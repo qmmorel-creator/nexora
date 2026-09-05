@@ -48,6 +48,12 @@ const sourceParts = (await readdir(path.join(root, "apps/nexora/source")))
 const sourceBytes = Buffer.concat(await Promise.all(sourceParts.map((name) => readFile(path.join(root, "apps/nexora/source", name)))));
 const builtBytes = await readFile(path.join(root, "apps/nexora/dist/index.html"));
 assert.deepEqual(builtBytes, sourceBytes, "Le build doit reconstruire exactement index.html");
-assert.match(builtBytes.toString("utf8"), /lp-drive-panel/);
-assert.match(builtBytes.toString("utf8"), /params\.get\("driveUrl"\)/);
+const builtSource = builtBytes.toString("utf8");
+assert.match(builtSource, /lp-drive-panel/);
+assert.match(builtSource, /params\.get\("driveUrl"\)/);
+assert.match(builtSource, /localStorage\.getItem\("nexora:todoistPersonalToken"\)/);
+assert.match(builtSource, /https:\/\/api\.todoist\.com\/api\/v1\/tasks/);
+assert.match(builtSource, /labels:\["nexora-mobile"\]/);
+assert.match(builtSource, /todoistTaskId/);
+assert.doesNotMatch(builtSource, /TELEGRAM_BOT_TOKEN/);
 console.log("Repository invariants: OK");
