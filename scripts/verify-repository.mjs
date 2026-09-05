@@ -4,7 +4,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const required = [
-  "apps/nexora/index.html",
+  "apps/nexora/source/index.html.part-000",
   "apps/nexora/netlify.toml",
   "apps/nexora/openapi.yaml",
   "apps/nexora/netlify/functions/nexora-create-task.ts",
@@ -41,4 +41,13 @@ for (const file of textFiles) {
 const gateway = await readFile(path.join(root, "apps/nexora-mcp/netlify/functions/gateway.mts"), "utf8");
 assert.match(gateway, /https:\/\/nexora-project\.org/);
 assert.match(gateway, /attachments:z\.array/);
+
+const sourceParts = (await readdir(path.join(root, "apps/nexora/source")))
+  .filter((name) => name.startsWith("index.html.part-"))
+  .sort();
+const sourceBytes = Buffer.concat(await Promise.all(sourceParts.map((name) => readFile(path.join(root, "apps/nexora/source", name)))));
+const builtBytes = await readFile(path.join(root, "apps/nexora/dist/index.html"));
+assert.deepEqual(builtBytes, sourceBytes, "Le build doit reconstruire exactement index.html");
+assert.match(builtBytes.toString("utf8"), /lp-drive-panel/);
+assert.match(builtBytes.toString("utf8"), /params\.get\("driveUrl"\)/);
 console.log("Repository invariants: OK");

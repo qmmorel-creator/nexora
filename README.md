@@ -14,6 +14,8 @@ Les deux applications restent déployées sur leurs projets Netlify existants :
 
 Firebase `nexora-cb20d` reste la source de données. Le dépôt ne contient ni données Firebase, ni comptes de service, ni jetons.
 
+L'interface monofichier est versionnée sous `apps/nexora/source/index.html.part-*`. Le build concatène ces fragments texte, dans l'ordre, pour reconstruire exactement `dist/index.html`.
+
 ## Validation locale
 
 ```bash
@@ -34,4 +36,3 @@ Chaque projet Netlify doit être relié à ce même dépôt, avec :
 Les domaines existants doivent être conservés. Les variables d'environnement restent configurées dans Netlify et ne sont jamais recopiées dans GitHub.
 
 Consulter [MIGRATION_GITHUB.md](docs/MIGRATION_GITHUB.md) avant la première bascule.
-
