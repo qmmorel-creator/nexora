@@ -2,7 +2,7 @@
 
 ## Objectif
 
-Faire de GitHub la source canonique du code sans changer les URLs publiques, le projet Firebase, les identifiants Netlify ni les contrats consommés par Telegram, le MCP et les automatisations ChatGPT.
+Faire de GitHub la source canonique du code sans changer les URLs publiques, le projet Firebase, les identifiants Netlify ni les contrats consommés par Todoist, le MCP et les automatisations ChatGPT. Le bot Telegram existant appartient à Budget360 et reste hors périmètre Nexora.
 
 ## Inventaire figé avant bascule
 
@@ -72,16 +72,21 @@ Ne placer aucune de ces valeurs dans GitHub. La connexion Git–Netlify réutili
 - vérifier les routines de tri Gmail, classement Drive, briefs et rapports Nexora ;
 - vérifier que les tâches créées depuis Gmail ou ChatGPT conservent leurs liens source et Drive.
 
-### Telegram
+### Todoist
 
-- ne pas changer le projet Firebase ni la structure `kv_store` ;
-- conserver `Inbox` comme projet par défaut pour toute tâche créée depuis Telegram ;
-- conserver tout endpoint, webhook, jeton et secret existant hors GitHub ;
-- effectuer une recette réelle : message Telegram, création unique dans `Inbox`, relecture Nexora, puis suppression ou archivage de la tâche de test.
+- préserver les fonctions Firebase v2 `todoistOAuthStart`, `todoistOAuthCallback`, `syncTodoist` et `todoistWebhook` dans `us-central1` ;
+- ne pas modifier leurs URL Cloud Run, secrets Firebase/Google Cloud, configuration OAuth ni webhook pendant la bascule Netlify ;
+- conserver le flux Todoist vers Nexora : label `nexora`, import unique dans le projet `Inbox`, puis suppression de la tâche Todoist importée ;
+- conserver le flux Nexora vers Todoist dans l'interface : token personnel en `localStorage`, création dans l'Inbox Todoist avec le label `nexora-mobile`, liaison par `todoistTaskId`, puis synchronisation de la complétion vers le statut Terminé ;
+- ne jamais committer le token API personnel Todoist ;
+- effectuer la recette après Deploy Preview : connexion Todoist existante, création d'une tâche de test `nexora-mobile`, vérification de la liaison, complétion dans Todoist, synchronisation vers Nexora et archivage de la tâche de test.
 
-Le code source du bot Telegram n'est pas présent dans les deux packages récupérés. Il ne doit pas être redéployé ni modifié pendant la bascule GitHub tant que sa source canonique et son hébergement ne sont pas identifiés.
+Les fonctions Todoist Firebase ne sont pas migrées vers Netlify dans cette opération. Elles restent déployées sur le projet `nexora-cb20d`, ce qui découple leur continuité du changement de source GitHub des deux sites Netlify.
+
+### Telegram Budget360 — hors périmètre
+
+Le seul bot Telegram retrouvé est la fonction Netlify `telegram` du projet `agent-comptes-quentin`, route `POST /api/telegram/webhook`. Il pilote Budget360 et ne dépend pas du dépôt Nexora. La migration Nexora ne doit modifier ni ce site, ni sa fonction, ni ses variables.
 
 ## Retour arrière
 
 En cas d'échec, republier le dernier Deploy ID fonctionnel du projet concerné. La base Firebase n'étant pas migrée, aucun retour arrière de données n'est requis.
-
