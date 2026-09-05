@@ -10,6 +10,8 @@ const required = [
   "apps/nexora/netlify/functions/nexora-create-task.ts",
   "apps/nexora-mcp/netlify.toml",
   "apps/nexora-mcp/netlify/functions/gateway.mts",
+  "apps/nexora-mcp/src/nexora.mts",
+  "apps/nexora-mcp/src/tools.mts",
 ];
 
 for (const file of required) await readFile(path.join(root, file));
@@ -40,9 +42,14 @@ for (const file of textFiles) {
 
 const gateway = await readFile(path.join(root, "apps/nexora-mcp/netlify/functions/gateway.mts"), "utf8");
 assert.match(gateway, /https:\/\/nexora-project\.org/);
-const domain = await readFile(path.join(root, "apps/nexora-mcp/src/nexora.mts"), "utf8");
-assert.match(domain, /attachments:z\.array/);
-assert.match(domain, /ensureTaskDates/);
+assert.match(gateway, /registerNexoraTools/);
+assert.match(gateway, /Every task type must have start and end dates/);
+const mcpTools = await readFile(path.join(root, "apps/nexora-mcp/src/tools.mts"), "utf8");
+assert.match(mcpTools, /add\('get_health'/);
+assert.match(mcpTools, /add\('list_projects'/);
+assert.match(mcpTools, /add\('create_task'/);
+assert.match(mcpTools, /add\('add_attachment'/);
+assert.match(mcpTools, /Dates obligatoires pour tous les types/);
 
 const sourceParts = (await readdir(path.join(root, "apps/nexora/source")))
   .filter((name) => name.startsWith("index.html.part-"))
