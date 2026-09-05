@@ -1,33 +1,56 @@
-# Nexora MCP
+# Nexora MCP 1.0.0
 
-Serveur MCP Streamable HTTP avec trois outils : list_projects, create_task, get_task. `create_task` accepte les liens de fichiers et dossiers Google Drive validés. Authentification OAuth authorization-code avec PKCE S256, connexion initiale via Firebase, jetons opaques hachés dans Firestore, accès 1 heure, refresh 30 jours avec rotation transactionnelle.
+Serveur privé Streamable HTTP : https://nexora-chatgpt-mcp.netlify.app/mcp
+Site Netlify : 2c0b2293-8b71-471b-8288-21f641256aa2.
 
-Hébergement dédié créé : nexora-chatgpt-mcp, site Netlify 2c0b2293-8b71-471b-8288-21f641256aa2.
+## Capacités
 
-## Configuration
+18 outils : list_projects, list_tasks, list_meetings, get_task, get_summary, get_health, get_activity, list_resources, read_resource, create_task, update_task, complete_task, archive_task, restore_task, delete_task, add_attachment, save_meeting_report, mutate_resource.
 
-Variables serveur requises : MCP_PUBLIC_ORIGIN, FIREBASE_WEB_API_KEY (configuration client publique), MCP_CLIENT_SIGNING_KEY, NEXORA_ASSISTANT_API_KEY, NEXORA_USER_UID, FIREBASE_SERVICE_ACCOUNT_JSON. Ne jamais committer les valeurs. Les collections nexora_mcp_codes/access/refresh doivent rester interdites aux clients Firestore ; règles existantes vérifiées : aucune règle client ne donne accès à ces collections (uniquement users/{uid}/kv_store et ancienne kv_store en lecture). Configurer un TTL sur expiresAt pour nettoyer les entrées expirées.
+Les tâches et réunions sont accessibles avec descriptions complètes, checklists, pièces jointes liées, responsable, sources Gmail/Drive, dépendances, récurrence et champs personnalisés. Recherche paginée par texte, projet, statut, type, responsable, source, période et état d’archive. Les dates civiles utilisent Europe/Paris. Une échéance (end) et une réalisation (completedAt) sont deux notions distinctes. Les comptes rendus ajoutés sont conservés dans la description, sous un titre explicite. Les anciennes descriptions libres peuvent être des notes ou des ordres du jour : leur nature doit être appréciée sans invention. Une pièce jointe externe nécessite une lecture avec le connecteur de sa source.
+
+Les domaines métier supplémentaires sont découverts avec list_resources : projets, catalogues, équipes, risques, budgets/dépenses Nexora, échéances, dossiers, tableaux de bord et réglages. read_resource renvoie la révision et la structure exacte. mutate_resource modifie un élément ou fusionne un objet de réglages. Les listes imbriquées fournies remplacent le champ concerné. Les historiques et états de synchronisation restent en lecture seule. Aucun outil ne modifie les transactions Budget360 ou les événements Google Calendar. Aucun secret de connexion n’est exposé.
+
+## Données et intégrité
+
+Le serveur utilise Firebase Admin et le propriétaire fixé par NEXORA_USER_UID. Il lit les documents canoniques `users/{uid}/kv_store/nexora:*`, après vérification de ce schéma sur la production et dans le code de l’application. L’API REST et le site principal Nexora ne sont pas modifiés.
+
+Les écritures utilisent une transaction Firestore, le format inline/chunked-v1 du site et des segments de 150000 caractères. Les révisions sont renouvelées pour que les sessions du site détectent les changements. Aucune copie intégrale périmée n’est écrasée : update_task exige une empreinte de la tâche, mutate_resource exige une révision du document. Les tâches sont fusionnées champ par champ avec la version relue en transaction. Les archivages/restaurations déplacent la tâche atomiquement entre tasks et taskArchive. La suppression définitive ne s’applique qu’à une tâche déjà archivée et nécessite une demande explicite.
+
+Les opérations sont dédupliquées dans `users/{uid}/nexora_mcp_operations` avec empreinte de requête. Une même clé pour une autre requête est refusée. La création recherche aussi les clés historiques et les identifiants source dans les tâches et archives. Le journal ne contient pas de secrets d’authentification. Les règles Firebase existantes n’accordent pas d’accès client à cette sous-collection.
+
+La pagination des tâches porte une empreinte des filtres et des révisions : si les données changent entre deux pages, la recherche doit recommencer. Une liste limitée ne vaut pas une lecture exhaustive. Les dates historiques invalides sont signalées dans dataQuality et ne bloquent pas une recherche. get_activity combine le journal applicatif conservé et les opérations MCP ; il ne garantit pas l’exhaustivité historique.
+
+## Authentification
+
+OAuth authorization-code, PKCE S256, audience MCP et UID contrôlés ; codes à usage unique, jetons opaques stockés hachés, accès une heure, renouvellement trente jours avec rotation transactionnelle. Les collections nexora_mcp_codes/access/refresh restent privées. TTL automatique sur expiresAt non configuré : l’application contrôle systématiquement l’expiration.
+
+Variables serveur : MCP_PUBLIC_ORIGIN, FIREBASE_WEB_API_KEY (configuration publique Firebase), MCP_CLIENT_SIGNING_KEY, NEXORA_USER_UID, FIREBASE_SERVICE_ACCOUNT_JSON. NEXORA_ASSISTANT_API_KEY reste disponible pour les anciens tests/API mais le nouveau domaine métier MCP accède directement aux données canoniques. Ne jamais publier les valeurs. Elles sont conservées comme variables Netlify standard, accessibles aux administrateurs du projet.
+
+Première connexion par e-mail/mot de passe Firebase ; pas de parcours social/MFA implémenté. La révocation d’un refresh empêche son renouvellement ; un accès déjà émis expire au plus tard une heure après émission. Une reconnexion peut être nécessaire après expiration ou révocation. Le MCP est effectivement connecté dans ChatGPT : list_projects a été exécuté par le connecteur pendant cette intervention.
+
+## Actualiser ChatGPT
+
+Après le déploiement, ouvrir Plugins → nexora → Refresh/Actualiser, vérifier les nouveaux outils, puis démarrer une nouvelle conversation. Ce rafraîchissement des métadonnées est une opération du compte ChatGPT ; le déploiement du serveur ne le prouve pas. L’URL et OAuth restent identiques.
+
+Documentation officielle :
+- https://developers.openai.com/plugins/deploy/connect-chatgpt
+- https://learn.chatgpt.com/docs/automations
 
 ## Vérification
 
-`npm ci --ignore-scripts` puis `node tests/protocol.mjs`. Le test oauth-live.mjs attend sur stdin un objet des variables de configuration : ne pas les écrire dans un fichier partagé. Il ne teste pas la connexion interactive utilisateur.
+`npm ci --ignore-scripts`, `npm test`, `node tests/protocol.mjs`.
 
-## Rattachement ChatGPT
+`tests/extended-live.mjs` reçoit sur stdin une ligne JSON des variables serveur, et TEST_REMOTE=true pour appeler le serveur publié. Ce test crée une tâche technique puis vérifie recherche, synthèse, création, déduplication, modification, conflit, lien documentaire, compte rendu, achèvement, archivage/restauration et création/suppression d’un dossier de test. La tâche est archivée et l’accès technique supprimé. Les identifiants ne doivent pas être écrits dans un fichier partagé. `tests/oauth-live.mjs` vérifie la rotation OAuth séparément.
 
-Après publication vérifiée, ajouter dans ChatGPT un connecteur MCP vers https://nexora-chatgpt-mcp.netlify.app/mcp, authentification OAuth, puis effectuer la connexion initiale Nexora. La connexion doit être réalisée dans l’interface ChatGPT ; ce code ne rattache pas automatiquement une application au compte. Vérifier ensuite depuis une nouvelle conversation la création et relecture d’une tâche.
+Les tests techniques ne remplacent pas la vérification d’une exécution planifiée réelle après actualisation des métadonnées du compte ChatGPT.
 
-## Limites
+## Publication et recette distante du 5 septembre 2026
 
-Première connexion par e-mail/mot de passe Firebase ; connexion par fournisseur social/MFA non implémentée. L’API publique Firebase est celle déjà publiée par Nexora, sans secret. Ne pas annoncer une compatibilité MFA ou connexion Google si non testée. Pas de token dans l’URL, pas de secret dans les résultats MCP. La révocation d’un refresh empêche son renouvellement ; les access tokens associés expirent au plus tard une heure après émission.
+Déploiement final `6a9c53b4b4f573d5a6ae6bc4` (build `6a9c53b4b4f573d5a6ae6bc2`) confirmé ready. Aucun secret détecté par le contrôle Netlify. Recette distante des 18 outils réussie ; tâche technique archivée, dossier technique supprimé, accès temporaire supprimé. Mesures ponctuelles sur ce test : recherche 1,2–1,5 s, création 3,4 s, modification 3,0 s, rejeu de création sans doublon 0,8 s. Ces mesures ne garantissent pas la durée totale d’un échange ChatGPT.
 
-Le service ne donne accès qu’au propriétaire NEXORA_USER_UID. Il dépend de l’API Nexora existante. Les opérations financières, suppression et archivage ne sont pas exposées.
+## 1.0.1 — Dates obligatoires
 
-## Recette du 5 septembre 2026
+Chaque création et chaque modification d’une tâche impose start et end, quel que soit son type. Les dates explicites sont conservées ; une seule date remplit les deux champs. À défaut : date de réception transmise par sourceReceivedDate/sourceReceivedAt, puis date d’exécution en Europe/Paris. Les champs null ne permettent pas de vider les dates enregistrées : le repli est appliqué dans la transaction. Les réessais idempotents gardent le résultat initial. Les anciennes entrées ne sont pas modifiées en masse.
 
-Contrôles locaux de protocole réussis. Test réel OAuth sur Firestore réussi : PKCE, usage unique du code, initialisation MCP, liste des trois outils, lecture des projets Nexora, rotation de refresh et refus du rejeu. Documents de test supprimés. Règles Firestore lues et vérifiées ; accès anonyme aux collections OAuth refusé (403). Connexion utilisateur et rattachement ChatGPT non testés à ce stade.
-
-La configuration Netlify a été relue après enregistrement. Les secrets restent dans les variables Netlify et ne sont pas inclus dans cette archive. L’option de masquage is_secret du connecteur n’a pas permis l’enregistrement ; les variables sont stockées comme variables d’environnement Netlify standard, accessibles aux administrateurs du projet. Aucun code client ne publie ces secrets ; seule FIREBASE_WEB_API_KEY est volontairement publique pour Firebase Authentication.
-
-Publication confirmée : déploiement Netlify 6a9c410356bb082cd3d9b3e9. Endpoint https://nexora-chatgpt-mcp.netlify.app/mcp. Création MCP en production, relecture, réessai sans doublon et archivage du test validés. Accès de test supprimé. Le rattachement au compte ChatGPT reste à effectuer dans l’interface du compte.
-
-Recette OAuth distante également réussie après publication : PKCE, code à usage unique, initialisation MCP, liste des outils, lecture Nexora et rotation de refresh avec rejet du rejeu. Tous les documents techniques de recette ont été supprimés.
+Le tri intelligent Gmail utilise la réception réelle du mail pour toute entrée dépourvue de date explicite, y compris Information. Les dates de repli sont des dates de classement et ne prouvent pas une échéance fixée par l’expéditeur.

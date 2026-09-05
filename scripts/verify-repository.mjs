@@ -40,7 +40,9 @@ for (const file of textFiles) {
 
 const gateway = await readFile(path.join(root, "apps/nexora-mcp/netlify/functions/gateway.mts"), "utf8");
 assert.match(gateway, /https:\/\/nexora-project\.org/);
-assert.match(gateway, /attachments:z\.array/);
+const domain = await readFile(path.join(root, "apps/nexora-mcp/src/nexora.mts"), "utf8");
+assert.match(domain, /attachments:z\.array/);
+assert.match(domain, /ensureTaskDates/);
 
 const sourceParts = (await readdir(path.join(root, "apps/nexora/source")))
   .filter((name) => name.startsWith("index.html.part-"))

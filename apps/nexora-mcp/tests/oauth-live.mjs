@@ -18,9 +18,9 @@ try{
  const token=await req('/oauth/token',grant,null,true);assert.equal(token.status,200);paths.push('nexora_mcp_access/'+hash(token.data.access_token),'nexora_mcp_refresh/'+hash(token.data.refresh_token));
  assert.equal((await req('/oauth/token',grant,null,true)).status,400);
  const initialized=await req('/mcp',{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'nexora-test',version:'1'}}},token.data.access_token);assert.equal(initialized.data.result.serverInfo.name,'nexora');
- const tools=await req('/mcp',{jsonrpc:'2.0',id:2,method:'tools/list',params:{}},token.data.access_token);assert.equal(tools.data.result.tools.length,3);
+ const tools=await req('/mcp',{jsonrpc:'2.0',id:2,method:'tools/list',params:{}},token.data.access_token);assert.equal(tools.data.result.tools.length,18);
  const listed=await req('/mcp',{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'list_projects',arguments:{}}},token.data.access_token);assert.ok(listed.data.result.structuredContent.catalogs.projects.some(p=>p.name==='Perso'));
  const fresh=await req('/oauth/token',{grant_type:'refresh_token',refresh_token:token.data.refresh_token,client_id:client,resource:origin+'/mcp'},null,true);assert.equal(fresh.status,200);paths.push('nexora_mcp_access/'+hash(fresh.data.access_token),'nexora_mcp_refresh/'+hash(fresh.data.refresh_token));
  assert.equal((await req('/oauth/token',{grant_type:'refresh_token',refresh_token:token.data.refresh_token,client_id:client,resource:origin+'/mcp'},null,true)).status,400);
- console.log('OAuth/PKCE, usage unique, initialisation MCP, 3 outils, lecture Nexora et rotation de refresh validés. Connexion utilisateur interactive non testée.');
+ console.log('OAuth/PKCE, usage unique, initialisation MCP, 18 outils, lecture Nexora et rotation de refresh validés. Connexion utilisateur interactive non testée.');
 }finally{for(const path of paths)await db.doc(path).delete();console.log('Documents techniques OAuth supprimés.');}
