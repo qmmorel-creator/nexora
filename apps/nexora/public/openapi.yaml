@@ -1,0 +1,474 @@
+openapi: 3.1.0
+info:
+  title: Nexora Assistant API
+  version: 1.1.0
+  description: API privée permettant à l’assistant de lire et gérer les tâches Nexora.
+servers:
+  - url: https://nexora-project.org
+security:
+  - bearerAuth: []
+paths:
+  /api/nexora/health:
+    get:
+      operationId: getNexoraHealth
+      summary: Vérifier la disponibilité et la configuration de la passerelle
+      security: []
+      responses:
+        "200":
+          description: Passerelle disponible
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          $ref: "#/components/responses/ConfigurationMissing"
+  /api/nexora/read:
+    get:
+      operationId: readNexora
+      summary: Lire les tâches ou les catalogues Nexora
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [today, tasks, catalogs, health]
+            default: today
+      responses:
+        "200":
+          description: Données demandées
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/nexora/tasks:
+    post:
+      operationId: createNexoraTask
+      summary: Créer une tâche ou retourner la tâche idempotente existante
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "200":
+          description: Tâche déjà existante
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskMutationResponse"
+        "201":
+          description: Tâche créée
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/nexora/tasks/manage:
+    get:
+      operationId: searchNexoraTasks
+      summary: Rechercher des tâches par identifiant source, fil ou période
+      parameters:
+        - in: query
+          name: taskId
+          schema: { type: string }
+        - in: query
+          name: sourceMessageId
+          schema: { type: string }
+        - in: query
+          name: sourceThreadId
+          schema: { type: string }
+        - in: query
+          name: updatedFrom
+          description: Horodatage ISO 8601 inclusif
+          schema: { type: string, format: date-time }
+        - in: query
+          name: updatedTo
+          description: Horodatage ISO 8601 inclusif
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Tâches correspondantes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, count, tasks]
+                properties:
+                  ok: { type: boolean, const: true }
+                  count: { type: integer, minimum: 0 }
+                  tasks:
+                    type: array
+                    items: { $ref: "#/components/schemas/Task" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      operationId: mutateNexoraTask
+      summary: Mettre à jour, terminer ou archiver une tâche
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MutateTaskRequest"
+      responses:
+        "200":
+          description: Mutation effectuée atomiquement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Tâche introuvable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Plusieurs tâches correspondent au fil
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/nexora/audit:
+    get:
+      operationId: readNexoraAudit
+      summary: Lire les événements du journal sur une période
+      parameters:
+        - in: query
+          name: start
+          required: true
+          schema: { type: string, format: date-time }
+        - in: query
+          name: end
+          required: true
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 2000, default: 1000 }
+      responses:
+        "200":
+          description: Événements de la période
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: recordNexoraAuditEvent
+      summary: Enregistrer une action Gmail ou Nexora confirmée
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditEventRequest" }
+      responses:
+        "200":
+          description: Événement idempotent déjà enregistré
+        "201":
+          description: Événement enregistré
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/nexora/reports:
+    get:
+      operationId: getNexoraReport
+      summary: Générer le rapport Gmail/Nexora du matin ou du soir
+      parameters:
+        - in: query
+          name: kind
+          schema: { type: string, enum: [morning, evening], default: evening }
+        - in: query
+          name: at
+          description: Instant de référence ISO 8601 ; maintenant par défaut
+          schema: { type: string, format: date-time }
+        - in: query
+          name: persist
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Rapport calculé depuis le journal réel
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/finance/catalogs:
+    get:
+      operationId: getFinanceCatalogs
+      summary: Lire les comptes et catégories KDM-88 actifs
+      responses:
+        "200":
+          description: Référentiels financiers actifs
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ConfigurationMissing" }
+  /api/finance/transactions:
+    post:
+      operationId: createFinanceTransaction
+      summary: Prévisualiser ou créer une transaction financière
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateFinanceTransactionRequest" }
+      responses:
+        "200": { description: Prévisualisation ou résultat idempotent }
+        "201": { description: Transaction créée }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ConfigurationMissing" }
+    patch:
+      operationId: categorizeFinanceTransaction
+      summary: Prévisualiser ou appliquer une catégorisation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategorizeFinanceTransactionRequest" }
+      responses:
+        "200": { description: Prévisualisation ou catégorisation appliquée }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Transaction introuvable }
+        "503": { $ref: "#/components/responses/ConfigurationMissing" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Unauthorized:
+      description: Authentification absente ou invalide
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Requête invalide
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ConfigurationMissing:
+      description: Configuration serveur incomplète
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, const: false }
+        error: { type: string }
+        detail: { type: string }
+    HealthResponse:
+      type: object
+      required: [ok, mode, projectId, writesEnabled]
+      properties:
+        ok: { type: boolean }
+        mode: { type: string }
+        projectId: { type: string }
+        writesEnabled:
+          type: array
+          items: { type: string }
+        searchEnabled:
+          type: array
+          items: { type: string }
+        finance:
+          type: object
+          required: [configured, catalogsEnabled, controlledWritesEnabled, operations]
+          properties:
+            configured: { type: boolean }
+            catalogsEnabled: { type: boolean }
+            controlledWritesEnabled: { type: boolean }
+            operations:
+              type: array
+              items: { type: string, enum: [create, categorize] }
+    Task:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        title: { type: string }
+        desc: { type: string }
+        projectId: { type: string }
+        statusId: { type: string }
+        taskTypeId: { type: string }
+        start: { type: string }
+        end: { type: string }
+        milestone: { type: boolean }
+        source: { type: string }
+        sourceUrl: { type: [string, "null"] }
+        sourceMessageId: { type: [string, "null"] }
+        sourceThreadId: { type: [string, "null"] }
+        sourceReceivedAt: { type: [string, "null"] }
+        sourceReceivedDate: { type: [string, "null"] }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/GoogleDriveAttachment" }
+    GoogleDriveAttachment:
+      type: object
+      additionalProperties: false
+      required: [type, provider, name, url]
+      properties:
+        id: { type: string }
+        type: { type: string, const: link }
+        provider: { type: string, const: google-drive }
+        driveKind: { type: string, enum: [file, folder] }
+        name: { type: string, maxLength: 240 }
+        url: { type: string, format: uri, pattern: '^https://(drive|docs)\\.google\\.com/' }
+        addedAt: { type: string, format: date-time }
+    CreateTaskRequest:
+      type: object
+      required: [title, idempotencyKey]
+      properties:
+        title: { type: string, maxLength: 240 }
+        idempotencyKey: { type: string, maxLength: 500 }
+        description: { type: string, maxLength: 10000 }
+        source: { type: string, default: assistant }
+        sourceUrl: { type: string, format: uri }
+        sourceMessageId: { type: string }
+        sourceThreadId: { type: string }
+        sourceSender: { type: string }
+        sourceReceivedAt: { type: string, format: date-time }
+        receivedDate: { type: string, format: date }
+        emailTaskKind:
+          type: string
+          enum: [action, information, parcel_tracking]
+        isParcelTracking: { type: boolean }
+        projectId: { type: string }
+        projectName: { type: string }
+        taskTypeId: { type: string }
+        taskTypeName: { type: string }
+        statusId: { type: string }
+        statusName: { type: string }
+        start: { type: string, format: date }
+        end: { type: string, format: date }
+        due: { type: string, format: date }
+        orderDate: { type: string, format: date }
+        estimatedDeliveryDate: { type: string, format: date }
+        attachments:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/GoogleDriveAttachment" }
+    MutateTaskRequest:
+      type: object
+      required: [idempotencyKey]
+      properties:
+        idempotencyKey: { type: string, maxLength: 500 }
+        taskId: { type: string }
+        sourceMessageId: { type: string }
+        sourceThreadId: { type: string }
+        action:
+          type: string
+          enum: [update, complete, archive]
+          default: update
+        changes:
+          type: object
+          additionalProperties: false
+          properties:
+            title: { type: string, maxLength: 240 }
+            description: { type: string, maxLength: 10000 }
+            start: { type: string, format: date }
+            end: { type: string, format: date }
+            statusId: { type: string }
+            sourceThreadId: { type: string }
+            sourceUrl: { type: string, format: uri }
+            sourceSender: { type: string }
+            addAttachments:
+              type: array
+              maxItems: 20
+              items: { $ref: "#/components/schemas/GoogleDriveAttachment" }
+      anyOf:
+        - required: [taskId]
+        - required: [sourceMessageId]
+        - required: [sourceThreadId]
+    AuditEventRequest:
+      type: object
+      required: [idempotencyKey, eventType]
+      properties:
+        idempotencyKey: { type: string, maxLength: 500 }
+        eventType:
+          type: string
+          enum: [email_analyzed, email_marked_read, email_marked_important, email_ignored, task_created, task_duplicate, task_updated, task_completed, task_archived, finance_transaction_created, finance_transaction_categorized, confirmation_requested, processing_error]
+        occurredAt: { type: string, format: date-time }
+        sourceMessageId: { type: string }
+        sourceThreadId: { type: string }
+        taskId: { type: string }
+        title: { type: string }
+        projectName: { type: string }
+        taskTypeName: { type: string }
+        reason: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+    TaskMutationResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        created: { type: boolean }
+        action: { type: string }
+        revision: { type: [string, "null"] }
+        task: { $ref: "#/components/schemas/Task" }
+    CreateFinanceTransactionRequest:
+      type: object
+      required: [idempotencyKey, bankDate, transactionType, accountId, signedAmount, category, subcategory]
+      properties:
+        idempotencyKey: { type: string, maxLength: 500 }
+        confirmed:
+          type: boolean
+          default: false
+          description: Force l’écriture après validation, y compris lorsque la confirmation est requise.
+        allowAutoCommit:
+          type: boolean
+          default: false
+          description: Autorise une écriture autonome seulement si le montant ne dépasse pas 200 € et si la confiance de catégorie atteint 85 %.
+        transactionId: { type: string, maxLength: 500 }
+        bankDate: { type: string, format: date }
+        effectiveDate: { type: string, format: date }
+        transactionType: { type: string, enum: [Dépense, Revenu, Remboursement] }
+        accountId: { type: string }
+        paymentMethodId: { type: string }
+        signedAmount: { type: number, not: { const: 0 } }
+        merchant: { type: string }
+        category: { type: string }
+        subcategory: { type: string }
+        categoryConfidence: { type: number, minimum: 0, maximum: 1 }
+        description: { type: string }
+        sourceId: { type: string }
+        tag: { type: string }
+    CategorizeFinanceTransactionRequest:
+      type: object
+      required: [idempotencyKey, transactionId, category, subcategory]
+      properties:
+        idempotencyKey: { type: string, maxLength: 500 }
+        confirmed:
+          type: boolean
+          default: false
+          description: Force l’écriture après validation, y compris lorsque la confirmation est requise.
+        allowAutoCommit:
+          type: boolean
+          default: false
+          description: Autorise une catégorisation autonome seulement si le montant ne dépasse pas 200 € et si la confiance atteint 85 %.
+        transactionId: { type: string, maxLength: 500 }
+        category: { type: string }
+        subcategory: { type: string }
+        categoryConfidence: { type: number, minimum: 0, maximum: 1 }
