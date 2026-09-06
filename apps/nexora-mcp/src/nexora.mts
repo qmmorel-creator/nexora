@@ -1,5 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
+import {calendarConfig,planCalendarImport} from './calendar.mts';
 
 export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState'] as const;
 const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState','taskBaselines']);
@@ -114,5 +115,14 @@ export function repository(db,uid){
     value=value.filter((_,i)=>i!==idx);
    }else value=value.map((x,i)=>i===idx?{...x,...args.changes,id:x.id}:x);}
   }const revision=write(tx,d,value);const entity=Array.isArray(value)?(args.action==='create'?value[value.length-1]:value.find(x=>x.id===args.id)):null;return {ok:true,resource:args.resource,revision,action:args.action,...(entity?{entity:clean(entity)}:{})};});}
- return {read,snapshot,catalogs,list,get,createTask,mutateTask,readResource,mutateResource,taskSnapshot,selected,enrich};
+ async function googleCalendarConfig(){const d=await snapshot(['gcalSettings','projects']);return {ok:true,...calendarConfig(d.gcalSettings.value,d.projects.value)};}
+ async function importGoogleCalendar(args){return atomic('import_google_calendar_events',args.idempotencyKey,args,async tx=>{
+  const names=['tasks','taskArchive','projects','statuses','taskTypes','gcalSettings'];
+  const d=Object.fromEntries(await Promise.all(names.map(async n=>[n,await read(n,tx)])));
+  const plan=planCalendarImport({tasks:d.tasks.value,archive:d.taskArchive.value,projects:d.projects.value,statuses:d.statuses.value,taskTypes:d.taskTypes.value,settings:d.gcalSettings.value},args);
+  if(plan.results.some(x=>['created','updated','cancelled'].includes(x.action)))write(tx,d.tasks,plan.tasks);
+  if(plan.results.some(x=>x.action==='cancelled'))write(tx,d.taskArchive,plan.archive);
+  return {ok:true,calendarId:args.calendarId,mode:'readonly-upsert',results:plan.results,counts:plan.results.reduce((out,x)=>(out[x.action]=(out[x.action]||0)+1,out),{}),coverage:'Batch only; missing events are never deleted. Read back each returned task ID.'};
+ });}
+ return {read,snapshot,catalogs,list,get,createTask,mutateTask,readResource,mutateResource,taskSnapshot,selected,enrich,googleCalendarConfig,importGoogleCalendar};
 }
