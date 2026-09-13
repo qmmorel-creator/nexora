@@ -1,4 +1,100 @@
-r(--border)",
+t statusName = (t) => {
+    const s = (ctx.statuses || []).find((x) => x.id === t.statusId);
+    return s?.name || s?.label || "Sans statut";
+  };
+
+  const assigneeName = (t) => {
+    const raw = t.assignee || t.responsible || t.assigneeId || t.responsibleId || "";
+    if (!raw) return "";
+    const people = [
+      ...(ctx.members || []),
+      ...(ctx.users || []),
+      ...(ctx.assignees || []),
+    ];
+    const person = people.find((p) => p.id === raw || p.uid === raw || p.email === raw);
+    return person?.name || person?.displayName || person?.email || raw;
+  };
+
+  // Recherche strictement limitée aux champs cochés par l'utilisateur.
+  const globalHaystack = (t) => {
+    const parts = [];
+    if (searchFields.title) parts.push(t.title || "");
+    if (searchFields.project) parts.push(projectName(t));
+    if (searchFields.status) parts.push(statusName(t));
+    if (searchFields.description) parts.push(t.desc || t.description || "");
+    if (searchFields.assignee) parts.push(assigneeName(t));
+    return norm(parts.join(" "));
+  };
+
+  const queryTerms = useMemo(
+    () => norm(query).split(/\s+/).filter(Boolean),
+    [query]
+  );
+
+  const searchableTasks = useMemo(() => [
+    ...(tasks || []).map((t) => ({ ...t, __searchArchived:false })),
+    ...(taskArchive || []).map((t) => ({ ...t, __searchArchived:true })),
+  ], [tasks, taskArchive]);
+
+  const results = useMemo(() => {
+    return searchableTasks
+      .filter((t) => {
+        if (queryTerms.length) {
+          const haystack = globalHaystack(t);
+          if (!queryTerms.every((term) => haystack.includes(term))) return false;
+        }
+        // Le champ de recherche propre aux filtres reste vide : la zone principale
+        // ci-dessus assure la recherche réellement globale sur tous les champs.
+        const f = { ...filters, search: "" };
+        return matchTaskFilters(t, f, ctx);
+      })
+      .sort((a, b) => {
+        const ae = a.end || a.dueDate || "9999-12-31";
+        const be = b.end || b.dueDate || "9999-12-31";
+        return String(ae).localeCompare(String(be)) || String(a.title || "").localeCompare(String(b.title || ""));
+      });
+  }, [
+    searchableTasks,
+    ctx,
+    filters,
+    queryTerms.join("|"),
+    searchFields.title,
+    searchFields.project,
+    searchFields.status,
+    searchFields.description,
+    searchFields.assignee,
+  ]);
+
+  const dateLabel = (v) => {
+    if (!v) return "—";
+    const d = new Date(String(v).length <= 10 ? `${v}T12:00:00` : v);
+    if (Number.isNaN(d.getTime())) return String(v);
+    return d.toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric" });
+  };
+
+  const resetFilters = () => setFilters(defaultMetaFilters());
+  const filterCount = activeFilterCount(filters);
+
+  return (
+    <Modal
+      title="Méta-recherche globale"
+      onClose={onClose}
+      extraWide
+      className="lp-global-meta-search"
+      footer={
+        <>
+          <div style={{ marginRight:"auto", fontSize:11.5, color:"var(--text-600)" }}>
+            {results.length} tâche{results.length > 1 ? "s" : ""} trouvée{results.length > 1 ? "s" : ""} · actives + archivées
+          </div>
+          <button className="lp-btn" onClick={onClose}>Fermer</button>
+        </>
+      }
+    >
+      <div style={{ display:"flex", flexDirection:"column", height:"min(76vh, 760px)", minHeight:520 }}>
+        <div style={{
+          flex:"0 0 auto",
+          paddingBottom:14,
+          borderBottom:"1px solid var(--border)",
           background:"var(--surface)",
           position:"relative",
           zIndex:2
@@ -231,7 +327,7 @@ function AppearanceModal({ appearance, setAppearance, saveStatus, saveError, pus
 
       <hr className="lp-divider" />
       <div className="lp-section-title">Dégradé de la Heat map</div>
-      <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>S'applique à la vue Heat map complète et au widget associé. Uniquement pour les jours sans retard — les jours en retard restent en dégradé rouge, pour rester un signal d'alerte reconnaissable.</p>
+      <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>S'applique à la vue Heat map complète. Uniquement pour les jours sans retard — les jours en retard restent en dégradé rouge, pour rester un signal d'alerte reconnaissable. Le widget Heat map mensuelle colore désormais les jours par projet ; les jours en retard y gardent un contour rouge.</p>
       <div className="lp-row2">
         <div className="lp-field"><label>Couleur minimum (peu de tâches)</label><input type="color" value={appearance.heatmapMinColor || "#d4f0e4"} onChange={(e) => setAppearance((a) => ({ ...a, heatmapMinColor: e.target.value }))} style={{ width: "100%", height: 36 }} /></div>
         <div className="lp-field"><label>Couleur maximum (beaucoup de tâches)</label><input type="color" value={appearance.heatmapMaxColor || "#0f5c40"} onChange={(e) => setAppearance((a) => ({ ...a, heatmapMaxColor: e.target.value }))} style={{ width: "100%", height: 36 }} /></div>
@@ -11593,7 +11689,7 @@ function defaultLayoutForType(type) {
   if (type === "budgetCompare") return { w: 6, h: 4 };
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "projectPulse") return { w: 4, h: 6 };
-  if (type === "heatmapMonth") return { w: 4, h: 5 };
+  if (type === "heatmapMonth") return { w: 9, h: 6 };
   if (type === "milestoneTimeline") return { w: 6, h: 4 };
   if (type === "verticalMetroTimeline") return { w: 6, h: 7 };
   if (type === "metroDeadline") return { w: 8, h: 6 };
@@ -12346,6 +12442,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     ctx={ctx}
                     onOpen={onOpen}
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
+                    onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
                     pastDays={
                       (() => {
                         const vals = [
@@ -12639,82 +12736,4 @@ function StackedBarChart({ data }) {
     return [...seen.entries()].map(([label, color]) => ({ label, color }));
   }, [data]);
   return (
-    <div className="lp-widget-stacked" style={{ position: "relative" }}>
-      <div className="lp-widget-barv">
-        {data.map((d) => (
-          <div className="lp-widget-barv-col" key={d.label}>
-            <span className="lp-widget-bar-value">{d.total}</span>
-            <div className="lp-widget-barv-track lp-widget-barv-track-stacked">
-              {d.segments.map((s, i) => (
-                <div
-                  key={i}
-                  className="lp-widget-barv-fill"
-                  style={{ height: `${(s.value / max) * 100}%`, background: s.color }}
-                  onMouseEnter={(e) => setHover({ seg: s, colLabel: d.label, x: e.clientX, y: e.clientY })}
-                  onMouseMove={(e) => setHover({ seg: s, colLabel: d.label, x: e.clientX, y: e.clientY })}
-                  onMouseLeave={() => setHover(null)}
-                />
-              ))}
-            </div>
-            <span className="lp-widget-barv-label">{d.label}</span>
-          </div>
-        ))}
-      </div>
-      {legend.length > 0 && (
-        <div className="lp-widget-legend lp-widget-legend-horizontal">
-          {legend.map((l) => (
-            <div key={l.label} className="lp-widget-legend-item">
-              <span className="lp-widget-legend-dot" style={{ background: l.color }} />
-              <span className="lp-widget-legend-label">{l.label}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {hover && (
-        <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
-          {hover.colLabel} · {hover.seg.label} — {hover.seg.value}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx, aggregateField, aggregateType }) {
-  const [hover, setHover] = useState(null);
-  const style = chartStyle || "pie";
-  const isAggregate = !!aggregateField;
-  const aggLabel = AGGREGATE_TYPES.find((a) => a.key === (aggregateType || "sum"))?.label || "";
-
-  // Tous les hooks sont appelés inconditionnellement (règle des Hooks React) —
-  // on calcule les trois formes de données possibles, puis on choisit laquelle
-  // afficher selon le style choisi.
-  const lineGroups = useMemo(() => groupTasks(tasks, "period", ctx).filter((g) => g.tasks.length > 0), [tasks, ctx]);
-  const stackedData = useMemo(() => computeStackedData(tasks, groupBy || "project", stackBy || "status", ctx, aggregateField, aggregateType), [tasks, groupBy, stackBy, ctx, aggregateField, aggregateType]);
-  const groups = useMemo(() => groupTasks(tasks, groupBy, ctx).filter((g) => g.tasks.length > 0), [tasks, groupBy, ctx]);
-
-  if (style === "gauge") {
-    const metric = gaugeMetric || "avgProgress";
-    let value = 0;
-    if (tasks.length > 0) {
-      if (metric === "doneRatio") value = (tasks.filter((t) => isTaskDoneGlobal(t, ctx)).length / tasks.length) * 100;
-      else value = tasks.reduce((s, t) => s + (Number(t.progress) || 0), 0) / tasks.length;
-    }
-    const metricLabel = GAUGE_METRICS.find((m) => m.key === metric)?.label || "Valeur";
-    return (
-      <div className="lp-widget-gauge-wrap">
-        <GaugeChart value={value} metricLabel={metricLabel} count={tasks.length} />
-      </div>
-    );
-  }
-
-  if (style === "line") {
-    const data = lineGroups.map((g) => ({ label: g.label, value: g.tasks.length }));
-    return <LineChartWidget data={data} />;
-  }
-
-  if (style === "stackedBar") {
-    if (stackedData.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune donnée pour ce filtre.</div>;
-    return <StackedBarChart data={stackedData} />;
-  }
-
-  const data = groups.map((g) => ({ label: g.label, value: aggregateTasksValue(g.tasks, aggregateField, aggrega
+   
