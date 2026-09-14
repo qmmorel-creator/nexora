@@ -1,4 +1,35 @@
-)} onClick={() => setPrefs({ showSubtasks: !showSubtasks })} title="Afficher les sous-tâches">
+GroupBy === "folder"} onChange={() => setMetroGroupBy("folder")} /> Dossier (fusionne les projets d'un même dossier)</label>
+        </DropdownButton>
+        <button className={"lp-tool-btn" + (leftCollapsed ? " active" : "")} onClick={() => setPrefs((p) => ({ ...p, leftCollapsed: !leftCollapsed }))} title={leftCollapsed ? "Afficher la colonne projet" : "Replier la colonne projet (plus de place pour le diagramme)"}>
+          <PanelLeftClose size={14} />
+        </button>
+        {!embedded && (
+          <button className={"lp-tool-btn" + (isAuto ? " active" : "")} onClick={() => setZoomKey("auto")} title="Zoom automatique : utilise toute la largeur disponible">
+            <Maximize2 size={14} />
+          </button>
+        )}
+        {!embedded && (
+          <button className="lp-tool-btn" onClick={resetZoom} title="Réinitialiser le zoom">
+            <RefreshCw size={14} />
+          </button>
+        )}
+        {!embedded && (
+          <DropdownButton label="" icon={<Columns3 size={14} />} title="Champs affichés sur les tâches">
+            {PM_FIELD_OPTIONS.map((f) => (
+              <label className="lp-checkbox-line" key={f.key}>
+                <input type="checkbox" checked={fields.includes(f.key)} onChange={() => setFields((prev) => (prev.includes(f.key) ? prev.filter((x) => x !== f.key) : [...prev, f.key]))} />
+                {f.label}
+              </label>
+            ))}
+          </DropdownButton>
+        )}
+        {!embedded && (
+          <button className="lp-tool-btn" onClick={toggleAllCollapsed} title={allCollapsed ? "Tout déplier" : "Tout replier"}>
+            {allCollapsed ? <ChevronsDown size={14} /> : <ChevronsUp size={14} />}
+          </button>
+        )}
+        {!embedded && (
+          <button className={"lp-tool-btn" + (showSubtasks ? " active" : "")} onClick={() => setPrefs({ showSubtasks: !showSubtasks })} title="Afficher les sous-tâches">
             <GripVertical size={14} />
           </button>
         )}
@@ -2105,7 +2136,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
           ctx={ctx}
           pageFilter={activePage?.filter}
           onSave={saveWidget}
-          onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch, lastInteraction: new Date().toISOString() } : t)))}
           onClose={() => setEditingWidget(null)}
         />
       )}
@@ -3433,6 +3463,8 @@ function WidgetBudgetCompare({ widget, projects }) {
 // que FieldValue, pour garantir une mise en forme identique au reste de l'app
 // (pastille de statut, badge de type, chip responsable, format de date).
 const MINIGANTT_ROW_FIELD_OPTIONS = ["assignee", "status", "taskType", "end", "progress"];
+// Hauteur d'un couloir d'étiquettes de bloc temporel : capsule + interligne.
+const MINIGANTT_PHASE_LANE_H = 22;
 
 // Anneau de progression du Mini-Gantt : contour coloré selon des paliers fixes
 // (rouge <50 %, orange 50-75 %, bleu 75-90 %, vert ≥90 %), remplacé par un
@@ -3777,12 +3809,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legacyWidgetRisks, onUpdateTask, onUpdateWidget]);
 
-  // L'éditeur travaille sur la liste à plat ; l'écriture retombe sur les tâches.
-  const applyRisks = (next) => {
-    if (!onUpdateTask) return;
-    applyTaskDelayRisks(next, tasks, onUpdateTask);
-  };
-
   // Ordre d'affichage réel des lignes, regroupement et replis compris : c'est
   // lui qui définit l'adjacence, donc le découpage d'un encadré en cadres
   // continus. Le regroupement est calculé une seule fois ici et réutilisé au
@@ -3919,14 +3945,24 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       .map((shape) => {
         const leftPx = (shape.leftPct / 100) * trackPx;
         const widthPx = (shape.widthPct / 100) * trackPx;
-        // Texte mono 9 px, gras, en majuscules : ~6,4 px par caractère, plus les
-        // marges intérieures et la bordure du chip.
-        const labelPx = 14 + String(shape.block.title || "").length * 6.4;
+        // L'étiquette a SA propre largeur : la capsule épouse le titre au lieu
+        // d'épouser la bande. Une bande de trois jours ne doit pas produire une
+        // capsule de trois jours de large dont le texte déborde de part et
+        // d'autre de sa propre bordure.
+        // `--font-mono` retombe sur Inter : les caractères n'ont PAS tous la
+        // même largeur, et les majuscules sont larges. L'estimation est donc
+        // volontairement généreuse — la sous-estimer tronquerait les titres,
+        // la surestimer ne coûte qu'un peu d'écartement entre couloirs.
+        const labelPx = Math.min(trackPx, 20 + String(shape.block.title || "").length * 8.6);
         const centerPx = leftPx + widthPx / 2;
+        // Recentrée sur la bande, puis ramenée dans la piste : une capsule ne
+        // sort jamais du diagramme, même pour un bloc collé au bord.
+        const labelLeftPx = Math.max(0, Math.min(trackPx - labelPx, centerPx - labelPx / 2));
+        shape.labelLeftPct = trackPx > 0 ? (labelLeftPx / trackPx) * 100 : 0;
         return {
           shape,
-          fromPx: Math.min(leftPx, centerPx - labelPx / 2),
-          toPx: Math.max(leftPx + widthPx, centerPx + labelPx / 2),
+          fromPx: Math.min(leftPx, labelLeftPx),
+          toPx: Math.max(leftPx + widthPx, labelLeftPx + labelPx),
         };
       })
       .sort((a, b) => a.fromPx - b.fromPx)
@@ -4074,7 +4110,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons" onMouseDown={(e)=>e.stopPropagation()}>
             <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
             <button type="button" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })} title="Ajouter un encadré autour d'une ou plusieurs tâches">+ Encadré</button>
-            <button type="button" onClick={() => setAnnotationPanel({ section: "risks", autoCreate: "risk" })} title="Ajouter un risque sur une tâche">+ Risque</button>
             <button type="button" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })} title="Ajouter un jalon ou une décision">+ Jalon</button>
           </div>
         )}
@@ -4425,7 +4460,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // (étiquette 26 %, gouttière 6 px, colonne de champs fixe) pour rester
   // alignées sur la piste.
   const phasesHeader = !temporalBlockShapes.length ? null : (
-    <div className="lp-widget-minigantt-phases" style={{ height: phaseLaneCount * 18 - 2 }}>
+    <div className="lp-widget-minigantt-phases" style={{ height: phaseLaneCount * MINIGANTT_PHASE_LANE_H - 3 }}>
       <span className="lp-widget-minigantt-phases-spacer" />
       <div className="lp-widget-minigantt-phases-track">
         {temporalBlockShapes.map((shape) => (
@@ -4434,12 +4469,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             type="button"
             className={"lp-widget-minigantt-phase" + (shape.block.kind === "decision" ? " is-decision" : "") + (shape.block.meta ? " is-meta" : "")}
             style={{
-              left: `${shape.leftPct}%`,
-              width: `${shape.widthPct}%`,
-              top: shape.lane * 18,
+              left: `${shape.labelLeftPct}%`,
+              maxWidth: "100%",
+              top: shape.lane * MINIGANTT_PHASE_LANE_H,
               color: shape.block.color,
               borderColor: shape.block.color,
-              background: "color-mix(in srgb, " + shape.block.color + " 12%, var(--surface))",
+              background: "color-mix(in srgb, " + shape.block.color + " 16%, var(--surface))",
             }}
             title={shape.block.meta
               ? `${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — méta bloc, réglable ${shape.block.id.startsWith("meta:" + TASK_META_BLOCK_ID_PREFIX) ? "dans la fiche de la tâche" : "dans Réglages > Méta blocs temporels"}`
@@ -4575,7 +4610,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         defaultStart={minDateStr}
         defaultEnd={maxDateStr}
         onChange={applyAnnotations}
-        onRisksChange={applyRisks}
         initialSection={annotationPanel.section}
         autoCreate={annotationPanel.autoCreate}
         focusId={annotationPanel.focusId}
@@ -7625,7 +7659,7 @@ function PageFilterModal({ page, onSave, onSaveMeta, onClose, ctx }) {
   );
 }
 
-function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onClose, onUpdateTask }) {
+function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onClose }) {
   const [type, setType] = useState(widget?.type || "kpi");
   const [title, setTitle] = useState(widget?.title || "");
   const [typeSearch, setTypeSearch] = useState("");
@@ -8621,7 +8655,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               frames={ganttAnnotations.highlightFrames}
               milestones={ganttAnnotations.milestones}
               risks={ganttTaskRisks}
-              onRisksChange={(next) => onUpdateTask && applyTaskDelayRisks(next, ganttTasks, onUpdateTask)}
               notes={ganttAnnotations.notes}
               tasks={ganttTasks}
               ctx={ctx}
