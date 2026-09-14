@@ -2925,6 +2925,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const configRisks = useMemo(() => normalizeMiniGanttRisks(rawRisks), [rawRisks]);
   const configNotes = useMemo(() => normalizeMiniGanttNotes(rawNotes), [rawNotes]);
 
+  // Les listes déroulantes de l'éditeur portent sur TOUTES les tâches retenues
+  // par les filtres du widget, pas seulement sur celles que le plafond
+  // d'affichage laisse voir : sinon une tâche filtrée « in » mais tronquée de
+  // la vue deviendrait impossible à désigner.
+  const editorTasks = useMemo(() => tasks.filter((t) => t.start && t.end), [tasks]);
+
   // Ordre d'affichage réel des lignes, regroupement et replis compris : c'est
   // lui qui définit l'adjacence, donc le découpage d'un encadré en cadres
   // continus. Le regroupement est calculé une seule fois ici et réutilisé au
@@ -3691,7 +3697,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         milestones={rawMilestones}
         risks={rawRisks}
         notes={rawNotes}
-        tasks={[...projTasks, ...milestoneTasks]}
+        tasks={editorTasks}
         ctx={ctx}
         defaultStart={minDateStr}
         defaultEnd={maxDateStr}
@@ -6376,7 +6382,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // Un bloc dont les dates sont invalides (ou dont la fin précède le début)
   // bloque l'enregistrement : l'erreur reste affichée sous les champs.
   const ganttAnnotationsValid = ganttAnnotations.temporalBlocks.every((b) => validateTemporalBlock(b).ok);
-  const ganttTasks = useMemo(() => (ctx.tasks || []).filter((t) => t.start && t.end), [ctx.tasks]);
+  // Les listes déroulantes des annotations ne proposent que les tâches que ce
+  // widget affiche réellement : filtre de la page, puis filtre du widget, tel
+  // qu'il est en cours d'édition dans cette même fiche.
+  const ganttTasks = useMemo(() => {
+    const pageScoped = applyWidgetFilter(ctx.tasks || [], pageFilter, ctx);
+    return applyWidgetFilter(pageScoped, filter, ctx).filter((t) => t.start && t.end);
+  }, [ctx, pageFilter, filter]);
   const ganttDefaultStart = ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date());
   const ganttDefaultEnd = ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date());
 

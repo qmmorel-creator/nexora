@@ -41,6 +41,10 @@ function AnnotationsHarness() {
   const setPrefs = (patch) => setPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
   const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["status", "end"], ganttAnnotations: miniAnnotations });
   const [toolbar, setToolbar] = useState(null);
+  // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
+  // déroulantes des annotations ne proposent que les tâches retenues par le
+  // filtre du widget. Ici, le filtre ne garde que le projet « p2 ».
+  const [formOpen, setFormOpen] = useState(false);
   const noop = () => {};
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 22 }}>
@@ -57,6 +61,19 @@ function AnnotationsHarness() {
       </div>
       <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>MINI-GANTT</h2>
+        <button type="button" id="harness-open-widget-form" onClick={() => setFormOpen(true)} style={{ marginBottom: 8 }}>
+          Ouvrir la fiche du widget (filtre projet p2)
+        </button>
+        {formOpen && (
+          <WidgetFormModal
+            widget={{ ...miniWidget, filter: { ...widgetDefaultFilter(), projectIds: ["p2"] } }}
+            existingWidgets={[]}
+            ctx={ctx}
+            pageFilter={null}
+            onSave={() => setFormOpen(false)}
+            onClose={() => setFormOpen(false)}
+          />
+        )}
         <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700 }}>
           <WidgetMiniGantt
             widget={miniWidget} tasks={tasks} ctx={ctx} onOpen={noop}

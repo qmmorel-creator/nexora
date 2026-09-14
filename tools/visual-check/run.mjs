@@ -106,6 +106,28 @@ try {
   dropdown.error = String(error).split("\n")[0];
 }
 
+// Portée des listes déroulantes : la fiche du widget est filtrée sur un seul
+// projet, les tâches proposées doivent l'être aussi.
+const scoped = { options: [], labels: [] };
+try {
+  // Referme d'abord la modale du widget, sinon son voile intercepte les clics.
+  await page.locator(".lp-modal").getByRole("button", { name: "Terminé" }).click();
+  await page.waitForTimeout(400);
+  await page.locator("#harness-open-widget-form").click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await page.locator(".lp-modal .lp-widget-appearance-toggle", { hasText: "Risques" }).click();
+  await page.waitForTimeout(400);
+  await page.locator(".lp-modal .lp-gantt-annot-head").last().click();
+  await page.waitForTimeout(300);
+  await page.locator(".lp-modal .lp-activity-search-trigger").first().click();
+  await page.waitForSelector(".lp-activity-search-menu", { timeout: 5000 });
+  scoped.labels = await page.locator(".lp-activity-search-menu .lp-activity-option-main").allTextContents();
+  scoped.options = await page.locator(".lp-activity-search-menu .lp-activity-search-option").allTextContents();
+} catch (error) {
+  scoped.error = String(error).split("\n")[0];
+}
+
 await browser.close();
 server.close();
 
@@ -168,6 +190,10 @@ expect(dropdown.triggers > 0, "Paramètres : la sélection de tâche d'un risque
 expect(dropdown.before > 1, `Paramètres : la liste déroulante ne propose que ${dropdown.before} option(s)`);
 expect(dropdown.after > 0 && dropdown.after < dropdown.before, `Paramètres : la recherche rapide ne filtre pas (${dropdown.before} → ${dropdown.after})`);
 expect(/Revue DOE/.test(dropdown.chosen), `Paramètres : la sélection ne s'applique pas (« ${dropdown.chosen} »)`);
+
+expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
+expect(scoped.labels.length === 2, `Paramètres : ${scoped.labels.length} tâche(s) proposée(s), 2 attendues (seul le projet filtré)`);
+expect(scoped.labels.every((l) => /FOR-0129|DREAL/.test(l)), `Paramètres : des tâches hors filtre sont proposées (${scoped.labels.join(", ")})`);
 
 console.log(`Capture : ${shot}`);
 if (failures.length) {
