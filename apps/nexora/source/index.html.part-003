@@ -1,4 +1,22 @@
-w => w.id === widgetId ? { ...w, layout: nextLayout } : { ...w, layout: { ...w.layout } });
+  y = Math.max(0, fixedBottom - h);
+    }
+
+    return {x,y,w,h};
+  };
+
+  const layoutsOverlap = (a, b) => (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+
+  // Conserve le widget redimensionné à sa place et pousse uniquement les
+  // widgets réellement en collision vers le bas. Le traitement est récursif :
+  // un widget déplacé peut lui-même pousser celui qui se trouve dessous.
+  const applyResizeWithCollisionPush = (widgetId, nextLayout) => {
+    setWidgets(prev => {
+      const next = prev.map(w => w.id === widgetId ? { ...w, layout: nextLayout } : { ...w, layout: { ...w.layout } });
       const changed = next.find(w => w.id === widgetId);
       if (!changed?.layout) return next;
 
@@ -2283,8 +2301,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     highlightFrames.forEach((frame) => {
       ganttFrameSegments(rows, frame).forEach((seg, i) => shapes.push({ ...seg, frame, key: frame.id + "-" + i }));
     });
+    // Même règle que le Gantt complet : deux étiquettes qui se superposeraient
+    // sont décalées vers le bas.
+    const placed = [];
+    shapes.slice().sort((a, b) => a.top - b.top || a.startIdx - b.startIdx).forEach((shape) => {
+      shape.labelOffset = placed.filter((x) => Math.abs(x.top - shape.top) < 26 && Math.abs(x.startIdx - shape.startIdx) / span < 0.12).length * 11;
+      placed.push(shape);
+    });
     return shapes;
-  }, [highlightFrames, visibleRows, rowRects]);
+  }, [highlightFrames, visibleRows, rowRects, span]);
 
   // Les blocs sont exprimés en pourcentage, comme les barres du Mini-Gantt, et
   // bornés à la fenêtre affichée : le zoom et le filtre « jours dans le passé »
@@ -2611,7 +2636,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         const widthPct = Math.max(1.2, ((to - from) / span) * 100);
         // Étiquette juste au-dessus du cadre, ou dans sa partie supérieure
         // gauche quand il n'y a pas la place sans mordre sur l'axe.
-        const labelTop = seg.top >= rowsBand.top + 12 ? seg.top - 11 : seg.top + 1;
+        const labelTop = (seg.top >= rowsBand.top + 12 ? seg.top - 11 : seg.top + 1) + (seg.labelOffset || 0);
         return (
           <React.Fragment key={seg.key}>
             <div

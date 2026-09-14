@@ -3525,8 +3525,16 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
     highlightFrames.forEach((frame) => {
       ganttFrameSegments(rows, frame).forEach((seg, i) => shapes.push({ ...seg, frame, key: frame.id + "-" + i }));
     });
+    // Deux cadres qui commencent au même endroit sur des lignes voisines
+    // superposeraient leurs étiquettes : on décale les suivantes vers le bas
+    // plutôt que d'en laisser une définitivement masquée.
+    const placed = [];
+    shapes.slice().sort((a, b) => a.top - b.top || a.startIdx - b.startIdx).forEach((shape) => {
+      shape.labelOffset = placed.filter((x) => Math.abs(x.top - shape.top) < 16 && Math.abs(x.startIdx - shape.startIdx) * dayWidth < 90).length * 12;
+      placed.push(shape);
+    });
     return shapes;
-  }, [highlightFrames, visibleRows, rowRects]);
+  }, [highlightFrames, visibleRows, rowRects, dayWidth]);
 
   // Un bloc temporel est dessiné DANS chaque piste, exactement comme la grille
   // et la ligne « aujourd'hui » : il reste au-dessus du fond du Gantt mais sous
@@ -4101,7 +4109,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
                       <button
                         type="button"
                         className="lp-gantt-frame-label"
-                        style={{ left, top: Math.max(0, seg.top - 13), background: seg.frame.color }}
+                        style={{ left, top: Math.max(0, seg.top - 13) + (seg.labelOffset || 0), background: seg.frame.color }}
                         title={`${seg.frame.label} — cliquer pour modifier`}
                         onClick={() => setAnnotationPanel({ section: "frames", focusId: seg.frame.id })}
                       >
@@ -12665,22 +12673,4 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     if (corner === "tl" || corner === "tr") {
       const fixedBottom = baseLayout.y + baseLayout.h;
       h = clamp(newH, 2, fixedBottom);
-      y = Math.max(0, fixedBottom - h);
-    }
-
-    return {x,y,w,h};
-  };
-
-  const layoutsOverlap = (a, b) => (
-    a.x < b.x + b.w &&
-    a.x + a.w > b.x &&
-    a.y < b.y + b.h &&
-    a.y + a.h > b.y
-  );
-
-  // Conserve le widget redimensionné à sa place et pousse uniquement les
-  // widgets réellement en collision vers le bas. Le traitement est récursif :
-  // un widget déplacé peut lui-même pousser celui qui se trouve dessous.
-  const applyResizeWithCollisionPush = (widgetId, nextLayout) => {
-    setWidgets(prev => {
-      const next = prev.map(
+    
