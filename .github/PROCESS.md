@@ -15,9 +15,9 @@ aucune fermeture sans validation explicite.
 
 ## Suivre l'avancement
 
-- Tableau : **https://github.com/users/qmmorel-creator/projects/1** — le dépôt `nexora`
-  doit être ajouté aux sources de ce board (ou un board dédié créé, auquel cas remplacer
-  l'URL ci-dessus). C'est la seule étape qui ne peut pas être versionnée dans le dépôt.
+- Tableau : **https://github.com/users/qmmorel-creator/projects/2** — board dédié à
+  Nexora, distinct de celui d'OS360 : là-bas `zone:nexora` désigne l'intégration Nexora
+  *dans* OS360, ce qui n'a pas le même sens que les `zone:*` de ce dépôt.
 - Chaque issue porte un label `statut:*` :
   - `statut:backlog` — collectée, pas encore commencée
   - `statut:en-cours` — en cours de développement
@@ -43,6 +43,18 @@ automatiquement par le workflow `Synchronisation des labels` à chaque push sur 
 touche ce fichier (ou manuellement via *Run workflow*). Le workflow ne supprime jamais un
 label : ajouter une zone = ajouter une entrée dans `labels.json` et une option dans
 `.github/ISSUE_TEMPLATE/demande.yml`.
+
+## Configuration du board
+
+Le board n'est pas versionnable dans le dépôt ; sa configuration attendue est donc
+consignée ici, pour être rétablie à l'identique si elle se perd :
+
+- le dépôt `nexora` est relié au board (onglet *Projects* du dépôt → *Link a project*) ;
+- le workflow *Auto-add to project* du board y ajoute les nouvelles issues, avec le
+  filtre `repo:qmmorel-creator/nexora is:issue is:open` ;
+- les colonnes suivent les labels `statut:*`, qui restent la source de vérité : rien ne
+  synchronise automatiquement un label vers le champ *Status* de GitHub, faute d'un jeton
+  à portée `project` — déplacer une carte ne remplace donc jamais le changement de label.
 
 ## Convention pour l'assistant (Claude ou ChatGPT)
 
