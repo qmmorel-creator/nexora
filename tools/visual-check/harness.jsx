@@ -77,6 +77,7 @@ function AnnotationsHarness() {
     treemapColorMode: "secondaryFilterGradient",
     treemapFields: ["projectName", "sizeCount", "progress", "averageCriticality", "lateTaskCount", "dominantStatus"],
     treemapShowZeroProjects: true,
+    treemapShowUpcoming: true,
   });
   const [treemapFormOpen, setTreemapFormOpen] = useState(false);
   const [openedProjectId, setOpenedProjectId] = useState("");

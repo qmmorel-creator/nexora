@@ -32,6 +32,7 @@ const EXPORTS = [
   "treemapGroupRects",
   "normalizeProjectTreemapConfig",
   "treemapLegendBuckets",
+  "treemapUpcomingCapacity",
   "TREEMAP_CRITICALITY_WEIGHTS",
   "TREEMAP_NEUTRAL_COLOR",
   "TREEMAP_DEFAULT_FIELDS",
@@ -337,4 +338,45 @@ test("la légende décrit des tranches réellement peuplées", () => {
   );
   assert.deepEqual(levels.map((b) => b.key), ["controlled", "watch", "high", "critical"]);
   assert.deepEqual(levels.map((b) => b.count), [1, 1, 0, 1]);
+});
+
+test("les prochaines tâches vont de la plus ancienne à la plus récente", () => {
+  const tasks = [
+    task({ id: "a", projectId: "p1", title: "Tard", end: "2026-10-20" }),
+    task({ id: "b", projectId: "p1", title: "Dépassée", end: "2026-08-01" }),
+    task({ id: "c", projectId: "p1", title: "Bientôt", end: "2026-09-15" }),
+    task({ id: "d", projectId: "p1", title: "Terminée", end: "2026-08-05" }),
+    task({ id: "e", projectId: "p1", title: "Sans échéance", end: "" }),
+  ];
+  const [p1] = T.computeTreemapProjects({
+    projects, tasks,
+    factsOf: factsById({ b: { late: true }, d: { done: true } }),
+  });
+  // Ni les terminées, ni celles sans échéance : la liste répond à « quoi ensuite ».
+  assert.deepEqual(p1.upcoming.map((u) => u.title), ["Dépassée", "Bientôt", "Tard"]);
+  assert.equal(p1.upcoming[0].late, true, "l'échéance dépassée est signalée, et vient en tête");
+  assert.equal(p1.upcoming[1].late, false);
+  assert.equal(p1.upcomingTotal, 3);
+});
+
+test("le nombre de tâches affichées suit la hauteur réelle de la tuile", () => {
+  // Rien ne tient : mieux vaut aucune ligne qu'une ligne coupée en deux.
+  assert.equal(T.treemapUpcomingCapacity(60, 60), 0);
+  assert.equal(T.treemapUpcomingCapacity(70, 60), 0);
+  assert.equal(T.treemapUpcomingCapacity(74, 60), 1);
+  assert.equal(T.treemapUpcomingCapacity(102, 60), 3);
+  // Plafonné : au-delà, la tuile deviendrait une liste, plus une tuile.
+  assert.equal(T.treemapUpcomingCapacity(2000, 60), 8);
+  // Entrées illisibles : zéro, jamais NaN lignes.
+  assert.equal(T.treemapUpcomingCapacity(undefined, undefined), 0);
+  assert.equal(T.treemapUpcomingCapacity("abc", 10), 0);
+  // Tuile trop étroite : une puce suivie de trois points n'apprend rien.
+  assert.equal(T.treemapUpcomingCapacity(200, 60, 60), 0);
+  assert.ok(T.treemapUpcomingCapacity(200, 60, 200) > 0);
+});
+
+test("l'affichage des prochaines tâches est un réglage, désactivé par défaut", () => {
+  assert.equal(T.normalizeProjectTreemapConfig({}).showUpcoming, false);
+  assert.equal(T.normalizeProjectTreemapConfig({ treemapShowUpcoming: true }).showUpcoming, true);
+  assert.equal(T.normalizeProjectTreemapConfig({ treemapShowUpcoming: "oui" }).showUpcoming, false);
 });

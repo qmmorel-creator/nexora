@@ -104,6 +104,19 @@ La **densité** de chaque tuile est calculée sur sa taille en pixels réellemen
 tuile, 1 en moyenne, 0 en petite. Les textes sont tronqués, jamais superposés ; l'infobulle
 et l'attribut `title` donnent le détail complet.
 
+## Prochaines tâches
+
+Réglage facultatif « Afficher les prochaines tâches du projet » : les tâches non terminées
+qui portent une échéance, **de la plus ancienne à la plus récente** — les échéances dépassées
+viennent donc naturellement en tête, en rouge. Sur une tuile foncée, le rouge plein
+deviendrait illisible : c'est sa version claire qui est utilisée.
+
+Le nombre de lignes suit la **hauteur réelle** de la tuile (`treemapUpcomingCapacity`), après
+déduction du nom, du bloc principal et de la rangée de capsules. Zéro ligne plutôt qu'une
+ligne coupée en deux ; rien non plus sous 110 px de large, où un titre tronqué à trois points
+n'apprendrait rien. Le reste est annoncé par un « + N autres », et la liste est plafonnée à
+huit à la source — au-delà, la tuile deviendrait une liste.
+
 ## Pavage
 
 `squarifyTreemap` implémente l'algorithme *squarified* (Bruls, Huizing, van Wijk) : des
