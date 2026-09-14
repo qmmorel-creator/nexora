@@ -41,7 +41,7 @@ function AnnotationsHarness() {
             widget={miniWidget} tasks={tasks} ctx={ctx} onOpen={noop}
             onUpdateWidget={(patch) => setMiniWidget((w) => ({ ...w, ...patch }))}
             onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
-            groupBy="none"
+            groupBy="project"
           />
         </div>
       </div>

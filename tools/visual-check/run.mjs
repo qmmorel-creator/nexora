@@ -68,6 +68,8 @@ const seen = await page.evaluate(() => {
     miniBlockLabels: rects(".lp-widget-minigantt-tblock-label"),
     miniFrames: rects(".lp-widget-minigantt-frame"),
     miniFrameLabels: rects(".lp-widget-minigantt-frame-label"),
+    miniRows: rects(".lp-widget-minigantt-row"),
+    miniBands: rects(".lp-widget-minigantt-tblock"),
   };
 });
 
@@ -90,6 +92,18 @@ expect(seen.ganttFrames.length === 3, `Gantt complet : ${seen.ganttFrames.length
 expect(seen.miniBlocks === 2, `Mini-Gantt : ${seen.miniBlocks} bloc(s) temporel(s), 2 attendus`);
 expect(seen.miniBlockLabels.length === 2, `Mini-Gantt : ${seen.miniBlockLabels.length} étiquette(s) de bloc, 2 attendues`);
 expect(seen.miniFrames.length === 3, `Mini-Gantt : ${seen.miniFrames.length} cadre(s), 3 attendus`);
+
+// « Le bloc temporel emporte tout » : une bande continue sur toute la hauteur des
+// lignes, en-têtes de groupe et interlignes compris — et non un morceau par
+// groupe, ce qui laissait une bande claire à chaque en-tête.
+if (seen.miniRows.length && seen.miniBands.length) {
+  const top = Math.min(...seen.miniRows.map((r) => r.y));
+  const bottom = Math.max(...seen.miniRows.map((r) => r.y + r.h));
+  seen.miniBands.forEach((band, i) => {
+    expect(band.y <= top + 2, `Mini-Gantt : la bande ${i + 1} commence sous la première ligne (${band.y} > ${top})`);
+    expect(band.y + band.h >= bottom - 2, `Mini-Gantt : la bande ${i + 1} s'arrête avant la dernière ligne (${band.y + band.h} < ${bottom})`);
+  });
+}
 
 for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt", seen.miniFrames]]) {
   frames.forEach((f, i) => expect(f.w > 4 && f.h > 4, `${name} : cadre ${i + 1} de surface nulle (${f.w}×${f.h})`));

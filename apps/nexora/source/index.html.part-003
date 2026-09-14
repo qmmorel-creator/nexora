@@ -1,4 +1,27 @@
-  y = Math.max(0, fixedBottom - h);
+
+    const newH = clamp(
+      Math.round((box.height + DASHBOARD_GAP) / rowUnit),
+      2,
+      12
+    );
+
+    let x = baseLayout.x;
+    let y = baseLayout.y;
+    let w = newW;
+    let h = newH;
+
+    if (corner === "tl" || corner === "bl") {
+      const fixedRight = baseLayout.x + baseLayout.w;
+      w = clamp(newW, 2, fixedRight);
+      x = fixedRight - w;
+    } else {
+      w = clamp(newW, 2, DASHBOARD_COLS - baseLayout.x);
+    }
+
+    if (corner === "tl" || corner === "tr") {
+      const fixedBottom = baseLayout.y + baseLayout.h;
+      h = clamp(newH, 2, fixedBottom);
+      y = Math.max(0, fixedBottom - h);
     }
 
     return {x,y,w,h};
@@ -2410,21 +2433,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {weekendBands.map((idx) => (
         <span key={"we-" + idx} className="lp-widget-minigantt-weekend" style={{ left: pctFor(idx), width: `${(1 / span) * 100}%` }} />
       ))}
-      {/* Les blocs temporels rejoignent la grille de fond : au-dessus du fond du
-          widget, sous les barres et les jalons (qui portent z-index 1). */}
-      {temporalBlockShapes.map((shape) => (
-        <span
-          key={shape.block.id}
-          className="lp-widget-minigantt-tblock"
-          style={{
-            left: `${shape.leftPct}%`,
-            width: `${shape.widthPct}%`,
-            background: "color-mix(in srgb, " + shape.block.color + " 10%, transparent)",
-            borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
-            borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
-          }}
-        />
-      ))}
       {secondaryTicks.map((d) => (
         <span key={"sec-" + d} className="lp-widget-minigantt-sub-sep" style={{ left: pctFor(dayIndex(d)) }} />
       ))}
@@ -2603,6 +2611,38 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return createPortal(node, document.body);
   };
 
+  // Un bloc temporel est UNE bande continue sur toute la hauteur utile, en
+  // arrière-plan de toutes les lignes — en-têtes de groupe et espaces entre
+  // groupes compris. Le rendre dans la grille de fond le découpait en autant de
+  // morceaux que de groupes, avec une bande blanche à chaque en-tête.
+  // Les lignes portent z-index 1 : la bande reste donc sous les barres et les
+  // jalons sans avoir à s'insérer dans chaque piste.
+  const bandLayer = (!rowsBand || !temporalBlockShapes.length) ? null : (
+    <div
+      className="lp-widget-minigantt-band-layer"
+      style={{
+        left: "calc(26% + 6px)",
+        right: fieldsLayout === "aligned" ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
+        top: rowsBand.top,
+        height: rowsBand.height,
+      }}
+    >
+      {temporalBlockShapes.map((shape) => (
+        <span
+          key={shape.block.id}
+          className="lp-widget-minigantt-tblock"
+          style={{
+            left: `${shape.leftPct}%`,
+            width: `${shape.widthPct}%`,
+            background: "color-mix(in srgb, " + shape.block.color + " 13%, transparent)",
+            borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+            borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+          }}
+        />
+      ))}
+    </div>
+  );
+
   // Étiquettes de blocs et cadres : une seule couche au-dessus des lignes,
   // sur la même bande horizontale que la grille de fond. Ce sont des variables
   // et non des composants définis ici : un composant recréé à chaque rendu
@@ -2692,6 +2732,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   if (!groupBy || groupBy === "none") {
     return (
       <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
+        {bandLayer}
         <Axis />
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
@@ -2708,6 +2749,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const groups = rowGroups;
   return (
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
+      {bandLayer}
       <Axis />
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
