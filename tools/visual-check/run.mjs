@@ -65,7 +65,7 @@ const seen = await page.evaluate(() => {
     ganttFrames: rects(".lp-gantt-frame"),
     ganttFrameLabels: rects(".lp-gantt-frame-label"),
     miniBlocks: document.querySelectorAll(".lp-widget-minigantt-tblock").length,
-    miniBlockLabels: rects(".lp-widget-minigantt-tblock-label"),
+    miniPhases: rects(".lp-widget-minigantt-phase"),
     miniFrames: rects(".lp-widget-minigantt-frame"),
     miniFrameLabels: rects(".lp-widget-minigantt-frame-label"),
     miniRows: rects(".lp-widget-minigantt-row"),
@@ -90,7 +90,7 @@ expect(seen.ganttBlocks > 0, "Gantt complet : aucun bloc temporel dessiné");
 expect(seen.ganttBlockLabels.length === 2, `Gantt complet : ${seen.ganttBlockLabels.length} étiquette(s) de bloc, 2 attendues`);
 expect(seen.ganttFrames.length === 3, `Gantt complet : ${seen.ganttFrames.length} cadre(s), 3 attendus (l'encadré non successif doit en produire deux)`);
 expect(seen.miniBlocks === 2, `Mini-Gantt : ${seen.miniBlocks} bloc(s) temporel(s), 2 attendus`);
-expect(seen.miniBlockLabels.length === 2, `Mini-Gantt : ${seen.miniBlockLabels.length} étiquette(s) de bloc, 2 attendues`);
+expect(seen.miniPhases.length === 2, `Mini-Gantt : ${seen.miniPhases.length} titre(s) de bloc dans la bande d’en-tête, 2 attendus`);
 expect(seen.miniFrames.length === 3, `Mini-Gantt : ${seen.miniFrames.length} cadre(s), 3 attendus`);
 
 // « Le bloc temporel emporte tout » : une bande continue sur toute la hauteur des
@@ -110,7 +110,7 @@ for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt"
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels]]) {
+for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];
