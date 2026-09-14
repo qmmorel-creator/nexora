@@ -94,6 +94,38 @@ type MetaTemporalBlock = TemporalBlock & {
   Son identifiant est préfixé `meta:` pour ne jamais entrer en collision avec un
   bloc propre au widget.
 
+### Méta blocs portés par une tâche calendrier
+
+Une tâche d'un projet adossé à un calendrier — Google Calendar
+(`project.gcalSource`) ou calendrier public synchronisé
+(`project.syncedCalendarSource`) — peut devenir un méta bloc depuis **sa propre
+fiche**, sans passer par les Réglages : une case à cocher, puis les mêmes
+réglages esthétiques et la même liste de tableaux de bord.
+
+```ts
+type TaskMetaBlock = {
+  enabled: boolean;
+  kind?: "phase" | "decision";
+  color?: string;
+  borderStyle?: "solid" | "dashed";
+  dashboardIds?: string[] | null;   // même convention que ci-dessus
+};
+// stocké dans task.metaBlock
+```
+
+- **Rien n'est recopié** : le titre et les dates du bloc restent ceux de la
+  tâche (`title`, `start`, `end` — ou la seule date d'un jalon). Déplacer
+  l'événement dans l'agenda déplace le bloc à la synchronisation suivante.
+- Identifiant dérivé : `task:<id de la tâche>`, préfixé `meta:` par le widget.
+- Les imports calendrier **reconstruisent** entièrement leurs tâches à chaque
+  synchronisation (nouvel identifiant Nexora, même événement) :
+  `carryOverTaskMetaBlocks` reporte le réglage via la clé stable de l'événement
+  (`googleEventId` + calendrier, ou `syncedCalendarKey` + calendrier).
+- Un projet qui cesse d'être adossé à un calendrier perd son méta bloc à
+  l'enregistrement suivant de la tâche : la période ne serait plus tenue à jour.
+- `mergeMetaTemporalBlocks(réglages, tâches)` est la source unique consommée par
+  `DashboardView`, avant `metaBlocksForDashboard`.
+
 ## Pilotage — Mini-Gantt uniquement
 
 Le Mini-Gantt étend la même clé `widget.ganttAnnotations` avec trois listes, et

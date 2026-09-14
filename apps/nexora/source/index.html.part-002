@@ -1,4 +1,21 @@
-t_contains" })} title="Ne contient pas"><SearchX size={13} /></button>
+fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
+        ) : (
+          <>
+            <optgroup label="Champs standards">
+              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
+            </optgroup>
+            {(ctx.customFieldDefs || []).length > 0 && (
+              <optgroup label="Champs personnalisés">
+                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
+              </optgroup>
+            )}
+          </>
+        )}
+      </select>
+      {isTitleField ? (
+        <div className="lp-mode-toggle lp-mode-toggle-icon">
+          <button type="button" className={cond.mode !== "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "contains" })} title="Contient"><SearchCheck size={13} /></button>
+          <button type="button" className={cond.mode === "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "not_contains" })} title="Ne contient pas"><SearchX size={13} /></button>
         </div>
       ) : isInactivityField ? (
         <div className="lp-mode-toggle">
@@ -3467,6 +3484,85 @@ function metaBlocksForDashboard(blocks, dashboardId) {
   });
 }
 
+// Une tâche d'un projet calendrier peut devenir elle-même un méta bloc : la
+// case est cochée dans la fiche de tâche, l'habillage est réglé au même
+// endroit, mais le titre et les dates restent ceux de la tâche. Rien n'est
+// recopié : déplacer l'événement dans Google Calendar déplace le bloc.
+const TASK_META_BLOCK_ID_PREFIX = "task:";
+
+function normalizeTaskMetaBlock(meta) {
+  if (!meta || typeof meta !== "object" || !meta.enabled) return null;
+  const kind = normalizeGanttBlockKind(meta.kind);
+  return {
+    enabled: true,
+    kind,
+    color: typeof meta.color === "string" && meta.color
+      ? meta.color
+      : (kind === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
+    borderStyle: normalizeGanttBorderStyle(meta.borderStyle),
+    // Même convention que les méta blocs des Réglages : absent = tous les
+    // tableaux de bord, y compris ceux créés plus tard.
+    dashboardIds: Array.isArray(meta.dashboardIds) ? meta.dashboardIds.filter((id) => typeof id === "string" && id) : null,
+  };
+}
+
+// Méta blocs dérivés des tâches. Un jalon (pas de date de fin) tient sur sa
+// seule journée. Une tâche dont les dates sont incomplètes est ignorée plutôt
+// que de casser le rendu.
+function metaBlocksFromTasks(tasks) {
+  const blocks = [];
+  (Array.isArray(tasks) ? tasks : []).forEach((t) => {
+    if (!t || !t.id) return;
+    const meta = normalizeTaskMetaBlock(t.metaBlock);
+    if (!meta) return;
+    const candidate = {
+      id: TASK_META_BLOCK_ID_PREFIX + t.id,
+      title: typeof t.title === "string" ? t.title.trim() : "",
+      startDate: t.start,
+      endDate: t.milestone ? t.start : (t.end || t.start),
+      kind: meta.kind,
+      color: meta.color,
+      borderStyle: meta.borderStyle,
+      dashboardIds: meta.dashboardIds,
+    };
+    if (!validateTemporalBlock(candidate).ok) return;
+    blocks.push(candidate);
+  });
+  return blocks;
+}
+
+// Source unique des méta blocs : ceux des Réglages d'abord, puis ceux portés
+// par les tâches calendrier.
+function mergeMetaTemporalBlocks(settingsBlocks, tasks) {
+  return [...normalizeMetaTemporalBlocks(settingsBlocks), ...metaBlocksFromTasks(tasks)];
+}
+
+// Les imports calendrier reconstruisent entièrement leurs tâches à chaque
+// synchronisation : l'identifiant Nexora change, l'événement non. La clé
+// stable de l'événement permet donc de reporter le réglage « méta bloc »
+// d'une synchronisation à la suivante.
+function calendarTaskEventKey(task) {
+  if (!task) return "";
+  if (task.googleEventId) return "gcal:" + (task.gcalCalendarId || "") + ":" + task.googleEventId;
+  if (task.syncedCalendarKey) return "sync:" + (task.syncedCalendarId || "") + ":" + task.syncedCalendarKey;
+  return "";
+}
+
+function carryOverTaskMetaBlocks(previousTasks, freshTasks) {
+  const fresh = Array.isArray(freshTasks) ? freshTasks : [];
+  const byKey = new Map();
+  (Array.isArray(previousTasks) ? previousTasks : []).forEach((t) => {
+    const key = calendarTaskEventKey(t);
+    const meta = normalizeTaskMetaBlock(t && t.metaBlock);
+    if (key && meta) byKey.set(key, meta);
+  });
+  if (byKey.size === 0) return fresh;
+  return fresh.map((t) => {
+    const meta = byKey.get(calendarTaskEventKey(t));
+    return meta ? { ...t, metaBlock: meta } : t;
+  });
+}
+
 // Les risques de délai appartiennent à la TÂCHE (`task.delayRisks`), pas au
 // widget : le même risque apparaît donc dans tous les Mini-Gantt qui affichent
 // cette tâche. Le registre de risques de Nexora (`nexora:risks`) reste un objet
@@ -5321,7 +5417,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, customFieldDefs, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, onLinkTodoist, isFavoriteTask, onToggleFavoriteTask }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, customFieldDefs, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, onLinkTodoist, isFavoriteTask, onToggleFavoriteTask }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -5433,6 +5529,32 @@ function TaskModal({ task, defaults, projects, statuses, taskTypes, tasks, teamM
   const [end, setEnd] = useState(base.end || addDays(iso(new Date()), 5));
   const [duration, setDuration] = useState(Math.max(0, dayIndex(base.end || addDays(iso(new Date()), 5)) - dayIndex(base.start || iso(new Date()))));
   const isGoogleCalendarTask = isGoogleCalendarProjectId(projectId, projects);
+  // Méta bloc temporel porté par la tâche. Réservé aux projets calendrier :
+  // ce sont leurs tâches qui représentent des périodes réelles (congés,
+  // absence, déplacement) importées depuis l'agenda. Seul l'habillage est
+  // réglé ici — le titre et les dates restent ceux de la tâche.
+  const isCalendarBackedTask = isCalendarBackedProjectId(projectId, projects);
+  const [metaBlock, setMetaBlock] = useState(
+    base.metaBlock && base.metaBlock.enabled ? { ...base.metaBlock } : null
+  );
+  const patchMetaBlock = (values) => setMetaBlock((prev) => (prev ? { ...prev, ...values } : prev));
+  const metaDashboardIds = (dashboards || []).map((d) => d.id);
+  const metaCheckedIds = metaBlock && Array.isArray(metaBlock.dashboardIds) ? metaBlock.dashboardIds : metaDashboardIds;
+  const toggleMetaDashboard = (dashboardId) => {
+    const next = metaCheckedIds.includes(dashboardId)
+      ? metaCheckedIds.filter((x) => x !== dashboardId)
+      : [...metaCheckedIds, dashboardId];
+    // Tous cochés à nouveau : retour à « tous », pour que les tableaux de bord
+    // créés plus tard héritent aussi du bloc.
+    const isAll = metaDashboardIds.length > 0 && metaDashboardIds.every((id) => next.includes(id));
+    patchMetaBlock({ dashboardIds: isAll ? null : next });
+  };
+  const metaScopeLabel = () => {
+    if (!metaBlock || !Array.isArray(metaBlock.dashboardIds)) return "Tous les tableaux de bord";
+    const kept = metaBlock.dashboardIds.filter((id) => metaDashboardIds.includes(id));
+    if (!kept.length) return "Aucun tableau de bord";
+    return `${kept.length} tableau${kept.length > 1 ? "x" : ""} de bord`;
+  };
   const computedGoogleStatusId = isGoogleCalendarTask
     ? googleCalendarComputedStatusId({ projectId, start, end: milestone ? start : end, statusId }, projects, statuses, iso(new Date()))
     : statusId;
@@ -5493,7 +5615,7 @@ function TaskModal({ task, defaults, projects, statuses, taskTypes, tasks, teamM
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []);
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -5576,6 +5698,9 @@ function TaskModal({ task, defaults, projects, statuses, taskTypes, tasks, teamM
       recurrence,
       customFields,
       attachments,
+      // Un projet qui n'est plus adossé à un calendrier perd son méta bloc :
+      // la période n'est alors plus tenue à jour par l'agenda.
+      metaBlock: isCalendarBackedProjectId(projectId, projects) && metaBlock && metaBlock.enabled ? metaBlock : null,
       source: base.source || null,
       sourceUrl: base.sourceUrl || null,
       sourceMessageId: base.sourceMessageId || null,
@@ -5794,6 +5919,66 @@ function TaskModal({ task, defaults, projects, statuses, taskTypes, tasks, teamM
                 <option value="week">semaine(s)</option>
                 <option value="month">mois</option>
               </select>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isCalendarBackedTask && (
+        <div className="lp-field">
+          <div className="lp-checkbox-row">
+            <input
+              type="checkbox"
+              id="task-meta-block"
+              checked={!!metaBlock}
+              onChange={(e) => setMetaBlock(e.target.checked
+                ? { enabled: true, kind: "phase", color: GANTT_BLOCK_DEFAULT_COLOR, borderStyle: "dashed", dashboardIds: null }
+                : null)}
+            />
+            <label htmlFor="task-meta-block" style={{ margin: 0, textTransform: "none", fontWeight: 500, fontSize: 13 }}>
+              Méta bloc temporel — dessiner cette période dans les Mini-Gantt (congés, absence, déplacement)
+            </label>
+          </div>
+          {metaBlock && (
+            <div style={{ marginTop: 8, marginLeft: 26, display: "flex", flexDirection: "column", gap: 10 }}>
+              <p className="lp-gantt-annot-hint" style={{ margin: 0 }}>
+                Titre et dates suivent la tâche : {(title || "").trim() || "sans titre"} · {start ? fmtShort(start) : "—"} → {milestone ? (start ? fmtShort(start) : "—") : (end ? fmtShort(end) : "—")}.
+                Déplacer l'événement dans l'agenda déplace le bloc.
+              </p>
+              <div className="lp-field">
+                <label>Tableaux de bord concernés</label>
+                <DropdownButton label={metaScopeLabel()} icon={<LayoutDashboard size={13} />} title="Choisir les tableaux de bord">
+                  {(dashboards || []).length === 0 && <div className="lp-dropdown-group-label">Aucun tableau de bord</div>}
+                  {(dashboards || []).map((d) => (
+                    <label className="lp-checkbox-line" key={d.id}>
+                      <input type="checkbox" checked={metaCheckedIds.includes(d.id)} onChange={() => toggleMetaDashboard(d.id)} /> {d.name}
+                    </label>
+                  ))}
+                </DropdownButton>
+                <p className="lp-gantt-annot-hint">
+                  {!Array.isArray(metaBlock.dashboardIds)
+                    ? "Tous cochés : les tableaux de bord créés plus tard recevront aussi ce bloc."
+                    : "Sélection explicite : un tableau de bord créé plus tard ne recevra pas ce bloc."}
+                </p>
+              </div>
+              <div className="lp-field">
+                <label>Nature</label>
+                <div className="lp-density-row">
+                  <button type="button" className={"lp-density-btn" + (metaBlock.kind !== "decision" ? " active" : "")} onClick={() => patchMetaBlock({ kind: "phase" })}>Phase</button>
+                  <button type="button" className={"lp-density-btn" + (metaBlock.kind === "decision" ? " active" : "")} onClick={() => patchMetaBlock({ kind: "decision", color: metaBlock.color || GANTT_DECISION_DEFAULT_COLOR })}>Fenêtre de décision</button>
+                </div>
+              </div>
+              <div className="lp-field">
+                <label>Bordure</label>
+                <div className="lp-density-row">
+                  <button type="button" className={"lp-density-btn" + (metaBlock.borderStyle !== "solid" ? " active" : "")} onClick={() => patchMetaBlock({ borderStyle: "dashed" })}>Pointillés</button>
+                  <button type="button" className={"lp-density-btn" + (metaBlock.borderStyle === "solid" ? " active" : "")} onClick={() => patchMetaBlock({ borderStyle: "solid" })}>Continue</button>
+                </div>
+              </div>
+              <div className="lp-field">
+                <label>Couleur</label>
+                <ColorPicker value={metaBlock.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patchMetaBlock({ color })} />
+              </div>
             </div>
           )}
         </div>
@@ -12583,152 +12768,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
                     {done ? (
                       <>
                         <circle cx={x0} cy={midY} r="6.5" fill="var(--success)" />
-                        <path d={`M ${x0 - 3} ${midY} L ${x0 - 1} ${midY + 2} L ${x0 + 3.5} ${midY - 2.5}`} stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                      </>
-                    ) : (
-                      <>
-                        <circle cx={x0} cy={midY} r="6.5" fill="#fff" />
-                        <path d={`M ${x0} ${midY - 6.5} A 6.5 6.5 0 0 1 ${x0} ${midY + 6.5}`} fill="none" stroke={color1} strokeWidth="2.4" />
-                        <path d={`M ${x0} ${midY - 6.5} A 6.5 6.5 0 0 0 ${x0} ${midY + 6.5}`} fill="none" stroke={color2} strokeWidth="2.4" />
-                      </>
-                    )}
-                  </g>
-                  <g onMouseDown={(e) => startDragTask(e, t, "end")} style={{ cursor: "ew-resize" }}>
-                    <circle cx={x1} cy={midY} r="13" fill="transparent" />
-                    <circle cx={x1} cy={midY} r="10.5" fill="none" stroke={color2} strokeWidth="1.4" strokeDasharray="2 2.5" opacity="0.85" />
-                    <circle cx={x1} cy={midY} r="6.5" fill="#fff" />
-                    <path d={`M ${x1} ${midY - 6.5} A 6.5 6.5 0 0 1 ${x1} ${midY + 6.5}`} fill="none" stroke={color1} strokeWidth="2.4" />
-                    <path d={`M ${x1} ${midY - 6.5} A 6.5 6.5 0 0 0 ${x1} ${midY + 6.5}`} fill="none" stroke={color2} strokeWidth="2.4" />
-                  </g>
-                  {(() => {
-                    const sharedTitleW = pmMeasureText(t.title || "", "700 10.5px Inter, sans-serif");
-                    const sharedMeta = `${p1.name} + ${p2.name}`;
-                    const sharedMetaW = pmMeasureText(sharedMeta, "600 9px Inter, sans-serif");
-                    return (
-                      <>
-                        <rect x={x0 - 4} y={midY - 27} width={sharedTitleW + 10} height={18} rx="3" fill="var(--surface)" opacity="0.98" />
-                        <text x={x0} y={midY - 14} fontFamily="Inter, sans-serif" fontSize="10.5" fontWeight="700" fill="var(--text-900)" style={{ cursor: "pointer" }} onClick={() => onOpen(t)}>{t.title}</text>
-                        {!!String(t.desc ?? t.description ?? "").trim() && (
-                          <g
-                            className="lp-pm-note-trigger"
-                            transform={`translate(${x0 + sharedTitleW + 7}, ${midY - 22})`}
-                            onClick={(e)=>{e.stopPropagation();setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});}}
-                            style={{cursor:"pointer"}}
-                          >
-                            <title>Afficher la description</title>
-                            <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
-                            <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
-                          </g>
-                        )}
-                        <rect x={x0 - 4} y={midY + 11} width={sharedMetaW + 10} height={16} rx="3" fill="var(--surface)" opacity="0.98" />
-                        <text x={x0} y={midY + 21} fontFamily="Inter, sans-serif" fontSize="9" fontWeight="600" fill={color1}>{sharedMeta}</text>
-                      </>
-                    );
-                  })()}
-                </g>
-              );
-            })}
-
-          </svg>
-
-          {rowsWithHeights.map((row) => (
-            <React.Fragment key={row.project.id}>
-            <div className="lp-pm-row" style={{ height: networkMode ? 60 : row.ROW_H }}>
-              <div
-                className={"lp-pm-left" + (leftCollapsed ? " lp-pm-left-collapsed" : "") + (dragOverRowId === row.project.id ? " lp-pm-left-dragover" : "")}
-                style={{ width: LEFT_W }}
-                draggable={!leftCollapsed}
-                onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", row.project.id); setDraggingRowId(row.project.id); }}
-                onDragOver={(e) => { e.preventDefault(); if (row.project.id !== draggingRowId) setDragOverRowId(row.project.id); }}
-                onDragLeave={() => setDragOverRowId((id) => (id === row.project.id ? null : id))}
-                onDrop={(e) => { e.preventDefault(); const draggedId = e.dataTransfer.getData("text/plain"); setDraggingRowId(null); setDragOverRowId(null); reorderRows(draggedId, row.project.id); }}
-                onDragEnd={() => { setDraggingRowId(null); setDragOverRowId(null); }}
-              >
-                {leftCollapsed ? (
-                  <span className="lp-pm-left-collapsed-dot" style={{ background: row.project.color }} title={row.project.name}><IconGlyph icon={row.project.icon} size={11} /></span>
-                ) : (
-                  <>
-                    <span className="lp-pm-left-drag-handle" title="Glisser pour réordonner les projets"><GripVertical size={12} /></span>
-                    <button className="lp-icon-btn" onClick={() => toggleCollapse(row.project.id)} title={collapsed[row.project.id] ? "Déplier" : "Replier"}>
-                      {collapsed[row.project.id] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                    </button>
-                    <span className="lp-project-dot" style={{ background: row.project.color, width: 34, height: 34, fontSize: 15 }}><IconGlyph icon={row.project.icon} size={16} /></span>
-                    <div>
-                      <div className="lp-pm-project-name" style={{ color: row.project.color }}>{row.project.name}</div>
-                      <div className="lp-pm-progress-row">
-                        <div style={{ width: 70 }}><ProgressBar value={row.avgProgress} color={row.project.color} animate={appearance?.animBarFill} /></div>
-                        <span className="lp-pm-progress-pct">{row.avgProgress}%</span>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <svg width={Math.max(1, chartWidth)} height={Math.max(1, networkMode ? 60 : row.ROW_H)} viewBox={`0 0 ${Math.max(1, chartWidth)} ${Math.max(1, networkMode ? 60 : row.ROW_H)}`} className="lp-pm-svg">
-                <defs>
-                  <marker id="lp-pm-arrowhead" markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto">
-                    <path d="M0,0 L5,2.5 L0,5 Z" fill="var(--text-muted)" />
-                  </marker>
-                </defs>
-                {networkMode ? <NetworkRow row={row} /> : deadlineMode ? <DeadlineRow row={row} /> : <ProjectRow row={row} />}
-              </svg>
-            </div>
-            {/* Espace dédié réservé au(x) tronc(s) commun(s) d'une tâche à deux projets
-                partagée avec la ligne suivante — territoire propre, jamais mélangé aux
-                branches de dépendance internes de chaque ligne. */}
-            {!deadlineMode && rowGapAfter[row.project.id] > 0 && (
-              <div className="lp-pm-shared-gap" style={{ height: rowGapAfter[row.project.id] }} />
-            )}
-            </React.Fragment>
-          ))}
-
-          {/* CALQUE GLOBAL FINAL DES ANIMATIONS — placé hors des SVG de chaque projet.
-              Les lignes de chaque projet sont rendues dans des SVG distincts, donc un
-              disque animé placé dans le SVG d'une ligne peut passer SOUS le SVG d'une
-              ligne voisine. Ce calque global est rendu après toutes les lignes et avec
-              un z-index supérieur : les disques restent systématiquement au-dessus des
-              troncs communs, jonctions et lignes de projets. */}
-          {!deadlineMode && appearance?.animSharedShimmer && (
-            <svg
-              className="lp-pm-shared-animation-overlay"
-              width={Math.max(1, chartWidth)}
-              height={Math.max(1, totalChartHeight)}
-              viewBox={`0 0 ${Math.max(1, chartWidth)} ${Math.max(1, totalChartHeight)}`}
-              style={{ position: "absolute", left: LEFT_W, top: 0, width: Math.max(1, chartWidth), height: Math.max(1, totalChartHeight), pointerEvents: "none", zIndex: 10, overflow: "visible", isolation: "isolate" }}
-            >
-              {/* TOUS les disques animés sont rendus ici, après les SVG de toutes les
-                  lignes. Cela garantit qu'ils restent visuellement au-dessus des rails,
-                  y compris lorsqu'ils passent sur une ligne appartenant à un autre projet. */}
-              {trainFlows.map((flow, i) => (
-                <circle
-                  key={"train-flow-overlay-" + i + "-" + flow.id}
-                  r="4"
-                  fill="#fff"
-                  stroke="#000"
-                  strokeWidth="1.8"
-                  opacity="1"
-                >
-                  <animateMotion dur={`${flow.duration || 0.35}s`} repeatCount="indefinite" path={flow.path} />
-                </circle>
-              ))}
-
-              {dated.filter((t) => isFullyShared(t) && !t.milestone).map((t) => {
-                const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
-                const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
-                if (!p1 || !p2) return null;
-                const x0 = xFor(t.start);
-                const x1 = Math.max(xFor(t.end), x0 + 30);
-                const y1 = rowAbsoluteMainY[t.projectId], y2 = rowAbsoluteMainY[t.secondaryProjectId];
-                const topProjectId = y1 < y2 ? t.projectId : t.secondaryProjectId;
-                const lane = sharedTaskLane[t.id] || 0;
-                const gapTop = rowGapTopAfter[topProjectId];
-                const midY = gapTop != null ? gapTop + (lane + 0.5) * SHARED_GAP_H : (y1 + y2) / 2;
-                return (
-                  <circle key={"shared-shimmer-overlay-" + t.id} r="5" fill="#fff" stroke="#000" strokeWidth="1.8" opacity="0.98">
-                    <animateMotion dur={`${Math.max(0.35, Math.abs(x1 - x0) / TRAIN_PX_PER_SECOND)}s`} repeatCount="indefinite" path={`M ${x0} ${midY} L ${x1} ${midY}`} />
-                  </circle>
-                );
-              })}
-            </svg>
-          )}
-
-          {rows.length === 0 && <div className=
+                        <path d={`M ${x0 - 3} ${midY} L ${x0 - 1} $
