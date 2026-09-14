@@ -3094,6 +3094,72 @@ function miniGanttRiskSegments(rows, risks) {
   return segments;
 }
 
+// Étiquettes des couloirs de risque.
+//
+// Deux risques qui se chevauchent dans le temps voient leurs COULOIRS empilés
+// sur des niveaux distincts, séparés de quelques pixels : assez pour deux
+// filets de 9 px de haut, beaucoup trop peu pour deux textes, qui se
+// recouvraient alors mot pour mot.
+//
+// Les étiquettes tiennent donc sur UNE SEULE ligne : chacune est posée à la
+// suite de son couloir, puis repoussée vers la droite tant qu'elle
+// recouvrirait celle d'un risque précédent de la même tâche. Le calcul se fait
+// en pixels, sur la largeur réellement mesurée de la piste.
+const MINIGANTT_RISK_LABEL_GAP = 7;
+const MINIGANTT_RISK_LABEL_OFFSET = 4;
+// Quand la première ligne est pleine jusqu'au bord de la piste, l'étiquette
+// passe à la ligne suivante plutôt que de disparaître. Deux lignes suffisent :
+// au-delà, l'empilement mordrait sur la ligne voisine.
+const MINIGANTT_RISK_LABEL_LINES = 2;
+const MINIGANTT_RISK_LABEL_LINE_H = 12;
+
+// Texte 8,5 px gras (Inter), casse mixte : ~4,6 px par caractère. Légèrement
+// généreux — sous-estimer laisserait deux étiquettes se toucher, surestimer
+// trop les repousserait hors de la piste et les ferait disparaître.
+function miniGanttRiskLabelWidth(title) {
+  return 5 + String(title || "").length * 4.6;
+}
+
+function miniGanttRiskLabelLayout(segments, options) {
+  const opts = options || {};
+  const trackPx = Number(opts.trackPx) || 0;
+  const minIdx = Number(opts.minIdx) || 0;
+  const span = Number(opts.span) || 1;
+  const maxIdx = Number.isFinite(Number(opts.maxIdx)) ? Number(opts.maxIdx) : minIdx + span;
+  const placements = new Map();
+  if (trackPx <= 0) return placements;
+
+  const byTask = new Map();
+  (Array.isArray(segments) ? segments : []).forEach((seg) => {
+    if (!seg || !seg.id || !seg.title) return;
+    if (!byTask.has(seg.taskId)) byTask.set(seg.taskId, []);
+    byTask.get(seg.taskId).push(seg);
+  });
+
+  byTask.forEach((list) => {
+    const cursors = [];
+    list
+      .slice()
+      .sort((a, b) => a.endIdx - b.endIdx || a.startIdx - b.startIdx)
+      .forEach((seg) => {
+        const to = Math.min(maxIdx, seg.endIdx);
+        const natural = ((to - minIdx) / span) * trackPx + MINIGANTT_RISK_LABEL_OFFSET;
+        const width = miniGanttRiskLabelWidth(seg.title);
+        for (let line = 0; line < MINIGANTT_RISK_LABEL_LINES; line += 1) {
+          const cursor = cursors[line] === undefined ? -Infinity : cursors[line];
+          const left = Math.max(natural, cursor);
+          if (left < 0 || left + width > trackPx) continue;
+          cursors[line] = left + width + MINIGANTT_RISK_LABEL_GAP;
+          placements.set(seg.id, { leftPct: (left / trackPx) * 100, line });
+          return;
+        }
+        // Aucune ligne ne peut l'accueillir sans déborder de la piste : elle
+        // serait tronquée de toute façon, et l'infobulle du couloir dit tout.
+      });
+  });
+  return placements;
+}
+
 // Méta blocs temporels : définis une seule fois dans les Réglages et dessinés
 // dans les Mini-Gantt des tableaux de bord retenus — congés, absences,
 // fermeture de site… Ils ne vivent ni dans un widget ni dans une tâche.
@@ -12823,33 +12889,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
                   {/* Jonctions verticales en pointillé entre chaque axe principal et
                       l'espace partagé — même codage que les connecteurs de dépendance
                       existants ailleurs dans cette vue (fin, discret, pointillé). */}
-                  <path d={path1} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  <path d={path2} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  <path d={path4} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  <path d={path5} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  {/* Petit repère à chaque intersection entre l'axe principal d'un projet
-                      et la jonction verticale vers l'espace partagé — cercle blanc à
-                      bordure noire, discret, purement indicatif. */}
-                  <circle cx={x0} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  <circle cx={x0} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  <circle cx={x1} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  <circle cx={x1} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  {/* Tronc commun : deux styles au choix (réglage Apparence) — dégradé
-                      fondu (une ligne, transition douce entre les deux couleurs) ou
-                      torsade (deux filaments entrelacés, un par couleur de projet). */}
-                  {trunkStyle === "braid" ? (
-                    <>
-                      <path d={buildBraidPath(trunkStart, trunkEnd, midY, 3.2, 26, true)} fill="none" stroke={color1} strokeWidth="2.4" strokeLinecap="round" opacity={done ? 0.45 : 0.7} style={{ cursor: "pointer" }} onClick={() => onOpen(t)} />
-                      <path d={buildBraidPath(trunkStart, trunkEnd, midY, 3.2, 26, false)} fill="none" stroke={color2} strokeWidth="2.4" strokeLinecap="round" opacity={done ? 0.45 : 0.7} />
-                      {pct > 0 && (
-                        <>
-                          <path d={buildBraidPath(trunkStart, progressTrunkEnd, midY, 3.2, 26, true)} fill="none" stroke={color1} strokeWidth="4" strokeLinecap="round" opacity={done ? 0.65 : 1} />
-                          <path d={buildBraidPath(trunkStart, progressTrunkEnd, midY, 3.2, 26, false)} fill="none" stroke={color2} strokeWidth="4" strokeLinecap="round" opacity={done ? 0.65 : 1} />
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <path d={path3} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.8" strokeLinecap="round" opacity={done ? 0.4 : 0.55} style={{ cursor: "pointer" }} onClick={() => onOpen(t)} />
-                      {pct > 0 && (
-                        <path d={`M ${trunkStart} ${midY} L ${progressTr
+                  <path d={path1} fill="none" stroke={color1} strokeWidth="1.8" s
