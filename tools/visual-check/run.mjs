@@ -79,6 +79,25 @@ const seen = await page.evaluate(() => {
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
     miniRiskButton: [...document.querySelectorAll("#harness-first-minigantt button")].some((b) => b.textContent.trim() === "+ Risque"),
+    metro: (() => {
+      const host = document.querySelector("#harness-metro");
+      if (!host) return null;
+      const hb = host.getBoundingClientRect();
+      const rel = (el) => { const b = el.getBoundingClientRect(); return { t: el.textContent.trim().slice(0, 30), x: Math.round(b.x - hb.x), y: Math.round(b.y - hb.y), w: Math.round(b.width), h: Math.round(b.height) }; };
+      const all = (sel) => [...host.querySelectorAll(sel)].map(rel);
+      const axes = all(".lp-pm-original-axis");
+      const rows = all(".lp-pm-row");
+      return {
+        bands: all(".lp-pm-tblock"),
+        bandLabels: all(".lp-pm-tblock-label"),
+        frames: all(".lp-pm-frame"),
+        strip: all(".lp-pm-strip-item"),
+        risks: all(".lp-pm-risk"),
+        axisBottom: axes.length ? Math.max(...axes.map((a) => a.y + a.h)) : 0,
+        firstRowTop: rows.length ? Math.min(...rows.map((r) => r.y)) : 0,
+        layer: (() => { const el = host.querySelector(".lp-pm-annot-layer"); return el ? rel(el) : null; })(),
+      };
+    })(),
     treemapTiles: rects("#harness-treemap .lp-widget-treemap-tile"),
     treemapNames: rects("#harness-treemap .lp-widget-treemap-tile-name"),
     treemapRings: document.querySelectorAll("#harness-treemap .lp-widget-treemap-ring").length,
@@ -303,6 +322,39 @@ expect(dropdown.triggers > 1, "Paramètres : la sélection de tâche d'un jalon 
 expect(dropdown.before > 1, `Paramètres : la liste déroulante ne propose que ${dropdown.before} option(s)`);
 expect(dropdown.after > 0 && dropdown.after < dropdown.before, `Paramètres : la recherche rapide ne filtre pas (${dropdown.before} → ${dropdown.after})`);
 expect(/Revue DOE/.test(dropdown.chosen), `Paramètres : la sélection ne s'applique pas (« ${dropdown.chosen} »)`);
+
+// --- Vue Métro : les annotations du Gantt, sur un plan de lignes ------------
+expect(!!seen.metro, "Vue Métro : le banc n'a pas monté la vue");
+if (seen.metro) {
+  const m = seen.metro;
+  // Trois bandes : deux blocs propres à la vue et un méta bloc des Réglages.
+  expect(m.bands.length === 3, `Vue Métro : ${m.bands.length} bande(s) de bloc temporel, 3 attendues (2 propres + 1 méta)`);
+  expect(m.bandLabels.length === m.bands.length, `Vue Métro : ${m.bandLabels.length} étiquette(s) de bloc pour ${m.bands.length} bande(s)`);
+  m.bands.forEach((b, i) => expect(b.w > 1 && b.h > 20, `Vue Métro : bande ${i + 1} de surface nulle (${b.w}×${b.h})`));
+
+  // Un encadré par groupe continu de lignes de projet.
+  expect(m.frames.length === 2, `Vue Métro : ${m.frames.length} cadre(s), 2 attendus`);
+  m.frames.forEach((f) => expect(f.w > 10 && f.h > 20, `Vue Métro : cadre « ${f.t} » de surface nulle (${f.w}×${f.h})`));
+
+  // La bande de repères s'intercale entre l'axe des dates et la première ligne :
+  // elle ne doit ni passer sous l'axe, ni recouvrir une ligne de projet.
+  expect(m.strip.length === 2, `Vue Métro : ${m.strip.length} repère(s) jalon/annotation, 2 attendus`);
+  m.strip.forEach((item) => {
+    expect(item.y >= m.axisBottom - 1, `Vue Métro : le repère « ${item.t} » passe sous l'axe des dates (${item.y} < ${m.axisBottom})`);
+    expect(item.y + item.h <= m.firstRowTop + 1, `Vue Métro : le repère « ${item.t} » recouvre la première ligne de projet (${item.y + item.h} > ${m.firstRowTop})`);
+  });
+  for (let i = 0; i < m.strip.length; i++) {
+    for (let j = i + 1; j < m.strip.length; j++) {
+      const a = m.strip[i], b = m.strip[j];
+      const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+      expect(!overlap, `Vue Métro : les repères « ${a.t} » et « ${b.t} » se superposent`);
+    }
+  }
+
+  // Les risques portés par les tâches apparaissent ici aussi, sans réglage.
+  expect(m.risks.length > 0, "Vue Métro : aucun couloir de risque, alors que des tâches en portent");
+  m.risks.forEach((r) => expect(r.w > 2 && r.h > 2, `Vue Métro : couloir de risque de surface nulle (${r.w}×${r.h})`));
+}
 
 // --- Treemap projets -------------------------------------------------------
 // Une tuile = un projet : jamais plus de tuiles que de projets du jeu d'essai.

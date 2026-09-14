@@ -1,4 +1,47 @@
-              onChange({ ...cond, values: has ? cond.values.filter((v) => v !== o.value) : [...(cond.values || []), o.value] });
+
+        </select>
+      ) : isInactivityField ? (
+        <div style={{flex:1,display:"flex",alignItems:"center",gap:7}}>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={cond.numberValue ?? ""}
+            onChange={(e) => onChange({ ...cond, numberValue:e.target.value })}
+            placeholder="Nombre de jours"
+            style={{maxWidth:150}}
+          />
+          <span style={{fontSize:11,color:"var(--text-muted)"}}>jours</span>
+        </div>
+      ) : isEntityField ? (
+        <div style={{flex:1,minWidth:0}}>
+          <EntityFilterMultiSelect
+            compact
+            options={options}
+            selectedIds={cond.values || []}
+            onToggle={(id)=>{
+              const current=cond.values || [];
+              const has=current.includes(id);
+              onChange({...cond,values:has ? current.filter((v)=>v!==id) : [...current,id]});
+            }}
+            onSelectAll={()=>onChange({...cond,values:options.map((o)=>o.value)})}
+            onDeselectAll={()=>onChange({...cond,values:[]})}
+            metaGroups={cond.field === "project" ? (ctx.projectFolders || []) : null}
+            onSelectGroup={cond.field === "project" ? (folderId)=>{
+              const ids=(ctx.projects || []).filter((p)=>p.folderId===folderId).map((p)=>p.id);
+              onChange({...cond,values:[...new Set([...(cond.values || []),...ids])]});
+            } : null}
+          />
+        </div>
+      ) : (
+        <div className="lp-filter-chipset" style={{ flex: 1 }}>
+          {options.map((o) => (
+            <button
+              key={o.value}
+              className={"lp-filter-chip" + ((cond.values || []).includes(o.value) ? " active" : "")}
+              onClick={() => {
+                const has = (cond.values || []).includes(o.value);
+                onChange({ ...cond, values: has ? cond.values.filter((v) => v !== o.value) : [...(cond.values || []), o.value] });
               }}
             >{o.label}</button>
           ))}
@@ -3158,6 +3201,50 @@ function miniGanttRiskLabelLayout(segments, options) {
       });
   });
   return placements;
+}
+
+// ENCADRÉS DANS LA VUE MÉTRO — les lignes y sont des PROJETS, pas des tâches.
+// La règle du Gantt reste la même (un cadre par groupe CONTINU de lignes), mais
+// la continuité s'apprécie sur l'ordre d'affichage des projets : un encadré qui
+// couvre les lignes 1 et 3 produit deux cadres, jamais un seul qui engloberait
+// la ligne 2 sans la concerner.
+function metroFrameSegments(frames, options) {
+  const opts = options || {};
+  const order = Array.isArray(opts.projectOrder) ? opts.projectOrder : [];
+  const projectOf = typeof opts.projectOf === "function" ? opts.projectOf : () => null;
+  const index = new Map(order.map((id, i) => [id, i]));
+  const out = [];
+
+  (Array.isArray(frames) ? frames : []).forEach((frame) => {
+    if (!frame || !frame.id) return;
+    const byRow = new Map();
+    (Array.isArray(frame.taskIds) ? frame.taskIds : []).forEach((taskId) => {
+      const projectId = projectOf(taskId);
+      if (projectId == null || !index.has(projectId)) return;
+      if (!byRow.has(projectId)) byRow.set(projectId, []);
+      byRow.get(projectId).push(taskId);
+    });
+    if (byRow.size === 0) return;
+
+    const rows = [...byRow.keys()].sort((a, b) => index.get(a) - index.get(b));
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      out.push({
+        id: frame.id + ":" + run[0],
+        frame,
+        projectIds: [...run],
+        taskIds: run.reduce((acc, projectId) => acc.concat(byRow.get(projectId)), []),
+      });
+      run = [];
+    };
+    rows.forEach((projectId, i) => {
+      if (i > 0 && index.get(projectId) !== index.get(rows[i - 1]) + 1) flush();
+      run.push(projectId);
+    });
+    flush();
+  });
+  return out;
 }
 
 // Méta blocs temporels : définis une seule fois dans les Réglages et dessinés
@@ -9776,7 +9863,7 @@ function pmMeasureText(text, font) {
   return c.measureText(text).width;
 }
 
-function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, setPrefs, setTasks, pushToast, expenses, embedded, isHomepage, onSelectProject, selectedProjectIds, onToggleProject }) {
+function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, setPrefs, setTasks, pushToast, expenses, embedded, isHomepage, onSelectProject, selectedProjectIds, onToggleProject, metaTemporalBlocks, annotations, onAnnotationsChange }) {
   const dated = useMemo(() => tasks.filter((t) => t.start && t.end), [tasks]);
   const [expandedActivities, setExpandedActivities] = useState(() => new Set());
   const toggleActivityActions = (id) => setExpandedActivities((prev) => {
@@ -11038,7 +11125,97 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
     return { rowGapAfter: gaps, sharedTaskLane: lanes };
   }, [rowsWithHeights, dated, visibleProjectIdsEarly, dayWidth, originIdx, deadlineMode]);
   const totalGapHeight = Object.values(rowGapAfter).reduce((s, v) => s + v, 0);
-  const totalChartHeight = rowsWithHeights.reduce((s, r) => s + r.ROW_H, 0) + totalGapHeight;
+
+  // ==========================================================================
+  // ANNOTATIONS — mêmes données, mêmes règles et mêmes fonctions pures que le
+  // Gantt et le Mini-Gantt. Rien n'est recalculé ici : seule la GÉOMÉTRIE
+  // change, parce qu'une ligne du Métro est un projet et non une tâche.
+  //
+  // Stockage : dans les préférences de la vue (comme le Gantt complet), ou
+  // pilotées de l'extérieur quand la vue est embarquée dans un widget.
+  // ==========================================================================
+  const annotationsControlled = typeof onAnnotationsChange === "function";
+  const annotationSource = annotationsControlled ? (annotations || {}) : prefs;
+  const rawTemporalBlocks = useMemo(() => (Array.isArray(annotationSource.temporalBlocks) ? annotationSource.temporalBlocks : []), [annotationSource.temporalBlocks]);
+  const rawHighlightFrames = useMemo(() => (Array.isArray(annotationSource.highlightFrames) ? annotationSource.highlightFrames : []), [annotationSource.highlightFrames]);
+  const rawMilestones = useMemo(() => (Array.isArray(annotationSource.milestones) ? annotationSource.milestones : []), [annotationSource.milestones]);
+  const rawNotes = useMemo(() => (Array.isArray(annotationSource.notes) ? annotationSource.notes : []), [annotationSource.notes]);
+  const applyAnnotations = (patch) => {
+    const next = {
+      temporalBlocks: rawTemporalBlocks,
+      highlightFrames: rawHighlightFrames,
+      milestones: rawMilestones,
+      notes: rawNotes,
+      ...patch,
+    };
+    if (annotationsControlled) onAnnotationsChange(next);
+    else setPrefs((p) => ({ ...p, ...next }));
+  };
+
+  // Méta blocs : la vue Métro n'est pas un tableau de bord, elle reçoit donc
+  // ceux qui valent pour TOUS — même règle que la page « Aujourd'hui ».
+  const scopedMetaBlocks = useMemo(
+    () => metaBlocksForDashboard(metaTemporalBlocks, null).map((b) => ({ ...b, id: "meta:" + b.id, meta: true })),
+    [metaTemporalBlocks]
+  );
+  const temporalBlocks = useMemo(
+    () => [...normalizeTemporalBlocks(rawTemporalBlocks), ...scopedMetaBlocks],
+    [rawTemporalBlocks, scopedMetaBlocks]
+  );
+  const highlightFrames = useMemo(() => normalizeHighlightFrames(rawHighlightFrames), [rawHighlightFrames]);
+  const configMilestones = useMemo(() => normalizeMiniGanttMilestones(rawMilestones), [rawMilestones]);
+  const configNotes = useMemo(() => normalizeMiniGanttNotes(rawNotes), [rawNotes]);
+  // Les risques de délai appartiennent aux tâches : ils apparaissent donc ici
+  // sans qu'aucun réglage de la vue ne soit nécessaire.
+  const taskRisks = useMemo(() => collectTaskDelayRisks(dated), [dated]);
+
+  const xForIdx = (idx) => PM_PAD_LEFT + (idx - originIdx) * dayWidth;
+  const [annotationPanel, setAnnotationPanel] = useState(null); // { section, autoCreate }
+
+  // Jalons et annotations partagent une bande de repères au-dessus des lignes.
+  // Elle est calculée AVANT la mise en page des lignes, parce que sa hauteur
+  // décale tout ce qui suit : sans cela, les repères recouvriraient la première
+  // ligne de projet au lieu de lui laisser la place.
+  const stripItems = useMemo(() => {
+    const items = [];
+    configMilestones.forEach((m) => {
+      items.push({ kind: "milestone", id: m.id, idx: dayIndex(m.date), label: m.title, color: m.color || MINIGANTT_MILESTONE_COLORS[m.type] || MINIGANTT_MILESTONE_COLORS.standard, type: m.type, data: m });
+    });
+    configNotes.forEach((n) => {
+      // Une annotation ancrée à une tâche, un jalon ou un risque est ramenée à
+      // une DATE : c'est la seule chose que la bande de repères sait placer.
+      let idx = null;
+      if (n.anchor.kind === "date") idx = dayIndex(n.anchor.date);
+      else if (n.anchor.kind === "task") { const t = dated.find((x) => x.id === n.anchor.id); if (t) idx = dayIndex(t.end); }
+      else if (n.anchor.kind === "milestone") { const m = configMilestones.find((x) => x.id === n.anchor.id); if (m) idx = dayIndex(m.date); }
+      else if (n.anchor.kind === "risk") { const r = taskRisks.find((x) => x.id === n.anchor.id); const t = r && dated.find((x) => x.id === r.taskId); if (t) idx = dayIndex(t.end) + (r.endOffset != null ? r.endOffset : 0); }
+      if (idx == null || !Number.isFinite(idx)) return;
+      items.push({ kind: "note", id: n.id, idx, label: n.title, color: "#64748B", data: n });
+    });
+    items.sort((a, b) => a.idx - b.idx);
+    // Répartition en couloirs sur la largeur RÉELLE : losange, gouttière, puis
+    // le texte à ~5,6 px par caractère.
+    const laneEnds = [];
+    items.forEach((item) => {
+      const leftPx = xForIdx(item.idx);
+      const widthPx = 20 + String(item.label || "").length * 5.6;
+      let lane = laneEnds.findIndex((end) => leftPx >= end + 10);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+      laneEnds[lane] = leftPx + widthPx;
+      item.lane = lane;
+      item.x = leftPx;
+    });
+    return items;
+  }, [configMilestones, configNotes, dated, taskRisks, dayWidth, originIdx]);
+
+  const STRIP_LANE_H = 16;
+  const stripLaneCount = stripItems.length ? Math.max(...stripItems.map((i) => i.lane)) + 1 : 0;
+  // Hauteur réservée au-dessus des lignes pour cette bande. Zéro sans repère :
+  // une vue sans annotation garde exactement sa mise en page d'origine.
+  const ANNOT_TOP_H = stripLaneCount ? stripLaneCount * STRIP_LANE_H + 8 : 0;
+  // La bande de repères s'ajoute à la hauteur totale : sans cela, la dernière
+  // ligne de projet sortirait du calque superposé.
+  const totalChartHeight = rowsWithHeights.reduce((s, r) => s + r.ROW_H, 0) + totalGapHeight + ANNOT_TOP_H;
 
   // Position Y absolue (dans le calque superposé, qui empile toutes les lignes) de
   // l'axe principal de chaque projet — nécessaire pour relier deux lignes de projets
@@ -11052,7 +11229,7 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
     // lui, toute position calculée ici atterrit 50px trop haut par rapport aux
     // lignes réellement affichées dans le calque superposé (qui, lui, démarre au
     // même point d'ancrage que .lp-pm-bands, pas au sommet des lignes).
-    let cursor = 50;
+    let cursor = 50 + ANNOT_TOP_H;
     rowsWithHeights.forEach((row) => {
       const rh = networkMode ? 60 : row.ROW_H;
       const my = networkMode ? 30 : row.mainY; // NetworkRow centre son unique voie à y=30 dans ses 60px
@@ -11061,13 +11238,13 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       cursor += rowGapAfter[row.project.id] || 0;
     });
     return map;
-  }, [rowsWithHeights, networkMode, rowGapAfter]);
+  }, [rowsWithHeights, networkMode, rowGapAfter, ANNOT_TOP_H]);
   // Sommet de l'espace réservé (territoire dédié) juste après chaque ligne — sert de
   // base pour positionner chaque VOIE (une par tâche partagée concurrente) à
   // l'intérieur de cet espace, plutôt qu'un unique centre partagé par toutes.
   const rowGapTopAfter = useMemo(() => {
     const map = {};
-    let cursor = 50; // même décalage que ci-dessus
+    let cursor = 50 + ANNOT_TOP_H; // même décalage que ci-dessus
     rowsWithHeights.forEach((row) => {
       cursor += networkMode ? 60 : row.ROW_H;
       const gap = rowGapAfter[row.project.id] || 0;
@@ -11075,8 +11252,23 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       cursor += gap;
     });
     return map;
-  }, [rowsWithHeights, networkMode, rowGapAfter]);
+  }, [rowsWithHeights, networkMode, rowGapAfter, ANNOT_TOP_H]);
+
+  // Haut et bas de chaque ligne de projet dans le calque superposé : c'est ce
+  // qui donne aux encadrés une hauteur exacte, sans mesure du DOM.
+  const rowAbsoluteBounds = useMemo(() => {
+    const map = {};
+    let cursor = 50 + ANNOT_TOP_H;
+    rowsWithHeights.forEach((row) => {
+      const rh = networkMode ? 60 : row.ROW_H;
+      map[row.project.id] = { top: cursor, bottom: cursor + rh };
+      cursor += rh + (rowGapAfter[row.project.id] || 0);
+    });
+    return map;
+  }, [rowsWithHeights, networkMode, rowGapAfter, ANNOT_TOP_H]);
+
   const visibleProjectIds = useMemo(() => new Set(rowsWithHeights.map((r) => r.project.id)), [rowsWithHeights]);
+
   const isFullyShared = (t) => !!(t.secondaryProjectId && visibleProjectIds.has(t.projectId) && visibleProjectIds.has(t.secondaryProjectId));
   // Courbe douce à trois points (segment droit → virage arrondi → segment droit),
   // même style que branchPath utilisé pour les embranchements de dépendance — pour
@@ -11158,6 +11350,80 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
     ro.observe(scrollRef.current);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); };
   }, [dated, dayWidth, rowsWithHeights.length, collapsed]);
+  // Bandes des blocs temporels : bornées à la fenêtre affichée, comme tout le
+  // reste de la vue. L'étiquette est verticale, posée sur le bord gauche de la
+  // bande — même parti pris que le Gantt complet, et aucun risque de recouvrir
+  // une ligne de projet.
+  const temporalBlockShapes = useMemo(() => {
+    const shapes = [];
+    temporalBlocks.forEach((block) => {
+      const startIdx = dayIndex(block.startDate);
+      const endIdx = dayIndex(block.endDate);
+      if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return;
+      const x0 = xForIdx(startIdx);
+      const x1 = xForIdx(endIdx + 1);
+      shapes.push({ block, x0, width: Math.max(2, x1 - x0) });
+    });
+    // Deux bandes qui démarrent presque au même endroit décalent leur étiquette
+    // plutôt que de la superposer.
+    const placed = [];
+    shapes.slice().sort((a, b) => a.x0 - b.x0).forEach((shape) => {
+      const clashes = placed.filter((x) => Math.abs(x.x0 - shape.x0) < 20).length;
+      shape.labelOffset = clashes * 14;
+      placed.push(shape);
+    });
+    return shapes;
+  }, [temporalBlocks, dayWidth, originIdx]);
+
+  // Encadrés : un cadre par groupe continu de LIGNES DE PROJET, bornes
+  // horizontales prises sur les dates réelles des tâches retenues.
+  const frameShapes = useMemo(() => {
+    const projectById = new Map(dated.map((t) => [t.id, t.projectId]));
+    const order = rowsWithHeights.map((r) => r.project.id);
+    const segments = metroFrameSegments(highlightFrames, {
+      projectOrder: order,
+      projectOf: (taskId) => projectById.get(taskId) || null,
+    });
+    const byId = new Map(dated.map((t) => [t.id, t]));
+    return segments.map((seg) => {
+      const tasksOf = seg.taskIds.map((id) => byId.get(id)).filter(Boolean);
+      if (!tasksOf.length) return null;
+      const startIdx = Math.min(...tasksOf.map((t) => dayIndex(t.start)));
+      const endIdx = Math.max(...tasksOf.map((t) => dayIndex(t.end)));
+      const bounds = seg.projectIds.map((id) => rowAbsoluteBounds[id]).filter(Boolean);
+      if (!bounds.length) return null;
+      const pad = normalizeGanttPadding(seg.frame.padding);
+      const x0 = xForIdx(startIdx) - pad - 10;
+      const x1 = xForIdx(endIdx + 1) + pad + 10;
+      const top = Math.min(...bounds.map((b) => b.top)) + 6;
+      const bottom = Math.max(...bounds.map((b) => b.bottom)) - 6;
+      return {
+        id: seg.id,
+        frame: seg.frame,
+        left: x0,
+        width: Math.max(12, x1 - x0),
+        top,
+        height: Math.max(20, bottom - top),
+      };
+    }).filter(Boolean);
+  }, [highlightFrames, dated, rowsWithHeights, rowAbsoluteBounds, dayWidth, originIdx]);
+
+  // Couloirs d'incertitude : posés à la suite de la tâche, sur SA ligne. La
+  // position verticale vient de la mesure déjà faite pour les flèches de
+  // dépendance — aucune seconde source de vérité.
+  const riskShapes = useMemo(() => {
+    if (!taskRisks.length) return [];
+    const rows = dated.map((t) => ({ id: t.id, startIdx: dayIndex(t.start), endIdx: dayIndex(t.end) }));
+    return miniGanttRiskSegments(rows, taskRisks).map((seg) => {
+      const pos = crossPositionsRef.current[seg.taskId];
+      if (!pos) return null;
+      const x0 = xForIdx(seg.startIdx);
+      const x1 = xForIdx(seg.endIdx);
+      return { seg, left: x0, width: Math.max(4, x1 - x0), y: pos.y };
+    }).filter(Boolean);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskRisks, dated, dayWidth, originIdx, crossVersion]);
+
   const colorOfTask = (t) => ctx.statuses.find((s) => s.id === t.statusId)?.color || "var(--text-muted)";
 
   // Zones de texte à protéger pour les connecteurs de dépendance inter-projets.
@@ -12535,6 +12801,15 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
             <RefreshCw size={14} />
           </button>
         )}
+        <DropdownButton label="" icon={<Bookmark size={14} />} title="Annotations : blocs temporels, encadrés, jalons, annotations">
+          <div className="lp-dropdown-group-label">Annotations</div>
+          <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })}><Layers size={13} /> Ajouter un bloc temporel</button>
+          <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })}><Crosshair size={13} /> Ajouter un encadré</button>
+          <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })}><Milestone size={13} /> Ajouter un jalon</button>
+          <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "notes", autoCreate: "note" })}><StickyNote size={13} /> Ajouter une annotation</button>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "blocks" })}><SlidersHorizontal size={13} /> Tout gérer…</button>
+        </DropdownButton>
         {!embedded && (
           <DropdownButton label="" icon={<Columns3 size={14} />} title="Champs affichés sur les tâches">
             {PM_FIELD_OPTIONS.map((f) => (
@@ -12681,212 +12956,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
               const arr = [];
               let cur = unitStart(globalMin, topUnit);
               let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 200) {
-                const d = new Date(cur + "T00:00:00");
-                arr.push({ start: cur, label: `${unitLabel(cur, "month")}${minYear !== maxYear ? " " + d.getFullYear() : ""}` });
-                cur = addDays(cur, unitLen(cur, "month"));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-top-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-          </div>
-          <div className="lp-pm-axis lp-pm-original-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const unit = dayWidth < 1.5 ? "year" : dayWidth < 5 ? "month" : dayWidth < 15 ? "week" : "day";
-              const arr = [];
-              let cur = unitStart(globalMin, unit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 400) {
-                const d = new Date(cur + "T00:00:00");
-                const showYear = minYear !== maxYear && (unit === "month" || unit === "week" || unit === "day") && d.getMonth() === 0;
-                arr.push({ start: cur, label: unitLabel(cur, unit) + (showYear ? ` ${d.getFullYear()}` : "") });
-                cur = addDays(cur, unitLen(cur, unit));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-axis-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-            {minYear !== maxYear && (
-              <div className="lp-pm-axis-year-badge">{minYear} → {maxYear}</div>
-            )}
-          </div>
-
-          {deadlineMode && (
-            <div style={{
-              position:"absolute", top:7, right:12, zIndex:8,
-              display:"flex", alignItems:"center", gap:6,
-              padding:"4px 7px", border:"1px solid var(--border)",
-              background:"var(--surface)", borderRadius:"var(--radius-sm)",
-              fontFamily:"var(--font-mono)", fontSize:8.5, fontWeight:800,
-              color:"var(--text-secondary)"
-            }}>
-              <CalendarClock size={11} /> MODE ÉCHÉANCES · glisser une station = modifier la fin
-            </div>
-          )}
-          <div className="lp-pm-bands" style={{ left: railLeftW, width: chartWidth, height: totalChartHeight }}>
-            {monthBands.map((b, i) => (
-              <div key={i} className="lp-pm-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0), background: accent }} />
-            ))}
-            {weekendBands.map((b, i) => (
-              <div key={"we-" + i} className="lp-pm-weekend-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0) }} />
-            ))}
-          </div>
-
-          {/* Flèches de dépendance INTER-projets, superposées à toutes les lignes.
-              Passe AU-DESSUS des lignes de projet (z-index supérieur à .lp-pm-row) pour
-              ne jamais rester invisible sous leur tronc — seul le texte des tâches, qui
-              porte son propre halo blanc, peut éventuellement passer par-dessus. */}
-          <svg
-            className="lp-pm-cross-arrows"
-            style={{ position: "absolute", left: LEFT_W, top: 0, width: chartWidth, height: totalChartHeight, pointerEvents: "none", zIndex: 2 }}
-          >
-            <defs>
-              {/* placeholders — chaque flèche définit son propre dégradé/marqueur ci-dessous */}
-            </defs>
-            {!deadlineMode && dated.filter((t) => t.dependsOn && t.dependsOn.length).flatMap((t) =>
-              t.dependsOn.map((depId) => {
-                const depTask = dated.find((x) => x.id === depId);
-                if (!depTask || depTask.projectId === t.projectId) return null; // intra-projet déjà géré localement
-                const from = crossPositionsRef.current[depId];
-                // Repli sur la position de fin si la tâche n'a pas de marqueur de début
-                // séparé (jalon) — sinon, arrive bien sur le DÉBUT de la tâche suivante.
-                const to = crossStartPositionsRef.current[t.id] || crossPositionsRef.current[t.id];
-                if (!from || !to) return null;
-                const fx = from.x - LEFT_W + 6, fy = from.y, tx = to.x - LEFT_W, ty = to.y;
-                const laneX = dependencyLaneX(fx, fy, tx - 4, ty, depId, t.id);
-                const bend = Math.min(10, Math.abs(ty - fy) / 2 || 8);
-                const dir = ty > fy ? 1 : -1;
-                const endX = tx - 4;
-                // Routage orthogonal "plan de métro" :
-                // 1) on sort à gauche de la station prédécesseure (jamais sous son titre),
-                // 2) on descend/remonte dans une voie verticale vérifiée sans texte,
-                // 3) on rejoint la tâche suivante par la gauche (son titre est à droite).
-                const d = Math.abs(ty - fy) < 1
-                  ? `M ${fx} ${fy} L ${endX} ${ty}`
-                  : `M ${fx} ${fy} L ${laneX + bend} ${fy} Q ${laneX} ${fy} ${laneX} ${fy + dir * bend} L ${laneX} ${ty - dir * bend} Q ${laneX} ${ty} ${laneX + bend} ${ty} L ${endX} ${ty}`;
-                const gradId = `pm-cross-grad-${depId}-${t.id}`;
-                return (
-                  <React.Fragment key={depId + "-" + t.id}>
-                    <defs>
-                      <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={fx} y1={fy} x2={tx} y2={ty}>
-                        <stop offset="0%" stopColor={accent} stopOpacity="0.45" />
-                        <stop offset="100%" stopColor={accent} />
-                      </linearGradient>
-                    </defs>
-                    {/* Contour blanc en dessous pour garantir le contraste sur n'importe
-                        quel fond (troncs colorés, bandes de mois/week-end...) — sans lui,
-                        le trait fin se perdait complètement en longeant les bords des
-                        lignes de projet, rendant la dépendance invisible en pratique. */}
-                    <path d={d} fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" opacity="0.9" />
-                    <path d={d} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.4" strokeDasharray="5 4" opacity="0.95" strokeLinecap="round" />
-                    {/* Station de correspondance façon plan de métro : cercles imbriqués aux
-                        deux extrémités, pour renforcer la métaphore d'un changement de ligne
-                        plutôt qu'une simple flèche technique. */}
-                    <circle cx={fx} cy={fy} r="5.5" fill="#fff" stroke={accent} strokeWidth="1.6" />
-                    <circle cx={fx} cy={fy} r="2" fill={accent} />
-                    <circle cx={tx - 4} cy={ty} r="6.5" fill="#fff" stroke={accent} strokeWidth="1.8" />
-                    <circle cx={tx - 4} cy={ty} r="6.5" fill="none" stroke="#fff" strokeWidth="1" strokeDasharray="0" />
-                    <circle cx={tx - 4} cy={ty} r="2.3" fill={accent} />
-                  </React.Fragment>
-                );
-              })
-            )}
-
-            {/* Tâches à deux projets : convergence des deux lignes vers un tronc commun
-                (couleurs alternées sur UN seul trait), pour la durée de la tâche partagée,
-                puis divergence de retour vers chaque ligne de projet. Repli automatique :
-                si l'un des deux projets n'est pas dans le périmètre actuel, la tâche est
-                déjà rendue normalement par sa propre ligne (voir isFullyShared plus haut) —
-                ce bloc ne dessine QUE le cas où les deux lignes sont bien visibles. */}
-            {!networkMode && !deadlineMode && dated.filter((t) => isFullyShared(t)).map((t) => {
-              const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
-              const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
-              if (!p1 || !p2) return null;
-              const y1 = rowAbsoluteMainY[t.projectId], y2 = rowAbsoluteMainY[t.secondaryProjectId];
-              const x0 = xFor(t.start);
-              const topProjectId = y1 < y2 ? t.projectId : t.secondaryProjectId;
-              // Chaque tâche partagée occupe sa propre voie au sein de l'espace dédié
-              // (calculée plus haut par répartition gloutonne façon "salle de réunion")
-              // — évite que plusieurs tâches partagées concurrentes se superposent sur
-              // le même axe quand elles se chevauchent dans le temps.
-              const lane = sharedTaskLane[t.id] || 0;
-              const gapTop = rowGapTopAfter[topProjectId];
-              const midY = gapTop != null ? gapTop + (lane + 0.5) * SHARED_GAP_H : (y1 + y2) / 2;
-              const done = isTaskDoneGlobal(t, ctx);
-              const color1 = p1.color || "var(--text-muted)", color2 = p2.color || "var(--text-muted)";
-              const gradId = "shared-grad-" + t.id;
-              const trunkStyle = appearance?.sharedTrunkStyle || "gradient";
-
-              // === Jalon partagé : un point unique, comme n'importe quel jalon — pas
-              // de durée, pas de "tronc", une seule jonction par ligne de projet. ===
-              if (t.milestone) {
-                return (
-                  <g key={"shared-" + t.id} style={{ pointerEvents: "auto" }}>
-                    <path d={`M ${x0} ${y1} L ${x0} ${midY}`} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                    <path d={`M ${x0} ${y2} L ${x0} ${midY}`} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                    <circle cx={x0} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                    <circle cx={x0} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                    {/* Anneau de correspondance : marque ce jalon comme un nœud partagé entre
-                        deux lignes, plus imposant qu'une station normale (double anneau). */}
-                    <circle cx={x0} cy={midY} r="13" fill="none" stroke={color1} strokeWidth="1.4" strokeDasharray="2 2.5" opacity="0.85" />
-                    <circle cx={x0} cy={midY} r="10.5" fill="var(--surface)" stroke={color2} strokeWidth="1.4" />
-                    <g onMouseDown={(e) => startDragTask(e, t, "start")} style={{ cursor: "ew-resize" }}>
-                      <circle cx={x0} cy={midY} r="13" fill="transparent" />
-                      <foreignObject x={x0 - 9} y={midY - 9} width="18" height="18" style={{ overflow: "visible" }}>
-                        <MilestoneGlyph size={18} icon={resolveMilestoneIcon(t, ctx)} />
-                      </foreignObject>
-                    </g>
-                    {(() => {
-                      const sharedTitleW = pmMeasureText(t.title || "", "700 10.5px Inter, sans-serif");
-                      const sharedMeta = `${p1.name} + ${p2.name}`;
-                      const sharedMetaW = pmMeasureText(sharedMeta, "600 9px Inter, sans-serif");
-                      return (
-                        <>
-                          <rect x={x0 + 12} y={midY - 10} width={sharedTitleW + 10} height={20} rx="3" fill="var(--surface)" opacity="0.98" />
-                          <text x={x0 + 16} y={midY} dominantBaseline="middle" fontFamily="Inter, sans-serif" fontSize="10.5" fontWeight="700" fill="var(--text-900)" style={{ cursor: "pointer" }} onClick={() => onOpen(t)}>{t.title}</text>
-                          {!!String(t.desc ?? t.description ?? "").trim() && (
-                            <g
-                              className="lp-pm-note-trigger"
-                              transform={`translate(${x0 + 16 + sharedTitleW + 7}, ${midY - 8})`}
-                              onClick={(e)=>{e.stopPropagation();setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});}}
-                              style={{cursor:"pointer"}}
-                            >
-                              <title>Afficher la description</title>
-                              <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
-                              <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
-                            </g>
-                          )}
-                          <rect x={x0 + 12} y={midY + 5} width={sharedMetaW + 10} height={16} rx="3" fill="var(--surface)" opacity="0.98" />
-                          <text x={x0 + 16} y={midY + 13} dominantBaseline="middle" fontFamily="Inter, sans-serif" fontSize="9" fontWeight="600" fill={color1}>{sharedMeta}</text>
-                        </>
-                      );
-                    })()}
-                  </g>
-                );
-              }
-
-              // === Tâche partagée avec durée : tronc commun en dégradé ===
-              const x1raw = xFor(t.end);
-              const x1 = Math.max(x1raw, x0 + 30); // largeur minimale pour rester lisible
-              const span = x1 - x0;
-              const pct = done ? 100 : Math.max(0, Math.min(100, t.progress || 0));
-              const xProgress = x0 + (span * pct) / 100;
-              const path1 = `M ${x0} ${y1} L ${x0} ${midY}`;
-              const path2 = `M ${x0} ${y2} L ${x0} ${midY}`;
-              const trunkStart = x0, trunkEnd = x1;
-              const path3 = `M ${trunkStart} ${midY} L ${trunkEnd} ${midY}`;
-              const path4 = `M ${x1} ${midY} L ${x1} ${y1}`;
-              const path5 = `M ${x1} ${midY} L ${x1} ${y2}`;
-              const progressTrunkEnd = Math.min(trunkEnd, Math.max(trunkStart, xProgress));
-
-              return (
-                <g key={"shared-" + t.id} style={{ pointerEvents: "auto" }}>
-                  <defs>
-                    <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={x0} y1={midY} x2={x1} y2={midY}>
-                      <stop offset="0%" stopColor={color1} />
-                      <stop offset="100%" stopColor={color2} />
-                    </linearGradient>
-                  </defs>
-                  {/* Jonctions verticales en pointillé entre chaque axe principal et
-                      l'espace partagé — même codage que les connecteurs de dépendance
-                      existants ailleurs dans cette vue (fin, discret, pointillé). */}
-                  <path d={path1} fill="none" stroke={color1} strokeWidth="1.8" s
+              while (dayIndex(cur) <= dayIndex(globalMax) && 
