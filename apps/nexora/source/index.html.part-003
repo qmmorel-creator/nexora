@@ -1,4 +1,46 @@
-layout.x } };
+w => w.id === widgetId ? { ...w, layout: nextLayout } : { ...w, layout: { ...w.layout } });
+      const changed = next.find(w => w.id === widgetId);
+      if (!changed?.layout) return next;
+
+      const queue = [changed.id];
+      const seen = new Set();
+
+      while (queue.length) {
+        const sourceId = queue.shift();
+        const source = next.find(w => w.id === sourceId);
+        if (!source?.layout) continue;
+
+        for (const other of next) {
+          if (other.id === source.id || other.id === widgetId || !other.layout) continue;
+          if (!layoutsOverlap(source.layout, other.layout)) continue;
+
+          const newY = source.layout.y + source.layout.h;
+          if (newY > other.layout.y) {
+            other.layout = { ...other.layout, y: newY };
+            queue.push(other.id);
+          }
+        }
+
+        if (seen.has(sourceId)) continue;
+        seen.add(sourceId);
+      }
+
+      return next;
+    });
+  };
+
+  // Réorganisation tactile : le glisser-déposer desktop (souris) n'est pas
+  // praticable au doigt sur une pile pleine largeur — on échange simplement le
+  // rang (layout.y) avec le voisin, au tap, sans toucher x/w/h ni au moteur de
+  // glisser-déposer existant (qui reste inchangé et utilisé tel quel ≥640px).
+  const moveWidgetInStack = (id, dir) => {
+    const idx = stackedWidgets.findIndex((w) => w.id === id);
+    const swapWith = stackedWidgets[idx + dir];
+    if (idx < 0 || !swapWith) return;
+    const current = stackedWidgets[idx];
+    setWidgets((prev) => prev.map((w) => {
+      if (w.id === current.id) return { ...w, layout: { ...w.layout, y: swapWith.layout.y, x: swapWith.layout.x } };
+      if (w.id === swapWith.id) return { ...w, layout: { ...w.layout, y: current.layout.y, x: current.layout.x } };
       return w;
     }));
   };
@@ -41,7 +83,7 @@ layout.x } };
       const scopedMilestones = w.showMilestones !== false ? scopedAll.filter((t) => t.milestone && t.end) : [];
       const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
       const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
-      targetHPx = 20 /* axe */ + rows * 20 + groupCount * 22 /* en-têtes de groupe */ + FRAME_CHROME_PX;
+      targetHPx = 50 /* axe : zoom + actions d'annotation */ + rows * 20 + groupCount * 22 /* en-têtes de groupe */ + FRAME_CHROME_PX;
     } else if (w.type === "list") {
       const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
       const rows = Math.max(1, Math.min(w.limit || 6, scoped.length));
@@ -2141,11 +2183,143 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     onOpen(t);
   };
 
+  // --- Annotations : blocs temporels et encadrés ---------------------------
+  // Mêmes données et même logique pure que le Gantt complet
+  // (widget.ganttAnnotations) : un seul jeu de règles sert les deux diagrammes.
+  // Tous ces Hooks restent AVANT le retour anticipé « aucune tâche » ci-dessous.
+  const annotationStore = ganttAnnotationsOf(widget);
+  const rawTemporalBlocks = useMemo(() => (Array.isArray(annotationStore.temporalBlocks) ? annotationStore.temporalBlocks : []), [annotationStore.temporalBlocks]);
+  const rawHighlightFrames = useMemo(() => (Array.isArray(annotationStore.highlightFrames) ? annotationStore.highlightFrames : []), [annotationStore.highlightFrames]);
+  const temporalBlocks = useMemo(() => normalizeTemporalBlocks(rawTemporalBlocks), [rawTemporalBlocks]);
+  const highlightFrames = useMemo(() => normalizeHighlightFrames(rawHighlightFrames), [rawHighlightFrames]);
+  const applyAnnotations = (patch) => {
+    if (!onUpdateWidget) return;
+    onUpdateWidget({ ganttAnnotations: { temporalBlocks: rawTemporalBlocks, highlightFrames: rawHighlightFrames, ...patch } });
+  };
+  const [annotationPanel, setAnnotationPanel] = useState(null); // null | { section, autoCreate, focusId }
+
+  // Ordre d'affichage réel des lignes, regroupement et replis compris : c'est
+  // lui qui définit l'adjacence, donc le découpage d'un encadré en cadres
+  // continus. Le regroupement est calculé une seule fois ici et réutilisé au
+  // rendu, plutôt que recalculé en deux endroits.
+  const rowGroups = useMemo(() => (
+    !groupBy || groupBy === "none"
+      ? [{ key: "all", label: "", color: null, tasks: [...projTasks, ...milestoneTasks] }]
+      : groupTasks([...projTasks, ...milestoneTasks], groupBy, ctx).filter((g) => g.tasks.length > 0)
+  ), [projTasks, milestoneTasks, groupBy, ctx]);
+
+  const visibleRows = useMemo(() => {
+    const rows = [];
+    rowGroups.forEach((g) => {
+      if (collapsed[g.key]) return;
+      g.tasks.forEach((t) => rows.push({ id: t.id, groupKey: g.key, start: t.milestone ? t.end : t.start, end: t.end }));
+    });
+    return rows;
+  }, [rowGroups, collapsed]);
+
+  // Les cadres suivent la mise en page mesurée plutôt qu'un second calcul de
+  // disposition : un zoom, un filtre, un repli de groupe ou un déplacement de
+  // tâche déplace les lignes, et les cadres suivent. Une ligne non rendue (jalon
+  // hors fenêtre, groupe replié) n'est simplement pas mesurée.
+  const rootRef = useRef(null);
+  const rowNodes = useRef({});
+  const [rowRects, setRowRects] = useState({});
+  const measureRows = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const base = root.getBoundingClientRect();
+    const next = {};
+    visibleRows.forEach((row) => {
+      const el = rowNodes.current[row.id];
+      if (!el || !el.isConnected) return;
+      const rect = el.getBoundingClientRect();
+      next[row.id] = { top: Math.round(rect.top - base.top), height: Math.round(rect.height) };
+    });
+    setRowRects((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      const same = prevKeys.length === nextKeys.length
+        && nextKeys.every((k) => prev[k] && prev[k].top === next[k].top && prev[k].height === next[k].height);
+      return same ? prev : next;
+    });
+  }, [visibleRows]);
+  useEffect(() => {
+    const id = requestAnimationFrame(measureRows);
+    return () => cancelAnimationFrame(id);
+  }, [measureRows, span, minIdx, fieldsLayout]);
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const root = rootRef.current;
+    if (!root) return undefined;
+    // Ne provoque un rendu que si une position change réellement : pas de
+    // boucle de recalcul permanente.
+    const ro = new ResizeObserver(() => measureRows());
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [measureRows]);
+
+  const rowsBand = useMemo(() => {
+    const rects = Object.values(rowRects);
+    if (!rects.length) return null;
+    const top = Math.min(...rects.map((r) => r.top));
+    const bottom = Math.max(...rects.map((r) => r.top + r.height));
+    return { top, height: Math.max(0, bottom - top) };
+  }, [rowRects]);
+
+  const frameShapes = useMemo(() => {
+    if (!highlightFrames.length) return [];
+    const rows = visibleRows
+      .map((row) => {
+        const rect = rowRects[row.id];
+        if (!rect) return null;
+        const startIdx = dayIndex(row.start);
+        const endIdx = dayIndex(row.end);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        return { id: row.id, groupKey: row.groupKey, top: rect.top, height: rect.height, startIdx, endIdx };
+      })
+      .filter(Boolean);
+    if (!rows.length) return [];
+    const shapes = [];
+    highlightFrames.forEach((frame) => {
+      ganttFrameSegments(rows, frame).forEach((seg, i) => shapes.push({ ...seg, frame, key: frame.id + "-" + i }));
+    });
+    return shapes;
+  }, [highlightFrames, visibleRows, rowRects]);
+
+  // Les blocs sont exprimés en pourcentage, comme les barres du Mini-Gantt, et
+  // bornés à la fenêtre affichée : le zoom et le filtre « jours dans le passé »
+  // les recadrent sans code supplémentaire.
+  const temporalBlockShapes = useMemo(() => {
+    const shapes = [];
+    temporalBlocks.forEach((block) => {
+      const startIdx = dayIndex(block.startDate);
+      const endIdx = dayIndex(block.endDate);
+      if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return;
+      if (endIdx < minIdx || startIdx > maxIdx) return;
+      const from = Math.max(minIdx, startIdx);
+      const to = Math.min(maxIdx, endIdx);
+      shapes.push({
+        block,
+        leftPct: ((from - minIdx) / span) * 100,
+        widthPct: Math.max(0.6, ((to - from) / span) * 100),
+      });
+    });
+    // Étiquettes décalées quand deux blocs commencent presque au même endroit :
+    // aucune ne reste définitivement masquée derrière une autre.
+    const placed = [];
+    shapes.slice().sort((a, b) => a.leftPct - b.leftPct).forEach((shape) => {
+      shape.labelOffset = placed.filter((x) => Math.abs(x.leftPct - shape.leftPct) < 2.5).length * 13;
+      placed.push(shape);
+    });
+    return shapes;
+  }, [temporalBlocks, minIdx, maxIdx, span]);
+
   if (isEmpty) return <div className="lp-empty" style={{ padding: 16 }}>Aucune tâche pour ce filtre.</div>;
 
   const Axis = () => (
     <div className="lp-widget-minigantt-axis">
       <div className="lp-widget-minigantt-axis-spacer">
+        <div className="lp-widget-minigantt-axis-controls">
         <div className="lp-widget-minigantt-zoom" onMouseDown={(e)=>e.stopPropagation()}>
           <button type="button" onClick={zoomOut} disabled={!zoomIsAuto && zoomLevel<=-2} title="Zoom arrière">−</button>
           <button type="button" onClick={resetZoom} className={zoomIsAuto ? "active" : ""} title="Retour au zoom automatique">
@@ -2153,6 +2327,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </button>
           <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=2} title="Zoom avant">+</button>
           {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
+        </div>
+        {onUpdateWidget && (
+          <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons" onMouseDown={(e)=>e.stopPropagation()}>
+            <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
+            <button type="button" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })} title="Ajouter un encadré autour d'une ou plusieurs tâches">+ Encadré</button>
+          </div>
+        )}
         </div>
       </div>
       <div className="lp-widget-minigantt-axis-track">
@@ -2203,6 +2384,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     >
       {weekendBands.map((idx) => (
         <span key={"we-" + idx} className="lp-widget-minigantt-weekend" style={{ left: pctFor(idx), width: `${(1 / span) * 100}%` }} />
+      ))}
+      {/* Les blocs temporels rejoignent la grille de fond : au-dessus du fond du
+          widget, sous les barres et les jalons (qui portent z-index 1). */}
+      {temporalBlockShapes.map((shape) => (
+        <span
+          key={shape.block.id}
+          className="lp-widget-minigantt-tblock"
+          style={{
+            left: `${shape.leftPct}%`,
+            width: `${shape.widthPct}%`,
+            background: "color-mix(in srgb, " + shape.block.color + " 10%, transparent)",
+            borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+            borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+          }}
+        />
       ))}
       {secondaryTicks.map((d) => (
         <span key={"sec-" + d} className="lp-widget-minigantt-sub-sep" style={{ left: pctFor(dayIndex(d)) }} />
@@ -2270,6 +2466,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <div
         className="lp-widget-minigantt-row"
         key={t.id}
+        ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
         onMouseEnter={(e) => openTip(t, e)}
         onMouseMove={(e) => openTip(t, e)}
@@ -2326,6 +2523,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <div
         className="lp-widget-minigantt-row lp-widget-minigantt-row-milestone"
         key={t.id}
+        ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
         onMouseEnter={(e) => openTip(t, e)}
         onMouseMove={(e) => openTip(t, e)}
@@ -2380,23 +2578,111 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return createPortal(node, document.body);
   };
 
+  // Étiquettes de blocs et cadres : une seule couche au-dessus des lignes,
+  // sur la même bande horizontale que la grille de fond. Ce sont des variables
+  // et non des composants définis ici : un composant recréé à chaque rendu
+  // remonterait l'éditeur et lui ferait perdre son état de saisie.
+  const annotationLayer = (!rowsBand || (!temporalBlockShapes.length && !frameShapes.length)) ? null : (
+    <div
+      className="lp-widget-minigantt-annot-layer"
+      style={{ left: "calc(26% + 6px)", right: fieldsLayout === "aligned" ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
+    >
+      {temporalBlockShapes.map((shape) => (
+        <button
+          key={shape.block.id}
+          type="button"
+          className="lp-widget-minigantt-tblock-label"
+          style={{
+            left: `calc(${shape.leftPct}% + ${3 + shape.labelOffset}px)`,
+            top: rowsBand.top + 2,
+            maxHeight: Math.max(12, rowsBand.height - 4),
+            color: shape.block.color,
+          }}
+          title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
+          onClick={() => setAnnotationPanel({ section: "blocks", focusId: shape.block.id })}
+        >
+          {shape.block.title}
+        </button>
+      ))}
+      {frameShapes.map((seg) => {
+        const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
+        const to = Math.max(minIdx, Math.min(maxIdx, seg.endIdx));
+        const leftPct = ((from - minIdx) / span) * 100;
+        const widthPct = Math.max(1.2, ((to - from) / span) * 100);
+        // Étiquette juste au-dessus du cadre, ou dans sa partie supérieure
+        // gauche quand il n'y a pas la place sans mordre sur l'axe.
+        const labelTop = seg.top >= rowsBand.top + 12 ? seg.top - 11 : seg.top + 1;
+        return (
+          <React.Fragment key={seg.key}>
+            <div
+              className="lp-widget-minigantt-frame"
+              style={{
+                left: `calc(${leftPct}% - ${seg.padding}px)`,
+                width: `calc(${widthPct}% + ${seg.padding * 2}px)`,
+                top: seg.top,
+                height: seg.height,
+                border: `1.5px ${seg.frame.borderStyle} ${seg.frame.color}`,
+              }}
+            />
+            {seg.frame.label && (
+              <button
+                type="button"
+                className="lp-widget-minigantt-frame-label"
+                style={{ left: `calc(${leftPct}% - ${seg.padding}px)`, top: labelTop, background: seg.frame.color }}
+                title={`${seg.frame.label} — cliquer pour modifier`}
+                onClick={() => setAnnotationPanel({ section: "frames", focusId: seg.frame.id })}
+              >
+                {seg.frame.label}
+              </button>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+
+  const annotationModal = !annotationPanel ? null : createPortal(
+    <Modal
+      title="Annotations du Mini-Gantt"
+      onClose={() => setAnnotationPanel(null)}
+      wide
+      footer={<button className="lp-btn lp-btn-primary" onClick={() => setAnnotationPanel(null)}>Terminé</button>}
+    >
+      <GanttAnnotationsEditor
+        blocks={rawTemporalBlocks}
+        frames={rawHighlightFrames}
+        tasks={[...projTasks, ...milestoneTasks]}
+        ctx={ctx}
+        defaultStart={minDateStr}
+        defaultEnd={maxDateStr}
+        onChange={applyAnnotations}
+        initialSection={annotationPanel.section}
+        autoCreate={annotationPanel.autoCreate}
+        focusId={annotationPanel.focusId}
+      />
+    </Modal>,
+    document.body
+  );
+
   if (!groupBy || groupBy === "none") {
     return (
-      <div className="lp-widget-minigantt" style={{ position: "relative" }}>
+      <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
         <Axis />
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
           {projTasks.map(Row)}
           {milestoneTasks.map(MilestoneRow)}
         </div>
+        {annotationLayer}
         <Tooltip />
+        {annotationModal}
       </div>
     );
   }
 
-  const groups = groupTasks([...projTasks, ...milestoneTasks], groupBy, ctx).filter((g) => g.tasks.length > 0);
+  const groups = rowGroups;
   return (
-    <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }}>
+    <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
       <Axis />
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
@@ -2417,7 +2703,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </div>
         );
       })}
+      {annotationLayer}
       <Tooltip />
+      {annotationModal}
     </div>
   );
 }
@@ -5087,7 +5375,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "riskMatrix") return !!riskMatrixProjectId;
     if (type === "budgetCompare") return budgetCompareProjectIds.length > 0;
     if (type === "list") return Number(limit) > 0;
-    if (type === "embedGantt") return ganttAnnotationsValid;
+    if (type === "embedGantt" || type === "minigantt") return ganttAnnotationsValid;
     return true;
   })();
 
@@ -5132,7 +5420,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (type === "riskMatrix") data.riskMatrixProjectId = riskMatrixProjectId;
     if (type === "budgetCompare") data.budgetCompareProjectIds = budgetCompareProjectIds;
-    if (type === "embedGantt") {
+    if (type === "embedGantt" || type === "minigantt") {
       data.ganttAnnotations = {
         temporalBlocks: normalizeTemporalBlocks(ganttAnnotations.temporalBlocks),
         highlightFrames: pruneHighlightFrames(ganttAnnotations.highlightFrames, ganttTasks.map((t) => t.id)),
@@ -5701,23 +5989,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </div>
       )}
 
-      {type === "embedGantt" && (
-        <>
-          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
-            Les annotations ci-dessous sont enregistrées avec ce widget : elles suivent sa duplication, celle de l'onglet et celle du tableau de bord, sans jamais modifier les tâches.
-          </p>
-          <GanttAnnotationsEditor
-            blocks={ganttAnnotations.temporalBlocks}
-            frames={ganttAnnotations.highlightFrames}
-            tasks={ganttTasks}
-            ctx={ctx}
-            defaultStart={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date())}
-            defaultEnd={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date())}
-            onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
-          />
-        </>
-      )}
-
       {type === "minigantt" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>Choisis un ou plusieurs projets ci-dessous — chaque tâche affiche le projet en label si plusieurs sont mélangés.</p>
@@ -5748,6 +6019,23 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <button type="button" className={"lp-density-btn" + (miniGanttFieldsLayout === "inline" ? " active" : "")} onClick={() => setMiniGanttFieldsLayout("inline")}>À la suite de la barre</button>
             </div>
           </div>
+        </>
+      )}
+
+      {(type === "embedGantt" || type === "minigantt") && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
+            Les annotations ci-dessous sont enregistrées avec ce widget : elles suivent sa duplication, celle de l'onglet et celle du tableau de bord, sans jamais modifier les tâches.
+          </p>
+          <GanttAnnotationsEditor
+            blocks={ganttAnnotations.temporalBlocks}
+            frames={ganttAnnotations.highlightFrames}
+            tasks={ganttTasks}
+            ctx={ctx}
+            defaultStart={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date())}
+            defaultEnd={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date())}
+            onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
+          />
         </>
       )}
 

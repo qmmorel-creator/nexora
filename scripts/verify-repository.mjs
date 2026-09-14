@@ -73,4 +73,6 @@ assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:END ===/);
 assert.match(builtSource, /ganttAnnotations: next/);
 assert.match(builtSource, /className="lp-gantt-tblock"/);
 assert.match(builtSource, /className="lp-gantt-frame"/);
+assert.match(builtSource, /className="lp-widget-minigantt-tblock"/);
+assert.match(builtSource, /className="lp-widget-minigantt-frame"/);
 console.log("Repository invariants: OK");

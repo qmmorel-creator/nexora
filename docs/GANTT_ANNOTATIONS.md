@@ -1,7 +1,8 @@
 # Annotations du Gantt — blocs temporels et encadrés
 
-Deux annotations configurables se superposent au diagramme de Gantt, sans jamais
-modifier les tâches :
+Deux annotations configurables se superposent aux diagrammes de Gantt — la vue
+Gantt d'un projet, le widget « Gantt (complet) » et le widget « Mini-Gantt » —
+sans jamais modifier les tâches :
 
 - **bloc temporel** — une grande phase transverse (Études, Gros œuvre, Second
   œuvre…), dessinée comme un rectangle très légèrement teinté sur toute la
@@ -18,11 +19,15 @@ rendu (`GanttView`) :
 |---|---|---|
 | Vue Gantt d'un projet | `viewPrefs.gantt.temporalBlocks` / `.highlightFrames` | clé Firebase `nexora:viewPrefs` |
 | Widget « Gantt (complet) » | `widget.ganttAnnotations` | avec le widget, dans son tableau de bord |
+| Widget « Mini-Gantt » | `widget.ganttAnnotations` | avec le widget, dans son tableau de bord |
 
-Le widget reçoit ses annotations par les props `annotations` et
-`onAnnotationsChange` ; sans ces props, `GanttView` retombe sur les préférences
-de vue. Les autres réglages du Gantt embarqué (zoom, colonnes, bulles) restent
-locaux à l'affichage, comme avant.
+Les deux widgets utilisent la **même clé** `widget.ganttAnnotations` et la même
+forme de données : changer un widget de type ne perd pas ses annotations.
+`GanttView` reçoit les siennes par les props `annotations` et
+`onAnnotationsChange` ; sans ces props, il retombe sur les préférences de vue.
+`WidgetMiniGantt` lit directement `widget.ganttAnnotations` et écrit par
+`onUpdateWidget`. Les autres réglages (zoom, colonnes, bulles, champs de ligne)
+restent ce qu'ils étaient.
 
 Comme la configuration vit dans l'objet widget, elle suit la duplication d'un
 widget, d'un onglet et d'un tableau de bord — ces trois opérations recopient les
@@ -62,11 +67,17 @@ diagramme ; les Gantt existants fonctionnent sans changement.
 
 ## Règles de rendu
 
-- Un bloc temporel est dessiné **dans chaque piste**, comme la grille verticale
-  et la ligne « aujourd'hui » : il reste au-dessus du fond du Gantt mais sous
-  les barres, les jalons et les dépendances, et il suit sans traitement
+- Un bloc temporel rejoint la **grille de fond** de chaque diagramme : dans le
+  Gantt complet il est dessiné dans chaque piste, comme la grille verticale et
+  la ligne « aujourd'hui » ; dans le Mini-Gantt il s'ajoute à la grille commune
+  aux lignes (`GridOverlay`). Dans les deux cas il reste au-dessus du fond mais
+  sous les barres, les jalons et les dépendances, et il suit sans traitement
   particulier le zoom, le scroll horizontal et tout changement de plage. Les
   périodes hors bloc gardent le fond normal.
+- Les unités diffèrent parce que les deux diagrammes ne positionnent pas leurs
+  barres pareil : pixels et jour de fin inclus dans le Gantt complet,
+  pourcentages et bornage à la fenêtre affichée dans le Mini-Gantt. Chaque bloc
+  s'aligne donc exactement sur les barres de son propre diagramme.
 - Les encadrés sont calculés à partir de la mise en page **mesurée** de chaque
   ligne visible, pas d'un second calcul de disposition : un zoom, un filtre, un
   repli/dépli, une bulle ouverte ou un déplacement de tâche déplacent les
@@ -83,10 +94,11 @@ diagramme ; les Gantt existants fonctionnent sans changement.
 
 Un seul éditeur, `GanttAnnotationsEditor`, monté à deux endroits :
 
-- dans les paramètres du widget « Gantt (complet) », en deux sections
-  repliables ;
-- dans la modale ouverte par « + Bloc temporel » et « + Encadré » de la barre
-  d'actions du Gantt, et par un clic sur l'étiquette d'une annotation.
+- dans les paramètres des widgets « Gantt (complet) » et « Mini-Gantt », en deux
+  sections repliables ;
+- dans la modale ouverte par « + Bloc temporel » / « + Encadré » de la barre
+  d'actions du Gantt complet, par « + Bloc » / « + Encadré » sous le zoom du
+  Mini-Gantt, et par un clic sur l'étiquette d'une annotation.
 
 Il permet de lister, créer, modifier, dupliquer, supprimer (avec la confirmation
 standard) et réordonner. Un bloc dont les dates sont invalides, ou dont la fin
