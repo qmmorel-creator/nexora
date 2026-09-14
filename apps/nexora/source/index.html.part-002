@@ -1,4 +1,17 @@
-alue })} placeholder="Texte à rechercher dans le titre…" />
+t_contains" })} title="Ne contient pas"><SearchX size={13} /></button>
+        </div>
+      ) : isInactivityField ? (
+        <div className="lp-mode-toggle">
+          <button type="button" className="active" style={{pointerEvents:"none"}}>Supérieur à</button>
+        </div>
+      ) : (
+        <div className="lp-mode-toggle">
+          <button className={cond.mode !== "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "is" })}>Est</button>
+          <button className={cond.mode === "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "isnot" })}>N'est pas</button>
+        </div>
+      )}
+      {isTitleField ? (
+        <input type="text" style={{ flex: 1 }} value={cond.textValue || ""} onChange={(e) => onChange({ ...cond, textValue: e.target.value })} placeholder="Texte à rechercher dans le titre…" />
       ) : isDateField ? (
         <select className="lp-filter-date-preset-select" style={{ flex: 1 }} value={cond.datePreset || ""} onChange={(e) => onChange({ ...cond, datePreset: e.target.value })}>
           <option value="">— Choisir une période —</option>
@@ -813,6 +826,7 @@ const SETTINGS_TABS = [
   { key: "todoist", label: "Todoist", icon: "check" },
   { key: "gcal", label: "Google Calendar", icon: "calendar" },
   { key: "metaFilters", label: "Méta-filtres", icon: "filter" },
+  { key: "metaBlocks", label: "Méta blocs temporels", icon: "chart-gantt" },
   { key: "appearance", label: "Apparence", icon: "palette" },
   { key: "animations", label: "Animations", icon: "sparkles" },
   { key: "shortcuts", label: "Raccourcis", icon: "keyboard" },
@@ -865,6 +879,152 @@ function ShortcutSettingsPane({ shortcutPrefs, setShortcutPrefs }) {
         ))}
       </div>
       <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 14 }}>Les raccourcis avec Ctrl+Alt sont utilisés par défaut pour éviter les conflits avec les raccourcis réservés du navigateur.</p>
+    </div>
+  );
+}
+
+// Réglages > Méta blocs temporels. Même mécanique de liste que les sections
+// d'annotations du Mini-Gantt (lp-gantt-annot-*) : rien de nouveau à styler.
+function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlocks, dashboards }) {
+  const [editingId, setEditingId] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const list = Array.isArray(metaTemporalBlocks) ? metaTemporalBlocks : [];
+  const allIds = dashboards.map((d) => d.id);
+  const patch = (id, values) => setMetaTemporalBlocks(list.map((b) => (b.id === id ? { ...b, ...values } : b)));
+  const move = (id, dir) => {
+    const i = list.findIndex((b) => b.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    setMetaTemporalBlocks(next);
+  };
+  const add = () => {
+    const today = iso(new Date());
+    // dashboardIds absent = tous les tableaux de bord, y compris ceux à venir :
+    // c'est ce que « tous cochés » veut dire à la création.
+    const created = { id: uid(), title: "Congés", startDate: today, endDate: addDays(today, 14), kind: "phase", color: GANTT_BLOCK_DEFAULT_COLOR, borderStyle: "dashed", dashboardIds: null };
+    setMetaTemporalBlocks([...list, created]);
+    setEditingId(created.id);
+  };
+  const duplicate = (block) => {
+    const copy = { ...block, id: uid(), title: `${block.title} (copie)`, dashboardIds: block.dashboardIds ? [...block.dashboardIds] : null };
+    const i = list.findIndex((b) => b.id === block.id);
+    setMetaTemporalBlocks([...list.slice(0, i + 1), copy, ...list.slice(i + 1)]);
+    setEditingId(copy.id);
+  };
+  const toggleDashboard = (block, dashboardId) => {
+    const current = block.dashboardIds === null || block.dashboardIds === undefined ? allIds : block.dashboardIds;
+    const next = current.includes(dashboardId) ? current.filter((x) => x !== dashboardId) : [...current, dashboardId];
+    // Tous cochés à nouveau : on repasse à « tous », pour que les tableaux de
+    // bord créés plus tard héritent du bloc au lieu d'en être exclus.
+    const isAll = allIds.length > 0 && allIds.every((id) => next.includes(id));
+    patch(block.id, { dashboardIds: isAll ? null : next });
+  };
+  const scopeLabel = (block) => {
+    if (block.dashboardIds === null || block.dashboardIds === undefined) return "Tous les tableaux de bord";
+    const kept = block.dashboardIds.filter((id) => allIds.includes(id));
+    if (!kept.length) return "Aucun tableau de bord";
+    return `${kept.length} tableau${kept.length > 1 ? "x" : ""} de bord`;
+  };
+
+  return (
+    <div className="lp-settings-pane">
+      <div className="lp-section-title">Méta blocs temporels</div>
+      <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 12, lineHeight: 1.5 }}>
+        Une période définie une seule fois ici et dessinée dans les Mini-Gantt des tableaux de bord retenus — congés, absences,
+        fermeture de site, gel de production. Les blocs propres à un widget restent indépendants : les deux se dessinent.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {list.map((block) => {
+          const validation = validateTemporalBlock(block);
+          const editing = editingId === block.id;
+          const checkedIds = block.dashboardIds === null || block.dashboardIds === undefined ? allIds : block.dashboardIds;
+          return (
+            <div className={"lp-gantt-annot-item" + (editing ? " editing" : "")} key={block.id}>
+              <div className="lp-gantt-annot-head" onClick={() => setEditingId(editing ? null : block.id)}>
+                <span className="lp-gantt-annot-swatch" style={{ background: block.color, borderStyle: block.borderStyle }} />
+                <span className="lp-gantt-annot-summary">
+                  <strong>{block.title || "Sans titre"}{block.kind === "decision" ? " · décision" : ""}</strong>
+                  <span>
+                    {isGanttIsoDate(block.startDate) ? fmtShort(block.startDate) : "—"} → {isGanttIsoDate(block.endDate) ? fmtShort(block.endDate) : "—"} · {scopeLabel(block)}
+                  </span>
+                </span>
+                {!validation.ok && <AlertTriangle size={12} color="var(--danger)" />}
+                <span className="lp-gantt-annot-actions" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" className="lp-icon-btn" onClick={() => move(block.id, -1)} disabled={list[0]?.id === block.id} title="Monter"><ChevronUp size={12} /></button>
+                  <button type="button" className="lp-icon-btn" onClick={() => move(block.id, 1)} disabled={list[list.length - 1]?.id === block.id} title="Descendre"><ChevronDown size={12} /></button>
+                  <button type="button" className="lp-icon-btn" onClick={() => duplicate(block)} title="Dupliquer"><Copy size={12} /></button>
+                  <button type="button" className="lp-icon-btn" onClick={() => setPendingDelete(block)} title="Supprimer"><Trash2 size={12} /></button>
+                </span>
+              </div>
+              {editing && (
+                <div className="lp-gantt-annot-form">
+                  <div className="lp-field">
+                    <label>Titre</label>
+                    <input type="text" value={block.title} onChange={(e) => patch(block.id, { title: e.target.value })} placeholder="Congés, fermeture de site…" />
+                  </div>
+                  <div className="lp-row2">
+                    <div className="lp-field">
+                      <label>Début</label>
+                      <input type="date" value={block.startDate || ""} onChange={(e) => patch(block.id, { startDate: e.target.value })} />
+                    </div>
+                    <div className="lp-field">
+                      <label>Fin</label>
+                      <input type="date" value={block.endDate || ""} onChange={(e) => patch(block.id, { endDate: e.target.value })} />
+                    </div>
+                  </div>
+                  {!validation.ok && <p className="lp-gantt-annot-error">{validation.error}</p>}
+                  <div className="lp-field">
+                    <label>Tableaux de bord concernés</label>
+                    <DropdownButton label={scopeLabel(block)} icon={<LayoutDashboard size={13} />} title="Choisir les tableaux de bord">
+                      {dashboards.length === 0 && <div className="lp-dropdown-group-label">Aucun tableau de bord</div>}
+                      {dashboards.map((d) => (
+                        <label className="lp-checkbox-line" key={d.id}>
+                          <input type="checkbox" checked={checkedIds.includes(d.id)} onChange={() => toggleDashboard(block, d.id)} /> {d.name}
+                        </label>
+                      ))}
+                    </DropdownButton>
+                    <p className="lp-gantt-annot-hint">
+                      {block.dashboardIds === null || block.dashboardIds === undefined
+                        ? "Tous cochés : les tableaux de bord créés plus tard recevront aussi ce bloc."
+                        : "Sélection explicite : un tableau de bord créé plus tard ne recevra pas ce bloc."}
+                    </p>
+                  </div>
+                  <div className="lp-field">
+                    <label>Nature</label>
+                    <div className="lp-density-row">
+                      <button type="button" className={"lp-density-btn" + (block.kind !== "decision" ? " active" : "")} onClick={() => patch(block.id, { kind: "phase" })}>Phase</button>
+                      <button type="button" className={"lp-density-btn" + (block.kind === "decision" ? " active" : "")} onClick={() => patch(block.id, { kind: "decision", color: block.color || GANTT_DECISION_DEFAULT_COLOR })}>Fenêtre de décision</button>
+                    </div>
+                  </div>
+                  <div className="lp-field">
+                    <label>Bordure</label>
+                    <div className="lp-density-row">
+                      <button type="button" className={"lp-density-btn" + (block.borderStyle !== "solid" ? " active" : "")} onClick={() => patch(block.id, { borderStyle: "dashed" })}>Pointillés</button>
+                      <button type="button" className={"lp-density-btn" + (block.borderStyle === "solid" ? " active" : "")} onClick={() => patch(block.id, { borderStyle: "solid" })}>Continue</button>
+                    </div>
+                  </div>
+                  <div className="lp-field">
+                    <label>Couleur</label>
+                    <ColorPicker value={block.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patch(block.id, { color })} />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <button type="button" className="lp-btn lp-gantt-annot-add" onClick={add}><Plus size={13} /> Ajouter un méta bloc temporel</button>
+      </div>
+      {pendingDelete && (
+        <ConfirmModal
+          title="Supprimer le méta bloc temporel"
+          message={`Supprimer « ${pendingDelete.title || "Sans titre"} » ? Il disparaîtra de tous les Mini-Gantt concernés. Les tâches ne sont pas modifiées.`}
+          danger confirmLabel="Supprimer"
+          onConfirm={() => { setMetaTemporalBlocks(list.filter((b) => b.id !== pendingDelete.id)); setPendingDelete(null); }}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2058,6 +2218,7 @@ function SettingsModal({
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
+  metaTemporalBlocks, setMetaTemporalBlocks,
   appearance, setAppearance, saveStatus, saveError,
   shortcutPrefs, setShortcutPrefs,
   enabledViews, setEnabledViews,
@@ -2145,6 +2306,9 @@ function SettingsModal({
                 gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError}
                 onFetchList={onFetchList}
               />
+            )}
+            {activeTab === "metaBlocks" && (
+              <MetaTemporalBlocksSettingsPane metaTemporalBlocks={metaTemporalBlocks} setMetaTemporalBlocks={setMetaTemporalBlocks} dashboards={dashboards || []} />
             )}
             {activeTab === "metaFilters" && (
               <MetaFiltersSettingsPane metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders, customFieldDefs }} />
@@ -3268,6 +3432,39 @@ function miniGanttRiskSegments(rows, risks) {
     });
   });
   return segments;
+}
+
+// Méta blocs temporels : définis une seule fois dans les Réglages et dessinés
+// dans les Mini-Gantt des tableaux de bord retenus — congés, absences,
+// fermeture de site… Ils ne vivent ni dans un widget ni dans une tâche.
+function normalizeMetaTemporalBlocks(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((b) => b && typeof b === "object" && b.id && validateTemporalBlock(b).ok)
+    .map((b) => ({
+      id: String(b.id),
+      title: String(b.title).trim(),
+      startDate: b.startDate,
+      endDate: b.endDate,
+      kind: normalizeGanttBlockKind(b.kind),
+      color: typeof b.color === "string" && b.color
+        ? b.color
+        : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
+      borderStyle: normalizeGanttBorderStyle(b.borderStyle),
+      // Absent = TOUS les tableaux de bord, y compris ceux créés plus tard.
+      // Décocher un tableau matérialise la liste.
+      dashboardIds: Array.isArray(b.dashboardIds) ? b.dashboardIds.filter((id) => typeof id === "string" && id) : null,
+    }));
+}
+
+// Méta blocs applicables à un tableau de bord donné. `dashboardId` vaut null
+// hors tableau de bord (page « Aujourd'hui ») : seuls les blocs valables pour
+// tous s'y appliquent.
+function metaBlocksForDashboard(blocks, dashboardId) {
+  return normalizeMetaTemporalBlocks(blocks).filter((b) => {
+    if (b.dashboardIds === null) return true;
+    return dashboardId ? b.dashboardIds.includes(dashboardId) : false;
+  });
 }
 
 // Les risques de délai appartiennent à la TÂCHE (`task.delayRisks`), pas au
@@ -12534,209 +12731,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
             </svg>
           )}
 
-          {rows.length === 0 && <div className="lp-empty" style={{ marginLeft: railLeftW, padding: 30 }}>Aucun projet avec des tâches datées.</div>}
-        </div>
-      </div>
-
-      {descriptionPopup && (() => {
-        const task = descriptionPopup.task;
-        const popupW = 380;
-        const popupH = 300;
-        const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
-        const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-        const left = Math.max(12, Math.min(descriptionPopup.x + 12, vw - popupW - 12));
-        const top = Math.max(12, Math.min(descriptionPopup.y + 12, vh - popupH - 12));
-        return (
-          <>
-            <div className="lp-pm-desc-overlay" onClick={()=>setDescriptionPopup(null)} />
-            <div className="lp-pm-desc-popover" style={{left,top}} onClick={(e)=>e.stopPropagation()}>
-              <div className="lp-pm-desc-popover-head">
-                <StickyNote size={14} style={{color:"var(--text-600)",flex:"0 0 auto"}} />
-                <div className="lp-pm-desc-popover-title">{task.title}</div>
-                <button className="lp-icon-btn" onClick={()=>setDescriptionPopup(null)} title="Fermer"><X size={13}/></button>
-              </div>
-              <div
-                className="lp-pm-desc-popover-body lp-desc-preview"
-                dangerouslySetInnerHTML={{__html:renderMarkdown(task.desc ?? task.description ?? "")}}
-              />
-            </div>
-          </>
-        );
-      })()}
-
-      {projectSummary && (() => {
-        const row = projectSummary.row;
-        const p = row.project;
-        const budgetStats = expenses ? computeBudgetStats(p.id, ctx.projects, expenses) : null;
-        const daysLeft = dayIndex(row.maxDate) - dayIndex(iso(new Date()));
-        const lateCount = [...row.pTasks, ...row.pMilestones].filter((t) => isTaskLate(t, ctx)).length;
-        const cardLeft = Math.min(projectSummary.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 300);
-        const cardTop = Math.min(projectSummary.y + 12, (typeof window !== "undefined" ? window.innerHeight : 800) - 280);
-        return (
-          <>
-            <div className="lp-pm-summary-overlay" onClick={() => setProjectSummary(null)} />
-            <div className="lp-pm-summary-card" style={{ left: cardLeft, top: cardTop }}>
-              <div className="lp-pm-summary-head">
-                <span className="lp-project-dot" style={{ background: p.color, width: 30, height: 30 }}><IconGlyph icon={p.icon} size={14} /></span>
-                <div>
-                  <div className="lp-pm-summary-title">{p.name}</div>
-                  <div className="lp-pm-summary-sub">Fin : {fmtShort(row.maxDate)}</div>
-                </div>
-                <button className="lp-icon-btn" onClick={() => setProjectSummary(null)} style={{ marginLeft: "auto" }}><X size={13} /></button>
-              </div>
-              <div className="lp-pm-summary-grid">
-                <div className="lp-pm-summary-metric">
-                  <div className="lp-pm-summary-metric-val" style={{ color: p.color }}>{row.avgProgress}%</div>
-                  <div className="lp-pm-summary-metric-label">Avancement</div>
-                </div>
-                <div className="lp-pm-summary-metric">
-                  <div className={"lp-pm-summary-metric-val" + (daysLeft < 0 ? " lp-pm-summary-metric-danger" : "")}>{daysLeft >= 0 ? daysLeft : Math.abs(daysLeft)}</div>
-                  <div className="lp-pm-summary-metric-label">{daysLeft >= 0 ? "jours restants" : "jours de retard"}</div>
-                </div>
-                {budgetStats && budgetStats.budgetActuel > 0 && (
-                  <div className="lp-pm-summary-metric">
-                    <div className={"lp-pm-summary-metric-val" + (budgetStats.pct > 100 ? " lp-pm-summary-metric-danger" : "")}>{budgetStats.pct}%</div>
-                    <div className="lp-pm-summary-metric-label">Budget consommé</div>
-                  </div>
-                )}
-                {lateCount > 0 && (
-                  <div className="lp-pm-summary-metric">
-                    <div className="lp-pm-summary-metric-val lp-pm-summary-metric-danger">{lateCount}</div>
-                    <div className="lp-pm-summary-metric-label">en retard</div>
-                  </div>
-                )}
-              </div>
-              {(row.pTasks[0] || row.pMilestones[0]) && (
-                <button className="lp-btn lp-btn-primary" style={{ width: "100%" }} onClick={() => { onOpen(row.pTasks[0] || row.pMilestones[0]); setProjectSummary(null); }}>Ouvrir une tâche du projet</button>
-              )}
-            </div>
-          </>
-        );
-      })()}
-
-      {selectedIds.size > 0 && (
-        <div className="lp-pm-selection-bar">
-          <span className="lp-pm-selection-count">{selectedIds.size} sélectionnée{selectedIds.size > 1 ? "s" : ""}</span>
-          <span className="lp-pm-selection-hint">Ctrl/Cmd-clic sur une station pour ajouter ou retirer</span>
-          <span style={{ flex: 1 }} />
-          {doneStatus && <button className="lp-btn" onClick={markSelectedDone}><CheckCircle2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Marquer terminé</button>}
-          <button className="lp-btn" onClick={deleteSelected}><Trash2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Supprimer</button>
-          <button className="lp-btn" onClick={clearSelection}>Désélectionner</button>
-        </div>
-      )}
-    </div>
-    {!embedded && isHomepage && homeStats && (
-      <div className="lp-metro-home-widgets">
-        <div className="lp-metro-home-widget">
-          <h4><span className="lp-metro-home-widget-ic" style={{ background: "color-mix(in srgb, var(--danger) 14%, white)", color: "var(--danger)" }}><AlertTriangle size={12} /></span>En retard</h4>
-          {lateTasks.length === 0 ? (
-            <p className="lp-metro-home-widget-empty">Rien en retard, tout est à jour.</p>
-          ) : lateTasks.map((t) => (
-            <div key={t.id} className="lp-metro-home-late-row" onClick={() => onOpen(t)}>
-              <span className="lp-metro-home-late-dot" style={{ background: ctx.projects.find((p) => p.id === t.projectId)?.color || "var(--text-muted)" }} />
-              <span className="lp-metro-home-late-title">{t.title}</span>
-              <span className="lp-metro-home-late-days">{Math.max(1, dayIndex(now) - dayIndex(t.end))}j</span>
-            </div>
-          ))}
-        </div>
-        <div className="lp-metro-home-widget">
-          <h4><span className="lp-metro-home-widget-ic" style={{ background: "color-mix(in srgb, var(--success) 14%, white)", color: "var(--success)" }}><TrendingUp size={12} /></span>Avancement global</h4>
-          <div className="lp-metro-home-kpi"><CountUp value={homeStats.avgProgress} animate={appearance?.animCountUp} /><span style={{ fontSize: 16 }}>%</span></div>
-          <p className="lp-metro-home-widget-empty">{homeStats.total} tâche{homeStats.total > 1 ? "s" : ""} au total</p>
-        </div>
-        <div className="lp-metro-home-widget">
-          <h4><span className="lp-metro-home-widget-ic" style={{ background: "var(--paper-soft)", color: "var(--text-600)" }}><BarChart3 size={12} /></span>Répartition</h4>
-          <div className="lp-metro-home-donut-row">
-            <div className="lp-metro-home-donut" style={{ background: `conic-gradient(${(() => {
-              let acc = 0;
-              return homeStats.byStatus.map((s) => {
-                const start = acc, pct = (s.count / homeStats.total) * 100;
-                acc += pct;
-                return `${s.color} ${start}% ${acc}%`;
-              }).join(", ");
-            })()})` }} />
-            <div className="lp-metro-home-donut-legend">
-              {homeStats.byStatus.slice(0, 3).map((s) => (
-                <div key={s.name}><span style={{ background: s.color }} />{s.name} · {Math.round((s.count / homeStats.total) * 100)}%</div>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="lp-metro-home-widget">
-          <h4><span className="lp-metro-home-widget-ic" style={{ background: "color-mix(in srgb, var(--signal) 14%, white)", color: "var(--signal)" }}><CalendarClock size={12} /></span>Prochaines échéances</h4>
-          {upcomingTasks.length === 0 ? (
-            <p className="lp-metro-home-widget-empty">Aucune échéance à venir.</p>
-          ) : upcomingTasks.map((t) => (
-            <div key={t.id} className="lp-metro-home-deadline-row" onClick={() => onOpen(t)}>
-              <div className="lp-metro-home-deadline-date">{new Date(t.end + "T00:00:00").getDate()}<small>{new Date(t.end + "T00:00:00").toLocaleDateString("fr-FR", { month: "short" })}</small></div>
-              <div>
-                <div className="lp-metro-home-deadline-title">{t.title}</div>
-                <div className="lp-metro-home-deadline-proj">{ctx.projects.find((p) => p.id === t.projectId)?.name || ""}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    )}
-    </>
-  );
-}
-
-// ============================================================================
-// Vue "Tableur" — grille de type Airtable/Notion/Coda : édition en ligne,
-// sélection multiple, modification en masse, duplication.
-// ============================================================================
-const TABLE_COL_OPTIONS = [
-  { key: "project", label: "Projet", w: 150 },
-  { key: "status", label: "Statut", w: 130 },
-  { key: "start", label: "Début", w: 110 },
-  { key: "end", label: "Fin", w: 110 },
-  { key: "progress", label: "Avancement", w: 110 },
-  { key: "assignee", label: "Responsable", w: 130 },
-  { key: "milestone", label: "Jalon", w: 60 },
-  { key: "lastInteraction", label: "Dernière interaction", w: 150 },
-  { key: "inactivity", label: "Inactivité", w: 105 },
-];
-
-function BulkProgressPicker({ onApply }) {
-  const [val, setVal] = useState(50);
-  return (
-    <DropdownButton label="Avancement" icon={<CheckCircle2 size={14} />}>
-      <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "4px 2px" }}>
-        <input type="number" min="0" max="100" value={val} onChange={(e) => setVal(e.target.value)} style={{ width: 60 }} />
-        <span style={{ fontSize: 12, color: "var(--text-600)" }}>%</span>
-        <button className="lp-btn lp-btn-primary" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => onApply(Math.max(0, Math.min(100, Number(val) || 0)))}>Appliquer</button>
-      </div>
-    </DropdownButton>
-  );
-}
-
-function BulkDatesPicker({ onApplyDates, onShift }) {
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [shiftDays, setShiftDays] = useState(1);
-  return (
-    <DropdownButton label="Dates" icon={<CalendarClock size={14} />}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "4px 2px", minWidth: 200 }}>
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-600)", marginBottom: 4 }}>Définir une date</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={{ flex: 1 }} title="Nouvelle date de début" />
-            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={{ flex: 1 }} title="Nouvelle date de fin" />
-          </div>
-          <button className="lp-btn lp-btn-primary" style={{ padding: "5px 10px", fontSize: 12, marginTop: 6, width: "100%" }} onClick={() => onApplyDates(start || null, end || null)} disabled={!start && !end}>Appliquer les dates</button>
-        </div>
-        <hr className="lp-divider" style={{ margin: "2px 0" }} />
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-600)", marginBottom: 4 }}>Décaler de (jours, +/-)</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input type="number" value={shiftDays} onChange={(e) => setShiftDays(e.target.value)} style={{ flex: 1 }} />
-            <button className="lp-btn" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => onShift(Number(shiftDays) || 0)}>Décaler</button>
-          </div>
-        </div>
-      </div>
-    </DropdownButton>
-  );
-}
-
-function Ta
+          {rows.length === 0 && <div className=

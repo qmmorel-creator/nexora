@@ -442,3 +442,49 @@ test("réécrire la liste à plat ne touche que les tâches réellement changée
   assert.deepEqual(TASKRISK.applyTaskDelayRisks([], [tasks[0]], () => {}), ["t1"]);
   assert.deepEqual(TASKRISK.applyTaskDelayRisks([], [{ id: "t9" }], () => {}), []);
 });
+
+const META = vm.runInThisContext(
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeMetaTemporalBlocks, metaBlocksForDashboard, GANTT_DECISION_DEFAULT_COLOR };\n})`
+)();
+
+test("un méta bloc sans liste de tableaux vaut pour tous, y compris les futurs", () => {
+  const blocks = [{ id: "m1", title: "Congés", startDate: "2026-08-01", endDate: "2026-08-21" }];
+  const [normalized] = META.normalizeMetaTemporalBlocks(blocks);
+  assert.equal(normalized.dashboardIds, null, "absent = tous");
+  // Un tableau de bord qui n'existait pas à la création reçoit quand même le bloc.
+  assert.equal(META.metaBlocksForDashboard(blocks, "tableau-cree-plus-tard").length, 1);
+  // Hors tableau de bord (page « Aujourd'hui »), seuls ces blocs-là s'appliquent.
+  assert.equal(META.metaBlocksForDashboard(blocks, null).length, 1);
+});
+
+test("une sélection explicite de tableaux de bord est respectée", () => {
+  const blocks = [
+    { id: "m1", title: "Congés", startDate: "2026-08-01", endDate: "2026-08-21", dashboardIds: ["d1", "d2"] },
+    { id: "m2", title: "Fermeture", startDate: "2026-12-24", endDate: "2026-12-31", dashboardIds: [] },
+  ];
+  assert.deepEqual(META.metaBlocksForDashboard(blocks, "d1").map((b) => b.id), ["m1"]);
+  assert.deepEqual(META.metaBlocksForDashboard(blocks, "d3").map((b) => b.id), []);
+  // Une sélection explicite ne s'applique jamais hors tableau de bord.
+  assert.deepEqual(META.metaBlocksForDashboard(blocks, null).map((b) => b.id), []);
+  // Un tableau de bord supprimé reste dans la liste sans rien casser.
+  assert.equal(META.metaBlocksForDashboard(blocks, "d2").length, 1);
+});
+
+test("un méta bloc illisible est ignoré, jamais dessiné", () => {
+  const blocks = META.normalizeMetaTemporalBlocks([
+    { id: "m1", title: "Valide", startDate: "2026-08-01", endDate: "2026-08-21" },
+    { id: "m2", title: "Fin avant début", startDate: "2026-08-21", endDate: "2026-08-01" },
+    { id: "m3", title: "Date folle", startDate: "2026-02-30", endDate: "2026-03-05" },
+    { id: "m4", startDate: "2026-08-01", endDate: "2026-08-21" },
+    { title: "Sans identifiant", startDate: "2026-08-01", endDate: "2026-08-21" },
+    null,
+  ]);
+  assert.deepEqual(blocks.map((b) => b.id), ["m1"]);
+  assert.deepEqual(META.normalizeMetaTemporalBlocks(undefined), []);
+  // La nature « fenêtre de décision » et ses valeurs par défaut sont partagées
+  // avec les blocs de widget : une seule règle pour les deux.
+  const [decision] = META.normalizeMetaTemporalBlocks([{ id: "m5", title: "Arbitrage", startDate: "2026-05-04", endDate: "2026-05-06", kind: "decision" }]);
+  assert.equal(decision.kind, "decision");
+  assert.equal(decision.color, META.GANTT_DECISION_DEFAULT_COLOR);
+  assert.equal(decision.borderStyle, "dashed");
+});

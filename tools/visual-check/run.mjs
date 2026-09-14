@@ -73,6 +73,8 @@ const seen = await page.evaluate(() => {
     miniDecisions: rects("#harness-first-minigantt .lp-widget-minigantt-phase.is-decision"),
     miniRisks: rects(".lp-widget-minigantt-risk"),
     secondRisks: rects("#harness-second-minigantt .lp-widget-minigantt-risk"),
+    secondBands: rects("#harness-second-minigantt .lp-widget-minigantt-tblock"),
+    secondMetaChips: rects("#harness-second-minigantt .lp-widget-minigantt-phase.is-meta"),
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
@@ -152,6 +154,10 @@ expect(seen.miniRisks.length === 6, `Mini-Gantt : ${seen.miniRisks.length} coulo
 // Les risques appartiennent à la tâche : le second widget, sans aucune
 // annotation propre, doit les afficher lui aussi.
 expect(seen.secondRisks.length === 3, `Second Mini-Gantt : ${seen.secondRisks.length} couloir(s) de risque, 3 attendus — un risque porté par la tâche doit apparaître dans tous les widgets`);
+// Méta bloc défini dans les Réglages : il doit atteindre un widget qui n'a
+// aucune annotation propre, et son titre ne doit pas être modifiable là.
+expect(seen.secondBands.length === 1, `Second Mini-Gantt : ${seen.secondBands.length} bande(s) de méta bloc, 1 attendue`);
+expect(seen.secondMetaChips.length === 1, `Second Mini-Gantt : ${seen.secondMetaChips.length} titre(s) de méta bloc, 1 attendu`);
 expect(seen.miniRiskLabels.length > 0, "Mini-Gantt : aucun risque n'affiche son étiquette");
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);

@@ -1,4 +1,209 @@
-bleView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete, toolbarSlot, prefs, setPrefs, customFieldDefs }) {
+"lp-empty" style={{ marginLeft: railLeftW, padding: 30 }}>Aucun projet avec des tâches datées.</div>}
+        </div>
+      </div>
+
+      {descriptionPopup && (() => {
+        const task = descriptionPopup.task;
+        const popupW = 380;
+        const popupH = 300;
+        const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+        const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+        const left = Math.max(12, Math.min(descriptionPopup.x + 12, vw - popupW - 12));
+        const top = Math.max(12, Math.min(descriptionPopup.y + 12, vh - popupH - 12));
+        return (
+          <>
+            <div className="lp-pm-desc-overlay" onClick={()=>setDescriptionPopup(null)} />
+            <div className="lp-pm-desc-popover" style={{left,top}} onClick={(e)=>e.stopPropagation()}>
+              <div className="lp-pm-desc-popover-head">
+                <StickyNote size={14} style={{color:"var(--text-600)",flex:"0 0 auto"}} />
+                <div className="lp-pm-desc-popover-title">{task.title}</div>
+                <button className="lp-icon-btn" onClick={()=>setDescriptionPopup(null)} title="Fermer"><X size={13}/></button>
+              </div>
+              <div
+                className="lp-pm-desc-popover-body lp-desc-preview"
+                dangerouslySetInnerHTML={{__html:renderMarkdown(task.desc ?? task.description ?? "")}}
+              />
+            </div>
+          </>
+        );
+      })()}
+
+      {projectSummary && (() => {
+        const row = projectSummary.row;
+        const p = row.project;
+        const budgetStats = expenses ? computeBudgetStats(p.id, ctx.projects, expenses) : null;
+        const daysLeft = dayIndex(row.maxDate) - dayIndex(iso(new Date()));
+        const lateCount = [...row.pTasks, ...row.pMilestones].filter((t) => isTaskLate(t, ctx)).length;
+        const cardLeft = Math.min(projectSummary.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 300);
+        const cardTop = Math.min(projectSummary.y + 12, (typeof window !== "undefined" ? window.innerHeight : 800) - 280);
+        return (
+          <>
+            <div className="lp-pm-summary-overlay" onClick={() => setProjectSummary(null)} />
+            <div className="lp-pm-summary-card" style={{ left: cardLeft, top: cardTop }}>
+              <div className="lp-pm-summary-head">
+                <span className="lp-project-dot" style={{ background: p.color, width: 30, height: 30 }}><IconGlyph icon={p.icon} size={14} /></span>
+                <div>
+                  <div className="lp-pm-summary-title">{p.name}</div>
+                  <div className="lp-pm-summary-sub">Fin : {fmtShort(row.maxDate)}</div>
+                </div>
+                <button className="lp-icon-btn" onClick={() => setProjectSummary(null)} style={{ marginLeft: "auto" }}><X size={13} /></button>
+              </div>
+              <div className="lp-pm-summary-grid">
+                <div className="lp-pm-summary-metric">
+                  <div className="lp-pm-summary-metric-val" style={{ color: p.color }}>{row.avgProgress}%</div>
+                  <div className="lp-pm-summary-metric-label">Avancement</div>
+                </div>
+                <div className="lp-pm-summary-metric">
+                  <div className={"lp-pm-summary-metric-val" + (daysLeft < 0 ? " lp-pm-summary-metric-danger" : "")}>{daysLeft >= 0 ? daysLeft : Math.abs(daysLeft)}</div>
+                  <div className="lp-pm-summary-metric-label">{daysLeft >= 0 ? "jours restants" : "jours de retard"}</div>
+                </div>
+                {budgetStats && budgetStats.budgetActuel > 0 && (
+                  <div className="lp-pm-summary-metric">
+                    <div className={"lp-pm-summary-metric-val" + (budgetStats.pct > 100 ? " lp-pm-summary-metric-danger" : "")}>{budgetStats.pct}%</div>
+                    <div className="lp-pm-summary-metric-label">Budget consommé</div>
+                  </div>
+                )}
+                {lateCount > 0 && (
+                  <div className="lp-pm-summary-metric">
+                    <div className="lp-pm-summary-metric-val lp-pm-summary-metric-danger">{lateCount}</div>
+                    <div className="lp-pm-summary-metric-label">en retard</div>
+                  </div>
+                )}
+              </div>
+              {(row.pTasks[0] || row.pMilestones[0]) && (
+                <button className="lp-btn lp-btn-primary" style={{ width: "100%" }} onClick={() => { onOpen(row.pTasks[0] || row.pMilestones[0]); setProjectSummary(null); }}>Ouvrir une tâche du projet</button>
+              )}
+            </div>
+          </>
+        );
+      })()}
+
+      {selectedIds.size > 0 && (
+        <div className="lp-pm-selection-bar">
+          <span className="lp-pm-selection-count">{selectedIds.size} sélectionnée{selectedIds.size > 1 ? "s" : ""}</span>
+          <span className="lp-pm-selection-hint">Ctrl/Cmd-clic sur une station pour ajouter ou retirer</span>
+          <span style={{ flex: 1 }} />
+          {doneStatus && <button className="lp-btn" onClick={markSelectedDone}><CheckCircle2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Marquer terminé</button>}
+          <button className="lp-btn" onClick={deleteSelected}><Trash2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Supprimer</button>
+          <button className="lp-btn" onClick={clearSelection}>Désélectionner</button>
+        </div>
+      )}
+    </div>
+    {!embedded && isHomepage && homeStats && (
+      <div className="lp-metro-home-widgets">
+        <div className="lp-metro-home-widget">
+          <h4><span className="lp-metro-home-widget-ic" style={{ background: "color-mix(in srgb, var(--danger) 14%, white)", color: "var(--danger)" }}><AlertTriangle size={12} /></span>En retard</h4>
+          {lateTasks.length === 0 ? (
+            <p className="lp-metro-home-widget-empty">Rien en retard, tout est à jour.</p>
+          ) : lateTasks.map((t) => (
+            <div key={t.id} className="lp-metro-home-late-row" onClick={() => onOpen(t)}>
+              <span className="lp-metro-home-late-dot" style={{ background: ctx.projects.find((p) => p.id === t.projectId)?.color || "var(--text-muted)" }} />
+              <span className="lp-metro-home-late-title">{t.title}</span>
+              <span className="lp-metro-home-late-days">{Math.max(1, dayIndex(now) - dayIndex(t.end))}j</span>
+            </div>
+          ))}
+        </div>
+        <div className="lp-metro-home-widget">
+          <h4><span className="lp-metro-home-widget-ic" style={{ background: "color-mix(in srgb, var(--success) 14%, white)", color: "var(--success)" }}><TrendingUp size={12} /></span>Avancement global</h4>
+          <div className="lp-metro-home-kpi"><CountUp value={homeStats.avgProgress} animate={appearance?.animCountUp} /><span style={{ fontSize: 16 }}>%</span></div>
+          <p className="lp-metro-home-widget-empty">{homeStats.total} tâche{homeStats.total > 1 ? "s" : ""} au total</p>
+        </div>
+        <div className="lp-metro-home-widget">
+          <h4><span className="lp-metro-home-widget-ic" style={{ background: "var(--paper-soft)", color: "var(--text-600)" }}><BarChart3 size={12} /></span>Répartition</h4>
+          <div className="lp-metro-home-donut-row">
+            <div className="lp-metro-home-donut" style={{ background: `conic-gradient(${(() => {
+              let acc = 0;
+              return homeStats.byStatus.map((s) => {
+                const start = acc, pct = (s.count / homeStats.total) * 100;
+                acc += pct;
+                return `${s.color} ${start}% ${acc}%`;
+              }).join(", ");
+            })()})` }} />
+            <div className="lp-metro-home-donut-legend">
+              {homeStats.byStatus.slice(0, 3).map((s) => (
+                <div key={s.name}><span style={{ background: s.color }} />{s.name} · {Math.round((s.count / homeStats.total) * 100)}%</div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="lp-metro-home-widget">
+          <h4><span className="lp-metro-home-widget-ic" style={{ background: "color-mix(in srgb, var(--signal) 14%, white)", color: "var(--signal)" }}><CalendarClock size={12} /></span>Prochaines échéances</h4>
+          {upcomingTasks.length === 0 ? (
+            <p className="lp-metro-home-widget-empty">Aucune échéance à venir.</p>
+          ) : upcomingTasks.map((t) => (
+            <div key={t.id} className="lp-metro-home-deadline-row" onClick={() => onOpen(t)}>
+              <div className="lp-metro-home-deadline-date">{new Date(t.end + "T00:00:00").getDate()}<small>{new Date(t.end + "T00:00:00").toLocaleDateString("fr-FR", { month: "short" })}</small></div>
+              <div>
+                <div className="lp-metro-home-deadline-title">{t.title}</div>
+                <div className="lp-metro-home-deadline-proj">{ctx.projects.find((p) => p.id === t.projectId)?.name || ""}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
+  );
+}
+
+// ============================================================================
+// Vue "Tableur" — grille de type Airtable/Notion/Coda : édition en ligne,
+// sélection multiple, modification en masse, duplication.
+// ============================================================================
+const TABLE_COL_OPTIONS = [
+  { key: "project", label: "Projet", w: 150 },
+  { key: "status", label: "Statut", w: 130 },
+  { key: "start", label: "Début", w: 110 },
+  { key: "end", label: "Fin", w: 110 },
+  { key: "progress", label: "Avancement", w: 110 },
+  { key: "assignee", label: "Responsable", w: 130 },
+  { key: "milestone", label: "Jalon", w: 60 },
+  { key: "lastInteraction", label: "Dernière interaction", w: 150 },
+  { key: "inactivity", label: "Inactivité", w: 105 },
+];
+
+function BulkProgressPicker({ onApply }) {
+  const [val, setVal] = useState(50);
+  return (
+    <DropdownButton label="Avancement" icon={<CheckCircle2 size={14} />}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "4px 2px" }}>
+        <input type="number" min="0" max="100" value={val} onChange={(e) => setVal(e.target.value)} style={{ width: 60 }} />
+        <span style={{ fontSize: 12, color: "var(--text-600)" }}>%</span>
+        <button className="lp-btn lp-btn-primary" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => onApply(Math.max(0, Math.min(100, Number(val) || 0)))}>Appliquer</button>
+      </div>
+    </DropdownButton>
+  );
+}
+
+function BulkDatesPicker({ onApplyDates, onShift }) {
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [shiftDays, setShiftDays] = useState(1);
+  return (
+    <DropdownButton label="Dates" icon={<CalendarClock size={14} />}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "4px 2px", minWidth: 200 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-600)", marginBottom: 4 }}>Définir une date</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={{ flex: 1 }} title="Nouvelle date de début" />
+            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={{ flex: 1 }} title="Nouvelle date de fin" />
+          </div>
+          <button className="lp-btn lp-btn-primary" style={{ padding: "5px 10px", fontSize: 12, marginTop: 6, width: "100%" }} onClick={() => onApplyDates(start || null, end || null)} disabled={!start && !end}>Appliquer les dates</button>
+        </div>
+        <hr className="lp-divider" style={{ margin: "2px 0" }} />
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-600)", marginBottom: 4 }}>Décaler de (jours, +/-)</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" value={shiftDays} onChange={(e) => setShiftDays(e.target.value)} style={{ flex: 1 }} />
+            <button className="lp-btn" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => onShift(Number(shiftDays) || 0)}>Décaler</button>
+          </div>
+        </div>
+      </div>
+    </DropdownButton>
+  );
+}
+
+function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete, toolbarSlot, prefs, setPrefs, customFieldDefs }) {
   // Les champs personnalisés s'ajoutent comme colonnes dynamiques, préfixées
   // "cf:" pour ne jamais entrer en collision avec les colonnes standards.
   const allColOptions = useMemo(() => [
@@ -580,7 +785,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs, metaTemporalBlocks, dashboardId }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -599,6 +804,13 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   // Le filtre de PAGE s'applique en base à tous ses widgets, combiné en ET
   // avec le filtre propre à chaque widget — jamais l'un à la place de l'autre.
   const pageFilteredTasks = useMemo(() => applyWidgetFilter(tasks, activePage?.filter, ctx), [tasks, activePage, ctx]);
+  // Méta blocs applicables ici : ceux qui visent ce tableau de bord, et ceux
+  // qui valent pour tous. Hors tableau de bord (page « Aujourd'hui »),
+  // dashboardId vaut null et seuls les seconds s'appliquent.
+  const scopedMetaBlocks = useMemo(
+    () => metaBlocksForDashboard(metaTemporalBlocks, dashboardId),
+    [metaTemporalBlocks, dashboardId]
+  );
 
   // S'assure que tous les widgets ont un layout (migration douce des tableaux de bord existants).
   useEffect(() => {
@@ -1230,6 +1442,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onOpen={onOpen}
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
+                    metaBlocks={scopedMetaBlocks}
                     pastDays={
                       (() => {
                         const vals = [
@@ -2680,7 +2893,7 @@ function MiniGanttProgressRing({ progress }) {
   );
 }
 
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "" }) {
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "", metaBlocks }) {
   const colorBy = widget.colorBy || "status"; // "status" | "project"
   const rowFields = widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"];
   // "aligned" = colonne à largeur fixe alignée à droite (les barres restent
@@ -2924,7 +3137,17 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const annotationStore = ganttAnnotationsOf(widget);
   const rawTemporalBlocks = useMemo(() => (Array.isArray(annotationStore.temporalBlocks) ? annotationStore.temporalBlocks : []), [annotationStore.temporalBlocks]);
   const rawHighlightFrames = useMemo(() => (Array.isArray(annotationStore.highlightFrames) ? annotationStore.highlightFrames : []), [annotationStore.highlightFrames]);
-  const temporalBlocks = useMemo(() => normalizeTemporalBlocks(rawTemporalBlocks), [rawTemporalBlocks]);
+  // Méta blocs des Réglages : dessinés comme les autres mais non modifiables
+  // ici. Leur identifiant est préfixé pour ne jamais entrer en collision avec
+  // un bloc propre au widget, et pour que le clic n'ouvre pas son éditeur.
+  const scopedMetaBlocks = useMemo(
+    () => normalizeMetaTemporalBlocks(metaBlocks).map((b) => ({ ...b, id: "meta:" + b.id, meta: true })),
+    [metaBlocks]
+  );
+  const temporalBlocks = useMemo(
+    () => [...normalizeTemporalBlocks(rawTemporalBlocks), ...scopedMetaBlocks],
+    [rawTemporalBlocks, scopedMetaBlocks]
+  );
   const highlightFrames = useMemo(() => normalizeHighlightFrames(rawHighlightFrames), [rawHighlightFrames]);
   const applyAnnotations = (patch) => {
     if (!onUpdateWidget) return;
@@ -3624,7 +3847,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <button
             key={shape.block.id}
             type="button"
-            className={"lp-widget-minigantt-phase" + (shape.block.kind === "decision" ? " is-decision" : "")}
+            className={"lp-widget-minigantt-phase" + (shape.block.kind === "decision" ? " is-decision" : "") + (shape.block.meta ? " is-meta" : "")}
             style={{
               left: `${shape.leftPct}%`,
               width: `${shape.widthPct}%`,
@@ -3633,8 +3856,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               borderColor: shape.block.color,
               background: "color-mix(in srgb, " + shape.block.color + " 12%, var(--surface))",
             }}
-            title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
-            onClick={() => setAnnotationPanel({ section: "blocks", focusId: shape.block.id })}
+            title={shape.block.meta
+              ? `${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — méta bloc, réglable dans Réglages > Méta blocs temporels`
+              : `${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
+            onClick={() => { if (!shape.block.meta) setAnnotationPanel({ section: "blocks", focusId: shape.block.id }); }}
           >
             <span className="lp-widget-minigantt-phase-text">{shape.block.title}</span>
           </button>

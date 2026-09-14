@@ -67,6 +67,33 @@ type GanttAnnotations = {
 type Task = { /* … */ delayRisks?: MiniGanttTaskRisk[] };
 ```
 
+## Méta blocs temporels — Réglages
+
+Une période qui ne concerne pas un widget mais l'ensemble du travail — congés,
+absences, fermeture de site — se définit une fois dans **Réglages > Méta blocs
+temporels** et se dessine dans les Mini-Gantt des tableaux de bord retenus.
+
+Stockage global dans `nexora:metaTemporalBlocks`, à l'image de
+`nexora:metaFilters` : ni dans un widget, ni dans une tâche.
+
+```ts
+type MetaTemporalBlock = TemporalBlock & {
+  dashboardIds?: string[] | null;   // absent = tous, y compris les tableaux à venir
+};
+```
+
+- `dashboardIds` absent vaut **tous les tableaux de bord**, présents et futurs :
+  c'est ce que « tous cochés » signifie à la création. Décocher un tableau
+  matérialise la liste ; tout recocher repasse à « tous ».
+- Une sélection explicite ne s'applique jamais hors tableau de bord ; la page
+  « Aujourd'hui » ne reçoit que les méta blocs valables pour tous.
+- Un tableau de bord supprimé reste inoffensif : son identifiant ne correspond
+  simplement plus à rien.
+- Dans le widget, un méta bloc se dessine comme les autres mais son titre porte
+  une bordure pointillée et n'est pas cliquable : il se règle dans les Réglages.
+  Son identifiant est préfixé `meta:` pour ne jamais entrer en collision avec un
+  bloc propre au widget.
+
 ## Pilotage — Mini-Gantt uniquement
 
 Le Mini-Gantt étend la même clé `widget.ganttAnnotations` avec trois listes, et
