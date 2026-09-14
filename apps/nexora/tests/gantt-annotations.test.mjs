@@ -488,3 +488,106 @@ test("un méta bloc illisible est ignoré, jamais dessiné", () => {
   assert.equal(decision.color, META.GANTT_DECISION_DEFAULT_COLOR);
   assert.equal(decision.borderStyle, "dashed");
 });
+
+const TASKMETA = vm.runInThisContext(
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { metaBlocksFromTasks, mergeMetaTemporalBlocks, normalizeTaskMetaBlock, carryOverTaskMetaBlocks, calendarTaskEventKey, metaBlocksForDashboard, GANTT_BLOCK_DEFAULT_COLOR, GANTT_DECISION_DEFAULT_COLOR };\n})`
+)();
+
+const calTask = (patch) => ({
+  id: "t1",
+  title: "Congés d'été",
+  start: "2026-08-03",
+  end: "2026-08-21",
+  googleEventId: "ev-1",
+  gcalCalendarId: "cal-perso",
+  ...patch,
+});
+
+test("une tâche calendrier cochée devient un méta bloc dont les dates suivent la tâche", () => {
+  const [block] = TASKMETA.metaBlocksFromTasks([calTask({ metaBlock: { enabled: true } })]);
+  assert.equal(block.id, "task:t1");
+  assert.equal(block.title, "Congés d'été");
+  assert.equal(block.startDate, "2026-08-03");
+  assert.equal(block.endDate, "2026-08-21");
+  assert.equal(block.kind, "phase");
+  assert.equal(block.color, TASKMETA.GANTT_BLOCK_DEFAULT_COLOR);
+  assert.equal(block.borderStyle, "dashed");
+  assert.equal(block.dashboardIds, null, "absent = tous les tableaux de bord");
+
+  // Déplacer l'événement déplace le bloc : rien n'est recopié.
+  const [moved] = TASKMETA.metaBlocksFromTasks([calTask({ start: "2026-09-01", end: "2026-09-10", title: "Congés reportés", metaBlock: { enabled: true } })]);
+  assert.equal(moved.startDate, "2026-09-01");
+  assert.equal(moved.endDate, "2026-09-10");
+  assert.equal(moved.title, "Congés reportés");
+});
+
+test("seules les tâches cochées et datées produisent un bloc", () => {
+  const blocks = TASKMETA.metaBlocksFromTasks([
+    calTask({ metaBlock: { enabled: true } }),
+    calTask({ id: "t2", metaBlock: { enabled: false } }),
+    calTask({ id: "t3" }),
+    calTask({ id: "t4", start: "", end: "", metaBlock: { enabled: true } }),
+    calTask({ id: "t5", start: "2026-08-21", end: "2026-08-03", metaBlock: { enabled: true } }),
+    calTask({ id: "t6", title: "   ", metaBlock: { enabled: true } }),
+    { metaBlock: { enabled: true } },
+    null,
+  ]);
+  assert.deepEqual(blocks.map((b) => b.id), ["task:t1"]);
+  assert.deepEqual(TASKMETA.metaBlocksFromTasks(undefined), []);
+
+  // Un jalon n'a pas de date de fin : le bloc tient sur sa seule journée.
+  const [jalon] = TASKMETA.metaBlocksFromTasks([calTask({ id: "t7", milestone: true, end: "", metaBlock: { enabled: true } })]);
+  assert.equal(jalon.startDate, "2026-08-03");
+  assert.equal(jalon.endDate, "2026-08-03");
+});
+
+test("l'habillage et la portée d'un méta bloc de tâche suivent les mêmes règles que ceux des Réglages", () => {
+  const [decision] = TASKMETA.metaBlocksFromTasks([
+    calTask({ metaBlock: { enabled: true, kind: "decision", borderStyle: "solid", dashboardIds: ["d1", 42, ""] } }),
+  ]);
+  assert.equal(decision.kind, "decision");
+  assert.equal(decision.color, TASKMETA.GANTT_DECISION_DEFAULT_COLOR);
+  assert.equal(decision.borderStyle, "solid");
+  assert.deepEqual(decision.dashboardIds, ["d1"]);
+  assert.deepEqual(TASKMETA.metaBlocksForDashboard([decision], "d1").map((b) => b.id), ["task:t1"]);
+  assert.deepEqual(TASKMETA.metaBlocksForDashboard([decision], "d2").map((b) => b.id), []);
+
+  assert.equal(TASKMETA.normalizeTaskMetaBlock(null), null);
+  assert.equal(TASKMETA.normalizeTaskMetaBlock({ enabled: false, color: "#fff" }), null);
+});
+
+test("les blocs des Réglages et ceux des tâches se cumulent", () => {
+  const merged = TASKMETA.mergeMetaTemporalBlocks(
+    [{ id: "m1", title: "Fermeture", startDate: "2026-12-24", endDate: "2026-12-31" }],
+    [calTask({ metaBlock: { enabled: true } })]
+  );
+  assert.deepEqual(merged.map((b) => b.id), ["m1", "task:t1"]);
+  assert.deepEqual(TASKMETA.mergeMetaTemporalBlocks(undefined, undefined), []);
+});
+
+test("une resynchronisation du calendrier ne perd pas le réglage méta bloc", () => {
+  const before = [
+    calTask({ metaBlock: { enabled: true, kind: "decision", borderStyle: "solid", color: "#123456" } }),
+    calTask({ id: "t2", googleEventId: "ev-2" }),
+    { id: "t3", title: "Réunion publique", syncedCalendarId: "ics-1", syncedCalendarKey: "k-9", metaBlock: { enabled: true } },
+  ];
+  // L'import reconstruit les tâches : nouvel identifiant Nexora, même événement.
+  const after = TASKMETA.carryOverTaskMetaBlocks(before, [
+    calTask({ id: "neuf-1", start: "2026-08-10", end: "2026-08-28" }),
+    calTask({ id: "neuf-2", googleEventId: "ev-2" }),
+    { id: "neuf-3", title: "Réunion publique", start: "2026-09-02", end: "2026-09-02", syncedCalendarId: "ics-1", syncedCalendarKey: "k-9" },
+  ]);
+  assert.deepEqual(after[0].metaBlock, { enabled: true, kind: "decision", color: "#123456", borderStyle: "solid", dashboardIds: null });
+  assert.equal(after[1].metaBlock, undefined, "une tâche jamais cochée le reste");
+  assert.equal(after[2].metaBlock.enabled, true, "les calendriers publics utilisent leur propre clé stable");
+
+  // Le bloc reporté suit les nouvelles dates de l'événement.
+  const [block] = TASKMETA.metaBlocksFromTasks(after);
+  assert.equal(block.id, "task:neuf-1");
+  assert.equal(block.endDate, "2026-08-28");
+
+  // Sans aucun réglage à reporter, la liste ressort telle quelle.
+  const fresh = [calTask({ id: "x" })];
+  assert.equal(TASKMETA.carryOverTaskMetaBlocks([], fresh), fresh);
+  assert.equal(TASKMETA.calendarTaskEventKey({ id: "manuelle" }), "");
+});

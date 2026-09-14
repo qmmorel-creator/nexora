@@ -1,4 +1,10 @@
-ss} color={statusColor || "var(--text-muted)"} gradient={statusColor ? null : gradient} trackColor={statusColor ? "#EAEDF3" : undefined} /><span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{task.progress}%</span></span>;
+k={(e) => e.stopPropagation()}>
+          <input type="range" min="0" max="100" value={task.progress} onChange={(e) => onProgressChange(task.id, Number(e.target.value))} className="lp-gradient-slider" draggable={false} onMouseDown={(e) => e.stopPropagation()} style={{ background: sliderGradientBg(task.progress, gradient, statusColor) }} />
+          <span>{task.progress}%</span>
+        </span>
+      );
+    }
+    return <span className="lp-row-progress"><ProgressBar value={task.progress} color={statusColor || "var(--text-muted)"} gradient={statusColor ? null : gradient} trackColor={statusColor ? "#EAEDF3" : undefined} /><span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{task.progress}%</span></span>;
   }
   if (fieldKey === "start") return <span className="lp-chip lp-mono">Début {fmtShort(task.start)}</span>;
   if (fieldKey === "end") return <span className="lp-chip lp-mono">Fin {fmtShort(task.end)}</span>;
@@ -9273,7 +9279,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       });
 
       setProjects(workingProjects);
-      setTasks([...keptTasks, ...freshTasks]);
+      setTasks([...keptTasks, ...carryOverTaskMetaBlocks(tasks, freshTasks)]);
 
       // Nettoyage complet de l'ancien état de synchronisation bidirectionnelle.
       setGcalSyncState({
@@ -9616,7 +9622,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
 
     setProjects(workingProjects);
-    setTasks([...keptTasks, ...freshTasks]);
+    setTasks([...keptTasks, ...carryOverTaskMetaBlocks(tasks, freshTasks)]);
     const now = new Date().toISOString();
     setSyncedCalendarSettings(prev => ({...prev, calendars: configs, lastSyncAt: now}));
     pushToast?.({message:`Calendriers synchronisés · ${enabled.length} projet${enabled.length>1?"s":""} · ${freshTasks.length} jalon${freshTasks.length>1?"s":""}`});
@@ -10098,6 +10104,14 @@ export default function LePlan({ currentUser, onSignOut }) {
   const metaFilteredTasks = useMemo(
     () => tasks.filter((t) => matchTaskFilters(t, metaFilters, ctx)),
     [tasks, metaFilters, ctx]
+  );
+  // Méta blocs effectifs : ceux des Réglages plus ceux portés par les tâches
+  // de projets calendrier. Calculés sur TOUTES les tâches, pas sur celles que
+  // laisse passer le filtre global : un congé reste dessiné même si la tâche
+  // qui le porte est filtrée.
+  const allMetaTemporalBlocks = useMemo(
+    () => mergeMetaTemporalBlocks(metaTemporalBlocks, tasks),
+    [metaTemporalBlocks, tasks]
   );
   const todayPresentationTasks = useMemo(() => {
     const rank = { action:0, activity:1, milestone:2 };
@@ -11465,14 +11479,14 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "control" && <ControlTowerView tasks={metaFilteredTasks} ctx={ctx} risks={risks} momentumSnapshots={momentumSnapshots} activityLog={activityLog} onOpenTask={openEditTask} onSelectProject={selectProjectAndNavigate} onNavigate={setView} />}
-          {view === "today" && <DashboardView metaTemporalBlocks={metaTemporalBlocks} dashboardId={null} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "today" && <DashboardView metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} customFieldDefs={customFieldDefs} />}
           {view === "chiffrage" && <ChiffrageView projects={projects} setProjects={setProjects} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} expenses={expenses} setExpenses={setExpenses} budgetLines={budgetLines} setBudgetLines={setBudgetLines} tasks={metaFilteredTasks} ctx={ctx} prefs={viewPrefs.chiffrage} setPrefs={setChiffragePrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "automations" && <AutomationsView workflows={workflows} setWorkflows={setWorkflows} workflowExecutionLog={workflowExecutionLog} ctx={ctx} prefs={viewPrefs.automations || {}} setPrefs={setAutomationsPrefs} toolbarSlot={viewToolbarSlot} dispatchWorkflowEvent={dispatchWorkflowEvent} pushToast={pushToast} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView metaTemporalBlocks={metaTemporalBlocks} dashboardId={activeDashboard?.id || null} tasks={metaFilteredTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "dashboard" && <DashboardView metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} tasks={metaFilteredTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
         </div>
       </main>
 
@@ -11491,7 +11505,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         />
       )}
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} customFieldDefs={customFieldDefs} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} onLinkTodoist={linkTaskToTodoist} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} />
+        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} customFieldDefs={customFieldDefs} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} onLinkTodoist={linkTaskToTodoist} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal
@@ -11803,21 +11817,4 @@ function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
     <div className="lp-filter-condition-row">
       <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
         {fieldsOverride ? (
-          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
-        ) : (
-          <>
-            <optgroup label="Champs standards">
-              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
-            </optgroup>
-            {(ctx.customFieldDefs || []).length > 0 && (
-              <optgroup label="Champs personnalisés">
-                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
-              </optgroup>
-            )}
-          </>
-        )}
-      </select>
-      {isTitleField ? (
-        <div className="lp-mode-toggle lp-mode-toggle-icon">
-          <button type="button" className={cond.mode !== "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "contains" })} title="Contient"><SearchCheck size={13} /></button>
-          <button type="button" className={cond.mode === "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "no
+          

@@ -84,6 +84,23 @@ const seen = await page.evaluate(() => {
 const shot = path.join(dir, "annotations.png");
 await page.screenshot({ path: shot, fullPage: true });
 
+// Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
+// présente, cochée pour cette tâche, et son habillage réglable au même endroit.
+const taskMeta = { checkbox: 0, checked: false, controls: 0, hints: [] };
+try {
+  await page.locator("#harness-open-task-modal").click();
+  await page.waitForSelector(".lp-modal #task-meta-block", { timeout: 10000 });
+  const box = page.locator(".lp-modal #task-meta-block");
+  taskMeta.checkbox = await box.count();
+  taskMeta.checked = await box.isChecked();
+  taskMeta.controls = await page.locator(".lp-modal .lp-density-btn", { hasText: /Phase|Fenêtre de décision|Pointillés|Continue/ }).count();
+  taskMeta.hints = (await page.locator(".lp-modal .lp-gantt-annot-hint").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+  await page.locator(".lp-modal").getByRole("button", { name: "Annuler" }).click();
+  await page.waitForTimeout(400);
+} catch (error) {
+  taskMeta.error = String(error).split("\n")[0];
+}
+
 // Recherche rapide des listes déroulantes des paramètres : on ouvre la fiche
 // d'un risque, on filtre la liste des tâches et on vérifie que la sélection
 // s'applique. Sans ce contrôle, une liste déroulante peut redevenir un <select>
@@ -156,8 +173,11 @@ expect(seen.miniRisks.length === 6, `Mini-Gantt : ${seen.miniRisks.length} coulo
 expect(seen.secondRisks.length === 3, `Second Mini-Gantt : ${seen.secondRisks.length} couloir(s) de risque, 3 attendus — un risque porté par la tâche doit apparaître dans tous les widgets`);
 // Méta bloc défini dans les Réglages : il doit atteindre un widget qui n'a
 // aucune annotation propre, et son titre ne doit pas être modifiable là.
-expect(seen.secondBands.length === 1, `Second Mini-Gantt : ${seen.secondBands.length} bande(s) de méta bloc, 1 attendue`);
-expect(seen.secondMetaChips.length === 1, `Second Mini-Gantt : ${seen.secondMetaChips.length} titre(s) de méta bloc, 1 attendu`);
+// Deux méta blocs atteignent ce widget : celui des Réglages et celui porté par
+// la tâche Google Calendar cochée depuis sa fiche.
+expect(seen.secondBands.length === 2, `Second Mini-Gantt : ${seen.secondBands.length} bande(s) de méta bloc, 2 attendues (Réglages + tâche calendrier)`);
+expect(seen.secondMetaChips.length === 2, `Second Mini-Gantt : ${seen.secondMetaChips.length} titre(s) de méta bloc, 2 attendus`);
+expect(seen.secondMetaChips.some((c) => /Congés d/.test(c.text)), `Second Mini-Gantt : le bloc issu de la tâche calendrier n'est pas dessiné (${seen.secondMetaChips.map((c) => c.text).join(", ")})`);
 expect(seen.miniRiskLabels.length > 0, "Mini-Gantt : aucun risque n'affiche son étiquette");
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
@@ -185,7 +205,7 @@ for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt"
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend]]) {
+for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];
@@ -200,6 +220,15 @@ expect(dropdown.triggers > 0, "Paramètres : la sélection de tâche d'un risque
 expect(dropdown.before > 1, `Paramètres : la liste déroulante ne propose que ${dropdown.before} option(s)`);
 expect(dropdown.after > 0 && dropdown.after < dropdown.before, `Paramètres : la recherche rapide ne filtre pas (${dropdown.before} → ${dropdown.after})`);
 expect(/Revue DOE/.test(dropdown.chosen), `Paramètres : la sélection ne s'applique pas (« ${dropdown.chosen} »)`);
+
+expect(!taskMeta.error, `contrôle de la fiche de tâche interrompu : ${taskMeta.error}`);
+expect(taskMeta.checkbox === 1, "Fiche de tâche : la case « méta bloc temporel » est absente d'une tâche de projet Google Calendar");
+expect(taskMeta.checked, "Fiche de tâche : la case « méta bloc temporel » ne reflète pas le réglage enregistré");
+expect(taskMeta.controls >= 4, `Fiche de tâche : ${taskMeta.controls} réglage(s) esthétique(s), au moins 4 attendus (nature et bordure)`);
+// Le titre et les dates viennent de la tâche, pas d'une saisie : la fiche doit
+// le dire, et la portée du bloc doit rester réglable ici.
+expect(taskMeta.hints.some((h) => /Congés d.août.+05\/08\/2026.+19\/08\/2026/.test(h)), `Fiche de tâche : les dates reprises de la tâche ne sont pas rappelées (${taskMeta.hints.join(" | ")})`);
+expect(taskMeta.hints.some((h) => /tableaux de bord/i.test(h)), `Fiche de tâche : la portée du méta bloc n'est pas expliquée (${taskMeta.hints.join(" | ")})`);
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
 expect(scoped.labels.length === 2, `Paramètres : ${scoped.labels.length} tâche(s) proposée(s), 2 attendues (seul le projet filtré)`);

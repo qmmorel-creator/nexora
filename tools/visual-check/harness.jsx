@@ -12,8 +12,18 @@ function AnnotationsHarness() {
     if (t.id === "t4") return { ...t, delayRisks: [{ id: "rk3", title: "Validation tardive", severity: "medium", style: "solid", color: "#8B5CF6" }] };
     return t;
   });
-  const [tasks, setTasks] = useState(seedWithRisks);
-  const [projects, setProjects] = useState(seedProjects);
+  // Projet adossé à Google Calendar : sa tâche porte le réglage « méta bloc »
+  // coché depuis la fiche de tâche. Le bloc doit apparaître dans les Mini-Gantt
+  // sans être déclaré nulle part ailleurs.
+  const calendarProject = { id: "p4", name: "Agenda perso", icon: "📅", color: "#0EA5E9", gcalSource: true, gcalCalendarId: "cal-perso" };
+  const calendarTask = {
+    id: "t8", projectId: "p4", statusId: "s1", title: "Congés d'août", desc: "",
+    start: "2026-08-05", end: "2026-08-19", progress: 0, milestone: false, assignee: "Quentin", checklist: [],
+    googleEventId: "ev-conges", gcalImported: true, gcalCalendarId: "cal-perso",
+    metaBlock: { enabled: true, kind: "phase", color: "#8B5CF6", borderStyle: "solid", dashboardIds: null },
+  };
+  const [tasks, setTasks] = useState([...seedWithRisks, calendarTask]);
+  const [projects, setProjects] = useState([...seedProjects, calendarProject]);
   const [statuses, setStatuses] = useState(seedStatuses);
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], customFieldDefs: [], expenses: [], risks: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
@@ -50,9 +60,14 @@ function AnnotationsHarness() {
   const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });
   // Méta blocs des Réglages : définis hors des widgets, ils doivent apparaître
   // dans le second Mini-Gantt qui n'a pourtant aucune annotation propre.
-  const metaBlocks = [
-    { id: "meta1", title: "Congés", startDate: "2026-08-10", endDate: "2026-08-24", color: "#F2A93B", borderStyle: "dashed" },
+  const settingsMetaBlocks = [
+    { id: "meta1", title: "Fermeture", startDate: "2026-08-24", endDate: "2026-08-31", color: "#F2A93B", borderStyle: "dashed" },
   ];
+  // Source unique : les blocs des Réglages PLUS ceux portés par les tâches
+  // calendrier — c'est ce que fait l'application avant d'appeler DashboardView.
+  const metaBlocks = mergeMetaTemporalBlocks(settingsMetaBlocks, tasks);
+  const dashboards = [{ id: "d1", name: "Chantier" }, { id: "d2", name: "Communication" }];
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [toolbar, setToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
   // déroulantes des annotations ne proposent que les tâches retenues par le
@@ -77,6 +92,28 @@ function AnnotationsHarness() {
         <button type="button" id="harness-open-widget-form" onClick={() => setFormOpen(true)} style={{ marginBottom: 8 }}>
           Ouvrir la fiche du widget (filtre projet p2)
         </button>
+        <button type="button" id="harness-open-task-modal" onClick={() => setTaskModalOpen(true)} style={{ marginBottom: 8, marginLeft: 8 }}>
+          Ouvrir la fiche de la tâche Google Calendar
+        </button>
+        {taskModalOpen && (
+          <TaskModal
+            task={tasks.find((t) => t.id === "t8")}
+            defaults={null}
+            projects={projects}
+            dashboards={dashboards}
+            statuses={statuses}
+            taskTypes={seedTaskTypes}
+            tasks={tasks}
+            teamMembers={seedTeamMembers}
+            gradient={appearance.gradient}
+            progressColorByStatus={false}
+            customFieldDefs={[]}
+            shortcutPrefs={{}}
+            onClose={() => setTaskModalOpen(false)}
+            onSave={() => setTaskModalOpen(false)}
+            onDelete={noop}
+          />
+        )}
         <div id="harness-second-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
             widget={otherWidget} tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
