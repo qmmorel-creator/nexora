@@ -1,4 +1,49 @@
-GroupBy === "folder"} onChange={() => setMetroGroupBy("folder")} /> Dossier (fusionne les projets d'un même dossier)</label>
+onst homeStats = useMemo(() => {
+    if (embedded || !isHomepage || homeDated.length === 0) return null;
+    const doneCount = homeDated.filter((t) => isTaskDoneGlobal(t, ctx)).length;
+    const byStatus = {};
+    homeDated.forEach((t) => {
+      const st = ctx.statuses.find((s) => s.id === t.statusId);
+      const key = st?.name || "Sans statut";
+      byStatus[key] = byStatus[key] || { count: 0, color: st?.color || "var(--text-muted)" };
+      byStatus[key].count++;
+    });
+    return {
+      avgProgress: Math.round((doneCount / homeDated.length) * 100),
+      byStatus: Object.entries(byStatus).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.count - a.count),
+      total: homeDated.length,
+      activeProjects: new Set(homeDated.map((t) => t.projectId)).size,
+      lateCount: homeDated.filter((t) => isTaskLate(t, ctx)).length,
+    };
+  }, [dated, ctx, embedded]);
+  const firstName = (ctx.myName || "").split(" ")[0] || "";
+
+  return (
+    <>
+      {!embedded && isHomepage && homeStats && (
+        <div className="lp-metro-home-greet">
+          <div>
+            <h2 className="lp-display" style={{ fontSize: 22, margin: "0 0 4px" }}>Bonjour{firstName ? `, ${firstName}` : ""} 👋</h2>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-600)", fontWeight: 500 }}>
+              {homeStats.activeProjects} projet{homeStats.activeProjects > 1 ? "s" : ""} actif{homeStats.activeProjects > 1 ? "s" : ""}
+              {homeStats.lateCount > 0 ? ` · ${homeStats.lateCount} tâche${homeStats.lateCount > 1 ? "s" : ""} en retard` : " · aucun retard"}
+              {upcomingTasks[0] ? ` · prochaine échéance le ${fmtShort(upcomingTasks[0].end)}` : ""}
+            </p>
+          </div>
+        </div>
+      )}
+      <div className="lp-pm-wrap lp-pm-quai" ref={pmChromeRef}>
+      <ViewToolbarPortal slot={toolbarSlot}>
+        <DropdownButton label="" icon={<Maximize2 size={14} />} title={`Zoom : ${isAuto ? "Automatique" : zoomDef.label}`}>
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-zoom" checked={zoomKey === "auto"} onChange={() => setZoomKey("auto")} /> Automatique (pleine largeur)</label>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          {PROJECT_METRO_ZOOMS.map((z) => (
+            <label className="lp-checkbox-line" key={z.key}><input type="radio" name="lp-pm-zoom" checked={zoomKey === z.key} onChange={() => setZoomKey(z.key)} /> {z.label}</label>
+          ))}
+        </DropdownButton>
+        <DropdownButton label="" icon={<Layers size={14} />} title={`Grouper par : ${metroGroupBy === "folder" ? "Dossier" : "Projet"}`}>
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "project"} onChange={() => setMetroGroupBy("project")} /> Projet (une ligne par projet)</label>
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "folder"} onChange={() => setMetroGroupBy("folder")} /> Dossier (fusionne les projets d'un même dossier)</label>
         </DropdownButton>
         <button className={"lp-tool-btn" + (leftCollapsed ? " active" : "")} onClick={() => setPrefs((p) => ({ ...p, leftCollapsed: !leftCollapsed }))} title={leftCollapsed ? "Afficher la colonne projet" : "Replier la colonne projet (plus de place pour le diagramme)"}>
           <PanelLeftClose size={14} />
@@ -4639,6 +4684,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   }
 
   const groups = rowGroups;
+  // Fond d'un groupe : une teinte très diluée de la couleur du champ de
+  // regroupement — projet, statut… — pour remplacer les larges aplats blancs
+  // qui séparaient les groupes. Un champ sans couleur propre (responsable,
+  // date…) retombe sur la couleur d'accentuation de l'application.
+  //
+  // Le fond d'un bloc non positionné se peint AVANT les descendants
+  // positionnés : la teinte reste donc sous la bande des blocs temporels
+  // (couche absolue) et sous les lignes (z-index 1). Rien de ce qui compte —
+  // barres, jalons, progression, couloirs de risque — ne perd en contraste.
+  const groupTint = (color) => {
+    const base = color && color !== "var(--text-muted)" ? color : "var(--accent)";
+    return `color-mix(in srgb, ${base} 7%, transparent)`;
+  };
   return (
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
       {bandLayer}
@@ -4649,7 +4707,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
         return (
-          <div className="lp-widget-minigantt-group" key={g.key}>
+          <div className="lp-widget-minigantt-group" key={g.key} style={{ background: groupTint(g.color) }}>
             <div className="lp-widget-minigantt-group-head" onClick={() => toggleGroup(g.key)} style={{ cursor: "pointer" }}>
               <ChevronRight size={11} className="lp-widget-group-chevron" style={{ transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)" }} />
               <span className="lp-widget-minigantt-group-dot" style={{ background: g.color || "var(--text-muted)" }} />
@@ -7085,6 +7143,18 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
     const chips = budget === 0 ? [] : secondaryFields.map((f) => renderField(f, row, dark)).filter(Boolean).slice(0, budget);
     const showRing = cfg.showProgressRing && cfg.fields.includes("progress") && density !== "small";
     const ringSize = density === "large" ? 38 : 26;
+    // Place déjà prise avant la liste : marges, nom du projet, bloc principal,
+    // et la rangée de capsules qui reste ancrée en bas de la tuile.
+    const reserved = 16
+      + (density === "small" ? 15 : 17)
+      + (density === "small" ? 18 : (density === "large" ? 44 : 32))
+      + (chips.length ? 20 : 0);
+    const upcomingMax = cfg.showUpcoming ? treemapUpcomingCapacity(h, reserved, w) : 0;
+    const upcoming = upcomingMax > 0 ? row.upcoming.slice(0, upcomingMax) : [];
+    // Le rouge doit rester lisible : sur une tuile foncée, le rouge plein
+    // deviendrait illisible, on prend donc sa version claire.
+    const lateColor = dark ? "#FFC9C9" : "#C23232";
+    const hiddenUpcoming = row.upcomingTotal - upcoming.length;
     return (
       <div
         key={row.projectId}
@@ -7126,6 +7196,20 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
           </div>
         ) : (
           <span className="lp-widget-treemap-tile-metric-value">{row.sizeCount}</span>
+        )}
+        {upcoming.length > 0 && (
+          <div className="lp-widget-treemap-upcoming">
+            {upcoming.map((u) => (
+              <span className={"lp-widget-treemap-upcoming-item" + (u.late ? " is-late" : "")} key={u.id} title={`${u.title} — ${fmtShort(u.end)}${u.late ? " · en retard" : ""}`}>
+                <span className="lp-widget-treemap-upcoming-dot" style={{ background: u.late ? lateColor : "currentColor", opacity: u.late ? 1 : 0.55 }} />
+                <span className="lp-widget-treemap-upcoming-title" style={u.late ? { color: lateColor } : undefined}>{u.title || "Sans titre"}</span>
+                <span className="lp-widget-treemap-upcoming-date" style={u.late ? { color: lateColor, opacity: 1 } : undefined}>{fmtShort(u.end)}</span>
+              </span>
+            ))}
+            {hiddenUpcoming > 0 && upcomingMax > 1 && (
+              <span className="lp-widget-treemap-upcoming-more">+{hiddenUpcoming} autre{hiddenUpcoming > 1 ? "s" : ""}</span>
+            )}
+          </div>
         )}
         {chips.length > 0 && <div className="lp-widget-treemap-tile-fields">{chips}</div>}
       </div>
@@ -7716,6 +7800,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [treemapShowZeroProjects, setTreemapShowZeroProjects] = useState(treemapCfg.showZeroProjects);
   const [treemapFields, setTreemapFields] = useState(treemapCfg.fields);
   const [treemapShowProgressRing, setTreemapShowProgressRing] = useState(treemapCfg.showProgressRing);
+  const [treemapShowUpcoming, setTreemapShowUpcoming] = useState(treemapCfg.showUpcoming);
   const [treemapGroupBy, setTreemapGroupBy] = useState(treemapCfg.groupBy);
   const [treemapCompact, setTreemapCompact] = useState(treemapCfg.compact);
   const [treemapShowLegend, setTreemapShowLegend] = useState(treemapCfg.showLegend);
@@ -7879,6 +7964,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.treemapShowZeroProjects = treemapShowZeroProjects;
       data.treemapFields = treemapFields;
       data.treemapShowProgressRing = treemapShowProgressRing;
+      data.treemapShowUpcoming = treemapShowUpcoming;
       data.treemapGroupBy = treemapGroupBy;
       data.treemapCompact = treemapCompact;
       data.treemapShowLegend = treemapShowLegend;
@@ -8568,6 +8654,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <label className="lp-checkbox-line">
             <input type="checkbox" checked={treemapShowProgressRing} onChange={(e) => setTreemapShowProgressRing(e.target.checked)} /> Afficher la progression sous forme d'anneau (champ « Progression »)
           </label>
+          <label className="lp-checkbox-line">
+            <input type="checkbox" checked={treemapShowUpcoming} onChange={(e) => setTreemapShowUpcoming(e.target.checked)} /> Afficher les prochaines tâches du projet
+          </label>
+          {treemapShowUpcoming && (
+            <p className="lp-gantt-annot-hint">
+              Les tâches non terminées qui portent une échéance, de la plus ancienne à la plus récente, en rouge si elles sont en retard.
+              Le nombre affiché s'adapte tout seul à la hauteur de chaque tuile ; le reste est annoncé par un « + N autres ».
+            </p>
+          )}
           <label className="lp-checkbox-line">
             <input type="checkbox" checked={treemapCompact} onChange={(e) => setTreemapCompact(e.target.checked)} /> Mode compact — plus d'informations sur les petites tuiles
           </label>

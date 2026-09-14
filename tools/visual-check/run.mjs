@@ -83,6 +83,9 @@ const seen = await page.evaluate(() => {
     treemapNames: rects("#harness-treemap .lp-widget-treemap-tile-name"),
     treemapRings: document.querySelectorAll("#harness-treemap .lp-widget-treemap-ring").length,
     treemapLegend: rects("#harness-treemap .lp-widget-treemap-legend-item"),
+    treemapUpcoming: rects("#harness-treemap .lp-widget-treemap-upcoming-item"),
+    treemapUpcomingNarrow: rects("#harness-treemap-narrow .lp-widget-treemap-upcoming-item"),
+    treemapGroupTints: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-group")].map((el) => getComputedStyle(el).backgroundColor),
     treemapBox: (() => { const r = document.querySelector("#harness-treemap .lp-widget-treemap-scroll").getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })(),
     narrowTiles: rects("#harness-treemap-narrow .lp-widget-treemap-tile"),
     narrowBox: (() => { const r = document.querySelector("#harness-treemap-narrow .lp-widget-treemap-scroll").getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })(),
@@ -294,6 +297,27 @@ seen.narrowTiles.forEach((t) => {
     t.x + t.w <= seen.narrowBox.x + seen.narrowBox.w + 1 && t.y + t.h <= seen.narrowBox.y + seen.narrowBox.h + 1,
     `Treemap étroit : une tuile déborde du cadre (${t.w}×${t.h})`
   );
+});
+
+// Prochaines tâches : présentes dans les grandes tuiles, jamais débordantes, et
+// moins nombreuses dans une tuile plus basse.
+expect(seen.treemapUpcoming.length > 0, "Treemap : aucune prochaine tâche listée alors que le réglage est actif");
+expect(
+  seen.treemapUpcomingNarrow.length < seen.treemapUpcoming.length,
+  `Treemap : ${seen.treemapUpcomingNarrow.length} ligne(s) dans le widget étroit contre ${seen.treemapUpcoming.length} dans le grand — le nombre doit suivre la hauteur de la tuile`
+);
+seen.treemapUpcoming.forEach((u) => {
+  expect(
+    u.y >= seen.treemapBox.y - 1 && u.y + u.h <= seen.treemapBox.y + seen.treemapBox.h + 1,
+    "Treemap : une ligne de prochaine tâche sort du cadre du widget"
+  );
+});
+
+// Bande de groupe du Mini-Gantt : un fond teinté, plus un aplat blanc.
+expect(seen.treemapGroupTints.length > 0, "Mini-Gantt groupé : aucun groupe trouvé");
+seen.treemapGroupTints.forEach((bg, i) => {
+  const transparent = bg === "rgba(0, 0, 0, 0)" || bg === "transparent";
+  expect(!transparent, `Mini-Gantt : le groupe ${i + 1} n'a pas de fond coloré (${bg})`);
 });
 
 expect(!treemap.error, `contrôle du Treemap interrompu : ${treemap.error}`);

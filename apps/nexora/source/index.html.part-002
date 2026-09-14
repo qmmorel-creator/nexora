@@ -1,4 +1,24 @@
-alse).map((meta) => (
+label}</span>
+            </button>
+          );
+        })}
+        <button type="button" className={"lp-mobile-tab" + (sidebarCollapsed === false ? " active" : "")} onClick={() => { setSidebarCollapsed((c) => !c); setMobileMoreOpen(false); }}>
+          <Folder size={21} />
+          <span>Dossiers</span>
+        </button>
+        <button type="button" className={"lp-mobile-tab" + (mobileMoreOpen ? " active" : "")} onClick={() => setMobileMoreOpen((o) => !o)}>
+          <MoreHorizontal size={21} />
+          {unreadNotificationsCount > 0 && <span className="lp-tab-badge lp-mobile-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
+          <span>Plus</span>
+        </button>
+      </nav>
+      {mobileMoreOpen && (
+        <>
+          <div className="lp-mobile-sheet-overlay" onMouseDown={() => setMobileMoreOpen(false)} onTouchStart={() => setMobileMoreOpen(false)} />
+          <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
+            <div className="lp-mobile-sheet-handle" />
+            <div className="lp-mobile-sheet-grid">
+              {ALL_VIEWS_META.filter((v) => !["control", "projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
                 <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
                   <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
                   <span>{meta.label}</span>
@@ -3839,6 +3859,27 @@ function treemapCriticalityLevel(score) {
   return level;
 }
 
+// Prochaines tâches d'un projet : les non terminées qui portent une échéance,
+// de la plus ancienne à la plus récente. La liste est plafonnée à la source —
+// au-delà, aucune tuile ne pourrait les afficher.
+const TREEMAP_UPCOMING_MAX = 8;
+// Hauteur d'une ligne de la liste, en pixels : c'est elle qui décide combien de
+// tâches tiennent dans une tuile donnée.
+const TREEMAP_UPCOMING_LINE_H = 14;
+
+// Largeur en deçà de laquelle un titre de tâche ne reste pas lisible : une
+// puce suivie de trois points n'apprend rien, autant ne rien afficher.
+const TREEMAP_UPCOMING_MIN_W = 110;
+
+// Combien de tâches tiennent dans la place restante. Zéro si la place manque :
+// mieux vaut aucune ligne qu'une ligne coupée en deux.
+function treemapUpcomingCapacity(tileHeight, reservedHeight, tileWidth) {
+  if (tileWidth !== undefined && (Number(tileWidth) || 0) < TREEMAP_UPCOMING_MIN_W) return 0;
+  const free = (Number(tileHeight) || 0) - (Number(reservedHeight) || 0);
+  if (!Number.isFinite(free) || free < TREEMAP_UPCOMING_LINE_H) return 0;
+  return Math.max(0, Math.min(TREEMAP_UPCOMING_MAX, Math.floor(free / TREEMAP_UPCOMING_LINE_H)));
+}
+
 // Poids minimal d'une tuile : un projet dont le COUNT() est nul reste visible
 // (quand le réglage le demande) sans jamais écraser les projets qui portent
 // réellement des tâches.
@@ -3879,6 +3920,7 @@ function computeTreemapProjects(input) {
     let nextMilestone = null;
     const statusTally = new Map();
     const ownerTally = new Map();
+    const upcoming = [];
 
     sized.forEach((t) => {
       const facts = factsOf(t) || {};
@@ -3894,6 +3936,7 @@ function computeTreemapProjects(input) {
           nextMilestone = { id: t.id, title: t.title, date: t.end, daysToDue: days };
         }
       }
+      if (!facts.done && t.end) upcoming.push({ id: t.id, title: t.title, end: t.end, late: !!facts.late });
       if (t.statusId) statusTally.set(t.statusId, (statusTally.get(t.statusId) || 0) + 1);
       const owner = typeof t.assignee === "string" ? t.assignee.trim() : "";
       if (owner) ownerTally.set(owner, (ownerTally.get(owner) || 0) + 1);
@@ -3905,6 +3948,9 @@ function computeTreemapProjects(input) {
       return key;
     };
 
+    // De la plus ancienne à la plus récente : les échéances dépassées viennent
+    // donc naturellement en tête, là où le regard se pose.
+    upcoming.sort((a, b) => a.end.localeCompare(b.end) || String(a.title || "").localeCompare(String(b.title || "")));
     const criticalityScore = sized.length ? Math.round(criticalitySum / sized.length) : 0;
     rows.push({
       project,
@@ -3921,6 +3967,8 @@ function computeTreemapProjects(input) {
       nextMilestone,
       dominantStatusId: best(statusTally),
       owner: best(ownerTally),
+      upcoming: upcoming.slice(0, TREEMAP_UPCOMING_MAX),
+      upcomingTotal: upcoming.length,
       ...(extras[project.id] || {}),
     });
   });
@@ -4172,6 +4220,7 @@ function normalizeProjectTreemapConfig(widget) {
     showZeroProjects: w.treemapShowZeroProjects === true,
     fields,
     showProgressRing: w.treemapShowProgressRing !== false,
+    showUpcoming: w.treemapShowUpcoming === true,
     groupBy: TREEMAP_GROUP_BY.includes(w.treemapGroupBy) ? w.treemapGroupBy : "none",
     compact: w.treemapCompact === true,
     showLegend: w.treemapShowLegend !== false,
@@ -12897,49 +12946,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
   const homeDated = useMemo(() => ((embedded || !isHomepage) ? [] : (ctx.tasks || []).filter((t) => t.start && t.end)), [ctx.tasks, embedded, isHomepage]);
   const lateTasks = useMemo(() => ((embedded || !isHomepage) ? [] : homeDated.filter((t) => isTaskLate(t, ctx)).sort((a, b) => a.end.localeCompare(b.end)).slice(0, 4)), [homeDated, ctx, embedded, isHomepage]);
   const upcomingTasks = useMemo(() => ((embedded || !isHomepage) ? [] : homeDated.filter((t) => !isTaskDoneGlobal(t, ctx) && t.end >= now).sort((a, b) => a.end.localeCompare(b.end)).slice(0, 4)), [homeDated, ctx, embedded, isHomepage, now]);
-  const homeStats = useMemo(() => {
-    if (embedded || !isHomepage || homeDated.length === 0) return null;
-    const doneCount = homeDated.filter((t) => isTaskDoneGlobal(t, ctx)).length;
-    const byStatus = {};
-    homeDated.forEach((t) => {
-      const st = ctx.statuses.find((s) => s.id === t.statusId);
-      const key = st?.name || "Sans statut";
-      byStatus[key] = byStatus[key] || { count: 0, color: st?.color || "var(--text-muted)" };
-      byStatus[key].count++;
-    });
-    return {
-      avgProgress: Math.round((doneCount / homeDated.length) * 100),
-      byStatus: Object.entries(byStatus).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.count - a.count),
-      total: homeDated.length,
-      activeProjects: new Set(homeDated.map((t) => t.projectId)).size,
-      lateCount: homeDated.filter((t) => isTaskLate(t, ctx)).length,
-    };
-  }, [dated, ctx, embedded]);
-  const firstName = (ctx.myName || "").split(" ")[0] || "";
-
-  return (
-    <>
-      {!embedded && isHomepage && homeStats && (
-        <div className="lp-metro-home-greet">
-          <div>
-            <h2 className="lp-display" style={{ fontSize: 22, margin: "0 0 4px" }}>Bonjour{firstName ? `, ${firstName}` : ""} 👋</h2>
-            <p style={{ margin: 0, fontSize: 13, color: "var(--text-600)", fontWeight: 500 }}>
-              {homeStats.activeProjects} projet{homeStats.activeProjects > 1 ? "s" : ""} actif{homeStats.activeProjects > 1 ? "s" : ""}
-              {homeStats.lateCount > 0 ? ` · ${homeStats.lateCount} tâche${homeStats.lateCount > 1 ? "s" : ""} en retard` : " · aucun retard"}
-              {upcomingTasks[0] ? ` · prochaine échéance le ${fmtShort(upcomingTasks[0].end)}` : ""}
-            </p>
-          </div>
-        </div>
-      )}
-      <div className="lp-pm-wrap lp-pm-quai" ref={pmChromeRef}>
-      <ViewToolbarPortal slot={toolbarSlot}>
-        <DropdownButton label="" icon={<Maximize2 size={14} />} title={`Zoom : ${isAuto ? "Automatique" : zoomDef.label}`}>
-          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-zoom" checked={zoomKey === "auto"} onChange={() => setZoomKey("auto")} /> Automatique (pleine largeur)</label>
-          <hr className="lp-divider" style={{ margin: "6px 0" }} />
-          {PROJECT_METRO_ZOOMS.map((z) => (
-            <label className="lp-checkbox-line" key={z.key}><input type="radio" name="lp-pm-zoom" checked={zoomKey === z.key} onChange={() => setZoomKey(z.key)} /> {z.label}</label>
-          ))}
-        </DropdownButton>
-        <DropdownButton label="" icon={<Layers size={14} />} title={`Grouper par : ${metroGroupBy === "folder" ? "Dossier" : "Projet"}`}>
-          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "project"} onChange={() => setMetroGroupBy("project")} /> Projet (une ligne par projet)</label>
-          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metro
+  c
