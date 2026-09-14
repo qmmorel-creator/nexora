@@ -1,7 +1,18 @@
 // ---- Banc d'essai local (scratchpad, jamais committé) : monte le Gantt
 // complet et le Mini-Gantt sur les données de démonstration, sans Firebase.
 function AnnotationsHarness() {
-  const [tasks, setTasks] = useState(seedTasks);
+  // Les risques de délai vivent sur la tâche : ils doivent apparaître dans
+  // TOUS les Mini-Gantt qui affichent cette tâche, quelle que soit la
+  // configuration de chaque widget.
+  const seedWithRisks = seedTasks.map((t) => {
+    if (t.id === "t1") return { ...t, delayRisks: [
+      { id: "rk1", title: "Fournisseur", severity: "high", style: "hatched" },
+      { id: "rk2", title: "Météo", severity: "low", style: "dashed", color: "#F2A93B" },
+    ] };
+    if (t.id === "t4") return { ...t, delayRisks: [{ id: "rk3", title: "Validation tardive", severity: "medium", style: "solid", color: "#8B5CF6" }] };
+    return t;
+  });
+  const [tasks, setTasks] = useState(seedWithRisks);
   const [projects, setProjects] = useState(seedProjects);
   const [statuses, setStatuses] = useState(seedStatuses);
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], customFieldDefs: [], expenses: [], risks: [], myName: null };
@@ -27,12 +38,6 @@ function AnnotationsHarness() {
       { id: "ms1", title: "Décision CODIR", date: "2026-08-18", type: "decision" },
       { id: "ms2", title: "Mise en service", date: "2026-09-22", type: "commissioning" },
     ],
-    risks: [
-      { id: "rk1", taskId: "t1", title: "Fournisseur", severity: "high", style: "hatched" },
-      { id: "rk2", taskId: "t1", title: "Météo", severity: "low", style: "dashed", color: "#F2A93B" },
-      { id: "rk3", taskId: "t4", title: "Validation tardive", severity: "medium", style: "solid", color: "#8B5CF6" },
-      { id: "rk4", taskId: "disparue", title: "Tâche supprimée", severity: "critical" },
-    ],
     notes: [
       { id: "n1", title: "Relance hebdo", text: "Point fournisseur le lundi.", anchor: { kind: "task", id: "t2" } },
     ],
@@ -40,6 +45,9 @@ function AnnotationsHarness() {
   const [prefs, setPrefsState] = useState({ ganttGroupBy: "project", bubbleFields: ["status", "project"], ganttCols: ["status", "start", "end"], zoomKey: "week", ...annotations });
   const setPrefs = (patch) => setPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
   const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["status", "end"], ganttAnnotations: miniAnnotations });
+  // Second widget SANS aucune annotation propre : seuls les risques portés par
+  // les tâches doivent y apparaître.
+  const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });
   const [toolbar, setToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
   // déroulantes des annotations ne proposent que les tâches retenues par le
@@ -64,6 +72,14 @@ function AnnotationsHarness() {
         <button type="button" id="harness-open-widget-form" onClick={() => setFormOpen(true)} style={{ marginBottom: 8 }}>
           Ouvrir la fiche du widget (filtre projet p2)
         </button>
+        <div id="harness-second-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={otherWidget} tasks={tasks} ctx={ctx} onOpen={noop}
+            onUpdateWidget={(patch) => setOtherWidget((w) => ({ ...w, ...patch }))}
+            onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
+            groupBy="none"
+          />
+        </div>
         {formOpen && (
           <WidgetFormModal
             widget={{ ...miniWidget, filter: { ...widgetDefaultFilter(), projectIds: ["p2"] } }}
@@ -74,7 +90,7 @@ function AnnotationsHarness() {
             onClose={() => setFormOpen(false)}
           />
         )}
-        <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700 }}>
+        <div id="harness-first-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700 }}>
           <WidgetMiniGantt
             widget={miniWidget} tasks={tasks} ctx={ctx} onOpen={noop}
             onUpdateWidget={(patch) => setMiniWidget((w) => ({ ...w, ...patch }))}

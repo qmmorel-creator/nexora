@@ -64,17 +64,18 @@ const seen = await page.evaluate(() => {
     ganttBlockLabels: rects(".lp-gantt-tblock-label"),
     ganttFrames: rects(".lp-gantt-frame"),
     ganttFrameLabels: rects(".lp-gantt-frame-label"),
-    miniBlocks: document.querySelectorAll(".lp-widget-minigantt-tblock").length,
-    miniPhases: rects(".lp-widget-minigantt-phase"),
-    miniFrames: rects(".lp-widget-minigantt-frame"),
-    miniFrameLabels: rects(".lp-widget-minigantt-frame-label"),
-    miniRows: rects(".lp-widget-minigantt-row"),
-    miniBands: rects(".lp-widget-minigantt-tblock"),
-    miniDecisions: rects(".lp-widget-minigantt-phase.is-decision"),
+    miniBlocks: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-tblock").length,
+    miniPhases: rects("#harness-first-minigantt .lp-widget-minigantt-phase"),
+    miniFrames: rects("#harness-first-minigantt .lp-widget-minigantt-frame"),
+    miniFrameLabels: rects("#harness-first-minigantt .lp-widget-minigantt-frame-label"),
+    miniRows: rects("#harness-first-minigantt .lp-widget-minigantt-row"),
+    miniBands: rects("#harness-first-minigantt .lp-widget-minigantt-tblock"),
+    miniDecisions: rects("#harness-first-minigantt .lp-widget-minigantt-phase.is-decision"),
     miniRisks: rects(".lp-widget-minigantt-risk"),
-    miniRiskLabels: rects(".lp-widget-minigantt-risk-label"),
-    miniMarkers: rects(".lp-widget-minigantt-marker"),
-    miniLegend: rects(".lp-widget-minigantt-legend-item"),
+    secondRisks: rects("#harness-second-minigantt .lp-widget-minigantt-risk"),
+    miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
+    miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
+    miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
   };
 });
 
@@ -87,7 +88,7 @@ await page.screenshot({ path: shot, fullPage: true });
 // brut sans que rien ne le signale.
 const dropdown = { triggers: 0, before: 0, after: 0, chosen: "" };
 try {
-  await page.getByRole("button", { name: "+ Risque" }).click();
+  await page.locator("#harness-first-minigantt").getByRole("button", { name: "+ Risque" }).click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   const triggers = page.locator(".lp-modal .lp-activity-search-trigger");
   dropdown.triggers = await triggers.count();
@@ -147,7 +148,10 @@ expect(seen.miniPhases.length === 3, `Mini-Gantt : ${seen.miniPhases.length} tit
 expect(seen.miniDecisions.length === 1, `Mini-Gantt : ${seen.miniDecisions.length} fenêtre(s) de décision, 1 attendue`);
 // Trois risques portent sur une tâche visible, le quatrième vise une tâche
 // supprimée : il doit être ignoré sans erreur.
-expect(seen.miniRisks.length === 3, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque, 3 attendus (le risque d'une tâche supprimée est ignoré)`);
+expect(seen.miniRisks.length === 6, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque au total, 6 attendus (3 par widget)`);
+// Les risques appartiennent à la tâche : le second widget, sans aucune
+// annotation propre, doit les afficher lui aussi.
+expect(seen.secondRisks.length === 3, `Second Mini-Gantt : ${seen.secondRisks.length} couloir(s) de risque, 3 attendus — un risque porté par la tâche doit apparaître dans tous les widgets`);
 expect(seen.miniRiskLabels.length > 0, "Mini-Gantt : aucun risque n'affiche son étiquette");
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
