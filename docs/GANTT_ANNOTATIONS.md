@@ -80,6 +80,17 @@ diagramme ; les Gantt existants fonctionnent sans changement.
     une bande claire à chaque en-tête. Le rail de chaque ligne
     (`.lp-widget-minigantt-track`) est translucide pour la même raison : plein,
     il coupait la bande d'un trait clair par ligne.
+
+- Le **titre** d'un bloc s'affiche différemment selon le diagramme : étiquette
+  verticale près du bord gauche dans le Gantt complet ; dans le Mini-Gantt, une
+  bande d'en-tête propre, sous le contexte de dates et au-dessus des lignes, où
+  chaque titre est un libellé horizontal aligné sur son bloc. Deux blocs qui se
+  chevauchent dans le temps occupent deux lignes de cette bande, jamais le même
+  emplacement.
+
+- Les éléments de tâche restent lisibles **dans** un bloc : la barre est posée
+  sur une base opaque plutôt que de prendre la teinte de la bande, elle porte un
+  contour fin, et un jalon à icône reçoit un halo clair.
 - Les unités diffèrent parce que les deux diagrammes ne positionnent pas leurs
   barres pareil : pixels et jour de fin inclus dans le Gantt complet,
   pourcentages et bornage à la fenêtre affichée dans le Mini-Gantt. Chaque bloc

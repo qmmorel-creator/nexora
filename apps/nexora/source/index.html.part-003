@@ -1,4 +1,27 @@
 
+      w = newW;
+      const newH = clamp(h - dRows, 2, y + h);
+      y = y + h - newH;
+      h = newH;
+    }
+
+    x = clamp(x, 0, DASHBOARD_COLS - w);
+    y = Math.max(0, y);
+
+    return { x, y, w, h };
+  };
+
+  // Conversion d'une taille pixel réelle vers la grille.
+  // Le coin opposé est conservé strictement en coordonnées de grille.
+  const snapResizeBoxToLayout = (baseLayout, corner, box) => {
+    const cellUnit = cellW + DASHBOARD_GAP;
+    const rowUnit = DASHBOARD_ROW_H + DASHBOARD_GAP;
+
+    const newW = clamp(
+      Math.round((box.width + DASHBOARD_GAP) / cellUnit),
+      2,
+      DASHBOARD_COLS
+    );
     const newH = clamp(
       Math.round((box.height + DASHBOARD_GAP) / rowUnit),
       2,
@@ -2352,12 +2375,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         widthPct: Math.max(0.6, ((to - from) / span) * 100),
       });
     });
-    // Étiquettes décalées quand deux blocs commencent presque au même endroit :
-    // aucune ne reste définitivement masquée derrière une autre.
-    const placed = [];
+    // Les titres vivent sur une bande d'en-tête, sous les dates : deux blocs qui
+    // se chevauchent dans le temps sont répartis sur deux lignes plutôt que de
+    // superposer leurs titres.
+    const laneEnds = [];
     shapes.slice().sort((a, b) => a.leftPct - b.leftPct).forEach((shape) => {
-      shape.labelOffset = placed.filter((x) => Math.abs(x.leftPct - shape.leftPct) < 2.5).length * 13;
-      placed.push(shape);
+      let lane = laneEnds.findIndex((end) => shape.leftPct >= end + 0.5);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+      laneEnds[lane] = shape.leftPct + shape.widthPct;
+      shape.lane = lane;
     });
     return shapes;
   }, [temporalBlocks, minIdx, maxIdx, span]);
@@ -2507,7 +2533,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       >
         <RowLabel t={t} proj={proj} />
         <div className="lp-widget-minigantt-track">
-          <div className="lp-widget-minigantt-bar" style={{ left: left + "%", width: width + "%", background: paleBg }}>
+          <div className="lp-widget-minigantt-bar" style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}>
             {/* Progression visuelle : portion remplie de la couleur pleine du
                 statut/projet/type, sur fond pâle de la même couleur pour le
                 reste de la durée — cohérent avec le diagramme de Gantt complet. */}
@@ -2617,6 +2643,43 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // morceaux que de groupes, avec une bande blanche à chaque en-tête.
   // Les lignes portent z-index 1 : la bande reste donc sous les barres et les
   // jalons sans avoir à s'insérer dans chaque piste.
+  const phaseLaneCount = temporalBlockShapes.length
+    ? Math.max(...temporalBlockShapes.map((shape) => shape.lane)) + 1
+    : 0;
+
+  // Titre du bloc : une bande propre placée sous le contexte de dates et
+  // au-dessus des lignes, plutôt qu'une étiquette verticale posée sur les
+  // barres. Les proportions reprennent exactement celles d'une ligne
+  // (étiquette 26 %, gouttière 6 px, colonne de champs fixe) pour rester
+  // alignées sur la piste.
+  const phasesHeader = !temporalBlockShapes.length ? null : (
+    <div className="lp-widget-minigantt-phases" style={{ height: phaseLaneCount * 18 - 2 }}>
+      <span className="lp-widget-minigantt-phases-spacer" />
+      <div className="lp-widget-minigantt-phases-track">
+        {temporalBlockShapes.map((shape) => (
+          <button
+            key={shape.block.id}
+            type="button"
+            className="lp-widget-minigantt-phase"
+            style={{
+              left: `${shape.leftPct}%`,
+              width: `${shape.widthPct}%`,
+              top: shape.lane * 18,
+              color: shape.block.color,
+              borderColor: shape.block.color,
+              background: "color-mix(in srgb, " + shape.block.color + " 12%, var(--surface))",
+            }}
+            title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
+            onClick={() => setAnnotationPanel({ section: "blocks", focusId: shape.block.id })}
+          >
+            {shape.block.title}
+          </button>
+        ))}
+      </div>
+      {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
+    </div>
+  );
+
   const bandLayer = (!rowsBand || !temporalBlockShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-band-layer"
@@ -2647,28 +2710,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // sur la même bande horizontale que la grille de fond. Ce sont des variables
   // et non des composants définis ici : un composant recréé à chaque rendu
   // remonterait l'éditeur et lui ferait perdre son état de saisie.
-  const annotationLayer = (!rowsBand || (!temporalBlockShapes.length && !frameShapes.length)) ? null : (
+  const annotationLayer = (!rowsBand || !frameShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-annot-layer"
       style={{ left: "calc(26% + 6px)", right: fieldsLayout === "aligned" ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
     >
-      {temporalBlockShapes.map((shape) => (
-        <button
-          key={shape.block.id}
-          type="button"
-          className="lp-widget-minigantt-tblock-label"
-          style={{
-            left: `calc(${shape.leftPct}% + ${3 + shape.labelOffset}px)`,
-            top: rowsBand.top + 2,
-            maxHeight: Math.max(12, rowsBand.height - 4),
-            color: shape.block.color,
-          }}
-          title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
-          onClick={() => setAnnotationPanel({ section: "blocks", focusId: shape.block.id })}
-        >
-          {shape.block.title}
-        </button>
-      ))}
       {frameShapes.map((seg) => {
         const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
         const to = Math.max(minIdx, Math.min(maxIdx, seg.endIdx));
@@ -2734,6 +2780,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
         {bandLayer}
         <Axis />
+        {phasesHeader}
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
           {projTasks.map(Row)}
@@ -2751,6 +2798,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
       {bandLayer}
       <Axis />
+      {phasesHeader}
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
         return (
