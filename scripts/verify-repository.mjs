@@ -82,4 +82,17 @@ assert.match(builtSource, /className="lp-gantt-tblock"/);
 assert.match(builtSource, /className="lp-gantt-frame"/);
 assert.match(builtSource, /className="lp-widget-minigantt-tblock"/);
 assert.match(builtSource, /className="lp-widget-minigantt-frame"/);
+// Réglages : chaque onglet déclaré doit avoir un volet rendu. Un onglet listé
+// dans la barre latérale mais sans branche `activeTab === "…"` s'ouvre sur un
+// panneau VIDE, sans la moindre erreur — c'est exactement ce qui est arrivé en
+// supprimant l'onglet Todoist : la coupure a emporté les cinq volets voisins.
+{
+  const tabsBlock = builtSource.slice(builtSource.indexOf("const SETTINGS_TABS = ["));
+  const declared = [...tabsBlock.slice(0, tabsBlock.indexOf("];")).matchAll(/\{ key: "(\w+)"/g)].map((m) => m[1]);
+  assert.ok(declared.length >= 10, `SETTINGS_TABS introuvable ou tronqué (${declared.length} onglets)`);
+  const rendered = new Set([...builtSource.matchAll(/activeTab === "(\w+)"/g)].map((m) => m[1]));
+  const orphans = declared.filter((key) => !rendered.has(key));
+  assert.deepEqual(orphans, [], `Onglets de Réglages sans volet rendu : ${orphans.join(", ")}`);
+}
+
 console.log("Repository invariants: OK");
