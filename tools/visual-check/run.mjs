@@ -78,11 +78,40 @@ const seen = await page.evaluate(() => {
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
+    treemapTiles: rects("#harness-treemap .lp-widget-treemap-tile"),
+    treemapNames: rects("#harness-treemap .lp-widget-treemap-tile-name"),
+    treemapRings: document.querySelectorAll("#harness-treemap .lp-widget-treemap-ring").length,
+    treemapLegend: rects("#harness-treemap .lp-widget-treemap-legend-item"),
+    treemapBox: (() => { const r = document.querySelector("#harness-treemap .lp-widget-treemap-scroll").getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })(),
+    narrowTiles: rects("#harness-treemap-narrow .lp-widget-treemap-tile"),
+    narrowBox: (() => { const r = document.querySelector("#harness-treemap-narrow .lp-widget-treemap-scroll").getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })(),
   };
 });
 
 const shot = path.join(dir, "annotations.png");
 await page.screenshot({ path: shot, fullPage: true });
+
+// Treemap projets : le clic ouvre le bon projet, et la fiche du widget expose
+// bien le filtre de taille, le filtre de coloration et les champs des tuiles.
+const treemap = { opened: "", fieldRows: 0, colorModes: 0, sizeFilterFields: 0 };
+try {
+  const biggest = page.locator("#harness-treemap .lp-widget-treemap-tile").first();
+  await biggest.click();
+  await page.waitForTimeout(250);
+  treemap.opened = (await page.locator("#harness-treemap-opened").innerText()).trim();
+  await page.locator("#harness-open-treemap-form").click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  treemap.colorModes = await page.locator(".lp-modal .lp-density-btn", { hasText: /Même filtre|Second filtre|Criticité moyenne/ }).count();
+  treemap.fieldRows = await page.locator(".lp-modal .lp-gantt-annot-head").count();
+  await page.locator(".lp-modal .lp-widget-appearance-toggle", { hasText: "Tâches comptées pour la surface" }).click();
+  await page.waitForTimeout(300);
+  treemap.sizeFilterFields = await page.locator(".lp-modal .lp-widget-appearance-panel .lp-filter-multiselect, .lp-modal .lp-widget-appearance-panel .lp-field").count();
+  await page.locator(".lp-modal").getByRole("button", { name: "Annuler" }).click();
+  await page.waitForTimeout(400);
+} catch (error) {
+  treemap.error = String(error).split("\n")[0];
+}
 
 // Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
 // présente, cochée pour cette tâche, et son habillage réglable au même endroit.
@@ -220,6 +249,43 @@ expect(dropdown.triggers > 0, "Paramètres : la sélection de tâche d'un risque
 expect(dropdown.before > 1, `Paramètres : la liste déroulante ne propose que ${dropdown.before} option(s)`);
 expect(dropdown.after > 0 && dropdown.after < dropdown.before, `Paramètres : la recherche rapide ne filtre pas (${dropdown.before} → ${dropdown.after})`);
 expect(/Revue DOE/.test(dropdown.chosen), `Paramètres : la sélection ne s'applique pas (« ${dropdown.chosen} »)`);
+
+// --- Treemap projets -------------------------------------------------------
+// Une tuile = un projet : jamais plus de tuiles que de projets du jeu d'essai.
+expect(seen.treemapTiles.length > 0, "Treemap : aucune tuile dessinée");
+expect(seen.treemapTiles.length <= 4, `Treemap : ${seen.treemapTiles.length} tuiles pour 4 projets — une tuile doit représenter un projet, jamais une tâche`);
+expect(seen.treemapRings > 0, "Treemap : aucun anneau de progression");
+expect(seen.treemapLegend.length > 0, "Treemap : légende absente alors que la coloration est active");
+seen.treemapTiles.forEach((t, i) => {
+  expect(t.w > 4 && t.h > 4, `Treemap : tuile ${i + 1} de surface nulle (${t.w}×${t.h})`);
+  expect(
+    t.x >= seen.treemapBox.x - 1 && t.y >= seen.treemapBox.y - 1
+      && t.x + t.w <= seen.treemapBox.x + seen.treemapBox.w + 1
+      && t.y + t.h <= seen.treemapBox.y + seen.treemapBox.h + 1,
+    `Treemap : la tuile « ${t.text.split("\n")[0]} » déborde du cadre du widget`
+  );
+});
+for (let i = 0; i < seen.treemapTiles.length; i++) {
+  for (let j = i + 1; j < seen.treemapTiles.length; j++) {
+    const a = seen.treemapTiles[i], b = seen.treemapTiles[j];
+    const overlap = a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1;
+    expect(!overlap, `Treemap : deux tuiles se chevauchent (${a.text.split("\n")[0]} / ${b.text.split("\n")[0]})`);
+  }
+}
+// Widget étroit : les tuiles se simplifient, elles ne débordent pas.
+expect(seen.narrowTiles.length > 0, "Treemap étroit : aucune tuile");
+seen.narrowTiles.forEach((t) => {
+  expect(
+    t.x + t.w <= seen.narrowBox.x + seen.narrowBox.w + 1 && t.y + t.h <= seen.narrowBox.y + seen.narrowBox.h + 1,
+    `Treemap étroit : une tuile déborde du cadre (${t.w}×${t.h})`
+  );
+});
+
+expect(!treemap.error, `contrôle du Treemap interrompu : ${treemap.error}`);
+expect(treemap.opened === "p1" || treemap.opened === "p2" || treemap.opened === "p3" || treemap.opened === "p4", `Treemap : le clic n'ouvre pas un projet (« ${treemap.opened} »)`);
+expect(treemap.colorModes === 3, `Treemap : ${treemap.colorModes} mode(s) de coloration dans la fiche, 3 attendus`);
+expect(treemap.fieldRows >= 5, `Treemap : ${treemap.fieldRows} champ(s) de tuile réordonnables, au moins 5 attendus`);
+expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas le moteur de filtres avancés");
 
 expect(!taskMeta.error, `contrôle de la fiche de tâche interrompu : ${taskMeta.error}`);
 expect(taskMeta.checkbox === 1, "Fiche de tâche : la case « méta bloc temporel » est absente d'une tâche de projet Google Calendar");
