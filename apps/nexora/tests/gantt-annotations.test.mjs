@@ -386,3 +386,59 @@ test("normaliser deux fois une liste ne change plus rien", () => {
   assert.equal(zero.startOffset, 0);
   assert.equal(zero.endOffset, 4);
 });
+
+const TASKRISK = vm.runInThisContext(
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeTaskDelayRisks, collectTaskDelayRisks, applyTaskDelayRisks, miniGanttRiskSegments, MINIGANTT_RISK_DEFAULT_DAYS };\n})`
+)();
+
+test("les risques de délai sont portés par la tâche, pas par le widget", () => {
+  const tasks = [
+    { id: "t1", delayRisks: [{ id: "r1", title: "Fournisseur", severity: "high" }, { id: "r2", title: "Météo" }] },
+    { id: "t2", delayRisks: [] },
+    { id: "t3" },
+    { id: "t4", delayRisks: "pas une liste" },
+    null,
+  ];
+  const flat = TASKRISK.collectTaskDelayRisks(tasks);
+  assert.deepEqual(flat.map((r) => [r.taskId, r.id]), [["t1", "r1"], ["t1", "r2"]]);
+  // La liste à plat est directement exploitable par le calcul des couloirs.
+  const segments = TASKRISK.miniGanttRiskSegments([{ id: "t1", startIdx: 0, endIdx: 10 }], flat);
+  assert.equal(segments.length, 2);
+  assert.equal(segments[0].endIdx - segments[0].startIdx, TASKRISK.MINIGANTT_RISK_DEFAULT_DAYS.high);
+  assert.deepEqual(TASKRISK.collectTaskDelayRisks(undefined), []);
+
+  // Un risque stocké sur la tâche ne porte pas d'identifiant de tâche redondant.
+  const [stored] = TASKRISK.normalizeTaskDelayRisks([{ id: "r1", title: "A" }]);
+  assert.ok(!("taskId" in stored));
+  assert.equal(stored.severity, "medium");
+});
+
+test("réécrire la liste à plat ne touche que les tâches réellement changées", () => {
+  const tasks = [
+    { id: "t1", delayRisks: [{ id: "r1", title: "A", color: "#D64545", style: "hatched", severity: "medium", startOffset: null, endOffset: null }] },
+    { id: "t2", delayRisks: [{ id: "r2", title: "B", color: "#D64545", style: "hatched", severity: "medium", startOffset: null, endOffset: null }] },
+    { id: "t3" },
+  ];
+  const flat = TASKRISK.collectTaskDelayRisks(tasks);
+
+  // Sans changement, aucune écriture — sinon chaque ouverture de l'éditeur
+  // marquerait toutes les tâches comme modifiées.
+  const calls = [];
+  assert.deepEqual(TASKRISK.applyTaskDelayRisks(flat, tasks, (id, patch) => calls.push([id, patch])), []);
+  assert.equal(calls.length, 0);
+
+  // Supprimer le risque de t2 vide bien sa liste : sans ça, la suppression
+  // ne serait jamais enregistrée.
+  const removed = flat.filter((r) => r.taskId !== "t2");
+  const writes = [];
+  assert.deepEqual(TASKRISK.applyTaskDelayRisks(removed, tasks, (id, patch) => writes.push([id, patch])), ["t2"]);
+  assert.deepEqual(writes, [["t2", { delayRisks: [] }]]);
+
+  // Déplacer un risque d'une tâche à l'autre touche les deux.
+  const moved = flat.map((r) => (r.id === "r1" ? { ...r, taskId: "t3" } : r));
+  assert.deepEqual(TASKRISK.applyTaskDelayRisks(moved, tasks, () => {}).sort(), ["t1", "t3"]);
+
+  // Une tâche absente de la liste fournie n'est jamais vidée par erreur.
+  assert.deepEqual(TASKRISK.applyTaskDelayRisks([], [tasks[0]], () => {}), ["t1"]);
+  assert.deepEqual(TASKRISK.applyTaskDelayRisks([], [{ id: "t9" }], () => {}), []);
+});

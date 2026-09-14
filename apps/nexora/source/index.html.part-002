@@ -3270,6 +3270,49 @@ function miniGanttRiskSegments(rows, risks) {
   return segments;
 }
 
+// Les risques de délai appartiennent à la TÂCHE (`task.delayRisks`), pas au
+// widget : le même risque apparaît donc dans tous les Mini-Gantt qui affichent
+// cette tâche. Le registre de risques de Nexora (`nexora:risks`) reste un objet
+// distinct — projet, probabilité et impact — et n'est pas touché.
+function normalizeTaskDelayRisks(list) {
+  return normalizeMiniGanttRisks((Array.isArray(list) ? list : []).map((r) => ({ ...r, taskId: "-" })))
+    .map(({ taskId, ...rest }) => rest);
+}
+
+// Liste à plat, telle que l'attendent miniGanttRiskSegments et l'éditeur.
+function collectTaskDelayRisks(tasks) {
+  const flat = [];
+  (Array.isArray(tasks) ? tasks : []).forEach((t) => {
+    if (!t || !t.id || !Array.isArray(t.delayRisks)) return;
+    normalizeTaskDelayRisks(t.delayRisks).forEach((risk) => flat.push({ ...risk, taskId: t.id }));
+  });
+  return flat;
+}
+
+// Réécrit une liste à plat sur les tâches concernées, en ne touchant que celles
+// dont la liste change réellement — une tâche vidée de ses risques est mise à
+// jour elle aussi, sinon la suppression ne serait jamais enregistrée.
+function applyTaskDelayRisks(flat, tasks, updateTask) {
+  const grouped = new Map();
+  (Array.isArray(flat) ? flat : []).forEach((risk) => {
+    if (!risk || !risk.taskId) return;
+    const { taskId, ...rest } = risk;
+    if (!grouped.has(taskId)) grouped.set(taskId, []);
+    grouped.get(taskId).push(rest);
+  });
+  const touched = [];
+  (Array.isArray(tasks) ? tasks : []).forEach((task) => {
+    if (!task || !task.id) return;
+    const next = grouped.get(task.id) || [];
+    const prev = Array.isArray(task.delayRisks) ? task.delayRisks : [];
+    if (!next.length && !prev.length) return;
+    if (JSON.stringify(prev) === JSON.stringify(next)) return;
+    touched.push(task.id);
+    if (typeof updateTask === "function") updateTask(task.id, { delayRisks: next });
+  });
+  return touched;
+}
+
 // Fenêtre temporelle minimale couvrant une sélection de lignes, élargie d'une
 // marge et des couloirs de risque qui prolongent ces lignes.
 function miniGanttSelectionWindow(rows, selectedIds, riskSegments, pad = 1) {
@@ -3706,7 +3749,7 @@ function MiniGanttAnnotationRow({ item, list, onMove, onDuplicate, onDelete, edi
 
 // Éditeur complet du Mini-Gantt : il réutilise tel quel l'éditeur partagé des
 // blocs et encadrés, et lui ajoute les trois sections propres à ce widget.
-function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, tasks, ctx, defaultStart, defaultEnd, onChange, initialSection, autoCreate, focusId }) {
+function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, tasks, ctx, defaultStart, defaultEnd, onChange, onRisksChange, initialSection, autoCreate, focusId }) {
   const [open, setOpen] = useState({
     milestones: initialSection === "milestones",
     risks: initialSection === "risks",
@@ -3719,7 +3762,9 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
   const taskTitle = (id) => tasks.find((t) => t.id === id)?.title || "Tâche introuvable";
 
   const setMilestones = (next) => onChange({ milestones: next });
-  const setRisks = (next) => onChange({ risks: next });
+  // Les risques appartiennent à la tâche : l'écriture passe par onRisksChange,
+  // jamais par la configuration du widget.
+  const setRisks = (next) => onRisksChange && onRisksChange(next);
   const setNotes = (next) => onChange({ notes: next });
   const patch = (list, setList) => (id, values) => setList(list.map((x) => (x.id === id ? { ...x, ...values } : x)));
   const patchMilestone = patch(milestones, setMilestones);
@@ -3869,7 +3914,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
 
       <MiniGanttListSection
         icon={<ShieldAlert size={13} />} title="Risques" count={risks.length}
-        hint="Chaque risque prolonge la barre de sa tâche. Plusieurs risques sur une même tâche s'enchaînent dans l'ordre de cette liste."
+        hint="Un risque appartient à la tâche : il apparaît dans tous les Mini-Gantt qui l'affichent, et il est enregistré aussitôt. Plusieurs risques sur une même tâche s'enchaînent dans l'ordre de cette liste."
         open={open.risks} onToggle={() => toggle("risks")} onAdd={addRisk} addLabel="Ajouter un risque"
       >
         {risks.map((r) => {
@@ -12694,35 +12739,4 @@ function BulkDatesPicker({ onApplyDates, onShift }) {
   );
 }
 
-function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete, toolbarSlot, prefs, setPrefs, customFieldDefs }) {
-  // Les champs personnalisés s'ajoutent comme colonnes dynamiques, préfixées
-  // "cf:" pour ne jamais entrer en collision avec les colonnes standards.
-  const allColOptions = useMemo(() => [
-    ...TABLE_COL_OPTIONS,
-    ...(customFieldDefs || []).map((f) => ({ key: "cf:" + f.id, label: f.name, w: 130, customField: f })),
-  ], [customFieldDefs]);
-  const cols = prefs.cols || ["project", "status", "start", "end", "progress", "assignee", "lastInteraction", "inactivity"];
-  const setCols = (updater) => setPrefs((p) => ({ ...p, cols: typeof updater === "function" ? updater(p.cols || []) : updater }));
-  const groupBy = prefs.groupBy || "none";
-  const setGroupBy = (v) => setPrefs((p) => ({ ...p, groupBy: v }));
-  const [collapsedGroups, setCollapsedGroups] = useState({});
-  const toggleGroupCollapsed = (key) => setCollapsedGroups((c) => ({ ...c, [key]: !c[key] }));
-  const [selected, setSelected] = useState(new Set());
-  const [newTitle, setNewTitle] = useState("");
-
-  const toggleRow = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleAll = () => setSelected((prev) => (prev.size === tasks.length ? new Set() : new Set(tasks.map((t) => t.id))));
-  const clearSelection = () => setSelected(new Set());
-
-  const updateTask = (id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  const bulkUpdate = (patch) => setTasks((prev) => prev.map((t) => (selected.has(t.id) ? { ...t, ...patch } : t)));
-  const bulkShiftDates = (days) => {
-    if (!days) return;
-    setTasks((prev) => prev.map((t) => (selected.has(t.id) ? { ...t, start: t.start ? addDays(t.start, days) : t.start, end: t.end ? addDays(t.end, days) : t.end } : t)));
-  };
-  const bulkSetDates = (start, end) => {
-    setTasks((prev) => prev.map((t) => (selected.has(t.id) ? { ...t, ...(start ? { start } : {}), ...(end ? { end } : {}) } : t)));
-  };
-
-  const duplicateTask = (t) => {
-    const copy = { ...t, id: uid(), title: t.title + " (c
+function Ta

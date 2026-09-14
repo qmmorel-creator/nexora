@@ -60,9 +60,11 @@ type GanttAnnotations = {
   highlightFrames?: GanttHighlightFrame[];
   // Propres au Mini-Gantt (ignorés par le Gantt complet) :
   milestones?: MiniGanttMilestone[];
-  risks?: MiniGanttTaskRisk[];
   notes?: MiniGanttNote[];
 };
+
+// Les risques de délai NE sont pas ici : ils appartiennent à la tâche.
+type Task = { /* … */ delayRisks?: MiniGanttTaskRisk[] };
 ```
 
 ## Pilotage — Mini-Gantt uniquement
@@ -81,8 +83,8 @@ type MiniGanttMilestone = {
   color?: string; taskId?: string | null;   // un jalon peut n'être rattaché à rien
 };
 
-type MiniGanttTaskRisk = {
-  id: string; taskId: string; title: string;
+type MiniGanttTaskRisk = {   // stocké dans task.delayRisks (sans taskId)
+  id: string; title: string;
   color?: string;
   style?: "solid" | "dashed" | "hatched";
   severity?: "low" | "medium" | "high" | "critical";
@@ -96,7 +98,21 @@ type MiniGanttNote = {
 };
 ```
 
-**Risques** — chaque risque prolonge la barre de sa tâche. Sans décalage
+**Risques** — ils sont portés par la **tâche** (`task.delayRisks`), pas par le
+widget : un même risque apparaît donc dans tous les Mini-Gantt qui affichent
+cette tâche, quelle que soit la configuration de chacun. C'est la seule donnée
+de cet ensemble écrite hors de la configuration du widget, parce qu'un délai
+prévisible est une propriété de la tâche, pas d'un cadrage d'affichage. Le
+registre de risques de Nexora (`nexora:risks`) reste un objet distinct — projet,
+probabilité et impact — et n'est pas touché.
+
+Les listes enregistrées sur un widget avant ce changement sont reprises
+automatiquement : au premier affichage, chaque risque est reversé sur sa tâche
+puis retiré du widget. Un risque dont la tâche n'est pas affichée par ce
+widget-là reste en attente, jusqu'à ce qu'un Mini-Gantt qui la montre s'en
+charge.
+
+Chaque risque prolonge la barre de sa tâche. Sans décalage
 explicite, il reprend là où le précédent s'arrête et dure le nombre de jours de
 sa gravité (2 / 5 / 10 / 15). Deux risques qui se recouvrent malgré tout sont
 empilés sur des couloirs distincts. `null` et `""` valent **absent**, jamais
