@@ -1,4 +1,550 @@
+     <span className="swatch small" style={{ background: tt.color }} /> {tt.name}
+              </button>
+            ))}
+          </DropdownButton>
+          <DropdownButton label="Projet" icon={<Folder size={14} />}>
+            {sortedByName(ctx.projects).map((p) => (
+              <button key={p.id} className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => bulkUpdate({ projectId: p.id })}>
+                <span className="swatch small" style={{ background: p.color }} /> {p.name}
+              </button>
+            ))}
+          </DropdownButton>
+          <DropdownButton label="Responsable" icon={<User size={14} />}>
+            <button className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => bulkUpdate({ assignee: "" })}>
+              <span className="swatch small" style={{ background: "#CBD5E1" }} /> Non assigné
+            </button>
+            {sortedByName(ctx.teamMembers || []).map((u) => (
+              <button key={u.id} className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => bulkUpdate({ assignee: u.name })}>
+                {u.avatarDataUrl ? <IconGlyph icon={u.avatarDataUrl} size={13} /> : <span className="swatch small" style={{ background: u.color }} />} {u.name}
+              </button>
+            ))}
+          </DropdownButton>
+          <DropdownButton label="Jalon" icon={<Milestone size={14} />}>
+            <button className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => bulkUpdate({ milestone: true })}>Oui</button>
+            <button className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => bulkUpdate({ milestone: false })}>Non</button>
+          </DropdownButton>
+          <BulkProgressPicker onApply={(v) => bulkUpdate({ progress: v })} />
+          <BulkDatesPicker onApplyDates={bulkSetDates} onShift={bulkShiftDates} />
+          <button className="lp-tool-btn" onClick={duplicateSelected} title="Dupliquer la sélection"><Bookmark size={14} /></button>
+          <button className="lp-tool-btn lp-filter-btn-danger" onClick={() => { onBulkDelete([...selected], "sélectionnées"); clearSelection(); }} title="Supprimer la sélection"><Trash2 size={14} /></button>
+          <button className="lp-tool-btn" onClick={clearSelection} title="Annuler la sélection"><X size={14} /></button>
+        </div>
+      )}
 
+      <div className="lp-table-scroll">
+        <table className="lp-table">
+          <thead>
+            <tr>
+              <th className="lp-table-th-check"><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
+              <th className="lp-table-th-title">Tâche</th>
+              {cols.map((c) => {
+                const def = allColOptions.find((x) => x.key === c);
+                return <th key={c} style={{ width: def?.w }}>{def?.label}</th>;
+              })}
+              <th className="lp-table-th-actions"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {(() => {
+              const Row = (t) => {
+                const proj = ctx.projects.find((p) => p.id === t.projectId);
+                const st = ctx.statuses.find((s) => s.id === t.statusId);
+                const done = isTaskDoneGlobal(t, ctx);
+                return (
+                  <tr key={t.id} className={selected.has(t.id) ? "lp-table-row-selected" : ""}>
+                    <td className="lp-table-th-check"><input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleRow(t.id)} /></td>
+                    <td className="lp-table-title-cell">
+                      {t.milestone && <MilestoneGlyph size={13} icon={resolveMilestoneIcon(t, ctx)} />}
+                      <InlineTextField value={t.title} onCommit={(v) => updateTask(t.id, { title: v })} style={{ fontWeight: 600, textDecoration: done ? "line-through" : "none", color: done ? "var(--text-600)" : "var(--text-900)" }} />
+                      {t.dependsOn && t.dependsOn.length > 0 && <span className="lp-dep-badge" title={`Dépend de ${t.dependsOn.length} tâche${t.dependsOn.length > 1 ? "s" : ""}`}><GripVertical size={11} />{t.dependsOn.length}</span>}
+                      {t.recurrence && <span className="lp-dep-badge" title="Tâche récurrente"><RefreshCw size={11} /></span>}
+                      {getPrimaryGoogleDriveAttachment(t) && (
+                        <a className="lp-icon-btn lp-drive-quick-link" href={getPrimaryGoogleDriveAttachment(t).url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title={`Ouvrir dans Google Drive${getGoogleDriveAttachments(t).length > 1 ? ` (${getGoogleDriveAttachments(t).length} liens)` : ""}`}><Folder size={13} /></a>
+                      )}
+                      <button className="lp-icon-btn lp-table-open-btn" onClick={() => onOpen(t)} title="Ouvrir la fiche complète"><ChevronRight size={13} /></button>
+                    </td>
+                    {cols.includes("project") && (
+                      <td>
+                        <InlineChipSelect
+                          options={ctx.projects.map((p) => ({ value: p.id, label: p.name, color: p.color }))}
+                          value={t.projectId}
+                          onChange={(v) => updateTask(t.id, { projectId: v })}
+                        />
+                      </td>
+                    )}
+                    {cols.includes("status") && (
+                      <td>
+                        {(() => {
+                          const restrictedStatus = restrictedStatusForType(ctx.taskTypes, ctx.statuses, t.taskTypeId);
+                          if (restrictedStatus) {
+                            return (
+                              <span
+                                className="lp-chip"
+                                title="Statut automatique — imposé par le type de tâche"
+                                style={{
+                                  background:(restrictedStatus.color || "var(--text-muted)") + "18",
+                                  color:restrictedStatus.color || "var(--text-muted)",
+                                  cursor:"default",
+                                  border:"1px solid " + ((restrictedStatus.color || "#64748B") + "30")
+                                }}
+                              >
+                                <Lock size={10} /> {restrictedStatus.name}
+                              </span>
+                            );
+                          }
+                          return (
+                            <InlineChipSelect
+                              options={getStatusesForProject(ctx.statuses, ctx.projects, t.projectId, t.statusId).map((s) => ({ value: s.id, label: s.name, color: s.color }))}
+                              value={t.statusId}
+                              onChange={(v) => updateTask(t.id, { statusId: v })}
+                            />
+                          );
+                        })()}
+                      </td>
+                    )}
+                    {cols.includes("start") && <td>{t.start ? <InlineDateField value={t.start} onCommit={(v) => updateTask(t.id, { start: v })} /> : <span className="lp-empty-cell" onClick={() => updateTask(t.id, { start: iso(new Date()) })}>—</span>}</td>}
+                    {cols.includes("end") && <td>{t.end ? <InlineDateField value={t.end} onCommit={(v) => updateTask(t.id, { end: v })} /> : <span className="lp-empty-cell" onClick={() => updateTask(t.id, { end: iso(new Date()) })}>—</span>}</td>}
+                    {cols.includes("progress") && (
+                      <td>
+                        <div className="lp-table-progress-cell">
+                          <input type="range" min="0" max="100" value={t.progress || 0} onChange={(e) => updateTask(t.id, { progress: Number(e.target.value) })} />
+                          <span>{t.progress || 0}%</span>
+                        </div>
+                      </td>
+                    )}
+                    {cols.includes("assignee") && (
+                      <td>
+                        <InlineChipSelect
+                          options={[{ value: "", label: "Non assigné", color: "#CBD5E1" }, ...sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }))]}
+                          value={t.assignee || ""}
+                          onChange={(v) => updateTask(t.id, { assignee: v })}
+                        />
+                      </td>
+                    )}
+                    {cols.includes("milestone") && (
+                      <td style={{ textAlign: "center" }}><input type="checkbox" checked={getTaskType(t) === "milestone"} onChange={(e) => updateTask(t.id, { type:e.target.checked ? "milestone" : "action", milestone:e.target.checked, end:e.target.checked ? (t.start || t.end) : t.end })} /></td>
+                    )}
+                    {cols.includes("lastInteraction") && (
+                      <td title={formatLastInteraction(t)}><span style={{fontFamily:"var(--font-mono)",fontSize:10}}>{formatLastInteraction(t)}</span></td>
+                    )}
+                    {cols.includes("inactivity") && (
+                      <td><span className="lp-dep-badge" title={`Dernière interaction : ${formatLastInteraction(t)}`}>{formatInteractionAge(t)}</span></td>
+                    )}
+                    {(customFieldDefs || []).filter((f) => cols.includes("cf:" + f.id)).map((f) => {
+                      const val = t.customFields ? t.customFields[f.id] : undefined;
+                      const setVal = (v) => updateTask(t.id, { customFields: { ...(t.customFields || {}), [f.id]: v } });
+                      return (
+                        <td key={f.id}>
+                          {f.type === "text" && <InlineTextField value={val || ""} onCommit={setVal} />}
+                          {f.type === "number" && <input type="number" className="lp-table-inline-number" value={val ?? ""} onChange={(e) => setVal(e.target.value === "" ? "" : Number(e.target.value))} />}
+                          {f.type === "date" && (val ? <InlineDateField value={val} onCommit={setVal} /> : <span className="lp-empty-cell" onClick={() => setVal(iso(new Date()))}>—</span>)}
+                          {f.type === "select" && (
+                            <InlineChipSelect
+                              options={[{ value: "", label: "—", color: "#CBD5E1" }, ...(f.options || []).map((o) => ({ value: o, label: o, color: "var(--text-muted)" }))]}
+                              value={val || ""}
+                              onChange={setVal}
+                            />
+                          )}
+                          {f.type === "checkbox" && <input type="checkbox" checked={!!val} onChange={(e) => setVal(e.target.checked)} style={{ display: "block", margin: "0 auto" }} />}
+                        </td>
+                      );
+                    })}
+                    <td className="lp-table-th-actions">
+                      <button className="lp-icon-btn" onClick={() => duplicateTask(t)} title="Dupliquer cette tâche"><Bookmark size={13} /></button>
+                      <button className="lp-icon-btn" onClick={() => onDelete(t)} title="Supprimer"><Trash2 size={13} /></button>
+                    </td>
+                  </tr>
+                );
+              };
+
+              if (!groupBy || groupBy === "none") return tasks.map(Row);
+
+              const groups = groupTasks(tasks, groupBy, ctx).filter((g) => g.tasks.length > 0);
+              const totalCols = cols.length + 3;
+              return groups.map((g) => {
+                const isCollapsed = !!collapsedGroups[g.key];
+                return (
+                  <React.Fragment key={g.key}>
+                    <tr className="lp-table-group-row" onClick={() => toggleGroupCollapsed(g.key)}>
+                      <td colSpan={totalCols}>
+                        <div className="lp-table-group-head">
+                          <ChevronRight size={12} style={{ transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)" }} />
+                          <span className="lp-table-group-dot" style={{ background: g.color || "var(--text-muted)" }} />
+                          <span className="lp-table-group-label">{g.label}</span>
+                          <span className="lp-table-group-count">{g.tasks.length}</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {!isCollapsed && g.tasks.map(Row)}
+                  </React.Fragment>
+                );
+              });
+            })()}
+            <tr className="lp-table-add-row">
+              <td className="lp-table-th-check"></td>
+              <td colSpan={cols.length + 2}>
+                <div className="lp-table-add-inner">
+                  <Plus size={14} />
+                  <input
+                    type="text"
+                    placeholder="Nouvelle tâche… (Entrée pour valider)"
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addQuickTask()}
+                  />
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        {tasks.length === 0 && <div className="lp-empty" style={{ padding: 24 }}>Aucune tâche.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Tableau de bord modulable — widgets configurables (chiffres, graphiques, listes)
+// ============================================================================
+const WIDGET_METRICS = [
+  { key: "count", label: "Nombre de tâches" },
+  { key: "avgProgress", label: "Avancement moyen (%)" },
+  { key: "milestoneCount", label: "Nombre de jalons" },
+  { key: "urgentCount", label: "Nombre de tâches urgentes" },
+];
+
+const CUSTOM_CARD_BLOCK_TYPES = [
+  { key:"aggregate", label:"Agrégation standard" },
+  { key:"customAggregate", label:"Agrégation d'un champ numérique" },
+  { key:"taskTitle", label:"Titre de la tâche" },
+  { key:"project", label:"Projet" },
+  { key:"status", label:"Statut" },
+  { key:"start", label:"Date de début" },
+  { key:"end", label:"Date de fin" },
+  { key:"assignee", label:"Responsable" },
+  { key:"progress", label:"Avancement" },
+  { key:"description", label:"Description" },
+  { key:"customField", label:"Champ personnalisé" },
+  { key:"staticText", label:"Texte libre" },
+];
+
+const CUSTOM_CARD_DEFAULT_ICONS = {
+  aggregate:"tabler:calculator",
+  customAggregate:"tabler:chart-bar",
+  taskTitle:"tabler:circle-check",
+  project:"tabler:folder",
+  status:"tabler:traffic-lights",
+  start:"tabler:calendar-event",
+  end:"tabler:calendar-due",
+  assignee:"tabler:user",
+  progress:"tabler:progress",
+  description:"tabler:align-left",
+  customField:"tabler:forms",
+  staticText:"tabler:text-size",
+};
+
+const customCardDefaultBlocks = () => ([
+  { id:uid(), kind:"aggregate", label:"Tâches", metric:"count", emphasis:"hero", showIcon:true, icon:"tabler:calculator", color:"", bgColor:"", showLabel:true, accent:"none" },
+  { id:uid(), kind:"progress", label:"Avancement", emphasis:"normal", showIcon:true, icon:"tabler:progress", color:"", bgColor:"", showLabel:true, accent:"none" },
+  { id:uid(), kind:"end", label:"Échéance", emphasis:"normal", showIcon:true, icon:"tabler:calendar-due", color:"", bgColor:"", showLabel:true, accent:"none" },
+]);
+const WIDGET_GROUPBY_FIELDS = ["project", "status", "taskType", "assignee", "milestone", "period"];
+const CHART_STYLES = [
+  { key: "pie", label: "Camembert" },
+  { key: "bar", label: "Barres verticales" },
+  { key: "barh", label: "Barres horizontales" },
+  { key: "gauge", label: "Jauge (%)" },
+  { key: "line", label: "Courbe d'évolution" },
+  { key: "stackedBar", label: "Barres empilées" },
+];
+const GAUGE_METRICS = [
+  { key: "avgProgress", label: "Avancement moyen" },
+  { key: "doneRatio", label: "Taux de tâches terminées" },
+];
+const AGGREGATE_TYPES = [
+  { key: "sum", label: "Somme" },
+  { key: "avg", label: "Moyenne" },
+  { key: "min", label: "Minimum" },
+  { key: "max", label: "Maximum" },
+];
+
+function widgetDefaultFilter() {
+  return { projectIds: [], projectIdsMode: "is", statusIds: [], statusIdsMode: "is", taskTypeIds: [], taskTypeIdsMode: "is", onlyLate: false, onlyMilestone: false, excludeDone: false, assigneeEmpty: false, dueWithinDays: "", pastDays: "", inactivityDays: "", datePresetField: "end", datePreset: "" };
+}
+
+// Migration douce : les widgets Mini-Gantt / Mini métro créés avant l'introduction
+// du filtre complet stockaient un unique "metroProjectId" / "ganttProjectId". On les
+// convertit à la volée en filtre équivalent (un seul projet coché), sans jamais
+// avoir besoin de toucher aux données déjà enregistrées.
+function widgetFilterFor(w) {
+  if (w.filter) return w.filter;
+  const legacyId = w.metroProjectId || w.ganttProjectId || null;
+  return legacyId ? { ...widgetDefaultFilter(), projectIds: [legacyId] } : widgetDefaultFilter();
+}
+
+function applyWidgetFilter(tasks, filter, ctx) {
+  const f = { ...widgetDefaultFilter(), ...(filter || {}) };
+  return tasks.filter((t) => {
+    if (f.projectIds && f.projectIds.length) {
+      // Même règle que le filtre global : une tâche à deux projets matche si SON
+      // PRINCIPAL OU SON SECONDAIRE est dans la liste — sinon un widget filtré sur
+      // le second projet la faisait disparaître entièrement.
+      const hasNoProject = !t.projectId && !t.secondaryProjectId;
+      const inList =
+        (hasNoProject && f.projectIds.includes(NO_PROJECT_FILTER)) ||
+        (!!t.projectId && f.projectIds.includes(t.projectId)) ||
+        (!!t.secondaryProjectId && f.projectIds.includes(t.secondaryProjectId));
+      if (f.projectIdsMode === "is not" ? inList : !inList) return false;
+    }
+    if (f.statusIds && f.statusIds.length) {
+      const inList = f.statusIds.includes(t.statusId);
+      if (f.statusIdsMode === "is not" ? inList : !inList) return false;
+    }
+    if (f.taskTypeIds && f.taskTypeIds.length) {
+      const inList = f.taskTypeIds.includes(t.taskTypeId);
+      if (f.taskTypeIdsMode === "is not" ? inList : !inList) return false;
+    }
+    if (f.onlyLate && !isTaskLate(t, ctx)) return false;
+    if (f.onlyMilestone && !t.milestone) return false;
+    if (f.excludeDone && isTaskDoneGlobal(t, ctx)) return false;
+    if (f.assigneeEmpty && t.assignee) return false;
+    {
+      const inactivityThreshold = f.inactivityDays !== "" && f.inactivityDays != null
+        ? Number(f.inactivityDays)
+        : (f.inactivityMinDays !== "" && f.inactivityMinDays != null ? Number(f.inactivityMinDays) : null);
+      if (inactivityThreshold != null && !Number.isNaN(inactivityThreshold) && taskInteractionAgeDays(t) <= inactivityThreshold) return false;
+    }
+    if (f.dueWithinDays !== "" && f.dueWithinDays != null) {
+      const days = Number(f.dueWithinDays);
+      if (!Number.isNaN(days)) {
+        const todayIdx = dayIndex(iso(new Date()));
+        const endIdx = dayIndex(t.end);
+        if (endIdx < todayIdx || endIdx > todayIdx + days) return false;
+      }
+    }
+    if (f.pastDays !== "" && f.pastDays != null) {
+      const days = Number(f.pastDays);
+      if (!Number.isNaN(days) && days >= 0 && t.end) {
+        const todayIdx = dayIndex(iso(new Date()));
+        const endIdx = dayIndex(t.end);
+        if (endIdx < todayIdx - days) return false;
+      }
+    }
+    if (f.datePreset) {
+      if (!matchesDatePreset(t[f.datePresetField || "end"], f.datePreset)) return false;
+    }
+    if (f.customFieldConditions && f.customFieldConditions.length) {
+      for (const cond of f.customFieldConditions) {
+        if (!evalFilterCondition(t, cond)) return false;
+      }
+    }
+    // Groupes de conditions multiples ET/OU (imbriqués) — mécanisme le plus
+    // général, utilisé notamment par le filtre de PAGE de tableau de bord.
+    if (f.advanced && f.advanced.items && f.advanced.items.length > 0) {
+      if (!evalFilterGroup(t, f.advanced)) return false;
+    }
+    return true;
+  });
+}
+
+function computeKpiValue(tasks, metric, ctx) {
+  if (tasks.length === 0) return metric === "avgProgress" ? "—" : 0;
+  if (metric === "avgProgress") return Math.round(tasks.reduce((s, t) => s + (Number(t.progress) || 0), 0) / tasks.length) + "%";
+  if (metric === "milestoneCount") return tasks.filter((t) => getTaskType(t) === "milestone").length;
+  if (metric === "urgentCount") return tasks.filter((t) => isTaskUrgent(t, ctx)).length;
+  return tasks.length;
+}
+
+function defaultLayoutForType(type) {
+  if (type === "kpi") return { w: 3, h: 2 };
+  if (type === "customCard") return { w: 5, h: 4 };
+  if (type === "countdown") return { w: 3, h: 3 };
+  if (type === "note") return { w: 4, h: 3 };
+  if (type === "taskDetail") return { w: 8, h: 7 };
+  if (type === "budget") return { w: 4, h: 3 };
+  if (type === "budgetCompare") return { w: 6, h: 4 };
+  if (type === "criticalPath") return { w: 4, h: 5 };
+  if (type === "projectPulse") return { w: 4, h: 6 };
+  if (type === "heatmapMonth") return { w: 9, h: 6 };
+  if (type === "milestoneTimeline") return { w: 6, h: 4 };
+  if (type === "verticalMetroTimeline") return { w: 6, h: 7 };
+  if (type === "metroDeadline") return { w: 8, h: 6 };
+  if (type === "blockers") return { w: 5, h: 5 };
+  if (type === "nextBestAction") return { w: 4, h: 6 };
+  if (type === "dailyBriefing") return { w: 4, h: 7 };
+  if (type === "dominoEffect") return { w: 4, h: 6 };
+  if (type === "projectStory") return { w: 4, h: 7 };
+  if (type === "timeMachine") return { w: 5, h: 5 };
+  if (type === "budgetBurnRate") return { w: 4, h: 5 };
+  if (type === "riskMatrix") return { w: 5, h: 6 };
+  if (type === "automations") return { w: 4, h: 5 };
+  if (type === "automationAlerts") return { w: 4, h: 4 };
+  if (type === "embedMetro" || type === "embedGantt" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
+  if (type === "projectMomentum") return { w: 4, h: 6 };
+  return { w: 6, h: 4 }; // chart / list / minigantt
+}
+
+function computeBudgetStats(projectId, projects, expenses) {
+  const project = projects.find((p) => p.id === projectId);
+  const budgetInitial = Number(project?.budgetInitial) || 0;
+  const budgetActuel = Number(project?.budgetActuel) || budgetInitial;
+  const projectExpenses = expenses.filter((e) => e.projectId === projectId);
+  const totals = { engagee: 0, facturee: 0, payee: 0 };
+  projectExpenses.forEach((e) => { const s = statusOf(e); totals[s] = (totals[s] || 0) + (Number(e.amount) || 0); });
+  const consumed = (totals.engagee || 0) + (totals.facturee || 0) + (totals.payee || 0);
+  const reste = budgetActuel - consumed;
+  const pct = budgetActuel > 0 ? Math.round((consumed / budgetActuel) * 100) : 0;
+  return {
+    project, budgetInitial, budgetActuel,
+    totalEngage: totals.engagee || 0, totalFacturee: totals.facturee || 0, totalPayee: totals.payee || 0,
+    consumed, reste, pct, projectExpenses,
+  };
+}
+
+
+// ---- Grille libre : chaque widget a une position (x,y) et une taille (w,h)
+// exprimées en unités de grille (12 colonnes). Déplacement et redimensionnement
+// se font à la souris, avec un aperçu en transform pendant le geste puis un
+// "snap" sur la grille au relâchement — même logique que le drag des
+// sous-tâches dans la vue Planning Projets (subDragRef plus haut dans ce fichier).
+const DASHBOARD_COLS = 12;
+const DASHBOARD_ROW_H = 68;
+const DASHBOARD_GAP = 14;
+
+// Bin-packing "skyline" : place les widgets sans layout les uns après les
+// autres, dans le premier espace libre en partant du haut, comme le ferait un
+// mur de briques. Utilisé à l'ouverture (widgets importés d'une session
+// précédente) et à l'ajout d'un nouveau widget.
+function packWidgets(widgets) {
+  const colHeights = new Array(DASHBOARD_COLS).fill(0);
+  return widgets.map((w) => {
+    if (w.layout && Number.isFinite(w.layout.x) && Number.isFinite(w.layout.y)) {
+      const { x, y, w: ww, h } = w.layout;
+      for (let c = x; c < x + ww; c++) colHeights[c] = Math.max(colHeights[c], y + h);
+      return w;
+    }
+    const { w: ww, h } = defaultLayoutForType(w.type);
+    let bestX = 0, bestY = Infinity;
+    for (let x = 0; x <= DASHBOARD_COLS - ww; x++) {
+      let y = 0;
+      for (let c = x; c < x + ww; c++) y = Math.max(y, colHeights[c]);
+      if (y < bestY) { bestY = y; bestX = x; }
+    }
+    for (let c = bestX; c < bestX + ww; c++) colHeights[c] = bestY + h;
+    return { ...w, layout: { x: bestX, y: bestY, w: ww, h } };
+  });
+}
+
+function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelete, onDuplicate, onAutoSize, onMoveUp, onMoveDown, onHeaderMouseDown, onResizeMouseDown, children, style, dragging, hasHeaderToolbar, className }) {
+  const [headerToolbarNode, setHeaderToolbarNode] = useState(null);
+  // onMoveUp/onMoveDown ne sont fournis que par la pile mobile (voir
+  // DashboardView) : le glisser-déposer souris (onHeaderMouseDown/
+  // onResizeMouseDown) reste le mécanisme de réorganisation ≥640px, inchangé.
+  const showMoveButtons = onMoveUp !== undefined || onMoveDown !== undefined;
+  return (
+    <div className={"lp-widget-card" + (dragging ? " lp-widget-card-dragging" : "") + (className ? " " + className : "")} style={style}>
+      <div className="lp-widget-head" onPointerDown={onHeaderMouseDown} style={bandColor ? { background: bandColor } : undefined}>
+        <span className="lp-drag-handle" title="Glisser pour déplacer"><GripVertical size={13} /></span>
+        {titleEmoji && <IconGlyph icon={titleEmoji} size={14} />}
+        <span className="lp-widget-title" style={titleColor ? { color: titleColor } : undefined}>{title}</span>
+        {hasHeaderToolbar && <div className="lp-widget-head-toolbar" onMouseDown={(e) => e.stopPropagation()} ref={setHeaderToolbarNode} />}
+        {showMoveButtons && (
+          <span className="lp-widget-move-group">
+            <button className="lp-icon-btn" disabled={!onMoveUp} onMouseDown={(e) => e.stopPropagation()} onClick={onMoveUp} title="Monter ce widget" aria-label="Monter ce widget"><ChevronUp size={15} /></button>
+            <button className="lp-icon-btn" disabled={!onMoveDown} onMouseDown={(e) => e.stopPropagation()} onClick={onMoveDown} title="Descendre ce widget" aria-label="Descendre ce widget"><ChevronDown size={15} /></button>
+          </span>
+        )}
+        {onAutoSize && <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onAutoSize} title="Dimensionner automatiquement selon le contenu" style={titleColor ? { color: titleColor } : undefined}><Wand2 size={13} /></button>}
+        <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onDuplicate} title="Dupliquer ce widget" style={titleColor ? { color: titleColor } : undefined}><Copy size={13} /></button>
+        <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onEdit} title="Configurer ce widget" style={titleColor ? { color: titleColor } : undefined}><Settings size={13} /></button>
+        <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onDelete} title="Supprimer ce widget" style={titleColor ? { color: titleColor } : undefined}><Trash2 size={13} /></button>
+      </div>
+      <div className="lp-widget-body">{typeof children === "function" ? children(headerToolbarNode) : children}</div>
+      {/* Redimensionnement par n'importe lequel des 4 coins — le coin opposé reste fixe. */}
+      <div className="lp-widget-resize-handle lp-widget-resize-tl" onPointerDown={onResizeMouseDown("tl")} title="Glisser pour redimensionner" />
+      <div className="lp-widget-resize-handle lp-widget-resize-tr" onPointerDown={onResizeMouseDown("tr")} title="Glisser pour redimensionner" />
+      <div className="lp-widget-resize-handle lp-widget-resize-bl" onPointerDown={onResizeMouseDown("bl")} title="Glisser pour redimensionner" />
+      <div className="lp-widget-resize-handle lp-widget-resize-br" onPointerDown={onResizeMouseDown("br")} title="Glisser pour redimensionner" />
+    </div>
+  );
+}
+
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs }) {
+  const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
+  const [editingPageName, setEditingPageName] = useState("");
+  const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
+  const [filterPageTarget, setFilterPageTarget] = useState(null); // page dont le filtre est en cours d'édition
+
+  useEffect(() => {
+    const onCreateWidgetShortcut = () => setEditingWidget("new");
+    window.addEventListener("nexora:create-widget", onCreateWidgetShortcut);
+    return () => window.removeEventListener("nexora:create-widget", onCreateWidgetShortcut);
+  }, []);
+  const gridRef = useRef(null);
+  const [gridWidth, setGridWidth] = useState(960);
+  const [gesture, setGesture] = useState(null); // { id, mode: "move"|"resize", dx, dy }
+  const gestureRef = useRef(null);
+  const activePage = (pages || []).find((p) => p.id === activePageId) || (pages || [])[0];
+  // Le filtre de PAGE s'applique en base à tous ses widgets, combiné en ET
+  // avec le filtre propre à chaque widget — jamais l'un à la place de l'autre.
+  const pageFilteredTasks = useMemo(() => applyWidgetFilter(tasks, activePage?.filter, ctx), [tasks, activePage, ctx]);
+
+  // S'assure que tous les widgets ont un layout (migration douce des tableaux de bord existants).
+  useEffect(() => {
+    if (widgets.some((w) => !w.layout)) setWidgets((prev) => packWidgets(prev));
+  }, [widgets, setWidgets]);
+
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const update = () => setGridWidth(el.clientWidth || 960);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [widgets.length === 0]); // le conteneur n'existe pas tant qu'aucun widget n'est présent : on retente l'accroche dès qu'il apparaît
+
+  const cellW = (gridWidth - (DASHBOARD_COLS - 1) * DASHBOARD_GAP) / DASHBOARD_COLS;
+  const px = (n) => n * (cellW + DASHBOARD_GAP);
+  const py = (n) => n * (DASHBOARD_ROW_H + DASHBOARD_GAP);
+  const gridHeight = widgets.length ? Math.max(...widgets.map((w) => (w.layout ? w.layout.y + w.layout.h : 0))) : 0;
+  // Sous ~640px, la grille libre à positionnement absolu (pensée pour la souris)
+  // devient une colonne unique en flux normal — mêmes widgets, mêmes données,
+  // juste une autre présentation. gridWidth vient du ResizeObserver déjà en
+  // place ci-dessus : pas de nouvel écouteur resize.
+  const isMobileStack = gridWidth < 640;
+  const stackOrder = (w) => (w.layout ? w.layout.y * 1000 + w.layout.x : 0);
+  const stackedWidgets = useMemo(
+    () => (isMobileStack ? [...widgets].sort((a, b) => stackOrder(a) - stackOrder(b)) : widgets),
+    [isMobileStack, widgets]
+  );
+
+  const updateWidget = (id, patch) => setWidgets((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+
+  const computeResizedLayout = (layout, corner, rawDx, rawDy) => {
+    const cellUnit = cellW + DASHBOARD_GAP;
+    const rowUnit = DASHBOARD_ROW_H + DASHBOARD_GAP;
+    const dCols = Math.round(rawDx / cellUnit);
+    const dRows = Math.round(rawDy / rowUnit);
+
+    let { x, y, w, h } = layout;
+
+    if (corner === "br") {
+      w = clamp(w + dCols, 2, DASHBOARD_COLS - x);
+      h = clamp(h + dRows, 2, 12);
+    } else if (corner === "bl") {
+      const newW = clamp(w - dCols, 2, x + w);
+      x = x + w - newW;
+      w = newW;
+      h = clamp(h + dRows, 2, 12);
+    } else if (corner === "tr") {
+      const newH = clamp(h - dRows, 2, y + h);
+      y = y + h - newH;
+      h = newH;
+      w = clamp(w + dCols, 2, DASHBOARD_COLS - x);
+    } else if (corner === "tl") {
+      const newW = clamp(w - dCols, 2, x + w);
+      x = x + w - newW;
       w = newW;
       const newH = clamp(h - dRows, 2, y + h);
       y = y + h - newH;
@@ -2108,14 +2654,26 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? todayIdx
     : Math.round((autoMinIdx + autoMaxIdx) / 2);
 
-  const minIdx = zoomIsAuto ? autoMinIdx : autoCenter - Math.floor(manualSpan / 2);
-  const maxIdx = zoomIsAuto ? autoMaxIdx : Math.max(minIdx + 1, minIdx + manualSpan);
+  // Fenêtre explicite posée par « Zoom (n tâches) » : elle prime sur le zoom
+  // automatique comme sur les niveaux manuels, jusqu'à ce qu'on l'efface.
+  const pinnedWindow = widget.miniGanttWindow
+    && isGanttIsoDate(widget.miniGanttWindow.start)
+    && isGanttIsoDate(widget.miniGanttWindow.end)
+    ? { minIdx: dayIndex(widget.miniGanttWindow.start), maxIdx: dayIndex(widget.miniGanttWindow.end) }
+    : null;
+
+  const minIdx = pinnedWindow ? pinnedWindow.minIdx : (zoomIsAuto ? autoMinIdx : autoCenter - Math.floor(manualSpan / 2));
+  const maxIdx = pinnedWindow
+    ? Math.max(pinnedWindow.minIdx + 1, pinnedWindow.maxIdx)
+    : (zoomIsAuto ? autoMaxIdx : Math.max(minIdx + 1, minIdx + manualSpan));
   const span = Math.max(1, maxIdx - minIdx);
 
   const setZoomLevel = (next) => {
     if (!onUpdateWidget) return;
-    if (next == null) onUpdateWidget({miniGanttZoomLevel:null});
-    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-2,2)});
+    // Poser un niveau de zoom relâche toujours la fenêtre épinglée : sinon les
+    // boutons − / Auto / + resteraient sans effet visible.
+    if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null});
+    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-2,2), miniGanttWindow:null});
   };
   const zoomIn = () => setZoomLevel(zoomIsAuto ? 1 : zoomLevel + 1);
   const zoomOut = () => setZoomLevel(zoomIsAuto ? -1 : zoomLevel - 1);
@@ -2258,9 +2816,34 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const highlightFrames = useMemo(() => normalizeHighlightFrames(rawHighlightFrames), [rawHighlightFrames]);
   const applyAnnotations = (patch) => {
     if (!onUpdateWidget) return;
-    onUpdateWidget({ ganttAnnotations: { temporalBlocks: rawTemporalBlocks, highlightFrames: rawHighlightFrames, ...patch } });
+    onUpdateWidget({ ganttAnnotations: {
+      temporalBlocks: rawTemporalBlocks,
+      highlightFrames: rawHighlightFrames,
+      milestones: rawMilestones,
+      risks: rawRisks,
+      notes: rawNotes,
+      ...patch,
+    } });
   };
   const [annotationPanel, setAnnotationPanel] = useState(null); // null | { section, autoCreate, focusId }
+
+  // --- Pilotage : sélection, focus, présentation ---------------------------
+  // La sélection est volontairement éphémère (elle sert à cadrer, pas à
+  // décrire le projet) ; focus et présentation sont des réglages du widget.
+  const [selection, setSelection] = useState([]);
+  const focusMode = widget.miniGanttFocus === "critical" ? "critical" : "none";
+  const presentation = !!widget.miniGanttPresentation;
+  const emphasisOn = widget.miniGanttEmphasis !== false;
+  const editable = !!onUpdateWidget && !presentation;
+  const setFocusMode = (next) => onUpdateWidget && onUpdateWidget({ miniGanttFocus: next === "critical" ? "critical" : null });
+  const togglePresentation = () => onUpdateWidget && onUpdateWidget({ miniGanttPresentation: !presentation });
+
+  const rawMilestones = useMemo(() => (Array.isArray(annotationStore.milestones) ? annotationStore.milestones : []), [annotationStore.milestones]);
+  const rawRisks = useMemo(() => (Array.isArray(annotationStore.risks) ? annotationStore.risks : []), [annotationStore.risks]);
+  const rawNotes = useMemo(() => (Array.isArray(annotationStore.notes) ? annotationStore.notes : []), [annotationStore.notes]);
+  const configMilestones = useMemo(() => normalizeMiniGanttMilestones(rawMilestones), [rawMilestones]);
+  const configRisks = useMemo(() => normalizeMiniGanttRisks(rawRisks), [rawRisks]);
+  const configNotes = useMemo(() => normalizeMiniGanttNotes(rawNotes), [rawNotes]);
 
   // Ordre d'affichage réel des lignes, regroupement et replis compris : c'est
   // lui qui définit l'adjacence, donc le découpage d'un encadré en cadres
@@ -2287,7 +2870,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // hors fenêtre, groupe replié) n'est simplement pas mesurée.
   const rootRef = useRef(null);
   const rowNodes = useRef({});
+  const stripTrackRef = useRef(null);
   const [rowRects, setRowRects] = useState({});
+  // Les étiquettes de repères sont placées en PIXELS : estimer leur largeur en
+  // pourcentage de la piste donnait des collisions dès que le widget était
+  // étroit, la même étiquette n'occupant pas la même fraction d'une piste de
+  // 270 px et d'une piste de 900 px.
+  const [stripWidth, setStripWidth] = useState(0);
   const measureRows = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -2306,6 +2895,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         && nextKeys.every((k) => prev[k] && prev[k].top === next[k].top && prev[k].height === next[k].height);
       return same ? prev : next;
     });
+    const strip = stripTrackRef.current;
+    if (strip) {
+      const width = Math.round(strip.getBoundingClientRect().width);
+      setStripWidth((prev) => (prev === width ? prev : width));
+    }
   }, [visibleRows]);
   useEffect(() => {
     const id = requestAnimationFrame(measureRows);
@@ -2388,7 +2982,124 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return shapes;
   }, [temporalBlocks, minIdx, maxIdx, span]);
 
+  // Chemin critique : même calcul que la vue Planning Projets et le widget
+  // Chemin critique (computeCriticalIds), jamais une seconde heuristique.
+  const criticalIds = useMemo(
+    () => ((emphasisOn || focusMode === "critical") && projTasks.length ? computeCriticalIds(projTasks) : null),
+    [projTasks, emphasisOn, focusMode]
+  );
+
+  // Couloirs d'incertitude : bornés aux lignes réellement visibles, donc
+  // insensibles à une tâche supprimée, filtrée ou repliée.
+  const riskSegments = useMemo(() => {
+    if (!configRisks.length) return [];
+    const rows = visibleRows.map((row) => ({ id: row.id, startIdx: dayIndex(row.start), endIdx: dayIndex(row.end) }));
+    return miniGanttRiskSegments(rows, configRisks);
+  }, [configRisks, visibleRows]);
+
+  const risksByTask = useMemo(() => {
+    const map = new Map();
+    riskSegments.forEach((seg) => {
+      if (!map.has(seg.taskId)) map.set(seg.taskId, []);
+      map.get(seg.taskId).push(seg);
+    });
+    return map;
+  }, [riskSegments]);
+
+  // Ensemble mis en avant par le focus : les tâches critiques et, avec elles,
+  // tout ce dont elles dépendent et tout ce qui en dépend.
+  const focusIds = useMemo(() => {
+    if (focusMode !== "critical" || !criticalIds) return null;
+    const kept = new Set(criticalIds);
+    const byId = new Map(projTasks.map((t) => [t.id, t]));
+    let guard = 0;
+    let frontier = [...kept];
+    while (frontier.length && guard < 3000) {
+      const next = [];
+      frontier.forEach((id) => {
+        const task = byId.get(id);
+        (task?.dependsOn || []).forEach((dep) => { if (byId.has(dep) && !kept.has(dep)) { kept.add(dep); next.push(dep); } });
+        projTasks.forEach((other) => {
+          if (kept.has(other.id)) return;
+          if ((other.dependsOn || []).includes(id)) { kept.add(other.id); next.push(other.id); }
+        });
+      });
+      frontier = next;
+      guard++;
+    }
+    return kept;
+  }, [focusMode, criticalIds, projTasks]);
+
+  const emphasisFor = (taskId) => (emphasisOn ? miniGanttRowEmphasis(taskId, riskSegments, criticalIds) : "none");
+  // Le focus atténue, il ne masque jamais : jalons, décisions et risques
+  // restent visibles pour garder le contexte.
+  const dimmed = (taskId) => !!focusIds && !focusIds.has(taskId);
+
+  const selectedSet = useMemo(() => new Set(selection), [selection]);
+  const toggleSelected = (taskId) => setSelection((prev) => (prev.includes(taskId) ? prev.filter((x) => x !== taskId) : [...prev, taskId]));
+  const zoomOnSelection = () => {
+    if (!onUpdateWidget) return;
+    const rows = visibleRows.map((row) => ({ id: row.id, startIdx: dayIndex(row.start), endIdx: dayIndex(row.end) }));
+    const win = miniGanttSelectionWindow(rows, selection, riskSegments, 1);
+    if (!win) return;
+    onUpdateWidget({
+      miniGanttWindow: { start: addDays("2020-01-01", win.minIdx), end: addDays("2020-01-01", win.maxIdx) },
+      miniGanttZoomLevel: null,
+    });
+  };
+
   if (isEmpty) return <div className="lp-empty" style={{ padding: 16 }}>Aucune tâche pour ce filtre.</div>;
+
+  // Jalons de configuration et annotations partagent la même bande, sous les
+  // titres de bloc : un seul mécanisme de placement, donc un seul traitement
+  // des collisions. Une annotation est ramenée à la date de son ancre — tâche,
+  // risque, jalon ou date libre.
+  const stripShapes = useMemo(() => {
+    const items = [];
+    configMilestones.forEach((m) => {
+      const idx = dayIndex(m.date);
+      if (!Number.isFinite(idx) || idx < minIdx || idx > maxIdx) return;
+      items.push({ kind: "milestone", id: m.id, idx, label: m.title, color: m.color, type: m.type, data: m });
+    });
+    const taskById = new Map([...projTasks, ...milestoneTasks].map((t) => [t.id, t]));
+    configNotes.forEach((n) => {
+      let idx = null;
+      if (n.anchor.kind === "date") idx = dayIndex(n.anchor.date);
+      else if (n.anchor.kind === "task") { const t = taskById.get(n.anchor.id); if (t) idx = dayIndex(t.end); }
+      else if (n.anchor.kind === "milestone") { const m = configMilestones.find((x) => x.id === n.anchor.id); if (m) idx = dayIndex(m.date); }
+      else if (n.anchor.kind === "risk") { const seg = riskSegments.find((x) => x.id === n.anchor.id); if (seg) idx = seg.endIdx; }
+      if (idx == null || !Number.isFinite(idx) || idx < minIdx || idx > maxIdx) return;
+      items.push({ kind: "note", id: n.id, idx, label: n.title, color: "#64748B", data: n });
+    });
+    items.sort((a, b) => a.idx - b.idx);
+    // Largeur estimée en pixels : le losange, la gouttière, puis le texte à
+    // ~5,6 px par caractère pour la graisse utilisée.
+    const trackPx = stripWidth || 420;
+    const laneEnds = [];
+    items.forEach((item) => {
+      const leftPx = ((item.idx - minIdx) / span) * trackPx;
+      const widthPx = 18 + String(item.label).length * 5.6;
+      let lane = laneEnds.findIndex((end) => leftPx >= end + 8);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+      laneEnds[lane] = leftPx + widthPx;
+      item.lane = lane;
+      item.leftPct = ((item.idx - minIdx) / span) * 100;
+    });
+    return items;
+  }, [configMilestones, configNotes, riskSegments, projTasks, milestoneTasks, minIdx, maxIdx, span, stripWidth]);
+
+  const stripLaneCount = stripShapes.length ? Math.max(...stripShapes.map((s) => s.lane)) + 1 : 0;
+
+  // Légende contextuelle : chaque entrée n'apparaît que si le diagramme
+  // contient réellement ce qu'elle décrit.
+  const legendItems = [
+    emphasisOn && criticalIds && criticalIds.size ? { key: "critical", label: "Critique", color: "#4F6AF5" } : null,
+    riskSegments.some((r) => r.severity === "low" || r.severity === "medium") ? { key: "watch", label: "Vigilance", color: "#F2A93B" } : null,
+    (configMilestones.length || milestoneTasks.length) ? { key: "milestone", label: "Jalon", color: "#0EA5E9" } : null,
+    (temporalBlocks.some((b) => b.kind === "decision") || configMilestones.some((m) => m.type === "decision"))
+      ? { key: "decision", label: "Décision", color: GANTT_DECISION_DEFAULT_COLOR } : null,
+    riskSegments.length ? { key: "risk", label: "Risque", color: "#D64545" } : null,
+  ].filter(Boolean);
 
   const Axis = () => (
     <div className="lp-widget-minigantt-axis">
@@ -2402,10 +3113,32 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=2} title="Zoom avant">+</button>
           {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
         </div>
-        {onUpdateWidget && (
+        {editable && (
           <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons" onMouseDown={(e)=>e.stopPropagation()}>
             <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
             <button type="button" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })} title="Ajouter un encadré autour d'une ou plusieurs tâches">+ Encadré</button>
+            <button type="button" onClick={() => setAnnotationPanel({ section: "risks", autoCreate: "risk" })} title="Ajouter un risque sur une tâche">+ Risque</button>
+            <button type="button" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })} title="Ajouter un jalon ou une décision">+ Jalon</button>
+          </div>
+        )}
+        {onUpdateWidget && (
+          <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons" onMouseDown={(e)=>e.stopPropagation()}>
+            <button
+              type="button"
+              className={focusMode === "critical" ? "active" : ""}
+              onClick={() => setFocusMode(focusMode === "critical" ? "none" : "critical")}
+              title="Mettre en avant le chemin critique et ses dépendances, en atténuant le reste"
+            >
+              {focusMode === "critical" ? "Focus ✓" : "Focus"}
+            </button>
+            {selection.length > 0 && !presentation && (
+              <button type="button" onClick={zoomOnSelection} title="Cadrer la vue sur les tâches sélectionnées">
+                Zoom ({selection.length} tâche{selection.length > 1 ? "s" : ""})
+              </button>
+            )}
+            <button type="button" className={presentation ? "active" : ""} onClick={togglePresentation} title={presentation ? "Quitter le mode présentation" : "Masquer les commandes d'édition pour projeter la vue"}>
+              {presentation ? "Quitter" : "Présenter"}
+            </button>
           </div>
         )}
         </div>
@@ -2437,12 +3170,87 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
+  // Légende sur sa propre ligne, alignée sur la piste : dans l'axe elle
+  // finissait par recouvrir « Aujourd'hui » et déborder du widget.
+  const legendRow = !legendItems.length ? null : (
+    <div className="lp-widget-minigantt-legend">
+      <span className="lp-widget-minigantt-phases-spacer" />
+      <div className="lp-widget-minigantt-legend-items">
+        {legendItems.map((item) => (
+          <span key={item.key} className="lp-widget-minigantt-legend-item">
+            <span className={"lp-widget-minigantt-legend-mark is-" + item.key} style={{ background: item.color, borderColor: item.color }} />
+            {item.label}
+          </span>
+        ))}
+      </div>
+      {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
+    </div>
+  );
+
   const RowLabel = ({ t, proj }) => (
     <span className="lp-widget-minigantt-label">
+      {editable && (
+        <input
+          type="checkbox"
+          className="lp-widget-minigantt-select"
+          checked={selectedSet.has(t.id)}
+          title="Sélectionner pour cadrer la vue"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onChange={() => toggleSelected(t.id)}
+        />
+      )}
       <span className="lp-widget-minigantt-label-title">{t.title}</span>
       {showRowProj && proj && <span className="lp-widget-minigantt-label-proj">{proj.name}</span>}
     </span>
   );
+
+  // Couloirs d'incertitude d'une ligne : rendus dans sa piste, après la barre,
+  // donc suivant sans effort le scroll, le zoom et tout déplacement de la tâche.
+  const RowRisks = ({ taskId }) => {
+    const segments = risksByTask.get(taskId);
+    if (!segments || !segments.length) return null;
+    return (
+      <>
+        {segments.map((seg) => {
+          const from = Math.max(minIdx, seg.startIdx);
+          const to = Math.min(maxIdx, seg.endIdx);
+          if (to <= from) return null;
+          const left = ((from - minIdx) / span) * 100;
+          const width = Math.max(0.6, ((to - from) / span) * 100);
+          const label = seg.title || "Risque";
+          const tip = `${label} — ${MINIGANTT_RISK_SEVERITY_LABELS[seg.severity]} · ${seg.endIdx - seg.startIdx} j`;
+          return (
+            <React.Fragment key={seg.id}>
+              <span
+                className={"lp-widget-minigantt-risk is-" + seg.style}
+                style={{
+                  left: left + "%",
+                  width: width + "%",
+                  top: `calc(50% + ${seg.lane * 5}px)`,
+                  color: seg.color,
+                  borderColor: seg.color,
+                  background: seg.style === "hatched"
+                    ? `repeating-linear-gradient(45deg, ${seg.color}40 0 3px, transparent 3px 6px)`
+                    : (seg.style === "solid" ? `${seg.color}38` : "transparent"),
+                }}
+                title={tip}
+              />
+              {seg.title && left + width < 74 && (
+                <span
+                  className="lp-widget-minigantt-risk-label"
+                  style={{ left: `calc(${left + width}% + 4px)`, top: `calc(50% + ${seg.lane * 5}px)`, color: seg.color }}
+                  title={tip}
+                >
+                  {seg.title}
+                </span>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </>
+    );
+  };
 
   // Grille verticale commune à toutes les lignes d'un même bloc (widget entier
   // en mode non groupé, ou chaque groupe en mode groupé) : rendue UNE SEULE
@@ -2523,7 +3331,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const pct = Math.max(0, Math.min(100, Math.round(t.progress || 0)));
     return (
       <div
-        className="lp-widget-minigantt-row"
+        className={"lp-widget-minigantt-row is-" + emphasisFor(t.id) + (dimmed(t.id) ? " is-dimmed" : "") + (selectedSet.has(t.id) ? " is-selected" : "")}
         key={t.id}
         ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
@@ -2538,7 +3346,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 statut/projet/type, sur fond pâle de la même couleur pour le
                 reste de la durée — cohérent avec le diagramme de Gantt complet. */}
             <div className="lp-widget-minigantt-bar-fill" style={{ width: `${pct}%`, background: barColor }} />
-            {onUpdateTask && (
+            {onUpdateTask && !presentation && (
               <>
                 <div
                   className="lp-widget-minigantt-handle left" title="Glisser pour changer la date de début"
@@ -2558,6 +3366,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               </>
             )}
           </div>
+          <RowRisks taskId={t.id} />
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={left + width} />}
         </div>
         {fieldsLayout === "aligned" && <RowFields t={t} />}
@@ -2580,7 +3389,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     } : {};
     return (
       <div
-        className="lp-widget-minigantt-row lp-widget-minigantt-row-milestone"
+        className={"lp-widget-minigantt-row lp-widget-minigantt-row-milestone" + (dimmed(t.id) ? " is-dimmed" : "") + (selectedSet.has(t.id) ? " is-selected" : "")}
         key={t.id}
         ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
@@ -2632,6 +3441,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             <div className="lp-widget-metro-tooltip-bar-fill" style={{ width: `${Math.max(0, Math.min(100, hover.t.progress || 0))}%` }} />
           </div>
         )}
+        {(risksByTask.get(hover.t.id) || []).map((seg) => (
+          <div key={seg.id} className="lp-widget-minigantt-tooltip-risk">
+            <span className="lp-widget-minigantt-legend-mark" style={{ background: seg.color, borderColor: seg.color }} />
+            {seg.title || "Risque"} — {MINIGANTT_RISK_SEVERITY_LABELS[seg.severity]} · +{seg.endIdx - seg.startIdx} j
+          </div>
+        ))}
       </div>
     );
     return createPortal(node, document.body);
@@ -2660,7 +3475,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <button
             key={shape.block.id}
             type="button"
-            className="lp-widget-minigantt-phase"
+            className={"lp-widget-minigantt-phase" + (shape.block.kind === "decision" ? " is-decision" : "")}
             style={{
               left: `${shape.leftPct}%`,
               width: `${shape.widthPct}%`,
@@ -2672,8 +3487,39 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
             onClick={() => setAnnotationPanel({ section: "blocks", focusId: shape.block.id })}
           >
-            {shape.block.title}
+            <span className="lp-widget-minigantt-phase-text">{shape.block.title}</span>
           </button>
+        ))}
+      </div>
+      {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
+    </div>
+  );
+
+  // Jalons de configuration et annotations : une bande dédiée sous les titres
+  // de bloc, avec le même placement en lignes que ces derniers.
+  const stripHeader = !stripShapes.length ? null : (
+    <div className="lp-widget-minigantt-strip" style={{ height: stripLaneCount * 17 }}>
+      <span className="lp-widget-minigantt-phases-spacer" />
+      <div className="lp-widget-minigantt-strip-track" ref={stripTrackRef}>
+        {stripShapes.map((item) => (
+          <span
+            key={item.kind + "-" + item.id}
+            className={"lp-widget-minigantt-marker is-" + item.kind + (item.type ? " type-" + item.type : "")}
+            style={{ left: `${item.leftPct}%`, top: item.lane * 17 }}
+          >
+            <span className="lp-widget-minigantt-marker-glyph" style={{ background: item.color, borderColor: item.color }} />
+            <button
+              type="button"
+              className="lp-widget-minigantt-marker-label"
+              style={{ color: item.color }}
+              title={item.kind === "note"
+                ? `${item.data.title}${item.data.text ? " — " + item.data.text : ""}`
+                : `${item.data.title} · ${fmtShort(item.data.date)}${item.type && item.type !== "standard" ? " · " + MINIGANTT_MILESTONE_LABELS[item.type] : ""}`}
+              onClick={() => editable && setAnnotationPanel({ section: item.kind === "note" ? "notes" : "milestones", focusId: item.id })}
+            >
+              {item.label}
+            </button>
+          </span>
         ))}
       </div>
       {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
@@ -2697,7 +3543,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           style={{
             left: `${shape.leftPct}%`,
             width: `${shape.widthPct}%`,
-            background: "color-mix(in srgb, " + shape.block.color + " 13%, transparent)",
+            background: "color-mix(in srgb, " + shape.block.color + (shape.block.kind === "decision" ? " 7%" : " 13%") + ", transparent)",
             borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
             borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
           }}
@@ -2759,9 +3605,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       wide
       footer={<button className="lp-btn lp-btn-primary" onClick={() => setAnnotationPanel(null)}>Terminé</button>}
     >
-      <GanttAnnotationsEditor
+      <MiniGanttAnnotationsEditor
         blocks={rawTemporalBlocks}
         frames={rawHighlightFrames}
+        milestones={rawMilestones}
+        risks={rawRisks}
+        notes={rawNotes}
         tasks={[...projTasks, ...milestoneTasks]}
         ctx={ctx}
         defaultStart={minDateStr}
@@ -2780,7 +3629,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
         {bandLayer}
         <Axis />
+        {legendRow}
         {phasesHeader}
+        {stripHeader}
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
           {projTasks.map(Row)}
@@ -2798,7 +3649,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
       {bandLayer}
       <Axis />
+      {legendRow}
       {phasesHeader}
+      {stripHeader}
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
         return (
@@ -5431,15 +6284,21 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // configuration du widget, jamais dans les tâches elles-mêmes.
   const [ganttAnnotations, setGanttAnnotations] = useState(() => {
     const stored = ganttAnnotationsOf(widget);
+    const list = (value) => (Array.isArray(value) ? value : []);
     return {
-      temporalBlocks: Array.isArray(stored.temporalBlocks) ? stored.temporalBlocks : [],
-      highlightFrames: Array.isArray(stored.highlightFrames) ? stored.highlightFrames : [],
+      temporalBlocks: list(stored.temporalBlocks),
+      highlightFrames: list(stored.highlightFrames),
+      milestones: list(stored.milestones),
+      risks: list(stored.risks),
+      notes: list(stored.notes),
     };
   });
   // Un bloc dont les dates sont invalides (ou dont la fin précède le début)
   // bloque l'enregistrement : l'erreur reste affichée sous les champs.
   const ganttAnnotationsValid = ganttAnnotations.temporalBlocks.every((b) => validateTemporalBlock(b).ok);
   const ganttTasks = useMemo(() => (ctx.tasks || []).filter((t) => t.start && t.end), [ctx.tasks]);
+  const ganttDefaultStart = ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date());
+  const ganttDefaultEnd = ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date());
 
   const updateCardBlock = (id, patch) => setCardBlocks((prev) => prev.map((b) => b.id === id ? { ...b, ...patch } : b));
   const removeCardBlock = (id) => setCardBlocks((prev) => prev.filter((b) => b.id !== id));
@@ -5539,6 +6398,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.ganttAnnotations = {
         temporalBlocks: normalizeTemporalBlocks(ganttAnnotations.temporalBlocks),
         highlightFrames: pruneHighlightFrames(ganttAnnotations.highlightFrames, ganttTasks.map((t) => t.id)),
+        milestones: normalizeMiniGanttMilestones(ganttAnnotations.milestones),
+        risks: normalizeMiniGanttRisks(ganttAnnotations.risks),
+        notes: normalizeMiniGanttNotes(ganttAnnotations.notes),
       };
     }
     if (type === "minigantt") {
@@ -6142,15 +7004,30 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
             Les annotations ci-dessous sont enregistrées avec ce widget : elles suivent sa duplication, celle de l'onglet et celle du tableau de bord, sans jamais modifier les tâches.
           </p>
-          <GanttAnnotationsEditor
-            blocks={ganttAnnotations.temporalBlocks}
-            frames={ganttAnnotations.highlightFrames}
-            tasks={ganttTasks}
-            ctx={ctx}
-            defaultStart={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date())}
-            defaultEnd={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date())}
-            onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
-          />
+          {type === "minigantt" ? (
+            <MiniGanttAnnotationsEditor
+              blocks={ganttAnnotations.temporalBlocks}
+              frames={ganttAnnotations.highlightFrames}
+              milestones={ganttAnnotations.milestones}
+              risks={ganttAnnotations.risks}
+              notes={ganttAnnotations.notes}
+              tasks={ganttTasks}
+              ctx={ctx}
+              defaultStart={ganttDefaultStart}
+              defaultEnd={ganttDefaultEnd}
+              onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
+            />
+          ) : (
+            <GanttAnnotationsEditor
+              blocks={ganttAnnotations.temporalBlocks}
+              frames={ganttAnnotations.highlightFrames}
+              tasks={ganttTasks}
+              ctx={ctx}
+              defaultStart={ganttDefaultStart}
+              defaultEnd={ganttDefaultEnd}
+              onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
+            />
+          )}
         </>
       )}
 
