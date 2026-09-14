@@ -67,13 +67,19 @@ diagramme ; les Gantt existants fonctionnent sans changement.
 
 ## Règles de rendu
 
-- Un bloc temporel rejoint la **grille de fond** de chaque diagramme : dans le
-  Gantt complet il est dessiné dans chaque piste, comme la grille verticale et
-  la ligne « aujourd'hui » ; dans le Mini-Gantt il s'ajoute à la grille commune
-  aux lignes (`GridOverlay`). Dans les deux cas il reste au-dessus du fond mais
-  sous les barres, les jalons et les dépendances, et il suit sans traitement
-  particulier le zoom, le scroll horizontal et tout changement de plage. Les
-  périodes hors bloc gardent le fond normal.
+- Un bloc temporel reste au-dessus du fond du diagramme mais sous les barres,
+  les jalons et les dépendances, et il suit sans traitement particulier le zoom,
+  le scroll horizontal et tout changement de plage. Les périodes hors bloc
+  gardent le fond normal. Le rendu diffère selon le diagramme :
+  - **Gantt complet** — dessiné dans chaque piste, comme la grille verticale et
+    la ligne « aujourd'hui ». Les en-têtes de groupe, opaques, interrompent donc
+    la bande.
+  - **Mini-Gantt** — **une seule bande continue** en arrière-plan de toutes les
+    lignes, en-têtes de groupe et interlignes compris. Le rendre dans la grille
+    commune aux lignes le découpait en autant de morceaux que de groupes, avec
+    une bande claire à chaque en-tête. Le rail de chaque ligne
+    (`.lp-widget-minigantt-track`) est translucide pour la même raison : plein,
+    il coupait la bande d'un trait clair par ligne.
 - Les unités diffèrent parce que les deux diagrammes ne positionnent pas leurs
   barres pareil : pixels et jour de fin inclus dans le Gantt complet,
   pourcentages et bornage à la fenêtre affichée dans le Mini-Gantt. Chaque bloc
