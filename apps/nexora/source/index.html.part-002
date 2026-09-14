@@ -1,4 +1,7 @@
-                 <span>{meta.label}</span>
+alse).map((meta) => (
+                <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
+                  <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
+                  <span>{meta.label}</span>
                   {meta.key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
                 </button>
               ))}
@@ -4621,10 +4624,12 @@ function MiniGanttAnnotationRow({ item, list, onMove, onDuplicate, onDelete, edi
 
 // Éditeur complet du Mini-Gantt : il réutilise tel quel l'éditeur partagé des
 // blocs et encadrés, et lui ajoute les trois sections propres à ce widget.
-function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, tasks, ctx, defaultStart, defaultEnd, onChange, onRisksChange, initialSection, autoCreate, focusId }) {
+// `risks` est ici en LECTURE SEULE : les risques de délai appartiennent à la
+// tâche et s'éditent dans sa fiche. L'éditeur n'en a besoin que pour proposer
+// un risque comme ancre d'annotation.
+function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, tasks, ctx, defaultStart, defaultEnd, onChange, initialSection, autoCreate, focusId }) {
   const [open, setOpen] = useState({
     milestones: initialSection === "milestones",
-    risks: initialSection === "risks",
     notes: initialSection === "notes",
   });
   const [editingId, setEditingId] = useState(focusId || null);
@@ -4634,13 +4639,9 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
   const taskTitle = (id) => tasks.find((t) => t.id === id)?.title || "Tâche introuvable";
 
   const setMilestones = (next) => onChange({ milestones: next });
-  // Les risques appartiennent à la tâche : l'écriture passe par onRisksChange,
-  // jamais par la configuration du widget.
-  const setRisks = (next) => onRisksChange && onRisksChange(next);
   const setNotes = (next) => onChange({ notes: next });
   const patch = (list, setList) => (id, values) => setList(list.map((x) => (x.id === id ? { ...x, ...values } : x)));
   const patchMilestone = patch(milestones, setMilestones);
-  const patchRisk = patch(risks, setRisks);
   const patchNote = patch(notes, setNotes);
 
   const moveIn = (list, setList, id, dir, sameGroup) => {
@@ -4662,12 +4663,6 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
     setOpen((o) => ({ ...o, milestones: true }));
     setEditingId(created.id);
   };
-  const addRisk = () => {
-    const created = { id: uid(), taskId: tasks[0]?.id || "", title: "Nouveau risque", color: MINIGANTT_RISK_DEFAULT_COLOR, style: "hatched", severity: "medium", startOffset: null, endOffset: null };
-    setRisks([...risks, created]);
-    setOpen((o) => ({ ...o, risks: true }));
-    setEditingId(created.id);
-  };
   const addNote = () => {
     const created = { id: uid(), title: "Nouvelle annotation", text: "", anchor: { kind: "date", date: defaultEnd } };
     setNotes([...notes, created]);
@@ -4679,8 +4674,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
   useEffect(() => {
     if (autoCreated.current || !autoCreate) return;
     autoCreated.current = true;
-    if (autoCreate === "risk") addRisk();
-    else if (autoCreate === "milestone") addMilestone();
+    if (autoCreate === "milestone") addMilestone();
     else if (autoCreate === "note") addNote();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCreate]);
@@ -4696,7 +4690,6 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
     if (!pendingDelete) return;
     const { kind, item } = pendingDelete;
     if (kind === "milestone") setMilestones(milestones.filter((x) => x.id !== item.id));
-    else if (kind === "risk") setRisks(risks.filter((x) => x.id !== item.id));
     else setNotes(notes.filter((x) => x.id !== item.id));
     setPendingDelete(null);
   };
@@ -4778,82 +4771,6 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
               <div className="lp-field">
                 <label>Couleur</label>
                 <ColorPicker value={m.color || MINIGANTT_MILESTONE_COLORS[m.type] || MINIGANTT_MILESTONE_COLORS.standard} onChange={(color) => patchMilestone(m.id, { color })} />
-              </div>
-            </MiniGanttAnnotationRow>
-          );
-        })}
-      </MiniGanttListSection>
-
-      <MiniGanttListSection
-        icon={<ShieldAlert size={13} />} title="Risques" count={risks.length}
-        hint="Un risque appartient à la tâche : il apparaît dans tous les Mini-Gantt qui l'affichent, et il est enregistré aussitôt. Plusieurs risques sur une même tâche s'enchaînent dans l'ordre de cette liste."
-        open={open.risks} onToggle={() => toggle("risks")} onAdd={addRisk} addLabel="Ajouter un risque"
-      >
-        {risks.map((r) => {
-          const missing = !knownTaskIds.has(r.taskId);
-          return (
-            <MiniGanttAnnotationRow
-              key={r.id} item={r} list={risks} editing={editingId === r.id}
-              onToggleEdit={() => setEditingId(editingId === r.id ? null : r.id)}
-              onMove={(dir) => moveIn(risks, setRisks, r.id, dir, (a, b) => a.taskId === b.taskId)}
-              onDuplicate={() => duplicateAfter(risks, setRisks, r, (x) => ({ title: `${x.title} (copie)` }))}
-              onDelete={() => setPendingDelete({ kind: "risk", item: r })}
-              warning={missing}
-              swatch={<span className="lp-gantt-annot-swatch" style={{ background: "transparent", borderColor: r.color || MINIGANTT_RISK_DEFAULT_COLOR, borderStyle: r.style === "solid" ? "solid" : "dashed" }} />}
-              title={r.title || "Sans titre"}
-              subtitle={`${taskTitle(r.taskId)} · ${MINIGANTT_RISK_SEVERITY_LABELS[r.severity] || "moyen"}`}
-            >
-              <div className="lp-field">
-                <label>Tâche</label>
-                <TaskSelect value={r.taskId} onSelect={(id) => patchRisk(r.id, { taskId: id || "" })} />
-              </div>
-              {missing && <p className="lp-gantt-annot-error">Cette tâche n'existe plus ou n'est pas visible : le risque n'est pas dessiné.</p>}
-              <div className="lp-field">
-                <label>Titre</label>
-                <input type="text" value={r.title} onChange={(e) => patchRisk(r.id, { title: e.target.value })} placeholder="Risque fournisseur — impact potentiel +10 j" />
-              </div>
-              <div className="lp-field">
-                <label>Gravité</label>
-                <div className="lp-density-row">
-                  {MINIGANTT_RISK_SEVERITIES.map((s) => (
-                    <button key={s} type="button" className={"lp-density-btn" + ((r.severity || "medium") === s ? " active" : "")} onClick={() => patchRisk(r.id, { severity: s })}>
-                      {MINIGANTT_RISK_SEVERITY_LABELS[s]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="lp-field">
-                <label>Style</label>
-                <div className="lp-density-row">
-                  {MINIGANTT_RISK_STYLES.map((s) => (
-                    <button key={s} type="button" className={"lp-density-btn" + ((r.style || "hatched") === s ? " active" : "")} onClick={() => patchRisk(r.id, { style: s })}>
-                      {s === "solid" ? "Plein" : s === "dashed" ? "Pointillés" : "Hachuré"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="lp-row2">
-                <div className="lp-field">
-                  <label>Début (j après la tâche)</label>
-                  <input
-                    type="number" value={r.startOffset ?? ""} placeholder="à la suite"
-                    onChange={(e) => patchRisk(r.id, { startOffset: e.target.value === "" ? null : Number(e.target.value) })}
-                  />
-                </div>
-                <div className="lp-field">
-                  <label>Fin (j après la tâche)</label>
-                  <input
-                    type="number" value={r.endOffset ?? ""} placeholder="selon la gravité"
-                    onChange={(e) => patchRisk(r.id, { endOffset: e.target.value === "" ? null : Number(e.target.value) })}
-                  />
-                </div>
-              </div>
-              <p className="lp-gantt-annot-hint" style={{ marginTop: 0 }}>
-                Laissés vides, le risque commence là où le précédent s'arrête et dure {MINIGANTT_RISK_DEFAULT_DAYS[r.severity || "medium"]} jours.
-              </p>
-              <div className="lp-field">
-                <label>Couleur</label>
-                <ColorPicker value={r.color || MINIGANTT_RISK_DEFAULT_COLOR} onChange={(color) => patchRisk(r.id, { color })} />
               </div>
             </MiniGanttAnnotationRow>
           );
@@ -6117,6 +6034,25 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
     base.metaBlock && base.metaBlock.enabled ? { ...base.metaBlock } : null
   );
   const patchMetaBlock = (values) => setMetaBlock((prev) => (prev ? { ...prev, ...values } : prev));
+  // Risques de délai : ils appartiennent à la tâche, donc ils s'éditent ICI —
+  // le Mini-Gantt ne fait que les dessiner, dans tous les widgets qui affichent
+  // cette tâche. Plusieurs risques s'enchaînent dans l'ordre de cette liste.
+  const [delayRisks, setDelayRisks] = useState(() => (Array.isArray(base.delayRisks) ? base.delayRisks.map((r) => ({ ...r })) : []));
+  const [editingRiskId, setEditingRiskId] = useState(null);
+  const patchDelayRisk = (id, values) => setDelayRisks((prev) => prev.map((r) => (r.id === id ? { ...r, ...values } : r)));
+  const addDelayRisk = () => {
+    const created = { id: uid(), title: "Nouveau risque", color: MINIGANTT_RISK_DEFAULT_COLOR, style: "hatched", severity: "medium", startOffset: null, endOffset: null };
+    setDelayRisks((prev) => [...prev, created]);
+    setEditingRiskId(created.id);
+  };
+  const moveDelayRisk = (id, dir) => setDelayRisks((prev) => {
+    const i = prev.findIndex((r) => r.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= prev.length) return prev;
+    const next = [...prev];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
   const metaDashboardIds = (dashboards || []).map((d) => d.id);
   const metaCheckedIds = metaBlock && Array.isArray(metaBlock.dashboardIds) ? metaBlock.dashboardIds : metaDashboardIds;
   const toggleMetaDashboard = (dashboardId) => {
@@ -6194,7 +6130,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null);
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -6280,6 +6216,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       // Un projet qui n'est plus adossé à un calendrier perd son méta bloc :
       // la période n'est alors plus tenue à jour par l'agenda.
       metaBlock: isCalendarBackedProjectId(projectId, projects) && metaBlock && metaBlock.enabled ? metaBlock : null,
+      delayRisks: normalizeTaskDelayRisks(delayRisks),
       source: base.source || null,
       sourceUrl: base.sourceUrl || null,
       sourceMessageId: base.sourceMessageId || null,
@@ -6562,6 +6499,84 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           )}
         </div>
       )}
+
+      <div className="lp-field">
+        <label>Risques de délai <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(couloirs dessinés à la suite de la barre, dans tous les Mini-Gantt qui affichent cette tâche)</span></label>
+        {delayRisks.length === 0 && (
+          <p className="lp-gantt-annot-hint" style={{ marginTop: 0 }}>
+            Aucun risque. Un risque n'avance pas la tâche : il matérialise le délai qu'elle prendrait si le risque se réalisait.
+          </p>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {delayRisks.map((r) => {
+            const editing = editingRiskId === r.id;
+            return (
+              <div className={"lp-gantt-annot-item" + (editing ? " editing" : "")} key={r.id}>
+                <div className="lp-gantt-annot-head" onClick={() => setEditingRiskId(editing ? null : r.id)}>
+                  <span className="lp-gantt-annot-swatch" style={{ background: "transparent", borderColor: r.color || MINIGANTT_RISK_DEFAULT_COLOR, borderStyle: r.style === "solid" ? "solid" : "dashed" }} />
+                  <span className="lp-gantt-annot-summary">
+                    <strong>{r.title || "Sans titre"}</strong>
+                    <span>{MINIGANTT_RISK_SEVERITY_LABELS[r.severity || "medium"]}</span>
+                  </span>
+                  <span className="lp-gantt-annot-actions" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="lp-icon-btn" onClick={() => moveDelayRisk(r.id, -1)} disabled={delayRisks[0]?.id === r.id} title="Monter"><ChevronUp size={12} /></button>
+                    <button type="button" className="lp-icon-btn" onClick={() => moveDelayRisk(r.id, 1)} disabled={delayRisks[delayRisks.length - 1]?.id === r.id} title="Descendre"><ChevronDown size={12} /></button>
+                    <button type="button" className="lp-icon-btn" onClick={() => setDelayRisks((prev) => prev.filter((x) => x.id !== r.id))} title="Supprimer"><Trash2 size={12} /></button>
+                  </span>
+                </div>
+                {editing && (
+                  <div className="lp-gantt-annot-form">
+                    <div className="lp-field">
+                      <label>Titre</label>
+                      <input type="text" value={r.title || ""} onChange={(e) => patchDelayRisk(r.id, { title: e.target.value })} placeholder="Risque fournisseur — impact potentiel +10 j" />
+                    </div>
+                    <div className="lp-field">
+                      <label>Gravité</label>
+                      <div className="lp-density-row">
+                        {MINIGANTT_RISK_SEVERITIES.map((sev) => (
+                          <button key={sev} type="button" className={"lp-density-btn" + ((r.severity || "medium") === sev ? " active" : "")} onClick={() => patchDelayRisk(r.id, { severity: sev })}>
+                            {MINIGANTT_RISK_SEVERITY_LABELS[sev]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="lp-field">
+                      <label>Style</label>
+                      <div className="lp-density-row">
+                        {MINIGANTT_RISK_STYLES.map((st) => (
+                          <button key={st} type="button" className={"lp-density-btn" + ((r.style || "hatched") === st ? " active" : "")} onClick={() => patchDelayRisk(r.id, { style: st })}>
+                            {st === "solid" ? "Plein" : st === "dashed" ? "Pointillés" : "Hachuré"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="lp-row2">
+                      <div className="lp-field">
+                        <label>Début (j après la tâche)</label>
+                        <input type="number" value={r.startOffset ?? ""} placeholder="à la suite" onChange={(e) => patchDelayRisk(r.id, { startOffset: e.target.value === "" ? null : Number(e.target.value) })} />
+                      </div>
+                      <div className="lp-field">
+                        <label>Fin (j après la tâche)</label>
+                        <input type="number" value={r.endOffset ?? ""} placeholder="selon la gravité" onChange={(e) => patchDelayRisk(r.id, { endOffset: e.target.value === "" ? null : Number(e.target.value) })} />
+                      </div>
+                    </div>
+                    <p className="lp-gantt-annot-hint" style={{ marginTop: 0 }}>
+                      Laissés vides, le risque commence là où le précédent s'arrête et dure {MINIGANTT_RISK_DEFAULT_DAYS[r.severity || "medium"]} jours.
+                    </p>
+                    <div className="lp-field">
+                      <label>Couleur</label>
+                      <ColorPicker value={r.color || MINIGANTT_RISK_DEFAULT_COLOR} onChange={(color) => patchDelayRisk(r.id, { color })} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={addDelayRisk}>
+          <Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ajouter un risque de délai
+        </button>
+      </div>
 
       {otherTasks.length > 0 && (
         <div className="lp-field">
@@ -12927,35 +12942,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
         </DropdownButton>
         <DropdownButton label="" icon={<Layers size={14} />} title={`Grouper par : ${metroGroupBy === "folder" ? "Dossier" : "Projet"}`}>
           <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "project"} onChange={() => setMetroGroupBy("project")} /> Projet (une ligne par projet)</label>
-          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "folder"} onChange={() => setMetroGroupBy("folder")} /> Dossier (fusionne les projets d'un même dossier)</label>
-        </DropdownButton>
-        <button className={"lp-tool-btn" + (leftCollapsed ? " active" : "")} onClick={() => setPrefs((p) => ({ ...p, leftCollapsed: !leftCollapsed }))} title={leftCollapsed ? "Afficher la colonne projet" : "Replier la colonne projet (plus de place pour le diagramme)"}>
-          <PanelLeftClose size={14} />
-        </button>
-        {!embedded && (
-          <button className={"lp-tool-btn" + (isAuto ? " active" : "")} onClick={() => setZoomKey("auto")} title="Zoom automatique : utilise toute la largeur disponible">
-            <Maximize2 size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button className="lp-tool-btn" onClick={resetZoom} title="Réinitialiser le zoom">
-            <RefreshCw size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <DropdownButton label="" icon={<Columns3 size={14} />} title="Champs affichés sur les tâches">
-            {PM_FIELD_OPTIONS.map((f) => (
-              <label className="lp-checkbox-line" key={f.key}>
-                <input type="checkbox" checked={fields.includes(f.key)} onChange={() => setFields((prev) => (prev.includes(f.key) ? prev.filter((x) => x !== f.key) : [...prev, f.key]))} />
-                {f.label}
-              </label>
-            ))}
-          </DropdownButton>
-        )}
-        {!embedded && (
-          <button className="lp-tool-btn" onClick={toggleAllCollapsed} title={allCollapsed ? "Tout déplier" : "Tout replier"}>
-            {allCollapsed ? <ChevronsDown size={14} /> : <ChevronsUp size={14} />}
-          </button>
-        )}
-        {!embedded && (
-          <button className={"lp-tool-btn" + (showSubtasks ? " active" : ""
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metro

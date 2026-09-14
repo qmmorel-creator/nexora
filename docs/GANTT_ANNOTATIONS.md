@@ -91,6 +91,10 @@ type MetaTemporalBlock = TemporalBlock & {
   simplement plus à rien.
 - Dans le widget, un méta bloc se dessine comme les autres mais son titre porte
   une bordure pointillée et n'est pas cliquable : il se règle dans les Réglages.
+- L'étiquette d'un bloc épouse **son titre**, pas sa bande : une phase de trois
+  jours garde une capsule lisible, centrée sur la bande puis ramenée dans la
+  piste quand elle touche un bord. Les couloirs d'étiquettes sont calculés sur
+  la largeur de l'étiquette, jamais sur celle de la bande.
   Son identifiant est préfixé `meta:` pour ne jamais entrer en collision avec un
   bloc propre au widget.
 
@@ -164,6 +168,11 @@ de cet ensemble écrite hors de la configuration du widget, parce qu'un délai
 prévisible est une propriété de la tâche, pas d'un cadrage d'affichage. Le
 registre de risques de Nexora (`nexora:risks`) reste un objet distinct — projet,
 probabilité et impact — et n'est pas touché.
+
+Ils s'éditent donc **dans la fiche de la tâche**, section « Risques de délai », et
+nulle part ailleurs : les annotations d'un Mini-Gantt ne proposent plus de les
+créer ni de les modifier, puisqu'elles n'appartiennent pas au widget. Le
+Mini-Gantt continue de les **dessiner**, sans les posséder.
 
 Les listes enregistrées sur un widget avant ce changement sont reprises
 automatiquement : au premier affichage, chaque risque est reversé sur sa tâche

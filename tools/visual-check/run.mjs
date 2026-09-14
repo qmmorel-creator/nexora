@@ -78,6 +78,7 @@ const seen = await page.evaluate(() => {
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
+    miniRiskButton: [...document.querySelectorAll("#harness-first-minigantt button")].some((b) => b.textContent.trim() === "+ Risque"),
     treemapTiles: rects("#harness-treemap .lp-widget-treemap-tile"),
     treemapNames: rects("#harness-treemap .lp-widget-treemap-tile-name"),
     treemapRings: document.querySelectorAll("#harness-treemap .lp-widget-treemap-ring").length,
@@ -115,7 +116,7 @@ try {
 
 // Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
 // présente, cochée pour cette tâche, et son habillage réglable au même endroit.
-const taskMeta = { checkbox: 0, checked: false, controls: 0, hints: [] };
+const taskMeta = { checkbox: 0, checked: false, controls: 0, hints: [], riskButton: 0, riskRows: 0, riskSeverities: 0 };
 try {
   await page.locator("#harness-open-task-modal").click();
   await page.waitForSelector(".lp-modal #task-meta-block", { timeout: 10000 });
@@ -124,6 +125,15 @@ try {
   taskMeta.checked = await box.isChecked();
   taskMeta.controls = await page.locator(".lp-modal .lp-density-btn", { hasText: /Phase|Fenêtre de décision|Pointillés|Continue/ }).count();
   taskMeta.hints = (await page.locator(".lp-modal .lp-gantt-annot-hint").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+  // Les risques de délai appartiennent à la tâche : ils doivent s'éditer ici.
+  const addRisk = page.locator(".lp-modal").getByRole("button", { name: "Ajouter un risque de délai" });
+  taskMeta.riskButton = await addRisk.count();
+  if (taskMeta.riskButton) {
+    await addRisk.click();
+    await page.waitForTimeout(300);
+    taskMeta.riskRows = await page.locator(".lp-modal .lp-gantt-annot-item").count();
+    taskMeta.riskSeverities = await page.locator(".lp-modal .lp-density-btn", { hasText: /^(faible|moyen|élevé|critique)$/ }).count();
+  }
   await page.locator(".lp-modal").getByRole("button", { name: "Annuler" }).click();
   await page.waitForTimeout(400);
 } catch (error) {
@@ -136,20 +146,24 @@ try {
 // brut sans que rien ne le signale.
 const dropdown = { triggers: 0, before: 0, after: 0, chosen: "" };
 try {
-  await page.locator("#harness-first-minigantt").getByRole("button", { name: "+ Risque" }).click();
+  await page.locator("#harness-first-minigantt").getByRole("button", { name: "+ Jalon" }).click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  // Dans la fiche d'un jalon, la PREMIÈRE liste déroulante est le type ; la
+  // seconde est la tâche rattachée, celle qu'on veut contrôler ici.
   const triggers = page.locator(".lp-modal .lp-activity-search-trigger");
   dropdown.triggers = await triggers.count();
-  if (dropdown.triggers > 0) {
-    await triggers.first().click();
+  if (dropdown.triggers > 1) {
+    await triggers.nth(1).click();
     await page.waitForSelector(".lp-activity-search-menu input", { timeout: 5000 });
     dropdown.before = await page.locator(".lp-activity-search-menu .lp-activity-search-option").count();
     await page.locator(".lp-activity-search-menu input").fill("revue");
     await page.waitForTimeout(250);
     dropdown.after = await page.locator(".lp-activity-search-menu .lp-activity-search-option").count();
-    await page.locator(".lp-activity-search-menu .lp-activity-search-option").first().click();
+    // « Aucune tâche » reste en tête de liste (le rattachement est facultatif) :
+    // on clique l'option réellement cherchée, pas la première venue.
+    await page.locator(".lp-activity-search-menu .lp-activity-search-option", { hasText: "Revue DOE" }).first().click();
     await page.waitForTimeout(250);
-    dropdown.chosen = (await triggers.first().innerText()).replace(/\s+/g, " ").trim();
+    dropdown.chosen = (await triggers.nth(1).innerText()).replace(/\s+/g, " ").trim();
   }
 } catch (error) {
   dropdown.error = String(error).split("\n")[0];
@@ -165,13 +179,14 @@ try {
   await page.locator("#harness-open-widget-form").click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   await page.waitForTimeout(500);
-  await page.locator(".lp-modal .lp-widget-appearance-toggle", { hasText: "Risques" }).click();
+  await page.locator(".lp-modal .lp-widget-appearance-toggle", { hasText: "Jalons" }).click();
   await page.waitForTimeout(400);
   await page.locator(".lp-modal .lp-gantt-annot-head").last().click();
   await page.waitForTimeout(300);
-  await page.locator(".lp-modal .lp-activity-search-trigger").first().click();
+  await page.locator(".lp-modal .lp-activity-search-trigger").nth(1).click();
   await page.waitForSelector(".lp-activity-search-menu", { timeout: 5000 });
-  scoped.labels = await page.locator(".lp-activity-search-menu .lp-activity-option-main").allTextContents();
+  scoped.labels = (await page.locator(".lp-activity-search-menu .lp-activity-option-main").allTextContents())
+    .filter((l) => l.trim() !== "Aucune tâche");
   scoped.options = await page.locator(".lp-activity-search-menu .lp-activity-search-option").allTextContents();
 } catch (error) {
   scoped.error = String(error).split("\n")[0];
@@ -245,7 +260,7 @@ for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-G
 }
 
 expect(!dropdown.error, `contrôle des listes déroulantes interrompu : ${dropdown.error}`);
-expect(dropdown.triggers > 0, "Paramètres : la sélection de tâche d'un risque n'est pas une liste déroulante avec recherche");
+expect(dropdown.triggers > 1, "Paramètres : la sélection de tâche d'un jalon n'est pas une liste déroulante avec recherche");
 expect(dropdown.before > 1, `Paramètres : la liste déroulante ne propose que ${dropdown.before} option(s)`);
 expect(dropdown.after > 0 && dropdown.after < dropdown.before, `Paramètres : la recherche rapide ne filtre pas (${dropdown.before} → ${dropdown.after})`);
 expect(/Revue DOE/.test(dropdown.chosen), `Paramètres : la sélection ne s'applique pas (« ${dropdown.chosen} »)`);
@@ -295,6 +310,12 @@ expect(taskMeta.controls >= 4, `Fiche de tâche : ${taskMeta.controls} réglage(
 // le dire, et la portée du bloc doit rester réglable ici.
 expect(taskMeta.hints.some((h) => /Congés d.août.+05\/08\/2026.+19\/08\/2026/.test(h)), `Fiche de tâche : les dates reprises de la tâche ne sont pas rappelées (${taskMeta.hints.join(" | ")})`);
 expect(taskMeta.hints.some((h) => /tableaux de bord/i.test(h)), `Fiche de tâche : la portée du méta bloc n'est pas expliquée (${taskMeta.hints.join(" | ")})`);
+// Les risques de délai appartiennent à la tâche : c'est dans SA fiche qu'ils
+// s'éditent, plus dans les annotations d'un widget.
+expect(taskMeta.riskButton === 1, "Fiche de tâche : impossible d'ajouter un risque de délai");
+expect(taskMeta.riskRows >= 1, `Fiche de tâche : ${taskMeta.riskRows} risque(s) après ajout, au moins 1 attendu`);
+expect(taskMeta.riskSeverities === 4, `Fiche de tâche : ${taskMeta.riskSeverities} niveau(x) de gravité, 4 attendus`);
+expect(!seen.miniRiskButton, "Mini-Gantt : le bouton « + Risque » devrait avoir disparu — les risques s'éditent dans la fiche de la tâche");
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
 expect(scoped.labels.length === 2, `Paramètres : ${scoped.labels.length} tâche(s) proposée(s), 2 attendues (seul le projet filtré)`);
