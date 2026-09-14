@@ -19,7 +19,7 @@ for (const file of required) await readFile(path.join(root, file));
 async function files(dir) {
   const output = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (["node_modules", ".git", ".netlify"].includes(entry.name)) continue;
+    if (["node_modules", ".git", ".netlify", ".harness"].includes(entry.name)) continue;
     const target = path.join(dir, entry.name);
     if (entry.isDirectory()) output.push(...await files(target));
     else output.push(target);
@@ -65,4 +65,14 @@ assert.match(builtSource, /https:\/\/api\.todoist\.com\/api\/v1\/tasks/);
 assert.match(builtSource, /labels:\["nexora-mobile"\]/);
 assert.match(builtSource, /todoistTaskId/);
 assert.doesNotMatch(builtSource, /TELEGRAM_BOT_TOKEN/);
+// Annotations du Gantt : le bloc de logique pure doit rester extractible par
+// les tests unitaires, et les annotations rester attachées à la configuration
+// du widget plutôt qu'aux tâches.
+assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:START ===/);
+assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:END ===/);
+assert.match(builtSource, /ganttAnnotations: next/);
+assert.match(builtSource, /className="lp-gantt-tblock"/);
+assert.match(builtSource, /className="lp-gantt-frame"/);
+assert.match(builtSource, /className="lp-widget-minigantt-tblock"/);
+assert.match(builtSource, /className="lp-widget-minigantt-frame"/);
 console.log("Repository invariants: OK");

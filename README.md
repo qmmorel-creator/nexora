@@ -16,6 +16,12 @@ Firebase `nexora-cb20d` reste la source de données. Le dépôt ne contient ni d
 
 L'interface monofichier est versionnée sous `apps/nexora/source/index.html.part-*`. Le build concatène ces fragments texte, dans l'ordre, pour reconstruire exactement `dist/index.html`.
 
+## Suivi des demandes
+
+Les demandes d'amélioration et de correction sont suivies en issues GitHub : modèle guidé,
+labels `statut:*` et `zone:*`, board Projects. Le processus complet, identique à celui
+d'OS360, est décrit dans [.github/PROCESS.md](.github/PROCESS.md).
+
 ## Validation locale
 
 ```bash
