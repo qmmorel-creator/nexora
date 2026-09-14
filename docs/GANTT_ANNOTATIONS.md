@@ -107,6 +107,14 @@ l'enregistrement de la fiche du widget.
 
 ## Tests
 
+Contrôle visuel : `npm run visual:check` monte les deux diagrammes hors ligne
+(dépendances CDN rebundlées depuis npm, Firebase bouchonné) sur les données de
+démonstration, vérifie que blocs et cadres sont bien dessinés, que l'encadré
+posé sur des tâches non successives produit deux cadres et qu'aucune étiquette
+n'en recouvre une autre, puis écrit une capture. Voir
+[tools/visual-check](../tools/visual-check/README.md) — le dossier est installé
+séparément pour ne pas alourdir les builds Netlify.
+
 `apps/nexora/tests/gantt-annotations.test.mjs` extrait le bloc de logique pure
 de `dist/index.html` entre les sentinelles `NEXORA:GANTT-ANNOTATIONS:START/END`
 et l'évalue tel quel : les tests portent sur le code réellement livré dans

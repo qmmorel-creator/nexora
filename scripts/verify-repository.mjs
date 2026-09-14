@@ -19,7 +19,7 @@ for (const file of required) await readFile(path.join(root, file));
 async function files(dir) {
   const output = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (["node_modules", ".git", ".netlify"].includes(entry.name)) continue;
+    if (["node_modules", ".git", ".netlify", ".harness"].includes(entry.name)) continue;
     const target = path.join(dir, entry.name);
     if (entry.isDirectory()) output.push(...await files(target));
     else output.push(target);
