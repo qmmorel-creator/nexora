@@ -68,7 +68,12 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
 4. Ne fermer une issue et passer en `statut:fait` qu'après validation explicite de Quentin
    dans un commentaire.
 5. Un commit qui répond à une issue doit le mentionner dans son message
-   (`Fixes #12`, `Ref #12`) pour garder le lien visible dans l'historique.
+   (`Ref #12`) pour garder le lien visible dans l'historique.
+   **Ne jamais utiliser de mot-clé de fermeture** (`Closes #12`, `Fixes #12`, `Resolves #12`)
+   dans un message de commit ni dans une description de pull request : GitHub fermerait
+   l'issue à la fusion, alors que la fermeture appartient à Quentin après validation (point 4).
+   Une issue fermée mais encore étiquetée `statut:à-tester` est le symptôme de cette erreur —
+   la rouvrir.
 6. Toujours repartir du dernier état de `main` avant de coder, pour éviter d'écraser le
    travail d'un autre assistant.
 
