@@ -1,4 +1,766 @@
- <div className="lp-widget-stacked" style={{ position: "relative" }}>
+layout.x } };
+      return w;
+    }));
+  };
+  const removeWidget = (id) => {
+    const removed = widgets.find((w) => w.id === id);
+    setWidgets((prev) => prev.filter((w) => w.id !== id));
+    if (removed && pushToast) {
+      pushToast({
+        message: `Widget « ${removed.title || "Widget"} » supprimé.`,
+        actionLabel: "Annuler",
+        onAction: () => setWidgets((prev) => (prev.some((w) => w.id === removed.id) ? prev : [...prev, removed])),
+      });
+    }
+  };
+  const duplicateWidget = (w) => setWidgets((prev) => packWidgets([...prev, { ...w, id: uid(), title: (w.title || "Widget") + " (copie)", layout: undefined }]));
+  const saveWidget = (data) => {
+    if (editingWidget === "new") setWidgets((prev) => packWidgets([...prev, { id: uid(), ...data }]));
+    else setWidgets((prev) => prev.map((w) => (w.id === editingWidget.id ? { ...w, ...data } : w)));
+    setEditingWidget(null);
+  };
+
+  // Dimensionnement automatique : recalcule la hauteur idéale d'après le contenu
+  // réel du widget (nombre de lignes pour la Liste/le Mini-Gantt, nombre de troncs
+  // pour la Mini métro) à la largeur actuelle — sans jamais empêcher un
+  // redimensionnement manuel ensuite, puisqu'il ne fait que réécrire layout.h une fois.
+  const autoSizeWidget = (w) => {
+    const def = defaultLayoutForType(w.type);
+    const targetW = w.layout?.w || def.w;
+    const FRAME_CHROME_PX = 68; // en-tête + paddings du cadre widget
+    let targetHPx;
+    if (w.type === "taskDetail") {
+      targetHPx = 510;
+    } else if (w.type === "metroDeadline") {
+      const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx).filter((t) => t.end);
+      const projectCount = Math.max(1, new Set(scoped.map((t) => t.projectId).filter(Boolean)).size);
+      targetHPx = 54 + projectCount * 82 + FRAME_CHROME_PX;
+    } else if (w.type === "minigantt") {
+      const scopedAll = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
+      const scoped = scopedAll.filter((t) => !t.milestone && t.start && t.end);
+      const scopedMilestones = w.showMilestones !== false ? scopedAll.filter((t) => t.milestone && t.end) : [];
+      const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
+      const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
+      targetHPx = 20 /* axe */ + rows * 20 + groupCount * 22 /* en-têtes de groupe */ + FRAME_CHROME_PX;
+    } else if (w.type === "list") {
+      const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
+      const rows = Math.max(1, Math.min(w.limit || 6, scoped.length));
+      const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks(scoped.slice(0, w.limit || 6), w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
+      targetHPx = rows * 26 + groupCount * 20 + FRAME_CHROME_PX;
+    } else {
+      updateWidget(w.id, { layout: { ...w.layout, w: def.w, h: def.h } });
+      return;
+    }
+    const targetHUnits = clamp(Math.ceil((targetHPx + DASHBOARD_GAP) / (DASHBOARD_ROW_H + DASHBOARD_GAP)), 2, 12);
+    updateWidget(w.id, { layout: { ...w.layout, w: targetW, h: targetHUnits } });
+  };
+
+  // ==========================================================================
+  // Moteur unique déplacement + redimensionnement.
+  //
+  // Règle essentielle : la géométrie finale vient TOUJOURS de la dernière
+  // position effectivement reçue pendant pointermove. On ne recalcule jamais
+  // à partir de pointerup : certains navigateurs renvoient alors des coordonnées
+  // différentes/stales, ce qui expliquait le "retour" du widget au relâchement.
+  // ==========================================================================
+  const finishWidgetPointerGesture = (g, cancelled=false) => {
+    if (!g) return;
+
+    try {
+      if (g.handle?.hasPointerCapture?.(g.pointerId)) {
+        g.handle.releasePointerCapture(g.pointerId);
+      }
+    } catch (_) {}
+
+    g.handle?.removeEventListener("pointermove",g.onMove);
+    g.handle?.removeEventListener("pointerup",g.onUp);
+    g.handle?.removeEventListener("pointercancel",g.onCancel);
+    g.handle?.removeEventListener("lostpointercapture",g.onLostCapture);
+
+    if (!cancelled) {
+      if (g.mode === "move") {
+        const finalDx = Number(g.lastDx) || 0;
+        const finalDy = Number(g.lastDy) || 0;
+        const cellUnit = cellW + DASHBOARD_GAP;
+        const rowUnit = DASHBOARD_ROW_H + DASHBOARD_GAP;
+
+        const dCols = Math.round(finalDx / cellUnit);
+        const dRows = Math.round(finalDy / rowUnit);
+        const nx = clamp(g.layout.x + dCols,0,DASHBOARD_COLS-g.layout.w);
+        const ny = Math.max(0,g.layout.y + dRows);
+
+        updateWidget(g.id,{layout:{...g.layout,x:nx,y:ny}});
+      } else if (g.mode === "resize") {
+        const finalBox = g.lastBox || g.baseBox;
+        const nextLayout = snapResizeBoxToLayout(g.layout,g.corner,finalBox);
+        applyResizeWithCollisionPush(g.id,nextLayout);
+      }
+    }
+
+    gestureRef.current=null;
+    setGesture(null);
+    document.body.style.userSelect="";
+    document.body.style.cursor="";
+  };
+
+  const bindPointerGestureListeners = (g) => {
+    const onMove = (ev) => {
+      if (ev.pointerId !== g.pointerId) return;
+      ev.preventDefault();
+
+      if (g.mode === "move") {
+        // Stocké dans la ref : cette valeur est la source de vérité au relâchement.
+        g.lastClientX = ev.clientX;
+        g.lastClientY = ev.clientY;
+        g.lastDx = ev.clientX - g.startX;
+        g.lastDy = ev.clientY - g.startY;
+
+        setGesture({
+          id:g.id,
+          mode:"move",
+          dx:g.lastDx,
+          dy:g.lastDy,
+        });
+        return;
+      }
+
+      const box = g.boxFromPointer(ev.clientX,ev.clientY);
+      g.lastClientX=ev.clientX;
+      g.lastClientY=ev.clientY;
+      g.lastBox=box;
+
+      setGesture({
+        id:g.id,
+        mode:"resize-"+g.corner,
+        previewPx:box,
+      });
+    };
+
+    const onUp = (ev) => {
+      if (ev.pointerId !== g.pointerId) return;
+      ev.preventDefault();
+      // IMPORTANT : ne pas utiliser ev.clientX/Y ici.
+      finishWidgetPointerGesture(g,false);
+    };
+
+    const onCancel = (ev) => {
+      if (ev.pointerId !== g.pointerId) return;
+      finishWidgetPointerGesture(g,true);
+    };
+
+    const onLostCapture = () => {
+      // Si pointerup a déjà finalisé, gestureRef est nul. Sinon on valide avec
+      // la dernière position connue, plutôt que de jeter le mouvement.
+      if (gestureRef.current === g) finishWidgetPointerGesture(g,false);
+    };
+
+    g.onMove=onMove;
+    g.onUp=onUp;
+    g.onCancel=onCancel;
+    g.onLostCapture=onLostCapture;
+
+    g.handle.addEventListener("pointermove",onMove,{passive:false});
+    g.handle.addEventListener("pointerup",onUp,{passive:false});
+    g.handle.addEventListener("pointercancel",onCancel,{passive:false});
+    g.handle.addEventListener("lostpointercapture",onLostCapture);
+  };
+
+  const startMoveGesture = (widget) => (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (!gridRef.current) return;
+
+    // Ne jamais démarrer un déplacement depuis un bouton ou un contrôle contenu
+    // dans l'en-tête. Les handlers stopPropagation restent en place, mais ce
+    // garde-fou évite les cas où un enfant change entre pointerdown et render.
+    if (e.target?.closest?.("button,input,select,textarea,a,.lp-widget-head-toolbar")) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const handle=e.currentTarget;
+    const pointerId=e.pointerId;
+
+    try { handle.setPointerCapture(pointerId); } catch (_) {}
+
+    const g={
+      id:widget.id,
+      mode:"move",
+      pointerId,
+      handle,
+      startX:e.clientX,
+      startY:e.clientY,
+      lastClientX:e.clientX,
+      lastClientY:e.clientY,
+      lastDx:0,
+      lastDy:0,
+      layout:{...widget.layout},
+    };
+
+    gestureRef.current=g;
+    document.body.style.userSelect="none";
+    document.body.style.cursor="grabbing";
+    setGesture({id:widget.id,mode:"move",dx:0,dy:0});
+
+    bindPointerGestureListeners(g);
+  };
+
+  const startResizeGesture = (corner,widget) => (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (!gridRef.current) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const handle=e.currentTarget;
+    const card=handle.closest(".lp-widget-card");
+    if (!card) return;
+
+    const pointerId=e.pointerId;
+    const gridRect=gridRef.current.getBoundingClientRect();
+    const cardRect=card.getBoundingClientRect();
+
+    try { handle.setPointerCapture(pointerId); } catch (_) {}
+
+    const baseBox={
+      left:cardRect.left-gridRect.left,
+      top:cardRect.top-gridRect.top,
+      width:cardRect.width,
+      height:cardRect.height,
+      right:cardRect.right-gridRect.left,
+      bottom:cardRect.bottom-gridRect.top,
+    };
+
+    const minWidth=Math.max(80,(cellW+DASHBOARD_GAP)*2-DASHBOARD_GAP);
+    const minHeight=Math.max(80,(DASHBOARD_ROW_H+DASHBOARD_GAP)*2-DASHBOARD_GAP);
+    const maxHeight=Math.max(minHeight,(DASHBOARD_ROW_H+DASHBOARD_GAP)*12-DASHBOARD_GAP);
+
+    const boxFromPointer=(clientX,clientY)=>{
+      const gx=clientX-gridRect.left;
+      const gy=clientY-gridRect.top;
+
+      let left=baseBox.left;
+      let top=baseBox.top;
+      let width=baseBox.width;
+      let height=baseBox.height;
+
+      if(corner==="br"){
+        width=clamp(gx-baseBox.left,minWidth,Math.max(minWidth,gridRect.width-baseBox.left));
+        height=clamp(gy-baseBox.top,minHeight,maxHeight);
+      }else if(corner==="bl"){
+        left=clamp(gx,0,baseBox.right-minWidth);
+        width=baseBox.right-left;
+        height=clamp(gy-baseBox.top,minHeight,maxHeight);
+      }else if(corner==="tr"){
+        width=clamp(gx-baseBox.left,minWidth,Math.max(minWidth,gridRect.width-baseBox.left));
+        top=clamp(gy,0,baseBox.bottom-minHeight);
+        height=clamp(baseBox.bottom-top,minHeight,maxHeight);
+        top=baseBox.bottom-height;
+      }else if(corner==="tl"){
+        left=clamp(gx,0,baseBox.right-minWidth);
+        width=baseBox.right-left;
+        top=clamp(gy,0,baseBox.bottom-minHeight);
+        height=clamp(baseBox.bottom-top,minHeight,maxHeight);
+        top=baseBox.bottom-height;
+      }
+
+      return {left,top,width,height};
+    };
+
+    const cursor=({
+      tl:"nwse-resize",
+      br:"nwse-resize",
+      tr:"nesw-resize",
+      bl:"nesw-resize",
+    })[corner]||"nwse-resize";
+
+    const g={
+      id:widget.id,
+      mode:"resize",
+      corner,
+      pointerId,
+      handle,
+      layout:{...widget.layout},
+      baseBox,
+      lastBox:baseBox,
+      lastClientX:e.clientX,
+      lastClientY:e.clientY,
+      boxFromPointer,
+    };
+
+    gestureRef.current=g;
+    document.body.style.userSelect="none";
+    document.body.style.cursor=cursor;
+    setGesture({id:widget.id,mode:"resize-"+corner,previewPx:baseBox});
+
+    bindPointerGestureListeners(g);
+  };
+
+  const pagesBarNode = pages && pages.length > 0 && (
+    <div className={"lp-dashboard-pages-bar" + (tabsSlot ? " lp-dashboard-pages-bar-inline" : "")}>
+      {pages.map((p) => {
+        const hasPageFilter = p.filter && Object.entries(p.filter).some(([k, v]) => {
+          if (k === "projectIdsMode" || k === "statusIdsMode" || k === "datePresetField") return false;
+          if (k === "advanced") return countFilterGroup(v) > 0;
+          return Array.isArray(v) ? v.length > 0 : (v !== "" && v !== false && v != null);
+        });
+        return (
+          <div
+            key={p.id}
+            className={"lp-dashboard-page-tab" + (p.id === activePageId ? " active" : "")}
+            onClick={() => editingPageId !== p.id && onSwitchPage(p.id)}
+            onContextMenu={(e) => { e.preventDefault(); setFilterPageTarget(p); }}
+          >
+            {editingPageId === p.id ? (
+              <input
+                autoFocus
+                className="lp-dashboard-page-tab-input"
+                value={editingPageName}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => setEditingPageName(e.target.value)}
+                onBlur={() => { onRenamePage(p.id, editingPageName); setEditingPageId(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setEditingPageId(null); }}
+              />
+            ) : (
+              <span
+                className="lp-dashboard-page-tab-label"
+                onDoubleClick={(e) => { e.stopPropagation(); setEditingPageId(p.id); setEditingPageName(p.name); }}
+                title="Double-clique pour renommer, clic droit pour filtrer"
+              >
+                {p.icon && <IconGlyph icon={p.icon} size={13} />}
+                {p.name}
+              </span>
+            )}
+            {p.id === activePageId && editingPageId !== p.id && (
+              <button className="lp-dashboard-page-tab-close lp-mobile-only-inline" onClick={(e) => { e.stopPropagation(); setEditingPageId(p.id); setEditingPageName(p.name); }} title="Renommer cette page"><Pencil size={11} /></button>
+            )}
+            {p.id === activePageId && (
+              <button className="lp-dashboard-page-tab-close" onClick={(e) => { e.stopPropagation(); setFilterPageTarget(p); }} title="Filtre de cette page (s'applique à tous ses widgets)">
+                <SlidersHorizontal size={11} />
+                {hasPageFilter && <span className="lp-dashboard-page-filter-dot" />}
+              </button>
+            )}
+            {p.id === activePageId && (
+              <button className="lp-dashboard-page-tab-close" onClick={(e) => { e.stopPropagation(); onDuplicatePage(p.id); }} title="Dupliquer cette page"><Copy size={11} /></button>
+            )}
+            {pages.length > 1 && p.id === activePageId && (
+              <button className="lp-dashboard-page-tab-close" onClick={(e) => { e.stopPropagation(); onDeletePage(p.id); }} title="Supprimer cette page"><X size={11} /></button>
+            )}
+          </div>
+        );
+      })}
+      <button className="lp-dashboard-page-add" onClick={onAddPage} title="Ajouter une page"><Plus size={13} /></button>
+    </div>
+  );
+
+  return (
+    <div className="lp-dashboard-wrap">
+      <ViewToolbarPortal slot={toolbarSlot}>
+        {dashboardName && <span className="lp-dashboard-name-tag">{dashboardName}</span>}
+        <button className="lp-tool-btn" onClick={() => setEditingWidget("new")} title="Ajouter un widget"><Plus size={14} /> Ajouter un widget</button>
+      </ViewToolbarPortal>
+
+      {/* Les onglets de pages sont "portés" à côté du titre (voir dashboardTabsSlot
+          dans le composant parent) quand un emplacement est disponible, pour ne
+          plus occuper leur propre rangée pleine largeur. Repli en rangée normale
+          si aucun slot n'est fourni (ex. futur usage sans en-tête compatible). */}
+      {tabsSlot ? <ViewToolbarPortal slot={tabsSlot}>{pagesBarNode}</ViewToolbarPortal> : pagesBarNode}
+
+      {widgets.length === 0 ? (
+        <div className="lp-empty" style={{ padding: 40 }}>
+          Aucun widget pour l'instant.
+          <div style={{ marginTop: 10 }}>
+            <button className="lp-btn lp-btn-primary" onClick={() => setEditingWidget("new")}>Ajouter un widget</button>
+          </div>
+        </div>
+      ) : (
+        <div className={"lp-dashboard-grid" + (isMobileStack ? " lp-dashboard-grid-stack" : "")} ref={gridRef} style={isMobileStack ? undefined : { height: py(gridHeight) - DASHBOARD_GAP }}>
+          {stackedWidgets.map((w, wIndex) => {
+            if (!w.layout) return null;
+            let scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
+            if (w.onlyMine && myName) scoped = scoped.filter((t) => t.assignee === myName);
+            const isGesturing = !isMobileStack && gesture && gesture.id === w.id;
+            const dx = isGesturing && gesture.mode === "move" ? gesture.dx : 0;
+            const dy = isGesturing && gesture.mode === "move" ? gesture.dy : 0;
+            const resizing = isGesturing && gesture.mode.startsWith("resize");
+            const resizePreviewPx = resizing ? gesture.previewPx : null;
+            // Pile mobile : plein largeur, en flux normal — plus de positionnement
+            // absolu ni de redimensionnement au doigt (voir moveWidgetInStack pour
+            // le réordonnancement tactile, via les boutons ↑/↓ de l'en-tête).
+            const style = isMobileStack ? {
+              position: "static", width: "100%", minHeight: Math.max(160, py(w.layout.h) - DASHBOARD_GAP),
+              background: w.bgColor || undefined,
+            } : {
+              left: resizing ? resizePreviewPx.left : px(w.layout.x) + dx,
+              top: resizing ? resizePreviewPx.top : py(w.layout.y) + dy,
+              width: resizing ? resizePreviewPx.width : px(w.layout.w) - DASHBOARD_GAP,
+              height: resizing ? resizePreviewPx.height : py(w.layout.h) - DASHBOARD_GAP,
+              zIndex: isGesturing ? 30 : 1,
+              background: w.bgColor || undefined,
+              transition: isGesturing ? "none" : undefined,
+              willChange: isGesturing ? "left, top, width, height" : undefined,
+              ...(appearance?.animCascade && !isGesturing ? { animationDelay: `${Math.min(wIndex, 10) * 70}ms` } : {}),
+            };
+            return (
+              <WidgetFrame
+                key={w.id}
+                title={w.title || "Widget"}
+                titleEmoji={w.titleEmoji}
+                titleColor={w.titleColor}
+                bandColor={w.bandColor}
+                style={style}
+                className={appearance?.animCascade ? "lp-anim-cascade-item" : undefined}
+                dragging={!!isGesturing}
+                onMoveUp={isMobileStack && wIndex > 0 ? () => moveWidgetInStack(w.id, -1) : undefined}
+                onMoveDown={isMobileStack && wIndex < stackedWidgets.length - 1 ? () => moveWidgetInStack(w.id, 1) : undefined}
+                onEdit={() => setEditingWidget(w)}
+                onDelete={() => removeWidget(w.id)}
+                onDuplicate={() => duplicateWidget(w)}
+                onAutoSize={() => autoSizeWidget(w)}
+                onHeaderMouseDown={startMoveGesture(w)}
+                onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedGantt" || w.type === "embedTimeline" || w.type === "embedRadar"}
+              >
+                {(headerToolbarSlot) => (
+                <>
+                {w.type === "kpi" && (
+                  <div className="lp-widget-kpi">{computeKpiValue(scoped, w.metric || "count", ctx)}</div>
+                )}
+                {w.type === "customCard" && (
+                  <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen}/>
+                )}
+                {w.type === "chart" && (
+                  <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} aggregateField={w.aggregateField} aggregateType={w.aggregateType || "sum"} />
+                )}
+                {w.type === "list" && (
+                  <WidgetList tasks={scoped} sortBy={w.sortBy || "end"} limit={w.limit || 6} groupBy={w.groupBy} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "taskDetail" && (
+                  <WidgetTaskDetail
+                    widget={w}
+                    tasks={scoped}
+                    allTasks={tasks}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    shortcutPrefs={shortcutPrefs}
+                    onChangeTask={(taskId)=>updateWidget(w.id,{taskDetailTaskId:taskId})}
+                    onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
+                  />
+                )}
+                {w.type === "countdown" && (
+                  <WidgetCountdown widget={w} tasks={tasks} ctx={ctx} />
+                )}
+                {w.type === "note" && (
+                  <WidgetNote widget={w} onChange={(content) => updateWidget(w.id, { content })} shortcutPrefs={shortcutPrefs} />
+                )}
+                {w.type === "budget" && (
+                  <WidgetBudget widget={w} projects={ctx.projects} expenses={expenses} expenseCategories={expenseCategories} />
+                )}
+                {w.type === "budgetCompare" && (
+                  <WidgetBudgetCompare widget={w} projects={ctx.projects} />
+                )}
+                {w.type === "minigantt" && (
+                  <WidgetMiniGantt
+                    widget={w}
+                    tasks={scoped}
+                    groupBy={w.groupBy}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
+                    onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
+                    pastDays={
+                      (() => {
+                        const vals = [
+                          activePage?.filter?.pastDays,
+                          widgetFilterFor(w)?.pastDays
+                        ]
+                          .filter(v => v !== "" && v != null && !Number.isNaN(Number(v)))
+                          .map(Number);
+                        return vals.length ? Math.min(...vals) : "";
+                      })()
+                    }
+                  />
+                )}
+                {w.type === "criticalPath" && (
+                  <WidgetCriticalPath tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "projectPulse" && (
+                  <WidgetProjectPulse tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "heatmapMonth" && (
+                  <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
+                )}
+                {w.type === "milestoneTimeline" && (
+                  <WidgetMilestoneTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "metroDeadline" && (
+                  <WidgetMetroDeadline tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "verticalMetroTimeline" && (
+                  <WidgetVerticalMetroTimeline
+                    tasks={scoped}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateDates={(taskId, patch) => setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, ...patch } : t))}
+                  />
+                )}
+                {w.type === "blockers" && (
+                  <WidgetBlockers tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "nextBestAction" && (
+                  <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "dailyBriefing" && (
+                  <WidgetDailyBriefing tasks={scoped} ctx={ctx} onOpen={onOpen} onViewDay={onViewDay} activityLog={activityLog} workflowExecutionLog={workflowExecutionLog} />
+                )}
+                {w.type === "projectMomentum" && (
+                  <WidgetProjectMomentum widget={w} tasks={scoped} ctx={ctx} snapshots={momentumSnapshots || []} onOpen={onOpen} />
+                )}
+                {w.type === "dominoEffect" && (
+                  <WidgetDominoEffect tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "projectStory" && (
+                  <WidgetProjectStory widget={w} ctx={ctx} activityLog={activityLog} onOpen={onOpen} />
+                )}
+                {w.type === "timeMachine" && (
+                  <WidgetTimeMachine widget={w} tasks={scoped} ctx={ctx} taskBaselines={taskBaselines || {}} momentumSnapshots={momentumSnapshots || []} onOpen={onOpen} />
+                )}
+                {w.type === "budgetBurnRate" && (
+                  <WidgetBudgetBurnRate widget={w} ctx={ctx} expenses={expenses || []} onOpen={onOpen} />
+                )}
+                {w.type === "riskMatrix" && (
+                  <WidgetRiskMatrix widget={w} ctx={ctx} risks={risks || []} onOpenProject={() => {}} />
+                )}
+                {w.type === "automations" && (
+                  <WidgetAutomations workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={onOpenAutomations} />
+                )}
+                {w.type === "automationAlerts" && (
+                  <WidgetAutomationAlerts workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={onOpenAutomations} />
+                )}
+                {w.type === "embedMetro" && (
+                  <WidgetEmbedMetro tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} expenses={expenses} setTasks={setTasks} pushToast={pushToast} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                {w.type === "embedGantt" && (
+                  <WidgetEmbedGantt widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} />
+                )}
+                {w.type === "embedTimeline" && (
+                  <WidgetEmbedTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                {w.type === "embedRadar" && (
+                  <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                </>
+                )}
+              </WidgetFrame>
+            );
+          })}
+        </div>
+      )}
+
+      {editingWidget && (
+        <WidgetFormModal
+          widget={editingWidget === "new" ? null : editingWidget}
+          existingWidgets={widgets}
+          ctx={ctx}
+          pageFilter={activePage?.filter}
+          onSave={saveWidget}
+          onClose={() => setEditingWidget(null)}
+        />
+      )}
+      {filterPageTarget && (
+        <PageFilterModal
+          page={filterPageTarget}
+          ctx={ctx}
+          onSave={(filter) => onUpdatePageFilter(filterPageTarget.id, filter)}
+          onSaveMeta={(patch) => onUpdatePageMeta(filterPageTarget.id, patch)}
+          onClose={() => setFilterPageTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Agrège un ensemble de tâches selon un champ personnalisé numérique — somme,
+// moyenne, minimum ou maximum. Sans champ choisi (aggregateField vide), le
+// comportement d'origine est conservé : un simple comptage de tâches.
+function aggregateTasksValue(tasksArr, aggregateField, aggregateType) {
+  if (!aggregateField) return tasksArr.length;
+  const fieldId = aggregateField.startsWith("cf:") ? aggregateField.slice(3) : aggregateField;
+  const nums = tasksArr.map((t) => Number(t.customFields?.[fieldId])).filter((n) => Number.isFinite(n));
+  if (nums.length === 0) return 0;
+  if (aggregateType === "avg") return nums.reduce((s, n) => s + n, 0) / nums.length;
+  if (aggregateType === "min") return Math.min(...nums);
+  if (aggregateType === "max") return Math.max(...nums);
+  return nums.reduce((s, n) => s + n, 0); // "sum" par défaut
+}
+// Arrondit proprement pour l'affichage : entier si c'en est un, sinon 1 décimale.
+function fmtAggregateValue(v) {
+  if (!Number.isFinite(v)) return "0";
+  const rounded = Math.round(v * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function computeStackedData(tasks, groupBy, stackBy, ctx, aggregateField, aggregateType) {
+  const primary = groupTasks(tasks, groupBy, ctx).filter((g) => g.tasks.length > 0);
+  const stackKeys = groupTasks(tasks, stackBy, ctx).filter((g) => g.tasks.length > 0);
+  return primary.map((pg) => ({
+    label: pg.label,
+    total: aggregateTasksValue(pg.tasks, aggregateField, aggregateType),
+    segments: stackKeys
+      .map((sg) => {
+        const segTasks = pg.tasks.filter((t) => matchesGroupKey(t, stackBy, sg.key, ctx));
+        return { label: sg.label, color: sg.color || "var(--text-muted)", value: aggregateTasksValue(segTasks, aggregateField, aggregateType) };
+      })
+      .filter((s) => s.value > 0),
+  }));
+}
+
+function GaugeChart({ value, size = 120, metricLabel, count }) {
+  const [hover, setHover] = useState(false);
+  const r = size / 2 - 10;
+  const cx = size / 2, cy = size / 2;
+  const circumference = Math.PI * r; // demi-cercle
+  const pct = clamp(value, 0, 100);
+  const offset = circumference * (1 - pct / 100);
+  return (
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <svg
+        width={size} height={size / 2 + 24} viewBox={`0 0 ${size} ${size / 2 + 24}`}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{ cursor: metricLabel ? "default" : undefined }}
+      >
+        <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="var(--border)" strokeWidth="12" strokeLinecap="round" />
+        <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="var(--accent)" strokeWidth="12" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} />
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--text-900)">{Math.round(pct)}%</text>
+      </svg>
+      {hover && metricLabel && (
+        <div className="lp-pie-tooltip" style={{ position: "absolute", left: "50%", bottom: "100%", transform: "translateX(-50%)", marginBottom: 6, whiteSpace: "nowrap" }}>
+          {metricLabel} — {Math.round(pct)}%{Number.isFinite(count) ? ` (${count} tâche${count > 1 ? "s" : ""})` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BarChartSimple({ data, horizontal, isAggregate }) {
+  const [hover, setHover] = useState(null); // { d, x, y }
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const openTip = (d, e) => setHover({ d, x: e.clientX, y: e.clientY });
+  const closeTip = () => setHover(null);
+  const total = data.reduce((s, d) => s + d.value, 0);
+  const pctFor = (v) => (total > 0 ? Math.round((v / total) * 100) : 0);
+  const legend = (
+    <div className="lp-widget-legend lp-widget-legend-horizontal">
+      {data.map((d) => (
+        <div key={d.label} className="lp-widget-legend-item">
+          <span className="lp-widget-legend-dot" style={{ background: d.color }} />
+          <span className="lp-widget-legend-label">{d.label}</span>
+          <span className="lp-widget-legend-value">{fmtAggregateValue(d.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+  if (horizontal) {
+    return (
+      <div className="lp-widget-barh-wrap">
+        <div className="lp-widget-barh" style={{ position: "relative" }}>
+          {data.map((d) => (
+            <div className="lp-widget-barh-row" key={d.label} onMouseEnter={(e) => openTip(d, e)} onMouseMove={(e) => openTip(d, e)} onMouseLeave={closeTip} style={{ cursor: "default" }}>
+              <span className="lp-widget-barh-label">{d.label}</span>
+              <div className="lp-widget-barh-track">
+                <div className="lp-widget-barh-fill" style={{ width: `${(d.value / max) * 100}%`, background: d.color }} />
+              </div>
+              <span className="lp-widget-bar-value">{fmtAggregateValue(d.value)}</span>
+            </div>
+          ))}
+          {hover && (
+            <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+              {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
+            </div>
+          )}
+        </div>
+        {legend}
+      </div>
+    );
+  }
+  return (
+    <div className="lp-widget-barv-wrap">
+      <div className="lp-widget-barv" style={{ position: "relative" }}>
+        {data.map((d) => (
+          <div className="lp-widget-barv-col" key={d.label} onMouseEnter={(e) => openTip(d, e)} onMouseMove={(e) => openTip(d, e)} onMouseLeave={closeTip} style={{ cursor: "default" }}>
+            <span className="lp-widget-bar-value">{fmtAggregateValue(d.value)}</span>
+            <div className="lp-widget-barv-track">
+              <div className="lp-widget-barv-fill" style={{ height: `${(d.value / max) * 100}%`, background: d.color }} />
+            </div>
+            <span className="lp-widget-barv-label">{d.label}</span>
+          </div>
+        ))}
+        {hover && (
+          <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+            {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
+          </div>
+        )}
+      </div>
+      {legend}
+    </div>
+  );
+}
+
+function LineChartWidget({ data, width = 320, height = 140 }) {
+  const [hover, setHover] = useState(null); // { p, x, y }
+  if (data.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune donnée pour ce filtre.</div>;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const padX = 8, padY = 14;
+  const stepX = data.length > 1 ? (width - padX * 2) / (data.length - 1) : 0;
+  const points = data.map((d, i) => {
+    const x = padX + i * stepX;
+    const y = height - padY - (d.value / max) * (height - padY * 2);
+    return { x, y, d };
+  });
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+  const area = `${path} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`;
+  return (
+    <div>
+      <div style={{ position: "relative" }}>
+        <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+          <path d={area} fill="var(--accent)" opacity="0.12" />
+          <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((p, i) => (
+            <g key={i} onMouseEnter={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseMove={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
+              <circle cx={p.x} cy={p.y} r="9" fill="transparent" />
+              <circle cx={p.x} cy={p.y} r="3" fill="var(--accent)" />
+              <text x={p.x} y={height - 2} textAnchor="middle" fontSize="9" fill="var(--text-600)">{p.d.label}</text>
+            </g>
+          ))}
+        </svg>
+        {hover && (
+          <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+            {hover.p.d.label} — {hover.p.d.value} tâche{hover.p.d.value > 1 ? "s" : ""}
+          </div>
+        )}
+      </div>
+      <div className="lp-widget-legend lp-widget-legend-horizontal">
+        <div className="lp-widget-legend-item">
+          <span className="lp-widget-legend-dot" style={{ background: "var(--accent)" }} />
+          <span className="lp-widget-legend-label">Nombre de tâches par période</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StackedBarChart({ data }) {
+  const [hover, setHover] = useState(null); // { seg, colLabel, x, y }
+  const max = Math.max(1, ...data.map((d) => d.total));
+  // Légende dédupliquée : un segment (ex. un statut) peut apparaître dans
+  // plusieurs colonnes — un seul badge par label/couleur distincts.
+  const legend = useMemo(() => {
+    const seen = new Map();
+    data.forEach((d) => d.segments.forEach((s) => { if (!seen.has(s.label)) seen.set(s.label, s.color); }));
+    return [...seen.entries()].map(([label, color]) => ({ label, color }));
+  }, [data]);
+  return (
+    <div className="lp-widget-stacked" style={{ position: "relative" }}>
       <div className="lp-widget-barv">
         {data.map((d) => (
           <div className="lp-widget-barv-col" key={d.label}>
@@ -3954,7 +4716,18 @@ function WidgetEmbedMetro({ tasks, ctx, onOpen, appearance, expenses, setTasks, 
   );
 }
 
-function WidgetEmbedGantt({ tasks, ctx, onOpen, appearance, setTasks, externalToolbarSlot }) {
+// Les annotations du Gantt embarqué vivent dans la configuration DU WIDGET
+// (widget.ganttAnnotations) et non dans les préférences éphémères de la vue :
+// elles survivent au rechargement et suivent le widget lors de la duplication
+// d'un widget, d'un onglet ou d'un tableau de bord. Les autres réglages
+// (zoom, colonnes, bulles) restent locaux au widget affiché, comme avant.
+function ganttAnnotationsOf(widget) {
+  const stored = widget && widget.ganttAnnotations;
+  return stored && typeof stored === "object" ? stored : {};
+}
+
+function WidgetEmbedGantt({ widget, tasks, ctx, onOpen, appearance, setTasks, externalToolbarSlot, onUpdateWidget }) {
+  const annotations = ganttAnnotationsOf(widget);
   return (
     <EmbeddedViewShell initialPrefs={{ bubbleFields: [] }} externalToolbarSlot={externalToolbarSlot}>
       {({ toolbarSlot, prefs, setPrefs }) => (
@@ -3963,6 +4736,8 @@ function WidgetEmbedGantt({ tasks, ctx, onOpen, appearance, setTasks, externalTo
           setTasks={setTasks || (() => {})} setProjects={() => {}} setStatuses={() => {}}
           onOpen={onOpen} onAdd={() => {}} onDelete={() => {}} onMarkDone={() => {}} onCycleStatus={() => {}} onBulkDelete={() => {}}
           prefs={prefs} setPrefs={setPrefs} toolbarSlot={toolbarSlot}
+          annotations={annotations}
+          onAnnotationsChange={onUpdateWidget ? ((next) => onUpdateWidget({ ganttAnnotations: next })) : undefined}
           embedded
         />
       )}
@@ -4249,6 +5024,19 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [bgColor, setBgColor] = useState(widget?.bgColor || "");
   const [bandColor, setBandColor] = useState(widget?.bandColor || "");
   const [titleEmoji, setTitleEmoji] = useState(widget?.titleEmoji || "");
+  // Annotations du Gantt embarqué : éditées ici puis enregistrées dans la
+  // configuration du widget, jamais dans les tâches elles-mêmes.
+  const [ganttAnnotations, setGanttAnnotations] = useState(() => {
+    const stored = ganttAnnotationsOf(widget);
+    return {
+      temporalBlocks: Array.isArray(stored.temporalBlocks) ? stored.temporalBlocks : [],
+      highlightFrames: Array.isArray(stored.highlightFrames) ? stored.highlightFrames : [],
+    };
+  });
+  // Un bloc dont les dates sont invalides (ou dont la fin précède le début)
+  // bloque l'enregistrement : l'erreur reste affichée sous les champs.
+  const ganttAnnotationsValid = ganttAnnotations.temporalBlocks.every((b) => validateTemporalBlock(b).ok);
+  const ganttTasks = useMemo(() => (ctx.tasks || []).filter((t) => t.start && t.end), [ctx.tasks]);
 
   const updateCardBlock = (id, patch) => setCardBlocks((prev) => prev.map((b) => b.id === id ? { ...b, ...patch } : b));
   const removeCardBlock = (id) => setCardBlocks((prev) => prev.filter((b) => b.id !== id));
@@ -4299,6 +5087,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "riskMatrix") return !!riskMatrixProjectId;
     if (type === "budgetCompare") return budgetCompareProjectIds.length > 0;
     if (type === "list") return Number(limit) > 0;
+    if (type === "embedGantt") return ganttAnnotationsValid;
     return true;
   })();
 
@@ -4343,6 +5132,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (type === "riskMatrix") data.riskMatrixProjectId = riskMatrixProjectId;
     if (type === "budgetCompare") data.budgetCompareProjectIds = budgetCompareProjectIds;
+    if (type === "embedGantt") {
+      data.ganttAnnotations = {
+        temporalBlocks: normalizeTemporalBlocks(ganttAnnotations.temporalBlocks),
+        highlightFrames: pruneHighlightFrames(ganttAnnotations.highlightFrames, ganttTasks.map((t) => t.id)),
+      };
+    }
     if (type === "minigantt") {
       data.groupBy = listGroupBy; data.showMilestones = showMilestones; data.colorBy = colorBy; data.miniGanttFields = miniGanttFields; data.miniGanttFieldsLayout = miniGanttFieldsLayout;
       if (widget?.miniGanttZoomLevel != null) data.miniGanttZoomLevel = widget.miniGanttZoomLevel;
@@ -4904,6 +5699,23 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           </div>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Deux barres par projet — budget initial et budget actuel — pour repérer les écarts d'un coup d'œil.</p>
         </div>
+      )}
+
+      {type === "embedGantt" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
+            Les annotations ci-dessous sont enregistrées avec ce widget : elles suivent sa duplication, celle de l'onglet et celle du tableau de bord, sans jamais modifier les tâches.
+          </p>
+          <GanttAnnotationsEditor
+            blocks={ganttAnnotations.temporalBlocks}
+            frames={ganttAnnotations.highlightFrames}
+            tasks={ganttTasks}
+            ctx={ctx}
+            defaultStart={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date())}
+            defaultEnd={ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date())}
+            onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
+          />
+        </>
       )}
 
       {type === "minigantt" && (

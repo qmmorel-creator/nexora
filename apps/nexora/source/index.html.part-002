@@ -1,4 +1,90 @@
-t statusName = (t) => {
+Days}
+            onChange={(e) => setLocal({ ...local, dueWithinDays: e.target.value })}
+            placeholder="Vide = tout"
+            style={{ maxWidth: 120 }}
+          />
+          <div style={{fontSize:10,color:"var(--text-muted)",marginTop:4}}>
+            Vide = aucune limite future.
+          </div>
+        </div>
+      </div>
+      <div className="lp-filter-section">
+        <div className="lp-section-title">Inactivité / tâches mortes</div>
+        <div className="lp-field">
+          <label>Inactivité supérieure à X jours</label>
+          <input
+            type="number"
+            min="0"
+            value={local.inactivityDays ?? local.inactivityMinDays ?? ""}
+            onChange={(e) => setLocal({ ...local, inactivityDays:e.target.value, inactivityMinDays:"", inactivityMaxDays:"" })}
+            placeholder="Ex. 14"
+            style={{ maxWidth:120 }}
+          />
+        </div>
+        <div style={{fontSize:10,color:"var(--text-muted)",marginTop:4}}>
+          Exemple : 30 affiche uniquement les tâches dont l'inactivité est strictement supérieure à 30 jours.
+        </div>
+      </div>
+      <div className="lp-row2">
+        <div className="lp-field"><label>Avancement min (%)</label><input type="number" min="0" max="100" value={local.progressMin} onChange={(e) => setLocal({ ...local, progressMin: Number(e.target.value) })} /></div>
+        <div className="lp-field"><label>Avancement max (%)</label><input type="number" min="0" max="100" value={local.progressMax} onChange={(e) => setLocal({ ...local, progressMax: Number(e.target.value) })} /></div>
+      </div>
+      <div className="lp-row2">
+        <div className="lp-field"><label>Début — de</label><input type="date" value={local.startFrom} onChange={(e) => setLocal({ ...local, startFrom: e.target.value })} /></div>
+        <div className="lp-field"><label>Début — à</label><input type="date" value={local.startTo} onChange={(e) => setLocal({ ...local, startTo: e.target.value })} /></div>
+      </div>
+      <div className="lp-row2">
+        <div className="lp-field"><label>Fin — de</label><input type="date" value={local.endFrom} onChange={(e) => setLocal({ ...local, endFrom: e.target.value })} /></div>
+        <div className="lp-field"><label>Fin — à</label><input type="date" value={local.endTo} onChange={(e) => setLocal({ ...local, endTo: e.target.value })} /></div>
+      </div>
+    </>
+  );
+}
+function FiltersModal({ filters, setFilters, ctx, onClose }) {
+  const local = filters;
+  const setLocal = setFilters;
+  const reset = () => setFilters(defaultFilters());
+
+  return (
+    <Modal title="Filtres" onClose={onClose} extraWide className="lp-filters-modal" footer={
+      <>
+        <button className="lp-btn" onClick={reset}>Réinitialiser</button>
+        <button className="lp-btn lp-btn-primary" onClick={onClose}>Fermer</button>
+      </>
+    }>
+      <FilterFieldsBody local={local} setLocal={setLocal} ctx={ctx} />
+    </Modal>
+  );
+}
+
+function GlobalMetaSearchModal({ tasks, taskArchive = [], ctx, onOpenTask, onRestoreArchived, onClose }) {
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState(() => defaultMetaFilters());
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [searchFields, setSearchFields] = useState({
+    title:true,
+    project:true,
+    status:true,
+    description:true,
+    assignee:true,
+  });
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const norm = (v) => String(v == null ? "" : v)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  const projectName = (t) => {
+    const p = (ctx.projects || []).find((x) => x.id === t.projectId);
+    return p?.name || p?.title || "Sans projet";
+  };
+  const statusName = (t) => {
     const s = (ctx.statuses || []).find((x) => x.id === t.statusId);
     return s?.name || s?.label || "Sans statut";
   };
@@ -2775,7 +2861,428 @@ const GANTT_COL_OPTIONS = [
 ];
 const BUBBLE_FIELD_OPTIONS = ["status", "taskType", "project", "assignee", "start", "end", "period", "progress", "milestone", "desc", "checklist"];
 
-function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, setProjects, setStatuses, onOpen, onAdd, onDelete, onMarkDone, onCycleStatus, onBulkDelete, prefs, setPrefs, toolbarSlot, embedded }) {
+// ============================================================================
+// Annotations du Gantt — blocs temporels et encadrés
+//
+// Logique pure (ni React, ni DOM), partagée par le rendu du Gantt et par
+// l'éditeur d'annotations : un seul jeu de règles, jamais recopié.
+// Les tests unitaires extraient ce bloc de dist/index.html entre les deux
+// sentinelles ci-dessous et l'évaluent tel quel — il ne doit donc utiliser
+// aucun helper défini ailleurs dans le fichier.
+// ============================================================================
+// === NEXORA:GANTT-ANNOTATIONS:START ===
+const GANTT_BLOCK_DEFAULT_COLOR = "#4F6AF5";
+const GANTT_FRAME_DEFAULT_COLOR = "#D64545";
+const GANTT_FRAME_DEFAULT_PADDING = 4;
+const GANTT_FRAME_MAX_PADDING = 24;
+
+function isGanttIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+// Retour d'erreur volontairement dans le style du reste de Nexora : un message
+// court sous le champ, et aucun enregistrement tant qu'il est présent.
+function validateTemporalBlock(block) {
+  const title = block && typeof block.title === "string" ? block.title.trim() : "";
+  if (!title) return { ok: false, error: "Le titre est obligatoire." };
+  if (!isGanttIsoDate(block.startDate)) return { ok: false, error: "La date de début est invalide." };
+  if (!isGanttIsoDate(block.endDate)) return { ok: false, error: "La date de fin est invalide." };
+  if (block.endDate < block.startDate) return { ok: false, error: "La date de fin doit être postérieure ou égale à la date de début." };
+  return { ok: true, error: "" };
+}
+
+function normalizeGanttBorderStyle(value) { return value === "solid" ? "solid" : "dashed"; }
+
+function normalizeGanttPadding(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return GANTT_FRAME_DEFAULT_PADDING;
+  return Math.min(GANTT_FRAME_MAX_PADDING, Math.max(0, Math.round(n)));
+}
+
+// Migration non destructive : une configuration Gantt sans annotations donne
+// simplement des listes vides, et une entrée illisible est ignorée plutôt que
+// de casser le rendu de tout le diagramme.
+function normalizeTemporalBlocks(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((b) => b && typeof b === "object" && b.id && validateTemporalBlock(b).ok)
+    .map((b) => ({
+      id: String(b.id),
+      title: String(b.title).trim(),
+      startDate: b.startDate,
+      endDate: b.endDate,
+      color: typeof b.color === "string" && b.color ? b.color : GANTT_BLOCK_DEFAULT_COLOR,
+      borderStyle: normalizeGanttBorderStyle(b.borderStyle),
+    }));
+}
+
+function normalizeHighlightFrames(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((f) => f && typeof f === "object" && f.id)
+    .map((f) => ({
+      id: String(f.id),
+      label: typeof f.label === "string" ? f.label : "",
+      taskIds: Array.isArray(f.taskIds) ? [...new Set(f.taskIds.filter((id) => typeof id === "string" && id))] : [],
+      color: typeof f.color === "string" && f.color ? f.color : GANTT_FRAME_DEFAULT_COLOR,
+      borderStyle: normalizeGanttBorderStyle(f.borderStyle),
+      padding: normalizeGanttPadding(f.padding),
+    }));
+}
+
+// Groupes continus de lignes sélectionnées, dans l'ordre d'affichage : une
+// tâche absente (supprimée, masquée par un filtre, repliée dans un groupe)
+// n'apparaît pas dans orderedIds et coupe donc naturellement la série.
+function ganttContinuousRuns(orderedIds, selectedIds) {
+  const selected = new Set(Array.isArray(selectedIds) ? selectedIds : []);
+  const runs = [];
+  let current = null;
+  (Array.isArray(orderedIds) ? orderedIds : []).forEach((id) => {
+    if (selected.has(id)) {
+      if (!current) { current = []; runs.push(current); }
+      current.push(id);
+    } else current = null;
+  });
+  return runs;
+}
+
+// rows : lignes visibles du Gantt, dans l'ordre d'affichage, chacune décrite
+// par sa géométrie MESURÉE (top/height en pixels, ce qui suit sans recalcul les
+// bulles dépliées, la densité et les en-têtes de groupe) et par ses bornes
+// temporelles (startIdx/endIdx en index de jour).
+//
+// Une frontière de groupe coupe toujours la continuité : deux lignes séparées
+// par un en-tête de groupe ne sont pas adjacentes à l'écran, et produisent donc
+// deux cadres distincts.
+function ganttFrameSegments(rows, frame) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r.id === "string") : [];
+  const padding = normalizeGanttPadding(frame && frame.padding);
+  const byId = new Map(list.map((r) => [r.id, r]));
+  const chunks = [];
+  list.forEach((row) => {
+    const last = chunks[chunks.length - 1];
+    if (last && last.groupKey === row.groupKey) last.ids.push(row.id);
+    else chunks.push({ groupKey: row.groupKey, ids: [row.id] });
+  });
+  const segments = [];
+  chunks.forEach((chunk) => {
+    ganttContinuousRuns(chunk.ids, frame && frame.taskIds).forEach((ids) => {
+      const cells = ids.map((id) => byId.get(id));
+      const starts = cells.map((r) => Number(r.startIdx)).filter((n) => Number.isFinite(n));
+      const ends = cells.map((r) => Number(r.endIdx)).filter((n) => Number.isFinite(n));
+      if (!starts.length || !ends.length) return;
+      const tops = cells.map((r) => Number(r.top) || 0);
+      const bottoms = cells.map((r) => (Number(r.top) || 0) + (Number(r.height) || 0));
+      segments.push({
+        ids,
+        top: Math.min(...tops) - padding,
+        height: Math.max(...bottoms) - Math.min(...tops) + padding * 2,
+        startIdx: Math.min(...starts),
+        endIdx: Math.max(...ends),
+        padding,
+      });
+    });
+  });
+  return segments;
+}
+
+// Nettoyage explicite, déclenché depuis l'éditeur uniquement — jamais au rendu,
+// pour qu'un simple filtre de vue ne détruise pas une configuration : on retire
+// les tâches qui n'existent plus, et l'encadré disparaît s'il n'en reste aucune.
+function pruneHighlightFrames(frames, knownTaskIds) {
+  const known = new Set(Array.isArray(knownTaskIds) ? knownTaskIds : []);
+  return normalizeHighlightFrames(frames)
+    .map((f) => ({ ...f, taskIds: f.taskIds.filter((id) => known.has(id)) }))
+    .filter((f) => f.taskIds.length > 0);
+}
+// === NEXORA:GANTT-ANNOTATIONS:END ===
+
+// Sélecteur multiple de tâches, respectant l'arborescence Projet → tâches du
+// Gantt, avec recherche — même mise en forme (pastille de projet, chip) que le
+// reste de Nexora.
+function GanttTaskMultiSelect({ tasks, ctx, value, onChange }) {
+  const [query, setQuery] = useState("");
+  const selected = Array.isArray(value) ? value : [];
+  const needle = query.trim().toLowerCase();
+  const groups = useMemo(() => {
+    const matching = tasks.filter((t) => !needle || (t.title || "").toLowerCase().includes(needle));
+    const byProject = new Map();
+    matching.forEach((t) => {
+      const key = t.projectId || "";
+      if (!byProject.has(key)) byProject.set(key, []);
+      byProject.get(key).push(t);
+    });
+    return [...byProject.entries()].map(([projectId, list]) => ({
+      projectId,
+      project: ctx.projects.find((p) => p.id === projectId) || null,
+      tasks: list,
+    }));
+  }, [tasks, ctx.projects, needle]);
+  const toggle = (id) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  // Une tâche cochée puis supprimée reste dans la liste enregistrée : on la
+  // signale plutôt que de la faire disparaître en silence.
+  const missing = selected.filter((id) => !tasks.some((t) => t.id === id));
+  return (
+    <div className="lp-field">
+      <label>Tâches encadrées</label>
+      <div className="lp-gantt-annot-search">
+        <Search size={12} />
+        <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher une tâche…" />
+        {query && <button type="button" className="lp-icon-btn" onClick={() => setQuery("")} title="Effacer"><X size={12} /></button>}
+      </div>
+      <div className="lp-gantt-annot-tasklist">
+        {groups.length === 0 && <p className="lp-gantt-annot-hint" style={{ margin: 6 }}>Aucune tâche ne correspond.</p>}
+        {groups.map((g) => (
+          <div key={g.projectId || "sans-projet"}>
+            <div className="lp-gantt-annot-tasklist-group">
+              <span className="lp-project-dot" style={{ background: g.project?.color || "var(--text-muted)", width: 11, height: 11, fontSize: 7 }}>
+                <IconGlyph icon={g.project?.icon} size={7} />
+              </span>
+              {g.project?.name || "Sans projet"}
+            </div>
+            {g.tasks.map((t) => (
+              <label className="lp-checkbox-line" key={t.id}>
+                <input type="checkbox" checked={selected.includes(t.id)} onChange={() => toggle(t.id)} /> {t.title}
+              </label>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="lp-gantt-annot-hint">
+        {selected.length} tâche{selected.length > 1 ? "s" : ""} retenue{selected.length > 1 ? "s" : ""}
+        {missing.length > 0 && ` · ${missing.length} tâche${missing.length > 1 ? "s" : ""} introuvable${missing.length > 1 ? "s" : ""}`}
+        {" · "}Les tâches non successives produisent plusieurs cadres.
+      </p>
+    </div>
+  );
+}
+
+function GanttAnnotationBorderRow({ value, onChange }) {
+  return (
+    <div className="lp-field">
+      <label>Bordure</label>
+      <div className="lp-density-row">
+        <button type="button" className={"lp-density-btn" + (value !== "solid" ? " active" : "")} onClick={() => onChange("dashed")}>Pointillés</button>
+        <button type="button" className={"lp-density-btn" + (value === "solid" ? " active" : "")} onClick={() => onChange("solid")}>Continue</button>
+      </div>
+    </div>
+  );
+}
+
+// Éditeur unique des annotations du Gantt : les deux sections repliables sont
+// rendues telles quelles dans les paramètres du widget, et dans la modale
+// ouverte depuis la barre d'actions du Gantt. Aucune duplication de formulaire.
+function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defaultEnd, onChange, initialSection, focusId, autoCreate }) {
+  const [openBlocks, setOpenBlocks] = useState(initialSection !== "frames");
+  const [openFrames, setOpenFrames] = useState(initialSection === "frames");
+  const [editingId, setEditingId] = useState(focusId || null);
+  const [pendingDelete, setPendingDelete] = useState(null); // { kind, item }
+  const knownTaskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
+
+  const setBlocks = (next) => onChange({ temporalBlocks: next });
+  const setFrames = (next) => onChange({ highlightFrames: next });
+  const patchBlock = (id, patch) => setBlocks(blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  const patchFrame = (id, patch) => setFrames(frames.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  const move = (list, setList, id, dir) => {
+    const i = list.findIndex((x) => x.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    setList(next);
+  };
+
+  const addBlock = () => {
+    const created = { id: uid(), title: "Nouvelle phase", startDate: defaultStart, endDate: defaultEnd, color: GANTT_BLOCK_DEFAULT_COLOR, borderStyle: "dashed" };
+    setBlocks([...blocks, created]);
+    setOpenBlocks(true);
+    setEditingId(created.id);
+  };
+  const addFrame = () => {
+    const created = { id: uid(), label: "", taskIds: [], color: GANTT_FRAME_DEFAULT_COLOR, borderStyle: "dashed", padding: GANTT_FRAME_DEFAULT_PADDING };
+    setFrames([...frames, created]);
+    setOpenFrames(true);
+    setEditingId(created.id);
+  };
+  const duplicateBlock = (b) => {
+    const copy = { ...b, id: uid(), title: `${b.title} (copie)` };
+    const i = blocks.findIndex((x) => x.id === b.id);
+    setBlocks([...blocks.slice(0, i + 1), copy, ...blocks.slice(i + 1)]);
+    setEditingId(copy.id);
+  };
+  const duplicateFrame = (f) => {
+    const copy = { ...f, id: uid(), label: f.label ? `${f.label} (copie)` : "", taskIds: [...f.taskIds] };
+    const i = frames.findIndex((x) => x.id === f.id);
+    setFrames([...frames.slice(0, i + 1), copy, ...frames.slice(i + 1)]);
+    setEditingId(copy.id);
+  };
+  // « + Bloc temporel » / « + Encadré » de la barre d'actions du Gantt : la
+  // création passe par le même chemin que le bouton « Ajouter » de la section,
+  // puis le formulaire correspondant s'ouvre — jamais un second formulaire.
+  const autoCreated = useRef(false);
+  useEffect(() => {
+    if (autoCreated.current || !autoCreate) return;
+    autoCreated.current = true;
+    if (autoCreate === "frame") addFrame();
+    else addBlock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCreate]);
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.kind === "block") setBlocks(blocks.filter((b) => b.id !== pendingDelete.item.id));
+    else setFrames(frames.filter((f) => f.id !== pendingDelete.item.id));
+    setPendingDelete(null);
+  };
+
+  const RowActions = ({ item, list, setList, kind, onDuplicate }) => (
+    <span className="lp-gantt-annot-actions" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="lp-icon-btn" onClick={() => move(list, setList, item.id, -1)} disabled={list[0]?.id === item.id} title="Monter"><ChevronUp size={12} /></button>
+      <button type="button" className="lp-icon-btn" onClick={() => move(list, setList, item.id, 1)} disabled={list[list.length - 1]?.id === item.id} title="Descendre"><ChevronDown size={12} /></button>
+      <button type="button" className="lp-icon-btn" onClick={() => onDuplicate(item)} title="Dupliquer"><Copy size={12} /></button>
+      <button type="button" className="lp-icon-btn" onClick={() => setPendingDelete({ kind, item })} title="Supprimer"><Trash2 size={12} /></button>
+    </span>
+  );
+
+  return (
+    <>
+      <div className="lp-widget-appearance-toggle" onClick={() => setOpenBlocks((v) => !v)}>
+        <ChevronRight size={13} style={{ transform: openBlocks ? "rotate(90deg)" : "none" }} />
+        <Layers size={13} /> Blocs temporels
+        <span className="lp-widget-appearance-hint">{blocks.length || "aucun"}</span>
+      </div>
+      {openBlocks && (
+        <div className="lp-widget-appearance-panel">
+          <p className="lp-gantt-annot-hint" style={{ marginTop: 0 }}>
+            Une grande phase transverse — Études, Gros œuvre, Second œuvre… — dessinée sur toute la hauteur du diagramme.
+          </p>
+          {blocks.map((b) => {
+            const validation = validateTemporalBlock(b);
+            const editing = editingId === b.id;
+            return (
+              <div className={"lp-gantt-annot-item" + (editing ? " editing" : "")} key={b.id}>
+                <div className="lp-gantt-annot-head" onClick={() => setEditingId(editing ? null : b.id)}>
+                  <span className="lp-gantt-annot-swatch" style={{ background: b.color, borderStyle: b.borderStyle }} />
+                  <span className="lp-gantt-annot-summary">
+                    <strong>{b.title || "Sans titre"}</strong>
+                    <span>{isGanttIsoDate(b.startDate) ? fmtShort(b.startDate) : "—"} → {isGanttIsoDate(b.endDate) ? fmtShort(b.endDate) : "—"}</span>
+                  </span>
+                  {!validation.ok && <AlertTriangle size={12} color="var(--danger)" />}
+                  <RowActions item={b} list={blocks} setList={setBlocks} kind="block" onDuplicate={duplicateBlock} />
+                </div>
+                {editing && (
+                  <div className="lp-gantt-annot-form">
+                    <div className="lp-field">
+                      <label>Titre</label>
+                      <input type="text" value={b.title} onChange={(e) => patchBlock(b.id, { title: e.target.value })} placeholder="Études, Gros œuvre…" />
+                    </div>
+                    <div className="lp-row2">
+                      <div className="lp-field">
+                        <label>Début</label>
+                        <input type="date" value={b.startDate} onChange={(e) => patchBlock(b.id, { startDate: e.target.value })} />
+                      </div>
+                      <div className="lp-field">
+                        <label>Fin</label>
+                        <input type="date" value={b.endDate} onChange={(e) => patchBlock(b.id, { endDate: e.target.value })} />
+                      </div>
+                    </div>
+                    {!validation.ok && <p className="lp-gantt-annot-error">{validation.error}</p>}
+                    <div className="lp-field">
+                      <label>Couleur</label>
+                      <ColorPicker value={b.color} onChange={(color) => patchBlock(b.id, { color })} />
+                    </div>
+                    <GanttAnnotationBorderRow value={b.borderStyle} onChange={(borderStyle) => patchBlock(b.id, { borderStyle })} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <button type="button" className="lp-btn lp-gantt-annot-add" onClick={addBlock}><Plus size={13} /> Ajouter un bloc temporel</button>
+        </div>
+      )}
+
+      <div className="lp-widget-appearance-toggle" onClick={() => setOpenFrames((v) => !v)}>
+        <ChevronRight size={13} style={{ transform: openFrames ? "rotate(90deg)" : "none" }} />
+        <Crosshair size={13} /> Encadrés
+        <span className="lp-widget-appearance-hint">{frames.length || "aucun"}</span>
+      </div>
+      {openFrames && (
+        <div className="lp-widget-appearance-panel">
+          <p className="lp-gantt-annot-hint" style={{ marginTop: 0 }}>
+            Met en évidence une ou plusieurs tâches. Les tâches non successives produisent plusieurs cadres.
+          </p>
+          {frames.map((f) => {
+            const editing = editingId === f.id;
+            const live = f.taskIds.filter((id) => knownTaskIds.includes(id)).length;
+            return (
+              <div className={"lp-gantt-annot-item" + (editing ? " editing" : "")} key={f.id}>
+                <div className="lp-gantt-annot-head" onClick={() => setEditingId(editing ? null : f.id)}>
+                  <span className="lp-gantt-annot-swatch" style={{ borderColor: f.color, borderStyle: f.borderStyle, background: "transparent" }} />
+                  <span className="lp-gantt-annot-summary">
+                    <strong>{f.label || "Sans libellé"}</strong>
+                    <span>{f.taskIds.length} tâche{f.taskIds.length > 1 ? "s" : ""}{live !== f.taskIds.length ? ` · ${f.taskIds.length - live} introuvable(s)` : ""}</span>
+                  </span>
+                  {f.taskIds.length === 0 && <AlertTriangle size={12} color="var(--danger)" />}
+                  <RowActions item={f} list={frames} setList={setFrames} kind="frame" onDuplicate={duplicateFrame} />
+                </div>
+                {editing && (
+                  <div className="lp-gantt-annot-form">
+                    <div className="lp-field">
+                      <label>Étiquette <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultative)</span></label>
+                      <input type="text" value={f.label} onChange={(e) => patchFrame(f.id, { label: e.target.value })} placeholder="Lot critique, à sécuriser…" />
+                    </div>
+                    <GanttTaskMultiSelect tasks={tasks} ctx={ctx} value={f.taskIds} onChange={(taskIds) => patchFrame(f.id, { taskIds })} />
+                    {f.taskIds.length === 0 && <p className="lp-gantt-annot-error">Sélectionne au moins une tâche : sans tâche, l'encadré n'est pas dessiné.</p>}
+                    <div className="lp-field">
+                      <label>Couleur</label>
+                      <ColorPicker value={f.color} onChange={(color) => patchFrame(f.id, { color })} />
+                    </div>
+                    <GanttAnnotationBorderRow value={f.borderStyle} onChange={(borderStyle) => patchFrame(f.id, { borderStyle })} />
+                    <div className="lp-field">
+                      <label>Marge intérieure — {f.padding} px</label>
+                      <input type="range" min="0" max={GANTT_FRAME_MAX_PADDING} value={f.padding} onChange={(e) => patchFrame(f.id, { padding: Number(e.target.value) })} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <button type="button" className="lp-btn lp-gantt-annot-add" onClick={addFrame}><Plus size={13} /> Ajouter un encadré</button>
+          {frames.some((f) => f.taskIds.some((id) => !knownTaskIds.includes(id))) && (
+            <button
+              type="button"
+              className="lp-btn lp-gantt-annot-add"
+              onClick={() => setFrames(pruneHighlightFrames(frames, knownTaskIds))}
+              title="Retire les tâches supprimées, et l'encadré s'il n'en reste aucune"
+            >
+              <Eraser size={13} /> Nettoyer les tâches supprimées
+            </button>
+          )}
+        </div>
+      )}
+
+      {pendingDelete && (
+        <ConfirmModal
+          title={pendingDelete.kind === "block" ? "Supprimer le bloc temporel" : "Supprimer l'encadré"}
+          message={
+            pendingDelete.kind === "block"
+              ? `Supprimer le bloc « ${pendingDelete.item.title || "Sans titre"} » ? Les tâches ne sont pas modifiées.`
+              : `Supprimer l'encadré « ${pendingDelete.item.label || "Sans libellé"} » ? Les tâches ne sont pas modifiées.`
+          }
+          danger
+          confirmLabel="Supprimer"
+          onConfirm={confirmDelete}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, setProjects, setStatuses, onOpen, onAdd, onDelete, onMarkDone, onCycleStatus, onBulkDelete, prefs, setPrefs, toolbarSlot, embedded, annotations, onAnnotationsChange }) {
   const tasks = useMemo(() => allTasks.filter((t) => t.start && t.end), [allTasks]);
   const ROW_H = { compact: 26, comfortable: 34, spacious: 44 }[appearance.density] || 34;
   const gradient = appearance.gradient;
@@ -2829,6 +3336,25 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
   const COLS_W = colDefs.reduce((sum, c) => sum + c.w, 0);
   const TOTAL_LEFT_W = effectiveNameW + COLS_W;
   const [expandedGroups, setExpandedGroups] = useState({});
+
+  // --- Annotations : blocs temporels et encadrés ---------------------------
+  // Deux origines possibles, jamais deux systèmes : la configuration du widget
+  // quand le Gantt est embarqué (annotations/onAnnotationsChange), sinon les
+  // préférences de vue, déjà persistées dans « nexora:viewPrefs ».
+  const annotationsControlled = typeof onAnnotationsChange === "function";
+  const annotationSource = annotationsControlled ? (annotations || {}) : prefs;
+  // Listes brutes pour l'éditeur (une date en cours de saisie doit rester
+  // modifiable), listes normalisées pour le rendu (une annotation invalide
+  // n'est jamais dessinée).
+  const rawTemporalBlocks = useMemo(() => (Array.isArray(annotationSource.temporalBlocks) ? annotationSource.temporalBlocks : []), [annotationSource.temporalBlocks]);
+  const rawHighlightFrames = useMemo(() => (Array.isArray(annotationSource.highlightFrames) ? annotationSource.highlightFrames : []), [annotationSource.highlightFrames]);
+  const temporalBlocks = useMemo(() => normalizeTemporalBlocks(rawTemporalBlocks), [rawTemporalBlocks]);
+  const highlightFrames = useMemo(() => normalizeHighlightFrames(rawHighlightFrames), [rawHighlightFrames]);
+  const applyAnnotations = (patch) => {
+    if (annotationsControlled) onAnnotationsChange({ temporalBlocks: rawTemporalBlocks, highlightFrames: rawHighlightFrames, ...patch });
+    else setPrefs(patch);
+  };
+  const [annotationPanel, setAnnotationPanel] = useState(null); // null | { section, autoCreate, focusId }
 
   const groupedLanes = useMemo(() => {
     const minGapDays = Math.ceil(180 / dayWidth); // place pour les étiquettes de dates + le bouton déplier
@@ -2887,7 +3413,128 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
   const originIdx = ticks.length ? dayIndex(ticks[0].start) : dayIndex(rangeStart);
   const timelineWidth = ticks.reduce((s, t) => s + t.len, 0) * dayWidth;
   const xFor = (dateStr) => (dayIndex(dateStr) - originIdx) * dayWidth;
+  const xForIdx = (idx) => (idx - originIdx) * dayWidth;
   const topH = zoom.top ? 26 : 0;
+
+  // --- Géométrie des annotations -------------------------------------------
+  // Les encadrés suivent la mise en page RÉELLE au lieu de la recalculer : on
+  // mesure chaque ligne visible (hauteur de densité, bulle dépliée, en-tête de
+  // groupe). Un zoom, un filtre, un repli/dépli ou un déplacement de tâche
+  // déplace les lignes, la mesure suit — sans second moteur de disposition à
+  // maintenir en parallèle du Gantt.
+  const rowsWrapRef = useRef(null);
+  const rowNodes = useRef({});
+  const [rowRects, setRowRects] = useState({});
+  const rowsPanelW = nameCollapsed ? 0 : effectiveNameW + COLS_W;
+
+  const visibleRows = useMemo(() => {
+    const rows = [];
+    groupedLanes.forEach((g) => {
+      if (expandedGroups[g.key] === false) return;
+      g.lanes.forEach((lane) => {
+        const t = lane[0];
+        if (t) rows.push({ id: t.id, groupKey: g.key, start: t.start, end: t.end });
+      });
+    });
+    return rows;
+  }, [groupedLanes, expandedGroups]);
+
+  const measureRows = useCallback(() => {
+    const wrap = rowsWrapRef.current;
+    if (!wrap) return;
+    const base = wrap.getBoundingClientRect();
+    const next = {};
+    visibleRows.forEach((row) => {
+      const el = rowNodes.current[row.id];
+      if (!el || !el.isConnected) return;
+      const rect = el.getBoundingClientRect();
+      next[row.id] = { top: Math.round(rect.top - base.top), height: Math.round(rect.height) };
+    });
+    // Ne remplace l'état que si une position a réellement changé : c'est ce qui
+    // empêche l'observateur de redimensionnement de boucler indéfiniment.
+    setRowRects((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      const same = prevKeys.length === nextKeys.length
+        && nextKeys.every((k) => prev[k] && prev[k].top === next[k].top && prev[k].height === next[k].height);
+      return same ? prev : next;
+    });
+  }, [visibleRows]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(measureRows);
+    return () => cancelAnimationFrame(id);
+  }, [measureRows, zoomKey, ROW_H, nameCollapsed, COLS_W, bubbles, timelineWidth]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const wrap = rowsWrapRef.current;
+    if (!wrap) return undefined;
+    const ro = new ResizeObserver(() => measureRows());
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [measureRows]);
+
+  const frameShapes = useMemo(() => {
+    if (!highlightFrames.length) return [];
+    const rows = visibleRows
+      .map((row) => {
+        const rect = rowRects[row.id];
+        if (!rect) return null;
+        const startIdx = dayIndex(row.start);
+        const endIdx = dayIndex(row.end);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        return { id: row.id, groupKey: row.groupKey, top: rect.top, height: rect.height, startIdx, endIdx };
+      })
+      .filter(Boolean);
+    if (!rows.length) return [];
+    const shapes = [];
+    highlightFrames.forEach((frame) => {
+      ganttFrameSegments(rows, frame).forEach((seg, i) => shapes.push({ ...seg, frame, key: frame.id + "-" + i }));
+    });
+    return shapes;
+  }, [highlightFrames, visibleRows, rowRects]);
+
+  // Un bloc temporel est dessiné DANS chaque piste, exactement comme la grille
+  // et la ligne « aujourd'hui » : il reste au-dessus du fond du Gantt mais sous
+  // les barres, jalons et dépendances, et suit sans effort le zoom, le scroll
+  // horizontal et tout changement de plage affichée.
+  const temporalBlockShapes = useMemo(() => {
+    const shapes = [];
+    temporalBlocks.forEach((block) => {
+      const startIdx = dayIndex(block.startDate);
+      const endIdx = dayIndex(block.endDate);
+      if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return;
+      shapes.push({
+        block,
+        left: (startIdx - originIdx) * dayWidth,
+        width: Math.max(2, (endIdx - startIdx + 1) * dayWidth),
+      });
+    });
+    // Étiquettes verticales décalées quand deux blocs commencent presque au même
+    // endroit : aucune ne reste définitivement masquée derrière une autre.
+    const placed = [];
+    shapes.slice().sort((a, b) => a.left - b.left).forEach((shape) => {
+      const clashes = placed.filter((x) => Math.abs(x.left - shape.left) < 18).length;
+      shape.labelOffset = clashes * 15;
+      placed.push(shape);
+    });
+    return shapes;
+  }, [temporalBlocks, originIdx, dayWidth]);
+
+  const renderTemporalBlocks = () => temporalBlockShapes.map((shape) => (
+    <div
+      key={shape.block.id}
+      className="lp-gantt-tblock"
+      style={{
+        left: shape.left,
+        width: shape.width,
+        background: "color-mix(in srgb, " + shape.block.color + " 10%, transparent)",
+        borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+        borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+      }}
+    />
+  ));
 
   // ------- Drag & resize -------
   const dragState = useRef(null);
@@ -3111,6 +3758,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
       <div className="lp-gantt-bubble-line" key={rowKey} style={{ background: ganttBg, width: timelineWidth, minWidth: timelineWidth, flex: "0 0 auto" }}>
         <div className="lp-gantt-bubble-cell" style={{ width: timelineWidth, minWidth: timelineWidth, background: ganttBg, display: "flex", alignItems: "flex-start", position: "relative", minHeight: 20, boxSizing: "border-box" }}>
           {ticks.map((tk, i) => <div key={i} style={{ position: "absolute", left: xFor(tk.start), top: 0, bottom: 0, width: 1, background: gridLineColor }} />)}
+          {renderTemporalBlocks()}
           {dayIndex(today) >= originIdx && dayIndex(today) <= originIdx + timelineWidth / dayWidth && <div className="lp-gantt-today" style={{ left: xFor(today) }} title="Aujourd'hui" />}
           {connectors}
           {cards}
@@ -3128,6 +3776,12 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
         </div>
         <button className="lp-tool-btn" onClick={recenterToday} title="Aujourd'hui"><Crosshair size={14} /></button>
         <button className="lp-tool-btn" onClick={fitAll} title="Zoom automatique"><Maximize2 size={14} /></button>
+        <button className="lp-tool-btn" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter une grande phase transverse (Études, Gros œuvre…)">
+          <Plus size={13} /> Bloc temporel
+        </button>
+        <button className="lp-tool-btn" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })} title="Encadrer une ou plusieurs tâches">
+          <Plus size={13} /> Encadré
+        </button>
         {!embedded && (
           <button className="lp-tool-btn" onClick={toggleAllBubbles} title={allOpen ? "Replier les tâches" : "Déplier les tâches"}>{allOpen ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}</button>
         )}
@@ -3236,6 +3890,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
           </div>
 
           {tasks.length === 0 && <div className="lp-empty">Aucune tâche ne correspond aux filtres actifs.</div>}
+          <div className="lp-gantt-rows" ref={rowsWrapRef}>
           {groupedLanes.map((g) => {
             const expanded = expandedGroups[g.key] !== false;
             const proj = ganttGroupBy === "project" ? ctx.projects.find((p) => p.id === g.key) : null;
@@ -3327,7 +3982,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
                   const panelW = effectiveNameW + COLS_W;
                   return (
                     <React.Fragment key={g.key + "-lane-" + li}>
-                      <div style={{ display: "flex" }}>
+                      <div style={{ display: "flex" }} ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}>
                         {/* Panneau gauche sticky — masqué entièrement si nameCollapsed */}
                         {showLeft && panelW > 0 && (
                           <div
@@ -3359,6 +4014,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
                         >
                           <div className="lp-gantt-track" style={{ flex: "1 0 auto", minWidth: timelineWidth, height: ROW_H, background: ganttBg }}>
                             {ticks.map((tk, i) => <div key={i} style={{ position: "absolute", left: xFor(tk.start), top: 0, bottom: 0, width: 1, background: gridLineColor }} />)}
+                            {renderTemporalBlocks()}
                             {dayIndex(today) >= originIdx && dayIndex(today) <= originIdx + timelineWidth / dayWidth && <div className="lp-gantt-today" style={{ left: xFor(today) }} title="Aujourd'hui" />}
                             {renderShape(t, 0)}
                           </div>
@@ -3372,6 +4028,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
                             {/* Continuité visuelle : repères de grille + ligne "aujourd'hui" traversant aussi la bulle */}
                             <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
                               {ticks.map((tk, i) => <div key={i} style={{ position: "absolute", left: xFor(tk.start), top: 0, bottom: 0, width: 1, background: gridLineColor }} />)}
+                              {renderTemporalBlocks()}
                               {dayIndex(today) >= originIdx && dayIndex(today) <= originIdx + timelineWidth / dayWidth && <div className="lp-gantt-today" style={{ left: xFor(today) }} />}
                             </div>
                             <div style={{ position: "relative", zIndex: 1 }}>{renderBubbleRow([t], `${g.key}-bl-${li}`)}</div>
@@ -3384,9 +4041,70 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
               </React.Fragment>
             );
           })}
+          {(temporalBlockShapes.length > 0 || frameShapes.length > 0) && (
+            <div className="lp-gantt-annot-layer" style={{ left: rowsPanelW, width: timelineWidth }}>
+              {temporalBlockShapes.map((shape) => (
+                <button
+                  key={shape.block.id}
+                  type="button"
+                  className="lp-gantt-tblock-label"
+                  style={{ left: shape.left + 4 + shape.labelOffset, color: shape.block.color }}
+                  title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)} — cliquer pour modifier`}
+                  onClick={() => setAnnotationPanel({ section: "blocks", focusId: shape.block.id })}
+                >
+                  {shape.block.title}
+                </button>
+              ))}
+              {frameShapes.map((seg) => {
+                const left = xForIdx(seg.startIdx) - seg.padding;
+                const width = Math.max(4, (seg.endIdx - seg.startIdx + 1) * dayWidth + seg.padding * 2);
+                return (
+                  <React.Fragment key={seg.key}>
+                    <div
+                      className="lp-gantt-frame"
+                      style={{ left, width, top: seg.top, height: seg.height, border: `2px ${seg.frame.borderStyle} ${seg.frame.color}` }}
+                    />
+                    {seg.frame.label && (
+                      <button
+                        type="button"
+                        className="lp-gantt-frame-label"
+                        style={{ left, top: Math.max(0, seg.top - 13), background: seg.frame.color }}
+                        title={`${seg.frame.label} — cliquer pour modifier`}
+                        onClick={() => setAnnotationPanel({ section: "frames", focusId: seg.frame.id })}
+                      >
+                        {seg.frame.label}
+                      </button>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
+          </div>
         </div>
       </div>
 
+      {annotationPanel && (
+        <Modal
+          title="Annotations du Gantt"
+          onClose={() => setAnnotationPanel(null)}
+          wide
+          footer={<button className="lp-btn lp-btn-primary" onClick={() => setAnnotationPanel(null)}>Terminé</button>}
+        >
+          <GanttAnnotationsEditor
+            blocks={rawTemporalBlocks}
+            frames={rawHighlightFrames}
+            tasks={tasks}
+            ctx={ctx}
+            defaultStart={rangeStart}
+            defaultEnd={rangeEnd}
+            onChange={applyAnnotations}
+            initialSection={annotationPanel.section}
+            autoCreate={annotationPanel.autoCreate}
+            focusId={annotationPanel.focusId}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -11974,766 +12692,4 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     const current = stackedWidgets[idx];
     setWidgets((prev) => prev.map((w) => {
       if (w.id === current.id) return { ...w, layout: { ...w.layout, y: swapWith.layout.y, x: swapWith.layout.x } };
-      if (w.id === swapWith.id) return { ...w, layout: { ...w.layout, y: current.layout.y, x: current.layout.x } };
-      return w;
-    }));
-  };
-  const removeWidget = (id) => {
-    const removed = widgets.find((w) => w.id === id);
-    setWidgets((prev) => prev.filter((w) => w.id !== id));
-    if (removed && pushToast) {
-      pushToast({
-        message: `Widget « ${removed.title || "Widget"} » supprimé.`,
-        actionLabel: "Annuler",
-        onAction: () => setWidgets((prev) => (prev.some((w) => w.id === removed.id) ? prev : [...prev, removed])),
-      });
-    }
-  };
-  const duplicateWidget = (w) => setWidgets((prev) => packWidgets([...prev, { ...w, id: uid(), title: (w.title || "Widget") + " (copie)", layout: undefined }]));
-  const saveWidget = (data) => {
-    if (editingWidget === "new") setWidgets((prev) => packWidgets([...prev, { id: uid(), ...data }]));
-    else setWidgets((prev) => prev.map((w) => (w.id === editingWidget.id ? { ...w, ...data } : w)));
-    setEditingWidget(null);
-  };
-
-  // Dimensionnement automatique : recalcule la hauteur idéale d'après le contenu
-  // réel du widget (nombre de lignes pour la Liste/le Mini-Gantt, nombre de troncs
-  // pour la Mini métro) à la largeur actuelle — sans jamais empêcher un
-  // redimensionnement manuel ensuite, puisqu'il ne fait que réécrire layout.h une fois.
-  const autoSizeWidget = (w) => {
-    const def = defaultLayoutForType(w.type);
-    const targetW = w.layout?.w || def.w;
-    const FRAME_CHROME_PX = 68; // en-tête + paddings du cadre widget
-    let targetHPx;
-    if (w.type === "taskDetail") {
-      targetHPx = 510;
-    } else if (w.type === "metroDeadline") {
-      const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx).filter((t) => t.end);
-      const projectCount = Math.max(1, new Set(scoped.map((t) => t.projectId).filter(Boolean)).size);
-      targetHPx = 54 + projectCount * 82 + FRAME_CHROME_PX;
-    } else if (w.type === "minigantt") {
-      const scopedAll = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
-      const scoped = scopedAll.filter((t) => !t.milestone && t.start && t.end);
-      const scopedMilestones = w.showMilestones !== false ? scopedAll.filter((t) => t.milestone && t.end) : [];
-      const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
-      const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
-      targetHPx = 20 /* axe */ + rows * 20 + groupCount * 22 /* en-têtes de groupe */ + FRAME_CHROME_PX;
-    } else if (w.type === "list") {
-      const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
-      const rows = Math.max(1, Math.min(w.limit || 6, scoped.length));
-      const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks(scoped.slice(0, w.limit || 6), w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
-      targetHPx = rows * 26 + groupCount * 20 + FRAME_CHROME_PX;
-    } else {
-      updateWidget(w.id, { layout: { ...w.layout, w: def.w, h: def.h } });
-      return;
-    }
-    const targetHUnits = clamp(Math.ceil((targetHPx + DASHBOARD_GAP) / (DASHBOARD_ROW_H + DASHBOARD_GAP)), 2, 12);
-    updateWidget(w.id, { layout: { ...w.layout, w: targetW, h: targetHUnits } });
-  };
-
-  // ==========================================================================
-  // Moteur unique déplacement + redimensionnement.
-  //
-  // Règle essentielle : la géométrie finale vient TOUJOURS de la dernière
-  // position effectivement reçue pendant pointermove. On ne recalcule jamais
-  // à partir de pointerup : certains navigateurs renvoient alors des coordonnées
-  // différentes/stales, ce qui expliquait le "retour" du widget au relâchement.
-  // ==========================================================================
-  const finishWidgetPointerGesture = (g, cancelled=false) => {
-    if (!g) return;
-
-    try {
-      if (g.handle?.hasPointerCapture?.(g.pointerId)) {
-        g.handle.releasePointerCapture(g.pointerId);
-      }
-    } catch (_) {}
-
-    g.handle?.removeEventListener("pointermove",g.onMove);
-    g.handle?.removeEventListener("pointerup",g.onUp);
-    g.handle?.removeEventListener("pointercancel",g.onCancel);
-    g.handle?.removeEventListener("lostpointercapture",g.onLostCapture);
-
-    if (!cancelled) {
-      if (g.mode === "move") {
-        const finalDx = Number(g.lastDx) || 0;
-        const finalDy = Number(g.lastDy) || 0;
-        const cellUnit = cellW + DASHBOARD_GAP;
-        const rowUnit = DASHBOARD_ROW_H + DASHBOARD_GAP;
-
-        const dCols = Math.round(finalDx / cellUnit);
-        const dRows = Math.round(finalDy / rowUnit);
-        const nx = clamp(g.layout.x + dCols,0,DASHBOARD_COLS-g.layout.w);
-        const ny = Math.max(0,g.layout.y + dRows);
-
-        updateWidget(g.id,{layout:{...g.layout,x:nx,y:ny}});
-      } else if (g.mode === "resize") {
-        const finalBox = g.lastBox || g.baseBox;
-        const nextLayout = snapResizeBoxToLayout(g.layout,g.corner,finalBox);
-        applyResizeWithCollisionPush(g.id,nextLayout);
-      }
-    }
-
-    gestureRef.current=null;
-    setGesture(null);
-    document.body.style.userSelect="";
-    document.body.style.cursor="";
-  };
-
-  const bindPointerGestureListeners = (g) => {
-    const onMove = (ev) => {
-      if (ev.pointerId !== g.pointerId) return;
-      ev.preventDefault();
-
-      if (g.mode === "move") {
-        // Stocké dans la ref : cette valeur est la source de vérité au relâchement.
-        g.lastClientX = ev.clientX;
-        g.lastClientY = ev.clientY;
-        g.lastDx = ev.clientX - g.startX;
-        g.lastDy = ev.clientY - g.startY;
-
-        setGesture({
-          id:g.id,
-          mode:"move",
-          dx:g.lastDx,
-          dy:g.lastDy,
-        });
-        return;
-      }
-
-      const box = g.boxFromPointer(ev.clientX,ev.clientY);
-      g.lastClientX=ev.clientX;
-      g.lastClientY=ev.clientY;
-      g.lastBox=box;
-
-      setGesture({
-        id:g.id,
-        mode:"resize-"+g.corner,
-        previewPx:box,
-      });
-    };
-
-    const onUp = (ev) => {
-      if (ev.pointerId !== g.pointerId) return;
-      ev.preventDefault();
-      // IMPORTANT : ne pas utiliser ev.clientX/Y ici.
-      finishWidgetPointerGesture(g,false);
-    };
-
-    const onCancel = (ev) => {
-      if (ev.pointerId !== g.pointerId) return;
-      finishWidgetPointerGesture(g,true);
-    };
-
-    const onLostCapture = () => {
-      // Si pointerup a déjà finalisé, gestureRef est nul. Sinon on valide avec
-      // la dernière position connue, plutôt que de jeter le mouvement.
-      if (gestureRef.current === g) finishWidgetPointerGesture(g,false);
-    };
-
-    g.onMove=onMove;
-    g.onUp=onUp;
-    g.onCancel=onCancel;
-    g.onLostCapture=onLostCapture;
-
-    g.handle.addEventListener("pointermove",onMove,{passive:false});
-    g.handle.addEventListener("pointerup",onUp,{passive:false});
-    g.handle.addEventListener("pointercancel",onCancel,{passive:false});
-    g.handle.addEventListener("lostpointercapture",onLostCapture);
-  };
-
-  const startMoveGesture = (widget) => (e) => {
-    if (e.button !== undefined && e.button !== 0) return;
-    if (!gridRef.current) return;
-
-    // Ne jamais démarrer un déplacement depuis un bouton ou un contrôle contenu
-    // dans l'en-tête. Les handlers stopPropagation restent en place, mais ce
-    // garde-fou évite les cas où un enfant change entre pointerdown et render.
-    if (e.target?.closest?.("button,input,select,textarea,a,.lp-widget-head-toolbar")) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    const handle=e.currentTarget;
-    const pointerId=e.pointerId;
-
-    try { handle.setPointerCapture(pointerId); } catch (_) {}
-
-    const g={
-      id:widget.id,
-      mode:"move",
-      pointerId,
-      handle,
-      startX:e.clientX,
-      startY:e.clientY,
-      lastClientX:e.clientX,
-      lastClientY:e.clientY,
-      lastDx:0,
-      lastDy:0,
-      layout:{...widget.layout},
-    };
-
-    gestureRef.current=g;
-    document.body.style.userSelect="none";
-    document.body.style.cursor="grabbing";
-    setGesture({id:widget.id,mode:"move",dx:0,dy:0});
-
-    bindPointerGestureListeners(g);
-  };
-
-  const startResizeGesture = (corner,widget) => (e) => {
-    if (e.button !== undefined && e.button !== 0) return;
-    if (!gridRef.current) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    const handle=e.currentTarget;
-    const card=handle.closest(".lp-widget-card");
-    if (!card) return;
-
-    const pointerId=e.pointerId;
-    const gridRect=gridRef.current.getBoundingClientRect();
-    const cardRect=card.getBoundingClientRect();
-
-    try { handle.setPointerCapture(pointerId); } catch (_) {}
-
-    const baseBox={
-      left:cardRect.left-gridRect.left,
-      top:cardRect.top-gridRect.top,
-      width:cardRect.width,
-      height:cardRect.height,
-      right:cardRect.right-gridRect.left,
-      bottom:cardRect.bottom-gridRect.top,
-    };
-
-    const minWidth=Math.max(80,(cellW+DASHBOARD_GAP)*2-DASHBOARD_GAP);
-    const minHeight=Math.max(80,(DASHBOARD_ROW_H+DASHBOARD_GAP)*2-DASHBOARD_GAP);
-    const maxHeight=Math.max(minHeight,(DASHBOARD_ROW_H+DASHBOARD_GAP)*12-DASHBOARD_GAP);
-
-    const boxFromPointer=(clientX,clientY)=>{
-      const gx=clientX-gridRect.left;
-      const gy=clientY-gridRect.top;
-
-      let left=baseBox.left;
-      let top=baseBox.top;
-      let width=baseBox.width;
-      let height=baseBox.height;
-
-      if(corner==="br"){
-        width=clamp(gx-baseBox.left,minWidth,Math.max(minWidth,gridRect.width-baseBox.left));
-        height=clamp(gy-baseBox.top,minHeight,maxHeight);
-      }else if(corner==="bl"){
-        left=clamp(gx,0,baseBox.right-minWidth);
-        width=baseBox.right-left;
-        height=clamp(gy-baseBox.top,minHeight,maxHeight);
-      }else if(corner==="tr"){
-        width=clamp(gx-baseBox.left,minWidth,Math.max(minWidth,gridRect.width-baseBox.left));
-        top=clamp(gy,0,baseBox.bottom-minHeight);
-        height=clamp(baseBox.bottom-top,minHeight,maxHeight);
-        top=baseBox.bottom-height;
-      }else if(corner==="tl"){
-        left=clamp(gx,0,baseBox.right-minWidth);
-        width=baseBox.right-left;
-        top=clamp(gy,0,baseBox.bottom-minHeight);
-        height=clamp(baseBox.bottom-top,minHeight,maxHeight);
-        top=baseBox.bottom-height;
-      }
-
-      return {left,top,width,height};
-    };
-
-    const cursor=({
-      tl:"nwse-resize",
-      br:"nwse-resize",
-      tr:"nesw-resize",
-      bl:"nesw-resize",
-    })[corner]||"nwse-resize";
-
-    const g={
-      id:widget.id,
-      mode:"resize",
-      corner,
-      pointerId,
-      handle,
-      layout:{...widget.layout},
-      baseBox,
-      lastBox:baseBox,
-      lastClientX:e.clientX,
-      lastClientY:e.clientY,
-      boxFromPointer,
-    };
-
-    gestureRef.current=g;
-    document.body.style.userSelect="none";
-    document.body.style.cursor=cursor;
-    setGesture({id:widget.id,mode:"resize-"+corner,previewPx:baseBox});
-
-    bindPointerGestureListeners(g);
-  };
-
-  const pagesBarNode = pages && pages.length > 0 && (
-    <div className={"lp-dashboard-pages-bar" + (tabsSlot ? " lp-dashboard-pages-bar-inline" : "")}>
-      {pages.map((p) => {
-        const hasPageFilter = p.filter && Object.entries(p.filter).some(([k, v]) => {
-          if (k === "projectIdsMode" || k === "statusIdsMode" || k === "datePresetField") return false;
-          if (k === "advanced") return countFilterGroup(v) > 0;
-          return Array.isArray(v) ? v.length > 0 : (v !== "" && v !== false && v != null);
-        });
-        return (
-          <div
-            key={p.id}
-            className={"lp-dashboard-page-tab" + (p.id === activePageId ? " active" : "")}
-            onClick={() => editingPageId !== p.id && onSwitchPage(p.id)}
-            onContextMenu={(e) => { e.preventDefault(); setFilterPageTarget(p); }}
-          >
-            {editingPageId === p.id ? (
-              <input
-                autoFocus
-                className="lp-dashboard-page-tab-input"
-                value={editingPageName}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => setEditingPageName(e.target.value)}
-                onBlur={() => { onRenamePage(p.id, editingPageName); setEditingPageId(null); }}
-                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setEditingPageId(null); }}
-              />
-            ) : (
-              <span
-                className="lp-dashboard-page-tab-label"
-                onDoubleClick={(e) => { e.stopPropagation(); setEditingPageId(p.id); setEditingPageName(p.name); }}
-                title="Double-clique pour renommer, clic droit pour filtrer"
-              >
-                {p.icon && <IconGlyph icon={p.icon} size={13} />}
-                {p.name}
-              </span>
-            )}
-            {p.id === activePageId && editingPageId !== p.id && (
-              <button className="lp-dashboard-page-tab-close lp-mobile-only-inline" onClick={(e) => { e.stopPropagation(); setEditingPageId(p.id); setEditingPageName(p.name); }} title="Renommer cette page"><Pencil size={11} /></button>
-            )}
-            {p.id === activePageId && (
-              <button className="lp-dashboard-page-tab-close" onClick={(e) => { e.stopPropagation(); setFilterPageTarget(p); }} title="Filtre de cette page (s'applique à tous ses widgets)">
-                <SlidersHorizontal size={11} />
-                {hasPageFilter && <span className="lp-dashboard-page-filter-dot" />}
-              </button>
-            )}
-            {p.id === activePageId && (
-              <button className="lp-dashboard-page-tab-close" onClick={(e) => { e.stopPropagation(); onDuplicatePage(p.id); }} title="Dupliquer cette page"><Copy size={11} /></button>
-            )}
-            {pages.length > 1 && p.id === activePageId && (
-              <button className="lp-dashboard-page-tab-close" onClick={(e) => { e.stopPropagation(); onDeletePage(p.id); }} title="Supprimer cette page"><X size={11} /></button>
-            )}
-          </div>
-        );
-      })}
-      <button className="lp-dashboard-page-add" onClick={onAddPage} title="Ajouter une page"><Plus size={13} /></button>
-    </div>
-  );
-
-  return (
-    <div className="lp-dashboard-wrap">
-      <ViewToolbarPortal slot={toolbarSlot}>
-        {dashboardName && <span className="lp-dashboard-name-tag">{dashboardName}</span>}
-        <button className="lp-tool-btn" onClick={() => setEditingWidget("new")} title="Ajouter un widget"><Plus size={14} /> Ajouter un widget</button>
-      </ViewToolbarPortal>
-
-      {/* Les onglets de pages sont "portés" à côté du titre (voir dashboardTabsSlot
-          dans le composant parent) quand un emplacement est disponible, pour ne
-          plus occuper leur propre rangée pleine largeur. Repli en rangée normale
-          si aucun slot n'est fourni (ex. futur usage sans en-tête compatible). */}
-      {tabsSlot ? <ViewToolbarPortal slot={tabsSlot}>{pagesBarNode}</ViewToolbarPortal> : pagesBarNode}
-
-      {widgets.length === 0 ? (
-        <div className="lp-empty" style={{ padding: 40 }}>
-          Aucun widget pour l'instant.
-          <div style={{ marginTop: 10 }}>
-            <button className="lp-btn lp-btn-primary" onClick={() => setEditingWidget("new")}>Ajouter un widget</button>
-          </div>
-        </div>
-      ) : (
-        <div className={"lp-dashboard-grid" + (isMobileStack ? " lp-dashboard-grid-stack" : "")} ref={gridRef} style={isMobileStack ? undefined : { height: py(gridHeight) - DASHBOARD_GAP }}>
-          {stackedWidgets.map((w, wIndex) => {
-            if (!w.layout) return null;
-            let scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
-            if (w.onlyMine && myName) scoped = scoped.filter((t) => t.assignee === myName);
-            const isGesturing = !isMobileStack && gesture && gesture.id === w.id;
-            const dx = isGesturing && gesture.mode === "move" ? gesture.dx : 0;
-            const dy = isGesturing && gesture.mode === "move" ? gesture.dy : 0;
-            const resizing = isGesturing && gesture.mode.startsWith("resize");
-            const resizePreviewPx = resizing ? gesture.previewPx : null;
-            // Pile mobile : plein largeur, en flux normal — plus de positionnement
-            // absolu ni de redimensionnement au doigt (voir moveWidgetInStack pour
-            // le réordonnancement tactile, via les boutons ↑/↓ de l'en-tête).
-            const style = isMobileStack ? {
-              position: "static", width: "100%", minHeight: Math.max(160, py(w.layout.h) - DASHBOARD_GAP),
-              background: w.bgColor || undefined,
-            } : {
-              left: resizing ? resizePreviewPx.left : px(w.layout.x) + dx,
-              top: resizing ? resizePreviewPx.top : py(w.layout.y) + dy,
-              width: resizing ? resizePreviewPx.width : px(w.layout.w) - DASHBOARD_GAP,
-              height: resizing ? resizePreviewPx.height : py(w.layout.h) - DASHBOARD_GAP,
-              zIndex: isGesturing ? 30 : 1,
-              background: w.bgColor || undefined,
-              transition: isGesturing ? "none" : undefined,
-              willChange: isGesturing ? "left, top, width, height" : undefined,
-              ...(appearance?.animCascade && !isGesturing ? { animationDelay: `${Math.min(wIndex, 10) * 70}ms` } : {}),
-            };
-            return (
-              <WidgetFrame
-                key={w.id}
-                title={w.title || "Widget"}
-                titleEmoji={w.titleEmoji}
-                titleColor={w.titleColor}
-                bandColor={w.bandColor}
-                style={style}
-                className={appearance?.animCascade ? "lp-anim-cascade-item" : undefined}
-                dragging={!!isGesturing}
-                onMoveUp={isMobileStack && wIndex > 0 ? () => moveWidgetInStack(w.id, -1) : undefined}
-                onMoveDown={isMobileStack && wIndex < stackedWidgets.length - 1 ? () => moveWidgetInStack(w.id, 1) : undefined}
-                onEdit={() => setEditingWidget(w)}
-                onDelete={() => removeWidget(w.id)}
-                onDuplicate={() => duplicateWidget(w)}
-                onAutoSize={() => autoSizeWidget(w)}
-                onHeaderMouseDown={startMoveGesture(w)}
-                onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedGantt" || w.type === "embedTimeline" || w.type === "embedRadar"}
-              >
-                {(headerToolbarSlot) => (
-                <>
-                {w.type === "kpi" && (
-                  <div className="lp-widget-kpi">{computeKpiValue(scoped, w.metric || "count", ctx)}</div>
-                )}
-                {w.type === "customCard" && (
-                  <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen}/>
-                )}
-                {w.type === "chart" && (
-                  <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} aggregateField={w.aggregateField} aggregateType={w.aggregateType || "sum"} />
-                )}
-                {w.type === "list" && (
-                  <WidgetList tasks={scoped} sortBy={w.sortBy || "end"} limit={w.limit || 6} groupBy={w.groupBy} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "taskDetail" && (
-                  <WidgetTaskDetail
-                    widget={w}
-                    tasks={scoped}
-                    allTasks={tasks}
-                    ctx={ctx}
-                    onOpen={onOpen}
-                    shortcutPrefs={shortcutPrefs}
-                    onChangeTask={(taskId)=>updateWidget(w.id,{taskDetailTaskId:taskId})}
-                    onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
-                  />
-                )}
-                {w.type === "countdown" && (
-                  <WidgetCountdown widget={w} tasks={tasks} ctx={ctx} />
-                )}
-                {w.type === "note" && (
-                  <WidgetNote widget={w} onChange={(content) => updateWidget(w.id, { content })} shortcutPrefs={shortcutPrefs} />
-                )}
-                {w.type === "budget" && (
-                  <WidgetBudget widget={w} projects={ctx.projects} expenses={expenses} expenseCategories={expenseCategories} />
-                )}
-                {w.type === "budgetCompare" && (
-                  <WidgetBudgetCompare widget={w} projects={ctx.projects} />
-                )}
-                {w.type === "minigantt" && (
-                  <WidgetMiniGantt
-                    widget={w}
-                    tasks={scoped}
-                    groupBy={w.groupBy}
-                    ctx={ctx}
-                    onOpen={onOpen}
-                    onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
-                    onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
-                    pastDays={
-                      (() => {
-                        const vals = [
-                          activePage?.filter?.pastDays,
-                          widgetFilterFor(w)?.pastDays
-                        ]
-                          .filter(v => v !== "" && v != null && !Number.isNaN(Number(v)))
-                          .map(Number);
-                        return vals.length ? Math.min(...vals) : "";
-                      })()
-                    }
-                  />
-                )}
-                {w.type === "criticalPath" && (
-                  <WidgetCriticalPath tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "projectPulse" && (
-                  <WidgetProjectPulse tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "heatmapMonth" && (
-                  <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
-                )}
-                {w.type === "milestoneTimeline" && (
-                  <WidgetMilestoneTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "metroDeadline" && (
-                  <WidgetMetroDeadline tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "verticalMetroTimeline" && (
-                  <WidgetVerticalMetroTimeline
-                    tasks={scoped}
-                    ctx={ctx}
-                    onOpen={onOpen}
-                    onUpdateDates={(taskId, patch) => setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, ...patch } : t))}
-                  />
-                )}
-                {w.type === "blockers" && (
-                  <WidgetBlockers tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "nextBestAction" && (
-                  <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "dailyBriefing" && (
-                  <WidgetDailyBriefing tasks={scoped} ctx={ctx} onOpen={onOpen} onViewDay={onViewDay} activityLog={activityLog} workflowExecutionLog={workflowExecutionLog} />
-                )}
-                {w.type === "projectMomentum" && (
-                  <WidgetProjectMomentum widget={w} tasks={scoped} ctx={ctx} snapshots={momentumSnapshots || []} onOpen={onOpen} />
-                )}
-                {w.type === "dominoEffect" && (
-                  <WidgetDominoEffect tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "projectStory" && (
-                  <WidgetProjectStory widget={w} ctx={ctx} activityLog={activityLog} onOpen={onOpen} />
-                )}
-                {w.type === "timeMachine" && (
-                  <WidgetTimeMachine widget={w} tasks={scoped} ctx={ctx} taskBaselines={taskBaselines || {}} momentumSnapshots={momentumSnapshots || []} onOpen={onOpen} />
-                )}
-                {w.type === "budgetBurnRate" && (
-                  <WidgetBudgetBurnRate widget={w} ctx={ctx} expenses={expenses || []} onOpen={onOpen} />
-                )}
-                {w.type === "riskMatrix" && (
-                  <WidgetRiskMatrix widget={w} ctx={ctx} risks={risks || []} onOpenProject={() => {}} />
-                )}
-                {w.type === "automations" && (
-                  <WidgetAutomations workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={onOpenAutomations} />
-                )}
-                {w.type === "automationAlerts" && (
-                  <WidgetAutomationAlerts workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={onOpenAutomations} />
-                )}
-                {w.type === "embedMetro" && (
-                  <WidgetEmbedMetro tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} expenses={expenses} setTasks={setTasks} pushToast={pushToast} externalToolbarSlot={headerToolbarSlot} />
-                )}
-                {w.type === "embedGantt" && (
-                  <WidgetEmbedGantt tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} />
-                )}
-                {w.type === "embedTimeline" && (
-                  <WidgetEmbedTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} />
-                )}
-                {w.type === "embedRadar" && (
-                  <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
-                )}
-                </>
-                )}
-              </WidgetFrame>
-            );
-          })}
-        </div>
-      )}
-
-      {editingWidget && (
-        <WidgetFormModal
-          widget={editingWidget === "new" ? null : editingWidget}
-          existingWidgets={widgets}
-          ctx={ctx}
-          pageFilter={activePage?.filter}
-          onSave={saveWidget}
-          onClose={() => setEditingWidget(null)}
-        />
-      )}
-      {filterPageTarget && (
-        <PageFilterModal
-          page={filterPageTarget}
-          ctx={ctx}
-          onSave={(filter) => onUpdatePageFilter(filterPageTarget.id, filter)}
-          onSaveMeta={(patch) => onUpdatePageMeta(filterPageTarget.id, patch)}
-          onClose={() => setFilterPageTarget(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-// Agrège un ensemble de tâches selon un champ personnalisé numérique — somme,
-// moyenne, minimum ou maximum. Sans champ choisi (aggregateField vide), le
-// comportement d'origine est conservé : un simple comptage de tâches.
-function aggregateTasksValue(tasksArr, aggregateField, aggregateType) {
-  if (!aggregateField) return tasksArr.length;
-  const fieldId = aggregateField.startsWith("cf:") ? aggregateField.slice(3) : aggregateField;
-  const nums = tasksArr.map((t) => Number(t.customFields?.[fieldId])).filter((n) => Number.isFinite(n));
-  if (nums.length === 0) return 0;
-  if (aggregateType === "avg") return nums.reduce((s, n) => s + n, 0) / nums.length;
-  if (aggregateType === "min") return Math.min(...nums);
-  if (aggregateType === "max") return Math.max(...nums);
-  return nums.reduce((s, n) => s + n, 0); // "sum" par défaut
-}
-// Arrondit proprement pour l'affichage : entier si c'en est un, sinon 1 décimale.
-function fmtAggregateValue(v) {
-  if (!Number.isFinite(v)) return "0";
-  const rounded = Math.round(v * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
-function computeStackedData(tasks, groupBy, stackBy, ctx, aggregateField, aggregateType) {
-  const primary = groupTasks(tasks, groupBy, ctx).filter((g) => g.tasks.length > 0);
-  const stackKeys = groupTasks(tasks, stackBy, ctx).filter((g) => g.tasks.length > 0);
-  return primary.map((pg) => ({
-    label: pg.label,
-    total: aggregateTasksValue(pg.tasks, aggregateField, aggregateType),
-    segments: stackKeys
-      .map((sg) => {
-        const segTasks = pg.tasks.filter((t) => matchesGroupKey(t, stackBy, sg.key, ctx));
-        return { label: sg.label, color: sg.color || "var(--text-muted)", value: aggregateTasksValue(segTasks, aggregateField, aggregateType) };
-      })
-      .filter((s) => s.value > 0),
-  }));
-}
-
-function GaugeChart({ value, size = 120, metricLabel, count }) {
-  const [hover, setHover] = useState(false);
-  const r = size / 2 - 10;
-  const cx = size / 2, cy = size / 2;
-  const circumference = Math.PI * r; // demi-cercle
-  const pct = clamp(value, 0, 100);
-  const offset = circumference * (1 - pct / 100);
-  return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      <svg
-        width={size} height={size / 2 + 24} viewBox={`0 0 ${size} ${size / 2 + 24}`}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        style={{ cursor: metricLabel ? "default" : undefined }}
-      >
-        <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="var(--border)" strokeWidth="12" strokeLinecap="round" />
-        <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="var(--accent)" strokeWidth="12" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} />
-        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--text-900)">{Math.round(pct)}%</text>
-      </svg>
-      {hover && metricLabel && (
-        <div className="lp-pie-tooltip" style={{ position: "absolute", left: "50%", bottom: "100%", transform: "translateX(-50%)", marginBottom: 6, whiteSpace: "nowrap" }}>
-          {metricLabel} — {Math.round(pct)}%{Number.isFinite(count) ? ` (${count} tâche${count > 1 ? "s" : ""})` : ""}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BarChartSimple({ data, horizontal, isAggregate }) {
-  const [hover, setHover] = useState(null); // { d, x, y }
-  const max = Math.max(1, ...data.map((d) => d.value));
-  const openTip = (d, e) => setHover({ d, x: e.clientX, y: e.clientY });
-  const closeTip = () => setHover(null);
-  const total = data.reduce((s, d) => s + d.value, 0);
-  const pctFor = (v) => (total > 0 ? Math.round((v / total) * 100) : 0);
-  const legend = (
-    <div className="lp-widget-legend lp-widget-legend-horizontal">
-      {data.map((d) => (
-        <div key={d.label} className="lp-widget-legend-item">
-          <span className="lp-widget-legend-dot" style={{ background: d.color }} />
-          <span className="lp-widget-legend-label">{d.label}</span>
-          <span className="lp-widget-legend-value">{fmtAggregateValue(d.value)}</span>
-        </div>
-      ))}
-    </div>
-  );
-  if (horizontal) {
-    return (
-      <div className="lp-widget-barh-wrap">
-        <div className="lp-widget-barh" style={{ position: "relative" }}>
-          {data.map((d) => (
-            <div className="lp-widget-barh-row" key={d.label} onMouseEnter={(e) => openTip(d, e)} onMouseMove={(e) => openTip(d, e)} onMouseLeave={closeTip} style={{ cursor: "default" }}>
-              <span className="lp-widget-barh-label">{d.label}</span>
-              <div className="lp-widget-barh-track">
-                <div className="lp-widget-barh-fill" style={{ width: `${(d.value / max) * 100}%`, background: d.color }} />
-              </div>
-              <span className="lp-widget-bar-value">{fmtAggregateValue(d.value)}</span>
-            </div>
-          ))}
-          {hover && (
-            <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
-              {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
-            </div>
-          )}
-        </div>
-        {legend}
-      </div>
-    );
-  }
-  return (
-    <div className="lp-widget-barv-wrap">
-      <div className="lp-widget-barv" style={{ position: "relative" }}>
-        {data.map((d) => (
-          <div className="lp-widget-barv-col" key={d.label} onMouseEnter={(e) => openTip(d, e)} onMouseMove={(e) => openTip(d, e)} onMouseLeave={closeTip} style={{ cursor: "default" }}>
-            <span className="lp-widget-bar-value">{fmtAggregateValue(d.value)}</span>
-            <div className="lp-widget-barv-track">
-              <div className="lp-widget-barv-fill" style={{ height: `${(d.value / max) * 100}%`, background: d.color }} />
-            </div>
-            <span className="lp-widget-barv-label">{d.label}</span>
-          </div>
-        ))}
-        {hover && (
-          <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
-            {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
-          </div>
-        )}
-      </div>
-      {legend}
-    </div>
-  );
-}
-
-function LineChartWidget({ data, width = 320, height = 140 }) {
-  const [hover, setHover] = useState(null); // { p, x, y }
-  if (data.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune donnée pour ce filtre.</div>;
-  const max = Math.max(1, ...data.map((d) => d.value));
-  const padX = 8, padY = 14;
-  const stepX = data.length > 1 ? (width - padX * 2) / (data.length - 1) : 0;
-  const points = data.map((d, i) => {
-    const x = padX + i * stepX;
-    const y = height - padY - (d.value / max) * (height - padY * 2);
-    return { x, y, d };
-  });
-  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-  const area = `${path} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`;
-  return (
-    <div>
-      <div style={{ position: "relative" }}>
-        <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
-          <path d={area} fill="var(--accent)" opacity="0.12" />
-          <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          {points.map((p, i) => (
-            <g key={i} onMouseEnter={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseMove={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
-              <circle cx={p.x} cy={p.y} r="9" fill="transparent" />
-              <circle cx={p.x} cy={p.y} r="3" fill="var(--accent)" />
-              <text x={p.x} y={height - 2} textAnchor="middle" fontSize="9" fill="var(--text-600)">{p.d.label}</text>
-            </g>
-          ))}
-        </svg>
-        {hover && (
-          <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
-            {hover.p.d.label} — {hover.p.d.value} tâche{hover.p.d.value > 1 ? "s" : ""}
-          </div>
-        )}
-      </div>
-      <div className="lp-widget-legend lp-widget-legend-horizontal">
-        <div className="lp-widget-legend-item">
-          <span className="lp-widget-legend-dot" style={{ background: "var(--accent)" }} />
-          <span className="lp-widget-legend-label">Nombre de tâches par période</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StackedBarChart({ data }) {
-  const [hover, setHover] = useState(null); // { seg, colLabel, x, y }
-  const max = Math.max(1, ...data.map((d) => d.total));
-  // Légende dédupliquée : un segment (ex. un statut) peut apparaître dans
-  // plusieurs colonnes — un seul badge par label/couleur distincts.
-  const legend = useMemo(() => {
-    const seen = new Map();
-    data.forEach((d) => d.segments.forEach((s) => { if (!seen.has(s.label)) seen.set(s.label, s.color); }));
-    return [...seen.entries()].map(([label, color]) => ({ label, color }));
-  }, [data]);
-  return (
-   
+      if (w.id === swapWith.id) return { ...w, layout: { ...w.layout, y: current.layout.y, x: current.

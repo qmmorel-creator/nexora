@@ -65,4 +65,12 @@ assert.match(builtSource, /https:\/\/api\.todoist\.com\/api\/v1\/tasks/);
 assert.match(builtSource, /labels:\["nexora-mobile"\]/);
 assert.match(builtSource, /todoistTaskId/);
 assert.doesNotMatch(builtSource, /TELEGRAM_BOT_TOKEN/);
+// Annotations du Gantt : le bloc de logique pure doit rester extractible par
+// les tests unitaires, et les annotations rester attachées à la configuration
+// du widget plutôt qu'aux tâches.
+assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:START ===/);
+assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:END ===/);
+assert.match(builtSource, /ganttAnnotations: next/);
+assert.match(builtSource, /className="lp-gantt-tblock"/);
+assert.match(builtSource, /className="lp-gantt-frame"/);
 console.log("Repository invariants: OK");
