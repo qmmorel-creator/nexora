@@ -70,6 +70,11 @@ const seen = await page.evaluate(() => {
     miniFrameLabels: rects(".lp-widget-minigantt-frame-label"),
     miniRows: rects(".lp-widget-minigantt-row"),
     miniBands: rects(".lp-widget-minigantt-tblock"),
+    miniDecisions: rects(".lp-widget-minigantt-phase.is-decision"),
+    miniRisks: rects(".lp-widget-minigantt-risk"),
+    miniRiskLabels: rects(".lp-widget-minigantt-risk-label"),
+    miniMarkers: rects(".lp-widget-minigantt-marker"),
+    miniLegend: rects(".lp-widget-minigantt-legend-item"),
   };
 });
 
@@ -89,8 +94,16 @@ expect(pageErrors.length === 0, `erreurs JavaScript au rendu :\n    ${pageErrors
 expect(seen.ganttBlocks > 0, "Gantt complet : aucun bloc temporel dessiné");
 expect(seen.ganttBlockLabels.length === 2, `Gantt complet : ${seen.ganttBlockLabels.length} étiquette(s) de bloc, 2 attendues`);
 expect(seen.ganttFrames.length === 3, `Gantt complet : ${seen.ganttFrames.length} cadre(s), 3 attendus (l'encadré non successif doit en produire deux)`);
-expect(seen.miniBlocks === 2, `Mini-Gantt : ${seen.miniBlocks} bloc(s) temporel(s), 2 attendus`);
-expect(seen.miniPhases.length === 2, `Mini-Gantt : ${seen.miniPhases.length} titre(s) de bloc dans la bande d’en-tête, 2 attendus`);
+expect(seen.miniBlocks === 3, `Mini-Gantt : ${seen.miniBlocks} bande(s) de bloc, 3 attendues (2 phases + 1 fenêtre de décision)`);
+expect(seen.miniPhases.length === 3, `Mini-Gantt : ${seen.miniPhases.length} titre(s) de bloc dans la bande d’en-tête, 3 attendus`);
+expect(seen.miniDecisions.length === 1, `Mini-Gantt : ${seen.miniDecisions.length} fenêtre(s) de décision, 1 attendue`);
+// Trois risques portent sur une tâche visible, le quatrième vise une tâche
+// supprimée : il doit être ignoré sans erreur.
+expect(seen.miniRisks.length === 3, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque, 3 attendus (le risque d'une tâche supprimée est ignoré)`);
+expect(seen.miniRiskLabels.length > 0, "Mini-Gantt : aucun risque n'affiche son étiquette");
+// Deux jalons de configuration et une annotation partagent la bande de repères.
+expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
+expect(seen.miniLegend.length >= 3, `Mini-Gantt : légende à ${seen.miniLegend.length} entrée(s), au moins 3 attendues`);
 expect(seen.miniFrames.length === 3, `Mini-Gantt : ${seen.miniFrames.length} cadre(s), 3 attendus`);
 
 // « Le bloc temporel emporte tout » : une bande continue sur toute la hauteur des
@@ -105,12 +118,16 @@ if (seen.miniRows.length && seen.miniBands.length) {
   });
 }
 
+seen.miniRisks.forEach((risk, i) => {
+  expect(risk.w > 2 && risk.h > 2, `Mini-Gantt : couloir de risque ${i + 1} de surface nulle (${risk.w}×${risk.h})`);
+});
+
 for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt", seen.miniFrames]]) {
   frames.forEach((f, i) => expect(f.w > 4 && f.h > 4, `${name} : cadre ${i + 1} de surface nulle (${f.w}×${f.h})`));
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases]]) {
+for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];

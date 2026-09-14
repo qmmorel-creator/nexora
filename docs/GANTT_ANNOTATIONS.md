@@ -58,8 +58,62 @@ type GanttHighlightFrame = {
 type GanttAnnotations = {
   temporalBlocks?: TemporalBlock[];
   highlightFrames?: GanttHighlightFrame[];
+  // Propres au Mini-Gantt (ignorés par le Gantt complet) :
+  milestones?: MiniGanttMilestone[];
+  risks?: MiniGanttTaskRisk[];
+  notes?: MiniGanttNote[];
 };
 ```
+
+## Pilotage — Mini-Gantt uniquement
+
+Le Mini-Gantt étend la même clé `widget.ganttAnnotations` avec trois listes, et
+ajoute quatre réglages à la racine du widget (`miniGanttFocus`,
+`miniGanttPresentation`, `miniGanttEmphasis`, `miniGanttWindow`). Le Gantt
+complet ignore ces champs : les deux widgets restent interchangeables.
+
+```ts
+type TemporalBlock = { /* … */ kind?: "phase" | "decision" };  // fenêtre de décision
+
+type MiniGanttMilestone = {
+  id: string; title: string; date: string;
+  type: "standard" | "decision" | "contractual" | "delivery" | "commissioning";
+  color?: string; taskId?: string | null;   // un jalon peut n'être rattaché à rien
+};
+
+type MiniGanttTaskRisk = {
+  id: string; taskId: string; title: string;
+  color?: string;
+  style?: "solid" | "dashed" | "hatched";
+  severity?: "low" | "medium" | "high" | "critical";
+  startOffset?: number | null;  // jours après la FIN de la tâche
+  endOffset?: number | null;
+};
+
+type MiniGanttNote = {
+  id: string; title: string; text?: string;
+  anchor: { kind: "task" | "risk" | "milestone" | "date"; id?: string | null; date?: string | null };
+};
+```
+
+**Risques** — chaque risque prolonge la barre de sa tâche. Sans décalage
+explicite, il reprend là où le précédent s'arrête et dure le nombre de jours de
+sa gravité (2 / 5 / 10 / 15). Deux risques qui se recouvrent malgré tout sont
+empilés sur des couloirs distincts. `null` et `""` valent **absent**, jamais
+zéro : la normalisation doit rester idempotente, sinon un second passage
+transforme « pas de décalage » en « décalage de 0 jour » et tous les couloirs
+s'effondrent à une journée.
+
+**Accentuation** — elle se déduit de ce qui est déjà déclaré, sans second
+système de marquage : un risque élevé ou critique passe la ligne en rouge, le
+chemin critique (même `computeCriticalIds` que la vue Planning) en bleu, un
+risque de moindre gravité en ambre. Le focus atténue le reste sans jamais le
+masquer.
+
+**Jalons et annotations** partagent une bande de repères sous les titres de
+bloc, avec un placement en lignes calculé **en pixels** à partir de la largeur
+mesurée de la piste : estimer la largeur d'une étiquette en pourcentage donnait
+des collisions dès que le widget était étroit.
 
 **Migration** : l'absence de ces champs vaut listes vides. Une entrée illisible
 ou un bloc aux dates invalides est ignoré au rendu plutôt que de casser le

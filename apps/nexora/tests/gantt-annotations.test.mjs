@@ -210,3 +210,179 @@ test("le nettoyage explicite retire les tâches disparues et les encadrés vidé
   assert.deepEqual(pruneHighlightFrames(frames, []), []);
   assert.deepEqual(pruneHighlightFrames(undefined, ["t1"]), []);
 });
+
+// ---------------------------------------------------------------------------
+// Mini-Gantt : fenêtres de décision, jalons, risques, annotations
+// ---------------------------------------------------------------------------
+const MINI = vm.runInThisContext(
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeMiniGanttMilestones, normalizeMiniGanttRisks, normalizeMiniGanttNotes, miniGanttRiskSegments, miniGanttSelectionWindow, miniGanttRowEmphasis, normalizeTemporalBlocks, MINIGANTT_RISK_DEFAULT_DAYS, GANTT_DECISION_DEFAULT_COLOR, MINIGANTT_RISK_DEFAULT_COLOR };\n})`
+)();
+
+test("un bloc temporel peut être une fenêtre de décision", () => {
+  const [phase, decision] = MINI.normalizeTemporalBlocks([
+    { id: "b1", title: "Études", startDate: "2026-03-01", endDate: "2026-06-30" },
+    { id: "b2", title: "Validation budget", startDate: "2026-04-01", endDate: "2026-04-03", kind: "decision" },
+  ]);
+  assert.equal(phase.kind, "phase");
+  assert.equal(decision.kind, "decision");
+  // La teinte violette est le défaut d'une fenêtre de décision, pas celui d'une phase.
+  assert.equal(decision.color, MINI.GANTT_DECISION_DEFAULT_COLOR);
+  assert.notEqual(phase.color, MINI.GANTT_DECISION_DEFAULT_COLOR);
+  // Une couleur explicite reste prioritaire.
+  const [forced] = MINI.normalizeTemporalBlocks([{ id: "b3", title: "X", startDate: "2026-01-01", endDate: "2026-01-02", kind: "decision", color: "#123456" }]);
+  assert.equal(forced.color, "#123456");
+});
+
+test("les jalons de configuration sont validés et typés", () => {
+  const list = MINI.normalizeMiniGanttMilestones([
+    { id: "m1", title: "Décision CODIR", date: "2026-05-12", type: "decision" },
+    { id: "m2", title: "Permis", date: "2026-06-01" },
+    { id: "m3", title: "Sans date" },
+    { id: "m4", title: "  ", date: "2026-06-01" },
+    { id: "m5", title: "Date folle", date: "2026-02-30" },
+    { title: "Sans identifiant", date: "2026-06-01" },
+  ]);
+  assert.deepEqual(list.map((m) => m.id), ["m1", "m2"]);
+  assert.equal(list[0].type, "decision");
+  assert.equal(list[1].type, "standard", "type inconnu ou absent = standard");
+  assert.ok(list[0].color && list[0].color !== list[1].color, "chaque type a sa couleur par défaut");
+  assert.equal(list[1].taskId, null, "un jalon peut n'être rattaché à aucune tâche");
+});
+
+test("les risques prennent des valeurs par défaut sûres", () => {
+  const [risk] = MINI.normalizeMiniGanttRisks([{ id: "r1", taskId: "t1", title: " Retard fournisseur " }]);
+  assert.equal(risk.title, "Retard fournisseur");
+  assert.equal(risk.style, "hatched", "une incertitude de délai est hachurée par défaut");
+  assert.equal(risk.severity, "medium");
+  assert.equal(risk.color, MINI.MINIGANTT_RISK_DEFAULT_COLOR);
+  assert.equal(risk.startOffset, null);
+  assert.equal(risk.endOffset, null);
+  // Entrées inexploitables écartées, jamais une exception.
+  assert.deepEqual(MINI.normalizeMiniGanttRisks([{ id: "r2" }, null, "texte", { taskId: "t1" }]), []);
+  assert.deepEqual(MINI.normalizeMiniGanttRisks(undefined), []);
+  const [style] = MINI.normalizeMiniGanttRisks([{ id: "r3", taskId: "t1", style: "pointillé", severity: "énorme" }]);
+  assert.equal(style.style, "hatched");
+  assert.equal(style.severity, "medium");
+});
+
+test("plusieurs risques sur une tâche se suivent après la fin de la barre", () => {
+  const rows = [{ id: "t1", startIdx: 0, endIdx: 10 }, { id: "t2", startIdx: 4, endIdx: 8 }];
+  const segments = MINI.miniGanttRiskSegments(rows, [
+    { id: "r1", taskId: "t1", title: "Fournisseur", severity: "low" },
+    { id: "r2", taskId: "t1", title: "Météo", severity: "high" },
+    { id: "r3", taskId: "t2", title: "Validation", severity: "medium" },
+  ]);
+  const t1 = segments.filter((s) => s.taskId === "t1");
+  assert.equal(t1.length, 2);
+  // Le premier démarre à la fin de la barre, le second enchaîne sur le premier.
+  assert.equal(t1[0].startIdx, 10);
+  assert.equal(t1[0].endIdx, 10 + MINI.MINIGANTT_RISK_DEFAULT_DAYS.low);
+  assert.equal(t1[1].startIdx, t1[0].endIdx);
+  assert.equal(t1[1].endIdx, t1[0].endIdx + MINI.MINIGANTT_RISK_DEFAULT_DAYS.high);
+  // Chaînés, ils ne se recouvrent pas : un seul couloir suffit.
+  assert.deepEqual(t1.map((s) => s.lane), [0, 0]);
+  // Chaque tâche a sa propre origine.
+  const t2 = segments.filter((s) => s.taskId === "t2");
+  assert.equal(t2[0].startIdx, 8);
+});
+
+test("les décalages explicites sont respectés et les recouvrements empilés", () => {
+  const rows = [{ id: "t1", startIdx: 0, endIdx: 20 }];
+  const segments = MINI.miniGanttRiskSegments(rows, [
+    { id: "r1", taskId: "t1", title: "A", startOffset: 0, endOffset: 10 },
+    { id: "r2", taskId: "t1", title: "B", startOffset: 5, endOffset: 12 },
+    { id: "r3", taskId: "t1", title: "C", startOffset: 12, endOffset: 14 },
+  ]);
+  assert.deepEqual(segments.map((s) => [s.startIdx, s.endIdx]), [[20, 30], [25, 32], [32, 34]]);
+  // A et B se recouvrent : B passe au couloir suivant. C ne recouvre personne.
+  assert.deepEqual(segments.map((s) => s.lane), [0, 1, 0]);
+});
+
+test("un risque dont la tâche n'est pas visible est ignoré sans erreur", () => {
+  const rows = [{ id: "t1", startIdx: 0, endIdx: 5 }];
+  const segments = MINI.miniGanttRiskSegments(rows, [
+    { id: "r1", taskId: "t1", title: "Visible" },
+    { id: "r2", taskId: "supprimee", title: "Tâche disparue" },
+    { id: "r3", taskId: "filtree", title: "Masquée par un filtre" },
+  ]);
+  assert.deepEqual(segments.map((s) => s.id), ["r1"]);
+  assert.deepEqual(MINI.miniGanttRiskSegments([], [{ id: "r1", taskId: "t1" }]), []);
+  assert.deepEqual(MINI.miniGanttRiskSegments(undefined, undefined), []);
+  assert.deepEqual(MINI.miniGanttRiskSegments([{ id: "t1", endIdx: NaN }], [{ id: "r1", taskId: "t1" }]), []);
+});
+
+test("la fenêtre de zoom couvre la sélection, ses risques et une marge", () => {
+  const rows = [
+    { id: "t1", startIdx: 10, endIdx: 20 },
+    { id: "t2", startIdx: 30, endIdx: 40 },
+    { id: "t3", startIdx: 0, endIdx: 100 },
+  ];
+  const segments = MINI.miniGanttRiskSegments(rows, [{ id: "r1", taskId: "t2", severity: "high" }]);
+  const win = MINI.miniGanttSelectionWindow(rows, ["t1", "t2"], segments, 2);
+  assert.equal(win.minIdx, 8, "début le plus ancien moins la marge");
+  // t2 finit à 40, son risque « high » prolonge de 10 jours, plus la marge.
+  assert.equal(win.maxIdx, 52);
+  // Une seule tâche : la fenêtre se resserre sur elle, jamais sur tout le Gantt.
+  const single = MINI.miniGanttSelectionWindow(rows, ["t1"], [], 0);
+  assert.deepEqual([single.minIdx, single.maxIdx], [10, 20]);
+  assert.equal(MINI.miniGanttSelectionWindow(rows, [], [], 1), null);
+  assert.equal(MINI.miniGanttSelectionWindow(rows, ["inconnue"], [], 1), null);
+  assert.equal(MINI.miniGanttSelectionWindow(undefined, undefined, undefined), null);
+});
+
+test("l'accentuation d'une ligne se déduit des risques et du chemin critique", () => {
+  const segments = [
+    { id: "r1", taskId: "t1", severity: "low" },
+    { id: "r2", taskId: "t2", severity: "critical" },
+    { id: "r3", taskId: "t3", severity: "medium" },
+  ];
+  const critical = new Set(["t1", "t4"]);
+  // Un risque élevé prime sur le chemin critique : c'est l'alerte la plus forte.
+  assert.equal(MINI.miniGanttRowEmphasis("t2", segments, critical), "risk");
+  // Sinon le chemin critique prime sur un simple risque de faible gravité.
+  assert.equal(MINI.miniGanttRowEmphasis("t1", segments, critical), "critical");
+  assert.equal(MINI.miniGanttRowEmphasis("t3", segments, critical), "watch");
+  assert.equal(MINI.miniGanttRowEmphasis("t4", segments, critical), "critical");
+  assert.equal(MINI.miniGanttRowEmphasis("t5", segments, critical), "none");
+  assert.equal(MINI.miniGanttRowEmphasis("t5", [], null), "none");
+});
+
+test("les annotations exigent une ancre exploitable", () => {
+  const notes = MINI.normalizeMiniGanttNotes([
+    { id: "n1", title: "Relance", anchor: { kind: "task", id: "t1" } },
+    { id: "n2", title: "Comité", anchor: { kind: "date", date: "2026-05-12" } },
+    { id: "n3", title: "Sans ancre", anchor: { kind: "task" } },
+    { id: "n4", title: "Date invalide", anchor: { kind: "date", date: "pas une date" } },
+    { id: "n5", anchor: { kind: "date", date: "2026-05-12" } },
+  ]);
+  assert.deepEqual(notes.map((n) => n.id), ["n1", "n2"]);
+  assert.equal(notes[0].anchor.kind, "task");
+  assert.equal(notes[1].anchor.date, "2026-05-12");
+  assert.equal(notes[0].text, "", "le texte est facultatif");
+});
+
+test("normaliser deux fois une liste ne change plus rien", () => {
+  // Le rendu normalise une liste déjà normalisée : sans idempotence, « pas de
+  // décalage » (null) devenait « décalage de 0 jour » et tous les couloirs
+  // d'incertitude s'effondraient à une journée.
+  const once = MINI.normalizeMiniGanttRisks([{ id: "r1", taskId: "t1", title: "A", severity: "high" }]);
+  const twice = MINI.normalizeMiniGanttRisks(once);
+  assert.deepEqual(twice, once);
+  assert.equal(twice[0].startOffset, null);
+  assert.equal(twice[0].endOffset, null);
+
+  const rows = [{ id: "t1", startIdx: 0, endIdx: 10 }];
+  const direct = MINI.miniGanttRiskSegments(rows, once);
+  const rerun = MINI.miniGanttRiskSegments(rows, twice);
+  assert.deepEqual(rerun, direct);
+  assert.equal(direct[0].endIdx - direct[0].startIdx, MINI.MINIGANTT_RISK_DEFAULT_DAYS.high);
+
+  // Une chaîne vide de formulaire vaut aussi « absent ».
+  const [blank] = MINI.normalizeMiniGanttRisks([{ id: "r2", taskId: "t1", startOffset: "", endOffset: "" }]);
+  assert.equal(blank.startOffset, null);
+  assert.equal(blank.endOffset, null);
+  // Un vrai zéro reste un zéro.
+  const [zero] = MINI.normalizeMiniGanttRisks([{ id: "r3", taskId: "t1", startOffset: 0, endOffset: 4 }]);
+  assert.equal(zero.startOffset, 0);
+  assert.equal(zero.endOffset, 4);
+});
