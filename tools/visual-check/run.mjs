@@ -246,10 +246,10 @@ expect(seen.miniPhases.length === 3, `Mini-Gantt : ${seen.miniPhases.length} tit
 expect(seen.miniDecisions.length === 1, `Mini-Gantt : ${seen.miniDecisions.length} fenêtre(s) de décision, 1 attendue`);
 // Trois risques portent sur une tâche visible, le quatrième vise une tâche
 // supprimée : il doit être ignoré sans erreur.
-expect(seen.miniRisks.length === 6, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque au total, 6 attendus (3 par widget)`);
+expect(seen.miniRisks.length === 8, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque au total, 8 attendus (4 par widget)`);
 // Les risques appartiennent à la tâche : le second widget, sans aucune
 // annotation propre, doit les afficher lui aussi.
-expect(seen.secondRisks.length === 3, `Second Mini-Gantt : ${seen.secondRisks.length} couloir(s) de risque, 3 attendus — un risque porté par la tâche doit apparaître dans tous les widgets`);
+expect(seen.secondRisks.length === 4, `Second Mini-Gantt : ${seen.secondRisks.length} couloir(s) de risque, 4 attendus — un risque porté par la tâche doit apparaître dans tous les widgets`);
 // Méta bloc défini dans les Réglages : il doit atteindre un widget qui n'a
 // aucune annotation propre, et son titre ne doit pas être modifiable là.
 // Deux méta blocs atteignent ce widget : celui des Réglages et celui porté par
@@ -257,7 +257,11 @@ expect(seen.secondRisks.length === 3, `Second Mini-Gantt : ${seen.secondRisks.le
 expect(seen.secondBands.length === 2, `Second Mini-Gantt : ${seen.secondBands.length} bande(s) de méta bloc, 2 attendues (Réglages + tâche calendrier)`);
 expect(seen.secondMetaChips.length === 2, `Second Mini-Gantt : ${seen.secondMetaChips.length} titre(s) de méta bloc, 2 attendus`);
 expect(seen.secondMetaChips.some((c) => /Congés d/.test(c.text)), `Second Mini-Gantt : le bloc issu de la tâche calendrier n'est pas dessiné (${seen.secondMetaChips.map((c) => c.text).join(", ")})`);
-expect(seen.miniRiskLabels.length > 0, "Mini-Gantt : aucun risque n'affiche son étiquette");
+// Le jeu d'essai pose DEUX risques qui se chevauchent sur la même tâche : leurs
+// couloirs s'empilent, leurs étiquettes doivent rester lisibles côte à côte ou
+// l'une sous l'autre — jamais l'une par-dessus l'autre (contrôle de
+// superposition ci-dessous).
+expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
 expect(seen.miniLegend.length >= 3, `Mini-Gantt : légende à ${seen.miniLegend.length} entrée(s), au moins 3 attendues`);
@@ -284,7 +288,7 @@ for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt"
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend]]) {
+for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];

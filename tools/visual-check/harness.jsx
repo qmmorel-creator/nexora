@@ -6,10 +6,15 @@ function AnnotationsHarness() {
   // configuration de chaque widget.
   const seedWithRisks = seedTasks.map((t) => {
     if (t.id === "t1") return { ...t, delayRisks: [
-      { id: "rk1", title: "Fournisseur", severity: "high", style: "hatched" },
+      { id: "rk1", title: "Fournisseur", severity: "high", style: "hatched", },
       { id: "rk2", title: "Météo", severity: "low", style: "dashed", color: "#F2A93B" },
     ] };
-    if (t.id === "t4") return { ...t, delayRisks: [{ id: "rk3", title: "Validation tardive", severity: "medium", style: "solid", color: "#8B5CF6" }] };
+    // Deux risques qui SE CHEVAUCHENT dans le temps : leurs couloirs s'empilent
+    // sur deux niveaux. Leurs étiquettes, elles, doivent rester lisibles.
+    if (t.id === "t4") return { ...t, delayRisks: [
+      { id: "rk3", title: "Validation tardive", severity: "medium", style: "solid", color: "#8B5CF6", startOffset: 0, endOffset: 6 },
+      { id: "rk4", title: "Reprise dossier", severity: "high", style: "hatched", startOffset: 0, endOffset: 6 },
+    ] };
     return t;
   });
   // Projet adossé à Google Calendar : sa tâche porte le réglage « méta bloc »

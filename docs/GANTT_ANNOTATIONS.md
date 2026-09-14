@@ -180,6 +180,15 @@ puis retiré du widget. Un risque dont la tâche n'est pas affichée par ce
 widget-là reste en attente, jusqu'à ce qu'un Mini-Gantt qui la montre s'en
 charge.
 
+Leurs **étiquettes** tiennent sur une seule ligne, posée à la suite de chaque
+couloir puis repoussée vers la droite tant qu'elle recouvrirait celle d'un risque
+précédent de la même tâche. Le calcul se fait en pixels, sur la largeur réellement
+mesurée de la piste. Quand la ligne est pleine jusqu'au bord, l'étiquette passe à
+une seconde ligne plutôt que de disparaître ; au-delà elle n'est pas dessinée, et
+l'infobulle du couloir reste la source. Les cinq pixels qui séparent deux couloirs
+empilés suffisent à deux filets de 9 px de haut, pas à deux textes : c'est
+pourquoi les étiquettes ne suivent PAS l'empilement des couloirs.
+
 Chaque risque prolonge la barre de sa tâche. Sans décalage
 explicite, il reprend là où le précédent s'arrête et dure le nombre de jours de
 sa gravité (2 / 5 / 10 / 15). Deux risques qui se recouvrent malgré tout sont

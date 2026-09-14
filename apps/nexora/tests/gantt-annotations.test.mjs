@@ -215,7 +215,7 @@ test("le nettoyage explicite retire les tâches disparues et les encadrés vidé
 // Mini-Gantt : fenêtres de décision, jalons, risques, annotations
 // ---------------------------------------------------------------------------
 const MINI = vm.runInThisContext(
-  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeMiniGanttMilestones, normalizeMiniGanttRisks, normalizeMiniGanttNotes, miniGanttRiskSegments, miniGanttSelectionWindow, miniGanttRowEmphasis, normalizeTemporalBlocks, MINIGANTT_RISK_DEFAULT_DAYS, GANTT_DECISION_DEFAULT_COLOR, MINIGANTT_RISK_DEFAULT_COLOR };\n})`
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeMiniGanttMilestones, normalizeMiniGanttRisks, normalizeMiniGanttNotes, miniGanttRiskSegments, miniGanttRiskLabelLayout, MINIGANTT_RISK_LABEL_LINES, miniGanttSelectionWindow, miniGanttRowEmphasis, normalizeTemporalBlocks, MINIGANTT_RISK_DEFAULT_DAYS, GANTT_DECISION_DEFAULT_COLOR, MINIGANTT_RISK_DEFAULT_COLOR };\n})`
 )();
 
 test("un bloc temporel peut être une fenêtre de décision", () => {
@@ -590,4 +590,69 @@ test("une resynchronisation du calendrier ne perd pas le réglage méta bloc", (
   const fresh = [calTask({ id: "x" })];
   assert.equal(TASKMETA.carryOverTaskMetaBlocks([], fresh), fresh);
   assert.equal(TASKMETA.calendarTaskEventKey({ id: "manuelle" }), "");
+});
+
+// Deux risques qui se chevauchent dans le temps ont des couloirs empilés, à
+// quelques pixels l'un de l'autre. Leurs ÉTIQUETTES, elles, se recouvraient mot
+// pour mot : cinq pixels suffisent à deux filets de 9 px, pas à deux textes.
+const labelOpts = { trackPx: 400, minIdx: 0, maxIdx: 100, span: 100 };
+const riskSeg = (patch) => ({ id: "s1", taskId: "t1", title: "Risque", startIdx: 10, endIdx: 20, lane: 0, ...patch });
+
+test("deux étiquettes de risque ne se recouvrent jamais", () => {
+  const placed = MINI.miniGanttRiskLabelLayout([
+    riskSeg({ id: "a", title: "Fournisseur" }),
+    riskSeg({ id: "b", title: "Météo", lane: 1 }),
+  ], labelOpts);
+
+  const a = placed.get("a"), b = placed.get("b");
+  assert.ok(a && b, "les deux étiquettes doivent être placées");
+  // Même couloir, donc même point de départ naturel : la seconde est repoussée
+  // vers la droite, ou passe à la ligne suivante — jamais posée par-dessus.
+  const separated = b.leftPct > a.leftPct || b.line !== a.line;
+  assert.ok(separated, `étiquettes superposées (${JSON.stringify(a)} / ${JSON.stringify(b)})`);
+});
+
+test("les étiquettes d'une même tâche s'enchaînent de gauche à droite", () => {
+  const placed = MINI.miniGanttRiskLabelLayout([
+    riskSeg({ id: "tard", title: "Tard", startIdx: 40, endIdx: 50 }),
+    riskSeg({ id: "tot", title: "Tôt", startIdx: 5, endIdx: 10 }),
+  ], labelOpts);
+  // L'ordre de la liste ne décide de rien : c'est la position du couloir.
+  assert.ok(placed.get("tot").leftPct < placed.get("tard").leftPct);
+  // Deux couloirs éloignés tiennent sur la même ligne.
+  assert.equal(placed.get("tot").line, 0);
+  assert.equal(placed.get("tard").line, 0);
+});
+
+test("une étiquette sans place bascule à la ligne, sans mordre sur la voisine", () => {
+  // Trois titres longs sur le même couloir, tout à droite de la piste : la
+  // première ligne se remplit, la deuxième prend la suite, la troisième n'a
+  // plus de place et n'est pas dessinée — l'infobulle du couloir reste.
+  const placed = MINI.miniGanttRiskLabelLayout([
+    riskSeg({ id: "x1", title: "Retard fournisseur majeur", startIdx: 60, endIdx: 62 }),
+    riskSeg({ id: "x2", title: "Reprise complète du dossier", startIdx: 60, endIdx: 62 }),
+    riskSeg({ id: "x3", title: "Arbitrage de gouvernance attendu", startIdx: 60, endIdx: 62 }),
+  ], labelOpts);
+  assert.equal(placed.get("x1").line, 0);
+  assert.equal(placed.get("x2").line, 1);
+  assert.equal(placed.has("x3"), false, "aucune troisième ligne : elle mordrait sur la ligne voisine");
+  assert.equal(MINI.MINIGANTT_RISK_LABEL_LINES, 2);
+});
+
+test("les risques de deux tâches différentes ne se gênent pas", () => {
+  const placed = MINI.miniGanttRiskLabelLayout([
+    riskSeg({ id: "a", taskId: "t1", title: "Fournisseur" }),
+    riskSeg({ id: "b", taskId: "t2", title: "Météo" }),
+  ], labelOpts);
+  // Chaque tâche a sa propre ligne de rail : même position, aucune interaction.
+  assert.equal(placed.get("a").leftPct, placed.get("b").leftPct);
+  assert.equal(placed.get("a").line, 0);
+  assert.equal(placed.get("b").line, 0);
+});
+
+test("sans piste mesurée ni titre, aucune étiquette n'est placée", () => {
+  assert.equal(MINI.miniGanttRiskLabelLayout([riskSeg({})], { ...labelOpts, trackPx: 0 }).size, 0);
+  assert.equal(MINI.miniGanttRiskLabelLayout([riskSeg({ title: "" })], labelOpts).size, 0);
+  assert.equal(MINI.miniGanttRiskLabelLayout(undefined, labelOpts).size, 0);
+  assert.equal(MINI.miniGanttRiskLabelLayout([null], labelOpts).size, 0);
 });
