@@ -1,4 +1,6 @@
-: null;
+tone") return task.milestone ? <span className="lp-chip">◆ Jalon</span> : null;
+  if (fieldKey === "progress") {
+    const statusColor = progressByStatus ? ctx.statuses.find((s) => s.id === task.statusId)?.color : null;
     if (onProgressChange) {
       return (
         <span className="lp-row-progress lp-row-progress-slider" onClick={(e) => e.stopPropagation()}>
@@ -6986,204 +6988,6 @@ function ImpactLineModal({ taskId, tasks, ctx, risks, onClose, onOpenTask }) {
 }
 
 
-function getTodoistPersonalToken(){
-  try { return (localStorage.getItem("nexora:todoistPersonalToken") || "").trim(); }
-  catch(e) { return ""; }
-}
-
-async function todoistGetAccountInfo(token){
-  let user=null, projects=[];
-  try{
-    const userRes=await fetch("https://api.todoist.com/api/v1/user",{headers:{Authorization:`Bearer ${token}`}});
-    if(userRes.ok) user=await userRes.json();
-  }catch(e){}
-  try{
-    let cursor="";
-    do{
-      const qs=new URLSearchParams({limit:"200"});
-      if(cursor) qs.set("cursor",cursor);
-      const res=await fetch(`https://api.todoist.com/api/v1/projects?${qs.toString()}`,{headers:{Authorization:`Bearer ${token}`}});
-      if(!res.ok) break;
-      const data=await res.json();
-      projects.push(...(Array.isArray(data.results)?data.results:Array.isArray(data.items)?data.items:Array.isArray(data)?data:[]));
-      cursor=data.next_cursor||"";
-    }while(cursor);
-  }catch(e){}
-
-  const inbox =
-    projects.find(p=>p.is_inbox_project===true) ||
-    projects.find(p=>String(p.name||"").trim().toLowerCase()==="inbox") ||
-    projects.find(p=>String(p.name||"").trim().toLowerCase()==="boîte de réception") ||
-    null;
-
-  return {user,projects,inbox};
-}
-
-async function todoistCreateLinkedTask(token, task){
-  if (!token) throw new Error("Token Todoist manquant.");
-
-  const info = await todoistGetAccountInfo(token);
-  const body = {
-    content: task.title || "Tâche Nexora",
-    description:[task.desc || "", `Nexora task: ${task.id}`].filter(Boolean).join("\n\n")
-  };
-
-  // Force explicitement l'Inbox du compte correspondant au token.
-  if(info.inbox?.id) body.project_id=String(info.inbox.id);
-
-  const due = task.end || task.start || "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) body.due_date=due;
-
-  const res = await fetch("https://api.todoist.com/api/v1/tasks",{
-    method:"POST",
-    headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
-    body:JSON.stringify(body)
-  });
-
-  const raw = await res.text();
-  let data = {};
-  try { data = raw ? JSON.parse(raw) : {}; } catch(_) {}
-
-  if (!res.ok) {
-    throw new Error(`Création Todoist HTTP ${res.status}${raw ? ` · ${raw.slice(0,500)}` : ""}`);
-  }
-  if (!data?.id) {
-    throw new Error(`Todoist a répondu ${res.status}, mais aucun ID de tâche n’a été retourné${raw ? ` · ${raw.slice(0,500)}` : ""}`);
-  }
-
-  const id=String(data.id);
-  const verifyRes=await fetch(`https://api.todoist.com/api/v1/tasks/${encodeURIComponent(id)}`,{
-    headers:{Authorization:`Bearer ${token}`}
-  });
-  const verifyRaw=await verifyRes.text();
-  let verified={};
-  try{verified=verifyRaw?JSON.parse(verifyRaw):{};}catch(_){}
-
-  if(!verifyRes.ok || !verified?.id){
-    throw new Error(`Todoist a créé l’ID ${id}, mais la vérification a échoué (HTTP ${verifyRes.status})${verifyRaw ? ` · ${verifyRaw.slice(0,500)}` : ""}`);
-  }
-
-  // Todoist n'applique pas toujours les labels fournis lors de la création.
-  // On force donc le label Nexora dans une seconde requête, puis on vérifie.
-  const labelRes = await fetch(`https://api.todoist.com/api/v1/tasks/${encodeURIComponent(id)}`,{
-    method:"POST",
-    headers:{
-      Authorization:`Bearer ${token}`,
-      "Content-Type":"application/json"
-    },
-    body:JSON.stringify({labels:["nexora-mobile"]})
-  });
-
-  const labelRaw = await labelRes.text();
-  let labeledTask = {};
-  try { labeledTask = labelRaw ? JSON.parse(labelRaw) : {}; } catch(_) {}
-
-  if(!labelRes.ok){
-    throw new Error(`Tâche créée dans Todoist, mais ajout du label nexora-mobile impossible (HTTP ${labelRes.status})${labelRaw ? ` · ${labelRaw.slice(0,500)}` : ""}`);
-  }
-
-  // Relire une dernière fois pour confirmer le label.
-  const finalRes = await fetch(`https://api.todoist.com/api/v1/tasks/${encodeURIComponent(id)}`,{
-    headers:{Authorization:`Bearer ${token}`}
-  });
-  const finalRaw = await finalRes.text();
-  let finalTask = {};
-  try { finalTask = finalRaw ? JSON.parse(finalRaw) : {}; } catch(_) {}
-
-  if(!finalRes.ok || !finalTask?.id){
-    throw new Error(`Tâche créée et labellisée, mais la vérification finale a échoué (HTTP ${finalRes.status})${finalRaw ? ` · ${finalRaw.slice(0,500)}` : ""}`);
-  }
-
-  const finalLabels = Array.isArray(finalTask.labels) ? finalTask.labels.map(x=>String(x).toLowerCase()) : [];
-  if(!finalLabels.includes("nexora-mobile")){
-    throw new Error(`La tâche a bien été créée, mais Todoist n’a pas confirmé le label nexora-mobile-mobile. Labels reçus : ${JSON.stringify(finalTask.labels || [])}`);
-  }
-
-  verified = finalTask;
-
-  const projectId=String(verified.project_id || data.project_id || info.inbox?.id || "");
-  const accountLabel =
-    info.user?.email ||
-    info.user?.full_name ||
-    info.user?.name ||
-    info.user?.id ||
-    "";
-
-  console.info("[Nexora Todoist] Tâche créée et vérifiée", {verified,accountLabel,inbox:info.inbox});
-
-  return {
-    todoistTaskId:id,
-    todoistUrl:verified.url || data.url || "https://app.todoist.com/app/inbox",
-    todoistLinkedAt:new Date().toISOString(),
-    todoistProjectId:projectId || null,
-    todoistProjectName:info.inbox?.name || "Inbox",
-    todoistAccountLabel:accountLabel || null,
-    todoistContent:verified.content || data.content || body.content
-  };
-}
-
-async function fetchTodoistCompletedSince(token,sinceIso){
-  const items=[];
-  let cursor="";
-
-  // L'API Todoist v1 exige obligatoirement "since" ET "until".
-  // On place until légèrement dans le futur car la borne est exclusive et
-  // cela évite de rater une tâche cochée exactement au moment de la synchro.
-  const untilIso = new Date(Date.now() + 60 * 1000).toISOString();
-
-  do{
-    const qs=new URLSearchParams({
-      since:sinceIso,
-      until:untilIso,
-      limit:"200"
-    });
-    if(cursor) qs.set("cursor",cursor);
-
-    const res=await fetch(`https://api.todoist.com/api/v1/tasks/completed/by_completion_date?${qs.toString()}`,{
-      headers:{Authorization:`Bearer ${token}`}
-    });
-
-    const raw=await res.text();
-    let data={};
-    try{ data=raw?JSON.parse(raw):{}; }catch(_){}
-
-    if(!res.ok){
-      throw new Error(
-        `Synchronisation Todoist HTTP ${res.status}` +
-        (raw ? ` · ${raw.slice(0,500)}` : "")
-      );
-    }
-
-    items.push(...(Array.isArray(data.items)?data.items:[]));
-    cursor=data.next_cursor || "";
-  }while(cursor);
-
-  return items;
-}
-
-async function syncLinkedTodoistTasks({token,tasks,statuses,setTasks}){
-  const linked=tasks.filter(t=>t.todoistTaskId);
-  if(!linked.length) return {checked:0,completed:0};
-  const since=new Date();
-  since.setDate(since.getDate()-89);
-  since.setHours(0,0,0,0);
-  const completed=await fetchTodoistCompletedSince(token,since.toISOString());
-  const byId=new Map(completed.map(x=>[String(x.id),x]));
-  const doneStatus=statuses.find(st=>/termin/i.test(st.name||""));
-  const now=new Date().toISOString();
-  let completedCount=0;
-  const next=tasks.map(t=>{
-    if(!t.todoistTaskId) return t;
-    const hit=byId.get(String(t.todoistTaskId));
-    if(!hit) return t;
-    const alreadyDone=doneStatus ? t.statusId===doneStatus.id : Number(t.progress||0)>=100;
-    if(!alreadyDone) completedCount++;
-    return {...t,statusId:doneStatus?.id||t.statusId,progress:100,todoistCompletedAt:hit.completed_at||now,lastInteraction:now};
-  });
-  if(completedCount>0) setTasks(next);
-  return {checked:linked.length,completed:completedCount};
-}
-
 export default function LePlan({ currentUser, onSignOut }) {
   const [projects, setProjects] = useState(seedProjects);
   const [statuses, setStatuses] = useState(seedStatuses);
@@ -9605,13 +9409,6 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [quickEditViewFolder, setQuickEditViewFolder] = useState(null); // dossier de vue édité via clic droit
 
   const [taskModal, setTaskModal] = useState(null);
-  const [todoistMobileSelectOpen, setTodoistMobileSelectOpen] = useState(false);
-  const [todoistMobileSelectParams, setTodoistMobileSelectParams] = useState({
-    projectId:"",
-    projectQuery:"",
-    minDate:"",
-    maxDate:""
-  });
   const [impactLineTaskId, setImpactLineTaskId] = useState(null);
   const [toasts, setToasts] = useState([]);
   const toastTimers = useRef({});
@@ -10349,31 +10146,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     setTaskModal(null);
   };
 
-  const linkTaskToTodoist = async (taskPayload) => {
-    const token=getTodoistPersonalToken();
-    if(!token) throw new Error("Renseigne ton token Todoist dans Réglages → Todoist.");
-    if(!taskPayload?.id) throw new Error("Enregistre d’abord la tâche Nexora.");
-    const result=await todoistCreateLinkedTask(token,taskPayload);
-    setTasks(prev=>prev.map(t=>t.id===taskPayload.id?{...t,...result}:t));
-    pushToast({message:`Todoist · tâche créée · label nexora-mobile confirmé · ID ${result.todoistTaskId}`});
-    return result;
-  };
-
-  const forceTodoistSync = useCallback(async ({silent=false}={}) => {
-    const token=getTodoistPersonalToken();
-    if(!token || !dataLoaded) return {checked:0,completed:0,skipped:true};
-    try{
-      const result=await syncLinkedTodoistTasks({token,tasks,statuses,setTasks});
-      if(!silent) pushToast({message:`Todoist synchronisé · ${result.completed} nouvelle(s) tâche(s) terminée(s)`});
-      return result;
-    }catch(e){
-      if(!silent) pushToast({message:`Todoist · ${(e&&e.message)||String(e)}`});
-      throw e;
-    }
-  },[dataLoaded,tasks,statuses,setTasks,pushToast]);
-
-
-
   const normalizeProjectName = (value) => String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -10381,87 +10153,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     .replace(/[^a-zA-Z0-9]+/g, " ")
     .trim()
     .toLowerCase();
-
-  const todoistMobileSelectHandledRef = useRef(false);
-  useEffect(() => {
-    if (!dataLoaded || todoistMobileSelectHandledRef.current) return;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("nexoraTodoistSelect") === "1") {
-        todoistMobileSelectHandledRef.current = true;
-
-        const rawProject = (params.get("project") || "").trim();
-        const rawMinDate = (params.get("minDate") || "").trim();
-        const rawMaxDate = (params.get("maxDate") || "").trim();
-
-        // Le raccourci peut fournir l'ID projet ou un nom approximatif.
-        // Tolérance : casse, accents, ponctuation et emoji ignorés.
-        let resolvedProjectId = "";
-        if (rawProject) {
-          const direct = projects.find(p => String(p.id) === rawProject);
-
-          if (direct) {
-            resolvedProjectId = direct.id;
-          } else {
-            const wanted = normalizeProjectName(rawProject);
-
-            const exactNormalized = projects.filter(
-              p => normalizeProjectName(p.name) === wanted
-            );
-
-            if (exactNormalized.length === 1) {
-              resolvedProjectId = exactNormalized[0].id;
-            } else {
-              const partial = projects.filter(p => {
-                const n = normalizeProjectName(p.name);
-                return wanted && n && (n.includes(wanted) || wanted.includes(n));
-              });
-
-              if (partial.length === 1) {
-                resolvedProjectId = partial[0].id;
-              } else {
-                // Plusieurs correspondances possibles : ne pas choisir arbitrairement.
-                resolvedProjectId = "";
-              }
-            }
-          }
-        }
-
-        setTodoistMobileSelectParams({
-          projectId:resolvedProjectId,
-          projectQuery:rawProject,
-          minDate:/^\d{4}-\d{2}-\d{2}$/.test(rawMinDate) ? rawMinDate : "",
-          maxDate:/^\d{4}-\d{2}-\d{2}$/.test(rawMaxDate) ? rawMaxDate : ""
-        });
-
-        setTodoistMobileSelectOpen(true);
-
-        // Nettoie uniquement les paramètres du raccourci.
-        const clean = new URL(window.location.href);
-        ["nexoraTodoistSelect","project","minDate","maxDate"].forEach(k => clean.searchParams.delete(k));
-        window.history.replaceState({}, "", clean.pathname + clean.search + clean.hash);
-      }
-    } catch(e) {
-      console.error("[Nexora Todoist Selection URL]", e);
-    }
-  }, [dataLoaded, projects]);
-
-  const todoistAutoSyncDoneRef=useRef(false);
-  useEffect(()=>{
-    if(!dataLoaded || todoistAutoSyncDoneRef.current || !getTodoistPersonalToken()) return;
-    todoistAutoSyncDoneRef.current=true;
-    forceTodoistSync({silent:true}).catch(()=>{});
-  },[dataLoaded,forceTodoistSync]);
-
-  useEffect(()=>{
-    const onVisible=()=>{
-      if(document.visibilityState==="visible" && dataLoaded && getTodoistPersonalToken()){
-        forceTodoistSync({silent:true}).catch(()=>{});
-      }
-    };
-    document.addEventListener("visibilitychange",onVisible);
-    return()=>document.removeEventListener("visibilitychange",onVisible);
-  },[dataLoaded,forceTodoistSync]);
 
   const deleteTask = (id) => {
     const removed = tasks.find((t) => t.id === id);
@@ -11562,22 +11253,8 @@ export default function LePlan({ currentUser, onSignOut }) {
         </div>
       </main>
 
-      {todoistMobileSelectOpen && (
-        <TodoistMobileSelectionModal
-          projects={projects}
-          tasks={tasks}
-          statuses={statuses}
-          onClose={()=>setTodoistMobileSelectOpen(false)}
-          onLinkTodoist={linkTaskToTodoist}
-          pushToast={pushToast}
-          initialProjectId={todoistMobileSelectParams.projectId}
-          initialProjectQuery={todoistMobileSelectParams.projectQuery}
-          initialMinDate={todoistMobileSelectParams.minDate}
-          initialMaxDate={todoistMobileSelectParams.maxDate}
-        />
-      )}
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} customFieldDefs={customFieldDefs} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} onLinkTodoist={linkTaskToTodoist} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} />
+        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} customFieldDefs={customFieldDefs} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal
@@ -11757,4 +11434,213 @@ export default function LePlan({ currentUser, onSignOut }) {
           return (
             <button key={key} type="button" className={"lp-mobile-tab" + (isActive ? " active" : "")} onClick={() => { setView(key); setMobileMoreOpen(false); }}>
               <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={21} />
-              <span>{meta.label === "Planning Projets" ? "Réseau" : meta.
+              <span>{meta.label === "Planning Projets" ? "Réseau" : meta.label}</span>
+            </button>
+          );
+        })}
+        <button type="button" className={"lp-mobile-tab" + (sidebarCollapsed === false ? " active" : "")} onClick={() => { setSidebarCollapsed((c) => !c); setMobileMoreOpen(false); }}>
+          <Folder size={21} />
+          <span>Dossiers</span>
+        </button>
+        <button type="button" className={"lp-mobile-tab" + (mobileMoreOpen ? " active" : "")} onClick={() => setMobileMoreOpen((o) => !o)}>
+          <MoreHorizontal size={21} />
+          {unreadNotificationsCount > 0 && <span className="lp-tab-badge lp-mobile-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
+          <span>Plus</span>
+        </button>
+      </nav>
+      {mobileMoreOpen && (
+        <>
+          <div className="lp-mobile-sheet-overlay" onMouseDown={() => setMobileMoreOpen(false)} onTouchStart={() => setMobileMoreOpen(false)} />
+          <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
+            <div className="lp-mobile-sheet-handle" />
+            <div className="lp-mobile-sheet-grid">
+              {ALL_VIEWS_META.filter((v) => !["control", "projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
+                <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
+                  <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
+                  <span>{meta.label}</span>
+                  {meta.key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
+                </button>
+              ))}
+            </div>
+            <hr className="lp-divider" />
+            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setSettingsTab("projects"); setSettingsOpen(true); setMobileMoreOpen(false); }}>
+              <Settings size={20} /><span>Réglages</span>
+            </button>
+            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setReadmeOpen(true); setMobileMoreOpen(false); }}>
+              <BookOpen size={20} /><span>Guide de démarrage</span>
+            </button>
+          </div>
+        </>
+      )}
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {readmeOpen && <ReadmeModal onClose={() => setReadmeOpen(false)} />}
+      {filtersOpen && <FiltersModal filters={filters} setFilters={setFilters} ctx={ctx} onClose={() => setFiltersOpen(false)} />}
+      {globalSearchOpen && (
+        <GlobalMetaSearchModal
+          tasks={tasks}
+          taskArchive={taskArchive}
+          ctx={ctx}
+          onRestoreArchived={restoreArchivedTasks}
+          onOpenTask={(t) => { setGlobalSearchOpen(false); openEditTask(t); }}
+          onClose={() => setGlobalSearchOpen(false)}
+        />
+      )}
+      {importOpen && <ImportCsvModal ctx={ctx} projects={projects} statuses={statuses} setProjects={setProjects} setStatuses={setStatuses} setTasks={setTasks} persistKey={persistKey} pushToast={pushToast} syncBlocked={syncBlocked} onClose={() => setImportOpen(false)} />}
+      {markdownImportOpen && (
+        <MarkdownImportModal
+          projects={projects}
+          setProjects={setProjects}
+          statuses={statuses}
+          setStatuses={setStatuses}
+          taskTypes={taskTypes}
+          setTasks={setTasks}
+          palette={PROJECT_PALETTES[appearance.projectPalette] || PROJECT_PALETTES.default}
+          pushToast={pushToast}
+          onClose={() => setMarkdownImportOpen(false)}
+        />
+      )}
+      {projectFoldersOpen && <SimpleFolderManager title="Dossiers de projets" folders={projectFolders} setFolders={setProjectFolders} countInFolder={(id) => projects.filter((p) => p.folderId === id).length} pushToast={pushToast} onClose={() => setProjectFoldersOpen(false)} itemLabel="dossier" />}
+      {viewFoldersOpen && <SimpleFolderManager title="Dossiers de vues" folders={viewFolders} setFolders={setViewFolders} countInFolder={(id) => savedViews.filter((v) => v.folderId === id).length} pushToast={pushToast} onClose={() => setViewFoldersOpen(false)} />}
+      {saveViewOpen && <SaveViewModal onClose={() => setSaveViewOpen(false)} onSave={saveCurrentView} activeFilterCount={fCount} currentView={view} viewFolders={viewFolders} />}
+      {newDashboardOpen && <NewDashboardModal onClose={() => setNewDashboardOpen(false)} onCreate={createDashboard} dashboardFolders={dashboardFolders} />}
+      {quickEditDashboard && (
+        <DashboardEditModal
+          dashboard={quickEditDashboard}
+          onSave={(patch) => { updateDashboardMeta(quickEditDashboard.id, patch); setQuickEditDashboard(null); }}
+          onClose={() => setQuickEditDashboard(null)}
+        />
+      )}
+      {dashboardFoldersOpen && <SimpleFolderManager title="Dossiers de tableaux de bord" folders={dashboardFolders} setFolders={setDashboardFolders} countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length} pushToast={pushToast} onClose={() => setDashboardFoldersOpen(false)} />}
+      {quickEditDashboardFolder && (
+        <SimpleFolderManager
+          title="Dossiers de tableaux de bord"
+          folders={dashboardFolders}
+          setFolders={setDashboardFolders}
+          countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length}
+          pushToast={pushToast}
+          initialEditFolder={quickEditDashboardFolder}
+          onClose={() => setQuickEditDashboardFolder(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Modale Filtres
+// ============================================================================
+function filterFieldOptions(field, ctx) {
+  if (field === "project") return [
+    { value:NO_PROJECT_FILTER, label:"Sans projet", color:"#94A3B8", folderId:null },
+    ...sortedByName(ctx.projects).map((p) => ({ value:p.id, label:p.name, color:p.color, folderId:p.folderId || null })),
+  ];
+  if (field === "status") return sortedByName(ctx.statuses).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
+  if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
+  if (field && field.startsWith("cf:")) {
+    const id = field.slice(3);
+    const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
+    if (!def) return [];
+    if (def.type === "checkbox") return [{ value: "true", label: "Oui" }, { value: "false", label: "Non" }];
+    if (def.type === "select") return (def.options || []).map((o) => ({ value: o, label: o }));
+    // Texte / nombre / date : pas de liste fermée — on propose les valeurs
+    // réellement déjà utilisées dans les tâches, comme pour "Responsable".
+    const values = new Set();
+    (ctx.tasks || []).forEach((t) => {
+      const v = t.customFields ? t.customFields[id] : undefined;
+      if (v !== undefined && v !== null && v !== "") values.add(String(v));
+    });
+    return [...values].sort().map((v) => ({ value: v, label: def.type === "date" ? fmtShort(v) : v }));
+  }
+  return [];
+}
+
+function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
+  const options = filterFieldOptions(cond.field, ctx);
+  const isDateField = cond.field === "start" || cond.field === "end";
+  const isTitleField = cond.field === "title";
+  const isInactivityField = cond.field === "inactivity";
+  const isEntityField = cond.field === "project" || cond.field === "status" || cond.field === "taskType";
+  return (
+    <div className="lp-filter-condition-row">
+      <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
+        {fieldsOverride ? (
+          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
+        ) : (
+          <>
+            <optgroup label="Champs standards">
+              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
+            </optgroup>
+            {(ctx.customFieldDefs || []).length > 0 && (
+              <optgroup label="Champs personnalisés">
+                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
+              </optgroup>
+            )}
+          </>
+        )}
+      </select>
+      {isTitleField ? (
+        <div className="lp-mode-toggle lp-mode-toggle-icon">
+          <button type="button" className={cond.mode !== "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "contains" })} title="Contient"><SearchCheck size={13} /></button>
+          <button type="button" className={cond.mode === "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "not_contains" })} title="Ne contient pas"><SearchX size={13} /></button>
+        </div>
+      ) : isInactivityField ? (
+        <div className="lp-mode-toggle">
+          <button type="button" className="active" style={{pointerEvents:"none"}}>Supérieur à</button>
+        </div>
+      ) : (
+        <div className="lp-mode-toggle">
+          <button className={cond.mode !== "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "is" })}>Est</button>
+          <button className={cond.mode === "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "isnot" })}>N'est pas</button>
+        </div>
+      )}
+      {isTitleField ? (
+        <input type="text" style={{ flex: 1 }} value={cond.textValue || ""} onChange={(e) => onChange({ ...cond, textValue: e.target.value })} placeholder="Texte à rechercher dans le titre…" />
+      ) : isDateField ? (
+        <select className="lp-filter-date-preset-select" style={{ flex: 1 }} value={cond.datePreset || ""} onChange={(e) => onChange({ ...cond, datePreset: e.target.value })}>
+          <option value="">— Choisir une période —</option>
+          {DATE_FILTER_PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+        </select>
+      ) : isInactivityField ? (
+        <div style={{flex:1,display:"flex",alignItems:"center",gap:7}}>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={cond.numberValue ?? ""}
+            onChange={(e) => onChange({ ...cond, numberValue:e.target.value })}
+            placeholder="Nombre de jours"
+            style={{maxWidth:150}}
+          />
+          <span style={{fontSize:11,color:"var(--text-muted)"}}>jours</span>
+        </div>
+      ) : isEntityField ? (
+        <div style={{flex:1,minWidth:0}}>
+          <EntityFilterMultiSelect
+            compact
+            options={options}
+            selectedIds={cond.values || []}
+            onToggle={(id)=>{
+              const current=cond.values || [];
+              const has=current.includes(id);
+              onChange({...cond,values:has ? current.filter((v)=>v!==id) : [...current,id]});
+            }}
+            onSelectAll={()=>onChange({...cond,values:options.map((o)=>o.value)})}
+            onDeselectAll={()=>onChange({...cond,values:[]})}
+            metaGroups={cond.field === "project" ? (ctx.projectFolders || []) : null}
+            onSelectGroup={cond.field === "project" ? (folderId)=>{
+              const ids=(ctx.projects || []).filter((p)=>p.folderId===folderId).map((p)=>p.id);
+              onChange({...cond,values:[...new Set([...(cond.values || []),...ids])]});
+            } : null}
+          />
+        </div>
+      ) : (
+        <div className="lp-filter-chipset" style={{ flex: 1 }}>
+          {options.map((o) => (
+            <button
+              key={o.value}
+              className={"lp-filter-chip" + ((cond.values || []).includes(o.value) ? " active" : "")}
+              onClick={() => {
+                const has = (cond.values || []).includes(o.value);
+  

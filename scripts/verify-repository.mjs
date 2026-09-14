@@ -60,10 +60,17 @@ assert.deepEqual(builtBytes, sourceBytes, "Le build doit reconstruire exactement
 const builtSource = builtBytes.toString("utf8");
 assert.match(builtSource, /lp-drive-panel/);
 assert.match(builtSource, /params\.get\("driveUrl"\)/);
-assert.match(builtSource, /localStorage\.getItem\("nexora:todoistPersonalToken"\)/);
-assert.match(builtSource, /https:\/\/api\.todoist\.com\/api\/v1\/tasks/);
-assert.match(builtSource, /labels:\["nexora-mobile"\]/);
-assert.match(builtSource, /todoistTaskId/);
+// La liaison Nexora → Todoist est supprimée. Le seul flux conservé —
+// Todoist → Nexora par l'étiquette `nexora` — vit HORS de l'application :
+// l'interface ne doit donc plus appeler l'API Todoist, ni stocker de token,
+// ni écrire de champ de liaison sur une tâche.
+assert.doesNotMatch(builtSource, /api\.todoist\.com/);
+assert.doesNotMatch(builtSource, /nexora:todoistPersonalToken/);
+assert.doesNotMatch(builtSource, /nexora-mobile/);
+assert.doesNotMatch(builtSource, /todoistTaskId/);
+// `todoistCompletedAt` reste LU, jamais écrit : les tâches terminées à l'époque
+// par cette synchronisation gardent leur vraie date de complétion.
+assert.match(builtSource, /task\.todoistCompletedAt/);
 assert.doesNotMatch(builtSource, /TELEGRAM_BOT_TOKEN/);
 // Annotations du Gantt : le bloc de logique pure doit rester extractible par
 // les tests unitaires, et les annotations rester attachées à la configuration

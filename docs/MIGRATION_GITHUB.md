@@ -77,9 +77,14 @@ Ne placer aucune de ces valeurs dans GitHub. La connexion Git–Netlify réutili
 - préserver les fonctions Firebase v2 `todoistOAuthStart`, `todoistOAuthCallback`, `syncTodoist` et `todoistWebhook` dans `us-central1` ;
 - ne pas modifier leurs URL Cloud Run, secrets Firebase/Google Cloud, configuration OAuth ni webhook pendant la bascule Netlify ;
 - conserver le flux Todoist vers Nexora : label `nexora`, import unique dans le projet `Inbox`, puis suppression de la tâche Todoist importée ;
-- conserver le flux Nexora vers Todoist dans l'interface : token personnel en `localStorage`, création dans l'Inbox Todoist avec le label `nexora-mobile`, liaison par `todoistTaskId`, puis synchronisation de la complétion vers le statut Terminé ;
-- ne jamais committer le token API personnel Todoist ;
-- effectuer la recette après Deploy Preview : connexion Todoist existante, création d'une tâche de test `nexora-mobile`, vérification de la liaison, complétion dans Todoist, synchronisation vers Nexora et archivage de la tâche de test.
+- le flux **Nexora vers Todoist** a été supprimé de l'interface : plus de token personnel en
+  `localStorage`, plus de création dans l'Inbox Todoist avec le label `nexora-mobile`, plus de
+  liaison par `todoistTaskId`, plus de synchronisation de la complétion. `scripts/verify-repository.mjs`
+  interdit désormais toute réapparition d'un appel à `api.todoist.com` dans l'interface ;
+- `todoistCompletedAt` reste **lu** par `taskCompletionDate`, jamais écrit : les tâches terminées
+  à l'époque par cette synchronisation gardent leur vraie date de complétion ;
+- effectuer la recette après Deploy Preview : créer une tâche Todoist étiquetée `nexora` et
+  vérifier qu'elle arrive bien dans le projet `Inbox` de Nexora, puis disparaît de Todoist.
 
 Les fonctions Todoist Firebase ne sont pas migrées vers Netlify dans cette opération. Elles restent déployées sur le projet `nexora-cb20d`, ce qui découple leur continuité du changement de source GitHub des deux sites Netlify.
 
