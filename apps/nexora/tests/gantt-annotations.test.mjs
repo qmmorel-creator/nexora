@@ -17,6 +17,7 @@ const EXPORTS = [
   "ganttContinuousRuns",
   "ganttFrameSegments",
   "pruneHighlightFrames",
+  "metroFrameSegments",
   "GANTT_BLOCK_DEFAULT_COLOR",
   "GANTT_FRAME_DEFAULT_COLOR",
   "GANTT_FRAME_DEFAULT_PADDING",
@@ -41,6 +42,7 @@ const {
   ganttContinuousRuns,
   ganttFrameSegments,
   pruneHighlightFrames,
+  metroFrameSegments,
   GANTT_BLOCK_DEFAULT_COLOR,
   GANTT_FRAME_DEFAULT_COLOR,
   GANTT_FRAME_DEFAULT_PADDING,
@@ -655,4 +657,52 @@ test("sans piste mesurée ni titre, aucune étiquette n'est placée", () => {
   assert.equal(MINI.miniGanttRiskLabelLayout([riskSeg({ title: "" })], labelOpts).size, 0);
   assert.equal(MINI.miniGanttRiskLabelLayout(undefined, labelOpts).size, 0);
   assert.equal(MINI.miniGanttRiskLabelLayout([null], labelOpts).size, 0);
+});
+
+// --- Encadrés dans la vue Métro -------------------------------------------
+// Les lignes du Métro sont des PROJETS. La continuité d'un encadré s'y apprécie
+// donc sur l'ordre d'affichage des projets, pas sur celui des tâches.
+const metroOpts = (order, byTask) => ({ projectOrder: order, projectOf: (id) => byTask[id] || null });
+
+test("un encadré sur des lignes de projet voisines donne un seul cadre", () => {
+  const segs = metroFrameSegments(
+    [{ id: "f1", label: "Lot critique", taskIds: ["a", "b", "c"] }],
+    metroOpts(["p1", "p2", "p3"], { a: "p1", b: "p2", c: "p2" })
+  );
+  assert.equal(segs.length, 1);
+  assert.deepEqual(segs[0].projectIds, ["p1", "p2"]);
+  assert.deepEqual(segs[0].taskIds.sort(), ["a", "b", "c"]);
+});
+
+test("des lignes de projet non voisines donnent un cadre chacune", () => {
+  const segs = metroFrameSegments(
+    [{ id: "f1", label: "Jalons clés", taskIds: ["a", "c"] }],
+    metroOpts(["p1", "p2", "p3"], { a: "p1", c: "p3" })
+  );
+  // La ligne p2 n'est pas concernée : aucun cadre ne doit l'englober.
+  assert.deepEqual(segs.map((s) => s.projectIds), [["p1"], ["p3"]]);
+  assert.notEqual(segs[0].id, segs[1].id, "deux cadres du même encadré gardent des identifiants distincts");
+});
+
+test("une tâche d'un projet replié ou absent est ignorée sans casser le cadre", () => {
+  const segs = metroFrameSegments(
+    [{ id: "f1", label: "Lot", taskIds: ["a", "fantome", "b"] }],
+    metroOpts(["p1"], { a: "p1", b: "p1" })
+  );
+  assert.equal(segs.length, 1);
+  assert.deepEqual(segs[0].taskIds, ["a", "b"]);
+
+  // Plus aucune tâche visible : pas de cadre fantôme.
+  assert.deepEqual(metroFrameSegments([{ id: "f1", taskIds: ["fantome"] }], metroOpts(["p1"], {})), []);
+  assert.deepEqual(metroFrameSegments(undefined, metroOpts(["p1"], {})), []);
+  assert.deepEqual(metroFrameSegments([null], metroOpts(["p1"], {})), []);
+});
+
+test("l'ordre des lignes prime sur l'ordre des tâches de l'encadré", () => {
+  const segs = metroFrameSegments(
+    [{ id: "f1", taskIds: ["c", "a"] }],
+    metroOpts(["p1", "p2"], { a: "p1", c: "p2" })
+  );
+  assert.equal(segs.length, 1);
+  assert.deepEqual(segs[0].projectIds, ["p1", "p2"], "p1 vient avant p2 quel que soit l'ordre de taskIds");
 });

@@ -82,6 +82,11 @@ assert.match(builtSource, /className="lp-gantt-tblock"/);
 assert.match(builtSource, /className="lp-gantt-frame"/);
 assert.match(builtSource, /className="lp-widget-minigantt-tblock"/);
 assert.match(builtSource, /className="lp-widget-minigantt-frame"/);
+// Vue Métro : les mêmes annotations y sont dessinées, sur un plan de lignes.
+assert.match(builtSource, /className="lp-pm-tblock"/);
+assert.match(builtSource, /className="lp-pm-frame"/);
+assert.match(builtSource, /lp-pm-strip-item is-/);
+assert.match(builtSource, /lp-pm-risk is-/);
 // Réglages : chaque onglet déclaré doit avoir un volet rendu. Un onglet listé
 // dans la barre latérale mais sans branche `activeTab === "…"` s'ouvre sur un
 // panneau VIDE, sans la moindre erreur — c'est exactement ce qui est arrivé en

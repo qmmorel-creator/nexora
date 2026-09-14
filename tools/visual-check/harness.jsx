@@ -85,6 +85,18 @@ function AnnotationsHarness() {
     treemapShowUpcoming: true,
   });
   const [treemapFormOpen, setTreemapFormOpen] = useState(false);
+  // Vue Métro : mêmes annotations que le Gantt, plus un encadré qui saute une
+  // ligne de projet (p1 et p3) — il doit produire DEUX cadres, jamais un seul.
+  const [metroPrefs, setMetroPrefs] = useState({
+    fields: ["status"], collapsed: {}, zoomKey: "auto", networkMode: false, deadlineMode: false, showRiskBadges: true,
+    temporalBlocks: annotations.temporalBlocks,
+    highlightFrames: [
+      { id: "mf1", label: "Lot critique", taskIds: ["t1", "t4"], color: "#D64545", borderStyle: "dashed", padding: 4 },
+      { id: "mf2", label: "Communication", taskIds: ["t6"], color: "#8B5CF6", borderStyle: "solid", padding: 3 },
+    ],
+    milestones: [{ id: "mms1", title: "Décision CODIR", date: "2026-08-18", type: "decision" }],
+    notes: [{ id: "mn1", title: "Relance hebdo", text: "Point fournisseur le lundi.", anchor: { kind: "task", id: "t2" } }],
+  });
   const [openedProjectId, setOpenedProjectId] = useState("");
   const [toolbar, setToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
@@ -104,6 +116,28 @@ function AnnotationsHarness() {
           onOpen={noop} onAdd={noop} onDelete={noop} onMarkDone={noop} onCycleStatus={noop} onBulkDelete={noop}
           prefs={prefs} setPrefs={setPrefs} toolbarSlot={toolbar}
         />
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>VUE MÉTRO</h2>
+        <div id="harness-metro" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 1100, height: 620, overflow: "hidden", marginBottom: 18 }}>
+          <ProjectMetroView
+            tasks={tasks}
+            ctx={ctx}
+            onOpen={noop}
+            toolbarSlot={null}
+            appearance={appearance}
+            prefs={metroPrefs}
+            setPrefs={(patch) => setMetroPrefs((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }))}
+            setTasks={setTasks}
+            pushToast={noop}
+            expenses={[]}
+            metaTemporalBlocks={settingsMetaBlocks}
+            isHomepage={false}
+            onSelectProject={noop}
+            selectedProjectIds={[]}
+            onToggleProject={noop}
+          />
+        </div>
       </div>
       <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>TREEMAP PROJETS</h2>

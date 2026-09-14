@@ -130,6 +130,36 @@ type TaskMetaBlock = {
 - `mergeMetaTemporalBlocks(réglages, tâches)` est la source unique consommée par
   `DashboardView`, avant `metaBlocksForDashboard`.
 
+## Vue Métro — les mêmes objets sur un plan de lignes
+
+La vue **Planning Projets** (Métro) dessine les mêmes annotations, avec les mêmes fonctions
+pures : rien n'y est recalculé, seule la **géométrie** change, parce qu'une ligne y est un
+**projet** et non une tâche.
+
+- **Blocs temporels** — bande continue sur toute la hauteur utile, derrière les lignes comme
+  derrière les tâches, avec une étiquette verticale sur le bord gauche (même parti pris que le
+  Gantt complet). Les fenêtres de décision et les méta blocs suivent ; la vue n'étant pas un
+  tableau de bord, elle reçoit les méta blocs valables pour **tous** — même règle que la page
+  « Aujourd'hui ».
+- **Encadrés** — `metroFrameSegments` applique la règle du Gantt (un cadre par groupe
+  **continu**) à l'ordre d'affichage des **projets** : un encadré couvrant les lignes 1 et 3
+  produit deux cadres, jamais un seul qui engloberait la ligne 2 sans la concerner. Les bornes
+  horizontales viennent des dates réelles des tâches retenues, les bornes verticales du cumul
+  des hauteurs de lignes — aucune mesure du DOM.
+- **Jalons et annotations** — ils partagent une bande de repères **au-dessus** des lignes,
+  répartie en couloirs sur la largeur réelle. Cette bande réserve sa hauteur dans le flux
+  (`ANNOT_TOP_H`) : sans cela elle recouvrirait la première ligne de projet. Sans aucun repère,
+  la hauteur réservée vaut zéro et la mise en page reste exactement celle d'avant. Une
+  annotation ancrée à une tâche, un jalon ou un risque est ramenée à une **date**, seule chose
+  qu'une bande de repères sache placer.
+- **Risques de délai** — posés à la suite de la tâche, sur SA ligne. La position verticale vient
+  de la mesure déjà faite pour les flèches de dépendance inter-projets : pas de seconde source
+  de vérité. Ils apparaissent sans aucun réglage de la vue, puisqu'ils appartiennent aux tâches.
+
+**Stockage** — dans les préférences de la vue (`viewPrefs.projects`), comme le Gantt complet ;
+ou dans la configuration du widget quand la vue est embarquée (`widget.ganttAnnotations`), comme
+le Gantt embarqué. L'éditeur est celui du Mini-Gantt, réutilisé tel quel.
+
 ## Pilotage — Mini-Gantt uniquement
 
 Le Mini-Gantt étend la même clé `widget.ganttAnnotations` avec trois listes, et

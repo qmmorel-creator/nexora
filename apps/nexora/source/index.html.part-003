@@ -1,4 +1,227 @@
-trokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
+guard < 200) {
+                const d = new Date(cur + "T00:00:00");
+                arr.push({ start: cur, label: `${unitLabel(cur, "month")}${minYear !== maxYear ? " " + d.getFullYear() : ""}` });
+                cur = addDays(cur, unitLen(cur, "month"));
+                guard++;
+              }
+              return arr.map((tk, i) => <div key={i} className="lp-pm-top-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
+            })()}
+          </div>
+          <div className="lp-pm-axis lp-pm-original-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
+            {(() => {
+              const unit = dayWidth < 1.5 ? "year" : dayWidth < 5 ? "month" : dayWidth < 15 ? "week" : "day";
+              const arr = [];
+              let cur = unitStart(globalMin, unit);
+              let guard = 0;
+              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 400) {
+                const d = new Date(cur + "T00:00:00");
+                const showYear = minYear !== maxYear && (unit === "month" || unit === "week" || unit === "day") && d.getMonth() === 0;
+                arr.push({ start: cur, label: unitLabel(cur, unit) + (showYear ? ` ${d.getFullYear()}` : "") });
+                cur = addDays(cur, unitLen(cur, unit));
+                guard++;
+              }
+              return arr.map((tk, i) => <div key={i} className="lp-pm-axis-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
+            })()}
+            {minYear !== maxYear && (
+              <div className="lp-pm-axis-year-badge">{minYear} → {maxYear}</div>
+            )}
+          </div>
+
+          {deadlineMode && (
+            <div style={{
+              position:"absolute", top:7, right:12, zIndex:8,
+              display:"flex", alignItems:"center", gap:6,
+              padding:"4px 7px", border:"1px solid var(--border)",
+              background:"var(--surface)", borderRadius:"var(--radius-sm)",
+              fontFamily:"var(--font-mono)", fontSize:8.5, fontWeight:800,
+              color:"var(--text-secondary)"
+            }}>
+              <CalendarClock size={11} /> MODE ÉCHÉANCES · glisser une station = modifier la fin
+            </div>
+          )}
+          <div className="lp-pm-bands" style={{ left: railLeftW, width: chartWidth, height: totalChartHeight }}>
+            {monthBands.map((b, i) => (
+              <div key={i} className="lp-pm-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0), background: accent }} />
+            ))}
+            {weekendBands.map((b, i) => (
+              <div key={"we-" + i} className="lp-pm-weekend-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0) }} />
+            ))}
+            {/* Blocs temporels : une bande continue sur toute la hauteur utile,
+                derrière les lignes de projet comme derrière les tâches. */}
+            {temporalBlockShapes.map((shape) => (
+              <div
+                key={shape.block.id}
+                className="lp-pm-tblock"
+                style={{
+                  left: shape.x0,
+                  width: shape.width,
+                  background: "color-mix(in srgb, " + shape.block.color + (shape.block.kind === "decision" ? " 7%" : " 12%") + ", transparent)",
+                  borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+                  borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+                }}
+              />
+            ))}
+          </div>
+
+          {/* Flèches de dépendance INTER-projets, superposées à toutes les lignes.
+              Passe AU-DESSUS des lignes de projet (z-index supérieur à .lp-pm-row) pour
+              ne jamais rester invisible sous leur tronc — seul le texte des tâches, qui
+              porte son propre halo blanc, peut éventuellement passer par-dessus. */}
+          <svg
+            className="lp-pm-cross-arrows"
+            style={{ position: "absolute", left: LEFT_W, top: 0, width: chartWidth, height: totalChartHeight, pointerEvents: "none", zIndex: 2 }}
+          >
+            <defs>
+              {/* placeholders — chaque flèche définit son propre dégradé/marqueur ci-dessous */}
+            </defs>
+            {!deadlineMode && dated.filter((t) => t.dependsOn && t.dependsOn.length).flatMap((t) =>
+              t.dependsOn.map((depId) => {
+                const depTask = dated.find((x) => x.id === depId);
+                if (!depTask || depTask.projectId === t.projectId) return null; // intra-projet déjà géré localement
+                const from = crossPositionsRef.current[depId];
+                // Repli sur la position de fin si la tâche n'a pas de marqueur de début
+                // séparé (jalon) — sinon, arrive bien sur le DÉBUT de la tâche suivante.
+                const to = crossStartPositionsRef.current[t.id] || crossPositionsRef.current[t.id];
+                if (!from || !to) return null;
+                const fx = from.x - LEFT_W + 6, fy = from.y, tx = to.x - LEFT_W, ty = to.y;
+                const laneX = dependencyLaneX(fx, fy, tx - 4, ty, depId, t.id);
+                const bend = Math.min(10, Math.abs(ty - fy) / 2 || 8);
+                const dir = ty > fy ? 1 : -1;
+                const endX = tx - 4;
+                // Routage orthogonal "plan de métro" :
+                // 1) on sort à gauche de la station prédécesseure (jamais sous son titre),
+                // 2) on descend/remonte dans une voie verticale vérifiée sans texte,
+                // 3) on rejoint la tâche suivante par la gauche (son titre est à droite).
+                const d = Math.abs(ty - fy) < 1
+                  ? `M ${fx} ${fy} L ${endX} ${ty}`
+                  : `M ${fx} ${fy} L ${laneX + bend} ${fy} Q ${laneX} ${fy} ${laneX} ${fy + dir * bend} L ${laneX} ${ty - dir * bend} Q ${laneX} ${ty} ${laneX + bend} ${ty} L ${endX} ${ty}`;
+                const gradId = `pm-cross-grad-${depId}-${t.id}`;
+                return (
+                  <React.Fragment key={depId + "-" + t.id}>
+                    <defs>
+                      <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={fx} y1={fy} x2={tx} y2={ty}>
+                        <stop offset="0%" stopColor={accent} stopOpacity="0.45" />
+                        <stop offset="100%" stopColor={accent} />
+                      </linearGradient>
+                    </defs>
+                    {/* Contour blanc en dessous pour garantir le contraste sur n'importe
+                        quel fond (troncs colorés, bandes de mois/week-end...) — sans lui,
+                        le trait fin se perdait complètement en longeant les bords des
+                        lignes de projet, rendant la dépendance invisible en pratique. */}
+                    <path d={d} fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" opacity="0.9" />
+                    <path d={d} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.4" strokeDasharray="5 4" opacity="0.95" strokeLinecap="round" />
+                    {/* Station de correspondance façon plan de métro : cercles imbriqués aux
+                        deux extrémités, pour renforcer la métaphore d'un changement de ligne
+                        plutôt qu'une simple flèche technique. */}
+                    <circle cx={fx} cy={fy} r="5.5" fill="#fff" stroke={accent} strokeWidth="1.6" />
+                    <circle cx={fx} cy={fy} r="2" fill={accent} />
+                    <circle cx={tx - 4} cy={ty} r="6.5" fill="#fff" stroke={accent} strokeWidth="1.8" />
+                    <circle cx={tx - 4} cy={ty} r="6.5" fill="none" stroke="#fff" strokeWidth="1" strokeDasharray="0" />
+                    <circle cx={tx - 4} cy={ty} r="2.3" fill={accent} />
+                  </React.Fragment>
+                );
+              })
+            )}
+
+            {/* Tâches à deux projets : convergence des deux lignes vers un tronc commun
+                (couleurs alternées sur UN seul trait), pour la durée de la tâche partagée,
+                puis divergence de retour vers chaque ligne de projet. Repli automatique :
+                si l'un des deux projets n'est pas dans le périmètre actuel, la tâche est
+                déjà rendue normalement par sa propre ligne (voir isFullyShared plus haut) —
+                ce bloc ne dessine QUE le cas où les deux lignes sont bien visibles. */}
+            {!networkMode && !deadlineMode && dated.filter((t) => isFullyShared(t)).map((t) => {
+              const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
+              const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
+              if (!p1 || !p2) return null;
+              const y1 = rowAbsoluteMainY[t.projectId], y2 = rowAbsoluteMainY[t.secondaryProjectId];
+              const x0 = xFor(t.start);
+              const topProjectId = y1 < y2 ? t.projectId : t.secondaryProjectId;
+              // Chaque tâche partagée occupe sa propre voie au sein de l'espace dédié
+              // (calculée plus haut par répartition gloutonne façon "salle de réunion")
+              // — évite que plusieurs tâches partagées concurrentes se superposent sur
+              // le même axe quand elles se chevauchent dans le temps.
+              const lane = sharedTaskLane[t.id] || 0;
+              const gapTop = rowGapTopAfter[topProjectId];
+              const midY = gapTop != null ? gapTop + (lane + 0.5) * SHARED_GAP_H : (y1 + y2) / 2;
+              const done = isTaskDoneGlobal(t, ctx);
+              const color1 = p1.color || "var(--text-muted)", color2 = p2.color || "var(--text-muted)";
+              const gradId = "shared-grad-" + t.id;
+              const trunkStyle = appearance?.sharedTrunkStyle || "gradient";
+
+              // === Jalon partagé : un point unique, comme n'importe quel jalon — pas
+              // de durée, pas de "tronc", une seule jonction par ligne de projet. ===
+              if (t.milestone) {
+                return (
+                  <g key={"shared-" + t.id} style={{ pointerEvents: "auto" }}>
+                    <path d={`M ${x0} ${y1} L ${x0} ${midY}`} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
+                    <path d={`M ${x0} ${y2} L ${x0} ${midY}`} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
+                    <circle cx={x0} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
+                    <circle cx={x0} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
+                    {/* Anneau de correspondance : marque ce jalon comme un nœud partagé entre
+                        deux lignes, plus imposant qu'une station normale (double anneau). */}
+                    <circle cx={x0} cy={midY} r="13" fill="none" stroke={color1} strokeWidth="1.4" strokeDasharray="2 2.5" opacity="0.85" />
+                    <circle cx={x0} cy={midY} r="10.5" fill="var(--surface)" stroke={color2} strokeWidth="1.4" />
+                    <g onMouseDown={(e) => startDragTask(e, t, "start")} style={{ cursor: "ew-resize" }}>
+                      <circle cx={x0} cy={midY} r="13" fill="transparent" />
+                      <foreignObject x={x0 - 9} y={midY - 9} width="18" height="18" style={{ overflow: "visible" }}>
+                        <MilestoneGlyph size={18} icon={resolveMilestoneIcon(t, ctx)} />
+                      </foreignObject>
+                    </g>
+                    {(() => {
+                      const sharedTitleW = pmMeasureText(t.title || "", "700 10.5px Inter, sans-serif");
+                      const sharedMeta = `${p1.name} + ${p2.name}`;
+                      const sharedMetaW = pmMeasureText(sharedMeta, "600 9px Inter, sans-serif");
+                      return (
+                        <>
+                          <rect x={x0 + 12} y={midY - 10} width={sharedTitleW + 10} height={20} rx="3" fill="var(--surface)" opacity="0.98" />
+                          <text x={x0 + 16} y={midY} dominantBaseline="middle" fontFamily="Inter, sans-serif" fontSize="10.5" fontWeight="700" fill="var(--text-900)" style={{ cursor: "pointer" }} onClick={() => onOpen(t)}>{t.title}</text>
+                          {!!String(t.desc ?? t.description ?? "").trim() && (
+                            <g
+                              className="lp-pm-note-trigger"
+                              transform={`translate(${x0 + 16 + sharedTitleW + 7}, ${midY - 8})`}
+                              onClick={(e)=>{e.stopPropagation();setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});}}
+                              style={{cursor:"pointer"}}
+                            >
+                              <title>Afficher la description</title>
+                              <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
+                              <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
+                            </g>
+                          )}
+                          <rect x={x0 + 12} y={midY + 5} width={sharedMetaW + 10} height={16} rx="3" fill="var(--surface)" opacity="0.98" />
+                          <text x={x0 + 16} y={midY + 13} dominantBaseline="middle" fontFamily="Inter, sans-serif" fontSize="9" fontWeight="600" fill={color1}>{sharedMeta}</text>
+                        </>
+                      );
+                    })()}
+                  </g>
+                );
+              }
+
+              // === Tâche partagée avec durée : tronc commun en dégradé ===
+              const x1raw = xFor(t.end);
+              const x1 = Math.max(x1raw, x0 + 30); // largeur minimale pour rester lisible
+              const span = x1 - x0;
+              const pct = done ? 100 : Math.max(0, Math.min(100, t.progress || 0));
+              const xProgress = x0 + (span * pct) / 100;
+              const path1 = `M ${x0} ${y1} L ${x0} ${midY}`;
+              const path2 = `M ${x0} ${y2} L ${x0} ${midY}`;
+              const trunkStart = x0, trunkEnd = x1;
+              const path3 = `M ${trunkStart} ${midY} L ${trunkEnd} ${midY}`;
+              const path4 = `M ${x1} ${midY} L ${x1} ${y1}`;
+              const path5 = `M ${x1} ${midY} L ${x1} ${y2}`;
+              const progressTrunkEnd = Math.min(trunkEnd, Math.max(trunkStart, xProgress));
+
+              return (
+                <g key={"shared-" + t.id} style={{ pointerEvents: "auto" }}>
+                  <defs>
+                    <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={x0} y1={midY} x2={x1} y2={midY}>
+                      <stop offset="0%" stopColor={color1} />
+                      <stop offset="100%" stopColor={color2} />
+                    </linearGradient>
+                  </defs>
+                  {/* Jonctions verticales en pointillé entre chaque axe principal et
+                      l'espace partagé — même codage que les connecteurs de dépendance
+                      existants ailleurs dans cette vue (fin, discret, pointillé). */}
+                  <path d={path1} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
                   <path d={path2} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
                   <path d={path4} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
                   <path d={path5} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
@@ -96,6 +319,85 @@ trokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
             })}
 
           </svg>
+
+          {/* Étiquettes de blocs, bande de repères, encadrés et couloirs de
+              risque : un seul calque au-dessus des lignes, sans jamais capter
+              le pointeur en dehors de ses propres libellés. */}
+          <div
+            className="lp-pm-annot-layer"
+            style={{ left: LEFT_W, top: 0, width: chartWidth, height: totalChartHeight, zIndex: 3 }}
+          >
+            {temporalBlockShapes.map((shape) => (
+              <span
+                key={"lbl-" + shape.block.id}
+                className="lp-pm-tblock-label"
+                style={{ left: shape.x0 + 4, top: 54 + ANNOT_TOP_H + shape.labelOffset, color: shape.block.color }}
+                title={`${shape.block.title} · ${fmtShort(shape.block.startDate)} → ${fmtShort(shape.block.endDate)}${shape.block.meta ? " — méta bloc" : ""}`}
+              >
+                {shape.block.title}
+              </span>
+            ))}
+
+            {frameShapes.map((shape) => (
+              <div
+                key={shape.id}
+                className="lp-pm-frame"
+                style={{ left: shape.left, top: shape.top, width: shape.width, height: shape.height, borderColor: shape.frame.color, borderStyle: shape.frame.borderStyle }}
+              >
+                {shape.frame.label && (
+                  <span className="lp-pm-frame-label" style={{ background: shape.frame.color }}>{shape.frame.label}</span>
+                )}
+              </div>
+            ))}
+
+            {stripItems.map((item) => (
+              <React.Fragment key={item.kind + "-" + item.id}>
+                <span
+                  className="lp-pm-strip-rule"
+                  style={{ left: item.x, top: 50 + item.lane * STRIP_LANE_H + 12, height: Math.max(0, totalChartHeight - (50 + item.lane * STRIP_LANE_H + 12)), borderColor: item.color }}
+                />
+                <span
+                  className={"lp-pm-strip-item is-" + item.kind}
+                  style={{ left: item.x - 4, top: 50 + item.lane * STRIP_LANE_H, color: item.color }}
+                >
+                  <span className="lp-pm-strip-glyph" style={{ background: item.kind === "note" ? "var(--surface)" : item.color, borderColor: item.color }} />
+                  <span
+                    className="lp-pm-strip-label"
+                    style={{ color: item.color }}
+                    title={item.kind === "note"
+                      ? `${item.data.title}${item.data.text ? " — " + item.data.text : ""}`
+                      : `${item.data.title} · ${fmtShort(item.data.date)}${item.type && item.type !== "standard" ? " · " + MINIGANTT_MILESTONE_LABELS[item.type] : ""}`}
+                  >
+                    {item.label}
+                  </span>
+                </span>
+              </React.Fragment>
+            ))}
+
+            {riskShapes.map(({ seg, left, width, y }) => (
+              <React.Fragment key={"risk-" + seg.id}>
+                <span
+                  className={"lp-pm-risk is-" + seg.style}
+                  style={{
+                    left, width, top: y,
+                    borderColor: seg.color,
+                    background: seg.style === "hatched"
+                      ? `repeating-linear-gradient(45deg, ${seg.color}40 0 3px, transparent 3px 6px)`
+                      : (seg.style === "solid" ? `${seg.color}38` : "transparent"),
+                  }}
+                  title={`${seg.title || "Risque"} — ${MINIGANTT_RISK_SEVERITY_LABELS[seg.severity]} · ${seg.endIdx - seg.startIdx} j`}
+                />
+                {seg.title && (
+                  <span className="lp-pm-risk-label" style={{ left: left + width + 5, top: y, color: seg.color }}>{seg.title}</span>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Place RÉELLEMENT réservée dans le flux à la bande de repères : sans
+              elle, le calque superposé serait décalé de sa hauteur par rapport
+              aux lignes qu'il annote. */}
+          {ANNOT_TOP_H > 0 && <div style={{ height: ANNOT_TOP_H }} />}
 
           {rowsWithHeights.map((row) => (
             <React.Fragment key={row.project.id}>
@@ -340,6 +642,35 @@ trokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
           ))}
         </div>
       </div>
+    )}
+
+    {annotationPanel && createPortal(
+      <Modal
+        title="Annotations du plan de lignes"
+        onClose={() => setAnnotationPanel(null)}
+        wide
+        footer={<button className="lp-btn lp-btn-primary" onClick={() => setAnnotationPanel(null)}>Terminé</button>}
+      >
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Mêmes objets que le Gantt et le Mini-Gantt. Les blocs, encadrés, jalons et annotations sont enregistrés avec cette vue ;
+          les risques de délai appartiennent aux tâches et se modifient dans leur fiche.
+        </p>
+        <MiniGanttAnnotationsEditor
+          blocks={rawTemporalBlocks}
+          frames={rawHighlightFrames}
+          milestones={rawMilestones}
+          risks={taskRisks}
+          notes={rawNotes}
+          tasks={dated}
+          ctx={ctx}
+          defaultStart={globalMin}
+          defaultEnd={globalMax}
+          onChange={applyAnnotations}
+          initialSection={annotationPanel.section}
+          autoCreate={annotationPanel.autoCreate}
+        />
+      </Modal>,
+      document.body
     )}
     </>
   );
@@ -1741,7 +2072,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetAutomationAlerts workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={onOpenAutomations} />
                 )}
                 {w.type === "embedMetro" && (
-                  <WidgetEmbedMetro tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} expenses={expenses} setTasks={setTasks} pushToast={pushToast} externalToolbarSlot={headerToolbarSlot} />
+                  <WidgetEmbedMetro widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} expenses={expenses} setTasks={setTasks} pushToast={pushToast} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} metaBlocks={scopedMetaBlocks} />
                 )}
                 {w.type === "embedGantt" && (
                   <WidgetEmbedGantt widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} />
@@ -7082,7 +7413,10 @@ function EmbeddedViewShell({ children, initialPrefs, externalToolbarSlot }) {
   );
 }
 
-function WidgetEmbedMetro({ tasks, ctx, onOpen, appearance, expenses, setTasks, pushToast, externalToolbarSlot }) {
+function WidgetEmbedMetro({ widget, tasks, ctx, onOpen, appearance, expenses, setTasks, pushToast, externalToolbarSlot, onUpdateWidget, metaBlocks }) {
+  // Mêmes règles que le Gantt embarqué : les annotations vivent dans la
+  // configuration DU WIDGET, pas dans les préférences éphémères de la vue.
+  const annotations = ganttAnnotationsOf(widget);
   return (
     <EmbeddedViewShell externalToolbarSlot={externalToolbarSlot}>
       {({ toolbarSlot, prefs, setPrefs }) => (
@@ -7090,6 +7424,9 @@ function WidgetEmbedMetro({ tasks, ctx, onOpen, appearance, expenses, setTasks, 
           tasks={tasks} ctx={ctx} onOpen={onOpen} toolbarSlot={toolbarSlot}
           appearance={appearance} prefs={prefs} setPrefs={setPrefs}
           setTasks={setTasks || (() => {})} pushToast={pushToast || (() => {})} expenses={expenses || []}
+          metaTemporalBlocks={metaBlocks}
+          annotations={annotations}
+          onAnnotationsChange={onUpdateWidget ? ((next) => onUpdateWidget({ ganttAnnotations: next })) : undefined}
           embedded
         />
       )}
