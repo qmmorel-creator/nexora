@@ -48,6 +48,11 @@ function AnnotationsHarness() {
   // Second widget SANS aucune annotation propre : seuls les risques portés par
   // les tâches doivent y apparaître.
   const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });
+  // Méta blocs des Réglages : définis hors des widgets, ils doivent apparaître
+  // dans le second Mini-Gantt qui n'a pourtant aucune annotation propre.
+  const metaBlocks = [
+    { id: "meta1", title: "Congés", startDate: "2026-08-10", endDate: "2026-08-24", color: "#F2A93B", borderStyle: "dashed" },
+  ];
   const [toolbar, setToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
   // déroulantes des annotations ne proposent que les tâches retenues par le
@@ -74,7 +79,7 @@ function AnnotationsHarness() {
         </button>
         <div id="harness-second-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
-            widget={otherWidget} tasks={tasks} ctx={ctx} onOpen={noop}
+            widget={otherWidget} tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
             onUpdateWidget={(patch) => setOtherWidget((w) => ({ ...w, ...patch }))}
             onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
             groupBy="none"
