@@ -1,4 +1,4 @@
-tre…" />
+alue })} placeholder="Texte à rechercher dans le titre…" />
       ) : isDateField ? (
         <select className="lp-filter-date-preset-select" style={{ flex: 1 }} value={cond.datePreset || ""} onChange={(e) => onChange({ ...cond, datePreset: e.target.value })}>
           <option value="">— Choisir une période —</option>
@@ -3598,6 +3598,68 @@ function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defa
   );
 }
 
+// Liste déroulante avec recherche rapide. L'habillage est celui du sélecteur
+// d'activité déjà présent dans Nexora (classes lp-activity-search-*) : même
+// panneau, même champ de recherche, même comportement — rien de nouveau à
+// apprendre pour l'utilisateur, aucun style supplémentaire à maintenir.
+function SearchableSelect({ value, options, onChange, placeholder, searchPlaceholder, emptyLabel }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef(null);
+  useEffect(() => {
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  const list = Array.isArray(options) ? options : [];
+  const selected = list.find((o) => o.id === value) || null;
+  const q = query.trim().toLocaleLowerCase("fr");
+  const filtered = q ? list.filter((o) => `${o.label} ${o.hint || ""}`.toLocaleLowerCase("fr").includes(q)) : list;
+  const choose = (id) => { onChange(id); setQuery(""); setOpen(false); };
+  return (
+    <div className="lp-activity-search-select" ref={ref}>
+      <button type="button" className="lp-activity-search-trigger" onClick={() => setOpen((v) => !v)}>
+        <span className="lp-activity-search-trigger-text">
+          {selected
+            ? <><strong>{selected.label}</strong>{selected.hint ? <span>{selected.hint}</span> : null}</>
+            : <span className="lp-activity-empty-value">{placeholder || "Choisir…"}</span>}
+        </span>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="lp-activity-search-menu">
+          <div className="lp-activity-search-box">
+            <Search size={14} />
+            <input
+              autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder || "Rechercher…"}
+              onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }}
+            />
+            {query && <button type="button" onClick={() => setQuery("")}><X size={12} /></button>}
+          </div>
+          <div className="lp-activity-search-options">
+            {emptyLabel && (
+              <button type="button" className={"lp-activity-search-option none" + (!value ? " selected" : "")} onClick={() => choose("")}>
+                <span className="lp-activity-option-main">{emptyLabel}</span>
+              </button>
+            )}
+            {filtered.length === 0
+              ? <div className="lp-activity-search-empty">Aucun résultat.</div>
+              : filtered.map((o) => (
+                  <button type="button" key={o.id} className={"lp-activity-search-option" + (o.id === value ? " selected" : "")} onClick={() => choose(o.id)}>
+                    <span className="lp-activity-option-dot" style={o.color ? { borderColor: o.color } : undefined} />
+                    <span className="lp-activity-option-main">{o.label}</span>
+                    {o.hint ? <span className="lp-activity-option-project">{o.hint}</span> : <span />}
+                    {o.id === value && <Check size={13} />}
+                  </button>
+                ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Section de liste réutilisable pour les annotations propres au Mini-Gantt
 // (jalons, risques, notes) : même repli, mêmes actions, même confirmation que
 // les sections blocs et encadrés — une seule mécanique à maintenir.
@@ -3722,14 +3784,19 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
     setPendingDelete(null);
   };
 
+  const taskOptions = useMemo(() => tasks
+    .map((t) => ({ id: t.id, label: t.title, hint: ctx.projects.find((p) => p.id === t.projectId)?.name || "", color: ctx.projects.find((p) => p.id === t.projectId)?.color }))
+    .sort((a, b) => a.hint.localeCompare(b.hint, "fr") || a.label.localeCompare(b.label, "fr")), [tasks, ctx.projects]);
+
   const TaskSelect = ({ value, onSelect, allowEmpty }) => (
-    <select value={value || ""} onChange={(e) => onSelect(e.target.value || null)}>
-      {allowEmpty && <option value="">Aucune tâche</option>}
-      {!allowEmpty && !knownTaskIds.has(value) && <option value={value || ""}>{value ? "Tâche introuvable" : "Choisir une tâche"}</option>}
-      {sortedByName(tasks.map((t) => ({ ...t, name: t.title }))).map((t) => (
-        <option key={t.id} value={t.id}>{t.title}</option>
-      ))}
-    </select>
+    <SearchableSelect
+      value={value || ""}
+      options={taskOptions}
+      onChange={(id) => onSelect(id || null)}
+      placeholder={value && !knownTaskIds.has(value) ? "Tâche introuvable" : "Choisir une tâche"}
+      searchPlaceholder="Rechercher une tâche ou un projet…"
+      emptyLabel={allowEmpty ? "Aucune tâche" : null}
+    />
   );
 
   return (
@@ -3778,9 +3845,12 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                 </div>
                 <div className="lp-field">
                   <label>Type</label>
-                  <select value={m.type || "standard"} onChange={(e) => patchMilestone(m.id, { type: e.target.value, color: "" })}>
-                    {MINIGANTT_MILESTONE_TYPES.map((k) => <option key={k} value={k}>{MINIGANTT_MILESTONE_LABELS[k]}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={m.type || "standard"}
+                    options={MINIGANTT_MILESTONE_TYPES.map((k) => ({ id: k, label: MINIGANTT_MILESTONE_LABELS[k], color: MINIGANTT_MILESTONE_COLORS[k] }))}
+                    onChange={(id) => patchMilestone(m.id, { type: id || "standard", color: "" })}
+                    searchPlaceholder="Rechercher un type…"
+                  />
                 </div>
               </div>
               {!valid && <p className="lp-gantt-annot-error">Un jalon demande un titre et une date valide.</p>}
@@ -3929,19 +3999,25 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
               {anchor.kind === "milestone" && (
                 <div className="lp-field">
                   <label>Jalon</label>
-                  <select value={anchor.id || ""} onChange={(e) => setAnchor({ id: e.target.value })}>
-                    <option value="">Choisir un jalon</option>
-                    {milestones.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={anchor.id || ""}
+                    options={milestones.map((m) => ({ id: m.id, label: m.title || "Sans titre", hint: isGanttIsoDate(m.date) ? fmtShort(m.date) : "", color: m.color || MINIGANTT_MILESTONE_COLORS[m.type] }))}
+                    onChange={(id) => setAnchor({ id })}
+                    placeholder="Choisir un jalon"
+                    searchPlaceholder="Rechercher un jalon…"
+                  />
                 </div>
               )}
               {anchor.kind === "risk" && (
                 <div className="lp-field">
                   <label>Risque</label>
-                  <select value={anchor.id || ""} onChange={(e) => setAnchor({ id: e.target.value })}>
-                    <option value="">Choisir un risque</option>
-                    {risks.map((r) => <option key={r.id} value={r.id}>{r.title || "Sans titre"}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={anchor.id || ""}
+                    options={risks.map((r) => ({ id: r.id, label: r.title || "Sans titre", hint: taskTitle(r.taskId), color: r.color || MINIGANTT_RISK_DEFAULT_COLOR }))}
+                    onChange={(id) => setAnchor({ id })}
+                    placeholder="Choisir un risque"
+                    searchPlaceholder="Rechercher un risque…"
+                  />
                 </div>
               )}
               {!resolved && <p className="lp-gantt-annot-error">Ancrage introuvable : l'annotation n'est pas dessinée.</p>}
@@ -5186,7 +5262,7 @@ function TaskModal({ task, defaults, projects, statuses, taskTypes, tasks, teamM
         return;
       }
       if (e.key !== "Escape") return;
-      const nestedOpen = document.querySelector(".lp-dropdown-panel-portal, .lp-color-select-panel, .lp-quick-context-menu");
+      const nestedOpen = document.querySelector(".lp-dropdown-panel-portal, .lp-color-select-panel, .lp-quick-context-menu, .lp-activity-search-menu");
       if (nestedOpen) return; // laisse le menu imbriqué (Projet, Statut…) se fermer en premier
       // Phase de capture + stopPropagation : empêche le gestionnaire générique
       // de Modal de fermer sans respecter la protection "modifications non
@@ -12649,84 +12725,4 @@ function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete
   };
 
   const duplicateTask = (t) => {
-    const copy = { ...t, id: uid(), title: t.title + " (copie)" };
-    setTasks((prev) => {
-      const idx = prev.findIndex((x) => x.id === t.id);
-      const next = [...prev];
-      next.splice(idx + 1, 0, copy);
-      return next;
-    });
-  };
-  const duplicateSelected = () => {
-    setTasks((prev) => {
-      const next = [...prev];
-      [...selected].forEach((id) => {
-        const idx = next.findIndex((x) => x.id === id);
-        if (idx === -1) return;
-        next.splice(idx + 1, 0, { ...next[idx], id: uid(), title: next[idx].title + " (copie)" });
-      });
-      return next;
-    });
-    clearSelection();
-  };
-
-  const addQuickTask = () => {
-    if (!newTitle.trim()) return;
-    const today = iso(new Date());
-    setTasks((prev) => [...prev, { id: uid(), title: newTitle.trim(), projectId: ctx.projects[0]?.id || null, statusId: ctx.statuses[0]?.id || null, taskTypeId: getDefaultTaskTypeForProject(ctx.taskTypes, ctx.projects, ctx.projects[0]?.id)?.id || null, start: today, end: today, progress: 0, milestone: false, desc: "", assignee: "", checklist: [], lastInteraction:new Date().toISOString() }]);
-    setNewTitle("");
-  };
-
-  const allSelected = tasks.length > 0 && selected.size === tasks.length;
-
-  return (
-    <div className="lp-table-wrap">
-      <ViewToolbarPortal slot={toolbarSlot}>
-        <DropdownButton label="" icon={<Layers size={14} />} title={`Grouper par : ${fieldLabel(groupBy, ctx)}`}>
-          {GROUP_OPTIONS.map((k) => (
-            <label className="lp-checkbox-line" key={k}><input type="radio" name="lp-table-gb" checked={groupBy === k} onChange={() => setGroupBy(k)} /> {fieldLabel(k, ctx)}</label>
-          ))}
-          {(customFieldDefs || []).length > 0 && (
-            <>
-              <div className="lp-dropdown-group-label">Champs personnalisés</div>
-              {customFieldDefs.map((f) => (
-                <label className="lp-checkbox-line" key={f.id}><input type="radio" name="lp-table-gb" checked={groupBy === "cf:" + f.id} onChange={() => setGroupBy("cf:" + f.id)} /> {f.name}</label>
-              ))}
-            </>
-          )}
-        </DropdownButton>
-        <DropdownButton label="" icon={<Columns3 size={14} />} title="Colonnes affichées">
-          {allColOptions.map((c) => (
-            <label className="lp-checkbox-line" key={c.key}>
-              <input type="checkbox" checked={cols.includes(c.key)} onChange={() => setCols((prev) => (prev.includes(c.key) ? prev.filter((x) => x !== c.key) : [...prev, c.key]))} />
-              {c.label}
-            </label>
-          ))}
-        </DropdownButton>
-      </ViewToolbarPortal>
-
-      {selected.size > 0 && (
-        <div className="lp-table-bulkbar">
-          <span className="lp-table-bulkbar-count">{selected.size} sélectionnée{selected.size > 1 ? "s" : ""}</span>
-          <DropdownButton label="Statut" icon={<Layers size={14} />}>
-            {sortedByName(ctx.statuses).map((s) => (
-              <button key={s.id} className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => bulkUpdate({ statusId: s.id })}>
-                <span className="swatch small" style={{ background: s.color }} /> {s.name}
-              </button>
-            ))}
-          </DropdownButton>
-          <DropdownButton label="Type" icon={<Tag size={14} />}>
-            {sortedByName(ctx.taskTypes || []).map((tt) => (
-              <button
-                key={tt.id}
-                className="lp-checkbox-line"
-                style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }}
-                onClick={() => {
-                  // Comme pour la modification à l'unité : si le nouveau type impose
-                  // un statut automatique (ex. "Information"), on le bascule dans le
-                  // même geste pour toute la sélection.
-                  const restricted = restrictedStatusForType(ctx.taskTypes, ctx.statuses, tt.id);
-                  bulkUpdate(restricted ? { taskTypeId: tt.id, statusId: restricted.id } : { taskTypeId: tt.id });
-                }}
-              >
-           
+    const copy = { ...t, id: uid(), title: t.title + " (c
