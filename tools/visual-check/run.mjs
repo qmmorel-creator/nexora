@@ -80,6 +80,32 @@ const seen = await page.evaluate(() => {
 
 const shot = path.join(dir, "annotations.png");
 await page.screenshot({ path: shot, fullPage: true });
+
+// Recherche rapide des listes déroulantes des paramètres : on ouvre la fiche
+// d'un risque, on filtre la liste des tâches et on vérifie que la sélection
+// s'applique. Sans ce contrôle, une liste déroulante peut redevenir un <select>
+// brut sans que rien ne le signale.
+const dropdown = { triggers: 0, before: 0, after: 0, chosen: "" };
+try {
+  await page.getByRole("button", { name: "+ Risque" }).click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  const triggers = page.locator(".lp-modal .lp-activity-search-trigger");
+  dropdown.triggers = await triggers.count();
+  if (dropdown.triggers > 0) {
+    await triggers.first().click();
+    await page.waitForSelector(".lp-activity-search-menu input", { timeout: 5000 });
+    dropdown.before = await page.locator(".lp-activity-search-menu .lp-activity-search-option").count();
+    await page.locator(".lp-activity-search-menu input").fill("revue");
+    await page.waitForTimeout(250);
+    dropdown.after = await page.locator(".lp-activity-search-menu .lp-activity-search-option").count();
+    await page.locator(".lp-activity-search-menu .lp-activity-search-option").first().click();
+    await page.waitForTimeout(250);
+    dropdown.chosen = (await triggers.first().innerText()).replace(/\s+/g, " ").trim();
+  }
+} catch (error) {
+  dropdown.error = String(error).split("\n")[0];
+}
+
 await browser.close();
 server.close();
 
@@ -136,6 +162,12 @@ for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-G
     }
   }
 }
+
+expect(!dropdown.error, `contrôle des listes déroulantes interrompu : ${dropdown.error}`);
+expect(dropdown.triggers > 0, "Paramètres : la sélection de tâche d'un risque n'est pas une liste déroulante avec recherche");
+expect(dropdown.before > 1, `Paramètres : la liste déroulante ne propose que ${dropdown.before} option(s)`);
+expect(dropdown.after > 0 && dropdown.after < dropdown.before, `Paramètres : la recherche rapide ne filtre pas (${dropdown.before} → ${dropdown.after})`);
+expect(/Revue DOE/.test(dropdown.chosen), `Paramètres : la sélection ne s'applique pas (« ${dropdown.chosen} »)`);
 
 console.log(`Capture : ${shot}`);
 if (failures.length) {
