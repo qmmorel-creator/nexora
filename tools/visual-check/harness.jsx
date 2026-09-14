@@ -68,6 +68,18 @@ function AnnotationsHarness() {
   const metaBlocks = mergeMetaTemporalBlocks(settingsMetaBlocks, tasks);
   const dashboards = [{ id: "d1", name: "Chantier" }, { id: "d2", name: "Communication" }];
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  // Treemap projets : surface = tâches non terminées, couleur = tâches en
+  // retard (second filtre), donc deux comptages réellement différents.
+  const [treemapWidget, setTreemapWidget] = useState({
+    id: "w3", type: "projectTreemap",
+    treemapSizeFilter: { ...widgetDefaultFilter(), excludeDone: true },
+    treemapColorFilter: { ...widgetDefaultFilter(), onlyLate: true },
+    treemapColorMode: "secondaryFilterGradient",
+    treemapFields: ["projectName", "sizeCount", "progress", "averageCriticality", "lateTaskCount", "dominantStatus"],
+    treemapShowZeroProjects: true,
+  });
+  const [treemapFormOpen, setTreemapFormOpen] = useState(false);
+  const [openedProjectId, setOpenedProjectId] = useState("");
   const [toolbar, setToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
   // déroulantes des annotations ne proposent que les tâches retenues par le
@@ -86,6 +98,43 @@ function AnnotationsHarness() {
           onOpen={noop} onAdd={noop} onDelete={noop} onMarkDone={noop} onCycleStatus={noop} onBulkDelete={noop}
           prefs={prefs} setPrefs={setPrefs} toolbarSlot={toolbar}
         />
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>TREEMAP PROJETS</h2>
+        <button type="button" id="harness-open-treemap-form" onClick={() => setTreemapFormOpen(true)} style={{ marginBottom: 8 }}>
+          Ouvrir la fiche du Treemap
+        </button>
+        <span id="harness-treemap-opened" style={{ marginLeft: 8, fontFamily: "monospace", fontSize: 12 }}>{openedProjectId}</span>
+        <div id="harness-treemap" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, height: 340, marginBottom: 18 }}>
+          <WidgetProjectTreemap
+            widget={treemapWidget}
+            tasks={tasks}
+            ctx={ctx}
+            risks={[{ id: "r1", projectId: "p1", status: "open" }, { id: "r2", projectId: "p1", status: "closed" }]}
+            expenses={[]}
+            onOpenProject={(id) => setOpenedProjectId(id)}
+            onEditProject={noop}
+            onFilterProject={noop}
+          />
+        </div>
+        {/* Le même widget, réduit à une bande : les tuiles doivent rester dans
+            le cadre et se simplifier au lieu de déborder. */}
+        <div id="harness-treemap-narrow" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 8, background: "var(--surface)", width: 300, height: 150, marginBottom: 18 }}>
+          <WidgetProjectTreemap
+            widget={{ ...treemapWidget, treemapShowSearch: false, treemapShowLegend: false, treemapCompact: true }}
+            tasks={tasks} ctx={ctx} risks={[]} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
+          />
+        </div>
+        {treemapFormOpen && (
+          <WidgetFormModal
+            widget={treemapWidget}
+            existingWidgets={[]}
+            ctx={ctx}
+            pageFilter={null}
+            onSave={(data) => { setTreemapWidget((w) => ({ ...w, ...data })); setTreemapFormOpen(false); }}
+            onClose={() => setTreemapFormOpen(false)}
+          />
+        )}
       </div>
       <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>MINI-GANTT</h2>

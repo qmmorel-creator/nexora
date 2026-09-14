@@ -1,4 +1,113 @@
-fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
+                 <span>{meta.label}</span>
+                  {meta.key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
+                </button>
+              ))}
+            </div>
+            <hr className="lp-divider" />
+            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setSettingsTab("projects"); setSettingsOpen(true); setMobileMoreOpen(false); }}>
+              <Settings size={20} /><span>Réglages</span>
+            </button>
+            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setReadmeOpen(true); setMobileMoreOpen(false); }}>
+              <BookOpen size={20} /><span>Guide de démarrage</span>
+            </button>
+          </div>
+        </>
+      )}
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {readmeOpen && <ReadmeModal onClose={() => setReadmeOpen(false)} />}
+      {filtersOpen && <FiltersModal filters={filters} setFilters={setFilters} ctx={ctx} onClose={() => setFiltersOpen(false)} />}
+      {globalSearchOpen && (
+        <GlobalMetaSearchModal
+          tasks={tasks}
+          taskArchive={taskArchive}
+          ctx={ctx}
+          onRestoreArchived={restoreArchivedTasks}
+          onOpenTask={(t) => { setGlobalSearchOpen(false); openEditTask(t); }}
+          onClose={() => setGlobalSearchOpen(false)}
+        />
+      )}
+      {importOpen && <ImportCsvModal ctx={ctx} projects={projects} statuses={statuses} setProjects={setProjects} setStatuses={setStatuses} setTasks={setTasks} persistKey={persistKey} pushToast={pushToast} syncBlocked={syncBlocked} onClose={() => setImportOpen(false)} />}
+      {markdownImportOpen && (
+        <MarkdownImportModal
+          projects={projects}
+          setProjects={setProjects}
+          statuses={statuses}
+          setStatuses={setStatuses}
+          taskTypes={taskTypes}
+          setTasks={setTasks}
+          palette={PROJECT_PALETTES[appearance.projectPalette] || PROJECT_PALETTES.default}
+          pushToast={pushToast}
+          onClose={() => setMarkdownImportOpen(false)}
+        />
+      )}
+      {projectFoldersOpen && <SimpleFolderManager title="Dossiers de projets" folders={projectFolders} setFolders={setProjectFolders} countInFolder={(id) => projects.filter((p) => p.folderId === id).length} pushToast={pushToast} onClose={() => setProjectFoldersOpen(false)} itemLabel="dossier" />}
+      {viewFoldersOpen && <SimpleFolderManager title="Dossiers de vues" folders={viewFolders} setFolders={setViewFolders} countInFolder={(id) => savedViews.filter((v) => v.folderId === id).length} pushToast={pushToast} onClose={() => setViewFoldersOpen(false)} />}
+      {saveViewOpen && <SaveViewModal onClose={() => setSaveViewOpen(false)} onSave={saveCurrentView} activeFilterCount={fCount} currentView={view} viewFolders={viewFolders} />}
+      {newDashboardOpen && <NewDashboardModal onClose={() => setNewDashboardOpen(false)} onCreate={createDashboard} dashboardFolders={dashboardFolders} />}
+      {quickEditDashboard && (
+        <DashboardEditModal
+          dashboard={quickEditDashboard}
+          onSave={(patch) => { updateDashboardMeta(quickEditDashboard.id, patch); setQuickEditDashboard(null); }}
+          onClose={() => setQuickEditDashboard(null)}
+        />
+      )}
+      {dashboardFoldersOpen && <SimpleFolderManager title="Dossiers de tableaux de bord" folders={dashboardFolders} setFolders={setDashboardFolders} countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length} pushToast={pushToast} onClose={() => setDashboardFoldersOpen(false)} />}
+      {quickEditDashboardFolder && (
+        <SimpleFolderManager
+          title="Dossiers de tableaux de bord"
+          folders={dashboardFolders}
+          setFolders={setDashboardFolders}
+          countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length}
+          pushToast={pushToast}
+          initialEditFolder={quickEditDashboardFolder}
+          onClose={() => setQuickEditDashboardFolder(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Modale Filtres
+// ============================================================================
+function filterFieldOptions(field, ctx) {
+  if (field === "project") return [
+    { value:NO_PROJECT_FILTER, label:"Sans projet", color:"#94A3B8", folderId:null },
+    ...sortedByName(ctx.projects).map((p) => ({ value:p.id, label:p.name, color:p.color, folderId:p.folderId || null })),
+  ];
+  if (field === "status") return sortedByName(ctx.statuses).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
+  if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
+  if (field && field.startsWith("cf:")) {
+    const id = field.slice(3);
+    const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
+    if (!def) return [];
+    if (def.type === "checkbox") return [{ value: "true", label: "Oui" }, { value: "false", label: "Non" }];
+    if (def.type === "select") return (def.options || []).map((o) => ({ value: o, label: o }));
+    // Texte / nombre / date : pas de liste fermée — on propose les valeurs
+    // réellement déjà utilisées dans les tâches, comme pour "Responsable".
+    const values = new Set();
+    (ctx.tasks || []).forEach((t) => {
+      const v = t.customFields ? t.customFields[id] : undefined;
+      if (v !== undefined && v !== null && v !== "") values.add(String(v));
+    });
+    return [...values].sort().map((v) => ({ value: v, label: def.type === "date" ? fmtShort(v) : v }));
+  }
+  return [];
+}
+
+function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
+  const options = filterFieldOptions(cond.field, ctx);
+  const isDateField = cond.field === "start" || cond.field === "end";
+  const isTitleField = cond.field === "title";
+  const isInactivityField = cond.field === "inactivity";
+  const isEntityField = cond.field === "project" || cond.field === "status" || cond.field === "taskType";
+  return (
+    <div className="lp-filter-condition-row">
+      <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
+        {fieldsOverride ? (
+          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
         ) : (
           <>
             <optgroup label="Champs standards">
@@ -3641,6 +3750,476 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
   return "none";
 }
 // === NEXORA:GANTT-ANNOTATIONS:END ===
+
+// === NEXORA:PROJECT-TREEMAP:START ===
+// Widget « Treemap projets ». Règle fondatrice : UNE TUILE = UN PROJET. Une
+// tâche n'est jamais une tuile — elle ne sert qu'à calculer les métriques du
+// projet auquel elle appartient.
+//
+// Tout ce bloc est PUR : il ne connaît ni React, ni le moteur de filtres de
+// Nexora. L'application lui passe des prédicats et des faits déjà construits
+// (`sizeMatch`, `colorMatch`, `factsOf`), ce qui rend chaque règle testable
+// sans monter l'interface.
+
+const TREEMAP_COLOR_MODES = ["sizeFilterGradient", "secondaryFilterGradient", "averageCriticality"];
+const TREEMAP_GROUP_BY = ["none", "folder", "priority", "owner", "criticality"];
+const TREEMAP_GRADIENT_DIRECTIONS = ["lowToHigh", "highToLow"];
+// Couleur des projets dont la valeur de coloration est absente ou nulle : un
+// gris neutre, jamais une couleur d'alerte.
+const TREEMAP_NEUTRAL_COLOR = "#E6EAF1";
+
+// Palettes sobres : le bas de l'échelle reste quasi neutre, la couleur forte
+// est réservée au haut. Un portefeuille sain ne doit pas s'afficher en rouge.
+const TREEMAP_PALETTES = {
+  ember: { label: "Maîtrisé → critique", stops: ["#EDF1F8", "#D5E7DD", "#F6E3B8", "#F0A95F", "#D64545"] },
+  ocean: { label: "Océan", stops: ["#EFF4FB", "#CCE0F4", "#93BFE6", "#4F8FD1", "#1E4C8A"] },
+  violet: { label: "Violet", stops: ["#F2EFFB", "#DED5F4", "#B8A5E7", "#8B5CF6", "#5B32B8"] },
+  slate: { label: "Ardoise", stops: ["#F2F4F8", "#DBE1EA", "#B1BCCC", "#7F8DA4", "#4A5870"] },
+  levels: { label: "Palette d'état", stops: ["#22B07D", "#F2A93B", "#F07A3D", "#D64545"], discrete: true },
+};
+const TREEMAP_DEFAULT_PALETTE = "ember";
+
+// Niveaux de criticité, bornes inférieures incluses.
+const TREEMAP_CRITICALITY_LEVELS = [
+  { key: "controlled", label: "Maîtrisé", min: 0, color: "#22B07D" },
+  { key: "watch", label: "Vigilance", min: 25, color: "#F2A93B" },
+  { key: "high", label: "Élevé", min: 50, color: "#F07A3D" },
+  { key: "critical", label: "Critique", min: 70, color: "#D64545" },
+];
+
+// CRITICITÉ — Nexora n'a pas de champ « criticité » sur la tâche, et en inventer
+// un produirait une donnée opaque que personne ne saurait expliquer. Le score
+// est donc une RÈGLE DÉTERMINISTE composée uniquement de faits déjà présents
+// dans le modèle : retard, statut urgent, échéance proche, jalon, inactivité,
+// priorité du projet. Chaque poids retenu est listé tel quel dans l'infobulle
+// de la tuile, de sorte qu'un chiffre affiché soit toujours redémontrable.
+//
+// Une tâche terminée vaut 0 : un projet dont tout est fait doit ressortir calme.
+const TREEMAP_CRITICALITY_WEIGHTS = {
+  late: 40,
+  urgent: 25,
+  dueSoon: 10,
+  milestone: 10,
+  stale: 10,
+  projectPriorityHigh: 15,
+  projectPriorityNormal: 5,
+};
+const TREEMAP_DUE_SOON_DAYS = 7;
+const TREEMAP_STALE_DAYS = 14;
+
+// facts : { done, late, urgent, milestone, daysToDue, inactivityDays, projectPriority }
+// Retourne { score, reasons } — `reasons` sert directement l'infobulle.
+function treemapTaskCriticality(facts) {
+  const f = facts || {};
+  if (f.done) return { score: 0, reasons: [] };
+  const W = TREEMAP_CRITICALITY_WEIGHTS;
+  const reasons = [];
+  let score = 0;
+  const add = (points, label) => { score += points; reasons.push({ points, label }); };
+  if (f.late) add(W.late, "En retard");
+  if (f.urgent) add(W.urgent, "Statut urgent");
+  const days = Number(f.daysToDue);
+  if (!f.late && Number.isFinite(days) && days >= 0 && days <= TREEMAP_DUE_SOON_DAYS) add(W.dueSoon, `Échéance dans ${TREEMAP_DUE_SOON_DAYS} jours ou moins`);
+  if (f.milestone) add(W.milestone, "Jalon");
+  const idle = Number(f.inactivityDays);
+  if (Number.isFinite(idle) && idle >= TREEMAP_STALE_DAYS) add(W.stale, `Sans interaction depuis ${TREEMAP_STALE_DAYS} jours`);
+  if (f.projectPriority === "high") add(W.projectPriorityHigh, "Projet prioritaire");
+  else if (f.projectPriority === "normal") add(W.projectPriorityNormal, "Projet à priorité normale");
+  return { score: Math.max(0, Math.min(100, score)), reasons };
+}
+
+function treemapCriticalityLevel(score) {
+  const n = Number(score);
+  const value = Number.isFinite(n) ? n : 0;
+  let level = TREEMAP_CRITICALITY_LEVELS[0];
+  TREEMAP_CRITICALITY_LEVELS.forEach((l) => { if (value >= l.min) level = l; });
+  return level;
+}
+
+// Poids minimal d'une tuile : un projet dont le COUNT() est nul reste visible
+// (quand le réglage le demande) sans jamais écraser les projets qui portent
+// réellement des tâches.
+const TREEMAP_ZERO_WEIGHT_RATIO = 0.12;
+const TREEMAP_MIN_WEIGHT = 1;
+
+// Statistiques par projet. `tasks` est déjà réduit par les méta-filtres, le
+// filtre de page et le filtre du widget : ce bloc ne refiltre rien, il compte.
+function computeTreemapProjects(input) {
+  const {
+    projects = [],
+    tasks = [],
+    sizeMatch = () => true,
+    colorMatch = () => true,
+    factsOf = () => ({}),
+    extras = {},
+    colorMode = "sizeFilterGradient",
+    showZeroProjects = false,
+  } = input || {};
+
+  const byProject = new Map();
+  (Array.isArray(tasks) ? tasks : []).forEach((t) => {
+    if (!t || !t.projectId) return;
+    if (!byProject.has(t.projectId)) byProject.set(t.projectId, []);
+    byProject.get(t.projectId).push(t);
+  });
+
+  const rows = [];
+  (Array.isArray(projects) ? projects : []).forEach((project) => {
+    if (!project || !project.id) return;
+    const projectTasks = byProject.get(project.id) || [];
+    const sized = projectTasks.filter((t) => sizeMatch(t));
+    const colored = projectTasks.filter((t) => colorMatch(t));
+    if (!showZeroProjects && sized.length === 0) return;
+
+    let doneCount = 0, lateCount = 0, urgentCount = 0, progressSum = 0, criticalitySum = 0;
+    let endDate = null;
+    let nextMilestone = null;
+    const statusTally = new Map();
+    const ownerTally = new Map();
+
+    sized.forEach((t) => {
+      const facts = factsOf(t) || {};
+      if (facts.done) doneCount += 1;
+      if (facts.late) lateCount += 1;
+      if (facts.urgent) urgentCount += 1;
+      progressSum += Math.max(0, Math.min(100, Number(t.progress) || 0));
+      criticalitySum += treemapTaskCriticality({ ...facts, projectPriority: project.priority || "normal" }).score;
+      if (t.end && (!endDate || t.end > endDate)) endDate = t.end;
+      if (facts.milestone && !facts.done) {
+        const days = Number(facts.daysToDue);
+        if (Number.isFinite(days) && days >= 0 && (!nextMilestone || days < nextMilestone.daysToDue)) {
+          nextMilestone = { id: t.id, title: t.title, date: t.end, daysToDue: days };
+        }
+      }
+      if (t.statusId) statusTally.set(t.statusId, (statusTally.get(t.statusId) || 0) + 1);
+      const owner = typeof t.assignee === "string" ? t.assignee.trim() : "";
+      if (owner) ownerTally.set(owner, (ownerTally.get(owner) || 0) + 1);
+    });
+
+    const best = (tally) => {
+      let key = null, max = 0;
+      tally.forEach((n, k) => { if (n > max) { max = n; key = k; } });
+      return key;
+    };
+
+    const criticalityScore = sized.length ? Math.round(criticalitySum / sized.length) : 0;
+    rows.push({
+      project,
+      projectId: project.id,
+      taskCount: projectTasks.length,
+      sizeCount: sized.length,
+      colorCount: colored.length,
+      doneCount,
+      lateCount,
+      urgentCount,
+      progress: sized.length ? Math.round(progressSum / sized.length) : 0,
+      criticality: { score: criticalityScore, level: treemapCriticalityLevel(criticalityScore) },
+      endDate,
+      nextMilestone,
+      dominantStatusId: best(statusTally),
+      owner: best(ownerTally),
+      ...(extras[project.id] || {}),
+    });
+  });
+
+  const maxSize = rows.reduce((m, r) => (r.sizeCount > m ? r.sizeCount : m), 0);
+  const zeroWeight = Math.max(TREEMAP_MIN_WEIGHT, maxSize * TREEMAP_ZERO_WEIGHT_RATIO);
+  rows.forEach((r) => { r.weight = r.sizeCount > 0 ? r.sizeCount : zeroWeight; });
+
+  rows.forEach((r) => { r.colorValue = treemapColorValue(r, colorMode); });
+  rows.sort((a, b) => b.sizeCount - a.sizeCount || String(a.project.name || "").localeCompare(String(b.project.name || "")));
+  return rows;
+}
+
+function treemapColorValue(row, colorMode) {
+  if (!row) return 0;
+  if (colorMode === "averageCriticality") return row.criticality ? row.criticality.score : 0;
+  if (colorMode === "secondaryFilterGradient") return row.colorCount || 0;
+  return row.sizeCount || 0;
+}
+
+// Plancher de l'échelle des comptages : sans lui, un portefeuille où le pire
+// projet compte deux tâches afficherait ce projet — et tous ses égaux — au rouge
+// le plus vif. La couleur forte doit rester réservée aux valeurs réellement
+// élevées, pas au simple maximum d'un domaine minuscule.
+const TREEMAP_MIN_COLOR_SPAN = 4;
+
+// Domaine de l'échelle de couleur. La criticité a un domaine fixe 0–100 : deux
+// widgets côte à côte doivent donner la même couleur au même score.
+function treemapColorDomain(rows, colorMode) {
+  if (colorMode === "averageCriticality") return { min: 0, max: 100 };
+  const values = (rows || []).map((r) => Number(r.colorValue) || 0);
+  const max = values.length ? Math.max(...values) : 0;
+  // `top` est le maximum réellement observé — la légende en a besoin pour
+  // annoncer des tranches vraies ; `max` est l'échelle de couleur.
+  return { min: 0, max: max > 0 ? Math.max(max, TREEMAP_MIN_COLOR_SPAN) : 0, top: max };
+}
+
+function treemapRampColor(stops, t) {
+  const list = Array.isArray(stops) && stops.length ? stops : [TREEMAP_NEUTRAL_COLOR];
+  if (list.length === 1) return list[0];
+  const p = Math.max(0, Math.min(1, Number(t) || 0));
+  const scaled = p * (list.length - 1);
+  const i = Math.min(list.length - 2, Math.floor(scaled));
+  return lerpColor(list[i], list[i + 1], scaled - i);
+}
+
+// Couleur d'une tuile. `direction` inverse l'échelle sans toucher aux palettes.
+function treemapTileColor(value, domain, paletteKey, direction) {
+  const palette = TREEMAP_PALETTES[paletteKey] || TREEMAP_PALETTES[TREEMAP_DEFAULT_PALETTE];
+  const min = Number(domain && domain.min) || 0;
+  const max = Number(domain && domain.max) || 0;
+  // Valeur ABSENTE et valeur ZÉRO ne sont pas la même chose : Number(null) vaut
+  // 0, ce qui donnerait au projet sans donnée la couleur du bas d'échelle au
+  // lieu du gris neutre.
+  if (value === null || value === undefined || value === "") return TREEMAP_NEUTRAL_COLOR;
+  const v = Number(value);
+  if (!Number.isFinite(v) || max <= min) return TREEMAP_NEUTRAL_COLOR;
+  let t = (v - min) / (max - min);
+  if (direction === "highToLow") t = 1 - t;
+  if (palette.discrete) {
+    const idx = Math.min(palette.stops.length - 1, Math.max(0, Math.round(t * (palette.stops.length - 1))));
+    return palette.stops[idx];
+  }
+  return treemapRampColor(palette.stops, t);
+}
+
+// Luminance relative, pour choisir un texte lisible sur n'importe quelle tuile
+// plutôt que d'imposer une couleur de texte fixe.
+function treemapLuminance(hex) {
+  const h = String(hex || "").replace("#", "");
+  if (h.length !== 6) return 1;
+  const channel = (v) => {
+    const c = parseInt(v, 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(h.slice(0, 2)) + 0.7152 * channel(h.slice(2, 4)) + 0.0722 * channel(h.slice(4, 6));
+}
+
+function treemapTextColor(background) {
+  return treemapLuminance(background) > 0.45 ? "#0B1526" : "#FFFFFF";
+}
+
+// Densité d'une tuile, d'après sa taille réelle en pixels — c'est elle qui
+// décide du nombre de champs affichés, jamais une estimation a priori.
+function treemapTileDensity(w, h, compact) {
+  const width = Number(w) || 0;
+  const height = Number(h) || 0;
+  const k = compact ? 0.8 : 1;
+  if (width >= 190 * k && height >= 118 * k) return "large";
+  if (width >= 118 * k && height >= 74 * k) return "medium";
+  return "small";
+}
+
+// Nombre de champs secondaires tolérés par densité : au-delà, les textes se
+// chevaucheraient et la tuile deviendrait illisible.
+function treemapSecondaryFieldBudget(density) {
+  if (density === "large") return 3;
+  if (density === "medium") return 1;
+  return 0;
+}
+
+// Pavage « squarified » (Bruls, Huizing, van Wijk) : des tuiles aussi proches
+// du carré que possible, donc comparables à l'œil. Les tuiles sont placées dans
+// le rectangle fourni, sans jamais en sortir.
+function squarifyTreemap(items, rect) {
+  const list = (Array.isArray(items) ? items : []).filter((i) => i && Number.isFinite(Number(i.weight)) && Number(i.weight) > 0);
+  const W = Number(rect && rect.w) || 0;
+  const H = Number(rect && rect.h) || 0;
+  if (!list.length || W <= 0 || H <= 0) return [];
+  const originX = Number(rect.x) || 0;
+  const originY = Number(rect.y) || 0;
+
+  const total = list.reduce((s, i) => s + Number(i.weight), 0);
+  const k = (W * H) / total;
+  const scaled = list
+    .map((i) => ({ item: i, area: Number(i.weight) * k }))
+    .sort((a, b) => b.area - a.area);
+
+  const out = [];
+  let x = originX, y = originY, w = W, h = H;
+
+  const worst = (row, len) => {
+    if (!row.length || len <= 0) return Infinity;
+    const s = row.reduce((a, b) => a + b.area, 0);
+    if (s <= 0) return Infinity;
+    const mx = Math.max(...row.map((r) => r.area));
+    const mn = Math.min(...row.map((r) => r.area));
+    if (mn <= 0) return Infinity;
+    const len2 = len * len, s2 = s * s;
+    return Math.max((len2 * mx) / s2, s2 / (len2 * mn));
+  };
+
+  const layoutRow = (row) => {
+    const s = row.reduce((a, b) => a + b.area, 0);
+    if (s <= 0) return;
+    if (w >= h) {
+      const rowW = Math.min(w, s / h);
+      let cy = y;
+      row.forEach((r, i) => {
+        const rowH = i === row.length - 1 ? y + h - cy : (r.area / s) * h;
+        out.push({ ...r.item, x, y: cy, w: rowW, h: rowH });
+        cy += rowH;
+      });
+      x += rowW; w -= rowW;
+    } else {
+      const rowH = Math.min(h, s / w);
+      let cx = x;
+      row.forEach((r, i) => {
+        const rowW = i === row.length - 1 ? x + w - cx : (r.area / s) * w;
+        out.push({ ...r.item, x: cx, y, w: rowW, h: rowH });
+        cx += rowW;
+      });
+      y += rowH; h -= rowH;
+    }
+  };
+
+  let row = [];
+  scaled.forEach((entry) => {
+    const side = Math.min(w, h);
+    const next = [...row, entry];
+    if (row.length && worst(row, side) < worst(next, side)) {
+      layoutRow(row);
+      row = [entry];
+    } else {
+      row = next;
+    }
+  });
+  if (row.length) layoutRow(row);
+  return out;
+}
+
+// Répartition verticale des groupes : chaque groupe reçoit une hauteur
+// proportionnelle à son poids, jamais inférieure à sa hauteur minimale utile.
+function treemapGroupRects(groups, rect, options) {
+  const list = (Array.isArray(groups) ? groups : []).filter((g) => g && Array.isArray(g.rows) && g.rows.length);
+  const W = Number(rect && rect.w) || 0;
+  const H = Number(rect && rect.h) || 0;
+  if (!list.length || W <= 0 || H <= 0) return [];
+  const opts = options || {};
+  const headerH = Number(opts.headerH) || 22;
+  const gap = Number(opts.gap) || 8;
+  const minBodyH = Number(opts.minBodyH) || 54;
+
+  const weights = list.map((g) => g.rows.reduce((s, r) => s + (Number(r.weight) || 0), 0));
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || list.length;
+  const available = H - list.length * headerH - Math.max(0, list.length - 1) * gap;
+  // Pas la place de tout caser proprement : chaque groupe garde sa hauteur
+  // minimale et la zone défile, plutôt que d'écraser les tuiles à néant.
+  const bodyTotal = Math.max(available, list.length * minBodyH);
+
+  let cursor = Number(rect.y) || 0;
+  return list.map((group, i) => {
+    const share = totalWeight > 0 ? weights[i] / totalWeight : 1 / list.length;
+    const bodyH = Math.max(minBodyH, Math.round(bodyTotal * share));
+    const out = {
+      group,
+      headerRect: { x: Number(rect.x) || 0, y: cursor, w: W, h: headerH },
+      bodyRect: { x: Number(rect.x) || 0, y: cursor + headerH, w: W, h: bodyH },
+    };
+    cursor += headerH + bodyH + gap;
+    return out;
+  });
+}
+
+// Configuration du widget. Toute valeur absente ou illisible retombe sur une
+// valeur sûre : un widget enregistré avant l'ajout d'un réglage continue de
+// s'afficher sans migration de données.
+const TREEMAP_TILE_FIELDS = [
+  { key: "projectName", label: "Nom du projet", locked: true },
+  { key: "dominantStatus", label: "Statut dominant des tâches" },
+  { key: "owner", label: "Responsable principal" },
+  { key: "sizeCount", label: "Tâches du filtre de taille" },
+  { key: "colorCount", label: "Tâches du filtre de coloration" },
+  { key: "progress", label: "Progression" },
+  { key: "averageCriticality", label: "Criticité moyenne" },
+  { key: "lateTaskCount", label: "Tâches en retard" },
+  { key: "urgentTaskCount", label: "Tâches urgentes" },
+  { key: "riskCount", label: "Risques ouverts" },
+  { key: "nextMilestone", label: "Prochain jalon" },
+  { key: "endDate", label: "Dernière échéance" },
+  { key: "budget", label: "Budget consommé" },
+  { key: "priority", label: "Priorité du projet" },
+  { key: "folder", label: "Dossier" },
+];
+const TREEMAP_DEFAULT_FIELDS = ["projectName", "sizeCount", "progress", "averageCriticality", "lateTaskCount"];
+
+function normalizeProjectTreemapConfig(widget) {
+  const w = widget || {};
+  const colorMode = TREEMAP_COLOR_MODES.includes(w.treemapColorMode) ? w.treemapColorMode : "sizeFilterGradient";
+  const known = new Set(TREEMAP_TILE_FIELDS.map((f) => f.key));
+  const rawFields = Array.isArray(w.treemapFields) ? w.treemapFields : TREEMAP_DEFAULT_FIELDS;
+  const fields = [];
+  rawFields.forEach((key) => {
+    if (typeof key !== "string" || !key) return;
+    if (!known.has(key) && !key.startsWith("cf:")) return;
+    if (!fields.includes(key)) fields.push(key);
+  });
+  // Le nom du projet est toujours affiché : sans lui la tuile ne désigne rien.
+  if (!fields.includes("projectName")) fields.unshift("projectName");
+  const paletteKey = TREEMAP_PALETTES[w.treemapPalette]
+    ? w.treemapPalette
+    : (colorMode === "averageCriticality" ? "levels" : TREEMAP_DEFAULT_PALETTE);
+  return {
+    sizeFilter: w.treemapSizeFilter || null,
+    colorFilter: w.treemapColorFilter || null,
+    colorMode,
+    palette: paletteKey,
+    direction: TREEMAP_GRADIENT_DIRECTIONS.includes(w.treemapDirection) ? w.treemapDirection : "lowToHigh",
+    showZeroProjects: w.treemapShowZeroProjects === true,
+    fields,
+    showProgressRing: w.treemapShowProgressRing !== false,
+    groupBy: TREEMAP_GROUP_BY.includes(w.treemapGroupBy) ? w.treemapGroupBy : "none",
+    compact: w.treemapCompact === true,
+    showLegend: w.treemapShowLegend !== false,
+    showSearch: w.treemapShowSearch !== false,
+    openOnClick: w.treemapOpenOnClick !== false,
+    radius: ["sharp", "medium", "round"].includes(w.treemapRadius) ? w.treemapRadius : "medium",
+    gap: Math.max(0, Math.min(12, Number.isFinite(Number(w.treemapGap)) ? Math.round(Number(w.treemapGap)) : 4)),
+    border: w.treemapBorder !== false,
+  };
+}
+
+// Paliers de la légende : quatre tranches du domaine, avec le nombre de projets
+// de chacune — cliquables pour ne garder temporairement que cette tranche.
+function treemapLegendBuckets(rows, colorMode, paletteKey, direction) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (colorMode === "averageCriticality") {
+    return TREEMAP_CRITICALITY_LEVELS.map((level, i) => {
+      const next = TREEMAP_CRITICALITY_LEVELS[i + 1];
+      const max = next ? next.min : 101;
+      return {
+        key: level.key,
+        label: level.label,
+        min: level.min,
+        max,
+        color: treemapTileColor((level.min + Math.min(100, max - 1)) / 2, { min: 0, max: 100 }, paletteKey, direction),
+        count: list.filter((r) => r.colorValue >= level.min && r.colorValue < max).length,
+      };
+    });
+  }
+  const domain = treemapColorDomain(list, colorMode);
+  const top = Number(domain.top) || 0;
+  if (top <= 0) return [];
+  // Des tranches ENTIÈRES : un comptage de tâches n'a pas de valeur décimale, et
+  // « 1–1 » ou « 0–0,5 » ne veut rien dire pour qui lit la légende.
+  // top + 1 valeurs distinctes (0 compris) réparties en quatre tranches au plus.
+  const step = Math.max(1, Math.ceil((top + 1) / 4));
+  const buckets = [];
+  for (let start = 0; start <= top; start += step) {
+    const last = Math.min(top, start + step - 1);
+    buckets.push({
+      key: "b" + start,
+      label: start === last ? String(start) : `${start}–${last}`,
+      min: start,
+      max: last + 1,
+      color: treemapTileColor((start + last) / 2, domain, paletteKey, direction),
+      count: list.filter((r) => r.colorValue >= start && r.colorValue <= last).length,
+    });
+  }
+  return buckets;
+}
+// === NEXORA:PROJECT-TREEMAP:END ===
 
 // Sélecteur multiple de tâches, respectant l'arborescence Projet → tâches du
 // Gantt, avec recherche — même mise en forme (pastille de projet, chip) que le
@@ -12379,393 +12958,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
           </button>
         )}
         {!embedded && (
-          <button className={"lp-tool-btn" + (showSubtasks ? " active" : "")} onClick={() => setPrefs({ showSubtasks: !showSubtasks })} title="Afficher les sous-tâches">
-            <GripVertical size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button className={"lp-tool-btn" + (showCriticalPath ? " active" : "")} onClick={() => setShowCriticalPath((v) => !v)} title="Mettre en évidence le chemin critique">
-            <Zap size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button className={"lp-tool-btn" + (showRiskBadges ? " active" : "")} onClick={() => setShowRiskBadges((v) => !v)} title="Afficher les alertes de retard">
-            <AlertTriangle size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button className={"lp-tool-btn" + (networkMode ? " active" : "")} onClick={() => setPrefs((p) => {
-              const next = !p.networkMode;
-              return { ...p, networkMode:next, deadlineMode:next ? false : !!p.deadlineMode };
-            })} title="Vue réseau : uniquement les jalons de tous les projets, sur un axe commun">
-            <Network size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button
-            className={"lp-tool-btn" + (deadlineMode ? " active" : "")}
-            onClick={() => setPrefs((p) => {
-              const next = !p.deadlineMode;
-              return { ...p, deadlineMode:next, networkMode:next ? false : !!p.networkMode };
-            })}
-            title="Échéances : représenter toutes les dates de fin comme des stations de métro"
-          >
-            <CalendarClock size={14} /> Échéances
-          </button>
-        )}
-        {!embedded && (
-          <button className="lp-tool-btn" onClick={exportPoster} title="Exporter en image (affiche)">
-            <Download size={14} />
-          </button>
-        )}
-        {embedded && (
-          <span className="lp-pm-search lp-pm-search-compact">
-            <Search size={12} />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Rechercher…" />
-            {searchQuery && <button className="lp-pm-search-clear" onClick={() => setSearchQuery("")} title="Effacer"><X size={11} /></button>}
-          </span>
-        )}
-        {embedded && (
-          <DropdownButton label="" icon={<MoreHorizontal size={14} />} title="Plus d'options">
-            <button type="button" className="lp-dropdown-action-row" onClick={() => setZoomKey("auto")}><Maximize2 size={13} /> Zoom automatique</button>
-            <button type="button" className="lp-dropdown-action-row" onClick={resetZoom}><RefreshCw size={13} /> Réinitialiser le zoom</button>
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <div className="lp-dropdown-group-label">Champs affichés</div>
-            {PM_FIELD_OPTIONS.map((f) => (
-              <label className="lp-checkbox-line" key={f.key}>
-                <input type="checkbox" checked={fields.includes(f.key)} onChange={() => setFields((prev) => (prev.includes(f.key) ? prev.filter((x) => x !== f.key) : [...prev, f.key]))} />
-                {f.label}
-              </label>
-            ))}
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <label className="lp-checkbox-line"><input type="checkbox" checked={allCollapsed} onChange={toggleAllCollapsed} /> Tout replier</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={showSubtasks} onChange={() => setPrefs({ showSubtasks: !showSubtasks })} /> Afficher les sous-tâches</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={showCriticalPath} onChange={() => setShowCriticalPath((v) => !v)} /> Chemin critique en évidence</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={showRiskBadges} onChange={() => setShowRiskBadges((v) => !v)} /> Alertes de retard</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={networkMode} onChange={() => setNetworkMode((v) => !v)} /> Vue réseau (jalons uniquement)</label>
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <button type="button" className="lp-dropdown-action-row" onClick={exportPoster}><Download size={13} /> Exporter en image</button>
-          </DropdownButton>
-        )}
-      </ViewToolbarPortal>
-
-      {!embedded && <div className="lp-pm-header-row">
-        <h2>Planning Projets</h2>
-        <span className="lp-pm-header-sub">Vue d'ensemble des projets et de leurs tâches</span>
-        <span className="lp-pm-header-sep">·</span>
-        <span className="lp-pm-legend-inline"><span className="lp-pm-legend-line" /> Projet</span>
-        <span className="lp-pm-legend-inline"><span className="lp-pm-legend-line" style={{ background: "var(--text-muted)", height: 3 }} /> Tâche (couleur = statut)</span>
-        <span className="lp-pm-legend-inline"><svg width="16" height="14" viewBox="-2 -7 16 14"><Terminus x={0} y={0} color="var(--text-600)" size={0.75} /></svg> Fin de projet</span>
-        <span className="lp-pm-legend-inline"><svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="var(--text-600)" transform="rotate(45 6 6)" /></svg> Jalon</span>
-      </div>}
-
-      <div className="lp-pm-sticky-axis-shell" aria-hidden="true">
-        <div
-          className="lp-pm-sticky-axis-inner"
-          style={{ width: railLeftW + chartWidth, transform: `translateX(${-pmScrollLeft}px)` }}
-        >
-          <div className="lp-pm-top-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const topUnit = dayWidth < 1.5 ? null : "month";
-              if (!topUnit) return null;
-              const arr = [];
-              let cur = unitStart(globalMin, topUnit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 200) {
-                const d = new Date(cur + "T00:00:00");
-                arr.push({ start: cur, label: `${unitLabel(cur, "month")}${minYear !== maxYear ? " " + d.getFullYear() : ""}` });
-                cur = addDays(cur, unitLen(cur, "month"));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-top-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-          </div>
-          <div className="lp-pm-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const unit = dayWidth < 1.5 ? "year" : dayWidth < 5 ? "month" : dayWidth < 15 ? "week" : "day";
-              const arr = [];
-              let cur = unitStart(globalMin, unit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 400) {
-                const d = new Date(cur + "T00:00:00");
-                const showYear = minYear !== maxYear && (unit === "month" || unit === "week" || unit === "day") && d.getMonth() === 0;
-                arr.push({ start: cur, label: unitLabel(cur, unit) + (showYear ? ` ${d.getFullYear()}` : "") });
-                cur = addDays(cur, unitLen(cur, unit));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-axis-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-            {minYear !== maxYear && <div className="lp-pm-axis-year-badge">{minYear} → {maxYear}</div>}
-          </div>
-        </div>
-      </div>
-
-      <div className="lp-pm-scroll" ref={scrollRef} style={{ overflowX: isAuto ? "hidden" : "auto" }}>
-        <div style={{ minWidth: railLeftW + chartWidth, position: "relative" }}>
-          <div className="lp-pm-top-axis lp-pm-original-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const topUnit = dayWidth < 1.5 ? null : "month";
-              if (!topUnit) return null;
-              const arr = [];
-              let cur = unitStart(globalMin, topUnit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 200) {
-                const d = new Date(cur + "T00:00:00");
-                arr.push({ start: cur, label: `${unitLabel(cur, "month")}${minYear !== maxYear ? " " + d.getFullYear() : ""}` });
-                cur = addDays(cur, unitLen(cur, "month"));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-top-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-          </div>
-          <div className="lp-pm-axis lp-pm-original-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const unit = dayWidth < 1.5 ? "year" : dayWidth < 5 ? "month" : dayWidth < 15 ? "week" : "day";
-              const arr = [];
-              let cur = unitStart(globalMin, unit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 400) {
-                const d = new Date(cur + "T00:00:00");
-                const showYear = minYear !== maxYear && (unit === "month" || unit === "week" || unit === "day") && d.getMonth() === 0;
-                arr.push({ start: cur, label: unitLabel(cur, unit) + (showYear ? ` ${d.getFullYear()}` : "") });
-                cur = addDays(cur, unitLen(cur, unit));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-axis-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-            {minYear !== maxYear && (
-              <div className="lp-pm-axis-year-badge">{minYear} → {maxYear}</div>
-            )}
-          </div>
-
-          {deadlineMode && (
-            <div style={{
-              position:"absolute", top:7, right:12, zIndex:8,
-              display:"flex", alignItems:"center", gap:6,
-              padding:"4px 7px", border:"1px solid var(--border)",
-              background:"var(--surface)", borderRadius:"var(--radius-sm)",
-              fontFamily:"var(--font-mono)", fontSize:8.5, fontWeight:800,
-              color:"var(--text-secondary)"
-            }}>
-              <CalendarClock size={11} /> MODE ÉCHÉANCES · glisser une station = modifier la fin
-            </div>
-          )}
-          <div className="lp-pm-bands" style={{ left: railLeftW, width: chartWidth, height: totalChartHeight }}>
-            {monthBands.map((b, i) => (
-              <div key={i} className="lp-pm-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0), background: accent }} />
-            ))}
-            {weekendBands.map((b, i) => (
-              <div key={"we-" + i} className="lp-pm-weekend-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0) }} />
-            ))}
-          </div>
-
-          {/* Flèches de dépendance INTER-projets, superposées à toutes les lignes.
-              Passe AU-DESSUS des lignes de projet (z-index supérieur à .lp-pm-row) pour
-              ne jamais rester invisible sous leur tronc — seul le texte des tâches, qui
-              porte son propre halo blanc, peut éventuellement passer par-dessus. */}
-          <svg
-            className="lp-pm-cross-arrows"
-            style={{ position: "absolute", left: LEFT_W, top: 0, width: chartWidth, height: totalChartHeight, pointerEvents: "none", zIndex: 2 }}
-          >
-            <defs>
-              {/* placeholders — chaque flèche définit son propre dégradé/marqueur ci-dessous */}
-            </defs>
-            {!deadlineMode && dated.filter((t) => t.dependsOn && t.dependsOn.length).flatMap((t) =>
-              t.dependsOn.map((depId) => {
-                const depTask = dated.find((x) => x.id === depId);
-                if (!depTask || depTask.projectId === t.projectId) return null; // intra-projet déjà géré localement
-                const from = crossPositionsRef.current[depId];
-                // Repli sur la position de fin si la tâche n'a pas de marqueur de début
-                // séparé (jalon) — sinon, arrive bien sur le DÉBUT de la tâche suivante.
-                const to = crossStartPositionsRef.current[t.id] || crossPositionsRef.current[t.id];
-                if (!from || !to) return null;
-                const fx = from.x - LEFT_W + 6, fy = from.y, tx = to.x - LEFT_W, ty = to.y;
-                const laneX = dependencyLaneX(fx, fy, tx - 4, ty, depId, t.id);
-                const bend = Math.min(10, Math.abs(ty - fy) / 2 || 8);
-                const dir = ty > fy ? 1 : -1;
-                const endX = tx - 4;
-                // Routage orthogonal "plan de métro" :
-                // 1) on sort à gauche de la station prédécesseure (jamais sous son titre),
-                // 2) on descend/remonte dans une voie verticale vérifiée sans texte,
-                // 3) on rejoint la tâche suivante par la gauche (son titre est à droite).
-                const d = Math.abs(ty - fy) < 1
-                  ? `M ${fx} ${fy} L ${endX} ${ty}`
-                  : `M ${fx} ${fy} L ${laneX + bend} ${fy} Q ${laneX} ${fy} ${laneX} ${fy + dir * bend} L ${laneX} ${ty - dir * bend} Q ${laneX} ${ty} ${laneX + bend} ${ty} L ${endX} ${ty}`;
-                const gradId = `pm-cross-grad-${depId}-${t.id}`;
-                return (
-                  <React.Fragment key={depId + "-" + t.id}>
-                    <defs>
-                      <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={fx} y1={fy} x2={tx} y2={ty}>
-                        <stop offset="0%" stopColor={accent} stopOpacity="0.45" />
-                        <stop offset="100%" stopColor={accent} />
-                      </linearGradient>
-                    </defs>
-                    {/* Contour blanc en dessous pour garantir le contraste sur n'importe
-                        quel fond (troncs colorés, bandes de mois/week-end...) — sans lui,
-                        le trait fin se perdait complètement en longeant les bords des
-                        lignes de projet, rendant la dépendance invisible en pratique. */}
-                    <path d={d} fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" opacity="0.9" />
-                    <path d={d} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.4" strokeDasharray="5 4" opacity="0.95" strokeLinecap="round" />
-                    {/* Station de correspondance façon plan de métro : cercles imbriqués aux
-                        deux extrémités, pour renforcer la métaphore d'un changement de ligne
-                        plutôt qu'une simple flèche technique. */}
-                    <circle cx={fx} cy={fy} r="5.5" fill="#fff" stroke={accent} strokeWidth="1.6" />
-                    <circle cx={fx} cy={fy} r="2" fill={accent} />
-                    <circle cx={tx - 4} cy={ty} r="6.5" fill="#fff" stroke={accent} strokeWidth="1.8" />
-                    <circle cx={tx - 4} cy={ty} r="6.5" fill="none" stroke="#fff" strokeWidth="1" strokeDasharray="0" />
-                    <circle cx={tx - 4} cy={ty} r="2.3" fill={accent} />
-                  </React.Fragment>
-                );
-              })
-            )}
-
-            {/* Tâches à deux projets : convergence des deux lignes vers un tronc commun
-                (couleurs alternées sur UN seul trait), pour la durée de la tâche partagée,
-                puis divergence de retour vers chaque ligne de projet. Repli automatique :
-                si l'un des deux projets n'est pas dans le périmètre actuel, la tâche est
-                déjà rendue normalement par sa propre ligne (voir isFullyShared plus haut) —
-                ce bloc ne dessine QUE le cas où les deux lignes sont bien visibles. */}
-            {!networkMode && !deadlineMode && dated.filter((t) => isFullyShared(t)).map((t) => {
-              const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
-              const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
-              if (!p1 || !p2) return null;
-              const y1 = rowAbsoluteMainY[t.projectId], y2 = rowAbsoluteMainY[t.secondaryProjectId];
-              const x0 = xFor(t.start);
-              const topProjectId = y1 < y2 ? t.projectId : t.secondaryProjectId;
-              // Chaque tâche partagée occupe sa propre voie au sein de l'espace dédié
-              // (calculée plus haut par répartition gloutonne façon "salle de réunion")
-              // — évite que plusieurs tâches partagées concurrentes se superposent sur
-              // le même axe quand elles se chevauchent dans le temps.
-              const lane = sharedTaskLane[t.id] || 0;
-              const gapTop = rowGapTopAfter[topProjectId];
-              const midY = gapTop != null ? gapTop + (lane + 0.5) * SHARED_GAP_H : (y1 + y2) / 2;
-              const done = isTaskDoneGlobal(t, ctx);
-              const color1 = p1.color || "var(--text-muted)", color2 = p2.color || "var(--text-muted)";
-              const gradId = "shared-grad-" + t.id;
-              const trunkStyle = appearance?.sharedTrunkStyle || "gradient";
-
-              // === Jalon partagé : un point unique, comme n'importe quel jalon — pas
-              // de durée, pas de "tronc", une seule jonction par ligne de projet. ===
-              if (t.milestone) {
-                return (
-                  <g key={"shared-" + t.id} style={{ pointerEvents: "auto" }}>
-                    <path d={`M ${x0} ${y1} L ${x0} ${midY}`} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                    <path d={`M ${x0} ${y2} L ${x0} ${midY}`} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                    <circle cx={x0} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                    <circle cx={x0} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                    {/* Anneau de correspondance : marque ce jalon comme un nœud partagé entre
-                        deux lignes, plus imposant qu'une station normale (double anneau). */}
-                    <circle cx={x0} cy={midY} r="13" fill="none" stroke={color1} strokeWidth="1.4" strokeDasharray="2 2.5" opacity="0.85" />
-                    <circle cx={x0} cy={midY} r="10.5" fill="var(--surface)" stroke={color2} strokeWidth="1.4" />
-                    <g onMouseDown={(e) => startDragTask(e, t, "start")} style={{ cursor: "ew-resize" }}>
-                      <circle cx={x0} cy={midY} r="13" fill="transparent" />
-                      <foreignObject x={x0 - 9} y={midY - 9} width="18" height="18" style={{ overflow: "visible" }}>
-                        <MilestoneGlyph size={18} icon={resolveMilestoneIcon(t, ctx)} />
-                      </foreignObject>
-                    </g>
-                    {(() => {
-                      const sharedTitleW = pmMeasureText(t.title || "", "700 10.5px Inter, sans-serif");
-                      const sharedMeta = `${p1.name} + ${p2.name}`;
-                      const sharedMetaW = pmMeasureText(sharedMeta, "600 9px Inter, sans-serif");
-                      return (
-                        <>
-                          <rect x={x0 + 12} y={midY - 10} width={sharedTitleW + 10} height={20} rx="3" fill="var(--surface)" opacity="0.98" />
-                          <text x={x0 + 16} y={midY} dominantBaseline="middle" fontFamily="Inter, sans-serif" fontSize="10.5" fontWeight="700" fill="var(--text-900)" style={{ cursor: "pointer" }} onClick={() => onOpen(t)}>{t.title}</text>
-                          {!!String(t.desc ?? t.description ?? "").trim() && (
-                            <g
-                              className="lp-pm-note-trigger"
-                              transform={`translate(${x0 + 16 + sharedTitleW + 7}, ${midY - 8})`}
-                              onClick={(e)=>{e.stopPropagation();setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});}}
-                              style={{cursor:"pointer"}}
-                            >
-                              <title>Afficher la description</title>
-                              <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
-                              <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
-                            </g>
-                          )}
-                          <rect x={x0 + 12} y={midY + 5} width={sharedMetaW + 10} height={16} rx="3" fill="var(--surface)" opacity="0.98" />
-                          <text x={x0 + 16} y={midY + 13} dominantBaseline="middle" fontFamily="Inter, sans-serif" fontSize="9" fontWeight="600" fill={color1}>{sharedMeta}</text>
-                        </>
-                      );
-                    })()}
-                  </g>
-                );
-              }
-
-              // === Tâche partagée avec durée : tronc commun en dégradé ===
-              const x1raw = xFor(t.end);
-              const x1 = Math.max(x1raw, x0 + 30); // largeur minimale pour rester lisible
-              const span = x1 - x0;
-              const pct = done ? 100 : Math.max(0, Math.min(100, t.progress || 0));
-              const xProgress = x0 + (span * pct) / 100;
-              const path1 = `M ${x0} ${y1} L ${x0} ${midY}`;
-              const path2 = `M ${x0} ${y2} L ${x0} ${midY}`;
-              const trunkStart = x0, trunkEnd = x1;
-              const path3 = `M ${trunkStart} ${midY} L ${trunkEnd} ${midY}`;
-              const path4 = `M ${x1} ${midY} L ${x1} ${y1}`;
-              const path5 = `M ${x1} ${midY} L ${x1} ${y2}`;
-              const progressTrunkEnd = Math.min(trunkEnd, Math.max(trunkStart, xProgress));
-
-              return (
-                <g key={"shared-" + t.id} style={{ pointerEvents: "auto" }}>
-                  <defs>
-                    <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={x0} y1={midY} x2={x1} y2={midY}>
-                      <stop offset="0%" stopColor={color1} />
-                      <stop offset="100%" stopColor={color2} />
-                    </linearGradient>
-                  </defs>
-                  {/* Jonctions verticales en pointillé entre chaque axe principal et
-                      l'espace partagé — même codage que les connecteurs de dépendance
-                      existants ailleurs dans cette vue (fin, discret, pointillé). */}
-                  <path d={path1} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  <path d={path2} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  <path d={path4} fill="none" stroke={color1} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  <path d={path5} fill="none" stroke={color2} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.35 : 0.6} />
-                  {/* Petit repère à chaque intersection entre l'axe principal d'un projet
-                      et la jonction verticale vers l'espace partagé — cercle blanc à
-                      bordure noire, discret, purement indicatif. */}
-                  <circle cx={x0} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  <circle cx={x0} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  <circle cx={x1} cy={y1} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  <circle cx={x1} cy={y2} r="3.5" fill="var(--surface)" stroke="var(--text-900)" strokeWidth="1.4" />
-                  {/* Tronc commun : deux styles au choix (réglage Apparence) — dégradé
-                      fondu (une ligne, transition douce entre les deux couleurs) ou
-                      torsade (deux filaments entrelacés, un par couleur de projet). */}
-                  {trunkStyle === "braid" ? (
-                    <>
-                      <path d={buildBraidPath(trunkStart, trunkEnd, midY, 3.2, 26, true)} fill="none" stroke={color1} strokeWidth="2.4" strokeLinecap="round" opacity={done ? 0.45 : 0.7} style={{ cursor: "pointer" }} onClick={() => onOpen(t)} />
-                      <path d={buildBraidPath(trunkStart, trunkEnd, midY, 3.2, 26, false)} fill="none" stroke={color2} strokeWidth="2.4" strokeLinecap="round" opacity={done ? 0.45 : 0.7} />
-                      {pct > 0 && (
-                        <>
-                          <path d={buildBraidPath(trunkStart, progressTrunkEnd, midY, 3.2, 26, true)} fill="none" stroke={color1} strokeWidth="4" strokeLinecap="round" opacity={done ? 0.65 : 1} />
-                          <path d={buildBraidPath(trunkStart, progressTrunkEnd, midY, 3.2, 26, false)} fill="none" stroke={color2} strokeWidth="4" strokeLinecap="round" opacity={done ? 0.65 : 1} />
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <path d={path3} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.8" strokeLinecap="round" opacity={done ? 0.4 : 0.55} style={{ cursor: "pointer" }} onClick={() => onOpen(t)} />
-                      {pct > 0 && (
-                        <path d={`M ${trunkStart} ${midY} L ${progressTrunkEnd} ${midY}`} fill="none" stroke={`url(#${gradId})`} strokeWidth="4.5" strokeLinecap="round" opacity={done ? 0.55 : 0.95} />
-                      )}
-                    </>
-                  )}
-                  {/* Chatoiement optionnel : un reflet lumineux qui balaie le tronc en
-                      continu, pour renforcer visuellement l'idée de connexion active
-                      entre les deux projets (Réglages > Apparence). */}
-                  {/* L’animation du disque est rendue dans un calque global final
-                      (voir ci-dessous), afin qu’aucune ligne ou géométrie d’une autre
-                      tâche partagée ne puisse passer visuellement au-dessus. */}
-                  {/* Nœuds de correspondance : géométrie à double anneau — plus imposante
-                      qu'une station normale (r=5.5) — pour signaler "changement de ligne",
-                      avec un disque intérieur moitié couleur projet 1 / moitié couleur
-                      projet 2. Glisser pour changer la date de début/fin, cliquer sans
-                      glisser pour ouvrir la fiche — même mécanique que les stations
-                      normales de la vue Métro. */}
-                  <g onMouseDown={(e) => startDragTask(e, t, "start")} style={{ cursor: "ew-resize" }}>
-                    <circle cx={x0} cy={midY} r="13" fill="transparent" />
-                    <circle cx={x0} cy={midY} r="10.5" fill="none" stroke={color2} strokeWidth="1.4" strokeDasharray="2 2.5" opacity="0.85" />
-                    {done ? (
-                      <>
-                        <circle cx={x0} cy={midY} r="6.5" fill="var(--success)" />
-                        <path d={`M ${x0 - 3} ${midY} L ${x0 - 1} $
+          <button className={"lp-tool-btn" + (showSubtasks ? " active" : ""
