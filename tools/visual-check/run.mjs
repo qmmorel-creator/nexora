@@ -117,6 +117,38 @@ try {
   treemap.error = String(error).split("\n")[0];
 }
 
+// Poignée d'avancement du Mini-Gantt : elle doit rester SOUS le pointeur. Le
+// geste est rejoué pour de vrai — appui, déplacement, relâchement — et l'écart
+// final entre la poignée et la souris est mesuré. Un pourcentage calculé sur la
+// piste entière plutôt que sur la barre laissait la poignée loin derrière.
+const drag = { gap: null, before: null, after: null };
+try {
+  const handle = page.locator("#harness-first-minigantt .lp-widget-minigantt-progress-handle").first();
+  const bar = page.locator("#harness-first-minigantt .lp-widget-minigantt-bar").first();
+  // La souris de Playwright travaille en coordonnées de FENÊTRE : sans ce
+  // défilement, la poignée resterait sous la ligne de flottaison et le geste
+  // ne l'atteindrait jamais.
+  await handle.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  const barBox = await bar.boundingBox();
+  const handleBox = await handle.boundingBox();
+  drag.before = Math.round(handleBox.x + handleBox.width / 2);
+  // Cible : 75 % de la largeur de la barre, bien à droite de la position initiale.
+  const targetX = Math.round(barBox.x + barBox.width * 0.75);
+  const targetY = Math.round(barBox.y + barBox.height / 2);
+  await page.mouse.move(drag.before, Math.round(handleBox.y + handleBox.height / 2));
+  await page.mouse.down();
+  await page.mouse.move(targetX, targetY, { steps: 12 });
+  await page.waitForTimeout(200);
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  const moved = await page.locator("#harness-first-minigantt .lp-widget-minigantt-progress-handle").first().boundingBox();
+  drag.after = Math.round(moved.x + moved.width / 2);
+  drag.gap = Math.abs(drag.after - targetX);
+} catch (error) {
+  drag.error = String(error).split("\n")[0];
+}
+
 // Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
 // présente, cochée pour cette tâche, et son habillage réglable au même endroit.
 const taskMeta = { checkbox: 0, checked: false, controls: 0, hints: [], riskButton: 0, riskRows: 0, riskSeverities: 0 };
@@ -325,6 +357,10 @@ expect(treemap.opened === "p1" || treemap.opened === "p2" || treemap.opened === 
 expect(treemap.colorModes === 3, `Treemap : ${treemap.colorModes} mode(s) de coloration dans la fiche, 3 attendus`);
 expect(treemap.fieldRows >= 5, `Treemap : ${treemap.fieldRows} champ(s) de tuile réordonnables, au moins 5 attendus`);
 expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas le moteur de filtres avancés");
+
+expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error}`);
+expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
+expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
 
 expect(!taskMeta.error, `contrôle de la fiche de tâche interrompu : ${taskMeta.error}`);
 expect(taskMeta.checkbox === 1, "Fiche de tâche : la case « méta bloc temporel » est absente d'une tâche de projet Google Calendar");

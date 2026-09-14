@@ -1,4 +1,19 @@
-*/}
+unkEnd} ${midY}`} fill="none" stroke={`url(#${gradId})`} strokeWidth="4.5" strokeLinecap="round" opacity={done ? 0.55 : 0.95} />
+                      )}
+                    </>
+                  )}
+                  {/* Chatoiement optionnel : un reflet lumineux qui balaie le tronc en
+                      continu, pour renforcer visuellement l'idée de connexion active
+                      entre les deux projets (Réglages > Apparence). */}
+                  {/* L’animation du disque est rendue dans un calque global final
+                      (voir ci-dessous), afin qu’aucune ligne ou géométrie d’une autre
+                      tâche partagée ne puisse passer visuellement au-dessus. */}
+                  {/* Nœuds de correspondance : géométrie à double anneau — plus imposante
+                      qu'une station normale (r=5.5) — pour signaler "changement de ligne",
+                      avec un disque intérieur moitié couleur projet 1 / moitié couleur
+                      projet 2. Glisser pour changer la date de début/fin, cliquer sans
+                      glisser pour ouvrir la fiche — même mécanique que les stations
+                      normales de la vue Métro. */}
                   <g onMouseDown={(e) => startDragTask(e, t, "start")} style={{ cursor: "ew-resize" }}>
                     <circle cx={x0} cy={midY} r="13" fill="transparent" />
                     <circle cx={x0} cy={midY} r="10.5" fill="none" stroke={color2} strokeWidth="1.4" strokeDasharray="2 2.5" opacity="0.85" />
@@ -3257,7 +3272,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       if (!point) return;
       if (e.cancelable) e.preventDefault();
       if (d.mode === "progress") {
-        const pct = Math.round(Math.max(0, Math.min(1, (point.clientX - d.trackLeft) / d.trackWidth)) * 100);
+        // Mesuré sur la barre : 0 % à son bord gauche, 100 % à son bord droit,
+        // donc la poignée reste exactement sous le pointeur.
+        const pct = Math.round(Math.max(0, Math.min(1, (point.clientX - d.refLeft) / d.refWidth)) * 100);
         if (pct !== d.lastProgress) { d.moved = true; d.lastProgress = pct; onUpdateTask(d.taskId, { progress: pct }); }
         return;
       }
@@ -3294,17 +3311,26 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     };
   }, [onUpdateTask]);
 
-  const startBarDrag = (e, task, mode, trackEl) => {
-    if (!onUpdateTask || !trackEl) return;
+  // `refEl` est l'élément SUR LEQUEL le geste se mesure, et il n'est pas le
+  // même selon le mode :
+  //  - dates (début, fin, jalon) : la PISTE, puisqu'un déplacement se convertit
+  //    en jours via la largeur d'une journée ;
+  //  - avancement : la BARRE, puisque la poignée est positionnée en pourcentage
+  //    de la barre (`left: pct%` dans .lp-widget-minigantt-bar).
+  // Mesurer l'avancement sur la piste entière faisait avancer la poignée d'une
+  // simple fraction du déplacement de la souris : plus la barre était courte
+  // par rapport à la fenêtre affichée, plus le pointeur s'éloignait d'elle.
+  const startBarDrag = (e, task, mode, refEl) => {
+    if (!onUpdateTask || !refEl) return;
     const touch = e.touches && e.touches[0];
     if (!touch && e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
-    const rect = trackEl.getBoundingClientRect();
+    const rect = refEl.getBoundingClientRect();
     dragStateRef.current = {
       taskId: task.id, mode,
       startX: touch ? touch.clientX : e.clientX,
       origStart: task.start, origEnd: task.end,
-      trackLeft: rect.left, trackWidth: rect.width,
+      refLeft: rect.left, refWidth: rect.width || 1,
       dayWidth: (rect.width / span) || 1,
       lastDelta: 0, lastProgress: task.progress || 0, moved: false,
     };
@@ -3939,8 +3965,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 />
                 <div
                   className="lp-widget-minigantt-progress-handle" style={{ left: `${pct}%` }} title={`Glisser pour changer l'avancement (${pct}%)`}
-                  onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-track"))}
-                  onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+                  onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-bar"))}
+                  onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-bar"))}
                 />
               </>
             )}
