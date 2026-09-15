@@ -1,4 +1,378 @@
-",
+extAnchor="middle" fontSize="8.5" fontWeight="700" fontFamily="Inter, sans-serif" fill={c.color}>{c.text}</text>
+                  </g>
+                );
+              })}
+              {subtasks.map(({ sub, depth }) => {
+                const subX = xFor(sub.end || t.end);
+                const subY = mainY + side * depth; // profondeur absolue depuis la ligne principale
+                // Le texte part À GAUCHE de la bulle (jamais à droite) : la marge
+                // (au-delà du rayon de la zone de clic invisible, r=9) garantit qu'il
+                // ne la recouvre jamais, quelle que soit sa longueur.
+                const subTitleW2 = pmMeasureText(truncateTitle(sub.text), SUB_TITLE_FONT);
+                const subGap = 12;
+                return (
+                  <g key={"subtxt-" + sub.id}>
+                    <g className="lp-pm-sub-drag" onMouseDown={(e) => startDragSubtask(e, t.id, sub.id, sub.end || t.end)} onTouchStart={(e) => startDragSubtask(e, t.id, sub.id, sub.end || t.end)} style={{ cursor: "ew-resize" }}>
+                      <circle cx={subX} cy={subY} r="9" fill="transparent" />
+                      <Station x={subX} y={subY} color="var(--text-muted)" r={3} done={sub.done} />
+                    </g>
+                    <rect x={subX - subGap - subTitleW2} y={subY - 6} width={subTitleW2 + 6} height={12} fill="var(--surface)" />
+                    <text x={subX - subGap} y={subY} dominantBaseline="middle" textAnchor="end" fontSize="8" fontWeight="600" fontFamily="Inter, sans-serif" fill="var(--text-600)" opacity={sub.done ? 0.5 : 1} onClick={() => onOpen(t)} className="lp-pm-task">{truncateTitle(sub.text)}</text>
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+        {!isCollapsed && (
+          <g
+            onClick={(e) => { e.stopPropagation(); setProjectSummary({ row, x: e.clientX, y: e.clientY }); }}
+            style={{ cursor: "pointer" }}
+          >
+            {/* Terminus : butoir vectoriel (barre + demi-disque), pas d'emoji. */}
+            <circle cx={xFor(maxDate) + 12} cy={mainY} r="14" fill="transparent" />
+            <Terminus x={xFor(maxDate) + 6} y={mainY} color={color} />
+            {appearance?.animConfetti && <ProjectConfetti x={xFor(maxDate) + 16} y={mainY} active={confettiProjectIds.has(p.id)} />}
+          </g>
+        )}
+      </g>
+    );
+  };
+
+  // Vue réseau : une ligne compacte par projet, uniquement les jalons (+ un
+  // repère de fin de projet), tous alignés sur l'axe temporel commun déjà
+  // calculé pour la vue complète — de quoi lire l'état de tous les projets
+  // en quelques secondes, sans le détail tâche par tâche.
+  const DeadlineRow = ({ row }) => {
+    const p = row.project;
+    const color = p.color || "var(--text-muted)";
+    const statusColorFor = (task) => ctx.statuses.find((st) => st.id === task?.statusId)?.color || color;
+    const groups = row.deadlineGroups || [];
+    const laneY = row.mainY;
+    const isCollapsed = collapsed[p.id];
+
+    if (isCollapsed) {
+      return (
+        <g>
+          {todayX !== null && (
+            <line x1={todayX} y1={0} x2={todayX} y2={56} stroke="var(--accent)" strokeWidth="1.8" strokeDasharray="4 5" opacity=".62" />
+          )}
+          <line x1={xFor(row.minDate)} y1={28} x2={xFor(row.maxDate)} y2={28} stroke={color} strokeWidth="3.2" strokeLinecap="round" opacity=".16" />
+          {groups.length > 0 && (
+            <g>
+              <line x1={xFor(row.minDate)} y1={28} x2={groups[0].x} y2={28} stroke={statusColorFor(groups[0].tasks[0])} strokeWidth="3.2" strokeLinecap="round" opacity=".95" />
+              {groups.map((g,gi)=> {
+                const next=groups[gi+1];
+                if(!next) return null;
+                return <line key={`collapsed-seg-${g.date}`} x1={g.x} y1={28} x2={next.x} y2={28} stroke={statusColorFor(g.tasks[0])} strokeWidth="3.2" strokeLinecap="round" opacity=".95"/>;
+              })}
+              <line x1={groups[groups.length-1].x} y1={28} x2={xFor(row.maxDate)} y2={28} stroke={statusColorFor(groups[groups.length-1].tasks[0])} strokeWidth="3.2" strokeLinecap="round" opacity=".95" />
+            </g>
+          )}
+          {groups.map((g) => {
+            const task = g.tasks.find((x) => isTaskLate(x, ctx)) || g.tasks[0];
+            const sc = statusColorFor(task);
+            const done = isTaskDoneGlobal(task, ctx);
+            const collapsedAtRisk = !!task && isTaskLate(task, ctx) && !done;
+            return (
+              <g key={g.date}>
+                {collapsedAtRisk && appearance?.animLateAlert && (
+                  <circle
+                    cx={g.x}
+                    cy={28}
+                    r="7"
+                    fill="none"
+                    stroke={PM_RISK_COLOR}
+                    strokeWidth="2"
+                    className="lp-pm-late-ring"
+                    pointerEvents="none"
+                  />
+                )}
+                <ProjectDeadlineStationGlyph
+                  x={g.x}
+                  y={28}
+                  project={p}
+                  task={task}
+                  ctx={ctx}
+                  color={sc}
+                  done={done}
+                  radius={6}
+                  iconSize={8}
+                />
+              </g>
+            );
+          })}
+        </g>
+      );
+    }
+
+    // Connecte deux dates successives. Toutes les branches du jour A convergent
+    // vers un nœud virtuel au milieu, puis divergent vers toutes les branches du
+    // jour B. Cela produit visuellement :
+    // 1 -> N : divergence
+    // N -> 1 : convergence
+    // N -> M : convergence puis nouvelle divergence
+    const transitionPaths = [];
+    for (let gi = 0; gi < groups.length - 1; gi++) {
+      const a = groups[gi], b = groups[gi + 1];
+      const hubX = (a.x + b.x) / 2;
+      const bend = Math.min(12, Math.max(5, (b.x - a.x) / 8));
+
+      a.offsets.forEach((off, i) => {
+        const y = laneY + off;
+        const d = Math.abs(y - laneY) < .5
+          ? `M ${a.x} ${y} L ${hubX} ${laneY}`
+          : `M ${a.x} ${y} L ${hubX - bend} ${y} Q ${hubX} ${y} ${hubX} ${y + Math.sign(laneY-y)*bend} L ${hubX} ${laneY}`;
+        transitionPaths.push(<path key={`in-${gi}-${i}`} d={d} fill="none" stroke={statusColorFor(a.tasks[Math.min(i,a.tasks.length-1)])} strokeWidth="2.2" strokeLinecap="round" opacity=".78" />);
+      });
+
+      b.offsets.forEach((off, i) => {
+        const y = laneY + off;
+        const d = Math.abs(y - laneY) < .5
+          ? `M ${hubX} ${laneY} L ${b.x} ${y}`
+          : `M ${hubX} ${laneY} L ${hubX} ${y - Math.sign(y-laneY)*bend} Q ${hubX} ${y} ${hubX + bend} ${y} L ${b.x} ${y}`;
+        transitionPaths.push(<path key={`out-${gi}-${i}`} d={d} fill="none" stroke={statusColorFor(b.tasks[Math.min(i,b.tasks.length-1)])} strokeWidth="2.2" strokeLinecap="round" opacity=".78" />);
+      });
+
+      transitionPaths.push(
+        <circle key={`hub-${gi}`} cx={hubX} cy={laneY} r="2.5" fill={color} opacity=".58" />
+      );
+    }
+
+    return (
+      <g>
+        {/* Aujourd'hui : repère temporel vertical continu dans chaque ligne.
+            Le libellé n'est affiché que sur le premier projet pour éviter la répétition. */}
+        {todayX !== null && (
+          <g pointerEvents="none">
+            <line
+              x1={todayX} y1={0} x2={todayX} y2={row.ROW_H}
+              stroke="var(--accent)"
+              strokeWidth="1.8"
+              strokeDasharray="4 5"
+              opacity=".62"
+            />
+            {rowsWithHeights[0]?.project?.id === p.id && (
+              <>
+                <rect x={todayX - 31} y={5} width="62" height="16" rx="3" fill="var(--surface)" opacity=".96" />
+                <text
+                  x={todayX} y={16}
+                  textAnchor="middle"
+                  fontFamily='"Inter", monospace'
+                  fontSize="7.5"
+                  fontWeight="800"
+                  fill="var(--accent)"
+                >
+                  AUJOURD'HUI
+                </text>
+              </>
+            )}
+          </g>
+        )}
+        {/* Ligne projet : infrastructure temporelle de référence */}
+        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(row.maxDate)} y2={laneY} stroke={color} strokeWidth="3.4" strokeLinecap="round" opacity=".16" />
+        {groups.length > 0 && (
+          <g>
+            <line x1={xFor(row.minDate)} y1={laneY} x2={groups[0].x} y2={laneY} stroke={statusColorFor(groups[0].tasks[0])} strokeWidth="3.4" strokeLinecap="round" opacity=".95"/>
+            {groups.map((g,gi)=>{
+              const next=groups[gi+1];
+              if(!next) return null;
+              return <line key={`status-main-${g.date}`} x1={g.x} y1={laneY} x2={next.x} y2={laneY} stroke={statusColorFor(g.tasks[0])} strokeWidth="3.4" strokeLinecap="round" opacity=".95"/>;
+            })}
+            <line x1={groups[groups.length-1].x} y1={laneY} x2={xFor(row.maxDate)} y2={laneY} stroke={statusColorFor(groups[groups.length-1].tasks[0])} strokeWidth="3.4" strokeLinecap="round" opacity=".95"/>
+          </g>
+        )}
+        {transitionPaths}
+
+        {groups.map((g, gi) => g.tasks.map((t, i) => {
+          const y = laneY + g.offsets[i];
+          const st = ctx.statuses.find((s) => s.id === t.statusId);
+          const done = isTaskDoneGlobal(t, ctx);
+          const atRisk = showRiskBadges && !done && isAtRisk(t);
+          const stationColor = st?.color || color; // la couleur reflète désormais le statut de la tâche
+          const placement = g.placements?.[i] || {
+            side:(i % 2 ? "below" : "above"),
+            lane:0,
+            titleW:120,
+            labelX:g.x,
+            displayTitle:String(t.title || ""),
+            titleTopRel:(i % 2 ? 28 : -56),
+          };
+          const labelAbove = placement.side === "above";
+          const titleW = Math.min(190, Math.max(64, placement.titleW || 120));
+          const textX = placement.labelX ?? g.x;
+          const titleRectY = laneY + (placement.titleTopRel ?? 0);
+          const titleTextY = titleRectY + 11;
+          const metaRectY = titleRectY + 16;
+          const metaTextY = metaRectY + 10;
+
+          return (
+            <g
+              key={t.id}
+              opacity={dimOpacity(t.id)}
+              onMouseDown={(e) => startDragTask(e, t, "deadlineEnd")}
+              onTouchStart={(e) => startDragTask(e, t, "deadlineEnd")}
+              style={{ cursor:"ew-resize" }}
+              data-pm-task-id={t.id}
+            >
+              {/* Branche de la station depuis la ligne principale */}
+              {Math.abs(g.offsets[i]) > .5 && (
+                <line x1={g.x} y1={laneY} x2={g.x} y2={y} stroke={stationColor} strokeWidth="1.6" strokeDasharray="2 3" opacity=".30" />
+              )}
+
+              {/* Connecteur d'étiquette routé sur une voie dédiée :
+                  segments orthogonaux, sans diagonales qui se croisent. */}
+              <path
+                d={(placement.connectorSegments || []).map((seg, si) =>
+                  `${si === 0 ? "M" : "L"} ${si === 0 ? seg.x1 : seg.x2} ${si === 0 ? seg.y1 : seg.y2}`
+                ).join(" ")}
+                transform={`translate(0 ${laneY})`}
+                fill="none"
+                stroke={stationColor}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity=".38"
+                pointerEvents="none"
+              />
+
+              <circle cx={g.x} cy={y} r="15" fill="transparent" />
+              {atRisk && appearance?.animLateAlert && (
+                <circle
+                  cx={g.x}
+                  cy={y}
+                  r="9.5"
+                  fill="none"
+                  stroke={PM_RISK_COLOR}
+                  strokeWidth="2"
+                  className="lp-pm-late-ring"
+                  pointerEvents="none"
+                />
+              )}
+
+              <ProjectDeadlineStationGlyph
+                x={g.x}
+                y={y}
+                project={p}
+                task={t}
+                ctx={ctx}
+                color={stationColor}
+                done={done}
+                radius={8.5}
+                iconSize={11}
+              />
+
+              {atRisk && (
+                <circle
+                  cx={g.x}
+                  cy={y}
+                  r="12"
+                  fill="none"
+                  stroke={PM_RISK_COLOR}
+                  strokeWidth="1.4"
+                  strokeDasharray="2 2"
+                  pointerEvents="none"
+                />
+              )}
+
+              {/* Étiquette sur sa propre voie : fond opaque + largeur plafonnée */}
+              <rect
+                x={textX - titleW/2 - 6}
+                y={titleRectY}
+                width={titleW + 12}
+                height="15"
+                rx="3"
+                fill="var(--surface)"
+                opacity=".985"
+              />
+              <text
+                x={textX}
+                y={titleTextY}
+                textAnchor="middle"
+                fontFamily="Inter, sans-serif"
+                fontSize="10"
+                fontWeight="700"
+                fill="var(--text-900)"
+              >
+                {placement.displayTitle || (String(t.title || "").length > 30 ? String(t.title).slice(0,29) + "…" : t.title)}
+              </text>
+
+              <rect
+                x={textX - 43}
+                y={metaRectY}
+                width="86"
+                height="13"
+                rx="3"
+                fill="var(--surface)"
+                opacity=".97"
+              />
+              <text
+                x={textX}
+                y={metaTextY}
+                textAnchor="middle"
+                fontFamily='"Inter", monospace'
+                fontSize="7.6"
+                fontWeight="700"
+                fill={stationColor}
+              >
+                {fmtShort(t.end)}
+              </text>
+
+              <title>{`${t.title} — ${fmtShort(t.end)}${st ? ` — ${st.name}` : ""} — Glisser horizontalement pour modifier l’échéance`}</title>
+            </g>
+          );
+        }))}
+
+        {groups.length > 0 && (
+          <>
+            <Station x={xFor(row.minDate)} y={laneY} color={color} r={5.5} />
+            <Terminus x={xFor(row.maxDate) + 7} y={laneY} color={color} size={.8} />
+          </>
+        )}
+      </g>
+    );
+  };
+
+  const NetworkRow = ({ row }) => {
+    const { project: p, pMilestones, maxDate, avgProgress } = row;
+    const color = p.color || "var(--text-muted)";
+    const laneY = 30;
+    return (
+      <g opacity={dimOpacity("net-" + p.id)}>
+        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(maxDate)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" opacity="0.55" />
+        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(row.minDate) + (xFor(maxDate) - xFor(row.minDate)) * (avgProgress / 100)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" />
+        <Station x={xFor(row.minDate)} y={laneY} color={color} r={6} />
+        {pMilestones.map((t) => {
+          const mx = xFor(t.end);
+          const done = isTaskDoneGlobal(t, ctx);
+          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
+          const atRisk = showRiskBadges && !done && isAtRisk(t);
+          return (
+            <g key={t.id} onClick={() => onOpen(t)} style={{ cursor: "pointer" }}>
+              <foreignObject x={mx - 8} y={laneY - 8} width="16" height="16" style={{ overflow: "visible" }}>
+                <MilestoneGlyph size={16} icon={resolveMilestoneIcon(t, ctx)} />
+              </foreignObject>
+              {isCritical && <circle cx={mx} cy={laneY} r="10" fill="none" stroke={PM_CRITICAL_COLOR} strokeWidth="1.6" />}
+              {atRisk && (
+                <g transform={`translate(${mx + 8}, ${laneY - 13})`}>
+                  <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
+                  <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+        <g onClick={(e) => { e.stopPropagation(); setProjectSummary({ row, x: e.clientX, y: e.clientY }); }} style={{ cursor: "pointer" }}>
+          <circle cx={xFor(maxDate) + 12} cy={laneY} r="14" fill="transparent" />
+          <Terminus x={xFor(maxDate) + 6} y={laneY} color={color} size={0.85} />
+        </g>
+      </g>
+    );
+  };
+
+  const now = iso(new Date());
+  // Les widgets de synthèse de l'accueil doivent refléter l'état RÉEL global, pas
+  // le sous-ensemble déjà filtré par la vue (ex. "Masquer les tâches terminées",
   // filtre projet actif…) — sinon "Avancement global" peut afficher 0% juste parce
   // que les tâches terminées sont masquées par défaut. On repart donc de
   // ctx.tasks (liste complète, non filtrée) plutôt que de "dated"/"tasks".
@@ -1462,6 +1836,7 @@ function defaultLayoutForType(type) {
   if (type === "budgetBurnRate") return { w: 4, h: 5 };
   if (type === "riskMatrix") return { w: 5, h: 6 };
   if (type === "projectTreemap") return { w: 8, h: 7 };
+  if (type === "deadlineScatter") return { w: 10, h: 7 };
   if (type === "automations") return { w: 4, h: 5 };
   if (type === "automationAlerts") return { w: 4, h: 4 };
   if (type === "embedMetro" || type === "embedGantt" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
@@ -2239,6 +2614,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onEditProject={onEditProject}
                     onFilterProject={(projectId) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), projectIds: [projectId] })}
                   />
+                )}
+                {w.type === "deadlineScatter" && (
+                  <WidgetDeadlineScatter widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "projectPulse" && (
                   <WidgetProjectPulse tasks={scoped} ctx={ctx} onOpen={onOpen} />
@@ -7820,6 +8198,7 @@ const WIDGET_TYPE_META = [
   { key: "budgetBurnRate", label: "Budget Burn Rate", icon: Flame, group: "Suivi" },
   { key: "riskMatrix", label: "Matrice des risques", icon: AlertOctagon, group: "Suivi" },
   { key: "projectTreemap", label: "Treemap projets", icon: Grid3x3, group: "Suivi" },
+  { key: "deadlineScatter", label: "Nuage des échéances", icon: Crosshair, group: "Suivi" },
   { key: "automations", label: "Automatisations", icon: Zap, group: "Suivi" },
   { key: "automationAlerts", label: "Automation Alerts", icon: ShieldAlert, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
@@ -8033,6 +8412,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [timeMachineProjectId, setTimeMachineProjectId] = useState(widget?.timeMachineProjectId || ctx.projects[0]?.id || "");
   const [burnRateProjectId, setBurnRateProjectId] = useState(widget?.burnRateProjectId || ctx.projects[0]?.id || "");
   const [riskMatrixProjectId, setRiskMatrixProjectId] = useState(widget?.riskMatrixProjectId || ctx.projects[0]?.id || "");
+  // Nuage des échéances — un seul réglage propre : le champ qui définit les couloirs.
+  const [scatterLaneField, setScatterLaneField] = useState(
+    SCATTER_LANE_FIELDS.includes(widget?.scatterLaneField) ? widget.scatterLaneField : "project"
+  );
   // Treemap projets — la configuration est relue par normalizeProjectTreemapConfig,
   // qui reste seul juge des valeurs par défaut : la fiche ne fait que l'éditer.
   const treemapCfg = useMemo(() => normalizeProjectTreemapConfig(widget || {}), [widget]);
@@ -8123,7 +8506,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "criticalPath" || type === "projectPulse" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedGantt" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || (type === "countdown" && countdownMode === "filter");
+  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "criticalPath" || type === "projectPulse" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedGantt" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "deadlineScatter" || (type === "countdown" && countdownMode === "filter");
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -8199,6 +8582,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "timeMachine") data.timeMachineProjectId = timeMachineProjectId;
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (type === "riskMatrix") data.riskMatrixProjectId = riskMatrixProjectId;
+    if (type === "deadlineScatter") data.scatterLaneField = scatterLaneField;
     if (type === "projectTreemap") {
       data.treemapSizeFilter = treemapSizeFilter;
       data.treemapColorFilter = treemapColorMode === "secondaryFilterGradient" ? treemapColorFilter : (widget?.treemapColorFilter || null);
@@ -8790,6 +9174,26 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </div>
       )}
 
+      {type === "deadlineScatter" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Un point = une tâche, placée selon le nombre de jours qui la sépare de son échéance : à droite ce qui vient,
+            à gauche ce qui est en retard. Les tâches sans date de fin ne sont pas placées. Le filtre général du widget
+            (plus bas) décide du périmètre.
+          </p>
+          <div className="lp-field">
+            <label>Couloirs</label>
+            <select
+              value={scatterLaneField}
+              onChange={(e) => setScatterLaneField(e.target.value)}
+            >
+              <option value="project">Projet</option>
+              <option value="status">Statut</option>
+              <option value="criticality">Criticité</option>
+            </select>
+          </div>
+        </>
+      )}
       {type === "projectTreemap" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>

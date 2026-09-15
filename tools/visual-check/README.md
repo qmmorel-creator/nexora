@@ -43,6 +43,19 @@ deux encadrés, dont un posé sur des tâches **non successives** :
 - les étiquettes de cadres ne se superposent pas ;
 - les cadres ont une surface non nulle et restent dans la zone des lignes.
 
+Scénario « Nuage des échéances » — quatre tâches datées et une sans date de fin,
+en couloirs par projet puis par criticité :
+
+- une tâche sans échéance ne devient jamais un point ;
+- le retard est à gauche de l'axe « aujourd'hui », et signalé par une couleur qui
+  n'est celle d'aucun couloir ;
+- deux tâches de même échéance ne se superposent pas ;
+- points et étiquettes restent dans le cadre du dessin ;
+- les couloirs de criticité suivent l'urgence : Urgent, Moyen, Bas, Sans criticité ;
+- l'infobulle apparaît au survol, le clic ouvre la tâche, et le couloir choisi
+  dans la fiche du widget est bien enregistré ;
+- sans aucune tâche datée, le widget explique pourquoi il n'affiche rien.
+
 ## Pourquoi un dossier séparé
 
 `apps/nexora` est construit par Netlify à chaque publication. Y ajouter React,

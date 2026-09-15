@@ -85,6 +85,20 @@ function AnnotationsHarness() {
     treemapShowUpcoming: true,
   });
   const [treemapFormOpen, setTreemapFormOpen] = useState(false);
+  // Nuage des échéances : des dates calculées À PARTIR D'AUJOURD'HUI, pour que
+  // les contrôles restent vrais quel que soit le jour où le banc est lancé.
+  // « sc5 » n'a pas de date de fin : elle ne doit jamais devenir un point.
+  const scatterToday = iso(new Date());
+  const scatterTasks = [
+    { id: "sc1", projectId: "p1", statusId: "s1", title: "Étude de sol", start: addDays(scatterToday, -20), end: addDays(scatterToday, -6), progress: 0, checklist: [], criticality: "urgent" },
+    { id: "sc2", projectId: "p1", statusId: "s1", title: "Permis de construire", start: addDays(scatterToday, -10), end: addDays(scatterToday, -6), progress: 0, checklist: [], criticality: "moyen" },
+    { id: "sc3", projectId: "p2", statusId: "s2", title: "Plan de communication", start: scatterToday, end: scatterToday, progress: 0, checklist: [], criticality: "bas" },
+    { id: "sc4", projectId: "p2", statusId: "s2", title: "Relance presse", start: scatterToday, end: addDays(scatterToday, 12), progress: 0, checklist: [] },
+    { id: "sc5", projectId: "p3", statusId: "s1", title: "Sans échéance", start: scatterToday, progress: 0, checklist: [] },
+  ];
+  const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
+  const [scatterFormOpen, setScatterFormOpen] = useState(false);
+  const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
   // Vue Métro : mêmes annotations que le Gantt, plus un encadré qui saute une
   // ligne de projet (p1 et p3) — il doit produire DEUX cadres, jamais un seul.
   const [metroPrefs, setMetroPrefs] = useState({
@@ -173,6 +187,38 @@ function AnnotationsHarness() {
             pageFilter={null}
             onSave={(data) => { setTreemapWidget((w) => ({ ...w, ...data })); setTreemapFormOpen(false); }}
             onClose={() => setTreemapFormOpen(false)}
+          />
+        )}
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>NUAGE DES ÉCHÉANCES</h2>
+        <button type="button" id="harness-open-scatter-form" onClick={() => setScatterFormOpen(true)} style={{ marginBottom: 8 }}>
+          Ouvrir la fiche du Nuage
+        </button>
+        <span id="harness-scatter-opened" style={{ marginLeft: 8, fontFamily: "monospace", fontSize: 12 }}>{scatterOpenedTaskId}</span>
+        <div id="harness-scatter" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
+          <WidgetDeadlineScatter
+            widget={scatterWidget} tasks={scatterTasks} ctx={ctx}
+            onOpen={(t) => setScatterOpenedTaskId(t ? t.id : "")}
+          />
+        </div>
+        {/* Mêmes tâches, couloirs par criticité : « Urgent » doit se retrouver
+            en haut, avant « Moyen » puis « Bas ». */}
+        <div id="harness-scatter-crit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
+          <WidgetDeadlineScatter widget={{ ...scatterWidget, scatterLaneField: "criticality" }} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
+        </div>
+        {/* Aucune tâche datée : le widget doit le dire, pas afficher un axe vide. */}
+        <div id="harness-scatter-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 300, height: 120, marginBottom: 18 }}>
+          <WidgetDeadlineScatter widget={scatterWidget} tasks={scatterTasks.filter((t) => !t.end)} ctx={ctx} onOpen={noop} />
+        </div>
+        {scatterFormOpen && (
+          <WidgetFormModal
+            widget={scatterWidget}
+            existingWidgets={[]}
+            ctx={ctx}
+            pageFilter={null}
+            onSave={(data) => { setScatterWidget((w) => ({ ...w, ...data })); setScatterFormOpen(false); }}
+            onClose={() => setScatterFormOpen(false)}
           />
         )}
       </div>

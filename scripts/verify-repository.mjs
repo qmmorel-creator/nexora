@@ -282,4 +282,28 @@ assert.match(builtSource, /lp-pm-risk is-/);
     "nexora:viewOrder est devenu fusionnable : la fusion par identifiant détruirait l'ordre des vues.");
 }
 
+/* Nuage des échéances (issue #46).
+   Un widget se déclare à cinq endroits indépendants. Déclaré au catalogue mais
+   absent du `switch` de rendu, il s'ajoute au tableau de bord et n'affiche
+   RIEN — pas une erreur, pas un message : une tuile vide. Le contrôle visuel
+   ne le verrait pas non plus, puisqu'il monte le composant directement. */
+{
+  assert.match(builtSource, /\/\/ === NEXORA:DEADLINE-SCATTER:START ===/, "Le bloc de calcul du nuage des échéances a disparu.");
+  assert.match(builtSource, /\/\/ === NEXORA:DEADLINE-SCATTER:END ===/, "La sentinelle de fin du bloc du nuage a disparu.");
+  assert.match(builtSource, /key: "deadlineScatter", label: "Nuage des échéances"/,
+    "Le nuage des échéances n'est plus au catalogue des widgets.");
+  assert.match(builtSource, /<WidgetDeadlineScatter widget=\{w\}/,
+    "Le nuage est au catalogue mais n'est plus rendu : la tuile serait vide, sans erreur.");
+  assert.match(builtSource, /type === "deadlineScatter" \|\| \(type === "countdown"/,
+    "Le nuage ne passe plus par le moteur de filtres : le widget ignorerait son propre filtre.");
+  assert.match(builtSource, /if \(type === "deadlineScatter"\) return \{ w: 10, h: 7 \};/,
+    "Le nuage n'a plus de taille par défaut : il naîtrait écrasé sur la grille.");
+  /* Le réglage doit être À LA FOIS proposé et enregistré : l'un sans l'autre
+     donne une liste déroulante qui s'affiche et n'est jamais retenue. */
+  assert.match(builtSource, /setScatterLaneField\(e\.target\.value\)/,
+    "Le choix des couloirs a disparu de la fiche du widget.");
+  assert.match(builtSource, /if \(type === "deadlineScatter"\) data\.scatterLaneField = scatterLaneField;/,
+    "Le couloir choisi dans la fiche n'est plus enregistré.");
+}
+
 console.log("Repository invariants: OK");
