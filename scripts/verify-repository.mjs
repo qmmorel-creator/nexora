@@ -149,4 +149,32 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.doesNotMatch(seed, /name: "Urgent"/, "le jeu de démonstration recrée un statut Urgent");
 }
 
+// Mini-Gantt : aucun hook après le retour « aucune tâche ». React compte les hooks à
+// chaque rendu ; un hook situé après un retour conditionnel s'exécute quand le widget
+// a des tâches et pas quand il n'en a plus. Passer d'un état à l'autre — n'importe
+// quel filtre qui ne ramène rien — casse alors le composant sur l'erreur React #310,
+// au lieu d'afficher l'état vide. Le défaut ne se voit ni à la lecture ni au build.
+{
+  const from = builtSource.indexOf("function WidgetMiniGantt");
+  assert.ok(from !== -1, "WidgetMiniGantt introuvable");
+  const open = builtSource.indexOf("}) {", from) + 3;
+  let depth = 0, end = open;
+  for (let i = open; i < builtSource.length; i++) {
+    const c = builtSource[i];
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) { end = i; break; }
+  }
+  const body = builtSource.slice(from, end);
+  // Le retour de NIVEAU COMPOSANT, reconnaissable à ses deux espaces d'indentation et
+  // au JSX qu'il rend. Plusieurs hooks contiennent aussi un « if (isEmpty) return [] »
+  // dans leur callback : les confondre ferait passer le garde pour concluant alors
+  // qu'il mesurerait tout autre chose.
+  const guardAt = body.indexOf("\n  if (isEmpty) return <div");
+  assert.ok(guardAt !== -1, "le retour « aucune tâche » du Mini-Gantt a disparu");
+  // Hooks de NIVEAU COMPOSANT uniquement : deux espaces d'indentation. Ceux imbriqués
+  // dans un callback s'exécutent de toute façon à chaque rendu.
+  const after = [...body.slice(guardAt).matchAll(/\n  const [\w[\], ]+ = use[A-Z]\w*\(/g)].map((m) => m[0].trim());
+  assert.deepEqual(after, [], `hook(s) après le retour « aucune tâche » du Mini-Gantt : ${after.join(" | ")}`);
+}
+
 console.log("Repository invariants: OK");
