@@ -7567,6 +7567,42 @@ export default function LePlan({ currentUser, onSignOut }) {
     mergedMap.forEach((v, k) => { merged[k] = v; });
     return { merged, unresolved };
   };
+
+  /* Une écriture qui réécrit MOT POUR MOT ce que Firebase a déjà confirmé ne
+     change rien — mais elle fait tourner la révision du document, et ouvre donc
+     une fenêtre de conflit à chaque démarrage.
+
+     C'est ce qui produisait le bandeau rouge au rechargement (issue #40,
+     point 3). Un Ctrl+R part avec une écriture keepalive, voulue : elle survit
+     au déchargement. Elle atterrit pendant que la nouvelle page lit déjà la
+     clé, qui obtient donc la révision d'AVANT. La première écriture de la
+     nouvelle page repart avec cette révision périmée, Firebase la refuse, et la
+     clé — un scalaire, rien à fusionner — se retrouve bloquée. */
+  const isRedundantWrite = (knownRaw, serializedValue) =>
+    typeof knownRaw === "string" && knownRaw === serializedValue;
+
+  /* Un scalaire n'a pas de parties : il n'y a rien à fusionner, et rien à
+     perdre. Un objet, si — d'où la distinction. null compte comme scalaire ;
+     une fonction n'a rien à faire dans une valeur stockée, mais la ranger du
+     même côté évite qu'un cas limite bascule en « fusionnable ». */
+  const isScalarSyncValue = (value) =>
+    value === null || (typeof value !== "object" && typeof value !== "function");
+
+  /* Que faire d'un conflit de révision, la valeur distante relue ?
+
+     « lastWriterWins » est la réponse aux clés qui portent une INTENTION
+     ponctuelle et non des données : la dernière vue ouverte, le tableau de bord
+     actif. Les bloquer, et alarmer d'un bandeau rouge parce que deux sessions
+     n'ont pas ouvert la même vue, est un faux positif — il n'y a rien à
+     réconcilier ni rien à sauver. Bloquer reste la réponse pour une valeur
+     structurée qu'on ne sait pas fusionner : là, écraser perdrait vraiment
+     quelque chose. */
+  const syncConflictResolution = ({ localValue, remoteValue, mergeable }) => {
+    if (JSON.stringify(remoteValue) === JSON.stringify(localValue)) return "identical";
+    if (isScalarSyncValue(localValue) && isScalarSyncValue(remoteValue)) return "lastWriterWins";
+    if (mergeable) return "merge";
+    return "block";
+  };
   // === NEXORA:SYNCMERGE:END ===
 
   // Envoie une clé vers Firebase. En cas de conflit de révision (une autre
@@ -7594,13 +7630,19 @@ export default function LePlan({ currentUser, onSignOut }) {
       let baseValue;
       try { baseValue = JSON.parse(baseRaw); } catch (_) { baseValue = baseRaw; }
 
-      if (JSON.stringify(remoteValue) === JSON.stringify(localValue)) {
-        // Conflit de révision mais contenu strictement identique : rien à
-        // perdre, on peut synchroniser tel quel.
+      const resolution = syncConflictResolution({
+        localValue,
+        remoteValue,
+        mergeable: NEXORA_MERGEABLE_KEYS.has(key),
+      });
+
+      // Contenu strictement identique, ou scalaire d'intention locale : rien à
+      // perdre, on écrit tel quel — la révision vient d'être rafraîchie.
+      if (resolution === "identical" || resolution === "lastWriterWins") {
         return await window.storage.set(key, payload);
       }
 
-      if (NEXORA_MERGEABLE_KEYS.has(key)) {
+      if (resolution === "merge") {
         const result = mergeKeyedCollections(key, localValue, remoteValue, baseValue);
         if (result) {
           const mergedPayload = JSON.stringify(result.merged);
@@ -7662,6 +7704,21 @@ export default function LePlan({ currentUser, onSignOut }) {
       return Promise.resolve();
     }
     const serializedValue = JSON.stringify(value);
+
+    /* Écriture inutile : Firebase a déjà confirmé exactement ce contenu. La
+       passer ne fait rien perdre et évite de faire tourner la révision pour
+       rien — voir isRedundantWrite. Le bandeau de cette clé disparaît au
+       passage : si l'on s'apprête à réécrire la valeur confirmée, c'est bien
+       qu'elle n'est plus en attente de quoi que ce soit. */
+    if (isRedundantWrite(window.storage?.getKnownValue?.(key), serializedValue)) {
+      setBlockedKeys((prev) => {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return Promise.resolve();
+    }
 
     // Le stockage est désormais segmenté automatiquement sous la limite
     // physique Firestore de 1 Mio/document. On ne prévient plus à 950 ko :

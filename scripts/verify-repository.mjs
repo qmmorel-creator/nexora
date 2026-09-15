@@ -239,6 +239,26 @@ assert.match(builtSource, /lp-pm-risk is-/);
   //    jusqu'au rechargement. Le défaut existait dans les DEUX adaptateurs : les
   //    compter est le seul moyen de ne pas croire l'invariant tenu parce qu'un seul
   //    l'applique.
+  /* 5. Bandeau rouge au rechargement (retour de test sur le point 3).
+     Deux verrous, tous deux invisibles à la lecture : ils ne se manifestent
+     qu'au rechargement, et seulement quand une écriture keepalive est partie
+     juste avant. */
+  assert.match(builtSource, /const isRedundantWrite = \(knownRaw, serializedValue\) =>/,
+    "Le contrôle d'écriture inutile a disparu : chaque démarrage refait tourner la révision pour rien.");
+  assert.match(builtSource, /if \(isRedundantWrite\(window\.storage\?\.getKnownValue\?\.\(key\), serializedValue\)\)/,
+    "persistKey ne compare plus ce qu'il s'apprête à écrire à ce que Firebase a confirmé.");
+  assert.match(builtSource, /const resolution = syncConflictResolution\(\{/,
+    "attemptPersist ne passe plus par la décision de conflit : un scalaire redeviendrait bloquant.");
+  /* La décision doit être PRISE en un seul endroit. Réintroduire la comparaison
+     à la main dans attemptPersist ferait diverger le code déployé des tests. */
+  const tentative = builtSource.slice(
+    builtSource.indexOf("const attemptPersist = async (key, payload)"),
+    builtSource.indexOf("const rescueQuotaWarnedRef"),
+  );
+  assert.ok(tentative.length > 0, "attemptPersist est introuvable.");
+  assert.doesNotMatch(tentative, /if \(JSON\.stringify\(remoteValue\) === JSON\.stringify\(localValue\)\) \{/,
+    "La comparaison de contenu est revenue à la main dans attemptPersist, hors de la décision testée.");
+
   const refreshers = [...builtSource.matchAll(/async refreshRevision\(key\) \{[\s\S]*?\n  \},/g)].map((m) => m[0]);
   assert.equal(refreshers.length, 2, `refreshRevision : ${refreshers.length} adaptateur(s), 2 attendus`);
   refreshers.forEach((fn, index) => {

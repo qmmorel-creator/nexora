@@ -9,7 +9,16 @@ import vm from "node:vm";
 // passerait sur une copie pendant que l'application diverge ne prouverait rien.
 const START = "// === NEXORA:SYNCMERGE:START ===";
 const END = "// === NEXORA:SYNCMERGE:END ===";
-const EXPORTS = ["NEXORA_MERGEABLE_KEYS", "NEXORA_MERGE_ID_GETTERS", "mergeItemTimestamp", "stampChangedEntities", "mergeKeyedCollections"];
+const EXPORTS = [
+  "NEXORA_MERGEABLE_KEYS",
+  "NEXORA_MERGE_ID_GETTERS",
+  "mergeItemTimestamp",
+  "stampChangedEntities",
+  "mergeKeyedCollections",
+  "isRedundantWrite",
+  "isScalarSyncValue",
+  "syncConflictResolution",
+];
 
 const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START);
@@ -19,7 +28,80 @@ assert.ok(from !== -1 && to > from, "bloc de fusion introuvable dans dist/index.
 const factory = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 );
-const { NEXORA_MERGEABLE_KEYS, mergeItemTimestamp, stampChangedEntities, mergeKeyedCollections } = factory();
+const {
+  NEXORA_MERGEABLE_KEYS,
+  mergeItemTimestamp,
+  stampChangedEntities,
+  mergeKeyedCollections,
+  isRedundantWrite,
+  isScalarSyncValue,
+  syncConflictResolution,
+} = factory();
+
+/* ---------------------------------------------------------------------------
+   Bandeau rouge au rechargement (issue #40, point 3 du retour de test).
+   Un Ctrl+R part avec une écriture keepalive, qui atterrit pendant que la
+   nouvelle page lit déjà la clé : celle-ci obtient la révision d'AVANT, sa
+   première écriture est refusée, et un scalaire — rien à fusionner — se
+   retrouve bloqué. Deux verrous ici : ne pas réécrire ce qui est déjà
+   confirmé, et ne jamais bloquer sur un scalaire.
+   --------------------------------------------------------------------------- */
+
+test("une écriture identique à ce que Firebase a confirmé est inutile", () => {
+  assert.equal(isRedundantWrite('{"a":1}', '{"a":1}'), true);
+  assert.equal(isRedundantWrite('{"a":1}', '{"a":2}'), false);
+});
+
+test("sans valeur confirmée, l'écriture part — on ne devine pas", () => {
+  // Première écriture d'une clé jamais lue : rien ne dit qu'elle est en place.
+  assert.equal(isRedundantWrite(undefined, '{"a":1}'), false);
+  assert.equal(isRedundantWrite(null, "null"), false);
+  // Une valeur connue non sérialisée ne peut pas être comparée de front.
+  assert.equal(isRedundantWrite({ a: 1 }, '{"a":1}'), false);
+});
+
+test("un scalaire n'a pas de parties, un objet si", () => {
+  for (const v of ["dashboard", 3, true, null]) assert.equal(isScalarSyncValue(v), true, String(v));
+  for (const v of [{}, [], { a: 1 }, [1, 2]]) assert.equal(isScalarSyncValue(v), false, JSON.stringify(v));
+});
+
+test("deux scalaires différents : le dernier écrivain gagne, jamais de blocage", () => {
+  // « dernière vue ouverte » : deux postes n'ouvrent pas la même vue. Il n'y a
+  // rien à réconcilier — alarmer d'un bandeau rouge pour cela est un faux
+  // positif, et bloquer la clé ne sauve rien.
+  assert.equal(
+    syncConflictResolution({ localValue: "gantt", remoteValue: "today", mergeable: false }),
+    "lastWriterWins",
+  );
+});
+
+test("un contenu strictement identique se règle avant tout le reste", () => {
+  assert.equal(
+    syncConflictResolution({ localValue: { a: 1 }, remoteValue: { a: 1 }, mergeable: false }),
+    "identical",
+  );
+});
+
+test("une collection fusionnable se fusionne ; une valeur structurée inconnue bloque", () => {
+  assert.equal(
+    syncConflictResolution({ localValue: [{ id: "a" }], remoteValue: [{ id: "b" }], mergeable: true }),
+    "merge",
+  );
+  // C'est ici que bloquer a un sens : écraser perdrait vraiment quelque chose.
+  assert.equal(
+    syncConflictResolution({ localValue: { gantt: { zoom: 2 } }, remoteValue: { gantt: { zoom: 3 } }, mergeable: false }),
+    "block",
+  );
+});
+
+test("un objet contre un scalaire ne passe jamais pour un scalaire", () => {
+  // Cas limite : une clé qui change de forme entre deux versions. Prendre le
+  // dernier écrivain écraserait alors une structure par une chaîne.
+  assert.equal(
+    syncConflictResolution({ localValue: "gantt", remoteValue: { gantt: true }, mergeable: false }),
+    "block",
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Le registre : une clé absente d'ici n'est PAS fusionnée — elle est bloquée.
