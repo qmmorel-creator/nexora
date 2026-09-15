@@ -5818,7 +5818,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
         const to = Math.max(minIdx, Math.min(maxIdx, seg.endIdx));
         const leftPct = ((from - minIdx) / span) * 100;
-        const widthPct = Math.max(1.2, ((to - from) / span) * 100);
+        // Le plancher doit être celui de la BARRE (voir Row : Math.max(2, …)),
+        // pas un plancher plus bas : sur une tâche d'un jour, la barre était
+        // tracée à 2 % et le cadre à 1,2 %, si bien que le cadre passait au
+        // milieu de la barre au lieu de l'entourer.
+        const widthPct = Math.max(2, ((to - from) / span) * 100);
+        // Dégagement en pixels de chaque côté, en plus du padding du cadre :
+        // le trait ne doit jamais se poser sur la barre.
+        const frameInsetPx = seg.padding + GANTT_FRAME_BAR_CLEARANCE;
         // Étiquette juste au-dessus du cadre, ou dans sa partie supérieure
         // gauche quand il n'y a pas la place sans mordre sur l'axe.
         const labelTop = (seg.top >= rowsBand.top + 12 ? seg.top - 11 : seg.top + 1) + (seg.labelOffset || 0);
@@ -5827,18 +5834,33 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             <div
               className="lp-widget-minigantt-frame"
               style={{
-                left: `calc(${leftPct}% - ${seg.padding}px)`,
-                width: `calc(${widthPct}% + ${seg.padding * 2}px)`,
+                left: `calc(${leftPct}% - ${frameInsetPx}px)`,
+                width: `calc(${widthPct}% + ${frameInsetPx * 2}px)`,
                 top: seg.top,
                 height: seg.height,
                 border: `1.5px ${seg.frame.borderStyle} ${seg.frame.color}`,
               }}
             />
-            {seg.frame.label && (
+            {seg.frame.cornerIconUrl && (
+              <img
+                src={seg.frame.cornerIconUrl}
+                alt=""
+                className="lp-widget-minigantt-frame-corner"
+                referrerPolicy="no-referrer"
+                style={{
+                  left: `calc(${leftPct}% + ${widthPct}% + ${frameInsetPx}px)`,
+                  top: seg.top,
+                }}
+              />
+            )}
+            {/* L'encadré posé par la coche n'a pas d'étiquette : sans ce
+                `|| iconUrl`, son icône n'était jamais rendue — le cadre
+                apparaissait nu. */}
+            {(seg.frame.label || seg.frame.iconUrl) && (
               <button
                 type="button"
                 className="lp-widget-minigantt-frame-label"
-                style={{ left: `calc(${leftPct}% - ${seg.padding}px)`, top: labelTop, background: seg.frame.color }}
+                style={{ left: `calc(${leftPct}% - ${frameInsetPx}px)`, top: labelTop, background: seg.frame.color }}
                 title={`${seg.frame.label || "Encadré"} — cliquer pour modifier`}
                 onClick={() => setAnnotationPanel({ section: "frames", focusId: seg.frame.id })}
               >

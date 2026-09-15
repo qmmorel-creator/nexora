@@ -287,6 +287,14 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /const blockedKeysReason = /,
     "Le bandeau de synchronisation ne distingue plus ses trois causes.");
 
+  /* Issue #48. L'encadré posé par la coche n'a PAS d'étiquette : son icône ne
+     s'affiche que parce que la condition de rendu accepte aussi iconUrl. Rétablir
+     `seg.frame.label &&` seul rendrait le cadre nu, sans la moindre erreur. */
+  assert.match(builtSource, /\(seg\.frame\.label \|\| seg\.frame\.iconUrl\)/,
+    "L'encadré sans étiquette ne rendrait plus son icône.");
+  assert.match(builtSource, /const GANTT_FRAME_BAR_CLEARANCE = /,
+    "Le dégagement entre le cadre et la barre a disparu.");
+
   /* La ligne de définition ne porte pas les parenthèses d'appel : ce motif ne
      compte QUE les appels. Trois attendus — écoutes, contrôle de fraîcheur,
      adoption d'une valeur distante. */
