@@ -1,4 +1,5 @@
-amMembers}
+kTypes={taskTypes} setTaskTypes={setTaskTypes}
+          teamMembers={teamMembers} setTeamMembers={setTeamMembers}
           customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs}
           risks={risks} setRisks={setRisks}
           gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
@@ -4030,9 +4031,6 @@ function heatmapNormalizeConfig(widget) {
 const SCATTER_LANE_FIELDS = ["project", "status", "criticality"];
 const SCATTER_POINT_RADIUS = 4.5;
 const SCATTER_POINT_GAP = 2;
-// Au-delà, les étiquettes se chevaucheraient quoi qu'on fasse : on les masque
-// et l'infobulle prend le relais. Elle, reste disponible à toute densité.
-const SCATTER_LANE_LABEL_LIMIT = 14;
 // Largeur approximative d'une étiquette, pour décider si deux voisines tiennent
 // côte à côte. Volontairement généreuse : mieux vaut masquer une étiquette de
 // trop qu'en laisser deux se superposer.
@@ -4109,31 +4107,115 @@ function scatterPackLane(points, options) {
   });
 }
 
-/* Quelles étiquettes afficher. Deux conditions cumulées :
-   - le couloir ne dépasse pas le seuil de densité ;
-   - la voisine de la même rangée est assez loin pour ne pas la toucher.
-   L'infobulle, elle, reste disponible pour tous les points, à toute densité —
-   c'est ce qui permet de masquer sans rien perdre. */
-function scatterVisibleLabels(packed, options) {
-  const { limit = SCATTER_LANE_LABEL_LIMIT, charPx = SCATTER_LABEL_CHAR_PX, paddingPx = SCATTER_LABEL_PADDING_PX } = options || {};
-  const visible = new Set();
-  if (packed.length > limit) return visible;
-  const byRow = new Map();
-  packed.forEach((p) => { if (!byRow.has(p.row)) byRow.set(p.row, []); byRow.get(p.row).push(p); });
-  byRow.forEach((row) => {
-    const ordered = [...row].sort((a, b) => a.x - b.x);
-    ordered.forEach((p, i) => {
-      const width = paddingPx + String(p.title).length * charPx;
-      const next = ordered[i + 1];
-      const prev = ordered[i - 1];
-      // La place est exigée DES DEUX CÔTÉS : près du bord droit, l'étiquette est
-      // rabattue vers la gauche, et n'aurait sinon aucune garantie d'y tenir.
-      const aDroite = !next || next.x - p.x >= width;
-      const aGauche = !prev || p.x - prev.x >= width;
-      if (aDroite && aGauche) visible.add(p.id);
+/* Placement des étiquettes (issue #53).
+
+   Règle : poser le PLUS d'étiquettes possible, tant qu'aucune n'en recouvre une
+   autre ni ne masque un point. Un seuil de densité, comme celui d'avant, jetait
+   des étiquettes qui avaient pourtant la place de tenir.
+
+   Chaque point propose des emplacements, du plus lisible au moins lisible :
+   à droite, à gauche, au-dessus, en dessous, puis déportés en hauteur avec un
+   trait de rappel en coude. Le premier emplacement libre gagne ; si aucun ne
+   l'est, le point reste sans étiquette — l'infobulle le rattrape.
+
+   Le parcours est ordonné par X puis par identifiant : à jeu de points égal, le
+   même placement, sinon les étiquettes sauteraient d'un rendu à l'autre. */
+
+const SCATTER_LABEL_HEIGHT_PX = 11;
+const SCATTER_LABEL_GAP_PX = 3;
+// Longueur du segment horizontal qui mène à une étiquette déportée.
+const SCATTER_LABEL_LEAD_PX = 14;
+// Hauteur d'un cran de déport : au moins la hauteur d'une étiquette, sinon deux
+// étiquettes déportées de crans voisins se toucheraient.
+const SCATTER_LABEL_ROW_PX = 12;
+// Au-delà, le placement coûte plus cher que ce qu'il rapporte : le couloir est
+// de toute façon trop dense pour qu'une étiquette y soit lisible.
+const SCATTER_LABEL_MAX_POINTS = 400;
+
+function scatterLabelWidth(title, charPx = SCATTER_LABEL_CHAR_PX, paddingPx = SCATTER_LABEL_PADDING_PX) {
+  return paddingPx + String(title == null ? "" : title).length * charPx;
+}
+
+// Deux rectangles se touchent-ils ? Les bords jointifs ne comptent pas comme un
+// recouvrement : deux étiquettes peuvent se suivre sans se gêner.
+function scatterBoxesOverlap(a, b) {
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+}
+
+/* Emplacements candidats d'une étiquette, dans l'ordre de préférence.
+   `leader` porte le trait de rappel : segment horizontal, coude, segment
+   horizontal — jamais une diagonale, qui se lirait comme une liaison. */
+function scatterLabelCandidates(point, width, options) {
+  const { radius, height, gap, lead, row } = options;
+  const half = height / 2;
+  const droite = point.x + radius + gap;
+  const gauche = point.x - radius - gap;
+  const out = [
+    { x: droite, y: point.y, anchor: "start", x0: droite, x1: droite + width },
+    { x: gauche, y: point.y, anchor: "end", x0: gauche - width, x1: gauche },
+    { x: point.x, y: point.y - radius - gap - half, anchor: "middle", x0: point.x - width / 2, x1: point.x + width / 2 },
+    { x: point.x, y: point.y + radius + gap + half, anchor: "middle", x0: point.x - width / 2, x1: point.x + width / 2 },
+  ];
+  for (const dy of [-row, row, -2 * row, 2 * row]) {
+    const coudeD = point.x + radius + gap;
+    const departD = coudeD + lead;
+    out.push({
+      x: departD, y: point.y + dy, anchor: "start", x0: departD, x1: departD + width,
+      leader: [[point.x + radius, point.y], [coudeD, point.y], [coudeD, point.y + dy], [departD, point.y + dy]],
     });
+    const coudeG = point.x - radius - gap;
+    const departG = coudeG - lead;
+    out.push({
+      x: departG, y: point.y + dy, anchor: "end", x0: departG - width, x1: departG,
+      leader: [[point.x - radius, point.y], [coudeG, point.y], [coudeG, point.y + dy], [departG, point.y + dy]],
+    });
+  }
+  return out.map((c) => ({ ...c, y0: c.y - half, y1: c.y + half }));
+}
+
+/* Rend une Map identifiant → { x, y, anchor, leader }. Un point absent de la
+   Map n'a pas trouvé de place. */
+function scatterPlaceLabels(points, options) {
+  const {
+    laneTop = -Infinity, laneBottom = Infinity,
+    plotLeft = -Infinity, plotRight = Infinity,
+    radius = SCATTER_POINT_RADIUS,
+    charPx = SCATTER_LABEL_CHAR_PX,
+    paddingPx = SCATTER_LABEL_PADDING_PX,
+    height = SCATTER_LABEL_HEIGHT_PX,
+    gap = SCATTER_LABEL_GAP_PX,
+    lead = SCATTER_LABEL_LEAD_PX,
+    row = SCATTER_LABEL_ROW_PX,
+    maxPoints = SCATTER_LABEL_MAX_POINTS,
+  } = options || {};
+
+  const liste = Array.isArray(points) ? points : [];
+  const placements = new Map();
+  if (!liste.length || liste.length > maxPoints) return placements;
+
+  // Les pastilles de TOUS les points, placés ou non : une étiquette ne doit
+  // jamais recouvrir un point, même un point qui n'aura pas d'étiquette.
+  const pastilles = liste.map((p) => ({
+    id: p.id, x0: p.x - radius, x1: p.x + radius, y0: p.y - radius, y1: p.y + radius,
+  }));
+
+  const ordre = [...liste].sort((a, b) => a.x - b.x || String(a.id).localeCompare(String(b.id)));
+  const prises = [];
+  const geom = { radius, height, gap, lead, row };
+
+  ordre.forEach((point) => {
+    const width = scatterLabelWidth(point.title, charPx, paddingPx);
+    for (const c of scatterLabelCandidates(point, width, geom)) {
+      if (c.x0 < plotLeft || c.x1 > plotRight) continue;
+      if (c.y0 < laneTop || c.y1 > laneBottom) continue;
+      if (prises.some((b) => scatterBoxesOverlap(c, b))) continue;
+      if (pastilles.some((b) => b.id !== point.id && scatterBoxesOverlap(c, b))) continue;
+      prises.push({ x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1 });
+      placements.set(point.id, { x: c.x, y: c.y, anchor: c.anchor, leader: c.leader || null });
+      break;
+    }
   });
-  return visible;
+  return placements;
 }
 
 /* Bornes de l'axe des X. On garde toujours l'origine visible — sans elle, on ne
@@ -4500,12 +4582,21 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
 
   const placed = useMemo(() => lanes.map((lane, i) => {
     const packed = scatterPackLane(lane.points, { laneHeight: laneH - 12, xOf });
-    const labels = scatterVisibleLabels(packed);
     const centerY = PAD_T + i * laneH + laneH / 2;
-    return { ...lane, centerY, points: packed.map((pt) => ({
-      ...pt, cy: centerY + pt.y, showLabel: labels.has(pt.id), beyond: scatterClampDays(pt.days, domain).beyond,
+    const avecY = packed.map((pt) => ({ ...pt, cy: centerY + pt.y }));
+    const labels = scatterPlaceLabels(
+      avecY.map((pt) => ({ id: pt.id, title: pt.title, x: pt.x, y: pt.cy })),
+      {
+        laneTop: PAD_T + i * laneH + 1,
+        laneBottom: PAD_T + (i + 1) * laneH - 1,
+        plotLeft: PAD_L,
+        plotRight: PAD_L + plotW,
+      },
+    );
+    return { ...lane, centerY, points: avecY.map((pt) => ({
+      ...pt, label: labels.get(pt.id) || null, beyond: scatterClampDays(pt.days, domain).beyond,
     })) };
-  }), [lanes, laneH, xOf, domain]);
+  }), [lanes, laneH, xOf, domain, plotW]);
 
   const ticks = useMemo(() => scatterTicks(domain), [domain]);
 
@@ -4596,24 +4687,29 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
                     d={pt.beyond === "low"
                       ? `M ${pt.x - SCATTER_POINT_RADIUS - 1} ${pt.cy} L ${pt.x + SCATTER_POINT_RADIUS} ${pt.cy - SCATTER_POINT_RADIUS} L ${pt.x + SCATTER_POINT_RADIUS} ${pt.cy + SCATTER_POINT_RADIUS} Z`
                       : `M ${pt.x + SCATTER_POINT_RADIUS + 1} ${pt.cy} L ${pt.x - SCATTER_POINT_RADIUS} ${pt.cy - SCATTER_POINT_RADIUS} L ${pt.x - SCATTER_POINT_RADIUS} ${pt.cy + SCATTER_POINT_RADIUS} Z`}
-                    fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
+                    fill={lane.color}
+                    stroke={pt.days < 0 ? SCATTER_LATE_COLOR : "var(--surface)"}
+                    strokeWidth={pt.days < 0 ? 1.8 : 1}
                     className={"lp-widget-scatter-dot is-beyond" + (hover && hover.id === pt.id ? " is-hover" : "")} />
                 ) : (
                   <circle cx={pt.x} cy={pt.cy} r={SCATTER_POINT_RADIUS}
-                          fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
+                          fill={lane.color}
+                          stroke={pt.days < 0 ? SCATTER_LATE_COLOR : "var(--surface)"}
+                          strokeWidth={pt.days < 0 ? 1.8 : 1.2}
                           className={"lp-widget-scatter-dot" + (hover && hover.id === pt.id ? " is-hover" : "")} />
                 )}
-                {pt.showLabel && (() => {
-                  // Près du bord droit, l'étiquette passe à gauche du point :
-                  // posée à droite, elle sortait du cadre et était rognée.
-                  const flip = pt.x + 12 + String(pt.title).length * SCATTER_LABEL_CHAR_PX > box.width - PAD_R;
-                  return (
-                    <text x={pt.x + (flip ? -1 : 1) * (SCATTER_POINT_RADIUS + 3)} y={pt.cy + 3}
-                          textAnchor={flip ? "end" : "start"} className="lp-widget-scatter-point-label">
+                {pt.label && (
+                  <>
+                    {pt.label.leader && (
+                      <polyline points={pt.label.leader.map(([lx, ly]) => `${lx},${ly}`).join(" ")}
+                                className="lp-widget-scatter-leader" />
+                    )}
+                    <text x={pt.label.x} y={pt.label.y} textAnchor={pt.label.anchor}
+                          dominantBaseline="central" className="lp-widget-scatter-point-label">
                       {pt.title}
                     </text>
-                  );
-                })()}
+                  </>
+                )}
               </g>
             ))}
           </g>
@@ -13023,93 +13119,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       if (d && d.moved && pushToast) {
         const { taskId, origStart, origEnd } = d;
         pushToast({
-          message: d.mode === "deadlineEnd" ? "Échéance modifiée." : "Dates modifiées.",
-          actionLabel: "Annuler",
-          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, start: origStart, end: origEnd } : t))),
-        });
-      } else if (d && !d.moved && d.task) {
-        onOpen(d.task);
-      }
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    window.addEventListener("touchmove", onMove, { passive: false });
-    window.addEventListener("touchend", onUp);
-    window.addEventListener("touchcancel", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
-    };
-  }, [setTasks, pushToast, onOpen]);
-
-  // Glisser-déposer dédié aux sous-tâches : ne modifie que leur propre date de fin,
-  // au sein de la checklist de leur tâche parente.
-  const subDragRef = useRef(null);
-  const startDragSubtask = (e, taskId, subId, origEnd) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const touch = e.touches && e.touches[0];
-    subDragRef.current = { taskId, subId, startClientX: touch ? touch.clientX : e.clientX, origEnd, dw: dayWidth, moved: false };
-  };
-  useEffect(() => {
-    function onMove(e) {
-      const d = subDragRef.current;
-      if (!d) return;
-      const point = e.touches ? e.touches[0] : e;
-      if (!point) return;
-      if (e.cancelable) e.preventDefault();
-      const deltaDays = Math.round((point.clientX - d.startClientX) / d.dw);
-      if (deltaDays !== 0) d.moved = true;
-      const newEnd = addDays(d.origEnd, deltaDays);
-      setTasks((prev) => prev.map((t) => {
-        if (t.id !== d.taskId) return t;
-        return { ...t, checklist: (t.checklist || []).map((s) => (s.id === d.subId ? { ...s, end: newEnd } : s)) };
-      }));
-    }
-    function onUp() {
-      const d = subDragRef.current;
-      subDragRef.current = null;
-      if (d && d.moved && pushToast) {
-        const { taskId, subId, origEnd } = d;
-        pushToast({
-          message: "Date de sous-tâche modifiée.",
-          actionLabel: "Annuler",
-          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: (t.checklist || []).map((s) => (s.id === subId ? { ...s, end: origEnd } : s)) } : t))),
-        });
-      }
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    window.addEventListener("touchmove", onMove, { passive: false });
-    window.addEventListener("touchend", onUp);
-    window.addEventListener("touchcancel", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
-    };
-  }, [setTasks, pushToast]);
-
-  // Barre de progression modifiable directement dans le graphique
-  const progressDragRef = useRef(null);
-  const setProgressFromClientX = (taskId, barX0, barW, clientX) => {
-    const pct = Math.max(0, Math.min(100, Math.round(((clientX - barX0) / barW) * 100)));
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t)));
-  };
-  const startDragProgress = (e, t, barX0, barW) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const svgRect = e.currentTarget.closest("svg").getBoundingClientRect();
-    const screenBarX0 = svgRect.left + barX0;
-    progressDragRef.current = { taskId: t.id, barX0: screenBarX0, barW };
-    setProgressFromClientX(t.id, screenBarX0, barW, e.clientX);
-  };
-  useEffect(() => {
-    function onMove(e) {
-      const d = progressDragRef.current;
-      if (!d) return;
-      setProgressFromClientX(d.taskId, d.barX0, d.barW, e.clientX);
-    }
-    function onUp() { progressDragRef.current = null; }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMov
+      

@@ -1,4 +1,93 @@
-e); window.removeEventListener("mouseup", onUp); };
+    message: d.mode === "deadlineEnd" ? "Échéance modifiée." : "Dates modifiées.",
+          actionLabel: "Annuler",
+          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, start: origStart, end: origEnd } : t))),
+        });
+      } else if (d && !d.moved && d.task) {
+        onOpen(d.task);
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    window.addEventListener("touchcancel", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
+    };
+  }, [setTasks, pushToast, onOpen]);
+
+  // Glisser-déposer dédié aux sous-tâches : ne modifie que leur propre date de fin,
+  // au sein de la checklist de leur tâche parente.
+  const subDragRef = useRef(null);
+  const startDragSubtask = (e, taskId, subId, origEnd) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const touch = e.touches && e.touches[0];
+    subDragRef.current = { taskId, subId, startClientX: touch ? touch.clientX : e.clientX, origEnd, dw: dayWidth, moved: false };
+  };
+  useEffect(() => {
+    function onMove(e) {
+      const d = subDragRef.current;
+      if (!d) return;
+      const point = e.touches ? e.touches[0] : e;
+      if (!point) return;
+      if (e.cancelable) e.preventDefault();
+      const deltaDays = Math.round((point.clientX - d.startClientX) / d.dw);
+      if (deltaDays !== 0) d.moved = true;
+      const newEnd = addDays(d.origEnd, deltaDays);
+      setTasks((prev) => prev.map((t) => {
+        if (t.id !== d.taskId) return t;
+        return { ...t, checklist: (t.checklist || []).map((s) => (s.id === d.subId ? { ...s, end: newEnd } : s)) };
+      }));
+    }
+    function onUp() {
+      const d = subDragRef.current;
+      subDragRef.current = null;
+      if (d && d.moved && pushToast) {
+        const { taskId, subId, origEnd } = d;
+        pushToast({
+          message: "Date de sous-tâche modifiée.",
+          actionLabel: "Annuler",
+          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: (t.checklist || []).map((s) => (s.id === subId ? { ...s, end: origEnd } : s)) } : t))),
+        });
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    window.addEventListener("touchcancel", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
+    };
+  }, [setTasks, pushToast]);
+
+  // Barre de progression modifiable directement dans le graphique
+  const progressDragRef = useRef(null);
+  const setProgressFromClientX = (taskId, barX0, barW, clientX) => {
+    const pct = Math.max(0, Math.min(100, Math.round(((clientX - barX0) / barW) * 100)));
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t)));
+  };
+  const startDragProgress = (e, t, barX0, barW) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const svgRect = e.currentTarget.closest("svg").getBoundingClientRect();
+    const screenBarX0 = svgRect.left + barX0;
+    progressDragRef.current = { taskId: t.id, barX0: screenBarX0, barW };
+    setProgressFromClientX(t.id, screenBarX0, barW, e.clientX);
+  };
+  useEffect(() => {
+    function onMove(e) {
+      const d = progressDragRef.current;
+      if (!d) return;
+      setProgressFromClientX(d.taskId, d.barX0, d.barW, e.clientX);
+    }
+    function onUp() { progressDragRef.current = null; }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [setTasks]);
 
   const ProjectRow = ({ row }) => {
@@ -12876,30 +12965,4 @@ body[data-life-app="nexora"] .lp-btn-primary:hover,
 body[data-life-app="nexora"] .lp-global-add-task:hover { background: var(--life-blue-hover); }
 body[data-life-app="nexora"] .lp-table thead th { background: var(--life-soft); font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 body[data-life-app="nexora"] .lp-modal { border-radius: 16px; box-shadow: var(--life-menu-shadow); }
-body[data-life-app="nexora"] .lp-modal-head h3 { font-size: 18px; font-weight: 700; }
-body[data-life-app="nexora"] #boot-screen { background: var(--life-bg); }
-body[data-life-app="nexora"] #boot-screen p { font-family: var(--life-font); font-size: 13px; }
-
-/* Keep the existing mobile drawers, grids and resize handles in charge. */
-@media (max-width: 767px) {
-  body[data-life-app="health"] .header { padding: 14px; gap: 14px; }
-  body[data-life-app="health"] .header-title,
-  body[data-life-app="budget"] .brand h1 { font-size: 21px; }
-  body[data-life-app="health"] .tab-btn { min-height: 44px; padding: 10px 12px; }
-  body[data-life-app="health"] .cq-widget { padding: 16px; }
-  body[data-life-app="health"] .cq-body { min-width: 0; }
-  body[data-life-app="health"] .cq-stat-row { grid-template-columns: 18px 86px minmax(12px,1fr) 44px 20px; gap: 5px; }
-  body[data-life-app="health"] :is(.header-icon-btn, .reglages-save-btn) { min-height: 44px; }
-  body[data-life-app="budget"] .brandbar { gap: 10px; padding-bottom: 10px; }
-  body[data-life-app="budget"] .tab { min-height: 44px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  body[data-life-app] *, body[data-life-app] *::before, body[data-life-app] *::after {
-    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
-    transition-duration: .01ms !important; scroll-behavior: auto !important;
-  }
-}
-
-</style>
-</body>
-</html>
+body[data-life-app="nexora"] .lp-modal-head h3 { font-size: 18px; font-weight: 7

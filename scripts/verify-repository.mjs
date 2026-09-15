@@ -376,6 +376,26 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "La sous-grille intermédiaire du nuage a disparu.");
   assert.match(builtSource, /ticks\.minor\.map/,
     "La sous-grille n'est plus dessinée à partir des graduations calculées.");
+
+  /* Moteur d'étiquettes (issue #53). Trois maillons qui se défont sans erreur :
+     le widget cesse de demander un placement, ou dessine le rappel autrement,
+     ou reprend la couleur d'alerte à la place de celle du groupe. */
+  assert.match(builtSource, /const labels = scatterPlaceLabels\(/,
+    "Le widget ne demande plus de placement : les étiquettes disparaîtraient.");
+  assert.match(builtSource, /className="lp-widget-scatter-leader"/,
+    "Le trait de rappel des étiquettes déportées a disparu.");
+  /* La couleur d'un point est celle de son GROUPE, en retard comme à venir : le
+     rouge d'alerte effaçait l'agrégation sur toute la moitié gauche du nuage.
+     Le retard se signale au contour. */
+  const nuage = builtSource.slice(
+    builtSource.indexOf("function WidgetDeadlineScatter"),
+    builtSource.indexOf("function WidgetProjectPulse"),
+  );
+  assert.ok(nuage.length > 0, "WidgetDeadlineScatter introuvable");
+  assert.doesNotMatch(nuage, /fill=\{pt\.days < 0 \? SCATTER_LATE_COLOR/,
+    "Le retard reprend la couleur du point : l'agrégation ne se lirait plus à gauche de l'origine.");
+  assert.match(nuage, /stroke=\{pt\.days < 0 \? SCATTER_LATE_COLOR/,
+    "Le retard n'est plus signalé au contour : rien ne le distinguerait d'une tâche à venir.");
 }
 
 /* Heat map croisée (issue #51).

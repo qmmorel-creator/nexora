@@ -99,6 +99,23 @@ function AnnotationsHarness() {
   const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
   const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
+  // Couloir DENSE : c'est le cas pour lequel le moteur d'étiquettes existe
+  // (issue #53). Titres longs, amas serrés, tâches de part et d'autre de
+  // l'origine — les conditions réelles d'un tableau de bord chargé.
+  const scatterDenseTitres = [
+    "Audit SOCOTEC Machine Tournante", "Organisation Réunion sur site le 1/2 Octobre",
+    "Revue DOE", "Travaux Levée Réserves", "Point GESCO", "Réunion Sécurité Ingénierie",
+    "PCH VA - Suivi Transfert CTEX6", "Réunion expertise amiable", "Chiffrage lot 3",
+  ];
+  const scatterDenseTasks = Array.from({ length: 36 }, (_, i) => {
+    const d = ((i * 31) % 150) - 70;
+    return {
+      id: `sd${i}`, projectId: ["p1", "p2", "p3"][i % 3], statusId: i % 3 === 0 ? "s1" : "s2",
+      title: scatterDenseTitres[i % scatterDenseTitres.length],
+      start: addDays(scatterToday, d - 10), end: addDays(scatterToday, d),
+      progress: (i * 13) % 101, checklist: [], criticality: ["urgent", "moyen", "bas"][i % 3],
+    };
+  });
   // Fenêtre fixe étroite (issue #50) : « sc1 » (J-6) et « sc4 » (J+12) sortent
   // d'une fenêtre J-3 → J+5. Ils doivent rester dessinés, rabattus sur le bord
   // et comptés — jamais disparaître.
@@ -230,6 +247,9 @@ function AnnotationsHarness() {
             en haut, avant « Moyen » puis « Bas ». */}
         <div id="harness-scatter-crit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
           <WidgetDeadlineScatter widget={{ ...scatterWidget, scatterLaneField: "criticality" }} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
+        </div>
+        <div id="harness-scatter-dense" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 1000, height: 280, marginBottom: 18 }}>
+          <WidgetDeadlineScatter widget={scatterWidget} tasks={scatterDenseTasks} ctx={ctx} onOpen={noop} />
         </div>
         {/* Fenêtre fixe étroite : deux tâches débordent, aucune ne disparaît. */}
         <div id="harness-scatter-window" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 200, marginBottom: 18 }}>
