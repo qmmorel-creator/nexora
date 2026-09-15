@@ -24,7 +24,7 @@ const EXPORTS = [
   "HEATMAP_MAX_MONTHS", "HEATMAP_MIN_COLOR_SPAN",
   "heatmapCellKey", "heatmapMonthOf", "heatmapMonthRange", "heatmapMonthAxis",
   "heatmapCellValue", "heatmapBuildGrid", "heatmapColorDomain", "heatmapNormalizeConfig",
-  "heatmapMonthLabel",
+  "heatmapMonthLabel", "heatmapOrderCriticalities",
   "TREEMAP_CRITICALITY_WEIGHTS",
 ];
 
@@ -200,4 +200,18 @@ test("un mois s'abrège sans devenir illisible, et une valeur douteuse ne casse 
     const out = H.heatmapMonthLabel(mauvais);
     assert.equal(typeof out, "string", `« ${mauvais} » doit rendre une chaîne, pas planter l'en-tête`);
   }
+});
+
+test("sur un axe, la criticité se lit de la plus urgente à la moins urgente", () => {
+  // CRITICALITIES est déclaré du plus bas au plus haut — hors des sentinelles,
+  // donc reproduit ici dans cet ordre-là : repris tel quel, l'axe mettait
+  // « Bas » en tête, là où l'œil doit tomber sur « Urgent ». Que la fonction
+  // soit bien appliquée à la vraie liste est tenu par un invariant de dépôt.
+  const declare = [{ id: "bas" }, { id: "moyen" }, { id: "urgent" }];
+  assert.deepEqual(H.heatmapOrderCriticalities(declare).map((c) => c.id), ["urgent", "moyen", "bas"]);
+  // Une valeur inconnue passe en dernier plutôt que de remonter en tête.
+  const avecInconnue = H.heatmapOrderCriticalities([{ id: "bas" }, { id: "zzz" }, { id: "urgent" }]);
+  assert.deepEqual(avecInconnue.map((c) => c.id), ["urgent", "bas", "zzz"]);
+  assert.deepEqual(H.heatmapOrderCriticalities([]), []);
+  assert.deepEqual(H.heatmapOrderCriticalities(null), []);
 });

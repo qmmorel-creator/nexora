@@ -405,6 +405,10 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
   assert.doesNotMatch(grille, /lp-widget-heatmap-/,
     "La heat map croisée réutilise les classes de la vue « Heat map » : ses cases seraient empilées, sans erreur.");
   assert.match(grille, /lp-widget-hmgrid-cell/, "Les classes propres à la heat map croisée ont disparu.");
+  /* CRITICALITIES est déclaré du plus bas au plus haut. Repris tel quel, l'axe
+     mettrait « Bas » en tête, là où l'œil doit tomber sur « Urgent ». */
+  assert.match(grille, /heatmapOrderCriticalities\(CRITICALITIES\)/,
+    "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
 }
 
 console.log("Repository invariants: OK");
