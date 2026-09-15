@@ -61,20 +61,24 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
 1. Avant de commencer un batch de travail, lire les issues ouvertes labellisées
    `statut:backlog` pour la ou les zones concernées.
 2. Passer le label en `statut:en-cours` au démarrage du travail sur une issue.
-3. Développer sur une branche, ouvrir une pull request et attendre que `Nexora CI` passe au
-   vert. Après fusion dans `main`, Netlify redéploie automatiquement les deux sites depuis
-   Git (voir « Déploiement automatique » ci-dessous). Commenter l'issue avec un résumé de ce
-   qui a été fait, puis passer en `statut:à-tester`.
-4. Ne fermer une issue et passer en `statut:fait` qu'après validation explicite de Quentin
+3. Développer sur la branche de travail et **y accumuler les commits**. Pousser sur cette
+   branche ne déclenche aucun déploiement : c'est gratuit, et c'est là que le travail attend.
+4. **Ne jamais ouvrir de pull request ni fusionner sans le feu vert explicite de Quentin**
+   (voir « Déploiement : validation explicite » ci-dessous). Quand plusieurs correctifs sont
+   prêts, les annoncer et demander l'autorisation de publier le lot.
+5. Une fois le feu vert donné : **une seule** pull request pour tout le lot, `Nexora CI`
+   verte, **une seule** fusion. Commenter chaque issue concernée avec un résumé, puis passer
+   en `statut:à-tester`.
+6. Ne fermer une issue et passer en `statut:fait` qu'après validation explicite de Quentin
    dans un commentaire.
-5. Un commit qui répond à une issue doit le mentionner dans son message
+7. Un commit qui répond à une issue doit le mentionner dans son message
    (`Ref #12`) pour garder le lien visible dans l'historique.
    **Ne jamais utiliser de mot-clé de fermeture** (`Closes #12`, `Fixes #12`, `Resolves #12`)
    dans un message de commit ni dans une description de pull request : GitHub fermerait
-   l'issue à la fusion, alors que la fermeture appartient à Quentin après validation (point 4).
+   l'issue à la fusion, alors que la fermeture appartient à Quentin après validation (point 6).
    Une issue fermée mais encore étiquetée `statut:à-tester` est le symptôme de cette erreur —
    la rouvrir.
-6. Toujours repartir du dernier état de `main` avant de coder, pour éviter d'écraser le
+8. Toujours repartir du dernier état de `main` avant de coder, pour éviter d'écraser le
    travail d'un autre assistant.
 
 ## Garde-fous propres à Nexora
@@ -89,18 +93,77 @@ Ces contraintes s'ajoutent aux règles de suivi et priment sur toute demande d'i
   l'inventaire figé est dans [`../docs/MIGRATION_GITHUB.md`](../docs/MIGRATION_GITHUB.md) et
   [`../docs/AUTOMATIONS_BASELINE.md`](../docs/AUTOMATIONS_BASELINE.md).
 
-## Déploiement automatique
+## Déploiement : validation explicite
 
-Les deux sites Netlify sont reliés à ce dépôt et se redéploient à chaque publication sur
-`main` :
+**Les déploiements Netlify sont facturés. Ils ne se déclenchent donc plus au fil de l'eau.**
+
+Les deux sites sont reliés à ce dépôt :
 
 | Projet Netlify | Branche | Base directory |
 |---|---|---|
 | `nexora-project` | `main` | `apps/nexora` |
 | `nexora-chatgpt-mcp` | `main` | `apps/nexora-mcp` |
 
-Livrer une demande = fusionner dans `main` après CI verte. Aucun déclenchement manuel n'est
-nécessaire ; en cas d'échec, republier le dernier Deploy ID fonctionnel du projet concerné.
+### Ce qui coûte, et ce qui ne coûte rien
+
+| Action | Construction Netlify |
+|---|---|
+| Commit et push sur la branche de travail | **aucune** — tant qu'aucune pull request n'est ouverte |
+| **Ouvrir une pull request** | une *Deploy Preview* **par site** |
+| **Fusionner dans `main`** | une construction de production **par site** |
+
+Le coût est donc porté par l'**ouverture d'une pull request** et par la **fusion**, jamais par
+le fait de committer. C'est exactement là que la validation s'impose.
+
+### La règle
+
+1. L'assistant accumule le travail en commits sur la branche, autant de fois qu'il le faut.
+2. Il **n'ouvre pas** de pull request et **ne fusionne pas** de sa propre initiative. Il
+   annonce ce qui est prêt et **demande le feu vert**.
+3. Sur feu vert : **une** pull request pour tout le lot, CI verte, **une** fusion. Un lot de
+   cinq correctifs coûte alors autant qu'un seul.
+4. Le feu vert vaut pour **ce lot-là**. Il ne se reporte pas au suivant.
+5. Exception, et elle seule : une régression qui casse la production en ligne. Là, publier
+   tout de suite et le dire — laisser le site cassé coûte plus cher qu'une construction.
+
+### Ce qui remplace la CI au fil de l'eau
+
+Comme `Nexora CI` ne tournait qu'à l'ouverture d'une pull request, elle tourne désormais aussi
+**à chaque push sur une branche de travail** : la vérification reste continue, sans qu'aucun
+déploiement Netlify ne soit déclenché. `npm run install:all && npm run verify` (plus
+`npm run visual:check` quand l'interface bouge) reste obligatoire avant chaque push : c'est ce
+qui garantit qu'un lot entier est publiable d'un coup.
+
+### Chaque site ne se construit que s'il est concerné
+
+Les deux sites vivent dans le même dépôt. Sans garde-fou, un correctif d'interface
+reconstruisait **aussi** le site MCP, et inversement : deux constructions facturées là où une
+seule était utile. Chaque `netlify.toml` porte donc une commande `ignore` qui saute la
+construction quand son propre dossier n'a pas changé :
+
+```toml
+ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- ."
+```
+
+Netlify l'exécute depuis le *base directory* : « `.` » désigne donc `apps/nexora` ou
+`apps/nexora-mcp`. Code de sortie 0 = rien n'a changé, on saute ; non nul = on construit. Au
+premier build ou après un vidage de cache, `$CACHED_COMMIT_REF` est vide, la commande échoue,
+et la construction a lieu — le repli sûr est bien « construire ».
+
+Vérifié sur des fusions réelles :
+
+| Modification | `nexora-project` | `nexora-chatgpt-mcp` |
+|---|---|---|
+| Correctif d'interface (`apps/nexora`) | construit | **sauté** |
+| Documentation ou CI uniquement | **sauté** | **sauté** |
+
+**Conséquence à connaître** : une fusion qui ne touche ni `apps/nexora` ni `apps/nexora-mcp`
+ne déploie plus rien, et c'est voulu. Un site qui « ne se redéploie pas » après une fusion de
+documentation n'est pas une panne.
+
+### En cas d'échec de construction
+
+Republier le dernier Deploy ID fonctionnel du projet concerné.
 
 ## Suivi visuel
 
