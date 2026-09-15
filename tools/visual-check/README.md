@@ -55,6 +55,8 @@ en couloirs par projet puis par criticité :
 - l'infobulle apparaît au survol, le clic ouvre la tâche, et le couloir choisi
   dans la fiche du widget est bien enregistré ;
 - sans aucune tâche datée, le widget explique pourquoi il n'affiche rien ;
+- chaque couloir porte la couleur de son entité en aplat très pâle, et l'axe une
+  sous-grille non étiquetée plus fine que les graduations ;
 - en fenêtre fixe, aucune tâche hors plage ne disparaît : elle est rabattue sur
   le bord en chevron, comptée aux deux bouts, et les bornes restent graduées.
 

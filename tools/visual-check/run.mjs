@@ -108,6 +108,12 @@ const seen = await page.evaluate(() => {
       .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), x: Math.round(el.getBoundingClientRect().x) })),
     scatterLaneColors: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-lane-mark")]
       .map((el) => (el.getAttribute("fill") || "").toUpperCase()),
+    // Fond des couloirs : chaque bande porte la couleur de son entité, en aplat
+    // très pâle. Relevé avec son opacité — une teinte à zéro ne distingue rien.
+    scatterBands: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-band")]
+      .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), opacity: Number(el.getAttribute("fill-opacity")) })),
+    scatterMajorAxes: document.querySelectorAll("#harness-scatter .lp-widget-scatter-axis, #harness-scatter .lp-widget-scatter-axis-today").length,
+    scatterMinorAxes: document.querySelectorAll("#harness-scatter .lp-widget-scatter-subaxis").length,
     windowDots: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot").length,
     windowBeyond: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot.is-beyond").length,
     windowOverflowText: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-overflow")].map((e) => e.textContent.trim()),
@@ -625,6 +631,26 @@ if (todayX !== null) {
   const late = seen.scatterDots.filter((d) => d.x + d.w / 2 < todayX - 1).length;
   expect(late === 2, `Nuage : ${late} point(s) à gauche de l'origine, 2 tâches en retard attendues`);
 }
+// --- Couloirs teintés et sous-grille (issue #53) ---------------------------
+// Chaque couloir porte la couleur de son entité : c'est ce qui permet de
+// retrouver sa ligne sans relire les libellés.
+expect(seen.scatterBands.length === seen.scatterLaneLabels.length,
+  `Nuage : ${seen.scatterBands.length} bande(s) de couloir pour ${seen.scatterLaneLabels.length} couloir(s) — chacun doit avoir la sienne`);
+{
+  const couleurs = new Set(seen.scatterLaneColors);
+  seen.scatterBands.forEach((b) => {
+    expect(couleurs.has(b.fill), `Nuage : une bande de couloir (${b.fill}) ne reprend pas la couleur de son entité`);
+    expect(b.opacity > 0 && b.opacity <= 0.2,
+      `Nuage : teinte de couloir à ${b.opacity} — nulle elle ne distingue rien, forte elle passe devant les points`);
+  });
+  expect(new Set(seen.scatterBands.map((b) => b.fill)).size > 1,
+    "Nuage : tous les couloirs ont la même teinte — le contrôle ne prouverait rien");
+}
+// Une sous-grille non étiquetée, plus dense que les graduations : sans elle,
+// entre deux repères un point se lit « quelque part au milieu ».
+expect(seen.scatterMinorAxes > seen.scatterMajorAxes,
+  `Nuage : ${seen.scatterMinorAxes} trait(s) de sous-grille pour ${seen.scatterMajorAxes} graduation(s) — la sous-grille doit être plus fine`);
+
 // Faible densité : quatre points seulement, les étiquettes doivent rester visibles.
 expect(seen.scatterLabels.length > 0, "Nuage : aucune étiquette alors que la densité est faible");
 // Et lisibles jusqu'au bout : une étiquette rognée par le bord droit ne dit

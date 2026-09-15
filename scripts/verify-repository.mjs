@@ -366,6 +366,16 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Le mode de fenêtre choisi dans la fiche n'est plus enregistré.");
   assert.match(builtSource, /data\.scatterWindowBefore = Number\(scatterWindowBefore\);/,
     "Les bornes de la fenêtre ne sont plus enregistrées.");
+
+  /* Couloirs teintés et sous-grille (issue #53). Sans la teinte, on ne retrouve
+     sa ligne qu'en relisant les libellés ; sans la sous-grille, un point entre
+     deux repères se lit « quelque part au milieu ». */
+  assert.match(builtSource, /fillOpacity=\{SCATTER_LANE_TINT\}/,
+    "Les couloirs ne portent plus la couleur de leur entité.");
+  assert.match(builtSource, /className="lp-widget-scatter-subaxis"/,
+    "La sous-grille intermédiaire du nuage a disparu.");
+  assert.match(builtSource, /ticks\.minor\.map/,
+    "La sous-grille n'est plus dessinée à partir des graduations calculées.");
 }
 
 /* Heat map croisée (issue #51).

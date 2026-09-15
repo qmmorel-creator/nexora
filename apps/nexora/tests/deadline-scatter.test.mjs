@@ -16,6 +16,7 @@ const EXPORTS = [
   "scatterDaysToDeadline", "scatterBuildLanes", "scatterPackLane",
   "scatterVisibleLabels", "scatterDomain",
   "scatterNormalizeWindow", "scatterClampDays", "scatterWindowOverflow",
+  "scatterTicks", "SCATTER_MINOR_PER_MAJOR", "SCATTER_LANE_TINT",
 ];
 
 const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
@@ -27,6 +28,7 @@ const {
   SCATTER_WINDOW_DEFAULT_BEFORE, SCATTER_WINDOW_DEFAULT_AFTER,
   scatterDaysToDeadline, scatterBuildLanes, scatterPackLane, scatterVisibleLabels, scatterDomain,
   scatterNormalizeWindow, scatterClampDays, scatterWindowOverflow,
+  scatterTicks, SCATTER_MINOR_PER_MAJOR, SCATTER_LANE_TINT,
 } = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 )();
@@ -257,4 +259,78 @@ test("aucune tâche n'est perdue par la fenêtre", () => {
   const { low, high } = scatterWindowOverflow(lanes, domain);
   assert.equal(low + high, 2, "deux tâches hors fenêtre, toujours comptées");
   assert.equal(total - low - high, 1, "une seule tâche dans la fenêtre");
+});
+
+/* ------------------------------------------------------------------------- *
+ * Graduations et sous-grille (issue #53).
+ * ------------------------------------------------------------------------- */
+
+test("aucune graduation ne sort du champ, même quand il ne contient pas l'origine", () => {
+  // Le champ straddle toujours zéro dans l'application ; la fonction, elle, doit
+  // rester juste pour n'importe quel champ — sinon un repère « aujourd'hui »
+  // apparaîtrait hors de la plage, à un endroit qui ne veut rien dire.
+  const { major, minor } = scatterTicks({ min: 10, max: 40 });
+  assert.ok(!major.includes(0), "l'origine n'appartient pas à ce champ : elle ne doit pas y être graduée");
+  [...major, ...minor].forEach((d) => {
+    assert.ok(d >= 10 && d <= 40, `graduation ${d} hors du champ 10 → 40`);
+  });
+  assert.ok(major.length > 0, "un champ sans origine garde tout de même des repères");
+});
+
+test("l'origine est toujours graduée, et rien ne sort du champ", () => {
+  // Sans l'origine, plus rien ne sépare visuellement le retard de l'avance.
+  for (const domain of [{ min: -30, max: 90 }, { min: -7, max: 7 }, { min: -200, max: 400 }, { min: -1, max: 6 }]) {
+    const { major, minor } = scatterTicks(domain);
+    assert.ok(major.includes(0), `origine absente pour ${JSON.stringify(domain)}`);
+    [...major, ...minor].forEach((d) => {
+      assert.ok(d >= domain.min && d <= domain.max, `graduation ${d} hors du champ ${JSON.stringify(domain)}`);
+    });
+    assert.deepEqual(major, [...major].sort((a, b) => a - b), "les graduations doivent être ordonnées");
+  }
+});
+
+test("la sous-grille ne double jamais une graduation principale", () => {
+  // Deux traits superposés se liraient comme un trait plus épais, donc comme un
+  // repère — exactement ce que la sous-grille ne doit pas être.
+  for (const domain of [{ min: -30, max: 90 }, { min: -7, max: 7 }, { min: -200, max: 400 }]) {
+    const { major, minor } = scatterTicks(domain);
+    const doublons = minor.filter((d) => major.includes(d));
+    assert.deepEqual(doublons, [], `sous-grille superposée aux repères pour ${JSON.stringify(domain)}`);
+  }
+});
+
+test("il y a bien une sous-grille entre deux graduations voisines", () => {
+  // Sans elle, entre « J+15 » et « J+30 » un point se lit « quelque part au
+  // milieu » : c'est tout l'objet de l'issue.
+  const { major, minor } = scatterTicks({ min: -30, max: 90 });
+  assert.ok(major.length >= 2, "au moins deux graduations principales attendues");
+  for (let i = 0; i < major.length - 1; i++) {
+    const entre = minor.filter((d) => d > major[i] && d < major[i + 1]);
+    assert.ok(entre.length > 0, `aucune sous-graduation entre ${major[i]} et ${major[i + 1]}`);
+  }
+  assert.equal(SCATTER_MINOR_PER_MAJOR, 5);
+});
+
+test("en fenêtre fixe, les deux bornes réglées restent graduées", () => {
+  const { major } = scatterTicks({ min: -3, max: 5, windowed: true });
+  assert.ok(major.includes(-3) && major.includes(5), `bornes non graduées (${major.join(" ")})`);
+  assert.ok(major.includes(0), "l'origine reste graduée");
+});
+
+test("la teinte des couloirs reste un fond, pas une couleur", () => {
+  // Au-delà, elle concurrence les points et la zone de retard.
+  assert.ok(SCATTER_LANE_TINT > 0, "un couloir sans teinte ne se distingue plus");
+  assert.ok(SCATTER_LANE_TINT <= 0.2, `teinte de ${SCATTER_LANE_TINT} : le fond passerait devant les points`);
+});
+
+test("une étiquette a besoin de place des deux côtés, pas seulement à droite", () => {
+  // Près du bord droit, l'étiquette est rabattue vers la gauche : ne vérifier
+  // que la droite la laissait recouvrir l'étiquette du point précédent.
+  const packed = scatterPackLane(
+    [{ id: "a", title: "Réception", days: 0 }, { id: "b", title: "Relance presse", days: 1 }, { id: "c", title: "Devis", days: 60 }],
+    { laneHeight: 10, xOf: (d) => d * 4 },
+  );
+  const visibles = scatterVisibleLabels(packed);
+  assert.ok(!visibles.has("b"), "« b » est serré entre deux voisins : son étiquette ne tient d'aucun côté");
+  assert.ok(visibles.has("c"), "« c » est isolé : il garde son étiquette");
 });

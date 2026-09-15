@@ -1,4 +1,6 @@
-{setRisks}
+amMembers}
+          customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs}
+          risks={risks} setRisks={setRisks}
           gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
           syncedCalendarSettings={syncedCalendarSettings} setSyncedCalendarSettings={setSyncedCalendarSettings} onSyncSyncedCalendars={syncPublicCalendarsToProjects}
           metaFilters={metaFilters} setMetaFilters={setMetaFilters}
@@ -4034,7 +4036,7 @@ const SCATTER_LANE_LABEL_LIMIT = 14;
 // Largeur approximative d'une étiquette, pour décider si deux voisines tiennent
 // côte à côte. Volontairement généreuse : mieux vaut masquer une étiquette de
 // trop qu'en laisser deux se superposer.
-const SCATTER_LABEL_CHAR_PX = 5.6;
+const SCATTER_LABEL_CHAR_PX = 6.2;
 const SCATTER_LABEL_PADDING_PX = 10;
 
 /* Jours restants avant l'échéance. Négatif = en retard.
@@ -4123,7 +4125,12 @@ function scatterVisibleLabels(packed, options) {
     ordered.forEach((p, i) => {
       const width = paddingPx + String(p.title).length * charPx;
       const next = ordered[i + 1];
-      if (!next || next.x - p.x >= width) visible.add(p.id);
+      const prev = ordered[i - 1];
+      // La place est exigée DES DEUX CÔTÉS : près du bord droit, l'étiquette est
+      // rabattue vers la gauche, et n'aurait sinon aucune garantie d'y tenir.
+      const aDroite = !next || next.x - p.x >= width;
+      const aGauche = !prev || p.x - prev.x >= width;
+      if (aDroite && aGauche) visible.add(p.id);
     });
   });
   return visible;
@@ -4139,6 +4146,9 @@ const SCATTER_EDGE_PAD_DAYS = 1;
 // Couleur du retard, alignée sur --danger du thème (les attributs SVG `fill`
 // ne résolvent pas var() de façon fiable, d'où la constante).
 const SCATTER_LATE_COLOR = "#E2483E";
+// Teinte d'un couloir : assez pâle pour rester un fond. Au-delà, elle
+// concurrence les points et la zone de retard, et le nuage devient illisible.
+const SCATTER_LANE_TINT = 0.1;
 /* Fenêtre d'affichage (issue #50). En automatique, l'axe s'ajuste aux tâches ;
    il suffit alors d'une échéance à J+400 pour que tout le reste se tasse en une
    colonne illisible autour de l'origine — précisément la zone qu'on regarde.
@@ -4188,6 +4198,34 @@ function scatterDomain(lanes, windowCfg) {
 /* Position en X d'une tâche hors fenêtre : rabattue sur le bord, avec la
    direction retenue. Le nombre de jours réel n'est jamais altéré — c'est lui
    que l'infobulle affiche, et c'est ce qui distingue « rabattu » de « faux ». */
+/* Graduations de l'axe des X.
+
+   Les principales tombent sur des repères ronds — 5, 10, 30 ou 90 jours selon
+   l'étendue — et l'origine y figure toujours : c'est elle qui sépare le retard
+   de l'avance. En fenêtre fixe (#50), les deux bornes réglées s'y ajoutent.
+
+   La sous-grille intermédiaire n'est pas étiquetée. Sans elle, entre « J+15 »
+   et « J+30 », un point se lit « quelque part au milieu » au lieu de « vers
+   J+21 ». Elle ne croise jamais une graduation principale : deux traits
+   superposés se liraient comme un trait plus épais, donc comme un repère. */
+const SCATTER_MINOR_PER_MAJOR = 5;
+function scatterTicks(domain) {
+  const span = domain.max - domain.min;
+  const step = span <= 20 ? 5 : span <= 60 ? 10 : span <= 180 ? 30 : 90;
+  const brut = [0];
+  for (let d = step; d <= domain.max; d += step) brut.push(d);
+  for (let d = -step; d >= domain.min; d -= step) brut.push(d);
+  if (domain.windowed) { brut.push(domain.min); brut.push(domain.max); }
+  const major = [...new Set(brut)].filter((d) => d >= domain.min && d <= domain.max).sort((a, b) => a - b);
+
+  const pas = step / SCATTER_MINOR_PER_MAJOR;
+  const minor = [];
+  for (let d = Math.ceil(domain.min / pas) * pas; d <= domain.max; d += pas) {
+    if (!major.includes(d)) minor.push(d);
+  }
+  return { major, minor };
+}
+
 function scatterClampDays(days, domain) {
   if (days < domain.min) return { plotDays: domain.min, beyond: "low" };
   if (days > domain.max) return { plotDays: domain.max, beyond: "high" };
@@ -4469,20 +4507,7 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
     })) };
   }), [lanes, laneH, xOf, domain]);
 
-  // Graduations : des repères ronds plutôt qu'un pas régulier arbitraire, et
-  // toujours l'origine, qui porte toute la lecture du widget.
-  const ticks = useMemo(() => {
-    const span = domain.max - domain.min;
-    const step = span <= 20 ? 5 : span <= 60 ? 10 : span <= 180 ? 30 : 90;
-    const out = [0];
-    for (let d = step; d <= domain.max; d += step) out.push(d);
-    for (let d = -step; d >= domain.min; d -= step) out.push(d);
-    // En fenêtre fixe, les deux bornes sont graduées quoi qu'il arrive : ce sont
-    // les valeurs que l'on vient de régler, et sans elles rien ne dit jusqu'où
-    // va la plage affichée — un chevron au bord devient alors une énigme.
-    if (domain.windowed) { out.push(domain.min); out.push(domain.max); }
-    return [...new Set(out)].filter((d) => d >= domain.min && d <= domain.max).sort((a, b) => a - b);
-  }, [domain]);
+  const ticks = useMemo(() => scatterTicks(domain), [domain]);
 
   const total = placed.reduce((n, l) => n + l.points.length, 0);
   if (!total) {
@@ -4500,17 +4525,26 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
            aria-label={`Nuage des échéances, ${total} tâches réparties en ${placed.length} couloirs`}>
         <defs>
           <linearGradient id="lp-scatter-late" x1="0" x2="1">
-            <stop offset="0%" stopColor={SCATTER_LATE_COLOR} stopOpacity="0.16" />
+            <stop offset="0%" stopColor={SCATTER_LATE_COLOR} stopOpacity="0.09" />
             <stop offset="100%" stopColor={SCATTER_LATE_COLOR} stopOpacity="0" />
           </linearGradient>
         </defs>
 
         {/* Bandes de couloir d'abord : elles servent de fond, et masquaient la
-            zone de retard quand elles étaient peintes par-dessus. */}
-        {placed.map((lane, i) => (i % 2 === 1 ? (
-          <rect key={`band-${lane.key}`} x={PAD_L} y={PAD_T + i * laneH} width={plotW} height={laneH}
-                className="lp-widget-scatter-band" />
-        ) : null))}
+            zone de retard quand elles étaient peintes par-dessus. Chacune porte
+            la couleur de son entité, très pâle — assez pour retrouver sa ligne,
+            trop peu pour concurrencer les points ou la zone de retard. */}
+        {placed.map((lane, i) => (
+          <g key={`band-${lane.key}`}>
+            <rect x={PAD_L} y={PAD_T + i * laneH} width={plotW} height={laneH}
+                  fill={lane.color || "#94A3B8"} fillOpacity={SCATTER_LANE_TINT}
+                  className="lp-widget-scatter-band" />
+            {i > 0 && (
+              <line x1={PAD_L} x2={PAD_L + plotW} y1={PAD_T + i * laneH} y2={PAD_T + i * laneH}
+                    className="lp-widget-scatter-lane-sep" />
+            )}
+          </g>
+        ))}
 
         {/* Le retard est une zone, pas seulement une moitié d'axe. */}
         {domain.min < 0 && (
@@ -4518,7 +4552,12 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
                 fill="url(#lp-scatter-late)" />
         )}
 
-        {ticks.map((d) => (
+        {ticks.minor.map((d) => (
+          <line key={`m${d}`} x1={xOf(d)} x2={xOf(d)} y1={PAD_T} y2={chartH - PAD_B}
+                className="lp-widget-scatter-subaxis" />
+        ))}
+
+        {ticks.major.map((d) => (
           <g key={d}>
             <line x1={xOf(d)} x2={xOf(d)} y1={PAD_T} y2={chartH - PAD_B}
                   className={d === 0 ? "lp-widget-scatter-axis-today" : "lp-widget-scatter-axis"} />
@@ -13073,37 +13112,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
     function onUp() { progressDragRef.current = null; }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, [setTasks]);
-
-  const ProjectRow = ({ row }) => {
-    const { project: p, minDate, maxDate, items, mainY, ROW_H, avgProgress } = row;
-    const color = p.color || "var(--text-muted)";
-    const isCollapsed = collapsed[p.id];
-    const textHaloStyle = { paintOrder: "stroke fill", stroke: "var(--surface)", strokeWidth: 4, strokeLinejoin: "round" };
-    // Position de chaque tâche (au sein de CE projet) pour les flèches de dépendance —
-    // seules les dépendances entre tâches du même projet peuvent être tracées, une
-    // flèche ne pouvant pas relier deux <svg> distincts (un par projet).
-    const posMap = {};
-    items.forEach(({ t, side, branchDist, isMilestone, activityOffset = 0 }) => {
-      const branchY = getTaskType(t) === "activity"
-        ? mainY + activityOffset
-        : (mainY + side * branchDist);
-      posMap[t.id] = { x0:xFor(t.start), x1:xFor(t.end), y:branchY, activityOffset };
-    });
-    // Couleur de chaque tâche : normalement la couleur du statut (comme les
-    // bifurcations) ; mais quand la ligne fusionne plusieurs projets (regroupement
-    // par dossier), on utilise plutôt la couleur du PROJET D'ORIGINE de chaque
-    // tâche — c'est le seul repère visuel qui permette encore de distinguer les
-    // tâches de projets différents sur cette même ligne fusionnée.
-    const taskColorMap = {};
-    items.forEach(({ t: it }) => {
-      if (p.isFolderGroup) {
-        const ownProject = ctx.projects.find((pr) => pr.id === it.projectId);
-        taskColorMap[it.id] = ownProject?.color || color;
-      } else {
-        const st = ctx.statuses.find((s) => s.id === it.statusId);
-        taskColorMap[it.id] = st?.color || color;
-      }
-    });
-    // Point de
+    return () => { window.removeEventListener("mousemove", onMov
