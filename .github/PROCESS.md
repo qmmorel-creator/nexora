@@ -134,6 +134,33 @@ déploiement Netlify ne soit déclenché. `npm run install:all && npm run verify
 `npm run visual:check` quand l'interface bouge) reste obligatoire avant chaque push : c'est ce
 qui garantit qu'un lot entier est publiable d'un coup.
 
+### Chaque site ne se construit que s'il est concerné
+
+Les deux sites vivent dans le même dépôt. Sans garde-fou, un correctif d'interface
+reconstruisait **aussi** le site MCP, et inversement : deux constructions facturées là où une
+seule était utile. Chaque `netlify.toml` porte donc une commande `ignore` qui saute la
+construction quand son propre dossier n'a pas changé :
+
+```toml
+ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- ."
+```
+
+Netlify l'exécute depuis le *base directory* : « `.` » désigne donc `apps/nexora` ou
+`apps/nexora-mcp`. Code de sortie 0 = rien n'a changé, on saute ; non nul = on construit. Au
+premier build ou après un vidage de cache, `$CACHED_COMMIT_REF` est vide, la commande échoue,
+et la construction a lieu — le repli sûr est bien « construire ».
+
+Vérifié sur des fusions réelles :
+
+| Modification | `nexora-project` | `nexora-chatgpt-mcp` |
+|---|---|---|
+| Correctif d'interface (`apps/nexora`) | construit | **sauté** |
+| Documentation ou CI uniquement | **sauté** | **sauté** |
+
+**Conséquence à connaître** : une fusion qui ne touche ni `apps/nexora` ni `apps/nexora-mcp`
+ne déploie plus rien, et c'est voulu. Un site qui « ne se redéploie pas » après une fusion de
+documentation n'est pas une panne.
+
 ### En cas d'échec de construction
 
 Republier le dernier Deploy ID fonctionnel du projet concerné.
