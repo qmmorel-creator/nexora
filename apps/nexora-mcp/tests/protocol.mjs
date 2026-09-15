@@ -12,4 +12,22 @@ const query=new URLSearchParams({client_id:client.client_id,redirect_uri:client.
 assert.equal((await call('/oauth/authorize?'+query)).status,302);
 query.set('redirect_uri','https://evil.example/callback');assert.equal((await call('/oauth/authorize?'+query)).status,400);
 query.set('redirect_uri',client.redirect_uris[0]);query.set('code_challenge_method','plain');assert.equal((await call('/oauth/authorize?'+query)).status,400);
-console.log('7 contrôles locaux réussis : découverte, authentification requise, client et redirections, PKCE.');
+
+// Claude : une seule URL de rappel pour toutes les surfaces hébergées (web,
+// Desktop, mobile, Cowork). Elle était refusée par la liste blanche, ce qui
+// rendait le connecteur inutilisable depuis Claude (issue #43).
+const claudeRedirect='https://claude.ai/api/mcp/auth_callback';
+const claudeReg=await call('/oauth/register','POST',{redirect_uris:[claudeRedirect]});
+assert.equal(claudeReg.status,201,'Claude doit pouvoir s\'enregistrer');
+const claudeClient=await claudeReg.json();
+assert.deepEqual(claudeClient.redirect_uris,[claudeRedirect]);
+const claudeQuery=new URLSearchParams({client_id:claudeClient.client_id,redirect_uri:claudeRedirect,response_type:'code',resource:origin+'/mcp',code_challenge_method:'S256',code_challenge:'a'.repeat(43)});
+assert.equal((await call('/oauth/authorize?'+claudeQuery)).status,302,'Le flux d\'autorisation doit aboutir pour Claude');
+
+// La liste blanche reste stricte : ces trois-là doivent rester refusés.
+// claude.com n'existe pas ; le loopback du CLI n'est pas autorisé ici ; et un
+// sous-domaine suffixé ne doit jamais passer pour claude.ai.
+for(const refuse of ['https://claude.com/api/mcp/auth_callback','http://localhost:3118/callback','https://claude.ai.evil.example/api/mcp/auth_callback'])
+ assert.equal((await call('/oauth/register','POST',{redirect_uris:[refuse]})).status,400,'doit rester refusé : '+refuse);
+
+console.log('12 contrôles locaux réussis : découverte, authentification requise, client et redirections, PKCE, enregistrement Claude, liste blanche stricte.');

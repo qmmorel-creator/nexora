@@ -15,7 +15,17 @@ function json(d, status=200, headers={}) { return Response.json(d,{status,header
 function error(code, status=400) { return json({error:code},status); }
 function sign(s) { return createHmac('sha256',env('MCP_CLIENT_SIGNING_KEY')).update(s).digest('base64url'); }
 function equal(a,b) { const x=Buffer.from(a), y=Buffer.from(b); return x.length===y.length && timingSafeEqual(x,y); }
-function validRedirect(s) { return s==='https://chatgpt.com/connector_platform_oauth_redirect' || /^https:\/\/chatgpt\.com\/connector\/oauth\/[A-Za-z0-9_-]+$/.test(s); }
+// URL de rappel des clients autorisés à s'enregistrer (RFC 7591). Liste blanche
+// stricte et volontairement courte : un enregistrement dynamique ouvert
+// laisserait n'importe qui inscrire sa propre redirection.
+//   - ChatGPT : deux formes, la plateforme et le connecteur nommé.
+//   - Claude  : une seule URL pour TOUTES les surfaces hébergées — web,
+//               Desktop, mobile et Cowork. claude.com/... n'existe pas.
+// Claude Code (CLI) est délibérément absent : client natif à redirection
+// loopback sur port éphémère (RFC 8252), qui exigerait d'accepter
+// http://localhost/callback en ignorant le port — donc d'ouvrir la porte à
+// toute application locale. À n'ajouter que sur demande explicite.
+function validRedirect(s) { return s==='https://chatgpt.com/connector_platform_oauth_redirect' || s==='https://claude.ai/api/mcp/auth_callback' || /^https:\/\/chatgpt\.com\/connector\/oauth\/[A-Za-z0-9_-]+$/.test(s); }
 function client(id) { const [s,sig,...rest]=String(id).split('.'); if(rest.length||!s||!sig||!equal(sign(s),sig)) throw new Error('Invalid client'); const d=JSON.parse(Buffer.from(s,'base64url').toString()); if(!Array.isArray(d.redirect_uris)||!d.redirect_uris.every(validRedirect)) throw new Error('Invalid redirects'); return d; }
 function flow(q) {
  const p=Object.fromEntries(q); const c=client(p.client_id);
