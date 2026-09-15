@@ -128,6 +128,20 @@ assert.match(builtSource, /lp-pm-risk is-/);
   const capsules = [...builtSource.matchAll(/fieldKey === "criticality"/g)].length;
   assert.equal(capsules, 2, `capsules de criticité : ${capsules} trouvée(s), 2 attendues (lecture et édition)`);
 
+  // 2 bis. Cinq listes énumèrent les champs À LA MAIN, sans passer par FIELD_DEFS.
+  //    Le premier lot les avait manquées : le champ apparaissait dans les filtres
+  //    avancés mais sans aucune valeur proposée, et le formulaire de tâche n'avait
+  //    pas de champ du tout — la criticité était donc impossible à renseigner.
+  assert.match(builtSource, /field === "criticality"\) return CRITICALITIES/, "valeurs des filtres avancés non branchées");
+  assert.match(builtSource, /field === "criticality"\) return task\.criticality/, "valeur lue pour évaluer une condition non branchée");
+  assert.match(builtSource, /GANTT_COL_OPTIONS = \[[^\]]*key: "criticality"/, "criticality absent des colonnes du Gantt");
+  assert.match(builtSource, /colKey === "criticality"/, "colonne de criticité déclarée mais sans rendu");
+  assert.match(builtSource, /BUBBLE_FIELD_OPTIONS = \[[^\]]*"criticality"/, "criticality absent des bulles du Gantt");
+  // Le formulaire doit à la fois proposer le champ ET l'enregistrer : l'un sans
+  // l'autre donne une case qui s'affiche et n'est jamais retenue.
+  assert.match(builtSource, /setCriticality\(e\.target\.value\)/, "champ Criticité absent du formulaire de tâche");
+  assert.match(builtSource, /criticality: criticality \|\| null/, "la criticité saisie n'est pas enregistrée");
+
   // 3. Aucun statut nommé « Urgent » ne doit revenir par le jeu de démonstration :
   //    il serait recréé chez tout nouvel utilisateur, et la reprise le supprimerait
   //    en boucle à chaque chargement.

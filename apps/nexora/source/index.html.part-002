@@ -1,4 +1,5 @@
-{() => setSaveViewOpen(false)} onSave={saveCurrentView} activeFilterCount={fCount} currentView={view} viewFolders={viewFolders} />}
+pen(false)} />}
+      {saveViewOpen && <SaveViewModal onClose={() => setSaveViewOpen(false)} onSave={saveCurrentView} activeFilterCount={fCount} currentView={view} viewFolders={viewFolders} />}
       {newDashboardOpen && <NewDashboardModal onClose={() => setNewDashboardOpen(false)} onCreate={createDashboard} dashboardFolders={dashboardFolders} />}
       {quickEditDashboard && (
         <DashboardEditModal
@@ -32,6 +33,8 @@ function filterFieldOptions(field, ctx) {
     ...sortedByName(ctx.projects).map((p) => ({ value:p.id, label:p.name, color:p.color, folderId:p.folderId || null })),
   ];
   if (field === "status") return sortedByName(ctx.statuses).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  // Pas de tri : l'ordre de CRITICALITIES est l'ordre voulu, Bas avant Urgent.
+  if (field === "criticality") return CRITICALITIES.map((c) => ({ value: c.id, label: c.name, color: c.color }));
   if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
   if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
   if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
@@ -2954,6 +2957,7 @@ const ZOOMS = [
 ];
 const GANTT_COL_OPTIONS = [
   { key: "status",   label: "Statut",      w: 90 },
+  { key: "criticality", label: "Criticité", w: 90 },
   { key: "taskType", label: "Type",        w: 90 },
   { key: "project",  label: "Projet",      w: 100 },
   { key: "assignee", label: "Responsable", w: 110 },
@@ -2962,7 +2966,7 @@ const GANTT_COL_OPTIONS = [
   { key: "progress", label: "Avancement",  w: 80 },
   { key: "period",   label: "Période",     w: 80 },
 ];
-const BUBBLE_FIELD_OPTIONS = ["status", "taskType", "project", "assignee", "start", "end", "period", "progress", "milestone", "desc", "checklist"];
+const BUBBLE_FIELD_OPTIONS = ["status", "criticality", "taskType", "project", "assignee", "start", "end", "period", "progress", "milestone", "desc", "checklist"];
 
 // ============================================================================
 // Annotations du Gantt — blocs temporels et encadrés
@@ -5329,6 +5333,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
               const pr = ctx.projects.find((p) => p.id === t.projectId);
               const style = { width: w, flex: `0 0 ${w}px`, borderRight: "1px solid var(--border)", height: ROW_H, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", fontSize: 10.5, overflow: "hidden" };
               if (colKey === "status") return <div style={style}>{st && <span className="lp-chip" style={{ background: st.color + "22", color: st.color, fontSize: 9.5, padding: "1px 5px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{st.name}</span>}</div>;
+              if (colKey === "criticality") { const c = criticalityOf(t); return <div style={style}>{c && <span className="lp-chip" style={{ background: c.color + "22", color: c.color, fontSize: 9.5, padding: "1px 5px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</span>}</div>; }
               if (colKey === "taskType") return <div style={style}>{tt && <span className="lp-chip" style={{ background: tt.color + "22", color: tt.color, fontSize: 9.5, padding: "1px 5px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{tt.name}</span>}</div>;
               if (colKey === "project") return <div style={style}>{pr && <span style={{ display: "flex", alignItems: "center", gap: 3, color: pr.color, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><span className="lp-project-dot" style={{ background: pr.color, width: 11, height: 11, fontSize: 7, flex: "0 0 auto" }}><IconGlyph icon={pr.icon} size={7} /></span>{pr.name}</span>}</div>;
               if (colKey === "assignee") return <div style={{ ...style, justifyContent: "flex-start", fontSize: 10.5, color: "var(--text-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.assignee}</div>;
@@ -5755,6 +5760,9 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   }, [projectId]);
   const initialAllowedStatuses = getStatusesForTask(statuses, projects, taskTypes, base.projectId || projects[0]?.id || "", base.taskTypeId || taskTypeId, base.statusId || null);
   const [statusId, setStatusId] = useState(base.statusId || initialAllowedStatuses[0]?.id || "");
+  // Pas de valeur par défaut imposée : une tâche sans criticité n'affiche pas de
+  // capsule, plutôt que de se voir attribuer un « Moyen » que personne n'a choisi.
+  const [criticality, setCriticality] = useState(base.criticality || "");
   const availableStatuses = useMemo(
     () => getStatusesForTask(statuses, projects, taskTypes, projectId, taskTypeId, statusId),
     [statuses, projects, taskTypes, projectId, taskTypeId, statusId]
@@ -6010,6 +6018,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       projectId,
       secondaryProjectId: secondaryProjectId || null,
       statusId: finalStatusId,
+      criticality: criticality || null,
       taskTypeId,
       milestone,
       milestoneIcon: milestoneIcon || null,
@@ -6152,6 +6161,13 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           <label>Type</label>
           <TaskTypeSelect taskTypes={availableTaskTypes} value={taskTypeId} onChange={setTaskTypeId} />
         </div>
+      </div>
+      <div className="lp-field">
+        <label>Criticité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — à quel point la tâche presse, indépendamment de son avancement)</span></label>
+        <select value={criticality} onChange={(e) => setCriticality(e.target.value)}>
+          <option value="">Non définie</option>
+          {CRITICALITIES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
       </div>
       <div className="lp-field">
         <label>Second projet <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — la tâche apparaît sur les deux lignes en vue Métro, reliées par un tronc commun)</span></label>
@@ -12934,34 +12950,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
           </button>
         )}
         {!embedded && (
-          <button className={"lp-tool-btn" + (showCriticalPath ? " active" : "")} onClick={() => setShowCriticalPath((v) => !v)} title="Mettre en évidence le chemin critique">
-            <Zap size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button className={"lp-tool-btn" + (showRiskBadges ? " active" : "")} onClick={() => setShowRiskBadges((v) => !v)} title="Afficher les alertes de retard">
-            <AlertTriangle size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button className={"lp-tool-btn" + (networkMode ? " active" : "")} onClick={() => setPrefs((p) => {
-              const next = !p.networkMode;
-              return { ...p, networkMode:next, deadlineMode:next ? false : !!p.deadlineMode };
-            })} title="Vue réseau : uniquement les jalons de tous les projets, sur un axe commun">
-            <Network size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button
-            className={"lp-tool-btn" + (deadlineMode ? " active" : "")}
-            onClick={() => setPrefs((p) => {
-              const next = !p.deadlineMode;
-              return { ...p, deadlineMode:next, networkMode:next ? false : !!p.networkMode };
-            })}
-            title="Échéances : représenter toutes les dates de fin comme des stations de métro"
-          >
-            <CalendarClock size={14} /> Échéances
-          </button>
-        )}
-        {!embedded && (
-          <button className="lp-tool-btn" onClick={exportPoster} title="Exporter en image (affich
+          <button className={"lp-tool-btn" + (showCriticalPath ? " active" : "")} onClick={() => setShowCriticalPath((v) => 
