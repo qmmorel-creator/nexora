@@ -1,4 +1,7 @@
-{setRisks}
+kTypes={taskTypes} setTaskTypes={setTaskTypes}
+          teamMembers={teamMembers} setTeamMembers={setTeamMembers}
+          customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs}
+          risks={risks} setRisks={setRisks}
           gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
           syncedCalendarSettings={syncedCalendarSettings} setSyncedCalendarSettings={setSyncedCalendarSettings} onSyncSyncedCalendars={syncPublicCalendarsToProjects}
           metaFilters={metaFilters} setMetaFilters={setMetaFilters}
@@ -3267,12 +3270,26 @@ function normalizeHighlightFrames(list) {
       // ne saurait pas quel encadré retirer, et l'on risquerait d'effacer un
       // encadré posé à la main autour de la même tâche.
       iconUrl: typeof f.iconUrl === "string" && f.iconUrl ? f.iconUrl : "",
+      // Pastille posée dans le coin supérieur droit du cadre, indépendante de
+      // l'étiquette : elle marque le cadre lui-même, là où iconUrl remplace un
+      // texte. Comme le reste des annotations, elle vit dans la configuration
+      // du widget et jamais dans la tâche (cf. docs/GANTT_ANNOTATIONS.md).
+      cornerIconUrl: typeof f.cornerIconUrl === "string" && f.cornerIconUrl ? f.cornerIconUrl : "",
       autoTaskId: typeof f.autoTaskId === "string" && f.autoTaskId ? f.autoTaskId : "",
     }));
 }
 
-// Icône des encadrés créés par la coche d'une ligne du Mini-Gantt.
+// Icônes des encadrés créés par la coche d'une ligne du Mini-Gantt : la
+// première remplace l'étiquette, la seconde se pose dans le coin supérieur
+// droit du cadre.
 const MINIGANTT_CHECK_FRAME_ICON = "https://cdn-icons-png.flaticon.com/512/7247/7247981.png";
+const MINIGANTT_CHECK_FRAME_CORNER_ICON = "https://cdn-icons-png.flaticon.com/512/8376/8376179.png";
+
+// Dégagement horizontal, en pixels, entre le trait du cadre et la barre qu'il
+// entoure. Sans lui le cadre était tracé exactement aux bornes de la barre :
+// son trait de 1,5 px se posait dessus et la recoupait visiblement aux deux
+// extrémités.
+const GANTT_FRAME_BAR_CLEARANCE = 5;
 
 /* Coche d'une ligne du Mini-Gantt : pose ou retire un encadré autour de cette
    seule tâche.
@@ -3299,6 +3316,7 @@ function miniGanttToggleTaskFrame(frames, taskId, on, makeId) {
       borderStyle: "dashed",
       padding: GANTT_FRAME_DEFAULT_PADDING,
       iconUrl: MINIGANTT_CHECK_FRAME_ICON,
+      cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON,
       autoTaskId: taskId,
     }];
   }
@@ -4028,13 +4046,10 @@ function heatmapNormalizeConfig(widget) {
 const SCATTER_LANE_FIELDS = ["project", "status", "criticality"];
 const SCATTER_POINT_RADIUS = 4.5;
 const SCATTER_POINT_GAP = 2;
-// Au-delà, les étiquettes se chevaucheraient quoi qu'on fasse : on les masque
-// et l'infobulle prend le relais. Elle, reste disponible à toute densité.
-const SCATTER_LANE_LABEL_LIMIT = 14;
 // Largeur approximative d'une étiquette, pour décider si deux voisines tiennent
 // côte à côte. Volontairement généreuse : mieux vaut masquer une étiquette de
 // trop qu'en laisser deux se superposer.
-const SCATTER_LABEL_CHAR_PX = 5.6;
+const SCATTER_LABEL_CHAR_PX = 6.2;
 const SCATTER_LABEL_PADDING_PX = 10;
 
 /* Jours restants avant l'échéance. Négatif = en retard.
@@ -4107,26 +4122,115 @@ function scatterPackLane(points, options) {
   });
 }
 
-/* Quelles étiquettes afficher. Deux conditions cumulées :
-   - le couloir ne dépasse pas le seuil de densité ;
-   - la voisine de la même rangée est assez loin pour ne pas la toucher.
-   L'infobulle, elle, reste disponible pour tous les points, à toute densité —
-   c'est ce qui permet de masquer sans rien perdre. */
-function scatterVisibleLabels(packed, options) {
-  const { limit = SCATTER_LANE_LABEL_LIMIT, charPx = SCATTER_LABEL_CHAR_PX, paddingPx = SCATTER_LABEL_PADDING_PX } = options || {};
-  const visible = new Set();
-  if (packed.length > limit) return visible;
-  const byRow = new Map();
-  packed.forEach((p) => { if (!byRow.has(p.row)) byRow.set(p.row, []); byRow.get(p.row).push(p); });
-  byRow.forEach((row) => {
-    const ordered = [...row].sort((a, b) => a.x - b.x);
-    ordered.forEach((p, i) => {
-      const width = paddingPx + String(p.title).length * charPx;
-      const next = ordered[i + 1];
-      if (!next || next.x - p.x >= width) visible.add(p.id);
+/* Placement des étiquettes (issue #53).
+
+   Règle : poser le PLUS d'étiquettes possible, tant qu'aucune n'en recouvre une
+   autre ni ne masque un point. Un seuil de densité, comme celui d'avant, jetait
+   des étiquettes qui avaient pourtant la place de tenir.
+
+   Chaque point propose des emplacements, du plus lisible au moins lisible :
+   à droite, à gauche, au-dessus, en dessous, puis déportés en hauteur avec un
+   trait de rappel en coude. Le premier emplacement libre gagne ; si aucun ne
+   l'est, le point reste sans étiquette — l'infobulle le rattrape.
+
+   Le parcours est ordonné par X puis par identifiant : à jeu de points égal, le
+   même placement, sinon les étiquettes sauteraient d'un rendu à l'autre. */
+
+const SCATTER_LABEL_HEIGHT_PX = 11;
+const SCATTER_LABEL_GAP_PX = 3;
+// Longueur du segment horizontal qui mène à une étiquette déportée.
+const SCATTER_LABEL_LEAD_PX = 14;
+// Hauteur d'un cran de déport : au moins la hauteur d'une étiquette, sinon deux
+// étiquettes déportées de crans voisins se toucheraient.
+const SCATTER_LABEL_ROW_PX = 12;
+// Au-delà, le placement coûte plus cher que ce qu'il rapporte : le couloir est
+// de toute façon trop dense pour qu'une étiquette y soit lisible.
+const SCATTER_LABEL_MAX_POINTS = 400;
+
+function scatterLabelWidth(title, charPx = SCATTER_LABEL_CHAR_PX, paddingPx = SCATTER_LABEL_PADDING_PX) {
+  return paddingPx + String(title == null ? "" : title).length * charPx;
+}
+
+// Deux rectangles se touchent-ils ? Les bords jointifs ne comptent pas comme un
+// recouvrement : deux étiquettes peuvent se suivre sans se gêner.
+function scatterBoxesOverlap(a, b) {
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+}
+
+/* Emplacements candidats d'une étiquette, dans l'ordre de préférence.
+   `leader` porte le trait de rappel : segment horizontal, coude, segment
+   horizontal — jamais une diagonale, qui se lirait comme une liaison. */
+function scatterLabelCandidates(point, width, options) {
+  const { radius, height, gap, lead, row } = options;
+  const half = height / 2;
+  const droite = point.x + radius + gap;
+  const gauche = point.x - radius - gap;
+  const out = [
+    { x: droite, y: point.y, anchor: "start", x0: droite, x1: droite + width },
+    { x: gauche, y: point.y, anchor: "end", x0: gauche - width, x1: gauche },
+    { x: point.x, y: point.y - radius - gap - half, anchor: "middle", x0: point.x - width / 2, x1: point.x + width / 2 },
+    { x: point.x, y: point.y + radius + gap + half, anchor: "middle", x0: point.x - width / 2, x1: point.x + width / 2 },
+  ];
+  for (const dy of [-row, row, -2 * row, 2 * row]) {
+    const coudeD = point.x + radius + gap;
+    const departD = coudeD + lead;
+    out.push({
+      x: departD, y: point.y + dy, anchor: "start", x0: departD, x1: departD + width,
+      leader: [[point.x + radius, point.y], [coudeD, point.y], [coudeD, point.y + dy], [departD, point.y + dy]],
     });
+    const coudeG = point.x - radius - gap;
+    const departG = coudeG - lead;
+    out.push({
+      x: departG, y: point.y + dy, anchor: "end", x0: departG - width, x1: departG,
+      leader: [[point.x - radius, point.y], [coudeG, point.y], [coudeG, point.y + dy], [departG, point.y + dy]],
+    });
+  }
+  return out.map((c) => ({ ...c, y0: c.y - half, y1: c.y + half }));
+}
+
+/* Rend une Map identifiant → { x, y, anchor, leader }. Un point absent de la
+   Map n'a pas trouvé de place. */
+function scatterPlaceLabels(points, options) {
+  const {
+    laneTop = -Infinity, laneBottom = Infinity,
+    plotLeft = -Infinity, plotRight = Infinity,
+    radius = SCATTER_POINT_RADIUS,
+    charPx = SCATTER_LABEL_CHAR_PX,
+    paddingPx = SCATTER_LABEL_PADDING_PX,
+    height = SCATTER_LABEL_HEIGHT_PX,
+    gap = SCATTER_LABEL_GAP_PX,
+    lead = SCATTER_LABEL_LEAD_PX,
+    row = SCATTER_LABEL_ROW_PX,
+    maxPoints = SCATTER_LABEL_MAX_POINTS,
+  } = options || {};
+
+  const liste = Array.isArray(points) ? points : [];
+  const placements = new Map();
+  if (!liste.length || liste.length > maxPoints) return placements;
+
+  // Les pastilles de TOUS les points, placés ou non : une étiquette ne doit
+  // jamais recouvrir un point, même un point qui n'aura pas d'étiquette.
+  const pastilles = liste.map((p) => ({
+    id: p.id, x0: p.x - radius, x1: p.x + radius, y0: p.y - radius, y1: p.y + radius,
+  }));
+
+  const ordre = [...liste].sort((a, b) => a.x - b.x || String(a.id).localeCompare(String(b.id)));
+  const prises = [];
+  const geom = { radius, height, gap, lead, row };
+
+  ordre.forEach((point) => {
+    const width = scatterLabelWidth(point.title, charPx, paddingPx);
+    for (const c of scatterLabelCandidates(point, width, geom)) {
+      if (c.x0 < plotLeft || c.x1 > plotRight) continue;
+      if (c.y0 < laneTop || c.y1 > laneBottom) continue;
+      if (prises.some((b) => scatterBoxesOverlap(c, b))) continue;
+      if (pastilles.some((b) => b.id !== point.id && scatterBoxesOverlap(c, b))) continue;
+      prises.push({ x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1 });
+      placements.set(point.id, { x: c.x, y: c.y, anchor: c.anchor, leader: c.leader || null });
+      break;
+    }
   });
-  return visible;
+  return placements;
 }
 
 /* Bornes de l'axe des X. On garde toujours l'origine visible — sans elle, on ne
@@ -4139,6 +4243,9 @@ const SCATTER_EDGE_PAD_DAYS = 1;
 // Couleur du retard, alignée sur --danger du thème (les attributs SVG `fill`
 // ne résolvent pas var() de façon fiable, d'où la constante).
 const SCATTER_LATE_COLOR = "#E2483E";
+// Teinte d'un couloir : assez pâle pour rester un fond. Au-delà, elle
+// concurrence les points et la zone de retard, et le nuage devient illisible.
+const SCATTER_LANE_TINT = 0.1;
 /* Fenêtre d'affichage (issue #50). En automatique, l'axe s'ajuste aux tâches ;
    il suffit alors d'une échéance à J+400 pour que tout le reste se tasse en une
    colonne illisible autour de l'origine — précisément la zone qu'on regarde.
@@ -4188,6 +4295,34 @@ function scatterDomain(lanes, windowCfg) {
 /* Position en X d'une tâche hors fenêtre : rabattue sur le bord, avec la
    direction retenue. Le nombre de jours réel n'est jamais altéré — c'est lui
    que l'infobulle affiche, et c'est ce qui distingue « rabattu » de « faux ». */
+/* Graduations de l'axe des X.
+
+   Les principales tombent sur des repères ronds — 5, 10, 30 ou 90 jours selon
+   l'étendue — et l'origine y figure toujours : c'est elle qui sépare le retard
+   de l'avance. En fenêtre fixe (#50), les deux bornes réglées s'y ajoutent.
+
+   La sous-grille intermédiaire n'est pas étiquetée. Sans elle, entre « J+15 »
+   et « J+30 », un point se lit « quelque part au milieu » au lieu de « vers
+   J+21 ». Elle ne croise jamais une graduation principale : deux traits
+   superposés se liraient comme un trait plus épais, donc comme un repère. */
+const SCATTER_MINOR_PER_MAJOR = 5;
+function scatterTicks(domain) {
+  const span = domain.max - domain.min;
+  const step = span <= 20 ? 5 : span <= 60 ? 10 : span <= 180 ? 30 : 90;
+  const brut = [0];
+  for (let d = step; d <= domain.max; d += step) brut.push(d);
+  for (let d = -step; d >= domain.min; d -= step) brut.push(d);
+  if (domain.windowed) { brut.push(domain.min); brut.push(domain.max); }
+  const major = [...new Set(brut)].filter((d) => d >= domain.min && d <= domain.max).sort((a, b) => a - b);
+
+  const pas = step / SCATTER_MINOR_PER_MAJOR;
+  const minor = [];
+  for (let d = Math.ceil(domain.min / pas) * pas; d <= domain.max; d += pas) {
+    if (!major.includes(d)) minor.push(d);
+  }
+  return { major, minor };
+}
+
 function scatterClampDays(days, domain) {
   if (days < domain.min) return { plotDays: domain.min, beyond: "low" };
   if (days > domain.max) return { plotDays: domain.max, beyond: "high" };
@@ -4209,10 +4344,85 @@ function scatterWindowOverflow(lanes, domain) {
 }
 // === NEXORA:DEADLINE-SCATTER:END ===
 
+// === NEXORA:POINTER-TOOLTIP:START ===
+// Infobulle suivant le curseur, pour les widgets.
+//
+// Deux défauts se cumulaient dans les infobulles posées à même le corps du
+// widget, et se voyaient comme un simple « décalage » :
+//
+// 1. position:fixed ne vaut par rapport à la fenêtre que tant qu'AUCUN ancêtre
+//    n'établit de bloc conteneur (transform, filter, will-change…). Posée dans
+//    le corps du widget, l'infobulle dépend donc de tout ce qui pourra être
+//    ajouté au-dessus d'elle un jour — et se décale le jour où ça arrive.
+// 2. le débordement n'était borné qu'à droite, et par une largeur devinée
+//    (280 px) qui n'est pas celle de la boîte : près du bas ou de la gauche de
+//    l'écran, l'infobulle sortait du champ.
+//
+// Le portail vers document.body supprime le premier, et la mesure réelle de la
+// boîte le second : on place d'abord, on mesure, puis on rabat si besoin.
+// C'est la méthode déjà éprouvée par l'infobulle du Mini-Gantt.
+function WidgetPointerTooltip({ x, y, className, children }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: x + 14, top: y + 14 });
+
+  useLayoutEffect(() => {
+    const gap = 14;
+    const node = ref.current;
+    const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
+    const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
+    // Sans mesure (premier rendu), on garde le placement direct : mieux vaut
+    // une infobulle bien posée au curseur qu'un saut visible.
+    const box = node ? node.getBoundingClientRect() : { width: 0, height: 0 };
+    let left = x + gap;
+    let top = y + gap;
+    if (box.width && left + box.width + 8 > viewportW) left = x - box.width - gap;
+    if (box.height && top + box.height + 8 > viewportH) top = y - box.height - gap;
+    setPos({ left: Math.max(8, left), top: Math.max(8, top) });
+  }, [x, y, children]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className={className}
+      style={{ position: "fixed", left: pos.left, top: pos.top, zIndex: 100000, pointerEvents: "none" }}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
+// === NEXORA:POINTER-TOOLTIP:END ===
+
 function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
   const [hover, setHover] = useState(null);
   const [selected, setSelected] = useState(null);
+  // Découpe en deux volets, sur le modèle de la vue Heat map calendaire.
+  // null = jamais glissé par l'utilisateur → les deux volets se partagent
+  // l'espace à parts strictement égales. Un nombre = largeur en px du volet
+  // liste, fixée par un glisser explicite sur la poignée.
+  const [listWidth, setListWidth] = useState(null);
+  const splitRef = useRef(null);
+  const listRef = useRef(null);
+  const dragRef = useRef(null);
+  const startResize = (e) => {
+    e.preventDefault();
+    const startWidth = listWidth != null ? listWidth : (listRef.current?.getBoundingClientRect().width || 320);
+    dragRef.current = { startX: e.clientX, startWidth };
+    const onMove = (ev) => {
+      if (!dragRef.current) return;
+      const wrapWidth = splitRef.current?.getBoundingClientRect().width || 800;
+      const delta = dragRef.current.startX - ev.clientX; // vers la gauche = liste plus large
+      setListWidth(Math.max(180, Math.min(Math.max(180, wrapWidth - 200), dragRef.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   const today = iso(new Date());
   const todayIdx = dayIndex(today);
 
@@ -4321,7 +4531,15 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const suffixe = cfg.metric === "progress" ? " %" : cfg.metric === "criticality" ? "/100" : "";
   const estSelection = (r, c) => selected && selected.rowId === r && selected.colId === c;
 
+  // La case retenue peut disparaître sous nos pieds : changer de filtre, d'axe
+  // ou de mesure recompose la grille. On la relit donc à chaque rendu plutôt
+  // que de recopier son contenu dans l'état, où il se périmerait en silence.
+  const ligneSel = selected ? lignes.find((r) => r.id === selected.rowId) : null;
+  const colonneSel = selected ? colonnes.find((c) => c.id === selected.colId) : null;
+  const celluleSel = (ligneSel && colonneSel) ? grid.cells.get(heatmapCellKey(ligneSel.id, colonneSel.id)) : null;
+
   return (
+    <div className="lp-widget-hmgrid-split" ref={splitRef}>
     <div className="lp-widget-hmgrid">
       <div className="lp-widget-hmgrid-scroll">
         <table className="lp-widget-hmgrid-table">
@@ -4361,11 +4579,13 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
                       onMouseMove={(e) => setHover((prev) => (prev && prev.cell === cellule ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
                       onMouseLeave={() => setHover((prev) => (prev && prev.cell === cellule ? null : prev))}
                       onClick={() => {
-                        // Une case porte souvent plusieurs tâches : il n'y a rien
-                        // à « ouvrir ». On la sélectionne, et on n'ouvre que
-                        // lorsqu'il n'y a aucune ambiguïté.
+                        // Le clic remplit le volet de droite, et rien d'autre.
+                        // L'ouverture automatique d'une case à tâche unique
+                        // avait du sens tant qu'il n'y avait pas de liste :
+                        // maintenant qu'elle existe, une fiche qui s'ouvre
+                        // toute seule surprend au lieu d'aider. On ouvre depuis
+                        // la liste, d'un clic explicite, dans tous les cas.
                         setSelected((prev) => (prev && prev.rowId === r.id && prev.colId === c.id ? null : { rowId: r.id, colId: c.id }));
-                        if (cellule.tasks.length === 1 && onOpen) onOpen(cellule.tasks[0]);
                       }}
                     >
                       {cfg.showValues ? cellule.value : ""}
@@ -4385,10 +4605,7 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
       )}
 
       {hover && (
-        <div
-          className="lp-widget-hmgrid-tip"
-          style={{ left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 280), top: hover.y + 14 }}
-        >
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-widget-hmgrid-tip">
           <strong>{hover.row.name} × {hover.col.name}</strong>
           <span>{HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{hover.cell.value}{suffixe}</b></span>
           {cfg.metric !== "count" && <span>{hover.cell.count} tâche{hover.cell.count > 1 ? "s" : ""} à ce croisement</span>}
@@ -4396,8 +4613,58 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
             <span key={t.id} className="lp-widget-hmgrid-tip-task">{t.title || "Sans titre"}</span>
           ))}
           {hover.cell.tasks.length > 4 && <span className="lp-widget-hmgrid-tip-more">et {hover.cell.tasks.length - 4} autre{hover.cell.tasks.length - 4 > 1 ? "s" : ""}…</span>}
-        </div>
+        </WidgetPointerTooltip>
       )}
+    </div>
+
+      {/* Poignée de glisser : ajuste la part respective de la grille et de la
+          liste, comme dans la vue Heat map calendaire. */}
+      <div className="lp-widget-hmgrid-resize-handle" onMouseDown={startResize} title="Glisser pour redimensionner" />
+
+      {/* Volet de droite : toujours apparent, avec un message d'invite quand
+          aucune case n'est retenue. Le faire apparaître et disparaître au clic
+          redimensionnerait la grille à chaque fois, et les cases sauteraient
+          sous le curseur. */}
+      <div
+        className="lp-widget-hmgrid-tasklist"
+        ref={listRef}
+        style={listWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${listWidth}px` }}
+      >
+        <div className="lp-widget-hmgrid-tasklist-head">
+          <span>{ligneSel && colonneSel ? `${ligneSel.name} × ${colonneSel.name}` : "Aucune case sélectionnée"}</span>
+          {selected && (
+            <button className="lp-icon-btn" onClick={() => setSelected(null)} title="Désélectionner"><X size={12} /></button>
+          )}
+        </div>
+        {!selected ? (
+          <div className="lp-widget-hmgrid-tasklist-empty">Clique sur une case de la grille pour voir les tâches de ce croisement.</div>
+        ) : !celluleSel ? (
+          // Case retenue devenue introuvable : le filtre, un axe ou la mesure
+          // ont changé. On le dit plutôt que d'afficher une liste vide, qui se
+          // lirait comme « ce croisement n'a aucune tâche ».
+          <div className="lp-widget-hmgrid-tasklist-empty">Ce croisement n'est plus dans la grille — le filtre ou les axes ont changé.</div>
+        ) : (
+          <>
+            <div className="lp-widget-hmgrid-tasklist-measure">
+              {HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{celluleSel.value}{suffixe}</b>
+              {cfg.metric !== "count" && ` · ${celluleSel.count} tâche${celluleSel.count > 1 ? "s" : ""}`}
+            </div>
+            <div className="lp-widget-hmgrid-tasklist-items">
+              {celluleSel.tasks.map((t) => {
+                const proj = (ctx.projects || []).find((p) => p.id === t.projectId);
+                const st = (ctx.statuses || []).find((x) => x.id === t.statusId);
+                return (
+                  <div className="lp-widget-hmgrid-tasklist-item" key={t.id} onClick={() => onOpen && onOpen(t)}>
+                    <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
+                    <span className="lp-widget-hmgrid-tasklist-title">{t.title || "Sans titre"}</span>
+                    {st && <span className="lp-widget-hmgrid-tasklist-status" style={{ color: st.color }}>{st.name}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -4462,27 +4729,23 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
 
   const placed = useMemo(() => lanes.map((lane, i) => {
     const packed = scatterPackLane(lane.points, { laneHeight: laneH - 12, xOf });
-    const labels = scatterVisibleLabels(packed);
     const centerY = PAD_T + i * laneH + laneH / 2;
-    return { ...lane, centerY, points: packed.map((pt) => ({
-      ...pt, cy: centerY + pt.y, showLabel: labels.has(pt.id), beyond: scatterClampDays(pt.days, domain).beyond,
+    const avecY = packed.map((pt) => ({ ...pt, cy: centerY + pt.y }));
+    const labels = scatterPlaceLabels(
+      avecY.map((pt) => ({ id: pt.id, title: pt.title, x: pt.x, y: pt.cy })),
+      {
+        laneTop: PAD_T + i * laneH + 1,
+        laneBottom: PAD_T + (i + 1) * laneH - 1,
+        plotLeft: PAD_L,
+        plotRight: PAD_L + plotW,
+      },
+    );
+    return { ...lane, centerY, points: avecY.map((pt) => ({
+      ...pt, label: labels.get(pt.id) || null, beyond: scatterClampDays(pt.days, domain).beyond,
     })) };
-  }), [lanes, laneH, xOf, domain]);
+  }), [lanes, laneH, xOf, domain, plotW]);
 
-  // Graduations : des repères ronds plutôt qu'un pas régulier arbitraire, et
-  // toujours l'origine, qui porte toute la lecture du widget.
-  const ticks = useMemo(() => {
-    const span = domain.max - domain.min;
-    const step = span <= 20 ? 5 : span <= 60 ? 10 : span <= 180 ? 30 : 90;
-    const out = [0];
-    for (let d = step; d <= domain.max; d += step) out.push(d);
-    for (let d = -step; d >= domain.min; d -= step) out.push(d);
-    // En fenêtre fixe, les deux bornes sont graduées quoi qu'il arrive : ce sont
-    // les valeurs que l'on vient de régler, et sans elles rien ne dit jusqu'où
-    // va la plage affichée — un chevron au bord devient alors une énigme.
-    if (domain.windowed) { out.push(domain.min); out.push(domain.max); }
-    return [...new Set(out)].filter((d) => d >= domain.min && d <= domain.max).sort((a, b) => a - b);
-  }, [domain]);
+  const ticks = useMemo(() => scatterTicks(domain), [domain]);
 
   const total = placed.reduce((n, l) => n + l.points.length, 0);
   if (!total) {
@@ -4500,17 +4763,26 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
            aria-label={`Nuage des échéances, ${total} tâches réparties en ${placed.length} couloirs`}>
         <defs>
           <linearGradient id="lp-scatter-late" x1="0" x2="1">
-            <stop offset="0%" stopColor={SCATTER_LATE_COLOR} stopOpacity="0.16" />
+            <stop offset="0%" stopColor={SCATTER_LATE_COLOR} stopOpacity="0.09" />
             <stop offset="100%" stopColor={SCATTER_LATE_COLOR} stopOpacity="0" />
           </linearGradient>
         </defs>
 
         {/* Bandes de couloir d'abord : elles servent de fond, et masquaient la
-            zone de retard quand elles étaient peintes par-dessus. */}
-        {placed.map((lane, i) => (i % 2 === 1 ? (
-          <rect key={`band-${lane.key}`} x={PAD_L} y={PAD_T + i * laneH} width={plotW} height={laneH}
-                className="lp-widget-scatter-band" />
-        ) : null))}
+            zone de retard quand elles étaient peintes par-dessus. Chacune porte
+            la couleur de son entité, très pâle — assez pour retrouver sa ligne,
+            trop peu pour concurrencer les points ou la zone de retard. */}
+        {placed.map((lane, i) => (
+          <g key={`band-${lane.key}`}>
+            <rect x={PAD_L} y={PAD_T + i * laneH} width={plotW} height={laneH}
+                  fill={lane.color || "#94A3B8"} fillOpacity={SCATTER_LANE_TINT}
+                  className="lp-widget-scatter-band" />
+            {i > 0 && (
+              <line x1={PAD_L} x2={PAD_L + plotW} y1={PAD_T + i * laneH} y2={PAD_T + i * laneH}
+                    className="lp-widget-scatter-lane-sep" />
+            )}
+          </g>
+        ))}
 
         {/* Le retard est une zone, pas seulement une moitié d'axe. */}
         {domain.min < 0 && (
@@ -4518,7 +4790,12 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
                 fill="url(#lp-scatter-late)" />
         )}
 
-        {ticks.map((d) => (
+        {ticks.minor.map((d) => (
+          <line key={`m${d}`} x1={xOf(d)} x2={xOf(d)} y1={PAD_T} y2={chartH - PAD_B}
+                className="lp-widget-scatter-subaxis" />
+        ))}
+
+        {ticks.major.map((d) => (
           <g key={d}>
             <line x1={xOf(d)} x2={xOf(d)} y1={PAD_T} y2={chartH - PAD_B}
                   className={d === 0 ? "lp-widget-scatter-axis-today" : "lp-widget-scatter-axis"} />
@@ -4557,24 +4834,29 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
                     d={pt.beyond === "low"
                       ? `M ${pt.x - SCATTER_POINT_RADIUS - 1} ${pt.cy} L ${pt.x + SCATTER_POINT_RADIUS} ${pt.cy - SCATTER_POINT_RADIUS} L ${pt.x + SCATTER_POINT_RADIUS} ${pt.cy + SCATTER_POINT_RADIUS} Z`
                       : `M ${pt.x + SCATTER_POINT_RADIUS + 1} ${pt.cy} L ${pt.x - SCATTER_POINT_RADIUS} ${pt.cy - SCATTER_POINT_RADIUS} L ${pt.x - SCATTER_POINT_RADIUS} ${pt.cy + SCATTER_POINT_RADIUS} Z`}
-                    fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
+                    fill={lane.color}
+                    stroke={pt.days < 0 ? SCATTER_LATE_COLOR : "var(--surface)"}
+                    strokeWidth={pt.days < 0 ? 1.8 : 1}
                     className={"lp-widget-scatter-dot is-beyond" + (hover && hover.id === pt.id ? " is-hover" : "")} />
                 ) : (
                   <circle cx={pt.x} cy={pt.cy} r={SCATTER_POINT_RADIUS}
-                          fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
+                          fill={lane.color}
+                          stroke={pt.days < 0 ? SCATTER_LATE_COLOR : "var(--surface)"}
+                          strokeWidth={pt.days < 0 ? 1.8 : 1.2}
                           className={"lp-widget-scatter-dot" + (hover && hover.id === pt.id ? " is-hover" : "")} />
                 )}
-                {pt.showLabel && (() => {
-                  // Près du bord droit, l'étiquette passe à gauche du point :
-                  // posée à droite, elle sortait du cadre et était rognée.
-                  const flip = pt.x + 12 + String(pt.title).length * SCATTER_LABEL_CHAR_PX > box.width - PAD_R;
-                  return (
-                    <text x={pt.x + (flip ? -1 : 1) * (SCATTER_POINT_RADIUS + 3)} y={pt.cy + 3}
-                          textAnchor={flip ? "end" : "start"} className="lp-widget-scatter-point-label">
+                {pt.label && (
+                  <>
+                    {pt.label.leader && (
+                      <polyline points={pt.label.leader.map(([lx, ly]) => `${lx},${ly}`).join(" ")}
+                                className="lp-widget-scatter-leader" />
+                    )}
+                    <text x={pt.label.x} y={pt.label.y} textAnchor={pt.label.anchor}
+                          dominantBaseline="central" className="lp-widget-scatter-point-label">
                       {pt.title}
                     </text>
-                  );
-                })()}
+                  </>
+                )}
               </g>
             ))}
           </g>
@@ -12984,126 +13266,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       if (d && d.moved && pushToast) {
         const { taskId, origStart, origEnd } = d;
         pushToast({
-          message: d.mode === "deadlineEnd" ? "Échéance modifiée." : "Dates modifiées.",
-          actionLabel: "Annuler",
-          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, start: origStart, end: origEnd } : t))),
-        });
-      } else if (d && !d.moved && d.task) {
-        onOpen(d.task);
-      }
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    window.addEventListener("touchmove", onMove, { passive: false });
-    window.addEventListener("touchend", onUp);
-    window.addEventListener("touchcancel", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
-    };
-  }, [setTasks, pushToast, onOpen]);
-
-  // Glisser-déposer dédié aux sous-tâches : ne modifie que leur propre date de fin,
-  // au sein de la checklist de leur tâche parente.
-  const subDragRef = useRef(null);
-  const startDragSubtask = (e, taskId, subId, origEnd) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const touch = e.touches && e.touches[0];
-    subDragRef.current = { taskId, subId, startClientX: touch ? touch.clientX : e.clientX, origEnd, dw: dayWidth, moved: false };
-  };
-  useEffect(() => {
-    function onMove(e) {
-      const d = subDragRef.current;
-      if (!d) return;
-      const point = e.touches ? e.touches[0] : e;
-      if (!point) return;
-      if (e.cancelable) e.preventDefault();
-      const deltaDays = Math.round((point.clientX - d.startClientX) / d.dw);
-      if (deltaDays !== 0) d.moved = true;
-      const newEnd = addDays(d.origEnd, deltaDays);
-      setTasks((prev) => prev.map((t) => {
-        if (t.id !== d.taskId) return t;
-        return { ...t, checklist: (t.checklist || []).map((s) => (s.id === d.subId ? { ...s, end: newEnd } : s)) };
-      }));
-    }
-    function onUp() {
-      const d = subDragRef.current;
-      subDragRef.current = null;
-      if (d && d.moved && pushToast) {
-        const { taskId, subId, origEnd } = d;
-        pushToast({
-          message: "Date de sous-tâche modifiée.",
-          actionLabel: "Annuler",
-          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: (t.checklist || []).map((s) => (s.id === subId ? { ...s, end: origEnd } : s)) } : t))),
-        });
-      }
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    window.addEventListener("touchmove", onMove, { passive: false });
-    window.addEventListener("touchend", onUp);
-    window.addEventListener("touchcancel", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
-    };
-  }, [setTasks, pushToast]);
-
-  // Barre de progression modifiable directement dans le graphique
-  const progressDragRef = useRef(null);
-  const setProgressFromClientX = (taskId, barX0, barW, clientX) => {
-    const pct = Math.max(0, Math.min(100, Math.round(((clientX - barX0) / barW) * 100)));
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t)));
-  };
-  const startDragProgress = (e, t, barX0, barW) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const svgRect = e.currentTarget.closest("svg").getBoundingClientRect();
-    const screenBarX0 = svgRect.left + barX0;
-    progressDragRef.current = { taskId: t.id, barX0: screenBarX0, barW };
-    setProgressFromClientX(t.id, screenBarX0, barW, e.clientX);
-  };
-  useEffect(() => {
-    function onMove(e) {
-      const d = progressDragRef.current;
-      if (!d) return;
-      setProgressFromClientX(d.taskId, d.barX0, d.barW, e.clientX);
-    }
-    function onUp() { progressDragRef.current = null; }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, [setTasks]);
-
-  const ProjectRow = ({ row }) => {
-    const { project: p, minDate, maxDate, items, mainY, ROW_H, avgProgress } = row;
-    const color = p.color || "var(--text-muted)";
-    const isCollapsed = collapsed[p.id];
-    const textHaloStyle = { paintOrder: "stroke fill", stroke: "var(--surface)", strokeWidth: 4, strokeLinejoin: "round" };
-    // Position de chaque tâche (au sein de CE projet) pour les flèches de dépendance —
-    // seules les dépendances entre tâches du même projet peuvent être tracées, une
-    // flèche ne pouvant pas relier deux <svg> distincts (un par projet).
-    const posMap = {};
-    items.forEach(({ t, side, branchDist, isMilestone, activityOffset = 0 }) => {
-      const branchY = getTaskType(t) === "activity"
-        ? mainY + activityOffset
-        : (mainY + side * branchDist);
-      posMap[t.id] = { x0:xFor(t.start), x1:xFor(t.end), y:branchY, activityOffset };
-    });
-    // Couleur de chaque tâche : normalement la couleur du statut (comme les
-    // bifurcations) ; mais quand la ligne fusionne plusieurs projets (regroupement
-    // par dossier), on utilise plutôt la couleur du PROJET D'ORIGINE de chaque
-    // tâche — c'est le seul repère visuel qui permette encore de distinguer les
-    // tâches de projets différents sur cette même ligne fusionnée.
-    const taskColorMap = {};
-    items.forEach(({ t: it }) => {
-      if (p.isFolderGroup) {
-        const ownProject = ctx.projects.find((pr) => pr.id === it.projectId);
-        taskColorMap[it.id] = ownProject?.color || color;
-      } else {
-        const st = ctx.statuses.find((s) => s.id === it.statusId);
-        taskColorMap[it.id] = st?.color || color;
-      }
-    });
-    // Point de
+      

@@ -1,4 +1,126 @@
- départ réel du tracé d'une tâche : si elle dépend d'une tâche du MÊME
+    message: d.mode === "deadlineEnd" ? "Échéance modifiée." : "Dates modifiées.",
+          actionLabel: "Annuler",
+          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, start: origStart, end: origEnd } : t))),
+        });
+      } else if (d && !d.moved && d.task) {
+        onOpen(d.task);
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    window.addEventListener("touchcancel", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
+    };
+  }, [setTasks, pushToast, onOpen]);
+
+  // Glisser-déposer dédié aux sous-tâches : ne modifie que leur propre date de fin,
+  // au sein de la checklist de leur tâche parente.
+  const subDragRef = useRef(null);
+  const startDragSubtask = (e, taskId, subId, origEnd) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const touch = e.touches && e.touches[0];
+    subDragRef.current = { taskId, subId, startClientX: touch ? touch.clientX : e.clientX, origEnd, dw: dayWidth, moved: false };
+  };
+  useEffect(() => {
+    function onMove(e) {
+      const d = subDragRef.current;
+      if (!d) return;
+      const point = e.touches ? e.touches[0] : e;
+      if (!point) return;
+      if (e.cancelable) e.preventDefault();
+      const deltaDays = Math.round((point.clientX - d.startClientX) / d.dw);
+      if (deltaDays !== 0) d.moved = true;
+      const newEnd = addDays(d.origEnd, deltaDays);
+      setTasks((prev) => prev.map((t) => {
+        if (t.id !== d.taskId) return t;
+        return { ...t, checklist: (t.checklist || []).map((s) => (s.id === d.subId ? { ...s, end: newEnd } : s)) };
+      }));
+    }
+    function onUp() {
+      const d = subDragRef.current;
+      subDragRef.current = null;
+      if (d && d.moved && pushToast) {
+        const { taskId, subId, origEnd } = d;
+        pushToast({
+          message: "Date de sous-tâche modifiée.",
+          actionLabel: "Annuler",
+          onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: (t.checklist || []).map((s) => (s.id === subId ? { ...s, end: origEnd } : s)) } : t))),
+        });
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    window.addEventListener("touchcancel", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
+    };
+  }, [setTasks, pushToast]);
+
+  // Barre de progression modifiable directement dans le graphique
+  const progressDragRef = useRef(null);
+  const setProgressFromClientX = (taskId, barX0, barW, clientX) => {
+    const pct = Math.max(0, Math.min(100, Math.round(((clientX - barX0) / barW) * 100)));
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t)));
+  };
+  const startDragProgress = (e, t, barX0, barW) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const svgRect = e.currentTarget.closest("svg").getBoundingClientRect();
+    const screenBarX0 = svgRect.left + barX0;
+    progressDragRef.current = { taskId: t.id, barX0: screenBarX0, barW };
+    setProgressFromClientX(t.id, screenBarX0, barW, e.clientX);
+  };
+  useEffect(() => {
+    function onMove(e) {
+      const d = progressDragRef.current;
+      if (!d) return;
+      setProgressFromClientX(d.taskId, d.barX0, d.barW, e.clientX);
+    }
+    function onUp() { progressDragRef.current = null; }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [setTasks]);
+
+  const ProjectRow = ({ row }) => {
+    const { project: p, minDate, maxDate, items, mainY, ROW_H, avgProgress } = row;
+    const color = p.color || "var(--text-muted)";
+    const isCollapsed = collapsed[p.id];
+    const textHaloStyle = { paintOrder: "stroke fill", stroke: "var(--surface)", strokeWidth: 4, strokeLinejoin: "round" };
+    // Position de chaque tâche (au sein de CE projet) pour les flèches de dépendance —
+    // seules les dépendances entre tâches du même projet peuvent être tracées, une
+    // flèche ne pouvant pas relier deux <svg> distincts (un par projet).
+    const posMap = {};
+    items.forEach(({ t, side, branchDist, isMilestone, activityOffset = 0 }) => {
+      const branchY = getTaskType(t) === "activity"
+        ? mainY + activityOffset
+        : (mainY + side * branchDist);
+      posMap[t.id] = { x0:xFor(t.start), x1:xFor(t.end), y:branchY, activityOffset };
+    });
+    // Couleur de chaque tâche : normalement la couleur du statut (comme les
+    // bifurcations) ; mais quand la ligne fusionne plusieurs projets (regroupement
+    // par dossier), on utilise plutôt la couleur du PROJET D'ORIGINE de chaque
+    // tâche — c'est le seul repère visuel qui permette encore de distinguer les
+    // tâches de projets différents sur cette même ligne fusionnée.
+    const taskColorMap = {};
+    items.forEach(({ t: it }) => {
+      if (p.isFolderGroup) {
+        const ownProject = ctx.projects.find((pr) => pr.id === it.projectId);
+        taskColorMap[it.id] = ownProject?.color || color;
+      } else {
+        const st = ctx.statuses.find((s) => s.id === it.statusId);
+        taskColorMap[it.id] = st?.color || color;
+      }
+    });
+    // Point de départ réel du tracé d'une tâche : si elle dépend d'une tâche du MÊME
     // projet, son embranchement part du cercle de fin de cette dernière (celle dont la
     // fin est la plus tardive, si plusieurs dépendances — c'est elle qui détermine la
     // date de début auto-calculée) plutôt que de l'axe principal du projet. Les
@@ -3278,9 +3400,9 @@ function BarChartSimple({ data, horizontal, isAggregate }) {
             </div>
           ))}
           {hover && (
-            <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+            <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
               {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
-            </div>
+            </WidgetPointerTooltip>
           )}
         </div>
         {legend}
@@ -3300,9 +3422,9 @@ function BarChartSimple({ data, horizontal, isAggregate }) {
           </div>
         ))}
         {hover && (
-          <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+          <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
             {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
-          </div>
+          </WidgetPointerTooltip>
         )}
       </div>
       {legend}
@@ -3338,9 +3460,9 @@ function LineChartWidget({ data, width = 320, height = 140 }) {
           ))}
         </svg>
         {hover && (
-          <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+          <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
             {hover.p.d.label} — {hover.p.d.value} tâche{hover.p.d.value > 1 ? "s" : ""}
-          </div>
+          </WidgetPointerTooltip>
         )}
       </div>
       <div className="lp-widget-legend lp-widget-legend-horizontal">
@@ -3396,9 +3518,9 @@ function StackedBarChart({ data }) {
         </div>
       )}
       {hover && (
-        <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
           {hover.colLabel} · {hover.seg.label} — {hover.seg.value}
-        </div>
+        </WidgetPointerTooltip>
       )}
     </div>
   );
@@ -3463,9 +3585,9 @@ function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx, ag
         ))}
       </div>
       {hover && (
-        <div className="lp-pie-tooltip" style={{ position: "fixed", left: hover.x + 12, top: hover.y + 12 }}>
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
           {hover.s.label} — {fmtAggregateValue(hover.s.value)}{!isAggregate && ` (${hover.s.pct}%)`}
-        </div>
+        </WidgetPointerTooltip>
       )}
     </div>
   );
@@ -5696,7 +5818,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
         const to = Math.max(minIdx, Math.min(maxIdx, seg.endIdx));
         const leftPct = ((from - minIdx) / span) * 100;
-        const widthPct = Math.max(1.2, ((to - from) / span) * 100);
+        // Le plancher doit être celui de la BARRE (voir Row : Math.max(2, …)),
+        // pas un plancher plus bas : sur une tâche d'un jour, la barre était
+        // tracée à 2 % et le cadre à 1,2 %, si bien que le cadre passait au
+        // milieu de la barre au lieu de l'entourer.
+        const widthPct = Math.max(2, ((to - from) / span) * 100);
+        // Dégagement en pixels de chaque côté, en plus du padding du cadre :
+        // le trait ne doit jamais se poser sur la barre.
+        const frameInsetPx = seg.padding + GANTT_FRAME_BAR_CLEARANCE;
         // Étiquette juste au-dessus du cadre, ou dans sa partie supérieure
         // gauche quand il n'y a pas la place sans mordre sur l'axe.
         const labelTop = (seg.top >= rowsBand.top + 12 ? seg.top - 11 : seg.top + 1) + (seg.labelOffset || 0);
@@ -5705,18 +5834,33 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             <div
               className="lp-widget-minigantt-frame"
               style={{
-                left: `calc(${leftPct}% - ${seg.padding}px)`,
-                width: `calc(${widthPct}% + ${seg.padding * 2}px)`,
+                left: `calc(${leftPct}% - ${frameInsetPx}px)`,
+                width: `calc(${widthPct}% + ${frameInsetPx * 2}px)`,
                 top: seg.top,
                 height: seg.height,
                 border: `1.5px ${seg.frame.borderStyle} ${seg.frame.color}`,
               }}
             />
-            {seg.frame.label && (
+            {seg.frame.cornerIconUrl && (
+              <img
+                src={seg.frame.cornerIconUrl}
+                alt=""
+                className="lp-widget-minigantt-frame-corner"
+                referrerPolicy="no-referrer"
+                style={{
+                  left: `calc(${leftPct}% + ${widthPct}% + ${frameInsetPx}px)`,
+                  top: seg.top,
+                }}
+              />
+            )}
+            {/* L'encadré posé par la coche n'a pas d'étiquette : sans ce
+                `|| iconUrl`, son icône n'était jamais rendue — le cadre
+                apparaissait nu. */}
+            {(seg.frame.label || seg.frame.iconUrl) && (
               <button
                 type="button"
                 className="lp-widget-minigantt-frame-label"
-                style={{ left: `calc(${leftPct}% - ${seg.padding}px)`, top: labelTop, background: seg.frame.color }}
+                style={{ left: `calc(${leftPct}% - ${frameInsetPx}px)`, top: labelTop, background: seg.frame.color }}
                 title={`${seg.frame.label || "Encadré"} — cliquer pour modifier`}
                 onClick={() => setAnnotationPanel({ section: "frames", focusId: seg.frame.id })}
               >
@@ -6045,10 +6189,10 @@ function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
           ))}
         </div>
         {hoverDay && (
-          <div className="lp-pie-tooltip lp-widget-metro-tooltip" style={{ position: "fixed", left: hoverDay.x + 12, top: hoverDay.y + 12 }}>
+          <WidgetPointerTooltip x={hoverDay.x} y={hoverDay.y} className="lp-pie-tooltip lp-widget-metro-tooltip">
             <div className="lp-widget-metro-tooltip-title">{fmtShort(hoverDay.day)}</div>
             <div className="lp-widget-metro-tooltip-meta">{hoverDay.tasks.slice(0, 5).map((t) => t.title).join(", ")}{hoverDay.tasks.length > 5 ? ` +${hoverDay.tasks.length - 5} autres` : ""}</div>
-          </div>
+          </WidgetPointerTooltip>
         )}
       </div>
       {/* Poignée de glisser : ajuste la part respective du calendrier et de la
@@ -8496,12 +8640,12 @@ function WidgetRiskMatrix({ widget, ctx, risks, onOpenProject }) {
             ))}
           </div>
           {hoverCell && (
-            <div className="lp-pie-tooltip lp-widget-metro-tooltip" style={{ position: "fixed", left: hoverCell.x + 12, top: hoverCell.y + 12 }}>
+            <WidgetPointerTooltip x={hoverCell.x} y={hoverCell.y} className="lp-pie-tooltip lp-widget-metro-tooltip">
               <div className="lp-widget-metro-tooltip-head">
                 <span className="lp-widget-metro-tooltip-title">Probabilité {hoverCell.p} × Impact {hoverCell.im}</span>
               </div>
               {hoverCell.risks.map((r) => <div key={r.id} className="lp-widget-metro-tooltip-meta">{r.title}</div>)}
-            </div>
+            </WidgetPointerTooltip>
           )}
         </>
       )}
@@ -12843,30 +12987,4 @@ body[data-life-app="nexora"] .lp-btn-primary:hover,
 body[data-life-app="nexora"] .lp-global-add-task:hover { background: var(--life-blue-hover); }
 body[data-life-app="nexora"] .lp-table thead th { background: var(--life-soft); font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 body[data-life-app="nexora"] .lp-modal { border-radius: 16px; box-shadow: var(--life-menu-shadow); }
-body[data-life-app="nexora"] .lp-modal-head h3 { font-size: 18px; font-weight: 700; }
-body[data-life-app="nexora"] #boot-screen { background: var(--life-bg); }
-body[data-life-app="nexora"] #boot-screen p { font-family: var(--life-font); font-size: 13px; }
-
-/* Keep the existing mobile drawers, grids and resize handles in charge. */
-@media (max-width: 767px) {
-  body[data-life-app="health"] .header { padding: 14px; gap: 14px; }
-  body[data-life-app="health"] .header-title,
-  body[data-life-app="budget"] .brand h1 { font-size: 21px; }
-  body[data-life-app="health"] .tab-btn { min-height: 44px; padding: 10px 12px; }
-  body[data-life-app="health"] .cq-widget { padding: 16px; }
-  body[data-life-app="health"] .cq-body { min-width: 0; }
-  body[data-life-app="health"] .cq-stat-row { grid-template-columns: 18px 86px minmax(12px,1fr) 44px 20px; gap: 5px; }
-  body[data-life-app="health"] :is(.header-icon-btn, .reglages-save-btn) { min-height: 44px; }
-  body[data-life-app="budget"] .brandbar { gap: 10px; padding-bottom: 10px; }
-  body[data-life-app="budget"] .tab { min-height: 44px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  body[data-life-app] *, body[data-life-app] *::before, body[data-life-app] *::after {
-    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
-    transition-duration: .01ms !important; scroll-behavior: auto !important;
-  }
-}
-
-</style>
-</body>
-</html>
+body[data-life-app="nexora"] .lp-modal-head h3 { font-size: 18px; font-weight: 7

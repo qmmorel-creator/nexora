@@ -22,7 +22,8 @@ const EXPORTS = [
   "GANTT_FRAME_DEFAULT_COLOR",
   "GANTT_FRAME_DEFAULT_PADDING",
   "GANTT_FRAME_MAX_PADDING",
-  "miniGanttToggleTaskFrame", "MINIGANTT_CHECK_FRAME_ICON", "normalizeHighlightFrames",
+  "miniGanttToggleTaskFrame", "MINIGANTT_CHECK_FRAME_ICON", "MINIGANTT_CHECK_FRAME_CORNER_ICON",
+  "GANTT_FRAME_BAR_CLEARANCE", "normalizeHighlightFrames",
 ];
 
 const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
@@ -38,6 +39,8 @@ const factory = vm.runInThisContext(
 const {
   miniGanttToggleTaskFrame,
   MINIGANTT_CHECK_FRAME_ICON,
+  MINIGANTT_CHECK_FRAME_CORNER_ICON,
+  GANTT_FRAME_BAR_CLEARANCE,
   isGanttIsoDate,
   validateTemporalBlock,
   normalizeTemporalBlocks,
@@ -753,4 +756,36 @@ test("la normalisation conserve l'icône et le marqueur d'origine", () => {
   ]);
   assert.equal(f.iconUrl, MINIGANTT_CHECK_FRAME_ICON, "Sans cela l'icône disparaîtrait au rechargement.");
   assert.equal(f.autoTaskId, "t1", "Sans cela décocher ne saurait plus quel encadré retirer.");
+});
+
+
+/* --- Retour de Quentin sur #48 : la pastille du coin, et le cadre qui
+   recoupait la barre --------------------------------------------------- */
+
+test("l'encadré posé par la coche porte aussi la pastille du coin", () => {
+  const out = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
+  assert.equal(out[0].cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
+  // Les deux icônes ont des rôles distincts : l'une remplace l'étiquette,
+  // l'autre marque le cadre. Les confondre ferait disparaître l'une des deux.
+  assert.notEqual(out[0].cornerIconUrl, out[0].iconUrl);
+});
+
+test("la pastille du coin survit au rechargement", () => {
+  const [f] = normalizeHighlightFrames([
+    { id: "f1", taskIds: ["t1"], iconUrl: MINIGANTT_CHECK_FRAME_ICON, cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON, autoTaskId: "t1" },
+  ]);
+  assert.equal(f.cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
+});
+
+test("un encadré sans pastille reste sans pastille", () => {
+  // Les encadrés posés à la main n'en portent pas : leur en donner une d'office
+  // marquerait tous les cadres existants au prochain chargement.
+  const [f] = normalizeHighlightFrames([{ id: "f9", taskIds: ["t1"] }]);
+  assert.equal(f.cornerIconUrl, "");
+});
+
+test("le dégagement du cadre est strictement positif", () => {
+  // À zéro, le trait de 1,5 px du cadre se pose sur la barre et la recoupe —
+  // c'est exactement ce que Quentin a vu.
+  assert.ok(GANTT_FRAME_BAR_CLEARANCE > 0, "sans dégagement, le cadre recoupe la barre");
 });

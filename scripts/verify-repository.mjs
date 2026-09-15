@@ -261,6 +261,87 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /NEXORA:UNLOAD-FLUSH:START/,
     "L'écriture garantie à la fermeture de l'onglet a disparu.");
 
+  /* Issue #40. Le site déployé passe par nexoraServerStorage, pas par
+     l'adaptateur Firestore direct : c'est là que le garde-fou de lecture doit
+     exister, et c'est là qu'il manquait. Sans lui, une lecture ratée ne laisse
+     aucune trace, l'écriture suivante part sans révision, le serveur la refuse,
+     et une préférence non fusionnable finit en « donnée en attente de
+     synchronisation » sans qu'aucune autre session soit en cause. */
+  assert.match(builtSource, /NEXORA:GATEWAY-READ-GUARD:START/,
+    "Le garde-fou de lecture de la passerelle a disparu.");
+  assert.match(builtSource, /NEXORA:GATEWAY-READ-GUARD:END/,
+    "La sentinelle de fin du garde-fou de la passerelle a disparu.");
+  {
+    const start = builtSource.indexOf("NEXORA:GATEWAY-READ-GUARD:START");
+    const end = builtSource.indexOf("NEXORA:GATEWAY-READ-GUARD:END", start);
+    const bloc = builtSource.slice(start, end);
+    assert.match(bloc, /__nexoraReadErrors\.set\(key, message\)/,
+      "La passerelle ne note plus les lectures ratées.");
+    assert.match(bloc, /err\.code = "NEXORA_READ_UNSAFE"/,
+      "La passerelle n'oppose plus NEXORA_READ_UNSAFE à une clé dont la lecture a échoué.");
+  }
+
+  /* Le bandeau doit nommer la cause. Les annoncer toutes comme un conflit entre
+     deux ordinateurs a fait chercher une seconde session inexistante pendant
+     trois allers-retours. */
+  assert.match(builtSource, /const blockedKeysReason = /,
+    "Le bandeau de synchronisation ne distingue plus ses trois causes.");
+
+  /* Issue #48. L'encadré posé par la coche n'a PAS d'étiquette : son icône ne
+     s'affiche que parce que la condition de rendu accepte aussi iconUrl. Rétablir
+     `seg.frame.label &&` seul rendrait le cadre nu, sans la moindre erreur. */
+  assert.match(builtSource, /\(seg\.frame\.label \|\| seg\.frame\.iconUrl\)/,
+    "L'encadré sans étiquette ne rendrait plus son icône.");
+  assert.match(builtSource, /const GANTT_FRAME_BAR_CLEARANCE = /,
+    "Le dégagement entre le cadre et la barre a disparu.");
+
+  /* Issue #56. Le bandeau de paramètres était transparent et sans plan de
+     superposition : le contenu se voyait au travers. Les trois pièces tiennent
+     ensemble — un fond opaque sans z-index, ou un z-index sans isolation du
+     corps, laisse repasser une infobulle ou une étiquette d'annotation. */
+  assert.match(builtSource, /=== NEXORA:WIDGET-HEAD-PIN:START ===/,
+    "Le bloc d'épinglage du bandeau de widget a disparu.");
+  {
+    const start = builtSource.indexOf("=== NEXORA:WIDGET-HEAD-PIN:START ===");
+    const end = builtSource.indexOf("=== NEXORA:WIDGET-HEAD-PIN:END ===", start);
+    assert.ok(end > start, "La sentinelle de fin de l'épinglage du bandeau a disparu.");
+    const bloc = builtSource.slice(start, end);
+    assert.match(bloc, /\.lp-widget-head\{[^}]*background:var\(--surface\)/,
+      "Le bandeau de widget est redevenu transparent.");
+    assert.match(bloc, /\.lp-widget-head\{[^}]*z-index:2/,
+      "Le bandeau de widget n'est plus peint au-dessus du corps.");
+    assert.match(bloc, /\.lp-widget-body\{[^}]*isolation:isolate/,
+      "Le corps du widget ne s'isole plus : un descendant peut repasser au-dessus du bandeau.");
+  }
+
+  /* Issue #54. Les infobulles des widgets étaient posées à même le corps du
+     widget en position:fixed. Deux pièges : position:fixed cesse de valoir par
+     rapport à la fenêtre dès qu'un ancêtre établit un bloc conteneur, et le
+     débordement n'était borné qu'à droite, sur une largeur devinée. Depuis #56
+     le corps du widget s'isole, ce qui les enfermerait en plus dans son plan.
+     Le portail vers document.body règle les trois d'un coup. */
+  assert.match(builtSource, /=== NEXORA:POINTER-TOOLTIP:START ===/,
+    "L'infobulle de survol commune aux widgets a disparu.");
+  {
+    const start = builtSource.indexOf("=== NEXORA:POINTER-TOOLTIP:START ===");
+    const end = builtSource.indexOf("=== NEXORA:POINTER-TOOLTIP:END ===", start);
+    const bloc = builtSource.slice(start, end);
+    assert.match(bloc, /createPortal\(/,
+      "L'infobulle des widgets n'est plus sortie dans un portail : elle se décalera de nouveau.");
+    assert.match(bloc, /getBoundingClientRect\(\)/,
+      "L'infobulle des widgets ne mesure plus sa boîte : son rabat redevient une devinette.");
+  }
+
+  /* Le motif d'origine — placement direct au curseur, sans mesure ni rabat —
+     reposé ailleurs ramènerait le défaut sans bruit. L'infobulle du Mini-Gantt
+     garde son position:fixed : elle calcule ses coordonnées et se rend déjà
+     dans un portail, c'est le modèle dont le reste s'inspire. */
+  {
+    const restants = (builtSource.match(/style=\{\{ position: "fixed", left: [^,]+ \+ 12, top: [^ ]+ \+ 12 \}\}/g) || []).length;
+    assert.equal(restants, 0,
+      `${restants} infobulle(s) de widget encore posée(s) au curseur sans rabat ni portail.`);
+  }
+
   /* La ligne de définition ne porte pas les parenthèses d'appel : ce motif ne
      compte QUE les appels. Trois attendus — écoutes, contrôle de fraîcheur,
      adoption d'une valeur distante. */
@@ -366,6 +447,36 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Le mode de fenêtre choisi dans la fiche n'est plus enregistré.");
   assert.match(builtSource, /data\.scatterWindowBefore = Number\(scatterWindowBefore\);/,
     "Les bornes de la fenêtre ne sont plus enregistrées.");
+
+  /* Couloirs teintés et sous-grille (issue #53). Sans la teinte, on ne retrouve
+     sa ligne qu'en relisant les libellés ; sans la sous-grille, un point entre
+     deux repères se lit « quelque part au milieu ». */
+  assert.match(builtSource, /fillOpacity=\{SCATTER_LANE_TINT\}/,
+    "Les couloirs ne portent plus la couleur de leur entité.");
+  assert.match(builtSource, /className="lp-widget-scatter-subaxis"/,
+    "La sous-grille intermédiaire du nuage a disparu.");
+  assert.match(builtSource, /ticks\.minor\.map/,
+    "La sous-grille n'est plus dessinée à partir des graduations calculées.");
+
+  /* Moteur d'étiquettes (issue #53). Trois maillons qui se défont sans erreur :
+     le widget cesse de demander un placement, ou dessine le rappel autrement,
+     ou reprend la couleur d'alerte à la place de celle du groupe. */
+  assert.match(builtSource, /const labels = scatterPlaceLabels\(/,
+    "Le widget ne demande plus de placement : les étiquettes disparaîtraient.");
+  assert.match(builtSource, /className="lp-widget-scatter-leader"/,
+    "Le trait de rappel des étiquettes déportées a disparu.");
+  /* La couleur d'un point est celle de son GROUPE, en retard comme à venir : le
+     rouge d'alerte effaçait l'agrégation sur toute la moitié gauche du nuage.
+     Le retard se signale au contour. */
+  const nuage = builtSource.slice(
+    builtSource.indexOf("function WidgetDeadlineScatter"),
+    builtSource.indexOf("function WidgetProjectPulse"),
+  );
+  assert.ok(nuage.length > 0, "WidgetDeadlineScatter introuvable");
+  assert.doesNotMatch(nuage, /fill=\{pt\.days < 0 \? SCATTER_LATE_COLOR/,
+    "Le retard reprend la couleur du point : l'agrégation ne se lirait plus à gauche de l'origine.");
+  assert.match(nuage, /stroke=\{pt\.days < 0 \? SCATTER_LATE_COLOR/,
+    "Le retard n'est plus signalé au contour : rien ne le distinguerait d'une tâche à venir.");
 }
 
 /* Heat map croisée (issue #51).

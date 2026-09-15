@@ -108,6 +108,27 @@ const seen = await page.evaluate(() => {
       .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), x: Math.round(el.getBoundingClientRect().x) })),
     scatterLaneColors: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-lane-mark")]
       .map((el) => (el.getAttribute("fill") || "").toUpperCase()),
+    // Fond des couloirs : chaque bande porte la couleur de son entité, en aplat
+    // très pâle. Relevé avec son opacité — une teinte à zéro ne distingue rien.
+    scatterBands: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-band")]
+      .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), opacity: Number(el.getAttribute("fill-opacity")) })),
+    scatterMajorAxes: document.querySelectorAll("#harness-scatter .lp-widget-scatter-axis, #harness-scatter .lp-widget-scatter-axis-today").length,
+    scatterMinorAxes: document.querySelectorAll("#harness-scatter .lp-widget-scatter-subaxis").length,
+    // Couloir dense : géométrie RÉELLEMENT rendue des étiquettes. C'est la seule
+    // façon de vérifier qu'elles ne se chevauchent pas — le calcul du moteur
+    // repose sur une largeur estimée, le navigateur, lui, mesure vraiment.
+    denseLabels: [...document.querySelectorAll("#harness-scatter-dense .lp-widget-scatter-point-label")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { text: el.textContent.trim(), x0: r.left, x1: r.right, y0: r.top, y1: r.bottom };
+    }),
+    denseDots: [...document.querySelectorAll("#harness-scatter-dense .lp-widget-scatter-dot")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { fill: (el.getAttribute("fill") || "").toUpperCase(), stroke: (el.getAttribute("stroke") || "").toUpperCase(),
+               x: Math.round(r.x + r.width / 2), x0: r.left, x1: r.right, y0: r.top, y1: r.bottom };
+    }),
+    denseLeaders: document.querySelectorAll("#harness-scatter-dense .lp-widget-scatter-leader").length,
+    denseTodayX: (() => { const el = document.querySelector("#harness-scatter-dense .lp-widget-scatter-axis-today"); return el ? el.getBoundingClientRect().x : null; })(),
+    denseBox: (() => { const r = document.querySelector("#harness-scatter-dense svg").getBoundingClientRect(); return { x0: r.left, x1: r.right, y0: r.top, y1: r.bottom }; })(),
     windowDots: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot").length,
     windowBeyond: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot.is-beyond").length,
     windowOverflowText: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-overflow")].map((e) => e.textContent.trim()),
@@ -298,12 +319,22 @@ try {
 
 // Heat map (issue #51) : l'infobulle doit nommer le croisement, et la fiche
 // proposer les deux axes ET la mesure.
-const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "" };
+const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "", listHead: "", listItems: 0, listInvite: "" };
 try {
   const plein = page.locator("#harness-heatmap .lp-widget-hmgrid-cell:not(.is-empty)").first();
   await plein.hover();
   await page.waitForTimeout(250);
   heatmap.tip = (await page.locator(".lp-widget-hmgrid-tip").innerText()).trim();
+
+  // Découpe en deux volets : le volet de droite existe AVANT tout clic (avec son
+  // invite), et le clic sur une case le remplit. Le faire apparaître au clic
+  // redimensionnerait la grille et ferait sauter les cases sous le curseur.
+  heatmap.listInvite = (await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-empty").innerText().catch(() => "")).trim();
+  await plein.click();
+  await page.waitForTimeout(250);
+  heatmap.listHead = (await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-head span").first().innerText()).trim();
+  heatmap.listItems = await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-item").count();
+
   await page.locator("#harness-open-heatmap-form").click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   await page.waitForTimeout(400);
@@ -585,22 +616,16 @@ expect(seen.scatterDots.length === 4, `Nuage : ${seen.scatterDots.length} point(
 expect(seen.scatterLaneLabels.length === 2, `Nuage : ${seen.scatterLaneLabels.length} couloir(s), 2 projets datés attendus`);
 expect(seen.scatterTodayAxis.length === 1, "Nuage : l'axe « aujourd'hui » est absent — sans lui, rien ne sépare le retard de l'avance");
 {
-  // Les deux points les plus à gauche sont les tâches en retard. Ils doivent
-  // porter UNE couleur d'alerte, et surtout PAS celle de leur couloir : sans
-  // cette seconde condition, le contrôle resterait vert si le retard reprenait
-  // simplement la couleur du projet — deux tâches en retard du même projet
-  // partageraient alors leur teinte sans que rien ne les signale.
-  const byX = [...seen.scatterDotFills].sort((a, b) => a.x - b.x);
-  const lateFills = new Set(byX.slice(0, 2).map((d) => d.fill));
+  // Depuis #53, la couleur d'un point est celle de son GROUPE, en retard comme
+  // à venir : c'est l'agrégation qu'on doit lire d'un coup d'œil. Le retard se
+  // signale au CONTOUR. Vérifier ici que le remplissage suit bien le couloir —
+  // et non plus qu'il s'en écarte, ce qui était la règle d'avant.
   const laneColors = new Set(seen.scatterLaneColors);
-  expect(lateFills.size === 1, `Nuage : les deux tâches en retard n'ont pas la même couleur (${[...lateFills].join(", ")})`);
   expect(laneColors.size > 0, "Nuage : les pastilles de couleur des couloirs ont disparu");
-  expect(
-    ![...lateFills].some((f) => laneColors.has(f)),
-    `Nuage : le retard reprend la couleur de son couloir (${[...lateFills].join(", ")}) — rien ne le signale`
-  );
-  const restFills = new Set(byX.slice(2).map((d) => d.fill));
-  expect(![...lateFills].some((f) => restFills.has(f)), "Nuage : le retard n'est pas distingué des tâches à venir");
+  seen.scatterDotFills.forEach((d) => {
+    expect(laneColors.has(d.fill),
+      `Nuage : un point est rempli en ${d.fill}, qui n'est la couleur d'aucun couloir — l'agrégation ne se lit plus`);
+  });
 }
 seen.scatterDots.forEach((d, i) => {
   expect(d.w > 0 && d.h > 0, `Nuage : point ${i + 1} de surface nulle`);
@@ -625,6 +650,69 @@ if (todayX !== null) {
   const late = seen.scatterDots.filter((d) => d.x + d.w / 2 < todayX - 1).length;
   expect(late === 2, `Nuage : ${late} point(s) à gauche de l'origine, 2 tâches en retard attendues`);
 }
+// --- Couloirs teintés et sous-grille (issue #53) ---------------------------
+// Chaque couloir porte la couleur de son entité : c'est ce qui permet de
+// retrouver sa ligne sans relire les libellés.
+expect(seen.scatterBands.length === seen.scatterLaneLabels.length,
+  `Nuage : ${seen.scatterBands.length} bande(s) de couloir pour ${seen.scatterLaneLabels.length} couloir(s) — chacun doit avoir la sienne`);
+{
+  const couleurs = new Set(seen.scatterLaneColors);
+  seen.scatterBands.forEach((b) => {
+    expect(couleurs.has(b.fill), `Nuage : une bande de couloir (${b.fill}) ne reprend pas la couleur de son entité`);
+    expect(b.opacity > 0 && b.opacity <= 0.2,
+      `Nuage : teinte de couloir à ${b.opacity} — nulle elle ne distingue rien, forte elle passe devant les points`);
+  });
+  expect(new Set(seen.scatterBands.map((b) => b.fill)).size > 1,
+    "Nuage : tous les couloirs ont la même teinte — le contrôle ne prouverait rien");
+}
+// Une sous-grille non étiquetée, plus dense que les graduations : sans elle,
+// entre deux repères un point se lit « quelque part au milieu ».
+expect(seen.scatterMinorAxes > seen.scatterMajorAxes,
+  `Nuage : ${seen.scatterMinorAxes} trait(s) de sous-grille pour ${seen.scatterMajorAxes} graduation(s) — la sous-grille doit être plus fine`);
+
+// --- Moteur d'étiquettes sur un couloir dense (issue #53) ------------------
+// 36 tâches à titres longs. La règle : poser le plus d'étiquettes possible,
+// tant qu'aucune n'en recouvre une autre ni ne masque un point.
+{
+  const chevauche = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  expect(seen.denseLabels.length >= 12,
+    `Nuage dense : ${seen.denseLabels.length} étiquette(s) sur 36 tâches — le moteur doit en poser bien davantage`);
+  for (let i = 0; i < seen.denseLabels.length; i++) {
+    for (let j = i + 1; j < seen.denseLabels.length; j++) {
+      const a = seen.denseLabels[i], b = seen.denseLabels[j];
+      expect(!chevauche(a, b), `Nuage dense : « ${a.text} » et « ${b.text} » se recouvrent`);
+    }
+  }
+  // Et aucune n'avale un point : une étiquette posée sur une pastille cache la
+  // tâche qu'elle est censée désigner.
+  seen.denseLabels.forEach((l) => {
+    seen.denseDots.forEach((d) => {
+      expect(!chevauche(l, d), `Nuage dense : l'étiquette « ${l.text} » recouvre un point`);
+    });
+  });
+  // Rien ne sort du dessin.
+  seen.denseLabels.forEach((l) => {
+    expect(l.x0 >= seen.denseBox.x0 - 1 && l.x1 <= seen.denseBox.x1 + 1,
+      `Nuage dense : l'étiquette « ${l.text} » sort du cadre`);
+  });
+  // Les amas serrés doivent produire des rappels en coude, sinon le moteur
+  // retombe sur « à droite ou rien ».
+  expect(seen.denseLeaders > 0, "Nuage dense : aucune étiquette déportée — les amas resteraient muets");
+}
+// La couleur d'un point suit son GROUPE des deux côtés de l'origine. Avant
+// l'issue #53, tout ce qui était en retard virait au rouge et l'agrégation
+// disparaissait de la moitié gauche du nuage.
+{
+  const enRetard = seen.denseDots.filter((d) => seen.denseTodayX !== null && d.x < seen.denseTodayX - 1);
+  const aVenir = seen.denseDots.filter((d) => seen.denseTodayX !== null && d.x > seen.denseTodayX + 1);
+  expect(enRetard.length > 0 && aVenir.length > 0, "Nuage dense : le jeu doit contenir des tâches des deux côtés");
+  expect(new Set(enRetard.map((d) => d.fill)).size > 1,
+    "Nuage dense : toutes les tâches en retard ont la même couleur — la couleur du groupe est écrasée");
+  // Le retard reste signalé, mais par le contour, pas en confisquant la teinte.
+  expect(enRetard.every((d) => d.stroke && d.stroke !== aVenir[0].stroke),
+    "Nuage dense : rien ne distingue plus une tâche en retard d'une tâche à venir");
+}
+
 // Faible densité : quatre points seulement, les étiquettes doivent rester visibles.
 expect(seen.scatterLabels.length > 0, "Nuage : aucune étiquette alors que la densité est faible");
 // Et lisibles jusqu'au bout : une étiquette rognée par le bord droit ne dit
@@ -722,6 +810,13 @@ expect(seen.heatCells.length === seen.heatRowHeads.length * seen.heatColHeads.le
 {
   const tailles = new Set(seen.heatCells.map((c) => `${c.w}x${c.h}`));
   expect(tailles.size === 1, `Heat map : ${tailles.size} tailles de case différentes (${[...tailles].join(", ")}) — elles doivent être identiques`);
+  // Retour de Quentin sur #51 : deux volets, comme la vue Heat map calendaire.
+  expect(/Clique sur une case/.test(heatmap.listInvite),
+    `Heat map : le volet de droite n'est pas apparent avant le clic (« ${heatmap.listInvite} »)`);
+  expect(/×/.test(heatmap.listHead),
+    `Heat map : le volet de droite ne nomme pas le croisement retenu (« ${heatmap.listHead} »)`);
+  expect(heatmap.listItems > 0,
+    `Heat map : ${heatmap.listItems} tâche(s) listée(s) dans le volet de droite après le clic sur une case pleine`);
 }
 // CASE VIDE contre CASE À ZÉRO — le cœur de l'issue. « Aucune tâche à ce
 // croisement » n'est pas « des tâches, mais aucune en retard ». Ce qui distingue
