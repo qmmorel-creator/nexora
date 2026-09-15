@@ -1,4 +1,52 @@
-hasAnimatedRef.current = true;
+ objectFit: "contain", ...style }} />;
+  }
+  if (icon.startsWith("data:") || icon.startsWith("http://") || icon.startsWith("https://")) return <img src={icon} alt="" style={{ width: size, height: size, borderRadius: 4, objectFit: "cover", ...style }} />;
+  return <span style={{ fontSize: size * 0.75, lineHeight: 1, ...style }}>{icon}</span>;
+}
+
+function NexoraIcon({ name, size = 16, style, stroke = 1.8, color }) {
+  return <IconGlyph icon={name ? makeTablerIconSpec(name, color) : null} size={size} style={style} stroke={stroke} />;
+}
+
+// Anime un nombre entier de 0 jusqu'à sa valeur réelle, une seule fois au montage
+// (Réglages > Apparence). Simple `<span>`, à utiliser comme {' '} inline avec un
+// suffixe (%, etc.) autour.
+// Petite salve de confettis SVG, déclenchée une seule fois quand un projet
+// franchit 100% d'avancement (jamais rejouée tant qu'il reste à 100%, ni si
+// l'utilisateur revient plus tard sur un projet déjà complet). Réglages > Apparence.
+function ProjectConfetti({ x, y, active }) {
+  const [pieces, setPieces] = useState([]);
+  const prevActiveRef = useRef(false);
+  useEffect(() => {
+    if (active && !prevActiveRef.current) {
+      const colors = ["#4F6AF5", "#1FA971", "#E2483E", "#FF7A3D", "#8B5CF6"];
+      setPieces(Array.from({ length: 16 }, (_, i) => {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 22 + Math.random() * 20;
+        return { id: i, dx: Math.cos(angle) * dist, dy: Math.sin(angle) * dist - 8, rot: Math.random() * 360 - 180, color: colors[i % colors.length] };
+      }));
+    } else if (!active) {
+      setPieces([]);
+    }
+    prevActiveRef.current = active;
+  }, [active]);
+  if (pieces.length === 0) return null;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {pieces.map((c) => (
+        <rect key={c.id} x={x - 3} y={y - 4} width="6" height="8" fill={c.color} rx="1"
+          className="lp-anim-confetti-piece"
+          style={{ "--lp-dx": `${c.dx}px`, "--lp-dy": `${c.dy}px`, "--lp-rot": `${c.rot}deg`, transformBox: "fill-box", transformOrigin: "center" }} />
+      ))}
+    </g>
+  );
+}
+function CountUp({ value, animate, duration = 800 }) {
+  const hasAnimatedRef = useRef(false);
+  const [display, setDisplay] = useState(animate ? 0 : value);
+  useEffect(() => {
+    if (!animate || hasAnimatedRef.current) { setDisplay(value); return; }
+    hasAnimatedRef.current = true;
     const t0 = performance.now();
     let raf;
     const step = (t) => {
@@ -7293,6 +7341,14 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:taskBaselines", "nexora:taskArchive", "nexora:customFieldDefs",
     "nexora:risks", "nexora:workflows", "nexora:workflowExecutionLog", "nexora:metaTemporalBlocks",
     "nexora:notifications", "nexora:favorites",
+    // Ajoutées le 15/09/2026 (issue #39). Ces deux-là passent par persistKey
+    // comme les autres et sont des listes d'objets portant un id : la fusion
+    // s'y applique telle quelle. Les cinq autres clés d'interface en restent
+    // dehors volontairement — viewOrder est un ORDRE, que fusionner par
+    // identifiant détruirait ; viewPrefs, enabledViews et shortcutPrefs sont
+    // des réglages scalaires sans horodatage, donc toujours « non résolus » ;
+    // todayWidgets vaut null tant qu'il n'est pas chargé.
+    "nexora:dashboards", "nexora:views",
   ]);
 
   // Certaines listes n'ont pas de champ `id` par élément qui identifie
@@ -7538,7 +7594,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           // jamais, et on prévient si un VRAI conflit (même élément modifié
           // des deux côtés sans horodatage tranchant) a dû être arbitré.
           if (written && written.mergedValue !== undefined) {
-            const setter = firebaseStateEntries().find(([, k]) => k === key)?.[2];
+            const setter = firebaseWatchedEntries().find(([, k]) => k === key)?.[2];
             if (setter) setter(written.mergedValue);
             if (written.mergeUnresolved && written.mergeUnresolved.length) {
               pushToast({
@@ -7722,6 +7778,31 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["startupPref", "nexora:startupPref", setStartupPref],
     ["favorites", "nexora:favorites", setFavorites],
   ];
+
+  // === NEXORA:INTERFACE-SYNC:START ===
+  // Sept clés d'interface sont stockées dans Firebase et écrites par
+  // persistKey comme les autres, mais elles étaient absentes de
+  // firebaseStateEntries() — la liste qui alimente à la fois les écoutes et le
+  // contrôle de fraîcheur au retour au premier plan. Elles ne bénéficiaient
+  // donc d'aucun rattrapage : une configuration de tableau de bord modifiée
+  // sur un poste n'atteignait l'autre qu'au rechargement complet.
+  //
+  // Leur hydratation garde son chemin propre — elle doit aboutir avant le
+  // premier rendu, avec ses propres drapeaux de chargement — et n'est pas
+  // touchée ici. Seule la fraîcheur est rattachée.
+  const firebaseInterfaceEntries = () => [
+    ["dashboards",    "nexora:dashboards",    setDashboards],
+    ["savedViews",    "nexora:views",         setSavedViews],
+    ["todayWidgets",  "nexora:todayWidgets",  setTodayData],
+    ["viewPrefs",     "nexora:viewPrefs",     setViewPrefs],
+    ["viewOrder",     "nexora:viewOrder",     setViewOrder],
+    ["enabledViews",  "nexora:enabledViews",  setEnabledViews],
+    ["shortcutPrefs", "nexora:shortcutPrefs", setShortcutPrefs],
+  ];
+
+  // Toutes les clés dont une modification distante doit être détectée.
+  const firebaseWatchedEntries = () => [...firebaseStateEntries(), ...firebaseInterfaceEntries()];
+  // === NEXORA:INTERFACE-SYNC:END ===
 
   const fullBackupLivePayload = () => ({
     "nexora:projects": projects,
@@ -8122,7 +8203,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     // Listen to every persisted state key, not only tasks/projects. A remote
     // value is first read as a "peek": its revision is committed locally only
     // after we have verified that no local write appeared during the fetch.
-    const unsubs = firebaseStateEntries().map(([, key, setter]) =>
+    const unsubs = firebaseWatchedEntries().map(([, key, setter]) =>
       window.storage.watch(key, async (revision) => {
         setRemoteChangeDetected((prev) => (prev[key] === revision ? prev : { ...prev, [key]: revision }));
 
@@ -8167,7 +8248,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     if (!dataLoaded) return;
     const onVisible = async () => {
       if (document.visibilityState !== "visible" || !window.storage?.checkRevision) return;
-      for (const [, key] of firebaseStateEntries()) {
+      for (const [, key] of firebaseWatchedEntries()) {
         try {
           const remoteRevision = await window.storage.checkRevision(key);
           const known = window.storage.getKnownRevision(key);
@@ -11564,70 +11645,4 @@ export default function LePlan({ currentUser, onSignOut }) {
           return (
             <button key={key} type="button" className={"lp-mobile-tab" + (isActive ? " active" : "")} onClick={() => { setView(key); setMobileMoreOpen(false); }}>
               <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={21} />
-              <span>{meta.label === "Planning Projets" ? "Réseau" : meta.label}</span>
-            </button>
-          );
-        })}
-        <button type="button" className={"lp-mobile-tab" + (sidebarCollapsed === false ? " active" : "")} onClick={() => { setSidebarCollapsed((c) => !c); setMobileMoreOpen(false); }}>
-          <Folder size={21} />
-          <span>Dossiers</span>
-        </button>
-        <button type="button" className={"lp-mobile-tab" + (mobileMoreOpen ? " active" : "")} onClick={() => setMobileMoreOpen((o) => !o)}>
-          <MoreHorizontal size={21} />
-          {unreadNotificationsCount > 0 && <span className="lp-tab-badge lp-mobile-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
-          <span>Plus</span>
-        </button>
-      </nav>
-      {mobileMoreOpen && (
-        <>
-          <div className="lp-mobile-sheet-overlay" onMouseDown={() => setMobileMoreOpen(false)} onTouchStart={() => setMobileMoreOpen(false)} />
-          <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
-            <div className="lp-mobile-sheet-handle" />
-            <div className="lp-mobile-sheet-grid">
-              {ALL_VIEWS_META.filter((v) => !["control", "projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
-                <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
-                  <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
-                  <span>{meta.label}</span>
-                  {meta.key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
-                </button>
-              ))}
-            </div>
-            <hr className="lp-divider" />
-            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setSettingsTab("projects"); setSettingsOpen(true); setMobileMoreOpen(false); }}>
-              <Settings size={20} /><span>Réglages</span>
-            </button>
-            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setReadmeOpen(true); setMobileMoreOpen(false); }}>
-              <BookOpen size={20} /><span>Guide de démarrage</span>
-            </button>
-          </div>
-        </>
-      )}
-      <ToastStack toasts={toasts} onDismiss={dismissToast} />
-      {readmeOpen && <ReadmeModal onClose={() => setReadmeOpen(false)} />}
-      {filtersOpen && <FiltersModal filters={filters} setFilters={setFilters} ctx={ctx} onClose={() => setFiltersOpen(false)} />}
-      {globalSearchOpen && (
-        <GlobalMetaSearchModal
-          tasks={tasks}
-          taskArchive={taskArchive}
-          ctx={ctx}
-          onRestoreArchived={restoreArchivedTasks}
-          onOpenTask={(t) => { setGlobalSearchOpen(false); openEditTask(t); }}
-          onClose={() => setGlobalSearchOpen(false)}
-        />
-      )}
-      {importOpen && <ImportCsvModal ctx={ctx} projects={projects} statuses={statuses} setProjects={setProjects} setStatuses={setStatuses} setTasks={setTasks} persistKey={persistKey} pushToast={pushToast} syncBlocked={syncBlocked} onClose={() => setImportOpen(false)} />}
-      {markdownImportOpen && (
-        <MarkdownImportModal
-          projects={projects}
-          setProjects={setProjects}
-          statuses={statuses}
-          setStatuses={setStatuses}
-          taskTypes={taskTypes}
-          setTasks={setTasks}
-          palette={PROJECT_PALETTES[appearance.projectPalette] || PROJECT_PALETTES.default}
-          pushToast={pushToast}
-          onClose={() => setMarkdownImportOpen(false)}
-        />
-      )}
-      {projectFoldersOpen && <SimpleFolderManager title="Dossiers de projets" folders={projectFolders} setFolders={setProjectFolders} countInFolder={(id) => projects.filter((p) => p.folderId === id).length} pushToast={pushToast} onClose={() => setProjectFoldersOpen(false)} itemLabel="dossier" />}
-      {viewFoldersOpen && <SimpleFolderManager title="Dossiers de vues" folders={viewFolders} setFolders={setViewFolders} countInFolder={(id) => savedViews.filter((v) => v.folderId === id).length} pushToast={pushToast} onClose={() => setViewFoldersO
+              <span>{meta.

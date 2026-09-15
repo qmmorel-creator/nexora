@@ -177,4 +177,37 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.deepEqual(after, [], `hook(s) après le retour « aucune tâche » du Mini-Gantt : ${after.join(" | ")}`);
 }
 
+/* Fiabilité de la synchronisation entre postes (issue #39).
+   Ces pièces ne se manifestent qu'à la fermeture de l'onglet, sur l'autre
+   machine, le lendemain. Rien ne signalerait leur disparition à l'usage. */
+{
+  assert.match(builtSource, /NEXORA:INTERFACE-SYNC:START/,
+    "Le rattachement des clés d'interface au rattrapage a disparu.");
+  assert.match(builtSource, /NEXORA:UNLOAD-FLUSH:START/,
+    "L'écriture garantie à la fermeture de l'onglet a disparu.");
+
+  /* La définition seule ne prouve rien : c'est l'usage qui rend le correctif
+     vivant. La ligne de définition ne porte pas les parenthèses d'appel, donc
+     ce motif ne compte QUE les appels : trois attendus — écoutes, contrôle de
+     fraîcheur, adoption d'une valeur distante. */
+  assert.match(builtSource, /const firebaseWatchedEntries = \(\) =>/,
+    "La définition de firebaseWatchedEntries a disparu.");
+  const usages = (builtSource.match(/firebaseWatchedEntries\(\)/g) || []).length;
+  assert.ok(usages >= 3,
+    `firebaseWatchedEntries n'est plus branché sur les trois boucles de rattrapage (${usages} appel(s) sur 3 attendus).`);
+
+  /* Le keepalive doit rester conditionné : l'appliquer sans condition
+     gaspillerait le quota partagé de 64 Kio sur des lectures de premier plan. */
+  assert.match(builtSource, /keepalive: nexoraPageLeaving && nexoraUseKeepalive\(nexoraBodyBytes\(requestBody\)\)/,
+    "La requête de la passerelle n'est plus marquée keepalive à la fermeture de la page.");
+
+  /* viewOrder est un ORDRE : le rendre fusionnable par identifiant le détruirait. */
+  const mergeableStart = builtSource.indexOf("const NEXORA_MERGEABLE_KEYS = new Set([");
+  const mergeableBlock = builtSource.slice(mergeableStart, builtSource.indexOf("]);", mergeableStart));
+  assert.ok(mergeableBlock.includes('"nexora:dashboards"'),
+    "nexora:dashboards n'est plus fusionnable : deux postes se disputeraient de nouveau leurs tableaux de bord.");
+  assert.ok(!mergeableBlock.includes('"nexora:viewOrder"'),
+    "nexora:viewOrder est devenu fusionnable : la fusion par identifiant détruirait l'ordre des vues.");
+}
+
 console.log("Repository invariants: OK");
