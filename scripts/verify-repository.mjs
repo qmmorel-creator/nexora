@@ -177,4 +177,77 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.deepEqual(after, [], `hook(s) après le retour « aucune tâche » du Mini-Gantt : ${after.join(" | ")}`);
 }
 
+// Conflit de synchronisation (409). Trois défauts distincts, tous invisibles à la
+// lecture comme au build : ils ne se manifestent qu'avec deux appareils, ou au
+// rechargement.
+{
+  assert.match(builtSource, /=== NEXORA:SYNCMERGE:START ===/, "bloc de fusion absent");
+  assert.match(builtSource, /=== NEXORA:SYNCMERGE:END ===/, "sentinelle de fin du bloc de fusion absente");
+
+  // 1. Une clé absente du registre n'est pas fusionnée : elle est BLOQUÉE, et plus
+  //    rien ne s'enregistre dessus jusqu'au rechargement de l'onglet.
+  //    nexora:dashboards porte les tableaux de bord et leurs widgets — c'est elle
+  //    qu'écrit la modification d'un filtre de Mini-Gantt.
+  const registry = builtSource.slice(
+    builtSource.indexOf("const NEXORA_MERGEABLE_KEYS"),
+    builtSource.indexOf("const NEXORA_MERGE_ID_GETTERS"),
+  );
+  assert.ok(registry.length > 0, "registre des clés fusionnables introuvable");
+  for (const key of ["nexora:dashboards", "nexora:dashboardFolders", "nexora:views", "nexora:taskTypes"]) {
+    assert.ok(registry.includes(`"${key}"`), `${key} absente du registre des clés fusionnables`);
+  }
+
+  // 2. Toute clé LUE au démarrage doit être ÉCRITE quelque part. nexora:taskTypes
+  //    était lue, sauvegardée, surveillée pour les changements distants — et jamais
+  //    enregistrée : cinq points la modifiaient, aucun n'atteignait Firebase. Rien
+  //    ne le signalait, la clé se rechargeait simplement telle qu'elle était avant.
+  const persisted = new Set([...builtSource.matchAll(/persistKey\("([^"]+)"/g)].map((m) => m[1]));
+  const read = new Set([
+    ...[...builtSource.matchAll(/storageGetWithTimeout\("([^"]+)"/g)].map((m) => m[1]),
+    ...[...builtSource.matchAll(/\["\w+", "(nexora:[^"]+)", set/g)].map((m) => m[1]),
+  ]);
+  // Deux exceptions légitimes : un ancien format lu pour migrer, et un index écrit
+  // directement par window.storage.set en dehors du cycle React.
+  const readOnlyByDesign = new Set(["nexora:dashboardWidgets", "nexora:snapshotIndex"]);
+  const neverWritten = [...read].filter((k) => !persisted.has(k) && !readOnlyByDesign.has(k)).sort();
+  assert.deepEqual(neverWritten, [], `clé(s) lues au démarrage et jamais enregistrées : ${neverWritten.join(", ")}`);
+
+  // 3. L'horodatage doit être posé par le setter, pas par les points d'écriture :
+  //    les tableaux de bord en comptent dix-neuf et aucun n'y penserait. Sans
+  //    horodatage la fusion ne peut pas départager deux sessions ayant touché la
+  //    même entité : elle garde la version distante et la modification locale est
+  //    perdue avec un simple avis.
+  assert.match(builtSource, /const stampChangedEntities = \(prev, next\) =>/, "fonction d'horodatage absente");
+  for (const [setter, raw] of [["setDashboards", "setDashboardsRaw"], ["setSavedViews", "setSavedViewsRaw"]]) {
+    assert.ok(
+      builtSource.includes(`const ${setter} = (updater) =>`)
+        && builtSource.includes(`${raw}((prev) => stampChangedEntities(prev, typeof updater === "function" ? updater(prev) : updater))`),
+      `${setter} ne passe pas par l'horodatage`,
+    );
+    // Le setter brut ne doit apparaître QUE deux fois : sa déclaration useState et
+    // son enveloppe. Une troisième occurrence est une écriture qui contourne
+    // l'horodatage — silencieuse, et invisible tant qu'on ne travaille pas à deux
+    // ordinateurs.
+    const rawUses = builtSource.split(raw).length - 1;
+    assert.equal(rawUses, 2, `${raw} apparaît ${rawUses} fois (2 attendues : la déclaration et l'enveloppe)`);
+  }
+
+  // 4. refreshRevision est appelé APRÈS un conflit, pour resynchroniser la révision
+  //    connue avant de réécrire. S'il renvoie null sans mettre cette révision à jour,
+  //    la réécriture repart avec une révision périmée et Firebase la refuse une
+  //    seconde fois — ce second 409 n'est plus rattrapé et la clé reste bloquée
+  //    jusqu'au rechargement. Le défaut existait dans les DEUX adaptateurs : les
+  //    compter est le seul moyen de ne pas croire l'invariant tenu parce qu'un seul
+  //    l'applique.
+  const refreshers = [...builtSource.matchAll(/async refreshRevision\(key\) \{[\s\S]*?\n  \},/g)].map((m) => m[0]);
+  assert.equal(refreshers.length, 2, `refreshRevision : ${refreshers.length} adaptateur(s), 2 attendus`);
+  refreshers.forEach((fn, index) => {
+    assert.match(
+      fn,
+      /Key not found[\s\S]*?__nexoraKnownRevisions\.set\(key, null\)/,
+      `refreshRevision #${index + 1} ne remet pas la révision connue à zéro sur une clé absente`,
+    );
+  });
+}
+
 console.log("Repository invariants: OK");
