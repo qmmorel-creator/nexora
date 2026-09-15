@@ -66,6 +66,17 @@ Scénario « Treemap par statut » — le même widget, mais une tuile = un stat
   proposés, ni comme champ de tuile ni comme regroupement ;
 - le premier champ de la tuile s'intitule d'après le champ choisi.
 
+Scénario « Heat map croisée » — projet × statut, puis projet × mois d'échéance
+avec la mesure « tâches en retard » :
+
+- toutes les cases ont exactement la même taille — c'est ce qui sépare ce widget
+  du Treemap, où la surface encode un comptage ;
+- une case à zéro porte un chiffre ET une couleur, une case sans tâche n'a ni
+  l'un ni l'autre : les deux ne disent pas la même chose ;
+- la grille est complète (autant de cases que lignes × colonnes) ;
+- l'infobulle nomme le croisement, la fiche propose les six axes et les quatre
+  mesures, et l'axe choisi est bien enregistré.
+
 ## Pourquoi un dossier séparé
 
 `apps/nexora` est construit par Netlify à chaque publication. Y ajouter React,

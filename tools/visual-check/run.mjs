@@ -112,6 +112,19 @@ const seen = await page.evaluate(() => {
     windowBeyond: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot.is-beyond").length,
     windowOverflowText: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-overflow")].map((e) => e.textContent.trim()),
     windowTicks: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-tick")].map((e) => e.textContent.trim()),
+    heatRowHeads: [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-rowhead")].map((e) => e.textContent.trim()),
+    heatColHeads: [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-colhead")].map((e) => e.textContent.trim()),
+    // Relevé VOLONTAIREMENT indépendant de la classe « is-empty » : s'en servir
+    // pour désigner les cases vides reviendrait à vérifier la propriété avec la
+    // chose même qu'on teste, et la garde ne pourrait plus échouer.
+    heatCells: [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-cell")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { text: el.textContent.trim(), bg: getComputedStyle(el).backgroundColor, w: Math.round(r.width), h: Math.round(r.height) };
+    }),
+    heatLateCells: [...document.querySelectorAll("#harness-heatmap-late .lp-widget-hmgrid-cell")].map((el) => ({
+      text: el.textContent.trim(),
+      bg: getComputedStyle(el).backgroundColor,
+    })),
     scatterCritLanes: rects("#harness-scatter-crit .lp-widget-scatter-lane-label").map((r) => r.text),
     scatterEmptyText: (document.querySelector("#harness-scatter-empty .lp-widget-scatter.is-empty") || {}).textContent || "",
     statusTileNames: rects("#harness-treemap-status .lp-widget-treemap-tile-name").map((r) => r.text),
@@ -281,6 +294,33 @@ try {
   await page.waitForTimeout(400);
 } catch (error) {
   statusTreemap.error = String(error).split("\n")[0];
+}
+
+// Heat map (issue #51) : l'infobulle doit nommer le croisement, et la fiche
+// proposer les deux axes ET la mesure.
+const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "" };
+try {
+  const plein = page.locator("#harness-heatmap .lp-widget-hmgrid-cell:not(.is-empty)").first();
+  await plein.hover();
+  await page.waitForTimeout(250);
+  heatmap.tip = (await page.locator(".lp-widget-hmgrid-tip").innerText()).trim();
+  await page.locator("#harness-open-heatmap-form").click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  const lignes = page.locator(".lp-modal select").filter({ has: page.locator('option[value="month"]') }).first();
+  heatmap.axisOptions = await lignes.locator("option").count();
+  const mesure = page.locator(".lp-modal select").filter({ has: page.locator('option[value="criticality"]') }).nth(1);
+  heatmap.metricOptions = await page.locator(".lp-modal select").filter({ has: page.locator('option[value="progress"]') }).first().locator("option").count();
+  // Changer l'axe des colonnes doit remonter jusqu'au widget : sans câblage
+  // dans la fiche, le réglage se perdrait à l'enregistrement.
+  await page.locator(".lp-modal select").filter({ has: page.locator('option[value="month"]') }).nth(1).selectOption("criticality");
+  await page.locator(".lp-modal").getByRole("button", { name: /Enregistrer|Créer|Ajouter/ }).first().click();
+  await page.waitForTimeout(500);
+  heatmap.savedCols = await page.evaluate(() =>
+    [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-colhead")].map((e) => e.textContent.trim()).join("|"));
+  void mesure;
+} catch (error) {
+  heatmap.error = String(error).split("\n")[0];
 }
 
 // Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
@@ -671,6 +711,49 @@ expect(
   /statut/i.test(statusTreemap.tileNameLabel),
   `Treemap par statut : le premier champ de tuile s'intitule « ${statusTreemap.tileNameLabel} » au lieu de nommer le statut`
 );
+
+// --- Heat map (issue #51) --------------------------------------------------
+// Toutes les cases ont la MÊME taille : c'est ce qui sépare ce widget du
+// Treemap, où la surface encode un comptage.
+expect(seen.heatRowHeads.length > 0 && seen.heatColHeads.length > 0,
+  `Heat map : grille vide (${seen.heatRowHeads.length} ligne(s), ${seen.heatColHeads.length} colonne(s))`);
+expect(seen.heatCells.length === seen.heatRowHeads.length * seen.heatColHeads.length,
+  `Heat map : ${seen.heatCells.length} case(s) pour ${seen.heatRowHeads.length}×${seen.heatColHeads.length} — la grille n'est pas complète`);
+{
+  const tailles = new Set(seen.heatCells.map((c) => `${c.w}x${c.h}`));
+  expect(tailles.size === 1, `Heat map : ${tailles.size} tailles de case différentes (${[...tailles].join(", ")}) — elles doivent être identiques`);
+}
+// CASE VIDE contre CASE À ZÉRO — le cœur de l'issue. « Aucune tâche à ce
+// croisement » n'est pas « des tâches, mais aucune en retard ». Ce qui distingue
+// les deux dans le rendu : la case à zéro porte un chiffre ET une couleur, la
+// case vide n'a ni l'un ni l'autre. Le scénario « tâches en retard » croisé aux
+// mois garantit qu'il existe bien des deux sortes — sans quoi le contrôle ne
+// prouverait rien.
+{
+  const opaque = (bg) => /^rgba?\(/.test(bg) && bg !== "rgba(0, 0, 0, 0)" && !/, 0\)$/.test(bg);
+  const zeros = seen.heatLateCells.filter((c) => c.text === "0");
+  const sansChiffre = seen.heatLateCells.filter((c) => c.text === "");
+  expect(zeros.length > 0, "Heat map : aucune case à zéro dans le scénario « tâches en retard » — le contrôle ne prouverait rien");
+  expect(sansChiffre.length > 0, "Heat map : aucune case vide dans le scénario — le contrôle ne prouverait rien");
+  zeros.forEach((c) => {
+    expect(opaque(c.bg), `Heat map : une case à zéro n'a pas de couleur (${c.bg}) — elle se confondrait avec une case vide`);
+  });
+  sansChiffre.forEach((c) => {
+    expect(!opaque(c.bg), `Heat map : une case sans tâche porte une couleur de mesure (${c.bg}) — elle se lirait comme un zéro`);
+  });
+}
+// Dans la grille par statut, toute case colorée porte sa valeur, et toute case
+// sans valeur reste incolore : même règle, vérifiée sur un second jeu.
+seen.heatCells.forEach((c) => {
+  const opaque = /^rgba?\(/.test(c.bg) && c.bg !== "rgba(0, 0, 0, 0)" && !/, 0\)$/.test(c.bg);
+  expect(opaque === (c.text !== ""), `Heat map : case « ${c.text || "(vide)"} » de fond ${c.bg} — couleur et valeur doivent aller ensemble`);
+});
+expect(!heatmap.error, `contrôle de la Heat map interrompu : ${heatmap.error}`);
+expect(/×/.test(heatmap.tip), `Heat map : l'infobulle ne nomme pas le croisement (« ${heatmap.tip} »)`);
+expect(heatmap.axisOptions === 6, `Heat map : ${heatmap.axisOptions} champ(s) d'axe dans la fiche, 6 attendus`);
+expect(heatmap.metricOptions === 4, `Heat map : ${heatmap.metricOptions} mesure(s) dans la fiche, 4 attendues`);
+expect(/Urgent|Moyen|Bas|criticité/i.test(heatmap.savedCols),
+  `Heat map : l'axe des colonnes choisi dans la fiche n'a pas été enregistré (colonnes : « ${heatmap.savedCols} »)`);
 
 expect(!treemap.error, `contrôle du Treemap interrompu : ${treemap.error}`);
 expect(treemap.opened === "p1" || treemap.opened === "p2" || treemap.opened === "p3" || treemap.opened === "p4", `Treemap : le clic n'ouvre pas un projet (« ${treemap.opened} »)`);

@@ -1,4 +1,65 @@
-
+{setRisks}
+          gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
+          syncedCalendarSettings={syncedCalendarSettings} setSyncedCalendarSettings={setSyncedCalendarSettings} onSyncSyncedCalendars={syncPublicCalendarsToProjects}
+          metaFilters={metaFilters} setMetaFilters={setMetaFilters}
+          metaTemporalBlocks={metaTemporalBlocks} setMetaTemporalBlocks={setMetaTemporalBlocks}
+          appearance={appearance} setAppearance={setAppearance}
+          saveStatus={syncStatus.state} saveError={syncStatus.error}
+          shortcutPrefs={shortcutPrefs} setShortcutPrefs={setShortcutPrefs}
+          enabledViews={enabledViews} setEnabledViews={setEnabledViews}
+          viewOrder={viewOrder} setViewOrder={setViewOrder}
+          startupPref={startupPref} setStartupPref={setStartupPref} savedViews={savedViews} dashboards={dashboards}
+          onOpenImport={() => setImportOpen(true)}
+          onOpenMarkdownImport={() => setMarkdownImportOpen(true)}
+          onExportFullBackup={exportFullBackup}
+          onRestoreFullBackup={restoreFullBackup}
+          pushToast={pushToast}
+          taskArchive={taskArchive}
+          onArchiveOldCompletedTasks={archiveOldCompletedTasks}
+          onArchiveTasks={archiveTasks}
+          onRestoreArchivedTasks={restoreArchivedTasks}
+          onDeleteArchivedTasksForever={deleteArchivedTasksForever}
+          snapshotIndex={taskProjectSnapshotIndex}
+          onRestoreSnapshot={restoreSnapshot}
+          snapshotBusy={snapshotBusy}
+        />
+      )}
+      {pendingDeleteProject && (
+        <ProjectDeleteChoiceModal
+          project={pendingDeleteProject}
+          projects={projects}
+          tasks={tasks}
+          setTasks={setTasks}
+          onConfirm={() => { setProjects((prev) => prev.filter((p) => p.id !== pendingDeleteProject.id)); setRisks((prev) => prev.filter((r) => r.projectId !== pendingDeleteProject.id)); setPendingDeleteProject(null); }}
+          onClose={() => setPendingDeleteProject(null)}
+        />
+      )}
+      {confirmState && (
+        <ConfirmModal
+          title={confirmState.title}
+          message={confirmState.message}
+          danger={confirmState.danger}
+          confirmLabel={confirmState.confirmLabel}
+          onConfirm={confirmState.onConfirm}
+          onClose={() => setConfirmState(null)}
+        />
+      )}
+      {quickEditProject && (
+        <ProjectFormModal
+          project={quickEditProject.__new ? null : quickEditProject}
+          projects={projects}
+          projectFolders={projectFolders}
+          statuses={statuses}
+          taskTypes={taskTypes}
+          tasks={tasks}
+          teamMembers={teamMembers}
+          customFieldDefs={customFieldDefs}
+          inheritedFolder={quickEditProject.__new ? null : projectFolders.find((f)=>f.id===quickEditProject.folderId)}
+          defaultColor={PROJECT_PALETTES[appearance.projectPalette] ? PROJECT_PALETTES[appearance.projectPalette][projects.length % PROJECT_PALETTES[appearance.projectPalette].length] : PROJECT_PALETTES.default[0]}
+          onSave={(data) => {
+            if (quickEditProject.__new) setProjects((prev) => [...prev, { id: uid(), ...data }]);
+            else setProjects((prev) => prev.map((p) => (p.id === quickEditProject.id ? { ...p, ...data } : p)));
+            setQuickEditProject(null);
           }}
           onClose={() => setQuickEditProject(null)}
         />
@@ -3747,6 +3808,195 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
 }
 // === NEXORA:GANTT-ANNOTATIONS:END ===
 
+// === NEXORA:HEATMAP-GRID:START ===
+/* Heat map en grille (issue #51).
+
+   Le Treemap encode DEUX informations : la surface d'une tuile et sa couleur.
+   C'est puissant, mais la surface écrase tout — une valeur qui compte trois
+   tâches devient une vignette où la couleur n'est plus lisible.
+
+   Ici, toutes les cellules ont la même taille et la couleur porte seule
+   l'information. On lit un CROISEMENT de deux champs, pas un classement : c'est
+   ce qui distingue vraiment ce widget du Treemap, et pourquoi les deux
+   coexistent au lieu de se remplacer.
+
+   Tout ce bloc est pur. Il ne fabrique jamais une ligne ni une colonne à partir
+   des tâches : c'est l'appelant qui déclare les entités de chaque axe. Une
+   valeur erronée en base créerait sinon une case fantôme que rien ne saurait
+   nommer. Seul l'axe des mois fait exception — une période se déduit forcément
+   des dates — et il est borné pour la même raison.
+
+   CASE VIDE et CASE À ZÉRO ne sont pas la même information : « aucune tâche à
+   ce croisement » n'est pas « des tâches, mais aucune en retard ». Une case sans
+   tâche n'existe tout simplement pas dans le résultat ; une case à zéro y est,
+   avec une valeur nulle. */
+
+const HEATMAP_AXIS_FIELDS = ["project", "status", "taskType", "criticality", "assignee", "month"];
+const HEATMAP_METRICS = ["count", "late", "criticality", "progress"];
+const HEATMAP_METRIC_LABELS = {
+  count: "Nombre de tâches",
+  late: "Tâches en retard",
+  criticality: "Criticité moyenne",
+  progress: "Progression moyenne",
+};
+const HEATMAP_AXIS_LABELS = {
+  project: "Projet",
+  status: "Statut",
+  taskType: "Type de tâche",
+  criticality: "Criticité",
+  assignee: "Responsable",
+  month: "Mois d'échéance",
+};
+// Au-delà, la grille des mois devient un ruban illisible. Ce qui dépasse n'est
+// pas jeté : il part dans une colonne « avant » ou « après », comme la fenêtre
+// du nuage (issue #50) rabat ses points sur le bord.
+const HEATMAP_MAX_MONTHS = 36;
+const HEATMAP_BEFORE_ID = "__before__";
+const HEATMAP_AFTER_ID = "__after__";
+const HEATMAP_NONE_ID = "__none__";
+
+// Clé d'une case. JSON plutôt qu'une concaténation : deux identifiants qui
+// contiendraient le séparateur désigneraient sinon la même case.
+const heatmapCellKey = (rowId, colId) => JSON.stringify([rowId, colId]);
+
+// Mois abrégés : l'en-tête d'une colonne de grille ne peut pas porter
+// « Septembre 2026 » sans écraser les autres. Ce sont des ABRÉGÉS, pas un
+// doublon des noms complets utilisés par le calendrier.
+const HEATMAP_MONTH_SHORT = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+function heatmapMonthLabel(monthId) {
+  if (typeof monthId !== "string" || !/^\d{4}-\d{2}$/.test(monthId)) return String(monthId || "");
+  const [y, m] = monthId.split("-").map(Number);
+  const nom = HEATMAP_MONTH_SHORT[m - 1];
+  if (!nom) return monthId;
+  return `${nom} ${String(y).slice(2)}`;
+}
+
+/* Mois d'une date ISO, au format "YYYY-MM". */
+function heatmapMonthOf(endDate) {
+  if (typeof endDate !== "string" || !/^\d{4}-\d{2}/.test(endDate)) return null;
+  return endDate.slice(0, 7);
+}
+
+/* Suite CONTIGUË de mois entre deux bornes incluses. Les trous comptent : sur un
+   axe de temps, sauter un mois sans tâche laisserait croire que deux colonnes
+   voisines sont consécutives alors qu'un mois vide les sépare. */
+function heatmapMonthRange(from, to) {
+  if (!from || !to || from > to) return [];
+  const out = [];
+  let [y, m] = from.split("-").map(Number);
+  const [ly, lm] = to.split("-").map(Number);
+  while (y < ly || (y === ly && m <= lm)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+/* Colonnes de l'axe des mois, bornées à HEATMAP_MAX_MONTHS autour du mois de
+   référence. Ce qui tombe hors de la plage va dans « avant » ou « après » :
+   borner l'affichage ne doit jamais revenir à filtrer les données. */
+function heatmapMonthAxis(months, today) {
+  const presents = [...new Set((months || []).filter(Boolean))].sort();
+  if (!presents.length) return { ids: [], before: false, after: false };
+  const plage = heatmapMonthRange(presents[0], presents[presents.length - 1]);
+  if (plage.length <= HEATMAP_MAX_MONTHS) return { ids: plage, before: false, after: false };
+  // Centré sur aujourd'hui : c'est de là qu'on regarde, et le passé lointain
+  // comme le futur lointain intéressent moins que les mois autour.
+  const ancre = heatmapMonthOf(today) || plage[0];
+  let debut = plage.indexOf(ancre);
+  if (debut === -1) debut = 0;
+  debut = Math.max(0, Math.min(plage.length - HEATMAP_MAX_MONTHS, debut - Math.floor(HEATMAP_MAX_MONTHS / 3)));
+  const ids = plage.slice(debut, debut + HEATMAP_MAX_MONTHS);
+  return { ids, before: debut > 0, after: debut + HEATMAP_MAX_MONTHS < plage.length };
+}
+
+/* Valeur d'une case selon la métrique choisie. `facts` vient de l'appelant,
+   comme pour le Treemap : aucune donnée n'est inventée ici. */
+function heatmapCellValue(tasks, metric, factsOf) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  if (!list.length) return 0;
+  if (metric === "late") return list.filter((t) => (factsOf(t) || {}).late).length;
+  if (metric === "progress") {
+    const somme = list.reduce((n, t) => n + Math.max(0, Math.min(100, Number(t.progress) || 0)), 0);
+    return Math.round(somme / list.length);
+  }
+  if (metric === "criticality") {
+    const somme = list.reduce((n, t) => n + treemapTaskCriticality(factsOf(t) || {}).score, 0);
+    return Math.round(somme / list.length);
+  }
+  return list.length;
+}
+
+/* Construit la grille. rowEntities / colEntities sont DÉCLARÉES par l'appelant ;
+   rowIdOf / colIdOf rattachent une tâche à sa case. Une tâche dont la ligne ou
+   la colonne n'est pas déclarée n'est comptée nulle part — et c'est voulu : la
+   fabriquer donnerait une case que l'interface ne saurait pas nommer. Elle est
+   en revanche COMPTÉE à part, pour que l'écart ne reste jamais invisible. */
+function heatmapBuildGrid(input) {
+  const {
+    tasks = [], rowEntities = [], colEntities = [],
+    rowIdOf = () => null, colIdOf = () => null,
+    metric = "count", factsOf = () => ({}),
+  } = input || {};
+
+  const rows = (Array.isArray(rowEntities) ? rowEntities : []).filter((e) => e && e.id);
+  const cols = (Array.isArray(colEntities) ? colEntities : []).filter((e) => e && e.id);
+  const rowIds = new Set(rows.map((e) => e.id));
+  const colIds = new Set(cols.map((e) => e.id));
+
+  const groupes = new Map();
+  let ignorees = 0;
+  (Array.isArray(tasks) ? tasks : []).forEach((t) => {
+    if (!t) return;
+    const r = rowIdOf(t), c = colIdOf(t);
+    if (!r || !c || !rowIds.has(r) || !colIds.has(c)) { ignorees += 1; return; }
+    const k = heatmapCellKey(r, c);
+    if (!groupes.has(k)) groupes.set(k, { rowId: r, colId: c, tasks: [] });
+    groupes.get(k).tasks.push(t);
+  });
+
+  const cells = new Map();
+  groupes.forEach((g, k) => {
+    cells.set(k, {
+      rowId: g.rowId, colId: g.colId, count: g.tasks.length,
+      value: heatmapCellValue(g.tasks, metric, factsOf), tasks: g.tasks,
+    });
+  });
+  return { rows, cols, cells, ignored: ignorees };
+}
+
+/* Domaine de couleur. La criticité et la progression ont un domaine fixe 0–100 :
+   deux widgets côte à côte doivent donner la même couleur à la même valeur. Les
+   comptages, eux, s'échelonnent sur la grille — avec un plancher, sinon la case
+   à deux tâches d'une grille minuscule s'afficherait au rouge le plus vif. */
+const HEATMAP_MIN_COLOR_SPAN = 4;
+function heatmapColorDomain(cells, metric) {
+  if (metric === "criticality" || metric === "progress") return { min: 0, max: 100 };
+  const valeurs = [...(cells instanceof Map ? cells.values() : cells || [])].map((c) => c.value);
+  const max = valeurs.length ? Math.max(...valeurs) : 0;
+  return { min: 0, max: Math.max(HEATMAP_MIN_COLOR_SPAN, max) };
+}
+
+/* Réglages, avec les mêmes défauts quoi qu'il arrive. Deux axes identiques
+   donneraient une diagonale et rien d'autre : on retombe sur un couple utile. */
+function heatmapNormalizeConfig(widget) {
+  const w = widget || {};
+  const champ = (value, defaut) => (HEATMAP_AXIS_FIELDS.includes(value) ? value : defaut);
+  const rowField = champ(w.heatmapRowField, "project");
+  let colField = champ(w.heatmapColField, "status");
+  if (rowField === colField) colField = rowField === "status" ? "project" : "status";
+  return {
+    rowField,
+    colField,
+    metric: HEATMAP_METRICS.includes(w.heatmapMetric) ? w.heatmapMetric : "count",
+    palette: TREEMAP_PALETTES[w.heatmapPalette] ? w.heatmapPalette : TREEMAP_DEFAULT_PALETTE,
+    direction: TREEMAP_GRADIENT_DIRECTIONS.includes(w.heatmapDirection) ? w.heatmapDirection : "lowToHigh",
+    showValues: w.heatmapShowValues !== false,
+  };
+}
+// === NEXORA:HEATMAP-GRID:END ===
+
 // === NEXORA:DEADLINE-SCATTER:START ===
 /* Nuage de points « échéances » (issue #46).
 
@@ -3945,6 +4195,199 @@ function scatterWindowOverflow(lanes, domain) {
   return { low, high };
 }
 // === NEXORA:DEADLINE-SCATTER:END ===
+
+function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
+  const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
+  const [hover, setHover] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const today = iso(new Date());
+  const todayIdx = dayIndex(today);
+
+  // Les mêmes faits que le Treemap, construits une fois : la criticité d'une
+  // tâche doit être la même valeur dans les deux widgets.
+  const factsOf = useCallback((t) => ({
+    done: isTaskDoneGlobal(t, ctx),
+    late: isTaskLate(t, ctx),
+    urgent: isTaskUrgent(t, ctx),
+    milestone: getTaskType(t) === "milestone",
+    daysToDue: t.end ? dayIndex(t.end) - todayIdx : null,
+    inactivityDays: taskInteractionAgeDays(t),
+    projectPriority: ((ctx.projects || []).find((p) => p.id === t.projectId) || {}).priority || "normal",
+  }), [ctx, todayIdx]);
+
+  // Entités d'un axe. Le bloc pur ne fabrique jamais de ligne ni de colonne :
+  // c'est ici, et seulement ici, qu'on déclare ce qui existe.
+  const axisOf = useCallback((field) => {
+    if (field === "status") {
+      return {
+        entities: [...(ctx.statuses || []), { id: HEATMAP_NONE_ID, name: "Sans statut", color: "#94A3B8" }],
+        idOf: (t) => t.statusId || HEATMAP_NONE_ID,
+      };
+    }
+    if (field === "taskType") {
+      return {
+        entities: [...(ctx.taskTypes || []), { id: HEATMAP_NONE_ID, name: "Sans type", color: "#94A3B8" }],
+        idOf: (t) => t.taskTypeId || HEATMAP_NONE_ID,
+      };
+    }
+    if (field === "criticality") {
+      return {
+        entities: [...CRITICALITIES, { id: HEATMAP_NONE_ID, name: "Sans criticité", color: "#94A3B8" }],
+        idOf: (t) => t.criticality || HEATMAP_NONE_ID,
+      };
+    }
+    if (field === "assignee") {
+      const noms = [...new Set(tasks.map((t) => (typeof t.assignee === "string" ? t.assignee.trim() : "")).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, "fr"));
+      return {
+        entities: [...noms.map((n) => ({ id: n, name: n, color: "#64748B" })), { id: HEATMAP_NONE_ID, name: "Non assignée", color: "#94A3B8" }],
+        idOf: (t) => (typeof t.assignee === "string" && t.assignee.trim()) || HEATMAP_NONE_ID,
+      };
+    }
+    if (field === "month") {
+      const axe = heatmapMonthAxis(tasks.map((t) => heatmapMonthOf(t.end)), today);
+      const dans = new Set(axe.ids);
+      const entities = axe.ids.map((id) => ({ id, name: heatmapMonthLabel(id), color: "#64748B" }));
+      if (axe.before) entities.unshift({ id: HEATMAP_BEFORE_ID, name: "avant", color: "#94A3B8" });
+      if (axe.after) entities.push({ id: HEATMAP_AFTER_ID, name: "après", color: "#94A3B8" });
+      entities.push({ id: HEATMAP_NONE_ID, name: "Sans échéance", color: "#94A3B8" });
+      return {
+        entities,
+        idOf: (t) => {
+          const m = heatmapMonthOf(t.end);
+          if (!m) return HEATMAP_NONE_ID;
+          if (dans.has(m)) return m;
+          if (!axe.ids.length) return HEATMAP_NONE_ID;
+          return m < axe.ids[0] ? HEATMAP_BEFORE_ID : HEATMAP_AFTER_ID;
+        },
+      };
+    }
+    return {
+      entities: [...(ctx.projects || []), { id: HEATMAP_NONE_ID, name: "Sans projet", color: "#94A3B8" }],
+      idOf: (t) => t.projectId || HEATMAP_NONE_ID,
+    };
+  }, [ctx.projects, ctx.statuses, ctx.taskTypes, tasks, today]);
+
+  const rowAxis = useMemo(() => axisOf(cfg.rowField), [axisOf, cfg.rowField]);
+  const colAxis = useMemo(() => axisOf(cfg.colField), [axisOf, cfg.colField]);
+
+  const grid = useMemo(() => heatmapBuildGrid({
+    tasks,
+    rowEntities: rowAxis.entities,
+    colEntities: colAxis.entities,
+    rowIdOf: rowAxis.idOf,
+    colIdOf: colAxis.idOf,
+    metric: cfg.metric,
+    factsOf,
+  }), [tasks, rowAxis, colAxis, cfg.metric, factsOf]);
+
+  // Un axe dont aucune case n'est remplie n'apprend rien : on retire les lignes
+  // et les colonnes entièrement vides plutôt que d'étaler une grille de néant.
+  const lignes = useMemo(() => {
+    const vus = new Set([...grid.cells.values()].map((c) => c.rowId));
+    return grid.rows.filter((r) => vus.has(r.id));
+  }, [grid]);
+  const colonnes = useMemo(() => {
+    const vus = new Set([...grid.cells.values()].map((c) => c.colId));
+    return grid.cols.filter((c) => vus.has(c.id));
+  }, [grid]);
+
+  const domain = useMemo(() => heatmapColorDomain(grid.cells, cfg.metric), [grid, cfg.metric]);
+
+  if (!lignes.length || !colonnes.length) {
+    return (
+      <div className="lp-widget-hmgrid is-empty">
+        <p>Aucune tâche à croiser dans ce filtre.</p>
+        <p className="lp-widget-hmgrid-hint">
+          Le filtre du widget et celui de l'onglet ne laissent passer aucune tâche portant les deux champs choisis.
+        </p>
+      </div>
+    );
+  }
+
+  const suffixe = cfg.metric === "progress" ? " %" : cfg.metric === "criticality" ? "/100" : "";
+  const estSelection = (r, c) => selected && selected.rowId === r && selected.colId === c;
+
+  return (
+    <div className="lp-widget-hmgrid">
+      <div className="lp-widget-hmgrid-scroll">
+        <table className="lp-widget-hmgrid-table">
+          <thead>
+            <tr>
+              <th className="lp-widget-hmgrid-corner" scope="col">
+                <span>{HEATMAP_AXIS_LABELS[cfg.rowField]}</span>
+                <span className="lp-widget-hmgrid-corner-col">{HEATMAP_AXIS_LABELS[cfg.colField]}</span>
+              </th>
+              {colonnes.map((c) => (
+                <th key={c.id} scope="col" className="lp-widget-hmgrid-colhead" title={c.name}>{c.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {lignes.map((r) => (
+              <tr key={r.id}>
+                <th scope="row" className="lp-widget-hmgrid-rowhead" title={r.name}>
+                  <span className="lp-widget-hmgrid-rowdot" style={{ background: r.color || "var(--text-muted)" }} />
+                  {r.name}
+                </th>
+                {colonnes.map((c) => {
+                  const cellule = grid.cells.get(heatmapCellKey(r.id, c.id));
+                  // Case VIDE : aucune tâche à ce croisement. Elle ne porte ni
+                  // couleur ni chiffre — un zéro y ferait croire à une mesure.
+                  if (!cellule) {
+                    return <td key={c.id} className="lp-widget-hmgrid-cell is-empty" title={`${r.name} × ${c.name} — aucune tâche`} />;
+                  }
+                  const bg = treemapTileColor(cellule.value, domain, cfg.palette, cfg.direction);
+                  const fg = treemapTextColor(bg);
+                  return (
+                    <td
+                      key={c.id}
+                      className={"lp-widget-hmgrid-cell" + (estSelection(r.id, c.id) ? " is-selected" : "")}
+                      style={{ background: bg, color: fg }}
+                      onMouseEnter={(e) => setHover({ cell: cellule, row: r, col: c, x: e.clientX, y: e.clientY })}
+                      onMouseMove={(e) => setHover((prev) => (prev && prev.cell === cellule ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
+                      onMouseLeave={() => setHover((prev) => (prev && prev.cell === cellule ? null : prev))}
+                      onClick={() => {
+                        // Une case porte souvent plusieurs tâches : il n'y a rien
+                        // à « ouvrir ». On la sélectionne, et on n'ouvre que
+                        // lorsqu'il n'y a aucune ambiguïté.
+                        setSelected((prev) => (prev && prev.rowId === r.id && prev.colId === c.id ? null : { rowId: r.id, colId: c.id }));
+                        if (cellule.tasks.length === 1 && onOpen) onOpen(cellule.tasks[0]);
+                      }}
+                    >
+                      {cfg.showValues ? cellule.value : ""}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {grid.ignored > 0 && (
+        <p className="lp-widget-hmgrid-ignored">
+          {grid.ignored} tâche{grid.ignored > 1 ? "s" : ""} hors grille (valeur inconnue sur l'un des deux axes).
+        </p>
+      )}
+
+      {hover && (
+        <div
+          className="lp-widget-hmgrid-tip"
+          style={{ left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 280), top: hover.y + 14 }}
+        >
+          <strong>{hover.row.name} × {hover.col.name}</strong>
+          <span>{HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{hover.cell.value}{suffixe}</b></span>
+          {cfg.metric !== "count" && <span>{hover.cell.count} tâche{hover.cell.count > 1 ? "s" : ""} à ce croisement</span>}
+          {hover.cell.tasks.slice(0, 4).map((t) => (
+            <span key={t.id} className="lp-widget-hmgrid-tip-task">{t.title || "Sans titre"}</span>
+          ))}
+          {hover.cell.tasks.length > 4 && <span className="lp-widget-hmgrid-tip-more">et {hover.cell.tasks.length - 4} autre{hover.cell.tasks.length - 4 > 1 ? "s" : ""}…</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
   const laneField = SCATTER_LANE_FIELDS.includes(widget?.scatterLaneField) ? widget.scatterLaneField : "project";
@@ -12660,309 +13103,3 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       if (getTaskType(t) === "action" && t.linkedActivityId) {
         const act = posMap[t.linkedActivityId];
         if (act) {
-          const rel = t.activityRelation || "contributes";
-          const x = rel === "blocks_start" ? act.x0 : rel === "blocks_end" ? act.x1 : (act.x0 + act.x1) / 2;
-          return { x, y:act.y, fromPred:false, fromActivity:true, relation:rel };
-        }
-      }
-      if (t.dependsOn && t.dependsOn.length) {
-        let best = null;
-        t.dependsOn.forEach((depId) => {
-          const p = posMap[depId];
-          if (p && (!best || p.x1 > best.x1)) best = p;
-        });
-        if (best) return { x: best.x1, y: best.y, fromPred: true };
-      }
-      return { x: xFor(t.start), y: mainY, fromPred: false };
-    };
-    return (
-      <g>
-        {/* Flèches de dépendance, tracées en tout premier pour rester TOUJOURS derrière
-            le texte (et son halo blanc) — uniquement entre tâches du même projet, une
-            flèche ne pouvant pas relier deux <svg> distincts (un par projet). Dégradé
-            entre la couleur de la tâche de départ et celle de la tâche d'arrivée,
-            épaisseur alignée sur la ligne de métro principale du projet. */}
-        {!isCollapsed && items.filter((it) => it.t.dependsOn && it.t.dependsOn.length).flatMap(({ t }) => {
-          const primaryOrigin = originFor(t); // dépendance déjà matérialisée par la bifurcation elle-même
-          return t.dependsOn.map((depId) => {
-            const from = posMap[depId];
-            const to = posMap[t.id];
-            if (!from || !to || depId === t.id) return null;
-            if (primaryOrigin.fromPred && from.x1 === primaryOrigin.x && from.y === primaryOrigin.y) return null; // déjà visible via la bifurcation
-            const startX = from.x1 + 6; // sort visiblement du cercle de la tâche de départ, plutôt que de son centre
-            const midX = (startX + to.x0) / 2;
-            const bend = Math.min(8, Math.abs(to.y - from.y) / 2 || 6);
-            const dir = to.y > from.y ? 1 : -1;
-            const d = Math.abs(to.y - from.y) < 1
-              ? `M ${startX} ${from.y} L ${to.x0 - 3} ${to.y}`
-              : `M ${startX} ${from.y} L ${midX - bend} ${from.y} Q ${midX} ${from.y} ${midX} ${from.y + dir * bend} L ${midX} ${to.y - dir * bend} Q ${midX} ${to.y} ${midX + bend} ${to.y} L ${to.x0 - 3} ${to.y}`;
-            const gradId = `pm-dep-grad-${depId}-${t.id}`;
-            const markerId = `pm-dep-arrow-${depId}-${t.id}`;
-            return (
-              <React.Fragment key={depId + "-" + t.id}>
-                <defs>
-                  <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={startX} y1={from.y} x2={to.x0} y2={to.y}>
-                    <stop offset="0%" stopColor={accent} stopOpacity="0.45" />
-                    <stop offset="100%" stopColor={accent} />
-                  </linearGradient>
-                  <marker id={markerId} markerWidth="5" markerHeight="5" refX="3.5" refY="1.75" orient="auto">
-                    <path d="M0,0 L3.5,1.75 L0,3.5 Z" fill={accent} />
-                  </marker>
-                </defs>
-                {/* Contour blanc en dessous, comme pour les flèches inter-projets — sans
-                    lui, le trait fin se perd dans la ligne de métro et les autres
-                    éléments de la même rangée. */}
-                <path d={d} fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" opacity="0.9" />
-                <path d={d} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.2" strokeDasharray="5 4" opacity="0.95" markerEnd={`url(#${markerId})`} strokeLinecap="round" />
-              </React.Fragment>
-            );
-          });
-        })}
-
-        {verticalSeparators.map((sx, i) => (
-          <line key={"sep-" + i} x1={sx} y1={0} x2={sx} y2={ROW_H} stroke="var(--border)" strokeWidth="1" opacity="0.4" />
-        ))}
-        {todayX !== null && (
-          <g>
-            {appearance?.animTodayPulse && (
-              <line
-                x1={todayX} y1={0} x2={todayX} y2={ROW_H}
-                stroke="var(--accent)"
-                strokeWidth="4"
-                strokeLinecap="round"
-                strokeOpacity="0.08"
-                className="lp-pm-today-pulse-halo"
-              />
-            )}
-            <line x1={todayX} y1={0} x2={todayX} y2={ROW_H} stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" opacity="0.95" className="lp-pm-today-line" />
-            <path
-              d={`M ${todayX - 5} 0 L ${todayX + 5} 0 L ${todayX} 8 Z`}
-              fill="var(--accent)"
-              className={"lp-pm-today-marker" + (appearance?.animTodayPulse ? " lp-anim-on" : "")}
-            />
-          </g>
-        )}
-
-        <line x1={xFor(minDate)} y1={mainY} x2={xFor(maxDate)} y2={mainY} stroke={color} strokeWidth="3.2" strokeLinecap="round" opacity="0.55" />
-        {avgProgress > 0 && <line x1={xFor(minDate)} y1={mainY} x2={xFor(minDate) + (xFor(maxDate) - xFor(minDate)) * (avgProgress / 100)} y2={mainY} stroke={color} strokeWidth="5.5" strokeLinecap="round" />}
-        <Station x={xFor(minDate)} y={mainY} color={color} r={7} />
-
-        {!isCollapsed && items.filter((it) => getTaskType(it.t) === "activity" && !isFullyShared(it.t)).map(({ t, activityOffset = 0 }) => {
-          const x0 = xFor(t.start), x1 = xFor(t.end);
-          const activityY = mainY + activityOffset;
-          const done = isTaskDoneGlobal(t, ctx);
-
-          // IMPORTANT : on compte toutes les Actions liées, même si elles n'ont
-          // aucune date. C'était la cause du compteur absent malgré "Actions liées (4)"
-          // visible dans la fiche Activité.
-          const linked = tasks.filter((a) => getTaskType(a) === "action" && a.linkedActivityId === t.id);
-          const linkedDone = linked.filter((a) => isTaskDoneGlobal(a, ctx)).length;
-          const isExpanded = expandedActivities.has(t.id);
-          const critical = !!criticalPathIds && criticalPathIds.has(t.id);
-          const stroke = critical ? PM_CRITICAL_COLOR : color;
-          const mid = (x0 + x1) / 2;
-          const titleW = pmMeasureText(t.title, TITLE_FONT);
-          const hasDescription = !!String(t.desc ?? t.description ?? "").trim();
-          return (
-            <g key={"activity-" + t.id} opacity={dimOpacity(t.id)}>
-              {activityOffset !== 0 && (
-                <>
-                  <path d={branchPath(x0, mainY, x0, activityY)} fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" opacity=".52" />
-                  <path d={branchPath(x1, mainY, x1, activityY)} fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" opacity=".52" />
-                </>
-              )}
-              <line x1={x0} y1={activityY} x2={x1} y2={activityY} stroke="var(--surface)" strokeWidth="12" strokeLinecap="round" />
-              <line x1={x0} y1={activityY} x2={x1} y2={activityY} stroke={stroke} strokeWidth={critical ? "8.5" : "7"} strokeLinecap="round" opacity={done ? .48 : .92} />
-              <circle cx={x0} cy={activityY} r="6.5" fill="var(--surface)" stroke={stroke} strokeWidth="1.8" />
-              <circle cx={x1} cy={activityY} r="6.5" fill="var(--surface)" stroke={stroke} strokeWidth="1.8" />
-
-              <rect x={mid - titleW/2 - 6} y={activityY - 27} width={titleW + 12} height="18" rx="3" fill="var(--surface)" opacity=".98" />
-              <text x={mid} y={activityY - 14} textAnchor="middle" className="lp-pm-activity-label" fill="var(--text-900)" onClick={() => onOpen(t)} style={{ cursor:"pointer" }}>
-                {t.title}
-              </text>
-              {hasDescription && (
-                <g
-                  className="lp-pm-note-trigger"
-                  transform={`translate(${mid + titleW/2 + 9}, ${activityY - 25})`}
-                  onClick={(e)=>{
-                    e.stopPropagation();
-                    setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});
-                  }}
-                  style={{cursor:"pointer"}}
-                >
-                  <title>Afficher la description</title>
-                  <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
-                  <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
-                  <path d="M11.2 1.9v2.7h2.7" fill="none" stroke="var(--text-600)" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round" opacity=".7"/>
-                </g>
-              )}
-
-              {/* Toujours visible : même une activité sans action affiche 0/0 afin
-                  que la logique Action ↔ Activité soit immédiatement compréhensible. */}
-              <g className="lp-pm-activity-actions" onClick={(e) => { e.stopPropagation(); if (linked.length) toggleActivityActions(t.id); }} style={{ cursor:linked.length ? "pointer" : "default" }}>
-                <line x1={mid} y1={activityY + 7} x2={mid} y2={activityY + 21} stroke={stroke} strokeWidth={isExpanded ? "2.4" : "1.4"} strokeDasharray={isExpanded ? "0" : "2 3"} opacity={linked.length ? .9 : .38} />
-                <rect x={mid - 29} y={activityY + 20} width="58" height="19" rx="9.5" fill="var(--surface)" stroke={stroke} strokeWidth="1.2" opacity={linked.length ? 1 : .55} />
-                <text x={mid} y={activityY + 33} textAnchor="middle" fill={stroke}>{linkedDone}/{linked.length} actions</text>
-              </g>
-            </g>
-          );
-        })}
-
-        {!isCollapsed && items.filter((it) =>
-          getTaskType(it.t) === "action" &&
-          !isFullyShared(it.t) &&
-          (!it.t.linkedActivityId || expandedActivities.has(it.t.linkedActivityId))
-        ).map(({ t, side, branchDist, subtasks }) => {
-          const branchY = mainY + side * branchDist;
-          const x0 = xFor(t.start), x1 = xFor(t.end);
-          const origin = originFor(t);
-          const st = ctx.statuses.find((s) => s.id === t.statusId);
-          // Regroupement par dossier : la couleur du statut ne différencie plus rien
-          // (toutes les tâches de la ligne peuvent avoir le même statut) — on bascule
-          // sur la couleur du PROJET D'ORIGINE de la tâche, seul repère qui distingue
-          // encore les tâches entre elles sur cette ligne fusionnée.
-          const taskColor = p.isFolderGroup
-            ? (ctx.projects.find((pr) => pr.id === t.projectId)?.color || "var(--text-muted)")
-            : (st?.color || "var(--text-muted)");
-          const done = isTaskDoneGlobal(t, ctx);
-          const pct = Math.max(0, Math.min(100, done ? 100 : t.progress || 0));
-          const xProgress = x0 + (x1 - x0) * (pct / 100); // portion réalisée mesurée sur la vraie durée de la tâche
-          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
-          const atRisk = showRiskBadges && !done && isAtRisk(t);
-          const blockingRelation = origin.fromActivity && ["blocks_start","blocks_end"].includes(t.activityRelation);
-          const lineColor = isCritical ? PM_CRITICAL_COLOR : taskColor;
-          // La tâche est TOUJOURS dessinée sur ses propres dates réelles (x0 → x1) : une
-          // dépendance ne déplace jamais visuellement son début ou sa fin. Seule la façon
-          // dont elle rejoint le reste du plan change : si elle dépend d'une tâche du même
-          // projet, un connecteur discret part du cercle de fin de cette dernière et
-          // rejoint le début réel de la tâche (sur sa propre ligne) — plutôt que de faire
-          // partir la tâche elle-même de ce point, ce qui aurait déplacé sa date affichée.
-          const actionAnchorX = origin.fromActivity ? origin.x : x0;
-          const mainPath = origin.fromPred
-            ? `M ${x0} ${branchY} L ${x1} ${branchY}`
-            : origin.fromActivity
-              ? branchPath(actionAnchorX, origin.y, x1, branchY)
-              : branchPath(x0, mainY, x1, branchY);
-          const progressPath = origin.fromPred
-            ? `M ${x0} ${branchY} L ${xProgress} ${branchY}`
-            : origin.fromActivity
-              ? branchPath(actionAnchorX, origin.y, xProgress, branchY)
-              : branchPath(x0, mainY, xProgress, branchY);
-          const startStationY = origin.fromPred ? branchY : mainY;
-          return (
-            <g key={"line-" + t.id} opacity={dimOpacity(t.id)}>
-              {/* Connecteur de dépendance : part du cercle de fin de la tâche prédécesseure
-                  et rejoint le début réel de cette tâche-ci, sur sa propre ligne — visuellement
-                  distinct (plus fin, pointillé) de la tâche elle-même pour ne jamais laisser
-                  penser que la tâche démarre à la date du prédécesseur. */}
-              {origin.fromPred && (
-                <path d={branchPath(origin.x, origin.y, x0, branchY)} fill="none" stroke={lineColor} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1 4" opacity={done ? 0.3 : 0.5} />
-              )}
-              {/* Épaisseur du trait : plus épais sur la portion déjà réalisée, un peu plus fin sur le reste.
-                  En chemin critique, le trait est plus épais et dans la couleur "express" pour ressortir
-                  nettement de la ligne, même quand la vue est chargée. */}
-              <path d={mainPath} fill="none" stroke={lineColor} strokeWidth={isCritical ? "4" : (blockingRelation ? "3.8" : "2.2")} strokeLinecap="round" opacity={done ? (isCritical ? 0.55 : 0.4) : (isCritical ? 0.8 : 0.55)} pathLength={appearance?.animLineDraw ? "1" : undefined} strokeDasharray={appearance?.animLineDraw ? "1" : undefined} className={appearance?.animLineDraw ? "lp-pm-line-draw" : undefined} />
-              {/* Animation du disque déplacée dans le calque SVG global final.
-                  Ne jamais la rendre dans le SVG propre à cette ligne : un autre SVG de
-                  projet pourrait sinon être peint au-dessus du disque. */}
-              {pct > 0 && <path d={progressPath} fill="none" stroke={lineColor} strokeWidth={isCritical ? "6" : "4.5"} strokeLinecap="round" opacity={done ? 0.55 : 0.95} />}
-              {/* Poignée sur la limite épais/fin : glisser horizontalement ajuste
-                  l'avancement de la tâche, en suivant la largeur réelle affichée à
-                  l'écran (donc cohérent quel que soit le niveau de zoom). Un simple
-                  clic (sans glisser) ouvre la fiche, comme partout ailleurs. Absente
-                  pile à 0% ou 100% : elle coïnciderait alors exactement avec la
-                  poignée de début/fin de tâche, qui passe devant dans le DOM. */}
-              {!t.milestone && pct > 0 && pct < 100 && (
-                <g
-                  onMouseDown={(e) => startDragTask(e, t, "progress", { taskPxWidth: x1 - x0 })}
-                  onTouchStart={(e) => startDragTask(e, t, "progress", { taskPxWidth: x1 - x0 })}
-                  style={{ cursor: "ew-resize" }}
-                  className="lp-pm-progress-handle"
-                >
-                  <rect x={xProgress - 7} y={branchY - 8} width="14" height="16" fill="transparent" />
-                  <line x1={xProgress} y1={branchY - 5} x2={xProgress} y2={branchY + 5} stroke={lineColor} strokeWidth="2" strokeLinecap="round" opacity={done ? 0.55 : 0.95} />
-                </g>
-              )}
-              {/* Point de glisser du début : toujours posé sur la vraie date de début de la
-                  tâche — sur l'axe du projet si elle est indépendante, ou sur sa propre ligne
-                  (juste après le connecteur) si elle dépend d'une autre tâche. */}
-              <g onMouseDown={(e) => startDragTask(e, t, "start")} onTouchStart={(e) => startDragTask(e, t, "start")} style={{ cursor: "ew-resize" }} data-pm-task-start-id={t.id}>
-                <circle cx={x0} cy={startStationY} r="10" fill="transparent" />
-                <Station x={x0} y={startStationY} color={lineColor} r={3.5} />
-              </g>
-              <g
-                onMouseDown={(e) => startDragTask(e, t, "end")}
-                onTouchStart={(e) => startDragTask(e, t, "end")}
-                onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey) { e.stopPropagation(); toggleSelect(t.id); } }}
-                style={{ cursor: "ew-resize" }}
-                data-pm-task-id={t.id}
-              >
-                <circle cx={x1} cy={branchY} r="11" fill="transparent" />
-                {atRisk && appearance?.animLateAlert && (
-                  <circle cx={x1} cy={branchY} r="6" fill="none" stroke={PM_RISK_COLOR} strokeWidth="2" className="lp-pm-late-ring" />
-                )}
-                <Station x={x1} y={branchY} color={lineColor} r={5.5} done={done} icon={p.metroTaskIcons ? resolveMilestoneIcon(t, ctx) : null} justCompleted={justCompletedIds.has(t.id)} />
-                {(selectedIds.has(t.id) || focusedId === t.id) && (
-                  <circle cx={x1} cy={branchY} r="10" fill="none" stroke={selectedIds.has(t.id) ? "var(--signal)" : "var(--text-muted)"} strokeWidth="2" strokeDasharray={selectedIds.has(t.id) ? "0" : "2 2"} />
-                )}
-                {atRisk && (
-                  <g transform={`translate(${x1 + 7}, ${branchY - 12})`} style={{ cursor: "pointer" }}>
-                    <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
-                    <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
-                  </g>
-                )}
-              </g>
-              {subtasks.map(({ sub, depth }) => {
-                // Une sous-tâche part TOUJOURS du cercle de fin de sa tâche, jamais de la
-                // ligne principale du projet — et rejoint sa propre date, passé ou futur.
-                const subX = xFor(sub.end || t.end);
-                const subY = mainY + side * depth; // profondeur absolue depuis la ligne principale
-                return (
-                  <g key={"sub-" + sub.id}>
-                    <path d={branchPath(x1, branchY, subX, subY)} fill="none" stroke="var(--text-muted)" strokeWidth="1.6" strokeLinecap="round" opacity={sub.done ? 0.4 : 0.65} />
-                    <g className="lp-pm-sub-drag" onMouseDown={(e) => startDragSubtask(e, t.id, sub.id, sub.end || t.end)} onTouchStart={(e) => startDragSubtask(e, t.id, sub.id, sub.end || t.end)} style={{ cursor: "ew-resize" }}>
-                      <circle cx={subX} cy={subY} r="9" fill="transparent" />
-                      <Station x={subX} y={subY} color="var(--text-muted)" r={3} done={sub.done} />
-                    </g>
-                  </g>
-                );
-              })}
-            </g>
-          );
-        })}
-
-        {!isCollapsed && items.filter((it) => it.isMilestone && !isFullyShared(it.t)).map(({ t, side, branchDist }) => {
-          const branchY = mainY + side * branchDist;
-          const mx = xFor(t.end);
-          // Même bascule que pour les tâches normales : couleur du projet d'origine
-          // du jalon quand la ligne fusionne plusieurs projets (dossier), sinon
-          // couleur du statut comme d'habitude.
-          const color2 = p.isFolderGroup
-            ? (ctx.projects.find((pr) => pr.id === t.projectId)?.color || color)
-            : (ctx.statuses.find((s) => s.id === t.statusId)?.color || color);
-          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
-          return (
-            <path key={"line-" + t.id} d={branchPath(mx, mainY, mx, branchY)} fill="none" stroke={isCritical ? PM_CRITICAL_COLOR : color2} strokeWidth={isCritical ? "3.5" : "2.5"} strokeLinecap="round" opacity={dimOpacity(t.id) * (isCritical ? 0.95 : 0.85)} strokeDasharray="1 5" onClick={() => onOpen(t)} style={{ cursor: "pointer" }} />
-          );
-        })}
-
-        {!isCollapsed && items.filter((it) => it.isMilestone && !isFullyShared(it.t)).map(({ t, side, branchDist }) => {
-          const branchY = mainY + side * branchDist;
-          const mx = xFor(t.end);
-          const titleW = pmMeasureText(t.title, MS_TITLE_FONT);
-          const hasDescription = !!String(t.desc ?? t.description ?? "").trim();
-          const noteX = mx + 17 + titleW + 6;
-          const noteBadgeW = hasDescription ? 23 : 0;
-          const dateX = mx + 14 + titleW + 6 + noteBadgeW;
-          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
-          const msColor = isCritical ? PM_CRITICAL_COLOR : (ctx.statuses.find((s) => s.id === t.statusId)?.color || color);
-          const done = isTaskDoneGlobal(t, ctx);
-          const atRisk = showRiskBadges && !done && isAtRisk(t);
-          return (
-            <g key={"ms-" + t.id} opacity={dimOpacity(t.id)} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey) { e.stopPropagation(); toggleSelect(t.id); } }}>
-              {/* Point de glisser : ne déclenche jamais l'ouverture de la fiche au clic —
-                  glisser pour changer la date et cliquer pour ouvrir sont deux zones
-                  distinctes, sinon relâcher après un glisser rouvrait la fiche aussitôt. */}
-              <g onMouseDown={(e) => startDragTask(e, t, "end")} onTouchStart={(e) => startDragTask(e, t, "end")} style={{ cursor: "ew-resize" }} data-pm-task-id={t.id}>
-                <circle cx={mx} cy={mainY} r="10" fill="transparent" />
-                {atRisk && appearance?.a

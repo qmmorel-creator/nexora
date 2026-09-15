@@ -282,6 +282,16 @@ assert.match(builtSource, /lp-pm-risk is-/);
     "nexora:viewOrder est devenu fusionnable : la fusion par identifiant détruirait l'ordre des vues.");
 }
 
+/* Widgets qui doivent passer par le moteur de filtres. Un widget absent de
+   cette expression ignorerait son propre filtre — en silence. Testé par
+   APPARTENANCE et non par voisinage : sinon, ajouter un widget entre deux
+   autres casserait la garde sans qu'aucune propriété n'ait changé. */
+const usesTaskFilterExpr = builtSource.slice(
+  builtSource.indexOf("const usesTaskFilter = "),
+  builtSource.indexOf(";", builtSource.indexOf("const usesTaskFilter = ")),
+);
+assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvable");
+
 /* Nuage des échéances (issue #46).
    Un widget se déclare à cinq endroits indépendants. Déclaré au catalogue mais
    absent du `switch` de rendu, il s'ajoute au tableau de bord et n'affiche
@@ -294,7 +304,7 @@ assert.match(builtSource, /lp-pm-risk is-/);
     "Le nuage des échéances n'est plus au catalogue des widgets.");
   assert.match(builtSource, /<WidgetDeadlineScatter widget=\{w\}/,
     "Le nuage est au catalogue mais n'est plus rendu : la tuile serait vide, sans erreur.");
-  assert.match(builtSource, /type === "deadlineScatter" \|\| \(type === "countdown"/,
+  assert.ok(usesTaskFilterExpr.includes('type === "deadlineScatter"'),
     "Le nuage ne passe plus par le moteur de filtres : le widget ignorerait son propre filtre.");
   assert.match(builtSource, /if \(type === "deadlineScatter"\) return \{ w: 10, h: 7 \};/,
     "Le nuage n'a plus de taille par défaut : il naîtrait écrasé sur la grille.");
@@ -356,6 +366,45 @@ assert.match(builtSource, /lp-pm-risk is-/);
     "Le mode de fenêtre choisi dans la fiche n'est plus enregistré.");
   assert.match(builtSource, /data\.scatterWindowBefore = Number\(scatterWindowBefore\);/,
     "Les bornes de la fenêtre ne sont plus enregistrées.");
+}
+
+/* Heat map croisée (issue #51).
+   Un widget se déclare à cinq endroits indépendants ; déclaré au catalogue mais
+   absent du `switch` de rendu, il s'ajoute au tableau de bord et n'affiche rien.
+   S'y ajoute ici un piège propre à ce widget : ses classes CSS ont failli
+   entrer en collision avec celles de la VUE « Heat map » (calendrier), qui pose
+   display:flex sur .lp-widget-heatmap-cell — un <td> ainsi sorti de la mise en
+   page de tableau empile les cases au lieu de les aligner. D'où un préfixe
+   distinct, qui doit le rester. */
+{
+  assert.match(builtSource, /\/\/ === NEXORA:HEATMAP-GRID:START ===/, "Le bloc de calcul de la heat map a disparu.");
+  assert.match(builtSource, /\/\/ === NEXORA:HEATMAP-GRID:END ===/, "La sentinelle de fin du bloc de la heat map a disparu.");
+  assert.match(builtSource, /key: "heatmapGrid", label: "Heat map croisée"/,
+    "La heat map croisée n'est plus au catalogue des widgets.");
+  assert.match(builtSource, /<WidgetHeatmapGrid widget=\{w\}/,
+    "La heat map est au catalogue mais n'est plus rendue : la tuile serait vide, sans erreur.");
+  assert.ok(usesTaskFilterExpr.includes('type === "heatmapGrid"'),
+    "La heat map ne passe plus par le moteur de filtres : le widget ignorerait son propre filtre.");
+  assert.match(builtSource, /if \(type === "heatmapGrid"\) return \{ w: 9, h: 7 \};/,
+    "La heat map n'a plus de taille par défaut.");
+  /* Les réglages doivent être à la fois proposés et enregistrés. */
+  assert.match(builtSource, /onChange=\{\(e\) => setHeatmapRowField\(e\.target\.value\)\}/,
+    "Le choix de l'axe des lignes a disparu de la fiche.");
+  assert.match(builtSource, /onChange=\{\(e\) => setHeatmapColField\(e\.target\.value\)\}/,
+    "Le choix de l'axe des colonnes a disparu de la fiche.");
+  assert.match(builtSource, /data\.heatmapRowField = heatmapRowField;/, "L'axe des lignes n'est plus enregistré.");
+  assert.match(builtSource, /data\.heatmapColField = heatmapColField;/, "L'axe des colonnes n'est plus enregistré.");
+  assert.match(builtSource, /data\.heatmapMetric = heatmapMetric;/, "La mesure choisie n'est plus enregistrée.");
+  /* Aucune classe du nouveau widget ne doit retomber dans l'espace de noms de
+     la vue « Heat map » : c'est ce qui empilait les cases. */
+  const grille = builtSource.slice(
+    builtSource.indexOf("function WidgetHeatmapGrid"),
+    builtSource.indexOf("function WidgetDeadlineScatter"),
+  );
+  assert.ok(grille.length > 0, "WidgetHeatmapGrid introuvable");
+  assert.doesNotMatch(grille, /lp-widget-heatmap-/,
+    "La heat map croisée réutilise les classes de la vue « Heat map » : ses cases seraient empilées, sans erreur.");
+  assert.match(grille, /lp-widget-hmgrid-cell/, "Les classes propres à la heat map croisée ont disparu.");
 }
 
 console.log("Repository invariants: OK");
