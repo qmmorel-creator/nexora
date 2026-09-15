@@ -7618,6 +7618,24 @@ export default function LePlan({ currentUser, onSignOut }) {
     }
   };
 
+  // Trois causes distinctes atterrissent dans blockedKeys, et les annoncer
+  // toutes comme un conflit entre deux ordinateurs a coûté plusieurs
+  // allers-retours : on cherchait une seconde session là où une lecture avait
+  // simplement échoué. Le bandeau dit maintenant laquelle des trois s'est
+  // produite, et ne mélange pas les registres quand il y en a plusieurs.
+  const blockedKeysReason = (blocked) => {
+    const causes = new Set(Object.values(blocked).map((e) => e?.cause || "conflict"));
+    if (causes.size !== 1) return "plusieurs causes distinctes (détail dans la console).";
+    const [only] = causes;
+    if (only === "read") {
+      return "la dernière lecture de cette donnée a échoué : rien n'est écrit tant qu'elle n'a pas été relue, pour ne pas écraser ce que Firebase contient.";
+    }
+    if (only === "bootstrap") {
+      return "cette donnée n'a pas pu être lue au démarrage : ni elle ni ses valeurs par défaut ne seront enregistrées tant que la lecture n'aura pas abouti.";
+    }
+    return "une autre session a modifié la même donnée entre-temps.";
+  };
+
   const persistKey = (key, value) => {
     // Premier appel juste après le chargement de cette clé (voir
     // justHydratedKeysRef ci-dessus) : rien n'a réellement changé, on ignore
@@ -7715,7 +7733,13 @@ export default function LePlan({ currentUser, onSignOut }) {
         // La copie de secours locale reste en place — rien n'est perdu, et le
         // prochain edit sur cette même clé retentera automatiquement.
         if (e?.code === "NEXORA_SYNC_CONFLICT" || e?.code === "NEXORA_READ_UNSAFE") {
-          setBlockedKeys((prev) => ({ ...prev, [key]: { message, since:new Date().toISOString() } }));
+          // La cause est portée jusqu'au bandeau : un conflit entre deux
+          // sessions et une lecture ratée demandent deux gestes différents, et
+          // les annoncer tous les deux comme « une autre session a modifié la
+          // même donnée » envoyait chercher un second ordinateur qui n'existait
+          // pas.
+          const cause = e.code === "NEXORA_READ_UNSAFE" ? "read" : "conflict";
+          setBlockedKeys((prev) => ({ ...prev, [key]: { message, cause, since:new Date().toISOString() } }));
         }
       } finally {
         persistScheduledRef.current.delete(key);
@@ -8778,7 +8802,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           // Vraie erreur (timeout, réseau...) : NE PAS retomber sur les valeurs
           // par défaut ni marquer "chargé" — ça écraserait les vrais tableaux de
           // bord au prochain enregistrement. On bloque cette clé et on arrête là.
-          setBlockedKeys((prev) => ({ ...prev, "nexora:dashboards": { message: msg, since: new Date().toISOString() } }));
+          setBlockedKeys((prev) => ({ ...prev, "nexora:dashboards": { message: msg, cause:"bootstrap", since: new Date().toISOString() } }));
           if (!cancelled) console.error("[Nexora bootstrap] nexora:dashboards", e);
           return;
         }
@@ -8957,7 +8981,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           // Vraie erreur (timeout, réseau...) : ne pas repartir sur les widgets
           // par défaut, ça écraserait la personnalisation existante au prochain
           // enregistrement. On bloque plutôt cette clé.
-          setBlockedKeys((prev) => ({ ...prev, "nexora:todayWidgets": { message: msg, since: new Date().toISOString() } }));
+          setBlockedKeys((prev) => ({ ...prev, "nexora:todayWidgets": { message: msg, cause:"bootstrap", since: new Date().toISOString() } }));
           console.error("[Nexora bootstrap] nexora:todayWidgets", e);
           return;
         }
@@ -10906,7 +10930,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         <div className="lp-sync-blocked-banner">
           <AlertTriangle size={16} />
           <span>
-            <strong>{Object.keys(blockedKeys).length > 1 ? `${Object.keys(blockedKeys).length} données` : "Une donnée"} en attente de synchronisation</strong> — une autre session a modifié la même donnée entre-temps. Le reste de l'application continue de se sauvegarder normalement ; ces éléments précis seront retentés automatiquement au prochain changement.
+            <strong>{Object.keys(blockedKeys).length > 1 ? `${Object.keys(blockedKeys).length} données` : "Une donnée"} en attente de synchronisation</strong> — {blockedKeysReason(blockedKeys)} Le reste de l'application continue de se sauvegarder normalement ; ces éléments précis seront retentés automatiquement au prochain changement.
             <span className="lp-sync-blocked-detail"> ({Object.keys(blockedKeys).join(", ")})</span>
           </span>
           <button className="lp-btn lp-btn-primary" onClick={() => {

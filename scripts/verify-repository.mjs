@@ -261,6 +261,32 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /NEXORA:UNLOAD-FLUSH:START/,
     "L'écriture garantie à la fermeture de l'onglet a disparu.");
 
+  /* Issue #40. Le site déployé passe par nexoraServerStorage, pas par
+     l'adaptateur Firestore direct : c'est là que le garde-fou de lecture doit
+     exister, et c'est là qu'il manquait. Sans lui, une lecture ratée ne laisse
+     aucune trace, l'écriture suivante part sans révision, le serveur la refuse,
+     et une préférence non fusionnable finit en « donnée en attente de
+     synchronisation » sans qu'aucune autre session soit en cause. */
+  assert.match(builtSource, /NEXORA:GATEWAY-READ-GUARD:START/,
+    "Le garde-fou de lecture de la passerelle a disparu.");
+  assert.match(builtSource, /NEXORA:GATEWAY-READ-GUARD:END/,
+    "La sentinelle de fin du garde-fou de la passerelle a disparu.");
+  {
+    const start = builtSource.indexOf("NEXORA:GATEWAY-READ-GUARD:START");
+    const end = builtSource.indexOf("NEXORA:GATEWAY-READ-GUARD:END", start);
+    const bloc = builtSource.slice(start, end);
+    assert.match(bloc, /__nexoraReadErrors\.set\(key, message\)/,
+      "La passerelle ne note plus les lectures ratées.");
+    assert.match(bloc, /err\.code = "NEXORA_READ_UNSAFE"/,
+      "La passerelle n'oppose plus NEXORA_READ_UNSAFE à une clé dont la lecture a échoué.");
+  }
+
+  /* Le bandeau doit nommer la cause. Les annoncer toutes comme un conflit entre
+     deux ordinateurs a fait chercher une seconde session inexistante pendant
+     trois allers-retours. */
+  assert.match(builtSource, /const blockedKeysReason = /,
+    "Le bandeau de synchronisation ne distingue plus ses trois causes.");
+
   /* La ligne de définition ne porte pas les parenthèses d'appel : ce motif ne
      compte QUE les appels. Trois attendus — écoutes, contrôle de fraîcheur,
      adoption d'une valeur distante. */

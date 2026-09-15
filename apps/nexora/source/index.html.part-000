@@ -1230,8 +1230,36 @@ const nexoraServerStorageRequest = async (action, payload = {}) => {
 };
 
 const nexoraServerStorage = {
+  // === NEXORA:GATEWAY-READ-GUARD:START ===
+  // L'adaptateur Firestore direct note toute lecture ratée dans
+  // __nexoraReadErrors et REFUSE d'écrire une clé dans cet état. Cette
+  // passerelle — la seule qui tourne sur le site déployé — ne faisait ni l'un
+  // ni l'autre.
+  //
+  // Conséquence observée après un Ctrl+R (un rechargement lance plus de vingt
+  // lectures de front, dont une peut expirer) : la clé n'a pas de révision
+  // connue, l'écriture suivante part donc SANS expectedRevision, le serveur la
+  // refuse par un 409, et comme une préférence scalaire ne se fusionne pas,
+  // la clé atterrit dans blockedKeys — le bandeau rouge « en attente de
+  // synchronisation », alors qu'aucune autre session n'est en cause.
+  //
+  // En notant la lecture ratée, l'écriture lève NEXORA_READ_UNSAFE, que
+  // attemptPersist rattrape déjà : il relit la clé (ce qui efface l'erreur) et
+  // réécrit ou fusionne. Le bandeau disparaît, et surtout l'écrasement muet
+  // d'une clé jamais relue n'est plus possible en production.
   async get(key, options = {}) {
-    const result = await nexoraServerStorageRequest("get", { key });
+    let result;
+    try {
+      result = await nexoraServerStorageRequest("get", { key });
+    } catch (error) {
+      const message = (error && error.message) || String(error);
+      // « Key not found » n'est pas une lecture ratée : la clé n'existe pas
+      // encore, et l'écrire est parfaitement sûr.
+      if (!message.includes("Key not found")) {
+        __nexoraReadErrors.set(key, message);
+      }
+      throw error;
+    }
     if (options.trackRevision !== false) {
       __nexoraKnownRevisions.set(key, result.revision || null);
       __nexoraKnownValues.set(key, result.value);
@@ -1241,6 +1269,13 @@ const nexoraServerStorage = {
   },
 
   async set(key, value) {
+    if (__nexoraReadErrors.has(key)) {
+      const err = new Error(
+        `Synchronisation bloquée pour ${key} : la dernière lecture Firebase a échoué (${__nexoraReadErrors.get(key)}). Recharge ou synchronise avant d'écrire.`
+      );
+      err.code = "NEXORA_READ_UNSAFE";
+      throw err;
+    }
     const payload = { key, value:String(value ?? "") };
     if (__nexoraKnownRevisions.has(key)) {
       payload.expectedRevision = __nexoraKnownRevisions.get(key);
@@ -1251,6 +1286,7 @@ const nexoraServerStorage = {
     __nexoraReadErrors.delete(key);
     return result;
   },
+  // === NEXORA:GATEWAY-READ-GUARD:END ===
 
   async delete(key) {
     const payload = { key };
