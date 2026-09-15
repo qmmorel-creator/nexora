@@ -1,6 +1,6 @@
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { parisCivilDate, reportPeriod } from "../../../lib/report-period.mjs";
 
 export { reportPeriod };
@@ -59,9 +59,23 @@ export function requireConfig() {
   return { uid, apiKey, missing };
 }
 
+// Comparaison en temps constant. `===` sur deux chaînes s'arrête au premier caractère
+// qui diffère : la durée de la réponse dépend alors du nombre de caractères devinés
+// juste. L'exploitation à distance reste peu probable — la gigue du réseau couvre
+// largement l'écart — mais l'écrire correctement ne coûte rien et retire la question.
+//
+// Le hachage préalable sert à deux choses : `timingSafeEqual` exige deux tampons de
+// MÊME longueur (sinon il lève), et passer par une empreinte de taille fixe évite de
+// divulguer la longueur de la clé attendue.
+function constantTimeEqual(a: string, b: string) {
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+
 export function isAuthorized(req: Request, expected: string) {
   const auth = req.headers.get("authorization") || "";
-  return auth === `Bearer ${expected}`;
+  return constantTimeEqual(auth, `Bearer ${expected}`);
 }
 
 export async function readLogicalDocument(uid: string, key: string): Promise<LogicalDocument> {

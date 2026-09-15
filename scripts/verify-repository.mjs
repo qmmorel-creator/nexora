@@ -40,6 +40,21 @@ for (const file of textFiles) {
   for (const pattern of forbidden) assert.doesNotMatch(source, pattern, `Secret potentiel dans ${path.relative(root, file)}`);
 }
 
+// Le contrat public existe en DEUX exemplaires : `apps/nexora/openapi.yaml`, qui fait
+// référence dans le dépôt, et `apps/nexora/public/openapi.yaml`, seul copié vers `dist`
+// par le build (`scripts/build.mjs`) et donc seul réellement PUBLIÉ. Modifier le premier
+// sans le second ne casse rien, ne se voit pas à la relecture, et laisse en ligne un
+// contrat périmé : les clients continuent de lire l'ancien.
+{
+  const [reference, publie] = await Promise.all([
+    readFile(path.join(root, "apps/nexora/openapi.yaml"), "utf8"),
+    readFile(path.join(root, "apps/nexora/public/openapi.yaml"), "utf8"),
+  ]);
+  assert.equal(publie, reference,
+    "apps/nexora/openapi.yaml et apps/nexora/public/openapi.yaml ont divergé : " +
+    "c'est le second qui est publié. Recopier l'un sur l'autre.");
+}
+
 const gateway = await readFile(path.join(root, "apps/nexora-mcp/netlify/functions/gateway.mts"), "utf8");
 assert.match(gateway, /https:\/\/nexora-project\.org/);
 assert.match(gateway, /registerNexoraTools/);

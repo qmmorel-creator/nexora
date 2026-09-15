@@ -65,3 +65,24 @@ export function reportPeriod(kind, at = new Date()) {
     : parisLocalToUtc(date, 20, 30);
   return { kind, timeZone: TIME_ZONE, localDate: date, start: start.toISOString(), end: end.toISOString() };
 }
+
+// Décide si l'invocation courante doit produire le rapport.
+//
+// Les deux fonctions planifiées sont programmées DEUX FOIS (`0 5,6 * * *`), à une
+// heure d'intervalle : selon la saison, c'est l'une ou l'autre qui tombe sur l'heure
+// locale voulue à Paris, et le garde écarte la seconde. C'est ce qui rend le rapport
+// insensible au changement d'heure.
+//
+// Le garde portait auparavant sur la minute EXACTE (`local.minute !== 0`). Netlify ne
+// garantit pas la minute de déclenchement d'une fonction planifiée : un démarrage à
+// froid ou une file d'attente décale l'invocation, les DEUX invocations tombent alors
+// dans le rejet, et la journée n'a pas de rapport — sans exception, sans trace, sans
+// que personne ne puisse le savoir.
+//
+// D'où une fenêtre de tolérance. Elle doit rester très inférieure à l'heure qui sépare
+// les deux invocations : sinon toutes les deux passeraient et le rapport serait produit
+// en double.
+export function shouldRunReport(local, targetHour, targetMinute, toleranceMinutes = 20) {
+  const ecart = Math.abs(local.hour * 60 + local.minute - (targetHour * 60 + targetMinute));
+  return ecart <= toleranceMinutes;
+}
