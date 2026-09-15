@@ -1,4 +1,17 @@
-hasAnimatedRef.current = true;
+(c) => (
+        <rect key={c.id} x={x - 3} y={y - 4} width="6" height="8" fill={c.color} rx="1"
+          className="lp-anim-confetti-piece"
+          style={{ "--lp-dx": `${c.dx}px`, "--lp-dy": `${c.dy}px`, "--lp-rot": `${c.rot}deg`, transformBox: "fill-box", transformOrigin: "center" }} />
+      ))}
+    </g>
+  );
+}
+function CountUp({ value, animate, duration = 800 }) {
+  const hasAnimatedRef = useRef(false);
+  const [display, setDisplay] = useState(animate ? 0 : value);
+  useEffect(() => {
+    if (!animate || hasAnimatedRef.current) { setDisplay(value); return; }
+    hasAnimatedRef.current = true;
     const t0 = performance.now();
     let raf;
     const step = (t) => {
@@ -7285,6 +7298,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   // (lastInteraction/updatedAt/modifiedAt/createdAt). Seul un VRAI conflit
   // (même élément modifié des deux côtés sans horodatage permettant de
   // trancher) est signalé — jamais deviné en silence.
+  // === NEXORA:SYNCMERGE:START ===
   const NEXORA_MERGEABLE_KEYS = new Set([
     "nexora:tasks", "nexora:projects", "nexora:statuses",
     "nexora:projectFolders", "nexora:viewFolders",
@@ -7293,6 +7307,13 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:taskBaselines", "nexora:taskArchive", "nexora:customFieldDefs",
     "nexora:risks", "nexora:workflows", "nexora:workflowExecutionLog", "nexora:metaTemporalBlocks",
     "nexora:notifications", "nexora:favorites",
+    // Ajoutées après le 409 observé en posant un filtre de criticité sur un
+    // Mini-Gantt. Ce sont des listes d'objets identifiables comme les autres,
+    // mais elles manquaient ici : un conflit les BLOQUAIT au lieu de les
+    // fusionner, et plus aucun réglage ne partait jusqu'au rechargement de
+    // l'onglet. nexora:dashboards porte les tableaux de bord et leurs widgets —
+    // c'est elle qu'écrit la modification d'un filtre de widget.
+    "nexora:dashboards", "nexora:dashboardFolders", "nexora:views", "nexora:taskTypes",
   ]);
 
   // Certaines listes n'ont pas de champ `id` par élément qui identifie
@@ -7309,6 +7330,33 @@ export default function LePlan({ currentUser, onSignOut }) {
     const raw = item.lastInteraction || item.updatedAt || item.modifiedAt || item.completedAt || item.capturedAt || item.createdAt;
     const t = raw ? Date.parse(raw) : NaN;
     return Number.isFinite(t) ? t : 0;
+  };
+
+  // Horodate les entités RÉELLEMENT modifiées d'une collection, pour que la
+  // fusion ci-dessous puisse départager deux sessions ayant touché la même.
+  // Sans horodatage elle ne devine pas : elle garde la version déjà enregistrée
+  // et signale le conflit — la modification locale est alors perdue.
+  //
+  // « Modifiée » se lit sur l'identité de l'objet, pas sur son contenu : les
+  // mises à jour de React reconstruisent l'objet touché et laissent les autres
+  // tels quels (prev.map((d) => (d.id === cible ? { ...d } : d))). Comparer les
+  // contenus coûterait une sérialisation complète à chaque frappe.
+  //
+  // Une entité ABSENTE de l'état précédent n'est jamais horodatée : c'est soit
+  // une création — que la fusion conserve de toute façon, personne d'autre ne
+  // l'ayant — soit un chargement depuis Firebase, où réhorodater écraserait
+  // justement l'information qu'on cherche à garder.
+  const stampChangedEntities = (prev, next) => {
+    if (!Array.isArray(prev) || !Array.isArray(next)) return next;
+    const seen = new Map();
+    prev.forEach((item) => { if (item && item.id != null) seen.set(item.id, item); });
+    if (!seen.size) return next;
+    const at = new Date().toISOString();
+    return next.map((item) => {
+      if (!item || item.id == null) return item;
+      const was = seen.get(item.id);
+      return (was !== undefined && was !== item) ? { ...item, updatedAt:at } : item;
+    });
   };
 
   // Fusionne deux collections "indexables" : soit un tableau d'objets
@@ -7392,6 +7440,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     mergedMap.forEach((v, k) => { merged[k] = v; });
     return { merged, unresolved };
   };
+  // === NEXORA:SYNCMERGE:END ===
 
   // Envoie une clé vers Firebase. En cas de conflit de révision (une autre
   // session a sauvegardé entretemps), tente une fusion consciente plutôt
@@ -8438,6 +8487,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
   }, [dataLoaded, projects, statuses, gcalLifecycleToday]);
 
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskTypes", taskTypes); }, [taskTypes, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:expenseCategories", expenseCategories); }, [expenseCategories, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:customFieldDefs", customFieldDefs); }, [customFieldDefs, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:risks", risks); }, [risks, dataLoaded]);
@@ -8587,7 +8637,11 @@ export default function LePlan({ currentUser, onSignOut }) {
   ]);
   const defaultDashboards = () => ([{ id: uid(), name: "Tableau de bord", folderId: null, widgets: defaultDashboardWidgets() }]);
 
-  const [dashboards, setDashboards] = useState(defaultDashboards);
+  const [dashboards, setDashboardsRaw] = useState(defaultDashboards);
+  // Voir stampChangedEntities : l'horodatage se pose ici, une fois, plutôt que
+  // sur chacun des points d'écriture — dont aucun n'y penserait.
+  const setDashboards = (updater) =>
+    setDashboardsRaw((prev) => stampChangedEntities(prev, typeof updater === "function" ? updater(prev) : updater));
   const [dashboardsLoaded, setDashboardsLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -8885,7 +8939,9 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [folderMetro, setFolderMetro] = useState(null); // { type: "project"|"dashboard", folder, items }
   const [folderMetroClosing, setFolderMetroClosing] = useState(false);
 
-  const [savedViews, setSavedViews] = useState([]);
+  const [savedViews, setSavedViewsRaw] = useState([]);
+  const setSavedViews = (updater) =>
+    setSavedViewsRaw((prev) => stampChangedEntities(prev, typeof updater === "function" ? updater(prev) : updater));
   const [contextMenu, setContextMenu] = useState(null); // { x, y, type, item }
   const isFavorite = (type, id) => favorites.some((f) => f.type === type && f.id === id);
   const toggleFavorite = (type, id) => setFavorites((prev) => (prev.some((f) => f.type === type && f.id === id) ? prev.filter((f) => !(f.type === type && f.id === id)) : [...prev, { type, id }]));
@@ -11582,52 +11638,4 @@ export default function LePlan({ currentUser, onSignOut }) {
         <>
           <div className="lp-mobile-sheet-overlay" onMouseDown={() => setMobileMoreOpen(false)} onTouchStart={() => setMobileMoreOpen(false)} />
           <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
-            <div className="lp-mobile-sheet-handle" />
-            <div className="lp-mobile-sheet-grid">
-              {ALL_VIEWS_META.filter((v) => !["control", "projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
-                <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
-                  <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
-                  <span>{meta.label}</span>
-                  {meta.key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
-                </button>
-              ))}
-            </div>
-            <hr className="lp-divider" />
-            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setSettingsTab("projects"); setSettingsOpen(true); setMobileMoreOpen(false); }}>
-              <Settings size={20} /><span>Réglages</span>
-            </button>
-            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setReadmeOpen(true); setMobileMoreOpen(false); }}>
-              <BookOpen size={20} /><span>Guide de démarrage</span>
-            </button>
-          </div>
-        </>
-      )}
-      <ToastStack toasts={toasts} onDismiss={dismissToast} />
-      {readmeOpen && <ReadmeModal onClose={() => setReadmeOpen(false)} />}
-      {filtersOpen && <FiltersModal filters={filters} setFilters={setFilters} ctx={ctx} onClose={() => setFiltersOpen(false)} />}
-      {globalSearchOpen && (
-        <GlobalMetaSearchModal
-          tasks={tasks}
-          taskArchive={taskArchive}
-          ctx={ctx}
-          onRestoreArchived={restoreArchivedTasks}
-          onOpenTask={(t) => { setGlobalSearchOpen(false); openEditTask(t); }}
-          onClose={() => setGlobalSearchOpen(false)}
-        />
-      )}
-      {importOpen && <ImportCsvModal ctx={ctx} projects={projects} statuses={statuses} setProjects={setProjects} setStatuses={setStatuses} setTasks={setTasks} persistKey={persistKey} pushToast={pushToast} syncBlocked={syncBlocked} onClose={() => setImportOpen(false)} />}
-      {markdownImportOpen && (
-        <MarkdownImportModal
-          projects={projects}
-          setProjects={setProjects}
-          statuses={statuses}
-          setStatuses={setStatuses}
-          taskTypes={taskTypes}
-          setTasks={setTasks}
-          palette={PROJECT_PALETTES[appearance.projectPalette] || PROJECT_PALETTES.default}
-          pushToast={pushToast}
-          onClose={() => setMarkdownImportOpen(false)}
-        />
-      )}
-      {projectFoldersOpen && <SimpleFolderManager title="Dossiers de projets" folders={projectFolders} setFolders={setProjectFolders} countInFolder={(id) => projects.filter((p) => p.folderId === id).length} pushToast={pushToast} onClose={() => setProjectFoldersOpen(false)} itemLabel="dossier" />}
-      {viewFoldersOpen && <SimpleFolderManager title="Dossiers de vues" folders={viewFolders} setFolders={setViewFolders} countInFolder={(id) => savedViews.filter((v) => v.folderId === id).length} pushToast={pushToast} onClose={() => setViewFoldersO
+            <div className=

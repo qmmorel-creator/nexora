@@ -1065,7 +1065,14 @@ const nexoraDirectStorage = {
       return await this.get(key);
     } catch (error) {
       const message = (error && error.message) || String(error);
-      if (message.includes("Key not found")) return null;
+      if (message.includes("Key not found")) {
+        // Absence CONSTATÉE, pas ignorance : la révision connue doit suivre,
+        // sinon la réécriture qui suit repart avec une révision périmée et se
+        // fait refuser une seconde fois.
+        __nexoraKnownRevisions.set(key, null);
+        __nexoraKnownValues.delete(key);
+        return null;
+      }
       throw error;
     }
   },
@@ -1219,7 +1226,13 @@ const nexoraServerStorage = {
     try {
       return await this.get(key);
     } catch (error) {
-      if (((error && error.message) || String(error)).includes("Key not found")) return null;
+      if (((error && error.message) || String(error)).includes("Key not found")) {
+        // Voir l'adaptateur direct : sans cette mise à jour, une clé effacée
+        // depuis un autre appareil reste inécrivable jusqu'au rechargement.
+        __nexoraKnownRevisions.set(key, null);
+        __nexoraKnownValues.delete(key);
+        return null;
+      }
       throw error;
     }
   },
@@ -3764,17 +3777,4 @@ function ProjectConfetti({ x, y, active }) {
   if (pieces.length === 0) return null;
   return (
     <g style={{ pointerEvents: "none" }}>
-      {pieces.map((c) => (
-        <rect key={c.id} x={x - 3} y={y - 4} width="6" height="8" fill={c.color} rx="1"
-          className="lp-anim-confetti-piece"
-          style={{ "--lp-dx": `${c.dx}px`, "--lp-dy": `${c.dy}px`, "--lp-rot": `${c.rot}deg`, transformBox: "fill-box", transformOrigin: "center" }} />
-      ))}
-    </g>
-  );
-}
-function CountUp({ value, animate, duration = 800 }) {
-  const hasAnimatedRef = useRef(false);
-  const [display, setDisplay] = useState(animate ? 0 : value);
-  useEffect(() => {
-    if (!animate || hasAnimatedRef.current) { setDisplay(value); return; }
-    
+      {pieces.map(
