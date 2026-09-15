@@ -4397,6 +4397,32 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
   const [hover, setHover] = useState(null);
   const [selected, setSelected] = useState(null);
+  // Découpe en deux volets, sur le modèle de la vue Heat map calendaire.
+  // null = jamais glissé par l'utilisateur → les deux volets se partagent
+  // l'espace à parts strictement égales. Un nombre = largeur en px du volet
+  // liste, fixée par un glisser explicite sur la poignée.
+  const [listWidth, setListWidth] = useState(null);
+  const splitRef = useRef(null);
+  const listRef = useRef(null);
+  const dragRef = useRef(null);
+  const startResize = (e) => {
+    e.preventDefault();
+    const startWidth = listWidth != null ? listWidth : (listRef.current?.getBoundingClientRect().width || 320);
+    dragRef.current = { startX: e.clientX, startWidth };
+    const onMove = (ev) => {
+      if (!dragRef.current) return;
+      const wrapWidth = splitRef.current?.getBoundingClientRect().width || 800;
+      const delta = dragRef.current.startX - ev.clientX; // vers la gauche = liste plus large
+      setListWidth(Math.max(180, Math.min(Math.max(180, wrapWidth - 200), dragRef.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   const today = iso(new Date());
   const todayIdx = dayIndex(today);
 
@@ -4505,7 +4531,15 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const suffixe = cfg.metric === "progress" ? " %" : cfg.metric === "criticality" ? "/100" : "";
   const estSelection = (r, c) => selected && selected.rowId === r && selected.colId === c;
 
+  // La case retenue peut disparaître sous nos pieds : changer de filtre, d'axe
+  // ou de mesure recompose la grille. On la relit donc à chaque rendu plutôt
+  // que de recopier son contenu dans l'état, où il se périmerait en silence.
+  const ligneSel = selected ? lignes.find((r) => r.id === selected.rowId) : null;
+  const colonneSel = selected ? colonnes.find((c) => c.id === selected.colId) : null;
+  const celluleSel = (ligneSel && colonneSel) ? grid.cells.get(heatmapCellKey(ligneSel.id, colonneSel.id)) : null;
+
   return (
+    <div className="lp-widget-hmgrid-split" ref={splitRef}>
     <div className="lp-widget-hmgrid">
       <div className="lp-widget-hmgrid-scroll">
         <table className="lp-widget-hmgrid-table">
@@ -4545,11 +4579,13 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
                       onMouseMove={(e) => setHover((prev) => (prev && prev.cell === cellule ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
                       onMouseLeave={() => setHover((prev) => (prev && prev.cell === cellule ? null : prev))}
                       onClick={() => {
-                        // Une case porte souvent plusieurs tâches : il n'y a rien
-                        // à « ouvrir ». On la sélectionne, et on n'ouvre que
-                        // lorsqu'il n'y a aucune ambiguïté.
+                        // Le clic remplit le volet de droite, et rien d'autre.
+                        // L'ouverture automatique d'une case à tâche unique
+                        // avait du sens tant qu'il n'y avait pas de liste :
+                        // maintenant qu'elle existe, une fiche qui s'ouvre
+                        // toute seule surprend au lieu d'aider. On ouvre depuis
+                        // la liste, d'un clic explicite, dans tous les cas.
                         setSelected((prev) => (prev && prev.rowId === r.id && prev.colId === c.id ? null : { rowId: r.id, colId: c.id }));
-                        if (cellule.tasks.length === 1 && onOpen) onOpen(cellule.tasks[0]);
                       }}
                     >
                       {cfg.showValues ? cellule.value : ""}
@@ -4579,6 +4615,56 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
           {hover.cell.tasks.length > 4 && <span className="lp-widget-hmgrid-tip-more">et {hover.cell.tasks.length - 4} autre{hover.cell.tasks.length - 4 > 1 ? "s" : ""}…</span>}
         </WidgetPointerTooltip>
       )}
+    </div>
+
+      {/* Poignée de glisser : ajuste la part respective de la grille et de la
+          liste, comme dans la vue Heat map calendaire. */}
+      <div className="lp-widget-hmgrid-resize-handle" onMouseDown={startResize} title="Glisser pour redimensionner" />
+
+      {/* Volet de droite : toujours apparent, avec un message d'invite quand
+          aucune case n'est retenue. Le faire apparaître et disparaître au clic
+          redimensionnerait la grille à chaque fois, et les cases sauteraient
+          sous le curseur. */}
+      <div
+        className="lp-widget-hmgrid-tasklist"
+        ref={listRef}
+        style={listWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${listWidth}px` }}
+      >
+        <div className="lp-widget-hmgrid-tasklist-head">
+          <span>{ligneSel && colonneSel ? `${ligneSel.name} × ${colonneSel.name}` : "Aucune case sélectionnée"}</span>
+          {selected && (
+            <button className="lp-icon-btn" onClick={() => setSelected(null)} title="Désélectionner"><X size={12} /></button>
+          )}
+        </div>
+        {!selected ? (
+          <div className="lp-widget-hmgrid-tasklist-empty">Clique sur une case de la grille pour voir les tâches de ce croisement.</div>
+        ) : !celluleSel ? (
+          // Case retenue devenue introuvable : le filtre, un axe ou la mesure
+          // ont changé. On le dit plutôt que d'afficher une liste vide, qui se
+          // lirait comme « ce croisement n'a aucune tâche ».
+          <div className="lp-widget-hmgrid-tasklist-empty">Ce croisement n'est plus dans la grille — le filtre ou les axes ont changé.</div>
+        ) : (
+          <>
+            <div className="lp-widget-hmgrid-tasklist-measure">
+              {HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{celluleSel.value}{suffixe}</b>
+              {cfg.metric !== "count" && ` · ${celluleSel.count} tâche${celluleSel.count > 1 ? "s" : ""}`}
+            </div>
+            <div className="lp-widget-hmgrid-tasklist-items">
+              {celluleSel.tasks.map((t) => {
+                const proj = (ctx.projects || []).find((p) => p.id === t.projectId);
+                const st = (ctx.statuses || []).find((x) => x.id === t.statusId);
+                return (
+                  <div className="lp-widget-hmgrid-tasklist-item" key={t.id} onClick={() => onOpen && onOpen(t)}>
+                    <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
+                    <span className="lp-widget-hmgrid-tasklist-title">{t.title || "Sans titre"}</span>
+                    {st && <span className="lp-widget-hmgrid-tasklist-status" style={{ color: st.color }}>{st.name}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

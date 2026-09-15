@@ -319,12 +319,22 @@ try {
 
 // Heat map (issue #51) : l'infobulle doit nommer le croisement, et la fiche
 // proposer les deux axes ET la mesure.
-const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "" };
+const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "", listHead: "", listItems: 0, listInvite: "" };
 try {
   const plein = page.locator("#harness-heatmap .lp-widget-hmgrid-cell:not(.is-empty)").first();
   await plein.hover();
   await page.waitForTimeout(250);
   heatmap.tip = (await page.locator(".lp-widget-hmgrid-tip").innerText()).trim();
+
+  // Découpe en deux volets : le volet de droite existe AVANT tout clic (avec son
+  // invite), et le clic sur une case le remplit. Le faire apparaître au clic
+  // redimensionnerait la grille et ferait sauter les cases sous le curseur.
+  heatmap.listInvite = (await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-empty").innerText().catch(() => "")).trim();
+  await plein.click();
+  await page.waitForTimeout(250);
+  heatmap.listHead = (await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-head span").first().innerText()).trim();
+  heatmap.listItems = await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-item").count();
+
   await page.locator("#harness-open-heatmap-form").click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   await page.waitForTimeout(400);
@@ -800,6 +810,13 @@ expect(seen.heatCells.length === seen.heatRowHeads.length * seen.heatColHeads.le
 {
   const tailles = new Set(seen.heatCells.map((c) => `${c.w}x${c.h}`));
   expect(tailles.size === 1, `Heat map : ${tailles.size} tailles de case différentes (${[...tailles].join(", ")}) — elles doivent être identiques`);
+  // Retour de Quentin sur #51 : deux volets, comme la vue Heat map calendaire.
+  expect(/Clique sur une case/.test(heatmap.listInvite),
+    `Heat map : le volet de droite n'est pas apparent avant le clic (« ${heatmap.listInvite} »)`);
+  expect(/×/.test(heatmap.listHead),
+    `Heat map : le volet de droite ne nomme pas le croisement retenu (« ${heatmap.listHead} »)`);
+  expect(heatmap.listItems > 0,
+    `Heat map : ${heatmap.listItems} tâche(s) listée(s) dans le volet de droite après le clic sur une case pleine`);
 }
 // CASE VIDE contre CASE À ZÉRO — le cœur de l'issue. « Aucune tâche à ce
 // croisement » n'est pas « des tâches, mais aucune en retard ». Ce qui distingue
