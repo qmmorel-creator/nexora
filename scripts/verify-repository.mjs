@@ -100,4 +100,39 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.deepEqual(orphans, [], `Onglets de Réglages sans volet rendu : ${orphans.join(", ")}`);
 }
 
+// Criticité (issue #35). « Urgent » était un statut ; c'est devenu une dimension à
+// part, et le statut a été supprimé. Trois choses peuvent se défaire sans que rien
+// ne casse visiblement — d'où ces gardes.
+{
+  assert.match(builtSource, /=== NEXORA:CRITICALITY:START ===/, "bloc Criticité absent");
+  assert.match(builtSource, /=== NEXORA:CRITICALITY:END ===/, "sentinelle de fin du bloc Criticité absente");
+
+  // 1. L'urgence doit se lire sur la criticité. Si isTaskUrgent repartait du NOM du
+  //    statut, le statut « Urgent » n'existant plus, le filtre « urgentes », les
+  //    liserés rouges, les barres du Gantt, les bulles de la vue Métro, le bloc
+  //    « Tâches urgentes » d'Aujourd'hui, le poids du treemap et trois métriques de
+  //    widgets se videraient tous en silence, sans une seule erreur.
+  const urgentFn = builtSource.slice(builtSource.indexOf("function isTaskUrgent"));
+  assert.match(urgentFn.slice(0, 400), /task\?\.criticality/, "isTaskUrgent ne lit plus la criticité");
+
+  // 2. Le champ doit rester branché sur le registre unique et sur les surfaces qui
+  //    ne s'en déduisent pas. Retirer une seule de ces lignes ne casse rien : la
+  //    criticité disparaît simplement de cette vue-là.
+  assert.match(builtSource, /key: "criticality", label: "Criticité"/, "criticality absent de FIELD_DEFS");
+  assert.match(builtSource, /ADVANCED_FILTER_FIELDS = \[[^\]]*"criticality"/, "criticality absent des filtres avancés");
+  assert.match(builtSource, /WIDGET_GROUPBY_FIELDS = \[[^\]]*"criticality"/, "criticality absent du groupement");
+  assert.match(builtSource, /MINIGANTT_ROW_FIELD_OPTIONS = \[[^\]]*"criticality"/, "criticality absent des champs de ligne du Mini-Gantt");
+  // Deux capsules distinctes, l'une en lecture (FieldValue) et l'autre éditable
+  // (InlineEditableField) : chercher le motif une seule fois laisserait passer la
+  // suppression de l'une des deux. Garde éprouvé en supprimant chacune.
+  const capsules = [...builtSource.matchAll(/fieldKey === "criticality"/g)].length;
+  assert.equal(capsules, 2, `capsules de criticité : ${capsules} trouvée(s), 2 attendues (lecture et édition)`);
+
+  // 3. Aucun statut nommé « Urgent » ne doit revenir par le jeu de démonstration :
+  //    il serait recréé chez tout nouvel utilisateur, et la reprise le supprimerait
+  //    en boucle à chaque chargement.
+  const seed = builtSource.slice(builtSource.indexOf("const seedStatuses"), builtSource.indexOf("const seedStatuses") + 900);
+  assert.doesNotMatch(seed, /name: "Urgent"/, "le jeu de démonstration recrée un statut Urgent");
+}
+
 console.log("Repository invariants: OK");
