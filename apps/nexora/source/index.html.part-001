@@ -1,4 +1,51 @@
-(c) => (
+nGlyph({ icon, size = 16, style, stroke = 1.8 }) {
+  if (!icon) return null;
+  if (typeof icon !== "string") return null;
+  if (icon.startsWith("tabler:")) {
+    const { name, color } = parseTablerIconSpec(icon);
+    const C = tablerComponent(name);
+    if (!C) return null;
+    return <C size={size} stroke={stroke} style={{ ...style, ...(color ? { color } : {}) }} aria-hidden="true" />;
+  }
+  if (icon.startsWith("iconify:")) {
+    const { prefix, name, color } = parseIconifySpec(icon);
+    if (!prefix || !name) return null;
+    return <img src={iconifyUrl(prefix, name, color, Math.max(32, size * 2))} alt="" style={{ width: size, height: size, objectFit: "contain", ...style }} />;
+  }
+  if (icon.startsWith("data:") || icon.startsWith("http://") || icon.startsWith("https://")) return <img src={icon} alt="" style={{ width: size, height: size, borderRadius: 4, objectFit: "cover", ...style }} />;
+  return <span style={{ fontSize: size * 0.75, lineHeight: 1, ...style }}>{icon}</span>;
+}
+
+function NexoraIcon({ name, size = 16, style, stroke = 1.8, color }) {
+  return <IconGlyph icon={name ? makeTablerIconSpec(name, color) : null} size={size} style={style} stroke={stroke} />;
+}
+
+// Anime un nombre entier de 0 jusqu'à sa valeur réelle, une seule fois au montage
+// (Réglages > Apparence). Simple `<span>`, à utiliser comme {' '} inline avec un
+// suffixe (%, etc.) autour.
+// Petite salve de confettis SVG, déclenchée une seule fois quand un projet
+// franchit 100% d'avancement (jamais rejouée tant qu'il reste à 100%, ni si
+// l'utilisateur revient plus tard sur un projet déjà complet). Réglages > Apparence.
+function ProjectConfetti({ x, y, active }) {
+  const [pieces, setPieces] = useState([]);
+  const prevActiveRef = useRef(false);
+  useEffect(() => {
+    if (active && !prevActiveRef.current) {
+      const colors = ["#4F6AF5", "#1FA971", "#E2483E", "#FF7A3D", "#8B5CF6"];
+      setPieces(Array.from({ length: 16 }, (_, i) => {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 22 + Math.random() * 20;
+        return { id: i, dx: Math.cos(angle) * dist, dy: Math.sin(angle) * dist - 8, rot: Math.random() * 360 - 180, color: colors[i % colors.length] };
+      }));
+    } else if (!active) {
+      setPieces([]);
+    }
+    prevActiveRef.current = active;
+  }, [active]);
+  if (pieces.length === 0) return null;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {pieces.map((c) => (
         <rect key={c.id} x={x - 3} y={y - 4} width="6" height="8" fill={c.color} rx="1"
           className="lp-anim-confetti-piece"
           style={{ "--lp-dx": `${c.dx}px`, "--lp-dy": `${c.dy}px`, "--lp-rot": `${c.rot}deg`, transformBox: "fill-box", transformOrigin: "center" }} />
@@ -7587,7 +7634,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           // jamais, et on prévient si un VRAI conflit (même élément modifié
           // des deux côtés sans horodatage tranchant) a dû être arbitré.
           if (written && written.mergedValue !== undefined) {
-            const setter = firebaseStateEntries().find(([, k]) => k === key)?.[2];
+            const setter = firebaseWatchedEntries().find(([, k]) => k === key)?.[2];
             if (setter) setter(written.mergedValue);
             if (written.mergeUnresolved && written.mergeUnresolved.length) {
               pushToast({
@@ -7771,6 +7818,33 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["startupPref", "nexora:startupPref", setStartupPref],
     ["favorites", "nexora:favorites", setFavorites],
   ];
+
+  // === NEXORA:INTERFACE-SYNC:START ===
+  // Les clés d'interface sont stockées dans Firebase, écrites par persistKey,
+  // et depuis peu fusionnables sur conflit. Mais elles restent absentes de
+  // firebaseStateEntries() — la liste qui alimente les écoutes, le contrôle de
+  // fraîcheur au retour au premier plan, et l'adoption d'une valeur distante.
+  //
+  // La fusion ne se déclenche qu'à l'ÉCRITURE : sans détection, une
+  // configuration de tableau de bord modifiée sur un poste n'atteint l'autre
+  // qu'au rechargement complet. Le rattrapage manquait, pas la fusion.
+  //
+  // L'hydratation garde son chemin propre — elle doit aboutir avant le premier
+  // rendu, avec ses propres drapeaux de chargement — et n'est pas touchée ici.
+  const firebaseInterfaceEntries = () => [
+    ["dashboards",    "nexora:dashboards",    setDashboards],
+    ["dashboardFolders", "nexora:dashboardFolders", setDashboardFolders],
+    ["savedViews",    "nexora:views",         setSavedViews],
+    ["todayWidgets",  "nexora:todayWidgets",  setTodayData],
+    ["viewPrefs",     "nexora:viewPrefs",     setViewPrefs],
+    ["viewOrder",     "nexora:viewOrder",     setViewOrder],
+    ["enabledViews",  "nexora:enabledViews",  setEnabledViews],
+    ["shortcutPrefs", "nexora:shortcutPrefs", setShortcutPrefs],
+  ];
+
+  // Toutes les clés dont une modification distante doit être détectée.
+  const firebaseWatchedEntries = () => [...firebaseStateEntries(), ...firebaseInterfaceEntries()];
+  // === NEXORA:INTERFACE-SYNC:END ===
 
   const fullBackupLivePayload = () => ({
     "nexora:projects": projects,
@@ -8171,7 +8245,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     // Listen to every persisted state key, not only tasks/projects. A remote
     // value is first read as a "peek": its revision is committed locally only
     // after we have verified that no local write appeared during the fetch.
-    const unsubs = firebaseStateEntries().map(([, key, setter]) =>
+    const unsubs = firebaseWatchedEntries().map(([, key, setter]) =>
       window.storage.watch(key, async (revision) => {
         setRemoteChangeDetected((prev) => (prev[key] === revision ? prev : { ...prev, [key]: revision }));
 
@@ -8216,7 +8290,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     if (!dataLoaded) return;
     const onVisible = async () => {
       if (document.visibilityState !== "visible" || !window.storage?.checkRevision) return;
-      for (const [, key] of firebaseStateEntries()) {
+      for (const [, key] of firebaseWatchedEntries()) {
         try {
           const remoteRevision = await window.storage.checkRevision(key);
           const known = window.storage.getKnownRevision(key);
@@ -11570,72 +11644,4 @@ export default function LePlan({ currentUser, onSignOut }) {
               {folderMetro.folder?.name || (folderMetro.type === "project" ? "Dossier" : "Dossier de tableaux de bord")}
             </div>
             {folderMetro.items?.length ? (
-              <div className="lp-folder-metro-line-wrap">
-                <div className="lp-folder-metro-stations">
-                  <div className="lp-folder-metro-line" style={{ "--folder-color": folderMetro.folder?.color || "var(--text-muted)" }} />
-                  {folderMetro.items.map((item, i) => {
-                    const itemColor = item.color || folderMetro.folder?.color || "var(--text-muted)";
-                    return (
-                      <button key={item.id} type="button" className="lp-folder-metro-station" onClick={() => navigateFromFolderMetro(item)} title={`Afficher ${item.name}`}>
-                        <span className="lp-folder-metro-name">{item.name}</span>
-                        <span className="lp-folder-metro-dot" style={{ "--folder-color": itemColor }}>
-                          <IconGlyph icon={item.icon || (folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard")} size={13} />
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <div className="lp-folder-metro-empty">
-                <IconGlyph icon={folderMetro.folder?.icon || (folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard")} size={20} />
-                <span>Aucun {folderMetro.type === "project" ? "projet" : "tableau de bord"} dans ce dossier</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-      <button
-        type="button"
-        className="lp-global-add-task"
-        onClick={() => openNewTask({})}
-        aria-label="Créer une tâche"
-        title="Créer une tâche"
-      >
-        <Plus size={23} strokeWidth={2.5} />
-        <span className="lp-global-add-task-label">Nouvelle tâche</span>
-      </button>
-
-      {/* ---------------- Barre de navigation mobile (bas d'écran) ----------------
-          Masquée en desktop/tablette via CSS (display:none), affichée uniquement
-          sous 768px. Réutilise exactement les mêmes données/handlers que le rail
-          desktop (view, setView, ALL_VIEWS_META, enabledViews) — aucune logique
-          dupliquée, seule la présentation change. */}
-      <nav className="lp-mobile-tabbar" aria-label="Navigation principale">
-        {["control", "today", "projects"].map((key) => {
-          if (enabledViews[key] === false) return null;
-          const meta = ALL_VIEWS_META.find((v) => v.key === key);
-          if (!meta) return null;
-          const isActive = key === "projects" ? PROJECT_TAB_VIEW_KEYS.includes(view) : view === key;
-          return (
-            <button key={key} type="button" className={"lp-mobile-tab" + (isActive ? " active" : "")} onClick={() => { setView(key); setMobileMoreOpen(false); }}>
-              <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={21} />
-              <span>{meta.label === "Planning Projets" ? "Réseau" : meta.label}</span>
-            </button>
-          );
-        })}
-        <button type="button" className={"lp-mobile-tab" + (sidebarCollapsed === false ? " active" : "")} onClick={() => { setSidebarCollapsed((c) => !c); setMobileMoreOpen(false); }}>
-          <Folder size={21} />
-          <span>Dossiers</span>
-        </button>
-        <button type="button" className={"lp-mobile-tab" + (mobileMoreOpen ? " active" : "")} onClick={() => setMobileMoreOpen((o) => !o)}>
-          <MoreHorizontal size={21} />
-          {unreadNotificationsCount > 0 && <span className="lp-tab-badge lp-mobile-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
-          <span>Plus</span>
-        </button>
-      </nav>
-      {mobileMoreOpen && (
-        <>
-          <div className="lp-mobile-sheet-overlay" onMouseDown={() => setMobileMoreOpen(false)} onTouchStart={() => setMobileMoreOpen(false)} />
-          <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
-            <div className=
+              <div className="lp-folder-metro-line-wrap"

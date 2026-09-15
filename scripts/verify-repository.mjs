@@ -250,4 +250,36 @@ assert.match(builtSource, /lp-pm-risk is-/);
   });
 }
 
+/* Rattrapage des clés d'interface et écriture garantie à la fermeture (issue #39).
+   La fusion sur conflit existe déjà pour ces clés ; ce qui manquait était la
+   DÉTECTION d'une modification distante, et la survie de la requête au
+   déchargement de la page. Ces pièces ne se manifestent qu'à la fermeture de
+   l'onglet, sur l'autre machine, le lendemain. */
+{
+  assert.match(builtSource, /NEXORA:INTERFACE-SYNC:START/,
+    "Le rattachement des clés d'interface au rattrapage a disparu.");
+  assert.match(builtSource, /NEXORA:UNLOAD-FLUSH:START/,
+    "L'écriture garantie à la fermeture de l'onglet a disparu.");
+
+  /* La ligne de définition ne porte pas les parenthèses d'appel : ce motif ne
+     compte QUE les appels. Trois attendus — écoutes, contrôle de fraîcheur,
+     adoption d'une valeur distante. */
+  assert.match(builtSource, /const firebaseWatchedEntries = \(\) =>/,
+    "La définition de firebaseWatchedEntries a disparu.");
+  const watched = (builtSource.match(/firebaseWatchedEntries\(\)/g) || []).length;
+  assert.ok(watched >= 3,
+    `firebaseWatchedEntries n'est plus branché sur les trois boucles de rattrapage (${watched} appel(s) sur 3 attendus).`);
+
+  /* Le keepalive doit rester conditionné : l'appliquer sans condition
+     gaspillerait le quota partagé de 64 Kio sur des lectures de premier plan. */
+  assert.match(builtSource, /keepalive: nexoraPageLeaving && nexoraUseKeepalive\(nexoraBodyBytes\(requestBody\)\)/,
+    "La requête de la passerelle n'est plus marquée keepalive à la fermeture de la page.");
+
+  /* viewOrder est un ORDRE : le rendre fusionnable par identifiant le détruirait. */
+  const mergeableStart = builtSource.indexOf("const NEXORA_MERGEABLE_KEYS = new Set([");
+  const mergeableBlock = builtSource.slice(mergeableStart, builtSource.indexOf("]);", mergeableStart));
+  assert.ok(!mergeableBlock.includes('"nexora:viewOrder"'),
+    "nexora:viewOrder est devenu fusionnable : la fusion par identifiant détruirait l'ordre des vues.");
+}
+
 console.log("Repository invariants: OK");
