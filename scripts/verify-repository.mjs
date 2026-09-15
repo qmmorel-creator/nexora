@@ -282,4 +282,32 @@ assert.match(builtSource, /lp-pm-risk is-/);
     "nexora:viewOrder est devenu fusionnable : la fusion par identifiant détruirait l'ordre des vues.");
 }
 
+/* Treemap : le champ qui porte les tuiles (issue #47).
+   Une tuile n'est plus forcément un projet. Trois maillons peuvent se défaire
+   sans qu'aucune erreur ne se produise : le widget continue alors d'afficher
+   des projets pendant que la fiche annonce des statuts. */
+{
+  assert.match(builtSource, /const TREEMAP_TILE_BY = \["project", "status", "taskType", "criticality"\];/,
+    "La liste des champs qui peuvent porter les tuiles a changé ou disparu.");
+  /* Sans ce paramètre, computeTreemapProjects retombe sur t.projectId : les
+     tuiles restent des projets, en silence, quel que soit le réglage. */
+  assert.match(builtSource, /bucketIdOf = \(t\) => t\.projectId,/,
+    "Le rattachement d'une tâche à sa tuile n'est plus un paramètre du bloc de calcul.");
+  assert.match(builtSource, /projects: tileEntities,/,
+    "Le widget ne transmet plus les entités de tuile : le réglage serait sans effet.");
+  assert.match(builtSource, /\bbucketIdOf,\n\s+colorMode: cfg\.colorMode,/,
+    "Le widget ne transmet plus le rattachement : les tuiles resteraient des projets.");
+  /* Le réglage doit être à la fois proposé et enregistré. */
+  assert.match(builtSource, /onChange=\{\(e\) => setTreemapTileBy\(e\.target\.value\)\}/,
+    "Le choix du champ des tuiles a disparu de la fiche du widget.");
+  assert.match(builtSource, /data\.treemapTileBy = treemapTileBy;/,
+    "Le champ des tuiles choisi dans la fiche n'est plus enregistré.");
+  /* La priorité vient du projet DE LA TÂCHE : reprise de l'entité de la tuile,
+     la criticité d'une même tâche changerait selon l'axe choisi. */
+  assert.match(builtSource, /projectPriority: \(\(ctx\.projects \|\| \[\]\)\.find\(\(p\) => p\.id === t\.projectId\) \|\| \{\}\)\.priority/,
+    "La priorité du projet n'est plus lue sur le projet de la tâche.");
+  assert.match(builtSource, /treemapTaskCriticality\(\{ projectPriority: project\.priority \|\| "normal", \.\.\.facts \}\)/,
+    "Les faits de la tâche ne priment plus sur la priorité de l'entité de tuile.");
+}
+
 console.log("Repository invariants: OK");

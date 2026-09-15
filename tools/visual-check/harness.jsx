@@ -85,6 +85,16 @@ function AnnotationsHarness() {
     treemapShowUpcoming: true,
   });
   const [treemapFormOpen, setTreemapFormOpen] = useState(false);
+  // Mêmes tâches, mais une tuile = un STATUT (issue #47) : c'est le câblage du
+  // champ qui porte les tuiles, pas le pavage, qui est contrôlé ici.
+  const [statusTreemapWidget, setStatusTreemapWidget] = useState({
+    id: "w6", type: "projectTreemap", treemapTileBy: "status",
+    treemapSizeFilter: widgetDefaultFilter(),
+    treemapFields: ["projectName", "sizeCount", "progress", "budget", "folder"],
+    treemapGroupBy: "folder",
+    treemapShowLegend: false, treemapShowSearch: false,
+  });
+  const [statusTreemapFormOpen, setStatusTreemapFormOpen] = useState(false);
   // Vue Métro : mêmes annotations que le Gantt, plus un encadré qui saute une
   // ligne de projet (p1 et p3) — il doit produire DEUX cadres, jamais un seul.
   const [metroPrefs, setMetroPrefs] = useState({
@@ -173,6 +183,29 @@ function AnnotationsHarness() {
             pageFilter={null}
             onSave={(data) => { setTreemapWidget((w) => ({ ...w, ...data })); setTreemapFormOpen(false); }}
             onClose={() => setTreemapFormOpen(false)}
+          />
+        )}
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>TREEMAP PAR STATUT</h2>
+        <button type="button" id="harness-open-status-treemap-form" onClick={() => setStatusTreemapFormOpen(true)} style={{ marginBottom: 8 }}>
+          Ouvrir la fiche du Treemap par statut
+        </button>
+        <div id="harness-treemap-status" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, height: 300, marginBottom: 18 }}>
+          <WidgetProjectTreemap
+            widget={statusTreemapWidget}
+            tasks={tasks} ctx={ctx} risks={[]} expenses={[]}
+            onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
+          />
+        </div>
+        {statusTreemapFormOpen && (
+          <WidgetFormModal
+            widget={statusTreemapWidget}
+            existingWidgets={[]}
+            ctx={ctx}
+            pageFilter={null}
+            onSave={(data) => { setStatusTreemapWidget((w) => ({ ...w, ...data })); setStatusTreemapFormOpen(false); }}
+            onClose={() => setStatusTreemapFormOpen(false)}
           />
         )}
       </div>

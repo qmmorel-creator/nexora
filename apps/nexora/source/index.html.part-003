@@ -1,4 +1,52 @@
-",
+       <>
+            <Station x={xFor(row.minDate)} y={laneY} color={color} r={5.5} />
+            <Terminus x={xFor(row.maxDate) + 7} y={laneY} color={color} size={.8} />
+          </>
+        )}
+      </g>
+    );
+  };
+
+  const NetworkRow = ({ row }) => {
+    const { project: p, pMilestones, maxDate, avgProgress } = row;
+    const color = p.color || "var(--text-muted)";
+    const laneY = 30;
+    return (
+      <g opacity={dimOpacity("net-" + p.id)}>
+        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(maxDate)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" opacity="0.55" />
+        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(row.minDate) + (xFor(maxDate) - xFor(row.minDate)) * (avgProgress / 100)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" />
+        <Station x={xFor(row.minDate)} y={laneY} color={color} r={6} />
+        {pMilestones.map((t) => {
+          const mx = xFor(t.end);
+          const done = isTaskDoneGlobal(t, ctx);
+          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
+          const atRisk = showRiskBadges && !done && isAtRisk(t);
+          return (
+            <g key={t.id} onClick={() => onOpen(t)} style={{ cursor: "pointer" }}>
+              <foreignObject x={mx - 8} y={laneY - 8} width="16" height="16" style={{ overflow: "visible" }}>
+                <MilestoneGlyph size={16} icon={resolveMilestoneIcon(t, ctx)} />
+              </foreignObject>
+              {isCritical && <circle cx={mx} cy={laneY} r="10" fill="none" stroke={PM_CRITICAL_COLOR} strokeWidth="1.6" />}
+              {atRisk && (
+                <g transform={`translate(${mx + 8}, ${laneY - 13})`}>
+                  <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
+                  <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+        <g onClick={(e) => { e.stopPropagation(); setProjectSummary({ row, x: e.clientX, y: e.clientY }); }} style={{ cursor: "pointer" }}>
+          <circle cx={xFor(maxDate) + 12} cy={laneY} r="14" fill="transparent" />
+          <Terminus x={xFor(maxDate) + 6} y={laneY} color={color} size={0.85} />
+        </g>
+      </g>
+    );
+  };
+
+  const now = iso(new Date());
+  // Les widgets de synthèse de l'accueil doivent refléter l'état RÉEL global, pas
+  // le sous-ensemble déjà filtré par la vue (ex. "Masquer les tâches terminées",
   // filtre projet actif…) — sinon "Avancement global" peut afficher 0% juste parce
   // que les tâches terminées sont masquées par défaut. On repart donc de
   // ctx.tasks (liste complète, non filtrée) plutôt que de "dated"/"tasks".
@@ -7139,7 +7187,37 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
     milestone: getTaskType(t) === "milestone",
     daysToDue: t.end ? dayIndex(t.end) - todayIdx : null,
     inactivityDays: taskInteractionAgeDays(t),
+    // Lue sur le projet DE LA TÂCHE, pas sur l'entité de la tuile : sinon le
+    // score de criticité d'une même tâche changerait selon l'axe choisi.
+    projectPriority: ((ctx.projects || []).find((p) => p.id === t.projectId) || {}).priority || "normal",
   }), [ctx, todayIdx]);
+
+  // Entités qui portent les tuiles, et rattachement d'une tâche à la sienne.
+  // Les quatre champs partagent la forme { id, name, color } attendue par le
+  // bloc pur ; la tuile « sans valeur » évite qu'une tâche disparaisse du
+  // comptage sans qu'on puisse le voir.
+  const { tileEntities, bucketIdOf } = useMemo(() => {
+    if (cfg.tileBy === "status") {
+      return {
+        tileEntities: [...(ctx.statuses || []), { id: "__none__", name: "Sans statut", color: "#94A3B8" }],
+        bucketIdOf: (t) => t.statusId || "__none__",
+      };
+    }
+    if (cfg.tileBy === "taskType") {
+      return {
+        tileEntities: [...(ctx.taskTypes || []), { id: "__none__", name: "Sans type", color: "#94A3B8" }],
+        bucketIdOf: (t) => t.taskTypeId || "__none__",
+      };
+    }
+    if (cfg.tileBy === "criticality") {
+      return {
+        tileEntities: [...CRITICALITIES, { id: "__none__", name: "Sans criticité", color: "#94A3B8" }],
+        bucketIdOf: (t) => t.criticality || "__none__",
+      };
+    }
+    return { tileEntities: ctx.projects || [], bucketIdOf: (t) => t.projectId };
+  }, [cfg.tileBy, ctx.projects, ctx.statuses, ctx.taskTypes]);
+  const tilesAreProjects = cfg.tileBy === "project";
 
   // Les deux filtres sont évalués UNE fois sur l'ensemble du périmètre, puis
   // consultés par identifiant : pas de re-filtrage par projet ni par rendu.
@@ -7156,6 +7234,10 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
 
   const extras = useMemo(() => {
     const map = {};
+    // Risques et budget appartiennent au projet : sur une tuile de statut, il
+    // n'y a rien à y rattacher (les champs correspondants sont d'ailleurs
+    // retirés par le normalisateur).
+    if (!tilesAreProjects) return map;
     (ctx.projects || []).forEach((p) => {
       const stats = computeBudgetStats(p.id, ctx.projects, expenses || []);
       map[p.id] = {
@@ -7166,18 +7248,19 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
       };
     });
     return map;
-  }, [ctx.projects, risks, expenses]);
+  }, [ctx.projects, risks, expenses, tilesAreProjects]);
 
   const rows = useMemo(() => computeTreemapProjects({
-    projects: ctx.projects || [],
+    projects: tileEntities,
     tasks,
     sizeMatch: (t) => sizeIds.has(t.id),
     colorMatch: (t) => colorIds.has(t.id),
     factsOf,
     extras,
+    bucketIdOf,
     colorMode: cfg.colorMode,
     showZeroProjects: cfg.showZeroProjects,
-  }), [ctx.projects, tasks, sizeIds, colorIds, factsOf, extras, cfg.colorMode, cfg.showZeroProjects]);
+  }), [tileEntities, bucketIdOf, tasks, sizeIds, colorIds, factsOf, extras, cfg.colorMode, cfg.showZeroProjects]);
 
   // Champs personnalisés numériques : somme sur les tâches retenues par le
   // filtre de taille. Calculé seulement si un tel champ est réellement affiché.
@@ -7189,16 +7272,17 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
     if (!customFieldIds.length) return {};
     const map = {};
     tasks.forEach((t) => {
-      if (!sizeIds.has(t.id) || !t.projectId) return;
+      const bucketId = sizeIds.has(t.id) ? bucketIdOf(t) : null;
+      if (!bucketId) return;
       customFieldIds.forEach((id) => {
         const raw = Number(t.customFields ? t.customFields[id] : undefined);
         if (!Number.isFinite(raw)) return;
-        if (!map[t.projectId]) map[t.projectId] = {};
-        map[t.projectId][id] = (map[t.projectId][id] || 0) + raw;
+        if (!map[bucketId]) map[bucketId] = {};
+        map[bucketId][id] = (map[bucketId][id] || 0) + raw;
       });
     });
     return map;
-  }, [tasks, sizeIds, customFieldIds]);
+  }, [tasks, sizeIds, customFieldIds, bucketIdOf]);
 
   const domain = useMemo(() => treemapColorDomain(rows, cfg.colorMode), [rows, cfg.colorMode]);
   const legend = useMemo(
@@ -7332,7 +7416,7 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
     return null;
   };
 
-  const openRow = (row) => { if (cfg.openOnClick && onOpenProject) onOpenProject(row.projectId); };
+  const openRow = (row) => { if (tilesAreProjects && cfg.openOnClick && onOpenProject) onOpenProject(row.projectId); };
 
   const tooltipNode = () => {
     if (!hover) return null;
@@ -7346,7 +7430,7 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
         {cfg.colorMode === "averageCriticality" && <div className="lp-widget-treemap-tooltip-row"><span>Couleur — criticité moyenne</span><strong>{row.criticality.score}/100 · {worst.label}</strong></div>}
         {cfg.colorMode === "sizeFilterGradient" && <div className="lp-widget-treemap-tooltip-row"><span>Couleur — même filtre</span><strong>{row.sizeCount}</strong></div>}
         <div className="lp-widget-treemap-tooltip-sep" />
-        <div className="lp-widget-treemap-tooltip-row"><span>Tâches du projet (périmètre)</span><strong>{row.taskCount}</strong></div>
+        <div className="lp-widget-treemap-tooltip-row"><span>Tâches de la tuile (périmètre)</span><strong>{row.taskCount}</strong></div>
         <div className="lp-widget-treemap-tooltip-row"><span>Terminées</span><strong>{row.doneCount}</strong></div>
         <div className="lp-widget-treemap-tooltip-row"><span>En retard</span><strong>{row.lateCount}</strong></div>
         <div className="lp-widget-treemap-tooltip-row"><span>Urgentes</span><strong>{row.urgentCount}</strong></div>
@@ -7406,7 +7490,7 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
         }
         style={{ left: tile.x + inset, top: tile.y + inset, width: w, height: h, background: bg, color: fg, borderRadius: radiusPx }}
         onClick={() => { setSelectedId((prev) => (prev === row.projectId ? null : row.projectId)); openRow(row); }}
-        onContextMenu={(e) => { e.preventDefault(); setHover(null); setMenu({ row, x: e.clientX, y: e.clientY }); }}
+        onContextMenu={(e) => { if (!tilesAreProjects) return; e.preventDefault(); setHover(null); setMenu({ row, x: e.clientX, y: e.clientY }); }}
         onMouseEnter={(e) => setHover({ row, x: e.clientX, y: e.clientY })}
         onMouseMove={(e) => setHover((prev) => (prev && prev.row === row ? { row, x: e.clientX, y: e.clientY } : prev))}
         onMouseLeave={() => setHover((prev) => (prev && prev.row === row ? null : prev))}
@@ -7457,13 +7541,20 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
   // États vides — jamais un cadre blanc muet : on dit pourquoi il n'y a rien et
   // quel réglage changerait la réponse.
   const emptyState = (() => {
-    if (!(ctx.projects || []).length) return { title: "Aucun projet", sub: "Crée un projet pour que le Treemap ait quelque chose à représenter." };
+    // Les messages nomment le champ qui porte les tuiles : « aucun projet »
+    // serait faux, et surtout inutile, sur un Treemap groupé par statut.
+    const noun = TREEMAP_TILE_BY_LABELS[cfg.tileBy].plural;
+    if (!tileEntities.length) {
+      return tilesAreProjects
+        ? { title: "Aucun projet", sub: "Crée un projet pour que le Treemap ait quelque chose à représenter." }
+        : { title: `Aucun de ces ${noun}`, sub: `Aucun ${TREEMAP_TILE_BY_LABELS[cfg.tileBy].label.toLowerCase()} n'est défini : le Treemap n'a rien à représenter.` };
+    }
     if (rows.length === 0) {
       return tasks.length === 0
-        ? { title: "Aucune tâche dans ce périmètre", sub: "Le filtre du widget et celui de l'onglet ne laissent passer aucune tâche : aucun projet ne peut donc être mesuré." }
-        : { title: "Aucun projet ne porte de tâche correspondante", sub: "Le filtre de taille exclut toutes les tâches de chaque projet. Élargis-le, ou coche « Afficher les projets sans tâche correspondante » pour les garder en tuile minimale." };
+        ? { title: "Aucune tâche dans ce périmètre", sub: `Le filtre du widget et celui de l'onglet ne laissent passer aucune tâche : aucun de ces ${noun} ne peut donc être mesuré.` }
+        : { title: `Aucun de ces ${noun} ne porte de tâche correspondante`, sub: "Le filtre de taille exclut toutes les tâches. Élargis-le, ou coche « Afficher les tuiles sans tâche correspondante » pour les garder en tuile minimale." };
     }
-    if (visibleRows.length === 0) return { title: "Aucun projet pour cette sélection", sub: "La recherche ou la tranche de légende active ne retient aucun projet." };
+    if (visibleRows.length === 0) return { title: `Aucun de ces ${noun} pour cette sélection`, sub: `La recherche ou la tranche de légende active ne retient aucun de ces ${noun}.` };
     return null;
   })();
 
@@ -8038,6 +8129,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const treemapCfg = useMemo(() => normalizeProjectTreemapConfig(widget || {}), [widget]);
   const [treemapSizeFilter, setTreemapSizeFilter] = useState(() => ({ ...widgetDefaultFilter(), ...(treemapCfg.sizeFilter || {}) }));
   const [treemapColorFilter, setTreemapColorFilter] = useState(() => ({ ...widgetDefaultFilter(), ...(treemapCfg.colorFilter || {}) }));
+  const [treemapTileBy, setTreemapTileBy] = useState(treemapCfg.tileBy);
   const [treemapColorMode, setTreemapColorMode] = useState(treemapCfg.colorMode);
   const [treemapPalette, setTreemapPalette] = useState(treemapCfg.palette);
   const [treemapDirection, setTreemapDirection] = useState(treemapCfg.direction);
@@ -8057,10 +8149,16 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [treemapColorFilterOpen, setTreemapColorFilterOpen] = useState(false);
   // Champs proposés : le catalogue, plus les champs personnalisés numériques —
   // les seuls qui puissent être agrégés depuis les tâches d'un projet.
+  // Le catalogue suit le champ qui porte les tuiles : proposer « Dossier » sur
+  // des tuiles de statut donnerait une capsule que le normalisateur retire à
+  // l'enregistrement — une case qui se coche et ne tient pas.
   const treemapFieldCatalogue = useMemo(() => [
-    ...TREEMAP_TILE_FIELDS,
+    ...TREEMAP_TILE_FIELDS
+      .filter((f) => treemapTileBy === "project" || !TREEMAP_PROJECT_ONLY_FIELDS.includes(f.key))
+      .filter((f) => !(treemapTileBy === "status" && f.key === "dominantStatus"))
+      .map((f) => (f.key === "projectName" ? { ...f, label: TREEMAP_TILE_BY_LABELS[treemapTileBy].tileName } : f)),
     ...(ctx.customFieldDefs || []).filter((f) => f.type === "number").map((f) => ({ key: "cf:" + f.id, label: f.name })),
-  ], [ctx.customFieldDefs]);
+  ], [ctx.customFieldDefs, treemapTileBy]);
   const treemapFieldLabel = (key) => treemapFieldCatalogue.find((f) => f.key === key)?.label || key;
   const moveTreemapField = (key, dir) => setTreemapFields((prev) => {
     const i = prev.indexOf(key);
@@ -8200,6 +8298,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (type === "riskMatrix") data.riskMatrixProjectId = riskMatrixProjectId;
     if (type === "projectTreemap") {
+      data.treemapTileBy = treemapTileBy;
       data.treemapSizeFilter = treemapSizeFilter;
       data.treemapColorFilter = treemapColorMode === "secondaryFilterGradient" ? treemapColorFilter : (widget?.treemapColorFilter || null);
       data.treemapColorMode = treemapColorMode;
@@ -8793,11 +8892,27 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       {type === "projectTreemap" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-            Une tuile = un projet. La surface vient du nombre de tâches du projet retenues par le filtre de taille ci-dessous ;
-            la couleur, du réglage « Coloration ». Le filtre général du widget (plus bas) décide d'abord du périmètre.
+            Une tuile = une valeur du champ choisi ci-dessous. La surface vient du nombre de tâches de la tuile retenues par
+            le filtre de taille ; la couleur, du réglage « Coloration ». Le filtre général du widget (plus bas) décide d'abord
+            du périmètre.
           </p>
 
           <div className="lp-widget-config-title" style={{ marginTop: 4 }}><Search size={12} /> Données</div>
+          <div className="lp-field">
+            <label>Une tuile représente</label>
+            <select value={treemapTileBy} onChange={(e) => setTreemapTileBy(e.target.value)}>
+              {TREEMAP_TILE_BY.map((key) => (
+                <option value={key} key={key}>{TREEMAP_TILE_BY_LABELS[key].label}</option>
+              ))}
+            </select>
+            {treemapTileBy !== "project" && (
+              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+                Dossier, priorité, budget et risques appartiennent au projet : ces champs de tuile et ces regroupements sont
+                retirés tant que les tuiles ne sont pas des projets. Ouvrir, modifier ou filtrer sur la tuile reste également
+                propre aux projets.
+              </p>
+            )}
+          </div>
           <div className="lp-field">
             <label>Filtre de taille <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(vide = toutes les tâches du périmètre)</span></label>
             <div className="lp-widget-appearance-toggle" onClick={() => setTreemapSizeFilterOpen((v) => !v)}>
@@ -8813,7 +8928,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           </div>
           <label className="lp-checkbox-line">
             <input type="checkbox" checked={treemapShowZeroProjects} onChange={(e) => setTreemapShowZeroProjects(e.target.checked)} />
-            Afficher les projets sans tâche correspondante, en tuile minimale
+            Afficher les {TREEMAP_TILE_BY_LABELS[treemapTileBy].plural} sans tâche correspondante, en tuile minimale
           </label>
 
           <div className="lp-widget-config-title" style={{ marginTop: 14 }}><Palette size={12} /> Encodage visuel</div>
@@ -8916,14 +9031,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             <input type="checkbox" checked={treemapOpenOnClick} onChange={(e) => setTreemapOpenOnClick(e.target.checked)} /> Ouvrir le projet au clic sur sa tuile
           </label>
           <label className="lp-checkbox-line">
-            <input type="checkbox" checked={treemapShowSearch} onChange={(e) => setTreemapShowSearch(e.target.checked)} /> Afficher la recherche de projet
+            <input type="checkbox" checked={treemapShowSearch} onChange={(e) => setTreemapShowSearch(e.target.checked)} /> Afficher la recherche par nom de tuile
           </label>
           <div className="lp-field" style={{ marginTop: 8 }}>
             <label>Regroupement</label>
             <div className="lp-density-row">
               <button type="button" className={"lp-density-btn" + (treemapGroupBy === "none" ? " active" : "")} onClick={() => setTreemapGroupBy("none")}>Aucun</button>
-              <button type="button" className={"lp-density-btn" + (treemapGroupBy === "folder" ? " active" : "")} onClick={() => setTreemapGroupBy("folder")}>Dossier</button>
-              <button type="button" className={"lp-density-btn" + (treemapGroupBy === "priority" ? " active" : "")} onClick={() => setTreemapGroupBy("priority")}>Priorité</button>
+              {treemapTileBy === "project" && (
+                <>
+                  <button type="button" className={"lp-density-btn" + (treemapGroupBy === "folder" ? " active" : "")} onClick={() => setTreemapGroupBy("folder")}>Dossier</button>
+                  <button type="button" className={"lp-density-btn" + (treemapGroupBy === "priority" ? " active" : "")} onClick={() => setTreemapGroupBy("priority")}>Priorité</button>
+                </>
+              )}
               <button type="button" className={"lp-density-btn" + (treemapGroupBy === "owner" ? " active" : "")} onClick={() => setTreemapGroupBy("owner")}>Responsable</button>
               <button type="button" className={"lp-density-btn" + (treemapGroupBy === "criticality" ? " active" : "")} onClick={() => setTreemapGroupBy("criticality")}>Criticité</button>
             </div>

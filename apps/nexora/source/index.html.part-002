@@ -3662,9 +3662,15 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
 // === NEXORA:GANTT-ANNOTATIONS:END ===
 
 // === NEXORA:PROJECT-TREEMAP:START ===
-// Widget « Treemap projets ». Règle fondatrice : UNE TUILE = UN PROJET. Une
-// tâche n'est jamais une tuile — elle ne sert qu'à calculer les métriques du
-// projet auquel elle appartient.
+// Widget « Treemap ». Règle fondatrice : UNE TUILE = UNE VALEUR DU CHAMP QUI
+// PORTE LES TUILES — le projet par défaut, sinon le statut, le type ou la
+// criticité. Une tâche n'est jamais une tuile : elle ne sert qu'à calculer les
+// métriques de la tuile à laquelle elle se rattache.
+//
+// Les quatre champs possibles partagent la même forme { id, name, color } :
+// c'est ce qui permet au bloc de n'en connaître qu'un seul, générique. Dans les
+// lignes produites, `project` désigne donc l'ENTITÉ DE LA TUILE, qui n'est un
+// projet que dans le cas par défaut.
 //
 // Tout ce bloc est PUR : il ne connaît ni React, ni le moteur de filtres de
 // Nexora. L'application lui passe des prédicats et des faits déjà construits
@@ -3673,6 +3679,13 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
 
 const TREEMAP_COLOR_MODES = ["sizeFilterGradient", "secondaryFilterGradient", "averageCriticality"];
 const TREEMAP_GROUP_BY = ["none", "folder", "priority", "owner", "criticality"];
+// Champs qui peuvent porter les tuiles (issue #47).
+const TREEMAP_TILE_BY = ["project", "status", "taskType", "criticality"];
+// Réglages et champs de tuile qui n'ont de sens que sur des projets : un dossier,
+// une priorité, un budget ou un risque n'existent pas pour un statut. Affichés
+// quand même, ils resteraient vides sans jamais dire pourquoi.
+const TREEMAP_PROJECT_ONLY_FIELDS = ["riskCount", "budget", "priority", "folder"];
+const TREEMAP_PROJECT_ONLY_GROUPS = ["folder", "priority"];
 const TREEMAP_GRADIENT_DIRECTIONS = ["lowToHigh", "highToLow"];
 // Couleur des projets dont la valeur de coloration est absente ou nulle : un
 // gris neutre, jamais une couleur d'alerte.
@@ -3785,13 +3798,17 @@ function computeTreemapProjects(input) {
     extras = {},
     colorMode = "sizeFilterGradient",
     showZeroProjects = false,
+    // Rattache une tâche à sa tuile. Par défaut le projet, d'où la compatibilité
+    // avec l'unique comportement d'avant l'issue #47.
+    bucketIdOf = (t) => t.projectId,
   } = input || {};
 
   const byProject = new Map();
   (Array.isArray(tasks) ? tasks : []).forEach((t) => {
-    if (!t || !t.projectId) return;
-    if (!byProject.has(t.projectId)) byProject.set(t.projectId, []);
-    byProject.get(t.projectId).push(t);
+    const bucketId = t ? bucketIdOf(t) : null;
+    if (!t || !bucketId) return;
+    if (!byProject.has(bucketId)) byProject.set(bucketId, []);
+    byProject.get(bucketId).push(t);
   });
 
   const rows = [];
@@ -3815,7 +3832,7 @@ function computeTreemapProjects(input) {
       if (facts.late) lateCount += 1;
       if (facts.urgent) urgentCount += 1;
       progressSum += Math.max(0, Math.min(100, Number(t.progress) || 0));
-      criticalitySum += treemapTaskCriticality({ ...facts, projectPriority: project.priority || "normal" }).score;
+      criticalitySum += treemapTaskCriticality({ projectPriority: project.priority || "normal", ...facts }).score;
       if (t.end && (!endDate || t.end > endDate)) endDate = t.end;
       if (facts.milestone && !facts.done) {
         const days = Number(facts.daysToDue);
@@ -4081,19 +4098,33 @@ const TREEMAP_TILE_FIELDS = [
   { key: "folder", label: "Dossier" },
 ];
 const TREEMAP_DEFAULT_FIELDS = ["projectName", "sizeCount", "progress", "averageCriticality", "lateTaskCount"];
+// Libellés du champ qui porte les tuiles, et nom du premier champ de la tuile —
+// « Nom du projet » n'a plus de sens quand la tuile est un statut.
+const TREEMAP_TILE_BY_LABELS = {
+  project: { label: "Projet", tileName: "Nom du projet", plural: "projets" },
+  status: { label: "Statut", tileName: "Nom du statut", plural: "statuts" },
+  taskType: { label: "Type de tâche", tileName: "Nom du type", plural: "types" },
+  criticality: { label: "Criticité", tileName: "Niveau de criticité", plural: "niveaux" },
+};
 
 function normalizeProjectTreemapConfig(widget) {
   const w = widget || {};
   const colorMode = TREEMAP_COLOR_MODES.includes(w.treemapColorMode) ? w.treemapColorMode : "sizeFilterGradient";
+  const tileBy = TREEMAP_TILE_BY.includes(w.treemapTileBy) ? w.treemapTileBy : "project";
   const known = new Set(TREEMAP_TILE_FIELDS.map((f) => f.key));
   const rawFields = Array.isArray(w.treemapFields) ? w.treemapFields : TREEMAP_DEFAULT_FIELDS;
   const fields = [];
   rawFields.forEach((key) => {
     if (typeof key !== "string" || !key) return;
     if (!known.has(key) && !key.startsWith("cf:")) return;
+    // Un dossier, une priorité, un budget, un risque : ces champs appartiennent
+    // au projet. Sur une tuile de statut ils resteraient vides sans explication.
+    if (tileBy !== "project" && TREEMAP_PROJECT_ONLY_FIELDS.includes(key)) return;
+    // Le statut dominant d'une tuile de statut, c'est ce statut : une tautologie.
+    if (tileBy === "status" && key === "dominantStatus") return;
     if (!fields.includes(key)) fields.push(key);
   });
-  // Le nom du projet est toujours affiché : sans lui la tuile ne désigne rien.
+  // Le nom de l'entité est toujours affiché : sans lui la tuile ne désigne rien.
   if (!fields.includes("projectName")) fields.unshift("projectName");
   const paletteKey = TREEMAP_PALETTES[w.treemapPalette]
     ? w.treemapPalette
@@ -4108,7 +4139,14 @@ function normalizeProjectTreemapConfig(widget) {
     fields,
     showProgressRing: w.treemapShowProgressRing !== false,
     showUpcoming: w.treemapShowUpcoming === true,
-    groupBy: TREEMAP_GROUP_BY.includes(w.treemapGroupBy) ? w.treemapGroupBy : "none",
+    tileBy,
+    // Regrouper des statuts par dossier ou par priorité de projet n'a pas de
+    // sens : le réglage retombe sur « aucun » plutôt que de produire des bandes
+    // vides. « Responsable » et « criticité » se calculent par tuile, eux.
+    groupBy: (() => {
+      const raw = TREEMAP_GROUP_BY.includes(w.treemapGroupBy) ? w.treemapGroupBy : "none";
+      return tileBy !== "project" && TREEMAP_PROJECT_ONLY_GROUPS.includes(raw) ? "none" : raw;
+    })(),
     compact: w.treemapCompact === true,
     showLegend: w.treemapShowLegend !== false,
     showSearch: w.treemapShowSearch !== false,
@@ -12921,52 +12959,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
         }))}
 
         {groups.length > 0 && (
-          <>
-            <Station x={xFor(row.minDate)} y={laneY} color={color} r={5.5} />
-            <Terminus x={xFor(row.maxDate) + 7} y={laneY} color={color} size={.8} />
-          </>
-        )}
-      </g>
-    );
-  };
-
-  const NetworkRow = ({ row }) => {
-    const { project: p, pMilestones, maxDate, avgProgress } = row;
-    const color = p.color || "var(--text-muted)";
-    const laneY = 30;
-    return (
-      <g opacity={dimOpacity("net-" + p.id)}>
-        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(maxDate)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" opacity="0.55" />
-        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(row.minDate) + (xFor(maxDate) - xFor(row.minDate)) * (avgProgress / 100)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" />
-        <Station x={xFor(row.minDate)} y={laneY} color={color} r={6} />
-        {pMilestones.map((t) => {
-          const mx = xFor(t.end);
-          const done = isTaskDoneGlobal(t, ctx);
-          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
-          const atRisk = showRiskBadges && !done && isAtRisk(t);
-          return (
-            <g key={t.id} onClick={() => onOpen(t)} style={{ cursor: "pointer" }}>
-              <foreignObject x={mx - 8} y={laneY - 8} width="16" height="16" style={{ overflow: "visible" }}>
-                <MilestoneGlyph size={16} icon={resolveMilestoneIcon(t, ctx)} />
-              </foreignObject>
-              {isCritical && <circle cx={mx} cy={laneY} r="10" fill="none" stroke={PM_CRITICAL_COLOR} strokeWidth="1.6" />}
-              {atRisk && (
-                <g transform={`translate(${mx + 8}, ${laneY - 13})`}>
-                  <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
-                  <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
-                </g>
-              )}
-            </g>
-          );
-        })}
-        <g onClick={(e) => { e.stopPropagation(); setProjectSummary({ row, x: e.clientX, y: e.clientY }); }} style={{ cursor: "pointer" }}>
-          <circle cx={xFor(maxDate) + 12} cy={laneY} r="14" fill="transparent" />
-          <Terminus x={xFor(maxDate) + 6} y={laneY} color={color} size={0.85} />
-        </g>
-      </g>
-    );
-  };
-
-  const now = iso(new Date());
-  // Les widgets de synthèse de l'accueil doivent refléter l'état RÉEL global, pas
-  // le sous-ensemble déjà filtré par la vue (ex. "Masquer les tâches terminées
+   

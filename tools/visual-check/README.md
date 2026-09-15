@@ -43,6 +43,14 @@ deux encadrés, dont un posé sur des tâches **non successives** :
 - les étiquettes de cadres ne se superposent pas ;
 - les cadres ont une surface non nulle et restent dans la zone des lignes.
 
+Scénario « Treemap par statut » — le même widget, mais une tuile = un statut :
+
+- les tuiles portent des noms de statut, pas des noms de projet ;
+- la fiche propose les quatre champs possibles pour les tuiles ;
+- dossier, priorité, budget et risques — des notions de projet — ne sont plus
+  proposés, ni comme champ de tuile ni comme regroupement ;
+- le premier champ de la tuile s'intitule d'après le champ choisi.
+
 ## Pourquoi un dossier séparé
 
 `apps/nexora` est construit par Netlify à chaque publication. Y ajouter React,
