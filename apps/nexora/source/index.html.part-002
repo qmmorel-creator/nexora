@@ -4344,6 +4344,55 @@ function scatterWindowOverflow(lanes, domain) {
 }
 // === NEXORA:DEADLINE-SCATTER:END ===
 
+// === NEXORA:POINTER-TOOLTIP:START ===
+// Infobulle suivant le curseur, pour les widgets.
+//
+// Deux défauts se cumulaient dans les infobulles posées à même le corps du
+// widget, et se voyaient comme un simple « décalage » :
+//
+// 1. position:fixed ne vaut par rapport à la fenêtre que tant qu'AUCUN ancêtre
+//    n'établit de bloc conteneur (transform, filter, will-change…). Posée dans
+//    le corps du widget, l'infobulle dépend donc de tout ce qui pourra être
+//    ajouté au-dessus d'elle un jour — et se décale le jour où ça arrive.
+// 2. le débordement n'était borné qu'à droite, et par une largeur devinée
+//    (280 px) qui n'est pas celle de la boîte : près du bas ou de la gauche de
+//    l'écran, l'infobulle sortait du champ.
+//
+// Le portail vers document.body supprime le premier, et la mesure réelle de la
+// boîte le second : on place d'abord, on mesure, puis on rabat si besoin.
+// C'est la méthode déjà éprouvée par l'infobulle du Mini-Gantt.
+function WidgetPointerTooltip({ x, y, className, children }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: x + 14, top: y + 14 });
+
+  useLayoutEffect(() => {
+    const gap = 14;
+    const node = ref.current;
+    const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
+    const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
+    // Sans mesure (premier rendu), on garde le placement direct : mieux vaut
+    // une infobulle bien posée au curseur qu'un saut visible.
+    const box = node ? node.getBoundingClientRect() : { width: 0, height: 0 };
+    let left = x + gap;
+    let top = y + gap;
+    if (box.width && left + box.width + 8 > viewportW) left = x - box.width - gap;
+    if (box.height && top + box.height + 8 > viewportH) top = y - box.height - gap;
+    setPos({ left: Math.max(8, left), top: Math.max(8, top) });
+  }, [x, y, children]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className={className}
+      style={{ position: "fixed", left: pos.left, top: pos.top, zIndex: 100000, pointerEvents: "none" }}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
+// === NEXORA:POINTER-TOOLTIP:END ===
+
 function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
   const [hover, setHover] = useState(null);
@@ -4520,10 +4569,7 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
       )}
 
       {hover && (
-        <div
-          className="lp-widget-hmgrid-tip"
-          style={{ left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 280), top: hover.y + 14 }}
-        >
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-widget-hmgrid-tip">
           <strong>{hover.row.name} × {hover.col.name}</strong>
           <span>{HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{hover.cell.value}{suffixe}</b></span>
           {cfg.metric !== "count" && <span>{hover.cell.count} tâche{hover.cell.count > 1 ? "s" : ""} à ce croisement</span>}
@@ -4531,7 +4577,7 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
             <span key={t.id} className="lp-widget-hmgrid-tip-task">{t.title || "Sans titre"}</span>
           ))}
           {hover.cell.tasks.length > 4 && <span className="lp-widget-hmgrid-tip-more">et {hover.cell.tasks.length - 4} autre{hover.cell.tasks.length - 4 > 1 ? "s" : ""}…</span>}
-        </div>
+        </WidgetPointerTooltip>
       )}
     </div>
   );

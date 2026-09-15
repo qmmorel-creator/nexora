@@ -314,6 +314,34 @@ assert.match(builtSource, /lp-pm-risk is-/);
       "Le corps du widget ne s'isole plus : un descendant peut repasser au-dessus du bandeau.");
   }
 
+  /* Issue #54. Les infobulles des widgets étaient posées à même le corps du
+     widget en position:fixed. Deux pièges : position:fixed cesse de valoir par
+     rapport à la fenêtre dès qu'un ancêtre établit un bloc conteneur, et le
+     débordement n'était borné qu'à droite, sur une largeur devinée. Depuis #56
+     le corps du widget s'isole, ce qui les enfermerait en plus dans son plan.
+     Le portail vers document.body règle les trois d'un coup. */
+  assert.match(builtSource, /=== NEXORA:POINTER-TOOLTIP:START ===/,
+    "L'infobulle de survol commune aux widgets a disparu.");
+  {
+    const start = builtSource.indexOf("=== NEXORA:POINTER-TOOLTIP:START ===");
+    const end = builtSource.indexOf("=== NEXORA:POINTER-TOOLTIP:END ===", start);
+    const bloc = builtSource.slice(start, end);
+    assert.match(bloc, /createPortal\(/,
+      "L'infobulle des widgets n'est plus sortie dans un portail : elle se décalera de nouveau.");
+    assert.match(bloc, /getBoundingClientRect\(\)/,
+      "L'infobulle des widgets ne mesure plus sa boîte : son rabat redevient une devinette.");
+  }
+
+  /* Le motif d'origine — placement direct au curseur, sans mesure ni rabat —
+     reposé ailleurs ramènerait le défaut sans bruit. L'infobulle du Mini-Gantt
+     garde son position:fixed : elle calcule ses coordonnées et se rend déjà
+     dans un portail, c'est le modèle dont le reste s'inspire. */
+  {
+    const restants = (builtSource.match(/style=\{\{ position: "fixed", left: [^,]+ \+ 12, top: [^ ]+ \+ 12 \}\}/g) || []).length;
+    assert.equal(restants, 0,
+      `${restants} infobulle(s) de widget encore posée(s) au curseur sans rabat ni portail.`);
+  }
+
   /* La ligne de définition ne porte pas les parenthèses d'appel : ce motif ne
      compte QUE les appels. Trois attendus — écoutes, contrôle de fraîcheur,
      adoption d'une valeur distante. */
