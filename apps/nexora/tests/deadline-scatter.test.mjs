@@ -11,9 +11,11 @@ const START = "// === NEXORA:DEADLINE-SCATTER:START ===";
 const END = "// === NEXORA:DEADLINE-SCATTER:END ===";
 const EXPORTS = [
   "SCATTER_LANE_FIELDS", "SCATTER_POINT_RADIUS", "SCATTER_POINT_GAP",
-  "SCATTER_LANE_LABEL_LIMIT", "SCATTER_MIN_SPAN_DAYS",
+  "SCATTER_LANE_LABEL_LIMIT", "SCATTER_MIN_SPAN_DAYS", "SCATTER_WINDOW_MAX_DAYS",
+  "SCATTER_WINDOW_DEFAULT_BEFORE", "SCATTER_WINDOW_DEFAULT_AFTER",
   "scatterDaysToDeadline", "scatterBuildLanes", "scatterPackLane",
   "scatterVisibleLabels", "scatterDomain",
+  "scatterNormalizeWindow", "scatterClampDays", "scatterWindowOverflow",
 ];
 
 const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
@@ -21,8 +23,10 @@ const from = html.indexOf(START), to = html.indexOf(END);
 assert.ok(from !== -1 && to > from, "bloc du nuage de points introuvable dans dist/index.html");
 const {
   SCATTER_LANE_FIELDS, SCATTER_POINT_RADIUS, SCATTER_POINT_GAP,
-  SCATTER_LANE_LABEL_LIMIT, SCATTER_MIN_SPAN_DAYS,
+  SCATTER_LANE_LABEL_LIMIT, SCATTER_MIN_SPAN_DAYS, SCATTER_WINDOW_MAX_DAYS,
+  SCATTER_WINDOW_DEFAULT_BEFORE, SCATTER_WINDOW_DEFAULT_AFTER,
   scatterDaysToDeadline, scatterBuildLanes, scatterPackLane, scatterVisibleLabels, scatterDomain,
+  scatterNormalizeWindow, scatterClampDays, scatterWindowOverflow,
 } = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 )();
@@ -165,4 +169,92 @@ test("sans aucune tâche, le champ reste centré sur aujourd'hui", () => {
 test("les trois champs de couloir annoncés sont bien ceux demandés", () => {
   assert.deepEqual(SCATTER_LANE_FIELDS, ["project", "status", "criticality"]);
   assert.ok(SCATTER_POINT_RADIUS > 0 && SCATTER_POINT_GAP >= 0);
+});
+
+/* ------------------------------------------------------------------------- *
+ * Fenêtre d'affichage (issue #50). Une seule échéance lointaine suffisait à
+ * tasser tout le nuage autour de l'origine.
+ * ------------------------------------------------------------------------- */
+
+test("sans réglage, la fenêtre reste automatique", () => {
+  // Compatibilité : tous les nuages déjà posés passent par ce chemin.
+  assert.equal(scatterNormalizeWindow({}).mode, "auto");
+  assert.equal(scatterNormalizeWindow(undefined).mode, "auto");
+  assert.equal(scatterNormalizeWindow({ scatterWindowMode: "inventé" }).mode, "auto");
+});
+
+test("une borne absurde est ramenée dans les limites, jamais à zéro", () => {
+  // Une borne à zéro effondrerait ce côté de l'axe : tous les points s'y
+  // empileraient, et le widget deviendrait une colonne.
+  const cas = [
+    [{ scatterWindowBefore: 0 }, "before", 1],
+    [{ scatterWindowBefore: -40 }, "before", 1],
+    [{ scatterWindowAfter: 99999 }, "after", SCATTER_WINDOW_MAX_DAYS],
+    [{ scatterWindowAfter: "abc" }, "after", SCATTER_WINDOW_DEFAULT_AFTER],
+    // `null` et "" valent zéro pour Number : une valeur absente, ou un champ que
+    // l'on vient de vider, doit revenir au défaut et non au minimum d'un jour.
+    [{ scatterWindowBefore: null }, "before", SCATTER_WINDOW_DEFAULT_BEFORE],
+    [{ scatterWindowAfter: "" }, "after", SCATTER_WINDOW_DEFAULT_AFTER],
+    [{ scatterWindowAfter: 12.6 }, "after", 13],
+  ];
+  for (const [widget, champ, attendu] of cas) {
+    assert.equal(scatterNormalizeWindow(widget)[champ], attendu, `${champ} pour ${JSON.stringify(widget)}`);
+  }
+});
+
+test("en fenêtre fixe, l'axe ne dépend plus des tâches", () => {
+  // C'est tout le point : une tâche à J+400 ne doit plus étirer le champ.
+  const lanes = [{ points: [{ days: 400 }, { days: -300 }] }];
+  const fixe = scatterDomain(lanes, { mode: "fixed", before: 30, after: 90 });
+  assert.deepEqual([fixe.min, fixe.max], [-30, 90]);
+  const auto = scatterDomain(lanes, { mode: "auto", before: 30, after: 90 });
+  assert.ok(auto.min <= -300 && auto.max >= 400, "en automatique, l'axe suit toujours les tâches");
+});
+
+test("un point hors fenêtre est rabattu sur le bord, pas supprimé ni déplacé au hasard", () => {
+  const domain = { min: -30, max: 90 };
+  assert.deepEqual(scatterClampDays(400, domain), { plotDays: 90, beyond: "high" });
+  assert.deepEqual(scatterClampDays(-300, domain), { plotDays: -30, beyond: "low" });
+  assert.deepEqual(scatterClampDays(5, domain), { plotDays: 5, beyond: null });
+  // Les bornes elles-mêmes sont DANS la fenêtre : les rabattre les ferait
+  // passer pour des débordements alors qu'elles sont exactement à la limite.
+  assert.deepEqual(scatterClampDays(90, domain), { plotDays: 90, beyond: null });
+  assert.deepEqual(scatterClampDays(-30, domain), { plotDays: -30, beyond: null });
+});
+
+test("ce qui déborde est compté de chaque côté", () => {
+  // Une fenêtre qui masque sans le dire serait un filtre déguisé.
+  const domain = { min: -30, max: 90 };
+  // Les deux tâches posées EXACTEMENT sur les bornes sont dans la fenêtre :
+  // les compter comme débordements annoncerait un « au-delà » que le dessin ne
+  // montre pas, et contredirait le rabattement, qui les laisse rondes.
+  const lanes = [
+    { points: [{ days: -300 }, { days: -100 }, { days: 5 }, { days: -30 }] },
+    { points: [{ days: 400 }, { days: 89 }, { days: 90 }] },
+  ];
+  assert.deepEqual(scatterWindowOverflow(lanes, domain), { low: 2, high: 1 });
+  lanes.forEach((lane) => lane.points.forEach((p) => {
+    const compte = p.days < domain.min || p.days > domain.max;
+    assert.equal(scatterClampDays(p.days, domain).beyond !== null, compte,
+      `« ${p.days} j » : le comptage et le rabattement ne disent pas la même chose`);
+  }));
+  assert.deepEqual(scatterWindowOverflow(lanes, { min: -500, max: 500 }), { low: 0, high: 0 });
+  assert.deepEqual(scatterWindowOverflow([], domain), { low: 0, high: 0 });
+});
+
+test("aucune tâche n'est perdue par la fenêtre", () => {
+  // Le comptage total doit être le même quelle que soit la plage affichée :
+  // la fenêtre décide de la MISE EN PAGE, jamais du périmètre.
+  const tasks = [
+    { id: "a", projectId: "P", end: "2027-12-31" },
+    { id: "b", projectId: "P", end: "2026-09-16" },
+    { id: "c", projectId: "P", end: "2024-01-01" },
+  ];
+  const lanes = scatterBuildLanes(tasks, laneOf, "2026-09-15");
+  const total = lanes.reduce((n, l) => n + l.points.length, 0);
+  assert.equal(total, 3);
+  const domain = scatterDomain(lanes, { mode: "fixed", before: 30, after: 90 });
+  const { low, high } = scatterWindowOverflow(lanes, domain);
+  assert.equal(low + high, 2, "deux tâches hors fenêtre, toujours comptées");
+  assert.equal(total - low - high, 1, "une seule tâche dans la fenêtre");
 });

@@ -108,6 +108,10 @@ const seen = await page.evaluate(() => {
       .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), x: Math.round(el.getBoundingClientRect().x) })),
     scatterLaneColors: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-lane-mark")]
       .map((el) => (el.getAttribute("fill") || "").toUpperCase()),
+    windowDots: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot").length,
+    windowBeyond: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot.is-beyond").length,
+    windowOverflowText: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-overflow")].map((e) => e.textContent.trim()),
+    windowTicks: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-tick")].map((e) => e.textContent.trim()),
     scatterCritLanes: rects("#harness-scatter-crit .lp-widget-scatter-lane-label").map((r) => r.text),
     scatterEmptyText: (document.querySelector("#harness-scatter-empty .lp-widget-scatter.is-empty") || {}).textContent || "",
     statusTileNames: rects("#harness-treemap-status .lp-widget-treemap-tile-name").map((r) => r.text),
@@ -598,6 +602,32 @@ expect(
 );
 // Sans aucune tâche datée, le widget le dit au lieu d'afficher un axe vide.
 expect(/Aucune tâche/.test(seen.scatterEmptyText), "Nuage vide : le widget n'explique pas pourquoi il n'affiche rien");
+
+// --- Fenêtre fixe (issue #50) ----------------------------------------------
+// Fenêtre J-3 → J+5 sur les mêmes quatre tâches datées : deux d'entre elles
+// débordent. Elles doivent rester DESSINÉES et COMPTÉES — une fenêtre qui
+// masque sans le dire serait un filtre déguisé.
+expect(seen.windowDots === 4, `Fenêtre : ${seen.windowDots} point(s) sur 4 — la fenêtre a fait disparaître une tâche`);
+// sc1 et sc2 sont toutes deux à J-6, sc4 à J+12 : deux débordements à gauche,
+// un à droite.
+expect(seen.windowBeyond === 3, `Fenêtre : ${seen.windowBeyond} point(s) marqué(s) hors fenêtre, 3 attendus`);
+expect(seen.windowOverflowText.length === 2, `Fenêtre : ${seen.windowOverflowText.length} compteur(s) de débordement, 2 attendus (un par bout)`);
+{
+  const gauche = seen.windowOverflowText.find((t) => t.startsWith("\u25C2")) || "";
+  const droite = seen.windowOverflowText.find((t) => t.endsWith("\u25B8")) || "";
+  expect(/^\u25C2 2 au-delà$/.test(gauche), `Fenêtre : compteur de gauche « ${gauche} », « ◂ 2 au-delà » attendu`);
+  expect(/^1 au-delà \u25B8$/.test(droite), `Fenêtre : compteur de droite « ${droite} », « 1 au-delà ▸ » attendu`);
+}
+// L'axe est borné par le réglage, plus par les tâches : sans cela, rien n'aurait
+// changé et les contrôles ci-dessus passeraient pour de mauvaises raisons.
+{
+  const jours = seen.windowTicks.map((t) => (t === "aujourd'hui" ? 0 : Number(t.replace("J+", "").replace("J", ""))));
+  expect(jours.every((j) => j >= -3 && j <= 5), `Fenêtre : graduations hors de la plage réglée (${seen.windowTicks.join(" ")})`);
+  // Les DEUX bornes doivent être graduées : sans elles, rien ne dit jusqu'où va
+  // la plage, et un chevron posé au bord reste une énigme.
+  expect(jours.includes(-3) && jours.includes(5),
+    `Fenêtre : bornes non graduées (${seen.windowTicks.join(" ")}) — J-3 et J+5 attendus`);
+}
 
 expect(!scatter.error, `contrôle du Nuage interrompu : ${scatter.error}`);
 expect(/jour|aujourd/i.test(scatter.tip), `Nuage : l'infobulle ne donne pas l'échéance (« ${scatter.tip} »)`);

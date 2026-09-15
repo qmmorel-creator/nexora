@@ -99,6 +99,11 @@ function AnnotationsHarness() {
   const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
   const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
+  // Fenêtre fixe étroite (issue #50) : « sc1 » (J-6) et « sc4 » (J+12) sortent
+  // d'une fenêtre J-3 → J+5. Ils doivent rester dessinés, rabattus sur le bord
+  // et comptés — jamais disparaître.
+  const scatterWindowWidget = { id: "w7", type: "deadlineScatter", scatterLaneField: "project",
+    scatterWindowMode: "fixed", scatterWindowBefore: 3, scatterWindowAfter: 5 };
 
   // Mêmes tâches, mais une tuile = un STATUT (issue #47) : c'est le câblage du
   // champ qui porte les tuiles, pas le pavage, qui est contrôlé ici.
@@ -217,6 +222,10 @@ function AnnotationsHarness() {
             en haut, avant « Moyen » puis « Bas ». */}
         <div id="harness-scatter-crit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
           <WidgetDeadlineScatter widget={{ ...scatterWidget, scatterLaneField: "criticality" }} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
+        </div>
+        {/* Fenêtre fixe étroite : deux tâches débordent, aucune ne disparaît. */}
+        <div id="harness-scatter-window" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 200, marginBottom: 18 }}>
+          <WidgetDeadlineScatter widget={scatterWindowWidget} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
         </div>
         {/* Aucune tâche datée : le widget doit le dire, pas afficher un axe vide. */}
         <div id="harness-scatter-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 300, height: 120, marginBottom: 18 }}>

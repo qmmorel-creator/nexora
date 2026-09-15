@@ -1,4 +1,80 @@
-tx) : null} justCompleted={justCompletedIds.has(t.id)} />
+nimLateAlert && (
+                  <circle cx={mx} cy={mainY} r={(isCritical ? 6 : 5) + 1.5} fill="none" stroke={PM_RISK_COLOR} strokeWidth="2" className="lp-pm-late-ring" />
+                )}
+                <Station x={mx} y={mainY} color={msColor} r={isCritical ? 6 : 5} />
+                {(selectedIds.has(t.id) || focusedId === t.id) && (
+                  <circle cx={mx} cy={mainY} r="10" fill="none" stroke={selectedIds.has(t.id) ? "var(--signal)" : "var(--text-muted)"} strokeWidth="2" strokeDasharray={selectedIds.has(t.id) ? "0" : "2 2"} />
+                )}
+                {atRisk && (
+                  <g transform={`translate(${mx + 8}, ${mainY - 13})`}>
+                    <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
+                    <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
+                  </g>
+                )}
+              </g>
+              <foreignObject x={mx - 8} y={branchY - 8} width="16" height="16" style={{ overflow: "visible", cursor: "pointer" }} onClick={() => onOpen(t)}>
+                <MilestoneGlyph size={16} icon={resolveMilestoneIcon(t, ctx)} />
+              </foreignObject>
+              <rect x={mx + 11} y={branchY - 9} width={titleW + 13} height={18} rx="2.5" fill="var(--surface)" opacity="0.99" style={{ cursor: "pointer" }} onClick={() => onOpen(t)} />
+              <text x={mx + 17} y={branchY} dominantBaseline="middle" textAnchor="start" fontSize="9.5" fontWeight="700" fill="var(--text-900)" style={{ cursor: "pointer" }} onClick={() => onOpen(t)}>{t.title}</text>
+              {hasDescription && (
+                <g
+                  className="lp-pm-note-trigger"
+                  transform={`translate(${noteX}, ${branchY - 8})`}
+                  onClick={(e)=>{
+                    e.stopPropagation();
+                    setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});
+                  }}
+                  style={{cursor:"pointer"}}
+                >
+                  <title>Afficher la description</title>
+                  <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
+                  <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
+                  <path d="M11.2 1.9v2.7h2.7" fill="none" stroke="var(--text-600)" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round" opacity=".7"/>
+                </g>
+              )}
+              {fields.includes("dates") && (
+                <>
+                  <rect x={dateX - 3} y={branchY - 6} width={pmMeasureText(fmtShort(t.end), MS_TITLE_FONT) + 6} height={12} fill="var(--surface)" />
+                  <text x={dateX} y={branchY} dominantBaseline="middle" textAnchor="start" fontFamily="var(--font-mono)" fontSize="9" fontWeight="600" fill="var(--text-600)">{fmtShort(t.end)}</text>
+                </>
+              )}
+            </g>
+          );
+        })}
+
+        {!isCollapsed && items.filter((it) =>
+          getTaskType(it.t) === "action" &&
+          !isFullyShared(it.t) &&
+          (!it.t.linkedActivityId || expandedActivities.has(it.t.linkedActivityId))
+        ).map(({ t, side, branchDist, subtasks }) => {
+          const branchY = mainY + side * branchDist;
+          const x1 = xFor(t.end);
+          const done = isTaskDoneGlobal(t, ctx);
+          const chips = fieldChipsFor(t);
+          const titleW = pmMeasureText(t.title, TITLE_FONT);
+          // Tâche partagée avec un projet actuellement non affiché (repli — voir
+          // isFullyShared) : petit repère à côté du titre pour ne pas perdre cette
+          // information de partage juste parce que l'autre ligne n'est pas visible.
+          const sharedOtherProject = t.secondaryProjectId
+            ? ctx.projects.find((pr) => pr.id === (t.projectId === p.id ? t.secondaryProjectId : t.projectId))
+            : null;
+          const sharedBadgeW = sharedOtherProject ? 18 : 0;
+          const hasDescription = !!String(t.desc ?? t.description ?? "").trim();
+          const noteBadgeW = hasDescription ? 22 : 0;
+          const noteX = x1 + 14 + titleW + 7;
+          let cursorX = x1 + 14 + titleW + noteBadgeW + sharedBadgeW + 16;
+          const taskColor = p.isFolderGroup
+            ? (ctx.projects.find((pr) => pr.id === t.projectId)?.color || "var(--text-muted)")
+            : ((ctx.statuses.find((s) => s.id === t.statusId) || {}).color || "var(--text-muted)");
+          return (
+            <g key={"txt-" + t.id} opacity={dimOpacity(t.id)}>
+              {/* Doublon purement visuel de la station, garanti au-dessus de toute ligne
+                  (une bulle ne doit jamais être masquée, même partiellement) — mais ne doit
+                  surtout pas intercepter les clics/glisser destinés à la vraie station
+                  interactive juste en dessous, sous peine de rendre le glisser impossible. */}
+              <g style={{ pointerEvents: "none" }}>
+                <Station x={x1} y={branchY} color={taskColor} r={5.5} done={done} icon={p.metroTaskIcons ? resolveMilestoneIcon(t, ctx) : null} justCompleted={justCompletedIds.has(t.id)} />
               </g>
               <rect x={x1 + 10} y={branchY - 9} width={titleW + 12} height={18} rx="2.5" fill="var(--surface)" opacity="0.99" />
               <text x={x1 + 14} y={branchY} dominantBaseline="middle" textAnchor="start" fontSize="10.5" fontWeight="700" fontFamily="Inter, sans-serif" fill="var(--text-900)" opacity={done ? 0.55 : 1} onClick={() => onOpen(t)} className="lp-pm-task">{t.title}</text>
@@ -8542,6 +8618,11 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [scatterLaneField, setScatterLaneField] = useState(
     SCATTER_LANE_FIELDS.includes(widget?.scatterLaneField) ? widget.scatterLaneField : "project"
   );
+  // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
+  const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
+  const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
+  const [scatterWindowBefore, setScatterWindowBefore] = useState(String(scatterWin.before));
+  const [scatterWindowAfter, setScatterWindowAfter] = useState(String(scatterWin.after));
   // Treemap projets — la configuration est relue par normalizeProjectTreemapConfig,
   // qui reste seul juge des valeurs par défaut : la fiche ne fait que l'éditer.
   const treemapCfg = useMemo(() => normalizeProjectTreemapConfig(widget || {}), [widget]);
@@ -8715,7 +8796,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "timeMachine") data.timeMachineProjectId = timeMachineProjectId;
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (type === "riskMatrix") data.riskMatrixProjectId = riskMatrixProjectId;
-    if (type === "deadlineScatter") data.scatterLaneField = scatterLaneField;
+    if (type === "deadlineScatter") {
+      data.scatterLaneField = scatterLaneField;
+      data.scatterWindowMode = scatterWindowMode;
+      data.scatterWindowBefore = Number(scatterWindowBefore);
+      data.scatterWindowAfter = Number(scatterWindowAfter);
+    }
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
       data.treemapSizeFilter = treemapSizeFilter;
@@ -9325,6 +9411,38 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <option value="status">Statut</option>
               <option value="criticality">Criticité</option>
             </select>
+          </div>
+          <div className="lp-field">
+            <label>Plage affichée</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (scatterWindowMode === "auto" ? " active" : "")} onClick={() => setScatterWindowMode("auto")}>Automatique</button>
+              <button type="button" className={"lp-density-btn" + (scatterWindowMode === "fixed" ? " active" : "")} onClick={() => setScatterWindowMode("fixed")}>Fenêtre fixe</button>
+            </div>
+            {scatterWindowMode === "auto" ? (
+              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+                L'axe s'ajuste aux tâches du filtre. Une seule échéance lointaine suffit alors à tasser tout le reste
+                autour de l'origine : passe en fenêtre fixe si ça t'arrive.
+              </p>
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <div className="lp-field" style={{ flex: 1, margin: 0 }}>
+                    <label>Jours de retard affichés</label>
+                    <input type="number" min={1} max={SCATTER_WINDOW_MAX_DAYS} value={scatterWindowBefore}
+                           onChange={(e) => setScatterWindowBefore(e.target.value)} />
+                  </div>
+                  <div className="lp-field" style={{ flex: 1, margin: 0 }}>
+                    <label>Jours à venir affichés</label>
+                    <input type="number" min={1} max={SCATTER_WINDOW_MAX_DAYS} value={scatterWindowAfter}
+                           onChange={(e) => setScatterWindowAfter(e.target.value)} />
+                  </div>
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+                  Les tâches hors fenêtre ne sont pas masquées : elles sont rabattues sur le bord, dessinées en chevron
+                  tourné vers l'extérieur, et comptées aux deux bouts de l'axe. Leur vraie échéance reste dans l'infobulle.
+                </p>
+              </>
+            )}
           </div>
         </>
       )}

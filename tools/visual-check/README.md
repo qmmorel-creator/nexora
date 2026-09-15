@@ -54,7 +54,9 @@ en couloirs par projet puis par criticité :
 - les couloirs de criticité suivent l'urgence : Urgent, Moyen, Bas, Sans criticité ;
 - l'infobulle apparaît au survol, le clic ouvre la tâche, et le couloir choisi
   dans la fiche du widget est bien enregistré ;
-- sans aucune tâche datée, le widget explique pourquoi il n'affiche rien.
+- sans aucune tâche datée, le widget explique pourquoi il n'affiche rien ;
+- en fenêtre fixe, aucune tâche hors plage ne disparaît : elle est rabattue sur
+  le bord en chevron, comptée aux deux bouts, et les bornes restent graduées.
 
 Scénario « Treemap par statut » — le même widget, mais une tuile = un statut :
 

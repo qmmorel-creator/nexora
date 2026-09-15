@@ -1,4 +1,14 @@
-se={() => setQuickEditView(null)}
+
+          }}
+          onClose={() => setQuickEditProject(null)}
+        />
+      )}
+      {quickEditView && (
+        <ViewEditModal
+          view={quickEditView}
+          ctx={ctx}
+          onSave={(patch) => { updateSavedView(quickEditView.id, patch); setQuickEditView(null); }}
+          onClose={() => setQuickEditView(null)}
         />
       )}
       {quickEditProjectFolder && (
@@ -3866,7 +3876,42 @@ const SCATTER_EDGE_PAD_DAYS = 1;
 // Couleur du retard, alignée sur --danger du thème (les attributs SVG `fill`
 // ne résolvent pas var() de façon fiable, d'où la constante).
 const SCATTER_LATE_COLOR = "#E2483E";
-function scatterDomain(lanes) {
+/* Fenêtre d'affichage (issue #50). En automatique, l'axe s'ajuste aux tâches ;
+   il suffit alors d'une échéance à J+400 pour que tout le reste se tasse en une
+   colonne illisible autour de l'origine — précisément la zone qu'on regarde.
+   En fenêtre fixe, l'axe est borné une fois pour toutes, et ce qui dépasse est
+   RABATTU sur le bord, jamais masqué. */
+const SCATTER_WINDOW_MODES = ["auto", "fixed"];
+const SCATTER_WINDOW_DEFAULT_BEFORE = 30;
+const SCATTER_WINDOW_DEFAULT_AFTER = 90;
+// Dix ans : au-delà, la fenêtre ne borne plus rien et le réglage ne sert qu'à
+// se tromper de saisie.
+const SCATTER_WINDOW_MAX_DAYS = 3650;
+
+function scatterNormalizeWindow(widget) {
+  const w = widget || {};
+  const mode = SCATTER_WINDOW_MODES.includes(w.scatterWindowMode) ? w.scatterWindowMode : "auto";
+  const borne = (value, defaut) => {
+    // `null` et la chaîne vide valent ZÉRO pour Number : sans ce garde, une
+    // valeur absente ou un champ que l'on vient de vider se rabattrait sur la
+    // borne minimale d'un jour au lieu de revenir au défaut.
+    if (value === null || value === undefined || value === "") return defaut;
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return defaut;
+    // Une borne à zéro effondrerait ce côté de l'axe : le minimum est un jour.
+    return Math.max(1, Math.min(SCATTER_WINDOW_MAX_DAYS, n));
+  };
+  return {
+    mode,
+    before: borne(w.scatterWindowBefore, SCATTER_WINDOW_DEFAULT_BEFORE),
+    after: borne(w.scatterWindowAfter, SCATTER_WINDOW_DEFAULT_AFTER),
+  };
+}
+
+function scatterDomain(lanes, windowCfg) {
+  if (windowCfg && windowCfg.mode === "fixed") {
+    return { min: -windowCfg.before, max: windowCfg.after, windowed: true };
+  }
   const all = lanes.flatMap((lane) => lane.points.map((p) => p.days));
   if (!all.length) return { min: -SCATTER_MIN_SPAN_DAYS, max: SCATTER_MIN_SPAN_DAYS };
   let min = Math.min(0, ...all) - SCATTER_EDGE_PAD_DAYS, max = Math.max(0, ...all) + SCATTER_EDGE_PAD_DAYS;
@@ -3875,6 +3920,29 @@ function scatterDomain(lanes) {
     min = Math.floor(min - pad); max = Math.ceil(max + pad);
   }
   return { min, max };
+}
+
+/* Position en X d'une tâche hors fenêtre : rabattue sur le bord, avec la
+   direction retenue. Le nombre de jours réel n'est jamais altéré — c'est lui
+   que l'infobulle affiche, et c'est ce qui distingue « rabattu » de « faux ». */
+function scatterClampDays(days, domain) {
+  if (days < domain.min) return { plotDays: domain.min, beyond: "low" };
+  if (days > domain.max) return { plotDays: domain.max, beyond: "high" };
+  return { plotDays: days, beyond: null };
+}
+
+/* Combien de tâches débordent de chaque côté. Affiché aux deux bouts de l'axe :
+   une tâche rabattue reste comptée, sinon la fenêtre deviendrait un filtre
+   silencieux — exactement ce qu'on veut éviter. */
+function scatterWindowOverflow(lanes, domain) {
+  let low = 0, high = 0;
+  (Array.isArray(lanes) ? lanes : []).forEach((lane) => {
+    (lane.points || []).forEach((p) => {
+      if (p.days < domain.min) low += 1;
+      else if (p.days > domain.max) high += 1;
+    });
+  });
+  return { low, high };
 }
 // === NEXORA:DEADLINE-SCATTER:END ===
 
@@ -3917,14 +3985,22 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
   }, [laneField, ctx.projects, ctx.statuses]);
 
   const lanes = useMemo(() => scatterBuildLanes(tasks, laneOf, today), [tasks, laneOf, today]);
-  const domain = useMemo(() => scatterDomain(lanes), [lanes]);
+  const fenetre = useMemo(() => scatterNormalizeWindow(widget), [widget]);
+  const domain = useMemo(() => scatterDomain(lanes, fenetre), [lanes, fenetre]);
+  const overflow = useMemo(() => scatterWindowOverflow(lanes, domain), [lanes, domain]);
 
-  const PAD_L = 118, PAD_R = 26, PAD_T = 14, PAD_B = 26;
+  const PAD_L = 118, PAD_R = 26, PAD_T = 20, PAD_B = 26;
   const plotW = Math.max(80, box.width - PAD_L - PAD_R);
   const laneH = Math.max(34, (box.height - PAD_T - PAD_B) / Math.max(1, lanes.length));
   const chartH = PAD_T + PAD_B + laneH * Math.max(1, lanes.length);
+  // Rabat sur le bord plutôt que de laisser un point sortir du dessin : hors
+  // fenêtre, la tâche reste visible et reste comptée, elle change seulement de
+  // forme. Le nombre de jours réel, lui, n'est jamais touché.
   const xOf = useCallback(
-    (days) => PAD_L + ((days - domain.min) / Math.max(1, domain.max - domain.min)) * plotW,
+    (days) => {
+      const borne = Math.max(domain.min, Math.min(domain.max, days));
+      return PAD_L + ((borne - domain.min) / Math.max(1, domain.max - domain.min)) * plotW;
+    },
     [domain, plotW]
   );
 
@@ -3932,8 +4008,10 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
     const packed = scatterPackLane(lane.points, { laneHeight: laneH - 12, xOf });
     const labels = scatterVisibleLabels(packed);
     const centerY = PAD_T + i * laneH + laneH / 2;
-    return { ...lane, centerY, points: packed.map((pt) => ({ ...pt, cy: centerY + pt.y, showLabel: labels.has(pt.id) })) };
-  }), [lanes, laneH, xOf]);
+    return { ...lane, centerY, points: packed.map((pt) => ({
+      ...pt, cy: centerY + pt.y, showLabel: labels.has(pt.id), beyond: scatterClampDays(pt.days, domain).beyond,
+    })) };
+  }), [lanes, laneH, xOf, domain]);
 
   // Graduations : des repères ronds plutôt qu'un pas régulier arbitraire, et
   // toujours l'origine, qui porte toute la lecture du widget.
@@ -3943,7 +4021,11 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
     const out = [0];
     for (let d = step; d <= domain.max; d += step) out.push(d);
     for (let d = -step; d >= domain.min; d -= step) out.push(d);
-    return out.filter((d) => d >= domain.min && d <= domain.max).sort((a, b) => a - b);
+    // En fenêtre fixe, les deux bornes sont graduées quoi qu'il arrive : ce sont
+    // les valeurs que l'on vient de régler, et sans elles rien ne dit jusqu'où
+    // va la plage affichée — un chevron au bord devient alors une énigme.
+    if (domain.windowed) { out.push(domain.min); out.push(domain.max); }
+    return [...new Set(out)].filter((d) => d >= domain.min && d <= domain.max).sort((a, b) => a - b);
   }, [domain]);
 
   const total = placed.reduce((n, l) => n + l.points.length, 0);
@@ -3991,6 +4073,17 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
           </g>
         ))}
 
+        {overflow.low > 0 && (
+          <text x={PAD_L} y={PAD_T - 3} textAnchor="start" className="lp-widget-scatter-overflow">
+            {`\u25C2 ${overflow.low} au-delà`}
+          </text>
+        )}
+        {overflow.high > 0 && (
+          <text x={PAD_L + plotW} y={PAD_T - 3} textAnchor="end" className="lp-widget-scatter-overflow">
+            {`${overflow.high} au-delà \u25B8`}
+          </text>
+        )}
+
         {placed.map((lane, i) => (
           <g key={lane.key}>
             <text x={PAD_L - 10} y={lane.centerY + 3} textAnchor="end" className="lp-widget-scatter-lane-label">
@@ -4003,9 +4096,18 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
                  onMouseLeave={() => setHover((h) => (h && h.id === pt.id ? null : h))}
                  onClick={() => onOpen && onOpen(pt.task)}
                  style={{ cursor: onOpen ? "pointer" : "default" }}>
-                <circle cx={pt.x} cy={pt.cy} r={SCATTER_POINT_RADIUS}
-                        fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
-                        className={"lp-widget-scatter-dot" + (hover && hover.id === pt.id ? " is-hover" : "")} />
+                {pt.beyond ? (
+                  <path
+                    d={pt.beyond === "low"
+                      ? `M ${pt.x - SCATTER_POINT_RADIUS - 1} ${pt.cy} L ${pt.x + SCATTER_POINT_RADIUS} ${pt.cy - SCATTER_POINT_RADIUS} L ${pt.x + SCATTER_POINT_RADIUS} ${pt.cy + SCATTER_POINT_RADIUS} Z`
+                      : `M ${pt.x + SCATTER_POINT_RADIUS + 1} ${pt.cy} L ${pt.x - SCATTER_POINT_RADIUS} ${pt.cy - SCATTER_POINT_RADIUS} L ${pt.x - SCATTER_POINT_RADIUS} ${pt.cy + SCATTER_POINT_RADIUS} Z`}
+                    fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
+                    className={"lp-widget-scatter-dot is-beyond" + (hover && hover.id === pt.id ? " is-hover" : "")} />
+                ) : (
+                  <circle cx={pt.x} cy={pt.cy} r={SCATTER_POINT_RADIUS}
+                          fill={pt.days < 0 ? SCATTER_LATE_COLOR : lane.color}
+                          className={"lp-widget-scatter-dot" + (hover && hover.id === pt.id ? " is-hover" : "")} />
+                )}
                 {pt.showLabel && (() => {
                   // Près du bord droit, l'étiquette passe à gauche du point :
                   // posée à droite, elle sortait du cadre et était rognée.
@@ -4034,6 +4136,7 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
               : hover.days > 0 ? `Dans ${hover.days} jour${hover.days > 1 ? "s" : ""}`
               : `En retard de ${-hover.days} jour${-hover.days > 1 ? "s" : ""}`}
           </span>
+          {hover.beyond && <span className="is-beyond">Hors fenêtre — rabattue sur le bord</span>}
         </div>
       )}
     </div>
@@ -12862,80 +12965,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
                   distinctes, sinon relâcher après un glisser rouvrait la fiche aussitôt. */}
               <g onMouseDown={(e) => startDragTask(e, t, "end")} onTouchStart={(e) => startDragTask(e, t, "end")} style={{ cursor: "ew-resize" }} data-pm-task-id={t.id}>
                 <circle cx={mx} cy={mainY} r="10" fill="transparent" />
-                {atRisk && appearance?.animLateAlert && (
-                  <circle cx={mx} cy={mainY} r={(isCritical ? 6 : 5) + 1.5} fill="none" stroke={PM_RISK_COLOR} strokeWidth="2" className="lp-pm-late-ring" />
-                )}
-                <Station x={mx} y={mainY} color={msColor} r={isCritical ? 6 : 5} />
-                {(selectedIds.has(t.id) || focusedId === t.id) && (
-                  <circle cx={mx} cy={mainY} r="10" fill="none" stroke={selectedIds.has(t.id) ? "var(--signal)" : "var(--text-muted)"} strokeWidth="2" strokeDasharray={selectedIds.has(t.id) ? "0" : "2 2"} />
-                )}
-                {atRisk && (
-                  <g transform={`translate(${mx + 8}, ${mainY - 13})`}>
-                    <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
-                    <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
-                  </g>
-                )}
-              </g>
-              <foreignObject x={mx - 8} y={branchY - 8} width="16" height="16" style={{ overflow: "visible", cursor: "pointer" }} onClick={() => onOpen(t)}>
-                <MilestoneGlyph size={16} icon={resolveMilestoneIcon(t, ctx)} />
-              </foreignObject>
-              <rect x={mx + 11} y={branchY - 9} width={titleW + 13} height={18} rx="2.5" fill="var(--surface)" opacity="0.99" style={{ cursor: "pointer" }} onClick={() => onOpen(t)} />
-              <text x={mx + 17} y={branchY} dominantBaseline="middle" textAnchor="start" fontSize="9.5" fontWeight="700" fill="var(--text-900)" style={{ cursor: "pointer" }} onClick={() => onOpen(t)}>{t.title}</text>
-              {hasDescription && (
-                <g
-                  className="lp-pm-note-trigger"
-                  transform={`translate(${noteX}, ${branchY - 8})`}
-                  onClick={(e)=>{
-                    e.stopPropagation();
-                    setDescriptionPopup({task:t,x:e.clientX,y:e.clientY});
-                  }}
-                  style={{cursor:"pointer"}}
-                >
-                  <title>Afficher la description</title>
-                  <rect x="0" y="0" width="17" height="16" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="1"/>
-                  <path d="M4.5 4.5h8M4.5 7.5h8M4.5 10.5h5.5" fill="none" stroke="var(--text-600)" strokeWidth="1.25" strokeLinecap="round"/>
-                  <path d="M11.2 1.9v2.7h2.7" fill="none" stroke="var(--text-600)" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round" opacity=".7"/>
-                </g>
-              )}
-              {fields.includes("dates") && (
-                <>
-                  <rect x={dateX - 3} y={branchY - 6} width={pmMeasureText(fmtShort(t.end), MS_TITLE_FONT) + 6} height={12} fill="var(--surface)" />
-                  <text x={dateX} y={branchY} dominantBaseline="middle" textAnchor="start" fontFamily="var(--font-mono)" fontSize="9" fontWeight="600" fill="var(--text-600)">{fmtShort(t.end)}</text>
-                </>
-              )}
-            </g>
-          );
-        })}
-
-        {!isCollapsed && items.filter((it) =>
-          getTaskType(it.t) === "action" &&
-          !isFullyShared(it.t) &&
-          (!it.t.linkedActivityId || expandedActivities.has(it.t.linkedActivityId))
-        ).map(({ t, side, branchDist, subtasks }) => {
-          const branchY = mainY + side * branchDist;
-          const x1 = xFor(t.end);
-          const done = isTaskDoneGlobal(t, ctx);
-          const chips = fieldChipsFor(t);
-          const titleW = pmMeasureText(t.title, TITLE_FONT);
-          // Tâche partagée avec un projet actuellement non affiché (repli — voir
-          // isFullyShared) : petit repère à côté du titre pour ne pas perdre cette
-          // information de partage juste parce que l'autre ligne n'est pas visible.
-          const sharedOtherProject = t.secondaryProjectId
-            ? ctx.projects.find((pr) => pr.id === (t.projectId === p.id ? t.secondaryProjectId : t.projectId))
-            : null;
-          const sharedBadgeW = sharedOtherProject ? 18 : 0;
-          const hasDescription = !!String(t.desc ?? t.description ?? "").trim();
-          const noteBadgeW = hasDescription ? 22 : 0;
-          const noteX = x1 + 14 + titleW + 7;
-          let cursorX = x1 + 14 + titleW + noteBadgeW + sharedBadgeW + 16;
-          const taskColor = p.isFolderGroup
-            ? (ctx.projects.find((pr) => pr.id === t.projectId)?.color || "var(--text-muted)")
-            : ((ctx.statuses.find((s) => s.id === t.statusId) || {}).color || "var(--text-muted)");
-          return (
-            <g key={"txt-" + t.id} opacity={dimOpacity(t.id)}>
-              {/* Doublon purement visuel de la station, garanti au-dessus de toute ligne
-                  (une bulle ne doit jamais être masquée, même partiellement) — mais ne doit
-                  surtout pas intercepter les clics/glisser destinés à la vraie station
-                  interactive juste en dessous, sous peine de rendre le glisser impossible. */}
-              <g style={{ pointerEvents: "none" }}>
-                <Station x={x1} y={branchY} color={taskColor} r={5.5} done={done} icon={p.metroTaskIcons ? resolveMilestoneIcon(t, c
+                {atRisk && appearance?.a

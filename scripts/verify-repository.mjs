@@ -302,7 +302,7 @@ assert.match(builtSource, /lp-pm-risk is-/);
      donne une liste déroulante qui s'affiche et n'est jamais retenue. */
   assert.match(builtSource, /setScatterLaneField\(e\.target\.value\)/,
     "Le choix des couloirs a disparu de la fiche du widget.");
-  assert.match(builtSource, /if \(type === "deadlineScatter"\) data\.scatterLaneField = scatterLaneField;/,
+  assert.match(builtSource, /data\.scatterLaneField = scatterLaneField;/,
     "Le couloir choisi dans la fiche n'est plus enregistré.");
 }
 
@@ -332,6 +332,30 @@ assert.match(builtSource, /lp-pm-risk is-/);
     "La priorité du projet n'est plus lue sur le projet de la tâche.");
   assert.match(builtSource, /treemapTaskCriticality\(\{ projectPriority: project\.priority \|\| "normal", \.\.\.facts \}\)/,
     "Les faits de la tâche ne priment plus sur la priorité de l'entité de tuile.");
+}
+
+/* Nuage des échéances : fenêtre d'affichage (issue #50).
+   La fenêtre décide de la MISE EN PAGE, jamais du périmètre. Si le rabattement
+   ou le comptage se défait, elle devient un filtre silencieux : des tâches
+   disparaissent du widget sans qu'aucune erreur ne se produise. */
+{
+  assert.match(builtSource, /const SCATTER_WINDOW_MODES = \["auto", "fixed"\];/,
+    "Les modes de fenêtre du nuage ont changé ou disparu.");
+  /* Sans le rabattement, un point hors fenêtre sort du dessin : invisible,
+     mais toujours compté — le widget mentirait dans les deux sens. */
+  assert.match(builtSource, /const borne = Math\.max\(domain\.min, Math\.min\(domain\.max, days\)\);/,
+    "La position en X n'est plus bornée : un point hors fenêtre sortirait du dessin.");
+  assert.match(builtSource, /beyond: scatterClampDays\(pt\.days, domain\)\.beyond/,
+    "Les points hors fenêtre ne sont plus marqués : rien ne les distinguerait d'une tâche à cette date.");
+  assert.match(builtSource, /className="lp-widget-scatter-overflow"/,
+    "Le compteur « au-delà » a disparu : la fenêtre deviendrait un filtre silencieux.");
+  /* Le réglage doit être à la fois proposé et enregistré. */
+  assert.match(builtSource, /onClick=\{\(\) => setScatterWindowMode\("fixed"\)\}/,
+    "Le choix de la plage a disparu de la fiche du widget.");
+  assert.match(builtSource, /data\.scatterWindowMode = scatterWindowMode;/,
+    "Le mode de fenêtre choisi dans la fiche n'est plus enregistré.");
+  assert.match(builtSource, /data\.scatterWindowBefore = Number\(scatterWindowBefore\);/,
+    "Les bornes de la fenêtre ne sont plus enregistrées.");
 }
 
 console.log("Repository invariants: OK");
