@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import handler from '../netlify/functions/gateway.mts';
 globalThis.Netlify={env:{get:k=>({MCP_PUBLIC_ORIGIN:'https://nexora-chatgpt-mcp.netlify.app',MCP_CLIENT_SIGNING_KEY:'local-test-key-only'}[k])}};
@@ -30,4 +31,26 @@ assert.equal((await call('/oauth/authorize?'+claudeQuery)).status,302,'Le flux d
 for(const refuse of ['https://claude.com/api/mcp/auth_callback','http://localhost:3118/callback','https://claude.ai.evil.example/api/mcp/auth_callback'])
  assert.equal((await call('/oauth/register','POST',{redirect_uris:[refuse]})).status,400,'doit rester refusé : '+refuse);
 
-console.log('12 contrôles locaux réussis : découverte, authentification requise, client et redirections, PKCE, enregistrement Claude, liste blanche stricte.');
+// Les deux listes blanches doivent rester en phase. Elles ont divergé une fois :
+// la passerelle acceptait Claude, connect.js refusait encore tout ce qui n'était
+// pas chatgpt.com, et la connexion échouait sur « Redirection invalide » APRÈS un
+// enregistrement réussi — un demi-correctif est ici pire qu'aucun, puisqu'il fait
+// croire que le problème est ailleurs.
+const connectSource=await readFile(new URL('../public/connect.js',import.meta.url),'utf8');
+const gatewaySource=await readFile(new URL('../netlify/functions/gateway.mts',import.meta.url),'utf8');
+// On extrait UNIQUEMENT le tableau MCP_CLIENT_ORIGINS. Ramasser toutes les
+// chaînes du fichier laisserait passer la panne : l'origine figure aussi dans le
+// dictionnaire d'étiquettes, et le contrôle resterait vert alors que la liste
+// blanche effective l'aurait perdue.
+const originsDecl=connectSource.match(/const MCP_CLIENT_ORIGINS = \[([^\]]*)\]/);
+assert.ok(originsDecl,'MCP_CLIENT_ORIGINS introuvable dans connect.js');
+const pageOrigins=[...originsDecl[1].matchAll(/'(https:\/\/[a-z.]+)'/g)].map(m=>m[1]);
+for(const attendu of ['https://chatgpt.com','https://claude.ai']){
+ assert.ok(pageOrigins.includes(attendu),'connect.js doit accepter '+attendu);
+ assert.ok(gatewaySource.includes(attendu),'la passerelle doit accepter '+attendu);
+}
+// Toute origine acceptée par la page doit l'être aussi par la passerelle.
+for(const origine of new Set(pageOrigins.filter(o=>o.startsWith('https://'))))
+ assert.ok(gatewaySource.includes(origine),'connect.js accepte '+origine+' que la passerelle ignore');
+
+console.log('15 contrôles locaux réussis : découverte, authentification requise, client et redirections, PKCE, enregistrement Claude, liste blanche stricte, cohérence page/passerelle.');
