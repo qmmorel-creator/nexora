@@ -37,6 +37,9 @@ const EXPORTS = [
   "TREEMAP_NEUTRAL_COLOR",
   "TREEMAP_DEFAULT_FIELDS",
   "TREEMAP_TILE_FIELDS",
+  "TREEMAP_TILE_BY",
+  "TREEMAP_TILE_BY_LABELS",
+  "TREEMAP_PROJECT_ONLY_FIELDS",
 ];
 
 // Évalué dans le realm courant : deepStrictEqual exige des prototypes partagés.
@@ -379,4 +382,126 @@ test("l'affichage des prochaines tâches est un réglage, désactivé par défau
   assert.equal(T.normalizeProjectTreemapConfig({}).showUpcoming, false);
   assert.equal(T.normalizeProjectTreemapConfig({ treemapShowUpcoming: true }).showUpcoming, true);
   assert.equal(T.normalizeProjectTreemapConfig({ treemapShowUpcoming: "oui" }).showUpcoming, false);
+});
+
+/* ------------------------------------------------------------------------- *
+ * Champ qui porte les tuiles (issue #47). Jusqu'ici une tuile était toujours
+ * un projet ; elle peut désormais être un statut, un type ou une criticité.
+ * ------------------------------------------------------------------------- */
+
+const entities = [
+  { id: "s1", name: "À planifier", color: "#64748B" },
+  { id: "s2", name: "En cours", color: "#0EA5E9" },
+];
+const byStatus = (t) => t.statusId;
+
+test("les quatre champs annoncés sont bien ceux demandés, et tous étiquetés", () => {
+  assert.deepEqual(T.TREEMAP_TILE_BY, ["project", "status", "taskType", "criticality"]);
+  T.TREEMAP_TILE_BY.forEach((key) => {
+    const l = T.TREEMAP_TILE_BY_LABELS[key];
+    assert.ok(l && l.label && l.tileName && l.plural, `libellés manquants pour « ${key} »`);
+  });
+});
+
+test("sans rattachement explicite, une tuile reste un projet", () => {
+  // La compatibilité n'est pas une politesse : tous les widgets déjà posés sur
+  // un tableau de bord passent par ce chemin.
+  const rows = T.computeTreemapProjects({
+    projects: [{ id: "p1", name: "Chantier" }],
+    tasks: [{ id: "t1", projectId: "p1", statusId: "s1" }],
+  });
+  assert.deepEqual(rows.map((r) => r.projectId), ["p1"]);
+  assert.equal(rows[0].sizeCount, 1);
+});
+
+test("les tuiles se regroupent sur le champ demandé", () => {
+  const rows = T.computeTreemapProjects({
+    projects: entities,
+    tasks: [
+      { id: "t1", projectId: "p1", statusId: "s1" },
+      { id: "t2", projectId: "p2", statusId: "s1" },
+      { id: "t3", projectId: "p1", statusId: "s2" },
+    ],
+    bucketIdOf: byStatus,
+  });
+  assert.deepEqual(rows.map((r) => [r.projectId, r.sizeCount]), [["s1", 2], ["s2", 1]]);
+});
+
+test("seules les tuiles déclarées existent, et une tuile fourre-tout ne perd rien", () => {
+  // Le bloc ne fabrique JAMAIS de tuile à partir des tâches : c'est l'appelant
+  // qui déclare les entités. Sans cette règle, une valeur erronée en base
+  // créerait une tuile fantôme que rien dans l'interface ne saurait nommer.
+  const orpheline = { id: "t2", projectId: "p1", statusId: "s9-inconnu" };
+  const sansDeclaration = T.computeTreemapProjects({
+    projects: entities,
+    tasks: [{ id: "t1", projectId: "p1", statusId: "s1" }, orpheline],
+    bucketIdOf: byStatus,
+  });
+  assert.deepEqual(sansDeclaration.map((r) => r.projectId), ["s1"]);
+  assert.equal(sansDeclaration.reduce((n, r) => n + r.sizeCount, 0), 1);
+
+  // L'interface, elle, déclare une tuile « sans valeur » : c'est ce qui garantit
+  // qu'aucune tâche du périmètre ne disparaisse du comptage sans qu'on le voie.
+  const avecFourreTout = T.computeTreemapProjects({
+    projects: [...entities, { id: "__none__", name: "Sans statut", color: "#94A3B8" }],
+    tasks: [{ id: "t1", projectId: "p1", statusId: "s1" }, { id: "t2", projectId: "p1" }],
+    bucketIdOf: (t) => t.statusId || "__none__",
+  });
+  assert.equal(avecFourreTout.reduce((n, r) => n + r.sizeCount, 0), 2);
+  assert.ok(avecFourreTout.some((r) => r.projectId === "__none__" && r.sizeCount === 1));
+});
+
+test("le score de criticité d'une tâche ne dépend pas de l'axe choisi", () => {
+  // Régression possible : la priorité du projet était lue sur l'ENTITÉ de la
+  // tuile. Groupé par statut, « projet prioritaire » se serait évaporé, et la
+  // même tâche aurait affiché deux scores selon le réglage du widget.
+  const tasks = [{ id: "t1", projectId: "p1", statusId: "s1" }];
+  const factsOf = () => ({ late: true, projectPriority: "high" });
+  const parProjet = T.computeTreemapProjects({
+    projects: [{ id: "p1", name: "Chantier", priority: "high" }], tasks, factsOf,
+  });
+  const parStatut = T.computeTreemapProjects({
+    projects: entities, tasks, factsOf, bucketIdOf: byStatus,
+  });
+  assert.equal(parProjet[0].criticality.score, parStatut[0].criticality.score);
+  assert.ok(parStatut[0].criticality.score >= T.TREEMAP_CRITICALITY_WEIGHTS.late + T.TREEMAP_CRITICALITY_WEIGHTS.projectPriorityHigh);
+});
+
+test("les champs propres au projet sont retirés dès que la tuile n'en est plus un", () => {
+  const projet = T.normalizeProjectTreemapConfig({ treemapTileBy: "project", treemapFields: ["projectName", "budget", "folder", "riskCount", "priority", "progress"] });
+  assert.ok(T.TREEMAP_PROJECT_ONLY_FIELDS.every((k) => projet.fields.includes(k)), "sur un projet, ces champs restent proposés");
+  const statut = T.normalizeProjectTreemapConfig({ treemapTileBy: "status", treemapFields: ["projectName", "budget", "folder", "riskCount", "priority", "progress"] });
+  assert.deepEqual(statut.fields, ["projectName", "progress"]);
+});
+
+test("le statut dominant d'une tuile de statut est une tautologie, donc retiré", () => {
+  const statut = T.normalizeProjectTreemapConfig({ treemapTileBy: "status", treemapFields: ["projectName", "dominantStatus", "progress"] });
+  assert.deepEqual(statut.fields, ["projectName", "progress"]);
+  const type = T.normalizeProjectTreemapConfig({ treemapTileBy: "taskType", treemapFields: ["projectName", "dominantStatus", "progress"] });
+  assert.ok(type.fields.includes("dominantStatus"), "sur un type, le statut dominant reste une information");
+});
+
+test("le nom de la tuile reste toujours affiché, quel que soit le champ", () => {
+  T.TREEMAP_TILE_BY.forEach((key) => {
+    const cfg = T.normalizeProjectTreemapConfig({ treemapTileBy: key, treemapFields: ["progress"] });
+    assert.equal(cfg.fields[0], "projectName", `sans son nom, une tuile « ${key} » ne désigne rien`);
+  });
+});
+
+test("regrouper par dossier ou priorité retombe sur « aucun » hors des projets", () => {
+  // Ces deux notions sont des attributs de projet : conservées, elles
+  // produiraient des bandes vides que rien n'expliquerait.
+  for (const groupBy of ["folder", "priority"]) {
+    assert.equal(T.normalizeProjectTreemapConfig({ treemapTileBy: "project", treemapGroupBy: groupBy }).groupBy, groupBy);
+    assert.equal(T.normalizeProjectTreemapConfig({ treemapTileBy: "status", treemapGroupBy: groupBy }).groupBy, "none");
+  }
+  // « Responsable » et « criticité » se calculent par tuile : ils survivent.
+  for (const groupBy of ["owner", "criticality"]) {
+    assert.equal(T.normalizeProjectTreemapConfig({ treemapTileBy: "status", treemapGroupBy: groupBy }).groupBy, groupBy);
+  }
+});
+
+test("un champ de tuile inconnu est refusé", () => {
+  const cfg = T.normalizeProjectTreemapConfig({ treemapTileBy: "criticality", treemapFields: ["projectName", "inventé", "progress"] });
+  assert.deepEqual(cfg.fields, ["projectName", "progress"]);
 });

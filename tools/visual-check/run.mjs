@@ -110,6 +110,10 @@ const seen = await page.evaluate(() => {
       .map((el) => (el.getAttribute("fill") || "").toUpperCase()),
     scatterCritLanes: rects("#harness-scatter-crit .lp-widget-scatter-lane-label").map((r) => r.text),
     scatterEmptyText: (document.querySelector("#harness-scatter-empty .lp-widget-scatter.is-empty") || {}).textContent || "",
+    statusTileNames: rects("#harness-treemap-status .lp-widget-treemap-tile-name").map((r) => r.text),
+    statusTiles: rects("#harness-treemap-status .lp-widget-treemap-tile").map((r) => r.text),
+    statusGroupLabels: rects("#harness-treemap-status .lp-widget-treemap-group-label").map((r) => r.text),
+    statusEmpty: (document.querySelector("#harness-treemap-status .lp-empty, #harness-treemap-status .lp-widget-treemap-empty") || {}).textContent || "",
     miniRiskButton: [...document.querySelectorAll("#harness-first-minigantt button")].some((b) => b.textContent.trim() === "+ Risque"),
     miniFields: (() => {
       const host = document.querySelector("#harness-first-minigantt");
@@ -248,6 +252,31 @@ try {
     [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-lane-label")].map((e) => e.textContent).join("|"));
 } catch (error) {
   scatter.error = String(error).split("\n")[0];
+}
+
+// Treemap par statut (issue #47) : la fiche doit proposer le champ qui porte
+// les tuiles, et ne plus proposer ce qui n'a de sens que sur un projet.
+const statusTreemap = { tileByOptions: 0, offersFolder: true, tileNameLabel: "" };
+try {
+  await page.locator("#harness-open-status-treemap-form").click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  const tileBySelect = page.locator(".lp-modal select").filter({ has: page.locator('option[value="taskType"]') }).first();
+  statusTreemap.tileByOptions = await tileBySelect.locator("option").count();
+  statusTreemap.offersFolder = await page.locator(".lp-modal .lp-density-btn", { hasText: /^Dossier$/ }).count() > 0;
+  statusTreemap.tileNameLabel = (await page.locator(".lp-modal .lp-gantt-annot-head").first().innerText()).trim();
+  // Le CATALOGUE des champs disponibles, pas la liste des champs déjà retenus :
+  // c'est lui que le champ des tuiles doit filtrer.
+  await page.locator(".lp-modal").getByTitle("Champs disponibles").first().click();
+  await page.waitForTimeout(300);
+  statusTreemap.fieldLabels = (await page.locator(".lp-dropdown-group-label", { hasText: "Champs disponibles" })
+    .locator("xpath=following-sibling::label").allInnerTexts()).map((t) => t.trim());
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(250);
+  await page.locator(".lp-modal").getByRole("button", { name: "Annuler" }).click();
+  await page.waitForTimeout(400);
+} catch (error) {
+  statusTreemap.error = String(error).split("\n")[0];
 }
 
 // Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
@@ -577,6 +606,40 @@ expect(scatter.laneOptions === 3, `Nuage : ${scatter.laneOptions} choix de coulo
 expect(
   scatter.savedLaneField === "À planifier|Attente tiers",
   `Nuage : le couloir choisi dans la fiche n'a pas été enregistré (couloirs après sauvegarde : « ${scatter.savedLaneField} », noms de statuts attendus)`
+);
+
+// --- Treemap par statut (issue #47) ----------------------------------------
+// Les tuiles portent des NOMS DE STATUT, pas des noms de projet : c'est tout le
+// point de l'issue, et c'est aussi ce qui casserait en silence si le champ de
+// rattachement n'était pas transmis au bloc de calcul.
+expect(seen.statusTileNames.length > 0, `Treemap par statut : aucune tuile (${seen.statusEmpty.slice(0, 120)})`);
+{
+  const statuts = ["À planifier", "Attente tiers", "En cours", "Terminé", "Information", "Sans statut"];
+  const projets = ["Lot 2B", "CTEX6", "Agenda perso"];
+  seen.statusTileNames.forEach((name) => {
+    expect(statuts.includes(name), `Treemap par statut : la tuile « ${name} » n'est pas un statut`);
+    expect(!projets.includes(name), `Treemap par statut : la tuile « ${name} » est restée un projet`);
+  });
+  // Regroupement « Dossier » demandé lui aussi : il doit retomber sur « aucun »,
+  // sans produire de bande.
+  expect(seen.statusGroupLabels.length === 0, `Treemap par statut : regroupement par dossier conservé (${seen.statusGroupLabels.join(" / ")})`);
+}
+expect(!statusTreemap.error, `contrôle du Treemap par statut interrompu : ${statusTreemap.error}`);
+expect(statusTreemap.tileByOptions === 4, `Treemap : ${statusTreemap.tileByOptions} choix de champ de tuile dans la fiche, 4 attendus`);
+expect(!statusTreemap.offersFolder, "Treemap par statut : la fiche propose encore un regroupement par dossier");
+expect(
+  Array.isArray(statusTreemap.fieldLabels) && statusTreemap.fieldLabels.length > 0,
+  "Treemap par statut : aucun champ de tuile listé dans la fiche"
+);
+// Budget, dossier, priorité, risques : des notions de projet. Proposées ici,
+// elles donneraient des cases qui se cochent et que l'enregistrement retire.
+["Budget", "Dossier", "Priorité du projet", "Risques"].forEach((mot) => {
+  const trouve = (statusTreemap.fieldLabels || []).filter((l) => l.includes(mot));
+  expect(trouve.length === 0, `Treemap par statut : la fiche propose encore « ${trouve.join(", ")} »`);
+});
+expect(
+  /statut/i.test(statusTreemap.tileNameLabel),
+  `Treemap par statut : le premier champ de tuile s'intitule « ${statusTreemap.tileNameLabel} » au lieu de nommer le statut`
 );
 
 expect(!treemap.error, `contrôle du Treemap interrompu : ${treemap.error}`);
