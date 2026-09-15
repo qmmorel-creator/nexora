@@ -243,6 +243,63 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Infobulle de la heat map mensuelle (issue #54). Deux pannes distinctes, que
+   seul un rendu réel départage : une infobulle laissée dans l'arbre du widget
+   se décale dès qu'un ancêtre porte un transform, et une infobulle collée à
+   « pointeur + 12 » sort du cadre près d'un bord.
+
+   Ce que le banc contrôle ici est ce qu'un test unitaire ne peut pas voir : où
+   l'infobulle est RENDUE, et qu'elle tient dans la fenêtre. La bascule d'un
+   bord à l'autre, elle, est une fonction pure — sept tests l'éprouvent sur les
+   deux axes, y compris une infobulle plus large que la fenêtre. La reproduire
+   ici demanderait de contraindre la fenêtre autour d'une case porteuse, sans
+   rien prouver de plus. */
+const infobulle = { parent: "", flipped: null, dansCadre: null, cursorX: null, tipLeft: null, marge: null };
+try {
+  const hote = "#harness-heatmap-month";
+  await page.locator(hote).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  const cases = page.locator(`${hote} .lp-widget-heatmap-cell`);
+  const total = await cases.count();
+  const vue = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  // La case porteuse la plus à droite ET visible : c'est elle qui force la bascule.
+  let cible = null;
+  for (let i = 0; i < total; i++) {
+    const boite = await cases.nth(i).boundingBox();
+    if (!boite) continue;
+    const cx = Math.round(boite.x + boite.width / 2), cy = Math.round(boite.y + boite.height / 2);
+    if (cx < 0 || cx > vue.w || cy < 0 || cy > vue.h) continue;
+    await page.mouse.move(cx, cy);
+    await page.waitForTimeout(40);
+    if (await page.locator(".lp-widget-heatmap-tip").count()) {
+      if (!cible || cx > cible.cx) cible = { cx, cy };
+    }
+  }
+  if (cible) {
+    await page.mouse.move(cible.cx, cible.cy);
+    await page.waitForTimeout(250);
+    Object.assign(infobulle, await page.evaluate(({ cx }) => {
+      const tip = document.querySelector(".lp-widget-heatmap-tip");
+      if (!tip) return { parent: "(absente)" };
+      const r = tip.getBoundingClientRect();
+      return {
+        parent: tip.parentElement === document.body ? "body" : String(tip.parentElement.className || tip.parentElement.tagName),
+        flipped: r.left < cx,
+        dansCadre: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight,
+        cursorX: cx,
+        tipLeft: Math.round(r.left),
+        marge: Math.round(window.innerWidth - cx),
+      };
+    }, cible));
+  } else {
+    infobulle.parent = "(aucune case porteuse visible)";
+  }
+  await page.mouse.move(2, 2);
+  await page.waitForTimeout(200);
+} catch (error) {
+  infobulle.error = String(error).split("\n")[0];
+}
+
 /* Bandeau de paramètres du widget (issue #56). Le contrôle porte sur ce qui
    défile SOUS le bandeau, pas sur le bandeau lui-même : la panne réelle était
    un axe collant calé sur une barre d'onglets absente, qui laissait une bande
@@ -851,6 +908,11 @@ expect(heatmap.axisOptions === 6, `Heat map : ${heatmap.axisOptions} champ(s) d'
 expect(heatmap.metricOptions === 4, `Heat map : ${heatmap.metricOptions} mesure(s) dans la fiche, 4 attendues`);
 expect(/Urgent|Moyen|Bas|criticité/i.test(heatmap.savedCols),
   `Heat map : l'axe des colonnes choisi dans la fiche n'a pas été enregistré (colonnes : « ${heatmap.savedCols} »)`);
+
+expect(!infobulle.error, `contrôle de l'infobulle de la heat map interrompu : ${infobulle.error}`);
+expect(infobulle.parent === "body", `Heat map mensuelle : l'infobulle est rendue dans « ${infobulle.parent} » au lieu de la racine — un ancêtre transformé la décalerait`);
+expect(infobulle.dansCadre === true, "Heat map mensuelle : l'infobulle sort de la fenêtre au lieu de basculer");
+expect(infobulle.tipLeft !== null, "Heat map mensuelle : aucune infobulle n'a pu être déclenchée — le contrôle ne prouve rien");
 
 expect(!bandeau.error, `contrôle du bandeau de paramètres interrompu : ${bandeau.error}`);
 /* Le rectangle de collage part du bord intérieur de la zone défilante : l'axe

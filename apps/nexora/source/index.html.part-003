@@ -5894,6 +5894,46 @@ function widgetSecondaryTicks(minDate, maxDate) {
 // (conic-gradient) selon la couleur de chacun. Les jours en retard gardent un
 // contour rouge distinct, pour rester un signal d'alerte reconnaissable même si la
 // couleur de fond est désormais celle du projet plutôt qu'un dégradé de charge.
+/* Infobulle de la heat map mensuelle. Deux raisons de la sortir du widget et
+   de la confier à un portail vers document.body (issue #54) :
+
+   - position:fixed se cale sur la fenêtre SAUF si un ancêtre porte transform,
+     filter, will-change ou contain — auquel cas c'est cet ancêtre qui devient
+     la référence, et l'infobulle apparaît décalée de toute sa position. Rendue
+     à la racine du document, elle ne peut plus se faire piéger ;
+   - le calcul de place devient celui du Mini-Gantt et du Treemap, qui basculent
+     l'infobulle quand elle déborde. Elle restait ici collée à x+12 / y+12,
+     donc rejetée hors du cadre près d'un bord.
+
+   Les dimensions sont majorées, jamais mesurées : c'est le parti déjà pris par
+   le Mini-Gantt, et la feuille de style plafonne la largeur en conséquence. */
+const HEATMAP_TIP_W = 240;
+const HEATMAP_TIP_H = 74;
+
+function HeatmapDayTooltip({ hover }) {
+  const { left, top } = tooltipAnchor({
+    x: hover.x,
+    y: hover.y,
+    width: HEATMAP_TIP_W,
+    height: HEATMAP_TIP_H,
+    viewportWidth: typeof window !== "undefined" ? window.innerWidth : 1200,
+    viewportHeight: typeof window !== "undefined" ? window.innerHeight : 800,
+  });
+  return createPortal(
+    <div
+      className="lp-pie-tooltip lp-widget-metro-tooltip lp-widget-heatmap-tip"
+      style={{ position: "fixed", left, top, zIndex: 100000, pointerEvents: "none" }}
+    >
+      <div className="lp-widget-metro-tooltip-title">{fmtShort(hover.day)}</div>
+      <div className="lp-widget-metro-tooltip-meta">
+        {hover.tasks.slice(0, 5).map((t) => t.title).join(", ")}
+        {hover.tasks.length > 5 ? ` +${hover.tasks.length - 5} autres` : ""}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [hoverDay, setHoverDay] = useState(null); // { day, x, y }
@@ -6061,12 +6101,7 @@ function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
             </div>
           ))}
         </div>
-        {hoverDay && (
-          <div className="lp-pie-tooltip lp-widget-metro-tooltip" style={{ position: "fixed", left: hoverDay.x + 12, top: hoverDay.y + 12 }}>
-            <div className="lp-widget-metro-tooltip-title">{fmtShort(hoverDay.day)}</div>
-            <div className="lp-widget-metro-tooltip-meta">{hoverDay.tasks.slice(0, 5).map((t) => t.title).join(", ")}{hoverDay.tasks.length > 5 ? ` +${hoverDay.tasks.length - 5} autres` : ""}</div>
-          </div>
-        )}
+        {hoverDay && <HeatmapDayTooltip hover={hoverDay} />}
       </div>
       {/* Poignée de glisser : ajuste la part respective du calendrier et de la
           liste. Tant qu'elle n'a pas été utilisée, les deux volets se partagent

@@ -4229,6 +4229,12 @@ function scatterWindowOverflow(lanes, domain) {
 }
 // === NEXORA:DEADLINE-SCATTER:END ===
 
+/* Majorants de l'infobulle : la feuille de style plafonne sa largeur à 260 px,
+   et son contenu à six lignes. Majorer plutôt que mesurer fait basculer
+   l'infobulle un peu tôt près d'un bord, jamais trop tard. */
+const HMGRID_TIP_W = 262;
+const HMGRID_TIP_H = 128;
+
 function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
   const [hover, setHover] = useState(null);
@@ -4404,10 +4410,22 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
         </p>
       )}
 
-      {hover && (
+      {/* Même traitement que la heat map mensuelle (issue #54) : portail vers la
+          racine du document, pour qu'aucun ancêtre porteur d'un transform ne
+          devienne la référence de position:fixed, et bascule quand l'infobulle
+          déborde — le rabattement à droite qui tenait lieu de calcul laissait
+          l'infobulle sortir par le bas, et la chevaucher par la gauche. */}
+      {hover && createPortal(
         <div
           className="lp-widget-hmgrid-tip"
-          style={{ left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 280), top: hover.y + 14 }}
+          style={tooltipAnchor({
+            x: hover.x,
+            y: hover.y,
+            width: HMGRID_TIP_W,
+            height: HMGRID_TIP_H,
+            viewportWidth: typeof window !== "undefined" ? window.innerWidth : 1200,
+            viewportHeight: typeof window !== "undefined" ? window.innerHeight : 800,
+          })}
         >
           <strong>{hover.row.name} × {hover.col.name}</strong>
           <span>{HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{hover.cell.value}{suffixe}</b></span>
@@ -4416,7 +4434,8 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
             <span key={t.id} className="lp-widget-hmgrid-tip-task">{t.title || "Sans titre"}</span>
           ))}
           {hover.cell.tasks.length > 4 && <span className="lp-widget-hmgrid-tip-more">et {hover.cell.tasks.length - 4} autre{hover.cell.tasks.length - 4 > 1 ? "s" : ""}…</span>}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

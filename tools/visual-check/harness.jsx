@@ -96,6 +96,14 @@ function AnnotationsHarness() {
     { id: "sc4", projectId: "p2", statusId: "s2", title: "Relance presse", start: scatterToday, end: addDays(scatterToday, 12), progress: 0, checklist: [] },
     { id: "sc5", projectId: "p3", statusId: "s1", title: "Sans échéance", start: scatterToday, progress: 0, checklist: [] },
   ];
+  /* Les mêmes tâches, plus une qui échoit DEUX MOIS plus tard : sans elle,
+     toutes les cases porteuses de la heat map se trouvent dans le premier des
+     trois mois affichés, donc à gauche — et la bascule de l'infobulle près du
+     bord droit ne serait jamais mise à l'épreuve. */
+  const heatmapMonthTasks = [
+    ...scatterTasks,
+    { id: "hm1", projectId: "p3", statusId: "s1", title: "Réception des travaux", start: scatterToday, end: addDays(scatterToday, 62), progress: 0, checklist: [] },
+  ];
   const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
   const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
@@ -176,6 +184,23 @@ function AnnotationsHarness() {
             selectedProjectIds={[]}
             onToggleProject={noop}
           />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>HEAT MAP MENSUELLE EN WIDGET</h2>
+        {/* Dans la structure réelle d'un widget, et volontairement bas dans la
+            page : une infobulle mal ancrée ne se trahit qu'une fois la page
+            défilée ou le widget décalé de l'origine (issue #54). */}
+        {/* Collé au bord DROIT de la page : les cases de la dernière colonne
+            sont alors assez près du bord pour que l'infobulle doive basculer.
+            Centré, le contrôle passerait sans jamais éprouver la bascule. */}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div id="harness-heatmap-month" className="lp-widget-card" style={{ position: "relative", width: 820, height: 360, marginBottom: 18 }}>
+          <div className="lp-widget-head"><span className="lp-widget-title">Heat map mensuelle 1</span></div>
+          <div className="lp-widget-body">
+            <WidgetHeatmapMonth tasks={heatmapMonthTasks} ctx={ctx} onOpen={noop} appearance={appearance} />
+          </div>
+        </div>
         </div>
       </div>
       <div>

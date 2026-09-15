@@ -468,4 +468,32 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
   assert.match(head, /z-index:\d+/, "Le bandeau n'a plus de plan propre : le contenu positionné passe par-dessus.");
 }
 
+/* Place des infobulles des heat maps (issue #54).
+   Deux pièces, chacune invisible à la lecture : le portail, sans lequel un
+   ancêtre porteur d'un transform devient la référence de position:fixed et
+   décale l'infobulle de toute sa position ; et le calcul de place, sans lequel
+   elle sort du cadre près d'un bord. */
+{
+  assert.match(builtSource, /\/\/ === NEXORA:TOOLTIP-ANCHOR:START ===/, "Le bloc de placement des infobulles a disparu.");
+  assert.match(builtSource, /\/\/ === NEXORA:TOOLTIP-ANCHOR:END ===/, "La sentinelle de fin du bloc de placement a disparu.");
+  const mensuelle = builtSource.slice(
+    builtSource.indexOf("function HeatmapDayTooltip"),
+    builtSource.indexOf("function WidgetHeatmapMonth"),
+  );
+  assert.ok(mensuelle.length > 0, "L'infobulle de la heat map mensuelle est introuvable.");
+  assert.match(mensuelle, /tooltipAnchor\(\{/, "L'infobulle mensuelle ne passe plus par le calcul de place : elle sortira du cadre près d'un bord.");
+  assert.match(mensuelle, /createPortal\(/, "L'infobulle mensuelle n'est plus portée à la racine : un ancêtre transformé la décalerait.");
+  assert.match(mensuelle, /document\.body,/, "Le portail de l'infobulle mensuelle ne vise plus document.body.");
+
+  const hmFrom = builtSource.indexOf('className="lp-widget-hmgrid-tip"');
+  const croisee = hmFrom === -1 ? "" : builtSource.slice(hmFrom - 600, hmFrom + 900);
+  assert.ok(croisee.length > 0, "L'infobulle de la heat map croisée est introuvable.");
+  assert.match(croisee, /createPortal\(/, "L'infobulle croisée n'est plus portée à la racine du document.");
+  assert.match(croisee, /tooltipAnchor\(\{/, "L'infobulle croisée ne passe plus par le calcul de place.");
+  /* Le rabattement maison d'origine ne traitait QUE le bord droit : le
+     réintroduire ferait ressortir l'infobulle par le bas. */
+  assert.doesNotMatch(croisee, /Math\.min\(hover\.x \+ 14/,
+    "Le rabattement maison de l'infobulle croisée est de retour : il ignore le bord bas.");
+}
+
 console.log("Repository invariants: OK");
