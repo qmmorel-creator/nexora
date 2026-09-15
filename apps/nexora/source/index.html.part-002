@@ -4239,8 +4239,37 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
   const [hover, setHover] = useState(null);
   const [selected, setSelected] = useState(null);
+  /* Deux volets, comme la heat map mensuelle : la grille à gauche, les tâches
+     de la case cliquée à droite. null = jamais glissé, donc partage strictement
+     égal ; un nombre = largeur en pixels fixée par un glisser explicite.
+     Ces états sont déclarés AVANT le retour « aucune tâche à croiser » : un
+     hook placé après ne s'exécuterait pas dans cet état, et le widget casserait
+     sur l'erreur React #310 au premier filtre qui ne ramène rien. */
+  const [listWidth, setListWidth] = useState(null);
+  const wrapRef = useRef(null);
+  const listRef = useRef(null);
+  const dragRef = useRef(null);
   const today = iso(new Date());
   const todayIdx = dayIndex(today);
+
+  const startResize = (e) => {
+    e.preventDefault();
+    const startWidth = listWidth != null ? listWidth : (listRef.current?.getBoundingClientRect().width || 300);
+    dragRef.current = { startX: e.clientX, startWidth };
+    const onMove = (ev) => {
+      if (!dragRef.current) return;
+      const wrapWidth = wrapRef.current?.getBoundingClientRect().width || 800;
+      const delta = dragRef.current.startX - ev.clientX; // vers la gauche = liste plus large
+      setListWidth(Math.max(180, Math.min(wrapWidth - 160, dragRef.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   // Les mêmes faits que le Treemap, construits une fois : la criticité d'une
   // tâche doit être la même valeur dans les deux widgets.
@@ -4333,6 +4362,20 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
 
   const domain = useMemo(() => heatmapColorDomain(grid.cells, cfg.metric), [grid, cfg.metric]);
 
+  /* La case retenue est relue dans la grille COURANTE, jamais mémorisée telle
+     quelle : un changement d'axe, de mesure ou de filtre peut la faire
+     disparaître, et le volet doit alors revenir à son invite plutôt que
+     d'afficher une liste périmée. */
+  const selection = useMemo(() => {
+    if (!selected) return null;
+    const cell = grid.cells.get(heatmapCellKey(selected.rowId, selected.colId));
+    if (!cell) return null;
+    const row = grid.rows.find((r) => r.id === selected.rowId);
+    const col = grid.cols.find((c) => c.id === selected.colId);
+    if (!row || !col) return null;
+    return { cell, row, col };
+  }, [selected, grid]);
+
   if (!lignes.length || !colonnes.length) {
     return (
       <div className="lp-widget-hmgrid is-empty">
@@ -4348,6 +4391,7 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
   const estSelection = (r, c) => selected && selected.rowId === r && selected.colId === c;
 
   return (
+    <div className="lp-widget-hmgrid-wrap" ref={wrapRef}>
     <div className="lp-widget-hmgrid">
       <div className="lp-widget-hmgrid-scroll">
         <table className="lp-widget-hmgrid-table">
@@ -4387,11 +4431,12 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
                       onMouseMove={(e) => setHover((prev) => (prev && prev.cell === cellule ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
                       onMouseLeave={() => setHover((prev) => (prev && prev.cell === cellule ? null : prev))}
                       onClick={() => {
-                        // Une case porte souvent plusieurs tâches : il n'y a rien
-                        // à « ouvrir ». On la sélectionne, et on n'ouvre que
-                        // lorsqu'il n'y a aucune ambiguïté.
+                        /* Le clic RETIENT la case ; c'est le volet de droite qui
+                           donne accès aux tâches. Ouvrir d'autorité la tâche
+                           d'une case qui n'en porte qu'une — ce que faisait la
+                           version précédente — poserait maintenant une fiche
+                           par-dessus la liste qu'on vient de demander. */
                         setSelected((prev) => (prev && prev.rowId === r.id && prev.colId === c.id ? null : { rowId: r.id, colId: c.id }));
-                        if (cellule.tasks.length === 1 && onOpen) onOpen(cellule.tasks[0]);
                       }}
                     >
                       {cfg.showValues ? cellule.value : ""}
@@ -4437,6 +4482,54 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
         </div>,
         document.body,
       )}
+    </div>
+
+      {/* Poignée : même geste que la heat map mensuelle. Tant qu'elle n'a pas
+          servi, les deux volets se partagent l'espace à parts égales. */}
+      <div className="lp-widget-hmgrid-resize" onMouseDown={startResize} title="Glisser pour redimensionner" />
+
+      {/* Volet de droite TOUJOURS présent, avec une invite quand aucune case
+          n'est retenue : le faire apparaître et disparaître au clic
+          redimensionnerait la grille à chaque fois, et les cases se
+          déplaceraient sous le pointeur. */}
+      <div
+        className="lp-widget-hmgrid-tasklist"
+        ref={listRef}
+        style={listWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${listWidth}px` }}
+      >
+        <div className="lp-widget-hmgrid-tasklist-head">
+          <span>{selection ? `${selection.row.name} × ${selection.col.name}` : "Aucune case retenue"}</span>
+          {selection && (
+            <button className="lp-icon-btn" onClick={() => setSelected(null)} title="Ne plus retenir cette case"><X size={12} /></button>
+          )}
+        </div>
+        {selection ? (
+          <>
+            <div className="lp-widget-hmgrid-tasklist-meta">
+              {HEATMAP_METRIC_LABELS[cfg.metric]} : <b>{selection.cell.value}{suffixe}</b>
+              {" · "}
+              {selection.cell.tasks.length} tâche{selection.cell.tasks.length > 1 ? "s" : ""}
+            </div>
+            <div className="lp-widget-hmgrid-tasklist-items">
+              {selection.cell.tasks.map((t) => {
+                const proj = (ctx.projects || []).find((p) => p.id === t.projectId);
+                const st = (ctx.statuses || []).find((x) => x.id === t.statusId);
+                return (
+                  <div className="lp-widget-hmgrid-tasklist-item" key={t.id} onClick={() => onOpen && onOpen(t)}>
+                    <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
+                    <span className="lp-widget-hmgrid-tasklist-title">{t.title || "Sans titre"}</span>
+                    {st && <span className="lp-widget-hmgrid-tasklist-status" style={{ color: st.color }}>{st.name}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="lp-widget-hmgrid-tasklist-empty">
+            Clique sur une case de la grille pour voir les tâches de ce croisement.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

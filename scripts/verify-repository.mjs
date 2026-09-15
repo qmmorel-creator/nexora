@@ -409,6 +409,30 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
      mettrait « Bas » en tête, là où l'œil doit tomber sur « Urgent ». */
   assert.match(grille, /heatmapOrderCriticalities\(CRITICALITIES\)/,
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
+
+  /* Deux volets (issue #51). Le volet de droite tient à trois pièces
+     indépendantes, dont deux sans effet visible si elles se défont : la
+     sélection relue dans la grille COURANTE, et l'état déclaré avant le retour
+     anticipé. */
+  assert.match(grille, /className="lp-widget-hmgrid-tasklist"/,
+    "Le volet des tâches de la heat map croisée a disparu.");
+  assert.match(grille, /className="lp-widget-hmgrid-resize"/,
+    "La poignée de partage entre la grille et la liste a disparu.");
+  /* Mémoriser la case retenue plutôt que de la relire laisserait une liste
+     périmée à l'écran après un changement d'axe ou de filtre. */
+  assert.match(grille, /const cell = grid\.cells\.get\(heatmapCellKey\(selected\.rowId, selected\.colId\)\);/,
+    "La case retenue n'est plus relue dans la grille courante : la liste survivrait à un changement d'axe.");
+  /* Même piège que le Mini-Gantt (erreur React #310) : un hook déclaré après le
+     retour « aucune tâche à croiser » ne s'exécute pas dans cet état, et le
+     widget casse au premier filtre qui ne ramène rien. */
+  const retourVide = grille.indexOf("if (!lignes.length || !colonnes.length)");
+  assert.ok(retourVide !== -1, "Le retour « aucune tâche à croiser » de la heat map a disparu.");
+  const apres = [...grille.slice(retourVide).matchAll(/\n  const [\w[\], ]+ = use[A-Z]\w*\(/g)].map((m) => m[0].trim());
+  assert.deepEqual(apres, [], `hook(s) après le retour « aucune tâche à croiser » : ${apres.join(" | ")}`);
+  /* Le clic retient la case ; il n'ouvre plus la tâche d'autorité, ce qui
+     poserait une fiche par-dessus la liste qu'on vient de demander. */
+  assert.doesNotMatch(grille, /if \(cellule\.tasks\.length === 1 && onOpen\) onOpen/,
+    "Le clic sur une case ouvre de nouveau la tâche d'autorité, par-dessus le volet de droite.");
 }
 
 /* Encadré posé par la coche du Mini-Gantt (issue #48, retour de test).

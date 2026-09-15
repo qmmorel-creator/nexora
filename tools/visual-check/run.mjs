@@ -452,12 +452,31 @@ try {
 
 // Heat map (issue #51) : l'infobulle doit nommer le croisement, et la fiche
 // proposer les deux axes ET la mesure.
-const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "" };
+const heatmap = { tip: "", axisOptions: 0, metricOptions: 0, savedCols: "", listHead: "", listItems: 0, listOpened: "", listEmptyAvant: "", tailles: [] };
 try {
   const plein = page.locator("#harness-heatmap .lp-widget-hmgrid-cell:not(.is-empty)").first();
   await plein.hover();
   await page.waitForTimeout(250);
   heatmap.tip = (await page.locator(".lp-widget-hmgrid-tip").innerText()).trim();
+  /* Deux volets (issue #51). Avant le moindre clic, le volet de droite est là
+     et invite à cliquer : le faire apparaître au clic redimensionnerait la
+     grille et déplacerait les cases sous le pointeur. */
+  heatmap.listEmptyAvant = (await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-empty").innerText()).trim();
+  // Les cases avant / après le clic : le volet ne doit pas déformer la grille.
+  const tailleDes = async () => page.evaluate(() =>
+    [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-cell")].map((e) => Math.round(e.getBoundingClientRect().width)));
+  const avantClic = await tailleDes();
+  await plein.click();
+  await page.waitForTimeout(250);
+  heatmap.listHead = (await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-head span").first().innerText()).trim();
+  heatmap.listItems = await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-item").count();
+  const apresClic = await tailleDes();
+  heatmap.tailles = [new Set(avantClic).size, new Set(apresClic).size];
+  if (heatmap.listItems > 0) {
+    await page.locator("#harness-heatmap .lp-widget-hmgrid-tasklist-item").first().click();
+    await page.waitForTimeout(200);
+    heatmap.listOpened = (await page.locator("#harness-heatmap-opened").innerText()).trim();
+  }
   await page.locator("#harness-open-heatmap-form").click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   await page.waitForTimeout(400);
@@ -908,6 +927,16 @@ expect(heatmap.axisOptions === 6, `Heat map : ${heatmap.axisOptions} champ(s) d'
 expect(heatmap.metricOptions === 4, `Heat map : ${heatmap.metricOptions} mesure(s) dans la fiche, 4 attendues`);
 expect(/Urgent|Moyen|Bas|criticité/i.test(heatmap.savedCols),
   `Heat map : l'axe des colonnes choisi dans la fiche n'a pas été enregistré (colonnes : « ${heatmap.savedCols} »)`);
+expect(/[Cc]lique/.test(heatmap.listEmptyAvant),
+  `Heat map : le volet de droite n'invite pas à cliquer avant toute sélection (« ${heatmap.listEmptyAvant} »)`);
+expect(/×/.test(heatmap.listHead),
+  `Heat map : le volet de droite ne nomme pas le croisement retenu (« ${heatmap.listHead} »)`);
+expect(heatmap.listItems > 0, "Heat map : le volet de droite reste vide après le clic sur une case porteuse");
+expect(heatmap.listOpened !== "", "Heat map : cliquer une tâche du volet de droite n'ouvre pas la tâche");
+/* Le volet est là avant comme après : la grille ne doit pas se redimensionner
+   au clic, sinon les cases se déplacent sous le pointeur. */
+expect(heatmap.tailles[0] === 1 && heatmap.tailles[1] === 1,
+  `Heat map : les cases n'ont plus toutes la même largeur (${heatmap.tailles[0]} taille(s) avant le clic, ${heatmap.tailles[1]} après)`);
 
 expect(!infobulle.error, `contrôle de l'infobulle de la heat map interrompu : ${infobulle.error}`);
 expect(infobulle.parent === "body", `Heat map mensuelle : l'infobulle est rendue dans « ${infobulle.parent} » au lieu de la racine — un ancêtre transformé la décalerait`);
