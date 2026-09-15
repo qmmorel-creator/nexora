@@ -1,4 +1,58 @@
-on className={"lp-tool-btn" + (leftCollapsed ? " active" : "")} onClick={() => setPrefs((p) => ({ ...p, leftCollapsed: !leftCollapsed }))} title={leftCollapsed ? "Afficher la colonne projet" : "Replier la colonne projet (plus de place pour le diagramme)"}>
+",
+  // filtre projet actif…) — sinon "Avancement global" peut afficher 0% juste parce
+  // que les tâches terminées sont masquées par défaut. On repart donc de
+  // ctx.tasks (liste complète, non filtrée) plutôt que de "dated"/"tasks".
+  const homeDated = useMemo(() => ((embedded || !isHomepage) ? [] : (ctx.tasks || []).filter((t) => t.start && t.end)), [ctx.tasks, embedded, isHomepage]);
+  const lateTasks = useMemo(() => ((embedded || !isHomepage) ? [] : homeDated.filter((t) => isTaskLate(t, ctx)).sort((a, b) => a.end.localeCompare(b.end)).slice(0, 4)), [homeDated, ctx, embedded, isHomepage]);
+  const upcomingTasks = useMemo(() => ((embedded || !isHomepage) ? [] : homeDated.filter((t) => !isTaskDoneGlobal(t, ctx) && t.end >= now).sort((a, b) => a.end.localeCompare(b.end)).slice(0, 4)), [homeDated, ctx, embedded, isHomepage, now]);
+  const homeStats = useMemo(() => {
+    if (embedded || !isHomepage || homeDated.length === 0) return null;
+    const doneCount = homeDated.filter((t) => isTaskDoneGlobal(t, ctx)).length;
+    const byStatus = {};
+    homeDated.forEach((t) => {
+      const st = ctx.statuses.find((s) => s.id === t.statusId);
+      const key = st?.name || "Sans statut";
+      byStatus[key] = byStatus[key] || { count: 0, color: st?.color || "var(--text-muted)" };
+      byStatus[key].count++;
+    });
+    return {
+      avgProgress: Math.round((doneCount / homeDated.length) * 100),
+      byStatus: Object.entries(byStatus).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.count - a.count),
+      total: homeDated.length,
+      activeProjects: new Set(homeDated.map((t) => t.projectId)).size,
+      lateCount: homeDated.filter((t) => isTaskLate(t, ctx)).length,
+    };
+  }, [dated, ctx, embedded]);
+  const firstName = (ctx.myName || "").split(" ")[0] || "";
+
+  return (
+    <>
+      {!embedded && isHomepage && homeStats && (
+        <div className="lp-metro-home-greet">
+          <div>
+            <h2 className="lp-display" style={{ fontSize: 22, margin: "0 0 4px" }}>Bonjour{firstName ? `, ${firstName}` : ""} 👋</h2>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-600)", fontWeight: 500 }}>
+              {homeStats.activeProjects} projet{homeStats.activeProjects > 1 ? "s" : ""} actif{homeStats.activeProjects > 1 ? "s" : ""}
+              {homeStats.lateCount > 0 ? ` · ${homeStats.lateCount} tâche${homeStats.lateCount > 1 ? "s" : ""} en retard` : " · aucun retard"}
+              {upcomingTasks[0] ? ` · prochaine échéance le ${fmtShort(upcomingTasks[0].end)}` : ""}
+            </p>
+          </div>
+        </div>
+      )}
+      <div className="lp-pm-wrap lp-pm-quai" ref={pmChromeRef}>
+      <ViewToolbarPortal slot={toolbarSlot}>
+        <DropdownButton label="" icon={<Maximize2 size={14} />} title={`Zoom : ${isAuto ? "Automatique" : zoomDef.label}`}>
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-zoom" checked={zoomKey === "auto"} onChange={() => setZoomKey("auto")} /> Automatique (pleine largeur)</label>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          {PROJECT_METRO_ZOOMS.map((z) => (
+            <label className="lp-checkbox-line" key={z.key}><input type="radio" name="lp-pm-zoom" checked={zoomKey === z.key} onChange={() => setZoomKey(z.key)} /> {z.label}</label>
+          ))}
+        </DropdownButton>
+        <DropdownButton label="" icon={<Layers size={14} />} title={`Grouper par : ${metroGroupBy === "folder" ? "Dossier" : "Projet"}`}>
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "project"} onChange={() => setMetroGroupBy("project")} /> Projet (une ligne par projet)</label>
+          <label className="lp-checkbox-line"><input type="radio" name="lp-pm-groupby" checked={metroGroupBy === "folder"} onChange={() => setMetroGroupBy("folder")} /> Dossier (fusionne les projets d'un même dossier)</label>
+        </DropdownButton>
+        <button className={"lp-tool-btn" + (leftCollapsed ? " active" : "")} onClick={() => setPrefs((p) => ({ ...p, leftCollapsed: !leftCollapsed }))} title={leftCollapsed ? "Afficher la colonne projet" : "Replier la colonne projet (plus de place pour le diagramme)"}>
           <PanelLeftClose size={14} />
         </button>
         {!embedded && (
