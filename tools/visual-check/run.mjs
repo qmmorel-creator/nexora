@@ -243,6 +243,46 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Coche du Mini-Gantt (issue #48). Rien de ce qui suit n'est visible d'un test
+   unitaire : la logique pose bien l'icône et le logo, c'est le RENDU qui décide
+   de les afficher — et le premier lot ne les affichait pas.
+
+   Le second Mini-Gantt est choisi parce qu'il n'a AUCUNE annotation propre :
+   tout ce qui apparaît après la coche vient donc de la coche. */
+const coche = { frames: 0, icons: 0, corners: 0, leftGap: null, rightGap: null, cornerInside: null, apres: 0 };
+try {
+  const hote = "#harness-second-minigantt";
+  const boite = page.locator(`${hote} .lp-widget-minigantt-select`).first();
+  await boite.scrollIntoViewIfNeeded();
+  await boite.check();
+  await page.waitForTimeout(400);
+  Object.assign(coche, await page.evaluate((sel) => {
+    const rect = (el) => (el ? el.getBoundingClientRect() : null);
+    const cadre = rect(document.querySelector(`${sel} .lp-widget-minigantt-frame`));
+    // La barre de la ligne cochée : c'est elle que le trait du cadre recoupait.
+    const ligne = document.querySelector(`${sel} .lp-widget-minigantt-row.is-selected`)
+      || document.querySelector(`${sel} .lp-widget-minigantt-row`);
+    const barre = rect(ligne && ligne.querySelector(".lp-widget-minigantt-bar"));
+    const coin = rect(document.querySelector(`${sel} .lp-widget-minigantt-frame-corner`));
+    return {
+      frames: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame`).length,
+      icons: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame-label .lp-widget-minigantt-frame-icon`).length,
+      corners: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame-corner`).length,
+      leftGap: cadre && barre ? Math.round(barre.left - cadre.left) : null,
+      rightGap: cadre && barre ? Math.round(cadre.right - barre.right) : null,
+      // Le logo doit rester DANS la largeur du cadre : accroché par son bord
+      // gauche, il déborderait à droite sans qu'aucune erreur ne se produise.
+      cornerInside: cadre && coin ? Math.round(cadre.right - coin.right) : null,
+    };
+  }, hote));
+  // Décocher doit tout retirer : sans cela le cadre s'accumulerait à chaque coche.
+  await page.locator(`${hote} .lp-widget-minigantt-select`).first().uncheck();
+  await page.waitForTimeout(400);
+  coche.apres = await page.locator(`${hote} .lp-widget-minigantt-frame`).count();
+} catch (error) {
+  coche.error = String(error).split("\n")[0];
+}
+
 // Nuage des échéances : l'infobulle doit apparaître au survol MÊME à faible
 // densité — c'est elle qui rend acceptable le masquage des étiquettes. Le clic
 // doit ouvrir la tâche, et la fiche exposer le choix des couloirs.
@@ -754,6 +794,15 @@ expect(heatmap.axisOptions === 6, `Heat map : ${heatmap.axisOptions} champ(s) d'
 expect(heatmap.metricOptions === 4, `Heat map : ${heatmap.metricOptions} mesure(s) dans la fiche, 4 attendues`);
 expect(/Urgent|Moyen|Bas|criticité/i.test(heatmap.savedCols),
   `Heat map : l'axe des colonnes choisi dans la fiche n'a pas été enregistré (colonnes : « ${heatmap.savedCols} »)`);
+
+expect(!coche.error, `contrôle de la coche du Mini-Gantt interrompu : ${coche.error}`);
+expect(coche.frames === 1, `Coche du Mini-Gantt : ${coche.frames} encadré(s) après la coche, 1 attendu`);
+expect(coche.icons === 1, `Coche du Mini-Gantt : ${coche.icons} icône(s) affichée(s) — l'encadré de coche n'a pas d'étiquette, c'est l'icône qui en tient lieu`);
+expect(coche.corners === 1, `Coche du Mini-Gantt : ${coche.corners} logo(s) de coin, 1 attendu en haut à droite`);
+expect(coche.leftGap !== null && coche.leftGap >= 6, `Coche du Mini-Gantt : le trait gauche du cadre passe à ${coche.leftGap} px de la barre — il la recoupe`);
+expect(coche.rightGap !== null && coche.rightGap >= 6, `Coche du Mini-Gantt : le trait droit du cadre passe à ${coche.rightGap} px de la barre — il la recoupe`);
+expect(coche.cornerInside !== null && coche.cornerInside >= 0, `Coche du Mini-Gantt : le logo de coin déborde de ${-coche.cornerInside} px hors du cadre`);
+expect(coche.apres === 0, `Coche du Mini-Gantt : ${coche.apres} encadré(s) restant(s) après avoir décoché, 0 attendu`);
 
 expect(!treemap.error, `contrôle du Treemap interrompu : ${treemap.error}`);
 expect(treemap.opened === "p1" || treemap.opened === "p2" || treemap.opened === "p3" || treemap.opened === "p4", `Treemap : le clic n'ouvre pas un projet (« ${treemap.opened} »)`);

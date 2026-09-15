@@ -22,7 +22,11 @@ const EXPORTS = [
   "GANTT_FRAME_DEFAULT_COLOR",
   "GANTT_FRAME_DEFAULT_PADDING",
   "GANTT_FRAME_MAX_PADDING",
-  "miniGanttToggleTaskFrame", "MINIGANTT_CHECK_FRAME_ICON", "normalizeHighlightFrames",
+  "miniGanttToggleTaskFrame",
+  "MINIGANTT_CHECK_FRAME_ICON",
+  "MINIGANTT_CHECK_FRAME_CORNER_ICON",
+  "MINIGANTT_FRAME_SIDE_MARGIN",
+  "MINIGANTT_FRAME_MIN_WIDTH_PCT",
 ];
 
 const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
@@ -38,6 +42,9 @@ const factory = vm.runInThisContext(
 const {
   miniGanttToggleTaskFrame,
   MINIGANTT_CHECK_FRAME_ICON,
+  MINIGANTT_CHECK_FRAME_CORNER_ICON,
+  MINIGANTT_FRAME_SIDE_MARGIN,
+  MINIGANTT_FRAME_MIN_WIDTH_PCT,
   isGanttIsoDate,
   validateTemporalBlock,
   normalizeTemporalBlocks,
@@ -753,4 +760,31 @@ test("la normalisation conserve l'icône et le marqueur d'origine", () => {
   ]);
   assert.equal(f.iconUrl, MINIGANTT_CHECK_FRAME_ICON, "Sans cela l'icône disparaîtrait au rechargement.");
   assert.equal(f.autoTaskId, "t1", "Sans cela décocher ne saurait plus quel encadré retirer.");
+});
+
+/* Logo du coin haut droit et écart à la barre (retour de test sur #48). */
+test("cocher pose aussi le logo du coin haut droit", () => {
+  const [f] = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
+  assert.equal(f.cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
+  assert.notEqual(MINIGANTT_CHECK_FRAME_CORNER_ICON, MINIGANTT_CHECK_FRAME_ICON, "Les deux logos sont distincts.");
+});
+
+test("un encadré automatique posé AVANT cette version reçoit le logo de coin", () => {
+  // Sans cette reprise, le logo n'apparaîtrait que sur les encadrés cochés
+  // après la mise à jour : ceux déjà en place resteraient nus, sans rien pour
+  // le signaler.
+  const [f] = normalizeHighlightFrames([{ id: "f1", taskIds: ["t1"], autoTaskId: "t1" }]);
+  assert.equal(f.cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
+});
+
+test("un encadré posé à la main ne reçoit aucun logo de coin", () => {
+  const [f] = normalizeHighlightFrames([{ id: "m1", label: "Jalon", taskIds: ["t1"] }]);
+  assert.equal(f.cornerIconUrl, "", "Le logo appartient à la coche, pas à tous les encadrés.");
+});
+
+test("le cadre s'écarte de la barre, et n'est jamais plus étroit qu'elle", () => {
+  // La barre du Mini-Gantt a une largeur plancher de 2 % ; un cadre autorisé à
+  // descendre en dessous couperait en deux la barre d'une tâche d'un seul jour.
+  assert.ok(MINIGANTT_FRAME_SIDE_MARGIN > 0, "Sans marge, le trait du cadre touche la barre.");
+  assert.ok(MINIGANTT_FRAME_MIN_WIDTH_PCT >= 2, "Le plancher du cadre doit valoir au moins celui de la barre.");
 });

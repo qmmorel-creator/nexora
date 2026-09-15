@@ -411,4 +411,30 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
 }
 
+/* Encadré posé par la coche du Mini-Gantt (issue #48, retour de test).
+   Trois pièces du RENDU, qu'aucun test unitaire ne peut voir : la logique pure
+   pose bien l'icône et le logo, mais c'est le JSX qui décide s'ils s'affichent.
+   Le premier lot en a fait l'expérience : l'étiquette portant l'icône n'était
+   rendue que « si le libellé existe » — or un encadré de coche n'en a pas, et
+   l'icône demandée n'est jamais apparue. */
+{
+  const layer = builtSource.slice(
+    builtSource.indexOf('className="lp-widget-minigantt-annot-layer"'),
+    builtSource.indexOf("const annotationModal"),
+  );
+  assert.ok(layer.length > 0, "Le calque d'annotations du Mini-Gantt est introuvable.");
+  assert.match(layer, /\{\(seg\.frame\.label \|\| seg\.frame\.iconUrl\) && \(/,
+    "L'icône de l'encadré n'est affichée que s'il porte un libellé : un encadré de coche n'en a pas, l'icône disparaîtrait.");
+  assert.match(layer, /className="lp-widget-minigantt-frame-corner"/,
+    "Le logo du coin haut droit de l'encadré a disparu du rendu.");
+  /* L'écart à la barre doit être appliqué AU RENDU : la constante peut très
+     bien exister et n'être utilisée nulle part. */
+  assert.match(layer, /const inset = seg\.padding \+ MINIGANTT_FRAME_SIDE_MARGIN;/,
+    "Le cadre ne s'écarte plus de la barre : le trait la recoupe.");
+  assert.match(layer, /Math\.max\(MINIGANTT_FRAME_MIN_WIDTH_PCT,/,
+    "Le cadre peut redevenir plus étroit que la barre d'une tâche d'un seul jour.");
+  assert.match(builtSource, /\.lp-widget-minigantt-frame-corner\{[^}]*translateX\(-100%\)/,
+    "Le logo de coin n'est plus accroché au bord droit du cadre : il déborderait hors de l'encadré.");
+}
+
 console.log("Repository invariants: OK");
