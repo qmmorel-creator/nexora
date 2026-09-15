@@ -295,6 +295,25 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /const GANTT_FRAME_BAR_CLEARANCE = /,
     "Le dégagement entre le cadre et la barre a disparu.");
 
+  /* Issue #56. Le bandeau de paramètres était transparent et sans plan de
+     superposition : le contenu se voyait au travers. Les trois pièces tiennent
+     ensemble — un fond opaque sans z-index, ou un z-index sans isolation du
+     corps, laisse repasser une infobulle ou une étiquette d'annotation. */
+  assert.match(builtSource, /=== NEXORA:WIDGET-HEAD-PIN:START ===/,
+    "Le bloc d'épinglage du bandeau de widget a disparu.");
+  {
+    const start = builtSource.indexOf("=== NEXORA:WIDGET-HEAD-PIN:START ===");
+    const end = builtSource.indexOf("=== NEXORA:WIDGET-HEAD-PIN:END ===", start);
+    assert.ok(end > start, "La sentinelle de fin de l'épinglage du bandeau a disparu.");
+    const bloc = builtSource.slice(start, end);
+    assert.match(bloc, /\.lp-widget-head\{[^}]*background:var\(--surface\)/,
+      "Le bandeau de widget est redevenu transparent.");
+    assert.match(bloc, /\.lp-widget-head\{[^}]*z-index:2/,
+      "Le bandeau de widget n'est plus peint au-dessus du corps.");
+    assert.match(bloc, /\.lp-widget-body\{[^}]*isolation:isolate/,
+      "Le corps du widget ne s'isole plus : un descendant peut repasser au-dessus du bandeau.");
+  }
+
   /* La ligne de définition ne porte pas les parenthèses d'appel : ce motif ne
      compte QUE les appels. Trois attendus — écoutes, contrôle de fraîcheur,
      adoption d'une valeur distante. */
