@@ -22,6 +22,7 @@ const EXPORTS = [
   "GANTT_FRAME_DEFAULT_COLOR",
   "GANTT_FRAME_DEFAULT_PADDING",
   "GANTT_FRAME_MAX_PADDING",
+  "miniGanttToggleTaskFrame", "MINIGANTT_CHECK_FRAME_ICON", "normalizeHighlightFrames",
 ];
 
 const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
@@ -35,6 +36,8 @@ const factory = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 );
 const {
+  miniGanttToggleTaskFrame,
+  MINIGANTT_CHECK_FRAME_ICON,
   isGanttIsoDate,
   validateTemporalBlock,
   normalizeTemporalBlocks,
@@ -705,4 +708,49 @@ test("l'ordre des lignes prime sur l'ordre des tâches de l'encadré", () => {
   );
   assert.equal(segs.length, 1);
   assert.deepEqual(segs[0].projectIds, ["p1", "p2"], "p1 vient avant p2 quel que soit l'ordre de taskIds");
+});
+
+
+/* Coche d'une ligne du Mini-Gantt → encadré automatique (issue #48).
+   Ce qui compte n'est pas de savoir poser un encadré, mais de ne jamais
+   effacer celui que l'utilisateur a posé à la main. */
+test("cocher pose un encadré autour de la seule tâche, avec l'icône", () => {
+  const out = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].taskIds, ["t1"]);
+  assert.equal(out[0].autoTaskId, "t1");
+  assert.equal(out[0].iconUrl, MINIGANTT_CHECK_FRAME_ICON);
+  assert.equal(out[0].label, "", "L'icône remplace le texte : pas d'étiquette.");
+});
+
+test("décocher retire l'encadré de la coche", () => {
+  const posed = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
+  assert.deepEqual(miniGanttToggleTaskFrame(posed, "t1", false), []);
+});
+
+test("décocher n'efface JAMAIS un encadré posé à la main sur la même tâche", () => {
+  const manuel = { id: "m1", label: "Jalon contractuel", taskIds: ["t1"], autoTaskId: "" };
+  const avec = miniGanttToggleTaskFrame([manuel], "t1", true, () => "f1");
+  assert.equal(avec.length, 2);
+  const apres = miniGanttToggleTaskFrame(avec, "t1", false);
+  assert.deepEqual(apres, [manuel], "Seul l'encadré automatique doit partir.");
+});
+
+test("cocher deux fois ne crée pas de doublon, et rend le même tableau", () => {
+  const une = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
+  const deux = miniGanttToggleTaskFrame(une, "t1", true, () => "f2");
+  assert.equal(deux, une, "Rendre le même tableau évite une écriture distante inutile.");
+});
+
+test("décocher une tâche sans encadré ne change rien", () => {
+  const liste = [{ id: "m1", taskIds: ["t2"], autoTaskId: "" }];
+  assert.equal(miniGanttToggleTaskFrame(liste, "t1", false), liste);
+});
+
+test("la normalisation conserve l'icône et le marqueur d'origine", () => {
+  const [f] = normalizeHighlightFrames([
+    { id: "f1", taskIds: ["t1"], iconUrl: MINIGANTT_CHECK_FRAME_ICON, autoTaskId: "t1" },
+  ]);
+  assert.equal(f.iconUrl, MINIGANTT_CHECK_FRAME_ICON, "Sans cela l'icône disparaîtrait au rechargement.");
+  assert.equal(f.autoTaskId, "t1", "Sans cela décocher ne saurait plus quel encadré retirer.");
 });

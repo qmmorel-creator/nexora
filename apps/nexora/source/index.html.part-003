@@ -1,4 +1,37 @@
-",
+okeLinecap="round" opacity="0.55" />
+        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(row.minDate) + (xFor(maxDate) - xFor(row.minDate)) * (avgProgress / 100)} y2={laneY} stroke={color} strokeWidth="3" strokeLinecap="round" />
+        <Station x={xFor(row.minDate)} y={laneY} color={color} r={6} />
+        {pMilestones.map((t) => {
+          const mx = xFor(t.end);
+          const done = isTaskDoneGlobal(t, ctx);
+          const isCritical = !!criticalPathIds && criticalPathIds.has(t.id);
+          const atRisk = showRiskBadges && !done && isAtRisk(t);
+          return (
+            <g key={t.id} onClick={() => onOpen(t)} style={{ cursor: "pointer" }}>
+              <foreignObject x={mx - 8} y={laneY - 8} width="16" height="16" style={{ overflow: "visible" }}>
+                <MilestoneGlyph size={16} icon={resolveMilestoneIcon(t, ctx)} />
+              </foreignObject>
+              {isCritical && <circle cx={mx} cy={laneY} r="10" fill="none" stroke={PM_CRITICAL_COLOR} strokeWidth="1.6" />}
+              {atRisk && (
+                <g transform={`translate(${mx + 8}, ${laneY - 13})`}>
+                  <circle r="7" fill="#fff" stroke={PM_RISK_COLOR} strokeWidth="1.4" />
+                  <text y="3" textAnchor="middle" fontSize="9" fontWeight="800" fill={PM_RISK_COLOR}>!</text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+        <g onClick={(e) => { e.stopPropagation(); setProjectSummary({ row, x: e.clientX, y: e.clientY }); }} style={{ cursor: "pointer" }}>
+          <circle cx={xFor(maxDate) + 12} cy={laneY} r="14" fill="transparent" />
+          <Terminus x={xFor(maxDate) + 6} y={laneY} color={color} size={0.85} />
+        </g>
+      </g>
+    );
+  };
+
+  const now = iso(new Date());
+  // Les widgets de synthèse de l'accueil doivent refléter l'état RÉEL global, pas
+  // le sous-ensemble déjà filtré par la vue (ex. "Masquer les tâches terminées",
   // filtre projet actif…) — sinon "Avancement global" peut afficher 0% juste parce
   // que les tâches terminées sont masquées par défaut. On repart donc de
   // ctx.tasks (liste complète, non filtrée) plutôt que de "dated"/"tasks".
@@ -4280,7 +4313,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const dimmed = (taskId) => !!focusIds && !focusIds.has(taskId);
 
   const selectedSet = useMemo(() => new Set(selection), [selection]);
-  const toggleSelected = (taskId) => setSelection((prev) => (prev.includes(taskId) ? prev.filter((x) => x !== taskId) : [...prev, taskId]));
+  const toggleSelected = (taskId) => {
+    // La coche garde son rôle de sélection (elle alimente « cadrer la vue ») et
+    // pose en plus un encadré autour de la tâche, retiré en décochant.
+    const willSelect = !selection.includes(taskId);
+    setSelection((prev) => (prev.includes(taskId) ? prev.filter((x) => x !== taskId) : [...prev, taskId]));
+    const nextFrames = miniGanttToggleTaskFrame(rawHighlightFrames, taskId, willSelect, uid);
+    if (nextFrames !== rawHighlightFrames) applyAnnotations({ highlightFrames: nextFrames });
+  };
   const zoomOnSelection = () => {
     if (!onUpdateWidget) return;
     const rows = visibleRows.map((row) => ({ id: row.id, startIdx: dayIndex(row.start), endIdx: dayIndex(row.end) }));
@@ -4863,10 +4903,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 type="button"
                 className="lp-widget-minigantt-frame-label"
                 style={{ left: `calc(${leftPct}% - ${seg.padding}px)`, top: labelTop, background: seg.frame.color }}
-                title={`${seg.frame.label} — cliquer pour modifier`}
+                title={`${seg.frame.label || "Encadré"} — cliquer pour modifier`}
                 onClick={() => setAnnotationPanel({ section: "frames", focusId: seg.frame.id })}
               >
-                {seg.frame.label}
+                {seg.frame.iconUrl
+                  ? <img src={seg.frame.iconUrl} alt="" className="lp-widget-minigantt-frame-icon" referrerPolicy="no-referrer" />
+                  : seg.frame.label}
               </button>
             )}
           </React.Fragment>
