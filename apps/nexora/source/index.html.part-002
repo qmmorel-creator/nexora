@@ -1,4 +1,103 @@
+{() => setSaveViewOpen(false)} onSave={saveCurrentView} activeFilterCount={fCount} currentView={view} viewFolders={viewFolders} />}
+      {newDashboardOpen && <NewDashboardModal onClose={() => setNewDashboardOpen(false)} onCreate={createDashboard} dashboardFolders={dashboardFolders} />}
+      {quickEditDashboard && (
+        <DashboardEditModal
+          dashboard={quickEditDashboard}
+          onSave={(patch) => { updateDashboardMeta(quickEditDashboard.id, patch); setQuickEditDashboard(null); }}
+          onClose={() => setQuickEditDashboard(null)}
+        />
+      )}
+      {dashboardFoldersOpen && <SimpleFolderManager title="Dossiers de tableaux de bord" folders={dashboardFolders} setFolders={setDashboardFolders} countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length} pushToast={pushToast} onClose={() => setDashboardFoldersOpen(false)} />}
+      {quickEditDashboardFolder && (
+        <SimpleFolderManager
+          title="Dossiers de tableaux de bord"
+          folders={dashboardFolders}
+          setFolders={setDashboardFolders}
+          countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length}
+          pushToast={pushToast}
+          initialEditFolder={quickEditDashboardFolder}
+          onClose={() => setQuickEditDashboardFolder(null)}
+        />
+      )}
+    </div>
+  );
+}
 
+// ============================================================================
+// Modale Filtres
+// ============================================================================
+function filterFieldOptions(field, ctx) {
+  if (field === "project") return [
+    { value:NO_PROJECT_FILTER, label:"Sans projet", color:"#94A3B8", folderId:null },
+    ...sortedByName(ctx.projects).map((p) => ({ value:p.id, label:p.name, color:p.color, folderId:p.folderId || null })),
+  ];
+  if (field === "status") return sortedByName(ctx.statuses).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
+  if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
+  if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
+  if (field && field.startsWith("cf:")) {
+    const id = field.slice(3);
+    const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
+    if (!def) return [];
+    if (def.type === "checkbox") return [{ value: "true", label: "Oui" }, { value: "false", label: "Non" }];
+    if (def.type === "select") return (def.options || []).map((o) => ({ value: o, label: o }));
+    // Texte / nombre / date : pas de liste fermée — on propose les valeurs
+    // réellement déjà utilisées dans les tâches, comme pour "Responsable".
+    const values = new Set();
+    (ctx.tasks || []).forEach((t) => {
+      const v = t.customFields ? t.customFields[id] : undefined;
+      if (v !== undefined && v !== null && v !== "") values.add(String(v));
+    });
+    return [...values].sort().map((v) => ({ value: v, label: def.type === "date" ? fmtShort(v) : v }));
+  }
+  return [];
+}
+
+function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
+  const options = filterFieldOptions(cond.field, ctx);
+  const isDateField = cond.field === "start" || cond.field === "end";
+  const isTitleField = cond.field === "title";
+  const isInactivityField = cond.field === "inactivity";
+  const isEntityField = cond.field === "project" || cond.field === "status" || cond.field === "taskType";
+  return (
+    <div className="lp-filter-condition-row">
+      <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
+        {fieldsOverride ? (
+          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
+        ) : (
+          <>
+            <optgroup label="Champs standards">
+              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
+            </optgroup>
+            {(ctx.customFieldDefs || []).length > 0 && (
+              <optgroup label="Champs personnalisés">
+                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
+              </optgroup>
+            )}
+          </>
+        )}
+      </select>
+      {isTitleField ? (
+        <div className="lp-mode-toggle lp-mode-toggle-icon">
+          <button type="button" className={cond.mode !== "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "contains" })} title="Contient"><SearchCheck size={13} /></button>
+          <button type="button" className={cond.mode === "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "not_contains" })} title="Ne contient pas"><SearchX size={13} /></button>
+        </div>
+      ) : isInactivityField ? (
+        <div className="lp-mode-toggle">
+          <button type="button" className="active" style={{pointerEvents:"none"}}>Supérieur à</button>
+        </div>
+      ) : (
+        <div className="lp-mode-toggle">
+          <button className={cond.mode !== "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "is" })}>Est</button>
+          <button className={cond.mode === "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "isnot" })}>N'est pas</button>
+        </div>
+      )}
+      {isTitleField ? (
+        <input type="text" style={{ flex: 1 }} value={cond.textValue || ""} onChange={(e) => onChange({ ...cond, textValue: e.target.value })} placeholder="Texte à rechercher dans le titre…" />
+      ) : isDateField ? (
+        <select className="lp-filter-date-preset-select" style={{ flex: 1 }} value={cond.datePreset || ""} onChange={(e) => onChange({ ...cond, datePreset: e.target.value })}>
+          <option value="">— Choisir une période —</option>
+          {DATE_FILTER_PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
         </select>
       ) : isInactivityField ? (
         <div style={{flex:1,display:"flex",alignItems:"center",gap:7}}>
@@ -1044,7 +1143,7 @@ function MetaFiltersSettingsPane({ metaFilters, setMetaFilters, ctx }) {
             checked={!!metaFilters.urgentOnly}
             onChange={(e) => setMetaFilters((f) => ({ ...f, urgentOnly: e.target.checked }))}
           />
-          <span style={{ textTransform:"none", fontWeight:500 }}>Afficher uniquement les tâches urgentes</span>
+          <span style={{ textTransform:"none", fontWeight:500 }}>Afficher uniquement les tâches de criticité urgente</span>
         </label>
       </div>
 
@@ -2545,6 +2644,10 @@ function InlineEditableField({ fieldKey, task, ctx, setTasks, gradient, progress
       .map((s) => ({ value: s.id, label: s.name, color: s.color }));
     return <InlineChipSelect options={options} value={task.statusId} onChange={(v) => update({ statusId: v })} />;
   }
+  if (fieldKey === "criticality") {
+    const options = CRITICALITIES.map((c) => ({ value: c.id, label: c.name, color: c.color }));
+    return <InlineChipSelect options={options} value={task.criticality || ""} onChange={(v) => update({ criticality: v })} />;
+  }
   if (fieldKey === "taskType") {
     const options = getTaskTypesForProject(ctx.taskTypes, ctx.projects, task.projectId, task.taskTypeId)
       .map((t) => ({ value: t.id, label: t.name, color: t.color, icon: t.icon }));
@@ -3504,7 +3607,7 @@ function treemapTaskCriticality(facts) {
   let score = 0;
   const add = (points, label) => { score += points; reasons.push({ points, label }); };
   if (f.late) add(W.late, "En retard");
-  if (f.urgent) add(W.urgent, "Statut urgent");
+  if (f.urgent) add(W.urgent, "Criticité urgente");
   const days = Number(f.daysToDue);
   if (!f.late && Number.isFinite(days) && days >= 0 && days <= TREEMAP_DUE_SOON_DAYS) add(W.dueSoon, `Échéance dans ${TREEMAP_DUE_SOON_DAYS} jours ou moins`);
   if (f.milestone) add(W.milestone, "Jalon");
@@ -4937,7 +5040,7 @@ function GanttView({ tasks: allTasks, ctx, appearance, setAppearance, setTasks, 
     const fill = appearance.progressColorByStatus ? st.color : (gradient && gradient.enabled ? `linear-gradient(90deg, ${gradient.from}, ${gradient.to})` : st.color);
     const isDone = /termin/i.test(st.name || "");
     const late = !isDone && dayIndex(t.end) < dayIndex(iso(new Date()));
-    const isUrgent = /urgent/i.test(st.name || "");
+    const isUrgent = isTaskUrgent(t, ctx);
     const DONE_GREEN = "#6FC79A";
     const doneHatch = `repeating-linear-gradient(45deg, ${DONE_GREEN}, ${DONE_GREEN} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 11px)`;
     if (t.milestone) {
@@ -12861,99 +12964,4 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
           </button>
         )}
         {!embedded && (
-          <button className="lp-tool-btn" onClick={exportPoster} title="Exporter en image (affiche)">
-            <Download size={14} />
-          </button>
-        )}
-        {embedded && (
-          <span className="lp-pm-search lp-pm-search-compact">
-            <Search size={12} />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Rechercher…" />
-            {searchQuery && <button className="lp-pm-search-clear" onClick={() => setSearchQuery("")} title="Effacer"><X size={11} /></button>}
-          </span>
-        )}
-        {embedded && (
-          <DropdownButton label="" icon={<MoreHorizontal size={14} />} title="Plus d'options">
-            <button type="button" className="lp-dropdown-action-row" onClick={() => setZoomKey("auto")}><Maximize2 size={13} /> Zoom automatique</button>
-            <button type="button" className="lp-dropdown-action-row" onClick={resetZoom}><RefreshCw size={13} /> Réinitialiser le zoom</button>
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <div className="lp-dropdown-group-label">Champs affichés</div>
-            {PM_FIELD_OPTIONS.map((f) => (
-              <label className="lp-checkbox-line" key={f.key}>
-                <input type="checkbox" checked={fields.includes(f.key)} onChange={() => setFields((prev) => (prev.includes(f.key) ? prev.filter((x) => x !== f.key) : [...prev, f.key]))} />
-                {f.label}
-              </label>
-            ))}
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <label className="lp-checkbox-line"><input type="checkbox" checked={allCollapsed} onChange={toggleAllCollapsed} /> Tout replier</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={showSubtasks} onChange={() => setPrefs({ showSubtasks: !showSubtasks })} /> Afficher les sous-tâches</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={showCriticalPath} onChange={() => setShowCriticalPath((v) => !v)} /> Chemin critique en évidence</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={showRiskBadges} onChange={() => setShowRiskBadges((v) => !v)} /> Alertes de retard</label>
-            <label className="lp-checkbox-line"><input type="checkbox" checked={networkMode} onChange={() => setNetworkMode((v) => !v)} /> Vue réseau (jalons uniquement)</label>
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <button type="button" className="lp-dropdown-action-row" onClick={exportPoster}><Download size={13} /> Exporter en image</button>
-          </DropdownButton>
-        )}
-      </ViewToolbarPortal>
-
-      {!embedded && <div className="lp-pm-header-row">
-        <h2>Planning Projets</h2>
-        <span className="lp-pm-header-sub">Vue d'ensemble des projets et de leurs tâches</span>
-        <span className="lp-pm-header-sep">·</span>
-        <span className="lp-pm-legend-inline"><span className="lp-pm-legend-line" /> Projet</span>
-        <span className="lp-pm-legend-inline"><span className="lp-pm-legend-line" style={{ background: "var(--text-muted)", height: 3 }} /> Tâche (couleur = statut)</span>
-        <span className="lp-pm-legend-inline"><svg width="16" height="14" viewBox="-2 -7 16 14"><Terminus x={0} y={0} color="var(--text-600)" size={0.75} /></svg> Fin de projet</span>
-        <span className="lp-pm-legend-inline"><svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="var(--text-600)" transform="rotate(45 6 6)" /></svg> Jalon</span>
-      </div>}
-
-      <div className="lp-pm-sticky-axis-shell" aria-hidden="true">
-        <div
-          className="lp-pm-sticky-axis-inner"
-          style={{ width: railLeftW + chartWidth, transform: `translateX(${-pmScrollLeft}px)` }}
-        >
-          <div className="lp-pm-top-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const topUnit = dayWidth < 1.5 ? null : "month";
-              if (!topUnit) return null;
-              const arr = [];
-              let cur = unitStart(globalMin, topUnit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 200) {
-                const d = new Date(cur + "T00:00:00");
-                arr.push({ start: cur, label: `${unitLabel(cur, "month")}${minYear !== maxYear ? " " + d.getFullYear() : ""}` });
-                cur = addDays(cur, unitLen(cur, "month"));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-top-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-          </div>
-          <div className="lp-pm-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const unit = dayWidth < 1.5 ? "year" : dayWidth < 5 ? "month" : dayWidth < 15 ? "week" : "day";
-              const arr = [];
-              let cur = unitStart(globalMin, unit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && guard < 400) {
-                const d = new Date(cur + "T00:00:00");
-                const showYear = minYear !== maxYear && (unit === "month" || unit === "week" || unit === "day") && d.getMonth() === 0;
-                arr.push({ start: cur, label: unitLabel(cur, unit) + (showYear ? ` ${d.getFullYear()}` : "") });
-                cur = addDays(cur, unitLen(cur, unit));
-                guard++;
-              }
-              return arr.map((tk, i) => <div key={i} className="lp-pm-axis-tick" style={{ left: xFor(tk.start) }}>{tk.label}</div>);
-            })()}
-            {minYear !== maxYear && <div className="lp-pm-axis-year-badge">{minYear} → {maxYear}</div>}
-          </div>
-        </div>
-      </div>
-
-      <div className="lp-pm-scroll" ref={scrollRef} style={{ overflowX: isAuto ? "hidden" : "auto" }}>
-        <div style={{ minWidth: railLeftW + chartWidth, position: "relative" }}>
-          <div className="lp-pm-top-axis lp-pm-original-axis" style={{ marginLeft: railLeftW, width: chartWidth }}>
-            {(() => {
-              const topUnit = dayWidth < 1.5 ? null : "month";
-              if (!topUnit) return null;
-              const arr = [];
-              let cur = unitStart(globalMin, topUnit);
-              let guard = 0;
-              while (dayIndex(cur) <= dayIndex(globalMax) && 
+          <button className="lp-tool-btn" onClick={exportPoster} title="Exporter en image (affich

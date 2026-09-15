@@ -1,4 +1,83 @@
-tone") return task.milestone ? <span className="lp-chip">◆ Jalon</span> : null;
+);
+    let raf;
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setDisplay(Math.round(eased * value));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, animate]);
+  return display;
+}
+function ProgressBar({ value, color, gradient, trackColor, animate }) {
+  const fill = gradient && gradient.enabled ? `linear-gradient(90deg, ${gradient.from}, ${gradient.to})` : color;
+  // Anime le remplissage de 0 jusqu'à la valeur réelle, une seule fois au montage
+  // (jamais ensuite, pour ne pas rejouer l'animation à chaque mise à jour en
+  // direct de la progression — ex. glisser-déposer). Optionnel (Réglages > Apparence).
+  const hasAnimatedRef = useRef(false);
+  const [displayValue, setDisplayValue] = useState(animate ? 0 : value);
+  useEffect(() => {
+    if (!animate || hasAnimatedRef.current) { setDisplayValue(value); return; }
+    hasAnimatedRef.current = true;
+    setDisplayValue(0);
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setDisplayValue(value));
+    });
+    return () => cancelAnimationFrame(raf1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, animate]);
+  return <div className="lp-progress-track" style={trackColor ? { background: trackColor } : undefined}><div className={"lp-progress-fill" + (animate ? " lp-anim-bar-fill" : "")} style={{ width: `${displayValue}%`, background: fill }} /></div>;
+}
+function sliderGradientBg(value, gradient, statusColor) {
+  const v = Math.max(0, Math.min(100, value));
+  if (statusColor) {
+    // Mode "avancement selon le statut" : couleur du statut sur fond blanc cassé
+    return `linear-gradient(90deg, ${statusColor} 0%, ${statusColor} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
+  }
+  const from = gradient && gradient.enabled ? gradient.from : "#C7CED9";
+  const to = gradient && gradient.enabled ? gradient.to : "#C7CED9";
+  return `linear-gradient(90deg, ${from} 0%, ${to} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
+}
+function FieldValue({ fieldKey, task, ctx, gradient, progressByStatus, onProgressChange }) {
+  if (fieldKey === "checklist") {
+    const list = task.checklist || [];
+    if (!list.length) return null;
+    const done = list.filter((i) => i.done).length;
+    return <span className="lp-chip"><Check size={11} /> {done}/{list.length}</span>;
+  }
+  if (fieldKey === "project") {
+    const p = ctx.projects.find((x) => x.id === task.projectId);
+    if (!p) return null;
+    return <span className="lp-chip" style={{ background: p.color + "22", color: p.color }}><IconGlyph icon={p.icon} size={12} /> {p.name}</span>;
+  }
+  if (fieldKey === "status") {
+    const s = ctx.statuses.find((x) => x.id === task.statusId);
+    if (!s) return null;
+    return <span className="lp-chip" style={{ background: s.color + "22", color: s.color }}><span className="lp-status-dot" style={{ background: s.color }} /> {s.name}</span>;
+  }
+  if (fieldKey === "criticality") {
+    const c = criticalityOf(task);
+    if (!c) return null;
+    return <span className="lp-chip" style={{ background: c.color + "22", color: c.color }}><span className="lp-status-dot" style={{ background: c.color }} /> {c.name}</span>;
+  }
+  if (fieldKey === "taskType") {
+    const tt = (ctx.taskTypes || []).find((x) => x.id === task.taskTypeId);
+    if (!tt) return null;
+    return <span className="lp-chip" style={{ background: tt.color + "22", color: tt.color }}>{tt.icon ? <IconGlyph icon={tt.icon} size={12} /> : <span className="lp-status-dot" style={{ background: tt.color }} />} {tt.name}</span>;
+  }
+  if (fieldKey === "assignee") {
+    if (!task.assignee) return null;
+    const u = ctx.teamMembers?.find((m) => m.name === task.assignee);
+    return (
+      <span className="lp-chip" style={u ? { background: u.color + "22", color: u.color } : undefined}>
+        {u?.avatarDataUrl && <IconGlyph icon={u.avatarDataUrl} size={12} />} {task.assignee}
+      </span>
+    );
+  }
+  if (fieldKey === "milestone") return task.milestone ? <span className="lp-chip">◆ Jalon</span> : null;
   if (fieldKey === "progress") {
     const statusColor = progressByStatus ? ctx.statuses.find((s) => s.id === task.statusId)?.color : null;
     if (onProgressChange) {
@@ -9941,6 +10020,40 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
   }, [dataLoaded]);
 
+  // Reprise « Urgent » (issue #35). Deux temps, dans cet ordre imposé : réaffecter
+  // les tâches D'ABORD, retirer le statut ENSUITE. L'inverse laisserait ces tâches
+  // pointant vers un statut inexistant.
+  //
+  // Les statuts peuvent être propres à un projet : il peut donc exister PLUSIEURS
+  // « Urgent », et le « En cours » de remplacement doit être résolu dans la portée
+  // de CHAQUE tâche. Quand un projet n'offre pas de « En cours », on ne devine pas :
+  // la tâche garde son statut, et le statut « Urgent » correspondant survit — en
+  // supprimer un encore référencé casserait ces tâches.
+  //
+  // Dépend des données plutôt que du seul premier chargement : la reprise est sans
+  // effet dès qu'il n'y a plus de statut « Urgent » (sortie immédiate), et se
+  // rejoue d'elle-même si la synchronisation entre appareils en ramène un.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const plan = planUrgentMigration({ tasks, statuses, projects, statusesForProject: getStatusesForProject });
+    if (!plan.reassign.length && !plan.removeStatusIds.length && !plan.keptStatusIds.length) return;
+
+    if (plan.reassign.length) {
+      const target = new Map(plan.reassign.map((r) => [r.taskId, r.statusId]));
+      setTasksRaw((prev) => prev.map((t) => (target.has(t.id) ? { ...t, criticality: "urgent", statusId: target.get(t.id) } : t)));
+    }
+    if (plan.keptStatusIds.length) {
+      console.warn("Criticité : " + plan.keptStatusIds.length + " statut(s) « Urgent » conservés — aucun « En cours » disponible dans le projet de certaines tâches. Créez-le, puis rechargez.");
+    }
+    if (plan.removeStatusIds.length) {
+      const drop = new Set(plan.removeStatusIds);
+      setStatuses((prev) => {
+        const next = prev.filter((s) => !drop.has(s.id));
+        return next.length === prev.length ? prev : next;
+      });
+    }
+  }, [dataLoaded, tasks, statuses, projects]);
+
   // Capture le "plan initial" (dates de la toute première fois qu'on voit chaque
   // tâche) — jamais réécrit ensuite, jamais reconstruit rétroactivement. Pour les
   // tâches déjà présentes au premier chargement, la baseline reflète honnêtement
@@ -11138,7 +11251,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           <button
             className={"lp-urgent-toggle-btn" + (filters.urgentOnly ? " active" : "")}
             onClick={() => setFilters((f) => ({ ...f, urgentOnly: !f.urgentOnly }))}
-            title="N'afficher que les tâches au statut Urgent"
+            title="N'afficher que les tâches de criticité urgente"
           >
             <AlertTriangle size={13} />
           </button>
@@ -11517,103 +11630,4 @@ export default function LePlan({ currentUser, onSignOut }) {
       )}
       {projectFoldersOpen && <SimpleFolderManager title="Dossiers de projets" folders={projectFolders} setFolders={setProjectFolders} countInFolder={(id) => projects.filter((p) => p.folderId === id).length} pushToast={pushToast} onClose={() => setProjectFoldersOpen(false)} itemLabel="dossier" />}
       {viewFoldersOpen && <SimpleFolderManager title="Dossiers de vues" folders={viewFolders} setFolders={setViewFolders} countInFolder={(id) => savedViews.filter((v) => v.folderId === id).length} pushToast={pushToast} onClose={() => setViewFoldersOpen(false)} />}
-      {saveViewOpen && <SaveViewModal onClose={() => setSaveViewOpen(false)} onSave={saveCurrentView} activeFilterCount={fCount} currentView={view} viewFolders={viewFolders} />}
-      {newDashboardOpen && <NewDashboardModal onClose={() => setNewDashboardOpen(false)} onCreate={createDashboard} dashboardFolders={dashboardFolders} />}
-      {quickEditDashboard && (
-        <DashboardEditModal
-          dashboard={quickEditDashboard}
-          onSave={(patch) => { updateDashboardMeta(quickEditDashboard.id, patch); setQuickEditDashboard(null); }}
-          onClose={() => setQuickEditDashboard(null)}
-        />
-      )}
-      {dashboardFoldersOpen && <SimpleFolderManager title="Dossiers de tableaux de bord" folders={dashboardFolders} setFolders={setDashboardFolders} countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length} pushToast={pushToast} onClose={() => setDashboardFoldersOpen(false)} />}
-      {quickEditDashboardFolder && (
-        <SimpleFolderManager
-          title="Dossiers de tableaux de bord"
-          folders={dashboardFolders}
-          setFolders={setDashboardFolders}
-          countInFolder={(id) => dashboards.filter((d) => d.folderId === id).length}
-          pushToast={pushToast}
-          initialEditFolder={quickEditDashboardFolder}
-          onClose={() => setQuickEditDashboardFolder(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// Modale Filtres
-// ============================================================================
-function filterFieldOptions(field, ctx) {
-  if (field === "project") return [
-    { value:NO_PROJECT_FILTER, label:"Sans projet", color:"#94A3B8", folderId:null },
-    ...sortedByName(ctx.projects).map((p) => ({ value:p.id, label:p.name, color:p.color, folderId:p.folderId || null })),
-  ];
-  if (field === "status") return sortedByName(ctx.statuses).map((s) => ({ value: s.id, label: s.name, color:s.color }));
-  if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
-  if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
-  if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
-  if (field && field.startsWith("cf:")) {
-    const id = field.slice(3);
-    const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
-    if (!def) return [];
-    if (def.type === "checkbox") return [{ value: "true", label: "Oui" }, { value: "false", label: "Non" }];
-    if (def.type === "select") return (def.options || []).map((o) => ({ value: o, label: o }));
-    // Texte / nombre / date : pas de liste fermée — on propose les valeurs
-    // réellement déjà utilisées dans les tâches, comme pour "Responsable".
-    const values = new Set();
-    (ctx.tasks || []).forEach((t) => {
-      const v = t.customFields ? t.customFields[id] : undefined;
-      if (v !== undefined && v !== null && v !== "") values.add(String(v));
-    });
-    return [...values].sort().map((v) => ({ value: v, label: def.type === "date" ? fmtShort(v) : v }));
-  }
-  return [];
-}
-
-function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
-  const options = filterFieldOptions(cond.field, ctx);
-  const isDateField = cond.field === "start" || cond.field === "end";
-  const isTitleField = cond.field === "title";
-  const isInactivityField = cond.field === "inactivity";
-  const isEntityField = cond.field === "project" || cond.field === "status" || cond.field === "taskType";
-  return (
-    <div className="lp-filter-condition-row">
-      <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
-        {fieldsOverride ? (
-          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
-        ) : (
-          <>
-            <optgroup label="Champs standards">
-              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
-            </optgroup>
-            {(ctx.customFieldDefs || []).length > 0 && (
-              <optgroup label="Champs personnalisés">
-                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
-              </optgroup>
-            )}
-          </>
-        )}
-      </select>
-      {isTitleField ? (
-        <div className="lp-mode-toggle lp-mode-toggle-icon">
-          <button type="button" className={cond.mode !== "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "contains" })} title="Contient"><SearchCheck size={13} /></button>
-          <button type="button" className={cond.mode === "not_contains" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "not_contains" })} title="Ne contient pas"><SearchX size={13} /></button>
-        </div>
-      ) : isInactivityField ? (
-        <div className="lp-mode-toggle">
-          <button type="button" className="active" style={{pointerEvents:"none"}}>Supérieur à</button>
-        </div>
-      ) : (
-        <div className="lp-mode-toggle">
-          <button className={cond.mode !== "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "is" })}>Est</button>
-          <button className={cond.mode === "isnot" ? "active" : ""} onClick={() => onChange({ ...cond, mode: "isnot" })}>N'est pas</button>
-        </div>
-      )}
-      {isTitleField ? (
-        <input type="text" style={{ flex: 1 }} value={cond.textValue || ""} onChange={(e) => onChange({ ...cond, textValue: e.target.value })} placeholder="Texte à rechercher dans le titre…" />
-      ) : isDateField ? (
-        <select className="lp-filter-date-preset-select" style={{ flex: 1 }} value={cond.datePreset || ""} onChange={(e) => onChange({ ...cond, datePreset: e.target.value })}>
-          <option value="">— Choisir une période —</option>
-          {DATE_FILTER_PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+      {saveViewOpen && <SaveViewModal onClose=

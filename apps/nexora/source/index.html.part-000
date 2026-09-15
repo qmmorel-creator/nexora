@@ -1674,6 +1674,7 @@ const IMPORT_FIELD_OPTIONS = [
   { key: "title", label: "Titre" },
   { key: "project", label: "Projet" },
   { key: "status", label: "Statut" },
+  { key: "criticality", label: "Criticité" },
   { key: "taskType", label: "Type de tâche" },
   { key: "assignee", label: "Responsable" },
   { key: "milestone", label: "Jalon (oui/non)" },
@@ -1820,9 +1821,61 @@ function periodLabelOf(key) {
   return `01/${mm}/${yyyy}`;
 }
 
+// Criticité (issue #35) : à quel point une tâche presse, indépendamment de son
+// avancement. « Urgent » était un statut, ce qui obligeait à choisir entre dire OÙ
+// EN EST une tâche et dire À QUEL POINT elle presse : la mettre urgente effaçait
+// son avancement. Les deux dimensions sont désormais séparées.
+//
+// Liste fermée plutôt qu'entités éditables comme les statuts : trois valeurs
+// suffisent, et une table de plus se paierait en réglages à maintenir. L'ordre du
+// tableau est l'ordre d'affichage — un tri alphabétique placerait « Urgent » au
+// milieu, entre « Bas » et « Moyen ».
+// === NEXORA:CRITICALITY:START ===
+const CRITICALITIES = [
+  { id: "bas", name: "Bas", color: "#64748B" },
+  { id: "moyen", name: "Moyen", color: "#D97706" },
+  { id: "urgent", name: "Urgent", color: "#DC2626" },
+];
+const criticalityOf = (task) => CRITICALITIES.find((c) => c.id === task?.criticality) || null;
+
+// Décide de la reprise, sans rien exécuter : quelles tâches réaffecter, quels
+// statuts « Urgent » retirer, lesquels conserver faute de remplacement. Fonction
+// pure, sans React ni état — c'est elle que les tests couvrent, extraite de
+// l'interface réellement construite.
+//
+// statusesForProject est passé en paramètre plutôt que capturé : la portée d'un
+// statut (global, ou propre à un projet) est une règle de l'application, et ce bloc
+// doit rester évaluable seul.
+function planUrgentMigration({ tasks, statuses, projects, statusesForProject }) {
+  const plan = { reassign: [], removeStatusIds: [], keptStatusIds: [] };
+  const urgentIds = new Set((statuses || []).filter((s) => /urgent/i.test(String(s?.name || ""))).map((s) => s.id));
+  if (!urgentIds.size) return plan;
+
+  const kept = new Set();
+  (tasks || []).forEach((t) => {
+    if (!t || !urgentIds.has(t.statusId)) return;
+    const scoped = statusesForProject(statuses, projects, t.projectId) || [];
+    // Le remplacement se cherche dans la portée de CETTE tâche : un « En cours »
+    // appartenant à un autre projet ne lui est pas proposable.
+    const target = scoped.find((s) => /en\s*cours/i.test(String(s?.name || "")) && !urgentIds.has(s.id)) || null;
+    if (!target) { kept.add(t.statusId); return; }
+    plan.reassign.push({ taskId: t.id, statusId: target.id });
+  });
+
+  plan.keptStatusIds = [...kept];
+  // Un statut encore référencé n'est jamais retiré : le supprimer laisserait ses
+  // tâches pointant vers un statut inexistant.
+  plan.removeStatusIds = [...urgentIds].filter((id) => !kept.has(id));
+  return plan;
+}
+// === NEXORA:CRITICALITY:END ===
+
+// « Urgent » ne figure plus ici : le statut est supprimé (issue #35). Le laisser
+// protégé le rendrait indestructible et toujours proposé dans tous les projets —
+// la reprise ci-dessous ne ferait alors que déplacer le problème.
 const isProtectedStatus = (status) => {
   const name = String(status?.name || "");
-  return /termin/i.test(name) || /en\s*cours/i.test(name) || /urgent/i.test(name);
+  return /termin/i.test(name) || /en\s*cours/i.test(name);
 };
 
 const getStatusesForProject = (statuses, projects, projectId, currentStatusId = null) => {
@@ -1949,6 +2002,10 @@ const getDefaultStatusForTask = (statuses, projects, taskTypes, projectId, taskT
 const FIELD_DEFS = [
   { key: "project", label: "Projet", kind: "select", getValue: (t) => t.projectId, optionsFn: (ctx) => sortedByName(ctx.projects).map((p) => ({ value: p.id, label: p.name, color: p.color, icon: p.icon })) },
   { key: "status", label: "Statut", kind: "select", getValue: (t) => t.statusId, optionsFn: (ctx) => sortedByName(ctx.statuses).map((s) => ({ value: s.id, label: s.name, color: s.color, icon: s.icon })) },
+  // Même forme que « status » : tout ce qui consomme FIELD_DEFS — groupement, tri,
+  // filtres, filtres avancés — traite donc la criticité sans code spécifique.
+  // optionsFn ne trie pas : l'ordre de CRITICALITIES est l'ordre voulu.
+  { key: "criticality", label: "Criticité", kind: "select", getValue: (t) => t.criticality || "", optionsFn: () => CRITICALITIES.map((c) => ({ value: c.id, label: c.name, color: c.color })) },
   { key: "taskType", label: "Type", kind: "select", getValue: (t) => t.taskTypeId, optionsFn: (ctx) => sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color: s.color, icon: s.icon })) },
   { key: "assignee", label: "Responsable", kind: "select", getValue: (t) => t.assignee || "", optionsFn: (ctx) => sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color, icon: u.avatarDataUrl })) },
   { key: "milestone", label: "Jalon", kind: "boolean", getValue: (t) => getTaskType(t) === "milestone" },
@@ -2113,7 +2170,7 @@ const getTaskType = (task) => task?.milestone ? "milestone" : "action";
 const taskTypeLabel = (task) => task?.milestone ? "Jalon" : "Tâche";
 
 
-const ADVANCED_FILTER_FIELDS = ["title", "project", "status", "taskType", "assignee", "milestone", "start", "end", "inactivity"];
+const ADVANCED_FILTER_FIELDS = ["title", "project", "status", "criticality", "taskType", "assignee", "milestone", "start", "end", "inactivity"];
 
 const NO_PROJECT_FILTER = "__nexora_without_project__";
 
@@ -2133,7 +2190,16 @@ const defaultMetaFilters = () => ({
   ...defaultFilters(),
   showDone: true,
 });
+// L'urgence se lit désormais sur la criticité, plus sur le nom du statut (issue
+// #35). Tout ce qui s'appuie sur cette fonction suit sans changer : filtre
+// « urgentes », liseré et hachures des lignes, barres du Gantt, bulles de la vue
+// Métro, bloc « Tâches urgentes » d'Aujourd'hui, poids du treemap, métriques.
+//
+// Le repli sur le nom du statut couvre deux fenêtres réelles : entre le chargement
+// des données et la reprise, et le temps qu'un appareil encore servi par une
+// version antérieure ait rechargé l'application.
 function isTaskUrgent(task, ctx) {
+  if (task?.criticality) return task.criticality === "urgent";
   const st = ctx.statuses.find((s) => s.id === task.statusId);
   return !!(st && /urgent/i.test(st.name || ""));
 }
@@ -3070,7 +3136,6 @@ const seedStatuses = [
   { id: "s1", name: "À planifier", color: "#64748B", icon: null },
   { id: "s2", name: "Attente tiers", color: "#8B5CF6", icon: null },
   { id: "s3", name: "En cours", color: "#0EA5E9", icon: null },
-  { id: "s4", name: "Urgent", color: "#D64545", icon: null },
   { id: "s5", name: "Terminé", color: "#22B07D", icon: null },
   { id: "s6", name: "Information", color: "#64748B", icon: null },
 ];
@@ -3712,78 +3777,4 @@ function CountUp({ value, animate, duration = 800 }) {
   useEffect(() => {
     if (!animate || hasAnimatedRef.current) { setDisplay(value); return; }
     hasAnimatedRef.current = true;
-    const t0 = performance.now();
-    let raf;
-    const step = (t) => {
-      const p = Math.min(1, (t - t0) / duration);
-      const eased = 1 - Math.pow(1 - p, 3);
-      setDisplay(Math.round(eased * value));
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, animate]);
-  return display;
-}
-function ProgressBar({ value, color, gradient, trackColor, animate }) {
-  const fill = gradient && gradient.enabled ? `linear-gradient(90deg, ${gradient.from}, ${gradient.to})` : color;
-  // Anime le remplissage de 0 jusqu'à la valeur réelle, une seule fois au montage
-  // (jamais ensuite, pour ne pas rejouer l'animation à chaque mise à jour en
-  // direct de la progression — ex. glisser-déposer). Optionnel (Réglages > Apparence).
-  const hasAnimatedRef = useRef(false);
-  const [displayValue, setDisplayValue] = useState(animate ? 0 : value);
-  useEffect(() => {
-    if (!animate || hasAnimatedRef.current) { setDisplayValue(value); return; }
-    hasAnimatedRef.current = true;
-    setDisplayValue(0);
-    const raf1 = requestAnimationFrame(() => {
-      requestAnimationFrame(() => setDisplayValue(value));
-    });
-    return () => cancelAnimationFrame(raf1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, animate]);
-  return <div className="lp-progress-track" style={trackColor ? { background: trackColor } : undefined}><div className={"lp-progress-fill" + (animate ? " lp-anim-bar-fill" : "")} style={{ width: `${displayValue}%`, background: fill }} /></div>;
-}
-function sliderGradientBg(value, gradient, statusColor) {
-  const v = Math.max(0, Math.min(100, value));
-  if (statusColor) {
-    // Mode "avancement selon le statut" : couleur du statut sur fond blanc cassé
-    return `linear-gradient(90deg, ${statusColor} 0%, ${statusColor} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
-  }
-  const from = gradient && gradient.enabled ? gradient.from : "#C7CED9";
-  const to = gradient && gradient.enabled ? gradient.to : "#C7CED9";
-  return `linear-gradient(90deg, ${from} 0%, ${to} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
-}
-function FieldValue({ fieldKey, task, ctx, gradient, progressByStatus, onProgressChange }) {
-  if (fieldKey === "checklist") {
-    const list = task.checklist || [];
-    if (!list.length) return null;
-    const done = list.filter((i) => i.done).length;
-    return <span className="lp-chip"><Check size={11} /> {done}/{list.length}</span>;
-  }
-  if (fieldKey === "project") {
-    const p = ctx.projects.find((x) => x.id === task.projectId);
-    if (!p) return null;
-    return <span className="lp-chip" style={{ background: p.color + "22", color: p.color }}><IconGlyph icon={p.icon} size={12} /> {p.name}</span>;
-  }
-  if (fieldKey === "status") {
-    const s = ctx.statuses.find((x) => x.id === task.statusId);
-    if (!s) return null;
-    return <span className="lp-chip" style={{ background: s.color + "22", color: s.color }}><span className="lp-status-dot" style={{ background: s.color }} /> {s.name}</span>;
-  }
-  if (fieldKey === "taskType") {
-    const tt = (ctx.taskTypes || []).find((x) => x.id === task.taskTypeId);
-    if (!tt) return null;
-    return <span className="lp-chip" style={{ background: tt.color + "22", color: tt.color }}>{tt.icon ? <IconGlyph icon={tt.icon} size={12} /> : <span className="lp-status-dot" style={{ background: tt.color }} />} {tt.name}</span>;
-  }
-  if (fieldKey === "assignee") {
-    if (!task.assignee) return null;
-    const u = ctx.teamMembers?.find((m) => m.name === task.assignee);
-    return (
-      <span className="lp-chip" style={u ? { background: u.color + "22", color: u.color } : undefined}>
-        {u?.avatarDataUrl && <IconGlyph icon={u.avatarDataUrl} size={12} />} {task.assignee}
-      </span>
-    );
-  }
-  if (fieldKey === "miles
+    const t0 = performance.now(
