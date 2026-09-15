@@ -243,6 +243,63 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Bandeau de paramètres du widget (issue #56). Le contrôle porte sur ce qui
+   défile SOUS le bandeau, pas sur le bandeau lui-même : la panne réelle était
+   un axe collant calé sur une barre d'onglets absente, qui laissait une bande
+   de 82 px où le contenu défilait à découvert. */
+const bandeau = { axisTop: null, headOpaque: false, headZ: "", contentAboveAxis: 0, axisY: null, headBottom: null };
+try {
+  const hote = "#harness-metro-widget";
+  await page.locator(hote).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  // Faire défiler POUR DE VRAI : sans défilement, rien ne peut passer derrière.
+  await page.locator(`${hote} .lp-widget-embed-body`).evaluate((el) => { el.scrollTop = 140; });
+  await page.waitForTimeout(400);
+  Object.assign(bandeau, await page.evaluate((sel) => {
+    const axis = document.querySelector(`${sel} .lp-pm-sticky-axis-shell`);
+    const head = document.querySelector(`${sel} .lp-widget-head`);
+    const body = document.querySelector(`${sel} .lp-widget-embed-body`);
+    const axisStyle = axis ? getComputedStyle(axis) : null;
+    const headStyle = head ? getComputedStyle(head) : null;
+    const axisBox = axis ? axis.getBoundingClientRect() : null;
+    const headBox = head ? head.getBoundingClientRect() : null;
+    const bg = headStyle ? headStyle.backgroundColor : "";
+    /* Le seul contrôle qui dise vraiment « rien ne passe » : ce que le
+       navigateur donne à voir juste sous le bandeau. Compter les boîtes ne
+       conclut rien — le grand SVG du planning traverse légitimement l'axe, qui
+       le recouvre. On interroge donc le rendu, à trois abscisses, sur la
+       première ligne de pixels sous le bandeau. */
+    let contentAboveAxis = 0;
+    if (headBox && axis) {
+      /* L'axe est volontairement transparent au pointeur — le planning reste
+         cliquable dessous. Le sondage le rend donc cliquable le temps de la
+         mesure, faute de quoi elementFromPoint le traverse et rapporte une
+         panne là où l'affichage est juste. */
+      const avant = axis.style.pointerEvents;
+      axis.style.pointerEvents = "auto";
+      for (const part of [0.3, 0.55, 0.8]) {
+        const x = Math.round(headBox.left + headBox.width * part);
+        const el = document.elementFromPoint(x, Math.round(headBox.bottom) + 3);
+        if (!el) continue;
+        const couvert = el === axis || axis.contains(el) || el.closest(".lp-widget-head");
+        if (!couvert) contentAboveAxis++;
+      }
+      axis.style.pointerEvents = avant;
+    }
+    return {
+      axisTop: axisStyle ? axisStyle.top : null,
+      headOpaque: !!bg && bg !== "rgba(0, 0, 0, 0)" && !/, 0\)$/.test(bg),
+      headZ: headStyle ? headStyle.zIndex : "",
+      contentAboveAxis,
+      axisY: axisBox ? Math.round(axisBox.top) : null,
+      headBottom: headBox ? Math.round(headBox.bottom) : null,
+      bodyPadTop: body ? Math.ceil(parseFloat(getComputedStyle(body).paddingTop) || 0) : 0,
+    };
+  }, hote));
+} catch (error) {
+  bandeau.error = String(error).split("\n")[0];
+}
+
 /* Coche du Mini-Gantt (issue #48). Rien de ce qui suit n'est visible d'un test
    unitaire : la logique pose bien l'icône et le logo, c'est le RENDU qui décide
    de les afficher — et le premier lot ne les affichait pas.
@@ -794,6 +851,18 @@ expect(heatmap.axisOptions === 6, `Heat map : ${heatmap.axisOptions} champ(s) d'
 expect(heatmap.metricOptions === 4, `Heat map : ${heatmap.metricOptions} mesure(s) dans la fiche, 4 attendues`);
 expect(/Urgent|Moyen|Bas|criticité/i.test(heatmap.savedCols),
   `Heat map : l'axe des colonnes choisi dans la fiche n'a pas été enregistré (colonnes : « ${heatmap.savedCols} »)`);
+
+expect(!bandeau.error, `contrôle du bandeau de paramètres interrompu : ${bandeau.error}`);
+/* Le rectangle de collage part du bord intérieur de la zone défilante : l'axe
+   doit donc remonter du remplissage haut pour se coller au bandeau. Contrôler
+   « top: 0 » laisserait passer précisément la panne d'origine. */
+expect(bandeau.axisTop === `${-bandeau.bodyPadTop}px`,
+  `Widget : l'axe collant se fige à « ${bandeau.axisTop} », attendu « ${-bandeau.bodyPadTop}px » (remplissage de la zone défilante) — sinon le contenu défile à découvert dans cette bande`);
+expect(bandeau.headOpaque, "Widget : le bandeau de paramètres n'a pas de fond opaque — le contenu transparaît derrière lui");
+expect(bandeau.headZ !== "auto" && Number(bandeau.headZ) > 0, `Widget : le bandeau de paramètres reste au plan par défaut (z-index « ${bandeau.headZ} ») — un élément positionné du contenu se peint par-dessus`);
+expect(bandeau.contentAboveAxis === 0, `Widget : sur 3 points sondés juste sous le bandeau, ${bandeau.contentAboveAxis} montrent le planning au lieu de l'axe — le contenu défile à découvert`);
+expect(bandeau.axisY !== null && bandeau.headBottom !== null && bandeau.axisY - bandeau.headBottom <= 2,
+  `Widget : ${bandeau.axisY - bandeau.headBottom} px séparent le bandeau de l'axe — c'est la bande où le contenu passe`);
 
 expect(!coche.error, `contrôle de la coche du Mini-Gantt interrompu : ${coche.error}`);
 expect(coche.frames === 1, `Coche du Mini-Gantt : ${coche.frames} encadré(s) après la coche, 1 attendu`);

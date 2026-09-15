@@ -437,4 +437,35 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Le logo de coin n'est plus accroché au bord droit du cadre : il déborderait hors de l'encadré.");
 }
 
+/* Bandeau de paramètres du widget (issue #56).
+   La panne ne venait pas du bandeau mais de ce qui défilait dessous : les
+   en-têtes collants du planning se calent sur la barre d'onglets de la PAGE,
+   qui n'existe pas dans un widget. Le repli de la mesure — 48 px + 34 px —
+   s'appliquait alors, et le planning défilait à découvert dans cette bande. */
+{
+  const metroFrom = builtSource.indexOf("const pmChromeRef = useRef(null);");
+  /* Recherche VERS L'AVANT : « const zoomKey = prefs.zoomKey » apparaît plus
+     haut dans le fichier, dans une autre vue. Repartir du début rendrait la
+     tranche vide, et tous les contrôles qui suivent passeraient à vide. */
+  const metro = metroFrom === -1 ? "" : builtSource.slice(metroFrom, builtSource.indexOf("const zoomKey = prefs.zoomKey", metroFrom));
+  assert.ok(metro.length > 0, "La mesure des en-têtes collants du planning est introuvable.");
+  assert.doesNotMatch(metro, /if \(embedded\) return undefined;/,
+    "Embarqué, le planning ne cale plus ses en-têtes collants : le repli de 82 px rouvre la bande sous le bandeau.");
+  assert.match(metro, /node\.style\.setProperty\("--pm-tabbar-h", `\$\{-padTop\}px`\)/,
+    "L'écart au bandeau ne compense plus le remplissage de la zone défilante.");
+  /* Le fond et le plan vont ENSEMBLE : un z-index sur un élément non positionné
+     ne s'applique pas, et un plan sans fond laisse voir au travers. */
+  /* Ancrage sur la DÉCLARATION, pas sur le seul sélecteur : « .lp-widget-head{ »
+     apparaît aussi plus haut, dans une règle de glisser tactile. Partir de
+     celle-là donnait une tranche de 700 000 caractères où tout se trouve — le
+     garde passait au vert en mesurant n'importe quoi. Éprouvé en retirant la
+     règle : sans cet ancrage, rien ne tombait. */
+  const headFrom = builtSource.indexOf(".lp-widget-head{ display:flex");
+  const head = headFrom === -1 ? "" : builtSource.slice(headFrom, builtSource.indexOf("}", headFrom));
+  assert.ok(head.length > 0, "La règle du bandeau de paramètres est introuvable.");
+  assert.match(head, /background:var\(--surface\)/, "Le bandeau de paramètres n'a plus de fond opaque.");
+  assert.match(head, /position:relative/, "Le bandeau n'est plus positionné : son z-index serait sans effet.");
+  assert.match(head, /z-index:\d+/, "Le bandeau n'a plus de plan propre : le contenu positionné passe par-dessus.");
+}
+
 console.log("Repository invariants: OK");

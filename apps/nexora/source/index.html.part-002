@@ -11137,11 +11137,37 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
   // défilement — d'où l'impression de "trou" d'opacité juste sous les onglets.
   const pmChromeRef = useRef(null);
   useEffect(() => {
-    if (embedded) return undefined;
-    const tabbarEl = document.querySelector(".lp-detail-tabbar");
     const node = pmChromeRef.current;
-    const headerEl = node?.querySelector(".lp-pm-header-row");
-    if (!tabbarEl || !node) return undefined;
+    if (!node) return undefined;
+    /* Embarqué dans un widget, ce planning n'a NI barre d'onglets NI bandeau de
+       titre au-dessus de lui : le bandeau de paramètres du widget vit hors de
+       la zone défilante. Les en-têtes collants doivent donc se coller à zéro.
+       Sans cela, le repli de la mesure s'appliquait (48 px + 34 px) et l'axe des
+       dates se figeait QUATRE-VINGT-DEUX pixels plus bas que le haut du widget :
+       les lignes du planning défilaient à découvert dans cette bande, juste
+       sous le bandeau de paramètres. */
+    if (embedded) {
+      const scroller = node.closest(".lp-widget-embed-body");
+      const applyEmbedded = () => {
+        /* Décalage NÉGATIF, et ce n'est pas une astuce : le rectangle de collage
+           d'un élément sticky part du bord INTÉRIEUR de la zone défilante, donc
+           sous son remplissage haut. Laissé à zéro, l'axe se fige dix pixels
+           plus bas que le bandeau et le planning continue de défiler dans cette
+           bande. Mesuré plutôt que codé en dur : le remplissage change avec la
+           densité d'affichage. */
+        const padTop = scroller ? Math.ceil(parseFloat(getComputedStyle(scroller).paddingTop) || 0) : 0;
+        node.style.setProperty("--pm-tabbar-h", `${-padTop}px`);
+        node.style.setProperty("--pm-header-h", "0px");
+      };
+      applyEmbedded();
+      if (!scroller) return undefined;
+      const roEmbedded = new ResizeObserver(applyEmbedded);
+      roEmbedded.observe(scroller);
+      return () => roEmbedded.disconnect();
+    }
+    const tabbarEl = document.querySelector(".lp-detail-tabbar");
+    const headerEl = node.querySelector(".lp-pm-header-row");
+    if (!tabbarEl) return undefined;
     const apply = () => {
       const tabH = Math.ceil(tabbarEl.getBoundingClientRect().height);
       if (tabH > 0) node.style.setProperty("--pm-tabbar-h", tabH + "px");
