@@ -59,7 +59,7 @@ function AnnotationsHarness() {
   };
   const [prefs, setPrefsState] = useState({ ganttGroupBy: "project", bubbleFields: ["status", "project"], ganttCols: ["status", "start", "end"], zoomKey: "week", ...annotations });
   const setPrefs = (patch) => setPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
-  const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["status", "end"], ganttAnnotations: miniAnnotations });
+  const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["assignee", "status", "taskType", "end", "progress"], ganttAnnotations: miniAnnotations });
   // Second widget SANS aucune annotation propre : seuls les risques portés par
   // les tâches doivent y apparaître.
   const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });

@@ -50,6 +50,20 @@ page.on("pageerror", (e) => pageErrors.push(e.message));
 // c'est attendu pour un fichier de 2,5 Mo, et sans effet sur le rendu.
 page.on("console", (m) => { if (m.type() === "error" && !m.text().includes("[BABEL]")) pageErrors.push("console: " + m.text()); });
 
+// Le banc est HORS LIGNE par construction. Certaines données de démonstration
+// portent une icône distante (une URL d'image dans un type de tâche) : la
+// requête échoue, et cet échec réseau n'est pas un défaut de rendu. On la sert
+// donc localement, plutôt que de relâcher le contrôle des erreurs de console.
+const TRANSPARENT_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64"
+);
+await page.route("**/*", (route) => {
+  const url = route.request().url();
+  if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue();
+  return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG });
+});
+
 await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "load", timeout: 90000 });
 await page.waitForSelector(".lp-gantt-wrap", { timeout: 90000 });
 await page.waitForTimeout(2500);
@@ -79,6 +93,28 @@ const seen = await page.evaluate(() => {
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
     miniRiskButton: [...document.querySelectorAll("#harness-first-minigantt button")].some((b) => b.textContent.trim() === "+ Risque"),
+    miniFields: (() => {
+      const host = document.querySelector("#harness-first-minigantt");
+      const hb = host.getBoundingClientRect();
+      return [...host.querySelectorAll(".lp-widget-minigantt-fields-aligned")].map((el) => {
+        const b = el.getBoundingClientRect();
+        const last = el.children.length ? el.children[el.children.length - 1].getBoundingClientRect() : null;
+        return {
+          // Ce qui dépasse de la colonne, et ce qui dépasse du widget lui-même.
+          overflow: last ? Math.round(last.right - b.right) : 0,
+          outside: last ? Math.round(last.right - hb.right) : 0,
+        };
+      });
+    })(),
+    miniBlockAlign: (() => {
+      const host = document.querySelector("#harness-first-minigantt");
+      const centre = (el) => { const b = el.getBoundingClientRect(); return b.x + b.width / 2; };
+      return [...host.querySelectorAll(".lp-widget-minigantt-phase[data-block-id]")].map((chip) => {
+        const band = host.querySelector(`.lp-widget-minigantt-tblock[data-block-id="${chip.getAttribute("data-block-id")}"]`);
+        if (!band) return null;
+        return { t: chip.textContent.trim(), gap: Math.round(Math.abs(centre(chip) - centre(band))) };
+      }).filter(Boolean);
+    })(),
     metro: (() => {
       const host = document.querySelector("#harness-metro");
       if (!host) return null;
@@ -280,6 +316,21 @@ expect(seen.secondMetaChips.some((c) => /Congés d/.test(c.text)), `Second Mini-
 // couloirs s'empilent, leurs étiquettes doivent rester lisibles côte à côte ou
 // l'une sous l'autre — jamais l'une par-dessus l'autre (contrôle de
 // superposition ci-dessous).
+// Colonne de champs : rien ne doit sortir de la colonne, ni a fortiori du
+// widget — c'est ainsi que l'anneau d'avancement se retrouvait tronqué.
+expect(seen.miniFields.length > 0, "Mini-Gantt : aucune colonne de champs alignée");
+seen.miniFields.forEach((f, i) => {
+  expect(f.overflow <= 0, `Mini-Gantt : les champs de la ligne ${i + 1} dépassent de ${f.overflow} px de leur colonne`);
+  expect(f.outside <= 0, `Mini-Gantt : les champs de la ligne ${i + 1} sortent de ${f.outside} px hors du widget`);
+});
+
+// L'étiquette d'un bloc temporel doit être CENTRÉE sur sa bande : une largeur
+// estimée trop généreuse la décalait visiblement vers la gauche.
+expect(seen.miniBlockAlign.length > 0, "Mini-Gantt : aucune étiquette de bloc appariée à sa bande");
+seen.miniBlockAlign.forEach((b) => {
+  expect(b.gap <= 3, `Mini-Gantt : l'étiquette « ${b.t} » est décalée de ${b.gap} px par rapport à sa bande`);
+});
+
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);

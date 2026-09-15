@@ -3460,7 +3460,16 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // alignées d'une ligne à l'autre) ; "inline" = juste après la barre/le
   // jalon, ancré sur sa position réelle dans le temps.
   const fieldsLayout = widget.miniGanttFieldsLayout === "inline" ? "inline" : "aligned";
-  const FIELDS_COL_WIDTH = 232;
+  // Largeur de la colonne de champs alignée à droite. Elle ne peut pas rester
+  // FIXE : quatre champs plus l'anneau d'avancement dépassent largement 232 px,
+  // et le surplus débordait hors du widget, où le cadre le coupait — l'anneau
+  // finissait tronqué. Elle est donc MESURÉE sur le contenu réel, puis
+  // réutilisée à l'identique par l'en-tête, la légende et la couche des blocs :
+  // c'est ce qui garde les barres alignées d'une ligne à l'autre.
+  const FIELDS_COL_MIN = 232;
+  const [fieldsColWidth, setFieldsColWidth] = useState(FIELDS_COL_MIN);
+  const fieldNodes = useRef({});
+  const FIELDS_COL_WIDTH = fieldsColWidth;
   const [hover, setHover] = useState(null); // { t, x, y }
   const [collapsed, setCollapsed] = useState({}); // { [groupKey]: true }
   const toggleGroup = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
@@ -3842,6 +3851,52 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const id = requestAnimationFrame(measureRows);
     return () => cancelAnimationFrame(id);
   }, [measureRows, span, minIdx, fieldsLayout]);
+
+  // Largeur RÉELLEMENT occupée par les champs d'une ligne. `scrollWidth` ne
+  // sert à rien ici : la colonne est en overflow visible, elle ne défile pas et
+  // déclare donc la largeur qu'on lui impose. On mesure le bord droit du
+  // dernier champ, seul témoin fiable de ce qui dépasse.
+  const measureFieldsColumn = useCallback(() => {
+    if (fieldsLayout !== "aligned") return;
+    let needed = 0;
+    Object.values(fieldNodes.current).forEach((el) => {
+      if (!el || !el.isConnected || !el.children.length) return;
+      const left = el.getBoundingClientRect().left;
+      const last = el.children[el.children.length - 1].getBoundingClientRect();
+      needed = Math.max(needed, Math.ceil(last.right - left) + 2);
+    });
+    if (!needed) return;
+    // Plafond : la colonne ne doit jamais avaler la piste. Au-delà, mieux vaut
+    // une colonne large mais bornée qu'un diagramme réduit à un trait.
+    const rootW = rootRef.current ? rootRef.current.getBoundingClientRect().width : 0;
+    const cap = rootW ? Math.max(FIELDS_COL_MIN, Math.round(rootW * 0.46)) : Infinity;
+    const next = Math.min(cap, Math.max(FIELDS_COL_MIN, needed));
+    setFieldsColWidth((prev) => (Math.abs(prev - next) <= 1 ? prev : next));
+  }, [fieldsLayout]);
+  useEffect(() => {
+    const id = requestAnimationFrame(measureFieldsColumn);
+    return () => cancelAnimationFrame(id);
+  });
+
+  // Largeur RÉELLE de chaque capsule de bloc temporel. L'estimation ne sert
+  // qu'au tout premier rendu : la centrer sur une estimation trop généreuse
+  // décalait visiblement l'étiquette par rapport à sa bande.
+  const phaseLabelNodes = useRef({});
+  const [phaseLabelWidths, setPhaseLabelWidths] = useState({});
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const next = {};
+      Object.entries(phaseLabelNodes.current).forEach(([id2, el]) => {
+        if (el && el.isConnected) next[id2] = Math.ceil(el.getBoundingClientRect().width);
+      });
+      setPhaseLabelWidths((prev) => {
+        const keys = Object.keys(next);
+        const same = keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === next[k]);
+        return same ? prev : next;
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  });
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return undefined;
     const root = rootRef.current;
@@ -3922,11 +3977,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         // d'épouser la bande. Une bande de trois jours ne doit pas produire une
         // capsule de trois jours de large dont le texte déborde de part et
         // d'autre de sa propre bordure.
-        // `--font-mono` retombe sur Inter : les caractères n'ont PAS tous la
-        // même largeur, et les majuscules sont larges. L'estimation est donc
-        // volontairement généreuse — la sous-estimer tronquerait les titres,
-        // la surestimer ne coûte qu'un peu d'écartement entre couloirs.
-        const labelPx = Math.min(trackPx, 20 + String(shape.block.title || "").length * 8.6);
+        // Largeur MESURÉE dès qu'elle est connue. L'estimation ne sert qu'au
+        // premier rendu : `--font-mono` retombe sur Inter, les caractères n'ont
+        // pas tous la même largeur, et centrer sur une estimation trop
+        // généreuse décalait l'étiquette par rapport à sa bande.
+        const measured = phaseLabelWidths[shape.block.id];
+        const labelPx = Math.min(trackPx, measured || (20 + String(shape.block.title || "").length * 8.6));
         const centerPx = leftPx + widthPx / 2;
         // Recentrée sur la bande, puis ramenée dans la piste : une capsule ne
         // sort jamais du diagramme, même pour un bloc collé au bord.
@@ -3946,7 +4002,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         item.shape.lane = lane;
       });
     return shapes;
-  }, [temporalBlocks, minIdx, maxIdx, span, stripWidth]);
+  }, [temporalBlocks, minIdx, maxIdx, span, stripWidth, phaseLabelWidths]);
 
   // Chemin critique : même calcul que la vue Planning Projets et le widget
   // Chemin critique (computeCriticalIds), jamais une seconde heuristique.
@@ -4287,7 +4343,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       );
     }
     return (
-      <div className="lp-widget-minigantt-fields lp-widget-minigantt-fields-aligned" style={{ width: FIELDS_COL_WIDTH }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="lp-widget-minigantt-fields lp-widget-minigantt-fields-aligned"
+        style={{ width: FIELDS_COL_WIDTH }}
+        ref={(el) => { if (el) fieldNodes.current[t.id] = el; else delete fieldNodes.current[t.id]; }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
         {content}
       </div>
     );
@@ -4453,6 +4515,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             key={shape.block.id}
             type="button"
             className={"lp-widget-minigantt-phase" + (shape.block.kind === "decision" ? " is-decision" : "") + (shape.block.meta ? " is-meta" : "")}
+            data-block-id={shape.block.id}
+            ref={(el) => { if (el) phaseLabelNodes.current[shape.block.id] = el; else delete phaseLabelNodes.current[shape.block.id]; }}
             style={{
               left: `${shape.labelLeftPct}%`,
               maxWidth: "100%",
@@ -4518,6 +4582,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {temporalBlockShapes.map((shape) => (
         <span
           key={shape.block.id}
+          data-block-id={shape.block.id}
           className="lp-widget-minigantt-tblock"
           style={{
             left: `${shape.leftPct}%`,
