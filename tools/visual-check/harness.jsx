@@ -99,6 +99,11 @@ function AnnotationsHarness() {
   const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
   const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
+  // Fenêtre fixe étroite (issue #50) : « sc1 » (J-6) et « sc4 » (J+12) sortent
+  // d'une fenêtre J-3 → J+5. Ils doivent rester dessinés, rabattus sur le bord
+  // et comptés — jamais disparaître.
+  const scatterWindowWidget = { id: "w7", type: "deadlineScatter", scatterLaneField: "project",
+    scatterWindowMode: "fixed", scatterWindowBefore: 3, scatterWindowAfter: 5 };
 
   // Mêmes tâches, mais une tuile = un STATUT (issue #47) : c'est le câblage du
   // champ qui porte les tuiles, pas le pavage, qui est contrôlé ici.
@@ -110,6 +115,14 @@ function AnnotationsHarness() {
     treemapShowLegend: false, treemapShowSearch: false,
   });
   const [statusTreemapFormOpen, setStatusTreemapFormOpen] = useState(false);
+  // Heat map (issue #51) : projet × statut. « sc5 » n'a pas de statut renseigné
+  // ici, mais toutes les tâches du jeu en ont un : ce qui compte, c'est que la
+  // case vide et la case à zéro ne se ressemblent pas.
+  const [heatmapWidget, setHeatmapWidget] = useState({
+    id: "w8", type: "heatmapGrid", heatmapRowField: "project", heatmapColField: "status", heatmapMetric: "count",
+  });
+  const [heatmapFormOpen, setHeatmapFormOpen] = useState(false);
+  const [heatmapOpenedTaskId, setHeatmapOpenedTaskId] = useState("");
   // Vue Métro : mêmes annotations que le Gantt, plus un encadré qui saute une
   // ligne de projet (p1 et p3) — il doit produire DEUX cadres, jamais un seul.
   const [metroPrefs, setMetroPrefs] = useState({
@@ -218,6 +231,10 @@ function AnnotationsHarness() {
         <div id="harness-scatter-crit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
           <WidgetDeadlineScatter widget={{ ...scatterWidget, scatterLaneField: "criticality" }} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
         </div>
+        {/* Fenêtre fixe étroite : deux tâches débordent, aucune ne disparaît. */}
+        <div id="harness-scatter-window" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 200, marginBottom: 18 }}>
+          <WidgetDeadlineScatter widget={scatterWindowWidget} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
+        </div>
         {/* Aucune tâche datée : le widget doit le dire, pas afficher un axe vide. */}
         <div id="harness-scatter-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 300, height: 120, marginBottom: 18 }}>
           <WidgetDeadlineScatter widget={scatterWidget} tasks={scatterTasks.filter((t) => !t.end)} ctx={ctx} onOpen={noop} />
@@ -253,6 +270,32 @@ function AnnotationsHarness() {
             pageFilter={null}
             onSave={(data) => { setStatusTreemapWidget((w) => ({ ...w, ...data })); setStatusTreemapFormOpen(false); }}
             onClose={() => setStatusTreemapFormOpen(false)}
+          />
+        )}
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>HEAT MAP</h2>
+        <button type="button" id="harness-open-heatmap-form" onClick={() => setHeatmapFormOpen(true)} style={{ marginBottom: 8 }}>
+          Ouvrir la fiche de la Heat map
+        </button>
+        <span id="harness-heatmap-opened" style={{ marginLeft: 8, fontFamily: "monospace", fontSize: 12 }}>{heatmapOpenedTaskId}</span>
+        <div id="harness-heatmap" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
+          <WidgetHeatmapGrid widget={heatmapWidget} tasks={tasks} ctx={ctx} onOpen={(t) => setHeatmapOpenedTaskId(t ? t.id : "")} />
+        </div>
+        {/* Métrique « tâches en retard » : des croisements portent des tâches
+            sans qu'aucune soit en retard. Ces cases-là valent 0 — elles ne
+            doivent pas se confondre avec les croisements sans aucune tâche. */}
+        <div id="harness-heatmap-late" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
+          <WidgetHeatmapGrid widget={{ ...heatmapWidget, heatmapMetric: "late", heatmapColField: "month" }} tasks={tasks} ctx={ctx} onOpen={noop} />
+        </div>
+        {heatmapFormOpen && (
+          <WidgetFormModal
+            widget={heatmapWidget}
+            existingWidgets={[]}
+            ctx={ctx}
+            pageFilter={null}
+            onSave={(data) => { setHeatmapWidget((w) => ({ ...w, ...data })); setHeatmapFormOpen(false); }}
+            onClose={() => setHeatmapFormOpen(false)}
           />
         )}
       </div>
