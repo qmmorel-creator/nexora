@@ -695,10 +695,16 @@ aucune.
 La période de référence est donc **cerclée à part**, par-dessus les trames,
 exactement sur ses deux dates, sans remplissage. Le contour est le **même noir
 que la barre réelle** : les deux formes se répondent — le **plein** pour le
-réel, au-dessus ; le **creux** pour le prévu, en dessous. `reference` sort de
-`miniGanttComparisonStrip` en % **du ruban**, comme les segments ; tronqué par
-le bord de la fenêtre, le cercle perd son montant de ce côté, pour dire qu'il
-continue au-delà du cadre.
+réel, au-dessus ; le **creux** pour le prévu, en dessous.
+
+`reference` sort de `miniGanttComparisonStrip` en % de la **piste**, et non du
+ruban : le cercle est rendu **à côté** du ruban, pas dedans, avec la même
+géométrie (même sommet, même hauteur, même arrondi) et un anneau posé de la même
+façon — une ombre portée **à l'extérieur** de la boîte. C'est ce qui fait que
+les deux anneaux se **superposent** là où ils coïncident : le noir couvre le
+gris, et il ne reste qu'un seul trait. Posé en bordure **intérieure**, son trait
+venait s'ajouter à celui du ruban et une tâche conforme portait un liseré épais
+sur tout son pourtour.
 
 Le ruban porte le **même contour que la barre réelle, en gris** : les deux
 étages se répondent, et le ruban se détache du fond comme du bloc temporel qu'il

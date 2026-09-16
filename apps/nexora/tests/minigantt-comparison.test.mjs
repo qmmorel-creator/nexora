@@ -685,37 +685,41 @@ test("les segments se touchent SANS bordure : seule la trame les sépare", () =>
 
 test("la période de référence est cerclée à part, sur ses dates exactes", () => {
   const w = fenetre("2026-06-01", "2026-10-15");
-  const jours = (from, to) => ganttDayNumber(to) - ganttDayNumber(from);
+  // Le cercle est exprimé en % de la PISTE, comme le ruban lui-même : il est
+  // rendu à CÔTÉ de lui, pour que les deux anneaux se superposent au lieu
+  // d'accoler leurs traits.
+  const pistePct = (d) => ((ganttDayNumber(d) - w.minIdx) / w.span) * 100;
+  const proche = (a, b, quoi) => assert.ok(Math.abs(a - b) < 0.001, `${quoi} : ${a} ≠ ${b}`);
 
-  // Cas conforme : le cercle couvre tout le ruban.
+  // Cas conforme : le cercle et le ruban ont EXACTEMENT la même géométrie.
   const conforme = miniGanttComparisonStrip(
     miniGanttTaskComparison(tache({ start: "2026-06-09", end: "2026-09-09", ...ref("2026-06-09", "2026-09-09") })), w);
-  assert.ok(Math.abs(conforme.reference.leftPct - 0) < 0.001);
-  assert.ok(Math.abs(conforme.reference.widthPct - 100) < 0.001);
+  proche(conforme.reference.leftPct, conforme.leftPct, "conforme, bord gauche");
+  proche(conforme.reference.widthPct, conforme.widthPct, "conforme, largeur");
 
   // Déplacée en bloc : le cercle tient sur la seule période prévue, pas sur le
   // ruban entier — c'est précisément ce qui manquait pour lire la durée du plan.
   const bloc = miniGanttComparisonStrip(
     miniGanttTaskComparison(tache({ start: "2026-09-13", end: "2026-10-02", ...ref("2026-06-09", "2026-09-09") })), w);
-  const total = jours("2026-06-09", "2026-10-02");
-  assert.ok(Math.abs(bloc.reference.leftPct - 0) < 0.001);
-  assert.ok(Math.abs(bloc.reference.widthPct - (jours("2026-06-09", "2026-09-09") / total) * 100) < 0.001);
+  proche(bloc.reference.leftPct, pistePct("2026-06-09"), "bloc, bord gauche");
+  proche(bloc.reference.widthPct, pistePct("2026-09-09") - pistePct("2026-06-09"), "bloc, largeur");
+  assert.ok(bloc.reference.widthPct < bloc.widthPct, "le cercle est plus court que le ruban");
 
   // Tâche d'un seul jour au milieu du plan : le ruban est tout gris, mais le
   // cercle dit quand même les trois mois prévus.
   const unJour = miniGanttComparisonStrip(
     miniGanttTaskComparison(tache({ start: "2026-07-15", end: "2026-07-15", ...ref("2026-06-09", "2026-09-09") })), w);
   assert.deepEqual(kinds(unJour), ["reference"]);
-  assert.ok(Math.abs(unJour.reference.widthPct - 100) < 0.001);
+  proche(unJour.reference.widthPct, pistePct("2026-09-09") - pistePct("2026-06-09"), "un jour, largeur");
 
-  // Référence qui dépasse la fenêtre : elle est bornée, et le côté tronqué est
-  // signalé pour que le rendu y retire son montant.
+  // Référence qui dépasse la fenêtre : elle est bornée au cadre, et le côté
+  // tronqué est signalé pour que le rendu y ouvre son angle.
   const coupee = miniGanttComparisonStrip(
     miniGanttTaskComparison(tache({ start: "2026-09-13", end: "2026-10-02", ...ref("2026-06-09", "2026-09-09") })),
     fenetre("2026-07-01", "2026-10-15"));
   assert.equal(coupee.reference.clippedStart, true);
   assert.equal(coupee.reference.clippedEnd, false);
-  assert.ok(Math.abs(coupee.reference.leftPct - 0) < 0.001);
+  proche(coupee.reference.leftPct, 0, "tronquée, bord gauche");
 
   // Un jalon n'a pas de ruban, donc pas de cercle.
   assert.equal(miniGanttComparisonStrip(miniGanttTaskComparison({
@@ -724,6 +728,10 @@ test("la période de référence est cerclée à part, sur ses dates exactes", (
   }), w), null);
 
   // Le contour est celui de la barre réelle : le plein et le creux se répondent.
-  assert.match(html, /\.lp-widget-minigantt-cmpref\{[\s\S]{0,160}border:1px solid rgba\(16,21,31,0\.85\)/);
+  assert.match(html, /\.lp-widget-minigantt-cmpref\{[\s\S]{0,220}box-shadow:0 0 0 1px rgba\(16,21,31,0\.85\);/);
   assert.match(html, /\.lp-widget-minigantt-bar\.is-compared\{ box-shadow:0 0 0 1px rgba\(16,21,31,0\.85\); \}/);
+  // Et il partage la géométrie du ruban, pour que les deux anneaux se
+  // superposent au lieu de s'accoler.
+  assert.match(html, /\.lp-widget-minigantt-cmpref\{\s*\n\s*position:absolute; top:9px; height:8px; border-radius:2px;/);
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px; border-radius:2px;/);
 });

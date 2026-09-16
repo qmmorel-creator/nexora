@@ -105,7 +105,17 @@ const seen = await page.evaluate(() => {
     cmpRefFrames: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpref")].map((el) => {
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
-      return { w: Math.round(r.width), h: Math.round(r.height), fond: cs.backgroundColor, trait: cs.borderTopWidth };
+      /* Le ruban de la MÊME ligne : les deux anneaux doivent partager sommet et
+         hauteur, faute de quoi ils s'accolent au lieu de se superposer et la
+         tâche conforme porte un liseré épais sur tout son pourtour. */
+      const ruban = el.closest(".lp-widget-minigantt-row")?.querySelector(".lp-widget-minigantt-cmpstrip");
+      const rr = ruban ? ruban.getBoundingClientRect() : null;
+      return {
+        w: Math.round(r.width), h: Math.round(r.height),
+        fond: cs.backgroundColor, bord: cs.borderTopWidth,
+        dTop: rr ? Math.round(r.top - rr.top) : null,
+        dH: rr ? Math.round(r.height - rr.height) : null,
+      };
     }),
     cmpSegLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-late"),
     cmpSegAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-ahead"),
@@ -1285,6 +1295,9 @@ expect(seen.cmpSegGaps.every((g) => g <= 1), `Comparaison : les segments d'un ru
 expect(seen.cmpRefFrames.length === 5, `Comparaison : ${seen.cmpRefFrames.length} période(s) de référence cerclée(s), 5 attendues — la durée initiale doit se lire sur chaque ligne comparée`);
 expect(seen.cmpRefFrames.every((f) => f.w > 1 && f.h > 1), `Comparaison : un cercle de référence est de surface nulle (${JSON.stringify(seen.cmpRefFrames)})`);
 expect(seen.cmpRefFrames.every((f) => f.fond === "rgba(0, 0, 0, 0)"), `Comparaison : le cercle de référence a un fond (${seen.cmpRefFrames.map((f) => f.fond).join(", ")}) — il masquerait la trame qu'il encadre`);
+expect(seen.cmpRefFrames.every((f) => f.bord === "0px"), `Comparaison : le cercle de référence est posé en BORDURE (${seen.cmpRefFrames.map((f) => f.bord).join(", ")}) — son trait s'accolerait à celui du ruban au lieu de le couvrir`);
+expect(seen.cmpRefFrames.every((f) => f.dTop === 0 && f.dH === 0),
+  `Comparaison : le cercle de référence n'a pas la géométrie du ruban (décalages ${JSON.stringify(seen.cmpRefFrames.map((f) => [f.dTop, f.dH]))}) — les deux anneaux s'accoleraient au lieu de se superposer`);
 expect(seen.cmpSegRef.length >= 1, `Comparaison : ${seen.cmpSegRef.length} segment(s) de période tenue, au moins 1 attendu`);
 expect(seen.cmpSegLate.length >= 1, `Comparaison : ${seen.cmpSegLate.length} segment(s) de retard, au moins 1 attendu`);
 expect(seen.cmpSegAhead.length >= 1, `Comparaison : ${seen.cmpSegAhead.length} segment(s) d'avance, au moins 1 attendu`);
