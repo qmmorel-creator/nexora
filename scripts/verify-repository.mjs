@@ -611,6 +611,14 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
   assert.match(builtSource, /setTimeout\(\(\) => setBoardSearchApplied\(boardSearch\), \d+\)/,
     "Le filtre n'est plus retardé : chaque caractère recalculerait toute la page.");
   assert.match(builtSource, /value=\{boardSearch\}/, "Le champ de filtre a disparu de la barre du haut.");
+  /* Le widget « Tâche détaillée » retrouve sa tâche dans `allTasks` même quand
+     un filtre la masque — c'est tout l'objet de cette seconde liste. Lui donner
+     la liste réduite par la recherche la faisait disparaître dès la première
+     lettre tapée, et le widget se vidait sous les yeux. */
+  assert.match(builtSource, /allTasks=\{tasksBeforeSearch \|\| tasks\}/,
+    "Le widget « Tâche détaillée » reçoit de nouveau la liste réduite par la recherche : son contenu s'évanouirait à la frappe.");
+  assert.equal((builtSource.match(/tasksBeforeSearch=\{metaFilteredTasks\}/g) || []).length, 2,
+    "Les deux surfaces à widgets ne transmettent plus toutes la liste d'avant la recherche.");
   /* Les TROIS surfaces qui partent du socle méta-filtré doivent le consommer.
      En oublier une donnerait un champ qui filtre ici et pas là. */
   for (const [surface, motif] of [
