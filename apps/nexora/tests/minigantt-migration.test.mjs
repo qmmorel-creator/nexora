@@ -37,4 +37,28 @@ test("les préférences historiques gantt deviennent des préférences Mini Gant
   assert.equal(prefs.groupBy, "status");
   assert.deepEqual(prefs.miniGanttFields, ["status", "progress"]);
   assert.equal(prefs.miniGanttSort, "start");
+  assert.equal(prefs.showMilestones, true);
+  assert.equal(prefs.colorBy, "status");
+  assert.equal(prefs.miniGanttFieldsLayout, "aligned");
+  assert.equal(prefs.miniGanttComparisonEnabled, false);
+});
+
+test("les préférences Mini Gantt déjà enregistrées restent complètes dans la vue", () => {
+  const annotations = { temporalBlocks: [{ id: "phase" }], notes: [{ id: "note" }] };
+  const prefs = api.normalizeMiniGanttViewPrefs({
+    groupBy: "assignee", showMilestones: false, colorBy: "taskType",
+    miniGanttFields: ["progress"], miniGanttFieldsLayout: "inline",
+    miniGanttSort: "title", miniGanttSortDir: "desc",
+    miniGanttRange: { mode: "rolling", beforeMonths: 2, afterMonths: 6 },
+    miniGanttWindow: { start: "2026-01-01", end: "2026-12-31" },
+    miniGanttZoomLevel: 1, miniGanttComparisonEnabled: true, ganttAnnotations: annotations,
+  });
+  assert.equal(prefs.groupBy, "assignee");
+  assert.equal(prefs.showMilestones, false);
+  assert.equal(prefs.colorBy, "taskType");
+  assert.equal(prefs.miniGanttFieldsLayout, "inline");
+  assert.equal(prefs.miniGanttSortDir, "desc");
+  assert.equal(prefs.miniGanttZoomLevel, 1);
+  assert.equal(prefs.miniGanttComparisonEnabled, true);
+  assert.deepEqual(prefs.ganttAnnotations, annotations);
 });

@@ -2441,6 +2441,7 @@ function defaultLayoutForType(type) {
 const LEGACY_EMBED_GANTT_TYPE = "embed" + "Gantt";
 const MINI_GANTT_DEFAULTS = {
   showMilestones: true,
+  colorBy: "status",
   miniGanttFields: ["assignee", "status", "taskType", "end", "progress"],
   miniGanttFieldsLayout: "aligned",
   miniGanttSort: "start",
@@ -2471,6 +2472,8 @@ function normalizeMiniGanttViewPrefs(prefs) {
   return {
     ...old,
     groupBy: old.groupBy || old.ganttGroupBy || "project",
+    showMilestones: old.showMilestones !== false,
+    colorBy: ["status", "project", "taskType"].includes(old.colorBy) ? old.colorBy : MINI_GANTT_DEFAULTS.colorBy,
     miniGanttFields: old.miniGanttFields || old.ganttCols || MINI_GANTT_DEFAULTS.miniGanttFields,
     miniGanttFieldsLayout: old.miniGanttFieldsLayout || "aligned",
     miniGanttSort: old.miniGanttSort || "start",
@@ -4716,7 +4719,14 @@ function MiniGanttProgressRing({ progress }) {
   );
 }
 
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "", metaBlocks, toolbarSlot }) {
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "", metaBlocks, toolbarSlot, onOpenSettings }) {
+  // Les Mini Gantt existants n'avaient pas toujours de `groupBy`. La vue
+  // consolidée doit néanmoins fournir ses en-têtes repliables : Projet devient
+  // le défaut de lecture, sans modifier une configuration explicitement à
+  // "none" ou vers un autre champ.
+  const effectiveGroupBy = groupBy === undefined || groupBy === null || groupBy === ""
+    ? "project"
+    : groupBy;
   const colorBy = widget.colorBy || "status"; // "status" | "project"
   const rowFields = widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"];
   // "aligned" = colonne à largeur fixe alignée à droite (les barres restent
@@ -5039,7 +5049,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   };
 
   // --- Annotations : blocs temporels et encadrés ---------------------------
-  // Mêmes données et même logique pure que le Gantt complet
+  // Mêmes données et même logique pure que le Mini Gantt
   // (widget.ganttAnnotations) : un seul jeu de règles sert les deux diagrammes.
   // Tous ces Hooks restent AVANT le retour anticipé « aucune tâche » ci-dessous.
   const annotationStore = ganttAnnotationsOf(widget);
@@ -5128,14 +5138,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // continus. Le regroupement est calculé une seule fois ici et réutilisé au
   // rendu, plutôt que recalculé en deux endroits.
   const rowGroups = useMemo(() => (
-    !groupBy || groupBy === "none"
+    !effectiveGroupBy || effectiveGroupBy === "none"
       ? [{ key: "all", label: "", color: null, tasks: orderedTasks }]
       // Le regroupement redistribue les lignes : chaque groupe est retrié, sinon
       // l'ordre choisi ne vaudrait qu'à l'intérieur du premier d'entre eux.
-      : groupTasks(orderedTasks, groupBy, ctx)
+      : groupTasks(orderedTasks, effectiveGroupBy, ctx)
           .filter((g) => g.tasks.length > 0)
           .map((g) => ({ ...g, tasks: miniGanttSortTasks(g.tasks, sortKey, sortDir) }))
-  ), [orderedTasks, groupBy, ctx, sortKey, sortDir]);
+  ), [orderedTasks, effectiveGroupBy, ctx, sortKey, sortDir]);
 
   const visibleRows = useMemo(() => {
     const rows = [];
@@ -5277,7 +5287,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     highlightFrames.forEach((frame) => {
       ganttFrameSegments(rows, frame).forEach((seg, i) => shapes.push({ ...seg, frame, key: frame.id + "-" + i }));
     });
-    // Même règle que le Gantt complet : deux étiquettes qui se superposeraient
+    // Même règle que le Mini Gantt : deux étiquettes qui se superposeraient
     // sont décalées vers le bas.
     const placed = [];
     shapes.slice().sort((a, b) => a.top - b.top || a.startIdx - b.startIdx).forEach((shape) => {
@@ -5479,6 +5489,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <button className="lp-tool-btn" type="button" onClick={zoomOut} title="Zoom arrière">−</button>
       <button className={"lp-tool-btn" + (zoomIsAuto ? " active" : "")} type="button" onClick={resetZoom} title="Zoom automatique">Auto</button>
       <button className="lp-tool-btn" type="button" onClick={zoomIn} title="Zoom avant">+</button>
+      {onOpenSettings && <button className="lp-tool-btn" type="button" onClick={onOpenSettings} title="Réglages de la vue"><Settings size={14} /> Réglages</button>}
       <DropdownButton label="Regrouper" icon={<Layers size={14} />} title="Regroupement des lignes">
         {["none", ...WIDGET_GROUPBY_FIELDS].map((key) => <button key={key} type="button" className="lp-dropdown-action-row" onClick={() => onUpdateWidget?.({ groupBy: key })}>{key === "none" ? "Aucun regroupement" : fieldLabel(key, ctx)}</button>)}
       </DropdownButton>
@@ -5858,7 +5869,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <div className="lp-widget-minigantt-bar" style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}>
             {/* Progression visuelle : portion remplie de la couleur pleine du
                 statut/projet/type, sur fond pâle de la même couleur pour le
-                reste de la durée — cohérent avec le diagramme de Gantt complet. */}
+                reste de la durée — cohérent avec le diagramme du Mini Gantt. */}
             <div className="lp-widget-minigantt-bar-fill" style={{ width: `${pct}%`, background: barColor }} />
             {onUpdateTask && (
               <>
@@ -8071,10 +8082,40 @@ function WidgetProjectMomentum({ widget, tasks, ctx, snapshots, onOpen }) {
 /* Vue principale : elle adapte uniquement la persistance de vue au contrat du
    widget. Toute la préparation temporelle et le rendu restent dans
    WidgetMiniGantt, ce qui interdit un second moteur Gantt. */
+function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
+  const range = normalizeMiniGanttRange(prefs.miniGanttRange);
+  const annotations = ganttAnnotationsOf(prefs);
+  const datedTasks = (tasks || []).filter((task) => task.start && task.end);
+  const defaultStart = datedTasks.reduce((value, task) => !value || task.start < value ? task.start : value, iso(new Date()));
+  const defaultEnd = datedTasks.reduce((value, task) => !value || task.end > value ? task.end : value, iso(new Date()));
+  const patchRange = (patch) => setPrefs({ miniGanttRange: normalizeMiniGanttRange({ ...range, ...patch }) });
+  const patchAnnotations = (patch) => setPrefs({ ganttAnnotations: { ...annotations, ...patch } });
+  const toggleField = (field) => setPrefs({ miniGanttFields: (prefs.miniGanttFields || MINI_GANTT_DEFAULTS.miniGanttFields).includes(field)
+    ? (prefs.miniGanttFields || MINI_GANTT_DEFAULTS.miniGanttFields).filter((value) => value !== field)
+    : [...(prefs.miniGanttFields || MINI_GANTT_DEFAULTS.miniGanttFields), field] });
+  return (
+    <Modal title="Réglages de la vue Gantt" onClose={onClose} wide footer={<button className="lp-btn lp-btn-primary" onClick={onClose}>Terminé</button>}>
+      <div className="lp-widget-config-section">
+        <div className="lp-widget-config-title"><Settings size={12} /> Affichage</div>
+        <div className="lp-field"><label>Regroupement repliable</label><select value={prefs.groupBy || "project"} onChange={(e) => setPrefs({ groupBy: e.target.value })}>{["none", ...WIDGET_GROUPBY_FIELDS].map((key) => <option key={key} value={key}>{key === "none" ? "Aucun regroupement" : fieldLabel(key, ctx)}</option>)}</select></div>
+        <label className="lp-checkbox-line"><input type="checkbox" checked={prefs.showMilestones !== false} onChange={(e) => setPrefs({ showMilestones: e.target.checked })} /> Afficher les jalons</label>
+        <div className="lp-field" style={{ marginTop: 10 }}><label>Couleur des barres</label><div className="lp-density-row">{[["status", "Par statut"], ["project", "Par projet"], ["taskType", "Par type"]].map(([key, label]) => <button key={key} type="button" className={"lp-density-btn" + (prefs.colorBy === key ? " active" : "")} onClick={() => setPrefs({ colorBy: key })}>{label}</button>)}</div></div>
+        <div className="lp-field" style={{ marginTop: 10 }}><label>Informations affichées</label>{MINIGANTT_ROW_FIELD_OPTIONS.map((field) => <label className="lp-checkbox-line" key={field}><input type="checkbox" checked={(prefs.miniGanttFields || MINI_GANTT_DEFAULTS.miniGanttFields).includes(field)} onChange={() => toggleField(field)} /> {fieldLabel(field, ctx)}</label>)}</div>
+        <div className="lp-field" style={{ marginTop: 10 }}><label>Disposition des informations</label><div className="lp-density-row"><button type="button" className={"lp-density-btn" + ((prefs.miniGanttFieldsLayout || "aligned") === "aligned" ? " active" : "")} onClick={() => setPrefs({ miniGanttFieldsLayout: "aligned" })}>Alignées à droite</button><button type="button" className={"lp-density-btn" + (prefs.miniGanttFieldsLayout === "inline" ? " active" : "")} onClick={() => setPrefs({ miniGanttFieldsLayout: "inline" })}>À la suite de la barre</button></div></div>
+        <div className="lp-field" style={{ marginTop: 10 }}><label>Ordre des lignes</label><div className="lp-density-row">{MINIGANTT_SORT_KEYS.map((key) => <button key={key} type="button" className={"lp-density-btn" + ((prefs.miniGanttSort || "start") === key ? " active" : "")} onClick={() => setPrefs({ miniGanttSort: key })}>{MINIGANTT_SORT_LABELS[key]}</button>)}</div><div className="lp-density-row" style={{ marginTop: 6 }}><button type="button" className={"lp-density-btn" + ((prefs.miniGanttSortDir || "asc") === "asc" ? " active" : "")} onClick={() => setPrefs({ miniGanttSortDir: "asc" })}>Croissant</button><button type="button" className={"lp-density-btn" + (prefs.miniGanttSortDir === "desc" ? " active" : "")} onClick={() => setPrefs({ miniGanttSortDir: "desc" })}>Décroissant</button></div></div>
+        <div className="lp-field" style={{ marginTop: 10 }}><label>Étendue temporelle</label><div className="lp-density-row">{[["auto", "Automatique"], ["rolling", "Fenêtre glissante"], ["fixed", "Dates fixes"]].map(([key, label]) => <button key={key} type="button" className={"lp-density-btn" + (range.mode === key ? " active" : "")} onClick={() => patchRange({ mode: key })}>{label}</button>)}</div>{range.mode === "auto" && <label className="lp-checkbox-line" style={{ marginTop: 8 }}><input type="checkbox" checked={range.includeToday} onChange={(e) => patchRange({ includeToday: e.target.checked })} /> Toujours inclure aujourd'hui</label>}{range.mode === "rolling" && <div className="lp-row2" style={{ marginTop: 8 }}><div className="lp-field"><label>Mois avant aujourd'hui</label><input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={range.beforeMonths} onChange={(e) => patchRange({ beforeMonths: e.target.value })} /></div><div className="lp-field"><label>Mois après aujourd'hui</label><input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={range.afterMonths} onChange={(e) => patchRange({ afterMonths: e.target.value })} /></div></div>}{range.mode === "fixed" && <div className="lp-row2" style={{ marginTop: 8 }}><div className="lp-field"><label>Du</label><input type="date" value={prefs.miniGanttWindow?.start || ""} onChange={(e) => setPrefs({ miniGanttWindow: { ...(prefs.miniGanttWindow || {}), start: e.target.value } })} /></div><div className="lp-field"><label>Au</label><input type="date" value={prefs.miniGanttWindow?.end || ""} onChange={(e) => setPrefs({ miniGanttWindow: { ...(prefs.miniGanttWindow || {}), end: e.target.value } })} /></div></div>}</div>
+        <div className="lp-field" style={{ marginTop: 10 }}><label>Mode d'affichage</label><div className="lp-density-row"><button type="button" className={"lp-density-btn" + (!prefs.miniGanttComparisonEnabled ? " active" : "")} onClick={() => setPrefs({ miniGanttComparisonEnabled: false })}>Standard</button><button type="button" className={"lp-density-btn" + (prefs.miniGanttComparisonEnabled ? " active" : "")} onClick={() => setPrefs({ miniGanttComparisonEnabled: true })}>Comparaison</button></div></div>
+      </div>
+      <div className="lp-widget-config-section"><div className="lp-widget-config-title"><StickyNote size={12} /> Annotations</div><MiniGanttAnnotationsEditor blocks={annotations.temporalBlocks || []} frames={annotations.highlightFrames || []} milestones={annotations.milestones || []} risks={collectTaskDelayRisks(tasks || [])} notes={annotations.notes || []} tasks={datedTasks} ctx={ctx} defaultStart={defaultStart} defaultEnd={defaultEnd} onChange={patchAnnotations} /></div>
+    </Modal>
+  );
+}
+
 function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, pastDays, toolbarSlot }) {
   const widget = normalizeMiniGanttViewPrefs(prefs);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
-    <section className="lp-minigantt-view" aria-label="MINI GANTT">
+    <section className="lp-minigantt-view" aria-label="Gantt">
       <WidgetMiniGantt
         widget={widget}
         tasks={tasks}
@@ -8086,7 +8127,9 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         metaBlocks={metaBlocks || []}
         pastDays={pastDays || ""}
         toolbarSlot={toolbarSlot}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
+      {settingsOpen && <MiniGanttViewSettings prefs={widget} setPrefs={setPrefs} tasks={tasks} ctx={ctx} onClose={() => setSettingsOpen(false)} />}
     </section>
   );
 }
@@ -10899,7 +10942,7 @@ function MetroHeroArt() {
 function LandingPage({ onGetStarted, onLogin }) {
   const FEATURES = [
     { icon: "🚇", title: "Planning Projets", text: "Chaque projet devient une ligne de métro : bifurcations pour les tâches, épaisseur du trait selon l'avancement." },
-    { icon: "📊", title: "MINI GANTT", text: "Planning visuel unique : regroupements, annotations, risques et comparaison." },
+    { icon: "📊", title: "Gantt", text: "Planning visuel unique : regroupements, annotations, risques et comparaison." },
     { icon: "🎯", title: "Radar annuel", text: "Vue circulaire de toute l'année, pour voir la charge se répartir dans le temps." },
     { icon: "🗂️", title: "Tableur type Airtable", text: "Édition en masse, duplication, ajout rapide — sans jamais quitter la grille." },
   ];

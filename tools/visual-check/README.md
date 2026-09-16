@@ -34,11 +34,11 @@ CHROMIUM_PATH=/chemin/vers/chromium NODE_PATH=$(npm root -g) npm start   # binai
 
 ## Ce qui est contrôlé
 
-Scénario `harness.jsx` — Gantt complet et Mini-Gantt, deux blocs temporels et
+Scénario `harness.jsx` — Mini-Gantt, deux blocs temporels et
 deux encadrés, dont un posé sur des tâches **non successives** :
 
 - aucune erreur JavaScript au rendu ;
-- blocs temporels et encadrés présents dans les deux diagrammes ;
+- blocs temporels et encadrés présents dans le diagramme ;
 - l'encadré non successif produit bien deux cadres distincts ;
 - les étiquettes de cadres ne se superposent pas ;
 - les cadres ont une surface non nulle et restent dans la zone des lignes.

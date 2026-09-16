@@ -1,4 +1,4 @@
-# Annotations du Gantt — blocs temporels et encadrés
+# Annotations du Mini Gantt — blocs temporels et encadrés
 
 Deux annotations configurables se superposent au Mini Gantt — dans sa vue
 principale et dans son widget de tableau de bord —
@@ -17,12 +17,12 @@ rendu Mini Gantt :
 
 | Contexte | Emplacement | Persistance |
 |---|---|---|
-| Vue MINI GANTT | `viewPrefs.gantt.temporalBlocks` / `.highlightFrames` | clé Firebase `nexora:viewPrefs` |
+| Vue « Gantt » | `viewPrefs.gantt.ganttAnnotations` | clé Firebase `nexora:viewPrefs` |
 | Widget « Mini-Gantt » | `widget.ganttAnnotations` | avec le widget, dans son tableau de bord |
 
 Les deux widgets utilisent la **même clé** `widget.ganttAnnotations` et la même
 forme de données : changer un widget de type ne perd pas ses annotations.
-La vue MINI GANTT utilise les préférences de vue ;
+La vue « Gantt » utilise les préférences de vue ;
 `WidgetMiniGantt` lit directement `widget.ganttAnnotations` et écrit par
 `onUpdateWidget`. Les autres réglages (zoom, colonnes, bulles, champs de ligne)
 restent ce qu'ils étaient.
