@@ -85,7 +85,9 @@ const seen = await page.evaluate(() => {
     miniRows: rects("#harness-first-minigantt .lp-widget-minigantt-row"),
     miniBands: rects("#harness-first-minigantt .lp-widget-minigantt-tblock"),
     miniDecisions: rects("#harness-first-minigantt .lp-widget-minigantt-phase.is-decision"),
-    miniRisks: rects(".lp-widget-minigantt-risk"),
+    // Portée aux DEUX widgets historiques : non ancré, ce compte changeait
+    // à chaque Mini-Gantt ajouté au banc pour une autre raison.
+    miniRisks: rects("#harness-first-minigantt .lp-widget-minigantt-risk, #harness-second-minigantt .lp-widget-minigantt-risk"),
     secondRisks: rects("#harness-second-minigantt .lp-widget-minigantt-risk"),
     secondBands: rects("#harness-second-minigantt .lp-widget-minigantt-tblock"),
     secondMetaChips: rects("#harness-second-minigantt .lp-widget-minigantt-phase.is-meta"),
@@ -262,6 +264,43 @@ try {
   drag.gap = Math.abs(drag.after - targetX);
 } catch (error) {
   drag.error = String(error).split("\n")[0];
+}
+
+/* Colonne de champs du Mini-Gantt (issue #66). Elle réservait 232 px quoi
+   qu'elle contienne : un seul anneau d'avancement écrasait la piste de près de
+   deux cents pixels pour rien. Aucun test unitaire ne peut le voir — la largeur
+   est MESURÉE sur le rendu. */
+const colonne = { cinq: null, un: null, zero: null, pisteUn: null, pisteCinq: null, pisteZero: null };
+try {
+  const largeur = async (hote) => {
+    await page.locator(hote).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(250);
+    return page.evaluate((sel) => {
+      const champs = document.querySelector(`${sel} .lp-widget-minigantt-fields-aligned`);
+      const racine = document.querySelector(`${sel} .lp-widget-minigantt`);
+      const piste = document.querySelector(`${sel} .lp-widget-minigantt-track`);
+      const bordRacine = racine ? racine.getBoundingClientRect().right : null;
+      const bordPiste = piste ? piste.getBoundingClientRect().right : null;
+      return {
+        // Sans aucun champ configuré, la colonne n'est pas rendue du tout :
+        // `colonnes` vaut alors zéro, et c'est la bonne réponse.
+        colonnes: document.querySelectorAll(`${sel} .lp-widget-minigantt-fields-aligned`).length,
+        width: champs ? Math.round(champs.getBoundingClientRect().width) : null,
+        // Ce que la colonne coûte VRAIMENT à la piste : l'écart entre le bord
+        // droit de la piste et celui du widget. C'est la seule mesure qui vaut
+        // pour les trois cas, y compris celui où la colonne n'existe pas.
+        reste: bordRacine !== null && bordPiste !== null ? Math.round(bordRacine - bordPiste) : null,
+      };
+    }, hote);
+  };
+  const cinq = await largeur("#harness-first-minigantt");
+  const un = await largeur("#harness-second-minigantt");
+  const zero = await largeur("#harness-nofields-minigantt");
+  colonne.cinq = cinq.width; colonne.pisteCinq = cinq.reste;
+  colonne.un = un.width; colonne.pisteUn = un.reste;
+  colonne.zero = zero.colonnes; colonne.pisteZero = zero.reste;
+} catch (error) {
+  colonne.error = String(error).split("\n")[0];
 }
 
 /* Coche du Mini-Gantt (issue #48). Rien de ce qui suit n'est visible d'un test
@@ -988,6 +1027,22 @@ expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas
 expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error}`);
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
+
+expect(!colonne.error, `contrôle de la colonne de champs interrompu : ${colonne.error}`);
+/* Le plancher de 232 px donnait EXACTEMENT la même largeur aux trois cas. Que
+   les trois diffèrent est ce qui prouve que la mesure décide, et non un
+   nombre écrit en dur. */
+expect(colonne.zero === 0, `Mini-Gantt : sans aucun champ, ${colonne.zero} colonne(s) de droite sont encore rendues — il n'en faut aucune`);
+expect(colonne.pisteZero !== null && colonne.pisteZero <= 10,
+  `Mini-Gantt : sans aucun champ, la piste s'arrête encore à ${colonne.pisteZero} px du bord — elle doit aller jusqu'au bout`);
+expect(colonne.un !== null && colonne.un > 0 && colonne.un < 140,
+  `Mini-Gantt : avec un seul champ, la colonne fait ${colonne.un} px — elle doit se régler sur son contenu, pas sur un plancher`);
+expect(colonne.cinq !== null && colonne.cinq > colonne.un,
+  `Mini-Gantt : cinq champs (${colonne.cinq} px) ne prennent pas plus de place qu'un seul (${colonne.un} px) — la mesure ne suit plus le contenu`);
+/* Et la place gagnée doit revenir à la PISTE : une colonne étroite qui laisse
+   quand même la piste s'arrêter au même endroit n'aurait rien réglé. */
+expect(colonne.pisteUn !== null && colonne.pisteCinq !== null && colonne.pisteUn < colonne.pisteCinq,
+  `Mini-Gantt : la piste s'arrête à ${colonne.pisteUn} px du bord avec un champ contre ${colonne.pisteCinq} px avec cinq — la place gagnée ne lui revient pas`);
 
 expect(!coche.error, `contrôle de la coche du Mini-Gantt interrompu : ${coche.error}`);
 expect(coche.frames === 1, `Coche du Mini-Gantt : ${coche.frames} encadré(s) après la coche, 1 attendu`);

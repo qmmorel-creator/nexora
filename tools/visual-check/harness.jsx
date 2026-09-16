@@ -392,6 +392,17 @@ function AnnotationsHarness() {
             onDelete={noop}
           />
         )}
+        {/* Aucun champ à droite (issue #66) : la colonne doit disparaître
+            complètement et la piste aller jusqu'au bord du widget. */}
+        <div id="harness-nofields-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{ id: "w9", type: "minigantt", colorBy: "status", miniGanttFields: [] }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
         <div id="harness-second-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
             widget={otherWidget} tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}

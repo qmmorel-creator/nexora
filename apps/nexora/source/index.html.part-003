@@ -4668,14 +4668,25 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // alignées d'une ligne à l'autre) ; "inline" = juste après la barre/le
   // jalon, ancré sur sa position réelle dans le temps.
   const fieldsLayout = widget.miniGanttFieldsLayout === "inline" ? "inline" : "aligned";
-  // Largeur de la colonne de champs alignée à droite. Elle ne peut pas rester
-  // FIXE : quatre champs plus l'anneau d'avancement dépassent largement 232 px,
-  // et le surplus débordait hors du widget, où le cadre le coupait — l'anneau
-  // finissait tronqué. Elle est donc MESURÉE sur le contenu réel, puis
-  // réutilisée à l'identique par l'en-tête, la légende et la couche des blocs :
-  // c'est ce qui garde les barres alignées d'une ligne à l'autre.
-  const FIELDS_COL_MIN = 232;
-  const [fieldsColWidth, setFieldsColWidth] = useState(FIELDS_COL_MIN);
+  /* Largeur de la colonne de champs alignée à droite. Elle ne peut pas rester
+     FIXE : quatre champs plus l'anneau d'avancement dépassent largement
+     deux cents pixels, et le surplus débordait hors du widget, où le cadre le
+     coupait — l'anneau finissait tronqué (#31). Elle est donc MESURÉE sur le
+     contenu réel, puis réutilisée à l'identique par l'en-tête, la légende et la
+     couche des blocs : c'est ce qui garde les barres alignées d'une ligne à
+     l'autre.
+
+     Il n'y a plus de PLANCHER. Celui de 232 px, hérité de #31, réservait la
+     même bande pour un seul anneau que pour cinq champs : la piste était
+     écrasée de près de deux cents pixels pour rien (#66). Le plafond
+     (rootW * 0.46) et la mesure suffisent à traiter le cas inverse — c'est lui
+     qui empêche la colonne d'avaler la piste, pas le plancher.
+
+     Le départ à zéro est délibéré : la mesure arrive à la trame suivante, et
+     partir large ferait rétrécir la colonne sous les yeux à chaque ouverture,
+     alors que partir à zéro ne la fait grandir que là où il y a vraiment des
+     champs à loger. */
+  const [fieldsColWidth, setFieldsColWidth] = useState(0);
   const fieldNodes = useRef({});
   const FIELDS_COL_WIDTH = fieldsColWidth;
   const [hover, setHover] = useState(null); // { t, x, y }
@@ -5066,19 +5077,27 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // dernier champ, seul témoin fiable de ce qui dépasse.
   const measureFieldsColumn = useCallback(() => {
     if (fieldsLayout !== "aligned") return;
+    /* « Aucune ligne montée » et « des lignes montées, sans aucun champ » sont
+       deux réponses différentes, et l'ancienne mesure les confondait dans un
+       `needed` à zéro qu'elle abandonnait. La première ne conclut rien — la
+       mesure reviendra à la trame suivante. La seconde vaut zéro, et c'est
+       ainsi que la colonne disparaît quand aucun champ n'est configuré. */
+    let mesurable = false;
     let needed = 0;
     Object.values(fieldNodes.current).forEach((el) => {
-      if (!el || !el.isConnected || !el.children.length) return;
+      if (!el || !el.isConnected) return;
+      mesurable = true;
+      if (!el.children.length) return;
       const left = el.getBoundingClientRect().left;
       const last = el.children[el.children.length - 1].getBoundingClientRect();
       needed = Math.max(needed, Math.ceil(last.right - left) + 2);
     });
-    if (!needed) return;
+    if (!mesurable) return;
     // Plafond : la colonne ne doit jamais avaler la piste. Au-delà, mieux vaut
     // une colonne large mais bornée qu'un diagramme réduit à un trait.
     const rootW = rootRef.current ? rootRef.current.getBoundingClientRect().width : 0;
-    const cap = rootW ? Math.max(FIELDS_COL_MIN, Math.round(rootW * 0.46)) : Infinity;
-    const next = Math.min(cap, Math.max(FIELDS_COL_MIN, needed));
+    const cap = rootW ? Math.round(rootW * 0.46) : Infinity;
+    const next = Math.min(cap, needed);
     setFieldsColWidth((prev) => (Math.abs(prev - next) <= 1 ? prev : next));
   }, [fieldsLayout]);
   useEffect(() => {
