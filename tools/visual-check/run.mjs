@@ -141,6 +141,17 @@ const seen = await page.evaluate(() => {
     // net de la ligne. Le widget standard, lui, ne doit pas bouger.
     cmpBarOutlined: document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar.is-compared").length,
     standardBarOutlined: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-bar.is-compared, #harness-second-minigantt .lp-widget-minigantt-bar.is-compared").length,
+    /* Le cadre doit l'emporter sur TOUT : une barre qui le traverse ne doit pas
+       le recouvrir. C'est l'ordre d'empilement des deux couches qui le dit. */
+    bandZ: (() => {
+      const fond = document.querySelector("#harness-first-minigantt .lp-widget-minigantt-band-layer");
+      const cadres = document.querySelector("#harness-first-minigantt .lp-widget-minigantt-band-frames");
+      const ligne = document.querySelector("#harness-first-minigantt .lp-widget-minigantt-row");
+      const z = (el) => (el ? Number(getComputedStyle(el).zIndex) : null);
+      return { fond: z(fond), cadres: z(cadres), ligne: z(ligne) };
+    })(),
+    // Le remplissage, lui, ne porte plus aucun trait : il ferait double emploi.
+    bandFillBorders: [...new Set([...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-tblock")].map((el) => getComputedStyle(el).borderLeftWidth))],
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
     cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
@@ -149,7 +160,9 @@ const seen = await page.evaluate(() => {
     legendRows: document.querySelectorAll(".lp-widget-minigantt-legend, .lp-widget-minigantt-legend-items, .lp-widget-minigantt-legend-item").length,
     // Épaisseur RÉELLEMENT peinte des traits d'un bloc temporel : le jeu d'essai
     // en règle un à 4 px et laisse les autres au défaut de 1,5 px.
-    bandBorders: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-tblock")].map((el) => ({
+    /* Le trait vit désormais sur la couche des CADRES, au premier plan ; le
+       remplissage reste derrière les barres, sur la couche des bandes. */
+    bandBorders: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-tblock-frame")].map((el) => ({
       // Déclarée (le réglage) ET utilisée (ce que le navigateur peint, arrondi
       // au pixel entier) : la seconde seule ne distinguerait pas 1,5 px de 1 px.
       g: el.style.borderLeftWidth, d: el.style.borderRightWidth,
@@ -1191,6 +1204,13 @@ expect(seen.bandBorders.every((b) => b.g === b.d), `Blocs temporels : les deux m
 // Un CADRE, pas deux montants : la bande était bornée à gauche et à droite,
 // sans haut ni bas — elle se lisait comme deux traits, pas comme une zone.
 expect(seen.bandBorders.every((b) => b.h !== "0px" && b.b !== "0px"), `Blocs temporels : une bande n'a ni haut ni bas, ce n'est pas un cadre (${JSON.stringify(seen.bandBorders)})`);
+/* « Je veux un vrai cadre, qui l'emporte sur tout le reste » : la couche des
+   cadres passe au-dessus des lignes, celle du remplissage reste dessous. */
+expect(seen.bandZ.cadres !== null && seen.bandZ.ligne !== null && seen.bandZ.cadres > seen.bandZ.ligne,
+  `Blocs temporels : le cadre ne passe pas devant les lignes (cadres ${seen.bandZ.cadres}, ligne ${seen.bandZ.ligne})`);
+expect(seen.bandZ.fond !== null && seen.bandZ.ligne !== null && seen.bandZ.fond < seen.bandZ.ligne,
+  `Blocs temporels : le remplissage passe devant les lignes (fond ${seen.bandZ.fond}, ligne ${seen.bandZ.ligne}) — il masquerait les barres qu'il sert à situer`);
+expect(seen.bandFillBorders.every((w) => w === "0px"), `Blocs temporels : le remplissage porte encore un trait (${seen.bandFillBorders.join(", ")}) — il ferait double emploi avec le cadre`);
 expect(seen.legendRows === 0, `Légende : ${seen.legendRows} élément(s) de légende encore rendu(s), 0 attendu — la bande a été retirée des deux diagrammes`);
 expect(seen.cmpModeButtons.length === 2 && seen.cmpModeButtons[1].active, `Comparaison : le sélecteur rapide n'affiche pas l'état actif (${JSON.stringify(seen.cmpModeButtons)})`);
 // « Superposées sans rendre la ligne plus haute » : le widget de comparaison

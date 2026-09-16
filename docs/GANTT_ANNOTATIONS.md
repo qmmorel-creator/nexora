@@ -115,6 +115,21 @@ zone. Le style choisi vaut aussi pour la **pastille du titre** : elle imposait
 ses pointillés (fenêtre de décision) ou ses points (méta bloc) par la feuille de
 style, si bien que « Continue » ne donnait pas du continu.
 
+### Deux couches, pas une
+
+Le bloc se dessine sur **deux couches distinctes** :
+
+| Couche | Ce qu'elle porte | `z-index` |
+|---|---|---|
+| `band-layer` | le **remplissage**, translucide | 0 — derrière les lignes |
+| `band-frames` | le **cadre**, couleur pleine | 6 — devant tout |
+
+Le remplissage doit rester derrière les barres : c'est une teinte de fond, elle
+situe et ne masque pas. Le cadre doit passer devant : posé avec le remplissage,
+il était recouvert par la moindre barre qui le traversait, et « Continue » ne
+donnait jamais un trait continu **à l'œil**. Séparer les deux est la seule façon
+d'obtenir un vrai cadre sans rendre la teinte opaque.
+
 ## Icône d'un encadré
 
 La pastille posée dans le coin d'un encadré créé par la **coche** d'une ligne est
@@ -131,6 +146,26 @@ sa fiche** (`task.ganttFrameIcon`), laissé vide pour garder le défaut.
 
 Un encadré posé **à la main** garde la sienne : rien ne la lui impose, et
 l'icône d'une tâche qu'il contiendrait ne s'y substitue pas.
+
+## Axe : la métrique, puis les bornes
+
+L'axe porte **deux lignes**, et non une :
+
+| Ligne | Ce qu'elle dit | Style |
+|---|---|---|
+| haut | l'**unité** de l'axe (années, trimestres, mois…) | 11 px, gras, `--text-900` |
+| bas | les **bornes** de la fenêtre, date complète | 8,5 px, `--text-muted`, calée sur son bord |
+
+Elles partageaient la même ligne, dédoublonnées par la seule égalité des dates.
+Or une borne au 12/03/2022 et la graduation « 2022 » sont deux dates
+différentes : elles se superposaient à quelques pixels près, et l'on lisait
+« 20222022 ». Elles n'ont pas non plus le même rôle — l'unité est la **métrique**,
+les bornes ne sont qu'un repère de cadrage.
+
+Les étiquettes de l'unité sont en outre **éclaircies** : deux voisines qui se
+toucheraient ne sont pas rendues toutes les deux (on garde la première et on
+saute la suivante), à partir de la largeur mesurée de la piste et d'une largeur
+de texte estimée par `widgetAxisLabelWidth`.
 
 ## Sous-grille : jusqu'à trois niveaux
 
@@ -742,3 +777,26 @@ et l'évalue tel quel : les tests portent sur le code réellement livré dans
 l'interface, sans copie à maintenir en parallèle. `scripts/verify-repository.mjs`
 vérifie que ces sentinelles et le rendu des annotations restent présents dans le
 build.
+
+
+## La vue Gantt et le widget : mêmes réglages (#80)
+
+Un même diagramme se pilotait de deux façons selon qu'on le regardait dans un
+tableau de bord ou en pleine page. La vue n'avait qu'un extrait de la barre
+d'outils dans l'en-tête de page — zoom, regroupement, annotations — et il fallait
+ouvrir les réglages pour tout le reste.
+
+La vue porte désormais la **même barre d'outils** que le widget, rendue comme une
+bande pleine largeur au-dessus de l'axe : mode Standard / Comparaison, ordre des
+lignes, étendue temporelle, zoom, annotations. L'en-tête de page ne garde que ce
+qui lui est propre et n'a pas de place dans la bande : le **regroupement** et
+l'accès aux **réglages de la vue**.
+
+Les réglages de la vue reprennent aussi le **filtre de tâches** du widget, avec
+le même composant de formulaire — donc les mêmes champs et les mêmes règles. Il
+s'applique **en plus** des filtres de la page, jamais à leur place : la vue
+resserre ce que la page laisse passer.
+
+Reste propre au widget, faute d'objet équivalent dans la vue : la
+personnalisation du **cadre** (icône du titre, couleur du titre, couleur du
+bandeau, couleur de fond). La vue n'a pas de cadre de widget à habiller.
