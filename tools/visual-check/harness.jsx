@@ -1,5 +1,5 @@
-// ---- Banc d'essai local (scratchpad, jamais committé) : monte le Gantt
-// complet et le Mini-Gantt sur les données de démonstration, sans Firebase.
+// ---- Banc d'essai local (scratchpad, jamais committé) : monte le Mini-Gantt
+// sur les données de démonstration, sans Firebase.
 // Un PNG transparent de 1×1, en ligne : aucune requête réseau, donc un contrôle
 // qui donne le même résultat partout (issue #70).
 const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -12,7 +12,7 @@ const EMPTY_DASHBOARD_WIDGETS = [
   "kpi", "chart", "list", "minigantt", "criticalPath", "projectPulse", "heatmapMonth",
   "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
-  "deadlineScatter", "heatmapGrid", "embedMetro", "embedGantt", "embedTimeline", "embedRadar",
+  "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
   "customCard", "automations", "automationAlerts", "projectStory",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
   // Ceux-là ne se montent qu'avec une cible désignée : c'est justement le cas
@@ -242,16 +242,6 @@ function AnnotationsHarness() {
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 22 }}>
       <GlobalStyles />
-      <div>
-        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>GANTT COMPLET</h2>
-        <div className="lp-gantt-toolbar" ref={setToolbar} />
-        <GanttView
-          tasks={tasks} ctx={ctx} appearance={appearance} setAppearance={noop}
-          setTasks={setTasks} setProjects={setProjects} setStatuses={setStatuses}
-          onOpen={noop} onAdd={noop} onDelete={noop} onMarkDone={noop} onCycleStatus={noop} onBulkDelete={noop}
-          prefs={prefs} setPrefs={setPrefs} toolbarSlot={toolbar}
-        />
-      </div>
       <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>VUE MÉTRO</h2>
         <div id="harness-metro" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 1100, height: 620, overflow: "hidden", marginBottom: 18 }}>
@@ -688,7 +678,7 @@ if (benchApp) {
     "kpi", "chart", "list", "minigantt", "criticalPath", "projectPulse", "heatmapMonth",
     "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
-    "deadlineScatter", "heatmapGrid", "embedMetro", "embedGantt", "embedTimeline", "embedRadar",
+    "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
     "customCard", "automationAlerts", "projectStory",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
