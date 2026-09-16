@@ -38,6 +38,7 @@ const {
   miniGanttComparisonLabelVisible,
   miniGanttComparisonToneColor,
   miniGanttComparisonZonePattern,
+  miniGanttComparisonZoneColor,
   miniGanttRiskSegments,
   normalizeTemporalBlocks,
   normalizeHighlightFrames,
@@ -54,6 +55,7 @@ const {
   "miniGanttComparisonDeltaAria", "miniGanttComparisonBars", "miniGanttComparisonMilestone",
   "miniGanttComparisonRangeIndices", "miniGanttComparisonTooltipLines",
   "miniGanttComparisonLabelVisible", "miniGanttComparisonToneColor", "miniGanttComparisonZonePattern",
+  "miniGanttComparisonZoneColor",
   "miniGanttRiskSegments", "normalizeTemporalBlocks", "normalizeHighlightFrames",
   "normalizeMiniGanttMilestones", "normalizeMiniGanttNotes", "ganttDayNumber",
   "MINIGANTT_COMPARISON_REF_COLOR", "MINIGANTT_COMPARISON_AHEAD_COLOR", "MINIGANTT_COMPARISON_LATE_COLOR",
@@ -173,6 +175,23 @@ test("avance, retard et conformité suivent la convention négatif/positif/zéro
 });
 
 // 9. Début en retard, fin en avance ----------------------------------------
+test("une fin en avance se peint en vert, et porte sa valeur", () => {
+  // Terminer plus tôt que prévu est la seule avance qu'une tâche démarrée à
+  // l'heure peut montrer : elle doit se voir, et en vert.
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-08-12", end: "2026-09-05", ...ref("2026-08-12", "2026-09-18") }));
+  assert.equal(cmp.startDeltaDays, 0);
+  assert.equal(cmp.endDeltaDays, -13);
+  assert.equal(cmp.endTone, "ahead");
+  const bars = miniGanttComparisonBars(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.equal(bars.ahead, null, "rien avant le début : la tâche a démarré à l'heure");
+  assert.equal(bars.late, null);
+  assert.ok(bars.freed, "le temps rendu à la fin est une zone à part entière");
+  assert.equal(miniGanttComparisonZoneColor("freed"), MINIGANTT_COMPARISON_AHEAD_COLOR);
+  // Et son chiffre s'affiche comme celui des autres zones dès qu'il tient.
+  assert.equal(miniGanttComparisonLabelVisible(bars.freed, { trackPx: 600 }), true);
+  assert.equal(miniGanttComparisonDeltaLabel(cmp.endDeltaDays), "\u221213 j");
+});
+
 test("un début en retard et une fin en avance se lisent séparément", () => {
   const cmp = miniGanttTaskComparison(tache({ start: "2026-08-15", end: "2026-09-14", ...ref("2026-08-12", "2026-09-18") }));
   assert.equal(cmp.startDeltaDays, 3);
@@ -214,7 +233,10 @@ test("une superposition parfaite laisse la référence discernable, et la barre 
   assert.equal(bars.freed, null);
   // Le contour, lui, est porté par la feuille de style : la barre de référence
   // déborde de 2 px en haut et en bas sans changer la hauteur de la ligne.
-  assert.match(html, /\.lp-widget-minigantt-refbar\{\s*\n\s*position:absolute; top:-2px; height:13px;/);
+  assert.match(html, /\.lp-widget-minigantt-refbar\{\s*\n\s*position:absolute; top:-3px; height:15px;/);
+  // Deux montants pleins aux dates prévues, reliés par un trait tireté : c'est
+  // ce qui sépare à l'œil le délai prévu du délai réel.
+  assert.match(html, /border:1\.5px dashed; border-left:3px solid; border-right:3px solid;/);
 });
 
 // 11. Jalons ----------------------------------------------------------------
@@ -462,9 +484,18 @@ test("l'avance et le retard ne passent jamais par la seule couleur", () => {
   const freed = miniGanttComparisonZonePattern("freed");
   assert.match(late, /repeating-linear-gradient\(45deg/);
   assert.match(ahead, /repeating-linear-gradient\(-45deg/);
-  assert.ok(freed.includes(MINIGANTT_COMPARISON_REF_COLOR));
+  // Les DEUX formes d'avance sont vertes et hachurées dans le même sens : une
+  // tâche terminée plus tôt doit afficher du vert, pas un gris de référence.
+  assert.match(freed, /repeating-linear-gradient\(-45deg/);
+  assert.ok(freed.includes(MINIGANTT_COMPARISON_AHEAD_COLOR));
+  assert.ok(!freed.includes(MINIGANTT_COMPARISON_REF_COLOR));
+  assert.equal(miniGanttComparisonZoneColor("freed"), MINIGANTT_COMPARISON_AHEAD_COLOR);
+  assert.equal(miniGanttComparisonZoneColor("ahead"), MINIGANTT_COMPARISON_AHEAD_COLOR);
+  assert.equal(miniGanttComparisonZoneColor("late"), MINIGANTT_COMPARISON_LATE_COLOR);
   assert.notEqual(late, ahead);
   assert.notEqual(late, freed);
+  // …sans pour autant se confondre : le motif reste plus aéré à la fin.
+  assert.notEqual(ahead, freed);
   // Libellé accessible, en toutes lettres.
   assert.equal(miniGanttComparisonDeltaAria(8, "Fin"), "Fin : 8 jours de retard.");
   assert.equal(miniGanttComparisonDeltaAria(-1, "Début"), "Début : 1 jour d'avance.");

@@ -106,6 +106,13 @@ const seen = await page.evaluate(() => {
     cmpLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-late"),
     cmpAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead"),
     cmpFreed: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed"),
+    // Couleur RÉELLEMENT peinte des zones d'avance : le vert doit dominer.
+    cmpAheadColors: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead, #harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed")].map((el) => {
+      const c = getComputedStyle(el).borderTopColor;
+      const m = c.match(/\d+/g) || [];
+      const [r, v, b] = m.map(Number);
+      return { c, vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
+    }),
     cmpLabels: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmplabel"),
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
@@ -974,16 +981,20 @@ seen.miniBlockAlign.forEach((b) => {
 // décalage intégral, jalon en retard) et en laisse deux sans référence, dont un
 // jalon : le widget doit accepter les deux dans le même diagramme.
 expect(seen.standardRefBars === 0, `Mode standard : ${seen.standardRefBars} barre(s) de référence dessinée(s), 0 attendue — des dates de référence sur les tâches ne doivent rien changer tant que le widget est en mode Standard`);
-expect(seen.cmpRefBars.length === 4, `Comparaison : ${seen.cmpRefBars.length} barre(s) de référence, 4 attendues (les jalons n'en ont pas)`);
+expect(seen.cmpRefBars.length === 5, `Comparaison : ${seen.cmpRefBars.length} barre(s) de référence, 5 attendues (les jalons n'en ont pas)`);
 seen.cmpRefBars.forEach((b, i) => {
   expect(b.w > 2 && b.h > 2, `Comparaison : barre de référence ${i + 1} de surface nulle (${b.w}×${b.h})`);
 });
 expect(seen.cmpLate.length >= 1, `Comparaison : ${seen.cmpLate.length} zone(s) de retard, au moins 1 attendue`);
 expect(seen.cmpAhead.length >= 1, `Comparaison : ${seen.cmpAhead.length} zone(s) d'avance, au moins 1 attendue`);
-expect(seen.cmpFreed.length >= 1, `Comparaison : ${seen.cmpFreed.length} trace(s) de référence non consommée, au moins 1 attendue`);
+expect(seen.cmpFreed.length >= 1, `Comparaison : ${seen.cmpFreed.length} zone(s) d'avance en fin de tâche, au moins 1 attendue`);
+// Terminer plus tôt que prévu EST une avance : la zone doit être verte à
+// l'écran, pas grise. C'est ce que le premier essai ne montrait pas.
+expect(seen.cmpAheadColors.every((c) => c.vert), `Comparaison : une zone d'avance n'est pas verte à l'écran (${JSON.stringify(seen.cmpAheadColors)})`);
+expect(seen.cmpAheadColors.length >= 2, `Comparaison : ${seen.cmpAheadColors.length} zone(s) d'avance relevée(s), au moins 2 attendues (début anticipé et fin anticipée)`);
 expect(seen.cmpGhosts.length === 1, `Comparaison : ${seen.cmpGhosts.length} losange(s) fantôme, 1 attendu (le jalon comparé ; celui sans référence n'en a pas)`);
 expect(seen.cmpLinks.length === 1, `Comparaison : ${seen.cmpLinks.length} segment(s) de liaison de jalon, 1 attendu`);
-expect(seen.cmpChips.length === 5, `Comparaison : ${seen.cmpChips.length} indicateur(s) d'écart, 5 attendus (4 tâches + 1 jalon)`);
+expect(seen.cmpChips.length === 6, `Comparaison : ${seen.cmpChips.length} indicateur(s) d'écart, 6 attendus (5 tâches + 1 jalon)`);
 expect(seen.cmpChips.every((c) => /^[+\u22120-9]/.test(c.text.trim())), `Comparaison : un indicateur d'écart ne porte ni signe ni valeur (${seen.cmpChips.map((c) => c.text.trim()).join(", ")})`);
 // La légende du mode s'AJOUTE à celle qui existe déjà (Critique, Vigilance,
 // Jalon, Risque…) : ses quatre repères doivent y être, en tête.

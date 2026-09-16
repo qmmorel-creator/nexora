@@ -359,20 +359,26 @@ mais conserve les valeurs saisies.
 
 ### Ce qui est dessiné
 
-- **Référence** — une barre en arrière-plan, gris bleuté (`#7C8DB5`), remplissage
-  très léger et contour visible. Elle déborde de 2 px au-dessus et au-dessous de
-  la barre actuelle : sur une superposition parfaite, son contour reste
-  discernable. Tout est en position absolue dans la piste — la ligne ne grandit
-  pas d'un pixel. Tronquée par le bord de la fenêtre, son trait devient
-  pointillé de ce côté.
+- **Référence** — la fenêtre initialement prévue, en arrière-plan : deux
+  **montants pleins de 3 px** aux dates de référence, reliés par un trait
+  tireté, en gris bleuté soutenu (`#63719A`) sur un remplissage très léger.
+  Ce sont les montants qui portent la lecture : l'œil attrape l'écart entre
+  celui de droite et la fin réelle de la barre. Elle déborde de 3 px au-dessus
+  et au-dessous de la barre actuelle, donc elle reste discernable sur une
+  superposition parfaite ; tout est en position absolue dans la piste, la ligne
+  ne grandit pas d'un pixel. Tronquée par le bord de la fenêtre, le montant de
+  ce côté s'efface au profit d'un pointillé fin.
 - **Actuel** — la barre existante, inchangée : couleur métier, point
   d'avancement, glisser-déposer, infobulle.
 - **Retard** (`late`) — la part de la période actuelle postérieure à la fin de
   référence, hachures **montantes** rouge corail (`#E4572E`).
-- **Avance** (`ahead`) — la part de la période actuelle antérieure au début de
-  référence, hachures **descendantes** vertes (`#1F9D6B`).
-- **Référence non consommée** (`freed`) — la fin de référence que la tâche
-  n'atteint pas, gardée en pointillé dilué plutôt qu'effacée.
+- **Avance au début** (`ahead`) — la part de la période actuelle antérieure au
+  début de référence, hachures **descendantes** vertes (`#1F9D6B`).
+- **Avance à la fin** (`freed`) — la fin de référence que la tâche n'atteint
+  pas : c'est du temps gagné, donc **le même vert**, avec un trait tireté et un
+  motif plus aéré pour rester distinct du démarrage anticipé. Elle a d'abord été
+  peinte en gris, comme une simple trace de la référence — une tâche terminée en
+  avance n'affichait alors rien de vert à l'écran.
 - **Jalon comparé** — un losange fantôme gris à la date de référence, le jalon
   actuel inchangé, et un segment fin entre les deux.
 
@@ -387,7 +393,7 @@ endDeltaDays   = currentEnd   - referenceEnd;
 
 ### Ce qui est écrit
 
-- **Libellés dans la piste** — au centre de la zone d'avance et de la zone de
+- **Libellés dans la piste** — au centre de chaque zone d'écart, avance comme
   retard. Ce sont les seuls éléments que la place fait disparaître : ils sont
   masqués quand la zone est trop étroite, quand ils recouvriraient la ligne
   « Aujourd'hui », ou quand la tâche porte des couloirs de risque, dont les
