@@ -59,9 +59,10 @@ jalon) et deux n'en portent pas, dont un jalon :
 - le sélecteur rapide affiche l'état actif ;
 - **les hauteurs de ligne sont identiques à celles du widget standard** : la
   superposition des barres ne fait grandir aucune ligne ;
-- les zones d'écart sont **plus fines que les barres** et chaque barre comparée
-  porte sa borne de fin : à hauteur égale, elles se lisaient comme le
-  prolongement de la barre.
+- la référence et les zones d'écart vivent sur un **rail placé sous la barre**,
+  jamais dans sa bande : à hauteur égale, elles se lisaient comme son
+  prolongement, et la poignée d'avancement semblait avoir de la course qu'elle
+  n'avait pas.
 
 Poignée d'avancement du Mini-Gantt :
 

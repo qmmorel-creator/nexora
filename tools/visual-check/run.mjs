@@ -106,20 +106,28 @@ const seen = await page.evaluate(() => {
     cmpLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-late"),
     cmpAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead"),
     cmpFreed: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed"),
-    // Couleur RÉELLEMENT peinte des zones d'avance : le vert doit dominer.
+    /* Couleur RÉELLEMENT peinte des zones d'avance. Elle est portée par le
+       MOTIF, pas par un contour : les rubans n'en ont plus. On lit donc la
+       première couleur du dégradé hachuré, telle que le navigateur la calcule. */
     cmpAheadColors: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead, #harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed")].map((el) => {
-      const c = getComputedStyle(el).borderTopColor;
-      const m = c.match(/\d+/g) || [];
-      const [r, v, b] = m.map(Number);
-      return { c, vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
+      const c = getComputedStyle(el).backgroundImage;
+      const m = c.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+      const [r, v, b] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [];
+      return { c: m ? m[0] : c.slice(0, 40), vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
     }),
     cmpLabels: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmplabel"),
     // Hauteurs comparées : une zone d'écart ne doit jamais avoir la géométrie de
     // la barre, sinon elle se lit comme son prolongement.
     cmpZoneHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone")].map((el) => Math.round(el.getBoundingClientRect().height)))],
     cmpBarHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar")].map((el) => Math.round(el.getBoundingClientRect().height)))],
-    cmpBarCaps: document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar.is-compared").length,
-    standardBarCaps: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-bar.is-compared, #harness-second-minigantt .lp-widget-minigantt-bar.is-compared").length,
+    // Le rail doit vivre SOUS la barre : c'est ce qui laisse la barre actuelle
+    // seule sur sa ligne. Mesuré ligne par ligne, sur la ligne qui porte les deux.
+    cmpRailUnderBar: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-row")].map((row) => {
+      const bar = row.querySelector(".lp-widget-minigantt-bar");
+      const rail = row.querySelector(".lp-widget-minigantt-refbar");
+      if (!bar || !rail) return null;
+      return Math.round(rail.getBoundingClientRect().top - bar.getBoundingClientRect().bottom);
+    }).filter((v) => v !== null),
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
     cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
@@ -1044,9 +1052,9 @@ seen.cmpRefBars.forEach((b, i) => {
 // doit jamais avoir la hauteur de la barre, et une barre comparée porte une
 // borne de fin que la poignée ronde ne dit pas.
 expect(seen.cmpZoneHeights.length && seen.cmpBarHeights.length && Math.max(...seen.cmpZoneHeights) < Math.min(...seen.cmpBarHeights),
-  `Comparaison : les zones d'écart (${seen.cmpZoneHeights.join("/")} px) ne sont pas plus fines que les barres (${seen.cmpBarHeights.join("/")} px) — elles se lisent comme leur prolongement`);
-expect(seen.cmpBarCaps === 5, `Comparaison : ${seen.cmpBarCaps} barre(s) portent une borne de fin, 5 attendues (une par tâche comparée)`);
-expect(seen.standardBarCaps === 0, `Mode standard : ${seen.standardBarCaps} barre(s) marquées comparées, 0 attendue`);
+  `Comparaison : les zones d'écart (${seen.cmpZoneHeights.join("/")} px) ne sont pas plus fines que les barres (${seen.cmpBarHeights.join("/")} px) — elles se liraient comme leur prolongement`);
+expect(seen.cmpRailUnderBar.length === 5, `Comparaison : ${seen.cmpRailUnderBar.length} ligne(s) portent barre et rail, 5 attendues`);
+expect(seen.cmpRailUnderBar.every((gap) => gap >= 0), `Comparaison : le rail de référence chevauche la barre (écarts ${seen.cmpRailUnderBar.join("/")} px) — la barre actuelle doit rester seule sur sa ligne`);
 
 expect(seen.cmpLate.length >= 1, `Comparaison : ${seen.cmpLate.length} zone(s) de retard, au moins 1 attendue`);
 expect(seen.cmpAhead.length >= 1, `Comparaison : ${seen.cmpAhead.length} zone(s) d'avance, au moins 1 attendue`);

@@ -384,25 +384,23 @@ mais conserve les valeurs saisies.
 
 ### Ce qui est dessiné
 
-- **Référence** — la fenêtre initialement prévue, en arrière-plan : deux
-  **montants pleins de 3 px** aux dates de référence, reliés par un trait
-  tireté, en gris bleuté soutenu (`#63719A`) sur un remplissage très léger.
-  Ce sont les montants qui portent la lecture : l'œil attrape l'écart entre
-  celui de droite et la fin réelle de la barre. Elle déborde de 3 px au-dessus
-  et au-dessous de la barre actuelle, donc elle reste discernable sur une
-  superposition parfaite ; tout est en position absolue dans la piste, la ligne
-  ne grandit pas d'un pixel. Tronquée par le bord de la fenêtre, le montant de
-  ce côté s'efface au profit d'un pointillé fin.
+- **Référence** — la période initialement prévue, sur le rail du bas : un filet
+  plein en gris bleuté (`#63719A`), sans contour ni montants. Tronquée par le
+  bord de la fenêtre, elle s'évanouit de ce côté et son angle s'ouvre — elle
+  continue au-delà du cadre.
 - **Actuel** — la barre existante, inchangée : couleur métier, point
   d'avancement, glisser-déposer, infobulle.
-Les trois zones d'écart ci-dessous sont des **rubans de 6 px centrés sur l'axe
-de la barre**, donc plus fins qu'elle et visiblement posés *à côté* d'elle. À
-égalité de hauteur, l'œil les lisait comme son prolongement : on ne savait plus
-si la poignée d'avancement était au bout de la tâche ou s'il restait de la
-course. Pour la même raison, une barre comparée porte une **borne de fin** — un
-montant plein de 2 px dans sa couleur métier, qui dépasse de 1,5 px en haut et
-en bas. C'est elle qui dit « la tâche s'arrête ici » ; la poignée ronde, elle,
-ne dit que « l'avancement en est là ».
+**Deux étages, pas une seule bande.** La barre actuelle reste seule sur sa
+ligne ; la référence et les écarts vivent sur un **rail de 4 px juste en
+dessous**. C'est la structure qui sépare, pas un habillage. Trois essais ont
+précédé celui-ci — référence en filet de 1 px superposé (invisible), puis en
+fenêtre à montants épais (trois objets empilés sur quinze pixels) — et tous
+butaient sur le même reproche : on ne savait plus si la poignée d'avancement
+était au bout de la tâche ou s'il restait de la course. Avec le rail, la
+question ne se pose plus : rien ne peut plus se confondre avec la barre.
+
+Le rail est en position absolue dans une piste en `overflow` visible, donc la
+hauteur de ligne reste exactement celle du mode Standard.
 
 - **Retard** (`late`) — la part de la période actuelle postérieure à la fin de
   référence, hachures **montantes** rouge corail (`#E4572E`).
@@ -414,7 +412,9 @@ ne dit que « l'avancement en est là ».
   peinte en gris, comme une simple trace de la référence — une tâche terminée en
   avance n'affichait alors rien de vert à l'écran.
 - **Jalon comparé** — un losange fantôme gris à la date de référence, le jalon
-  actuel inchangé, et un segment fin entre les deux.
+  actuel inchangé, et un segment fin entre les deux. Un jalon n'a pas de barre :
+  il n'a donc pas de rail du bas, et tout reste sur sa ligne — l'écart chiffré
+  compris.
 
 La couleur ne porte jamais seule l'information : chaque zone a son **motif**, et
 l'écart est écrit en chiffres (`−3 j`, `+8 j`, `0 j` — négatif = avance,

@@ -235,10 +235,9 @@ test("une superposition parfaite laisse la référence discernable, et la barre 
   assert.equal(bars.freed, null);
   // Le contour, lui, est porté par la feuille de style : la barre de référence
   // déborde de 2 px en haut et en bas sans changer la hauteur de la ligne.
-  assert.match(html, /\.lp-widget-minigantt-refbar\{\s*\n\s*position:absolute; top:-3px; height:15px;/);
-  // Deux montants pleins aux dates prévues, reliés par un trait tireté : c'est
-  // ce qui sépare à l'œil le délai prévu du délai réel.
-  assert.match(html, /border:1\.5px dashed; border-left:3px solid; border-right:3px solid;/);
+  // La référence vit sur un RAIL FIN sous la barre : c'est la structure, et non
+  // un habillage, qui sépare le délai prévu du délai réel.
+  assert.match(html, /\.lp-widget-minigantt-refbar\{\s*\n\s*position:absolute; top:11px; height:4px;/);
 });
 
 // 11. Jalons ----------------------------------------------------------------
@@ -463,13 +462,14 @@ test("mode standard : aucune barre de référence, aucune zone, aucune ligne plu
   assert.match(html, /cmpMs && cmpMs\.referenceVisible && /);
   // Les barres comparées vivent en position absolue dans la piste : la hauteur
   // de ligne est inchangée.
-  // Les zones d'écart sont PLUS FINES que la barre et centrées sur son axe :
-  // sans quoi elles se lisent comme son prolongement, et la poignée
-  // d'avancement semble avoir de la course qu'elle n'a pas.
-  assert.match(html, /\.lp-widget-minigantt-cmpzone\{ position:absolute; top:50%; height:6px; transform:translateY\(-50%\);/);
-  // Et la barre comparée porte une borne de fin, que la poignée ronde ne dit pas.
-  assert.match(html, /\.lp-widget-minigantt-bar\.is-compared::after\{/);
-  assert.match(html, /\(cmpBars \? " is-compared" : ""\)/);
+  // Les écarts partagent CE MÊME RAIL, jamais la bande de la barre : à hauteur
+  // égale ils se lisaient comme son prolongement, et la poignée d'avancement
+  // semblait avoir devant elle une course qui n'existait pas.
+  assert.match(html, /\.lp-widget-minigantt-cmpzone\{ position:absolute; top:11px; height:4px;/);
+  // La barre actuelle, elle, reste exactement ce qu'elle était : rien ne s'y
+  // ajoute, aucune classe de comparaison ne la touche.
+  assert.doesNotMatch(html, /lp-widget-minigantt-bar\.is-compared/);
+  assert.match(html, /<div className="lp-widget-minigantt-bar" style=\{\{ left: left \+ "%"/);
 });
 
 // 18. Widget étroit ----------------------------------------------------------
