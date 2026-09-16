@@ -299,6 +299,129 @@ standard) et réordonner. Un bloc dont les dates sont invalides, ou dont la fin
 précède le début, affiche l'erreur sous les champs, n'est pas dessiné, et bloque
 l'enregistrement de la fiche du widget.
 
+## Mode Comparaison — Mini-Gantt uniquement
+
+Un Mini-Gantt peut afficher, pour chaque tâche qui le déclare, sa **planification
+de référence** en arrière-plan de ses **dates actuelles**, avec les écarts en
+jours. Le diagramme reste le même — mêmes lignes, mêmes hauteurs, mêmes
+regroupements, mêmes annotations : la comparaison n'est qu'une couche de plus
+dans la piste existante, jamais un second diagramme.
+
+### Deux interrupteurs, et il faut les deux
+
+| Interrupteur | Où | Stockage | Absent = |
+|---|---|---|---|
+| Mode du widget | Paramètres du widget (« Mode d'affichage ») **et** sélecteur rapide `Standard \| Comparaison` sous le zoom | `widget.miniGanttComparisonEnabled` | `false` |
+| Comparaison de la tâche | Fiche de la tâche | `task.comparison.enabled` | `false` |
+
+Les deux commandes du widget écrivent la **même** propriété : elles ne peuvent
+pas se contredire. Le réglage appartient au widget, donc il suit la duplication
+d'un widget, d'un onglet et d'un tableau de bord, comme les annotations.
+
+```ts
+type MiniGanttWidget = {
+  // propriétés existantes…
+  miniGanttComparisonEnabled?: boolean;
+};
+
+type Task = {
+  // propriétés existantes…
+  comparison?: {
+    enabled: boolean;
+    referenceStart?: string | null;  // AAAA-MM-JJ
+    referenceEnd?: string | null;    // AAAA-MM-JJ
+  };
+};
+```
+
+Une comparaison n'est dessinée que si `widget.miniGanttComparisonEnabled === true`
+**et** `task.comparison.enabled === true` **et** que les dates de référence sont
+exploitables. Sinon la ligne garde le rendu standard : pas d'erreur dans le
+diagramme, pas de tâche masquée, pas de hauteur de ligne modifiée. Un même
+widget mélange donc sans réglage supplémentaire des tâches et des jalons
+comparables et non comparables.
+
+### Les références sont un historique
+
+`referenceStart` et `referenceEnd` ne bougent **jamais** toutes seules. Déplacer
+une barre dans un Mini-Gantt écrit `start` / `end` et laisse la référence là où
+elle est — c'est tout l'intérêt de la comparaison. La seule réécriture possible
+est le bouton **Copier les dates actuelles comme référence** de la fiche tâche,
+et seulement au clic.
+
+Pour une tâche avec durée, les deux champs sont demandés et la fin doit être
+postérieure ou égale au début. Pour un **jalon**, seul *Fin / jalon référence*
+est affiché : `referenceEnd` est à la fois le début et la fin de la référence,
+aucune durée n'est fabriquée. Une comparaison activée sans les dates nécessaires
+affiche l'erreur sous le champ et **bloque l'enregistrement** de la fiche.
+Désactiver l'interrupteur masque les champs et retire la barre de référence,
+mais conserve les valeurs saisies.
+
+### Ce qui est dessiné
+
+- **Référence** — une barre en arrière-plan, gris bleuté (`#7C8DB5`), remplissage
+  très léger et contour visible. Elle déborde de 2 px au-dessus et au-dessous de
+  la barre actuelle : sur une superposition parfaite, son contour reste
+  discernable. Tout est en position absolue dans la piste — la ligne ne grandit
+  pas d'un pixel. Tronquée par le bord de la fenêtre, son trait devient
+  pointillé de ce côté.
+- **Actuel** — la barre existante, inchangée : couleur métier, point
+  d'avancement, glisser-déposer, infobulle.
+- **Retard** (`late`) — la part de la période actuelle postérieure à la fin de
+  référence, hachures **montantes** rouge corail (`#E4572E`).
+- **Avance** (`ahead`) — la part de la période actuelle antérieure au début de
+  référence, hachures **descendantes** vertes (`#1F9D6B`).
+- **Référence non consommée** (`freed`) — la fin de référence que la tâche
+  n'atteint pas, gardée en pointillé dilué plutôt qu'effacée.
+- **Jalon comparé** — un losange fantôme gris à la date de référence, le jalon
+  actuel inchangé, et un segment fin entre les deux.
+
+La couleur ne porte jamais seule l'information : chaque zone a son **motif**, et
+l'écart est écrit en chiffres (`−3 j`, `+8 j`, `0 j` — négatif = avance,
+positif = retard). Les écarts de début et de fin sont calculés **séparément** :
+
+```ts
+startDeltaDays = currentStart - referenceStart;
+endDeltaDays   = currentEnd   - referenceEnd;
+```
+
+### Ce qui est écrit
+
+- **Libellés dans la piste** — au centre de la zone d'avance et de la zone de
+  retard. Ce sont les seuls éléments que la place fait disparaître : ils sont
+  masqués quand la zone est trop étroite, quand ils recouvriraient la ligne
+  « Aujourd'hui », ou quand la tâche porte des couloirs de risque, dont les
+  étiquettes occupent déjà cette bande. **Les barres comparées, elles, restent
+  toujours dessinées.**
+- **Indicateur latéral** — une pastille avec les autres champs de la ligne,
+  portant l'écart de **fin** (ou de jalon), qui est l'écart principal. Elle
+  s'affiche même si aucun champ facultatif n'est configuré, et porte un
+  `aria-label` en toutes lettres (« Fin : 8 jours de retard »).
+- **Infobulle** — quatre lignes ajoutées à celle qui existe déjà (Référence,
+  Actuel, Début, Fin ; pour un jalon : Jalon de référence, Jalon actuel, Écart).
+  Elle reste portée par le survol, donc elle disparaît à la sortie du pointeur.
+- **Légende** — `Initial`, `Actuel`, `Avance`, `Retard`, avec exactement les
+  couleurs, contours et motifs des lignes. Elle n'apparaît que si le widget
+  contient réellement au moins une comparaison exploitable.
+
+### Plage temporelle
+
+En mode Comparaison, les dates de référence entrent dans le calcul de la plage
+automatique au même titre que les dates actuelles : une barre ou un jalon de
+référence antérieur ou postérieur aux dates actuelles n'est jamais coupé. Les
+blocs temporels, jalons, risques et annotations continuent d'alimenter la même
+plage, inchangés. En mode Standard, la plage ne bouge pas d'un jour.
+
+### Compatibilité
+
+Aucune migration. Une tâche sans `comparison` et un widget sans
+`miniGanttComparisonEnabled` rendent exactement comme avant. Rien n'initialise
+une référence à partir des dates actuelles, et la normalisation rend `null`
+plutôt qu'un objet vide : une tâche d'avant ce changement reste identique à
+elle-même après un aller-retour dans la fiche. Les données de comparaison sont
+des propriétés métier ordinaires de la tâche : elles suivent les imports,
+exports, sauvegardes et synchronisations comme les autres.
+
 ## Tests
 
 Contrôle visuel : `npm run visual:check` monte les deux diagrammes hors ligne
@@ -308,6 +431,14 @@ posé sur des tâches non successives produit deux cadres et qu'aucune étiquett
 n'en recouvre une autre, puis écrit une capture. Voir
 [tools/visual-check](../tools/visual-check/README.md) — le dossier est installé
 séparément pour ne pas alourdir les builds Netlify.
+
+`apps/nexora/tests/minigantt-comparison.test.mjs` couvre le mode Comparaison de
+bout en bout, depuis les mêmes sentinelles : normalisation et validation des
+dates de référence, calcul séparé des deux écarts, géométrie des barres
+superposées (avance, retard, référence non consommée, décalage intégral,
+superposition parfaite), jalons, plage automatique, persistance à la duplication
+d'un widget, sérialisation, widget étroit et absence de régression du rendu
+standard.
 
 `apps/nexora/tests/gantt-annotations.test.mjs` extrait le bloc de logique pure
 de `dist/index.html` entre les sentinelles `NEXORA:GANTT-ANNOTATIONS:START/END`

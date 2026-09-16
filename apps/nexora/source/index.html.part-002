@@ -3825,6 +3825,318 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
   if (risks.length) return "watch";
   return "none";
 }
+
+// --- Mini-Gantt : mode Comparaison (référence vs actuel) --------------------
+//
+// Deux interrupteurs INDÉPENDANTS, et il faut les deux :
+//   - `widget.miniGanttComparisonEnabled` — le widget affiche la comparaison ;
+//   - `task.comparison.enabled` — cette tâche a une référence à comparer.
+// Absents, ils valent « désactivé » : un widget et une tâche d'avant ce
+// changement rendent exactement comme avant, sans migration.
+//
+// Les dates de référence sont un HISTORIQUE : rien ici ne les recale sur les
+// dates actuelles. Déplacer une barre dans le Mini-Gantt modifie `start`/`end`
+// et laisse `comparison` intact — c'est tout l'intérêt de la comparaison.
+const MINIGANTT_COMPARISON_REF_COLOR = "#7C8DB5";   // gris bleuté de la référence
+const MINIGANTT_COMPARISON_AHEAD_COLOR = "#1F9D6B"; // avance
+const MINIGANTT_COMPARISON_LATE_COLOR = "#E4572E";  // retard (rouge corail)
+const MINIGANTT_COMPARISON_ONTIME_COLOR = "#64748B"; // conforme, repère neutre
+// Un libellé chiffré (« +8 j ») tient dans ~26 px. En dessous, on masque LE
+// LIBELLÉ, jamais la zone qu'il décrit : l'infobulle garde le détail complet.
+const MINIGANTT_COMPARISON_LABEL_MIN_PX = 26;
+
+// Index de jour d'une date ISO, même origine (01/01/2020) et mêmes entiers que
+// `dayIndex` de l'application — calculé en UTC pour rester pur et testable
+// isolément, sans dépendre du fuseau de la machine.
+function ganttDayNumber(value) {
+  if (!isGanttIsoDate(value)) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(2020, 0, 1)) / 86400000);
+}
+
+// Forme stockée sur la tâche. Rend `null` quand il n'y a RIEN à garder, pour ne
+// pas semer des objets vides dans Firebase ; mais une comparaison désactivée
+// qui porte encore des dates est conservée telle quelle : désactiver ne doit
+// jamais effacer l'historique saisi.
+function normalizeTaskComparison(value) {
+  if (!value || typeof value !== "object") return null;
+  const enabled = value.enabled === true;
+  const referenceStart = isGanttIsoDate(value.referenceStart) ? value.referenceStart : null;
+  const referenceEnd = isGanttIsoDate(value.referenceEnd) ? value.referenceEnd : null;
+  if (!enabled && !referenceStart && !referenceEnd) return null;
+  return { enabled, referenceStart, referenceEnd };
+}
+
+function miniGanttComparisonEnabledOn(widget) {
+  return !!(widget && widget.miniGanttComparisonEnabled === true);
+}
+
+// Erreurs de saisie, champ par champ, sur les valeurs BRUTES de la fiche : une
+// chaîne mal formée doit dire « date invalide », pas « date manquante », et la
+// normalisation seule ne saurait plus faire la différence.
+// Rend `{ start, end }` — chaîne vide = pas d'erreur.
+function taskComparisonErrors(raw, options) {
+  const milestone = !!(options && options.milestone);
+  const out = { start: "", end: "" };
+  if (!raw || raw.enabled !== true) return out;
+  const start = raw.referenceStart;
+  const end = raw.referenceEnd;
+  if (!milestone) {
+    if (!start) out.start = "Renseigner le début de référence, ou désactiver la comparaison.";
+    else if (!isGanttIsoDate(start)) out.start = "Date de début de référence invalide (AAAA-MM-JJ).";
+  }
+  if (!end) out.end = milestone
+    ? "Renseigner le jalon de référence, ou désactiver la comparaison."
+    : "Renseigner la fin de référence, ou désactiver la comparaison.";
+  else if (!isGanttIsoDate(end)) out.end = "Date de fin de référence invalide (AAAA-MM-JJ).";
+  if (!milestone && !out.start && !out.end && ganttDayNumber(end) < ganttDayNumber(start)) {
+    out.end = "La fin de référence doit être postérieure ou égale au début de référence.";
+  }
+  return out;
+}
+
+function taskComparisonIsValid(raw, options) {
+  const errors = taskComparisonErrors(raw, options);
+  return !errors.start && !errors.end;
+}
+
+// « Copier les dates actuelles comme référence » : une fonction PURE, appelée
+// uniquement depuis le clic explicite du bouton de la fiche tâche. Rien ne
+// l'appelle à l'enregistrement ni au déplacement d'une barre.
+function taskComparisonFromCurrentDates(task) {
+  if (!task || typeof task !== "object") return null;
+  const milestone = !!task.milestone;
+  const end = isGanttIsoDate(task.end) ? task.end : null;
+  const start = milestone ? end : (isGanttIsoDate(task.start) ? task.start : null);
+  if (!end || (!milestone && !start)) return null;
+  return { enabled: true, referenceStart: milestone ? null : start, referenceEnd: end };
+}
+
+// Comparaison EXPLOITABLE d'une tâche, ou `null`. `null` n'est jamais une
+// erreur : la ligne retombe simplement sur le rendu standard, sans changer de
+// hauteur ni disparaître.
+function miniGanttTaskComparison(task) {
+  if (!task || typeof task !== "object") return null;
+  const cmp = normalizeTaskComparison(task.comparison);
+  if (!cmp || !cmp.enabled) return null;
+  const milestone = !!task.milestone;
+  const currentEnd = isGanttIsoDate(task.end) ? task.end : null;
+  const currentStart = milestone ? currentEnd : (isGanttIsoDate(task.start) ? task.start : null);
+  if (!currentEnd || !currentStart) return null;
+  const referenceEnd = cmp.referenceEnd;
+  // Un jalon n'a pas de durée : sa référence de début EST sa référence de fin.
+  // On n'en fabrique jamais une par différence avec les dates actuelles.
+  const referenceStart = milestone ? referenceEnd : cmp.referenceStart;
+  if (!isGanttIsoDate(referenceEnd) || !isGanttIsoDate(referenceStart)) return null;
+  const referenceStartIdx = ganttDayNumber(referenceStart);
+  const referenceEndIdx = ganttDayNumber(referenceEnd);
+  if (!milestone && referenceEndIdx < referenceStartIdx) return null;
+  const currentStartIdx = ganttDayNumber(currentStart);
+  const currentEndIdx = ganttDayNumber(currentEnd);
+  const startDeltaDays = currentStartIdx - referenceStartIdx;
+  const endDeltaDays = currentEndIdx - referenceEndIdx;
+  return {
+    taskId: task.id || null,
+    milestone,
+    referenceStart, referenceEnd, currentStart, currentEnd,
+    referenceStartIdx, referenceEndIdx, currentStartIdx, currentEndIdx,
+    startDeltaDays, endDeltaDays,
+    startTone: miniGanttComparisonTone(startDeltaDays),
+    endTone: miniGanttComparisonTone(endDeltaDays),
+  };
+}
+
+// Convention unique, partagée par les barres, l'indicateur latéral, la légende
+// et l'infobulle : négatif = avance, positif = retard, zéro = conforme.
+function miniGanttComparisonTone(days) {
+  if (!Number.isFinite(days) || days === 0) return "ontime";
+  return days < 0 ? "ahead" : "late";
+}
+
+// « −3 j », « +8 j », « 0 j ». Le signe moins est le vrai (U+2212), comme
+// partout ailleurs dans Nexora, et jamais un trait d'union.
+function miniGanttComparisonDeltaLabel(days) {
+  if (!Number.isFinite(days)) return "";
+  if (days === 0) return "0 j";
+  return (days < 0 ? "−" : "+") + Math.abs(days) + " j";
+}
+
+function miniGanttComparisonToneLabel(tone) {
+  return tone === "ahead" ? "avance" : tone === "late" ? "retard" : "conforme";
+}
+
+// Libellé accessible complet d'un écart — lu par les lecteurs d'écran là où
+// l'œil ne voit qu'une couleur et un motif.
+function miniGanttComparisonDeltaAria(days, what) {
+  const tone = miniGanttComparisonTone(days);
+  const n = Math.abs(days || 0);
+  const quoi = what || "Écart";
+  if (tone === "ontime") return `${quoi} : conforme à la référence.`;
+  return `${quoi} : ${n} jour${n > 1 ? "s" : ""} ${tone === "ahead" ? "d'avance" : "de retard"}.`;
+}
+
+/* Géométrie des barres superposées, en pourcentages de la piste — exactement
+   l'échelle temporelle déjà utilisée par les barres, les blocs et les risques.
+   Rien n'est dessiné hors de la fenêtre affichée : chaque segment est borné à
+   [minIdx, maxIdx], et un segment entièrement hors champ vaut `null`.
+
+     reference — toute la période de référence, en arrière-plan ;
+     ahead     — la part de la période actuelle ANTÉRIEURE à la référence ;
+     late      — la part de la période actuelle POSTÉRIEURE à la fin de
+                 référence, c'est-à-dire le dépassement ;
+     freed     — la fin de référence non consommée, quand la tâche se termine
+                 plus tôt : on en garde une trace plutôt que de l'effacer.
+
+   Un jalon n'a pas de barre : seuls `referenceIdx`, `currentIdx` et le segment
+   de liaison ont un sens, et ils sont rendus par `miniGanttComparisonMilestone`. */
+function miniGanttComparisonBars(cmp, window) {
+  if (!cmp || cmp.milestone) return null;
+  const minIdx = Number(window && window.minIdx);
+  const maxIdx = Number(window && window.maxIdx);
+  const span = Math.max(1, Number(window && window.span) || (maxIdx - minIdx));
+  if (!Number.isFinite(minIdx) || !Number.isFinite(maxIdx)) return null;
+  const clip = (fromIdx, toIdx, minWidthPct) => {
+    if (!Number.isFinite(fromIdx) || !Number.isFinite(toIdx)) return null;
+    if (toIdx < minIdx || fromIdx > maxIdx) return null;
+    const from = Math.max(minIdx, fromIdx);
+    const to = Math.min(maxIdx, toIdx);
+    if (to < from) return null;
+    return {
+      leftPct: ((from - minIdx) / span) * 100,
+      widthPct: Math.max(minWidthPct, ((to - from) / span) * 100),
+      clippedStart: fromIdx < minIdx,
+      clippedEnd: toIdx > maxIdx,
+    };
+  };
+  // Plancher de 2 % comme la barre actuelle (voir `Row`) : sur une tâche d'un
+  // seul jour, une référence tracée plus fin passerait au milieu de la barre
+  // au lieu de l'encadrer.
+  const reference = clip(cmp.referenceStartIdx, cmp.referenceEndIdx, 2);
+  const ahead = cmp.currentStartIdx < cmp.referenceStartIdx
+    ? clip(cmp.currentStartIdx, Math.min(cmp.referenceStartIdx, cmp.currentEndIdx), 0.6)
+    : null;
+  const late = cmp.currentEndIdx > cmp.referenceEndIdx
+    ? clip(Math.max(cmp.referenceEndIdx, cmp.currentStartIdx), cmp.currentEndIdx, 0.6)
+    : null;
+  const freed = cmp.currentEndIdx < cmp.referenceEndIdx
+    ? clip(Math.max(cmp.currentEndIdx, cmp.referenceStartIdx), cmp.referenceEndIdx, 0.6)
+    : null;
+  return { reference, ahead, late, freed };
+}
+
+// Jalon comparé : deux positions et le segment qui les relie. Le segment est
+// borné à la fenêtre, mais sa présence ne dépend pas d'elle — un jalon de
+// référence hors champ reste signalé par l'écart chiffré et l'infobulle.
+function miniGanttComparisonMilestone(cmp, window) {
+  if (!cmp || !cmp.milestone) return null;
+  const minIdx = Number(window && window.minIdx);
+  const maxIdx = Number(window && window.maxIdx);
+  const span = Math.max(1, Number(window && window.span) || (maxIdx - minIdx));
+  if (!Number.isFinite(minIdx) || !Number.isFinite(maxIdx)) return null;
+  const pctOf = (idx) => ((idx - minIdx) / span) * 100;
+  const inside = (idx) => idx >= minIdx && idx <= maxIdx;
+  const from = Math.min(cmp.referenceEndIdx, cmp.currentEndIdx);
+  const to = Math.max(cmp.referenceEndIdx, cmp.currentEndIdx);
+  const linkFrom = Math.max(minIdx, from);
+  const linkTo = Math.min(maxIdx, to);
+  return {
+    referenceVisible: inside(cmp.referenceEndIdx),
+    referenceLeftPct: pctOf(cmp.referenceEndIdx),
+    currentVisible: inside(cmp.currentEndIdx),
+    currentLeftPct: pctOf(cmp.currentEndIdx),
+    link: to > from && linkTo > linkFrom
+      ? { leftPct: pctOf(linkFrom), widthPct: ((linkTo - linkFrom) / span) * 100 }
+      : null,
+  };
+}
+
+// La plage automatique du widget doit englober les dates de RÉFÉRENCE, sans
+// quoi une barre fantôme antérieure ou postérieure aux dates actuelles serait
+// coupée par le bord du diagramme. Rend une liste d'index de jour à verser
+// telle quelle dans les min/max existants — les blocs, jalons, risques et
+// annotations continuent d'alimenter la même plage, inchangés.
+function miniGanttComparisonRangeIndices(tasks, comparisonOn) {
+  if (!comparisonOn) return [];
+  const out = [];
+  (Array.isArray(tasks) ? tasks : []).forEach((task) => {
+    const cmp = miniGanttTaskComparison(task);
+    if (!cmp) return;
+    out.push(cmp.referenceStartIdx, cmp.referenceEndIdx);
+  });
+  return out;
+}
+
+// Lignes ajoutées à l'infobulle au survol. Pas d'infobulle persistante : c'est
+// le composant qui les affiche et les retire avec le survol, elles ne portent
+// aucun état.
+function miniGanttComparisonTooltipLines(cmp, formatDate) {
+  if (!cmp) return [];
+  const fmt = typeof formatDate === "function" ? formatDate : (d) => d;
+  if (cmp.milestone) {
+    return [
+      { key: "ref", label: "Jalon de référence", value: fmt(cmp.referenceEnd) },
+      { key: "cur", label: "Jalon actuel", value: fmt(cmp.currentEnd) },
+      { key: "end", label: "Écart", value: miniGanttComparisonDeltaLabel(cmp.endDeltaDays), tone: cmp.endTone },
+    ];
+  }
+  return [
+    { key: "ref", label: "Référence", value: `${fmt(cmp.referenceStart)} → ${fmt(cmp.referenceEnd)}` },
+    { key: "cur", label: "Actuel", value: `${fmt(cmp.currentStart)} → ${fmt(cmp.currentEnd)}` },
+    { key: "start", label: "Début", value: miniGanttComparisonDeltaLabel(cmp.startDeltaDays), tone: cmp.startTone },
+    { key: "end", label: "Fin", value: miniGanttComparisonDeltaLabel(cmp.endDeltaDays), tone: cmp.endTone },
+  ];
+}
+
+// Un libellé chiffré ne s'affiche que s'il tient dans la zone qu'il décrit.
+// C'est le SEUL élément que la place fait disparaître : les barres comparées,
+// elles, sont toujours dessinées.
+function miniGanttComparisonLabelFits(widthPct, trackPx) {
+  const px = ((Number(widthPct) || 0) / 100) * (Number(trackPx) || 0);
+  return px >= MINIGANTT_COMPARISON_LABEL_MIN_PX;
+}
+
+/* Un libellé chiffré disparaît dans trois cas, et trois seulement :
+     - il ne tient pas dans la zone qu'il décrit ;
+     - la tâche porte des couloirs de risque, dont les étiquettes occupent déjà
+       cette bande — deux textes superposés ne se lisent ni l'un ni l'autre ;
+     - il recouvrirait la ligne « Aujourd'hui ».
+   Dans tous les cas, LES BARRES RESTENT DESSINÉES et l'infobulle garde le
+   détail complet : c'est le texte qui s'efface, jamais l'information. */
+function miniGanttComparisonLabelVisible(zone, options) {
+  if (!zone) return false;
+  const o = options || {};
+  if (o.hasRisks) return false;
+  const trackPx = Number(o.trackPx) || 0;
+  if (!miniGanttComparisonLabelFits(zone.widthPct, trackPx)) return false;
+  const todayPct = Number(o.todayPct);
+  if (Number.isFinite(todayPct) && trackPx > 0) {
+    const centerPx = ((zone.leftPct + zone.widthPct / 2) / 100) * trackPx;
+    const todayPx = (todayPct / 100) * trackPx;
+    if (Math.abs(todayPx - centerPx) < MINIGANTT_COMPARISON_LABEL_MIN_PX / 2 + 2) return false;
+  }
+  return true;
+}
+
+function miniGanttComparisonToneColor(tone) {
+  if (tone === "ahead") return MINIGANTT_COMPARISON_AHEAD_COLOR;
+  if (tone === "late") return MINIGANTT_COMPARISON_LATE_COLOR;
+  return MINIGANTT_COMPARISON_ONTIME_COLOR;
+}
+
+/* Motif d'une zone d'écart. C'est lui, et non la seule couleur, qui dit ce
+   qu'on regarde : hachures MONTANTES pour le retard, DESCENDANTES pour
+   l'avance, pointillé très dilué pour la part de référence non consommée.
+   Vu en noir et blanc, ou par un œil qui ne distingue pas le rouge du vert,
+   les trois restent différents. */
+function miniGanttComparisonZonePattern(kind) {
+  if (kind === "late") {
+    return `repeating-linear-gradient(45deg, ${MINIGANTT_COMPARISON_LATE_COLOR}8c 0 3px, transparent 3px 6px)`;
+  }
+  if (kind === "ahead") {
+    return `repeating-linear-gradient(-45deg, ${MINIGANTT_COMPARISON_AHEAD_COLOR}8c 0 3px, transparent 3px 6px)`;
+  }
+  return `repeating-linear-gradient(45deg, ${MINIGANTT_COMPARISON_REF_COLOR}33 0 2px, transparent 2px 5px)`;
+}
 // === NEXORA:GANTT-ANNOTATIONS:END ===
 
 // === NEXORA:WIDGET-TRANSFER:START ===
@@ -7379,6 +7691,19 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   // Risques de délai : ils appartiennent à la tâche, donc ils s'éditent ICI —
   // le Mini-Gantt ne fait que les dessiner, dans tous les widgets qui affichent
   // cette tâche. Plusieurs risques s'enchaînent dans l'ordre de cette liste.
+  /* Comparaison : des dates de RÉFÉRENCE portées par la tâche, et un historique
+     stable. Rien ne les recale — ni l'enregistrement de la fiche, ni un
+     glisser-déposer de la barre dans un Mini-Gantt : seule l'action explicite
+     « Copier les dates actuelles comme référence » les réécrit.
+
+     Désactiver l'interrupteur masque les champs et retire la barre de
+     référence des diagrammes, mais CONSERVE les valeurs saisies : une
+     désactivation temporaire ne doit pas coûter l'historique. */
+  const [comparison, setComparison] = useState(() => {
+    const stored = normalizeTaskComparison(base.comparison);
+    return stored ? { ...stored } : { enabled: false, referenceStart: null, referenceEnd: null };
+  });
+  const patchComparison = (values) => setComparison((prev) => ({ ...prev, ...values }));
   const [delayRisks, setDelayRisks] = useState(() => (Array.isArray(base.delayRisks) ? base.delayRisks.map((r) => ({ ...r })) : []));
   const [editingRiskId, setEditingRiskId] = useState(null);
   const patchDelayRisk = (id, values) => setDelayRisks((prev) => prev.map((r) => (r.id === id ? { ...r, ...values } : r)));
@@ -7472,7 +7797,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []);
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison));
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -7505,9 +7830,31 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const onEndChange = (v) => { setEnd(v); if (!milestone) setDuration(Math.max(0, dayIndex(v) - dayIndex(start))); };
   const onDurationChange = (v) => { const d = Math.max(0, Number(v) || 0); setDuration(d); if (!milestone) setEnd(addDays(start, d)); };
 
+  // Erreurs de saisie de la comparaison, recalculées à chaque frappe et
+  // affichées SOUS le champ concerné. Elles bloquent l'enregistrement : une
+  // comparaison activée sans les dates nécessaires n'a rien à dessiner.
+  const comparisonErrors = taskComparisonErrors(comparison, { milestone });
+  const comparisonBlocksSave = !!start && !taskComparisonIsValid(comparison, { milestone });
+  // Action SECONDAIRE et explicite. Elle n'est appelée que par le clic sur son
+  // bouton — aucun enregistrement, aucune modification de date ne la déclenche.
+  const copyCurrentDatesAsReference = () => {
+    const next = taskComparisonFromCurrentDates({ milestone, start, end: milestone ? start : end });
+    if (!next) return;
+    setComparison((prev) => ({
+      enabled: true,
+      // Un jalon ne touche pas au début de référence : il n'en a pas, et
+      // l'écraser perdrait la valeur d'une tâche repassée en jalon.
+      referenceStart: milestone ? prev.referenceStart : next.referenceStart,
+      referenceEnd: next.referenceEnd,
+    }));
+  };
+
   const submit = () => {
     if (!title.trim()) { setTitleError(true); return; }
     if (!projectId || !statusId) return;
+    // Les messages sont déjà affichés sous les champs : il n'y a rien à poser
+    // ici, seulement à refuser l'enregistrement.
+    if (comparisonBlocksSave) return;
     setTitleError(false);
     // Contrainte fin→début : une tâche ne peut jamais commencer avant que toutes
     // ses dépendances soient terminées. Si c'est le cas (dépendance ajoutée après
@@ -7560,6 +7907,9 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       // la période n'est alors plus tenue à jour par l'agenda.
       metaBlock: isCalendarBackedProjectId(projectId, projects) && metaBlock && metaBlock.enabled ? metaBlock : null,
       delayRisks: normalizeTaskDelayRisks(delayRisks),
+      // `null` quand il n'y a rien à garder : aucune tâche ne gagne un objet
+      // vide, et une tâche d'avant ce changement reste identique à elle-même.
+      comparison: normalizeTaskComparison(comparison),
       source: base.source || null,
       sourceUrl: base.sourceUrl || null,
       sourceMessageId: base.sourceMessageId || null,
@@ -7743,6 +8093,85 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 <option value="week">semaine(s)</option>
                 <option value="month">mois</option>
               </select>
+            </div>
+          )}
+        </div>
+      )}
+
+      {start && (
+        <div className="lp-field">
+          <div className="lp-checkbox-row">
+            <input
+              type="checkbox"
+              id="task-comparison"
+              checked={!!comparison.enabled}
+              onChange={(e) => patchComparison({ enabled: e.target.checked })}
+            />
+            <label htmlFor="task-comparison" style={{ margin: 0, textTransform: "none", fontWeight: 500, fontSize: 13 }}>
+              Activer le mode comparaison pour cette tâche
+            </label>
+          </div>
+          {!comparison.enabled ? (
+            <p className="lp-gantt-annot-hint" style={{ marginTop: 6, marginLeft: 26 }}>
+              {comparison.referenceStart || comparison.referenceEnd
+                ? "Les dates de référence déjà saisies sont conservées : réactiver l'interrupteur les retrouve telles quelles."
+                : "Une fois activée, la planification initiale se compare aux dates actuelles dans les Mini-Gantt réglés sur « Comparaison »."}
+            </p>
+          ) : (
+            <div style={{ marginTop: 8, marginLeft: 26, display: "flex", flexDirection: "column", gap: 10 }}>
+              <p className="lp-gantt-annot-hint" style={{ margin: 0 }}>
+                {milestone
+                  ? "Le jalon de référence est comparé à la date actuelle du jalon. Aucune durée n'est créée."
+                  : "Les dates de référence sont comparées aux dates actuelles de la tâche."}
+                {" "}Elles ne bougent jamais toutes seules : déplacer la tâche laisse la référence là où elle est.
+                Elles ne s'affichent que dans les Mini-Gantt dont le mode est réglé sur « Comparaison ».
+              </p>
+              <div className="lp-row2">
+                {!milestone && (
+                  <div className="lp-field">
+                    <label htmlFor="task-comparison-start">Début référence</label>
+                    <input
+                      id="task-comparison-start"
+                      type="date"
+                      value={comparison.referenceStart || ""}
+                      aria-invalid={comparisonErrors.start ? "true" : undefined}
+                      onChange={(e) => patchComparison({ referenceStart: e.target.value || null })}
+                    />
+                    {comparisonErrors.start && <p className="lp-gantt-annot-error">{comparisonErrors.start}</p>}
+                  </div>
+                )}
+                <div className="lp-field">
+                  <label htmlFor="task-comparison-end">Fin / jalon référence</label>
+                  <input
+                    id="task-comparison-end"
+                    type="date"
+                    value={comparison.referenceEnd || ""}
+                    aria-invalid={comparisonErrors.end ? "true" : undefined}
+                    onChange={(e) => patchComparison({ referenceEnd: e.target.value || null })}
+                  />
+                  {comparisonErrors.end && <p className="lp-gantt-annot-error">{comparisonErrors.end}</p>}
+                </div>
+              </div>
+              <div>
+                <button type="button" className="lp-btn" onClick={copyCurrentDatesAsReference}>
+                  <Copy size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Copier les dates actuelles comme référence
+                </button>
+              </div>
+              {(() => {
+                const preview = miniGanttTaskComparison({
+                  id: task.id, milestone,
+                  start, end: milestone ? start : end,
+                  comparison,
+                });
+                if (!preview) return null;
+                return (
+                  <p className="lp-gantt-annot-hint" style={{ margin: 0 }}>
+                    {milestone
+                      ? `Écart du jalon : ${miniGanttComparisonDeltaLabel(preview.endDeltaDays)} (${miniGanttComparisonToneLabel(preview.endTone)}).`
+                      : `Début : ${miniGanttComparisonDeltaLabel(preview.startDeltaDays)} (${miniGanttComparisonToneLabel(preview.startTone)}) · Fin : ${miniGanttComparisonDeltaLabel(preview.endDeltaDays)} (${miniGanttComparisonToneLabel(preview.endTone)}).`}
+                  </p>
+                );
+              })()}
             </div>
           )}
         </div>
