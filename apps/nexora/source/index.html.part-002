@@ -3915,6 +3915,27 @@ function taskComparisonFromCurrentDates(task) {
   return { enabled: true, referenceStart: milestone ? null : start, referenceEnd: end };
 }
 
+/* Une tâche NOUVELLE naît avec sa planification initiale pour référence : ce
+   qu'on demande à la création EST le plan de départ, et c'est de lui qu'on
+   voudra mesurer les dérives plus tard. Elle ne bouge plus ensuite — aucun
+   enregistrement, aucun glisser-déposer ne la recale.
+
+   À appliquer à la CRÉATION et à elle seule. Une tâche déjà porteuse d'une
+   comparaison est rendue telle quelle : un appelant qui a déjà décidé — la
+   fiche de tâche, qui montre et laisse modifier la référence avant
+   d'enregistrer — n'est jamais écrasé. Une tâche sans dates exploitables non
+   plus : il n'y a rien à figer.
+
+   Les tâches importées d'un agenda ne passent pas par ici. Leurs dates
+   appartiennent à Google Calendar et sont réécrites à chaque synchronisation :
+   une « planification initiale » n'y voudrait rien dire. */
+function withCreationComparison(task) {
+  if (!task || typeof task !== "object") return task;
+  if (normalizeTaskComparison(task.comparison)) return task;
+  const seed = taskComparisonFromCurrentDates(task);
+  return seed ? { ...task, comparison: seed } : task;
+}
+
 // Comparaison EXPLOITABLE d'une tâche, ou `null`. `null` n'est jamais une
 // erreur : la ligne retombe simplement sur le rendu standard, sans changer de
 // hauteur ni disparaître.
@@ -7708,18 +7729,42 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   // le Mini-Gantt ne fait que les dessiner, dans tous les widgets qui affichent
   // cette tâche. Plusieurs risques s'enchaînent dans l'ordre de cette liste.
   /* Comparaison : des dates de RÉFÉRENCE portées par la tâche, et un historique
-     stable. Rien ne les recale — ni l'enregistrement de la fiche, ni un
-     glisser-déposer de la barre dans un Mini-Gantt : seule l'action explicite
-     « Copier les dates actuelles comme référence » les réécrit.
+     stable. Rien ne les recale une fois la tâche créée — ni l'enregistrement de
+     la fiche, ni un glisser-déposer de la barre dans un Mini-Gantt : seule
+     l'action explicite « Copier les dates actuelles comme référence » les
+     réécrit.
+
+     À la CRÉATION, en revanche, la planification initiale est exactement ce
+     qu'on est en train de demander : la référence naît donc calée sur les dates
+     de la nouvelle tâche. Elle n'est pas posée en douce pour autant — elle
+     s'affiche dans la fiche, remplie, et reste modifiable avant d'enregistrer.
+     Une tâche EXISTANTE, elle, n'en gagne jamais : ouvrir puis enregistrer une
+     fiche ancienne ne lui fabrique aucune référence.
 
      Désactiver l'interrupteur masque les champs et retire la barre de
      référence des diagrammes, mais CONSERVE les valeurs saisies : une
      désactivation temporaire ne doit pas coûter l'historique. */
+  const comparisonSeed = () => taskComparisonFromCurrentDates({ milestone, start, end: milestone ? start : end })
+    || { enabled: false, referenceStart: null, referenceEnd: null };
   const [comparison, setComparison] = useState(() => {
     const stored = normalizeTaskComparison(base.comparison);
-    return stored ? { ...stored } : { enabled: false, referenceStart: null, referenceEnd: null };
+    if (stored) return { ...stored };
+    return isNew ? comparisonSeed() : { enabled: false, referenceStart: null, referenceEnd: null };
   });
-  const patchComparison = (values) => setComparison((prev) => ({ ...prev, ...values }));
+  /* Le premier geste de l'utilisateur sur ce bloc — l'interrupteur, un champ de
+     date, le bouton de copie — arrête définitivement le calage automatique.
+     Sans ce garde-fou, régler les dates après avoir choisi une référence à la
+     main l'écraserait sous les yeux de celui qui vient de la saisir. */
+  const comparisonTouched = useRef(false);
+  useEffect(() => {
+    if (!isNew || comparisonTouched.current) return;
+    setComparison(comparisonSeed());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, milestone, start, end]);
+  const patchComparison = (values) => {
+    comparisonTouched.current = true;
+    setComparison((prev) => ({ ...prev, ...values }));
+  };
   const [delayRisks, setDelayRisks] = useState(() => (Array.isArray(base.delayRisks) ? base.delayRisks.map((r) => ({ ...r })) : []));
   const [editingRiskId, setEditingRiskId] = useState(null);
   const patchDelayRisk = (id, values) => setDelayRisks((prev) => prev.map((r) => (r.id === id ? { ...r, ...values } : r)));
@@ -7856,6 +7901,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const copyCurrentDatesAsReference = () => {
     const next = taskComparisonFromCurrentDates({ milestone, start, end: milestone ? start : end });
     if (!next) return;
+    comparisonTouched.current = true;
     setComparison((prev) => ({
       enabled: true,
       // Un jalon ne touche pas au début de référence : il n'en a pas, et
@@ -7923,9 +7969,19 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       // la période n'est alors plus tenue à jour par l'agenda.
       metaBlock: isCalendarBackedProjectId(projectId, projects) && metaBlock && metaBlock.enabled ? metaBlock : null,
       delayRisks: normalizeTaskDelayRisks(delayRisks),
-      // `null` quand il n'y a rien à garder : aucune tâche ne gagne un objet
-      // vide, et une tâche d'avant ce changement reste identique à elle-même.
-      comparison: normalizeTaskComparison(comparison),
+      /* `null` quand il n'y a rien à garder : aucune tâche ne gagne un objet
+         vide, et une tâche d'avant ce changement reste identique à elle-même.
+
+         Une tâche NOUVELLE dont la référence n'a pas été touchée à la main est
+         calée sur les dates RÉELLEMENT enregistrées, pas sur celles affichées :
+         une dépendance peut décaler la tâche à l'enregistrement (voir
+         `finalStart` / `finalEnd` ci-dessus), et une tâche ne doit pas naître
+         avec un retard sur son propre plan. */
+      comparison: normalizeTaskComparison(
+        isNew && !comparisonTouched.current
+          ? taskComparisonFromCurrentDates({ milestone, start: finalStart, end: finalEnd })
+          : comparison
+      ),
       source: base.source || null,
       sourceUrl: base.sourceUrl || null,
       sourceMessageId: base.sourceMessageId || null,
@@ -8139,8 +8195,11 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 {milestone
                   ? "Le jalon de référence est comparé à la date actuelle du jalon. Aucune durée n'est créée."
                   : "Les dates de référence sont comparées aux dates actuelles de la tâche."}
-                {" "}Elles ne bougent jamais toutes seules : déplacer la tâche laisse la référence là où elle est.
-                Elles ne s'affichent que dans les Mini-Gantt dont le mode est réglé sur « Comparaison ».
+                {" "}
+                {isNew
+                  ? "Elles suivent les dates ci-dessus tant que tu n'y touches pas, et se figent à la création : c'est la planification initiale. Ensuite, plus rien ne les recale — déplacer la tâche laissera la référence là où elle est."
+                  : "Elles ne bougent jamais toutes seules : déplacer la tâche laisse la référence là où elle est."}
+                {" "}Elles ne s'affichent que dans les Mini-Gantt dont le mode est réglé sur « Comparaison ».
               </p>
               <div className="lp-row2">
                 {!milestone && (
@@ -10247,7 +10306,7 @@ function ImportCsvModal({ ctx, projects, statuses, setProjects, setStatuses, set
       const taskTypeName = String(getMappedValue(row, mapping, "taskType") || "").trim();
       const matchedTaskType = taskTypeName ? findTaskTypeByName(ctx?.taskTypes, taskTypeName) : null;
 
-      newTasks.push({
+      newTasks.push(withCreationComparison({
         id: uid(),
         title,
         projectId,
@@ -10264,7 +10323,7 @@ function ImportCsvModal({ ctx, projects, statuses, setProjects, setStatuses, set
         lastInteraction:new Date().toISOString(),
         importSource:"csv",
         importFileName:fileName || null
-      });
+      }));
     });
 
     try {

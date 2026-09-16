@@ -25,6 +25,7 @@ const {
   taskComparisonErrors,
   taskComparisonIsValid,
   taskComparisonFromCurrentDates,
+  withCreationComparison,
   miniGanttComparisonEnabledOn,
   miniGanttTaskComparison,
   miniGanttComparisonTone,
@@ -50,7 +51,8 @@ const {
   MINIGANTT_COMPARISON_LATE_COLOR,
 } = bloc("GANTT-ANNOTATIONS", [
   "normalizeTaskComparison", "taskComparisonErrors", "taskComparisonIsValid",
-  "taskComparisonFromCurrentDates", "miniGanttComparisonEnabledOn", "miniGanttTaskComparison",
+  "taskComparisonFromCurrentDates", "withCreationComparison",
+  "miniGanttComparisonEnabledOn", "miniGanttTaskComparison",
   "miniGanttComparisonTone", "miniGanttComparisonDeltaLabel", "miniGanttComparisonToneLabel",
   "miniGanttComparisonDeltaAria", "miniGanttComparisonBars", "miniGanttComparisonMilestone",
   "miniGanttComparisonRangeIndices", "miniGanttComparisonTooltipLines",
@@ -372,6 +374,56 @@ test("« Copier les dates actuelles comme référence » ne s'exécute que sur d
     "aucun appel automatique : seule la poignée du bouton référence la fonction");
 });
 
+// Création d'une tâche : la référence naît calée sur les dates demandées ------
+test("une tâche NOUVELLE naît avec sa planification initiale pour référence", () => {
+  const creee = withCreationComparison({ id: "n1", title: "Nouvelle", start: "2026-08-12", end: "2026-09-18" });
+  assert.deepEqual(creee.comparison, { enabled: true, referenceStart: "2026-08-12", referenceEnd: "2026-09-18" });
+  // Elle est donc conforme à elle-même au premier jour : aucun écart inventé.
+  const cmp = miniGanttTaskComparison(creee);
+  assert.equal(cmp.startDeltaDays, 0);
+  assert.equal(cmp.endDeltaDays, 0);
+
+  // Un jalon ne reçoit que la référence qui le concerne.
+  const jalon = withCreationComparison({ id: "n2", milestone: true, start: "2026-09-18", end: "2026-09-18" });
+  assert.deepEqual(jalon.comparison, { enabled: true, referenceStart: null, referenceEnd: "2026-09-18" });
+
+  // …puis elle ne bouge plus : déplacer la tâche creuse un écart, elle reste.
+  const deplacee = { ...creee, start: "2026-08-19", end: "2026-09-30" };
+  assert.deepEqual(deplacee.comparison, creee.comparison);
+  assert.equal(miniGanttTaskComparison(deplacee).endDeltaDays, 12);
+});
+
+test("le calage à la création ne touche ni les tâches déjà décidées, ni celles sans dates", () => {
+  // Une comparaison déjà posée — par la fiche, qui la montre et la laisse
+  // modifier avant d'enregistrer — n'est jamais écrasée.
+  const decidee = { id: "d", start: "2026-08-12", end: "2026-09-18", comparison: { enabled: true, referenceStart: "2026-07-01", referenceEnd: "2026-08-01" } };
+  assert.equal(withCreationComparison(decidee), decidee);
+  // Une comparaison volontairement désactivée compte AUSSI comme une décision.
+  const refusee = { id: "r", start: "2026-08-12", end: "2026-09-18", comparison: { enabled: false, referenceStart: "2026-07-01", referenceEnd: "2026-08-01" } };
+  assert.equal(withCreationComparison(refusee), refusee);
+  // Sans dates exploitables, il n'y a rien à figer.
+  const sansDates = { id: "s", title: "Sans date", start: null, end: null };
+  assert.equal(withCreationComparison(sansDates), sansDates);
+  assert.equal(withCreationComparison(null), null);
+  // Écriture immuable : la tâche d'origine n'est jamais modifiée sur place.
+  const source = { id: "i", start: "2026-08-12", end: "2026-09-18" };
+  const sortie = withCreationComparison(source);
+  assert.notEqual(sortie, source);
+  assert.equal(source.comparison, undefined);
+});
+
+test("une tâche EXISTANTE ne gagne jamais de référence toute seule", () => {
+  // Le calage est réservé à la création : la fiche le conditionne à `isNew`, et
+  // le premier geste sur le bloc l'arrête définitivement.
+  assert.match(html, /if \(!isNew \|\| comparisonTouched\.current\) return;/);
+  assert.match(html, /comparisonTouched\.current = true;/);
+  assert.match(html, /isNew \? comparisonSeed\(\) : \{ enabled: false, referenceStart: null, referenceEnd: null \}/);
+  // Et les tâches importées d'un agenda restent en dehors : leurs dates
+  // appartiennent à Google Calendar et sont réécrites à chaque synchronisation.
+  const importee = { id: "g", start: "2026-08-05", end: "2026-08-19", gcalImported: true };
+  assert.equal(normalizeTaskComparison(importee.comparison), null);
+});
+
 // 16. Compatibilité avec les blocs, encadrés, risques et annotations ---------
 test("le mode comparaison n'altère ni les blocs, ni les encadrés, ni les risques, ni les notes", () => {
   const blocs = normalizeTemporalBlocks([{ id: "b", title: "Études", startDate: "2026-03-01", endDate: "2026-06-30" }]);
@@ -466,8 +518,9 @@ test("la comparaison traverse sérialisation et restauration sans perte ni migra
   const widget = JSON.parse(JSON.stringify({ id: "w", type: "minigantt", miniGanttComparisonEnabled: true }));
   assert.equal(miniGanttComparisonEnabledOn(widget), true);
 
-  // Aucune initialisation silencieuse : la normalisation ne fabrique jamais une
-  // référence à partir des dates actuelles.
+  // Aucune initialisation silencieuse au CHARGEMENT : la normalisation ne
+  // fabrique jamais une référence à partir des dates actuelles. Seule la
+  // création d'une tâche en pose une, et elle est visible dans la fiche.
   assert.equal(normalizeTaskComparison({ enabled: true }).referenceStart, null);
   assert.equal(normalizeTaskComparison({ enabled: true }).referenceEnd, null);
 });

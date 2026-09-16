@@ -341,13 +341,38 @@ diagramme, pas de tâche masquée, pas de hauteur de ligne modifiée. Un même
 widget mélange donc sans réglage supplémentaire des tâches et des jalons
 comparables et non comparables.
 
-### Les références sont un historique
+### À la création, la référence vaut les dates demandées
 
-`referenceStart` et `referenceEnd` ne bougent **jamais** toutes seules. Déplacer
-une barre dans un Mini-Gantt écrit `start` / `end` et laisse la référence là où
-elle est — c'est tout l'intérêt de la comparaison. La seule réécriture possible
-est le bouton **Copier les dates actuelles comme référence** de la fiche tâche,
-et seulement au clic.
+Une tâche **nouvelle** naît avec sa planification initiale pour référence : ce
+qu'on demande à la création *est* le plan de départ. La fiche de création ouvre
+donc la comparaison activée et les deux champs remplis, et la référence **suit**
+les dates tant qu'on n'y touche pas — régler le début puis la fin après
+l'ouverture aboutit bien à « référence = dates demandées ». Le premier geste sur
+le bloc (l'interrupteur, un champ de date, le bouton de copie) arrête
+définitivement ce calage, et l'enregistrement le fige.
+
+Rien n'est posé en douce pour autant : la référence est **visible et modifiable**
+avant d'enregistrer. Si une dépendance décale la tâche à l'enregistrement, c'est
+sur les dates **réellement enregistrées** que la référence se cale — une tâche ne
+naît jamais en retard sur son propre plan.
+
+La règle vaut pour les autres créations d'une tâche par l'utilisateur (ajout
+rapide, import tabulaire, action de workflow) via `withCreationComparison`.
+Deux exceptions, et elles seules :
+
+- une tâche **existante** n'en gagne jamais : ouvrir puis enregistrer une fiche
+  ancienne ne lui fabrique aucune référence ;
+- les tâches **importées d'un agenda** restent en dehors — leurs dates
+  appartiennent à Google Calendar et sont réécrites à chaque synchronisation,
+  une « planification initiale » n'y voudrait rien dire.
+
+### Ensuite, les références sont un historique
+
+Une fois la tâche créée, `referenceStart` et `referenceEnd` ne bougent **jamais**
+toutes seules. Déplacer une barre dans un Mini-Gantt écrit `start` / `end` et
+laisse la référence là où elle est — c'est tout l'intérêt de la comparaison. La
+seule réécriture possible est le bouton **Copier les dates actuelles comme
+référence** de la fiche tâche, et seulement au clic.
 
 Pour une tâche avec durée, les deux champs sont demandés et la fin doit être
 postérieure ou égale au début. Pour un **jalon**, seul *Fin / jalon référence*
@@ -422,9 +447,10 @@ plage, inchangés. En mode Standard, la plage ne bouge pas d'un jour.
 
 Aucune migration. Une tâche sans `comparison` et un widget sans
 `miniGanttComparisonEnabled` rendent exactement comme avant. Rien n'initialise
-une référence à partir des dates actuelles, et la normalisation rend `null`
-plutôt qu'un objet vide : une tâche d'avant ce changement reste identique à
-elle-même après un aller-retour dans la fiche. Les données de comparaison sont
+une référence au CHARGEMENT — seule la création d'une tâche en pose une, et elle
+est affichée avant d'être enregistrée — et la normalisation rend `null` plutôt
+qu'un objet vide : une tâche d'avant ce changement reste identique à elle-même
+après un aller-retour dans la fiche. Les données de comparaison sont
 des propriétés métier ordinaires de la tâche : elles suivent les imports,
 exports, sauvegardes et synchronisations comme les autres.
 

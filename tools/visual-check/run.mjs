@@ -875,6 +875,44 @@ try {
   taskMeta.error = String(error).split("\n")[0];
 }
 
+/* Création d'une tâche : la référence doit naître calée sur les dates demandées,
+   VISIBLE dans la fiche, suivre un changement de dates tant qu'on n'y touche
+   pas, et se figer telle quelle à l'enregistrement. */
+const creation = { checked: null, start: "", end: "", startApresDate: "", endApresDate: "", startApresSaisie: "", enregistre: null };
+try {
+  await page.locator("#harness-open-task-create").click();
+  await page.waitForSelector(".lp-modal #task-comparison", { timeout: 10000 });
+  creation.checked = await page.locator(".lp-modal #task-comparison").isChecked();
+  creation.start = await page.locator(".lp-modal #task-comparison-start").inputValue();
+  creation.end = await page.locator(".lp-modal #task-comparison-end").inputValue();
+  creation.dates = {
+    start: await page.locator(".lp-modal input[type=date]").first().inputValue(),
+    end: await page.locator(".lp-modal input[type=date]").nth(1).inputValue(),
+  };
+  // Changer la date de début APRÈS l'ouverture : la référence suit, puisque
+  // c'est bien la date demandée qui fait la planification initiale.
+  await page.locator(".lp-modal input[type=date]").first().fill("2026-10-05");
+  await page.waitForTimeout(350);
+  creation.startApresDate = await page.locator(".lp-modal #task-comparison-start").inputValue();
+  creation.endApresDate = await page.locator(".lp-modal #task-comparison-end").inputValue();
+  // …mais dès qu'on saisit une référence à la main, elle cesse de suivre.
+  await page.locator(".lp-modal #task-comparison-start").fill("2026-01-15");
+  await page.waitForTimeout(250);
+  await page.locator(".lp-modal input[type=date]").first().fill("2026-11-02");
+  await page.waitForTimeout(350);
+  creation.startApresSaisie = await page.locator(".lp-modal #task-comparison-start").inputValue();
+  // Enregistrer fige ce qui est à l'écran.
+  await page.locator('.lp-modal input[placeholder="Ex. Revue DOE"]').fill("Tâche de banc");
+  await page.locator(".lp-modal").getByRole("button", { name: "Enregistrer" }).click();
+  await page.waitForTimeout(400);
+  creation.enregistre = JSON.parse(await page.locator("#harness-created-comparison").textContent());
+} catch (error) {
+  creation.error = String(error).split("\n")[0];
+  // La fiche reste ouverte si un geste a échoué : la refermer, sinon tous les
+  // contrôles suivants tombent sur une modale qu'ils n'attendent pas.
+  try { await page.keyboard.press("Escape"); await page.waitForTimeout(300); } catch { /* rien à refermer */ }
+}
+
 // Recherche rapide des listes déroulantes des paramètres : on ouvre la fiche
 // d'un risque, on filtre la liste des tâches et on vérifie que la sélection
 // s'applique. Sans ce contrôle, une liste déroulante peut redevenir un <select>
@@ -1539,6 +1577,16 @@ expect(taskComparison.errorsAfterCopy === 0, `Fiche de tâche : ${taskComparison
 // Désactiver masque les champs SANS effacer l'historique saisi.
 expect(taskComparison.fieldsAfterUncheck === 0, `Fiche de tâche : ${taskComparison.fieldsAfterUncheck} champ(s) encore visible(s) après désactivation, 0 attendu`);
 expect(taskComparison.startAfterRecheck === "2026-08-05", `Fiche de tâche : la date de référence est perdue par une désactivation temporaire (${taskComparison.startAfterRecheck})`);
+
+// Création d'une tâche : la référence naît calée sur les dates demandées.
+expect(!creation.error, `contrôle de la fiche de création interrompu : ${creation.error}`);
+expect(creation.checked === true, "Fiche de création : la comparaison n'est pas activée d'emblée");
+expect(creation.start === creation.dates?.start && creation.end === creation.dates?.end,
+  `Fiche de création : la référence (${creation.start} → ${creation.end}) ne reprend pas les dates demandées (${creation.dates?.start} → ${creation.dates?.end})`);
+expect(creation.startApresDate === "2026-10-05", `Fiche de création : la référence ne suit pas un changement de date (${creation.startApresDate})`);
+expect(creation.startApresSaisie === "2026-01-15", `Fiche de création : une référence saisie à la main est écrasée par un changement de date (${creation.startApresSaisie})`);
+expect(creation.enregistre && creation.enregistre.enabled === true && creation.enregistre.referenceStart === "2026-01-15",
+  `Fiche de création : la référence enregistrée n'est pas celle affichée (${JSON.stringify(creation.enregistre)})`);
 
 // Tableaux Markdown (issue #71).
 expect(taskMeta.mdTables === 1, `Fiche de tâche : ${taskMeta.mdTables} tableau(x) rendu(s) dans l'aperçu, 1 attendu`);

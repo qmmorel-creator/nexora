@@ -115,6 +115,11 @@ function AnnotationsHarness() {
   const metaBlocks = mergeMetaTemporalBlocks(settingsMetaBlocks, tasks);
   const dashboards = [{ id: "d1", name: "Chantier" }, { id: "d2", name: "Communication" }];
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  // Fiche de CRÉATION : c'est la seule qui cale la référence sur les dates
+  // demandées. Le banc garde aussi ce que la fiche enregistre, pour vérifier
+  // que la référence figée est bien celle qu'on voyait à l'écran.
+  const [taskCreateOpen, setTaskCreateOpen] = useState(false);
+  const [createdTask, setCreatedTask] = useState(null);
   // Treemap projets : surface = tâches non terminées, couleur = tâches en
   // retard (second filtre), donc deux comptages réellement différents.
   const [treemapWidget, setTreemapWidget] = useState({
@@ -542,6 +547,29 @@ function AnnotationsHarness() {
         <button type="button" id="harness-open-task-modal" onClick={() => setTaskModalOpen(true)} style={{ marginBottom: 8, marginLeft: 8 }}>
           Ouvrir la fiche de la tâche Google Calendar
         </button>
+        <button type="button" id="harness-open-task-create" onClick={() => { setCreatedTask(null); setTaskCreateOpen(true); }} style={{ marginBottom: 8, marginLeft: 8 }}>
+          Créer une tâche
+        </button>
+        <span id="harness-created-comparison" style={{ display: "none" }}>{JSON.stringify(createdTask ? createdTask.comparison || null : null)}</span>
+        {taskCreateOpen && (
+          <TaskModal
+            task={{}}
+            defaults={{ projectId: "p1", title: "" }}
+            projects={projects}
+            dashboards={dashboards}
+            statuses={statuses}
+            taskTypes={seedTaskTypes}
+            tasks={tasks}
+            teamMembers={seedTeamMembers}
+            gradient={appearance.gradient}
+            progressColorByStatus={false}
+            customFieldDefs={[]}
+            shortcutPrefs={{}}
+            onClose={() => setTaskCreateOpen(false)}
+            onSave={(data) => { setCreatedTask(data); setTaskCreateOpen(false); }}
+            onDelete={noop}
+          />
+        )}
         {taskModalOpen && (
           <TaskModal
             task={tasks.find((t) => t.id === "t8")}

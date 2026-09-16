@@ -60,7 +60,16 @@ jalon) et deux n'en portent pas, dont un jalon :
 - **les hauteurs de ligne sont identiques à celles du widget standard** : la
   superposition des barres ne fait grandir aucune ligne.
 
-Fiche de tâche, mode comparaison :
+Fiche de CRÉATION d'une tâche :
+
+- la comparaison est activée d'emblée et les deux champs sont remplis avec les
+  dates demandées ;
+- changer une date après l'ouverture déplace la référence avec elle ;
+- une référence saisie à la main n'est plus jamais rattrapée par un changement
+  de date ;
+- ce qui est enregistré est exactement ce qui était à l'écran.
+
+Fiche de tâche existante, mode comparaison :
 
 - l'interrupteur est décoché sur une tâche qui n'en porte pas, et les champs de
   dates de référence n'existent pas tant qu'il l'est ;
