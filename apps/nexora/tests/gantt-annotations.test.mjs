@@ -223,7 +223,7 @@ test("le nettoyage explicite retire les tâches disparues et les encadrés vidé
 // Mini-Gantt : fenêtres de décision, jalons, risques, annotations
 // ---------------------------------------------------------------------------
 const MINI = vm.runInThisContext(
-  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeMiniGanttMilestones, normalizeMiniGanttRisks, normalizeMiniGanttNotes, miniGanttRiskSegments, miniGanttRiskLabelLayout, MINIGANTT_RISK_LABEL_LINES, miniGanttSelectionWindow, miniGanttRowEmphasis, normalizeTemporalBlocks, MINIGANTT_RISK_DEFAULT_DAYS, GANTT_DECISION_DEFAULT_COLOR, MINIGANTT_RISK_DEFAULT_COLOR };\n})`
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeMiniGanttMilestones, normalizeMiniGanttRisks, normalizeMiniGanttNotes, miniGanttRiskSegments, miniGanttRiskLabelLayout, MINIGANTT_RISK_LABEL_LINES, miniGanttRowEmphasis, normalizeTemporalBlocks, MINIGANTT_RISK_DEFAULT_DAYS, GANTT_DECISION_DEFAULT_COLOR, MINIGANTT_RISK_DEFAULT_COLOR };\n})`
 )();
 
 test("un bloc temporel peut être une fenêtre de décision", () => {
@@ -319,24 +319,6 @@ test("un risque dont la tâche n'est pas visible est ignoré sans erreur", () =>
   assert.deepEqual(MINI.miniGanttRiskSegments([{ id: "t1", endIdx: NaN }], [{ id: "r1", taskId: "t1" }]), []);
 });
 
-test("la fenêtre de zoom couvre la sélection, ses risques et une marge", () => {
-  const rows = [
-    { id: "t1", startIdx: 10, endIdx: 20 },
-    { id: "t2", startIdx: 30, endIdx: 40 },
-    { id: "t3", startIdx: 0, endIdx: 100 },
-  ];
-  const segments = MINI.miniGanttRiskSegments(rows, [{ id: "r1", taskId: "t2", severity: "high" }]);
-  const win = MINI.miniGanttSelectionWindow(rows, ["t1", "t2"], segments, 2);
-  assert.equal(win.minIdx, 8, "début le plus ancien moins la marge");
-  // t2 finit à 40, son risque « high » prolonge de 10 jours, plus la marge.
-  assert.equal(win.maxIdx, 52);
-  // Une seule tâche : la fenêtre se resserre sur elle, jamais sur tout le Gantt.
-  const single = MINI.miniGanttSelectionWindow(rows, ["t1"], [], 0);
-  assert.deepEqual([single.minIdx, single.maxIdx], [10, 20]);
-  assert.equal(MINI.miniGanttSelectionWindow(rows, [], [], 1), null);
-  assert.equal(MINI.miniGanttSelectionWindow(rows, ["inconnue"], [], 1), null);
-  assert.equal(MINI.miniGanttSelectionWindow(undefined, undefined, undefined), null);
-});
 
 test("l'accentuation d'une ligne se déduit des risques et du chemin critique", () => {
   const segments = [

@@ -14,12 +14,22 @@ const EXPORTS = [
   "widgetTransferLocate",
   "widgetTransferCopy",
   "widgetTransferApply",
+  "widgetTransferFilterTargets",
 ];
+// La recherche des destinations réutilise la normalisation du filtre de la barre
+// du haut : les deux blocs sont donc évalués ensemble, comme ils le sont dans
+// l'application.
+const SEARCH_START = "// === NEXORA:BOARD-SEARCH:START ===";
+const SEARCH_END = "// === NEXORA:BOARD-SEARCH:END ===";
 
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START);
 const to = html.indexOf(END);
 assert.ok(from !== -1 && to > from, "bloc de transfert de widget introuvable dans .build/index.html");
+
+const searchFrom = html.indexOf(SEARCH_START);
+const searchTo = html.indexOf(SEARCH_END);
+assert.ok(searchFrom !== -1 && searchTo > searchFrom, "bloc du filtre textuel introuvable dans .build/index.html");
 
 const {
   WIDGET_TRANSFER_MODES,
@@ -28,8 +38,9 @@ const {
   widgetTransferLocate,
   widgetTransferCopy,
   widgetTransferApply,
+  widgetTransferFilterTargets,
 } = vm.runInThisContext(
-  `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
+  `(function () {\n${html.slice(searchFrom + SEARCH_START.length, searchTo)}\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 )();
 
 // Deux plans : « Aujourd'hui » à page unique, un tableau de bord à deux pages.
@@ -150,4 +161,48 @@ test("les plans non concernés sont rendus À L'IDENTIQUE", () => {
   const input = boards();
   const out = widgetTransferApply(input, "w1", { boardId: "d1", pageId: "p2" }, "move", makeId);
   assert.equal(out[0], input[0], "« Aujourd'hui » n'est pas concerné : il doit être rendu tel quel");
+});
+
+
+/* --- Retour de Quentin sur #58 : « comme d'habitude, proposer une recherche
+   rapide dans la liste déroulante » --------------------------------------- */
+
+const CIBLES = widgetTransferTargets([
+  { id: "today", name: "Aujourd'hui", pages: [{ id: "tp", name: "Aujourd'hui" }] },
+  { id: "d1", name: "Chantiers", pages: [{ id: "p1", name: "Page 1" }, { id: "p2", name: "Suivi" }] },
+  { id: "d2", name: "Préfecture", pages: [{ id: "p3", name: "Réserves" }] },
+]);
+
+test("la recherche porte sur le nom du tableau", () => {
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "chantiers").map((t) => t.pageId), ["p1", "p2"]);
+});
+
+test("la recherche porte AUSSI sur le nom de la page", () => {
+  // Sans cela il faudrait savoir à quel tableau appartient une page pour la
+  // retrouver, ce qui est exactement ce qu'on cherche à éviter.
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "suivi").map((t) => t.pageId), ["p2"]);
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "reserves").map((t) => t.pageId), ["p3"]);
+});
+
+test("la recherche ignore la casse et les accents", () => {
+  assert.equal(widgetTransferFilterTargets(CIBLES, "PREFECTURE").length, 1);
+  assert.equal(widgetTransferFilterTargets(CIBLES, "préfecture").length, 1);
+  assert.equal(widgetTransferFilterTargets(CIBLES, "Réserves").length, 1);
+});
+
+test("plusieurs mots se combinent, dans n'importe quel ordre", () => {
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "suivi chantiers").map((t) => t.pageId), ["p2"]);
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "chantiers suivi").map((t) => t.pageId), ["p2"]);
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "chantiers reserves"), []);
+});
+
+test("une recherche vide rend la liste entière, telle quelle", () => {
+  assert.equal(widgetTransferFilterTargets(CIBLES, ""), CIBLES);
+  assert.equal(widgetTransferFilterTargets(CIBLES, "   "), CIBLES);
+  assert.equal(widgetTransferFilterTargets(CIBLES, null), CIBLES);
+});
+
+test("aucune correspondance rend une liste vide, pas la liste entière", () => {
+  assert.deepEqual(widgetTransferFilterTargets(CIBLES, "zzz"), []);
+  assert.deepEqual(widgetTransferFilterTargets(null, "zzz"), []);
 });

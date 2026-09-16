@@ -2517,7 +2517,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3158,7 +3158,14 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetTaskDetail
                     widget={w}
                     tasks={scoped}
-                    allTasks={tasks}
+                    /* `allTasks` sert à RETROUVER la tâche déjà choisie quand
+                       un filtre la masque — c'est tout son objet. Lui donner la
+                       liste filtrée par la recherche de la barre du haut (#72)
+                       la faisait disparaître dès qu'on tapait : le widget
+                       retombait sur son sélecteur et son contenu s'évanouissait
+                       sous les yeux. Il reçoit donc la liste D'AVANT cette
+                       recherche. */
+                    allTasks={tasksBeforeSearch || tasks}
                     ctx={ctx}
                     onOpen={onOpen}
                     shortcutPrefs={shortcutPrefs}
@@ -4767,8 +4774,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? todayIdx
     : Math.round((autoMinIdx + autoMaxIdx) / 2);
 
-  // Fenêtre explicite posée par « Zoom (n tâches) » : elle prime sur le zoom
-  // automatique comme sur les niveaux manuels, jusqu'à ce qu'on l'efface.
+  // Fenêtre explicite héritée : plus rien n'en pose depuis le retrait du bouton
+  // de cadrage sur la sélection (#48), mais un widget enregistré avant garde la
+  // sienne. Elle prime sur le zoom automatique comme sur les niveaux manuels, et
+  // les boutons − / Auto / + la relâchent.
   const pinnedWindow = widget.miniGanttWindow
     && isGanttIsoDate(widget.miniGanttWindow.start)
     && isGanttIsoDate(widget.miniGanttWindow.end)
@@ -4961,16 +4970,20 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   };
   const [annotationPanel, setAnnotationPanel] = useState(null); // null | { section, autoCreate, focusId }
 
-  // --- Pilotage : sélection, focus, présentation ---------------------------
-  // La sélection est volontairement éphémère (elle sert à cadrer, pas à
-  // décrire le projet) ; focus et présentation sont des réglages du widget.
-  const [selection, setSelection] = useState([]);
-  const focusMode = widget.miniGanttFocus === "critical" ? "critical" : "none";
-  const presentation = !!widget.miniGanttPresentation;
+  /* « Supprimer focus et présenter, la checkbox ne sert qu'à mettre un encadré
+     autour de la tâche » (#48).
+
+     Les modes Focus et Présentation sont retirés, et avec eux le bouton Zoom,
+     seul autre usage que la coche avait. Les réglages que ces deux modes
+     enregistraient sur le widget ne sont plus lus du tout : un widget sauvegardé
+     alors que l'un des deux était actif s'ouvre désormais normalement au lieu de
+     rester figé dedans sans plus aucun bouton pour en sortir.
+
+     La coche ne porte plus d'état éphémère : elle LIT les encadrés posés. Une
+     sélection en mémoire se vidait au rechargement pendant que l'encadré, lui,
+     survivait — la case revenait décochée sur une tâche visiblement encadrée. */
   const emphasisOn = widget.miniGanttEmphasis !== false;
-  const editable = !!onUpdateWidget && !presentation;
-  const setFocusMode = (next) => onUpdateWidget && onUpdateWidget({ miniGanttFocus: next === "critical" ? "critical" : null });
-  const togglePresentation = () => onUpdateWidget && onUpdateWidget({ miniGanttPresentation: !presentation });
+  const editable = !!onUpdateWidget;
 
   const rawMilestones = useMemo(() => (Array.isArray(annotationStore.milestones) ? annotationStore.milestones : []), [annotationStore.milestones]);
   // Les risques viennent des tâches. Les listes héritées, enregistrées sur le
@@ -5234,8 +5247,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // Chemin critique : même calcul que la vue Planning Projets et le widget
   // Chemin critique (computeCriticalIds), jamais une seconde heuristique.
   const criticalIds = useMemo(
-    () => ((emphasisOn || focusMode === "critical") && projTasks.length ? computeCriticalIds(projTasks) : null),
-    [projTasks, emphasisOn, focusMode]
+    () => (emphasisOn && projTasks.length ? computeCriticalIds(projTasks) : null),
+    [projTasks, emphasisOn]
   );
 
   // Couloirs d'incertitude : bornés aux lignes réellement visibles, donc
@@ -5255,53 +5268,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return map;
   }, [riskSegments]);
 
-  // Ensemble mis en avant par le focus : les tâches critiques et, avec elles,
-  // tout ce dont elles dépendent et tout ce qui en dépend.
-  const focusIds = useMemo(() => {
-    if (focusMode !== "critical" || !criticalIds) return null;
-    const kept = new Set(criticalIds);
-    const byId = new Map(projTasks.map((t) => [t.id, t]));
-    let guard = 0;
-    let frontier = [...kept];
-    while (frontier.length && guard < 3000) {
-      const next = [];
-      frontier.forEach((id) => {
-        const task = byId.get(id);
-        (task?.dependsOn || []).forEach((dep) => { if (byId.has(dep) && !kept.has(dep)) { kept.add(dep); next.push(dep); } });
-        projTasks.forEach((other) => {
-          if (kept.has(other.id)) return;
-          if ((other.dependsOn || []).includes(id)) { kept.add(other.id); next.push(other.id); }
-        });
-      });
-      frontier = next;
-      guard++;
-    }
-    return kept;
-  }, [focusMode, criticalIds, projTasks]);
-
   const emphasisFor = (taskId) => (emphasisOn ? miniGanttRowEmphasis(taskId, riskSegments, criticalIds) : "none");
-  // Le focus atténue, il ne masque jamais : jalons, décisions et risques
-  // restent visibles pour garder le contexte.
-  const dimmed = (taskId) => !!focusIds && !focusIds.has(taskId);
 
-  const selectedSet = useMemo(() => new Set(selection), [selection]);
+  // Cochée = encadrée, et rien d'autre. L'état vient des annotations, donc il
+  // survit au rechargement comme l'encadré qu'il décrit.
+  const selectedSet = useMemo(
+    () => new Set(rawHighlightFrames.filter((f) => f && f.autoTaskId).map((f) => f.autoTaskId)),
+    [rawHighlightFrames]
+  );
   const toggleSelected = (taskId) => {
-    // La coche garde son rôle de sélection (elle alimente « cadrer la vue ») et
-    // pose en plus un encadré autour de la tâche, retiré en décochant.
-    const willSelect = !selection.includes(taskId);
-    setSelection((prev) => (prev.includes(taskId) ? prev.filter((x) => x !== taskId) : [...prev, taskId]));
+    const willSelect = !selectedSet.has(taskId);
     const nextFrames = miniGanttToggleTaskFrame(rawHighlightFrames, taskId, willSelect, uid);
     if (nextFrames !== rawHighlightFrames) applyAnnotations({ highlightFrames: nextFrames });
-  };
-  const zoomOnSelection = () => {
-    if (!onUpdateWidget) return;
-    const rows = visibleRows.map((row) => ({ id: row.id, startIdx: dayIndex(row.start), endIdx: dayIndex(row.end) }));
-    const win = miniGanttSelectionWindow(rows, selection, riskSegments, 1);
-    if (!win) return;
-    onUpdateWidget({
-      miniGanttWindow: { start: addDays("2020-01-01", win.minIdx), end: addDays("2020-01-01", win.maxIdx) },
-      miniGanttZoomLevel: null,
-    });
   };
 
   // Jalons de configuration et annotations partagent la même bande, sous les
@@ -5372,26 +5350,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
             <button type="button" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })} title="Ajouter un encadré autour d'une ou plusieurs tâches">+ Encadré</button>
             <button type="button" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })} title="Ajouter un jalon ou une décision">+ Jalon</button>
-          </div>
-        )}
-        {onUpdateWidget && (
-          <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons" onMouseDown={(e)=>e.stopPropagation()}>
-            <button
-              type="button"
-              className={focusMode === "critical" ? "active" : ""}
-              onClick={() => setFocusMode(focusMode === "critical" ? "none" : "critical")}
-              title="Mettre en avant le chemin critique et ses dépendances, en atténuant le reste"
-            >
-              {focusMode === "critical" ? "Focus ✓" : "Focus"}
-            </button>
-            {selection.length > 0 && !presentation && (
-              <button type="button" onClick={zoomOnSelection} title="Cadrer la vue sur les tâches sélectionnées">
-                Zoom ({selection.length} tâche{selection.length > 1 ? "s" : ""})
-              </button>
-            )}
-            <button type="button" className={presentation ? "active" : ""} onClick={togglePresentation} title={presentation ? "Quitter le mode présentation" : "Masquer les commandes d'édition pour projeter la vue"}>
-              {presentation ? "Quitter" : "Présenter"}
-            </button>
           </div>
         )}
         </div>
@@ -5615,7 +5573,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const pct = Math.max(0, Math.min(100, Math.round(t.progress || 0)));
     return (
       <div
-        className={"lp-widget-minigantt-row is-" + emphasisFor(t.id) + (dimmed(t.id) ? " is-dimmed" : "") + (selectedSet.has(t.id) ? " is-selected" : "")}
+        className={"lp-widget-minigantt-row is-" + emphasisFor(t.id) + (selectedSet.has(t.id) ? " is-selected" : "")}
         key={t.id}
         ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
@@ -5630,7 +5588,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 statut/projet/type, sur fond pâle de la même couleur pour le
                 reste de la durée — cohérent avec le diagramme de Gantt complet. */}
             <div className="lp-widget-minigantt-bar-fill" style={{ width: `${pct}%`, background: barColor }} />
-            {onUpdateTask && !presentation && (
+            {onUpdateTask && (
               <>
                 <div
                   className="lp-widget-minigantt-handle left" title="Glisser pour changer la date de début"
@@ -5673,7 +5631,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     } : {};
     return (
       <div
-        className={"lp-widget-minigantt-row lp-widget-minigantt-row-milestone" + (dimmed(t.id) ? " is-dimmed" : "") + (selectedSet.has(t.id) ? " is-selected" : "")}
+        className={"lp-widget-minigantt-row lp-widget-minigantt-row-milestone" + (selectedSet.has(t.id) ? " is-selected" : "")}
         key={t.id}
         ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
@@ -9100,9 +9058,34 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
      d'eux — et « nexora:today » en contient déjà un. */
   const transferIsHere = (t) => t.boardId === boardId && t.pageId === currentPageId;
   const [transferIndex, setTransferIndex] = useState("");
+  /* Liste déroulante à recherche rapide, comme celles du statut, du type et du
+     projet (retour de Quentin sur #58 : « comme d'habitude »). Un <select> natif
+     ne peut pas en porter, et la liste grandit avec chaque tableau et chaque
+     page — elle devient vite trop longue pour être parcourue à l'œil. */
+  const [transferPickerOpen, setTransferPickerOpen] = useState(false);
+  const [transferQuery, setTransferQuery] = useState("");
+  const transferPickerRef = useRef(null);
+  const transferSearchRef = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (transferPickerRef.current && !transferPickerRef.current.contains(e.target)) setTransferPickerOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  // À l'ouverture, la recherche repart de zéro et prend le clavier : sans cela
+  // il faudrait viser le champ à la souris avant de pouvoir taper.
+  useEffect(() => {
+    if (!transferPickerOpen) return;
+    setTransferQuery("");
+    const id = setTimeout(() => transferSearchRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, [transferPickerOpen]);
   /* Par défaut, la première destination QUI N'EST PAS celle où le widget se
      trouve déjà : ouvrir sur « ici » invite à valider un transfert qui ne fait
      rien. */
+  const transferFiltered = useMemo(
+    () => widgetTransferFilterTargets(transferTargets, transferQuery),
+    [transferTargets, transferQuery]
+  );
   const transferSelected = transferTargets[Number(transferIndex)]
     || transferTargets.find((t) => !transferIsHere(t))
     || transferTargets[0]
@@ -9432,16 +9415,48 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             <div className="lp-widget-transfer-panel">
               <div className="lp-field">
                 <label>Tableau de bord de destination</label>
-                <select
-                  value={transferSelected ? String(transferTargets.indexOf(transferSelected)) : ""}
-                  onChange={(e) => setTransferIndex(e.target.value)}
-                >
-                  {transferTargets.map((t, i) => (
-                    <option key={`${t.boardId}-${t.pageId}-${i}`} value={String(i)}>
-                      {t.label}{transferIsHere(t) ? " — ici" : ""}
-                    </option>
-                  ))}
-                </select>
+                <div className="lp-color-select" ref={transferPickerRef}>
+                  <button
+                    type="button"
+                    className="lp-color-select-btn"
+                    onClick={() => setTransferPickerOpen((o) => !o)}
+                    aria-expanded={transferPickerOpen}
+                  >
+                    <span className="lp-color-select-label">
+                      {transferSelected ? `${transferSelected.label}${transferIsHere(transferSelected) ? " — ici" : ""}` : "Aucune destination"}
+                    </span>
+                    <ChevronDown size={14} />
+                  </button>
+                  {transferPickerOpen && (
+                    <div className="lp-color-select-panel">
+                      {/* Même seuil que les autres listes de Nexora : en dessous
+                          de six entrées, un champ de recherche encombre plus
+                          qu'il n'aide. */}
+                      {transferTargets.length > 5 && (
+                        <input
+                          ref={transferSearchRef}
+                          type="text"
+                          className="lp-select-search"
+                          placeholder="Rechercher un tableau ou une page…"
+                          value={transferQuery}
+                          onChange={(e) => setTransferQuery(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
+                      {transferFiltered.map((t) => (
+                        <button
+                          type="button"
+                          key={`${t.boardId}-${t.pageId}`}
+                          className={"lp-color-select-option" + (t === transferSelected ? " active" : "")}
+                          onClick={() => { setTransferIndex(String(transferTargets.indexOf(t))); setTransferPickerOpen(false); }}
+                        >
+                          {t.label}{transferIsHere(t) ? " — ici" : ""}
+                        </button>
+                      ))}
+                      {transferFiltered.length === 0 && <div className="lp-select-empty">Aucun résultat</div>}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="lp-field">

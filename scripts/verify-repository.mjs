@@ -596,6 +596,29 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Une icône dont le chargement échoue n'a plus de repli.");
   assert.match(builtSource, /if \(failedSrc === src\)/,
     "L'échec n'est plus mémorisé par URL : changer l'URL ne retenterait pas.");
+  /* Second retour de test : l'icône ne s'affichait pas parce qu'elle n'était
+     jamais ENREGISTRÉE. La règle de choix est couverte par le test unitaire ;
+     ce qui ne l'est pas, c'est son câblage dans la fiche. Chacun de ces quatre
+     points, retiré seul, rend l'URL silencieusement perdue. */
+  assert.match(builtSource, /const saveIcon = \(\) => commitIcon\(resolveIconChoice\(draftIcon, customUrl\)\);/,
+    "« Enregistrer » ignore de nouveau l'URL laissée dans le champ : elle serait perdue sans un mot.");
+  assert.match(builtSource, /title="Utiliser cette image" onClick=\{\(\)=>commitIcon\(customUrl\.trim\(\)\)\}/,
+    "« Utiliser cette image » ne fait plus qu'un brouillon : refermer la fiche perdrait l'icône.");
+  assert.match(builtSource, /if\(e\.key==="Enter" && isImageUrl\(customUrl\)\)\{ e\.preventDefault\(\); commitIcon\(customUrl\.trim\(\)\); \}/,
+    "La touche Entrée du champ d'URL ne valide plus l'icône.");
+  /* Le champ vidé dès qu'on choisit ailleurs est ce qui rend son contenu
+     lisible comme « la dernière chose exprimée » : sans cela, une URL restée
+     dans le champ reprendrait le dessus sur l'icône cliquée, et « Retirer
+     l'icône » ressusciterait l'ancienne URL. */
+  assert.match(builtSource, /setCustomUrl\(""\);\s*\n\s*if \(item\.prefix === "tabler"\)/,
+    "Choisir une icône dans la grille ne vide plus le champ d'URL : l'URL reprendrait le dessus.");
+  assert.match(builtSource, /onClick=\{\(\)=>\{setCustomUrl\(""\);setDraftIcon\(null\);\}\}>Retirer l'icône/,
+    "« Retirer l'icône » laisse l'URL dans le champ : elle reviendrait à l'enregistrement.");
+  /* Même règle des deux côtés, jusque dans l'état initial du champ : la
+     première version du correctif y avait laissé une expression sensible à la
+     casse, et le champ s'ouvrait vide sur une icône pourtant enregistrée. */
+  assert.doesNotMatch(builtSource, /useState\(\/\^\(https\?:\|data:\)\/\.test\(icon/,
+    "Le champ d'URL retrouve sa propre règle de reconnaissance, différente du rendu.");
 }
 
 /* Filtre textuel des surfaces « tableau de bord » (issue #72).
@@ -611,6 +634,14 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
   assert.match(builtSource, /setTimeout\(\(\) => setBoardSearchApplied\(boardSearch\), \d+\)/,
     "Le filtre n'est plus retardé : chaque caractère recalculerait toute la page.");
   assert.match(builtSource, /value=\{boardSearch\}/, "Le champ de filtre a disparu de la barre du haut.");
+  /* Le widget « Tâche détaillée » retrouve sa tâche dans `allTasks` même quand
+     un filtre la masque — c'est tout l'objet de cette seconde liste. Lui donner
+     la liste réduite par la recherche la faisait disparaître dès la première
+     lettre tapée, et le widget se vidait sous les yeux. */
+  assert.match(builtSource, /allTasks=\{tasksBeforeSearch \|\| tasks\}/,
+    "Le widget « Tâche détaillée » reçoit de nouveau la liste réduite par la recherche : son contenu s'évanouirait à la frappe.");
+  assert.equal((builtSource.match(/tasksBeforeSearch=\{metaFilteredTasks\}/g) || []).length, 2,
+    "Les deux surfaces à widgets ne transmettent plus toutes la liste d'avant la recherche.");
   /* Les TROIS surfaces qui partent du socle méta-filtré doivent le consommer.
      En oublier une donnerait un champ qui filtre ici et pas là. */
   for (const [surface, motif] of [
@@ -658,8 +689,47 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     builtSource.indexOf("}", builtSource.indexOf(".lp-widget-minigantt-frame-corner{")),
   );
   assert.ok(corner.length > 0, "La règle de la pastille du coin est introuvable.");
-  assert.match(corner, /opacity:0?\.\d+/,
-    "La pastille du coin n'est plus peinte en transparence.");
+  /* Quentin a demandé la pastille OPAQUE après l'avoir vue en transparence :
+     une opacité partielle qui reviendrait ici annulerait son retour sans que
+     rien d'autre ne tombe. */
+  assert.doesNotMatch(corner, /opacity:0?\.\d+/,
+    "La pastille du coin redevient transparente : elle doit rester pleine.");
+}
+
+/* Coche du Mini-Gantt : elle ne sert qu'à encadrer (issue #48, dernier retour).
+   Trois disparitions et une emphase, dont aucune ne se signale d'elle-même si
+   elle se défait : les boutons peuvent revenir d'un copier-coller, et l'état de
+   la coche peut retomber sur une sélection en mémoire. */
+{
+  const mini = builtSource.slice(
+    builtSource.indexOf("function WidgetMiniGantt"),
+    builtSource.indexOf("function WidgetEmbedMetro"),
+  );
+  assert.ok(mini.length > 0, "WidgetMiniGantt introuvable.");
+  for (const [quoi, motif] of [
+    ["Focus", /miniGanttFocus/],
+    ["Présenter", /miniGanttPresentation/],
+    ["Zoom sur la sélection", /zoomOnSelection/],
+  ]) {
+    assert.doesNotMatch(mini, motif, `Le mode « ${quoi} » est revenu dans le Mini-Gantt.`);
+  }
+  /* L'état de la coche vient des encadrés, pas d'une sélection en mémoire : une
+     sélection se viderait au rechargement et la case reviendrait décochée sur
+     une tâche visiblement encadrée. */
+  assert.match(mini, /new Set\(rawHighlightFrames\.filter\(\(f\) => f && f\.autoTaskId\)\.map\(\(f\) => f\.autoTaskId\)\)/,
+    "La coche du Mini-Gantt ne se lit plus sur les encadrés posés.");
+  assert.doesNotMatch(mini, /useState\(\[\]\);[\s\S]{0,80}selection/, "Une sélection éphémère est revenue.");
+  /* L'emphase de la tâche cochée : gras du titre et liseré rouge épais.
+     Contrôle RÈGLE PAR RÈGLE, sans découper de tranche : le sélecteur de fin
+     qu'on aurait pris ici (« .lp-widget-minigantt-label-title{ ») est contenu
+     dans celui de début, donc la tranche se serait refermée dans sa propre
+     ancre et les deux contrôles seraient passés à vide. */
+  assert.match(builtSource,
+    /\.lp-widget-minigantt-row\.is-selected \.lp-widget-minigantt-label-title\{[^}]*font-weight:800/,
+    "Le titre d'une tâche cochée n'est plus en gras.");
+  assert.match(builtSource,
+    /\.lp-widget-minigantt-row\.is-selected \.lp-widget-minigantt-bar\{ box-shadow:0 0 0 2\.5px #D64545/,
+    "La barre d'une tâche cochée n'a plus son liseré rouge épais.");
 }
 
 /* Bandeau de paramètres du widget (issue #56).

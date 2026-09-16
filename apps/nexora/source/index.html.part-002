@@ -3813,28 +3813,6 @@ function applyTaskDelayRisks(flat, tasks, updateTask) {
   return touched;
 }
 
-// Fenêtre temporelle minimale couvrant une sélection de lignes, élargie d'une
-// marge et des couloirs de risque qui prolongent ces lignes.
-function miniGanttSelectionWindow(rows, selectedIds, riskSegments, pad = 1) {
-  const selected = new Set(Array.isArray(selectedIds) ? selectedIds : []);
-  const kept = (Array.isArray(rows) ? rows : []).filter((r) => r && selected.has(r.id));
-  if (!kept.length) return null;
-  let minIdx = Infinity;
-  let maxIdx = -Infinity;
-  kept.forEach((r) => {
-    const s = Number(r.startIdx);
-    const e = Number(r.endIdx);
-    if (Number.isFinite(s)) minIdx = Math.min(minIdx, s);
-    if (Number.isFinite(e)) maxIdx = Math.max(maxIdx, e);
-  });
-  (Array.isArray(riskSegments) ? riskSegments : []).forEach((seg) => {
-    if (!selected.has(seg.taskId)) return;
-    if (Number.isFinite(seg.endIdx)) maxIdx = Math.max(maxIdx, seg.endIdx);
-  });
-  if (!Number.isFinite(minIdx) || !Number.isFinite(maxIdx)) return null;
-  const margin = Math.max(0, Math.round(pad));
-  return { minIdx: minIdx - margin, maxIdx: Math.max(minIdx - margin + 1, maxIdx + margin) };
-}
 
 // Accentuation d'une ligne, déduite de ce que l'utilisateur a déjà déclaré —
 // aucun second système de marquage à tenir à jour :
@@ -3919,6 +3897,23 @@ function widgetTransferLocate(boards, widgetId) {
    chevaucherait ce qui s'y trouve déjà. Le tableau de destination replace le
    widget par son propre tassement (packWidgets) dès qu'il s'affiche, comme
    pour un widget créé sans position. */
+/* Recherche rapide dans la liste des destinations (retour de Quentin sur #58).
+
+   Insensible à la casse ET aux accents, comme le filtre de la barre du haut :
+   « prefecture » doit trouver « Préfecture ». Tous les mots doivent être
+   présents, dans n'importe quel ordre, et la comparaison porte sur le nom du
+   tableau ET celui de la page — taper le nom d'une page suffit donc à la
+   trouver sans savoir à quel tableau elle appartient. */
+function widgetTransferFilterTargets(targets, query) {
+  const list = Array.isArray(targets) ? targets : [];
+  const mots = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (!mots.length) return list;
+  return list.filter((t) => {
+    const foin = normalizeSearchText(`${t.boardName || ""} ${t.pageName || ""} ${t.label || ""}`);
+    return mots.every((mot) => foin.includes(mot));
+  });
+}
+
 function widgetTransferCopy(widget, makeId) {
   return {
     ...widget,
@@ -8166,7 +8161,7 @@ function IconEditor({ icon, setIcon }) {
   const [page, setPage] = useState(0);
   const [draftIcon, setDraftIcon] = useState(icon || null);
   const [color, setColor] = useState(parseTablerIconSpec(icon).color || parseIconifySpec(icon).color || "#0B1526");
-  const [customUrl, setCustomUrl] = useState(/^(https?:|data:)/.test(icon || "") ? icon : "");
+  const [customUrl, setCustomUrl] = useState(normalizeIconUrl(icon) ? icon : "");
   /* La fiche et le rendu doivent accepter EXACTEMENT la même chose : c'est leur
      divergence qui faisait le défaut #70 — la fiche acceptait « HTTPS:// » en
      ignorant la casse, le rendu le refusait en la respectant, et l'icône
@@ -8352,10 +8347,16 @@ function IconEditor({ icon, setIcon }) {
   };
 
   const chooseItem = (item) => {
+    /* Le champ d'URL se vide dès qu'on choisit ailleurs : c'est ce qui rend son
+       contenu lisible comme « la dernière chose exprimée » au moment
+       d'enregistrer. Sans cela une URL laissée dans le champ reprendrait le
+       dessus sur l'icône qu'on vient de cliquer. */
+    setCustomUrl("");
     if (item.prefix === "tabler") setDraftIcon(makeTablerIconSpec(item.name, color));
     else setDraftIcon(iconifySpec(item.prefix, item.name, isRecolorablePrefix(item.prefix) ? color : ""));
   };
-  const saveIcon = () => { setIcon(draftIcon || null); setOpen(false); };
+  const commitIcon = (value) => { setIcon(value || null); setOpen(false); };
+  const saveIcon = () => commitIcon(resolveIconChoice(draftIcon, customUrl));
   const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageItems = items.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
@@ -8382,7 +8383,7 @@ function IconEditor({ icon, setIcon }) {
                   <div className="nexora-icon-swatches" style={{opacity:canRecolor?1:.45,pointerEvents:canRecolor?"auto":"none"}}>{["#0B1526","#4F6AF5","#22B07D","#F2A93B","#D64545","#7C5CFF","#0EA5E9","#64748B"].map(c=><button key={c} type="button" className={"nexora-icon-swatch"+(color.toLowerCase()===c.toLowerCase()?" active":"")} style={{background:c}} onClick={()=>applyColor(c)} />)}</div>
                   <button type="button" className="lp-btn" disabled={!canRecolor} style={{width:"100%",marginTop:9,opacity:canRecolor?1:.55}} onClick={()=>{ if(draftIcon?.startsWith("tabler:")){setDraftIcon(`tabler:${selectedTabler.name}`);} else if(draftIcon?.startsWith("iconify:")){setDraftIcon(`iconify:${selectedIconify.prefix}/${selectedIconify.name}`);} setColor("#0B1526"); }}>Couleur automatique</button>
                 </div>
-                {draftIcon && <button type="button" className="lp-btn" style={{width:"100%",marginTop:8}} onClick={()=>setDraftIcon(null)}>Retirer l'icône</button>}
+                {draftIcon && <button type="button" className="lp-btn" style={{width:"100%",marginTop:8}} onClick={()=>{setCustomUrl("");setDraftIcon(null);}}>Retirer l'icône</button>}
                 <div className="lp-field" style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
                   <label style={{fontSize:10.5,fontWeight:700,textTransform:"uppercase",letterSpacing:.4,color:"var(--text-600)"}}>Image personnalisée</label>
                   <div style={{display:"flex",gap:6,marginTop:5}}>
@@ -8390,11 +8391,15 @@ function IconEditor({ icon, setIcon }) {
                       type="text"
                       value={customUrl}
                       onChange={(e)=>setCustomUrl(e.target.value)}
-                      onKeyDown={(e)=>{ if(e.key==="Enter" && isImageUrl(customUrl)){ e.preventDefault(); setDraftIcon(customUrl.trim()); } }}
+                      onKeyDown={(e)=>{ if(e.key==="Enter" && isImageUrl(customUrl)){ e.preventDefault(); commitIcon(customUrl.trim()); } }}
                       placeholder="Coller une URL d'image…"
                       style={{flex:1,minWidth:0,fontSize:12}}
                     />
-                    <button type="button" className="lp-icon-btn" disabled={!isImageUrl(customUrl)} title="Utiliser cette image" onClick={()=>setDraftIcon(customUrl.trim())}><Check size={14} /></button>
+                    {/* « Utiliser cette image » ENREGISTRE, au lieu de ne
+                        remplir qu'un brouillon : le geste porte déjà ce nom, et
+                        l'aperçu qu'il donnait invitait à refermer la fiche — ce
+                        qui perdait l'icône (#70). */}
+                    <button type="button" className="lp-icon-btn" disabled={!isImageUrl(customUrl)} title="Utiliser cette image" onClick={()=>commitIcon(customUrl.trim())}><Check size={14} /></button>
                   </div>
                 </div>
               </aside>

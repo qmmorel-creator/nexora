@@ -449,7 +449,7 @@ try {
 
    Le second Mini-Gantt est choisi parce qu'il n'a AUCUNE annotation propre :
    tout ce qui apparaît après la coche vient donc de la coche. */
-const coche = { frames: 0, icons: 0, corners: 0, cornerOpacity: "", leftGap: null, rightGap: null, cornerOffsetX: null, cornerOffsetY: null, apres: 0 };
+const coche = { frames: 0, icons: 0, corners: 0, cornerOpacity: "", leftGap: null, rightGap: null, cornerOffsetX: null, cornerOffsetY: null, apres: 0, boutons: [], lignes: 0, titreGras: "", ombreBarre: "", cochee: null, apresCochee: null };
 try {
   const hote = "#harness-second-minigantt";
   const boite = page.locator(`${hote} .lp-widget-minigantt-select`).first();
@@ -478,12 +478,45 @@ try {
          ferait flotter entièrement hors du cadre sans la moindre erreur. */
       cornerOffsetX: cadre && coin ? Math.round(cadre.right - (coin.left + coin.width / 2)) : null,
       cornerOffsetY: cadre && coin ? Math.round(cadre.top - (coin.top + coin.height / 2)) : null,
+      /* « Supprimer focus et présenter » (#48). Les boutons de zoom − / Auto / +
+         et les trois « + Bloc / + Encadré / + Jalon » restent : on relève donc
+         TOUS les libellés de la barre de contrôles et on vérifie qu'aucun mode
+         n'y subsiste, plutôt que de compter — un décompte laisserait passer un
+         mode qui prendrait la place d'un bouton retiré. */
+      boutons: Array.from(document.querySelectorAll(`${sel} .lp-widget-minigantt-axis-controls button`))
+        .map((b) => (b.textContent || "").trim()),
+      /* L'emphase demandée : gras du titre et liseré rouge épais de la barre.
+         Mesuré sur le RENDU : une règle bien écrite mais surclassée par une
+         autre ne se voit que là. */
+      lignes: document.querySelectorAll(`${sel} .lp-widget-minigantt-row.is-selected`).length,
+      titreGras: ligne ? getComputedStyle(ligne.querySelector(".lp-widget-minigantt-label-title") || ligne).fontWeight : "",
+      ombreBarre: ligne && ligne.querySelector(".lp-widget-minigantt-bar")
+        ? getComputedStyle(ligne.querySelector(".lp-widget-minigantt-bar")).boxShadow
+        : "",
     };
   }, hote));
-  // Décocher doit tout retirer : sans cela le cadre s'accumulerait à chaque coche.
-  await page.locator(`${hote} .lp-widget-minigantt-select`).first().uncheck();
+  /* La coche LIT les encadrés : après le geste, elle doit se voir cochée sans
+     qu'aucun état éphémère ne la soutienne. */
+  coche.cochee = await boite.isChecked();
+  /* Décocher doit tout retirer : sans cela le cadre s'accumulerait à chaque
+     coche. Le banc a grossi : sans ce recentrage, la case peut se retrouver
+     hors de la fenêtre au moment du second geste et le contrôle expire sans
+     que rien ne soit en cause. */
+  const boite2 = page.locator(`${hote} .lp-widget-minigantt-select`).first();
+  await boite2.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  /* Clic à la position mesurée plutôt que `uncheck()` : poser l'encadré change
+     la hauteur du widget, et sur un banc devenu long l'heuristique de stabilité
+     de Playwright peut attendre indéfiniment un élément qui, lui, ne bouge
+     plus. Le clic reste un VRAI clic de souris — on ne contourne que l'attente,
+     pas l'interaction. */
+  {
+    const b = await boite2.boundingBox();
+    await page.mouse.click(Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2));
+  }
   await page.waitForTimeout(400);
   coche.apres = await page.locator(`${hote} .lp-widget-minigantt-frame`).count();
+  coche.apresCochee = await boite2.isChecked();
 } catch (error) {
   coche.error = String(error).split("\n")[0];
 }
@@ -493,20 +526,37 @@ try {
    qui ne l'est pas, c'est la fiche : le bouton peut disparaître, la liste
    proposer la mauvaise chose, ou le bouton de validation partir sans les
    réglages en cours — autant de pannes muettes. */
-const transfert = { bouton: 0, options: 0, defaut: "", ici: 0, done: "" };
+const transfert = { bouton: 0, options: 0, defaut: "", ici: 0, done: "", recherche: 0, filtrees: -1, filtreLabel: "", videMessage: 0 };
 try {
   await page.locator("#harness-open-treemap-form").click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   await page.waitForTimeout(300);
   transfert.bouton = await page.locator(".lp-modal .lp-widget-transfer .lp-btn-mini").count();
   await page.locator(".lp-modal .lp-widget-transfer .lp-btn-mini").click();
-  const cible = page.locator(".lp-modal .lp-widget-transfer-panel select").first();
-  transfert.options = await cible.locator("option").count();
+  const cible = page.locator(".lp-modal .lp-widget-transfer-panel .lp-color-select").first();
   // La destination proposée d'emblée ne doit PAS être celle où le widget se
   // trouve déjà : ouvrir sur « ici » invite à valider un transfert vide.
-  transfert.defaut = (await cible.locator("option:checked").innerText()).trim();
-  transfert.ici = await cible.locator("option", { hasText: "— ici" }).count();
-  await cible.selectOption({ label: "Chantiers › Suivi" });
+  transfert.defaut = (await cible.locator(".lp-color-select-label").innerText()).trim();
+  await cible.locator(".lp-color-select-btn").click();
+  await page.waitForTimeout(250);
+  transfert.options = await cible.locator(".lp-color-select-option").count();
+  transfert.ici = await cible.locator(".lp-color-select-option", { hasText: "— ici" }).count();
+  /* Recherche rapide (retour de Quentin sur #58). Elle doit filtrer sur le nom
+     de la PAGE autant que sur celui du tableau, et ignorer les accents. */
+  transfert.recherche = await cible.locator(".lp-select-search").count();
+  if (transfert.recherche) {
+    await cible.locator(".lp-select-search").fill("suivi");
+    await page.waitForTimeout(250);
+    transfert.filtrees = await cible.locator(".lp-color-select-option").count();
+    transfert.filtreLabel = (await cible.locator(".lp-color-select-option").first().innerText()).trim();
+    await cible.locator(".lp-select-search").fill("zzz");
+    await page.waitForTimeout(250);
+    transfert.videMessage = await cible.locator(".lp-select-empty").count();
+    await cible.locator(".lp-select-search").fill("");
+    await page.waitForTimeout(250);
+  }
+  await cible.locator(".lp-color-select-option", { hasText: "Chantiers › Suivi" }).first().click();
+  await page.waitForTimeout(250);
   await page.locator(".lp-modal .lp-widget-transfer-modes label").nth(1).click();
   await page.locator(".lp-modal .lp-widget-transfer-panel .lp-btn-primary").click();
   await page.waitForTimeout(400);
@@ -1327,18 +1377,33 @@ expect(coche.frames === 1, `Coche du Mini-Gantt : ${coche.frames} encadré(s) ap
 // « Ne garder que l'image à droite, en transparence, pas celle de gauche » (#48).
 expect(coche.icons === 0, `Coche du Mini-Gantt : ${coche.icons} image(s) à gauche du cadre, 0 attendue`);
 expect(coche.corners === 1, `Coche du Mini-Gantt : ${coche.corners} pastille(s) de coin, 1 attendue en haut à droite`);
-expect(coche.cornerOpacity !== "" && Number(coche.cornerOpacity) > 0 && Number(coche.cornerOpacity) < 1,
-  `Coche du Mini-Gantt : la pastille est peinte à l'opacité « ${coche.cornerOpacity} » — elle doit rester en transparence`);
+expect(coche.cornerOpacity === "1",
+  `Coche du Mini-Gantt : la pastille est peinte à l'opacité « ${coche.cornerOpacity} » — Quentin l'a demandée pleine`);
 expect(coche.leftGap !== null && coche.leftGap >= 6, `Coche du Mini-Gantt : le trait gauche du cadre passe à ${coche.leftGap} px de la barre — il la recoupe`);
 expect(coche.rightGap !== null && coche.rightGap >= 6, `Coche du Mini-Gantt : le trait droit du cadre passe à ${coche.rightGap} px de la barre — il la recoupe`);
 expect(coche.cornerOffsetX !== null && Math.abs(coche.cornerOffsetX) <= 2 && Math.abs(coche.cornerOffsetY) <= 2,
   `Coche du Mini-Gantt : la pastille est décalée de (${coche.cornerOffsetX}, ${coche.cornerOffsetY}) px du coin supérieur droit du cadre — elle doit y rester centrée`);
 expect(coche.apres === 0, `Coche du Mini-Gantt : ${coche.apres} encadré(s) restant(s) après avoir décoché, 0 attendu`);
+expect(coche.boutons.length > 0, "Mini-Gantt : aucun bouton relevé dans la barre de contrôles — le contrôle des modes retirés passerait à vide");
+expect(!coche.boutons.some((t) => /focus|présenter|quitter|zoom \(/i.test(t)),
+  `Mini-Gantt : la barre de contrôles porte encore « ${coche.boutons.join(" / ")} » — Focus, Présenter et le cadrage sur la sélection ont été retirés (#48)`);
+expect(coche.cochee === true && coche.apresCochee === false,
+  `Coche du Mini-Gantt : la case se lit « ${coche.cochee} » une fois l'encadré posé et « ${coche.apresCochee} » une fois retiré — elle doit suivre l'encadré`);
+expect(coche.lignes === 1, `Coche du Mini-Gantt : ${coche.lignes} ligne(s) marquée(s) is-selected, 1 attendue`);
+expect(Number(coche.titreGras) >= 700,
+  `Coche du Mini-Gantt : le titre de la tâche cochée est peint en graisse ${coche.titreGras || "inconnue"} — Quentin l'a demandé en gras`);
+expect(/rgb\(214, 69, 69\)/.test(coche.ombreBarre) && /2\.5px/.test(coche.ombreBarre),
+  `Coche du Mini-Gantt : la barre de la tâche cochée porte l'ombre « ${coche.ombreBarre || "aucune"} » — il faut un liseré rouge épais`);
 
 expect(!transfert.error, `contrôle du changement de tableau de bord interrompu : ${transfert.error}`);
 expect(transfert.bouton === 1, `Fiche du widget : ${transfert.bouton} bouton « Changer de tableau de bord », 1 attendu`);
-expect(transfert.options === 3, `Fiche du widget : ${transfert.options} destination(s) proposée(s), 3 attendues (Aujourd'hui, Chantiers › Page 1, Chantiers › Suivi)`);
+expect(transfert.options === 7, `Fiche du widget : ${transfert.options} destination(s) proposée(s), 7 attendues`);
 expect(transfert.defaut === "Aujourd'hui", `Fiche du widget : la destination proposée d'emblée est « ${transfert.defaut} » — ce doit être la première qui n'est pas celle où le widget se trouve déjà`);
+// Recherche rapide dans la liste (retour de Quentin sur #58).
+expect(transfert.recherche === 1, "Fiche du widget : la liste des destinations n'a pas de recherche rapide");
+expect(transfert.filtrees === 1, `Fiche du widget : « suivi » laisse ${transfert.filtrees} destination(s), 1 attendue — la recherche doit porter sur le nom de la page`);
+expect(/Suivi/.test(transfert.filtreLabel || ""), `Fiche du widget : « suivi » ne ramène pas la bonne page (« ${transfert.filtreLabel} »)`);
+expect(transfert.videMessage === 1, "Fiche du widget : une recherche sans résultat n'affiche rien — l'utilisateur ne sait pas si la liste est vide ou cassée");
 expect(transfert.ici === 1, `Fiche du widget : ${transfert.ici} destination marquée « ici » — l'emplacement actuel doit se reconnaître dans la liste`);
 // mode | tableau | page | titre | un réglage du widget : le transfert doit
 // emporter la configuration de la fiche, pas seulement l'identité du widget.

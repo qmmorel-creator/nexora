@@ -10,8 +10,8 @@ const html = await readFile(new URL("../.build/index.html", import.meta.url), "u
 const from = html.indexOf(START);
 const to = html.indexOf(END);
 assert.ok(from !== -1 && to > from, "bloc des icônes par URL introuvable dans .build/index.html");
-const { normalizeIconUrl } = vm.runInThisContext(
-  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeIconUrl };\n})`
+const { normalizeIconUrl, resolveIconChoice } = vm.runInThisContext(
+  `(function () {\n${html.slice(from + START.length, to)}\n;return { normalizeIconUrl, resolveIconChoice };\n})`
 )();
 
 test("la casse du protocole ne décide plus si l'icône s'affiche", () => {
@@ -63,4 +63,33 @@ test("ce qui n'est pas une URL suit son propre chemin", () => {
 test("javascript: n'est jamais pris pour une icône", () => {
   assert.equal(normalizeIconUrl("javascript:alert(1)"), null);
   assert.equal(normalizeIconUrl("  JavaScript:alert(1)"), null);
+});
+
+/* Ce que « Enregistrer » retient de la fiche d'icône. La normalisation d'URL ne
+   pouvait rien pour ce défaut-là : l'URL était bien reconnue, elle n'était
+   simplement jamais transmise. */
+
+test("une URL collée sans validation est quand même enregistrée", () => {
+  // Le cas signalé : l'icône disparaissait, l'entrée retombait sur son défaut.
+  assert.equal(resolveIconChoice(null, "https://cdn.exemple/logo.png"), "https://cdn.exemple/logo.png");
+  assert.equal(resolveIconChoice("tabler:star", "https://cdn.exemple/logo.png"), "https://cdn.exemple/logo.png");
+});
+
+test("l'URL en attente est rendue propre, comme au rendu", () => {
+  assert.equal(resolveIconChoice(null, "  HTTPS://cdn.exemple/logo.png  "), "HTTPS://cdn.exemple/logo.png");
+});
+
+test("un champ vide ou inexploitable laisse le brouillon décider", () => {
+  assert.equal(resolveIconChoice("tabler:star", ""), "tabler:star");
+  assert.equal(resolveIconChoice("tabler:star", "   "), "tabler:star");
+  // Une saisie en cours qui n'est pas une URL ne doit pas remplacer le choix.
+  assert.equal(resolveIconChoice("tabler:star", "cdn.exemple/logo.png"), "tabler:star");
+  assert.equal(resolveIconChoice("tabler:star", "javascript:alert(1)"), "tabler:star");
+});
+
+test("retirer l'icône reste possible", () => {
+  // Le champ est vidé en même temps que le brouillon : sans cela l'ancienne URL
+  // ressusciterait à l'enregistrement.
+  assert.equal(resolveIconChoice(null, ""), null);
+  assert.equal(resolveIconChoice(undefined, undefined), null);
 });
