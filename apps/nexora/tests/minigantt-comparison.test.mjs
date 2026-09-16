@@ -614,13 +614,37 @@ test("un départ anticipé ouvre le ruban en vert", () => {
   jointif(ruban);
 });
 
-test("deux périodes DISJOINTES ne laissent pas de trou : l'entre-deux appartient au décalage", () => {
-  // La tâche a été repoussée en bloc, après la fin prévue.
-  const cmp = miniGanttTaskComparison(tache({ start: "2026-10-01", end: "2026-10-20", ...ref("2026-08-12", "2026-09-18") }));
-  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-11-01"));
-  // Un seul segment : trois morceaux rouges consécutifs sont FUSIONNÉS, sinon
-  // deux jonctions invisibles resteraient dans le ruban.
-  assert.deepEqual(kinds(ruban), ["late"]);
+test("une tâche déplacée EN BLOC garde son plan lisible", () => {
+  /* Cas signalé : plan du 09/06 au 09/09, réel du 13/09 au 02/10 — aucun
+     recouvrement. Tout était classé en retard, puis fusionné : un seul pavé
+     rouge d'un bout à l'autre, dans lequel ni la période initiale ni le
+     glissement ne se lisaient plus. Le plan n'a pas pris du retard, il a été
+     abandonné là où il était : il reste gris, en entier. */
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-09-13", end: "2026-10-02", ...ref("2026-06-09", "2026-09-09") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-06-01", "2026-10-15"));
+  assert.deepEqual(kinds(ruban), ["reference", "late"]);
+  jointif(ruban);
+  // Le gris couvre EXACTEMENT la période de référence, ni plus ni moins.
+  const jours = (from, to) => ganttDayNumber(to) - ganttDayNumber(from);
+  const total = jours("2026-06-09", "2026-10-02");
+  assert.ok(Math.abs(ruban.segments[0].widthPct - (jours("2026-06-09", "2026-09-09") / total) * 100) < 0.001);
+  // Et le rouge couvre l'entre-deux ET la période réelle, d'un seul tenant.
+  assert.ok(Math.abs(ruban.segments[1].widthPct - (jours("2026-09-09", "2026-10-02") / total) * 100) < 0.001);
+});
+
+test("déplacée en bloc vers l'AVANT, le plan reste gris et le gain est vert", () => {
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-06-01", end: "2026-06-20", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-05-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["ahead", "reference"]);
+  jointif(ruban);
+});
+
+test("dès qu'il y a recouvrement, le plan non consommé se peint de nouveau", () => {
+  // Départ tardif AVEC recouvrement : la part du plan laissée de côté au début
+  // reste un retard, et c'est bien ce qu'on veut lire.
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-08-20", end: "2026-09-26", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["late", "reference", "late"]);
   jointif(ruban);
 });
 
@@ -650,4 +674,64 @@ test("les segments se touchent SANS bordure : seule la trame les sépare", () =>
   assert.match(miniGanttComparisonZonePattern("reference"), /135deg/);
   assert.match(miniGanttComparisonZonePattern("late"), /\(45deg/);
   assert.match(miniGanttComparisonZonePattern("ahead"), /-45deg/);
+});
+
+// 20. La durée initiale se lit toujours ---------------------------------------
+//
+// Les trames disent ce qui a bougé ; elles ne disent pas combien de temps le
+// plan prévoyait. Une tâche d'un seul jour au milieu d'un plan de trois mois ne
+// montrait aucune frontière (retour de test). La période de référence est donc
+// cerclée à part, par-dessus les trames, exactement sur ses deux dates.
+
+test("la période de référence est cerclée à part, sur ses dates exactes", () => {
+  const w = fenetre("2026-06-01", "2026-10-15");
+  // Le cercle est exprimé en % de la PISTE, comme le ruban lui-même : il est
+  // rendu à CÔTÉ de lui, pour que les deux anneaux se superposent au lieu
+  // d'accoler leurs traits.
+  const pistePct = (d) => ((ganttDayNumber(d) - w.minIdx) / w.span) * 100;
+  const proche = (a, b, quoi) => assert.ok(Math.abs(a - b) < 0.001, `${quoi} : ${a} ≠ ${b}`);
+
+  // Cas conforme : le cercle et le ruban ont EXACTEMENT la même géométrie.
+  const conforme = miniGanttComparisonStrip(
+    miniGanttTaskComparison(tache({ start: "2026-06-09", end: "2026-09-09", ...ref("2026-06-09", "2026-09-09") })), w);
+  proche(conforme.reference.leftPct, conforme.leftPct, "conforme, bord gauche");
+  proche(conforme.reference.widthPct, conforme.widthPct, "conforme, largeur");
+
+  // Déplacée en bloc : le cercle tient sur la seule période prévue, pas sur le
+  // ruban entier — c'est précisément ce qui manquait pour lire la durée du plan.
+  const bloc = miniGanttComparisonStrip(
+    miniGanttTaskComparison(tache({ start: "2026-09-13", end: "2026-10-02", ...ref("2026-06-09", "2026-09-09") })), w);
+  proche(bloc.reference.leftPct, pistePct("2026-06-09"), "bloc, bord gauche");
+  proche(bloc.reference.widthPct, pistePct("2026-09-09") - pistePct("2026-06-09"), "bloc, largeur");
+  assert.ok(bloc.reference.widthPct < bloc.widthPct, "le cercle est plus court que le ruban");
+
+  // Tâche d'un seul jour au milieu du plan : le ruban est tout gris, mais le
+  // cercle dit quand même les trois mois prévus.
+  const unJour = miniGanttComparisonStrip(
+    miniGanttTaskComparison(tache({ start: "2026-07-15", end: "2026-07-15", ...ref("2026-06-09", "2026-09-09") })), w);
+  assert.deepEqual(kinds(unJour), ["reference"]);
+  proche(unJour.reference.widthPct, pistePct("2026-09-09") - pistePct("2026-06-09"), "un jour, largeur");
+
+  // Référence qui dépasse la fenêtre : elle est bornée au cadre, et le côté
+  // tronqué est signalé pour que le rendu y ouvre son angle.
+  const coupee = miniGanttComparisonStrip(
+    miniGanttTaskComparison(tache({ start: "2026-09-13", end: "2026-10-02", ...ref("2026-06-09", "2026-09-09") })),
+    fenetre("2026-07-01", "2026-10-15"));
+  assert.equal(coupee.reference.clippedStart, true);
+  assert.equal(coupee.reference.clippedEnd, false);
+  proche(coupee.reference.leftPct, 0, "tronquée, bord gauche");
+
+  // Un jalon n'a pas de ruban, donc pas de cercle.
+  assert.equal(miniGanttComparisonStrip(miniGanttTaskComparison({
+    id: "m", title: "Jalon", milestone: true, start: "2026-09-26", end: "2026-09-26",
+    comparison: { enabled: true, referenceEnd: "2026-09-18" },
+  }), w), null);
+
+  // Le contour est celui de la barre réelle : le plein et le creux se répondent.
+  assert.match(html, /\.lp-widget-minigantt-cmpref\{[\s\S]{0,220}box-shadow:0 0 0 1px rgba\(16,21,31,0\.85\);/);
+  assert.match(html, /\.lp-widget-minigantt-bar\.is-compared\{ box-shadow:0 0 0 1px rgba\(16,21,31,0\.85\); \}/);
+  // Et il partage la géométrie du ruban, pour que les deux anneaux se
+  // superposent au lieu de s'accoler.
+  assert.match(html, /\.lp-widget-minigantt-cmpref\{\s*\n\s*position:absolute; top:9px; height:8px; border-radius:2px;/);
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px; border-radius:2px;/);
 });
