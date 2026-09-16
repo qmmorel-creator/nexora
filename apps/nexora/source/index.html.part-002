@@ -10,6 +10,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           enabledViews={enabledViews} setEnabledViews={setEnabledViews}
           viewOrder={viewOrder} setViewOrder={setViewOrder}
           startupPref={startupPref} setStartupPref={setStartupPref} savedViews={savedViews} dashboards={dashboards}
+          projectDefaultView={projectDefaultView} setProjectDefaultView={setProjectDefaultView}
           onOpenImport={() => setImportOpen(true)}
           onOpenMarkdownImport={() => setMarkdownImportOpen(true)}
           onExportFullBackup={exportFullBackup}
@@ -55,6 +56,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           tasks={tasks}
           teamMembers={teamMembers}
           inheritedFolder={quickEditProject.__new ? null : projectFolders.find((f)=>f.id===quickEditProject.folderId)}
+          projectDefaultView={projectDefaultView}
           defaultColor={PROJECT_PALETTES[appearance.projectPalette] ? PROJECT_PALETTES[appearance.projectPalette][projects.length % PROJECT_PALETTES[appearance.projectPalette].length] : PROJECT_PALETTES.default[0]}
           onSave={(data) => {
             if (quickEditProject.__new) setProjects((prev) => [...prev, { id: uid(), ...data }]);
@@ -2227,6 +2229,7 @@ function SettingsModal({
   enabledViews, setEnabledViews,
   viewOrder, setViewOrder,
   startupPref, setStartupPref, savedViews, dashboards,
+  projectDefaultView, setProjectDefaultView,
   onOpenImport,
   onOpenMarkdownImport,
   onExportFullBackup,
@@ -2273,7 +2276,7 @@ function SettingsModal({
           </div>
           <div className="lp-settings-content">
             {activeTab === "projects" && (
-              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
+              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
             )}
             {activeTab === "statuses" && (
               <StatusManager embedded statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />
@@ -2363,6 +2366,25 @@ function SettingsModal({
                       </select>
                     )}
                   </div>
+                </div>
+
+                <div className="lp-section-title">À l'ouverture d'un projet</div>
+                <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+                  La vue affichée quand tu ouvres un projet. Un dossier ou un projet peut
+                  toujours imposer la sienne depuis sa propre « Ouverture par défaut » — ce
+                  réglage ne sert que lorsqu'aucun des deux n'en a choisi une.
+                </p>
+                <div className="lp-field" style={{ marginBottom: 14 }}>
+                  <label>Vue par défaut</label>
+                  <select
+                    value={projectDefaultView || ""}
+                    onChange={(e) => setProjectDefaultView(e.target.value)}
+                  >
+                    <option value="">Conserver la vue en cours</option>
+                    {PROJECT_DEFAULT_VIEW_OPTIONS
+                      .filter((v) => enabledViews[v.key] !== false)
+                      .map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+                  </select>
                 </div>
 
                 <div className="lp-section-title">Tableau de bord</div>
@@ -8554,6 +8576,14 @@ function IconEditor({ icon, setIcon }) {
 }
 
 
+/* Ce que « ne rien choisir ici » donne réellement : le réglage général, s'il
+   en existe un, sinon la vue en cours. Le dire évite de promettre « Conserver
+   la vue actuelle » alors qu'un socle imposera autre chose. */
+const projectDefaultViewFallbackLabel = (globalView) => {
+  const label = PROJECT_DEFAULT_VIEW_OPTIONS.find((v) => v.key === globalView)?.label;
+  return label ? `Réglage général (${label})` : "Conserver la vue actuelle";
+};
+
 function ProjectNavigationDefaultsEditor({ value, onChange, ctx, inheritedLabel = "" }) {
   const nav = value || {};
   const viewKey = nav.view || "";
@@ -8629,7 +8659,7 @@ function ProjectNavigationDefaultsEditor({ value, onChange, ctx, inheritedLabel 
   );
 }
 
-function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, onClose }) {
+function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, projectDefaultView, onClose }) {
   const current = folders.find((f)=>f.id===folder.id) || folder;
   const [navigationDefaults, setNavigationDefaults] = useState(current.navigationDefaults || {});
   const ctx = { projects, statuses, taskTypes, tasks, teamMembers, projectFolders };
@@ -8653,13 +8683,13 @@ function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, s
         value={navigationDefaults}
         onChange={setNavigationDefaults}
         ctx={ctx}
-        inheritedLabel="Conserver la vue actuelle"
+        inheritedLabel={projectDefaultViewFallbackLabel(projectDefaultView)}
       />
     </Modal>
   );
 }
 
-function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, teamMembers, onDeleteProject, onBulkDelete, palette, onClose, embedded }) {
+function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, teamMembers, projectDefaultView, onDeleteProject, onBulkDelete, palette, onClose, embedded }) {
   const [formTarget, setFormTarget] = useState(null); // null | "new" | projet à modifier
   const [folderNavTarget, setFolderNavTarget] = useState(null);
 
@@ -8729,6 +8759,7 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           tasks={tasks}
           teamMembers={teamMembers}
           inheritedFolder={formTarget === "new" ? null : projectFolders.find((f)=>f.id===formTarget.folderId)}
+          projectDefaultView={projectDefaultView}
           defaultColor={palette[projects.length % palette.length]}
           onSave={handleSave}
           onClose={() => setFormTarget(null)}
@@ -8751,6 +8782,7 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           tasks={tasks}
           teamMembers={teamMembers}
           projectFolders={projectFolders}
+          projectDefaultView={projectDefaultView}
           onClose={()=>setFolderNavTarget(null)}
         />
       )}
@@ -8760,7 +8792,7 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
 
 
 
-function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, inheritedFolder, defaultColor, onSave, onClose }) {
+function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, inheritedFolder, projectDefaultView, defaultColor, onSave, onClose }) {
   const [name, setName] = useState(project?.name || "");
   const [icon, setIcon] = useState(project?.icon || "tabler:route");
   const [color, setColor] = useState(project?.color || defaultColor || PROJECT_PALETTES.default[0]);
@@ -8900,7 +8932,7 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
           ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
           inheritedLabel={inheritedFolder?.navigationDefaults?.view
             ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
-            : "Conserver la vue actuelle"}
+            : projectDefaultViewFallbackLabel(projectDefaultView)}
         />
       )}
       {projectFolders.length > 0 && (
