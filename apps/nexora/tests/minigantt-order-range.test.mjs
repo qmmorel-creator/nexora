@@ -17,12 +17,14 @@ const EXPORTS = [
   "MINIGANTT_SORT_KEYS", "MINIGANTT_SORT_LABELS",
   "normalizeMiniGanttRange", "miniGanttRangeWindow", "miniGanttClampWindow",
   "ganttShiftMonths", "ganttDayNumber", "MINIGANTT_RANGE_MAX_MONTHS",
+  "miniGanttPinnedWindow",
 ];
 const {
   normalizeMiniGanttSort, normalizeMiniGanttSortDir, miniGanttSortValue, miniGanttSortTasks,
   MINIGANTT_SORT_KEYS, MINIGANTT_SORT_LABELS,
   normalizeMiniGanttRange, miniGanttRangeWindow, miniGanttClampWindow,
   ganttShiftMonths, ganttDayNumber, MINIGANTT_RANGE_MAX_MONTHS,
+  miniGanttPinnedWindow,
 } = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 )();
@@ -202,4 +204,62 @@ test("le widget rend une seule liste triée, et n'écrase plus les tâches hors 
   assert.match(html, /if \(\(rawEndIdx < minIdx \|\| rawStartIdx > maxIdx\) && !cmpInWindow\) return null;/);
   // Et le zoom manuel passe par le recadrage.
   assert.match(html, /const manualWindow = miniGanttClampWindow\(/);
+});
+
+// --- Cadrage automatique : la plus ancienne et la plus lointaine ------------
+//
+// Deux causes, un seul symptôme : « le mode automatique cache des choses de
+// 2022 mais me montre 2027, 2028, 2029 qui ne contiennent rien » (retour de
+// test). Le passé était tronqué d'un côté sans que rien ne borne l'autre.
+
+test("le filtre « X jours dans le passé » ne tronque plus l'axe", () => {
+  // Le filtre ne regarde que la date de FIN : une tâche démarrée bien avant la
+  // fenêtre le passe, et se retrouvait pourtant amputée de son début.
+  // Le cadrage automatique se cale désormais sur l'étendue naturelle, point.
+  assert.match(html, /const filteredMinIdx = naturalMinIdx;/);
+  // Plus aucune borne gauche dérivée du filtre…
+  assert.doesNotMatch(html, /const filterMinIdx =/);
+  // …et la prop n'est plus transmise au widget, faute d'emploi.
+  assert.doesNotMatch(html, /function WidgetMiniGantt\(\{[^}]*pastDays/);
+  // Le filtre lui-même, qui choisit les TÂCHES, est intact.
+  assert.match(html, /if \(f\.pastDays !== "" && f\.pastDays != null\) \{/);
+});
+
+test("la fenêtre figée héritée cède la place dès qu'un cadrage est choisi", () => {
+  const fenetre = { start: "2023-01-01", end: "2029-12-31" };
+  // Widget d'avant le réglage d'étendue : la fenêtre héritée s'applique encore,
+  // exactement comme avant — aucune migration.
+  const heritee = miniGanttPinnedWindow({ miniGanttWindow: fenetre });
+  assert.equal(heritee.minIdx, ganttDayNumber("2023-01-01"));
+  assert.equal(heritee.maxIdx, ganttDayNumber("2029-12-31"));
+  // Elle reste la mémoire du cadrage « Dates fixes » : c'est là que ses deux
+  // dates sont rangées, et ce mode continue donc de les lire.
+  const fixe = miniGanttPinnedWindow({ miniGanttWindow: fenetre, miniGanttRange: { mode: "fixed" } });
+  assert.equal(fixe.minIdx, ganttDayNumber("2023-01-01"));
+  // Mais elle ne survit plus à un AUTRE choix : sinon le mode automatique
+  // restait sans effet visible, et rien dans l'interface ne disait pourquoi.
+  assert.equal(miniGanttPinnedWindow({ miniGanttWindow: fenetre, miniGanttRange: { mode: "auto" } }), null);
+  assert.equal(miniGanttPinnedWindow({ miniGanttWindow: fenetre, miniGanttRange: { mode: "rolling", beforeMonths: 3, afterMonths: 3 } }), null);
+});
+
+test("une fenêtre héritée incomplète ou illisible est ignorée", () => {
+  assert.equal(miniGanttPinnedWindow({}), null);
+  assert.equal(miniGanttPinnedWindow(null), null);
+  assert.equal(miniGanttPinnedWindow({ miniGanttWindow: { start: "2023-01-01" } }), null);
+  assert.equal(miniGanttPinnedWindow({ miniGanttWindow: { start: "hier", end: "demain" } }), null);
+  // Bornes inversées : la fenêtre garde au moins un jour de largeur.
+  const plate = miniGanttPinnedWindow({ miniGanttWindow: { start: "2026-05-10", end: "2026-05-10" } });
+  assert.equal(plate.maxIdx - plate.minIdx, 1);
+});
+
+test("en mode auto, la fenêtre couvre l'étendue entière, des deux côtés", () => {
+  const bornes = {
+    minIdx: ganttDayNumber("2022-03-01"),
+    maxIdx: ganttDayNumber("2026-11-30"),
+    todayIdx: ganttDayNumber("2026-09-16"),
+    todayIso: "2026-09-16",
+  };
+  const w = miniGanttRangeWindow({ mode: "auto" }, bornes);
+  assert.equal(w.minIdx, ganttDayNumber("2022-03-01"), "la plus ancienne date reste dans le cadre");
+  assert.equal(w.maxIdx, ganttDayNumber("2026-11-30"), "et la plus lointaine aussi");
 });

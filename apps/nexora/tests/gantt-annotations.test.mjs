@@ -24,6 +24,9 @@ const EXPORTS = [
   "GANTT_FRAME_MAX_PADDING",
   "miniGanttToggleTaskFrame", "MINIGANTT_CHECK_FRAME_ICON", "MINIGANTT_CHECK_FRAME_CORNER_ICON",
   "GANTT_FRAME_BAR_CLEARANCE", "normalizeHighlightFrames",
+  "normalizeGanttBlockOpacity", "ganttBlockFill",
+  "normalizeGanttBlockBorderWidth", "ganttBlockBorder", "GANTT_BLOCK_BORDER_WIDTH_MAX", "GANTT_BLOCK_DEFAULT_BORDER_WIDTH",
+  "GANTT_BLOCK_OPACITY_MAX", "GANTT_BLOCK_DEFAULT_OPACITY", "GANTT_DECISION_DEFAULT_OPACITY",
 ];
 
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
@@ -37,6 +40,15 @@ const factory = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 );
 const {
+  normalizeGanttBlockOpacity,
+  ganttBlockFill,
+  normalizeGanttBlockBorderWidth,
+  ganttBlockBorder,
+  GANTT_BLOCK_BORDER_WIDTH_MAX,
+  GANTT_BLOCK_DEFAULT_BORDER_WIDTH,
+  GANTT_BLOCK_OPACITY_MAX,
+  GANTT_BLOCK_DEFAULT_OPACITY,
+  GANTT_DECISION_DEFAULT_OPACITY,
   miniGanttToggleTaskFrame,
   MINIGANTT_CHECK_FRAME_ICON,
   MINIGANTT_CHECK_FRAME_CORNER_ICON,
@@ -567,7 +579,10 @@ test("une resynchronisation du calendrier ne perd pas le réglage méta bloc", (
     calTask({ id: "neuf-2", googleEventId: "ev-2" }),
     { id: "neuf-3", title: "Réunion publique", start: "2026-09-02", end: "2026-09-02", syncedCalendarId: "ics-1", syncedCalendarKey: "k-9" },
   ]);
-  assert.deepEqual(after[0].metaBlock, { enabled: true, kind: "decision", color: "#123456", borderStyle: "solid", dashboardIds: null });
+  // La transparence et l'épaisseur des traits rejoignent le réglage reporté, à
+  // leur valeur par défaut tant que personne ne les a touchées — 7 % pour une
+  // fenêtre de décision, 1,5 px pour tout le monde.
+  assert.deepEqual(after[0].metaBlock, { enabled: true, kind: "decision", color: "#123456", borderStyle: "solid", opacity: 7, borderWidth: 1.5, dashboardIds: null });
   assert.equal(after[1].metaBlock, undefined, "une tâche jamais cochée le reste");
   assert.equal(after[2].metaBlock.enabled, true, "les calendriers publics utilisent leur propre clé stable");
 
@@ -798,4 +813,98 @@ test("le dégagement du cadre est strictement positif", () => {
   // À zéro, le trait de 1,5 px du cadre se pose sur la barre et la recoupe —
   // c'est exactement ce que Quentin a vu.
   assert.ok(GANTT_FRAME_BAR_CLEARANCE > 0, "sans dégagement, le cadre recoupe la barre");
+});
+
+// --- Transparence réglable du bloc temporel --------------------------------
+test("la transparence d'un bloc est réglable, et ses défauts ne changent rien", () => {
+  // Un bloc d'avant ce réglage garde EXACTEMENT le remplissage qu'il avait :
+  // 13 % pour une phase, 7 % pour une fenêtre de décision.
+  assert.equal(normalizeGanttBlockOpacity(undefined, "phase"), GANTT_BLOCK_DEFAULT_OPACITY);
+  assert.equal(normalizeGanttBlockOpacity(null, "decision"), GANTT_DECISION_DEFAULT_OPACITY);
+  assert.equal(normalizeGanttBlockOpacity("", undefined), GANTT_BLOCK_DEFAULT_OPACITY);
+  assert.equal(GANTT_BLOCK_DEFAULT_OPACITY, 13);
+  assert.equal(GANTT_DECISION_DEFAULT_OPACITY, 7);
+  // Une valeur réglée est respectée, y compris zéro — une bande vide bornée par
+  // ses deux traits est un choix légitime.
+  assert.equal(normalizeGanttBlockOpacity(0, "phase"), 0);
+  assert.equal(normalizeGanttBlockOpacity(35, "phase"), 35);
+  assert.equal(normalizeGanttBlockOpacity("35", "phase"), 35);
+  // Bornée des deux côtés : au-delà du plafond, la bande passerait devant les
+  // barres qu'elle sert à situer.
+  assert.equal(normalizeGanttBlockOpacity(-10, "phase"), 0);
+  assert.equal(normalizeGanttBlockOpacity(500, "phase"), GANTT_BLOCK_OPACITY_MAX);
+  assert.equal(normalizeGanttBlockOpacity("abc", "phase"), GANTT_BLOCK_DEFAULT_OPACITY);
+  // La normalisation la conserve sur le bloc.
+  const [bloc] = normalizeTemporalBlocks([{ id: "b", title: "Études", startDate: "2026-03-01", endDate: "2026-06-30", opacity: 42 }]);
+  assert.equal(bloc.opacity, 42);
+  const [parDefaut] = normalizeTemporalBlocks([{ id: "b", title: "Études", startDate: "2026-03-01", endDate: "2026-06-30" }]);
+  assert.equal(parDefaut.opacity, GANTT_BLOCK_DEFAULT_OPACITY);
+});
+
+test("les deux diagrammes posent le MÊME remplissage, calculé au même endroit", () => {
+  assert.equal(
+    ganttBlockFill({ color: "#4F6AF5", opacity: 42 }),
+    "color-mix(in srgb, #4F6AF5 42%, transparent)"
+  );
+  // Sans réglage, chaque nature retrouve sa valeur d'origine.
+  assert.equal(ganttBlockFill({ color: "#4F6AF5" }), "color-mix(in srgb, #4F6AF5 13%, transparent)");
+  assert.equal(ganttBlockFill({ color: "#8B5CF6", kind: "decision" }), "color-mix(in srgb, #8B5CF6 7%, transparent)");
+  // Sans couleur non plus : le défaut des blocs prend le relais.
+  assert.match(ganttBlockFill({}), /^color-mix\(in srgb, #[0-9A-Fa-f]{6} 13%, transparent\)$/);
+  assert.match(ganttBlockFill(null), /13%/);
+  // Et les deux diagrammes l'appellent, plutôt que de recopier le calcul.
+  assert.equal((html.match(/background: ganttBlockFill\(shape\.block\)/g) || []).length, 2);
+  assert.doesNotMatch(html, /shape\.block\.kind === "decision" \? " 7%"/);
+});
+
+// --- Épaisseur des traits d'un bloc temporel --------------------------------
+//
+// Elle était codée en dur à 1,5 px aux quatre endroits qui dessinent un bloc :
+// invisible au réglage, et impossible à accorder avec la transparence du
+// remplissage — un bloc très transparent avait des traits aussi appuyés qu'un
+// bloc plein.
+
+test("l'épaisseur des traits se règle, au demi-pixel, sans toucher aux blocs existants", () => {
+  // Un bloc enregistré avant ce réglage garde EXACTEMENT son rendu d'avant.
+  assert.equal(GANTT_BLOCK_DEFAULT_BORDER_WIDTH, 1.5);
+  assert.equal(normalizeGanttBlockBorderWidth(undefined), 1.5);
+  assert.equal(normalizeGanttBlockBorderWidth(null), 1.5);
+  assert.equal(normalizeGanttBlockBorderWidth(""), 1.5);
+  assert.equal(normalizeGanttBlockBorderWidth("pas un nombre"), 1.5);
+  // Au demi-pixel : en dessous, deux réglages voisins rendent pareil à l'écran.
+  assert.equal(normalizeGanttBlockBorderWidth(2.3), 2.5);
+  assert.equal(normalizeGanttBlockBorderWidth(2.1), 2);
+  assert.equal(normalizeGanttBlockBorderWidth("3"), 3);
+  // Bornes : 0 retire les traits, le plafond empêche de fermer une bande courte.
+  assert.equal(normalizeGanttBlockBorderWidth(0), 0);
+  assert.equal(normalizeGanttBlockBorderWidth(-4), 0);
+  assert.equal(normalizeGanttBlockBorderWidth(99), GANTT_BLOCK_BORDER_WIDTH_MAX);
+});
+
+test("le trait est composé à un seul endroit, épaisseur, style et couleur", () => {
+  assert.equal(ganttBlockBorder({ color: "#123456", borderStyle: "solid", borderWidth: 4 }), "4px solid #123456");
+  // Le style reste celui du bloc : plein ou pointillés, rien d'autre.
+  assert.equal(ganttBlockBorder({ color: "#123456", borderStyle: "n'importe quoi" }), "1.5px dashed #123456");
+  // 0 px ne laisse pas un trait de largeur nulle : il n'y a plus de trait.
+  assert.equal(ganttBlockBorder({ color: "#123456", borderWidth: 0 }), "none");
+  // Un bloc sans couleur retombe sur la couleur par défaut, comme le remplissage.
+  assert.ok(ganttBlockBorder({}).endsWith(GANTT_BLOCK_DEFAULT_COLOR));
+  assert.equal(ganttBlockBorder(null), `1.5px dashed ${GANTT_BLOCK_DEFAULT_COLOR}`);
+  // Les quatre rendus passent par cette composition : plus aucune valeur codée
+  // en dur dans les diagrammes.
+  assert.doesNotMatch(html, /borderLeft: "1\.5px " \+/);
+  assert.match(html, /borderLeft: ganttBlockBorder\(shape\.block\)/);
+});
+
+test("le réglage survit à la normalisation, dans les trois formes de bloc", () => {
+  const [bloc] = normalizeTemporalBlocks([
+    { id: "b1", title: "Congés", startDate: "2026-08-01", endDate: "2026-08-20", color: "#4F6AF5", borderWidth: 3 },
+  ]);
+  assert.equal(bloc.borderWidth, 3);
+  // Et un bloc qui n'en porte pas ressort au défaut, jamais à `undefined` —
+  // sinon le rendu retomberait sur une valeur codée ailleurs.
+  const [sansReglage] = normalizeTemporalBlocks([
+    { id: "b2", title: "Gros œuvre", startDate: "2026-08-21", endDate: "2026-09-20", color: "#22B07D" },
+  ]);
+  assert.equal(sansReglage.borderWidth, 1.5);
 });

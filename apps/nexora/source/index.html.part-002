@@ -1318,6 +1318,8 @@ function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlo
                     <label>Couleur</label>
                     <ColorPicker value={block.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patch(block.id, { color })} />
                   </div>
+                  <GanttBlockBorderWidthRow block={block} onChange={(borderWidth) => patch(block.id, { borderWidth })} />
+                  <GanttBlockOpacityRow block={block} onChange={(opacity) => patch(block.id, { opacity })} />
                 </div>
               )}
             </div>
@@ -3237,6 +3239,68 @@ function normalizeGanttPadding(value) {
 // Migration non destructive : une configuration Gantt sans annotations donne
 // simplement des listes vides, et une entrée illisible est ignorée plutôt que
 // de casser le rendu de tout le diagramme.
+/* Opacité du remplissage d'un bloc temporel, en POURCENT.
+
+   Elle était figée dans le rendu — 13 % pour une phase, 7 % pour une fenêtre de
+   décision — et les deux diagrammes la recopiaient chacun de leur côté, à un
+   point près. Elle devient un réglage du bloc, avec ces mêmes valeurs par
+   défaut : un bloc enregistré avant ce changement ne bouge pas d'un pixel.
+
+   Le plafond de 60 % n'est pas arbitraire : au-delà, la bande passe devant les
+   barres qu'elle est censée situer, alors qu'elle est dessinée DERRIÈRE elles. */
+const GANTT_BLOCK_OPACITY_MAX = 60;
+const GANTT_BLOCK_DEFAULT_OPACITY = 13;
+const GANTT_DECISION_DEFAULT_OPACITY = 7;
+
+function normalizeGanttBlockOpacity(value, kind) {
+  const parDefaut = normalizeGanttBlockKind(kind) === "decision"
+    ? GANTT_DECISION_DEFAULT_OPACITY
+    : GANTT_BLOCK_DEFAULT_OPACITY;
+  if (value === null || value === undefined || value === "") return parDefaut;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return parDefaut;
+  return Math.min(GANTT_BLOCK_OPACITY_MAX, Math.max(0, n));
+}
+
+/* Épaisseur des deux traits qui bornent un bloc temporel. Elle était codée en
+   dur à 1,5 px aux quatre endroits qui dessinent un bloc — widget, vue Gantt,
+   aperçu de l'éditeur —, donc invisible au réglage et impossible à accorder
+   avec la transparence du remplissage : un bloc très transparent avait des
+   traits aussi appuyés qu'un bloc plein.
+
+   0 px retire les traits — la bande n'est plus alors qu'un lavis de couleur.
+   Le plafond de 6 px n'est pas arbitraire : au-delà, les deux montants
+   mangeraient une bande courte au point de la fermer. La valeur par défaut
+   reste 1,5 px : un bloc enregistré avant ce réglage ne bouge pas d'un pixel. */
+const GANTT_BLOCK_BORDER_WIDTH_MAX = 6;
+const GANTT_BLOCK_DEFAULT_BORDER_WIDTH = 1.5;
+
+function normalizeGanttBlockBorderWidth(value) {
+  if (value === null || value === undefined || value === "") return GANTT_BLOCK_DEFAULT_BORDER_WIDTH;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return GANTT_BLOCK_DEFAULT_BORDER_WIDTH;
+  // Au demi-pixel : en dessous, deux réglages voisins rendent pareil à l'écran.
+  return Math.min(GANTT_BLOCK_BORDER_WIDTH_MAX, Math.max(0, Math.round(n * 2) / 2));
+}
+
+// Le trait tel que les deux diagrammes le posent. Un seul endroit, comme pour
+// le remplissage : ils le recopiaient chacun de leur côté, épaisseur comprise.
+function ganttBlockBorder(block) {
+  const b = block && typeof block === "object" ? block : {};
+  const width = normalizeGanttBlockBorderWidth(b.borderWidth);
+  if (!width) return "none";
+  const color = typeof b.color === "string" && b.color ? b.color : GANTT_BLOCK_DEFAULT_COLOR;
+  return `${width}px ${normalizeGanttBorderStyle(b.borderStyle)} ${color}`;
+}
+
+// Le remplissage tel que les deux diagrammes le posent, à partir de l'opacité
+// du bloc. Un seul endroit : ils le recopiaient chacun de leur côté.
+function ganttBlockFill(block) {
+  const b = block && typeof block === "object" ? block : {};
+  const color = typeof b.color === "string" && b.color ? b.color : GANTT_BLOCK_DEFAULT_COLOR;
+  return `color-mix(in srgb, ${color} ${normalizeGanttBlockOpacity(b.opacity, b.kind)}%, transparent)`;
+}
+
 function normalizeTemporalBlocks(list) {
   if (!Array.isArray(list)) return [];
   return list
@@ -3251,6 +3315,8 @@ function normalizeTemporalBlocks(list) {
         ? b.color
         : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
       borderStyle: normalizeGanttBorderStyle(b.borderStyle),
+      opacity: normalizeGanttBlockOpacity(b.opacity, b.kind),
+      borderWidth: normalizeGanttBlockBorderWidth(b.borderWidth),
     }));
 }
 
@@ -3675,6 +3741,8 @@ function normalizeMetaTemporalBlocks(list) {
         ? b.color
         : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
       borderStyle: normalizeGanttBorderStyle(b.borderStyle),
+      opacity: normalizeGanttBlockOpacity(b.opacity, b.kind),
+      borderWidth: normalizeGanttBlockBorderWidth(b.borderWidth),
       // Absent = TOUS les tableaux de bord, y compris ceux créés plus tard.
       // Décocher un tableau matérialise la liste.
       dashboardIds: Array.isArray(b.dashboardIds) ? b.dashboardIds.filter((id) => typeof id === "string" && id) : null,
@@ -3707,6 +3775,8 @@ function normalizeTaskMetaBlock(meta) {
       ? meta.color
       : (kind === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
     borderStyle: normalizeGanttBorderStyle(meta.borderStyle),
+    opacity: normalizeGanttBlockOpacity(meta.opacity, kind),
+    borderWidth: normalizeGanttBlockBorderWidth(meta.borderWidth),
     // Même convention que les méta blocs des Réglages : absent = tous les
     // tableaux de bord, y compris ceux créés plus tard.
     dashboardIds: Array.isArray(meta.dashboardIds) ? meta.dashboardIds.filter((id) => typeof id === "string" && id) : null,
@@ -3730,6 +3800,8 @@ function metaBlocksFromTasks(tasks) {
       kind: meta.kind,
       color: meta.color,
       borderStyle: meta.borderStyle,
+      opacity: meta.opacity,
+      borderWidth: meta.borderWidth,
       dashboardIds: meta.dashboardIds,
     };
     if (!validateTemporalBlock(candidate).ok) return;
@@ -4048,6 +4120,91 @@ function miniGanttComparisonBars(cmp, window) {
   return { reference, ahead, late, freed };
 }
 
+/* RUBAN de comparaison — un seul bloc continu, collé sous la barre.
+
+   Le rail précédent juxtaposait trois objets qui se chevauchaient (référence,
+   avance, retard), chacun avec son contour : trop discret de loin, brouillon de
+   près (retour de test). On raisonne désormais par PARTITION du temps couvert
+   par l'une OU l'autre des deux périodes, découpé aux quatre dates :
+
+     gris  — plan et réel coïncident, c'est la période tenue ;
+     rouge — le temps que le réel occupe au-delà du plan, ou que le plan
+             réservait avant que le réel ne démarre ;
+     vert  — le temps rendu : prévu et non consommé, ou consommé en avance.
+
+   Les segments sont DISJOINTS et JOINTIFS : aucune bordure n'est nécessaire,
+   seule la trame change d'un segment à l'autre, et le ruban se lit comme une
+   seule pièce. Ils sont exprimés en % DU RUBAN, pas de la piste : le rendu les
+   pose dans un conteneur en overflow:hidden, ce qui arrondit proprement les
+   deux extrémités sans arrondir les jonctions internes. */
+function miniGanttComparisonStrip(cmp, window) {
+  if (!cmp || cmp.milestone) return null;
+  const minIdx = Number(window && window.minIdx);
+  const maxIdx = Number(window && window.maxIdx);
+  const span = Math.max(1, Number(window && window.span) || (maxIdx - minIdx));
+  if (!Number.isFinite(minIdx) || !Number.isFinite(maxIdx)) return null;
+  const refStart = cmp.referenceStartIdx;
+  const refEnd = cmp.referenceEndIdx;
+  const curStart = cmp.currentStartIdx;
+  const curEnd = cmp.currentEndIdx;
+  if (![refStart, refEnd, curStart, curEnd].every((n) => Number.isFinite(n))) return null;
+  const from = Math.min(refStart, curStart);
+  const to = Math.max(refEnd, curEnd);
+  if (to < minIdx || from > maxIdx) return null;
+  const clipFrom = Math.max(minIdx, from);
+  const clipTo = Math.min(maxIdx, to);
+  if (clipTo < clipFrom) return null;
+  const inner = clipTo - clipFrom;
+  // Bornes de découpe : les quatre dates qui tombent dans la fenêtre, plus les
+  // deux bords. Le Set retire les doublons — deux dates confondues ne doivent
+  // pas produire un segment de largeur nulle.
+  const cuts = Array.from(new Set(
+    [refStart, refEnd, curStart, curEnd]
+      .filter((n) => n > clipFrom && n < clipTo)
+      .concat([clipFrom, clipTo])
+  )).sort((a, b) => a - b);
+  const segments = [];
+  for (let i = 0; i < cuts.length - 1; i += 1) {
+    const a = cuts[i];
+    const b = cuts[i + 1];
+    if (b <= a) continue;
+    // On classe par le MILIEU du segment : jamais par une borne, qui appartient
+    // aux deux côtés à la fois.
+    const mid = (a + b) / 2;
+    const inRef = mid > refStart && mid < refEnd;
+    const inCur = mid > curStart && mid < curEnd;
+    const kind = inRef && inCur
+      ? "reference"
+      : inRef
+        ? (mid < curStart ? "late" : "ahead")
+        : inCur
+          ? (mid < refStart ? "ahead" : "late")
+          // Ni l'un ni l'autre : les deux périodes sont DISJOINTES et c'est
+          // l'entre-deux. Il appartient au décalage qui l'a créé.
+          : (mid > refEnd ? "late" : "ahead");
+    const widthPct = (inner > 0 ? (b - a) / inner : 1) * 100;
+    const previous = segments[segments.length - 1];
+    if (previous && previous.kind === kind) {
+      previous.widthPct += widthPct;
+      continue;
+    }
+    segments.push({ kind, leftPct: (inner > 0 ? (a - clipFrom) / inner : 0) * 100, widthPct });
+  }
+  // Tâche d'un seul jour parfaitement conforme : les quatre dates sont
+  // confondues, il n'y a aucun segment à découper — le ruban existe quand même,
+  // sans quoi la ligne ne montrerait plus rien du tout.
+  if (!segments.length) segments.push({ kind: "reference", leftPct: 0, widthPct: 100 });
+  return {
+    leftPct: ((clipFrom - minIdx) / span) * 100,
+    // Même plancher de 2 % que la barre actuelle : sur une tâche très courte,
+    // un ruban plus fin serait invisible.
+    widthPct: Math.max(2, (inner / span) * 100),
+    clippedStart: from < minIdx,
+    clippedEnd: to > maxIdx,
+    segments,
+  };
+}
+
 // Jalon comparé : deux positions et le segment qui les relie. Le segment est
 // borné à la fenêtre, mais sa présence ne dépend pas d'elle — un jalon de
 // référence hors champ reste signalé par l'écart chiffré et l'infobulle.
@@ -4159,6 +4316,13 @@ function miniGanttComparisonToneColor(tone) {
    motif reste plus aéré que celui d'`ahead` pour qu'on distingue encore
    « partie prise avant le début prévu » de « temps rendu à la fin ». */
 function miniGanttComparisonZonePattern(kind) {
+  // Période TENUE : la trame grise penche dans l'autre sens (135°) que les deux
+  // trames d'écart, et pose un fond très clair. C'est ce contraste de SENS, pas
+  // seulement de couleur, qui fait lire les jonctions du ruban sans y mettre la
+  // moindre bordure.
+  if (kind === "reference") {
+    return `repeating-linear-gradient(135deg, ${MINIGANTT_COMPARISON_REF_COLOR}61 0 2px, transparent 2px 5px), ${MINIGANTT_COMPARISON_REF_COLOR}17`;
+  }
   if (kind === "late") {
     return `repeating-linear-gradient(45deg, ${MINIGANTT_COMPARISON_LATE_COLOR}8c 0 3px, transparent 3px 6px)`;
   }
@@ -4172,6 +4336,7 @@ function miniGanttComparisonZonePattern(kind) {
 // gagné —, elle doit donc porter la même couleur.
 function miniGanttComparisonZoneColor(kind) {
   if (kind === "late") return MINIGANTT_COMPARISON_LATE_COLOR;
+  if (kind === "reference") return MINIGANTT_COMPARISON_REF_COLOR;
   return MINIGANTT_COMPARISON_AHEAD_COLOR;
 }
 
@@ -4236,6 +4401,34 @@ function miniGanttSortTasks(tasks, key, direction) {
 // Absent, c'est `auto` : un widget d'avant ce réglage ne change pas de cadrage.
 const MINIGANTT_RANGE_MODES = ["auto", "rolling", "fixed"];
 const MINIGANTT_RANGE_MAX_MONTHS = 120;
+/* Réglages rapides de la fenêtre glissante, pour la barre d'outils du widget :
+   on choisit un cadrage d'un clic au lieu de saisir deux nombres. Les valeurs
+   libres restent dans les paramètres — la barre d'outils va vite, la fiche
+   règle finement. */
+const MINIGANTT_RANGE_PRESETS = [
+  { key: "1-3", before: 1, after: 3, label: "1 mois avant · 3 après" },
+  { key: "3-12", before: 3, after: 12, label: "3 mois avant · 12 après" },
+  { key: "6-24", before: 6, after: 24, label: "6 mois avant · 24 après" },
+  { key: "12-36", before: 12, after: 36, label: "12 mois avant · 36 après" },
+];
+
+// Le préréglage qui correspond EXACTEMENT au cadrage courant, s'il y en a un :
+// une valeur saisie à la main dans les paramètres n'en coche aucun.
+function miniGanttRangePresetKey(range) {
+  const r = normalizeMiniGanttRange(range);
+  const found = MINIGANTT_RANGE_PRESETS.find((p) => p.before === r.beforeMonths && p.after === r.afterMonths);
+  return found ? found.key : null;
+}
+
+// Libellé court du cadrage, tel que la barre d'outils l'affiche. `hasWindow`
+// dit si une fenêtre à dates fixes est réellement posée : sans elle, le mode
+// « fixed » retombe sur l'automatique, et le libellé doit le dire.
+function miniGanttRangeLabel(range, hasWindow) {
+  const r = normalizeMiniGanttRange(range);
+  if (r.mode === "fixed") return hasWindow ? "Dates fixes" : "Auto";
+  if (r.mode === "rolling") return `\u2212${r.beforeMonths} / +${r.afterMonths} mois`;
+  return "Auto";
+}
 
 function ganttClampInt(value, min, max, fallback) {
   const n = Math.round(Number(value));
@@ -4295,6 +4488,30 @@ function miniGanttRangeWindow(range, bounds) {
   const lo = r.includeToday && Number.isFinite(todayIdx) ? Math.min(min, todayIdx) : min;
   const hi = r.includeToday && Number.isFinite(todayIdx) ? Math.max(max, todayIdx) : max;
   return { minIdx: lo, maxIdx: Math.max(lo + 1, hi) };
+}
+
+/* Fenêtre à dates fixes HÉRITÉE de l'ancien bouton de cadrage (#48), encore
+   portée par les widgets enregistrés à l'époque. Elle primait sur tout, y
+   compris sur le mode automatique : un widget qui avait gardé une fenêtre
+   2023-2029 cachait le passé et réservait trois années vides à l'avenir, sans
+   que rien dans l'interface ne dise pourquoi (retour de test).
+
+   Elle reste la MÉMOIRE du cadrage « Dates fixes » — c'est là que ses deux
+   dates sont rangées —, mais elle ne survit plus à un autre choix : dès que le
+   widget demande « Auto » ou une fenêtre glissante, c'est ce réglage qui décide.
+   Aucune migration : un widget sans réglage d'étendue se comporte exactement
+   comme avant. */
+function miniGanttPinnedWindow(widget) {
+  const w = widget && typeof widget === "object" ? widget : {};
+  const range = w.miniGanttRange;
+  if (range && typeof range === "object" && normalizeMiniGanttRange(range).mode !== "fixed") return null;
+  const win = w.miniGanttWindow;
+  if (!win || typeof win !== "object") return null;
+  if (!isGanttIsoDate(win.start) || !isGanttIsoDate(win.end)) return null;
+  const minIdx = ganttDayNumber(win.start);
+  const maxIdx = ganttDayNumber(win.end);
+  if (minIdx == null || maxIdx == null) return null;
+  return { minIdx, maxIdx: Math.max(minIdx + 1, maxIdx) };
 }
 
 /* Ramène une fenêtre DANS des bornes utiles, en conservant sa largeur.
@@ -6134,6 +6351,82 @@ function GanttAnnotationBorderRow({ value, onChange }) {
   );
 }
 
+/* Transparence du remplissage d'un bloc temporel. Partagée par les TROIS
+   éditeurs de bloc — annotations d'un widget, méta blocs des Réglages, méta
+   bloc porté par une tâche calendrier — plutôt que recopiée dans chacun.
+   L'aperçu montre le résultat exact, contour compris : un pourcentage seul ne
+   dit rien de ce que ça donne derrière des barres. */
+/* Épaisseur des traits d'un bloc temporel. Partagée par les TROIS éditeurs,
+   comme la transparence, et posée juste sous le choix plein / pointillés :
+   les deux réglages décrivent le même trait. */
+function GanttBlockBorderWidthRow({ block, onChange }) {
+  const epaisseur = normalizeGanttBlockBorderWidth(block?.borderWidth);
+  return (
+    <div className="lp-field">
+      <label>Épaisseur des traits — {epaisseur} px</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          type="range" min="0" max={GANTT_BLOCK_BORDER_WIDTH_MAX} step="0.5" value={epaisseur}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ flex: "1 1 auto", minWidth: 0 }}
+          aria-label="Épaisseur des traits du bloc temporel, en pixels"
+        />
+        <input
+          type="number" min="0" max={GANTT_BLOCK_BORDER_WIDTH_MAX} step="0.5" value={epaisseur}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ width: 64, flex: "0 0 auto" }}
+        />
+        <span
+          aria-hidden="true"
+          title="Aperçu des traits"
+          style={{
+            flex: "0 0 auto", width: 34, height: 20, borderRadius: 4, boxSizing: "border-box",
+            background: ganttBlockFill(block),
+            border: ganttBlockBorder({ ...block, borderWidth: epaisseur }),
+          }}
+        />
+      </div>
+      <p className="lp-gantt-annot-hint">
+        0 px retire les traits : il ne reste que le lavis de couleur. Au-delà de {GANTT_BLOCK_BORDER_WIDTH_MAX} px, les deux montants fermeraient une bande courte.
+      </p>
+    </div>
+  );
+}
+
+function GanttBlockOpacityRow({ block, onChange }) {
+  const opacite = normalizeGanttBlockOpacity(block?.opacity, block?.kind);
+  return (
+    <div className="lp-field">
+      <label>Transparence du remplissage — {opacite} %</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          type="range" min="0" max={GANTT_BLOCK_OPACITY_MAX} value={opacite}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ flex: "1 1 auto", minWidth: 0 }}
+          aria-label="Opacité du remplissage du bloc temporel, en pourcent"
+        />
+        <input
+          type="number" min="0" max={GANTT_BLOCK_OPACITY_MAX} value={opacite}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ width: 64, flex: "0 0 auto" }}
+        />
+        <span
+          aria-hidden="true"
+          title="Aperçu du remplissage"
+          style={{
+            flex: "0 0 auto", width: 34, height: 20, borderRadius: 4, boxSizing: "border-box",
+            background: ganttBlockFill({ ...block, opacity: opacite }),
+            border: ganttBlockBorder(block),
+          }}
+        />
+      </div>
+      <p className="lp-gantt-annot-hint">
+        0 % laisse la bande vide, bornée par ses deux traits. Au-delà de {GANTT_BLOCK_OPACITY_MAX} %, elle passerait devant les barres qu'elle sert à situer.
+      </p>
+    </div>
+  );
+}
+
 // Éditeur unique des annotations du Gantt : les deux sections repliables sont
 // rendues telles quelles dans les paramètres du widget, et dans la modale
 // ouverte depuis la barre d'actions du Gantt. Aucune duplication de formulaire.
@@ -6266,6 +6559,8 @@ function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defa
                       <label>Couleur</label>
                       <ColorPicker value={b.color} onChange={(color) => patchBlock(b.id, { color })} />
                     </div>
+                    <GanttBlockBorderWidthRow block={b} onChange={(borderWidth) => patchBlock(b.id, { borderWidth })} />
+                    <GanttBlockOpacityRow block={b} onChange={(opacity) => patchBlock(b.id, { opacity })} />
                     <GanttAnnotationBorderRow value={b.borderStyle} onChange={(borderStyle) => patchBlock(b.id, { borderStyle })} />
                   </div>
                 )}
@@ -7612,6 +7907,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 <label>Couleur</label>
                 <ColorPicker value={metaBlock.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patchMetaBlock({ color })} />
               </div>
+              <GanttBlockBorderWidthRow block={metaBlock} onChange={(borderWidth) => patchMetaBlock({ borderWidth })} />
+              <GanttBlockOpacityRow block={metaBlock} onChange={(opacity) => patchMetaBlock({ opacity })} />
             </div>
           )}
         </div>

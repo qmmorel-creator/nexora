@@ -86,7 +86,7 @@ function AnnotationsHarness() {
   const annotations = {
     temporalBlocks: [
       { id: "b1", title: "Études", startDate: "2026-07-13", endDate: "2026-08-20", color: "#4F6AF5", borderStyle: "dashed" },
-      { id: "b2", title: "Gros œuvre", startDate: "2026-08-21", endDate: "2026-09-20", color: "#22B07D", borderStyle: "solid" },
+      { id: "b2", title: "Gros œuvre", startDate: "2026-08-21", endDate: "2026-09-20", color: "#22B07D", borderStyle: "solid", borderWidth: 4 },
     ],
     highlightFrames: [
       { id: "f1", label: "Lot critique", taskIds: ["t1", "t2"], color: "#D64545", borderStyle: "dashed", padding: 4 },
@@ -593,6 +593,22 @@ function AnnotationsHarness() {
         <div id="harness-nofields-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
             widget={{ id: "w9", type: "minigantt", colorBy: "status", miniGanttFields: [], miniGanttSort: "title" }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* Échelle ANNUELLE : neuf ans à dates fixes. C'est le cas où l'axe
+            n'offrait que neuf traits et rien entre eux — la sous-grille par
+            trimestres lui rend son contexte temporel. */}
+        <div id="harness-years-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{
+              id: "w12", type: "minigantt", colorBy: "status", miniGanttFields: ["end"],
+              miniGanttRange: { mode: "fixed" },
+              miniGanttWindow: { start: "2019-01-01", end: "2027-12-31" },
+            }}
             tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
             onUpdateWidget={noop}
             onUpdateTask={noop}

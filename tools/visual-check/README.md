@@ -64,6 +64,19 @@ jalon) et deux n'en portent pas, dont un jalon :
   prolongement, et la poignée d'avancement semblait avoir de la course qu'elle
   n'avait pas.
 
+Alignement des titres de bloc :
+
+- dans un widget **sans bande de repères** — donc sans la mesure sur laquelle la
+  largeur de piste s'appuyait —, chaque titre reste centré sur sa bande.
+
+Barre d'outils et sous-grille du Mini-Gantt :
+
+- toutes les commandes d'affichage sont **alignées côte à côte** sur une bande
+  au-dessus de l'axe, et non empilées en colonne ;
+- sur une échelle de neuf ans, l'axe porte des sous-graduations trimestrielles
+  et le diagramme une sous-grille verticale : sans elles, neuf traits et rien
+  entre eux.
+
 Ordre des lignes et cadrage du Mini-Gantt :
 
 - un jalon placé **entre deux barres** apparaît bien entre elles, et non en bas
