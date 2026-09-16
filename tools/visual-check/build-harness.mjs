@@ -5,10 +5,11 @@
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
+import { compileUi } from "../../apps/nexora/scripts/compile-ui.mjs";
 
 const here = path.resolve(import.meta.dirname);
 const repoRoot = path.resolve(here, "..", "..");
-const distFile = path.join(repoRoot, "apps", "nexora", "dist", "index.html");
+const distFile = path.join(repoRoot, "apps", "nexora", ".build", "index.html");
 const outDir = path.join(here, ".harness");
 const vendorDir = path.join(outDir, "vendor");
 
@@ -91,8 +92,8 @@ function requireOnce(source, needle, label) {
   if (count !== 1) throw new Error(`${label} : ${count} occurrence(s) dans dist/index.html, 1 attendue — le banc doit être mis à jour.`);
 }
 
-export async function buildHarness() {
-  const source = await readFile(distFile, "utf8").catch(() => {
+export async function buildHarness({ compile = true } = {}) {
+  const source = await readFile(distFile, "utf8").then(s => s.replace(/\r\n/g, "\n")).catch(() => {
     throw new Error("apps/nexora/dist/index.html absent — lancer d'abord `npm run build --prefix apps/nexora`.");
   });
   requireOnce(source, BABEL_TAG, "balise Babel");
@@ -123,7 +124,7 @@ export async function buildHarness() {
     .replace(BABEL_TAG, `<script type="importmap">${JSON.stringify({ imports: IMPORT_MAP })}</script>\n<script src="./vendor/babel.min.js"></script>`)
     .replace(FONT_TAG, "")
     .replace(BOOTSTRAP, harness);
-  await writeFile(path.join(outDir, "index.html"), page);
+  await writeFile(path.join(outDir, "index.html"), compile ? await compileUi(page) : page);
   return outDir;
 }
 

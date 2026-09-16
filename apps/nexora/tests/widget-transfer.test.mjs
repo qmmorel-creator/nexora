@@ -16,10 +16,10 @@ const EXPORTS = [
   "widgetTransferApply",
 ];
 
-const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START);
 const to = html.indexOf(END);
-assert.ok(from !== -1 && to > from, "bloc de transfert de widget introuvable dans dist/index.html");
+assert.ok(from !== -1 && to > from, "bloc de transfert de widget introuvable dans .build/index.html");
 
 const {
   WIDGET_TRANSFER_MODES,

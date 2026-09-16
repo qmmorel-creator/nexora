@@ -3262,34 +3262,60 @@ const seedTasks = [
 // ============================================================================
 // UI génériques
 // ============================================================================
+// Shared modal: nested dialogs restore the preceding dialog and its focus.
+const nexoraModalStack = [];
 function Modal({ title, onClose, children, footer, wide, extraWide, compact, className = "" }) {
-  // Échap ferme la modale — cohérent avec le menu contextuel (clic droit) qui
-  // gère déjà ce raccourci ; corrige ici une bonne fois pour toutes puisque
-  // Modal est le composant partagé derrière la quasi-totalité des dialogues.
-  // Garde : si un menu déroulant imbriqué (Projet, Statut, DropdownButton…) est
-  // ouvert au moment de l'appui, on le laisse se fermer lui-même en premier —
-  // sinon Échap fermerait toute la fiche en cours d'édition par surprise.
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== "Escape") return;
+  const titleId = React.useId();
+  const panel = useRef(null);
+  const close = useRef(onClose); close.current = onClose;
+  const [host] = useState(() => { const el = document.createElement("div"); el.className = "lp-theme lp-modal-host"; return el; });
+  useLayoutEffect(() => {
+    const previous = document.activeElement;
+    const theme = getComputedStyle(previous?.closest?.(".lp-modal-host, .lp-app") || document.querySelector(".lp-app") || document.body);
+    for (const key of theme) if (key.startsWith("--")) host.style.setProperty(key, theme.getPropertyValue(key));
+    document.body.appendChild(host);
+    const siblings = [...document.body.children].filter(el => el !== host && !["SCRIPT", "STYLE", "LINK"].includes(el.tagName));
+    const oldInert = siblings.map(el => [el, el.inert]);
+    oldInert.forEach(([el]) => { el.inert = true; });
+    nexoraModalStack.push(host);
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => [...panel.current.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')].filter(el => el.getClientRects().length && !el.closest('[inert]'));
+    const initial = panel.current.querySelector('[autofocus]') || panel.current;
+    initial.focus({ preventScroll: true });
+    const onKey = e => {
+      if (nexoraModalStack.at(-1) !== host || e.defaultPrevented) return;
       const nestedOpen = document.querySelector(".lp-dropdown-panel-portal, .lp-color-select-panel, .lp-quick-context-menu, .lp-activity-search-menu");
       if (nestedOpen) return;
-      onClose();
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); close.current(); }
+      if (e.key === "Tab") {
+        const nodes = focusable(), first = nodes[0], last = nodes.at(-1);
+        if (!first) { e.preventDefault(); panel.current.focus(); }
+        else if (e.shiftKey && (document.activeElement === first || !nodes.includes(document.activeElement))) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (document.activeElement === last || !nodes.includes(document.activeElement))) { e.preventDefault(); first.focus(); }
+      }
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return (
-    <div className="lp-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={"lp-modal" + (wide ? " lp-modal-wide" : "") + (extraWide ? " lp-modal-extra-wide" : "") + (compact ? " lp-modal-compact" : "") + (className ? " " + className : "")}>
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      nexoraModalStack.splice(nexoraModalStack.indexOf(host), 1);
+      oldInert.forEach(([el, value]) => { el.inert = value; });
+      document.body.style.overflow = oldOverflow;
+      host.remove();
+      if (previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true });
+    };
+  }, [host]);
+  return createPortal(
+    <div className="lp-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+      <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={"lp-modal" + (wide ? " lp-modal-wide" : "") + (extraWide ? " lp-modal-extra-wide" : "") + (compact ? " lp-modal-compact" : "") + (className ? " " + className : "")}>
         <div className="lp-modal-head">
-          <h3>{title}</h3>
-          <button className="lp-icon-btn" onClick={onClose}><X size={18} /></button>
+          <h3 id={titleId}>{title}</h3>
+          <button type="button" className="lp-icon-btn" aria-label="Fermer" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="lp-modal-body">{children}</div>
         {footer && <div className="lp-modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>, host
   );
 }
 function ConfirmModal({ title, message, danger, confirmLabel, onConfirm, onClose }) {

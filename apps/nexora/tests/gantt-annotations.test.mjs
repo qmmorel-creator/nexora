@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
 // Les fonctions testées sont extraites de l'interface RÉELLEMENT construite
-// (dist/index.html, reconstruit par `npm run build` juste avant `npm test`),
+// (.build/index.html, reconstruit par `npm run build` juste avant `npm test`),
 // entre les deux sentinelles du bloc d'annotations. Aucune copie du code n'est
 // maintenue à côté : si le bloc change dans l'interface, ces tests suivent.
 const START = "// === NEXORA:GANTT-ANNOTATIONS:START ===";
@@ -26,10 +26,10 @@ const EXPORTS = [
   "GANTT_FRAME_BAR_CLEARANCE", "normalizeHighlightFrames",
 ];
 
-const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START);
 const to = html.indexOf(END);
-assert.ok(from !== -1 && to > from, "bloc d'annotations Gantt introuvable dans dist/index.html");
+assert.ok(from !== -1 && to > from, "bloc d'annotations Gantt introuvable dans .build/index.html");
 
 // Évalué dans le realm courant (et non dans un contexte vm isolé) : les objets
 // retournés partagent les prototypes du test, ce que deepStrictEqual exige.
