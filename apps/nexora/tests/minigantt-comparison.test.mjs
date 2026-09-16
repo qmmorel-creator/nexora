@@ -562,11 +562,11 @@ test("l'avance et le retard ne passent jamais par la seule couleur", () => {
   assert.equal(miniGanttComparisonDeltaAria(8, "Fin"), "Fin : 8 jours de retard.");
   assert.equal(miniGanttComparisonDeltaAria(-1, "Début"), "Début : 1 jour d'avance.");
   assert.equal(miniGanttComparisonDeltaAria(0, "Jalon"), "Jalon : conforme à la référence.");
-  // Et la légende reprend exactement ces couleurs et ces motifs.
-  assert.match(html, /key: "cmp-ahead", label: "Avance"/);
-  assert.match(html, /key: "cmp-late", label: "Retard"/);
-  assert.match(html, /key: "cmp-ref", label: "Initial"/);
-  assert.match(html, /key: "cmp-current", label: "Actuel"/);
+  // La légende a été retirée : elle occupait une ligne pleine largeur pour
+  // redire ce que le diagramme montre. Ce sont les infobulles de chaque objet
+  // qui portent désormais l'explication, là où la question se pose.
+  assert.doesNotMatch(html, /key: "cmp-ahead", label: "Avance"/);
+  assert.doesNotMatch(html, /lp-widget-minigantt-legend-items/);
 });
 
 // 19. Le ruban continu -------------------------------------------------------

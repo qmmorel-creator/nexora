@@ -86,6 +86,29 @@ dessinée derrière elles.
 `ganttBlockFill(block)` calcule le remplissage en un seul endroit, et les deux
 diagrammes l'appellent.
 
+## Traits du bloc : style et épaisseur
+
+Les deux traits qui bornent une bande se règlent, eux aussi, dans les **trois**
+éditeurs de bloc :
+
+| Réglage | Propriété | Valeurs | Défaut |
+|---|---|---|---|
+| Bordure | `borderStyle` | `dashed` (pointillés) ou `solid` (continue) | `dashed` |
+| Épaisseur | `borderWidth` | 0 à 6 px, au demi-pixel | `1.5` |
+
+L'épaisseur était codée en dur à 1,5 px aux **quatre** endroits qui dessinent un
+bloc — widget, vue Gantt, aperçu de l'éditeur : invisible au réglage, et
+impossible à accorder avec la transparence du remplissage, puisqu'un bloc très
+transparent avait des traits aussi appuyés qu'un bloc plein.
+
+0 px retire les traits : il ne reste que le lavis de couleur. Le plafond de 6 px
+n'est pas arbitraire — au-delà, les deux montants fermeraient une bande courte.
+La valeur par défaut reste 1,5 px, donc un bloc enregistré avant ce réglage ne
+bouge pas d'un pixel.
+
+`ganttBlockBorder(block)` compose le trait en un seul endroit — épaisseur, style
+et couleur — et les quatre rendus l'appellent, l'aperçu de l'éditeur compris.
+
 ## Alignement des titres de bloc
 
 Le titre d'un bloc est **centré sur sa bande par `translateX(-50%)`**, donc par
@@ -612,9 +635,11 @@ endDeltaDays   = currentEnd   - referenceEnd;
 - **Infobulle** — quatre lignes ajoutées à celle qui existe déjà (Référence,
   Actuel, Début, Fin ; pour un jalon : Jalon de référence, Jalon actuel, Écart).
   Elle reste portée par le survol, donc elle disparaît à la sortie du pointeur.
-- **Légende** — `Initial`, `Actuel`, `Avance`, `Retard`, avec exactement les
-  couleurs, contours et motifs des lignes. Elle n'apparaît que si le widget
-  contient réellement au moins une comparaison exploitable.
+Il n'y a **pas de légende**. Elle occupait une ligne pleine largeur pour redire
+ce que le diagramme montre déjà — un losange est un jalon, une trame rouge est un
+retard — et poussait les barres vers le bas à chaque repère de plus. Les couleurs
+et les trames restent expliquées par l'**infobulle** de chaque objet, là où la
+question se pose.
 
 ### Plage temporelle
 

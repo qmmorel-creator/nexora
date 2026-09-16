@@ -1239,8 +1239,8 @@
                   left: shape.x0,
                   width: shape.width,
                   background: ganttBlockFill(shape.block),
-                  borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
-                  borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+                  borderLeft: ganttBlockBorder(shape.block),
+                  borderRight: ganttBlockBorder(shape.block),
                 }}
               />
             ))}
@@ -5196,6 +5196,29 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return () => cancelAnimationFrame(id);
   }, [measureRows, span, minIdx, fieldsLayout]);
 
+  /* La mesure ci-dessus est un instantané : elle ne retombe que si le nombre de
+     lignes change. Or la piste, elle, bouge encore après — la barre d'outils qui
+     se replie, la colonne de champs qui trouve sa largeur, une police web qui
+     arrive, le widget qu'on redimensionne. La valeur gardée devenait alors plus
+     large que la piste réelle, et tout ce qui se positionne à partir d'elle
+     dérivait : titres de blocs, étiquettes d'écart, et étiquettes de risque —
+     jusqu'à s'y recouvrir, le calcul les croyant au large (retour de test).
+     Un ResizeObserver suit la piste elle-même : la mesure ne peut plus vieillir. */
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return undefined;
+    const track = root.querySelector(
+      ".lp-widget-minigantt-phases-track, .lp-widget-minigantt-strip-track, .lp-widget-minigantt-track"
+    );
+    if (!track) return undefined;
+    const observer = new ResizeObserver(() => {
+      const width = Math.round(track.getBoundingClientRect().width);
+      if (width > 0) setTrackWidth((prev) => (prev === width ? prev : width));
+    });
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [visibleRows, fieldsLayout]);
+
   // Largeur RÉELLEMENT occupée par les champs d'une ligne. `scrollWidth` ne
   // sert à rien ici : la colonne est en overflow visible, elle ne défile pas et
   // déclare donc la largeur qu'on lui impose. On mesure le bord droit du
@@ -5464,40 +5487,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
   const stripLaneCount = stripShapes.length ? Math.max(...stripShapes.map((s) => s.lane)) + 1 : 0;
 
-  // Légende contextuelle : chaque entrée n'apparaît que si le diagramme
-  // contient réellement ce qu'elle décrit.
-  const comparisonLegendItems = !comparisonOn || !comparisonByTask.size ? [] : [
-    {
-      key: "cmp-ref", label: "Initial", color: MINIGANTT_COMPARISON_REF_COLOR,
-      background: miniGanttComparisonZonePattern("reference"),
-      title: "Période tenue — plan et réel coïncident. Hachures descendantes, sur le ruban collé sous la barre",
-    },
-    {
-      key: "cmp-current", label: "Actuel", color: "var(--text-900)",
-      title: "Période actuelle : la barre pleine, cerclée de noir, seule sur sa ligne",
-    },
-    {
-      key: "cmp-ahead", label: "Avance", color: MINIGANTT_COMPARISON_AHEAD_COLOR,
-      background: miniGanttComparisonZonePattern("ahead"),
-      title: "Part de la période actuelle antérieure à la référence — hachures descendantes",
-    },
-    {
-      key: "cmp-late", label: "Retard", color: MINIGANTT_COMPARISON_LATE_COLOR,
-      background: miniGanttComparisonZonePattern("late"),
-      title: "Dépassement de la fin de référence — hachures montantes",
-    },
-  ];
-
-  const legendItems = [
-    ...comparisonLegendItems,
-    emphasisOn && criticalIds && criticalIds.size ? { key: "critical", label: "Critique", color: "#4F6AF5" } : null,
-    riskSegments.some((r) => r.severity === "low" || r.severity === "medium") ? { key: "watch", label: "Vigilance", color: "#F2A93B" } : null,
-    (configMilestones.length || milestoneTasks.length) ? { key: "milestone", label: "Jalon", color: "#0EA5E9" } : null,
-    (temporalBlocks.some((b) => b.kind === "decision") || configMilestones.some((m) => m.type === "decision"))
-      ? { key: "decision", label: "Décision", color: GANTT_DECISION_DEFAULT_COLOR } : null,
-    riskSegments.length ? { key: "risk", label: "Risque", color: "#D64545" } : null,
-  ].filter(Boolean);
-
   /* Barre d'outils du widget : TOUS les réglages d'affichage côte à côte, sur
      une bande pleine largeur au-dessus de l'axe. Ils étaient empilés en colonne
      dans la gouttière de 26 % à gauche de l'axe — trois blocs superposés qui
@@ -5669,22 +5658,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
-  // Légende sur sa propre ligne, alignée sur la piste : dans l'axe elle
-  // finissait par recouvrir « Aujourd'hui » et déborder du widget.
-  const legendRow = !legendItems.length ? null : (
-    <div className="lp-widget-minigantt-legend">
-      <span className="lp-widget-minigantt-phases-spacer" />
-      <div className="lp-widget-minigantt-legend-items">
-        {legendItems.map((item) => (
-          <span key={item.key} className="lp-widget-minigantt-legend-item" title={item.title || undefined}>
-            <span className={"lp-widget-minigantt-legend-mark is-" + item.key} style={{ background: item.background || item.color, borderColor: item.color }} />
-            {item.label}
-          </span>
-        ))}
-      </div>
-      {fieldsColumnShown && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
-    </div>
-  );
+  /* Plus de légende. Elle occupait une ligne pleine largeur pour redire ce que
+     le diagramme montre déjà — un losange est un jalon, une trame rouge est un
+     retard — et elle poussait les barres vers le bas à chaque repère de plus.
+     Les couleurs et les trames restent expliquées par les infobulles de chaque
+     objet, là où la question se pose. */
 
   const RowLabel = ({ t, proj }) => (
     <span className="lp-widget-minigantt-label">
@@ -5722,7 +5700,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   //
   // Le retour est descendu sous le dernier hook plutôt que les hooks remontés :
   // stripShapes et riskLabelLayout ne font que parcourir des collections, et les
-  // valeurs intermédiaires (stripLaneCount, legendRow) se gardent déjà elles-mêmes
+  // valeurs intermédiaires (stripLaneCount, toolbar) se gardent déjà elles-mêmes
   // contre une liste vide. C'est aussi la convention du composant, dont les hooks
   // antérieurs (axisDisplayTicks, weekendBands) testent isEmpty À L'INTÉRIEUR.
   if (isEmpty) return <div className="lp-empty" style={{ padding: 16 }}>Aucune tâche pour ce filtre.</div>;
@@ -6255,8 +6233,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             left: `${shape.leftPct}%`,
             width: `${shape.widthPct}%`,
             background: ganttBlockFill(shape.block),
-            borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
-            borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
+            borderLeft: ganttBlockBorder(shape.block),
+            borderRight: ganttBlockBorder(shape.block),
           }}
         />
       ))}
@@ -6368,7 +6346,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {bandLayer}
         {!toolbarSlot && toolbar}
         <Axis />
-        {legendRow}
         {phasesHeader}
         {stripHeader}
         <div className="lp-widget-minigantt-rows">
@@ -6402,7 +6379,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {bandLayer}
       {!toolbarSlot && toolbar}
       <Axis />
-      {legendRow}
       {phasesHeader}
       {stripHeader}
       {groups.map((g) => {

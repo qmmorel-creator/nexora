@@ -1318,6 +1318,7 @@ function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlo
                     <label>Couleur</label>
                     <ColorPicker value={block.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patch(block.id, { color })} />
                   </div>
+                  <GanttBlockBorderWidthRow block={block} onChange={(borderWidth) => patch(block.id, { borderWidth })} />
                   <GanttBlockOpacityRow block={block} onChange={(opacity) => patch(block.id, { opacity })} />
                 </div>
               )}
@@ -3261,6 +3262,37 @@ function normalizeGanttBlockOpacity(value, kind) {
   return Math.min(GANTT_BLOCK_OPACITY_MAX, Math.max(0, n));
 }
 
+/* Épaisseur des deux traits qui bornent un bloc temporel. Elle était codée en
+   dur à 1,5 px aux quatre endroits qui dessinent un bloc — widget, vue Gantt,
+   aperçu de l'éditeur —, donc invisible au réglage et impossible à accorder
+   avec la transparence du remplissage : un bloc très transparent avait des
+   traits aussi appuyés qu'un bloc plein.
+
+   0 px retire les traits — la bande n'est plus alors qu'un lavis de couleur.
+   Le plafond de 6 px n'est pas arbitraire : au-delà, les deux montants
+   mangeraient une bande courte au point de la fermer. La valeur par défaut
+   reste 1,5 px : un bloc enregistré avant ce réglage ne bouge pas d'un pixel. */
+const GANTT_BLOCK_BORDER_WIDTH_MAX = 6;
+const GANTT_BLOCK_DEFAULT_BORDER_WIDTH = 1.5;
+
+function normalizeGanttBlockBorderWidth(value) {
+  if (value === null || value === undefined || value === "") return GANTT_BLOCK_DEFAULT_BORDER_WIDTH;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return GANTT_BLOCK_DEFAULT_BORDER_WIDTH;
+  // Au demi-pixel : en dessous, deux réglages voisins rendent pareil à l'écran.
+  return Math.min(GANTT_BLOCK_BORDER_WIDTH_MAX, Math.max(0, Math.round(n * 2) / 2));
+}
+
+// Le trait tel que les deux diagrammes le posent. Un seul endroit, comme pour
+// le remplissage : ils le recopiaient chacun de leur côté, épaisseur comprise.
+function ganttBlockBorder(block) {
+  const b = block && typeof block === "object" ? block : {};
+  const width = normalizeGanttBlockBorderWidth(b.borderWidth);
+  if (!width) return "none";
+  const color = typeof b.color === "string" && b.color ? b.color : GANTT_BLOCK_DEFAULT_COLOR;
+  return `${width}px ${normalizeGanttBorderStyle(b.borderStyle)} ${color}`;
+}
+
 // Le remplissage tel que les deux diagrammes le posent, à partir de l'opacité
 // du bloc. Un seul endroit : ils le recopiaient chacun de leur côté.
 function ganttBlockFill(block) {
@@ -3284,6 +3316,7 @@ function normalizeTemporalBlocks(list) {
         : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
       borderStyle: normalizeGanttBorderStyle(b.borderStyle),
       opacity: normalizeGanttBlockOpacity(b.opacity, b.kind),
+      borderWidth: normalizeGanttBlockBorderWidth(b.borderWidth),
     }));
 }
 
@@ -3709,6 +3742,7 @@ function normalizeMetaTemporalBlocks(list) {
         : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
       borderStyle: normalizeGanttBorderStyle(b.borderStyle),
       opacity: normalizeGanttBlockOpacity(b.opacity, b.kind),
+      borderWidth: normalizeGanttBlockBorderWidth(b.borderWidth),
       // Absent = TOUS les tableaux de bord, y compris ceux créés plus tard.
       // Décocher un tableau matérialise la liste.
       dashboardIds: Array.isArray(b.dashboardIds) ? b.dashboardIds.filter((id) => typeof id === "string" && id) : null,
@@ -3742,6 +3776,7 @@ function normalizeTaskMetaBlock(meta) {
       : (kind === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
     borderStyle: normalizeGanttBorderStyle(meta.borderStyle),
     opacity: normalizeGanttBlockOpacity(meta.opacity, kind),
+    borderWidth: normalizeGanttBlockBorderWidth(meta.borderWidth),
     // Même convention que les méta blocs des Réglages : absent = tous les
     // tableaux de bord, y compris ceux créés plus tard.
     dashboardIds: Array.isArray(meta.dashboardIds) ? meta.dashboardIds.filter((id) => typeof id === "string" && id) : null,
@@ -3766,6 +3801,7 @@ function metaBlocksFromTasks(tasks) {
       color: meta.color,
       borderStyle: meta.borderStyle,
       opacity: meta.opacity,
+      borderWidth: meta.borderWidth,
       dashboardIds: meta.dashboardIds,
     };
     if (!validateTemporalBlock(candidate).ok) return;
@@ -6320,6 +6356,43 @@ function GanttAnnotationBorderRow({ value, onChange }) {
    bloc porté par une tâche calendrier — plutôt que recopiée dans chacun.
    L'aperçu montre le résultat exact, contour compris : un pourcentage seul ne
    dit rien de ce que ça donne derrière des barres. */
+/* Épaisseur des traits d'un bloc temporel. Partagée par les TROIS éditeurs,
+   comme la transparence, et posée juste sous le choix plein / pointillés :
+   les deux réglages décrivent le même trait. */
+function GanttBlockBorderWidthRow({ block, onChange }) {
+  const epaisseur = normalizeGanttBlockBorderWidth(block?.borderWidth);
+  return (
+    <div className="lp-field">
+      <label>Épaisseur des traits — {epaisseur} px</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          type="range" min="0" max={GANTT_BLOCK_BORDER_WIDTH_MAX} step="0.5" value={epaisseur}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ flex: "1 1 auto", minWidth: 0 }}
+          aria-label="Épaisseur des traits du bloc temporel, en pixels"
+        />
+        <input
+          type="number" min="0" max={GANTT_BLOCK_BORDER_WIDTH_MAX} step="0.5" value={epaisseur}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ width: 64, flex: "0 0 auto" }}
+        />
+        <span
+          aria-hidden="true"
+          title="Aperçu des traits"
+          style={{
+            flex: "0 0 auto", width: 34, height: 20, borderRadius: 4, boxSizing: "border-box",
+            background: ganttBlockFill(block),
+            border: ganttBlockBorder({ ...block, borderWidth: epaisseur }),
+          }}
+        />
+      </div>
+      <p className="lp-gantt-annot-hint">
+        0 px retire les traits : il ne reste que le lavis de couleur. Au-delà de {GANTT_BLOCK_BORDER_WIDTH_MAX} px, les deux montants fermeraient une bande courte.
+      </p>
+    </div>
+  );
+}
+
 function GanttBlockOpacityRow({ block, onChange }) {
   const opacite = normalizeGanttBlockOpacity(block?.opacity, block?.kind);
   return (
@@ -6343,7 +6416,7 @@ function GanttBlockOpacityRow({ block, onChange }) {
           style={{
             flex: "0 0 auto", width: 34, height: 20, borderRadius: 4, boxSizing: "border-box",
             background: ganttBlockFill({ ...block, opacity: opacite }),
-            border: `1.5px ${normalizeGanttBorderStyle(block?.borderStyle)} ${block?.color || GANTT_BLOCK_DEFAULT_COLOR}`,
+            border: ganttBlockBorder(block),
           }}
         />
       </div>
@@ -6486,6 +6559,7 @@ function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defa
                       <label>Couleur</label>
                       <ColorPicker value={b.color} onChange={(color) => patchBlock(b.id, { color })} />
                     </div>
+                    <GanttBlockBorderWidthRow block={b} onChange={(borderWidth) => patchBlock(b.id, { borderWidth })} />
                     <GanttBlockOpacityRow block={b} onChange={(opacity) => patchBlock(b.id, { opacity })} />
                     <GanttAnnotationBorderRow value={b.borderStyle} onChange={(borderStyle) => patchBlock(b.id, { borderStyle })} />
                   </div>
@@ -7833,6 +7907,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 <label>Couleur</label>
                 <ColorPicker value={metaBlock.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patchMetaBlock({ color })} />
               </div>
+              <GanttBlockBorderWidthRow block={metaBlock} onChange={(borderWidth) => patchMetaBlock({ borderWidth })} />
               <GanttBlockOpacityRow block={metaBlock} onChange={(opacity) => patchMetaBlock({ opacity })} />
             </div>
           )}

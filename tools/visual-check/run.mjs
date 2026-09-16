@@ -144,7 +144,17 @@ const seen = await page.evaluate(() => {
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
     cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
-    cmpLegend: rects("#harness-comparison-minigantt .lp-widget-minigantt-legend-item"),
+    // La légende a été retirée des deux diagrammes : plus aucune bande ne redit
+    // ce que les formes montrent déjà.
+    legendRows: document.querySelectorAll(".lp-widget-minigantt-legend, .lp-widget-minigantt-legend-items, .lp-widget-minigantt-legend-item").length,
+    // Épaisseur RÉELLEMENT peinte des traits d'un bloc temporel : le jeu d'essai
+    // en règle un à 4 px et laisse les autres au défaut de 1,5 px.
+    bandBorders: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-tblock")].map((el) => ({
+      // Déclarée (le réglage) ET utilisée (ce que le navigateur peint, arrondi
+      // au pixel entier) : la seconde seule ne distinguerait pas 1,5 px de 1 px.
+      g: el.style.borderLeftWidth, d: el.style.borderRightWidth,
+      peint: getComputedStyle(el).borderLeftWidth, style: getComputedStyle(el).borderLeftStyle,
+    })),
     cmpRows: rects("#harness-comparison-minigantt .lp-widget-minigantt-row"),
     cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
     standardStrips: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-cmpstrip, #harness-second-minigantt .lp-widget-minigantt-cmpstrip, #harness-nofields-minigantt .lp-widget-minigantt-cmpstrip").length,
@@ -183,7 +193,6 @@ const seen = await page.evaluate(() => {
     standardRowCount: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-row").length,
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
-    miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
     scatterDots: rects("#harness-scatter .lp-widget-scatter-dot"),
     scatterLabels: rects("#harness-scatter .lp-widget-scatter-point-label"),
     scatterLaneLabels: rects("#harness-scatter .lp-widget-scatter-lane-label"),
@@ -1167,9 +1176,14 @@ expect(seen.cmpGhosts.length === 1, `Comparaison : ${seen.cmpGhosts.length} losa
 expect(seen.cmpLinks.length === 1, `Comparaison : ${seen.cmpLinks.length} segment(s) de liaison de jalon, 1 attendu`);
 expect(seen.cmpChips.length === 6, `Comparaison : ${seen.cmpChips.length} indicateur(s) d'écart, 6 attendus (5 tâches + 1 jalon)`);
 expect(seen.cmpChips.every((c) => /^[+\u22120-9]/.test(c.text.trim())), `Comparaison : un indicateur d'écart ne porte ni signe ni valeur (${seen.cmpChips.map((c) => c.text.trim()).join(", ")})`);
-// La légende du mode s'AJOUTE à celle qui existe déjà (Critique, Vigilance,
-// Jalon, Risque…) : ses quatre repères doivent y être, en tête.
-expect(seen.cmpLegend.slice(0, 4).map((i) => i.text.trim()).join("|") === "Initial|Actuel|Avance|Retard", `Comparaison : la légende ne s'ouvre pas sur les quatre repères du mode (${seen.cmpLegend.map((i) => i.text.trim()).join(", ")})`);
+/* Épaisseur des traits d'un bloc temporel : réglable, et RÉELLEMENT peinte.
+   Elle était codée en dur à 1,5 px aux quatre endroits qui dessinent un bloc. */
+expect(seen.bandBorders.length >= 2, `Blocs temporels : ${seen.bandBorders.length} bande(s) relevée(s), au moins 2 attendues`);
+expect(seen.bandBorders.some((b) => b.g === "4px" && b.d === "4px" && b.peint === "4px"), `Blocs temporels : aucune bande peinte à 4 px alors que le jeu d'essai en règle une (${JSON.stringify(seen.bandBorders)})`);
+expect(seen.bandBorders.some((b) => b.g === "1.5px"), `Blocs temporels : aucune bande au défaut de 1,5 px (${JSON.stringify(seen.bandBorders)})`);
+expect(seen.bandBorders.some((b) => b.style === "dashed") && seen.bandBorders.some((b) => b.style === "solid"), `Blocs temporels : le choix plein / pointillés ne se voit pas (${JSON.stringify(seen.bandBorders)})`);
+expect(seen.bandBorders.every((b) => b.g === b.d), `Blocs temporels : les deux montants d'une bande n'ont pas la même épaisseur (${JSON.stringify(seen.bandBorders)})`);
+expect(seen.legendRows === 0, `Légende : ${seen.legendRows} élément(s) de légende encore rendu(s), 0 attendu — la bande a été retirée des deux diagrammes`);
 expect(seen.cmpModeButtons.length === 2 && seen.cmpModeButtons[1].active, `Comparaison : le sélecteur rapide n'affiche pas l'état actif (${JSON.stringify(seen.cmpModeButtons)})`);
 // « Superposées sans rendre la ligne plus haute » : le widget de comparaison
 // est le jumeau exact du second, au mode près. Les hauteurs de ligne doivent
@@ -1229,7 +1243,6 @@ expect(seen.rollingRows < seen.standardRowCount,
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
-expect(seen.miniLegend.length >= 3, `Mini-Gantt : légende à ${seen.miniLegend.length} entrée(s), au moins 3 attendues`);
 expect(seen.miniFrames.length === 3, `Mini-Gantt : ${seen.miniFrames.length} cadre(s), 3 attendus`);
 
 // « Le bloc temporel emporte tout » : une bande continue sur toute la hauteur des
@@ -1253,7 +1266,7 @@ for (const [name, frames] of [["Mini-Gantt", seen.miniFrames]]) {
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels], ["Comparaison (légende)", seen.cmpLegend], ["Comparaison (écarts)", seen.cmpLabels]]) {
+for (const [name, labels] of [["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels], ["Comparaison (écarts)", seen.cmpLabels]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];
