@@ -86,6 +86,17 @@ Ordre des lignes et cadrage du Mini-Gantt :
 - en « Fenêtre glissante », l'axe suit le calendrier et les tâches hors fenêtre
   ne sont plus dessinées du tout.
 
+Parité des réglages du Gantt — la fiche du widget Mini-Gantt et les réglages de
+la vue pleine page sont ouverts l'un après l'autre sur le même contexte :
+
+- les deux offrent les mêmes commandes d'affichage (regroupement, couleur des
+  barres, informations, disposition, ordre, étendue, mode) ;
+- le menu de regroupement est identique de part et d'autre, inactivité et champ
+  personnalisé compris ;
+- un cadrage « Dates fixes » sans dates affiche le même message des deux côtés ;
+- les explications de la fiche (fenêtre glissante, ordre des jalons, mode
+  Comparaison) se retrouvent dans la vue.
+
 Poignée d'avancement du Mini-Gantt :
 
 - une tâche à 100 % remplace son rond blanc par une pastille verte à coche,

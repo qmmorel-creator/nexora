@@ -238,6 +238,15 @@ function AnnotationsHarness() {
   // déroulantes des annotations ne proposent que les tâches retenues par le
   // filtre du widget. Ici, le filtre ne garde que le projet « p2 ».
   const [formOpen, setFormOpen] = useState(false);
+  /* Parité des réglages du Gantt (#86) : la fiche du widget et les réglages de
+     la vue pleine page doivent proposer EXACTEMENT les mêmes commandes
+     d'affichage. Les deux sont montés côte à côte sur un contexte qui porte un
+     champ personnalisé — le regroupement doit le proposer des deux côtés. */
+  const [ganttViewSettingsOpen, setGanttViewSettingsOpen] = useState(false);
+  const [ganttWidgetFormOpen, setGanttWidgetFormOpen] = useState(false);
+  const [ganttViewPrefs, setGanttViewPrefs] = useState(() => normalizeMiniGanttViewPrefs({ groupBy: "project" }));
+  const parityCtx = { ...ctx, customFieldDefs: [{ id: "lot", name: "Lot de travaux", type: "text" }] };
+  const parityWidget = { id: "parite", type: "minigantt", title: "Mini-Gantt", groupBy: "project", colorBy: "status", miniGanttFields: ["end"] };
   const noop = () => {};
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 22 }}>
@@ -535,6 +544,34 @@ function AnnotationsHarness() {
             pageFilter={null}
             onSave={(data) => { setHeatmapWidget((w) => ({ ...w, ...data })); setHeatmapFormOpen(false); }}
             onClose={() => setHeatmapFormOpen(false)}
+          />
+        )}
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>RÉGLAGES GANTT — PARITÉ</h2>
+        <button type="button" id="harness-open-gantt-view-settings" onClick={() => setGanttViewSettingsOpen(true)} style={{ marginBottom: 8 }}>
+          Ouvrir les réglages de la vue Gantt
+        </button>
+        <button type="button" id="harness-open-gantt-widget-form" onClick={() => setGanttWidgetFormOpen(true)} style={{ marginBottom: 8, marginLeft: 8 }}>
+          Ouvrir la fiche du widget Mini-Gantt
+        </button>
+        {ganttViewSettingsOpen && (
+          <MiniGanttViewSettings
+            prefs={ganttViewPrefs}
+            setPrefs={(patch) => setGanttViewPrefs((p) => normalizeMiniGanttViewPrefs({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }))}
+            tasks={tasks}
+            ctx={parityCtx}
+            onClose={() => setGanttViewSettingsOpen(false)}
+          />
+        )}
+        {ganttWidgetFormOpen && (
+          <WidgetFormModal
+            widget={parityWidget}
+            existingWidgets={[]}
+            ctx={parityCtx}
+            pageFilter={null}
+            onSave={() => setGanttWidgetFormOpen(false)}
+            onClose={() => setGanttWidgetFormOpen(false)}
           />
         )}
       </div>

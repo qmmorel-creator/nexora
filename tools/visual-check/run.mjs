@@ -1098,6 +1098,59 @@ try {
   scoped.error = String(error).split("\n")[0];
 }
 
+/* Parité des réglages du Gantt (#86) : la fiche du widget Mini-Gantt et les
+   réglages de la vue pleine page doivent offrir les MÊMES commandes
+   d'affichage, les mêmes regroupements et la même validation des dates fixes.
+   Les deux panneaux sont relevés à la suite, puis comparés l'un à l'autre. */
+const releverPanneau = async (bouton) => {
+  const modale = page.locator(".lp-modal").last();
+  await page.locator(bouton).click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  const releve = {
+    labels: (await modale.locator(".lp-field > label").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
+    lignes: (await modale.locator(".lp-checkbox-line").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
+    boutons: (await modale.locator(".lp-density-btn").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
+    aides: (await modale.locator("p").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()),
+    regroupements: [],
+    erreurDatesFixes: "",
+  };
+  const selects = modale.locator("select");
+  for (let i = 0; i < await selects.count(); i += 1) {
+    const options = (await selects.nth(i).locator("option").allTextContents()).map((t) => t.trim());
+    if (options.includes("Aucun regroupement")) { releve.regroupements = options; break; }
+  }
+  // Les explications dépendent du cadrage choisi : on passe par la fenêtre
+  // glissante avant de relever, sinon la sienne n'est jamais rendue.
+  await modale.locator(".lp-density-btn", { hasText: "Fenêtre glissante" }).first().click();
+  await page.waitForTimeout(300);
+  releve.aides.push(...(await modale.locator("p").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()));
+  // Cadrage « Dates fixes » sans aucune date : les deux panneaux doivent le dire.
+  await modale.locator(".lp-density-btn", { hasText: "Dates fixes" }).first().click();
+  await page.waitForTimeout(300);
+  releve.erreurDatesFixes = (await modale.locator(".lp-gantt-annot-error").allTextContents()).join(" ").trim();
+  // Échap plutôt qu'un bouton de pied de page : les deux panneaux n'ont pas le
+  // même (« Terminé » pour la vue, « Annuler »/« Enregistrer » pour la fiche),
+  // et la fiche refuse justement d'enregistrer un cadrage sans dates.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+  return releve;
+};
+
+const parite = {};
+try {
+  /* Page rechargée : les scénarios précédents laissent des modales ouvertes,
+     dont le voile intercepterait les clics. Le banc est sans état persistant,
+     un rechargement le remet à neuf. */
+  await page.reload({ waitUntil: "load", timeout: 90000 });
+  await page.waitForSelector("#harness-open-gantt-view-settings", { timeout: 90000 });
+  await page.waitForTimeout(1500);
+  parite.vue = await releverPanneau("#harness-open-gantt-view-settings");
+  parite.widget = await releverPanneau("#harness-open-gantt-widget-form");
+} catch (error) {
+  parite.error = String(error).split("\n")[0];
+}
+
 await browser.close();
 server.close();
 
@@ -1107,6 +1160,45 @@ server.close();
 // trois cadres au total par diagramme.
 const failures = [];
 const expect = (ok, message) => { if (!ok) failures.push(message); };
+
+// --- Parité des réglages du Gantt (#86) ------------------------------------
+expect(!parite.error, `Réglages du Gantt : scénario de parité en échec (${parite.error})`);
+if (parite.vue && parite.widget) {
+  const COMMANDES = [
+    "Grouper par", "Couleur des barres", "Informations affichées à côté de la barre",
+    "Disposition de ces informations", "Ordre des lignes", "Étendue temporelle", "Mode d'affichage",
+  ];
+  COMMANDES.forEach((commande) => {
+    const dansVue = parite.vue.labels.some((l) => l.startsWith(commande));
+    const dansWidget = parite.widget.labels.some((l) => l.startsWith(commande));
+    expect(dansWidget, `Fiche du widget Mini-Gantt : commande « ${commande} » absente`);
+    expect(dansVue, `Réglages de la vue Gantt : commande « ${commande} » absente, alors que la fiche du widget l'offre`);
+  });
+  expect(
+    parite.vue.regroupements.length > 0 && parite.vue.regroupements.join("|") === parite.widget.regroupements.join("|"),
+    `Regroupements différents entre la vue et le widget :\n    vue    : ${parite.vue.regroupements.join(", ")}\n    widget : ${parite.widget.regroupements.join(", ")}`
+  );
+  ["Inactivité (jours)", "Lot de travaux"].forEach((option) => {
+    expect(parite.vue.regroupements.includes(option), `Réglages de la vue Gantt : regroupement « ${option} » absent du menu`);
+  });
+  expect(
+    /date de début/i.test(parite.vue.erreurDatesFixes),
+    `Réglages de la vue Gantt : un cadrage « Dates fixes » sans date ne dit rien (« ${parite.vue.erreurDatesFixes} »)`
+  );
+  expect(
+    parite.vue.erreurDatesFixes === parite.widget.erreurDatesFixes,
+    `Message de dates fixes différent : vue « ${parite.vue.erreurDatesFixes} », widget « ${parite.widget.erreurDatesFixes} »`
+  );
+  // Les explications de la fiche doivent se retrouver dans la vue : c'est ce
+  // qu'elle avait perdu en recopiant le formulaire au lieu de le partager.
+  const AIDES = ["la fenêtre avance toute seule", "les jalons passent devant les barres", "En mode Comparaison"];
+  AIDES.forEach((aide) => {
+    expect(
+      parite.vue.aides.some((p) => p.includes(aide)),
+      `Réglages de la vue Gantt : explication manquante (« ${aide} »)`
+    );
+  });
+}
 
 expect(pageErrors.length === 0, `erreurs JavaScript au rendu :\n    ${pageErrors.slice(0, 5).join("\n    ")}`);
 expect(seen.miniBlocks === 3, `Mini-Gantt : ${seen.miniBlocks} bande(s) de bloc, 3 attendues (2 phases + 1 fenêtre de décision)`);
