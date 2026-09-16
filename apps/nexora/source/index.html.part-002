@@ -149,7 +149,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           desktop (view, setView, ALL_VIEWS_META, enabledViews) — aucune logique
           dupliquée, seule la présentation change. */}
       <nav className="lp-mobile-tabbar" aria-label="Navigation principale">
-        {["control", "today", "projects"].map((key) => {
+        {["today", "projects"].map((key) => {
           if (enabledViews[key] === false) return null;
           const meta = ALL_VIEWS_META.find((v) => v.key === key);
           if (!meta) return null;
@@ -177,7 +177,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
             <div className="lp-mobile-sheet-handle" />
             <div className="lp-mobile-sheet-grid">
-              {ALL_VIEWS_META.filter((v) => !["control", "projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
+              {ALL_VIEWS_META.filter((v) => !["projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
                 <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
                   <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
                   <span>{meta.label}</span>
@@ -10428,179 +10428,10 @@ function DayTaskCard({ task, ctx, onOpen, variant }) {
   );
 }
 
-// ============================================================================
-// Vue Calendrier — hebdomadaire (cartes détaillées) ou mensuelle (grille)
-// ============================================================================
-const CAL_FIELD_OPTIONS = ["project", "status", "assignee", "progress", "start", "end", "period", "checklist"];
 const CAL_MONTHS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
-const CAL_DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 
-function tasksActiveOnDay(tasks, dateStr) {
-  return tasks.filter((t) => t.start <= dateStr && t.end >= dateStr);
-}
 
-function CalTaskCard({ task, ctx, cardFields, gradient, onOpen, compact }) {
-  const proj = ctx.projects.find((p) => p.id === task.projectId);
-  const done = isTaskDoneGlobal(task, ctx);
-  const isStart = task.start === task.end ? null : "range";
-  return (
-    <div className={"lp-cal-card" + (done ? " done" : "")} style={{ borderLeftColor: proj?.color || "var(--text-muted)" }} onClick={() => onOpen(task)}>
-      <div className="lp-cal-card-head">
-        <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 15, height: 15, fontSize: 8, flex: "0 0 auto" }}><IconGlyph icon={proj?.icon} size={9} /></span>
-        {task.milestone && <MilestoneGlyph size={13} icon={resolveMilestoneIcon(task, ctx)} />}
-        <span className="lp-cal-card-title">{task.title}</span>
-        {done && <CheckCircle2 size={14} color="var(--success)" style={{ flex: "0 0 auto" }} />}
-      </div>
-      {!compact && cardFields.length > 0 && (
-        <div className="lp-cal-card-fields">
-          {cardFields.map((f) => <FieldValue key={f} fieldKey={f} task={task} ctx={ctx} gradient={gradient} />)}
-        </div>
-      )}
-    </div>
-  );
-}
 
-function CalendarView({ tasks, ctx, onOpen, onAdd, gradient, prefs, setPrefs }) {
-  const today = iso(new Date());
-  const mode = prefs.mode || "week";
-  const setMode = (m) => setPrefs({ mode: m });
-  const cardFields = prefs.cardFields || ["project", "status", "assignee", "progress"];
-  const setCardFields = (updater) => setPrefs((p) => ({ cardFields: typeof updater === "function" ? updater(p.cardFields || []) : updater }));
-  const [anchor, setAnchor] = useState(today);
-  const [selectedDay, setSelectedDay] = useState(null);
-
-  const weekDays = useMemo(() => {
-    const monday = getMonday(anchor);
-    return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  }, [anchor]);
-
-  const monthGrid = useMemo(() => {
-    const d = new Date(anchor + "T00:00:00");
-    const firstOfMonth = iso(new Date(d.getFullYear(), d.getMonth(), 1));
-    const monday = getMonday(firstOfMonth);
-    return Array.from({ length: 42 }, (_, i) => addDays(monday, i));
-  }, [anchor]);
-
-  const curMonthIdx = new Date(anchor + "T00:00:00").getMonth();
-
-  const goPrev = () => {
-    if (mode === "week") { setAnchor((a) => addDays(a, -7)); return; }
-    const d = new Date(anchor + "T00:00:00"); d.setMonth(d.getMonth() - 1); setAnchor(iso(d));
-  };
-  const goNext = () => {
-    if (mode === "week") { setAnchor((a) => addDays(a, 7)); return; }
-    const d = new Date(anchor + "T00:00:00"); d.setMonth(d.getMonth() + 1); setAnchor(iso(d));
-  };
-  const goToday = () => { setAnchor(today); setSelectedDay(null); };
-
-  const weekLabel = () => {
-    const start = weekDays[0], end = weekDays[6];
-    const sd = new Date(start + "T00:00:00"), ed = new Date(end + "T00:00:00");
-    if (sd.getMonth() === ed.getMonth()) return `${sd.getDate()} – ${ed.getDate()} ${CAL_MONTHS_FR[sd.getMonth()]} ${sd.getFullYear()}`;
-    return `${sd.getDate()} ${CAL_MONTHS_FR[sd.getMonth()]} – ${ed.getDate()} ${CAL_MONTHS_FR[ed.getMonth()]} ${sd.getFullYear()}`;
-  };
-
-  const tasksForDayObj = (day) => ({
-    ending: tasks.filter((t) => t.end === day),
-    ongoing: tasks.filter((t) => t.start < day && t.end > day),
-  });
-
-  return (
-    <div className="lp-cal-wrap">
-      <div className="lp-toolbar" style={{ marginBottom: 10 }}>
-        <div className="lp-mode-toggle">
-          <button className={mode !== "month" ? "active" : ""} onClick={() => setMode("week")}>Hebdomadaire</button>
-          <button className={mode === "month" ? "active" : ""} onClick={() => setMode("month")}>Mensuel</button>
-        </div>
-        <button className="lp-tool-btn" onClick={goPrev}>‹</button>
-        <button className="lp-tool-btn" onClick={goToday}><Crosshair size={13} /> Aujourd'hui</button>
-        <button className="lp-tool-btn" onClick={goNext}>›</button>
-        <span style={{ fontWeight: 700, fontSize: 14, marginLeft: 4 }}>
-          {mode === "week" ? weekLabel() : `${CAL_MONTHS_FR[curMonthIdx]} ${new Date(anchor + "T00:00:00").getFullYear()}`}
-        </span>
-        {mode === "week" && (
-          <DropdownButton label="Colonnes des cartes" icon={<Columns3 size={14} />}>
-            {CAL_FIELD_OPTIONS.map((f) => (
-              <label className="lp-checkbox-line" key={f}>
-                <input type="checkbox" checked={cardFields.includes(f)} onChange={() => setCardFields((prev) => prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f])} />
-                {fieldLabel(f)}
-              </label>
-            ))}
-          </DropdownButton>
-        )}
-      </div>
-
-      {mode === "week" ? (
-        <div className="lp-cal-week-grid">
-          {weekDays.map((day) => {
-            const dayTasks = tasksActiveOnDay(tasks, day);
-            const isToday = day === today;
-            const dt = new Date(day + "T00:00:00");
-            return (
-              <div key={day} className={"lp-cal-day-col" + (isToday ? " today" : "")}>
-                <div className="lp-cal-day-header">
-                  <span className="lp-cal-day-name">{CAL_DAY_NAMES[(dt.getDay() + 6) % 7]}</span>
-                  <span className="lp-cal-day-num">{dt.getDate()}</span>
-                  <button className="lp-cal-day-add" onClick={() => onAdd({ start: day, end: day })} title="Ajouter une tâche ce jour"><Plus size={13} /></button>
-                </div>
-                <div className="lp-cal-day-body">
-                  {dayTasks.length === 0 && <div className="lp-cal-empty">Aucune tâche</div>}
-                  {dayTasks.map((t) => <CalTaskCard key={t.id} task={t} ctx={ctx} cardFields={cardFields} gradient={gradient} onOpen={onOpen} />)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="lp-cal-month-layout">
-          <div className="lp-cal-month-left">
-            <div className="lp-cal-month-daynames">
-              {CAL_DAY_NAMES.map((d) => <div key={d}>{d}</div>)}
-            </div>
-            <div className="lp-cal-month-grid">
-              {monthGrid.map((day) => {
-                const dt = new Date(day + "T00:00:00");
-                const inMonth = dt.getMonth() === curMonthIdx;
-                const dayTasks = tasksActiveOnDay(tasks, day);
-                const isToday = day === today;
-                const isSelected = day === selectedDay;
-                const projColors = [...new Set(dayTasks.map((t) => ctx.projects.find((p) => p.id === t.projectId)?.color).filter(Boolean))];
-                return (
-                  <div
-                    key={day}
-                    className={"lp-cal-month-cell" + (inMonth ? "" : " other-month") + (isToday ? " today" : "") + (isSelected ? " selected" : "")}
-                    onClick={() => setSelectedDay(isSelected ? null : day)}
-                  >
-                    <div className="lp-cal-month-cell-head">
-                      <span className="lp-cal-month-cell-num">{dt.getDate()}</span>
-                      {dayTasks.length > 0 && <span className="lp-cal-month-cell-count">{dayTasks.length}</span>}
-                    </div>
-                    <div className="lp-cal-month-dots">
-                      {projColors.slice(0, 6).map((c, i) => <span key={i} className="lp-cal-month-dot" style={{ background: c }} />)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="lp-cal-day-list">
-            <div className="lp-cal-day-list-header">
-              <span style={{ fontWeight: 700, fontSize: 14 }}>{selectedDay ? `Tâches du ${fmtShort(selectedDay)}` : "Sélectionne un jour"}</span>
-              {selectedDay && <button className="lp-icon-btn" onClick={() => setSelectedDay(null)}><X size={16} /></button>}
-            </div>
-            <div className="lp-cal-day-list-body">
-              {!selectedDay && <div className="lp-cal-empty">Clique sur un jour du calendrier pour voir ses tâches</div>}
-              {selectedDay && tasksActiveOnDay(tasks, selectedDay).length === 0 && <div className="lp-cal-empty">Aucune tâche ce jour</div>}
-              {selectedDay && tasksActiveOnDay(tasks, selectedDay).map((t) => (
-                <CalTaskCard key={t.id} task={t} ctx={ctx} cardFields={["project", "status", "assignee", "start", "end", "progress"]} gradient={gradient} onOpen={onOpen} />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ============================================================================
 // Vue Timeline — roadmap horizontal avec bulles alternées anti-chevauchement

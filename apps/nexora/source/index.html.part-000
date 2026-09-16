@@ -2246,20 +2246,16 @@ const fieldLabel = (key, ctx) => (key === "checklist" ? "Sous-tâches" : key ===
 // d'icônes de la navigation.
 const ALL_VIEWS_META = [
   { key: "dashboard", label: "Tableau de bord", iconKey: "tabler:layout-dashboard" },
-  { key: "control", label: "Centre de pilotage", iconKey: "tabler:affiliate" },
   { key: "projects", label: "Planning Projets", iconKey: "tabler:route" },
   // La clé historique reste volontairement `gantt` : elle maintient les vues
   // sauvegardées et la dernière vue ouverte, mais ne désigne plus le moteur
   // classique. Son unique rendu est désormais le Mini Gantt.
   { key: "gantt", label: "Gantt", iconKey: "tabler:chart-gantt" },
   { key: "heatmap", label: "Heat map", iconKey: "tabler:flame" },
-  { key: "calendar", label: "Calendrier", iconKey: "tabler:calendar" },
   { key: "timeline", label: "Timeline + Liste", iconKey: "tabler:timeline" },
   { key: "radar", label: "Radar", iconKey: "tabler:radar" },
   { key: "today", label: "Aujourd'hui", iconKey: "tabler:sun" },
   { key: "table", label: "Tableur", iconKey: "tabler:table" },
-  { key: "chiffrage", label: "Chiffrage", iconKey: "tabler:calculator" },
-  { key: "automations", label: "Automatisations", iconKey: "tabler:automation" },
   { key: "notifications", label: "Notifications", iconKey: "tabler:bell" },
 ];
 // === NEXORA:VIEW-RAIL-COUNT:START ===
@@ -2267,10 +2263,8 @@ const ALL_VIEWS_META = [
 
    « Le nombre d'éléments concernés » n'a de sens que là où il est SANS
    AMBIGUÏTÉ : des projets pour le planning, des tableaux pour les tableaux de
-   bord, des automatisations pour les automatisations, des notifications non
-   lues, et les échéances du jour pour « Aujourd'hui ». Le Centre de pilotage
-   n'agrège pas une collection : lui coller un chiffre inventé serait pire que
-   pas de chiffre du tout, donc il n'en porte aucun.
+   bord, des notifications non lues, et les échéances du jour pour
+   « Aujourd'hui ».
 
    Rend 0 pour « aucun badge » : l'issue ne veut un badge que si le compteur
    dépasse zéro, et un « 0 » affiché ne dit rien d'utile. */
@@ -2280,7 +2274,6 @@ function viewRailBadgeCount(key, counts) {
   switch (key) {
     case "projects": return n(c.projects);
     case "dashboard": return n(c.dashboards);
-    case "automations": return n(c.workflows);
     case "notifications": return n(c.unreadNotifications);
     case "today": return n(c.dueToday);
     default: return 0;
@@ -2300,19 +2293,17 @@ function viewRailBadgeLabel(count) {
 // Destinations de haut niveau — seules celles-ci restent dans le bandeau vertical.
 // Les autres (les "vues" de détail sur les tâches) deviennent des onglets affichés
 // une fois un contexte projet actif, plutôt que des destinations indépendantes.
-const TOP_LEVEL_VIEW_KEYS = ["control", "projects", "today", "dashboard", "automations", "notifications"];
+const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "dashboard", "notifications"];
 // Vues de détail — apparaissent en onglets horizontaux, jamais dans le bandeau.
-const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "calendar", "timeline", "radar", "table", "chiffrage"];
+const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "timeline", "radar", "table"];
 
 const PROJECT_DEFAULT_VIEW_OPTIONS = [
   { key:"projects", label:"Métro" },
   { key:"gantt", label:"Gantt" },
   { key:"heatmap", label:"Heat map" },
-  { key:"calendar", label:"Calendrier" },
   { key:"timeline", label:"Timeline + Liste" },
   { key:"radar", label:"Radar" },
   { key:"table", label:"Tableur" },
-  { key:"chiffrage", label:"Chiffrage" },
 ];
 
 const projectNavigationZoomOptions = (viewKey) => {
@@ -2323,9 +2314,6 @@ const projectNavigationZoomOptions = (viewKey) => {
   if (viewKey === "gantt") return [
     { key:"day", label:"Jour" }, { key:"week", label:"Semaine" }, { key:"month", label:"Mois" },
     { key:"quarter", label:"Trimestre" }, { key:"year", label:"Année" }, { key:"5years", label:"5 ans" }
-  ];
-  if (viewKey === "calendar") return [
-    { key:"week", label:"Hebdomadaire" }, { key:"month", label:"Mensuel" }
   ];
   if (viewKey === "timeline") return [
     { key:"day", label:"Jour" }, { key:"week", label:"Semaine" }, { key:"month", label:"Mois" }, { key:"auto", label:"Auto" }
@@ -2998,7 +2986,7 @@ function getTimeMachine({ project, tasks, taskBaselines, momentumSnapshots }) {
   return { status: "ready", hasBaseline, planStart, planEnd, currentStart, currentEnd, driftDays, forecast, forecastDriftDays, projTasks };
 }
 
-function getDailyBriefing({ tasks, ctx, activityLog, workflowExecutionLog }) {
+function getDailyBriefing({ tasks, ctx, activityLog }) {
   const dated = tasks.filter((t) => t.start && t.end);
   const today = iso(new Date());
   const tomorrow = addDays(today, 1);
@@ -3051,16 +3039,7 @@ function getDailyBriefing({ tasks, ctx, activityLog, workflowExecutionLog }) {
     if (reopened.length > 0) recentChanges.push({ key: "reopened", icon: "↺", text: `${reopened.length} tâche${reopened.length > 1 ? "s" : ""} rouverte${reopened.length > 1 ? "s" : ""}`, entries: reopened });
   }
 
-  // Automatisations déclenchées hier — permet au briefing de mentionner ce qui
-  // s'est passé "en coulisses" sans avoir à ouvrir la vue Automatisations.
-  let automationsYesterday = null;
-  if (workflowExecutionLog && workflowExecutionLog.length > 0) {
-    const yesterday = addDays(today, -1);
-    const entries = workflowExecutionLog.filter((e) => e.triggeredAt.slice(0, 10) === yesterday && e.status === "success");
-    if (entries.length > 0) automationsYesterday = { count: entries.length, entries };
-  }
-
-  return { date: today, priorityLevel, alerts, todayItems, dueTomorrowCount: dueTomorrow.length, nextBestAction, atRiskProjects, recentChanges, automationsYesterday };
+  return { date: today, priorityLevel, alerts, todayItems, dueTomorrowCount: dueTomorrow.length, nextBestAction, atRiskProjects, recentChanges };
 }
 
 // ============================================================================
