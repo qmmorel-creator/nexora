@@ -614,13 +614,37 @@ test("un départ anticipé ouvre le ruban en vert", () => {
   jointif(ruban);
 });
 
-test("deux périodes DISJOINTES ne laissent pas de trou : l'entre-deux appartient au décalage", () => {
-  // La tâche a été repoussée en bloc, après la fin prévue.
-  const cmp = miniGanttTaskComparison(tache({ start: "2026-10-01", end: "2026-10-20", ...ref("2026-08-12", "2026-09-18") }));
-  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-11-01"));
-  // Un seul segment : trois morceaux rouges consécutifs sont FUSIONNÉS, sinon
-  // deux jonctions invisibles resteraient dans le ruban.
-  assert.deepEqual(kinds(ruban), ["late"]);
+test("une tâche déplacée EN BLOC garde son plan lisible", () => {
+  /* Cas signalé : plan du 09/06 au 09/09, réel du 13/09 au 02/10 — aucun
+     recouvrement. Tout était classé en retard, puis fusionné : un seul pavé
+     rouge d'un bout à l'autre, dans lequel ni la période initiale ni le
+     glissement ne se lisaient plus. Le plan n'a pas pris du retard, il a été
+     abandonné là où il était : il reste gris, en entier. */
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-09-13", end: "2026-10-02", ...ref("2026-06-09", "2026-09-09") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-06-01", "2026-10-15"));
+  assert.deepEqual(kinds(ruban), ["reference", "late"]);
+  jointif(ruban);
+  // Le gris couvre EXACTEMENT la période de référence, ni plus ni moins.
+  const jours = (from, to) => ganttDayNumber(to) - ganttDayNumber(from);
+  const total = jours("2026-06-09", "2026-10-02");
+  assert.ok(Math.abs(ruban.segments[0].widthPct - (jours("2026-06-09", "2026-09-09") / total) * 100) < 0.001);
+  // Et le rouge couvre l'entre-deux ET la période réelle, d'un seul tenant.
+  assert.ok(Math.abs(ruban.segments[1].widthPct - (jours("2026-09-09", "2026-10-02") / total) * 100) < 0.001);
+});
+
+test("déplacée en bloc vers l'AVANT, le plan reste gris et le gain est vert", () => {
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-06-01", end: "2026-06-20", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-05-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["ahead", "reference"]);
+  jointif(ruban);
+});
+
+test("dès qu'il y a recouvrement, le plan non consommé se peint de nouveau", () => {
+  // Départ tardif AVEC recouvrement : la part du plan laissée de côté au début
+  // reste un retard, et c'est bien ce qu'on veut lire.
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-08-20", end: "2026-09-26", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["late", "reference", "late"]);
   jointif(ruban);
 });
 

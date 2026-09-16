@@ -667,6 +667,23 @@ mais conserve les valeurs saisies.
 | `late` | le temps que le réel occupe au-delà du plan, ou que le plan réservait avant que le réel ne démarre | rouge corail (`#E4572E`), hachures **montantes** (45°) |
 | `ahead` | le temps **rendu** : prévu et non consommé, ou consommé en avance | vert (`#1F9D6B`), hachures **descendantes** (−45°) |
 
+### Une tâche déplacée en bloc garde son plan
+
+La part du plan que le réel n'a pas consommée se peint — départ tardif en rouge,
+fin anticipée en vert — **mais seulement si les deux périodes se recoupent
+quelque part**.
+
+Sans ce garde-fou, une tâche déplacée **en bloc** (plan du 09/06 au 09/09, réel
+du 13/09 au 02/10, aucun recouvrement) voyait ses trois morceaux — plan non
+consommé, entre-deux, période réelle — tous classés en retard, puis fusionnés
+par la règle des voisins de même nature : un seul pavé rouge d'un bout à
+l'autre, dans lequel ni la période initiale ni le glissement ne se lisaient
+plus (retour de test).
+
+Un plan abandonné n'a pas « pris du retard » : il est resté où il était. Il
+reste donc **gris, en entier**, et le rouge ne couvre que l'entre-deux et la
+période réelle.
+
 Le ruban porte le **même contour que la barre réelle, en gris** : les deux
 étages se répondent, et le ruban se détache du fond comme du bloc temporel qu'il
 traverse. Il est posé par une ombre plutôt qu'une bordure — le conteneur est en
