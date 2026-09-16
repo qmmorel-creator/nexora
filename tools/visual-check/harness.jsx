@@ -154,6 +154,7 @@ function AnnotationsHarness() {
   });
   const [openedProjectId, setOpenedProjectId] = useState("");
   const [toolbar, setToolbar] = useState(null);
+  const [metroWidgetToolbar, setMetroWidgetToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
   // déroulantes des annotations ne proposent que les tâches retenues par le
   // filtre du widget. Ici, le filtre ne garde que le projet « p2 ».
@@ -192,6 +193,34 @@ function AnnotationsHarness() {
             selectedProjectIds={[]}
             onToggleProject={noop}
           />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>MÉTRO EN WIDGET</h2>
+        {/* La MÊME vue, mais embarquée dans la structure réelle d'un widget de
+            tableau de bord : carte, bandeau de paramètres, corps défilant. Les
+            en-têtes collants du planning se calent sur la barre d'onglets de la
+            page — qui n'existe pas ici. Sans repli à zéro, l'axe des dates se
+            fige 82 px sous le bandeau et les lignes défilent à découvert dans
+            cette bande (issue #56). */}
+        <div id="harness-metro-widget" className="lp-widget-card" style={{ position: "relative", width: 760, height: 320, marginBottom: 18 }}>
+          <div className="lp-widget-head">
+            <span className="lp-widget-title">Métro (complet) 1</span>
+            <span className="lp-view-toolbar-slot" ref={setMetroWidgetToolbar} />
+          </div>
+          <div className="lp-widget-body">
+            <div className="lp-widget-embed">
+              <div className="lp-widget-embed-body">
+                <ProjectMetroView
+                  tasks={tasks} ctx={ctx} onOpen={noop} toolbarSlot={metroWidgetToolbar} appearance={appearance}
+                  prefs={metroPrefs}
+                  setPrefs={(patch) => setMetroPrefs((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }))}
+                  setTasks={setTasks} pushToast={noop} expenses={[]} metaTemporalBlocks={settingsMetaBlocks}
+                  embedded isHomepage={false} onSelectProject={noop} selectedProjectIds={[]} onToggleProject={noop}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div>
