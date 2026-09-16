@@ -596,6 +596,29 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Une icône dont le chargement échoue n'a plus de repli.");
   assert.match(builtSource, /if \(failedSrc === src\)/,
     "L'échec n'est plus mémorisé par URL : changer l'URL ne retenterait pas.");
+  /* Second retour de test : l'icône ne s'affichait pas parce qu'elle n'était
+     jamais ENREGISTRÉE. La règle de choix est couverte par le test unitaire ;
+     ce qui ne l'est pas, c'est son câblage dans la fiche. Chacun de ces quatre
+     points, retiré seul, rend l'URL silencieusement perdue. */
+  assert.match(builtSource, /const saveIcon = \(\) => commitIcon\(resolveIconChoice\(draftIcon, customUrl\)\);/,
+    "« Enregistrer » ignore de nouveau l'URL laissée dans le champ : elle serait perdue sans un mot.");
+  assert.match(builtSource, /title="Utiliser cette image" onClick=\{\(\)=>commitIcon\(customUrl\.trim\(\)\)\}/,
+    "« Utiliser cette image » ne fait plus qu'un brouillon : refermer la fiche perdrait l'icône.");
+  assert.match(builtSource, /if\(e\.key==="Enter" && isImageUrl\(customUrl\)\)\{ e\.preventDefault\(\); commitIcon\(customUrl\.trim\(\)\); \}/,
+    "La touche Entrée du champ d'URL ne valide plus l'icône.");
+  /* Le champ vidé dès qu'on choisit ailleurs est ce qui rend son contenu
+     lisible comme « la dernière chose exprimée » : sans cela, une URL restée
+     dans le champ reprendrait le dessus sur l'icône cliquée, et « Retirer
+     l'icône » ressusciterait l'ancienne URL. */
+  assert.match(builtSource, /setCustomUrl\(""\);\s*\n\s*if \(item\.prefix === "tabler"\)/,
+    "Choisir une icône dans la grille ne vide plus le champ d'URL : l'URL reprendrait le dessus.");
+  assert.match(builtSource, /onClick=\{\(\)=>\{setCustomUrl\(""\);setDraftIcon\(null\);\}\}>Retirer l'icône/,
+    "« Retirer l'icône » laisse l'URL dans le champ : elle reviendrait à l'enregistrement.");
+  /* Même règle des deux côtés, jusque dans l'état initial du champ : la
+     première version du correctif y avait laissé une expression sensible à la
+     casse, et le champ s'ouvrait vide sur une icône pourtant enregistrée. */
+  assert.doesNotMatch(builtSource, /useState\(\/\^\(https\?:\|data:\)\/\.test\(icon/,
+    "Le champ d'URL retrouve sa propre règle de reconnaissance, différente du rendu.");
 }
 
 /* Filtre textuel des surfaces « tableau de bord » (issue #72).
