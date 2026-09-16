@@ -257,6 +257,37 @@ const seen = await page.evaluate(() => {
       }).filter(Boolean);
     })(),
     secondStrip: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-strip-track").length,
+    /* TOUTES les pistes d'un même widget portent la même échelle temporelle :
+       elles doivent donc avoir la même largeur, au pixel près. L'axe avait une
+       marge droite de 20 px et aucune réserve pour la colonne de champs — il
+       était plus large que les lignes de 60 à 230 px selon les champs
+       affichés, et tout l'axe tombait à côté. « Aujourd'hui » le rendait
+       seulement visible, en s'écartant de son propre trait vertical. C'est la
+       DEUXIÈME fois que ce défaut frappe (les titres de bloc avant lui) : on le
+       mesure plutôt que d'y revenir une troisième. */
+    largeursPistes: ["#harness-first-minigantt", "#harness-second-minigantt", "#harness-comparison-minigantt", "#harness-nofields-minigantt"].map((sel) => {
+      const host = document.querySelector(sel);
+      if (!host) return null;
+      const largeur = (el) => (el ? Math.round(el.getBoundingClientRect().width) : null);
+      const pistes = [
+        largeur(host.querySelector(".lp-widget-minigantt-axis-track")),
+        largeur(host.querySelector(".lp-widget-minigantt-phases-track")),
+        largeur(host.querySelector(".lp-widget-minigantt-strip-track")),
+        largeur(host.querySelector(".lp-widget-minigantt-track")),
+        largeur(host.querySelector(".lp-widget-minigantt-gridoverlay")),
+      ].filter((v) => v !== null);
+      return { sel, min: Math.min(...pistes), max: Math.max(...pistes), n: pistes.length };
+    }).filter(Boolean),
+    // Le repère « Aujourd'hui » de l'axe et le trait vertical du diagramme
+    // décrivent la même date : ils doivent tomber au même endroit.
+    reperesAujourdhui: ["#harness-first-minigantt", "#harness-second-minigantt", "#harness-comparison-minigantt"].map((sel) => {
+      const host = document.querySelector(sel);
+      const centre = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return b.x + b.width / 2; };
+      const etiquette = centre(host && host.querySelector(".lp-widget-minigantt-axis-today"));
+      const trait = centre(host && host.querySelector(".lp-widget-minigantt-todayline"));
+      if (etiquette === null || trait === null) return null;
+      return { sel, ecart: Math.round(Math.abs(etiquette - trait)) };
+    }).filter(Boolean),
     miniBlockAlign: (() => {
       const host = document.querySelector("#harness-first-minigantt");
       const centre = (el) => { const b = el.getBoundingClientRect(); return b.x + b.width / 2; };
@@ -1064,6 +1095,16 @@ seen.miniFields.forEach((f, i) => {
 
 // L'étiquette d'un bloc temporel doit être CENTRÉE sur sa bande : une largeur
 // estimée trop généreuse la décalait visiblement vers la gauche.
+// --- Échelle temporelle commune --------------------------------------------
+expect(seen.largeursPistes.length >= 3, `Mini-Gantt : ${seen.largeursPistes.length} widget(s) mesuré(s) pour l'alignement des pistes, au moins 3 attendus`);
+seen.largeursPistes.forEach((w) => {
+  expect(w.n >= 3, `${w.sel} : seulement ${w.n} piste(s) mesurée(s) — le contrôle d'alignement ne garde plus grand-chose`);
+  expect(w.max - w.min <= 1, `${w.sel} : les pistes n'ont pas la même largeur (${w.min} à ${w.max} px) — l'axe et les lignes ne portent plus la même échelle temporelle`);
+});
+seen.reperesAujourdhui.forEach((r) => {
+  expect(r.ecart <= 2, `${r.sel} : le repère « Aujourd'hui » de l'axe est à ${r.ecart} px de son trait vertical`);
+});
+
 // Sans bande de repères, la largeur de la piste doit quand même être mesurée.
 expect(seen.secondStrip === 0, `Second Mini-Gantt : il porte une bande de repères (${seen.secondStrip}) — le cas du titre désaligné ne serait plus reproduit`);
 expect(seen.secondBlockAlign.length > 0, "Second Mini-Gantt : aucune étiquette de bloc appariée à sa bande");

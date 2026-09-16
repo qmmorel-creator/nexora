@@ -5419,6 +5419,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return map;
   }, [comparisonOn, projTasks, milestoneTasks]);
 
+  /* La colonne de droite existe-t-elle dans CE widget ? Une seule réponse pour
+     l'axe, la bande des titres de bloc, celle des repères, la légende, la
+     grille et chaque ligne : sans quoi les uns réservent la gouttière que les
+     autres n'ont pas, et les repères tombent à côté. */
+  const fieldsColumnShown = fieldsLayout === "aligned"
+    && (rowFields.length > 0 || comparisonByTask.size > 0);
+
   const emphasisFor = (taskId) => (emphasisOn ? miniGanttRowEmphasis(taskId, riskSegments, criticalIds) : "none");
 
   // Cochée = encadrée, et rien d'autre. L'état vient des annotations, donc il
@@ -5671,6 +5678,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <span className="lp-widget-minigantt-axis-today" style={{ left: pctFor(todayIdx) }}>Aujourd'hui</span>
         )}
       </div>
+      {/* Même réserve que la bande des titres de bloc et celle des repères :
+          sans elle, l'axe est plus large que les pistes et toutes ses
+          graduations tombent à côté. */}
+      {fieldsColumnShown && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
     </div>
   );
 
@@ -5687,7 +5698,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </span>
         ))}
       </div>
-      {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
+      {fieldsColumnShown && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
     </div>
   );
 
@@ -5798,7 +5809,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const GridOverlay = () => (
     <div
       className="lp-widget-minigantt-gridoverlay"
-      style={{ left: "calc(26% + 6px)", right: fieldsLayout === "aligned" ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
+      style={{ left: "calc(26% + 6px)", right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
     >
       {weekendBands.map((idx) => (
         <span key={"we-" + idx} className="lp-widget-minigantt-weekend" style={{ left: pctFor(idx), width: `${(1 / span) * 100}%` }} />
@@ -5854,7 +5865,16 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // champ facultatif n'est configuré.
   const RowFields = ({ t, anchorPct }) => {
     const hasComparison = comparisonByTask.has(t.id);
-    if (!rowFields.length && !hasComparison) return null;
+    /* En disposition alignée, la colonne se rend sur TOUTES les lignes dès
+       qu'elle existe pour une seule — même celles qui n'ont rien à y mettre.
+       Sinon la ligne perd l'élément ET la gouttière de 6 px du flex, et sa
+       piste devient plus large que celles de ses voisines, de l'axe et de la
+       grille. Deux lignes du même widget n'avaient alors pas la même échelle
+       dès qu'une seule portait un indicateur d'écart.
+       Aucune colonne pour personne reste le cas de l'issue #66 : là, rien
+       n'est rendu nulle part, et la piste va jusqu'au bord. */
+    if (!fieldsColumnShown && !hasComparison) return null;
+    if (fieldsLayout === "inline" && !rowFields.length && !hasComparison) return null;
     const content = (
       <>
         {rowFields.filter((f) => f !== "progress").map((f) => (
@@ -6194,7 +6214,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </button>
         ))}
       </div>
-      {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
+      {fieldsColumnShown && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
     </div>
   );
 
@@ -6225,7 +6245,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </span>
         ))}
       </div>
-      {fieldsLayout === "aligned" && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
+      {fieldsColumnShown && <span className="lp-widget-minigantt-phases-fields" style={{ width: FIELDS_COL_WIDTH }} />}
     </div>
   );
 
@@ -6234,7 +6254,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       className="lp-widget-minigantt-band-layer"
       style={{
         left: "calc(26% + 6px)",
-        right: fieldsLayout === "aligned" ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
+        right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
         top: rowsBand.top,
         height: rowsBand.height,
       }}
@@ -6263,7 +6283,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const annotationLayer = (!rowsBand || !frameShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-annot-layer"
-      style={{ left: "calc(26% + 6px)", right: fieldsLayout === "aligned" ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
+      style={{ left: "calc(26% + 6px)", right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
     >
       {frameShapes.map((seg) => {
         const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
