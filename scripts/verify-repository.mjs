@@ -557,6 +557,29 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
 }
 
+/* Bulles du rail vertical (issue #65).
+   Les compteurs sont couverts par tests/view-rail-badge.test.mjs, la mise en
+   page par le contrôle visuel. Reste le CÂBLAGE : un compteur calculé que
+   personne n'affiche, ou un badge affiché à partir de rien. */
+{
+  assert.match(builtSource, /const badge = viewRailBadgeLabel\(viewRailBadgeCount\(key, viewRailCounts\)\);/,
+    "Le badge des bulles du rail n'est plus calculé.");
+  assert.match(builtSource, /\{badge && <span className=\{"lp-view-rail-btn-count"/,
+    "Le badge n'est plus rendu sur la bulle.");
+  /* Le rail portait un « lp-tab-badge » tronqué à « 9+ » dès dix notifications.
+     Il passe au badge commun des bulles, qui tient trois chiffres. Le contrôle
+     porte sur LE RAIL seul : la barre du bas des mobiles garde son « 9+ », et
+     c'est voulu — elle n'a pas la place. */
+  const railFrom = builtSource.indexOf('<nav className="lp-view-rail"');
+  /* Recherche VERS L'AVANT : « lp-view-rail-folders » apparaît d'abord dans la
+     feuille de style, des milliers de lignes plus haut. Repartir du début
+     donnerait une tranche vide, et le contrôle passerait à vide. */
+  const railJsx = railFrom === -1 ? "" : builtSource.slice(railFrom, builtSource.indexOf("lp-view-rail-folders", railFrom));
+  assert.ok(railJsx.length > 0, "Le rail vertical est introuvable.");
+  assert.doesNotMatch(railJsx, /lp-tab-badge/,
+    "Le rail reprend le badge tronqué à « 9+ » : ses bulles tiennent trois chiffres.");
+}
+
 /* Icônes par URL du menu latéral (issue #70).
    La reconnaissance est couverte par tests/icon-url.test.mjs. Ce qui ne l'est
    pas, c'est la SYMÉTRIE entre la fiche qui accepte et le rendu qui affiche :

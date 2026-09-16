@@ -4505,7 +4505,12 @@ function GlobalStyles() {
         .lp-view-rail::before{
           /* Ligne continue (pas de segments) : c'est le rail lui-même, pas une
              indication pointillée. */
-          content:""; position:absolute; top:34px; bottom:34px; left:50%; width:3px; transform:translateX(-50%);
+          /* 31px = 12px de remplissage du rail + la moitié d'une bulle de 38 :
+             la ligne part du CENTRE de la première bulle et s'arrête au centre
+             de la dernière, comme une ligne de métro entre ses terminus. Elle
+             visait la moitié des anciennes cartes de 58 px et commençait donc
+             sous la première (#65). */
+          content:""; position:absolute; top:31px; bottom:31px; left:50%; width:3px; transform:translateX(-50%);
           background:var(--rail); border-radius:3px; z-index:0; opacity:0.9;
         }
         .lp-view-rail-favorites{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:3px; padding-top:8px; }
@@ -4599,8 +4604,28 @@ function GlobalStyles() {
         .lp-view-rail-fav-dot{ width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; }
         .lp-view-rail-btn{ position:relative; z-index:1; flex:0 0 auto; width:36px; height:36px; display:flex; align-items:center; justify-content:center; border:1.75px solid var(--border-strong); background:var(--surface); color:var(--text-muted); font-size:15px; border-radius:50%; cursor:pointer; transition:transform .12s ease, border-color .12s ease, color .12s ease; }
         .lp-view-rail-btn:hover{ border-color:var(--graphite); color:var(--text-primary); transform:scale(1.06); }
-        .lp-view-rail-label{font-size:12px;line-height:1.2;text-align:center;overflow-wrap:anywhere;}
-        .lp-view-rail>.lp-view-rail-btn{width:98px;min-height:58px;height:auto;padding:7px 3px;flex-direction:column;gap:4px;border-radius:var(--radius-sm);}
+        /* Les entrées de premier niveau sont des BULLES, comme les roundels de
+           dossier plus bas (#65). En grandes cartes de 98×58, elles créaient de
+           gros écarts en haut de la frise et cassaient la continuité avec le
+           reste : deux registres visuels sur une même ligne de métro.
+
+           Le libellé reste dans le DOM — il nomme le bouton pour les lecteurs
+           d'écran, et l'infobulle le donne à la souris — mais il n'occupe plus
+           de place : c'est l'icône qui porte la lecture. */
+        .lp-view-rail-label{ position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+        .lp-view-rail>.lp-view-rail-btn{ width:38px; height:38px; min-height:0; padding:0; flex-direction:row; gap:0; border-radius:50%; box-shadow:0 0 0 2px var(--ink-soft); }
+        /* Badge du compteur, repris de celui des dossiers pour que les deux
+           familles de bulles se ressemblent vraiment. « min-width » plutôt qu'une
+           largeur fixe : il doit rester lisible à un, deux et trois chiffres. */
+        .lp-view-rail-btn-count{
+          position:absolute; right:-4px; bottom:-4px; min-width:14px; height:14px; padding:0 3px;
+          border-radius:8px; background:var(--graphite); color:#fff;
+          border:1.5px solid var(--ink-soft);
+          font:700 8px/11px var(--font-mono); text-align:center; z-index:3;
+          display:flex; align-items:center; justify-content:center;
+        }
+        /* Les notifications non lues appellent l'œil, les autres comptes non. */
+        .lp-view-rail-btn-count.is-alert{ background:var(--danger); }
         .lp-view-rail-btn.active{ background:var(--quai-elevated); color:var(--line-blue); border-color:var(--line-blue); box-shadow:none; }
         /* Stations des dossiers : accessibles même lorsque la navigation latérale est repliée.
            La couleur du dossier est reprise sur l'anneau et l'icône du premier projet
@@ -10594,6 +10619,17 @@ export default function LePlan({ currentUser, onSignOut }) {
   );
   const boardSearchActive = !!boardSearchApplied.trim();
 
+  /* Compteurs des bulles du rail (#65). Rassemblés en un seul endroit, et
+     calculés sur le socle méta-filtré comme les vues qu'ils annoncent : un badge
+     qui compterait des tâches que la vue n'affiche pas mentirait. */
+  const viewRailCounts = useMemo(() => ({
+    projects: projects.length,
+    dashboards: dashboards.length,
+    workflows: workflows.length,
+    unreadNotifications: unreadNotificationsCount,
+    dueToday: metaFilteredTasks.filter((t) => t.end === iso(new Date()) && !isTaskDoneGlobal(t, ctx)).length,
+  }), [projects, dashboards, workflows, unreadNotificationsCount, metaFilteredTasks, ctx]);
+
   const todayPresentationTasks = useMemo(() => {
     const rank = { action:0, activity:1, milestone:2 };
     return [...boardTasks].sort((a,b) => {
@@ -11244,6 +11280,9 @@ export default function LePlan({ currentUser, onSignOut }) {
       )}
 
       {/* ---------------- Bandeau de vues persistant (icônes) ---------------- */}
+      {/* Les compteurs des bulles du rail (#65). Rassemblés ici, à un seul
+          endroit, plutôt que devinés dans le rendu : c'est ce qui permet de les
+          éprouver par un test sans monter toute l'application. */}
       <nav className="lp-view-rail" aria-label="Espaces de travail">
         {viewOrder.map((key) => {
           if (enabledViews[key] === false) return null;
@@ -11254,10 +11293,22 @@ export default function LePlan({ currentUser, onSignOut }) {
           // détail (Gantt, Radar…) puisque ces dernières n'ont plus leur propre
           // icône ici — elles restent conceptuellement rattachées à ce point d'entrée.
           const isActive = PROJECT_TAB_VIEW_KEYS.includes(view) ? key === "projects" : view === key;
+          const badge = viewRailBadgeLabel(viewRailBadgeCount(key, viewRailCounts));
           return (
-            <button key={key} className={"lp-view-rail-btn" + (isActive ? " active" : "")} onClick={() => setView(key)} title={meta.label} aria-current={isActive ? "page" : undefined}>
-              <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={17} /><span className="lp-view-rail-label">{meta.label}</span>
-              {key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
+            /* Bulle, et non plus grande carte (#65) : le libellé reste dans le
+               DOM pour les lecteurs d'écran et sert d'infobulle, mais ce sont
+               l'icône et le badge qui portent la lecture — comme les roundels de
+               dossier plus bas, dont cette rangée se distinguait sans raison. */
+            <button
+              key={key}
+              className={"lp-view-rail-btn" + (isActive ? " active" : "")}
+              onClick={() => setView(key)}
+              title={badge ? `${meta.label} · ${badge}` : meta.label}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={17} />
+              <span className="lp-view-rail-label">{meta.label}</span>
+              {badge && <span className={"lp-view-rail-btn-count" + (key === "notifications" ? " is-alert" : "")}>{badge}</span>}
             </button>
           );
         })}

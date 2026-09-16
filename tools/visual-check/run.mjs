@@ -275,6 +275,61 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Rail des vues (issue #65). Les grandes cartes rectangulaires doivent être
+   redevenues des bulles, alignées sur la ligne centrale et de hauteur
+   régulière — ce qui ne se lit que sur un rendu. */
+const rail = {};
+try {
+  await page.locator("#harness-view-rail").scrollIntoViewIfNeeded();
+  await page.waitForTimeout(250);
+  Object.assign(rail, await page.evaluate(() => {
+    const nav = document.querySelector("#harness-view-rail");
+    const btns = [...nav.querySelectorAll(".lp-view-rail-btn")];
+    const rects = btns.map((b) => b.getBoundingClientRect());
+    const cs = btns.map((b) => getComputedStyle(b));
+    const ligne = getComputedStyle(nav, "::before");
+    const badges = [...nav.querySelectorAll(".lp-view-rail-btn-count")];
+    const roundel = nav.querySelector(".lp-view-rail-folder");
+    const rRoundel = roundel ? roundel.getBoundingClientRect() : null;
+    const centre = (r) => Math.round(r.left + r.width / 2);
+    const ecarts = [];
+    for (let i = 1; i < rects.length; i++) ecarts.push(Math.round(rects[i].top - rects[i - 1].bottom));
+    return {
+      nb: btns.length,
+      // Rondes : autant de haut que de large, et un rayon en pourcentage.
+      rondes: rects.every((r) => Math.abs(r.width - r.height) <= 1) && cs.every((c) => c.borderRadius === "50%"),
+      hauteurs: [...new Set(rects.map((r) => Math.round(r.height)))],
+      // Aucune bulle ne doit provoquer de rupture de hauteur.
+      hauteurMax: Math.max(...rects.map((r) => Math.round(r.height))),
+      // Espacement régulier entre toutes les bulles.
+      ecarts: [...new Set(ecarts)],
+      // Toutes centrées sur la même verticale, roundels de dossier compris.
+      centres: [...new Set(rects.map(centre).concat(rRoundel ? [centre(rRoundel)] : []))],
+      ligneVisible: ligne.display !== "none" && parseFloat(ligne.width) > 0,
+      // Le libellé reste dans le DOM (lecteurs d'écran) mais ne prend pas de place.
+      libelleInvisible: [...nav.querySelectorAll(".lp-view-rail-label")].every((l) => l.getBoundingClientRect().width <= 2),
+      libelleDansLeDom: nav.querySelector(".lp-view-rail-label")?.textContent.trim() || "",
+      // Un badge par bulle qui en a un — jamais sur celle qui n'en a pas.
+      nbBadges: badges.length,
+      badgesLargeurs: badges.map((b) => Math.round(b.getBoundingClientRect().width)),
+      /* Lisibilité réelle : le texte du badge tient-il dans le badge ? Comparer
+         des largeurs entre elles ne conclut rien — un compteur court se loge
+         déjà dans la largeur plancher, et seul le débordement ment. */
+      badgesTronques: badges.filter((b) => b.scrollWidth > b.clientWidth + 1).length,
+      // Le badge se pose sur le bord inférieur droit, sans s'éloigner de la bulle.
+      badgeAncre: badges.every((b) => {
+        const rb = b.getBoundingClientRect();
+        const bulle = b.closest(".lp-view-rail-btn").getBoundingClientRect();
+        /* Ancré au coin inférieur droit, et pas plus large que sa bulle : un
+           compteur qui déborderait des deux côtés cesserait d'être un badge. */
+        return rb.right > bulle.right - 2 && rb.bottom > bulle.bottom - 2 && rb.width < bulle.width;
+      }),
+    };
+  }));
+} catch (error) {
+  rail.error = String(error).split("\n")[0];
+}
+
 /* Heat map mensuelle (issue #68). Le reflow est du CSS pur : il ne se vérifie
    que sur un rendu, à deux largeurs. */
 const mois = { large: null, etroit: null, passe: null };
@@ -1194,6 +1249,22 @@ expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas
 expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error}`);
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
+
+expect(!rail.error, `contrôle du rail des vues interrompu : ${rail.error}`);
+expect(rail.nb === 4, `Rail : ${rail.nb} bulles rendues, 4 attendues`);
+expect(rail.rondes, "Rail : les entrées ne sont pas des bulles rondes — les grandes cartes rectangulaires sont toujours là");
+expect((rail.hauteurs || []).length === 1, `Rail : ${(rail.hauteurs || []).length} hauteurs différentes (${(rail.hauteurs || []).join(", ")} px) — aucune bulle ne doit rompre la hauteur`);
+expect(rail.hauteurMax <= 44, `Rail : la plus haute bulle fait ${rail.hauteurMax} px — c'est encore une carte, pas une bulle`);
+expect((rail.ecarts || []).length === 1, `Rail : l'espacement vertical varie (${(rail.ecarts || []).join(", ")} px) — il doit être régulier`);
+expect((rail.centres || []).length === 1, `Rail : ${(rail.centres || []).length} axes verticaux différents — bulles et roundels doivent partager la ligne centrale`);
+expect(rail.ligneVisible, "Rail : la ligne verticale centrale a disparu");
+expect(rail.libelleInvisible, "Rail : le libellé occupe encore de la place — c'est lui qui faisait les grandes cartes");
+expect(rail.libelleDansLeDom.length > 0, "Rail : le libellé a quitté le DOM — le bouton n'aurait plus de nom accessible");
+expect(rail.nbBadges === 3, `Rail : ${rail.nbBadges} badge(s), 3 attendus — celle sans compteur ne doit pas en porter`);
+// Un, deux et trois chiffres doivent tous tenir sans être rognés.
+expect(rail.badgesTronques === 0,
+  `Rail : ${rail.badgesTronques} badge(s) tronqué(s) — un compteur à trois chiffres doit rester lisible (largeurs : ${(rail.badgesLargeurs || []).join(", ")} px)`);
+expect(rail.badgeAncre, "Rail : un badge n'est pas posé sur le bord inférieur droit de sa bulle");
 
 expect(!mois.error, `contrôle de la heat map mensuelle interrompu : ${mois.error}`);
 expect(mois.large && mois.large.blocs === 3, `Heat map mensuelle : ${mois.large && mois.large.blocs} mois rendus, 3 attendus`);

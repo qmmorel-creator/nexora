@@ -216,6 +216,33 @@ function AnnotationsHarness() {
         </div>
       </div>
       <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>RAIL DES VUES</h2>
+        {/* Issue #65. Le rail réel vit dans l'application complète, que ce banc
+            ne monte pas ; ce qui a changé est ENTIÈREMENT dans la feuille de
+            style, et c'est elle qu'on éprouve ici, sur le même balisage et les
+            mêmes classes que le rendu réel. */}
+        <nav id="harness-view-rail" className="lp-view-rail" aria-label="Espaces de travail" style={{ height: 320, marginBottom: 18 }}>
+          {[
+            { key: "control", label: "Centre de pilotage", icon: "tabler:affiliate", badge: "" },
+            { key: "projects", label: "Planning Projets", icon: "tabler:route", badge: "4" },
+            { key: "automations", label: "Automatisations", icon: "tabler:automation", badge: "999+" },
+            { key: "notifications", label: "Notifications", icon: "tabler:bell", badge: "12" },
+          ].map((v) => (
+            <button key={v.key} type="button" className={"lp-view-rail-btn" + (v.key === "projects" ? " active" : "")} title={v.label}>
+              <IconGlyph icon={v.icon} size={17} />
+              <span className="lp-view-rail-label">{v.label}</span>
+              {v.badge && <span className={"lp-view-rail-btn-count" + (v.key === "notifications" ? " is-alert" : "")}>{v.badge}</span>}
+            </button>
+          ))}
+          <div className="lp-view-rail-folders" aria-label="Dossiers de projets">
+            <button type="button" className="lp-view-rail-folder" style={{ "--folder-color": "#4F6AF5" }} title="Dossier">
+              <IconGlyph icon="tabler:folder" size={14} />
+              <span className="lp-view-rail-folder-count">3</span>
+            </button>
+          </div>
+        </nav>
+      </div>
+      <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>HEAT MAP MENSUELLE</h2>
         {/* Le MÊME widget à deux largeurs (#68) : large, les trois mois tiennent
             sur une ligne ; étroit, ils doivent passer les uns sous les autres
