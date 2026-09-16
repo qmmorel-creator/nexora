@@ -3,7 +3,7 @@ import {z} from 'zod';
 import {calendarConfig,planCalendarImport} from './calendar.mts';
 
 export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState'] as const;
-const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState','taskBaselines']);
+const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState']);
 export function fingerprint(v) { return createHash('sha256').update(JSON.stringify(v)).digest('hex'); }
 export function normalize(v) {return String(v??'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();}
 export function parisDate(v=new Date()) {return new Intl.DateTimeFormat('fr-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(v));}
@@ -21,6 +21,17 @@ export function ensureTaskDates(task, now=new Date()) {
 }
 function day(v) {if(!v)return null;const parsed=new Date(v);if(!Number.isFinite(parsed.getTime()))return null;return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:parisDate(parsed);}
 function clean(v) {if(Array.isArray(v))return v.map(clean);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).filter(([k])=>!/(token|password|secret|credential|apiKey)/i.test(k)).map(([k,x])=>[k,clean(x)]));if(typeof v==='string'&&v.startsWith('data:'))return '[inline binary omitted]';return v;}
+function validateTaskBaselineChanges(changes) {
+ if(!changes||Array.isArray(changes)||typeof changes!=='object')throw new Error('Baseline changes must be an object map');
+ const validDate=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v+'T00:00:00Z'))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v;
+ for(const [taskId,baseline] of Object.entries(changes)){
+  if(!taskId.trim()||taskId.length>200)throw new Error('Invalid baseline task ID');
+  if(!baseline||Array.isArray(baseline)||typeof baseline!=='object')throw new Error('Invalid baseline for task '+taskId);
+  const keys=Object.keys(baseline);if(keys.length!==3||!['start','end','capturedAt'].every(k=>keys.includes(k)))throw new Error('Baseline must contain only start, end and capturedAt');
+  for(const field of ['start','end','capturedAt'])if(!validDate(baseline[field]))throw new Error('Invalid baseline '+field+' for task '+taskId);
+  if(baseline.start>baseline.end)throw new Error('Baseline end precedes start for task '+taskId);
+ }
+}
 export function reportEvidence(t,defs=[]) {
  const evidence=[];
  for(const key of ['meetingMinutes','minutes','meetingReport','report','compteRendu'])if(t[key])evidence.push({field:key,value:t[key]});
@@ -107,7 +118,7 @@ export function repository(db,uid){
   ensureTaskDates(task);validateTask(task,c);write(tx,d.tasks,[...c.tasks,task]);return {ok:true,created:true,task:clean(task),version:fingerprint(task)};
  });}
  async function readResource(args){if(!RESOURCES.includes(args.resource))throw new Error('Unsupported resource');const d=await read(args.resource);let value=clean(d.value);if(Array.isArray(value)){if(args.id)value=value.filter(x=>x.id===args.id);if(args.query)value=value.filter(x=>normalize(JSON.stringify(x)).includes(normalize(args.query)));const total=value.length;return {ok:true,resource:args.resource,revision:d.revision,total,items:value.slice(args.offset,args.offset+args.limit),nextOffset:args.offset+args.limit<total?args.offset+args.limit:null};}return {ok:true,resource:args.resource,revision:d.revision,value};}
- async function mutateResource(args){if(!RESOURCES.includes(args.resource)||READ_ONLY.has(args.resource))throw new Error('Resource is read-only');return atomic('resource',args.idempotencyKey,args,async tx=>{if(args.action!=='delete'&&!args.changes)throw new Error('changes required');if(['update','delete'].includes(args.action)&&!args.id)throw new Error('id required');const d=await read(args.resource,tx);if(d.revision!==args.expectedRevision)throw new Error('Conflict: read resource again');let value=d.value;
+ async function mutateResource(args){if(!RESOURCES.includes(args.resource)||READ_ONLY.has(args.resource))throw new Error('Resource is read-only');if(args.resource==='taskBaselines'){if(args.action!=='replace_settings')throw new Error('taskBaselines only supports replace_settings');validateTaskBaselineChanges(args.changes);}return atomic('resource',args.idempotencyKey,args,async tx=>{if(args.action!=='delete'&&!args.changes)throw new Error('changes required');if(['update','delete'].includes(args.action)&&!args.id)throw new Error('id required');const d=await read(args.resource,tx);if(d.revision!==args.expectedRevision)throw new Error('Conflict: read resource again');let value=d.value;
   if(args.action==='replace_settings'){if(Array.isArray(value))throw new Error('Use entity operations for lists');value={...value,...args.changes};}
   else {if(!Array.isArray(value))throw new Error('Use replace_settings for object settings');const idx=value.findIndex(x=>x.id===args.id);if(args.action==='create'){if(idx>=0)throw new Error('ID already exists');if(!args.changes?.name&&['projects','statuses','taskTypes','teamMembers','projectFolders'].includes(args.resource))throw new Error('Name required');value=[...value,{...args.changes,id:args.id||randomUUID()}];}
    else {if(idx<0)throw new Error('Entity not found');if(value[idx].locked&&['statuses','taskTypes'].includes(args.resource))throw new Error('Built-in catalog entry is locked');if(args.action==='delete'){
