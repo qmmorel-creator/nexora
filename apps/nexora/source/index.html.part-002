@@ -3372,6 +3372,27 @@ const MINIGANTT_CHECK_FRAME_ICON = "https://cdn-icons-png.flaticon.com/512/7247/
 // transparence (voir .lp-widget-minigantt-frame-corner).
 const MINIGANTT_CHECK_FRAME_CORNER_ICON = "https://cdn-icons-png.flaticon.com/512/8376/8376179.png";
 
+/* Icône de la pastille d'un encadré posé par la COCHE d'une ligne. Le triangle
+   rouge reste le défaut ; la tâche peut lui substituer la sienne, par une URL
+   saisie dans sa fiche. On résout à l'AFFICHAGE plutôt qu'à la pose : changer
+   l'URL met à jour l'encadré déjà posé, sans réécrire la configuration du
+   widget — et décocher puis recocher ne perd pas le réglage.
+
+   Un encadré posé à la main garde la sienne : rien ne la lui impose. */
+function normalizeTaskFrameIcon(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function miniGanttFrameCornerIcon(frame, task) {
+  const f = frame && typeof frame === "object" ? frame : {};
+  if (!f.autoTaskId) return typeof f.cornerIconUrl === "string" ? f.cornerIconUrl : "";
+  const custom = normalizeTaskFrameIcon(task && task.ganttFrameIcon);
+  if (custom) return custom;
+  return typeof f.cornerIconUrl === "string" && f.cornerIconUrl
+    ? f.cornerIconUrl
+    : MINIGANTT_CHECK_FRAME_CORNER_ICON;
+}
+
 // Dégagement horizontal, en pixels, entre le trait du cadre et la barre qu'il
 // entoure. Sans lui le cadre était tracé exactement aux bornes de la barre :
 // son trait de 1,5 px se posait dessus et la recoupait visiblement aux deux
@@ -7324,6 +7345,11 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const [metaBlock, setMetaBlock] = useState(
     base.metaBlock && base.metaBlock.enabled ? { ...base.metaBlock } : null
   );
+  /* Icône de la pastille de l'encadré posé par la coche de cette tâche dans le
+     Mini-Gantt. Vide = le triangle rouge par défaut. Elle vit sur la TÂCHE et
+     non dans la configuration d'un widget : c'est la même icône dans tous les
+     diagrammes qui affichent la tâche, et décocher puis recocher la retrouve. */
+  const [ganttFrameIcon, setGanttFrameIcon] = useState(normalizeTaskFrameIcon(base.ganttFrameIcon));
   const patchMetaBlock = (values) => setMetaBlock((prev) => (prev ? { ...prev, ...values } : prev));
   // Risques de délai : ils appartiennent à la tâche, donc ils s'éditent ICI —
   // le Mini-Gantt ne fait que les dessiner, dans tous les widgets qui affichent
@@ -7458,7 +7484,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison));
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -7568,6 +7594,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       // Un projet qui n'est plus adossé à un calendrier perd son méta bloc :
       // la période n'est alors plus tenue à jour par l'agenda.
       metaBlock: isCalendarBackedProjectId(projectId, projects) && metaBlock && metaBlock.enabled ? metaBlock : null,
+      ganttFrameIcon: normalizeTaskFrameIcon(ganttFrameIcon),
       delayRisks: normalizeTaskDelayRisks(delayRisks),
       /* `null` quand il n'y a rien à garder : aucune tâche ne gagne un objet
          vide, et une tâche d'avant ce changement reste identique à elle-même.
@@ -7913,6 +7940,33 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           )}
         </div>
       )}
+
+      <div className="lp-field">
+        <label htmlFor="task-frame-icon">
+          Icône de l'encadré <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(pastille posée dans le coin du cadre quand cette ligne est cochée dans un Mini-Gantt)</span>
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            id="task-frame-icon"
+            type="url"
+            inputMode="url"
+            placeholder="https://… — vide : le triangle rouge par défaut"
+            value={ganttFrameIcon}
+            onChange={(e) => setGanttFrameIcon(e.target.value)}
+            style={{ flex: "1 1 auto", minWidth: 0 }}
+          />
+          <img
+            src={normalizeTaskFrameIcon(ganttFrameIcon) || MINIGANTT_CHECK_FRAME_CORNER_ICON}
+            alt=""
+            referrerPolicy="no-referrer"
+            title="Aperçu de la pastille"
+            style={{ flex: "0 0 auto", width: 22, height: 22, objectFit: "contain" }}
+          />
+        </div>
+        <p className="lp-gantt-annot-hint">
+          Laisser vide rend le triangle rouge. L'adresse doit pointer une image accessible publiquement.
+        </p>
+      </div>
 
       <div className="lp-field">
         <label>Risques de délai <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(couloirs dessinés à la suite de la barre, dans tous les Mini-Gantt qui affichent cette tâche)</span></label>

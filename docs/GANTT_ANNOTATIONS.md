@@ -109,6 +109,53 @@ bouge pas d'un pixel.
 `ganttBlockBorder(block)` compose le trait en un seul endroit — épaisseur, style
 et couleur — et les quatre rendus l'appellent, l'aperçu de l'éditeur compris.
 
+C'est un **cadre**, pas deux montants : la bande était bornée à gauche et à
+droite, sans haut ni bas, et se lisait comme deux traits plutôt que comme une
+zone. Le style choisi vaut aussi pour la **pastille du titre** : elle imposait
+ses pointillés (fenêtre de décision) ou ses points (méta bloc) par la feuille de
+style, si bien que « Continue » ne donnait pas du continu.
+
+## Icône d'un encadré
+
+La pastille posée dans le coin d'un encadré créé par la **coche** d'une ligne est
+un triangle rouge. La tâche peut lui substituer la sienne : un champ **URL dans
+sa fiche** (`task.ganttFrameIcon`), laissé vide pour garder le défaut.
+
+`miniGanttFrameCornerIcon(frame, task)` résout l'icône **à l'affichage**, jamais
+à la pose. Trois conséquences voulues :
+
+- changer l'URL met à jour l'encadré déjà posé, sans réécrire la configuration
+  du widget ;
+- décocher puis recocher ne perd pas le réglage, puisqu'il vit sur la tâche ;
+- c'est la même icône dans tous les diagrammes qui affichent cette tâche.
+
+Un encadré posé **à la main** garde la sienne : rien ne la lui impose, et
+l'icône d'une tâche qu'il contiendrait ne s'y substitue pas.
+
+## Sous-grille : jusqu'à trois niveaux
+
+L'axe porte son unité, puis **deux** sous-grilles de plus en plus fines. Un cran,
+c'est une case dans `WIDGET_AXIS_SCALE` — `year`, `quarter`, `month`, `week`,
+`day` :
+
+| Unité de l'axe | Deuxième niveau | Troisième niveau |
+|---|---|---|
+| année | trimestre | mois |
+| trimestre | mois | semaine |
+| mois | semaine | jour |
+| semaine | jour | — |
+
+`widgetSubTicks(min, max, crans)` les produit tous ; `widgetSecondaryTicks` et
+`widgetTertiaryTicks` en sont les deux appels. Le garde-fou est un garde-fou de
+**densité**, pas seulement de boucle : au-delà de `MINIGANTT_SUBGRID_MAX` traits
+(180), le niveau se tait. Sous une échelle mensuelle, le troisième niveau est le
+jour — jusqu'à 550 traits sur quelques centaines de pixels, soit un aplat gris et
+non un repère. L'axe reste donc lisible à tous les zooms sans qu'on ait à le
+régler.
+
+Les trois niveaux se distinguent par le **ton**, pas par le comptage :
+graduation pleine, sous-grille à 50 % d'opacité, troisième niveau à 22 %.
+
 ## Alignement des titres de bloc
 
 Le titre d'un bloc est **centré sur sa bande par `translateX(-50%)`**, donc par
@@ -584,6 +631,17 @@ mais conserve les valeurs saisies.
 | `reference` | plan et réel coïncident — la période **tenue** | gris bleuté (`#63719A`), hachures à **135°** |
 | `late` | le temps que le réel occupe au-delà du plan, ou que le plan réservait avant que le réel ne démarre | rouge corail (`#E4572E`), hachures **montantes** (45°) |
 | `ahead` | le temps **rendu** : prévu et non consommé, ou consommé en avance | vert (`#1F9D6B`), hachures **descendantes** (−45°) |
+
+Le ruban porte le **même contour que la barre réelle, en gris** : les deux
+étages se répondent, et le ruban se détache du fond comme du bloc temporel qu'il
+traverse. Il est posé par une ombre plutôt qu'une bordure — le conteneur est en
+`overflow:hidden` pour arrondir les extrémités, et une bordure y rognerait les
+segments.
+
+L'**écart chiffré** se pose sur le bord *extérieur* de sa zone, celui qui
+s'éloigne de la barre : un démarrage anticipé à gauche, un retard de fin à
+droite. Au centre, il masquait la trame qu'il commente et débordait des deux
+côtés d'une zone courte.
 
 **Aucune bordure interne.** C'est le changement de **sens** de la trame, pas un
 liseré, qui fait lire les jonctions — un cadre de plus rechargerait ce qu'on

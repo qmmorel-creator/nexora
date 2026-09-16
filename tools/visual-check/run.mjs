@@ -153,6 +153,7 @@ const seen = await page.evaluate(() => {
       // Déclarée (le réglage) ET utilisée (ce que le navigateur peint, arrondi
       // au pixel entier) : la seconde seule ne distinguerait pas 1,5 px de 1 px.
       g: el.style.borderLeftWidth, d: el.style.borderRightWidth,
+      h: getComputedStyle(el).borderTopWidth, b: getComputedStyle(el).borderBottomWidth,
       peint: getComputedStyle(el).borderLeftWidth, style: getComputedStyle(el).borderLeftStyle,
     })),
     cmpRows: rects("#harness-comparison-minigantt .lp-widget-minigantt-row"),
@@ -184,9 +185,13 @@ const seen = await page.evaluate(() => {
       return Math.round(axe.getBoundingClientRect().top - bar.getBoundingClientRect().bottom);
     })(),
     // Sous-grille : le contexte temporel entre deux graduations étiquetées.
-    anneesSubTicks: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-axis-subtick").length,
+    anneesSubTicks: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-axis-subtick:not(.is-fine)").length,
     anneesTicks: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-axis-tick").length,
-    anneesGrille: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-sub-sep").length,
+    anneesGrille: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-sub-sep:not(.is-fine)").length,
+    // Troisième niveau : un cran plus fin encore que la sous-grille
+    // (année → trimestre → mois). Il porte la classe `is-fine`.
+    anneesSubTicks3: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-axis-subtick.is-fine").length,
+    anneesGrille3: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-sub-sep.is-fine").length,
     // Cadrage glissant : l'axe suit le calendrier, les tâches hors fenêtre sortent.
     rollingRows: document.querySelectorAll("#harness-rolling-minigantt .lp-widget-minigantt-row").length,
     rollingAxis: [...document.querySelectorAll("#harness-rolling-minigantt .lp-widget-minigantt-axis-tick-label")].map((el) => el.textContent.trim()),
@@ -1183,6 +1188,9 @@ expect(seen.bandBorders.some((b) => b.g === "4px" && b.d === "4px" && b.peint ==
 expect(seen.bandBorders.some((b) => b.g === "1.5px"), `Blocs temporels : aucune bande au défaut de 1,5 px (${JSON.stringify(seen.bandBorders)})`);
 expect(seen.bandBorders.some((b) => b.style === "dashed") && seen.bandBorders.some((b) => b.style === "solid"), `Blocs temporels : le choix plein / pointillés ne se voit pas (${JSON.stringify(seen.bandBorders)})`);
 expect(seen.bandBorders.every((b) => b.g === b.d), `Blocs temporels : les deux montants d'une bande n'ont pas la même épaisseur (${JSON.stringify(seen.bandBorders)})`);
+// Un CADRE, pas deux montants : la bande était bornée à gauche et à droite,
+// sans haut ni bas — elle se lisait comme deux traits, pas comme une zone.
+expect(seen.bandBorders.every((b) => b.h !== "0px" && b.b !== "0px"), `Blocs temporels : une bande n'a ni haut ni bas, ce n'est pas un cadre (${JSON.stringify(seen.bandBorders)})`);
 expect(seen.legendRows === 0, `Légende : ${seen.legendRows} élément(s) de légende encore rendu(s), 0 attendu — la bande a été retirée des deux diagrammes`);
 expect(seen.cmpModeButtons.length === 2 && seen.cmpModeButtons[1].active, `Comparaison : le sélecteur rapide n'affiche pas l'état actif (${JSON.stringify(seen.cmpModeButtons)})`);
 // « Superposées sans rendre la ligne plus haute » : le widget de comparaison
@@ -1230,8 +1238,16 @@ expect(seen.toolbarAboveAxis !== null && seen.toolbarAboveAxis >= 0, `Barre d'ou
 // rien entre elles. Les trimestres lui rendent son contexte temporel.
 expect(seen.anneesTicks > 0, "Échelle annuelle : aucune graduation sur l'axe");
 expect(seen.anneesSubTicks >= 20, `Échelle annuelle : ${seen.anneesSubTicks} sous-graduation(s) sur l'axe, au moins 20 attendues (les trimestres)`);
+expect(seen.anneesSubTicks <= 60, `Échelle annuelle : ${seen.anneesSubTicks} sous-graduation(s) de deuxième niveau — ce sont les trimestres, pas les mois`);
 expect(seen.anneesSubTicks > seen.anneesTicks, `Échelle annuelle : la sous-grille (${seen.anneesSubTicks}) n'est pas plus fine que les graduations (${seen.anneesTicks})`);
 expect(seen.anneesGrille >= 20, `Échelle annuelle : ${seen.anneesGrille} trait(s) de sous-grille dans le diagramme, au moins 20 attendus`);
+/* Un TROISIÈME niveau, un cran plus fin : sur neuf ans, les trimestres portent
+   les années, les mois portent les trimestres. Il doit être strictement plus
+   dense que le deuxième, sinon il ne raconte rien de plus. */
+expect(seen.anneesSubTicks3 > seen.anneesSubTicks,
+  `Échelle annuelle : le troisième niveau (${seen.anneesSubTicks3}) n'est pas plus fin que la sous-grille (${seen.anneesSubTicks}) — il devrait porter les mois`);
+expect(seen.anneesGrille3 > seen.anneesGrille,
+  `Échelle annuelle : la troisième grille du diagramme (${seen.anneesGrille3}) n'est pas plus fine que la deuxième (${seen.anneesGrille})`);
 
 // --- Cadrage « Fenêtre glissante » -----------------------------------------
 // Un mois avant, un mois après : le jeu d'essai s'étend de juillet à septembre,
