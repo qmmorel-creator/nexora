@@ -157,7 +157,24 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /BUBBLE_FIELD_OPTIONS = \[[^\]]*"criticality"/, "criticality absent des bulles du Gantt");
   // Le formulaire doit à la fois proposer le champ ET l'enregistrer : l'un sans
   // l'autre donne une case qui s'affiche et n'est jamais retenue.
-  assert.match(builtSource, /setCriticality\(e\.target\.value\)/, "champ Criticité absent du formulaire de tâche");
+  /* Le champ est passé d'un <select> natif au sélecteur à pastilles (#69) : ce
+     qui compte reste que le formulaire le PROPOSE et l'ENREGISTRE — l'un sans
+     l'autre donne un champ qui s'affiche et n'est jamais retenu. */
+  assert.match(builtSource, /<CriticalitySelect value=\{criticality\} onChange=\{setCriticality\} \/>/,
+    "champ Criticité absent du formulaire de tâche");
+  assert.match(builtSource, /function CriticalitySelect\(\{ value, onChange \}\)/,
+    "le sélecteur de criticité a disparu.");
+  /* La pastille de « Non définie » ne doit jamais exister : une pastille grise
+     se lirait comme un quatrième niveau, au lieu d'une absence de niveau. */
+  const critSelect = builtSource.slice(
+    builtSource.indexOf("=== NEXORA:CRITICALITY-SELECT:START ==="),
+    builtSource.indexOf("=== NEXORA:CRITICALITY-SELECT:END ==="),
+  );
+  assert.ok(critSelect.length > 0, "Le bloc du sélecteur de criticité est introuvable.");
+  assert.match(critSelect, /lp-color-select-dot-spacer/,
+    "« Non définie » n'a plus son écarteur : son libellé se décalerait des trois niveaux.");
+  assert.equal((critSelect.match(/lp-color-select-dot"/g) || []).length, 2,
+    "La pastille doit être posée exactement deux fois : sur la valeur choisie et sur chaque option.");
   assert.match(builtSource, /criticality: criticality \|\| null/, "la criticité saisie n'est pas enregistrée");
 
   // 3. Aucun statut nommé « Urgent » ne doit revenir par le jeu de démonstration :

@@ -533,6 +533,55 @@ try {
   taskMeta.checked = await box.isChecked();
   taskMeta.controls = await page.locator(".lp-modal .lp-density-btn", { hasText: /Phase|Fenêtre de décision|Pointillés|Continue/ }).count();
   taskMeta.hints = (await page.locator(".lp-modal .lp-gantt-annot-hint").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+  /* Criticité (issue #69) : sur la même ligne que Projet, Statut et Type, et
+     porteuse d'une pastille. Les deux se vérifient au rendu et nulle part
+     ailleurs — un champ déplacé dans le JSX peut très bien retomber à la ligne
+     faute de règle de mise en page. */
+  Object.assign(taskMeta, await page.evaluate(() => {
+    const rangee = document.querySelector(".lp-modal .lp-row4");
+    const champs = rangee ? [...rangee.children] : [];
+    const hauts = champs.map((c) => Math.round(c.getBoundingClientRect().top));
+    const critique = champs[champs.length - 1];
+    const bouton = critique ? critique.querySelector(".lp-color-select-btn") : null;
+    const voisins = [...(rangee ? rangee.querySelectorAll(".lp-color-select-btn, .lp-field > select, .lp-field > input") : [])];
+    return {
+      // Quatre champs, tous sur la MÊME ligne : des « top » identiques.
+      critFields: champs.length,
+      critSameRow: hauts.length ? hauts.every((h) => Math.abs(h - hauts[0]) <= 1) : false,
+      critLabel: critique ? (critique.querySelector("label")?.textContent || "").replace(/\s+/g, " ").trim() : "",
+      // Hauteurs alignées : un <select> natif à côté de trois boutons ne
+      // tombait pas à la même hauteur, et c'est visible immédiatement.
+      critHeights: [...new Set(voisins.map((v) => Math.round(v.getBoundingClientRect().height)))],
+      // Pastille de la valeur choisie : absente tant que rien n'est choisi.
+      critDotOnValue: bouton ? bouton.querySelectorAll(".lp-color-select-dot").length : -1,
+    };
+  }));
+  // Ouvrir la liste : trois niveaux à pastille, « Non définie » sans pastille.
+  await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-btn").click();
+  await page.waitForTimeout(250);
+  Object.assign(taskMeta, await page.evaluate(() => {
+    const options = [...document.querySelectorAll(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-option")];
+    const couleur = (el) => {
+      const dot = el.querySelector(".lp-color-select-dot");
+      return dot ? getComputedStyle(dot).backgroundColor : "";
+    };
+    const rond = (el) => {
+      const dot = el.querySelector(".lp-color-select-dot");
+      if (!dot) return "";
+      const r = dot.getBoundingClientRect();
+      // « Rond » se vérifie sur le rendu : un rayon en pourcentage sur un carré.
+      return `${Math.round(r.width)}x${Math.round(r.height)}:${getComputedStyle(dot).borderRadius}`;
+    };
+    return {
+      critOptions: options.map((o) => o.textContent.replace(/\s+/g, " ").trim()),
+      critDots: options.map(couleur),
+      critShape: options.slice(1).map(rond),
+    };
+  }));
+  await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-option").nth(1).click();
+  await page.waitForTimeout(250);
+  taskMeta.critDotAfterPick = await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-btn .lp-color-select-dot").count();
+
   // Les risques de délai appartiennent à la tâche : ils doivent s'éditer ici.
   const addRisk = page.locator(".lp-modal").getByRole("button", { name: "Ajouter un risque de délai" });
   taskMeta.riskButton = await addRisk.count();
@@ -1092,6 +1141,24 @@ expect(taskMeta.hints.some((h) => /tableaux de bord/i.test(h)), `Fiche de tâche
 expect(taskMeta.riskButton === 1, "Fiche de tâche : impossible d'ajouter un risque de délai");
 expect(taskMeta.riskRows >= 1, `Fiche de tâche : ${taskMeta.riskRows} risque(s) après ajout, au moins 1 attendu`);
 expect(taskMeta.riskSeverities === 4, `Fiche de tâche : ${taskMeta.riskSeverities} niveau(x) de gravité, 4 attendus`);
+
+// Criticité (issue #69).
+expect(taskMeta.critFields === 4, `Fiche de tâche : ${taskMeta.critFields} champ(s) sur la rangée Projet/Statut/Type/Criticité, 4 attendus`);
+expect(taskMeta.critSameRow, "Fiche de tâche : les quatre champs ne sont pas sur la même ligne — la criticité est retombée en dessous");
+expect(/^Criticité/.test(taskMeta.critLabel || ""), `Fiche de tâche : le quatrième champ de la rangée est « ${taskMeta.critLabel} », attendu « Criticité »`);
+expect((taskMeta.critHeights || []).length === 1, `Fiche de tâche : les champs de la rangée ont ${(taskMeta.critHeights || []).length} hauteurs différentes (${(taskMeta.critHeights || []).join(", ")} px) — ils doivent s'aligner`);
+expect(taskMeta.critDotOnValue === 0, "Fiche de tâche : une pastille s'affiche alors qu'aucune criticité n'est choisie — « Non définie » ne doit pas se lire comme un niveau");
+expect((taskMeta.critOptions || []).join("|") === "Non définie|Bas|Moyen|Urgent",
+  `Fiche de tâche : options de criticité « ${(taskMeta.critOptions || []).join("|")} » — les libellés métier ne doivent pas changer, ni l'ordre du plus bas au plus haut`);
+// Feu tricolore : vert, orange, rouge. « Non définie » n'a aucune pastille.
+expect((taskMeta.critDots || [])[0] === "", "Fiche de tâche : « Non définie » porte une pastille — elle se confondrait avec un niveau");
+expect(/rgb\(31, 169, 113\)/.test((taskMeta.critDots || [])[1] || ""), `Fiche de tâche : « Bas » n'est pas vert (${(taskMeta.critDots || [])[1]})`);
+expect(/rgb\(217, 119, 6\)/.test((taskMeta.critDots || [])[2] || ""), `Fiche de tâche : « Moyen » n'est pas orange (${(taskMeta.critDots || [])[2]})`);
+expect(/rgb\(220, 38, 38\)/.test((taskMeta.critDots || [])[3] || ""), `Fiche de tâche : « Urgent » n'est pas rouge (${(taskMeta.critDots || [])[3]})`);
+expect((taskMeta.critShape || []).every((f) => /^11x11:50%$/.test(f)),
+  `Fiche de tâche : les pastilles ne sont pas rondes (${(taskMeta.critShape || []).join(", ")})`);
+expect(taskMeta.critDotAfterPick === 1, "Fiche de tâche : après avoir choisi un niveau, la pastille n'apparaît pas sur la valeur fermée");
+
 expect(!seen.miniRiskButton, "Mini-Gantt : le bouton « + Risque » devrait avoir disparu — les risques s'éditent dans la fiche de la tâche");
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
