@@ -9,7 +9,17 @@ Site Netlify : 2c0b2293-8b71-471b-8288-21f641256aa2.
 
 Les tâches et réunions sont accessibles avec descriptions complètes, checklists, pièces jointes liées, responsable, sources Gmail/Drive, dépendances, récurrence et champs personnalisés. Recherche paginée par texte, projet, statut, type, responsable, source, période et état d’archive. Les dates civiles utilisent Europe/Paris. Une échéance (end) et une réalisation (completedAt) sont deux notions distinctes. Les comptes rendus ajoutés sont conservés dans la description, sous un titre explicite. Les anciennes descriptions libres peuvent être des notes ou des ordres du jour : leur nature doit être appréciée sans invention. Une pièce jointe externe nécessite une lecture avec le connecteur de sa source.
 
-Les domaines métier supplémentaires sont découverts avec list_resources : projets, catalogues, équipes, risques, budgets/dépenses Nexora, échéances, dossiers, tableaux de bord et réglages. read_resource renvoie la révision et la structure exacte. mutate_resource modifie un élément ou fusionne un objet de réglages. Les listes imbriquées fournies remplacent le champ concerné. Les historiques et états de synchronisation restent en lecture seule. Aucun outil ne modifie les transactions Budget360 ou les événements Google Calendar. Aucun secret de connexion n’est exposé.
+Les domaines métier supplémentaires sont découverts avec list_resources : projets, catalogues, équipes, risques, budgets/dépenses Nexora, échéances, dossiers, tableaux de bord et réglages. read_resource renvoie la révision et la structure exacte. mutate_resource modifie un élément ou fusionne un objet de réglages. Les listes imbriquées fournies remplacent le champ concerné. Les historiques et états de synchronisation restent en lecture seule.
+
+`taskBaselines` — le plan initial du widget Time Machine — s'écrit désormais, mais par un seul chemin et sous contrôle :
+
+- seule l'action `replace_settings` est acceptée ; `create`, `update` et `delete` sont refusés ;
+- `changes` est un objet indexé par identifiant de tâche, chaque entrée valant exactement `{start, end, capturedAt}` en `AAAA-MM-JJ`, avec `start <= end` ; tout champ inattendu, toute date invalide et toute période inversée sont refusés ;
+- la validation a lieu **avant** l'écriture : un lot partiellement faux n'écrit rien ;
+- les entrées transmises sont **fusionnées** aux existantes — une tâche absente du lot garde sa baseline, la carte n'est jamais remplacée en bloc ;
+- `expectedRevision` et `idempotencyKey` s'appliquent comme pour les autres ressources, donc la même requête rejouée ne double jamais l'écriture.
+
+C'est une validation plus stricte que pour un réglage ordinaire, et c'est voulu : une baseline fausse reste invisible jusqu'au jour où l'on compare le réel au prévu. Aucun outil ne modifie les transactions Budget360 ou les événements Google Calendar. Aucun secret de connexion n’est exposé.
 
 ## Données et intégrité
 
