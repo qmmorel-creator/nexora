@@ -109,6 +109,13 @@ function AnnotationsHarness() {
     { id: "sc4", projectId: "p2", statusId: "s2", title: "Relance presse", start: scatterToday, end: addDays(scatterToday, 12), progress: 0, checklist: [] },
     { id: "sc5", projectId: "p3", statusId: "s1", title: "Sans échéance", start: scatterToday, progress: 0, checklist: [] },
   ];
+  /* Heat map mensuelle (#68) : une échéance passée et une à venir, pour que la
+     distinction passé / futur ait de quoi se voir. Les dates sont relatives à
+     aujourd'hui, donc le contrôle reste vrai quel que soit le jour. */
+  const heatmapMonthTasks = [
+    { id: "hm1", projectId: "p1", statusId: "s1", title: "Échéance passée", start: addDays(scatterToday, -20), end: addDays(scatterToday, -10), progress: 0, checklist: [] },
+    { id: "hm2", projectId: "p2", statusId: "s2", title: "Échéance à venir", start: scatterToday, end: addDays(scatterToday, 5), progress: 0, checklist: [] },
+  ];
   const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
   const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
@@ -206,6 +213,18 @@ function AnnotationsHarness() {
             selectedProjectIds={[]}
             onToggleProject={noop}
           />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>HEAT MAP MENSUELLE</h2>
+        {/* Le MÊME widget à deux largeurs (#68) : large, les trois mois tiennent
+            sur une ligne ; étroit, ils doivent passer les uns sous les autres
+            plutôt que de déborder derrière une barre de défilement. */}
+        <div id="harness-heatmap-month-large" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 1200, height: 320, marginBottom: 14 }}>
+          <WidgetHeatmapMonth tasks={heatmapMonthTasks} ctx={ctx} onOpen={noop} appearance={appearance} />
+        </div>
+        <div id="harness-heatmap-month-etroit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 420, height: 520, marginBottom: 18 }}>
+          <WidgetHeatmapMonth tasks={heatmapMonthTasks} ctx={ctx} onOpen={noop} appearance={appearance} />
         </div>
       </div>
       <div>

@@ -275,6 +275,54 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Heat map mensuelle (issue #68). Le reflow est du CSS pur : il ne se vérifie
+   que sur un rendu, à deux largeurs. */
+const mois = { large: null, etroit: null, passe: null };
+try {
+  const mesure = async (hote) => {
+    await page.locator(hote).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    return page.evaluate((sel) => {
+      const conteneur = document.querySelector(`${sel} .lp-widget-heatmap-months`);
+      const blocs = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-month`)];
+      const boite = conteneur ? conteneur.getBoundingClientRect() : null;
+      const rects = blocs.map((b) => b.getBoundingClientRect());
+      return {
+        blocs: blocs.length,
+        // Autant de « top » distincts que de lignes occupées par les mois.
+        lignes: new Set(rects.map((r) => Math.round(r.top))).size,
+        // Un mois qui déborde du conteneur est un mois qu'on ne peut pas lire.
+        debordent: boite ? rects.filter((r) => r.left < boite.left - 1 || r.right > boite.right + 1).length : -1,
+        // Barre de défilement horizontale : ce que l'issue demande de supprimer.
+        defileH: conteneur ? Math.round(conteneur.scrollWidth - conteneur.clientWidth) : -1,
+        titres: blocs.map((b) => (b.querySelector(".lp-widget-heatmap-month-title")?.textContent || "").trim()),
+        // Ce qui reste sous le dernier mois : le calendrier doit occuper la
+        // hauteur offerte, pas se tasser en haut d'un grand vide.
+        videEnBas: boite && rects.length ? Math.round(boite.bottom - Math.max(...rects.map((r) => r.bottom))) : -1,
+      };
+    }, hote);
+  };
+  mois.large = await mesure("#harness-heatmap-month-large");
+  mois.etroit = await mesure("#harness-heatmap-month-etroit");
+  mois.passe = await page.evaluate((sel) => {
+    const passees = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-cell-past`)];
+    const colorees = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-cell`)]
+      .filter((c) => { const bg = getComputedStyle(c).backgroundColor; return bg && bg !== "rgba(0, 0, 0, 0)"; });
+    const une = passees[0];
+    const numero = une ? une.querySelector(".lp-widget-heatmap-daynum") : null;
+    return {
+      nbPassees: passees.length,
+      nbColorees: colorees.length,
+      // Le voile : posé en ::after, il ne se lit que sur le style calculé.
+      voile: une ? getComputedStyle(une, "::after").opacity : "",
+      // Sur une case lavée, le blanc deviendrait illisible.
+      numeroBlanc: numero ? getComputedStyle(numero).color === "rgb(255, 255, 255)" : null,
+    };
+  }, "#harness-heatmap-month-large");
+} catch (error) {
+  mois.error = String(error).split("\n")[0];
+}
+
 /* Icônes par URL (issue #70). La reconnaissance est couverte par un test
    unitaire ; ce qui ne l'est pas, c'est ce que le navigateur AFFICHE — une URL
    non reconnue retombait sur la branche « emoji » et s'écrivait en toutes
@@ -1146,6 +1194,28 @@ expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas
 expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error}`);
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
+
+expect(!mois.error, `contrôle de la heat map mensuelle interrompu : ${mois.error}`);
+expect(mois.large && mois.large.blocs === 3, `Heat map mensuelle : ${mois.large && mois.large.blocs} mois rendus, 3 attendus`);
+expect(mois.large && mois.large.lignes === 1, `Heat map mensuelle large : les mois occupent ${mois.large && mois.large.lignes} ligne(s), 1 attendue`);
+expect(mois.etroit && mois.etroit.lignes === 3, `Heat map mensuelle étroite : les mois occupent ${mois.etroit && mois.etroit.lignes} ligne(s), 3 attendues — ils doivent passer les uns sous les autres`);
+for (const [nom, m] of [["large", mois.large], ["étroite", mois.etroit]]) {
+  expect(m && m.debordent === 0, `Heat map mensuelle ${nom} : ${m && m.debordent} mois débordent du cadre`);
+  expect(m && m.defileH <= 0, `Heat map mensuelle ${nom} : ${m && m.defileH} px de défilement horizontal — il ne doit plus y en avoir`);
+  expect(m && m.blocs === 3 && m.titres.every((t) => t.length > 0), `Heat map mensuelle ${nom} : un mois a perdu son titre (${m && m.titres.join(" | ")})`);
+}
+expect(mois.large && mois.large.videEnBas <= 8,
+  `Heat map mensuelle large : ${mois.large && mois.large.videEnBas} px de vide sous le calendrier — il doit occuper la hauteur offerte`);
+// L'ordre chronologique doit survivre au passage à la ligne.
+expect(mois.large && mois.etroit && mois.large.titres.join("|") === mois.etroit.titres.join("|"),
+  `Heat map mensuelle : l'ordre des mois change avec la largeur (${mois.large && mois.large.titres.join("|")} contre ${mois.etroit && mois.etroit.titres.join("|")})`);
+expect(mois.passe && mois.passe.nbPassees >= 1, "Heat map mensuelle : aucune case passée n'est lavée — le passé ne se distingue pas du futur");
+expect(mois.passe && mois.passe.nbPassees < mois.passe.nbColorees,
+  `Heat map mensuelle : ${mois.passe && mois.passe.nbPassees} case(s) lavée(s) sur ${mois.passe && mois.passe.nbColorees} colorée(s) — les échéances à venir ne doivent pas l'être`);
+expect(mois.passe && Number(mois.passe.voile) > 0 && Number(mois.passe.voile) < 1,
+  `Heat map mensuelle : le voile du passé est à l'opacité « ${mois.passe && mois.passe.voile} » — la couleur de projet doit rester reconnaissable`);
+expect(mois.passe && mois.passe.numeroBlanc === false,
+  "Heat map mensuelle : le numéro d'un jour passé reste blanc sur une case lavée — il devient illisible");
 
 expect(!icones.error, `contrôle des icônes par URL interrompu : ${icones.error}`);
 expect(icones.cas.length === 4, `Icônes : ${icones.cas.length} cas rendus, 4 attendus`);
