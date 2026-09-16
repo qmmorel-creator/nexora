@@ -2565,7 +2565,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3250,7 +3250,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     widget={w}
                     tasks={scoped}
                     ctx={ctx}
-                    risks={risks || []}
                     expenses={expenses}
                     onOpenProject={onOpenProject}
                     onEditProject={onEditProject}
@@ -8606,7 +8605,7 @@ function TreemapProgressRing({ value, size, color, trackColor, textColor }) {
 // filtre, ou de la criticité moyenne. `tasks` arrive déjà réduit par les
 // méta-filtres, le filtre de page et le filtre du widget : ce composant ne
 // refiltre jamais le périmètre, il ne fait que compter à l'intérieur.
-function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProject, onEditProject, onFilterProject }) {
+function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onEditProject, onFilterProject }) {
   const cfg = useMemo(() => normalizeProjectTreemapConfig(widget), [widget]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
@@ -8699,14 +8698,13 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
     (ctx.projects || []).forEach((p) => {
       const stats = computeBudgetStats(p.id, ctx.projects, expenses || []);
       map[p.id] = {
-        riskCount: (risks || []).filter((r) => r.projectId === p.id && r.status !== "closed").length,
         budgetConsumed: stats.consumed,
         budgetTotal: stats.budgetActuel,
         budgetPct: stats.pct,
       };
     });
     return map;
-  }, [ctx.projects, risks, expenses, tilesAreProjects]);
+  }, [ctx.projects, expenses, tilesAreProjects]);
 
   const rows = useMemo(() => computeTreemapProjects({
     projects: tileEntities,
@@ -8839,10 +8837,6 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
       if (!row.urgentCount) return null;
       return <span className={chipClass} key={key} style={{ color: "var(--danger)" }} title="Tâches de criticité urgente"><Flame size={9} />{row.urgentCount}</span>;
     }
-    if (key === "riskCount") {
-      if (!row.riskCount) return null;
-      return <span className={chipClass} key={key} title="Risques ouverts du projet"><ShieldAlert size={9} />{row.riskCount}</span>;
-    }
     if (key === "nextMilestone") {
       if (!row.nextMilestone) return null;
       return <span className={chipClass} key={key} title={`Prochain jalon : ${row.nextMilestone.title} (${fmtShort(row.nextMilestone.date)})`}>◆ {fmtShort(row.nextMilestone.date)}</span>;
@@ -8893,7 +8887,6 @@ function WidgetProjectTreemap({ widget, tasks, ctx, risks, expenses, onOpenProje
         <div className="lp-widget-treemap-tooltip-row"><span>En retard</span><strong>{row.lateCount}</strong></div>
         <div className="lp-widget-treemap-tooltip-row"><span>Urgentes</span><strong>{row.urgentCount}</strong></div>
         <div className="lp-widget-treemap-tooltip-row"><span>Progression moyenne</span><strong>{row.progress}%</strong></div>
-        {row.riskCount > 0 && <div className="lp-widget-treemap-tooltip-row"><span>Risques ouverts</span><strong>{row.riskCount}</strong></div>}
         {row.nextMilestone && <div className="lp-widget-treemap-tooltip-row"><span>Prochain jalon</span><strong>{fmtShort(row.nextMilestone.date)}</strong></div>}
         <div className="lp-widget-treemap-tooltip-note">
           Criticité = moyenne, sur les tâches retenues, de : retard {TREEMAP_CRITICALITY_WEIGHTS.late},
@@ -11338,24 +11331,6 @@ function fmtEuroCompact(n) {
 
 
 
-const RISK_LEVELS = [
-  { key: "low", label: "Faible", color: "#22B07D", max: 4 },
-  { key: "medium", label: "Modéré", color: "#D9A320", max: 9 },
-  { key: "high", label: "Élevé", color: "#E8792C", max: 14 },
-  { key: "critical", label: "Critique", color: "#D64545", max: 25 },
-];
-const RISK_STATUSES = [
-  { key: "open", label: "Actif" },
-  { key: "mitigated", label: "Sous contrôle" },
-  { key: "closed", label: "Clos" },
-];
-function riskScoreOf(r) {
-  return (Number(r.probability) || 1) * (Number(r.impact) || 1);
-}
-function riskLevelOf(r) {
-  const score = riskScoreOf(r);
-  return RISK_LEVELS.find((l) => score <= l.max) || RISK_LEVELS[RISK_LEVELS.length - 1];
-}
 
 function calculateBudgetBurnRate({ project, expenses, budgetActuel: budgetActuelOverride, poolExpenses }) {
   if (!project && budgetActuelOverride === undefined) return { status: "noProject" };

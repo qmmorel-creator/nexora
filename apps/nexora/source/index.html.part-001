@@ -3672,17 +3672,10 @@ function GlobalStyles() {
         .lp-emoji-btn.active{ border-color:var(--accent); background:#FFF6E6; }
         .lp-manage-item{ display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--border); min-width:0; }
         .lp-manage-item > .lp-manage-name{ overflow:hidden; }
-        .lp-risk-dot-indicator{ position:absolute; top:3px; right:3px; width:7px; height:7px; border-radius:50%; background:var(--danger); border:1.5px solid #fff; }
         .lp-manage-item .lp-icon-btn{ position:relative; }
 
         .lp-risk-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
         .lp-risk-list{ display:flex; flex-direction:column; gap:6px; }
-        .lp-risk-row{ display:flex; align-items:center; gap:12px; padding:10px; border:1px solid var(--border); border-radius:7px; cursor:pointer; }
-        .lp-risk-row:hover{ background:var(--paper-soft); }
-        .lp-risk-score-badge{ flex:0 0 auto; width:32px; height:32px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:800; color:#fff; }
-        .lp-risk-row-main{ flex:1; min-width:0; }
-        .lp-risk-row-title{ font-size:13.5px; font-weight:700; color:var(--text-900); }
-        .lp-risk-row-meta{ display:flex; gap:5px; font-size:11.5px; color:var(--text-600); font-weight:600; margin-top:2px; }
 
         .lp-risk-grid-picker{ display:grid; grid-template-columns:auto 1fr; grid-template-rows:1fr auto; gap:4px; width:fit-content; }
         .lp-risk-grid-picker-grid{ display:grid; grid-template-columns:repeat(5, 28px); grid-template-rows:repeat(5, 28px); gap:3px; }
@@ -6286,6 +6279,198 @@ function GlobalStyles() {
 
 
 
+function ImpactLineModal({ taskId, tasks, ctx, onClose, onOpenTask }) {
+  const [mode, setMode] = useState("full");
+  const impactBody = useRef(null);
+  useLayoutEffect(() => {
+    impactBody.current?.querySelector(".lp-impact-focus")?.scrollIntoView({block:"nearest",inline:"center",behavior:"auto"});
+  }, [taskId, mode, tasks.length]);
+  const task = tasks.find((t) => t.id === taskId);
+  const graph = useMemo(() => buildDependencyGraph(tasks, ctx), [tasks, ctx]);
+  const criticalIds = useMemo(
+    () => computeCriticalIds(tasks.filter((t) => t.start && t.end && !t.milestone)),
+    [tasks]
+  );
+
+  const ancestorsFor = (id) => {
+    const seen = new Set();
+    const walk = (cur) => {
+      const t = graph.byId[cur];
+      (t?.dependsOn || []).forEach((depId) => {
+        if (seen.has(depId)) return;
+        seen.add(depId);
+        walk(depId);
+      });
+    };
+    walk(id);
+    return [...seen].map((id) => graph.byId[id]).filter(Boolean);
+  };
+
+  const descendantsFor = (id) => {
+    const seen = new Set();
+    const walk = (cur) => {
+      (graph.dependents[cur] || []).forEach((nextId) => {
+        if (seen.has(nextId)) return;
+        seen.add(nextId);
+        walk(nextId);
+      });
+    };
+    walk(id);
+    return [...seen].map((id) => graph.byId[id]).filter(Boolean);
+  };
+
+  if (!task) return null;
+
+  const directPreds = (task.dependsOn || []).map((id) => graph.byId[id]).filter(Boolean);
+  const directSuccs = (graph.dependents[taskId] || []).map((id) => graph.byId[id]).filter(Boolean);
+  const allPreds = ancestorsFor(task.id);
+  const allSuccs = descendantsFor(task.id);
+
+  const relevantPreds = mode === "direct" ? directPreds : allPreds;
+  const relevantSuccs = mode === "direct"
+    ? directSuccs
+    : mode === "impact"
+      ? allSuccs.filter((t) => isTaskLate(t, ctx) || getTaskType(t) === "milestone" || criticalIds.has(t.id) || graph.blockedSetFor(t.id).size > 0)
+      : allSuccs;
+
+  const sortUpstream = [...relevantPreds].sort((a,b) =>
+    (a.end || a.start || "").localeCompare(b.end || b.start || "")
+  );
+  const sortDownstream = [...relevantSuccs].sort((a,b) =>
+    (a.start || a.end || "").localeCompare(b.start || b.end || "")
+  );
+
+  const projectIds = new Set(
+    [task, ...allPreds, ...allSuccs].flatMap((t) => [t.projectId, t.secondaryProjectId]).filter(Boolean)
+  );
+  const chainItems = [task, ...allPreds, ...allSuccs];
+  const lateItems = chainItems.filter((t) => isTaskLate(t, ctx));
+
+  const project = ctx.projects.find((p) => p.id === task.projectId);
+  const status = ctx.statuses.find((s) => s.id === task.statusId);
+  const taskColor = project?.color || "var(--line-blue)";
+
+  const Station = ({ t }) => {
+    const p = ctx.projects.find((x) => x.id === t.projectId);
+    const color = p?.color || "var(--line-blue)";
+    const type = getTaskType(t);
+    const late = isTaskLate(t, ctx);
+    const critical = criticalIds.has(t.id);
+    const blocking = false;
+    const st = ctx.statuses.find((x) => x.id === t.statusId);
+
+    return (
+      <div className="lp-impact-station-wrap">
+        <div className="lp-impact-station-connector" style={{"--station-color":color}} />
+        <button
+          type="button"
+          className={
+            "lp-impact-station " + type +
+            (late ? " late" : "") +
+            (critical ? " critical" : "") +
+            (blocking ? " blocking" : "")
+          }
+          style={{"--station-color":color}}
+          onClick={() => onOpenTask(t)}
+          aria-label={`${t.title} · ${p?.name || "Projet"}`}
+          title={`${t.title} · ${p?.name || ""}`}
+        />
+        <div className="lp-impact-station-label">
+          <div className="lp-impact-station-title" title={t.title}>{t.title}</div>
+          <div className="lp-impact-station-meta">
+            {p?.name || "Projet"}<br/>
+            {t.end ? fmtShort(t.end) : t.start ? fmtShort(t.start) : "—"}
+            {st ? ` · ${st.name}` : ""}
+            
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="lp-impact-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="lp-impact-shell">
+        <div className="lp-impact-head">
+          <Network size={18} />
+          <div className="lp-impact-title-wrap">
+            <div className="lp-impact-title">Ligne d’impact</div>
+            <div className="lp-impact-sub">Lecture du réseau · amont → station active → aval</div>
+          </div>
+          <button type="button" aria-label="Fermer la ligne d’impact" className="lp-impact-close" onClick={onClose}><X size={18}/></button>
+        </div>
+
+        <div className="lp-impact-summary">
+          <div className="lp-impact-kpi"><div className="lp-impact-kpi-value">{allPreds.length}</div><div className="lp-impact-kpi-label">Prédécesseurs</div></div>
+          <div className="lp-impact-kpi"><div className="lp-impact-kpi-value">{allSuccs.length}</div><div className="lp-impact-kpi-label">Successeurs</div></div>
+          <div className="lp-impact-kpi"><div className="lp-impact-kpi-value">{projectIds.size}</div><div className="lp-impact-kpi-label">Projets</div></div>
+          <div className="lp-impact-kpi"><div className="lp-impact-kpi-value">{lateItems.length}</div><div className="lp-impact-kpi-label">En retard</div></div>
+          <div className="lp-impact-kpi"><div className="lp-impact-kpi-value">{criticalIds.has(task.id) ? "Oui" : "Non"}</div><div className="lp-impact-kpi-label">Critique</div></div>
+        </div>
+
+        <div className="lp-impact-toolbar">
+          {[["direct","Direct"],["full","Chaîne complète"],["impact","Impact"]].map(([key,label]) => (
+            <button key={key} className={"lp-impact-mode" + (mode === key ? " active" : "")} onClick={() => setMode(key)}>{label}</button>
+          ))}
+          <span style={{marginLeft:"auto",fontFamily:"var(--font-mono)",fontSize:12,color:"var(--text-muted)"}}>
+            {allPreds.length} amont · {allSuccs.length} aval · {projectIds.size} projet{projectIds.size>1?"s":""}
+          </span>
+        </div>
+
+        <div className="lp-impact-body" ref={impactBody}>
+          <div className="lp-impact-metro" style={{width:Math.max(220,sortUpstream.length*164)+260+Math.max(220,sortDownstream.length*164)+88}}>
+            <div className="lp-impact-metro-grid" style={{gridTemplateColumns:`minmax(220px,${Math.max(1,sortUpstream.length)}fr) 260px minmax(220px,${Math.max(1,sortDownstream.length)}fr)`}}>
+              <section className="lp-impact-side upstream">
+                <div className="lp-impact-side-label"><strong>AMONT</strong> · prédécesseurs</div>
+                <div className="lp-impact-rail"/>
+                {sortUpstream.length ? (
+                  <div className="lp-impact-stations" style={{"--count":Math.max(1,sortUpstream.length)}}>
+                    {sortUpstream.map((t) => <Station key={t.id} t={t}/>)}
+                  </div>
+                ) : <div className="lp-impact-empty-line">Aucun prédécesseur</div>}
+              </section>
+
+              <section className="lp-impact-focus" style={{"--focus-color":taskColor}}>
+                <div className="lp-impact-focus-card" style={{"--focus-color":taskColor}}>
+                  <div className="lp-impact-focus-roundel"/>
+                  <div className="lp-impact-focus-title">{task.title}</div>
+                  <div className="lp-impact-focus-project">{project?.name || "Projet"}</div>
+                  <div className="lp-impact-focus-info">
+                    <div><span>Statut</span><strong>{status?.name || "—"}</strong></div>
+                    <div><span>Responsable</span><strong>{task.assignee || "—"}</strong></div>
+                    <div><span>Début</span><strong>{task.start ? fmtShort(task.start) : "—"}</strong></div>
+                    <div><span>Fin</span><strong>{task.end ? fmtShort(task.end) : "—"}</strong></div>
+                    <div><span>Critique</span><strong>{criticalIds.has(task.id) ? "Oui" : "Non"}</strong></div>
+                    <div><span>Impact aval</span><strong>{allSuccs.length}</strong></div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="lp-impact-side downstream">
+                <div className="lp-impact-side-label"><strong>AVAL</strong> · conséquences</div>
+                <div className="lp-impact-rail"/>
+                {sortDownstream.length ? (
+                  <div className="lp-impact-stations" style={{"--count":Math.max(1,sortDownstream.length)}}>
+                    {sortDownstream.map((t) => <Station key={t.id} t={t}/>)}
+                  </div>
+                ) : <div className="lp-impact-empty-line">Aucun successeur</div>}
+              </section>
+            </div>
+
+            <div className="lp-impact-legend">
+              <span><i className="lp-impact-key"/>Action</span>
+              <span><i className="lp-impact-key activity"/>Activité</span>
+              <span><i className="lp-impact-key milestone"/>Jalon</span>
+              <span><i className="lp-impact-key blocking"/>Action bloquante</span>
+              <span>Couleur = projet · rouge = critique / retard</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LePlan({ currentUser, onSignOut }) {
   const [projects, setProjects] = useState(seedProjects);
   const [statuses, setStatuses] = useState(seedStatuses);
@@ -6353,7 +6538,6 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [viewFolders, setViewFolders] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState(seedExpenseCategories);
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
-  const [risks, setRisks] = useState([]);
   const [gcalSettings, setGcalSettings] = useState({
     calendars: [],
     daysPast: 30,
@@ -6492,7 +6676,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:expenseCategories", "nexora:expenses", "nexora:budgetLines",
     "nexora:teamMembers", "nexora:momentumSnapshots", "nexora:activityLog",
     "nexora:taskBaselines", "nexora:taskArchive", "nexora:customFieldDefs",
-    "nexora:risks", "nexora:metaTemporalBlocks",
+    "nexora:metaTemporalBlocks",
     "nexora:notifications", "nexora:favorites",
     // Ajoutées après le 409 observé en posant un filtre de criticité sur un
     // Mini-Gantt. Ce sont des listes d'objets identifiables comme les autres,
@@ -6970,7 +7154,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["taskBaselines", "nexora:taskBaselines", setTaskBaselines],
     ["taskArchive", "nexora:taskArchive", setTaskArchive],
     ["customFieldDefs", "nexora:customFieldDefs", setCustomFieldDefs],
-    ["risks", "nexora:risks", setRisks],
     ["gcalSettings", "nexora:gcalSettings", setGcalSettings],
     ["gcalSyncState", "nexora:gcalSyncState", setGcalSyncState],
     ["metaFilters", "nexora:metaFilters", setMetaFilters],
@@ -7024,7 +7207,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:taskBaselines": taskBaselines,
     "nexora:taskArchive": taskArchive,
     "nexora:customFieldDefs": customFieldDefs,
-    "nexora:risks": risks,
     "nexora:gcalSettings": gcalSettings,
     "nexora:gcalSyncState": gcalSyncState,
     "nexora:metaFilters": metaFilters,
@@ -7724,7 +7906,6 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskTypes", taskTypes); }, [taskTypes, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:expenseCategories", expenseCategories); }, [expenseCategories, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:customFieldDefs", customFieldDefs); }, [customFieldDefs, dataLoaded]);
-  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:risks", risks); }, [risks, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:gcalSettings", gcalSettings); }, [gcalSettings, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:gcalSyncState", gcalSyncState); }, [gcalSyncState, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:metaFilters", metaFilters); }, [metaFilters, dataLoaded]);
@@ -9084,7 +9265,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [sidebarOpen, setSidebarOpen] = useState({ projects: true, views: true, dashboards: true });
   const [collapsedViewFolders, setCollapsedViewFolders] = useState({});
 
-  const ctx = useMemo(() => ({ projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs, expenses, risks }), [projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs, expenses, risks]);
+  const ctx = useMemo(() => ({ projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs, expenses }), [projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs, expenses]);
   // Relie le compte connecté à un utilisateur de l'app via son email, pour
   // activer "Mes tâches" dans certains widgets sans dupliquer de système d'auth.
   const myName = useMemo(() => {
@@ -9681,7 +9862,6 @@ export default function LePlan({ currentUser, onSignOut }) {
         confirmLabel: "Supprimer",
         onConfirm: () => {
           setProjects((prev) => prev.filter((p) => p.id !== project.id));
-          setRisks((prev) => prev.filter((r) => r.projectId !== project.id));
           setConfirmState(null);
         },
       });
@@ -10615,12 +10795,12 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} shortcutPrefs={shortcutPrefs} />}
+          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} customFieldDefs={customFieldDefs} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} shortcutPrefs={shortcutPrefs} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} />}
         </div>
       </main>
 
@@ -10632,7 +10812,6 @@ export default function LePlan({ currentUser, onSignOut }) {
           taskId={impactLineTaskId}
           tasks={tasks}
           ctx={ctx}
-          risks={risks}
           onClose={() => setImpactLineTaskId(null)}
           onOpenTask={(t) => { setImpactLineTaskId(null); openEditTask(t); }}
         />
