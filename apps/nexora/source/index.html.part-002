@@ -4174,6 +4174,151 @@ function miniGanttComparisonZoneColor(kind) {
   if (kind === "late") return MINIGANTT_COMPARISON_LATE_COLOR;
   return MINIGANTT_COMPARISON_AHEAD_COLOR;
 }
+
+// --- Mini-Gantt : ordre des lignes -----------------------------------------
+//
+// Les jalons étaient TOUS rendus après TOUTES les barres, quel que soit leur
+// date : un jalon de 2022 se retrouvait sous une tâche de 2026. L'ordre devient
+// donc une seule liste triée, et le partage barres/jalons ne sert plus qu'à
+// choisir le composant de rendu.
+const MINIGANTT_SORT_KEYS = ["start", "end", "title"];
+const MINIGANTT_SORT_LABELS = { start: "Date de début", end: "Date de fin", title: "Titre" };
+
+function normalizeMiniGanttSort(value) {
+  return MINIGANTT_SORT_KEYS.includes(value) ? value : "start";
+}
+
+function normalizeMiniGanttSortDir(value) {
+  return value === "desc" ? "desc" : "asc";
+}
+
+/* Clé de tri d'une ligne. Un jalon n'a qu'une date : elle vaut début ET fin,
+   sinon trier par « date de début » le renverrait en tête ou en queue selon un
+   champ qu'il ne porte pas vraiment. */
+function miniGanttSortValue(task, key) {
+  if (!task || typeof task !== "object") return "";
+  if (key === "title") return String(task.title || "").trim();
+  const date = task.milestone
+    ? (task.end || task.start)
+    : (key === "end" ? (task.end || task.start) : (task.start || task.end));
+  return String(date || "");
+}
+
+/* Tri des lignes affichées.
+
+   À CLÉ ÉGALE, les jalons passent devant les barres — et ce, quel que soit le
+   sens du tri : c'est une règle de lisibilité (le jalon marque la date, la
+   barre l'occupe), pas une seconde clé qu'on retournerait. Le titre départage
+   en dernier ressort, pour que deux rendus successifs donnent le même ordre. */
+function miniGanttSortTasks(tasks, key, direction) {
+  const k = normalizeMiniGanttSort(key);
+  const dir = normalizeMiniGanttSortDir(direction) === "desc" ? -1 : 1;
+  const compareTitles = (a, b) =>
+    String(a.title || "").localeCompare(String(b.title || ""), "fr", { sensitivity: "base", numeric: true });
+  return (Array.isArray(tasks) ? [...tasks] : []).sort((a, b) => {
+    const va = miniGanttSortValue(a, k);
+    const vb = miniGanttSortValue(b, k);
+    const cmp = k === "title"
+      ? va.localeCompare(vb, "fr", { sensitivity: "base", numeric: true })
+      : va.localeCompare(vb);
+    if (cmp !== 0) return cmp * dir;
+    if (!!a.milestone !== !!b.milestone) return a.milestone ? -1 : 1;
+    return compareTitles(a, b);
+  });
+}
+
+// --- Mini-Gantt : étendue temporelle affichée ------------------------------
+//
+// Trois cadrages, et un seul réglage qui les porte :
+//   auto    — l'étendue des tâches retenues, élargie à aujourd'hui ;
+//   rolling — une fenêtre glissante autour d'aujourd'hui, en mois ;
+//   fixed   — deux dates arrêtées à la main (widget.miniGanttWindow).
+// Absent, c'est `auto` : un widget d'avant ce réglage ne change pas de cadrage.
+const MINIGANTT_RANGE_MODES = ["auto", "rolling", "fixed"];
+const MINIGANTT_RANGE_MAX_MONTHS = 120;
+
+function ganttClampInt(value, min, max, fallback) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function normalizeMiniGanttRange(value) {
+  const v = value && typeof value === "object" ? value : {};
+  return {
+    mode: MINIGANTT_RANGE_MODES.includes(v.mode) ? v.mode : "auto",
+    // Le repère « Aujourd'hui » doit rester visible par défaut : c'est ce que
+    // faisait le cadrage automatique avant d'être réglable, et ce qui empêche
+    // un widget entièrement passé ou entièrement futur de perdre son repère.
+    includeToday: v.includeToday !== false,
+    beforeMonths: ganttClampInt(v.beforeMonths, 0, MINIGANTT_RANGE_MAX_MONTHS, 3),
+    afterMonths: ganttClampInt(v.afterMonths, 0, MINIGANTT_RANGE_MAX_MONTHS, 12),
+  };
+}
+
+// Décalage en MOIS d'une date ISO, en restant sur le dernier jour du mois quand
+// la cible n'a pas ce quantième (31 janvier − 1 mois = 28 ou 29 février).
+function ganttShiftMonths(isoDate, months) {
+  if (!isGanttIsoDate(isoDate)) return null;
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const total = (y * 12 + (m - 1)) + Math.round(Number(months) || 0);
+  const ny = Math.floor(total / 12);
+  const nm = total - ny * 12;
+  const dernier = new Date(Date.UTC(ny, nm + 1, 0)).getUTCDate();
+  const nd = Math.min(d, dernier);
+  return `${String(ny).padStart(4, "0")}-${String(nm + 1).padStart(2, "0")}-${String(nd).padStart(2, "0")}`;
+}
+
+/* Fenêtre demandée par le cadrage, en index de jour.
+
+   `bounds` porte l'étendue naturelle des tâches (`minIdx`/`maxIdx`) et
+   `todayIdx`. Rend `null` en mode `fixed` : ce cadrage-là vit dans
+   `widget.miniGanttWindow`, que l'appelant lit déjà. */
+function miniGanttRangeWindow(range, bounds) {
+  const r = normalizeMiniGanttRange(range);
+  const b = bounds && typeof bounds === "object" ? bounds : {};
+  const todayIdx = Number(b.todayIdx);
+  if (r.mode === "fixed") return null;
+  if (r.mode === "rolling") {
+    if (!isGanttIsoDate(b.todayIso)) return null;
+    const from = ganttDayNumber(ganttShiftMonths(b.todayIso, -r.beforeMonths));
+    const to = ganttDayNumber(ganttShiftMonths(b.todayIso, r.afterMonths));
+    if (from == null || to == null) return null;
+    return { minIdx: from, maxIdx: Math.max(from + 1, to) };
+  }
+  const min = Number(b.minIdx);
+  const max = Number(b.maxIdx);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  // Cadrage automatique : l'étendue des tâches, élargie à aujourd'hui si on le
+  // demande. C'est la seule différence avec le comportement historique, qui
+  // l'élargissait toujours.
+  const lo = r.includeToday && Number.isFinite(todayIdx) ? Math.min(min, todayIdx) : min;
+  const hi = r.includeToday && Number.isFinite(todayIdx) ? Math.max(max, todayIdx) : max;
+  return { minIdx: lo, maxIdx: Math.max(lo + 1, hi) };
+}
+
+/* Ramène une fenêtre DANS des bornes utiles, en conservant sa largeur.
+
+   C'est ce qui manquait au zoom manuel : centré sur aujourd'hui, il réservait
+   la moitié de la piste à des années vides pendant qu'il coupait les tâches les
+   plus anciennes (retour de test). Plutôt que de rogner la fenêtre — ce qui
+   changerait le zoom demandé —, on la FAIT GLISSER jusqu'à ce qu'elle rentre.
+   Plus large que les bornes, elle les épouse : il n'y a rien à montrer au-delà. */
+function miniGanttClampWindow(window, bounds) {
+  const w = window && typeof window === "object" ? window : {};
+  const b = bounds && typeof bounds === "object" ? bounds : {};
+  const minIdx = Number(w.minIdx);
+  const maxIdx = Number(w.maxIdx);
+  const lo = Number(b.minIdx);
+  const hi = Number(b.maxIdx);
+  if (![minIdx, maxIdx, lo, hi].every(Number.isFinite)) return { minIdx, maxIdx };
+  const span = Math.max(1, maxIdx - minIdx);
+  if (span >= hi - lo) return { minIdx: lo, maxIdx: Math.max(lo + 1, hi) };
+  if (minIdx < lo) return { minIdx: lo, maxIdx: lo + span };
+  if (maxIdx > hi) return { minIdx: hi - span, maxIdx: hi };
+  return { minIdx, maxIdx };
+}
+
 // === NEXORA:GANTT-ANNOTATIONS:END ===
 
 // === NEXORA:WIDGET-TRANSFER:START ===

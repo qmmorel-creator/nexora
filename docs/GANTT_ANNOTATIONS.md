@@ -299,6 +299,84 @@ standard) et réordonner. Un bloc dont les dates sont invalides, ou dont la fin
 précède le début, affiche l'erreur sous les champs, n'est pas dessiné, et bloque
 l'enregistrement de la fiche du widget.
 
+## Ordre des lignes et étendue temporelle — Mini-Gantt uniquement
+
+Deux réglages du widget, dans ses paramètres, avec pour valeur par défaut
+exactement le comportement historique.
+
+### Ordre des lignes
+
+```ts
+type MiniGanttWidget = {
+  miniGanttSort?: "start" | "end" | "title";  // défaut "start"
+  miniGanttSortDir?: "asc" | "desc";          // défaut "asc"
+};
+```
+
+Barres et jalons sont triés **ensemble**, dans une seule liste. Ils étaient
+auparavant rendus en deux blocs — toutes les barres, puis tous les jalons — si
+bien qu'un jalon de 2022 se retrouvait sous une tâche de 2026. Le partage ne
+sert plus qu'à deux choses : choisir le composant de rendu, et appliquer à
+chacun son propre plafond d'affichage (20 barres, 12 jalons).
+
+Un **jalon n'a qu'une date** : elle vaut début comme fin, sinon trier par « date
+de début » le renverrait en tête ou en queue selon un champ qu'il ne porte pas.
+
+**À position égale dans le tri, les jalons passent devant les barres**, quel que
+soit le sens : c'est une règle de lisibilité — le jalon marque la date, la barre
+l'occupe —, pas une seconde clé qu'on retournerait. Le titre départage en
+dernier ressort, pour que deux rendus successifs donnent le même ordre.
+
+Le regroupement redistribue les lignes : chaque groupe est retrié, sinon l'ordre
+choisi ne vaudrait qu'à l'intérieur du premier d'entre eux.
+
+### Étendue temporelle
+
+```ts
+type MiniGanttWidget = {
+  miniGanttRange?: {
+    mode: "auto" | "rolling" | "fixed";  // défaut "auto"
+    includeToday?: boolean;              // mode auto, défaut true
+    beforeMonths?: number;               // mode rolling, défaut 3, borné à 120
+    afterMonths?: number;                // mode rolling, défaut 12, borné à 120
+  };
+  miniGanttWindow?: { start: string; end: string };  // mode fixed
+};
+```
+
+| Mode | Ce que couvre l'axe |
+|---|---|
+| **Automatique** | l'étendue des tâches retenues, élargie à « Aujourd'hui » si `includeToday` |
+| **Fenêtre glissante** | N mois avant et M mois après aujourd'hui — l'axe avance seul, jour après jour, sans dépendre des tâches |
+| **Dates fixes** | deux dates arrêtées à la main, stockées dans `miniGanttWindow` |
+
+`includeToday` n'existe que pour le mode automatique : décoché, un widget
+entièrement passé ou entièrement futur se cadre sur ses tâches au lieu de
+réserver la moitié de la piste au trajet jusqu'à aujourd'hui.
+
+Les dates fixes continuent de vivre dans `miniGanttWindow` — le rendu la lisait
+déjà, et un widget qui en portait une (héritée du bouton de cadrage retiré en
+#48) ne change pas de forme. Les autres modes la relâchent, sinon elle primerait
+sur eux. Les boutons − / Auto / + du widget la relâchent aussi.
+
+Une comparaison activée sans dates fixes valides **bloque l'enregistrement** de
+la fiche, avec l'erreur sous les champs.
+
+### Le zoom manuel ne montre plus de vide
+
+Les niveaux − / + restent relatifs à l'étendue automatique, mais la fenêtre
+obtenue est désormais **ramenée dans les bornes utiles**. Centrée sur
+aujourd'hui et sans borne, elle réservait la moitié de la piste à des années
+vides pendant qu'elle coupait les tâches les plus anciennes. Elle **glisse**
+jusqu'à rentrer plutôt que de rétrécir : le zoom demandé n'est pas trahi. Plus
+large que les bornes, elle les épouse — il n'y a rien à montrer au-delà.
+
+Enfin, une tâche **entièrement hors de la fenêtre affichée n'est plus dessinée**.
+Un cadrage glissant ou à dates fixes en exclut forcément, et les écraser contre
+le bord donnait une barre de 2 % qui ne voulait rien dire. Les jalons
+appliquaient déjà cette règle ; les barres la rejoignent. En mode Comparaison,
+une référence encore dans la fenêtre suffit à garder la ligne.
+
 ## Mode Comparaison — Mini-Gantt uniquement
 
 Un Mini-Gantt peut afficher, pour chaque tâche qui le déclare, sa **planification

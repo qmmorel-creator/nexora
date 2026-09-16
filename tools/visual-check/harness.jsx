@@ -71,7 +71,14 @@ function AnnotationsHarness() {
     googleEventId: "ev-conges", gcalImported: true, gcalCalendarId: "cal-perso",
     metaBlock: { enabled: true, kind: "phase", color: "#8B5CF6", borderStyle: "solid", dashboardIds: null },
   };
-  const [tasks, setTasks] = useState([...seedWithRisks, calendarTask]);
+  /* Jalon PRÉCOCE, volontairement placé entre deux barres : tant que les jalons
+     étaient rendus après toutes les barres, il se retrouvait en bas du widget.
+     C'est lui qui prouve que l'ordre mêle bien les deux. */
+  const earlyMilestone = {
+    id: "t9", projectId: "p1", statusId: "s1", title: "Ordre de service", desc: "",
+    start: "2026-07-15", end: "2026-07-15", progress: 0, milestone: true, assignee: "Quentin", checklist: [],
+  };
+  const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
   const [projects, setProjects] = useState([...seedProjects, calendarProject]);
   const [statuses, setStatuses] = useState(seedStatuses);
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], customFieldDefs: [], expenses: [], risks: [], myName: null };
@@ -595,7 +602,19 @@ function AnnotationsHarness() {
             complètement et la piste aller jusqu'au bord du widget. */}
         <div id="harness-nofields-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
-            widget={{ id: "w9", type: "minigantt", colorBy: "status", miniGanttFields: [] }}
+            widget={{ id: "w9", type: "minigantt", colorBy: "status", miniGanttFields: [], miniGanttSort: "title" }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* Cadrage « Fenêtre glissante » : l'axe ne dépend plus des tâches mais du
+            calendrier. Les tâches hors fenêtre ne sont pas dessinées du tout —
+            elles étaient écrasées contre le bord en une barre de 2 %. */}
+        <div id="harness-rolling-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{ id: "w11", type: "minigantt", colorBy: "status", miniGanttFields: ["end"], miniGanttRange: { mode: "rolling", beforeMonths: 1, afterMonths: 1 } }}
             tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
             onUpdateWidget={noop}
             onUpdateTask={noop}
