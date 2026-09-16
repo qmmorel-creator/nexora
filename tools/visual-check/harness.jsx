@@ -1,5 +1,9 @@
 // ---- Banc d'essai local (scratchpad, jamais committé) : monte le Gantt
 // complet et le Mini-Gantt sur les données de démonstration, sans Firebase.
+// Un PNG transparent de 1×1, en ligne : aucune requête réseau, donc un contrôle
+// qui donne le même résultat partout (issue #70).
+const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
 function AnnotationsHarness() {
   // Les risques de délai vivent sur la tâche : ils doivent apparaître dans
   // TOUS les Mini-Gantt qui affichent cette tâche, quelle que soit la
@@ -85,6 +89,15 @@ function AnnotationsHarness() {
     treemapShowUpcoming: true,
   });
   const [treemapFormOpen, setTreemapFormOpen] = useState(false);
+  /* Changer de tableau de bord (issue #58). Deux plans, dont un à deux pages :
+     c'est ce qui distingue « Aujourd'hui » (page unique, nommée par son plan)
+     de « Chantiers › Suivi ». Le banc n'écrit rien, il enregistre l'intention
+     transmise par la fiche — c'est elle qui doit être juste. */
+  const transferBoards = [
+    { id: "today", name: "Aujourd'hui", pages: [{ id: "tp", name: "Aujourd'hui", widgets: [] }] },
+    { id: "d1", name: "Chantiers", pages: [{ id: "p1", name: "Page 1", widgets: [treemapWidget] }, { id: "p2", name: "Suivi", widgets: [] }] },
+  ];
+  const [transferDone, setTransferDone] = useState("");
   // Nuage des échéances : des dates calculées À PARTIR D'AUJOURD'HUI, pour que
   // les contrôles restent vrais quel que soit le jour où le banc est lancé.
   // « sc5 » n'a pas de date de fin : elle ne doit jamais devenir un point.
@@ -95,6 +108,13 @@ function AnnotationsHarness() {
     { id: "sc3", projectId: "p2", statusId: "s2", title: "Plan de communication", start: scatterToday, end: scatterToday, progress: 0, checklist: [], criticality: "bas" },
     { id: "sc4", projectId: "p2", statusId: "s2", title: "Relance presse", start: scatterToday, end: addDays(scatterToday, 12), progress: 0, checklist: [] },
     { id: "sc5", projectId: "p3", statusId: "s1", title: "Sans échéance", start: scatterToday, progress: 0, checklist: [] },
+  ];
+  /* Heat map mensuelle (#68) : une échéance passée et une à venir, pour que la
+     distinction passé / futur ait de quoi se voir. Les dates sont relatives à
+     aujourd'hui, donc le contrôle reste vrai quel que soit le jour. */
+  const heatmapMonthTasks = [
+    { id: "hm1", projectId: "p1", statusId: "s1", title: "Échéance passée", start: addDays(scatterToday, -20), end: addDays(scatterToday, -10), progress: 0, checklist: [] },
+    { id: "hm2", projectId: "p2", statusId: "s2", title: "Échéance à venir", start: scatterToday, end: addDays(scatterToday, 5), progress: 0, checklist: [] },
   ];
   const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
@@ -154,6 +174,7 @@ function AnnotationsHarness() {
   });
   const [openedProjectId, setOpenedProjectId] = useState("");
   const [toolbar, setToolbar] = useState(null);
+  const [metroWidgetToolbar, setMetroWidgetToolbar] = useState(null);
   // Fiche du widget, montée à la demande : elle sert à vérifier que les listes
   // déroulantes des annotations ne proposent que les tâches retenues par le
   // filtre du widget. Ici, le filtre ne garde que le projet « p2 ».
@@ -195,6 +216,88 @@ function AnnotationsHarness() {
         </div>
       </div>
       <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>RAIL DES VUES</h2>
+        {/* Issue #65. Le rail réel vit dans l'application complète, que ce banc
+            ne monte pas ; ce qui a changé est ENTIÈREMENT dans la feuille de
+            style, et c'est elle qu'on éprouve ici, sur le même balisage et les
+            mêmes classes que le rendu réel. */}
+        <nav id="harness-view-rail" className="lp-view-rail" aria-label="Espaces de travail" style={{ height: 320, marginBottom: 18 }}>
+          {[
+            { key: "control", label: "Centre de pilotage", icon: "tabler:affiliate", badge: "" },
+            { key: "projects", label: "Planning Projets", icon: "tabler:route", badge: "4" },
+            { key: "automations", label: "Automatisations", icon: "tabler:automation", badge: "999+" },
+            { key: "notifications", label: "Notifications", icon: "tabler:bell", badge: "12" },
+          ].map((v) => (
+            <button key={v.key} type="button" className={"lp-view-rail-btn" + (v.key === "projects" ? " active" : "")} title={v.label}>
+              <IconGlyph icon={v.icon} size={17} />
+              <span className="lp-view-rail-label">{v.label}</span>
+              {v.badge && <span className={"lp-view-rail-btn-count" + (v.key === "notifications" ? " is-alert" : "")}>{v.badge}</span>}
+            </button>
+          ))}
+          <div className="lp-view-rail-folders" aria-label="Dossiers de projets">
+            <button type="button" className="lp-view-rail-folder" style={{ "--folder-color": "#4F6AF5" }} title="Dossier">
+              <IconGlyph icon="tabler:folder" size={14} />
+              <span className="lp-view-rail-folder-count">3</span>
+            </button>
+          </div>
+        </nav>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>HEAT MAP MENSUELLE</h2>
+        {/* Le MÊME widget à deux largeurs (#68) : large, les trois mois tiennent
+            sur une ligne ; étroit, ils doivent passer les uns sous les autres
+            plutôt que de déborder derrière une barre de défilement. */}
+        <div id="harness-heatmap-month-large" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 1200, height: 320, marginBottom: 14 }}>
+          <WidgetHeatmapMonth tasks={heatmapMonthTasks} ctx={ctx} onOpen={noop} appearance={appearance} />
+        </div>
+        <div id="harness-heatmap-month-etroit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 420, height: 520, marginBottom: 18 }}>
+          <WidgetHeatmapMonth tasks={heatmapMonthTasks} ctx={ctx} onOpen={noop} appearance={appearance} />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>ICÔNES PAR URL</h2>
+        {/* Issue #70. Des images EN LIGNE (data:), pour que le contrôle reste
+            hors réseau et déterministe : ce qu'on vérifie n'est pas qu'un CDN
+            répond, mais que la reconnaissance de l'URL ne dépend ni de la casse
+            ni des espaces, et qu'un chargement raté tombe sur un repli. */}
+        <div id="harness-icon-urls" style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 18 }}>
+          <span data-icon="minuscule"><IconGlyph icon={HARNESS_PNG} size={16} /></span>
+          <span data-icon="majuscule"><IconGlyph icon={HARNESS_PNG.replace("data:image/png", "DATA:IMAGE/PNG")} size={16} /></span>
+          <span data-icon="espaces"><IconGlyph icon={"   " + HARNESS_PNG + "  "} size={16} /></span>
+          {/* Servie en 404 par le serveur du banc : le repli ne peut s'éprouver
+              qu'avec un chargement qui échoue POUR DE VRAI. */}
+          <span data-icon="casse"><IconGlyph icon={location.origin + "/icone-volontairement-cassee.png"} size={16} /></span>
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>MÉTRO EN WIDGET</h2>
+        {/* La MÊME vue, mais embarquée dans la structure réelle d'un widget de
+            tableau de bord : carte, bandeau de paramètres, corps défilant. Les
+            en-têtes collants du planning se calent sur la barre d'onglets de la
+            page — qui n'existe pas ici. Sans repli à zéro, l'axe des dates se
+            fige 82 px sous le bandeau et les lignes défilent à découvert dans
+            cette bande (issue #56). */}
+        <div id="harness-metro-widget" className="lp-widget-card" style={{ position: "relative", width: 760, height: 320, marginBottom: 18 }}>
+          <div className="lp-widget-head">
+            <span className="lp-widget-title">Métro (complet) 1</span>
+            <span className="lp-view-toolbar-slot" ref={setMetroWidgetToolbar} />
+          </div>
+          <div className="lp-widget-body">
+            <div className="lp-widget-embed">
+              <div className="lp-widget-embed-body">
+                <ProjectMetroView
+                  tasks={tasks} ctx={ctx} onOpen={noop} toolbarSlot={metroWidgetToolbar} appearance={appearance}
+                  prefs={metroPrefs}
+                  setPrefs={(patch) => setMetroPrefs((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }))}
+                  setTasks={setTasks} pushToast={noop} expenses={[]} metaTemporalBlocks={settingsMetaBlocks}
+                  embedded isHomepage={false} onSelectProject={noop} selectedProjectIds={[]} onToggleProject={noop}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>TREEMAP PROJETS</h2>
         <button type="button" id="harness-open-treemap-form" onClick={() => setTreemapFormOpen(true)} style={{ marginBottom: 8 }}>
           Ouvrir la fiche du Treemap
@@ -220,6 +323,7 @@ function AnnotationsHarness() {
             tasks={tasks} ctx={ctx} risks={[]} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
           />
         </div>
+        <span id="harness-transfer-done" style={{ fontFamily: "monospace", fontSize: 12 }}>{transferDone}</span>
         {treemapFormOpen && (
           <WidgetFormModal
             widget={treemapWidget}
@@ -228,6 +332,13 @@ function AnnotationsHarness() {
             pageFilter={null}
             onSave={(data) => { setTreemapWidget((w) => ({ ...w, ...data })); setTreemapFormOpen(false); }}
             onClose={() => setTreemapFormOpen(false)}
+            transferBoards={transferBoards}
+            boardId="d1"
+            currentPageId="p1"
+            onTransfer={({ data, target, mode }) => {
+              setTransferDone(`${mode}|${target.boardId}|${target.pageId}|${data.title}|${data.treemapShowUpcoming}`);
+              setTreemapFormOpen(false);
+            }}
           />
         )}
       </div>
@@ -346,6 +457,17 @@ function AnnotationsHarness() {
             onDelete={noop}
           />
         )}
+        {/* Aucun champ à droite (issue #66) : la colonne doit disparaître
+            complètement et la piste aller jusqu'au bord du widget. */}
+        <div id="harness-nofields-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{ id: "w9", type: "minigantt", colorBy: "status", miniGanttFields: [] }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
         <div id="harness-second-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
             widget={otherWidget} tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}

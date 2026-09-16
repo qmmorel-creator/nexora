@@ -717,13 +717,12 @@ test("l'ordre des lignes prime sur l'ordre des tâches de l'encadré", () => {
 /* Coche d'une ligne du Mini-Gantt → encadré automatique (issue #48).
    Ce qui compte n'est pas de savoir poser un encadré, mais de ne jamais
    effacer celui que l'utilisateur a posé à la main. */
-test("cocher pose un encadré autour de la seule tâche, avec l'icône", () => {
+test("cocher pose un encadré autour de la seule tâche", () => {
   const out = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
   assert.equal(out.length, 1);
   assert.deepEqual(out[0].taskIds, ["t1"]);
   assert.equal(out[0].autoTaskId, "t1");
-  assert.equal(out[0].iconUrl, MINIGANTT_CHECK_FRAME_ICON);
-  assert.equal(out[0].label, "", "L'icône remplace le texte : pas d'étiquette.");
+  assert.equal(out[0].label, "", "Le cadre n'a pas d'étiquette.");
 });
 
 test("décocher retire l'encadré de la coche", () => {
@@ -750,11 +749,8 @@ test("décocher une tâche sans encadré ne change rien", () => {
   assert.equal(miniGanttToggleTaskFrame(liste, "t1", false), liste);
 });
 
-test("la normalisation conserve l'icône et le marqueur d'origine", () => {
-  const [f] = normalizeHighlightFrames([
-    { id: "f1", taskIds: ["t1"], iconUrl: MINIGANTT_CHECK_FRAME_ICON, autoTaskId: "t1" },
-  ]);
-  assert.equal(f.iconUrl, MINIGANTT_CHECK_FRAME_ICON, "Sans cela l'icône disparaîtrait au rechargement.");
+test("la normalisation conserve le marqueur d'origine", () => {
+  const [f] = normalizeHighlightFrames([{ id: "f1", taskIds: ["t1"], autoTaskId: "t1" }]);
   assert.equal(f.autoTaskId, "t1", "Sans cela décocher ne saurait plus quel encadré retirer.");
 });
 
@@ -762,19 +758,51 @@ test("la normalisation conserve l'icône et le marqueur d'origine", () => {
 /* --- Retour de Quentin sur #48 : la pastille du coin, et le cadre qui
    recoupait la barre --------------------------------------------------- */
 
-test("l'encadré posé par la coche porte aussi la pastille du coin", () => {
+test("l'encadré posé par la coche porte la pastille du coin, et elle seule", () => {
   const out = miniGanttToggleTaskFrame([], "t1", true, () => "f1");
   assert.equal(out[0].cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
-  // Les deux icônes ont des rôles distincts : l'une remplace l'étiquette,
-  // l'autre marque le cadre. Les confondre ferait disparaître l'une des deux.
-  assert.notEqual(out[0].cornerIconUrl, out[0].iconUrl);
+  // « Ne garder que l'image à droite » (#48) : l'étiquette-icône de gauche
+  // doublait la pastille et mordait sur le début de la barre.
+  assert.equal(out[0].iconUrl, "", "L'image de gauche ne doit plus être posée.");
 });
 
 test("la pastille du coin survit au rechargement", () => {
   const [f] = normalizeHighlightFrames([
-    { id: "f1", taskIds: ["t1"], iconUrl: MINIGANTT_CHECK_FRAME_ICON, cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON, autoTaskId: "t1" },
+    { id: "f1", taskIds: ["t1"], cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON, autoTaskId: "t1" },
   ]);
   assert.equal(f.cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
+});
+
+/* --- Second retour de Quentin sur #48 : « ne garder que l'image à droite en
+   transparence, pas celle de gauche » ---------------------------------- */
+
+test("un encadré de coche DÉJÀ ENREGISTRÉ perd son image de gauche au rechargement", () => {
+  // Sans cette reprise, l'image de gauche resterait sur tous les encadrés
+  // posés avant la correction : Quentin la reverrait exactement comme avant.
+  const [f] = normalizeHighlightFrames([
+    { id: "f1", taskIds: ["t1"], iconUrl: MINIGANTT_CHECK_FRAME_ICON, cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON, autoTaskId: "t1" },
+  ]);
+  assert.equal(f.iconUrl, "");
+  assert.equal(f.cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON, "La pastille, elle, reste.");
+});
+
+test("un encadré de coche sans pastille en reçoit une au rechargement", () => {
+  // Les tout premiers encadrés de coche n'avaient que l'image de gauche. Lui
+  // retirer sans rien poser les laisserait complètement nus.
+  const [f] = normalizeHighlightFrames([
+    { id: "f1", taskIds: ["t1"], iconUrl: MINIGANTT_CHECK_FRAME_ICON, autoTaskId: "t1" },
+  ]);
+  assert.equal(f.iconUrl, "");
+  assert.equal(f.cornerIconUrl, MINIGANTT_CHECK_FRAME_CORNER_ICON);
+});
+
+test("un encadré posé À LA MAIN garde l'icône qu'on lui a donnée", () => {
+  // La reprise ne vise que les encadrés de coche : elle ne doit pas se
+  // transformer en effacement d'une icône choisie par l'utilisateur.
+  const perso = "https://example.invalid/mon-icone.png";
+  const [f] = normalizeHighlightFrames([{ id: "m1", taskIds: ["t1"], iconUrl: perso, autoTaskId: "" }]);
+  assert.equal(f.iconUrl, perso);
+  assert.equal(f.cornerIconUrl, "", "Et il ne reçoit toujours pas de pastille d'office.");
 });
 
 test("un encadré sans pastille reste sans pastille", () => {

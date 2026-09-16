@@ -12,7 +12,8 @@ nGlyph({ icon, size = 16, style, stroke = 1.8 }) {
     if (!prefix || !name) return null;
     return <img src={iconifyUrl(prefix, name, color, Math.max(32, size * 2))} alt="" style={{ width: size, height: size, objectFit: "contain", ...style }} />;
   }
-  if (icon.startsWith("data:") || icon.startsWith("http://") || icon.startsWith("https://")) return <img src={icon} alt="" style={{ width: size, height: size, borderRadius: 4, objectFit: "cover", ...style }} />;
+  const url = normalizeIconUrl(icon);
+  if (url) return <IconUrlImage key={url} src={url} size={size} style={style} />;
   return <span style={{ fontSize: size * 0.75, lineHeight: 1, ...style }}>{icon}</span>;
 }
 
@@ -651,6 +652,64 @@ function TaskDetailPicker({ tasks, projects, value, onChange, compact = false })
   );
 }
 
+/* === NEXORA:CRITICALITY-SELECT:START ===
+   Sélecteur de criticité (issue #69).
+
+   Même coquille que StatusSelect et TaskTypeSelect — `lp-color-select` — pour
+   que les quatre champs de la première ligne de la fiche de tâche aient la même
+   hauteur, le même cadre et le même comportement. Un `<select>` natif à côté de
+   trois boutons ne s'alignait ni en hauteur ni au pixel, et ne pouvait pas
+   porter de pastille.
+
+   Trois différences assumées avec ses deux voisins :
+   - pas de champ de recherche : trois options, il serait absurde ;
+   - pas de tri alphabétique : l'ordre de CRITICALITIES est l'ordre voulu, du
+     plus bas au plus haut ;
+   - « Non définie » ne porte aucune pastille. Lui en donner une, fût-elle grise,
+     la ferait lire comme un quatrième niveau — c'est l'absence de pastille qui
+     dit l'absence de criticité.
+
+   La couleur n'est jamais seule à porter l'information : le libellé métier
+   l'accompagne partout, dans la liste comme dans la valeur choisie. */
+function CriticalitySelect({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  const current = CRITICALITIES.find((c) => c.id === value) || null;
+  const choose = (id) => { onChange(id); setOpen(false); };
+  return (
+    <div className="lp-color-select" ref={ref}>
+      <button type="button" className="lp-color-select-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        {current && <span className="lp-color-select-swatch lp-color-select-dot" style={{ background: current.color }} />}
+        <span className="lp-color-select-label">{current ? current.name : "Non définie"}</span>
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <div className="lp-color-select-panel">
+          <button type="button" className={"lp-color-select-option" + (!current ? " active" : "")} onClick={() => choose("")}>
+            {/* Écarteur de la largeur d'une pastille : sans lui, « Non définie »
+                commencerait huit pixels à gauche des trois niveaux et la liste
+                paraîtrait bancale. */}
+            <span className="lp-color-select-dot-spacer" />
+            Non définie
+          </button>
+          {CRITICALITIES.map((c) => (
+            <button type="button" key={c.id} className={"lp-color-select-option" + (c.id === value ? " active" : "")} onClick={() => choose(c.id)}>
+              <span className="lp-color-select-swatch lp-color-select-dot" style={{ background: c.color }} />
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+// === NEXORA:CRITICALITY-SELECT:END ===
+
 function ProjectSelect({ projects, value, onChange, emptyLabel }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -999,6 +1058,12 @@ function GlobalStyles() {
         .lp-search-input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
         .lp-search-clear{ position:absolute; right:6px; background:none; border:none; cursor:pointer; color:var(--text-600); display:flex; padding:3px; border-radius:5px; }
         .lp-search-clear:hover{ background:var(--paper-soft); color:var(--text-900); }
+        /* Filtre des tableaux de bord (#72) : un peu plus large que celui des
+           autres vues, parce qu'il est seul de son espèce sur ces surfaces et
+           qu'il accueille des mots entiers plutôt que des fragments. */
+        .lp-board-search-wrap{ flex:0 1 210px; }
+        .lp-board-search-count{ flex:0 0 auto; margin-left:6px; font-size:11px; font-weight:700; color:var(--text-600); white-space:nowrap; }
+        .lp-board-search-count.is-empty{ color:var(--danger-text); }
         .lp-dashboard-central-btn{ display:flex; align-items:center; gap:5px; padding:6px 10px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface); color:var(--text-900); font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .12s ease, color .12s ease, border-color .12s ease; }
         .lp-dashboard-central-btn:hover{ background:var(--paper-soft); }
         .lp-dashboard-central-btn.active{ background:var(--ink); border-color:var(--ink); color:#fff; }
@@ -1840,14 +1905,38 @@ function GlobalStyles() {
         .lp-widget-heatmap-legend{ display:flex; flex-wrap:wrap; align-items:center; gap:9px; padding:0 2px; }
         .lp-widget-heatmap-legend-item{ display:flex; align-items:center; gap:4px; font-size:10px; font-weight:700; color:var(--text-600); white-space:nowrap; }
         .lp-widget-heatmap-legend-dot{ width:8px; height:8px; border-radius:2px; flex:0 0 auto; }
-        .lp-widget-heatmap-months{ display:flex; gap:14px; flex:1; min-height:0; overflow-x:auto; }
-        .lp-widget-heatmap-month{ display:flex; flex-direction:column; gap:6px; flex:1 1 0; min-width:160px; min-height:0; }
+        /* Les mois se répartissent sur plusieurs lignes selon la place (#68).
+           En rangée unique avec « overflow-x:auto », un widget étroit poussait
+           les mois hors du cadre : le premier et le dernier devenaient
+           invisibles, et il fallait défiler à l'horizontale pour les retrouver.
+           « auto-fit » rend le nombre de colonnes à la LARGEUR DISPONIBLE — trois
+           quand elle le permet, puis deux, puis une — et se recompose seul au
+           redimensionnement, sans point de rupture ni mesure en JavaScript.
+
+           « minmax(150px, 1fr) » sur les rangées tient les deux bouts : sur une
+           seule rangée le calendrier occupe toute la hauteur comme avant, et sur
+           plusieurs chaque mois garde une hauteur lisible, quitte à ce que
+           l'ensemble défile VERTICALEMENT — ce que l'issue demande, plutôt que
+           d'écraser les cases pour tout faire tenir. */
+        .lp-widget-heatmap-months{ display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); grid-auto-rows:minmax(150px, 1fr); gap:14px; flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; }
+        .lp-widget-heatmap-month{ display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
         .lp-widget-heatmap-month-title{ font-size:11px; font-weight:800; color:var(--text-900); text-align:center; text-transform:capitalize; }
         .lp-widget-heatmap-dow{ display:grid; grid-template-columns:repeat(7, 1fr); gap:3px; }
         .lp-widget-heatmap-dow span{ text-align:center; font-size:9.5px; font-weight:700; color:var(--text-600); }
         .lp-widget-heatmap-grid{ display:grid; grid-template-columns:repeat(7, 1fr); gap:3px; flex:1; min-height:0; }
         .lp-widget-heatmap-cell{ display:flex; align-items:center; justify-content:center; border-radius:6px; background:var(--paper-soft); cursor:pointer; min-height:0; overflow:hidden; }
         .lp-widget-heatmap-cell-out{ opacity:0.3; }
+        /* Passé : la couleur de projet reste reconnaissable, mais lavée (#68).
+           Un voile posé PAR-DESSUS plutôt qu'une opacité sur la case : la case
+           peut porter un conic-gradient à plusieurs projets, qu'on ne saurait
+           pas éclaircir couleur par couleur. Le voile prend la surface du thème,
+           donc il éclaircit en clair et assombrit en sombre — dans les deux cas
+           la case recule d'un plan sans perdre sa teinte. */
+        .lp-widget-heatmap-cell-past{ position:relative; }
+        .lp-widget-heatmap-cell-past::after{ content:""; position:absolute; inset:0; background:var(--surface); opacity:0.62; pointer-events:none; }
+        /* Le numéro du jour repasse AU-DESSUS du voile : sans cela il se
+           retrouverait lavé avec le fond et deviendrait illisible. */
+        .lp-widget-heatmap-daynum{ position:relative; z-index:1; }
         .lp-widget-heatmap-cell-today{ box-shadow:0 0 0 1.5px var(--signal) inset; }
         .lp-widget-heatmap-cell-selected{ box-shadow:0 0 0 2px var(--ink) inset; }
         .lp-widget-heatmap-cell-late{ box-shadow:0 0 0 2px #c22020 inset; }
@@ -2351,8 +2440,13 @@ function GlobalStyles() {
         .lp-widget-minigantt-frame{ position:absolute; border-radius:5px; box-sizing:border-box; pointer-events:none; }
         .lp-widget-minigantt-frame-icon{ width:13px; height:13px; display:block; object-fit:contain; }
         /* Pastille du coin supérieur droit du cadre : ancrée sur l'angle, donc
-           translatée d'une demi-taille vers l'extérieur sur les deux axes. */
-        .lp-widget-minigantt-frame-corner{ position:absolute; width:14px; height:14px; object-fit:contain; transform:translate(-50%,-50%); pointer-events:none; filter:drop-shadow(0 1px 2px rgba(10,15,25,0.25)); }
+           translatée d'une demi-taille vers l'extérieur sur les deux axes.
+           C'est la SEULE marque d'un encadré posé par la coche depuis le retour
+           de Quentin sur #48, et elle est peinte en transparence pour ne pas
+           masquer la barre ni le trait du cadre qu'elle chevauche. L'ombre
+           portée disparaîtrait sous l'opacité en un halo sale : elle est
+           retirée, la transparence suffit à détacher la pastille du fond. */
+        .lp-widget-minigantt-frame-corner{ position:absolute; width:14px; height:14px; object-fit:contain; transform:translate(-50%,-50%); pointer-events:none; opacity:0.55; }
 .lp-widget-minigantt-frame-label{ position:absolute; border:none; border-radius:4px; padding:0 5px; font-size:9px; font-weight:800; color:#fff; line-height:1.6; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; cursor:pointer; pointer-events:auto; box-shadow:0 1px 2px rgba(10,15,25,0.18); }
         .lp-widget-minigantt-row{ display:flex; align-items:center; gap:6px; cursor:pointer; min-width:0; padding:2px 0; position:relative; z-index:1; }
         .lp-widget-minigantt-grouped{ gap:10px; }
@@ -3220,6 +3314,20 @@ function GlobalStyles() {
         .lp-desc-preview ul{ margin:4px 0 8px; padding-left:20px; }
         .lp-desc-preview a{ color:var(--accent-text); }
         .lp-desc-preview code{ background:var(--paper-soft); padding:1px 5px; border-radius:4px; font-size:0.92em; }
+        /* Tableaux Markdown (#71). Le défilement appartient à l'enveloppe, pas à
+           la modale : sans elle, un tableau plus large que la fiche pousse la
+           fiche entière au lieu de défiler tout seul. */
+        .lp-md-table-wrap{ overflow-x:auto; max-width:100%; margin:6px 0 10px; }
+        /* collapse, et non separate : c'est ce qui donne un seul filet entre
+           deux cellules au lieu de deux traits accolés. */
+        .lp-md-table{ border-collapse:collapse; width:auto; min-width:100%; font-size:12.5px; }
+        .lp-md-table th, .lp-md-table td{ border:1px solid var(--border); padding:5px 9px; vertical-align:top; }
+        /* Les cellules longues se replient DANS leur colonne. Sans cela, une
+           phrase entière tiendrait sur une seule ligne et étirerait le tableau
+           jusqu'à rendre les autres colonnes illisibles. */
+        .lp-md-table td{ white-space:normal; overflow-wrap:anywhere; }
+        .lp-md-table th{ background:var(--paper-soft); font-weight:700; text-align:left; white-space:nowrap; }
+        .lp-md-table tbody tr:nth-child(even){ background:color-mix(in srgb, var(--paper-soft) 45%, transparent); }
         .lp-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 18px; border-bottom:1px solid var(--border); }
         .lp-modal-head h3{ font-family:var(--font-display); margin:0; font-size:16px; font-weight:700; }
         .lp-modal-body{ padding:18px; overflow-y:auto; display:flex; flex-direction:column; gap:14px; }
@@ -3230,6 +3338,11 @@ function GlobalStyles() {
         .lp-color-select-btn:hover{ border-color:var(--text-600); }
         .lp-color-select-label{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .lp-color-select-swatch{ width:14px; height:14px; border-radius:3px; flex:0 0 auto; }
+        /* Criticité (#69) : une pastille RONDE, pour qu'elle ne se confonde pas
+           avec le carré de couleur d'un statut ou d'un type. Un peu plus petite,
+           elle se lit comme un voyant plutôt que comme un aplat. */
+        .lp-color-select-dot{ width:11px; height:11px; border-radius:50%; }
+        .lp-color-select-dot-spacer{ width:11px; flex:0 0 auto; }
         .swatch{ width:14px; height:14px; border-radius:50%; flex:0 0 auto; display:inline-block; }
         .swatch.small{ width:11px; height:11px; }
         .lp-color-select-panel{ position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:260px; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 8px 24px rgba(10,15,25,0.14); z-index:50; padding:6px; }
@@ -3389,6 +3502,12 @@ function GlobalStyles() {
         .lp-row2 > div{ flex:1; }
         .lp-row3{ display:flex; gap:10px; }
         .lp-row3 > div{ flex:1; min-width:0; }
+        /* Quatre champs de même registre sur une ligne (#69). Le repli est dans
+           la règle elle-même : « flex:1 1 160px » laisse les champs se partager la
+           largeur tant qu'ils tiennent, puis passer à deux par ligne, puis à un,
+           sans point de rupture écrit à la main. */
+        .lp-row4{ display:flex; gap:10px; flex-wrap:wrap; }
+        .lp-row4 > div{ flex:1 1 160px; min-width:0; }
 
         .lp-widget-type-search-wrap{ display:flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:9px; padding:6px 10px; margin-bottom:8px; }
         .lp-widget-type-search-icon{ color:var(--text-600); flex:0 0 auto; }
@@ -3486,6 +3605,23 @@ function GlobalStyles() {
         .lp-widget-appearance-panel{ display:flex; flex-direction:column; gap:12px; padding:4px 2px 2px; }
 
         
+        /* Changer de tableau de bord depuis la fiche du widget (issue #58).
+           Même boîte que le sélecteur de type juste en dessous : c'est le même
+           registre — « où et quoi », avant les réglages du widget. */
+        .lp-widget-transfer{ margin:0 0 16px 0; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+        .lp-widget-transfer-row{ min-height:48px; padding:8px 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .lp-widget-transfer-label{ display:flex; align-items:center; gap:8px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.25px; color:var(--text-600); }
+        .lp-widget-transfer-here{ flex:1 1 auto; min-width:0; font-size:12px; font-weight:650; color:var(--text-900); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .lp-btn-mini{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; font-size:11.5px; }
+        .lp-widget-transfer-panel{ border-top:1px solid var(--border); padding:12px; display:flex; flex-direction:column; gap:12px; }
+        .lp-widget-transfer-panel .lp-field{ margin:0; }
+        .lp-widget-transfer-modes{ display:flex; flex-direction:column; gap:6px; }
+        /* Le choix se clique sur toute la ligne, pas seulement sur le rond :
+           un libellé de deux lignes rendait la cible ridiculement petite. */
+        .lp-widget-transfer-modes label{ display:flex; align-items:flex-start; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:12px; font-weight:500; color:var(--text-900); text-transform:none; letter-spacing:normal; cursor:pointer; }
+        .lp-widget-transfer-modes label.active{ border-color:var(--signal); background:var(--paper-soft); }
+        .lp-widget-transfer-modes input{ margin-top:2px; flex:0 0 auto; }
+        .lp-widget-transfer-hint{ margin:0; font-size:11.5px; line-height:1.45; color:var(--text-600); }
         .lp-widget-type-hard-selector{
           display:block !important;
           visibility:visible !important;
@@ -4369,7 +4505,12 @@ function GlobalStyles() {
         .lp-view-rail::before{
           /* Ligne continue (pas de segments) : c'est le rail lui-même, pas une
              indication pointillée. */
-          content:""; position:absolute; top:34px; bottom:34px; left:50%; width:3px; transform:translateX(-50%);
+          /* 31px = 12px de remplissage du rail + la moitié d'une bulle de 38 :
+             la ligne part du CENTRE de la première bulle et s'arrête au centre
+             de la dernière, comme une ligne de métro entre ses terminus. Elle
+             visait la moitié des anciennes cartes de 58 px et commençait donc
+             sous la première (#65). */
+          content:""; position:absolute; top:31px; bottom:31px; left:50%; width:3px; transform:translateX(-50%);
           background:var(--rail); border-radius:3px; z-index:0; opacity:0.9;
         }
         .lp-view-rail-favorites{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:3px; padding-top:8px; }
@@ -4463,8 +4604,28 @@ function GlobalStyles() {
         .lp-view-rail-fav-dot{ width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; }
         .lp-view-rail-btn{ position:relative; z-index:1; flex:0 0 auto; width:36px; height:36px; display:flex; align-items:center; justify-content:center; border:1.75px solid var(--border-strong); background:var(--surface); color:var(--text-muted); font-size:15px; border-radius:50%; cursor:pointer; transition:transform .12s ease, border-color .12s ease, color .12s ease; }
         .lp-view-rail-btn:hover{ border-color:var(--graphite); color:var(--text-primary); transform:scale(1.06); }
-        .lp-view-rail-label{font-size:12px;line-height:1.2;text-align:center;overflow-wrap:anywhere;}
-        .lp-view-rail>.lp-view-rail-btn{width:98px;min-height:58px;height:auto;padding:7px 3px;flex-direction:column;gap:4px;border-radius:var(--radius-sm);}
+        /* Les entrées de premier niveau sont des BULLES, comme les roundels de
+           dossier plus bas (#65). En grandes cartes de 98×58, elles créaient de
+           gros écarts en haut de la frise et cassaient la continuité avec le
+           reste : deux registres visuels sur une même ligne de métro.
+
+           Le libellé reste dans le DOM — il nomme le bouton pour les lecteurs
+           d'écran, et l'infobulle le donne à la souris — mais il n'occupe plus
+           de place : c'est l'icône qui porte la lecture. */
+        .lp-view-rail-label{ position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+        .lp-view-rail>.lp-view-rail-btn{ width:38px; height:38px; min-height:0; padding:0; flex-direction:row; gap:0; border-radius:50%; box-shadow:0 0 0 2px var(--ink-soft); }
+        /* Badge du compteur, repris de celui des dossiers pour que les deux
+           familles de bulles se ressemblent vraiment. « min-width » plutôt qu'une
+           largeur fixe : il doit rester lisible à un, deux et trois chiffres. */
+        .lp-view-rail-btn-count{
+          position:absolute; right:-4px; bottom:-4px; min-width:14px; height:14px; padding:0 3px;
+          border-radius:8px; background:var(--graphite); color:#fff;
+          border:1.5px solid var(--ink-soft);
+          font:700 8px/11px var(--font-mono); text-align:center; z-index:3;
+          display:flex; align-items:center; justify-content:center;
+        }
+        /* Les notifications non lues appellent l'œil, les autres comptes non. */
+        .lp-view-rail-btn-count.is-alert{ background:var(--danger); }
         .lp-view-rail-btn.active{ background:var(--quai-elevated); color:var(--line-blue); border-color:var(--line-blue); box-shadow:none; }
         /* Stations des dossiers : accessibles même lorsque la navigation latérale est repliée.
            La couleur du dossier est reprise sur l'anneau et l'icône du premier projet
@@ -9134,6 +9295,48 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
   };
 
+  /* Changer un widget de tableau de bord (issue #58).
+
+     Les widgets vivent dans DEUX magasins distincts — les tableaux de bord
+     (`nexora:dashboards`) et la page « Aujourd'hui » (`nexora:todayWidgets`) —
+     et un transfert peut aller de l'un à l'autre. Le calcul est donc fait une
+     seule fois sur la liste entière des plans (`widgetTransferApply`, fonction
+     pure et éprouvée par tests/widget-transfer.test.mjs), puis réécrit magasin
+     par magasin. Traiter le retrait et la pose comme deux gestes séparés
+     suffirait à perdre le widget entre les deux. */
+  const TODAY_BOARD_ID = "nexora:today";
+  const widgetTransferBoards = useMemo(() => ([
+    { id: TODAY_BOARD_ID, name: "Aujourd'hui", pages: todayPages },
+    ...dashboards.map((d) => ({ id: d.id, name: d.name || "Sans nom", pages: dashboardPages(d) })),
+  ]), [todayPages, dashboards]);
+
+  const writeBoardPages = (boardId, nextPages) => {
+    if (boardId === TODAY_BOARD_ID) {
+      setTodayData((prev) => ({ ...(prev || TODAY_DATA_FALLBACK), pages: nextPages }));
+      return;
+    }
+    setDashboards((prev) => prev.map((d) => {
+      if (d.id !== boardId) return d;
+      // La page active du tableau de destination ne doit pas changer sous les
+      // yeux de son propriétaire ; elle n'est recalculée que si elle a disparu.
+      const activeId = d.activePageId && nextPages.some((p) => p.id === d.activePageId) ? d.activePageId : (nextPages[0]?.id || null);
+      return { ...d, pages: nextPages, activePageId: activeId };
+    }));
+  };
+
+  const transferWidget = ({ widgetId, target, mode, patch }) => {
+    const before = widgetTransferBoards;
+    const after = widgetTransferApply(before, widgetId, target, mode, uid, patch);
+    if (after === before) { pushToast({ message: "Le widget est déjà là : rien à déplacer." }); return; }
+    // Seuls les plans réellement touchés sont réécrits : recréer les autres
+    // relancerait une écriture Firebase par tableau de bord à chaque transfert.
+    after.forEach((board, index) => { if (board !== before[index]) writeBoardPages(board.id, board.pages); });
+    const destination = widgetTransferTargets(before).find((t) => t.boardId === target?.boardId && t.pageId === target?.pageId);
+    const title = (patch && patch.title) || widgetTransferLocate(before, widgetId)?.widget?.title || "Widget";
+    const verbe = widgetTransferNormalizeMode(mode) === "duplicate" ? "dupliqué dans" : "déplacé vers";
+    pushToast({ message: `Widget « ${title} » ${verbe} « ${destination?.label || "?"} ».` });
+  };
+
   const createDashboard = (name, folderId) => {
     const d = { id: uid(), name: name.trim(), folderId: folderId || null, widgets: [] };
     setDashboards((prev) => [...prev, d]);
@@ -10394,13 +10597,46 @@ export default function LePlan({ currentUser, onSignOut }) {
     () => mergeMetaTemporalBlocks(metaTemporalBlocks, tasks),
     [metaTemporalBlocks, tasks]
   );
+  /* Filtre textuel des surfaces « tableau de bord » (issue #72).
+
+     Il vit à part des filtres de vue, et c'est volontaire : ces surfaces
+     partent du socle méta-filtré et n'appliquent pas `filters`. Le brancher sur
+     `filters.search` l'aurait fait partager son état avec les autres vues, où
+     la recherche balaie tout autre chose.
+
+     `boardSearchApplied` est la valeur RETARDÉE. La zone de saisie reste
+     pilotée par `boardSearch`, donc la frappe ne rame jamais ; seul le
+     recalcul des vues attend la fin de la rafale. */
+  const [boardSearch, setBoardSearch] = useState("");
+  const [boardSearchApplied, setBoardSearchApplied] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setBoardSearchApplied(boardSearch), 120);
+    return () => clearTimeout(id);
+  }, [boardSearch]);
+  const boardTasks = useMemo(
+    () => filterTasksByText(metaFilteredTasks, boardSearchApplied),
+    [metaFilteredTasks, boardSearchApplied]
+  );
+  const boardSearchActive = !!boardSearchApplied.trim();
+
+  /* Compteurs des bulles du rail (#65). Rassemblés en un seul endroit, et
+     calculés sur le socle méta-filtré comme les vues qu'ils annoncent : un badge
+     qui compterait des tâches que la vue n'affiche pas mentirait. */
+  const viewRailCounts = useMemo(() => ({
+    projects: projects.length,
+    dashboards: dashboards.length,
+    workflows: workflows.length,
+    unreadNotifications: unreadNotificationsCount,
+    dueToday: metaFilteredTasks.filter((t) => t.end === iso(new Date()) && !isTaskDoneGlobal(t, ctx)).length,
+  }), [projects, dashboards, workflows, unreadNotificationsCount, metaFilteredTasks, ctx]);
+
   const todayPresentationTasks = useMemo(() => {
     const rank = { action:0, activity:1, milestone:2 };
-    return [...metaFilteredTasks].sort((a,b) => {
+    return [...boardTasks].sort((a,b) => {
       const ta = getTaskType(a), tb = getTaskType(b);
       return (rank[ta] ?? 9) - (rank[tb] ?? 9) || (a.end || "").localeCompare(b.end || "");
     });
-  }, [metaFilteredTasks]);
+  }, [boardTasks]);
 
   const filteredTasks = useMemo(() => {
     const base = metaFilteredTasks.filter((t) => matchTaskFilters(t, filters, ctx));
@@ -11044,6 +11280,9 @@ export default function LePlan({ currentUser, onSignOut }) {
       )}
 
       {/* ---------------- Bandeau de vues persistant (icônes) ---------------- */}
+      {/* Les compteurs des bulles du rail (#65). Rassemblés ici, à un seul
+          endroit, plutôt que devinés dans le rendu : c'est ce qui permet de les
+          éprouver par un test sans monter toute l'application. */}
       <nav className="lp-view-rail" aria-label="Espaces de travail">
         {viewOrder.map((key) => {
           if (enabledViews[key] === false) return null;
@@ -11054,10 +11293,22 @@ export default function LePlan({ currentUser, onSignOut }) {
           // détail (Gantt, Radar…) puisque ces dernières n'ont plus leur propre
           // icône ici — elles restent conceptuellement rattachées à ce point d'entrée.
           const isActive = PROJECT_TAB_VIEW_KEYS.includes(view) ? key === "projects" : view === key;
+          const badge = viewRailBadgeLabel(viewRailBadgeCount(key, viewRailCounts));
           return (
-            <button key={key} className={"lp-view-rail-btn" + (isActive ? " active" : "")} onClick={() => setView(key)} title={meta.label} aria-current={isActive ? "page" : undefined}>
-              <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={17} /><span className="lp-view-rail-label">{meta.label}</span>
-              {key === "notifications" && unreadNotificationsCount > 0 && <span className="lp-tab-badge">{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>}
+            /* Bulle, et non plus grande carte (#65) : le libellé reste dans le
+               DOM pour les lecteurs d'écran et sert d'infobulle, mais ce sont
+               l'icône et le badge qui portent la lecture — comme les roundels de
+               dossier plus bas, dont cette rangée se distinguait sans raison. */
+            <button
+              key={key}
+              className={"lp-view-rail-btn" + (isActive ? " active" : "")}
+              onClick={() => setView(key)}
+              title={badge ? `${meta.label} · ${badge}` : meta.label}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={17} />
+              <span className="lp-view-rail-label">{meta.label}</span>
+              {badge && <span className={"lp-view-rail-btn-count" + (key === "notifications" ? " is-alert" : "")}>{badge}</span>}
             </button>
           );
         })}
@@ -11524,7 +11775,35 @@ export default function LePlan({ currentUser, onSignOut }) {
             Méta
             {metaFilterCount > 0 && <span className="lp-filter-badge">{metaFilterCount}</span>}
           </button>
-          {!["dashboard", "control"].includes(view) && (
+          {/* Filtre textuel des surfaces « tableau de bord » (issue #72).
+              Il ne s'ajoute pas au champ de recherche des autres vues : il le
+              REMPLACE là où celui-ci était masqué, faute de pouvoir filtrer
+              quoi que ce soit. La barre du haut porte donc toujours un champ de
+              recherche, quelle que soit la vue. */}
+          {["dashboard", "control", "today"].includes(view) && (
+            <div className="lp-search-wrap lp-board-search-wrap">
+              <span className="lp-search-icon">⌕</span>
+              <input
+                type="text"
+                className="lp-search-input"
+                placeholder="Nom ou description…"
+                value={boardSearch}
+                onChange={(e) => setBoardSearch(e.target.value)}
+                aria-label="Filtrer les tâches sur leur nom ou leur description"
+              />
+              {boardSearch && (
+                <button className="lp-search-clear" onClick={() => setBoardSearch("")} title="Effacer le filtre"><X size={13} /></button>
+              )}
+            </div>
+          )}
+          {["dashboard", "control", "today"].includes(view) && boardSearchActive && (
+            /* Sans ce compte, un filtre qui ne ramène rien donne des widgets
+               vides sans qu'on sache si c'est la recherche ou les données. */
+            <span className={"lp-board-search-count" + (boardTasks.length === 0 ? " is-empty" : "")}>
+              {boardTasks.length === 0 ? "Aucune tâche" : `${boardTasks.length} tâche${boardTasks.length > 1 ? "s" : ""}`}
+            </span>
+          )}
+          {!["dashboard", "control", "today"].includes(view) && (
           <>
           <div className="lp-search-wrap">
             <span className="lp-search-icon">⌕</span>
@@ -11669,15 +11948,15 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} gradient={appearance.gradient} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "control" && <ControlTowerView tasks={metaFilteredTasks} ctx={ctx} risks={risks} momentumSnapshots={momentumSnapshots} activityLog={activityLog} onOpenTask={openEditTask} onSelectProject={selectProjectAndNavigate} onNavigate={setView} />}
-          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "control" && <ControlTowerView tasks={boardTasks} ctx={ctx} risks={risks} momentumSnapshots={momentumSnapshots} activityLog={activityLog} onOpenTask={openEditTask} onSelectProject={selectProjectAndNavigate} onNavigate={setView} />}
+          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} customFieldDefs={customFieldDefs} />}
           {view === "chiffrage" && <ChiffrageView projects={projects} setProjects={setProjects} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} expenses={expenses} setExpenses={setExpenses} budgetLines={budgetLines} setBudgetLines={setBudgetLines} tasks={metaFilteredTasks} ctx={ctx} prefs={viewPrefs.chiffrage} setPrefs={setChiffragePrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "automations" && <AutomationsView workflows={workflows} setWorkflows={setWorkflows} workflowExecutionLog={workflowExecutionLog} ctx={ctx} prefs={viewPrefs.automations || {}} setPrefs={setAutomationsPrefs} toolbarSlot={viewToolbarSlot} dispatchWorkflowEvent={dispatchWorkflowEvent} pushToast={pushToast} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} tasks={metaFilteredTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
         </div>
       </main>
 

@@ -48,7 +48,16 @@ const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 // Babel signale en console qu'il ne stylise pas un script de plus de 500 Ko :
 // c'est attendu pour un fichier de 2,5 Mo, et sans effet sur le rendu.
-page.on("console", (m) => { if (m.type() === "error" && !m.text().includes("[BABEL]")) pageErrors.push("console: " + m.text()); });
+page.on("console", (m) => {
+  if (m.type() !== "error") return;
+  if (m.text().includes("[BABEL]")) return;
+  /* Le banc monte EXPRÈS une icône dont le chargement échoue (issue #70) :
+     c'est le seul moyen d'éprouver le repli, et cet échec EST le sujet du
+     contrôle, pas un défaut. Reconnu à son adresse, et à elle seule, pour ne
+     rien relâcher d'autre. */
+  if ((m.location()?.url || "").includes("icone-volontairement-cassee")) return;
+  pageErrors.push("console: " + m.text());
+});
 
 // Le banc est HORS LIGNE par construction. Certaines données de démonstration
 // portent une icône distante (une URL d'image dans un type de tâche) : la
@@ -85,7 +94,9 @@ const seen = await page.evaluate(() => {
     miniRows: rects("#harness-first-minigantt .lp-widget-minigantt-row"),
     miniBands: rects("#harness-first-minigantt .lp-widget-minigantt-tblock"),
     miniDecisions: rects("#harness-first-minigantt .lp-widget-minigantt-phase.is-decision"),
-    miniRisks: rects(".lp-widget-minigantt-risk"),
+    // Portée aux DEUX widgets historiques : non ancré, ce compte changeait
+    // à chaque Mini-Gantt ajouté au banc pour une autre raison.
+    miniRisks: rects("#harness-first-minigantt .lp-widget-minigantt-risk, #harness-second-minigantt .lp-widget-minigantt-risk"),
     secondRisks: rects("#harness-second-minigantt .lp-widget-minigantt-risk"),
     secondBands: rects("#harness-second-minigantt .lp-widget-minigantt-tblock"),
     secondMetaChips: rects("#harness-second-minigantt .lp-widget-minigantt-phase.is-meta"),
@@ -264,6 +275,303 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Rail des vues (issue #65). Les grandes cartes rectangulaires doivent être
+   redevenues des bulles, alignées sur la ligne centrale et de hauteur
+   régulière — ce qui ne se lit que sur un rendu. */
+const rail = {};
+try {
+  await page.locator("#harness-view-rail").scrollIntoViewIfNeeded();
+  await page.waitForTimeout(250);
+  Object.assign(rail, await page.evaluate(() => {
+    const nav = document.querySelector("#harness-view-rail");
+    const btns = [...nav.querySelectorAll(".lp-view-rail-btn")];
+    const rects = btns.map((b) => b.getBoundingClientRect());
+    const cs = btns.map((b) => getComputedStyle(b));
+    const ligne = getComputedStyle(nav, "::before");
+    const badges = [...nav.querySelectorAll(".lp-view-rail-btn-count")];
+    const roundel = nav.querySelector(".lp-view-rail-folder");
+    const rRoundel = roundel ? roundel.getBoundingClientRect() : null;
+    const centre = (r) => Math.round(r.left + r.width / 2);
+    const ecarts = [];
+    for (let i = 1; i < rects.length; i++) ecarts.push(Math.round(rects[i].top - rects[i - 1].bottom));
+    return {
+      nb: btns.length,
+      // Rondes : autant de haut que de large, et un rayon en pourcentage.
+      rondes: rects.every((r) => Math.abs(r.width - r.height) <= 1) && cs.every((c) => c.borderRadius === "50%"),
+      hauteurs: [...new Set(rects.map((r) => Math.round(r.height)))],
+      // Aucune bulle ne doit provoquer de rupture de hauteur.
+      hauteurMax: Math.max(...rects.map((r) => Math.round(r.height))),
+      // Espacement régulier entre toutes les bulles.
+      ecarts: [...new Set(ecarts)],
+      // Toutes centrées sur la même verticale, roundels de dossier compris.
+      centres: [...new Set(rects.map(centre).concat(rRoundel ? [centre(rRoundel)] : []))],
+      ligneVisible: ligne.display !== "none" && parseFloat(ligne.width) > 0,
+      // Le libellé reste dans le DOM (lecteurs d'écran) mais ne prend pas de place.
+      libelleInvisible: [...nav.querySelectorAll(".lp-view-rail-label")].every((l) => l.getBoundingClientRect().width <= 2),
+      libelleDansLeDom: nav.querySelector(".lp-view-rail-label")?.textContent.trim() || "",
+      // Un badge par bulle qui en a un — jamais sur celle qui n'en a pas.
+      nbBadges: badges.length,
+      badgesLargeurs: badges.map((b) => Math.round(b.getBoundingClientRect().width)),
+      /* Lisibilité réelle : le texte du badge tient-il dans le badge ? Comparer
+         des largeurs entre elles ne conclut rien — un compteur court se loge
+         déjà dans la largeur plancher, et seul le débordement ment. */
+      badgesTronques: badges.filter((b) => b.scrollWidth > b.clientWidth + 1).length,
+      // Le badge se pose sur le bord inférieur droit, sans s'éloigner de la bulle.
+      badgeAncre: badges.every((b) => {
+        const rb = b.getBoundingClientRect();
+        const bulle = b.closest(".lp-view-rail-btn").getBoundingClientRect();
+        /* Ancré au coin inférieur droit, et pas plus large que sa bulle : un
+           compteur qui déborderait des deux côtés cesserait d'être un badge. */
+        return rb.right > bulle.right - 2 && rb.bottom > bulle.bottom - 2 && rb.width < bulle.width;
+      }),
+    };
+  }));
+} catch (error) {
+  rail.error = String(error).split("\n")[0];
+}
+
+/* Heat map mensuelle (issue #68). Le reflow est du CSS pur : il ne se vérifie
+   que sur un rendu, à deux largeurs. */
+const mois = { large: null, etroit: null, passe: null };
+try {
+  const mesure = async (hote) => {
+    await page.locator(hote).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    return page.evaluate((sel) => {
+      const conteneur = document.querySelector(`${sel} .lp-widget-heatmap-months`);
+      const blocs = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-month`)];
+      const boite = conteneur ? conteneur.getBoundingClientRect() : null;
+      const rects = blocs.map((b) => b.getBoundingClientRect());
+      return {
+        blocs: blocs.length,
+        // Autant de « top » distincts que de lignes occupées par les mois.
+        lignes: new Set(rects.map((r) => Math.round(r.top))).size,
+        // Un mois qui déborde du conteneur est un mois qu'on ne peut pas lire.
+        debordent: boite ? rects.filter((r) => r.left < boite.left - 1 || r.right > boite.right + 1).length : -1,
+        // Barre de défilement horizontale : ce que l'issue demande de supprimer.
+        defileH: conteneur ? Math.round(conteneur.scrollWidth - conteneur.clientWidth) : -1,
+        titres: blocs.map((b) => (b.querySelector(".lp-widget-heatmap-month-title")?.textContent || "").trim()),
+        // Ce qui reste sous le dernier mois : le calendrier doit occuper la
+        // hauteur offerte, pas se tasser en haut d'un grand vide.
+        videEnBas: boite && rects.length ? Math.round(boite.bottom - Math.max(...rects.map((r) => r.bottom))) : -1,
+      };
+    }, hote);
+  };
+  mois.large = await mesure("#harness-heatmap-month-large");
+  mois.etroit = await mesure("#harness-heatmap-month-etroit");
+  mois.passe = await page.evaluate((sel) => {
+    const passees = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-cell-past`)];
+    const colorees = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-cell`)]
+      .filter((c) => { const bg = getComputedStyle(c).backgroundColor; return bg && bg !== "rgba(0, 0, 0, 0)"; });
+    const une = passees[0];
+    const numero = une ? une.querySelector(".lp-widget-heatmap-daynum") : null;
+    return {
+      nbPassees: passees.length,
+      nbColorees: colorees.length,
+      // Le voile : posé en ::after, il ne se lit que sur le style calculé.
+      voile: une ? getComputedStyle(une, "::after").opacity : "",
+      // Sur une case lavée, le blanc deviendrait illisible.
+      numeroBlanc: numero ? getComputedStyle(numero).color === "rgb(255, 255, 255)" : null,
+    };
+  }, "#harness-heatmap-month-large");
+} catch (error) {
+  mois.error = String(error).split("\n")[0];
+}
+
+/* Icônes par URL (issue #70). La reconnaissance est couverte par un test
+   unitaire ; ce qui ne l'est pas, c'est ce que le navigateur AFFICHE — une URL
+   non reconnue retombait sur la branche « emoji » et s'écrivait en toutes
+   lettres, sans la moindre erreur. */
+const icones = { cas: [] };
+try {
+  await page.locator("#harness-icon-urls").scrollIntoViewIfNeeded();
+  // Laisser le temps aux chargements (et aux échecs) de se produire.
+  await page.waitForTimeout(600);
+  icones.cas = await page.evaluate(() => [...document.querySelectorAll("#harness-icon-urls > span")].map((sp) => {
+    const img = sp.querySelector("img");
+    const svg = sp.querySelector("svg");
+    const boite = sp.getBoundingClientRect();
+    return {
+      nom: sp.dataset.icon,
+      img: !!img,
+      // Le repli : une icône, pas un trou ni une image cassée.
+      repli: !img && !!svg,
+      // Une URL rendue en toutes lettres : le symptôme exact de l'issue.
+      texte: sp.textContent.trim(),
+      largeur: Math.round(boite.width),
+      hauteur: Math.round(boite.height),
+    };
+  }));
+} catch (error) {
+  icones.error = String(error).split("\n")[0];
+}
+
+/* Colonne de champs du Mini-Gantt (issue #66). Elle réservait 232 px quoi
+   qu'elle contienne : un seul anneau d'avancement écrasait la piste de près de
+   deux cents pixels pour rien. Aucun test unitaire ne peut le voir — la largeur
+   est MESURÉE sur le rendu. */
+const colonne = { cinq: null, un: null, zero: null, pisteUn: null, pisteCinq: null, pisteZero: null };
+try {
+  const largeur = async (hote) => {
+    await page.locator(hote).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(250);
+    return page.evaluate((sel) => {
+      const champs = document.querySelector(`${sel} .lp-widget-minigantt-fields-aligned`);
+      const racine = document.querySelector(`${sel} .lp-widget-minigantt`);
+      const piste = document.querySelector(`${sel} .lp-widget-minigantt-track`);
+      const bordRacine = racine ? racine.getBoundingClientRect().right : null;
+      const bordPiste = piste ? piste.getBoundingClientRect().right : null;
+      return {
+        // Sans aucun champ configuré, la colonne n'est pas rendue du tout :
+        // `colonnes` vaut alors zéro, et c'est la bonne réponse.
+        colonnes: document.querySelectorAll(`${sel} .lp-widget-minigantt-fields-aligned`).length,
+        width: champs ? Math.round(champs.getBoundingClientRect().width) : null,
+        // Ce que la colonne coûte VRAIMENT à la piste : l'écart entre le bord
+        // droit de la piste et celui du widget. C'est la seule mesure qui vaut
+        // pour les trois cas, y compris celui où la colonne n'existe pas.
+        reste: bordRacine !== null && bordPiste !== null ? Math.round(bordRacine - bordPiste) : null,
+      };
+    }, hote);
+  };
+  const cinq = await largeur("#harness-first-minigantt");
+  const un = await largeur("#harness-second-minigantt");
+  const zero = await largeur("#harness-nofields-minigantt");
+  colonne.cinq = cinq.width; colonne.pisteCinq = cinq.reste;
+  colonne.un = un.width; colonne.pisteUn = un.reste;
+  colonne.zero = zero.colonnes; colonne.pisteZero = zero.reste;
+} catch (error) {
+  colonne.error = String(error).split("\n")[0];
+}
+
+/* Coche du Mini-Gantt (issue #48). Rien de ce qui suit n'est visible d'un test
+   unitaire : la logique pose bien ce qu'il faut, c'est le RENDU qui décide de
+   l'afficher — et un premier lot avait livré un cadre entièrement nu.
+
+   Le second Mini-Gantt est choisi parce qu'il n'a AUCUNE annotation propre :
+   tout ce qui apparaît après la coche vient donc de la coche. */
+const coche = { frames: 0, icons: 0, corners: 0, cornerOpacity: "", leftGap: null, rightGap: null, cornerOffsetX: null, cornerOffsetY: null, apres: 0 };
+try {
+  const hote = "#harness-second-minigantt";
+  const boite = page.locator(`${hote} .lp-widget-minigantt-select`).first();
+  await boite.scrollIntoViewIfNeeded();
+  await boite.check();
+  await page.waitForTimeout(400);
+  Object.assign(coche, await page.evaluate((sel) => {
+    const rect = (el) => (el ? el.getBoundingClientRect() : null);
+    const cadre = rect(document.querySelector(`${sel} .lp-widget-minigantt-frame`));
+    // La barre de la ligne cochée : c'est elle que le trait du cadre recoupait.
+    const ligne = document.querySelector(`${sel} .lp-widget-minigantt-row.is-selected`)
+      || document.querySelector(`${sel} .lp-widget-minigantt-row`);
+    const barre = rect(ligne && ligne.querySelector(".lp-widget-minigantt-bar"));
+    const coinEl = document.querySelector(`${sel} .lp-widget-minigantt-frame-corner`);
+    const coin = rect(coinEl);
+    return {
+      frames: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame`).length,
+      icons: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame-label .lp-widget-minigantt-frame-icon`).length,
+      corners: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame-corner`).length,
+      cornerOpacity: coinEl ? getComputedStyle(coinEl).opacity : "",
+      leftGap: cadre && barre ? Math.round(barre.left - cadre.left) : null,
+      rightGap: cadre && barre ? Math.round(cadre.right - barre.right) : null,
+      /* La pastille est CENTRÉE sur le coin supérieur droit : elle chevauche
+         volontairement le trait, moitié dedans moitié dehors. Ce qu'on contrôle
+         est donc son centre, pas son bord — un ancrage par le bord gauche la
+         ferait flotter entièrement hors du cadre sans la moindre erreur. */
+      cornerOffsetX: cadre && coin ? Math.round(cadre.right - (coin.left + coin.width / 2)) : null,
+      cornerOffsetY: cadre && coin ? Math.round(cadre.top - (coin.top + coin.height / 2)) : null,
+    };
+  }, hote));
+  // Décocher doit tout retirer : sans cela le cadre s'accumulerait à chaque coche.
+  await page.locator(`${hote} .lp-widget-minigantt-select`).first().uncheck();
+  await page.waitForTimeout(400);
+  coche.apres = await page.locator(`${hote} .lp-widget-minigantt-frame`).count();
+} catch (error) {
+  coche.error = String(error).split("\n")[0];
+}
+
+/* Changer de tableau de bord depuis la fiche du widget (issue #58).
+   La logique du transfert est couverte par tests/widget-transfer.test.mjs ; ce
+   qui ne l'est pas, c'est la fiche : le bouton peut disparaître, la liste
+   proposer la mauvaise chose, ou le bouton de validation partir sans les
+   réglages en cours — autant de pannes muettes. */
+const transfert = { bouton: 0, options: 0, defaut: "", ici: 0, done: "" };
+try {
+  await page.locator("#harness-open-treemap-form").click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(300);
+  transfert.bouton = await page.locator(".lp-modal .lp-widget-transfer .lp-btn-mini").count();
+  await page.locator(".lp-modal .lp-widget-transfer .lp-btn-mini").click();
+  const cible = page.locator(".lp-modal .lp-widget-transfer-panel select").first();
+  transfert.options = await cible.locator("option").count();
+  // La destination proposée d'emblée ne doit PAS être celle où le widget se
+  // trouve déjà : ouvrir sur « ici » invite à valider un transfert vide.
+  transfert.defaut = (await cible.locator("option:checked").innerText()).trim();
+  transfert.ici = await cible.locator("option", { hasText: "— ici" }).count();
+  await cible.selectOption({ label: "Chantiers › Suivi" });
+  await page.locator(".lp-modal .lp-widget-transfer-modes label").nth(1).click();
+  await page.locator(".lp-modal .lp-widget-transfer-panel .lp-btn-primary").click();
+  await page.waitForTimeout(400);
+  transfert.done = (await page.locator("#harness-transfer-done").innerText()).trim();
+} catch (error) {
+  transfert.error = String(error).split("\n")[0];
+}
+
+/* Bandeau de paramètres du widget (issue #56). Le contrôle porte sur ce qui
+   défile SOUS le bandeau, pas sur le bandeau lui-même : la panne réelle était
+   un axe collant calé sur une barre d'onglets absente, qui laissait une bande
+   de 82 px où le contenu défilait à découvert. */
+const bandeau = { axisTop: null, headOpaque: false, headZ: "", contentAboveAxis: 0, axisY: null, headBottom: null, bodyPadTop: 0 };
+try {
+  const hote = "#harness-metro-widget";
+  await page.locator(hote).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  // Faire défiler POUR DE VRAI : sans défilement, rien ne peut passer derrière.
+  await page.locator(`${hote} .lp-widget-embed-body`).evaluate((el) => { el.scrollTop = 140; });
+  await page.waitForTimeout(400);
+  Object.assign(bandeau, await page.evaluate((sel) => {
+    const axis = document.querySelector(`${sel} .lp-pm-sticky-axis-shell`);
+    const head = document.querySelector(`${sel} .lp-widget-head`);
+    const body = document.querySelector(`${sel} .lp-widget-embed-body`);
+    const axisStyle = axis ? getComputedStyle(axis) : null;
+    const headStyle = head ? getComputedStyle(head) : null;
+    const axisBox = axis ? axis.getBoundingClientRect() : null;
+    const headBox = head ? head.getBoundingClientRect() : null;
+    const bg = headStyle ? headStyle.backgroundColor : "";
+    /* Le seul contrôle qui dise vraiment « rien ne passe » : ce que le
+       navigateur donne à voir juste sous le bandeau. Compter les boîtes ne
+       conclut rien — le grand SVG du planning traverse légitimement l'axe, qui
+       le recouvre. On interroge donc le rendu, à trois abscisses, sur la
+       première ligne de pixels sous le bandeau. */
+    let contentAboveAxis = 0;
+    if (headBox && axis) {
+      /* L'axe est volontairement transparent au pointeur — le planning reste
+         cliquable dessous. Le sondage le rend donc cliquable le temps de la
+         mesure, faute de quoi elementFromPoint le traverse et rapporte une
+         panne là où l'affichage est juste. */
+      const avant = axis.style.pointerEvents;
+      axis.style.pointerEvents = "auto";
+      for (const part of [0.3, 0.55, 0.8]) {
+        const x = Math.round(headBox.left + headBox.width * part);
+        const el = document.elementFromPoint(x, Math.round(headBox.bottom) + 3);
+        if (!el) continue;
+        const couvert = el === axis || axis.contains(el) || el.closest(".lp-widget-head");
+        if (!couvert) contentAboveAxis++;
+      }
+      axis.style.pointerEvents = avant;
+    }
+    return {
+      axisTop: axisStyle ? axisStyle.top : null,
+      headOpaque: !!bg && bg !== "rgba(0, 0, 0, 0)" && !/, 0\)$/.test(bg),
+      headZ: headStyle ? headStyle.zIndex : "",
+      contentAboveAxis,
+      axisY: axisBox ? Math.round(axisBox.top) : null,
+      headBottom: headBox ? Math.round(headBox.bottom) : null,
+      bodyPadTop: body ? Math.ceil(parseFloat(getComputedStyle(body).paddingTop) || 0) : 0,
+    };
+  }, hote));
+} catch (error) {
+  bandeau.error = String(error).split("\n")[0];
+}
+
 // Nuage des échéances : l'infobulle doit apparaître au survol MÊME à faible
 // densité — c'est elle qui rend acceptable le masquage des étiquettes. Le clic
 // doit ouvrir la tâche, et la fiche exposer le choix des couloirs.
@@ -365,6 +673,88 @@ try {
   taskMeta.checked = await box.isChecked();
   taskMeta.controls = await page.locator(".lp-modal .lp-density-btn", { hasText: /Phase|Fenêtre de décision|Pointillés|Continue/ }).count();
   taskMeta.hints = (await page.locator(".lp-modal .lp-gantt-annot-hint").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+  /* Criticité (issue #69) : sur la même ligne que Projet, Statut et Type, et
+     porteuse d'une pastille. Les deux se vérifient au rendu et nulle part
+     ailleurs — un champ déplacé dans le JSX peut très bien retomber à la ligne
+     faute de règle de mise en page. */
+  Object.assign(taskMeta, await page.evaluate(() => {
+    const rangee = document.querySelector(".lp-modal .lp-row4");
+    const champs = rangee ? [...rangee.children] : [];
+    const hauts = champs.map((c) => Math.round(c.getBoundingClientRect().top));
+    const critique = champs[champs.length - 1];
+    const bouton = critique ? critique.querySelector(".lp-color-select-btn") : null;
+    const voisins = [...(rangee ? rangee.querySelectorAll(".lp-color-select-btn, .lp-field > select, .lp-field > input") : [])];
+    return {
+      // Quatre champs, tous sur la MÊME ligne : des « top » identiques.
+      critFields: champs.length,
+      critSameRow: hauts.length ? hauts.every((h) => Math.abs(h - hauts[0]) <= 1) : false,
+      critLabel: critique ? (critique.querySelector("label")?.textContent || "").replace(/\s+/g, " ").trim() : "",
+      // Hauteurs alignées : un <select> natif à côté de trois boutons ne
+      // tombait pas à la même hauteur, et c'est visible immédiatement.
+      critHeights: [...new Set(voisins.map((v) => Math.round(v.getBoundingClientRect().height)))],
+      // Pastille de la valeur choisie : absente tant que rien n'est choisi.
+      critDotOnValue: bouton ? bouton.querySelectorAll(".lp-color-select-dot").length : -1,
+    };
+  }));
+  // Ouvrir la liste : trois niveaux à pastille, « Non définie » sans pastille.
+  await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-btn").click();
+  await page.waitForTimeout(250);
+  Object.assign(taskMeta, await page.evaluate(() => {
+    const options = [...document.querySelectorAll(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-option")];
+    const couleur = (el) => {
+      const dot = el.querySelector(".lp-color-select-dot");
+      return dot ? getComputedStyle(dot).backgroundColor : "";
+    };
+    const rond = (el) => {
+      const dot = el.querySelector(".lp-color-select-dot");
+      if (!dot) return "";
+      const r = dot.getBoundingClientRect();
+      // « Rond » se vérifie sur le rendu : un rayon en pourcentage sur un carré.
+      return `${Math.round(r.width)}x${Math.round(r.height)}:${getComputedStyle(dot).borderRadius}`;
+    };
+    return {
+      critOptions: options.map((o) => o.textContent.replace(/\s+/g, " ").trim()),
+      critDots: options.map(couleur),
+      critShape: options.slice(1).map(rond),
+    };
+  }));
+  await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-option").nth(1).click();
+  await page.waitForTimeout(250);
+  taskMeta.critDotAfterPick = await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-btn .lp-color-select-dot").count();
+
+  /* Tableaux Markdown (issue #71). Le rendu est couvert par
+     tests/markdown-table.test.mjs ; ce qui ne l'est pas, c'est le va-et-vient
+     Édition → Aperçu → Édition dans la vraie fiche, et le fait que le texte
+     source en ressorte à l'octet près. */
+  const TABLEAU_MD = "| N° de réserve | Statut / observations |\n|---:|---|\n| 5 | Non fait. |\n| 8 | Non fait : absence de constat contradictoire… |";
+  await page.locator(".lp-modal .lp-desc-mode-toggle button", { hasText: "Édition" }).click();
+  await page.waitForTimeout(200);
+  const zone = page.locator(".lp-modal textarea").first();
+  await zone.fill(TABLEAU_MD);
+  await page.waitForTimeout(200);
+  await page.locator(".lp-modal .lp-desc-mode-toggle button", { hasText: "Aperçu" }).click();
+  await page.waitForTimeout(300);
+  Object.assign(taskMeta, await page.evaluate(() => {
+    const t = document.querySelector(".lp-modal .lp-desc-preview table.lp-md-table");
+    const wrap = document.querySelector(".lp-modal .lp-desc-preview .lp-md-table-wrap");
+    const modale = document.querySelector(".lp-modal");
+    return {
+      mdTables: document.querySelectorAll(".lp-modal .lp-desc-preview table.lp-md-table").length,
+      mdHeaders: t ? [...t.querySelectorAll("th")].map((c) => c.textContent.trim()) : [],
+      mdCells: t ? t.querySelectorAll("td").length : 0,
+      mdAlign: t ? getComputedStyle(t.querySelector("th")).textAlign : "",
+      // Des paragraphes pleins de barres verticales : le symptôme d'origine.
+      mdPipeParagraphs: [...document.querySelectorAll(".lp-modal .lp-desc-preview p")].filter((p) => p.textContent.includes("|")).length,
+      // Le défilement reste DANS le tableau : la modale ne s'élargit pas.
+      mdScrollsItself: wrap ? getComputedStyle(wrap).overflowX === "auto" : false,
+      mdModalOverflow: modale ? Math.round(modale.scrollWidth - modale.clientWidth) : -1,
+    };
+  }));
+  await page.locator(".lp-modal .lp-desc-mode-toggle button", { hasText: "Édition" }).click();
+  await page.waitForTimeout(250);
+  taskMeta.mdRoundTrip = await page.locator(".lp-modal textarea").first().inputValue();
+  taskMeta.mdSource = TABLEAU_MD;
+
   // Les risques de délai appartiennent à la tâche : ils doivent s'éditer ici.
   const addRisk = page.locator(".lp-modal").getByRole("button", { name: "Ajouter un risque de délai" });
   taskMeta.riskButton = await addRisk.count();
@@ -860,6 +1250,113 @@ expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
 
+expect(!rail.error, `contrôle du rail des vues interrompu : ${rail.error}`);
+expect(rail.nb === 4, `Rail : ${rail.nb} bulles rendues, 4 attendues`);
+expect(rail.rondes, "Rail : les entrées ne sont pas des bulles rondes — les grandes cartes rectangulaires sont toujours là");
+expect((rail.hauteurs || []).length === 1, `Rail : ${(rail.hauteurs || []).length} hauteurs différentes (${(rail.hauteurs || []).join(", ")} px) — aucune bulle ne doit rompre la hauteur`);
+expect(rail.hauteurMax <= 44, `Rail : la plus haute bulle fait ${rail.hauteurMax} px — c'est encore une carte, pas une bulle`);
+expect((rail.ecarts || []).length === 1, `Rail : l'espacement vertical varie (${(rail.ecarts || []).join(", ")} px) — il doit être régulier`);
+expect((rail.centres || []).length === 1, `Rail : ${(rail.centres || []).length} axes verticaux différents — bulles et roundels doivent partager la ligne centrale`);
+expect(rail.ligneVisible, "Rail : la ligne verticale centrale a disparu");
+expect(rail.libelleInvisible, "Rail : le libellé occupe encore de la place — c'est lui qui faisait les grandes cartes");
+expect(rail.libelleDansLeDom.length > 0, "Rail : le libellé a quitté le DOM — le bouton n'aurait plus de nom accessible");
+expect(rail.nbBadges === 3, `Rail : ${rail.nbBadges} badge(s), 3 attendus — celle sans compteur ne doit pas en porter`);
+// Un, deux et trois chiffres doivent tous tenir sans être rognés.
+expect(rail.badgesTronques === 0,
+  `Rail : ${rail.badgesTronques} badge(s) tronqué(s) — un compteur à trois chiffres doit rester lisible (largeurs : ${(rail.badgesLargeurs || []).join(", ")} px)`);
+expect(rail.badgeAncre, "Rail : un badge n'est pas posé sur le bord inférieur droit de sa bulle");
+
+expect(!mois.error, `contrôle de la heat map mensuelle interrompu : ${mois.error}`);
+expect(mois.large && mois.large.blocs === 3, `Heat map mensuelle : ${mois.large && mois.large.blocs} mois rendus, 3 attendus`);
+expect(mois.large && mois.large.lignes === 1, `Heat map mensuelle large : les mois occupent ${mois.large && mois.large.lignes} ligne(s), 1 attendue`);
+expect(mois.etroit && mois.etroit.lignes === 3, `Heat map mensuelle étroite : les mois occupent ${mois.etroit && mois.etroit.lignes} ligne(s), 3 attendues — ils doivent passer les uns sous les autres`);
+for (const [nom, m] of [["large", mois.large], ["étroite", mois.etroit]]) {
+  expect(m && m.debordent === 0, `Heat map mensuelle ${nom} : ${m && m.debordent} mois débordent du cadre`);
+  expect(m && m.defileH <= 0, `Heat map mensuelle ${nom} : ${m && m.defileH} px de défilement horizontal — il ne doit plus y en avoir`);
+  expect(m && m.blocs === 3 && m.titres.every((t) => t.length > 0), `Heat map mensuelle ${nom} : un mois a perdu son titre (${m && m.titres.join(" | ")})`);
+}
+expect(mois.large && mois.large.videEnBas <= 8,
+  `Heat map mensuelle large : ${mois.large && mois.large.videEnBas} px de vide sous le calendrier — il doit occuper la hauteur offerte`);
+// L'ordre chronologique doit survivre au passage à la ligne.
+expect(mois.large && mois.etroit && mois.large.titres.join("|") === mois.etroit.titres.join("|"),
+  `Heat map mensuelle : l'ordre des mois change avec la largeur (${mois.large && mois.large.titres.join("|")} contre ${mois.etroit && mois.etroit.titres.join("|")})`);
+expect(mois.passe && mois.passe.nbPassees >= 1, "Heat map mensuelle : aucune case passée n'est lavée — le passé ne se distingue pas du futur");
+expect(mois.passe && mois.passe.nbPassees < mois.passe.nbColorees,
+  `Heat map mensuelle : ${mois.passe && mois.passe.nbPassees} case(s) lavée(s) sur ${mois.passe && mois.passe.nbColorees} colorée(s) — les échéances à venir ne doivent pas l'être`);
+expect(mois.passe && Number(mois.passe.voile) > 0 && Number(mois.passe.voile) < 1,
+  `Heat map mensuelle : le voile du passé est à l'opacité « ${mois.passe && mois.passe.voile} » — la couleur de projet doit rester reconnaissable`);
+expect(mois.passe && mois.passe.numeroBlanc === false,
+  "Heat map mensuelle : le numéro d'un jour passé reste blanc sur une case lavée — il devient illisible");
+
+expect(!icones.error, `contrôle des icônes par URL interrompu : ${icones.error}`);
+expect(icones.cas.length === 4, `Icônes : ${icones.cas.length} cas rendus, 4 attendus`);
+for (const cas of icones.cas) {
+  // Aucune URL ne doit jamais s'écrire en toutes lettres, quel que soit le cas.
+  expect(cas.texte === "", `Icône « ${cas.nom} » : l'URL est rendue en toutes lettres (« ${cas.texte.slice(0, 40)}… »)`);
+}
+for (const nom of ["minuscule", "majuscule", "espaces"]) {
+  const cas = icones.cas.find((c) => c.nom === nom);
+  expect(cas && cas.img, `Icône « ${nom} » : aucune image rendue — la reconnaissance dépend encore de la forme de l'URL`);
+}
+{
+  const casse = icones.cas.find((c) => c.nom === "casse");
+  expect(casse && casse.repli, "Icône « casse » : un chargement raté ne tombe pas sur un repli — le menu garderait une image cassée");
+  const bonne = icones.cas.find((c) => c.nom === "minuscule");
+  expect(casse && bonne && casse.largeur === bonne.largeur && casse.hauteur === bonne.hauteur,
+    `Icône « casse » : le repli fait ${casse && casse.largeur}×${casse && casse.hauteur} px contre ${bonne && bonne.largeur}×${bonne && bonne.hauteur} px pour une icône chargée — le menu bougerait`);
+}
+
+expect(!colonne.error, `contrôle de la colonne de champs interrompu : ${colonne.error}`);
+/* Le plancher de 232 px donnait EXACTEMENT la même largeur aux trois cas. Que
+   les trois diffèrent est ce qui prouve que la mesure décide, et non un
+   nombre écrit en dur. */
+expect(colonne.zero === 0, `Mini-Gantt : sans aucun champ, ${colonne.zero} colonne(s) de droite sont encore rendues — il n'en faut aucune`);
+expect(colonne.pisteZero !== null && colonne.pisteZero <= 10,
+  `Mini-Gantt : sans aucun champ, la piste s'arrête encore à ${colonne.pisteZero} px du bord — elle doit aller jusqu'au bout`);
+expect(colonne.un !== null && colonne.un > 0 && colonne.un < 140,
+  `Mini-Gantt : avec un seul champ, la colonne fait ${colonne.un} px — elle doit se régler sur son contenu, pas sur un plancher`);
+expect(colonne.cinq !== null && colonne.cinq > colonne.un,
+  `Mini-Gantt : cinq champs (${colonne.cinq} px) ne prennent pas plus de place qu'un seul (${colonne.un} px) — la mesure ne suit plus le contenu`);
+/* Et la place gagnée doit revenir à la PISTE : une colonne étroite qui laisse
+   quand même la piste s'arrêter au même endroit n'aurait rien réglé. */
+expect(colonne.pisteUn !== null && colonne.pisteCinq !== null && colonne.pisteUn < colonne.pisteCinq,
+  `Mini-Gantt : la piste s'arrête à ${colonne.pisteUn} px du bord avec un champ contre ${colonne.pisteCinq} px avec cinq — la place gagnée ne lui revient pas`);
+
+expect(!coche.error, `contrôle de la coche du Mini-Gantt interrompu : ${coche.error}`);
+expect(coche.frames === 1, `Coche du Mini-Gantt : ${coche.frames} encadré(s) après la coche, 1 attendu`);
+// « Ne garder que l'image à droite, en transparence, pas celle de gauche » (#48).
+expect(coche.icons === 0, `Coche du Mini-Gantt : ${coche.icons} image(s) à gauche du cadre, 0 attendue`);
+expect(coche.corners === 1, `Coche du Mini-Gantt : ${coche.corners} pastille(s) de coin, 1 attendue en haut à droite`);
+expect(coche.cornerOpacity !== "" && Number(coche.cornerOpacity) > 0 && Number(coche.cornerOpacity) < 1,
+  `Coche du Mini-Gantt : la pastille est peinte à l'opacité « ${coche.cornerOpacity} » — elle doit rester en transparence`);
+expect(coche.leftGap !== null && coche.leftGap >= 6, `Coche du Mini-Gantt : le trait gauche du cadre passe à ${coche.leftGap} px de la barre — il la recoupe`);
+expect(coche.rightGap !== null && coche.rightGap >= 6, `Coche du Mini-Gantt : le trait droit du cadre passe à ${coche.rightGap} px de la barre — il la recoupe`);
+expect(coche.cornerOffsetX !== null && Math.abs(coche.cornerOffsetX) <= 2 && Math.abs(coche.cornerOffsetY) <= 2,
+  `Coche du Mini-Gantt : la pastille est décalée de (${coche.cornerOffsetX}, ${coche.cornerOffsetY}) px du coin supérieur droit du cadre — elle doit y rester centrée`);
+expect(coche.apres === 0, `Coche du Mini-Gantt : ${coche.apres} encadré(s) restant(s) après avoir décoché, 0 attendu`);
+
+expect(!transfert.error, `contrôle du changement de tableau de bord interrompu : ${transfert.error}`);
+expect(transfert.bouton === 1, `Fiche du widget : ${transfert.bouton} bouton « Changer de tableau de bord », 1 attendu`);
+expect(transfert.options === 3, `Fiche du widget : ${transfert.options} destination(s) proposée(s), 3 attendues (Aujourd'hui, Chantiers › Page 1, Chantiers › Suivi)`);
+expect(transfert.defaut === "Aujourd'hui", `Fiche du widget : la destination proposée d'emblée est « ${transfert.defaut} » — ce doit être la première qui n'est pas celle où le widget se trouve déjà`);
+expect(transfert.ici === 1, `Fiche du widget : ${transfert.ici} destination marquée « ici » — l'emplacement actuel doit se reconnaître dans la liste`);
+// mode | tableau | page | titre | un réglage du widget : le transfert doit
+// emporter la configuration de la fiche, pas seulement l'identité du widget.
+expect(/^duplicate\|d1\|p2\|/.test(transfert.done), `Fiche du widget : le transfert transmis est « ${transfert.done} », attendu « duplicate|d1|p2|… »`);
+expect(/\|true$/.test(transfert.done), `Fiche du widget : les réglages du widget ne partent pas avec lui (« ${transfert.done} »)`);
+
+expect(!bandeau.error, `contrôle du bandeau de paramètres interrompu : ${bandeau.error}`);
+/* Le rectangle de collage part du bord intérieur de la zone défilante : l'axe
+   doit donc remonter du remplissage haut pour se coller au bandeau. Contrôler
+   « top: 0 » laisserait passer précisément la panne d'origine. */
+expect(bandeau.axisTop === `${-bandeau.bodyPadTop}px`,
+  `Widget : l'axe collant se fige à « ${bandeau.axisTop} », attendu « ${-bandeau.bodyPadTop}px » (remplissage de la zone défilante) — sinon le contenu défile à découvert dans cette bande`);
+expect(bandeau.headOpaque, "Widget : le bandeau de paramètres n'a pas de fond opaque — le contenu transparaît derrière lui");
+expect(bandeau.headZ !== "auto" && Number(bandeau.headZ) > 0, `Widget : le bandeau de paramètres reste au plan par défaut (z-index « ${bandeau.headZ} ») — un élément positionné du contenu se peint par-dessus`);
+expect(bandeau.contentAboveAxis === 0, `Widget : sur 3 points sondés juste sous le bandeau, ${bandeau.contentAboveAxis} montrent le planning au lieu de l'axe — le contenu défile à découvert`);
+expect(bandeau.axisY !== null && bandeau.headBottom !== null && bandeau.axisY - bandeau.headBottom <= 2,
+  `Widget : ${bandeau.axisY - bandeau.headBottom} px séparent le bandeau de l'axe — c'est la bande où le contenu passe`);
+
 expect(!taskMeta.error, `contrôle de la fiche de tâche interrompu : ${taskMeta.error}`);
 expect(taskMeta.checkbox === 1, "Fiche de tâche : la case « méta bloc temporel » est absente d'une tâche de projet Google Calendar");
 expect(taskMeta.checked, "Fiche de tâche : la case « méta bloc temporel » ne reflète pas le réglage enregistré");
@@ -873,6 +1370,38 @@ expect(taskMeta.hints.some((h) => /tableaux de bord/i.test(h)), `Fiche de tâche
 expect(taskMeta.riskButton === 1, "Fiche de tâche : impossible d'ajouter un risque de délai");
 expect(taskMeta.riskRows >= 1, `Fiche de tâche : ${taskMeta.riskRows} risque(s) après ajout, au moins 1 attendu`);
 expect(taskMeta.riskSeverities === 4, `Fiche de tâche : ${taskMeta.riskSeverities} niveau(x) de gravité, 4 attendus`);
+
+// Tableaux Markdown (issue #71).
+expect(taskMeta.mdTables === 1, `Fiche de tâche : ${taskMeta.mdTables} tableau(x) rendu(s) dans l'aperçu, 1 attendu`);
+expect((taskMeta.mdHeaders || []).join("|") === "N° de réserve|Statut / observations",
+  `Fiche de tâche : en-têtes du tableau « ${(taskMeta.mdHeaders || []).join("|")} »`);
+expect(taskMeta.mdCells === 4, `Fiche de tâche : ${taskMeta.mdCells} cellule(s) de données, 4 attendues`);
+expect(taskMeta.mdAlign === "right", `Fiche de tâche : la colonne alignée à droite (---:) est rendue « ${taskMeta.mdAlign} »`);
+expect(taskMeta.mdPipeParagraphs === 0, `Fiche de tâche : ${taskMeta.mdPipeParagraphs} paragraphe(s) contiennent encore des barres verticales — le tableau est rendu comme du texte`);
+expect(taskMeta.mdScrollsItself, "Fiche de tâche : le tableau ne défile pas tout seul — un tableau large élargirait la modale");
+expect(taskMeta.mdModalOverflow <= 0, `Fiche de tâche : la modale déborde de ${taskMeta.mdModalOverflow} px à cause du tableau`);
+/* Le va-et-vient ne doit RIEN changer au texte source : c'est la moitié de
+   l'issue, et elle ne se voit que sur un aller-retour réel. */
+expect(taskMeta.mdRoundTrip === taskMeta.mdSource,
+  `Fiche de tâche : le Markdown source a changé après Édition → Aperçu → Édition.\n    avant : ${JSON.stringify(taskMeta.mdSource)}\n    après : ${JSON.stringify(taskMeta.mdRoundTrip)}`);
+
+// Criticité (issue #69).
+expect(taskMeta.critFields === 4, `Fiche de tâche : ${taskMeta.critFields} champ(s) sur la rangée Projet/Statut/Type/Criticité, 4 attendus`);
+expect(taskMeta.critSameRow, "Fiche de tâche : les quatre champs ne sont pas sur la même ligne — la criticité est retombée en dessous");
+expect(/^Criticité/.test(taskMeta.critLabel || ""), `Fiche de tâche : le quatrième champ de la rangée est « ${taskMeta.critLabel} », attendu « Criticité »`);
+expect((taskMeta.critHeights || []).length === 1, `Fiche de tâche : les champs de la rangée ont ${(taskMeta.critHeights || []).length} hauteurs différentes (${(taskMeta.critHeights || []).join(", ")} px) — ils doivent s'aligner`);
+expect(taskMeta.critDotOnValue === 0, "Fiche de tâche : une pastille s'affiche alors qu'aucune criticité n'est choisie — « Non définie » ne doit pas se lire comme un niveau");
+expect((taskMeta.critOptions || []).join("|") === "Non définie|Bas|Moyen|Urgent",
+  `Fiche de tâche : options de criticité « ${(taskMeta.critOptions || []).join("|")} » — les libellés métier ne doivent pas changer, ni l'ordre du plus bas au plus haut`);
+// Feu tricolore : vert, orange, rouge. « Non définie » n'a aucune pastille.
+expect((taskMeta.critDots || [])[0] === "", "Fiche de tâche : « Non définie » porte une pastille — elle se confondrait avec un niveau");
+expect(/rgb\(31, 169, 113\)/.test((taskMeta.critDots || [])[1] || ""), `Fiche de tâche : « Bas » n'est pas vert (${(taskMeta.critDots || [])[1]})`);
+expect(/rgb\(217, 119, 6\)/.test((taskMeta.critDots || [])[2] || ""), `Fiche de tâche : « Moyen » n'est pas orange (${(taskMeta.critDots || [])[2]})`);
+expect(/rgb\(220, 38, 38\)/.test((taskMeta.critDots || [])[3] || ""), `Fiche de tâche : « Urgent » n'est pas rouge (${(taskMeta.critDots || [])[3]})`);
+expect((taskMeta.critShape || []).every((f) => /^11x11:50%$/.test(f)),
+  `Fiche de tâche : les pastilles ne sont pas rondes (${(taskMeta.critShape || []).join(", ")})`);
+expect(taskMeta.critDotAfterPick === 1, "Fiche de tâche : après avoir choisi un niveau, la pastille n'apparaît pas sur la valeur fermée");
+
 expect(!seen.miniRiskButton, "Mini-Gantt : le bouton « + Risque » devrait avoir disparu — les risques s'éditent dans la fiche de la tâche");
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);

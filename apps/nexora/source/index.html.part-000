@@ -1493,6 +1493,7 @@ const addDays = (dateStr, n) => {
   return iso(dt);
 };
 const dayIndex = (dateStr) => Math.round((new Date(dateStr + "T00:00:00") - new Date("2020-01-01T00:00:00")) / DAY_MS);
+// === NEXORA:MARKDOWN:START ===
 // Les guillemets et apostrophes DOIVENT être échappés, pas seulement les chevrons :
 // le rendu Markdown interpole l'URL d'un lien dans un attribut entre guillemets
 // (`<a href="$2" …>`), et la classe de caractères de l'URL accepte le guillemet.
@@ -1510,6 +1511,94 @@ const CALLOUT_TYPES = {
   warning: { label: "Attention", color: "#D97706", bg: "#FFFBEB", icon: "⚠️" },
   danger: { label: "Danger", color: "#DC2626", bg: "#FEF2F2", icon: "🔥" },
 };
+/* Tableaux GitHub Flavored Markdown (issue #71).
+
+   Le rendu n'en connaissait aucun : chaque ligne d'un tableau collé depuis
+   ChatGPT ou Claude devenait un paragraphe, barres verticales comprises, et
+   l'aperçu donnait l'impression que les séparateurs s'étaient déplacés. Le
+   texte source, lui, n'avait jamais bougé — la zone de saisie ne le transforme
+   pas — c'était bien le seul aperçu qui était en cause.
+
+   Tout ce qui suit travaille sur des lignes DÉJÀ échappées par escapeHtml :
+   les barres, les tirets et les deux-points traversent l'échappement intacts,
+   donc l'analyse reste exacte sans jamais rouvrir l'injection de balises. */
+
+// Une cellule de la ligne de séparation : « --- », « :--- », « ---: », « :---: ».
+const MD_TABLE_DELIM = /^\s*:?-+:?\s*$/;
+
+/* Découpe une ligne de tableau en cellules.
+
+   Les barres de bord sont facultatives en GFM, et une barre ÉCHAPPÉE (\|)
+   appartient au texte de la cellule : la couper créerait une colonne fantôme
+   et décalerait toutes les colonnes suivantes de cette ligne. */
+function mdTableCells(line) {
+  let s = String(line == null ? "" : line).trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (/(^|[^\\])\|$/.test(s)) s = s.slice(0, -1);
+  const cells = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && s[i + 1] === "|") { cur += "|"; i++; continue; }
+    if (s[i] === "|") { cells.push(cur.trim()); cur = ""; continue; }
+    cur += s[i];
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+/* L'alignement de chaque colonne, lu sur la ligne de séparation — ou null si
+   ce n'en est pas une. C'est ce null qui distingue un vrai tableau d'une phrase
+   qui contient des barres verticales : sans lui, « a | b » deviendrait un
+   tableau d'une ligne. */
+function mdTableAligns(line) {
+  if (!/\|/.test(String(line == null ? "" : line))) return null;
+  const cells = mdTableCells(line);
+  if (!cells.length || cells.some((c) => !MD_TABLE_DELIM.test(c))) return null;
+  return cells.map((c) => {
+    const left = c.startsWith(":");
+    const right = c.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    if (left) return "left";
+    return "";
+  });
+}
+
+/* Reconnaît un tableau à partir de la ligne `start`, et rend où il s'arrête.
+
+   Deux lignes sont nécessaires pour le reconnaître — l'en-tête et la
+   séparation — et GFM exige qu'elles aient le MÊME nombre de colonnes. */
+function mdTableParse(lines, start) {
+  const head = lines[start];
+  if (!head || !/\|/.test(head)) return null;
+  const aligns = mdTableAligns(lines[start + 1]);
+  if (!aligns) return null;
+  const header = mdTableCells(head);
+  if (header.length !== aligns.length) return null;
+  const body = [];
+  let i = start + 2;
+  while (i < lines.length && lines[i].trim() !== "" && /\|/.test(lines[i])) {
+    const cells = mdTableCells(lines[i]);
+    /* Une ligne plus courte se complète, une plus longue se tronque — c'est ce
+       que fait GFM, et c'est ce qui empêche une cellule mal comptée de décaler
+       la colonne suivante sur toutes les lignes en dessous. */
+    body.push(Array.from({ length: header.length }, (_, c) => cells[c] || ""));
+    i++;
+  }
+  return { aligns, header, body, next: i };
+}
+
+function mdTableHtml(parsed, inline) {
+  const style = (a) => (a ? ' style="text-align:' + a + '"' : "");
+  const head = parsed.header.map((c, i) => `<th${style(parsed.aligns[i])}>${inline(c)}</th>`).join("");
+  const body = parsed.body
+    .map((row) => `<tr>${row.map((c, i) => `<td${style(parsed.aligns[i])}>${inline(c)}</td>`).join("")}</tr>`)
+    .join("");
+  /* Le défilement appartient au TABLEAU, pas à la fiche : sans cette
+     enveloppe, un tableau large élargit toute la modale de tâche. */
+  return `<div class="lp-md-table-wrap"><table class="lp-md-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 const renderMarkdown = (text, interactive = false) => {
   if (!text) return "";
   const lines = escapeHtml(text).split("\n");
@@ -1604,6 +1693,15 @@ const renderMarkdown = (text, interactive = false) => {
       html += `</details>`;
       continue;
     }
+    // Tableau GFM. Placé AVANT les listes et le paragraphe par défaut, qui
+    // avaleraient chaque ligne du tableau une par une.
+    const table = mdTableParse(lines, i);
+    if (table) {
+      closeList();
+      html += mdTableHtml(table, inline);
+      i = table.next;
+      continue;
+    }
     // Listes de tâches Markdown : "- [ ] ..." et "- [x] ..."
     const taskMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
     if (taskMatch) {
@@ -1635,6 +1733,7 @@ const renderMarkdown = (text, interactive = false) => {
   closeList();
   return html;
 };
+// === NEXORA:MARKDOWN:END ===
 
 
 
@@ -1927,8 +2026,16 @@ function periodLabelOf(key) {
 // tableau est l'ordre d'affichage — un tri alphabétique placerait « Urgent » au
 // milieu, entre « Bas » et « Moyen ».
 // === NEXORA:CRITICALITY:START ===
+/* Les trois niveaux, du plus bas au plus haut. Cet ordre est celui de lecture
+   des listes ; la heat map le retourne exprès (voir heatmapOrderCriticalities).
+
+   Les couleurs forment un feu tricolore : vert, orange, rouge (#69). « Bas »
+   était gris ardoise, ce qui le rendait indistinguable de « sans criticité »
+   partout où la couleur porte l'information — pastille de la fiche de tâche,
+   tuile de Treemap, case de heat map. Le vert vient de --success, la palette de
+   Nexora, plutôt que d'une teinte inventée pour l'occasion. */
 const CRITICALITIES = [
-  { id: "bas", name: "Bas", color: "#64748B" },
+  { id: "bas", name: "Bas", color: "#1FA971" },
   { id: "moyen", name: "Moyen", color: "#D97706" },
   { id: "urgent", name: "Urgent", color: "#DC2626" },
 ];
@@ -2152,6 +2259,41 @@ const ALL_VIEWS_META = [
   { key: "automations", label: "Automatisations", iconKey: "tabler:automation" },
   { key: "notifications", label: "Notifications", iconKey: "tabler:bell" },
 ];
+// === NEXORA:VIEW-RAIL-COUNT:START ===
+/* Badge d'une bulle du rail vertical (issue #65).
+
+   « Le nombre d'éléments concernés » n'a de sens que là où il est SANS
+   AMBIGUÏTÉ : des projets pour le planning, des tableaux pour les tableaux de
+   bord, des automatisations pour les automatisations, des notifications non
+   lues, et les échéances du jour pour « Aujourd'hui ». Le Centre de pilotage
+   n'agrège pas une collection : lui coller un chiffre inventé serait pire que
+   pas de chiffre du tout, donc il n'en porte aucun.
+
+   Rend 0 pour « aucun badge » : l'issue ne veut un badge que si le compteur
+   dépasse zéro, et un « 0 » affiché ne dit rien d'utile. */
+function viewRailBadgeCount(key, counts) {
+  const c = counts || {};
+  const n = (v) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
+  switch (key) {
+    case "projects": return n(c.projects);
+    case "dashboard": return n(c.dashboards);
+    case "automations": return n(c.workflows);
+    case "notifications": return n(c.unreadNotifications);
+    case "today": return n(c.dueToday);
+    default: return 0;
+  }
+}
+
+/* Le badge doit rester lisible jusqu'à trois chiffres (issue #65). Au-delà, un
+   quatrième élargirait la bulle : « 999+ » borne la largeur sans mentir sur
+   l'ordre de grandeur. */
+function viewRailBadgeLabel(count) {
+  const n = Number.isFinite(count) ? Math.floor(count) : 0;
+  if (n <= 0) return "";
+  return n > 999 ? "999+" : String(n);
+}
+// === NEXORA:VIEW-RAIL-COUNT:END ===
+
 // Destinations de haut niveau — seules celles-ci restent dans le bandeau vertical.
 // Les autres (les "vues" de détail sur les tâches) deviennent des onglets affichés
 // une fois un contexte projet actif, plutôt que des destinations indépendantes.
@@ -3104,6 +3246,50 @@ function taskSearchHaystack(task, ctx) {
   ];
   return parts.filter(Boolean).join(" \u241F ").toLowerCase();
 }
+// === NEXORA:BOARD-SEARCH:START ===
+/* Filtre textuel des surfaces « tableau de bord » (issue #72).
+
+   Les vues Tableau de bord, Aujourd'hui et Centre de pilotage partent du socle
+   méta-filtré et n'appliquent PAS les filtres de vue — c'est voulu, et c'est
+   pour cela que le champ de recherche de la barre du haut y était masqué : il
+   n'aurait rien filtré du tout. Elles n'avaient donc aucun filtre textuel.
+
+   Ce filtre-ci est délibérément plus étroit que `matchTaskFilters` : le nom et
+   la description, rien d'autre. Chercher « Dupont » ne doit pas ramener toutes
+   les tâches d'un projet dont Dupont est responsable — c'est ce que fait la
+   recherche des autres vues, qui balaie tout le foin (`taskSearchHaystack`), et
+   ce n'est pas ce qu'on demande ici. */
+
+/* Insensible à la casse ET aux accents : « réserve » doit trouver « Reserve »,
+   et réciproquement. La décomposition NFD sépare la lettre de son accent, que
+   l'on retire ensuite. */
+function normalizeSearchText(value) {
+  return String(value == null ? "" : value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+/* Tous les mots doivent être présents, dans n'importe quel ordre : taper
+   « plan mars » trouve « Plan de charge — mars », ce qu'une recherche de la
+   chaîne entière manquerait. Une requête vide ne filtre rien — un filtre qui
+   masquerait tout tant qu'on n'a pas fini de taper serait inutilisable. */
+function taskMatchesTextQuery(task, query) {
+  const mots = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (!mots.length) return true;
+  const foin = normalizeSearchText(`${task?.title || ""} \u241F ${task?.desc || ""}`);
+  return mots.every((mot) => foin.includes(mot));
+}
+
+function filterTasksByText(tasks, query) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  // Rendre LE MÊME tableau quand il n'y a rien à filtrer : les vues qui
+  // dépendent de cette liste ne se recalculent pas pour rien.
+  if (!normalizeSearchText(query).trim()) return list;
+  return list.filter((t) => taskMatchesTextQuery(t, query));
+}
+// === NEXORA:BOARD-SEARCH:END ===
+
 function matchTaskFilters(task, f, ctx) {
   if (f.search.trim()) {
     const q = f.search.trim().toLowerCase();
@@ -3825,6 +4011,64 @@ const parseTablerIconSpec = (icon) => {
   return { name: name || "", color: /^#[0-9a-fA-F]{6}$/.test(color || "") ? color : "" };
 };
 const makeTablerIconSpec = (name, color) => `tabler:${name}${/^#[0-9a-fA-F]{6}$/.test(color || "") ? `|${color}` : ""}`;
+
+// === NEXORA:ICON-URL:START ===
+/* Icônes données par URL (issue #70).
+
+   Le défaut réel : la fiche d'icône ACCEPTE l'URL avec une expression
+   insensible à la casse, alors que le rendu la reconnaissait par
+   startsWith("https://"), sensible à la casse. Une URL collée en « HTTPS:// »,
+   ce que produisent certains presse-papiers et certains gestionnaires de liens,
+   était donc enregistrée sans broncher puis rendue comme du TEXTE par le menu
+   latéral. D'où des icônes qui marchent et d'autres non, sans motif apparent —
+   « intermittent ou dépendant du format ».
+
+   Les espaces autour comptent pour la même raison : un copier-coller depuis un
+   document en ramène très souvent, et une URL précédée d'une espace ne
+   commençait par rien de reconnu.
+
+   Rend null quand ce n'est pas une URL d'image : c'est ce qui laisse les
+   spécifications tabler:/iconify: et les emojis suivre leur propre chemin. */
+function normalizeIconUrl(icon) {
+  if (typeof icon !== "string") return null;
+  const trimmed = icon.trim();
+  if (!trimmed) return null;
+  // data: restreint aux IMAGES : c'est une icône, et un data:text/html n'aurait
+  // ici aucun sens qu'un repli ne traite déjà mieux.
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  /* Protocole implicite : « //cdn.exemple/logo.png » est une URL parfaitement
+     valide en HTML, et le menu latéral l'affichait en toutes lettres. */
+  if (trimmed.startsWith("//")) return "https:" + trimmed;
+  return null;
+}
+// === NEXORA:ICON-URL:END ===
+
+/* Une icône d'URL, avec repli quand le chargement échoue VRAIMENT.
+
+   L'échec est mémorisé PAR URL, et non par un simple booléen : changer l'URL
+   d'une entrée doit retenter aussitôt, pas rester bloqué sur l'échec de la
+   précédente. L'état vit dans ce composant, donc une icône cassée n'affecte
+   aucune autre entrée du menu. Et rien n'est jamais réécrit dans les données :
+   l'URL enregistrée survit à l'échec et sera retentée au prochain chargement. */
+function IconUrlImage({ src, size, style }) {
+  const [failedSrc, setFailedSrc] = useState(null);
+  if (failedSrc === src) {
+    /* Même encombrement que l'image attendue : le menu ne bouge pas d'un pixel.
+       Et le repli se distingue d'une icône ordinaire — savoir que l'URL est en
+       cause est plus utile qu'un trou. */
+    return <ImageIcon size={size} style={{ flex: "0 0 auto", color: "var(--text-muted)", ...style }} aria-hidden="true" />;
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      onError={() => setFailedSrc(src)}
+      referrerPolicy="no-referrer"
+      style={{ width: size, height: size, borderRadius: 4, objectFit: "cover", ...style }}
+    />
+  );
+}
 
 // Résout un identifiant Tabler kebab-case (ex. alert-triangle)
 // vers le composant React exporté par @tabler/icons-react (IconAlertTriangle).

@@ -3258,31 +3258,52 @@ function normalizeHighlightFrames(list) {
   if (!Array.isArray(list)) return [];
   return list
     .filter((f) => f && typeof f === "object" && f.id)
-    .map((f) => ({
-      id: String(f.id),
-      label: typeof f.label === "string" ? f.label : "",
-      taskIds: Array.isArray(f.taskIds) ? [...new Set(f.taskIds.filter((id) => typeof id === "string" && id))] : [],
-      color: typeof f.color === "string" && f.color ? f.color : GANTT_FRAME_DEFAULT_COLOR,
-      borderStyle: normalizeGanttBorderStyle(f.borderStyle),
-      padding: normalizeGanttPadding(f.padding),
-      // Encadré posé par la coche d'une ligne : l'icône remplace l'étiquette,
-      // et autoTaskId dit de quelle tâche il vient. Sans ce marqueur, décocher
-      // ne saurait pas quel encadré retirer, et l'on risquerait d'effacer un
-      // encadré posé à la main autour de la même tâche.
-      iconUrl: typeof f.iconUrl === "string" && f.iconUrl ? f.iconUrl : "",
-      // Pastille posée dans le coin supérieur droit du cadre, indépendante de
-      // l'étiquette : elle marque le cadre lui-même, là où iconUrl remplace un
-      // texte. Comme le reste des annotations, elle vit dans la configuration
-      // du widget et jamais dans la tâche (cf. docs/GANTT_ANNOTATIONS.md).
-      cornerIconUrl: typeof f.cornerIconUrl === "string" && f.cornerIconUrl ? f.cornerIconUrl : "",
-      autoTaskId: typeof f.autoTaskId === "string" && f.autoTaskId ? f.autoTaskId : "",
-    }));
+    .map((f) => {
+      // autoTaskId dit de quelle tâche vient un encadré posé par la coche. Sans
+      // ce marqueur, décocher ne saurait pas quel encadré retirer, et l'on
+      // risquerait d'effacer un encadré posé à la main autour de la même tâche.
+      const autoTaskId = typeof f.autoTaskId === "string" && f.autoTaskId ? f.autoTaskId : "";
+      const autoFrame = !!autoTaskId;
+      return {
+        id: String(f.id),
+        label: typeof f.label === "string" ? f.label : "",
+        taskIds: Array.isArray(f.taskIds) ? [...new Set(f.taskIds.filter((id) => typeof id === "string" && id))] : [],
+        color: typeof f.color === "string" && f.color ? f.color : GANTT_FRAME_DEFAULT_COLOR,
+        borderStyle: normalizeGanttBorderStyle(f.borderStyle),
+        padding: normalizeGanttPadding(f.padding),
+        // Étiquette-icône à gauche du cadre. Les encadrés posés par la COCHE n'en
+        // portent plus (retour de Quentin sur #48 : seule la pastille du coin est
+        // gardée) — d'où la reprise ci-dessous, qui la retire aussi de ceux déjà
+        // enregistrés. Un encadré posé à la main garde la sienne : rien ne la lui
+        // pose d'office, mais rien ne la lui enlève non plus.
+        iconUrl: autoFrame && typeof f.iconUrl === "string" && f.iconUrl === MINIGANTT_CHECK_FRAME_ICON
+          ? ""
+          : (typeof f.iconUrl === "string" && f.iconUrl ? f.iconUrl : ""),
+        // Pastille posée dans le coin supérieur droit du cadre, indépendante de
+        // l'étiquette : elle marque le cadre lui-même. C'est désormais la SEULE
+        // marque d'un encadré de coche, et elle est peinte en transparence.
+        // Reprise aussi : un encadré de coche enregistré avant l'ajout de la
+        // pastille n'en porterait aucune et resterait nu, maintenant que
+        // l'étiquette-icône a disparu. Comme le reste des annotations, elle vit
+        // dans la configuration du widget et jamais dans la tâche
+        // (cf. docs/GANTT_ANNOTATIONS.md).
+        cornerIconUrl: typeof f.cornerIconUrl === "string" && f.cornerIconUrl
+          ? f.cornerIconUrl
+          : (autoFrame ? MINIGANTT_CHECK_FRAME_CORNER_ICON : ""),
+        autoTaskId: autoTaskId,
+      };
+    });
 }
 
-// Icônes des encadrés créés par la coche d'une ligne du Mini-Gantt : la
-// première remplace l'étiquette, la seconde se pose dans le coin supérieur
-// droit du cadre.
+// Icônes des encadrés créés par la coche d'une ligne du Mini-Gantt.
+// MINIGANTT_CHECK_FRAME_ICON tenait lieu d'étiquette, à gauche du cadre : elle
+// n'est PLUS posée (retour de Quentin sur #48 — « ne garder que l'image à
+// droite »). La constante reste, et elle seule permet de reconnaître cette
+// étiquette-là pour la retirer des encadrés déjà enregistrés sans toucher à
+// l'icône qu'un encadré posé à la main porterait.
 const MINIGANTT_CHECK_FRAME_ICON = "https://cdn-icons-png.flaticon.com/512/7247/7247981.png";
+// Seule marque restante : la pastille du coin supérieur droit, peinte en
+// transparence (voir .lp-widget-minigantt-frame-corner).
 const MINIGANTT_CHECK_FRAME_CORNER_ICON = "https://cdn-icons-png.flaticon.com/512/8376/8376179.png";
 
 // Dégagement horizontal, en pixels, entre le trait du cadre et la barre qu'il
@@ -3315,7 +3336,9 @@ function miniGanttToggleTaskFrame(frames, taskId, on, makeId) {
       color: GANTT_FRAME_DEFAULT_COLOR,
       borderStyle: "dashed",
       padding: GANTT_FRAME_DEFAULT_PADDING,
-      iconUrl: MINIGANTT_CHECK_FRAME_ICON,
+      // Pas d'étiquette-icône à gauche : elle doublait la pastille et recouvrait
+      // le début de la barre. Le cadre ne porte plus que la pastille du coin.
+      iconUrl: "",
       cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON,
       autoTaskId: taskId,
     }];
@@ -3825,6 +3848,136 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
   return "none";
 }
 // === NEXORA:GANTT-ANNOTATIONS:END ===
+
+// === NEXORA:WIDGET-TRANSFER:START ===
+/* Déplacer ou dupliquer un widget vers un autre tableau de bord (issue #58).
+
+   Le modèle : un « plan » — un tableau de bord, ou la page « Aujourd'hui » —
+   porte des PAGES, et chaque page porte ses widgets. Un transfert touche donc
+   deux plans à la fois, parfois le même.
+
+   Tout est ici, en fonctions pures qui prennent et rendent la LISTE ENTIÈRE des
+   plans. Ce n'est pas de la coquetterie : les deux magasins de l'application
+   (`nexora:dashboards` et `nexora:todayWidgets`) sont des états React distincts,
+   et traiter le retrait et la pose comme deux écritures séparées suffirait à
+   perdre le widget d'un côté sans le poser de l'autre — ou à le laisser dans les
+   deux. En rendant l'état complet d'un coup, il n'existe aucun instant où le
+   widget est nulle part, ou partout. */
+
+const WIDGET_TRANSFER_MODES = ["move", "duplicate"];
+
+function widgetTransferNormalizeMode(mode) {
+  return WIDGET_TRANSFER_MODES.includes(mode) ? mode : "move";
+}
+
+/* Destinations proposées, à plat : une entrée par page, préfixée du nom de son
+   plan. La liste est construite ici et non dans la fiche pour que l'ordre et
+   les libellés soient éprouvés par un test plutôt que relus à l'écran. */
+function widgetTransferTargets(boards) {
+  const out = [];
+  (Array.isArray(boards) ? boards : []).forEach((board) => {
+    if (!board || !board.id) return;
+    const pages = Array.isArray(board.pages) ? board.pages.filter((p) => p && p.id) : [];
+    pages.forEach((page) => {
+      out.push({
+        boardId: board.id,
+        pageId: page.id,
+        boardName: board.name || "Sans nom",
+        pageName: page.name || "Page",
+        // Un plan à page unique n'a pas à afficher « Tableau › Page 1 » :
+        // l'onglet n'existe pas pour l'utilisateur, le nommer l'égare.
+        label: pages.length > 1
+          ? `${board.name || "Sans nom"} › ${page.name || "Page"}`
+          : (board.name || "Sans nom"),
+      });
+    });
+  });
+  return out;
+}
+
+/* Où se trouve un widget, tous plans confondus. Rendre null plutôt que de
+   lever : l'appelant doit pouvoir dire « introuvable » à l'utilisateur au lieu
+   de casser la fiche. */
+function widgetTransferLocate(boards, widgetId) {
+  for (const board of (Array.isArray(boards) ? boards : [])) {
+    for (const page of (Array.isArray(board?.pages) ? board.pages : [])) {
+      const widget = (Array.isArray(page?.widgets) ? page.widgets : []).find((w) => w && w.id === widgetId);
+      if (widget) return { boardId: board.id, pageId: page.id, widget };
+    }
+  }
+  return null;
+}
+
+/* Copie d'un widget : nouvel identifiant, titre suffixé.
+
+   Jamais deux pages qui partagent le même identifiant de widget — sinon
+   redimensionner la copie déplacerait l'original, et la duplication d'un
+   tableau de bord partirait d'un état déjà ambigu.
+
+   `layout: undefined` est VOLONTAIRE, ici comme au déplacement : la position
+   dans la grille d'origine n'a aucun sens sur une autre page, où elle
+   chevaucherait ce qui s'y trouve déjà. Le tableau de destination replace le
+   widget par son propre tassement (packWidgets) dès qu'il s'affiche, comme
+   pour un widget créé sans position. */
+function widgetTransferCopy(widget, makeId) {
+  return {
+    ...widget,
+    id: typeof makeId === "function" ? makeId() : `${widget.id}-copie`,
+    title: `${widget.title || "Widget"} (copie)`,
+    layout: undefined,
+  };
+}
+
+/* Le transfert, sur la liste entière des plans.
+
+   `patch` porte les réglages en cours dans la fiche : sans lui, « Enregistrer »
+   et « Changer de tableau de bord » se contrediraient — le widget partirait
+   avec sa configuration d'avant, et les modifications à l'écran seraient
+   perdues sans un mot.
+
+   Rend LA MÊME liste quand il n'y a rien à faire (destination inconnue, widget
+   introuvable, déplacement vers la page où il est déjà) : l'appelant s'en sert
+   pour n'écrire nulle part. */
+function widgetTransferApply(boards, widgetId, target, mode, makeId, patch) {
+  const list = Array.isArray(boards) ? boards : [];
+  const normalized = widgetTransferNormalizeMode(mode);
+  const found = widgetTransferLocate(list, widgetId);
+  const targetBoard = list.find((b) => b && b.id === target?.boardId);
+  const targetPage = (Array.isArray(targetBoard?.pages) ? targetBoard.pages : []).find((p) => p && p.id === target?.pageId);
+  if (!found || !targetBoard || !targetPage) return list;
+  if (normalized === "move" && found.boardId === targetBoard.id && found.pageId === targetPage.id) return list;
+  const patched = { ...found.widget, ...(patch && typeof patch === "object" ? patch : {}) };
+  const posed = normalized === "duplicate"
+    ? widgetTransferCopy(patched, makeId)
+    : { ...patched, layout: undefined };
+  return list.map((board) => {
+    const pages = Array.isArray(board?.pages) ? board.pages : [];
+    let touched = false;
+    const nextPages = pages.map((page) => {
+      let widgets = Array.isArray(page?.widgets) ? page.widgets : [];
+      const isSource = board.id === found.boardId && page.id === found.pageId;
+      const isTarget = board.id === targetBoard.id && page.id === targetPage.id;
+      // La source se traite EN PREMIER : quand elle est aussi la destination,
+      // poser avant de retirer effacerait ce qu'on vient de poser.
+      if (isSource) {
+        widgets = normalized === "move"
+          ? widgets.filter((w) => !w || w.id !== widgetId)
+          // Dupliquer enregistre aussi la fiche sur l'original : sinon les
+          // réglages affichés ne partiraient qu'avec la copie et sembleraient
+          // s'être perdus sur le widget resté en place.
+          : widgets.map((w) => (w && w.id === widgetId ? patched : w));
+        touched = true;
+      }
+      if (isTarget) {
+        widgets = [...widgets, posed];
+        touched = true;
+      }
+      return widgets === page.widgets ? page : { ...page, widgets };
+    });
+    return touched ? { ...board, pages: nextPages } : board;
+  });
+}
+// === NEXORA:WIDGET-TRANSFER:END ===
 
 // === NEXORA:HEATMAP-GRID:START ===
 /* Heat map en grille (issue #51).
@@ -7495,7 +7648,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         />
         {titleError && <p style={{ fontSize: 11.5, color: "var(--danger)", margin: "5px 0 0", fontWeight: 600 }}>Le titre est obligatoire.</p>}
       </div>
-      <div className="lp-row3">
+      <div className="lp-row4">
         <div className="lp-field"><label>Projet</label>
           <ProjectSelect projects={projects} value={projectId} onChange={setProjectId} />
         </div>
@@ -7537,13 +7690,13 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           <label>Type</label>
           <TaskTypeSelect taskTypes={availableTaskTypes} value={taskTypeId} onChange={setTaskTypeId} />
         </div>
-      </div>
-      <div className="lp-field">
-        <label>Criticité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — à quel point la tâche presse, indépendamment de son avancement)</span></label>
-        <select value={criticality} onChange={(e) => setCriticality(e.target.value)}>
-          <option value="">Non définie</option>
-          {CRITICALITIES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        {/* La criticité occupait seule toute une ligne, ce qui lui donnait plus
+            de poids qu'au projet ou au statut (#69). Elle rejoint la rangée :
+            quatre champs du même registre, même hauteur, même cadre. */}
+        <div className="lp-field">
+          <label>Criticité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif)</span></label>
+          <CriticalitySelect value={criticality} onChange={setCriticality} />
+        </div>
       </div>
       <div className="lp-field">
         <label>Second projet <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — la tâche apparaît sur les deux lignes en vue Métro, reliées par un tronc commun)</span></label>
@@ -8014,7 +8167,12 @@ function IconEditor({ icon, setIcon }) {
   const [draftIcon, setDraftIcon] = useState(icon || null);
   const [color, setColor] = useState(parseTablerIconSpec(icon).color || parseIconifySpec(icon).color || "#0B1526");
   const [customUrl, setCustomUrl] = useState(/^(https?:|data:)/.test(icon || "") ? icon : "");
-  const isImageUrl = (u) => /^(https?:\/\/|data:image\/)/i.test((u || "").trim());
+  /* La fiche et le rendu doivent accepter EXACTEMENT la même chose : c'est leur
+     divergence qui faisait le défaut #70 — la fiche acceptait « HTTPS:// » en
+     ignorant la casse, le rendu le refusait en la respectant, et l'icône
+     enregistrée s'affichait en toutes lettres. Une seule fonction, donc, des
+     deux côtés. */
+  const isImageUrl = (u) => !!normalizeIconUrl(u);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [styleFilter, setStyleFilter] = useState("all");
@@ -11401,11 +11559,41 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
   // défilement — d'où l'impression de "trou" d'opacité juste sous les onglets.
   const pmChromeRef = useRef(null);
   useEffect(() => {
-    if (embedded) return undefined;
-    const tabbarEl = document.querySelector(".lp-detail-tabbar");
     const node = pmChromeRef.current;
-    const headerEl = node?.querySelector(".lp-pm-header-row");
-    if (!tabbarEl || !node) return undefined;
+    if (!node) return undefined;
+    /* === NEXORA:WIDGET-EMBED-STICKY:START ===
+       Embarqué dans un widget, ce planning n'a NI barre d'onglets NI bandeau de
+       titre au-dessus de lui : le bandeau de paramètres du widget vit hors de
+       la zone défilante. Les en-têtes collants doivent donc se coller à zéro.
+       Sans cela, le repli du style s'appliquait — 48 px pour une barre
+       d'onglets absente, 34 px pour un bandeau de titre que le mode embarqué ne
+       rend même pas — et l'axe des dates se figeait QUATRE-VINGT-DEUX pixels
+       sous le haut du widget : les lignes du planning défilaient à découvert
+       dans cette bande, juste sous le bandeau de paramètres. C'est cela, et non
+       le bandeau lui-même, qui produisait les libellés tronqués. */
+    if (embedded) {
+      const scroller = node.closest(".lp-widget-embed-body");
+      const applyEmbedded = () => {
+        /* Décalage NÉGATIF, et ce n'est pas une astuce : le rectangle de collage
+           d'un élément sticky part du bord INTÉRIEUR de la zone défilante, donc
+           sous son remplissage haut. Laissé à zéro, l'axe se fige dix pixels
+           plus bas que le bandeau et le planning continue de défiler dans cette
+           bande. Mesuré plutôt que codé en dur : le remplissage change avec la
+           densité d'affichage. */
+        const padTop = scroller ? Math.ceil(parseFloat(getComputedStyle(scroller).paddingTop) || 0) : 0;
+        node.style.setProperty("--pm-tabbar-h", `${-padTop}px`);
+        node.style.setProperty("--pm-header-h", "0px");
+      };
+      applyEmbedded();
+      if (!scroller) return undefined;
+      const roEmbedded = new ResizeObserver(applyEmbedded);
+      roEmbedded.observe(scroller);
+      return () => roEmbedded.disconnect();
+    }
+    // === NEXORA:WIDGET-EMBED-STICKY:END ===
+    const tabbarEl = document.querySelector(".lp-detail-tabbar");
+    const headerEl = node.querySelector(".lp-pm-header-row");
+    if (!tabbarEl) return undefined;
     const apply = () => {
       const tabH = Math.ceil(tabbarEl.getBoundingClientRect().height);
       if (tabH > 0) node.style.setProperty("--pm-tabbar-h", tabH + "px");

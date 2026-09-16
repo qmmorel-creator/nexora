@@ -157,7 +157,24 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /BUBBLE_FIELD_OPTIONS = \[[^\]]*"criticality"/, "criticality absent des bulles du Gantt");
   // Le formulaire doit à la fois proposer le champ ET l'enregistrer : l'un sans
   // l'autre donne une case qui s'affiche et n'est jamais retenue.
-  assert.match(builtSource, /setCriticality\(e\.target\.value\)/, "champ Criticité absent du formulaire de tâche");
+  /* Le champ est passé d'un <select> natif au sélecteur à pastilles (#69) : ce
+     qui compte reste que le formulaire le PROPOSE et l'ENREGISTRE — l'un sans
+     l'autre donne un champ qui s'affiche et n'est jamais retenu. */
+  assert.match(builtSource, /<CriticalitySelect value=\{criticality\} onChange=\{setCriticality\} \/>/,
+    "champ Criticité absent du formulaire de tâche");
+  assert.match(builtSource, /function CriticalitySelect\(\{ value, onChange \}\)/,
+    "le sélecteur de criticité a disparu.");
+  /* La pastille de « Non définie » ne doit jamais exister : une pastille grise
+     se lirait comme un quatrième niveau, au lieu d'une absence de niveau. */
+  const critSelect = builtSource.slice(
+    builtSource.indexOf("=== NEXORA:CRITICALITY-SELECT:START ==="),
+    builtSource.indexOf("=== NEXORA:CRITICALITY-SELECT:END ==="),
+  );
+  assert.ok(critSelect.length > 0, "Le bloc du sélecteur de criticité est introuvable.");
+  assert.match(critSelect, /lp-color-select-dot-spacer/,
+    "« Non définie » n'a plus son écarteur : son libellé se décalerait des trois niveaux.");
+  assert.equal((critSelect.match(/lp-color-select-dot"/g) || []).length, 2,
+    "La pastille doit être posée exactement deux fois : sur la valeur choisie et sur chaque option.");
   assert.match(builtSource, /criticality: criticality \|\| null/, "la criticité saisie n'est pas enregistrée");
 
   // 3. Aucun statut nommé « Urgent » ne doit revenir par le jeu de démonstration :
@@ -538,6 +555,143 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
      mettrait « Bas » en tête, là où l'œil doit tomber sur « Urgent ». */
   assert.match(grille, /heatmapOrderCriticalities\(CRITICALITIES\)/,
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
+}
+
+/* Bulles du rail vertical (issue #65).
+   Les compteurs sont couverts par tests/view-rail-badge.test.mjs, la mise en
+   page par le contrôle visuel. Reste le CÂBLAGE : un compteur calculé que
+   personne n'affiche, ou un badge affiché à partir de rien. */
+{
+  assert.match(builtSource, /const badge = viewRailBadgeLabel\(viewRailBadgeCount\(key, viewRailCounts\)\);/,
+    "Le badge des bulles du rail n'est plus calculé.");
+  assert.match(builtSource, /\{badge && <span className=\{"lp-view-rail-btn-count"/,
+    "Le badge n'est plus rendu sur la bulle.");
+  /* Le rail portait un « lp-tab-badge » tronqué à « 9+ » dès dix notifications.
+     Il passe au badge commun des bulles, qui tient trois chiffres. Le contrôle
+     porte sur LE RAIL seul : la barre du bas des mobiles garde son « 9+ », et
+     c'est voulu — elle n'a pas la place. */
+  const railFrom = builtSource.indexOf('<nav className="lp-view-rail"');
+  /* Recherche VERS L'AVANT : « lp-view-rail-folders » apparaît d'abord dans la
+     feuille de style, des milliers de lignes plus haut. Repartir du début
+     donnerait une tranche vide, et le contrôle passerait à vide. */
+  const railJsx = railFrom === -1 ? "" : builtSource.slice(railFrom, builtSource.indexOf("lp-view-rail-folders", railFrom));
+  assert.ok(railJsx.length > 0, "Le rail vertical est introuvable.");
+  assert.doesNotMatch(railJsx, /lp-tab-badge/,
+    "Le rail reprend le badge tronqué à « 9+ » : ses bulles tiennent trois chiffres.");
+}
+
+/* Icônes par URL du menu latéral (issue #70).
+   La reconnaissance est couverte par tests/icon-url.test.mjs. Ce qui ne l'est
+   pas, c'est la SYMÉTRIE entre la fiche qui accepte et le rendu qui affiche :
+   c'est leur divergence qui faisait le défaut, et deux expressions régulières
+   voisines reprendraient le même chemin sans la moindre erreur. */
+{
+  assert.match(builtSource, /const isImageUrl = \(u\) => !!normalizeIconUrl\(u\);/,
+    "La fiche d'icône ne partage plus sa règle avec le rendu : une URL acceptée pourrait redevenir inaffichable.");
+  assert.match(builtSource, /const url = normalizeIconUrl\(icon\);\s*\n\s*if \(url\) return <IconUrlImage/,
+    "Le rendu ne passe plus par la reconnaissance commune des URL d'icône.");
+  /* Sans repli, une URL en échec laisse une image cassée ; sans mémorisation
+     PAR URL, corriger l'URL resterait bloqué sur l'échec précédent. */
+  assert.match(builtSource, /onError=\{\(\) => setFailedSrc\(src\)\}/,
+    "Une icône dont le chargement échoue n'a plus de repli.");
+  assert.match(builtSource, /if \(failedSrc === src\)/,
+    "L'échec n'est plus mémorisé par URL : changer l'URL ne retenterait pas.");
+}
+
+/* Filtre textuel des surfaces « tableau de bord » (issue #72).
+   Le calcul est couvert par tests/board-search.test.mjs. Ce qui ne l'est pas,
+   c'est le CÂBLAGE : un champ qui se saisit sans que rien ne le consomme, ou
+   une surface oubliée, ne produit aucune erreur — la recherche paraît
+   simplement sans effet. */
+{
+  assert.match(builtSource, /const boardTasks = useMemo\(\s*\(\) => filterTasksByText\(metaFilteredTasks, boardSearchApplied\)/,
+    "La liste filtrée par le texte n'est plus calculée.");
+  /* La valeur retardée est ce qui rend la frappe fluide : sans elle, chaque
+     caractère recalcule tous les widgets de la page. */
+  assert.match(builtSource, /setTimeout\(\(\) => setBoardSearchApplied\(boardSearch\), \d+\)/,
+    "Le filtre n'est plus retardé : chaque caractère recalculerait toute la page.");
+  assert.match(builtSource, /value=\{boardSearch\}/, "Le champ de filtre a disparu de la barre du haut.");
+  /* Les TROIS surfaces qui partent du socle méta-filtré doivent le consommer.
+     En oublier une donnerait un champ qui filtre ici et pas là. */
+  for (const [surface, motif] of [
+    ["Centre de pilotage", /<ControlTowerView tasks=\{boardTasks\}/],
+    ["Tableau de bord", /view === "dashboard" && <DashboardView[^\n]*tasks=\{boardTasks\}/],
+    ["Aujourd'hui", /return \[\.\.\.boardTasks\]\.sort/],
+  ]) {
+    assert.match(builtSource, motif, `La vue « ${surface} » ne consomme plus la liste filtrée par le texte.`);
+  }
+}
+
+/* Changer un widget de tableau de bord (issue #58).
+   Le calcul est couvert par tests/widget-transfer.test.mjs. Ce qui ne l'est pas,
+   c'est la CHAÎNE qui va de la fiche au magasin : quatre maillons, dont trois
+   peuvent se défaire sans la moindre erreur — un bouton qui n'appelle plus
+   rien, une fiche montée sans son émetteur, un transfert calculé et jamais
+   écrit. Le widget resterait simplement sur place, en silence. */
+{
+  assert.match(builtSource, /Changer de tableau de bord/,
+    "Le bouton « Changer de tableau de bord » a disparu de la fiche du widget.");
+  assert.match(builtSource, /onTransfer\(\{ data: buildData\(\)/,
+    "Le bouton de transfert ne transmet plus les réglages de la fiche : le widget partirait avec sa configuration d'avant.");
+  assert.match(builtSource, /onTransfer=\{onTransferWidget \? transferEditedWidget : undefined\}/,
+    "La fiche du widget n'est plus montée avec son émetteur de transfert : le bouton disparaîtrait.");
+  assert.match(builtSource, /const after = widgetTransferApply\(before, widgetId, target, mode, uid, patch\);/,
+    "Le transfert ne passe plus par widgetTransferApply : retrait et pose redeviendraient deux écritures séparées.");
+  /* Les DEUX surfaces doivent recevoir le câblage : « Aujourd'hui » et les
+     tableaux de bord partagent le même composant, et n'en câbler qu'une
+     donnerait un bouton présent d'un côté, absent de l'autre. */
+  const mounts = builtSource.match(/onTransferWidget=\{transferWidget\}/g) || [];
+  assert.equal(mounts.length, 2,
+    `Le transfert n'est câblé que sur ${mounts.length} des 2 surfaces (« Aujourd'hui » et les tableaux de bord).`);
+}
+
+/* Encadré posé par la coche du Mini-Gantt (issue #48, second retour).
+   La logique est couverte par les tests unitaires ; ce qui ne l'est pas, c'est
+   le RENDU — et c'est précisément lui qui avait avalé l'icône au premier lot.
+   « Ne garder que l'image à droite, en transparence » tient à trois maillons
+   qui peuvent se défaire sans erreur. */
+{
+  assert.match(builtSource, /<img\s+src=\{seg\.frame\.cornerIconUrl\}/,
+    "La pastille du coin n'est plus rendue : l'encadré de coche n'aurait plus aucune marque.");
+  const corner = builtSource.slice(
+    builtSource.indexOf(".lp-widget-minigantt-frame-corner{"),
+    builtSource.indexOf("}", builtSource.indexOf(".lp-widget-minigantt-frame-corner{")),
+  );
+  assert.ok(corner.length > 0, "La règle de la pastille du coin est introuvable.");
+  assert.match(corner, /opacity:0?\.\d+/,
+    "La pastille du coin n'est plus peinte en transparence.");
+}
+
+/* Bandeau de paramètres du widget (issue #56).
+   La panne ne venait pas du bandeau mais de ce qui défilait dessous : les
+   en-têtes collants du planning se calent sur la barre d'onglets de la PAGE,
+   qui n'existe pas dans un widget. Le repli de la mesure — 48 px + 34 px —
+   s'appliquait alors, et le planning défilait à découvert dans cette bande.
+   Le premier lot n'avait livré que le durcissement CSS : le bandeau est devenu
+   opaque, et la bande est restée. Les deux moitiés sont gardées ici ensemble. */
+{
+  const metroFrom = builtSource.indexOf("const pmChromeRef = useRef(null);");
+  /* Recherche VERS L'AVANT : « const zoomKey = prefs.zoomKey » apparaît plus
+     haut dans le fichier, dans une autre vue. Repartir du début rendrait la
+     tranche vide, et tous les contrôles qui suivent passeraient à vide. */
+  const metro = metroFrom === -1 ? "" : builtSource.slice(metroFrom, builtSource.indexOf("const zoomKey = prefs.zoomKey", metroFrom));
+  assert.ok(metro.length > 0, "La mesure des en-têtes collants du planning est introuvable.");
+  assert.doesNotMatch(metro, /if \(embedded\) return undefined;/,
+    "Embarqué, le planning ne cale plus ses en-têtes collants : le repli de 82 px rouvre la bande sous le bandeau.");
+  assert.match(metro, /node\.style\.setProperty\("--pm-tabbar-h", `\$\{-padTop\}px`\)/,
+    "L'écart au bandeau ne compense plus le remplissage de la zone défilante.");
+  /* Le fond et le plan vont ENSEMBLE : un z-index sur un élément non positionné
+     ne s'applique pas, et un plan sans fond laisse voir au travers.
+     Ancrage sur la DÉCLARATION, pas sur le seul sélecteur : « .lp-widget-head{ »
+     apparaît aussi plus haut, dans une règle de glisser tactile. Partir de
+     celle-là donnait une tranche de 700 000 caractères où tout se trouve — le
+     garde passait au vert en mesurant n'importe quoi. */
+  const headFrom = builtSource.indexOf(".lp-widget-head{ display:flex");
+  const head = headFrom === -1 ? "" : builtSource.slice(headFrom, builtSource.indexOf("}", headFrom));
+  assert.ok(head.length > 0, "La règle du bandeau de paramètres est introuvable.");
+  assert.match(head, /background:var\(--surface\)/, "Le bandeau de paramètres n'a plus de fond opaque.");
+  assert.match(head, /position:relative/, "Le bandeau n'est plus positionné : son z-index serait sans effet.");
+  assert.match(head, /z-index:\d+/, "Le bandeau n'a plus de plan propre : le contenu positionné passe par-dessus.");
 }
 
 console.log("Repository invariants: OK");
