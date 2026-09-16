@@ -3258,31 +3258,52 @@ function normalizeHighlightFrames(list) {
   if (!Array.isArray(list)) return [];
   return list
     .filter((f) => f && typeof f === "object" && f.id)
-    .map((f) => ({
-      id: String(f.id),
-      label: typeof f.label === "string" ? f.label : "",
-      taskIds: Array.isArray(f.taskIds) ? [...new Set(f.taskIds.filter((id) => typeof id === "string" && id))] : [],
-      color: typeof f.color === "string" && f.color ? f.color : GANTT_FRAME_DEFAULT_COLOR,
-      borderStyle: normalizeGanttBorderStyle(f.borderStyle),
-      padding: normalizeGanttPadding(f.padding),
-      // Encadré posé par la coche d'une ligne : l'icône remplace l'étiquette,
-      // et autoTaskId dit de quelle tâche il vient. Sans ce marqueur, décocher
-      // ne saurait pas quel encadré retirer, et l'on risquerait d'effacer un
-      // encadré posé à la main autour de la même tâche.
-      iconUrl: typeof f.iconUrl === "string" && f.iconUrl ? f.iconUrl : "",
-      // Pastille posée dans le coin supérieur droit du cadre, indépendante de
-      // l'étiquette : elle marque le cadre lui-même, là où iconUrl remplace un
-      // texte. Comme le reste des annotations, elle vit dans la configuration
-      // du widget et jamais dans la tâche (cf. docs/GANTT_ANNOTATIONS.md).
-      cornerIconUrl: typeof f.cornerIconUrl === "string" && f.cornerIconUrl ? f.cornerIconUrl : "",
-      autoTaskId: typeof f.autoTaskId === "string" && f.autoTaskId ? f.autoTaskId : "",
-    }));
+    .map((f) => {
+      // autoTaskId dit de quelle tâche vient un encadré posé par la coche. Sans
+      // ce marqueur, décocher ne saurait pas quel encadré retirer, et l'on
+      // risquerait d'effacer un encadré posé à la main autour de la même tâche.
+      const autoTaskId = typeof f.autoTaskId === "string" && f.autoTaskId ? f.autoTaskId : "";
+      const autoFrame = !!autoTaskId;
+      return {
+        id: String(f.id),
+        label: typeof f.label === "string" ? f.label : "",
+        taskIds: Array.isArray(f.taskIds) ? [...new Set(f.taskIds.filter((id) => typeof id === "string" && id))] : [],
+        color: typeof f.color === "string" && f.color ? f.color : GANTT_FRAME_DEFAULT_COLOR,
+        borderStyle: normalizeGanttBorderStyle(f.borderStyle),
+        padding: normalizeGanttPadding(f.padding),
+        // Étiquette-icône à gauche du cadre. Les encadrés posés par la COCHE n'en
+        // portent plus (retour de Quentin sur #48 : seule la pastille du coin est
+        // gardée) — d'où la reprise ci-dessous, qui la retire aussi de ceux déjà
+        // enregistrés. Un encadré posé à la main garde la sienne : rien ne la lui
+        // pose d'office, mais rien ne la lui enlève non plus.
+        iconUrl: autoFrame && typeof f.iconUrl === "string" && f.iconUrl === MINIGANTT_CHECK_FRAME_ICON
+          ? ""
+          : (typeof f.iconUrl === "string" && f.iconUrl ? f.iconUrl : ""),
+        // Pastille posée dans le coin supérieur droit du cadre, indépendante de
+        // l'étiquette : elle marque le cadre lui-même. C'est désormais la SEULE
+        // marque d'un encadré de coche, et elle est peinte en transparence.
+        // Reprise aussi : un encadré de coche enregistré avant l'ajout de la
+        // pastille n'en porterait aucune et resterait nu, maintenant que
+        // l'étiquette-icône a disparu. Comme le reste des annotations, elle vit
+        // dans la configuration du widget et jamais dans la tâche
+        // (cf. docs/GANTT_ANNOTATIONS.md).
+        cornerIconUrl: typeof f.cornerIconUrl === "string" && f.cornerIconUrl
+          ? f.cornerIconUrl
+          : (autoFrame ? MINIGANTT_CHECK_FRAME_CORNER_ICON : ""),
+        autoTaskId: autoTaskId,
+      };
+    });
 }
 
-// Icônes des encadrés créés par la coche d'une ligne du Mini-Gantt : la
-// première remplace l'étiquette, la seconde se pose dans le coin supérieur
-// droit du cadre.
+// Icônes des encadrés créés par la coche d'une ligne du Mini-Gantt.
+// MINIGANTT_CHECK_FRAME_ICON tenait lieu d'étiquette, à gauche du cadre : elle
+// n'est PLUS posée (retour de Quentin sur #48 — « ne garder que l'image à
+// droite »). La constante reste, et elle seule permet de reconnaître cette
+// étiquette-là pour la retirer des encadrés déjà enregistrés sans toucher à
+// l'icône qu'un encadré posé à la main porterait.
 const MINIGANTT_CHECK_FRAME_ICON = "https://cdn-icons-png.flaticon.com/512/7247/7247981.png";
+// Seule marque restante : la pastille du coin supérieur droit, peinte en
+// transparence (voir .lp-widget-minigantt-frame-corner).
 const MINIGANTT_CHECK_FRAME_CORNER_ICON = "https://cdn-icons-png.flaticon.com/512/8376/8376179.png";
 
 // Dégagement horizontal, en pixels, entre le trait du cadre et la barre qu'il
@@ -3315,7 +3336,9 @@ function miniGanttToggleTaskFrame(frames, taskId, on, makeId) {
       color: GANTT_FRAME_DEFAULT_COLOR,
       borderStyle: "dashed",
       padding: GANTT_FRAME_DEFAULT_PADDING,
-      iconUrl: MINIGANTT_CHECK_FRAME_ICON,
+      // Pas d'étiquette-icône à gauche : elle doublait la pastille et recouvrait
+      // le début de la barre. Le cadre ne porte plus que la pastille du coin.
+      iconUrl: "",
       cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON,
       autoTaskId: taskId,
     }];

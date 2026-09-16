@@ -565,4 +565,21 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
   }
 }
 
+/* Encadré posé par la coche du Mini-Gantt (issue #48, second retour).
+   La logique est couverte par les tests unitaires ; ce qui ne l'est pas, c'est
+   le RENDU — et c'est précisément lui qui avait avalé l'icône au premier lot.
+   « Ne garder que l'image à droite, en transparence » tient à trois maillons
+   qui peuvent se défaire sans erreur. */
+{
+  assert.match(builtSource, /<img\s+src=\{seg\.frame\.cornerIconUrl\}/,
+    "La pastille du coin n'est plus rendue : l'encadré de coche n'aurait plus aucune marque.");
+  const corner = builtSource.slice(
+    builtSource.indexOf(".lp-widget-minigantt-frame-corner{"),
+    builtSource.indexOf("}", builtSource.indexOf(".lp-widget-minigantt-frame-corner{")),
+  );
+  assert.ok(corner.length > 0, "La règle de la pastille du coin est introuvable.");
+  assert.match(corner, /opacity:0?\.\d+/,
+    "La pastille du coin n'est plus peinte en transparence.");
+}
+
 console.log("Repository invariants: OK");

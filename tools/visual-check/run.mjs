@@ -264,6 +264,51 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
+/* Coche du Mini-Gantt (issue #48). Rien de ce qui suit n'est visible d'un test
+   unitaire : la logique pose bien ce qu'il faut, c'est le RENDU qui décide de
+   l'afficher — et un premier lot avait livré un cadre entièrement nu.
+
+   Le second Mini-Gantt est choisi parce qu'il n'a AUCUNE annotation propre :
+   tout ce qui apparaît après la coche vient donc de la coche. */
+const coche = { frames: 0, icons: 0, corners: 0, cornerOpacity: "", leftGap: null, rightGap: null, cornerOffsetX: null, cornerOffsetY: null, apres: 0 };
+try {
+  const hote = "#harness-second-minigantt";
+  const boite = page.locator(`${hote} .lp-widget-minigantt-select`).first();
+  await boite.scrollIntoViewIfNeeded();
+  await boite.check();
+  await page.waitForTimeout(400);
+  Object.assign(coche, await page.evaluate((sel) => {
+    const rect = (el) => (el ? el.getBoundingClientRect() : null);
+    const cadre = rect(document.querySelector(`${sel} .lp-widget-minigantt-frame`));
+    // La barre de la ligne cochée : c'est elle que le trait du cadre recoupait.
+    const ligne = document.querySelector(`${sel} .lp-widget-minigantt-row.is-selected`)
+      || document.querySelector(`${sel} .lp-widget-minigantt-row`);
+    const barre = rect(ligne && ligne.querySelector(".lp-widget-minigantt-bar"));
+    const coinEl = document.querySelector(`${sel} .lp-widget-minigantt-frame-corner`);
+    const coin = rect(coinEl);
+    return {
+      frames: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame`).length,
+      icons: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame-label .lp-widget-minigantt-frame-icon`).length,
+      corners: document.querySelectorAll(`${sel} .lp-widget-minigantt-frame-corner`).length,
+      cornerOpacity: coinEl ? getComputedStyle(coinEl).opacity : "",
+      leftGap: cadre && barre ? Math.round(barre.left - cadre.left) : null,
+      rightGap: cadre && barre ? Math.round(cadre.right - barre.right) : null,
+      /* La pastille est CENTRÉE sur le coin supérieur droit : elle chevauche
+         volontairement le trait, moitié dedans moitié dehors. Ce qu'on contrôle
+         est donc son centre, pas son bord — un ancrage par le bord gauche la
+         ferait flotter entièrement hors du cadre sans la moindre erreur. */
+      cornerOffsetX: cadre && coin ? Math.round(cadre.right - (coin.left + coin.width / 2)) : null,
+      cornerOffsetY: cadre && coin ? Math.round(cadre.top - (coin.top + coin.height / 2)) : null,
+    };
+  }, hote));
+  // Décocher doit tout retirer : sans cela le cadre s'accumulerait à chaque coche.
+  await page.locator(`${hote} .lp-widget-minigantt-select`).first().uncheck();
+  await page.waitForTimeout(400);
+  coche.apres = await page.locator(`${hote} .lp-widget-minigantt-frame`).count();
+} catch (error) {
+  coche.error = String(error).split("\n")[0];
+}
+
 // Nuage des échéances : l'infobulle doit apparaître au survol MÊME à faible
 // densité — c'est elle qui rend acceptable le masquage des étiquettes. Le clic
 // doit ouvrir la tâche, et la fiche exposer le choix des couloirs.
@@ -859,6 +904,19 @@ expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas
 expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error}`);
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
+
+expect(!coche.error, `contrôle de la coche du Mini-Gantt interrompu : ${coche.error}`);
+expect(coche.frames === 1, `Coche du Mini-Gantt : ${coche.frames} encadré(s) après la coche, 1 attendu`);
+// « Ne garder que l'image à droite, en transparence, pas celle de gauche » (#48).
+expect(coche.icons === 0, `Coche du Mini-Gantt : ${coche.icons} image(s) à gauche du cadre, 0 attendue`);
+expect(coche.corners === 1, `Coche du Mini-Gantt : ${coche.corners} pastille(s) de coin, 1 attendue en haut à droite`);
+expect(coche.cornerOpacity !== "" && Number(coche.cornerOpacity) > 0 && Number(coche.cornerOpacity) < 1,
+  `Coche du Mini-Gantt : la pastille est peinte à l'opacité « ${coche.cornerOpacity} » — elle doit rester en transparence`);
+expect(coche.leftGap !== null && coche.leftGap >= 6, `Coche du Mini-Gantt : le trait gauche du cadre passe à ${coche.leftGap} px de la barre — il la recoupe`);
+expect(coche.rightGap !== null && coche.rightGap >= 6, `Coche du Mini-Gantt : le trait droit du cadre passe à ${coche.rightGap} px de la barre — il la recoupe`);
+expect(coche.cornerOffsetX !== null && Math.abs(coche.cornerOffsetX) <= 2 && Math.abs(coche.cornerOffsetY) <= 2,
+  `Coche du Mini-Gantt : la pastille est décalée de (${coche.cornerOffsetX}, ${coche.cornerOffsetY}) px du coin supérieur droit du cadre — elle doit y rester centrée`);
+expect(coche.apres === 0, `Coche du Mini-Gantt : ${coche.apres} encadré(s) restant(s) après avoir décoché, 0 attendu`);
 
 expect(!taskMeta.error, `contrôle de la fiche de tâche interrompu : ${taskMeta.error}`);
 expect(taskMeta.checkbox === 1, "Fiche de tâche : la case « méta bloc temporel » est absente d'une tâche de projet Google Calendar");
