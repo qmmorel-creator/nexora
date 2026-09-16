@@ -24,6 +24,8 @@ const EXPORTS = [
   "GANTT_FRAME_MAX_PADDING",
   "miniGanttToggleTaskFrame", "MINIGANTT_CHECK_FRAME_ICON", "MINIGANTT_CHECK_FRAME_CORNER_ICON",
   "GANTT_FRAME_BAR_CLEARANCE", "normalizeHighlightFrames",
+  "normalizeGanttBlockOpacity", "ganttBlockFill",
+  "GANTT_BLOCK_OPACITY_MAX", "GANTT_BLOCK_DEFAULT_OPACITY", "GANTT_DECISION_DEFAULT_OPACITY",
 ];
 
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
@@ -37,6 +39,11 @@ const factory = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 );
 const {
+  normalizeGanttBlockOpacity,
+  ganttBlockFill,
+  GANTT_BLOCK_OPACITY_MAX,
+  GANTT_BLOCK_DEFAULT_OPACITY,
+  GANTT_DECISION_DEFAULT_OPACITY,
   miniGanttToggleTaskFrame,
   MINIGANTT_CHECK_FRAME_ICON,
   MINIGANTT_CHECK_FRAME_CORNER_ICON,
@@ -567,7 +574,9 @@ test("une resynchronisation du calendrier ne perd pas le réglage méta bloc", (
     calTask({ id: "neuf-2", googleEventId: "ev-2" }),
     { id: "neuf-3", title: "Réunion publique", start: "2026-09-02", end: "2026-09-02", syncedCalendarId: "ics-1", syncedCalendarKey: "k-9" },
   ]);
-  assert.deepEqual(after[0].metaBlock, { enabled: true, kind: "decision", color: "#123456", borderStyle: "solid", dashboardIds: null });
+  // La transparence rejoint le réglage reporté, à sa valeur par défaut pour une
+  // fenêtre de décision tant que personne ne l'a touchée.
+  assert.deepEqual(after[0].metaBlock, { enabled: true, kind: "decision", color: "#123456", borderStyle: "solid", opacity: 7, dashboardIds: null });
   assert.equal(after[1].metaBlock, undefined, "une tâche jamais cochée le reste");
   assert.equal(after[2].metaBlock.enabled, true, "les calendriers publics utilisent leur propre clé stable");
 
@@ -798,4 +807,46 @@ test("le dégagement du cadre est strictement positif", () => {
   // À zéro, le trait de 1,5 px du cadre se pose sur la barre et la recoupe —
   // c'est exactement ce que Quentin a vu.
   assert.ok(GANTT_FRAME_BAR_CLEARANCE > 0, "sans dégagement, le cadre recoupe la barre");
+});
+
+// --- Transparence réglable du bloc temporel --------------------------------
+test("la transparence d'un bloc est réglable, et ses défauts ne changent rien", () => {
+  // Un bloc d'avant ce réglage garde EXACTEMENT le remplissage qu'il avait :
+  // 13 % pour une phase, 7 % pour une fenêtre de décision.
+  assert.equal(normalizeGanttBlockOpacity(undefined, "phase"), GANTT_BLOCK_DEFAULT_OPACITY);
+  assert.equal(normalizeGanttBlockOpacity(null, "decision"), GANTT_DECISION_DEFAULT_OPACITY);
+  assert.equal(normalizeGanttBlockOpacity("", undefined), GANTT_BLOCK_DEFAULT_OPACITY);
+  assert.equal(GANTT_BLOCK_DEFAULT_OPACITY, 13);
+  assert.equal(GANTT_DECISION_DEFAULT_OPACITY, 7);
+  // Une valeur réglée est respectée, y compris zéro — une bande vide bornée par
+  // ses deux traits est un choix légitime.
+  assert.equal(normalizeGanttBlockOpacity(0, "phase"), 0);
+  assert.equal(normalizeGanttBlockOpacity(35, "phase"), 35);
+  assert.equal(normalizeGanttBlockOpacity("35", "phase"), 35);
+  // Bornée des deux côtés : au-delà du plafond, la bande passerait devant les
+  // barres qu'elle sert à situer.
+  assert.equal(normalizeGanttBlockOpacity(-10, "phase"), 0);
+  assert.equal(normalizeGanttBlockOpacity(500, "phase"), GANTT_BLOCK_OPACITY_MAX);
+  assert.equal(normalizeGanttBlockOpacity("abc", "phase"), GANTT_BLOCK_DEFAULT_OPACITY);
+  // La normalisation la conserve sur le bloc.
+  const [bloc] = normalizeTemporalBlocks([{ id: "b", title: "Études", startDate: "2026-03-01", endDate: "2026-06-30", opacity: 42 }]);
+  assert.equal(bloc.opacity, 42);
+  const [parDefaut] = normalizeTemporalBlocks([{ id: "b", title: "Études", startDate: "2026-03-01", endDate: "2026-06-30" }]);
+  assert.equal(parDefaut.opacity, GANTT_BLOCK_DEFAULT_OPACITY);
+});
+
+test("les deux diagrammes posent le MÊME remplissage, calculé au même endroit", () => {
+  assert.equal(
+    ganttBlockFill({ color: "#4F6AF5", opacity: 42 }),
+    "color-mix(in srgb, #4F6AF5 42%, transparent)"
+  );
+  // Sans réglage, chaque nature retrouve sa valeur d'origine.
+  assert.equal(ganttBlockFill({ color: "#4F6AF5" }), "color-mix(in srgb, #4F6AF5 13%, transparent)");
+  assert.equal(ganttBlockFill({ color: "#8B5CF6", kind: "decision" }), "color-mix(in srgb, #8B5CF6 7%, transparent)");
+  // Sans couleur non plus : le défaut des blocs prend le relais.
+  assert.match(ganttBlockFill({}), /^color-mix\(in srgb, #[0-9A-Fa-f]{6} 13%, transparent\)$/);
+  assert.match(ganttBlockFill(null), /13%/);
+  // Et les deux diagrammes l'appellent, plutôt que de recopier le calcul.
+  assert.equal((html.match(/background: ganttBlockFill\(shape\.block\)/g) || []).length, 2);
+  assert.doesNotMatch(html, /shape\.block\.kind === "decision" \? " 7%"/);
 });

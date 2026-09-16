@@ -42,6 +42,7 @@ type TemporalBlock = {
   endDate: string;     // AAAA-MM-JJ, >= startDate
   color?: string;      // défaut #4F6AF5
   borderStyle?: "dashed" | "solid";  // défaut dashed
+  opacity?: number;    // 0 à 60 %, défaut 13 (phase) ou 7 (décision)
 };
 
 type GanttHighlightFrame = {
@@ -64,6 +65,46 @@ type GanttAnnotations = {
 // Les risques de délai NE sont pas ici : ils appartiennent à la tâche.
 type Task = { /* … */ delayRisks?: MiniGanttTaskRisk[] };
 ```
+
+## Transparence du remplissage
+
+L'opacité de la bande était figée dans le rendu — 13 % pour une phase, 7 % pour
+une fenêtre de décision — et les deux diagrammes la recopiaient chacun de leur
+côté, à un point près. Elle devient un réglage du bloc (`opacity`, en pourcent),
+avec ces mêmes valeurs par défaut : un bloc enregistré avant ce changement ne
+bouge pas d'un pixel.
+
+Le réglage est le même composant dans les **trois** éditeurs de bloc —
+annotations d'un widget, méta blocs des Réglages, méta bloc porté par une tâche
+calendrier — avec un aperçu qui montre le résultat exact, contour compris.
+
+0 % laisse la bande vide, bornée par ses deux traits : c'est un choix légitime,
+pas une valeur refusée. Le plafond de 60 % n'est pas arbitraire — au-delà, la
+bande passe devant les barres qu'elle est censée situer, alors qu'elle est
+dessinée derrière elles.
+
+`ganttBlockFill(block)` calcule le remplissage en un seul endroit, et les deux
+diagrammes l'appellent.
+
+## Alignement des titres de bloc
+
+Le titre d'un bloc est **centré sur sa bande par `translateX(-50%)`**, donc par
+le navigateur, donc exactement. Le centrage se calculait auparavant en pixels, à
+partir d'une largeur d'étiquette mesurée une seule fois — avant le chargement de
+la police, quand la capsule est encore plus étroite qu'elle ne le sera. Rien ne
+provoquant de second rendu à l'arrivée de la police, la valeur restait périmée et
+l'étiquette gardait son décalage.
+
+La largeur mesurée ne sert donc plus qu'à répartir les capsules en lignes
+lorsqu'elles se recouvriraient, et à retenir dans la piste celles qui en
+sortiraient — deux usages qu'une estimation suffit à traiter.
+
+La **largeur de la piste**, elle, se mesurait sur la bande des repères, qui
+n'existe que si le widget porte des jalons de configuration ou des annotations.
+Sans eux, la mesure ne tombait jamais et tout retombait sur un repli de 420 px :
+les titres se centraient sur une piste imaginaire, et les étiquettes de risque et
+d'écart avec eux. Elle se prend désormais sur la **première piste présente** —
+titres de bloc, repères, ou ligne —, toutes trois de géométrie identique.
 
 ## Méta blocs temporels — Réglages
 

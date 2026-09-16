@@ -241,6 +241,22 @@ const seen = await page.evaluate(() => {
         };
       });
     })(),
+    /* Alignement des titres de bloc dans un widget SANS bande de repères. La
+       largeur de la piste se mesurait sur cette bande-là : sans elle, la mesure
+       ne tombait jamais et les titres se centraient sur une piste imaginaire de
+       420 px, loin de leur bande (retour de test). Le second Mini-Gantt n'a
+       aucune annotation propre — donc aucune bande de repères — et porte
+       pourtant deux méta blocs : c'est exactement le cas qui échouait. */
+    secondBlockAlign: (() => {
+      const host = document.querySelector("#harness-second-minigantt");
+      const centre = (el) => { const b = el.getBoundingClientRect(); return b.x + b.width / 2; };
+      return [...host.querySelectorAll(".lp-widget-minigantt-phase[data-block-id]")].map((chip) => {
+        const band = host.querySelector(`.lp-widget-minigantt-tblock[data-block-id="${chip.getAttribute("data-block-id")}"]`);
+        if (!band) return null;
+        return { t: chip.textContent.trim(), gap: Math.round(Math.abs(centre(chip) - centre(band))) };
+      }).filter(Boolean);
+    })(),
+    secondStrip: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-strip-track").length,
     miniBlockAlign: (() => {
       const host = document.querySelector("#harness-first-minigantt");
       const centre = (el) => { const b = el.getBoundingClientRect(); return b.x + b.width / 2; };
@@ -1048,6 +1064,13 @@ seen.miniFields.forEach((f, i) => {
 
 // L'étiquette d'un bloc temporel doit être CENTRÉE sur sa bande : une largeur
 // estimée trop généreuse la décalait visiblement vers la gauche.
+// Sans bande de repères, la largeur de la piste doit quand même être mesurée.
+expect(seen.secondStrip === 0, `Second Mini-Gantt : il porte une bande de repères (${seen.secondStrip}) — le cas du titre désaligné ne serait plus reproduit`);
+expect(seen.secondBlockAlign.length > 0, "Second Mini-Gantt : aucune étiquette de bloc appariée à sa bande");
+seen.secondBlockAlign.forEach((b) => {
+  expect(b.gap <= 3, `Second Mini-Gantt : l'étiquette « ${b.t} » est décalée de ${b.gap} px par rapport à sa bande — la piste n'est pas mesurée quand le widget n'a pas de bande de repères`);
+});
+
 expect(seen.miniBlockAlign.length > 0, "Mini-Gantt : aucune étiquette de bloc appariée à sa bande");
 seen.miniBlockAlign.forEach((b) => {
   expect(b.gap <= 3, `Mini-Gantt : l'étiquette « ${b.t} » est décalée de ${b.gap} px par rapport à sa bande`);

@@ -1238,7 +1238,7 @@
                 style={{
                   left: shape.x0,
                   width: shape.width,
-                  background: "color-mix(in srgb, " + shape.block.color + (shape.block.kind === "decision" ? " 7%" : " 12%") + ", transparent)",
+                  background: ganttBlockFill(shape.block),
                   borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
                   borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
                 }}
@@ -5168,7 +5168,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // pourcentage de la piste donnait des collisions dès que le widget était
   // étroit, la même étiquette n'occupant pas la même fraction d'une piste de
   // 270 px et d'une piste de 900 px.
-  const [stripWidth, setStripWidth] = useState(0);
+  const [trackWidth, setTrackWidth] = useState(0);
   const measureRows = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -5187,10 +5187,24 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         && nextKeys.every((k) => prev[k] && prev[k].top === next[k].top && prev[k].height === next[k].height);
       return same ? prev : next;
     });
-    const strip = stripTrackRef.current;
-    if (strip) {
-      const width = Math.round(strip.getBoundingClientRect().width);
-      setStripWidth((prev) => (prev === width ? prev : width));
+    /* Largeur de la PISTE. Elle se mesurait sur la bande des repères — qui
+       n'existe que si le widget porte des jalons de configuration ou des
+       annotations. Sans eux, la mesure ne tombait jamais et tout le monde
+       retombait sur le repli de 420 px : les étiquettes de bloc temporel se
+       centraient alors sur une piste imaginaire, loin de leur bande (retour de
+       test), et les étiquettes de risque et d'écart avec elles.
+
+       On prend donc la PREMIÈRE piste présente dans le widget, quelle qu'elle
+       soit : celle des titres de bloc, celle des repères, ou celle d'une ligne.
+       Toutes trois partagent exactement la même géométrie — gouttière de 26 %,
+       même gap, même colonne de champs — et il y en a toujours au moins une dès
+       qu'il y a quelque chose à aligner. */
+    const track = root.querySelector(
+      ".lp-widget-minigantt-phases-track, .lp-widget-minigantt-strip-track, .lp-widget-minigantt-track"
+    );
+    if (track) {
+      const width = Math.round(track.getBoundingClientRect().width);
+      setTrackWidth((prev) => (prev === width ? prev : width));
     }
   }, [visibleRows]);
   useEffect(() => {
@@ -5321,27 +5335,36 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     // déborde de part et d'autre d'une bande étroite, et deux blocs pourtant
     // disjoints dans le temps verraient leurs titres se recouvrir. Le calcul se
     // fait donc en pixels, sur la largeur réellement mesurée de la piste.
-    const trackPx = stripWidth || 420;
+    const trackPx = trackWidth || 420;
     const laneEnds = [];
     shapes
       .map((shape) => {
         const leftPx = (shape.leftPct / 100) * trackPx;
         const widthPx = (shape.widthPct / 100) * trackPx;
-        // L'étiquette a SA propre largeur : la capsule épouse le titre au lieu
-        // d'épouser la bande. Une bande de trois jours ne doit pas produire une
-        // capsule de trois jours de large dont le texte déborde de part et
-        // d'autre de sa propre bordure.
-        // Largeur MESURÉE dès qu'elle est connue. L'estimation ne sert qu'au
-        // premier rendu : `--font-mono` retombe sur Inter, les caractères n'ont
-        // pas tous la même largeur, et centrer sur une estimation trop
-        // généreuse décalait l'étiquette par rapport à sa bande.
+        /* L'étiquette a SA propre largeur : la capsule épouse le titre au lieu
+           d'épouser la bande. Une bande de trois jours ne doit pas produire une
+           capsule de trois jours de large dont le texte déborde de part et
+           d'autre de sa propre bordure.
+
+           Le CENTRAGE, lui, ne passe plus par cette largeur : c'est
+           `translateX(-50%)` qui centre, donc le navigateur, donc exactement.
+           Le calculer en pixels revenait à dépendre d'une largeur mesurée UNE
+           FOIS — avant le chargement de la police, quand la capsule est encore
+           plus étroite qu'elle ne le sera. Rien ne provoquant de second rendu
+           quand la police arrive, la valeur restait périmée et l'étiquette
+           gardait son décalage (retour de test).
+
+           La largeur ne sert donc plus qu'à deux choses qu'une estimation suffit
+           à traiter : répartir les capsules en lignes pour qu'elles ne se
+           recouvrent pas, et retenir celles qui sortiraient de la piste. */
         const measured = phaseLabelWidths[shape.block.id];
         const labelPx = Math.min(trackPx, measured || (20 + String(shape.block.title || "").length * 8.6));
         const centerPx = leftPx + widthPx / 2;
-        // Recentrée sur la bande, puis ramenée dans la piste : une capsule ne
-        // sort jamais du diagramme, même pour un bloc collé au bord.
-        const labelLeftPx = Math.max(0, Math.min(trackPx - labelPx, centerPx - labelPx / 2));
-        shape.labelLeftPct = trackPx > 0 ? (labelLeftPx / trackPx) * 100 : 0;
+        // Ramenée dans la piste : une capsule ne sort jamais du diagramme, même
+        // pour un bloc collé au bord.
+        const clampedCenterPx = Math.max(labelPx / 2, Math.min(trackPx - labelPx / 2, centerPx));
+        const labelLeftPx = clampedCenterPx - labelPx / 2;
+        shape.labelCenterPct = trackPx > 0 ? (clampedCenterPx / trackPx) * 100 : 0;
         return {
           shape,
           fromPx: Math.min(leftPx, labelLeftPx),
@@ -5356,7 +5379,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         item.shape.lane = lane;
       });
     return shapes;
-  }, [temporalBlocks, minIdx, maxIdx, span, stripWidth, phaseLabelWidths]);
+  }, [temporalBlocks, minIdx, maxIdx, span, trackWidth, phaseLabelWidths]);
 
   // Chemin critique : même calcul que la vue Planning Projets et le widget
   // Chemin critique (computeCriticalIds), jamais une seconde heuristique.
@@ -5434,7 +5457,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     items.sort((a, b) => a.idx - b.idx);
     // Largeur estimée en pixels : le losange, la gouttière, puis le texte à
     // ~5,6 px par caractère pour la graisse utilisée.
-    const trackPx = stripWidth || 420;
+    const trackPx = trackWidth || 420;
     const laneEnds = [];
     items.forEach((item) => {
       const leftPx = ((item.idx - minIdx) / span) * trackPx;
@@ -5446,7 +5469,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       item.leftPct = ((item.idx - minIdx) / span) * 100;
     });
     return items;
-  }, [configMilestones, configNotes, riskSegments, projTasks, milestoneTasks, minIdx, maxIdx, span, stripWidth]);
+  }, [configMilestones, configNotes, riskSegments, projTasks, milestoneTasks, minIdx, maxIdx, span, trackWidth]);
 
   const stripLaneCount = stripShapes.length ? Math.max(...stripShapes.map((s) => s.lane)) + 1 : 0;
 
@@ -5690,8 +5713,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // pour tout le widget : deux étiquettes d'une même tâche ne se recouvrent
   // jamais, quel que soit l'empilement de leurs couloirs.
   const riskLabelLayout = useMemo(
-    () => miniGanttRiskLabelLayout(riskSegments, { trackPx: stripWidth || 420, minIdx, maxIdx, span }),
-    [riskSegments, stripWidth, minIdx, maxIdx, span]
+    () => miniGanttRiskLabelLayout(riskSegments, { trackPx: trackWidth || 420, minIdx, maxIdx, span }),
+    [riskSegments, trackWidth, minIdx, maxIdx, span]
   );
 
   // Couloirs d'incertitude d'une ligne : rendus dans sa piste, après la barre,
@@ -5713,7 +5736,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // c'est elle qui décide si un libellé chiffré tient, en pixels et non en
   // pourcentage — le même « +8 j » n'occupe pas la même fraction d'une piste de
   // 270 px et d'une piste de 900 px.
-  const comparisonTrackPx = stripWidth || 420;
+  const comparisonTrackPx = trackWidth || 420;
   const comparisonTodayPct = showToday ? ((todayIdx - minIdx) / span) * 100 : null;
 
   const RowRisks = ({ taskId }) => {
@@ -6154,7 +6177,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             data-block-id={shape.block.id}
             ref={(el) => { if (el) phaseLabelNodes.current[shape.block.id] = el; else delete phaseLabelNodes.current[shape.block.id]; }}
             style={{
-              left: `${shape.labelLeftPct}%`,
+              left: `${shape.labelCenterPct}%`,
+              transform: "translateX(-50%)",
               maxWidth: "100%",
               top: shape.lane * MINIGANTT_PHASE_LANE_H,
               color: shape.block.color,
@@ -6223,7 +6247,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           style={{
             left: `${shape.leftPct}%`,
             width: `${shape.widthPct}%`,
-            background: "color-mix(in srgb, " + shape.block.color + (shape.block.kind === "decision" ? " 7%" : " 13%") + ", transparent)",
+            background: ganttBlockFill(shape.block),
             borderLeft: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
             borderRight: "1.5px " + shape.block.borderStyle + " " + shape.block.color,
           }}

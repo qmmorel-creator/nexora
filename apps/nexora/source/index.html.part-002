@@ -1318,6 +1318,7 @@ function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlo
                     <label>Couleur</label>
                     <ColorPicker value={block.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patch(block.id, { color })} />
                   </div>
+                  <GanttBlockOpacityRow block={block} onChange={(opacity) => patch(block.id, { opacity })} />
                 </div>
               )}
             </div>
@@ -3237,6 +3238,37 @@ function normalizeGanttPadding(value) {
 // Migration non destructive : une configuration Gantt sans annotations donne
 // simplement des listes vides, et une entrée illisible est ignorée plutôt que
 // de casser le rendu de tout le diagramme.
+/* Opacité du remplissage d'un bloc temporel, en POURCENT.
+
+   Elle était figée dans le rendu — 13 % pour une phase, 7 % pour une fenêtre de
+   décision — et les deux diagrammes la recopiaient chacun de leur côté, à un
+   point près. Elle devient un réglage du bloc, avec ces mêmes valeurs par
+   défaut : un bloc enregistré avant ce changement ne bouge pas d'un pixel.
+
+   Le plafond de 60 % n'est pas arbitraire : au-delà, la bande passe devant les
+   barres qu'elle est censée situer, alors qu'elle est dessinée DERRIÈRE elles. */
+const GANTT_BLOCK_OPACITY_MAX = 60;
+const GANTT_BLOCK_DEFAULT_OPACITY = 13;
+const GANTT_DECISION_DEFAULT_OPACITY = 7;
+
+function normalizeGanttBlockOpacity(value, kind) {
+  const parDefaut = normalizeGanttBlockKind(kind) === "decision"
+    ? GANTT_DECISION_DEFAULT_OPACITY
+    : GANTT_BLOCK_DEFAULT_OPACITY;
+  if (value === null || value === undefined || value === "") return parDefaut;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return parDefaut;
+  return Math.min(GANTT_BLOCK_OPACITY_MAX, Math.max(0, n));
+}
+
+// Le remplissage tel que les deux diagrammes le posent, à partir de l'opacité
+// du bloc. Un seul endroit : ils le recopiaient chacun de leur côté.
+function ganttBlockFill(block) {
+  const b = block && typeof block === "object" ? block : {};
+  const color = typeof b.color === "string" && b.color ? b.color : GANTT_BLOCK_DEFAULT_COLOR;
+  return `color-mix(in srgb, ${color} ${normalizeGanttBlockOpacity(b.opacity, b.kind)}%, transparent)`;
+}
+
 function normalizeTemporalBlocks(list) {
   if (!Array.isArray(list)) return [];
   return list
@@ -3251,6 +3283,7 @@ function normalizeTemporalBlocks(list) {
         ? b.color
         : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
       borderStyle: normalizeGanttBorderStyle(b.borderStyle),
+      opacity: normalizeGanttBlockOpacity(b.opacity, b.kind),
     }));
 }
 
@@ -3675,6 +3708,7 @@ function normalizeMetaTemporalBlocks(list) {
         ? b.color
         : (normalizeGanttBlockKind(b.kind) === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
       borderStyle: normalizeGanttBorderStyle(b.borderStyle),
+      opacity: normalizeGanttBlockOpacity(b.opacity, b.kind),
       // Absent = TOUS les tableaux de bord, y compris ceux créés plus tard.
       // Décocher un tableau matérialise la liste.
       dashboardIds: Array.isArray(b.dashboardIds) ? b.dashboardIds.filter((id) => typeof id === "string" && id) : null,
@@ -3707,6 +3741,7 @@ function normalizeTaskMetaBlock(meta) {
       ? meta.color
       : (kind === "decision" ? GANTT_DECISION_DEFAULT_COLOR : GANTT_BLOCK_DEFAULT_COLOR),
     borderStyle: normalizeGanttBorderStyle(meta.borderStyle),
+    opacity: normalizeGanttBlockOpacity(meta.opacity, kind),
     // Même convention que les méta blocs des Réglages : absent = tous les
     // tableaux de bord, y compris ceux créés plus tard.
     dashboardIds: Array.isArray(meta.dashboardIds) ? meta.dashboardIds.filter((id) => typeof id === "string" && id) : null,
@@ -3730,6 +3765,7 @@ function metaBlocksFromTasks(tasks) {
       kind: meta.kind,
       color: meta.color,
       borderStyle: meta.borderStyle,
+      opacity: meta.opacity,
       dashboardIds: meta.dashboardIds,
     };
     if (!validateTemporalBlock(candidate).ok) return;
@@ -6162,6 +6198,45 @@ function GanttAnnotationBorderRow({ value, onChange }) {
   );
 }
 
+/* Transparence du remplissage d'un bloc temporel. Partagée par les TROIS
+   éditeurs de bloc — annotations d'un widget, méta blocs des Réglages, méta
+   bloc porté par une tâche calendrier — plutôt que recopiée dans chacun.
+   L'aperçu montre le résultat exact, contour compris : un pourcentage seul ne
+   dit rien de ce que ça donne derrière des barres. */
+function GanttBlockOpacityRow({ block, onChange }) {
+  const opacite = normalizeGanttBlockOpacity(block?.opacity, block?.kind);
+  return (
+    <div className="lp-field">
+      <label>Transparence du remplissage — {opacite} %</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          type="range" min="0" max={GANTT_BLOCK_OPACITY_MAX} value={opacite}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ flex: "1 1 auto", minWidth: 0 }}
+          aria-label="Opacité du remplissage du bloc temporel, en pourcent"
+        />
+        <input
+          type="number" min="0" max={GANTT_BLOCK_OPACITY_MAX} value={opacite}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ width: 64, flex: "0 0 auto" }}
+        />
+        <span
+          aria-hidden="true"
+          title="Aperçu du remplissage"
+          style={{
+            flex: "0 0 auto", width: 34, height: 20, borderRadius: 4, boxSizing: "border-box",
+            background: ganttBlockFill({ ...block, opacity: opacite }),
+            border: `1.5px ${normalizeGanttBorderStyle(block?.borderStyle)} ${block?.color || GANTT_BLOCK_DEFAULT_COLOR}`,
+          }}
+        />
+      </div>
+      <p className="lp-gantt-annot-hint">
+        0 % laisse la bande vide, bornée par ses deux traits. Au-delà de {GANTT_BLOCK_OPACITY_MAX} %, elle passerait devant les barres qu'elle sert à situer.
+      </p>
+    </div>
+  );
+}
+
 // Éditeur unique des annotations du Gantt : les deux sections repliables sont
 // rendues telles quelles dans les paramètres du widget, et dans la modale
 // ouverte depuis la barre d'actions du Gantt. Aucune duplication de formulaire.
@@ -6294,6 +6369,7 @@ function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defa
                       <label>Couleur</label>
                       <ColorPicker value={b.color} onChange={(color) => patchBlock(b.id, { color })} />
                     </div>
+                    <GanttBlockOpacityRow block={b} onChange={(opacity) => patchBlock(b.id, { opacity })} />
                     <GanttAnnotationBorderRow value={b.borderStyle} onChange={(borderStyle) => patchBlock(b.id, { borderStyle })} />
                   </div>
                 )}
@@ -7640,6 +7716,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 <label>Couleur</label>
                 <ColorPicker value={metaBlock.color || GANTT_BLOCK_DEFAULT_COLOR} onChange={(color) => patchMetaBlock({ color })} />
               </div>
+              <GanttBlockOpacityRow block={metaBlock} onChange={(opacity) => patchMetaBlock({ opacity })} />
             </div>
           )}
         </div>
