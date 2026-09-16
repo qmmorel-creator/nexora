@@ -64,6 +64,15 @@ jalon) et deux n'en portent pas, dont un jalon :
   prolongement, et la poignée d'avancement semblait avoir de la course qu'elle
   n'avait pas.
 
+Ordre des lignes et cadrage du Mini-Gantt :
+
+- un jalon placé **entre deux barres** apparaît bien entre elles, et non en bas
+  du widget : barres et jalons sont triés ensemble ;
+- un widget réglé sur « Titre » rend un ordre alphabétique, et un autre widget
+  garde le sien — le tri est propre à chaque widget ;
+- en « Fenêtre glissante », l'axe suit le calendrier et les tâches hors fenêtre
+  ne sont plus dessinées du tout.
+
 Poignée d'avancement du Mini-Gantt :
 
 - une tâche à 100 % remplace son rond blanc par une pastille verte à coche,

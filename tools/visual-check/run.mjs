@@ -147,6 +147,13 @@ const seen = await page.evaluate(() => {
       w: Math.round(el.getBoundingClientRect().width),
       coches: el.querySelectorAll("svg").length,
     })),
+    // Ordre des lignes : barres et jalons doivent se mêler, pas se suivre.
+    ordreTitres: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-label-title")].map((el) => el.textContent.trim()),
+    ordreParTitre: [...document.querySelectorAll("#harness-nofields-minigantt .lp-widget-minigantt-label-title")].map((el) => el.textContent.trim()),
+    // Cadrage glissant : l'axe suit le calendrier, les tâches hors fenêtre sortent.
+    rollingRows: document.querySelectorAll("#harness-rolling-minigantt .lp-widget-minigantt-row").length,
+    rollingAxis: [...document.querySelectorAll("#harness-rolling-minigantt .lp-widget-minigantt-axis-tick-label")].map((el) => el.textContent.trim()),
+    standardRowCount: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-row").length,
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
@@ -1089,6 +1096,27 @@ expect(seen.doneHandles.every((h) => h.vert), `Mini-Gantt : une pastille de vali
 expect(seen.plainHandles.length > 0, "Mini-Gantt : plus aucune poignée d'avancement ordinaire");
 expect(seen.plainHandles.every((h) => h.coches === 0), "Mini-Gantt : une tâche non terminée porte une coche de validation");
 expect(seen.doneHandles.every((h) => seen.plainHandles.every((p) => h.w > p.w)), `Mini-Gantt : la pastille de validation n'est pas plus grande que le rond ordinaire (${JSON.stringify(seen.doneHandles)} contre ${JSON.stringify(seen.plainHandles)})`);
+
+// --- Ordre des lignes ------------------------------------------------------
+// Le jeu d'essai place un jalon (« Ordre de service », 15/07) ENTRE deux barres.
+// Tant que les jalons étaient rendus après toutes les barres, il finissait en
+// bas du widget quel que soit le tri.
+expect(seen.ordreTitres[0] === "Documents FOR-0129" && seen.ordreTitres[1] === "Ordre de service",
+  `Mini-Gantt : l'ordre par date de début ne mêle pas barres et jalons (${seen.ordreTitres.slice(0, 4).join(" | ")})`);
+expect(seen.ordreTitres[seen.ordreTitres.length - 1] === "Deadline MAJ Octopus complète",
+  `Mini-Gantt : la dernière ligne n'est pas la plus tardive (${seen.ordreTitres.slice(-2).join(" | ")})`);
+// Tri par titre sur un autre widget : le réglage est bien propre à chacun.
+expect(seen.ordreParTitre.length > 1 && seen.ordreParTitre.join("|") === [...seen.ordreParTitre].sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base", numeric: true })).join("|"),
+  `Mini-Gantt : le tri par titre n'est pas alphabétique (${seen.ordreParTitre.join(" | ")})`);
+expect(seen.ordreParTitre.join("|") !== seen.ordreTitres.join("|"),
+  "Mini-Gantt : deux widgets aux tris différents rendent le même ordre — le réglage n'est pas propre au widget");
+
+// --- Cadrage « Fenêtre glissante » -----------------------------------------
+// Un mois avant, un mois après : le jeu d'essai s'étend de juillet à septembre,
+// donc des tâches sortent forcément de la fenêtre.
+expect(seen.rollingRows > 0, "Cadrage glissant : plus aucune ligne dessinée");
+expect(seen.rollingRows < seen.standardRowCount,
+  `Cadrage glissant : ${seen.rollingRows} ligne(s) contre ${seen.standardRowCount} en automatique — les tâches hors fenêtre devraient sortir`);
 
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.

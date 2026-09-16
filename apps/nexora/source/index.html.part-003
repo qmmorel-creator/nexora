@@ -4727,6 +4727,20 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       .slice(0, 12)
       .sort((a, b) => a.end.localeCompare(b.end));
   }, [tasks, showMilestones]);
+  /* Ordre d'affichage : UNE seule liste triée, barres et jalons confondus.
+
+     Auparavant les jalons étaient tous rendus après toutes les barres : un
+     jalon de 2022 se retrouvait sous une tâche de 2026, quel que soit le tri
+     (retour de test). Le partage barres/jalons ne sert plus qu'à deux choses —
+     choisir le composant de rendu, et appliquer à chacun son propre plafond
+     d'affichage. */
+  const sortKey = normalizeMiniGanttSort(widget.miniGanttSort);
+  const sortDir = normalizeMiniGanttSortDir(widget.miniGanttSortDir);
+  const orderedTasks = useMemo(
+    () => miniGanttSortTasks([...projTasks, ...milestoneTasks], sortKey, sortDir),
+    [projTasks, milestoneTasks, sortKey, sortDir]
+  );
+
   // IMPORTANT : tous les Hooks doivent être appelés à chaque rendu, dans le
   // même ordre — le early-return "aucune tâche" est donc repoussé après TOUS
   // les Hooks (voir plus bas), avec des valeurs de repli sûres ici plutôt que
@@ -4767,12 +4781,27 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const filterMinIdx =
     parsedPastDays == null ? naturalMinIdx : todayIdx - parsedPastDays;
 
-  // La ligne "aujourd'hui" doit toujours rester visible dans l'axe, même si
-  // toutes les tâches affichées sont entièrement passées ou entièrement futures :
-  // on élargit donc l'étendue automatique pour englober todayIdx.
-  const autoMinIdx = Math.min(Math.max(naturalMinIdx, filterMinIdx), todayIdx);
-  const autoMaxIdx = Math.max(Math.max(autoMinIdx + 1, naturalMaxIdx), todayIdx);
+  /* Cadrage temporel du widget. Trois modes, un seul réglage :
+       auto    — l'étendue des tâches retenues ;
+       rolling — une fenêtre glissante autour d'aujourd'hui, en mois ;
+       fixed   — deux dates arrêtées à la main.
+     Absent, c'est `auto` : un widget d'avant ce réglage ne bouge pas. */
+  const rangeCfg = normalizeMiniGanttRange(widget.miniGanttRange);
+
+  // La ligne "aujourd'hui" reste visible dans l'axe même si toutes les tâches
+  // affichées sont entièrement passées ou entièrement futures — sauf si le
+  // cadrage automatique demande explicitement le contraire.
+  const filteredMinIdx = Math.max(naturalMinIdx, filterMinIdx);
+  const autoWindow = miniGanttRangeWindow(rangeCfg, {
+    minIdx: filteredMinIdx, maxIdx: naturalMaxIdx, todayIdx, todayIso: today,
+  }) || { minIdx: filteredMinIdx, maxIdx: Math.max(filteredMinIdx + 1, naturalMaxIdx) };
+  const autoMinIdx = autoWindow.minIdx;
+  const autoMaxIdx = Math.max(autoMinIdx + 1, autoWindow.maxIdx);
   const autoSpan = Math.max(1, autoMaxIdx - autoMinIdx);
+  /* Bornes utiles pour le zoom manuel : tout ce qu'il y a à montrer, dates de
+     référence et repère « Aujourd'hui » compris. Au-delà, la piste est vide. */
+  const usefulMinIdx = Math.min(filteredMinIdx, autoMinIdx, todayIdx);
+  const usefulMaxIdx = Math.max(naturalMaxIdx, autoMaxIdx, todayIdx);
 
   // Zoom manuel persistant du widget :
   // null/undefined = automatique ; -2..+2 = niveaux relatifs à l'étendue auto.
@@ -4787,20 +4816,30 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? todayIdx
     : Math.round((autoMinIdx + autoMaxIdx) / 2);
 
-  // Fenêtre explicite héritée : plus rien n'en pose depuis le retrait du bouton
-  // de cadrage sur la sélection (#48), mais un widget enregistré avant garde la
-  // sienne. Elle prime sur le zoom automatique comme sur les niveaux manuels, et
-  // les boutons − / Auto / + la relâchent.
+  /* Fenêtre à dates fixes. C'est le cadrage « Dates fixes » des paramètres —
+     et c'est aussi la fenêtre qu'un widget enregistré avant le retrait du
+     bouton de cadrage (#48) a pu garder. Elle prime sur le zoom automatique
+     comme sur les niveaux manuels, et les boutons − / Auto / + la relâchent. */
   const pinnedWindow = widget.miniGanttWindow
     && isGanttIsoDate(widget.miniGanttWindow.start)
     && isGanttIsoDate(widget.miniGanttWindow.end)
     ? { minIdx: dayIndex(widget.miniGanttWindow.start), maxIdx: dayIndex(widget.miniGanttWindow.end) }
     : null;
 
-  const minIdx = pinnedWindow ? pinnedWindow.minIdx : (zoomIsAuto ? autoMinIdx : autoCenter - Math.floor(manualSpan / 2));
+  /* Le zoom manuel était CENTRÉ SUR AUJOURD'HUI, sans borne : à un niveau
+     large, il réservait la moitié de la piste à des années vides pendant qu'il
+     coupait les tâches les plus anciennes (retour de test). La fenêtre est
+     désormais ramenée dans les bornes utiles — on la fait GLISSER, pas rétrécir,
+     pour ne pas trahir le zoom demandé. */
+  const manualWindow = miniGanttClampWindow(
+    { minIdx: autoCenter - Math.floor(manualSpan / 2), maxIdx: autoCenter - Math.floor(manualSpan / 2) + manualSpan },
+    { minIdx: usefulMinIdx, maxIdx: usefulMaxIdx }
+  );
+
+  const minIdx = pinnedWindow ? pinnedWindow.minIdx : (zoomIsAuto ? autoMinIdx : manualWindow.minIdx);
   const maxIdx = pinnedWindow
     ? Math.max(pinnedWindow.minIdx + 1, pinnedWindow.maxIdx)
-    : (zoomIsAuto ? autoMaxIdx : Math.max(minIdx + 1, minIdx + manualSpan));
+    : (zoomIsAuto ? autoMaxIdx : Math.max(minIdx + 1, manualWindow.maxIdx));
   const span = Math.max(1, maxIdx - minIdx);
 
   const setZoomLevel = (next) => {
@@ -5042,9 +5081,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // rendu, plutôt que recalculé en deux endroits.
   const rowGroups = useMemo(() => (
     !groupBy || groupBy === "none"
-      ? [{ key: "all", label: "", color: null, tasks: [...projTasks, ...milestoneTasks] }]
-      : groupTasks([...projTasks, ...milestoneTasks], groupBy, ctx).filter((g) => g.tasks.length > 0)
-  ), [projTasks, milestoneTasks, groupBy, ctx]);
+      ? [{ key: "all", label: "", color: null, tasks: orderedTasks }]
+      // Le regroupement redistribue les lignes : chaque groupe est retrié, sinon
+      // l'ordre choisi ne vaudrait qu'à l'intérieur du premier d'entre eux.
+      : groupTasks(orderedTasks, groupBy, ctx)
+          .filter((g) => g.tasks.length > 0)
+          .map((g) => ({ ...g, tasks: miniGanttSortTasks(g.tasks, sortKey, sortDir) }))
+  ), [orderedTasks, groupBy, ctx, sortKey, sortDir]);
 
   const visibleRows = useMemo(() => {
     const rows = [];
@@ -5679,6 +5722,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     // sa ligne. Aucune ligne ne grandit — tout est en position absolue dans une
     // piste en `overflow:visible`.
     const cmp = comparisonByTask.get(t.id) || null;
+    /* Une tâche entièrement HORS de la fenêtre affichée n'est pas dessinée. Un
+       cadrage glissant ou à dates fixes en exclut forcément, et les écraser
+       contre le bord donnait une barre de 2 % qui ne voulait rien dire. Les
+       jalons appliquaient déjà cette règle ; les barres la rejoignent. Une
+       référence encore dans la fenêtre suffit à garder la ligne : c'est elle
+       qu'on est venu comparer. */
+    const cmpInWindow = !!cmp && cmp.referenceEndIdx >= minIdx && cmp.referenceStartIdx <= maxIdx;
+    if ((rawEndIdx < minIdx || rawStartIdx > maxIdx) && !cmpInWindow) return null;
     const cmpBars = cmp ? miniGanttComparisonBars(cmp, { minIdx, maxIdx, span }) : null;
     const cmpHasRisks = risksByTask.has(t.id);
     const cmpLabelVisible = (zone) => miniGanttComparisonLabelVisible(zone, {
@@ -6123,8 +6174,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {stripHeader}
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
-          {projTasks.map(Row)}
-          {milestoneTasks.map(MilestoneRow)}
+          {orderedTasks.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))}
         </div>
         {annotationLayer}
         <Tooltip />
@@ -9338,6 +9388,19 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // Mode Comparaison : propriété absente = mode Standard. Cet interrupteur et
   // le sélecteur rapide de l'en-tête écrivent la MÊME propriété.
   const [miniGanttComparisonEnabled, setMiniGanttComparisonEnabled] = useState(miniGanttComparisonEnabledOn(widget));
+  // Ordre des lignes. Absent = « Date de début » croissant, l'ordre historique.
+  const [miniGanttSort, setMiniGanttSort] = useState(normalizeMiniGanttSort(widget?.miniGanttSort));
+  const [miniGanttSortDir, setMiniGanttSortDir] = useState(normalizeMiniGanttSortDir(widget?.miniGanttSortDir));
+  // Cadrage temporel. Absent = « Automatique », le cadrage historique.
+  const [miniGanttRange, setMiniGanttRange] = useState(() => normalizeMiniGanttRange(widget?.miniGanttRange));
+  const patchMiniGanttRange = (values) => setMiniGanttRange((prev) => ({ ...prev, ...values }));
+  const [miniGanttWindowStart, setMiniGanttWindowStart] = useState(widget?.miniGanttWindow?.start || "");
+  const [miniGanttWindowEnd, setMiniGanttWindowEnd] = useState(widget?.miniGanttWindow?.end || "");
+  const miniGanttWindowError = miniGanttRange.mode !== "fixed" ? ""
+    : !isGanttIsoDate(miniGanttWindowStart) ? "Renseigner une date de début valide."
+    : !isGanttIsoDate(miniGanttWindowEnd) ? "Renseigner une date de fin valide."
+    : miniGanttWindowEnd < miniGanttWindowStart ? "La date de fin doit être postérieure à la date de début."
+    : "";
   const [countdownMode, setCountdownMode] = useState(widget?.countdownMode || "date");
   const [countdownDate, setCountdownDate] = useState(widget?.countdownDate || "");
   const [countdownTaskId, setCountdownTaskId] = useState(widget?.countdownTaskId || "");
@@ -9495,7 +9558,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "riskMatrix") return !!riskMatrixProjectId;
     if (type === "budgetCompare") return budgetCompareProjectIds.length > 0;
     if (type === "list") return Number(limit) > 0;
-    if (type === "embedGantt" || type === "minigantt") return ganttAnnotationsValid;
+    // Un cadrage « Dates fixes » incomplet ou à l'envers n'a pas d'axe : la
+    // fiche le dit sous les champs et refuse l'enregistrement.
+    if (type === "minigantt") return ganttAnnotationsValid && !miniGanttWindowError;
+    if (type === "embedGantt") return ganttAnnotationsValid;
     return true;
   })();
 
@@ -9588,6 +9654,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "minigantt") {
       data.groupBy = listGroupBy; data.showMilestones = showMilestones; data.colorBy = colorBy; data.miniGanttFields = miniGanttFields; data.miniGanttFieldsLayout = miniGanttFieldsLayout;
       data.miniGanttComparisonEnabled = miniGanttComparisonEnabled;
+      data.miniGanttSort = miniGanttSort;
+      data.miniGanttSortDir = miniGanttSortDir;
+      data.miniGanttRange = normalizeMiniGanttRange(miniGanttRange);
+      /* Les dates fixes vivent dans `miniGanttWindow`, comme avant : le rendu
+         les lit déjà, et un widget qui en portait une ne change pas de forme.
+         Les autres cadrages la relâchent, sinon elle primerait sur eux. */
+      data.miniGanttWindow = miniGanttRange.mode === "fixed" && !miniGanttWindowError
+        ? { start: miniGanttWindowStart, end: miniGanttWindowEnd }
+        : null;
       if (widget?.miniGanttZoomLevel != null) data.miniGanttZoomLevel = widget.miniGanttZoomLevel;
     }
     if (titleColor) data.titleColor = titleColor; else data.titleColor = null;
@@ -10562,6 +10637,77 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <button type="button" className={"lp-density-btn" + (miniGanttFieldsLayout === "aligned" ? " active" : "")} onClick={() => setMiniGanttFieldsLayout("aligned")}>Alignées à droite</button>
               <button type="button" className={"lp-density-btn" + (miniGanttFieldsLayout === "inline" ? " active" : "")} onClick={() => setMiniGanttFieldsLayout("inline")}>À la suite de la barre</button>
             </div>
+          </div>
+          <div className="lp-field" style={{ marginTop: 10 }}>
+            <label>Ordre des lignes</label>
+            <div className="lp-density-row">
+              {MINIGANTT_SORT_KEYS.map((k) => (
+                <button key={k} type="button" className={"lp-density-btn" + (miniGanttSort === k ? " active" : "")} onClick={() => setMiniGanttSort(k)}>
+                  {MINIGANTT_SORT_LABELS[k]}
+                </button>
+              ))}
+            </div>
+            <div className="lp-density-row" style={{ marginTop: 6 }}>
+              <button type="button" className={"lp-density-btn" + (miniGanttSortDir === "asc" ? " active" : "")} onClick={() => setMiniGanttSortDir("asc")}>Croissant</button>
+              <button type="button" className={"lp-density-btn" + (miniGanttSortDir === "desc" ? " active" : "")} onClick={() => setMiniGanttSortDir("desc")}>Décroissant</button>
+            </div>
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              À position égale dans le tri, les jalons passent devant les barres — quel que soit le sens.
+            </p>
+          </div>
+          <div className="lp-field" style={{ marginTop: 10 }}>
+            <label>Étendue temporelle</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (miniGanttRange.mode === "auto" ? " active" : "")} onClick={() => patchMiniGanttRange({ mode: "auto" })}>Automatique</button>
+              <button type="button" className={"lp-density-btn" + (miniGanttRange.mode === "rolling" ? " active" : "")} onClick={() => patchMiniGanttRange({ mode: "rolling" })}>Fenêtre glissante</button>
+              <button type="button" className={"lp-density-btn" + (miniGanttRange.mode === "fixed" ? " active" : "")} onClick={() => patchMiniGanttRange({ mode: "fixed" })}>Dates fixes</button>
+            </div>
+            {miniGanttRange.mode === "auto" && (
+              <>
+                <label className="lp-checkbox-line" style={{ marginTop: 8 }}>
+                  <input type="checkbox" checked={miniGanttRange.includeToday} onChange={(e) => patchMiniGanttRange({ includeToday: e.target.checked })} />
+                  {" "}Toujours inclure la ligne « Aujourd'hui »
+                </label>
+                <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+                  L'axe couvre exactement l'étendue des tâches affichées. Décoché, un widget entièrement passé ou entièrement futur se cadre sur ses tâches et perd son repère du jour.
+                </p>
+              </>
+            )}
+            {miniGanttRange.mode === "rolling" && (
+              <>
+                <div className="lp-row2" style={{ marginTop: 8 }}>
+                  <div className="lp-field">
+                    <label>Mois avant aujourd'hui</label>
+                    <input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={miniGanttRange.beforeMonths} onChange={(e) => patchMiniGanttRange({ beforeMonths: e.target.value })} />
+                  </div>
+                  <div className="lp-field">
+                    <label>Mois après aujourd'hui</label>
+                    <input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={miniGanttRange.afterMonths} onChange={(e) => patchMiniGanttRange({ afterMonths: e.target.value })} />
+                  </div>
+                </div>
+                <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+                  L'axe suit le calendrier : la fenêtre avance toute seule jour après jour. Une tâche hors fenêtre n'est pas dessinée.
+                </p>
+              </>
+            )}
+            {miniGanttRange.mode === "fixed" && (
+              <>
+                <div className="lp-row2" style={{ marginTop: 8 }}>
+                  <div className="lp-field">
+                    <label>Du</label>
+                    <input type="date" value={miniGanttWindowStart} onChange={(e) => setMiniGanttWindowStart(e.target.value)} />
+                  </div>
+                  <div className="lp-field">
+                    <label>Au</label>
+                    <input type="date" value={miniGanttWindowEnd} min={miniGanttWindowStart || undefined} onChange={(e) => setMiniGanttWindowEnd(e.target.value)} />
+                  </div>
+                </div>
+                {miniGanttWindowError && <p className="lp-gantt-annot-error">{miniGanttWindowError}</p>}
+                <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+                  L'axe ne bouge plus. Les boutons − / Auto / + du widget relâchent ce cadrage.
+                </p>
+              </>
+            )}
           </div>
           <div className="lp-field" style={{ marginTop: 10 }}>
             <label>Mode d'affichage</label>
