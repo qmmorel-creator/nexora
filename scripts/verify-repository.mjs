@@ -90,16 +90,19 @@ assert.doesNotMatch(builtSource, /todoistTaskId/);
 // par cette synchronisation gardent leur vraie date de complétion.
 assert.match(builtSource, /task\.todoistCompletedAt/);
 assert.doesNotMatch(builtSource, /TELEGRAM_BOT_TOKEN/);
-// Annotations du Gantt : le bloc de logique pure doit rester extractible par
-// les tests unitaires, et les annotations rester attachées à la configuration
-// du widget plutôt qu'aux tâches.
+// Mini Gantt unique : annotations et migration restent extractibles, sans
+// réintroduire un moteur classique en parallèle.
 assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:START ===/);
 assert.match(builtSource, /\/\/ === NEXORA:GANTT-ANNOTATIONS:END ===/);
-assert.match(builtSource, /ganttAnnotations: next/);
-assert.match(builtSource, /className="lp-gantt-tblock"/);
-assert.match(builtSource, /className="lp-gantt-frame"/);
 assert.match(builtSource, /className="lp-widget-minigantt-tblock"/);
 assert.match(builtSource, /className="lp-widget-minigantt-frame"/);
+assert.match(builtSource, /label: "MINI GANTT"/);
+assert.match(builtSource, /function MiniGanttView/);
+assert.match(builtSource, /NEXORA:MINIGANTT-MIGRATION:START/);
+assert.match(builtSource, /migrateLegacyMiniGanttWidget/);
+assert.doesNotMatch(builtSource, /function WidgetEmbedGantt/);
+assert.doesNotMatch(builtSource, /function GanttView/);
+assert.doesNotMatch(builtSource, /Gantt \(complet\)/);
 // Vue Métro : les mêmes annotations y sont dessinées, sur un plan de lignes.
 assert.match(builtSource, /className="lp-pm-tblock"/);
 assert.match(builtSource, /className="lp-pm-frame"/);
@@ -152,9 +155,6 @@ assert.match(builtSource, /lp-pm-risk is-/);
   //    pas de champ du tout — la criticité était donc impossible à renseigner.
   assert.match(builtSource, /field === "criticality"\) return CRITICALITIES/, "valeurs des filtres avancés non branchées");
   assert.match(builtSource, /field === "criticality"\) return task\.criticality/, "valeur lue pour évaluer une condition non branchée");
-  assert.match(builtSource, /GANTT_COL_OPTIONS = \[[^\]]*key: "criticality"/, "criticality absent des colonnes du Gantt");
-  assert.match(builtSource, /colKey === "criticality"/, "colonne de criticité déclarée mais sans rendu");
-  assert.match(builtSource, /BUBBLE_FIELD_OPTIONS = \[[^\]]*"criticality"/, "criticality absent des bulles du Gantt");
   // Le formulaire doit à la fois proposer le champ ET l'enregistrer : l'un sans
   // l'autre donne une case qui s'affiche et n'est jamais retenue.
   /* Le champ est passé d'un <select> natif au sélecteur à pastilles (#69) : ce
