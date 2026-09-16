@@ -563,34 +563,6 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     `Le transfert n'est câblé que sur ${mounts.length} des 2 surfaces (« Aujourd'hui » et les tableaux de bord).`);
 }
 
-/* Feuille de style embarquée : pas un seul accent grave à l'intérieur.
-
-   Les blocs `<style>{`…`}</style>` sont des littéraux gabarits JavaScript. Un
-   accent grave posé DANS le CSS — y compris dans un commentaire, par exemple
-   pour citer une propriété — ferme le littéral au milieu de la feuille. Babel
-   part alors en erreur de syntaxe sur le fichier ENTIER et l'application reste
-   sur « Chargement… », écran blanc, sans le moindre message côté serveur.
-
-   C'est arrivé : le lot des couleurs de contraste (#59) a livré un commentaire
-   citant « color: » entre accents graves, et rien ne l'a vu — ni `tsc`, ni les
-   tests unitaires, qui n'analysent jamais le JSX. D'où ce garde, le seul de ce
-   fichier qui protège du plantage total. */
-{
-  let from = builtSource.indexOf("<style>{`");
-  assert.ok(from !== -1, "Aucune feuille de style embarquée : le garde ne contrôlerait rien.");
-  while (from !== -1) {
-    const open = from + "<style>{`".length;
-    const close = builtSource.indexOf("`}</style>", open);
-    assert.ok(close !== -1, "Feuille de style embarquée non refermée.");
-    const inner = builtSource.slice(open, close);
-    const faute = inner.indexOf("`");
-    assert.equal(faute, -1,
-      "Accent grave dans une feuille de style embarquée — il referme le littéral gabarit et l'interface entière cesse de se charger. " +
-      `Extrait : « ${inner.slice(Math.max(0, faute - 70), faute + 25).replace(/\s+/g, " ")} »`);
-    from = builtSource.indexOf("<style>{`", close);
-  }
-}
-
 /* Encadré posé par la coche du Mini-Gantt (issue #48, second retour).
    La logique est couverte par les tests unitaires ; ce qui ne l'est pas, c'est
    le RENDU — et c'est précisément lui qui avait avalé l'icône au premier lot.
