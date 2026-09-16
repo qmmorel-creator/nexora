@@ -51,6 +51,9 @@ function AnnotationsHarness() {
     if (t.id === "t2") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-30", referenceEnd: "2026-08-08" } };   // avance au début et à la fin
     if (t.id === "t4") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-13", referenceEnd: "2026-08-20" } };   // conforme
     if (t.id === "t6") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-20", referenceEnd: "2026-08-10" } };   // décalage intégral
+    // Démarrée à l'heure, TERMINÉE PLUS TÔT : la seule avance visible est celle
+    // de la fin. C'est ce cas qui ne montrait rien de vert à l'écran.
+    if (t.id === "t5") return { ...t, comparison: { enabled: true, referenceStart: "2026-08-01", referenceEnd: "2026-09-02" } };
     if (t.id === "t3") return { ...t, comparison: { enabled: true, referenceEnd: "2026-09-10" } };                                 // jalon en retard
     // t7 : jalon SANS référence — il doit garder le rendu standard dans le
     // même widget, sans erreur et sans changer de hauteur.
