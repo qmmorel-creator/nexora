@@ -3977,6 +3977,64 @@ const parseTablerIconSpec = (icon) => {
 };
 const makeTablerIconSpec = (name, color) => `tabler:${name}${/^#[0-9a-fA-F]{6}$/.test(color || "") ? `|${color}` : ""}`;
 
+// === NEXORA:ICON-URL:START ===
+/* Icônes données par URL (issue #70).
+
+   Le défaut réel : la fiche d'icône ACCEPTE l'URL avec une expression
+   insensible à la casse, alors que le rendu la reconnaissait par
+   startsWith("https://"), sensible à la casse. Une URL collée en « HTTPS:// »,
+   ce que produisent certains presse-papiers et certains gestionnaires de liens,
+   était donc enregistrée sans broncher puis rendue comme du TEXTE par le menu
+   latéral. D'où des icônes qui marchent et d'autres non, sans motif apparent —
+   « intermittent ou dépendant du format ».
+
+   Les espaces autour comptent pour la même raison : un copier-coller depuis un
+   document en ramène très souvent, et une URL précédée d'une espace ne
+   commençait par rien de reconnu.
+
+   Rend null quand ce n'est pas une URL d'image : c'est ce qui laisse les
+   spécifications tabler:/iconify: et les emojis suivre leur propre chemin. */
+function normalizeIconUrl(icon) {
+  if (typeof icon !== "string") return null;
+  const trimmed = icon.trim();
+  if (!trimmed) return null;
+  // data: restreint aux IMAGES : c'est une icône, et un data:text/html n'aurait
+  // ici aucun sens qu'un repli ne traite déjà mieux.
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  /* Protocole implicite : « //cdn.exemple/logo.png » est une URL parfaitement
+     valide en HTML, et le menu latéral l'affichait en toutes lettres. */
+  if (trimmed.startsWith("//")) return "https:" + trimmed;
+  return null;
+}
+// === NEXORA:ICON-URL:END ===
+
+/* Une icône d'URL, avec repli quand le chargement échoue VRAIMENT.
+
+   L'échec est mémorisé PAR URL, et non par un simple booléen : changer l'URL
+   d'une entrée doit retenter aussitôt, pas rester bloqué sur l'échec de la
+   précédente. L'état vit dans ce composant, donc une icône cassée n'affecte
+   aucune autre entrée du menu. Et rien n'est jamais réécrit dans les données :
+   l'URL enregistrée survit à l'échec et sera retentée au prochain chargement. */
+function IconUrlImage({ src, size, style }) {
+  const [failedSrc, setFailedSrc] = useState(null);
+  if (failedSrc === src) {
+    /* Même encombrement que l'image attendue : le menu ne bouge pas d'un pixel.
+       Et le repli se distingue d'une icône ordinaire — savoir que l'URL est en
+       cause est plus utile qu'un trou. */
+    return <ImageIcon size={size} style={{ flex: "0 0 auto", color: "var(--text-muted)", ...style }} aria-hidden="true" />;
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      onError={() => setFailedSrc(src)}
+      referrerPolicy="no-referrer"
+      style={{ width: size, height: size, borderRadius: 4, objectFit: "cover", ...style }}
+    />
+  );
+}
+
 // Résout un identifiant Tabler kebab-case (ex. alert-triangle)
 // vers le composant React exporté par @tabler/icons-react (IconAlertTriangle).
 // Cette fonction est volontairement définie avant IconGlyph : elle est appelée

@@ -48,7 +48,16 @@ const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 // Babel signale en console qu'il ne stylise pas un script de plus de 500 Ko :
 // c'est attendu pour un fichier de 2,5 Mo, et sans effet sur le rendu.
-page.on("console", (m) => { if (m.type() === "error" && !m.text().includes("[BABEL]")) pageErrors.push("console: " + m.text()); });
+page.on("console", (m) => {
+  if (m.type() !== "error") return;
+  if (m.text().includes("[BABEL]")) return;
+  /* Le banc monte EXPRÈS une icône dont le chargement échoue (issue #70) :
+     c'est le seul moyen d'éprouver le repli, et cet échec EST le sujet du
+     contrôle, pas un défaut. Reconnu à son adresse, et à elle seule, pour ne
+     rien relâcher d'autre. */
+  if ((m.location()?.url || "").includes("icone-volontairement-cassee")) return;
+  pageErrors.push("console: " + m.text());
+});
 
 // Le banc est HORS LIGNE par construction. Certaines données de démonstration
 // portent une icône distante (une URL d'image dans un type de tâche) : la
@@ -264,6 +273,34 @@ try {
   drag.gap = Math.abs(drag.after - targetX);
 } catch (error) {
   drag.error = String(error).split("\n")[0];
+}
+
+/* Icônes par URL (issue #70). La reconnaissance est couverte par un test
+   unitaire ; ce qui ne l'est pas, c'est ce que le navigateur AFFICHE — une URL
+   non reconnue retombait sur la branche « emoji » et s'écrivait en toutes
+   lettres, sans la moindre erreur. */
+const icones = { cas: [] };
+try {
+  await page.locator("#harness-icon-urls").scrollIntoViewIfNeeded();
+  // Laisser le temps aux chargements (et aux échecs) de se produire.
+  await page.waitForTimeout(600);
+  icones.cas = await page.evaluate(() => [...document.querySelectorAll("#harness-icon-urls > span")].map((sp) => {
+    const img = sp.querySelector("img");
+    const svg = sp.querySelector("svg");
+    const boite = sp.getBoundingClientRect();
+    return {
+      nom: sp.dataset.icon,
+      img: !!img,
+      // Le repli : une icône, pas un trou ni une image cassée.
+      repli: !img && !!svg,
+      // Une URL rendue en toutes lettres : le symptôme exact de l'issue.
+      texte: sp.textContent.trim(),
+      largeur: Math.round(boite.width),
+      hauteur: Math.round(boite.height),
+    };
+  }));
+} catch (error) {
+  icones.error = String(error).split("\n")[0];
 }
 
 /* Colonne de champs du Mini-Gantt (issue #66). Elle réservait 232 px quoi
@@ -1109,6 +1146,24 @@ expect(treemap.sizeFilterFields > 0, "Treemap : le filtre de taille n'expose pas
 expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error}`);
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
+
+expect(!icones.error, `contrôle des icônes par URL interrompu : ${icones.error}`);
+expect(icones.cas.length === 4, `Icônes : ${icones.cas.length} cas rendus, 4 attendus`);
+for (const cas of icones.cas) {
+  // Aucune URL ne doit jamais s'écrire en toutes lettres, quel que soit le cas.
+  expect(cas.texte === "", `Icône « ${cas.nom} » : l'URL est rendue en toutes lettres (« ${cas.texte.slice(0, 40)}… »)`);
+}
+for (const nom of ["minuscule", "majuscule", "espaces"]) {
+  const cas = icones.cas.find((c) => c.nom === nom);
+  expect(cas && cas.img, `Icône « ${nom} » : aucune image rendue — la reconnaissance dépend encore de la forme de l'URL`);
+}
+{
+  const casse = icones.cas.find((c) => c.nom === "casse");
+  expect(casse && casse.repli, "Icône « casse » : un chargement raté ne tombe pas sur un repli — le menu garderait une image cassée");
+  const bonne = icones.cas.find((c) => c.nom === "minuscule");
+  expect(casse && bonne && casse.largeur === bonne.largeur && casse.hauteur === bonne.hauteur,
+    `Icône « casse » : le repli fait ${casse && casse.largeur}×${casse && casse.hauteur} px contre ${bonne && bonne.largeur}×${bonne && bonne.hauteur} px pour une icône chargée — le menu bougerait`);
+}
 
 expect(!colonne.error, `contrôle de la colonne de champs interrompu : ${colonne.error}`);
 /* Le plancher de 232 px donnait EXACTEMENT la même largeur aux trois cas. Que

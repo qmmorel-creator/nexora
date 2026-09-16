@@ -557,6 +557,24 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
 }
 
+/* Icônes par URL du menu latéral (issue #70).
+   La reconnaissance est couverte par tests/icon-url.test.mjs. Ce qui ne l'est
+   pas, c'est la SYMÉTRIE entre la fiche qui accepte et le rendu qui affiche :
+   c'est leur divergence qui faisait le défaut, et deux expressions régulières
+   voisines reprendraient le même chemin sans la moindre erreur. */
+{
+  assert.match(builtSource, /const isImageUrl = \(u\) => !!normalizeIconUrl\(u\);/,
+    "La fiche d'icône ne partage plus sa règle avec le rendu : une URL acceptée pourrait redevenir inaffichable.");
+  assert.match(builtSource, /const url = normalizeIconUrl\(icon\);\s*\n\s*if \(url\) return <IconUrlImage/,
+    "Le rendu ne passe plus par la reconnaissance commune des URL d'icône.");
+  /* Sans repli, une URL en échec laisse une image cassée ; sans mémorisation
+     PAR URL, corriger l'URL resterait bloqué sur l'échec précédent. */
+  assert.match(builtSource, /onError=\{\(\) => setFailedSrc\(src\)\}/,
+    "Une icône dont le chargement échoue n'a plus de repli.");
+  assert.match(builtSource, /if \(failedSrc === src\)/,
+    "L'échec n'est plus mémorisé par URL : changer l'URL ne retenterait pas.");
+}
+
 /* Filtre textuel des surfaces « tableau de bord » (issue #72).
    Le calcul est couvert par tests/board-search.test.mjs. Ce qui ne l'est pas,
    c'est le CÂBLAGE : un champ qui se saisit sans que rien ne le consomme, ou

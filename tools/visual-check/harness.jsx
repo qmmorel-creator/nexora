@@ -1,5 +1,9 @@
 // ---- Banc d'essai local (scratchpad, jamais committé) : monte le Gantt
 // complet et le Mini-Gantt sur les données de démonstration, sans Firebase.
+// Un PNG transparent de 1×1, en ligne : aucune requête réseau, donc un contrôle
+// qui donne le même résultat partout (issue #70).
+const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
 function AnnotationsHarness() {
   // Les risques de délai vivent sur la tâche : ils doivent apparaître dans
   // TOUS les Mini-Gantt qui affichent cette tâche, quelle que soit la
@@ -202,6 +206,21 @@ function AnnotationsHarness() {
             selectedProjectIds={[]}
             onToggleProject={noop}
           />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>ICÔNES PAR URL</h2>
+        {/* Issue #70. Des images EN LIGNE (data:), pour que le contrôle reste
+            hors réseau et déterministe : ce qu'on vérifie n'est pas qu'un CDN
+            répond, mais que la reconnaissance de l'URL ne dépend ni de la casse
+            ni des espaces, et qu'un chargement raté tombe sur un repli. */}
+        <div id="harness-icon-urls" style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 18 }}>
+          <span data-icon="minuscule"><IconGlyph icon={HARNESS_PNG} size={16} /></span>
+          <span data-icon="majuscule"><IconGlyph icon={HARNESS_PNG.replace("data:image/png", "DATA:IMAGE/PNG")} size={16} /></span>
+          <span data-icon="espaces"><IconGlyph icon={"   " + HARNESS_PNG + "  "} size={16} /></span>
+          {/* Servie en 404 par le serveur du banc : le repli ne peut s'éprouver
+              qu'avec un chargement qui échoue POUR DE VRAI. */}
+          <span data-icon="casse"><IconGlyph icon={location.origin + "/icone-volontairement-cassee.png"} size={16} /></span>
         </div>
       </div>
       <div>
