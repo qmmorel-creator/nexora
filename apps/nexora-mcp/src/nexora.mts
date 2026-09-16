@@ -3,7 +3,35 @@ import {z} from 'zod';
 import {calendarConfig,planCalendarImport} from './calendar.mts';
 
 export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState'] as const;
-const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState','taskBaselines']);
+const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState']);
+/* Écriture AUTORISÉE mais bornée : seul replace_settings est accepté, et chaque
+   entrée est validée avant fusion. taskBaselines porte le plan initial du widget
+   Time Machine — une entrée fausse y reste invisible jusqu'au jour où l'on
+   compare le réel au prévu, d'où une validation stricte plutôt qu'une écriture
+   libre comme sur un réglage ordinaire. */
+const SETTINGS_ONLY = new Set(['taskBaselines']);
+export const TASK_BASELINE_FIELDS = ['start','end','capturedAt'] as const;
+const plainObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const isDay = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
+/* Valide et normalise un lot de baselines. Rend un objet NEUF : la fusion se
+   fait ensuite sur la valeur lue, donc une tâche absente du lot garde la sienne
+   — on ne remplace jamais la carte entière. */
+export function validateTaskBaselines(changes) {
+ if(!plainObject(changes))throw new Error('taskBaselines expects an object keyed by task ID');
+ const out={};
+ for(const [taskId,entry] of Object.entries(changes)){
+  if(!taskId.trim())throw new Error('Empty task ID in taskBaselines');
+  // Une clé héritée de JSON.parse pourrait réécrire le prototype de l'objet fusionné.
+  if(['__proto__','constructor','prototype'].includes(taskId))throw new Error('Reserved task ID in taskBaselines: '+taskId);
+  if(!plainObject(entry))throw new Error('Baseline for '+taskId+' must be an object');
+  const extra=Object.keys(entry).filter(k=>!TASK_BASELINE_FIELDS.includes(k));
+  if(extra.length)throw new Error('Unexpected field in baseline for '+taskId+': '+extra.join(', '));
+  for(const field of TASK_BASELINE_FIELDS)if(!isDay(entry[field]))throw new Error('Baseline '+field+' for '+taskId+' must be a YYYY-MM-DD date');
+  if(entry.start>entry.end)throw new Error('Baseline start is after end for '+taskId);
+  out[taskId]={start:entry.start,end:entry.end,capturedAt:entry.capturedAt};
+ }
+ return out;
+}
 export function fingerprint(v) { return createHash('sha256').update(JSON.stringify(v)).digest('hex'); }
 export function normalize(v) {return String(v??'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();}
 export function parisDate(v=new Date()) {return new Intl.DateTimeFormat('fr-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(v));}
@@ -107,8 +135,18 @@ export function repository(db,uid){
   ensureTaskDates(task);validateTask(task,c);write(tx,d.tasks,[...c.tasks,task]);return {ok:true,created:true,task:clean(task),version:fingerprint(task)};
  });}
  async function readResource(args){if(!RESOURCES.includes(args.resource))throw new Error('Unsupported resource');const d=await read(args.resource);let value=clean(d.value);if(Array.isArray(value)){if(args.id)value=value.filter(x=>x.id===args.id);if(args.query)value=value.filter(x=>normalize(JSON.stringify(x)).includes(normalize(args.query)));const total=value.length;return {ok:true,resource:args.resource,revision:d.revision,total,items:value.slice(args.offset,args.offset+args.limit),nextOffset:args.offset+args.limit<total?args.offset+args.limit:null};}return {ok:true,resource:args.resource,revision:d.revision,value};}
- async function mutateResource(args){if(!RESOURCES.includes(args.resource)||READ_ONLY.has(args.resource))throw new Error('Resource is read-only');return atomic('resource',args.idempotencyKey,args,async tx=>{if(args.action!=='delete'&&!args.changes)throw new Error('changes required');if(['update','delete'].includes(args.action)&&!args.id)throw new Error('id required');const d=await read(args.resource,tx);if(d.revision!==args.expectedRevision)throw new Error('Conflict: read resource again');let value=d.value;
-  if(args.action==='replace_settings'){if(Array.isArray(value))throw new Error('Use entity operations for lists');value={...value,...args.changes};}
+ async function mutateResource(args){if(!RESOURCES.includes(args.resource)||READ_ONLY.has(args.resource))throw new Error('Resource is read-only');
+  if(SETTINGS_ONLY.has(args.resource)&&args.action!=='replace_settings')throw new Error('Resource only accepts replace_settings');
+  return atomic('resource',args.idempotencyKey,args,async tx=>{if(args.action!=='delete'&&!args.changes)throw new Error('changes required');if(['update','delete'].includes(args.action)&&!args.id)throw new Error('id required');const d=await read(args.resource,tx);if(d.revision!==args.expectedRevision)throw new Error('Conflict: read resource again');let value=d.value;
+  if(args.action==='replace_settings'){
+   /* Ressource encore jamais écrite : read() rend [] pour une clé absente, ce
+      qui faisait passer un réglage-objet pour une liste et refusait la toute
+      PREMIÈRE écriture. Une liste non vide, elle, reste une vraie erreur. */
+   if(SETTINGS_ONLY.has(args.resource)&&Array.isArray(value)&&!value.length)value={};
+   if(Array.isArray(value))throw new Error('Use entity operations for lists');
+   // Validé AVANT la fusion : un lot partiellement faux ne doit rien écrire.
+   const changes=args.resource==='taskBaselines'?validateTaskBaselines(args.changes):args.changes;
+   value={...value,...changes};}
   else {if(!Array.isArray(value))throw new Error('Use replace_settings for object settings');const idx=value.findIndex(x=>x.id===args.id);if(args.action==='create'){if(idx>=0)throw new Error('ID already exists');if(!args.changes?.name&&['projects','statuses','taskTypes','teamMembers','projectFolders'].includes(args.resource))throw new Error('Name required');value=[...value,{...args.changes,id:args.id||randomUUID()}];}
    else {if(idx<0)throw new Error('Entity not found');if(value[idx].locked&&['statuses','taskTypes'].includes(args.resource))throw new Error('Built-in catalog entry is locked');if(args.action==='delete'){
     if(['projects','statuses','taskTypes','projectFolders'].includes(args.resource)){const tasks=await read('tasks',tx),archive=await read('taskArchive',tx),projects=await read('projects',tx);const field={projects:'projectId',statuses:'statusId',taskTypes:'taskTypeId',projectFolders:'folderId'}[args.resource];if([...tasks.value,...archive.value,...projects.value].some(x=>x[field]===args.id||x.secondaryProjectId===args.id))throw new Error('Entity still referenced; move its records first');}
