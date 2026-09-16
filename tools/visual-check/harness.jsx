@@ -9,11 +9,11 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    rendu possible sur les tableaux de bord, et qu'aucun d'eux ne rencontrait
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
-  "kpi", "chart", "list", "minigantt", "criticalPath", "projectPulse", "heatmapMonth",
+  "kpi", "chart", "list", "minigantt", "criticalPath", "heatmapMonth",
   "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
   "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
-  "customCard", "automations", "automationAlerts", "projectStory",
+  "customCard",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
   // Ceux-là ne se montent qu'avec une cible désignée : c'est justement le cas
   // où le filtre peut la faire disparaître de la liste (issue #72).
@@ -21,9 +21,6 @@ const EMPTY_DASHBOARD_WIDGETS = [
     { id: "vide-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: "t1", layout: { x: 0, y: 40, w: 3, h: 4 } },
     { id: "vide-countdown-task", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: "t1", layout: { x: 3, y: 40, w: 3, h: 4 } },
     { id: "vide-countdown-filtre", type: "countdown", title: "countdown filtre", countdownMode: "filter", layout: { x: 6, y: 40, w: 3, h: 4 } },
-    { id: "vide-momentum", type: "projectMomentum", title: "momentum", momentumProjectId: "p1", layout: { x: 9, y: 40, w: 3, h: 4 } },
-    { id: "vide-timeMachine", type: "timeMachine", title: "timeMachine", timeMachineProjectId: "p1", layout: { x: 0, y: 44, w: 3, h: 4 } },
-    { id: "vide-riskMatrix", type: "riskMatrix", title: "riskMatrix", riskMatrixProjectId: "p1", layout: { x: 3, y: 44, w: 3, h: 4 } },
   ]);
 
 function AnnotationsHarness() {
@@ -728,7 +725,7 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
 if (benchApp) {
   const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
   const benchWidgets = [
-    "kpi", "chart", "list", "minigantt", "criticalPath", "projectPulse", "heatmapMonth",
+    "kpi", "chart", "list", "minigantt", "criticalPath", "heatmapMonth",
     "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
