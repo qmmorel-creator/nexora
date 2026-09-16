@@ -68,7 +68,7 @@ Les couleurs de projets, groupes et séries restent attachées aux données. La 
 
 **Body Font:** 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif.
 
-La couche finale `life-*` fixe le corps à 14px, les titres de widgets à 14px / 650 et les captions à 12px. Les tokens historiques de titres 17, 22 et 34px restent utilisés selon les vues. Le code et les touches utilisent `--life-mono` ; le contenu ordinaire reste en Inter. Attention : des styles locaux explicites, notamment `.lp-impact-*` et des métadonnées d’activité, descendent encore sous 10px. La valeur du token caption ne les agrandit pas automatiquement.
+La couche finale `life-*` fixe le corps à 14px, les titres de widgets à 14px / 650 et les captions à 12px. Les tokens historiques de titres 17, 22 et 34px restent utilisés selon les vues. Le code et les touches utilisent `--life-mono` ; le contenu ordinaire reste en Inter. Les annotations Impact, les métadonnées d’activité et les étiquettes du nuage d’échéances sont fixées à 12px minimum. Les diagrammes denses défilent localement ; la carte de la tâche active est centrée à l’ouverture.
 
 La hiérarchie privilégie des tailles fixes de produit, les libellés explicites et la lisibilité des nombres. Les valeurs du frontmatter décrivent les rôles réellement présents, sans prétendre supprimer toutes les exceptions locales.
 

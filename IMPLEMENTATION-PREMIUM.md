@@ -25,8 +25,8 @@ Le bilan complet, la matrice recommandation→statut, les captures avant/après 
 
 La galerie est `C:/Users/qmmor/Documents/Nexora/REVUE-PREMIUM.html`. Les scripts et journaux sont dans ce même espace de travail, sous `implementation-evidence/` pour les résultats. Ces preuves ne font pas partie du déploiement.
 
-Les microannotations Impact/Activité demandent une adaptation par diagramme. Authentification et services réels non exercés ; tous les enchaînements de menus imbriqués ne sont pas couverts.
+Les annotations Impact/Activité sont à 12 px minimum, avec 20 dépendances vérifiées à 390 et 1440 px. Les étiquettes du nuage d’échéances disposent d’une réserve verticale adaptée ; npm run visual:check passe. Authentification et services réels non exercés ; tous les enchaînements de menus imbriqués ne sont pas couverts.
 
 Les correctifs préexistants OS360 #70 et NEXORA #56 sont conservés. Les demandes NEXORA #58/#48 ont été consultées pour préserver les évolutions prévues. Les tokens et préférences sont décrits dans [DESIGN.md](DESIGN.md).
 
-Détecteur Impeccable exécuté en fallback regex : parseurs absents, contraste calculé non vérifié ; ses alertes stylistiques ne sont pas une liste de bugs. Aucun push, aucune fusion ni publication.
+Détecteur Impeccable exécuté en fallback regex : parseurs absents, contraste calculé non vérifié ; ses alertes stylistiques ne sont pas une liste de bugs. Publication du lot autorisée le 16 septembre 2026 ; contrôles locaux terminés avant ouverture de la pull request.

@@ -433,7 +433,7 @@ test("le placement est déterministe, même quand l'ordre change tout", () => {
   // parcours suivait celui du tableau, les étiquettes sauteraient d'un rendu à
   // l'autre au moindre tri. Un jeu régulier ne prouverait rien — tout le monde
   // y tient à droite quel que soit l'ordre.
-  const points = Array.from({ length: 9 }, (_, i) => ({
+  const points = Array.from({ length: 18 }, (_, i) => ({
     id: `t${i}`, title: `Réunion de chantier ${i}`, x: 300 + i * 5, y: 60,
   }));
   const une = scatterPlaceLabels(points, CADRE);
