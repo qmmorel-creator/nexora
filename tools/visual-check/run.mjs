@@ -582,6 +582,39 @@ try {
   await page.waitForTimeout(250);
   taskMeta.critDotAfterPick = await page.locator(".lp-modal .lp-row4 .lp-field:last-child .lp-color-select-btn .lp-color-select-dot").count();
 
+  /* Tableaux Markdown (issue #71). Le rendu est couvert par
+     tests/markdown-table.test.mjs ; ce qui ne l'est pas, c'est le va-et-vient
+     Édition → Aperçu → Édition dans la vraie fiche, et le fait que le texte
+     source en ressorte à l'octet près. */
+  const TABLEAU_MD = "| N° de réserve | Statut / observations |\n|---:|---|\n| 5 | Non fait. |\n| 8 | Non fait : absence de constat contradictoire… |";
+  await page.locator(".lp-modal .lp-desc-mode-toggle button", { hasText: "Édition" }).click();
+  await page.waitForTimeout(200);
+  const zone = page.locator(".lp-modal textarea").first();
+  await zone.fill(TABLEAU_MD);
+  await page.waitForTimeout(200);
+  await page.locator(".lp-modal .lp-desc-mode-toggle button", { hasText: "Aperçu" }).click();
+  await page.waitForTimeout(300);
+  Object.assign(taskMeta, await page.evaluate(() => {
+    const t = document.querySelector(".lp-modal .lp-desc-preview table.lp-md-table");
+    const wrap = document.querySelector(".lp-modal .lp-desc-preview .lp-md-table-wrap");
+    const modale = document.querySelector(".lp-modal");
+    return {
+      mdTables: document.querySelectorAll(".lp-modal .lp-desc-preview table.lp-md-table").length,
+      mdHeaders: t ? [...t.querySelectorAll("th")].map((c) => c.textContent.trim()) : [],
+      mdCells: t ? t.querySelectorAll("td").length : 0,
+      mdAlign: t ? getComputedStyle(t.querySelector("th")).textAlign : "",
+      // Des paragraphes pleins de barres verticales : le symptôme d'origine.
+      mdPipeParagraphs: [...document.querySelectorAll(".lp-modal .lp-desc-preview p")].filter((p) => p.textContent.includes("|")).length,
+      // Le défilement reste DANS le tableau : la modale ne s'élargit pas.
+      mdScrollsItself: wrap ? getComputedStyle(wrap).overflowX === "auto" : false,
+      mdModalOverflow: modale ? Math.round(modale.scrollWidth - modale.clientWidth) : -1,
+    };
+  }));
+  await page.locator(".lp-modal .lp-desc-mode-toggle button", { hasText: "Édition" }).click();
+  await page.waitForTimeout(250);
+  taskMeta.mdRoundTrip = await page.locator(".lp-modal textarea").first().inputValue();
+  taskMeta.mdSource = TABLEAU_MD;
+
   // Les risques de délai appartiennent à la tâche : ils doivent s'éditer ici.
   const addRisk = page.locator(".lp-modal").getByRole("button", { name: "Ajouter un risque de délai" });
   taskMeta.riskButton = await addRisk.count();
@@ -1141,6 +1174,20 @@ expect(taskMeta.hints.some((h) => /tableaux de bord/i.test(h)), `Fiche de tâche
 expect(taskMeta.riskButton === 1, "Fiche de tâche : impossible d'ajouter un risque de délai");
 expect(taskMeta.riskRows >= 1, `Fiche de tâche : ${taskMeta.riskRows} risque(s) après ajout, au moins 1 attendu`);
 expect(taskMeta.riskSeverities === 4, `Fiche de tâche : ${taskMeta.riskSeverities} niveau(x) de gravité, 4 attendus`);
+
+// Tableaux Markdown (issue #71).
+expect(taskMeta.mdTables === 1, `Fiche de tâche : ${taskMeta.mdTables} tableau(x) rendu(s) dans l'aperçu, 1 attendu`);
+expect((taskMeta.mdHeaders || []).join("|") === "N° de réserve|Statut / observations",
+  `Fiche de tâche : en-têtes du tableau « ${(taskMeta.mdHeaders || []).join("|")} »`);
+expect(taskMeta.mdCells === 4, `Fiche de tâche : ${taskMeta.mdCells} cellule(s) de données, 4 attendues`);
+expect(taskMeta.mdAlign === "right", `Fiche de tâche : la colonne alignée à droite (---:) est rendue « ${taskMeta.mdAlign} »`);
+expect(taskMeta.mdPipeParagraphs === 0, `Fiche de tâche : ${taskMeta.mdPipeParagraphs} paragraphe(s) contiennent encore des barres verticales — le tableau est rendu comme du texte`);
+expect(taskMeta.mdScrollsItself, "Fiche de tâche : le tableau ne défile pas tout seul — un tableau large élargirait la modale");
+expect(taskMeta.mdModalOverflow <= 0, `Fiche de tâche : la modale déborde de ${taskMeta.mdModalOverflow} px à cause du tableau`);
+/* Le va-et-vient ne doit RIEN changer au texte source : c'est la moitié de
+   l'issue, et elle ne se voit que sur un aller-retour réel. */
+expect(taskMeta.mdRoundTrip === taskMeta.mdSource,
+  `Fiche de tâche : le Markdown source a changé après Édition → Aperçu → Édition.\n    avant : ${JSON.stringify(taskMeta.mdSource)}\n    après : ${JSON.stringify(taskMeta.mdRoundTrip)}`);
 
 // Criticité (issue #69).
 expect(taskMeta.critFields === 4, `Fiche de tâche : ${taskMeta.critFields} champ(s) sur la rangée Projet/Statut/Type/Criticité, 4 attendus`);

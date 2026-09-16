@@ -1493,6 +1493,7 @@ const addDays = (dateStr, n) => {
   return iso(dt);
 };
 const dayIndex = (dateStr) => Math.round((new Date(dateStr + "T00:00:00") - new Date("2020-01-01T00:00:00")) / DAY_MS);
+// === NEXORA:MARKDOWN:START ===
 // Les guillemets et apostrophes DOIVENT être échappés, pas seulement les chevrons :
 // le rendu Markdown interpole l'URL d'un lien dans un attribut entre guillemets
 // (`<a href="$2" …>`), et la classe de caractères de l'URL accepte le guillemet.
@@ -1510,6 +1511,94 @@ const CALLOUT_TYPES = {
   warning: { label: "Attention", color: "#D97706", bg: "#FFFBEB", icon: "⚠️" },
   danger: { label: "Danger", color: "#DC2626", bg: "#FEF2F2", icon: "🔥" },
 };
+/* Tableaux GitHub Flavored Markdown (issue #71).
+
+   Le rendu n'en connaissait aucun : chaque ligne d'un tableau collé depuis
+   ChatGPT ou Claude devenait un paragraphe, barres verticales comprises, et
+   l'aperçu donnait l'impression que les séparateurs s'étaient déplacés. Le
+   texte source, lui, n'avait jamais bougé — la zone de saisie ne le transforme
+   pas — c'était bien le seul aperçu qui était en cause.
+
+   Tout ce qui suit travaille sur des lignes DÉJÀ échappées par escapeHtml :
+   les barres, les tirets et les deux-points traversent l'échappement intacts,
+   donc l'analyse reste exacte sans jamais rouvrir l'injection de balises. */
+
+// Une cellule de la ligne de séparation : « --- », « :--- », « ---: », « :---: ».
+const MD_TABLE_DELIM = /^\s*:?-+:?\s*$/;
+
+/* Découpe une ligne de tableau en cellules.
+
+   Les barres de bord sont facultatives en GFM, et une barre ÉCHAPPÉE (\|)
+   appartient au texte de la cellule : la couper créerait une colonne fantôme
+   et décalerait toutes les colonnes suivantes de cette ligne. */
+function mdTableCells(line) {
+  let s = String(line == null ? "" : line).trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (/(^|[^\\])\|$/.test(s)) s = s.slice(0, -1);
+  const cells = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && s[i + 1] === "|") { cur += "|"; i++; continue; }
+    if (s[i] === "|") { cells.push(cur.trim()); cur = ""; continue; }
+    cur += s[i];
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+/* L'alignement de chaque colonne, lu sur la ligne de séparation — ou null si
+   ce n'en est pas une. C'est ce null qui distingue un vrai tableau d'une phrase
+   qui contient des barres verticales : sans lui, « a | b » deviendrait un
+   tableau d'une ligne. */
+function mdTableAligns(line) {
+  if (!/\|/.test(String(line == null ? "" : line))) return null;
+  const cells = mdTableCells(line);
+  if (!cells.length || cells.some((c) => !MD_TABLE_DELIM.test(c))) return null;
+  return cells.map((c) => {
+    const left = c.startsWith(":");
+    const right = c.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    if (left) return "left";
+    return "";
+  });
+}
+
+/* Reconnaît un tableau à partir de la ligne `start`, et rend où il s'arrête.
+
+   Deux lignes sont nécessaires pour le reconnaître — l'en-tête et la
+   séparation — et GFM exige qu'elles aient le MÊME nombre de colonnes. */
+function mdTableParse(lines, start) {
+  const head = lines[start];
+  if (!head || !/\|/.test(head)) return null;
+  const aligns = mdTableAligns(lines[start + 1]);
+  if (!aligns) return null;
+  const header = mdTableCells(head);
+  if (header.length !== aligns.length) return null;
+  const body = [];
+  let i = start + 2;
+  while (i < lines.length && lines[i].trim() !== "" && /\|/.test(lines[i])) {
+    const cells = mdTableCells(lines[i]);
+    /* Une ligne plus courte se complète, une plus longue se tronque — c'est ce
+       que fait GFM, et c'est ce qui empêche une cellule mal comptée de décaler
+       la colonne suivante sur toutes les lignes en dessous. */
+    body.push(Array.from({ length: header.length }, (_, c) => cells[c] || ""));
+    i++;
+  }
+  return { aligns, header, body, next: i };
+}
+
+function mdTableHtml(parsed, inline) {
+  const style = (a) => (a ? ' style="text-align:' + a + '"' : "");
+  const head = parsed.header.map((c, i) => `<th${style(parsed.aligns[i])}>${inline(c)}</th>`).join("");
+  const body = parsed.body
+    .map((row) => `<tr>${row.map((c, i) => `<td${style(parsed.aligns[i])}>${inline(c)}</td>`).join("")}</tr>`)
+    .join("");
+  /* Le défilement appartient au TABLEAU, pas à la fiche : sans cette
+     enveloppe, un tableau large élargit toute la modale de tâche. */
+  return `<div class="lp-md-table-wrap"><table class="lp-md-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 const renderMarkdown = (text, interactive = false) => {
   if (!text) return "";
   const lines = escapeHtml(text).split("\n");
@@ -1604,6 +1693,15 @@ const renderMarkdown = (text, interactive = false) => {
       html += `</details>`;
       continue;
     }
+    // Tableau GFM. Placé AVANT les listes et le paragraphe par défaut, qui
+    // avaleraient chaque ligne du tableau une par une.
+    const table = mdTableParse(lines, i);
+    if (table) {
+      closeList();
+      html += mdTableHtml(table, inline);
+      i = table.next;
+      continue;
+    }
     // Listes de tâches Markdown : "- [ ] ..." et "- [x] ..."
     const taskMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
     if (taskMatch) {
@@ -1635,6 +1733,7 @@ const renderMarkdown = (text, interactive = false) => {
   closeList();
   return html;
 };
+// === NEXORA:MARKDOWN:END ===
 
 
 
