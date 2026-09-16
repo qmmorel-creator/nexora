@@ -9100,9 +9100,34 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
      d'eux — et « nexora:today » en contient déjà un. */
   const transferIsHere = (t) => t.boardId === boardId && t.pageId === currentPageId;
   const [transferIndex, setTransferIndex] = useState("");
+  /* Liste déroulante à recherche rapide, comme celles du statut, du type et du
+     projet (retour de Quentin sur #58 : « comme d'habitude »). Un <select> natif
+     ne peut pas en porter, et la liste grandit avec chaque tableau et chaque
+     page — elle devient vite trop longue pour être parcourue à l'œil. */
+  const [transferPickerOpen, setTransferPickerOpen] = useState(false);
+  const [transferQuery, setTransferQuery] = useState("");
+  const transferPickerRef = useRef(null);
+  const transferSearchRef = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (transferPickerRef.current && !transferPickerRef.current.contains(e.target)) setTransferPickerOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  // À l'ouverture, la recherche repart de zéro et prend le clavier : sans cela
+  // il faudrait viser le champ à la souris avant de pouvoir taper.
+  useEffect(() => {
+    if (!transferPickerOpen) return;
+    setTransferQuery("");
+    const id = setTimeout(() => transferSearchRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, [transferPickerOpen]);
   /* Par défaut, la première destination QUI N'EST PAS celle où le widget se
      trouve déjà : ouvrir sur « ici » invite à valider un transfert qui ne fait
      rien. */
+  const transferFiltered = useMemo(
+    () => widgetTransferFilterTargets(transferTargets, transferQuery),
+    [transferTargets, transferQuery]
+  );
   const transferSelected = transferTargets[Number(transferIndex)]
     || transferTargets.find((t) => !transferIsHere(t))
     || transferTargets[0]
@@ -9432,16 +9457,48 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             <div className="lp-widget-transfer-panel">
               <div className="lp-field">
                 <label>Tableau de bord de destination</label>
-                <select
-                  value={transferSelected ? String(transferTargets.indexOf(transferSelected)) : ""}
-                  onChange={(e) => setTransferIndex(e.target.value)}
-                >
-                  {transferTargets.map((t, i) => (
-                    <option key={`${t.boardId}-${t.pageId}-${i}`} value={String(i)}>
-                      {t.label}{transferIsHere(t) ? " — ici" : ""}
-                    </option>
-                  ))}
-                </select>
+                <div className="lp-color-select" ref={transferPickerRef}>
+                  <button
+                    type="button"
+                    className="lp-color-select-btn"
+                    onClick={() => setTransferPickerOpen((o) => !o)}
+                    aria-expanded={transferPickerOpen}
+                  >
+                    <span className="lp-color-select-label">
+                      {transferSelected ? `${transferSelected.label}${transferIsHere(transferSelected) ? " — ici" : ""}` : "Aucune destination"}
+                    </span>
+                    <ChevronDown size={14} />
+                  </button>
+                  {transferPickerOpen && (
+                    <div className="lp-color-select-panel">
+                      {/* Même seuil que les autres listes de Nexora : en dessous
+                          de six entrées, un champ de recherche encombre plus
+                          qu'il n'aide. */}
+                      {transferTargets.length > 5 && (
+                        <input
+                          ref={transferSearchRef}
+                          type="text"
+                          className="lp-select-search"
+                          placeholder="Rechercher un tableau ou une page…"
+                          value={transferQuery}
+                          onChange={(e) => setTransferQuery(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
+                      {transferFiltered.map((t) => (
+                        <button
+                          type="button"
+                          key={`${t.boardId}-${t.pageId}`}
+                          className={"lp-color-select-option" + (t === transferSelected ? " active" : "")}
+                          onClick={() => { setTransferIndex(String(transferTargets.indexOf(t))); setTransferPickerOpen(false); }}
+                        >
+                          {t.label}{transferIsHere(t) ? " — ici" : ""}
+                        </button>
+                      ))}
+                      {transferFiltered.length === 0 && <div className="lp-select-empty">Aucun résultat</div>}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="lp-field">

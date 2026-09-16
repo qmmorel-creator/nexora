@@ -658,8 +658,11 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     builtSource.indexOf("}", builtSource.indexOf(".lp-widget-minigantt-frame-corner{")),
   );
   assert.ok(corner.length > 0, "La règle de la pastille du coin est introuvable.");
-  assert.match(corner, /opacity:0?\.\d+/,
-    "La pastille du coin n'est plus peinte en transparence.");
+  /* Quentin a demandé la pastille OPAQUE après l'avoir vue en transparence :
+     une opacité partielle qui reviendrait ici annulerait son retour sans que
+     rien d'autre ne tombe. */
+  assert.doesNotMatch(corner, /opacity:0?\.\d+/,
+    "La pastille du coin redevient transparente : elle doit rester pleine.");
 }
 
 /* Bandeau de paramètres du widget (issue #56).

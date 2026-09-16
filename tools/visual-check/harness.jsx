@@ -4,6 +4,28 @@
 // qui donne le même résultat partout (issue #70).
 const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
+/* Un widget de chaque type qui consomme des tâches (issue #72). Ils sont montés
+   AVEC UNE LISTE VIDE : c'est le cas que le filtre texte de la barre du haut a
+   rendu possible sur les tableaux de bord, et qu'aucun d'eux ne rencontrait
+   avant. */
+const EMPTY_DASHBOARD_WIDGETS = [
+  "kpi", "chart", "list", "minigantt", "criticalPath", "projectPulse", "heatmapMonth",
+  "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
+  "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
+  "deadlineScatter", "heatmapGrid", "embedMetro", "embedGantt", "embedTimeline", "embedRadar",
+  "customCard", "automations", "automationAlerts", "projectStory",
+].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
+  // Ceux-là ne se montent qu'avec une cible désignée : c'est justement le cas
+  // où le filtre peut la faire disparaître de la liste (issue #72).
+  .concat([
+    { id: "vide-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: "t1", layout: { x: 0, y: 40, w: 3, h: 4 } },
+    { id: "vide-countdown-task", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: "t1", layout: { x: 3, y: 40, w: 3, h: 4 } },
+    { id: "vide-countdown-filtre", type: "countdown", title: "countdown filtre", countdownMode: "filter", layout: { x: 6, y: 40, w: 3, h: 4 } },
+    { id: "vide-momentum", type: "projectMomentum", title: "momentum", momentumProjectId: "p1", layout: { x: 9, y: 40, w: 3, h: 4 } },
+    { id: "vide-timeMachine", type: "timeMachine", title: "timeMachine", timeMachineProjectId: "p1", layout: { x: 0, y: 44, w: 3, h: 4 } },
+    { id: "vide-riskMatrix", type: "riskMatrix", title: "riskMatrix", riskMatrixProjectId: "p1", layout: { x: 3, y: 44, w: 3, h: 4 } },
+  ]);
+
 function AnnotationsHarness() {
   // Les risques de délai vivent sur la tâche : ils doivent apparaître dans
   // TOUS les Mini-Gantt qui affichent cette tâche, quelle que soit la
@@ -96,6 +118,13 @@ function AnnotationsHarness() {
   const transferBoards = [
     { id: "today", name: "Aujourd'hui", pages: [{ id: "tp", name: "Aujourd'hui", widgets: [] }] },
     { id: "d1", name: "Chantiers", pages: [{ id: "p1", name: "Page 1", widgets: [treemapWidget] }, { id: "p2", name: "Suivi", widgets: [] }] },
+    /* Au-delà de cinq destinations, la liste porte une recherche rapide — même
+       seuil que les autres listes de Nexora (retour de Quentin sur #58). Le banc
+       en compte donc sept, dont une accentuée pour éprouver la recherche sans
+       accents. */
+    { id: "d2", name: "Préfecture", pages: [{ id: "p3", name: "Réserves", widgets: [] }] },
+    { id: "d3", name: "Communication", pages: [{ id: "p4", name: "Presse", widgets: [] }] },
+    { id: "d4", name: "Budget", pages: [{ id: "p5", name: "Engagements", widgets: [] }, { id: "p6", name: "Factures", widgets: [] }] },
   ];
   const [transferDone, setTransferDone] = useState("");
   // Nuage des échéances : des dates calculées À PARTIR D'AUJOURD'HUI, pour que
@@ -212,6 +241,65 @@ function AnnotationsHarness() {
             onSelectProject={noop}
             selectedProjectIds={[]}
             onToggleProject={noop}
+          />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>CENTRE DE PILOTAGE SANS AUCUNE TÂCHE</h2>
+        {/* Issue #72 : le filtre texte s'applique aussi à cette vue, qui ne
+            rencontrait jamais de liste vide avant lui. */}
+        <div id="harness-control-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 1200, height: 360, overflow: "auto", marginBottom: 18 }}>
+          <ControlTowerView tasks={[]} ctx={ctx} risks={[]} momentumSnapshots={[]} activityLog={[]} onOpenTask={noop} onSelectProject={noop} onNavigate={noop} />
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>TABLEAU DE BORD SANS AUCUNE TÂCHE</h2>
+        {/* Issue #72. Le filtre texte de la barre du haut peut réduire la liste
+            des tâches à RIEN, ce qui n'arrivait jamais avant lui sur ces
+            surfaces. Chaque widget doit le supporter : un seul qui suppose une
+            liste non vide fait tomber la page entière, et c'est exactement ce
+            que Quentin a vu en tapant dans la barre. */}
+        <div id="harness-empty-dashboard" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 1200, height: 420, position: "relative", overflow: "auto", marginBottom: 18 }}>
+          <DashboardView
+            tasks={[]}
+            ctx={ctx}
+            widgets={EMPTY_DASHBOARD_WIDGETS}
+            setWidgets={noop}
+            onOpen={noop}
+            toolbarSlot={null}
+            tabsSlot={null}
+            expenses={[]}
+            expenseCategories={[]}
+            dashboardName="Banc"
+            appearance={appearance}
+            momentumSnapshots={[]}
+            onViewDay={noop}
+            activityLog={[]}
+            myName={null}
+            pages={[{ id: "p1", name: "Page 1", widgets: EMPTY_DASHBOARD_WIDGETS }]}
+            activePageId="p1"
+            onSwitchPage={noop}
+            onAddPage={noop}
+            onRenamePage={noop}
+            onDeletePage={noop}
+            onDuplicatePage={noop}
+            onUpdatePageFilter={noop}
+            onUpdatePageMeta={noop}
+            taskBaselines={{}}
+            setTasks={noop}
+            pushToast={noop}
+            risks={[]}
+            workflows={[]}
+            workflowExecutionLog={[]}
+            onOpenAutomations={noop}
+            shortcutPrefs={{}}
+            metaTemporalBlocks={[]}
+            dashboardId="d1"
+            onOpenProject={noop}
+            onEditProject={noop}
+            boardId="d1"
+            transferBoards={[]}
+            onTransferWidget={noop}
           />
         </div>
       </div>
@@ -498,5 +586,54 @@ function AnnotationsHarness() {
     </div>
   );
 }
+/* Avec « ?app=1 », le banc monte l'APPLICATION ENTIÈRE au lieu du scénario
+   d'annotations, en court-circuitant l'écran d'authentification. C'est le seul
+   moyen d'éprouver ce qui ne vit que dans l'application assemblée : la barre du
+   haut, le rail, la navigation entre vues. Le contrôle visuel habituel n'en est
+   pas affecté — il n'ouvre jamais cette adresse. */
 const root = createRoot(document.getElementById('root'));
-root.render(React.createElement(AnnotationsHarness));
+const benchApp = new URLSearchParams(location.search).get("app") === "1";
+
+/* Base de données EN MÉMOIRE pour le banc application (issue #72).
+
+   Sans elle, l'application se monte sans aucune tâche : tout filtre y est alors
+   un coup d'épée dans l'eau, et le banc ne peut rien éprouver. La passerelle
+   Netlify n'existe pas ici, on la remplace donc par une carte clé → valeur,
+   exactement l'interface que window.storage expose (get/set/delete/watch).
+
+   Le tableau de bord monté porte un widget de CHAQUE type qui consomme des
+   tâches : un seul qui ne supporte pas une liste réduite à rien fait tomber la
+   page entière, et c'est ce qu'il s'agit d'attraper ici. */
+if (benchApp) {
+  const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
+  const benchWidgets = [
+    "kpi", "chart", "list", "minigantt", "criticalPath", "projectPulse", "heatmapMonth",
+    "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
+    "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
+    "deadlineScatter", "heatmapGrid", "embedMetro", "embedGantt", "embedTimeline", "embedRadar",
+    "customCard", "automationAlerts", "projectStory",
+  ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
+  benchWidgets.push(
+    { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
+    { id: "banc-countdown", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: seedTasks[0]?.id, layout: { x: 3, y: 96, w: 3, h: 4 } },
+  );
+  const mem = new Map(Object.entries({
+    "nexora:tasks": JSON.stringify(benchTasks),
+    "nexora:projects": JSON.stringify(seedProjects),
+    "nexora:statuses": JSON.stringify(seedStatuses),
+    "nexora:taskTypes": JSON.stringify(seedTaskTypes),
+    "nexora:teamMembers": JSON.stringify(seedTeamMembers),
+    "nexora:dashboards": JSON.stringify([{ id: "banc-d1", name: "Tableau du banc", folderId: null, pages: [{ id: "banc-p1", name: "Page 1", widgets: benchWidgets }], activePageId: "banc-p1" }]),
+    "nexora:activeDashboardId": JSON.stringify("banc-d1"),
+  }));
+  window.storage = {
+    async get(key) {
+      if (!mem.has(key)) throw new Error("Key not found: " + key);
+      return { value: mem.get(key), revision: "banc" };
+    },
+    async set(key, value) { mem.set(key, String(value ?? "")); return { revision: "banc", value }; },
+    async delete(key) { mem.delete(key); return {}; },
+    watch() { return () => {}; },
+  };
+}
+root.render(React.createElement(benchApp ? () => React.createElement(LePlan, { currentUser: { uid: "banc", email: "banc@local" }, onSignOut: () => {} }) : AnnotationsHarness));
