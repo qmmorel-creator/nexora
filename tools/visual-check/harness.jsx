@@ -42,6 +42,19 @@ function AnnotationsHarness() {
       { id: "rk4", title: "Reprise dossier", severity: "high", style: "hatched", startOffset: 0, endOffset: 6 },
     ] };
     return t;
+  }).map((t) => {
+    /* Mode Comparaison : des dates de référence portées par la TÂCHE. Elles ne
+       doivent rien changer tant qu'un widget n'est pas réglé sur
+       « Comparaison » — les contrôles des autres Mini-Gantt ci-dessous le
+       vérifient en restant à l'identique. */
+    if (t.id === "t1") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-20", referenceEnd: "2026-08-28" } };   // retard de 13 j
+    if (t.id === "t2") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-30", referenceEnd: "2026-08-08" } };   // avance au début et à la fin
+    if (t.id === "t4") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-13", referenceEnd: "2026-08-20" } };   // conforme
+    if (t.id === "t6") return { ...t, comparison: { enabled: true, referenceStart: "2026-07-20", referenceEnd: "2026-08-10" } };   // décalage intégral
+    if (t.id === "t3") return { ...t, comparison: { enabled: true, referenceEnd: "2026-09-10" } };                                 // jalon en retard
+    // t7 : jalon SANS référence — il doit garder le rendu standard dans le
+    // même widget, sans erreur et sans changer de hauteur.
+    return t;
   });
   // Projet adossé à Google Calendar : sa tâche porte le réglage « méta bloc »
   // coché depuis la fiche de tâche. Le bloc doit apparaître dans les Mini-Gantt
@@ -550,6 +563,19 @@ function AnnotationsHarness() {
         <div id="harness-nofields-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
           <WidgetMiniGantt
             widget={{ id: "w9", type: "minigantt", colorBy: "status", miniGanttFields: [] }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* Mode Comparaison : JUMEAU du second Mini-Gantt (mêmes tâches, mêmes
+            champs, même regroupement), au mode près. C'est ce qui permet de
+            comparer les hauteurs de ligne des deux et de vérifier que la
+            superposition des barres ne fait grandir aucune ligne. */}
+        <div id="harness-comparison-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{ ...otherWidget, id: "w10", miniGanttComparisonEnabled: true }}
             tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
             onUpdateWidget={noop}
             onUpdateTask={noop}

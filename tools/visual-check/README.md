@@ -43,6 +43,32 @@ deux encadrés, dont un posé sur des tâches **non successives** :
 - les étiquettes de cadres ne se superposent pas ;
 - les cadres ont une surface non nulle et restent dans la zone des lignes.
 
+Scénario « Mini-Gantt en mode Comparaison » — un widget jumeau du second (mêmes
+tâches, mêmes champs, même regroupement), au mode près, sur des tâches dont cinq
+portent des dates de référence (retard, avance, conforme, décalage intégral,
+jalon) et deux n'en portent pas, dont un jalon :
+
+- les widgets restés en mode Standard ne dessinent aucune barre de référence,
+  bien que les tâches en portent : le mode appartient au widget ;
+- une barre de référence par tâche comparable, aucune pour les jalons, qui ont
+  un losange fantôme et un segment de liaison ;
+- zones d'avance, de retard et de référence non consommée présentes et de
+  surface non nulle ;
+- un indicateur d'écart par ligne comparable, toujours signé et chiffré ;
+- la légende s'ouvre sur Initial, Actuel, Avance, Retard, sans recouvrement ;
+- le sélecteur rapide affiche l'état actif ;
+- **les hauteurs de ligne sont identiques à celles du widget standard** : la
+  superposition des barres ne fait grandir aucune ligne.
+
+Fiche de tâche, mode comparaison :
+
+- l'interrupteur est décoché sur une tâche qui n'en porte pas, et les champs de
+  dates de référence n'existent pas tant qu'il l'est ;
+- activé sans dates, deux erreurs explicites s'affichent à côté des champs ;
+- « Copier les dates actuelles comme référence » remplit les deux champs depuis
+  les dates de la tâche, et seulement au clic ;
+- désactiver masque les champs sans effacer ce qui a été saisi.
+
 Scénario « Nuage des échéances » — quatre tâches datées et une sans date de fin,
 en couloirs par projet puis par criticité :
 

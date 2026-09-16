@@ -4737,12 +4737,25 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const todayIdx = dayIndex(today);
   const allForRange = isEmpty ? [] : [...projTasks, ...milestoneTasks];
 
+  // Mode Comparaison du widget. Propriété absente = mode Standard : un widget
+  // enregistré avant ce changement rend exactement comme avant, sans migration.
+  const comparisonOn = miniGanttComparisonEnabledOn(widget);
+  const setComparisonMode = (on) => {
+    if (onUpdateWidget) onUpdateWidget({ miniGanttComparisonEnabled: !!on });
+  };
+  // Les dates de RÉFÉRENCE élargissent la plage automatique au même titre que
+  // les dates actuelles : une barre fantôme antérieure ou postérieure ne doit
+  // jamais être coupée par le bord du diagramme. Volontairement calculé sans
+  // Hook — c'est un parcours de quelques dizaines d'éléments, et aucun Hook
+  // conditionnel ne peut se glisser avant le retour anticipé « aucune tâche ».
+  const comparisonRangeIdx = miniGanttComparisonRangeIndices(allForRange, comparisonOn);
+
   const naturalMinIdx = isEmpty
     ? todayIdx
-    : Math.min(...allForRange.map((t) => dayIndex(t.start || t.end)));
+    : Math.min(...allForRange.map((t) => dayIndex(t.start || t.end)), ...comparisonRangeIdx);
   const naturalMaxIdx = isEmpty
     ? todayIdx
-    : Math.max(...allForRange.map((t) => dayIndex(t.end)));
+    : Math.max(...allForRange.map((t) => dayIndex(t.end)), ...comparisonRangeIdx);
 
   // Le filtre "X jours dans le passé" pilote aussi l'axe du Mini Gantt.
   // Vide = toute l'étendue naturelle.
@@ -5268,6 +5281,20 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return map;
   }, [riskSegments]);
 
+  // Comparaisons EXPLOITABLES, tâche par tâche. Une tâche sans référence, ou
+  // dont la référence est incomplète ou invalide, n'entre simplement pas dans
+  // cette table : elle garde le rendu standard, sans message d'erreur dans le
+  // diagramme et sans changer de hauteur de ligne.
+  const comparisonByTask = useMemo(() => {
+    const map = new Map();
+    if (!comparisonOn) return map;
+    [...projTasks, ...milestoneTasks].forEach((t) => {
+      const cmp = miniGanttTaskComparison(t);
+      if (cmp) map.set(t.id, cmp);
+    });
+    return map;
+  }, [comparisonOn, projTasks, milestoneTasks]);
+
   const emphasisFor = (taskId) => (emphasisOn ? miniGanttRowEmphasis(taskId, riskSegments, criticalIds) : "none");
 
   // Cochée = encadrée, et rien d'autre. L'état vient des annotations, donc il
@@ -5324,7 +5351,30 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
   // Légende contextuelle : chaque entrée n'apparaît que si le diagramme
   // contient réellement ce qu'elle décrit.
+  const comparisonLegendItems = !comparisonOn || !comparisonByTask.size ? [] : [
+    {
+      key: "cmp-ref", label: "Initial", color: MINIGANTT_COMPARISON_REF_COLOR,
+      background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 12%, transparent)`,
+      title: "Période de référence, dessinée en arrière-plan de la barre actuelle",
+    },
+    {
+      key: "cmp-current", label: "Actuel", color: "var(--text-900)",
+      title: "Période actuelle, au premier plan, dans la couleur métier de la tâche",
+    },
+    {
+      key: "cmp-ahead", label: "Avance", color: MINIGANTT_COMPARISON_AHEAD_COLOR,
+      background: miniGanttComparisonZonePattern("ahead"),
+      title: "Part de la période actuelle antérieure à la référence — hachures descendantes",
+    },
+    {
+      key: "cmp-late", label: "Retard", color: MINIGANTT_COMPARISON_LATE_COLOR,
+      background: miniGanttComparisonZonePattern("late"),
+      title: "Dépassement de la fin de référence — hachures montantes",
+    },
+  ];
+
   const legendItems = [
+    ...comparisonLegendItems,
     emphasisOn && criticalIds && criticalIds.size ? { key: "critical", label: "Critique", color: "#4F6AF5" } : null,
     riskSegments.some((r) => r.severity === "low" || r.severity === "medium") ? { key: "watch", label: "Vigilance", color: "#F2A93B" } : null,
     (configMilestones.length || milestoneTasks.length) ? { key: "milestone", label: "Jalon", color: "#0EA5E9" } : null,
@@ -5345,6 +5395,17 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=2} title="Zoom avant">+</button>
           {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
         </div>
+        {editable && (
+          /* Sélecteur rapide : il pilote EXACTEMENT la même propriété que
+             l'interrupteur des paramètres du widget
+             (`miniGanttComparisonEnabled`), jamais un état local — les deux ne
+             peuvent donc pas se contredire, et l'état actif se lit d'un coup
+             d'œil sans ouvrir les réglages. */
+          <div className="lp-widget-minigantt-zoom lp-widget-minigantt-cmpmode" onMouseDown={(e)=>e.stopPropagation()} role="group" aria-label="Mode d'affichage du Mini-Gantt">
+            <button type="button" className={comparisonOn ? "" : "active"} aria-pressed={!comparisonOn} onClick={() => setComparisonMode(false)} title="Mode standard — dates actuelles seules">Standard</button>
+            <button type="button" className={comparisonOn ? "active" : ""} aria-pressed={comparisonOn} onClick={() => setComparisonMode(true)} title="Mode comparaison — dates de référence, dates actuelles et écarts en jours">Comparaison</button>
+          </div>
+        )}
         {editable && (
           <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons" onMouseDown={(e)=>e.stopPropagation()}>
             <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
@@ -5388,8 +5449,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <span className="lp-widget-minigantt-phases-spacer" />
       <div className="lp-widget-minigantt-legend-items">
         {legendItems.map((item) => (
-          <span key={item.key} className="lp-widget-minigantt-legend-item">
-            <span className={"lp-widget-minigantt-legend-mark is-" + item.key} style={{ background: item.color, borderColor: item.color }} />
+          <span key={item.key} className="lp-widget-minigantt-legend-item" title={item.title || undefined}>
+            <span className={"lp-widget-minigantt-legend-mark is-" + item.key} style={{ background: item.background || item.color, borderColor: item.color }} />
             {item.label}
           </span>
         ))}
@@ -5438,6 +5499,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // contre une liste vide. C'est aussi la convention du composant, dont les hooks
   // antérieurs (axisDisplayTicks, weekendBands) testent isEmpty À L'INTÉRIEUR.
   if (isEmpty) return <div className="lp-empty" style={{ padding: 16 }}>Aucune tâche pour ce filtre.</div>;
+
+  // Largeur RÉELLE de la piste, déjà mesurée pour les étiquettes de risque :
+  // c'est elle qui décide si un libellé chiffré tient, en pixels et non en
+  // pourcentage — le même « +8 j » n'occupe pas la même fraction d'une piste de
+  // 270 px et d'une piste de 900 px.
+  const comparisonTrackPx = stripWidth || 420;
+  const comparisonTodayPct = showToday ? ((todayIdx - minIdx) / span) * 100 : null;
 
   const RowRisks = ({ taskId }) => {
     const segments = risksByTask.get(taskId);
@@ -5513,14 +5581,48 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
+  /* Indicateur latéral d'écart : l'écart de FIN (ou de jalon), qui est l'écart
+     principal. Il vit avec les autres champs de la ligne, donc il suit les deux
+     dispositions sans code de placement supplémentaire. Le signe et le nombre
+     le rendent lisible sans voir la couleur, et `aria-label` le dit en toutes
+     lettres aux lecteurs d'écran. */
+  const ComparisonChip = ({ t }) => {
+    const cmp = comparisonByTask.get(t.id);
+    if (!cmp) return null;
+    const color = miniGanttComparisonToneColor(cmp.endTone);
+    const quoi = cmp.milestone ? "Jalon" : "Fin";
+    return (
+      <span
+        className="lp-widget-minigantt-cmpchip"
+        style={{ color, borderColor: color, background: `color-mix(in srgb, ${color} 10%, transparent)` }}
+        title={`${quoi} — référence ${fmtShort(cmp.referenceEnd)}, actuel ${fmtShort(cmp.currentEnd)} · ${miniGanttComparisonDeltaLabel(cmp.endDeltaDays)} (${miniGanttComparisonToneLabel(cmp.endTone)})`}
+        aria-label={miniGanttComparisonDeltaAria(cmp.endDeltaDays, quoi)}
+      >
+        <span
+          className="lp-widget-minigantt-cmpchip-mark"
+          style={{
+            borderColor: color,
+            borderStyle: cmp.endTone === "ahead" ? "dashed" : cmp.endTone === "late" ? "solid" : "dotted",
+            background: cmp.endTone === "ontime" ? "transparent" : miniGanttComparisonZonePattern(cmp.endTone),
+          }}
+          aria-hidden="true"
+        />
+        {miniGanttComparisonDeltaLabel(cmp.endDeltaDays)}
+      </span>
+    );
+  };
+
   // Champs facultatifs — chaque champ (hors "progress", rendu séparément en
   // anneau) passe par le composant FieldValue partagé avec le reste de
   // Nexora, pour garder exactement la même mise en forme (pastille de
   // statut, badge de type, chip responsable...). En disposition "aligned",
   // c'est une colonne à largeur fixe après la piste ; en "inline", un bloc
   // positionné juste après la barre/le jalon, ancré sur sa position réelle.
+  // L'indicateur d'écart ci-dessus les suit : il s'affiche même quand aucun
+  // champ facultatif n'est configuré.
   const RowFields = ({ t, anchorPct }) => {
-    if (!rowFields.length) return null;
+    const hasComparison = comparisonByTask.has(t.id);
+    if (!rowFields.length && !hasComparison) return null;
     const content = (
       <>
         {rowFields.filter((f) => f !== "progress").map((f) => (
@@ -5531,6 +5633,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             <MiniGanttProgressRing progress={t.progress} />
           </span>
         )}
+        <ComparisonChip t={t} />
       </>
     );
     if (fieldsLayout === "inline") {
@@ -5571,6 +5674,39 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const barColor = (colorBy === "project" ? proj?.color : colorBy === "taskType" ? tt?.color : st?.color) || proj?.color || st?.color || "var(--text-muted)";
     const paleBg = typeof barColor === "string" && barColor.startsWith("#") ? barColor + "3a" : "var(--paper-soft)";
     const pct = Math.max(0, Math.min(100, Math.round(t.progress || 0)));
+    // Comparaison : la référence se dessine DANS la même piste, en arrière-plan
+    // de la barre actuelle. Aucune ligne ne grandit — tout est en position
+    // absolue dans une piste en `overflow:visible`.
+    const cmp = comparisonByTask.get(t.id) || null;
+    const cmpBars = cmp ? miniGanttComparisonBars(cmp, { minIdx, maxIdx, span }) : null;
+    const cmpHasRisks = risksByTask.has(t.id);
+    const cmpLabelVisible = (zone) => miniGanttComparisonLabelVisible(zone, {
+      trackPx: comparisonTrackPx, todayPct: comparisonTodayPct, hasRisks: cmpHasRisks,
+    });
+    const cmpZone = (zone, kind, days) => {
+      if (!zone) return null;
+      const isFreed = kind === "freed";
+      const color = isFreed ? MINIGANTT_COMPARISON_REF_COLOR : miniGanttComparisonToneColor(kind);
+      const centerPct = zone.leftPct + zone.widthPct / 2;
+      return (
+        <React.Fragment key={"cmp-" + kind}>
+          <span
+            className={"lp-widget-minigantt-cmpzone is-" + kind}
+            style={{ left: zone.leftPct + "%", width: zone.widthPct + "%", borderColor: color, background: miniGanttComparisonZonePattern(kind) }}
+            aria-hidden="true"
+          />
+          {!isFreed && cmpLabelVisible(zone) && (
+            <span
+              className="lp-widget-minigantt-cmplabel"
+              style={{ left: centerPct + "%", transform: "translate(-50%, -50%)", color }}
+              aria-hidden="true"
+            >
+              {miniGanttComparisonDeltaLabel(days)}
+            </span>
+          )}
+        </React.Fragment>
+      );
+    };
     return (
       <div
         className={"lp-widget-minigantt-row is-" + emphasisFor(t.id) + (selectedSet.has(t.id) ? " is-selected" : "")}
@@ -5583,6 +5719,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       >
         <RowLabel t={t} proj={proj} />
         <div className="lp-widget-minigantt-track">
+          {cmpBars && cmpBars.reference && (
+            <span
+              className={"lp-widget-minigantt-refbar"
+                + (cmpBars.reference.clippedStart ? " is-clipped-start" : "")
+                + (cmpBars.reference.clippedEnd ? " is-clipped-end" : "")}
+              style={{
+                left: cmpBars.reference.leftPct + "%",
+                width: cmpBars.reference.widthPct + "%",
+                borderColor: MINIGANTT_COMPARISON_REF_COLOR,
+                background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 12%, transparent)`,
+              }}
+              aria-hidden="true"
+            />
+          )}
+          {cmpBars && cmpZone(cmpBars.freed, "freed")}
           <div className="lp-widget-minigantt-bar" style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}>
             {/* Progression visuelle : portion remplie de la couleur pleine du
                 statut/projet/type, sur fond pâle de la même couleur pour le
@@ -5608,6 +5759,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               </>
             )}
           </div>
+          {cmpBars && cmpZone(cmpBars.ahead, "ahead", cmp.startDeltaDays)}
+          {cmpBars && cmpZone(cmpBars.late, "late", cmp.endDeltaDays)}
           <RowRisks taskId={t.id} />
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={left + width} />}
         </div>
@@ -5625,6 +5778,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const posIdxPct = ((milestoneIdx - minIdx) / span) * 100;
     const posPct = `${posIdxPct}%`;
     const customMsIcon = resolveMilestoneIcon(t, ctx);
+    // Jalon comparé : un losange fantôme gris à la date de référence, le jalon
+    // actuel inchangé, et un segment fin entre les deux. Aucune durée n'est
+    // fabriquée — un jalon n'en a pas.
+    const cmp = comparisonByTask.get(t.id) || null;
+    const cmpMs = cmp ? miniGanttComparisonMilestone(cmp, { minIdx, maxIdx, span }) : null;
+    const cmpMsColor = cmp ? miniGanttComparisonToneColor(cmp.endTone) : null;
     const dragHandlers = onUpdateTask ? {
       onMouseDown: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
       onTouchStart: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
@@ -5641,6 +5800,29 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       >
         <RowLabel t={t} proj={proj} />
         <div className="lp-widget-minigantt-track">
+          {cmpMs && cmpMs.link && (
+            <span
+              className="lp-widget-minigantt-ms-link"
+              style={{ left: cmpMs.link.leftPct + "%", width: cmpMs.link.widthPct + "%", borderTopColor: cmpMsColor }}
+              aria-hidden="true"
+            />
+          )}
+          {cmpMs && cmpMs.referenceVisible && (
+            <span
+              className="lp-widget-minigantt-ms-ghost"
+              style={{ left: cmpMs.referenceLeftPct + "%", borderColor: MINIGANTT_COMPARISON_REF_COLOR }}
+              aria-hidden="true"
+            />
+          )}
+          {cmpMs && cmpMs.link && miniGanttComparisonLabelVisible(cmpMs.link, { trackPx: comparisonTrackPx, todayPct: comparisonTodayPct }) && (
+            <span
+              className="lp-widget-minigantt-cmplabel"
+              style={{ left: (cmpMs.link.leftPct + cmpMs.link.widthPct / 2) + "%", transform: "translate(-50%, -50%)", color: cmpMsColor }}
+              aria-hidden="true"
+            >
+              {miniGanttComparisonDeltaLabel(cmp.endDeltaDays)}
+            </span>
+          )}
           {customMsIcon ? (
             <span className="lp-widget-minigantt-milestone-icon" style={{ left: posPct }} title="Glisser pour changer la date du jalon" {...dragHandlers}><IconGlyph icon={customMsIcon} size={13} /></span>
           ) : (
@@ -5655,8 +5837,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
   const Tooltip = () => {
     if (!hover) return null;
-    const tipW = 190;
-    const tipH = hover.t.milestone ? 54 : 62;
+    // Aucune infobulle persistante : elle n'existe que tant que `hover` est
+    // posé, et `onMouseLeave` le vide. Le mode Comparaison ne fait qu'ajouter
+    // des lignes à celle qui existe déjà.
+    const hoverCmp = comparisonByTask.get(hover.t.id) || null;
+    const cmpLines = hoverCmp ? miniGanttComparisonTooltipLines(hoverCmp, fmtShort) : [];
+    const tipW = hoverCmp ? 236 : 190;
+    const tipH = (hover.t.milestone ? 54 : 62) + cmpLines.length * 15;
     const gap = 8;
     const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
     const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
@@ -5681,6 +5868,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {!hover.t.milestone && (
           <div className="lp-widget-metro-tooltip-bar">
             <div className="lp-widget-metro-tooltip-bar-fill" style={{ width: `${Math.max(0, Math.min(100, hover.t.progress || 0))}%` }} />
+          </div>
+        )}
+        {cmpLines.length > 0 && (
+          <div className="lp-widget-minigantt-tooltip-cmp">
+            {cmpLines.map((line) => (
+              <div key={line.key} className="lp-widget-minigantt-tooltip-cmp-line">
+                <span className="lp-widget-minigantt-tooltip-cmp-label">{line.label}</span>
+                <span
+                  className="lp-widget-minigantt-tooltip-cmp-value"
+                  style={line.tone ? { color: miniGanttComparisonToneColor(line.tone), fontWeight: 800 } : undefined}
+                >
+                  {line.value}
+                </span>
+              </div>
+            ))}
           </div>
         )}
         {(risksByTask.get(hover.t.id) || []).map((seg) => (
@@ -9119,6 +9321,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [colorBy, setColorBy] = useState(widget?.colorBy || "status");
   const [miniGanttFields, setMiniGanttFields] = useState(widget?.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"]);
   const [miniGanttFieldsLayout, setMiniGanttFieldsLayout] = useState(widget?.miniGanttFieldsLayout === "inline" ? "inline" : "aligned");
+  // Mode Comparaison : propriété absente = mode Standard. Cet interrupteur et
+  // le sélecteur rapide de l'en-tête écrivent la MÊME propriété.
+  const [miniGanttComparisonEnabled, setMiniGanttComparisonEnabled] = useState(miniGanttComparisonEnabledOn(widget));
   const [countdownMode, setCountdownMode] = useState(widget?.countdownMode || "date");
   const [countdownDate, setCountdownDate] = useState(widget?.countdownDate || "");
   const [countdownTaskId, setCountdownTaskId] = useState(widget?.countdownTaskId || "");
@@ -9368,6 +9573,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     }
     if (type === "minigantt") {
       data.groupBy = listGroupBy; data.showMilestones = showMilestones; data.colorBy = colorBy; data.miniGanttFields = miniGanttFields; data.miniGanttFieldsLayout = miniGanttFieldsLayout;
+      data.miniGanttComparisonEnabled = miniGanttComparisonEnabled;
       if (widget?.miniGanttZoomLevel != null) data.miniGanttZoomLevel = widget.miniGanttZoomLevel;
     }
     if (titleColor) data.titleColor = titleColor; else data.titleColor = null;
@@ -10342,6 +10548,16 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <button type="button" className={"lp-density-btn" + (miniGanttFieldsLayout === "aligned" ? " active" : "")} onClick={() => setMiniGanttFieldsLayout("aligned")}>Alignées à droite</button>
               <button type="button" className={"lp-density-btn" + (miniGanttFieldsLayout === "inline" ? " active" : "")} onClick={() => setMiniGanttFieldsLayout("inline")}>À la suite de la barre</button>
             </div>
+          </div>
+          <div className="lp-field" style={{ marginTop: 10 }}>
+            <label>Mode d'affichage</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (miniGanttComparisonEnabled ? "" : " active")} onClick={() => setMiniGanttComparisonEnabled(false)}>Standard</button>
+              <button type="button" className={"lp-density-btn" + (miniGanttComparisonEnabled ? " active" : "")} onClick={() => setMiniGanttComparisonEnabled(true)}>Comparaison</button>
+            </div>
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              En mode Comparaison, les tâches dont la fiche porte des dates de référence affichent la période initiale en arrière-plan, la période actuelle au premier plan, et l'écart en jours. Les autres gardent le rendu standard. Ce réglage est propre à ce widget et suit sa duplication.
+            </p>
           </div>
         </>
       )}

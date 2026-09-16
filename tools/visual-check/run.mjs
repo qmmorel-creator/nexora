@@ -100,6 +100,21 @@ const seen = await page.evaluate(() => {
     secondRisks: rects("#harness-second-minigantt .lp-widget-minigantt-risk"),
     secondBands: rects("#harness-second-minigantt .lp-widget-minigantt-tblock"),
     secondMetaChips: rects("#harness-second-minigantt .lp-widget-minigantt-phase.is-meta"),
+    // Mode Comparaison : tout est relevé sur le widget dédié, jumeau du second
+    // au mode près — ce qui permet de comparer les hauteurs de ligne des deux.
+    cmpRefBars: rects("#harness-comparison-minigantt .lp-widget-minigantt-refbar"),
+    cmpLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-late"),
+    cmpAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead"),
+    cmpFreed: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed"),
+    cmpLabels: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmplabel"),
+    cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
+    cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
+    cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
+    cmpLegend: rects("#harness-comparison-minigantt .lp-widget-minigantt-legend-item"),
+    cmpRows: rects("#harness-comparison-minigantt .lp-widget-minigantt-row"),
+    cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
+    standardRefBars: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-refbar, #harness-second-minigantt .lp-widget-minigantt-refbar, #harness-nofields-minigantt .lp-widget-minigantt-refbar").length,
+    standardRows: rects("#harness-second-minigantt .lp-widget-minigantt-row"),
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
@@ -715,6 +730,7 @@ try {
 // Fiche de tâche d'un projet Google Calendar : la case « méta bloc » doit être
 // présente, cochée pour cette tâche, et son habillage réglable au même endroit.
 const taskMeta = { checkbox: 0, checked: false, controls: 0, hints: [], riskButton: 0, riskRows: 0, riskSeverities: 0 };
+const taskComparison = { checkbox: 0, checkedAtOpen: null, fieldsAtOpen: -1, fieldsAfterCheck: -1, errors: [], start: "", end: "", errorsAfterCopy: -1, fieldsAfterUncheck: -1, startAfterRecheck: "" };
 try {
   await page.locator("#harness-open-task-modal").click();
   await page.waitForSelector(".lp-modal #task-meta-block", { timeout: 10000 });
@@ -804,6 +820,38 @@ try {
   await page.waitForTimeout(250);
   taskMeta.mdRoundTrip = await page.locator(".lp-modal textarea").first().inputValue();
   taskMeta.mdSource = TABLEAU_MD;
+
+  /* Mode comparaison de la tâche. Rien de ce qui suit ne se voit d'un test
+     unitaire : les fonctions pures savent valider et copier, c'est la FICHE qui
+     décide d'afficher les champs, l'erreur, et de refuser l'enregistrement. */
+  const cmpBox = page.locator(".lp-modal #task-comparison");
+  taskComparison.checkbox = await cmpBox.count();
+  if (taskComparison.checkbox) {
+    // Une tâche sans comparaison : la case est décochée et aucun champ n'est là.
+    taskComparison.checkedAtOpen = await cmpBox.isChecked();
+    taskComparison.fieldsAtOpen = await page.locator(".lp-modal #task-comparison-start, .lp-modal #task-comparison-end").count();
+    await cmpBox.check();
+    await page.waitForTimeout(300);
+    taskComparison.fieldsAfterCheck = await page.locator(".lp-modal #task-comparison-start, .lp-modal #task-comparison-end").count();
+    // Activée sans dates : deux erreurs explicites, à côté des champs.
+    taskComparison.errors = (await page.locator(".lp-modal .lp-gantt-annot-error").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+    taskComparison.saveDisabledLook = await page.locator(".lp-modal").getByRole("button", { name: "Copier les dates actuelles comme référence" }).count();
+    // Le bouton de copie remplit les deux champs, et seulement sur clic.
+    await page.locator(".lp-modal").getByRole("button", { name: "Copier les dates actuelles comme référence" }).click();
+    await page.waitForTimeout(300);
+    taskComparison.start = await page.locator(".lp-modal #task-comparison-start").inputValue();
+    taskComparison.end = await page.locator(".lp-modal #task-comparison-end").inputValue();
+    taskComparison.errorsAfterCopy = await page.locator(".lp-modal .lp-gantt-annot-error").count();
+    // Décocher masque les champs sans effacer ce qui vient d'être saisi.
+    await cmpBox.uncheck();
+    await page.waitForTimeout(250);
+    taskComparison.fieldsAfterUncheck = await page.locator(".lp-modal #task-comparison-start, .lp-modal #task-comparison-end").count();
+    await cmpBox.check();
+    await page.waitForTimeout(250);
+    taskComparison.startAfterRecheck = await page.locator(".lp-modal #task-comparison-start").inputValue();
+    await cmpBox.uncheck();
+    await page.waitForTimeout(200);
+  }
 
   // Les risques de délai appartiennent à la tâche : ils doivent s'éditer ici.
   const addRisk = page.locator(".lp-modal").getByRole("button", { name: "Ajouter un risque de délai" });
@@ -921,6 +969,36 @@ seen.miniBlockAlign.forEach((b) => {
   expect(b.gap <= 3, `Mini-Gantt : l'étiquette « ${b.t} » est décalée de ${b.gap} px par rapport à sa bande`);
 });
 
+// --- Mode Comparaison ------------------------------------------------------
+// Le jeu d'essai pose une référence sur cinq tâches (retard, avance, conforme,
+// décalage intégral, jalon en retard) et en laisse deux sans référence, dont un
+// jalon : le widget doit accepter les deux dans le même diagramme.
+expect(seen.standardRefBars === 0, `Mode standard : ${seen.standardRefBars} barre(s) de référence dessinée(s), 0 attendue — des dates de référence sur les tâches ne doivent rien changer tant que le widget est en mode Standard`);
+expect(seen.cmpRefBars.length === 4, `Comparaison : ${seen.cmpRefBars.length} barre(s) de référence, 4 attendues (les jalons n'en ont pas)`);
+seen.cmpRefBars.forEach((b, i) => {
+  expect(b.w > 2 && b.h > 2, `Comparaison : barre de référence ${i + 1} de surface nulle (${b.w}×${b.h})`);
+});
+expect(seen.cmpLate.length >= 1, `Comparaison : ${seen.cmpLate.length} zone(s) de retard, au moins 1 attendue`);
+expect(seen.cmpAhead.length >= 1, `Comparaison : ${seen.cmpAhead.length} zone(s) d'avance, au moins 1 attendue`);
+expect(seen.cmpFreed.length >= 1, `Comparaison : ${seen.cmpFreed.length} trace(s) de référence non consommée, au moins 1 attendue`);
+expect(seen.cmpGhosts.length === 1, `Comparaison : ${seen.cmpGhosts.length} losange(s) fantôme, 1 attendu (le jalon comparé ; celui sans référence n'en a pas)`);
+expect(seen.cmpLinks.length === 1, `Comparaison : ${seen.cmpLinks.length} segment(s) de liaison de jalon, 1 attendu`);
+expect(seen.cmpChips.length === 5, `Comparaison : ${seen.cmpChips.length} indicateur(s) d'écart, 5 attendus (4 tâches + 1 jalon)`);
+expect(seen.cmpChips.every((c) => /^[+\u22120-9]/.test(c.text.trim())), `Comparaison : un indicateur d'écart ne porte ni signe ni valeur (${seen.cmpChips.map((c) => c.text.trim()).join(", ")})`);
+// La légende du mode s'AJOUTE à celle qui existe déjà (Critique, Vigilance,
+// Jalon, Risque…) : ses quatre repères doivent y être, en tête.
+expect(seen.cmpLegend.slice(0, 4).map((i) => i.text.trim()).join("|") === "Initial|Actuel|Avance|Retard", `Comparaison : la légende ne s'ouvre pas sur les quatre repères du mode (${seen.cmpLegend.map((i) => i.text.trim()).join(", ")})`);
+expect(seen.cmpModeButtons.length === 2 && seen.cmpModeButtons[1].active, `Comparaison : le sélecteur rapide n'affiche pas l'état actif (${JSON.stringify(seen.cmpModeButtons)})`);
+// « Superposées sans rendre la ligne plus haute » : le widget de comparaison
+// est le jumeau exact du second, au mode près. Les hauteurs de ligne doivent
+// donc rester les mêmes, ligne par ligne.
+expect(seen.cmpRows.length === seen.standardRows.length, `Comparaison : ${seen.cmpRows.length} ligne(s) contre ${seen.standardRows.length} en mode standard — le mode ne doit ni masquer ni ajouter de tâche`);
+seen.cmpRows.forEach((row, i) => {
+  const ref = seen.standardRows[i];
+  if (!ref) return;
+  expect(Math.abs(row.h - ref.h) <= 2, `Comparaison : la ligne ${i + 1} mesure ${row.h} px contre ${ref.h} px en mode standard — la superposition ne doit pas faire grandir la ligne`);
+});
+
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.
 expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
@@ -948,7 +1026,7 @@ for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt"
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels]]) {
+for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels], ["Comparaison (légende)", seen.cmpLegend], ["Comparaison (écarts)", seen.cmpLabels]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];
@@ -1435,6 +1513,21 @@ expect(taskMeta.hints.some((h) => /tableaux de bord/i.test(h)), `Fiche de tâche
 expect(taskMeta.riskButton === 1, "Fiche de tâche : impossible d'ajouter un risque de délai");
 expect(taskMeta.riskRows >= 1, `Fiche de tâche : ${taskMeta.riskRows} risque(s) après ajout, au moins 1 attendu`);
 expect(taskMeta.riskSeverities === 4, `Fiche de tâche : ${taskMeta.riskSeverities} niveau(x) de gravité, 4 attendus`);
+
+// Mode comparaison dans la fiche de tâche.
+expect(taskComparison.checkbox === 1, "Fiche de tâche : l'interrupteur « Activer le mode comparaison » est absent");
+expect(taskComparison.checkedAtOpen === false, "Fiche de tâche : une tâche sans comparaison ouvre l'interrupteur déjà coché");
+expect(taskComparison.fieldsAtOpen === 0, `Fiche de tâche : ${taskComparison.fieldsAtOpen} champ(s) de référence visible(s) alors que la comparaison est désactivée, 0 attendu`);
+expect(taskComparison.fieldsAfterCheck === 2, `Fiche de tâche : ${taskComparison.fieldsAfterCheck} champ(s) de référence après activation, 2 attendus (début et fin)`);
+expect(taskComparison.errors.length === 2, `Fiche de tâche : ${taskComparison.errors.length} erreur(s) pour une comparaison activée sans dates, 2 attendues (${taskComparison.errors.join(" | ")})`);
+// La copie remplit les deux champs depuis les dates ACTUELLES de la tâche
+// (Congés d'août : 05/08/2026 → 19/08/2026), et lève les erreurs.
+expect(taskComparison.start === "2026-08-05" && taskComparison.end === "2026-08-19",
+  `Fiche de tâche : la copie des dates actuelles donne ${taskComparison.start} → ${taskComparison.end}, 2026-08-05 → 2026-08-19 attendu`);
+expect(taskComparison.errorsAfterCopy === 0, `Fiche de tâche : ${taskComparison.errorsAfterCopy} erreur(s) subsistent après la copie des dates`);
+// Désactiver masque les champs SANS effacer l'historique saisi.
+expect(taskComparison.fieldsAfterUncheck === 0, `Fiche de tâche : ${taskComparison.fieldsAfterUncheck} champ(s) encore visible(s) après désactivation, 0 attendu`);
+expect(taskComparison.startAfterRecheck === "2026-08-05", `Fiche de tâche : la date de référence est perdue par une désactivation temporaire (${taskComparison.startAfterRecheck})`);
 
 // Tableaux Markdown (issue #71).
 expect(taskMeta.mdTables === 1, `Fiche de tâche : ${taskMeta.mdTables} tableau(x) rendu(s) dans l'aperçu, 1 attendu`);
