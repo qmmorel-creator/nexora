@@ -673,6 +673,42 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "La pastille du coin redevient transparente : elle doit rester pleine.");
 }
 
+/* Coche du Mini-Gantt : elle ne sert qu'à encadrer (issue #48, dernier retour).
+   Trois disparitions et une emphase, dont aucune ne se signale d'elle-même si
+   elle se défait : les boutons peuvent revenir d'un copier-coller, et l'état de
+   la coche peut retomber sur une sélection en mémoire. */
+{
+  const mini = builtSource.slice(
+    builtSource.indexOf("function WidgetMiniGantt"),
+    builtSource.indexOf("function WidgetEmbedMetro"),
+  );
+  assert.ok(mini.length > 0, "WidgetMiniGantt introuvable.");
+  for (const [quoi, motif] of [
+    ["Focus", /miniGanttFocus/],
+    ["Présenter", /miniGanttPresentation/],
+    ["Zoom sur la sélection", /zoomOnSelection/],
+  ]) {
+    assert.doesNotMatch(mini, motif, `Le mode « ${quoi} » est revenu dans le Mini-Gantt.`);
+  }
+  /* L'état de la coche vient des encadrés, pas d'une sélection en mémoire : une
+     sélection se viderait au rechargement et la case reviendrait décochée sur
+     une tâche visiblement encadrée. */
+  assert.match(mini, /new Set\(rawHighlightFrames\.filter\(\(f\) => f && f\.autoTaskId\)\.map\(\(f\) => f\.autoTaskId\)\)/,
+    "La coche du Mini-Gantt ne se lit plus sur les encadrés posés.");
+  assert.doesNotMatch(mini, /useState\(\[\]\);[\s\S]{0,80}selection/, "Une sélection éphémère est revenue.");
+  /* L'emphase de la tâche cochée : gras du titre et liseré rouge épais.
+     Contrôle RÈGLE PAR RÈGLE, sans découper de tranche : le sélecteur de fin
+     qu'on aurait pris ici (« .lp-widget-minigantt-label-title{ ») est contenu
+     dans celui de début, donc la tranche se serait refermée dans sa propre
+     ancre et les deux contrôles seraient passés à vide. */
+  assert.match(builtSource,
+    /\.lp-widget-minigantt-row\.is-selected \.lp-widget-minigantt-label-title\{[^}]*font-weight:800/,
+    "Le titre d'une tâche cochée n'est plus en gras.");
+  assert.match(builtSource,
+    /\.lp-widget-minigantt-row\.is-selected \.lp-widget-minigantt-bar\{ box-shadow:0 0 0 2\.5px #D64545/,
+    "La barre d'une tâche cochée n'a plus son liseré rouge épais.");
+}
+
 /* Bandeau de paramètres du widget (issue #56).
    La panne ne venait pas du bandeau mais de ce qui défilait dessous : les
    en-têtes collants du planning se calent sur la barre d'onglets de la PAGE,

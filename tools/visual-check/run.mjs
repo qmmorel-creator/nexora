@@ -449,7 +449,7 @@ try {
 
    Le second Mini-Gantt est choisi parce qu'il n'a AUCUNE annotation propre :
    tout ce qui apparaît après la coche vient donc de la coche. */
-const coche = { frames: 0, icons: 0, corners: 0, cornerOpacity: "", leftGap: null, rightGap: null, cornerOffsetX: null, cornerOffsetY: null, apres: 0 };
+const coche = { frames: 0, icons: 0, corners: 0, cornerOpacity: "", leftGap: null, rightGap: null, cornerOffsetX: null, cornerOffsetY: null, apres: 0, boutons: [], lignes: 0, titreGras: "", ombreBarre: "", cochee: null, apresCochee: null };
 try {
   const hote = "#harness-second-minigantt";
   const boite = page.locator(`${hote} .lp-widget-minigantt-select`).first();
@@ -478,8 +478,26 @@ try {
          ferait flotter entièrement hors du cadre sans la moindre erreur. */
       cornerOffsetX: cadre && coin ? Math.round(cadre.right - (coin.left + coin.width / 2)) : null,
       cornerOffsetY: cadre && coin ? Math.round(cadre.top - (coin.top + coin.height / 2)) : null,
+      /* « Supprimer focus et présenter » (#48). Les boutons de zoom − / Auto / +
+         et les trois « + Bloc / + Encadré / + Jalon » restent : on relève donc
+         TOUS les libellés de la barre de contrôles et on vérifie qu'aucun mode
+         n'y subsiste, plutôt que de compter — un décompte laisserait passer un
+         mode qui prendrait la place d'un bouton retiré. */
+      boutons: Array.from(document.querySelectorAll(`${sel} .lp-widget-minigantt-axis-controls button`))
+        .map((b) => (b.textContent || "").trim()),
+      /* L'emphase demandée : gras du titre et liseré rouge épais de la barre.
+         Mesuré sur le RENDU : une règle bien écrite mais surclassée par une
+         autre ne se voit que là. */
+      lignes: document.querySelectorAll(`${sel} .lp-widget-minigantt-row.is-selected`).length,
+      titreGras: ligne ? getComputedStyle(ligne.querySelector(".lp-widget-minigantt-label-title") || ligne).fontWeight : "",
+      ombreBarre: ligne && ligne.querySelector(".lp-widget-minigantt-bar")
+        ? getComputedStyle(ligne.querySelector(".lp-widget-minigantt-bar")).boxShadow
+        : "",
     };
   }, hote));
+  /* La coche LIT les encadrés : après le geste, elle doit se voir cochée sans
+     qu'aucun état éphémère ne la soutienne. */
+  coche.cochee = await boite.isChecked();
   /* Décocher doit tout retirer : sans cela le cadre s'accumulerait à chaque
      coche. Le banc a grossi : sans ce recentrage, la case peut se retrouver
      hors de la fenêtre au moment du second geste et le contrôle expire sans
@@ -498,6 +516,7 @@ try {
   }
   await page.waitForTimeout(400);
   coche.apres = await page.locator(`${hote} .lp-widget-minigantt-frame`).count();
+  coche.apresCochee = await boite2.isChecked();
 } catch (error) {
   coche.error = String(error).split("\n")[0];
 }
@@ -1365,6 +1384,16 @@ expect(coche.rightGap !== null && coche.rightGap >= 6, `Coche du Mini-Gantt : le
 expect(coche.cornerOffsetX !== null && Math.abs(coche.cornerOffsetX) <= 2 && Math.abs(coche.cornerOffsetY) <= 2,
   `Coche du Mini-Gantt : la pastille est décalée de (${coche.cornerOffsetX}, ${coche.cornerOffsetY}) px du coin supérieur droit du cadre — elle doit y rester centrée`);
 expect(coche.apres === 0, `Coche du Mini-Gantt : ${coche.apres} encadré(s) restant(s) après avoir décoché, 0 attendu`);
+expect(coche.boutons.length > 0, "Mini-Gantt : aucun bouton relevé dans la barre de contrôles — le contrôle des modes retirés passerait à vide");
+expect(!coche.boutons.some((t) => /focus|présenter|quitter|zoom \(/i.test(t)),
+  `Mini-Gantt : la barre de contrôles porte encore « ${coche.boutons.join(" / ")} » — Focus, Présenter et le cadrage sur la sélection ont été retirés (#48)`);
+expect(coche.cochee === true && coche.apresCochee === false,
+  `Coche du Mini-Gantt : la case se lit « ${coche.cochee} » une fois l'encadré posé et « ${coche.apresCochee} » une fois retiré — elle doit suivre l'encadré`);
+expect(coche.lignes === 1, `Coche du Mini-Gantt : ${coche.lignes} ligne(s) marquée(s) is-selected, 1 attendue`);
+expect(Number(coche.titreGras) >= 700,
+  `Coche du Mini-Gantt : le titre de la tâche cochée est peint en graisse ${coche.titreGras || "inconnue"} — Quentin l'a demandé en gras`);
+expect(/rgb\(214, 69, 69\)/.test(coche.ombreBarre) && /2\.5px/.test(coche.ombreBarre),
+  `Coche du Mini-Gantt : la barre de la tâche cochée porte l'ombre « ${coche.ombreBarre || "aucune"} » — il faut un liseré rouge épais`);
 
 expect(!transfert.error, `contrôle du changement de tableau de bord interrompu : ${transfert.error}`);
 expect(transfert.bouton === 1, `Fiche du widget : ${transfert.bouton} bouton « Changer de tableau de bord », 1 attendu`);
