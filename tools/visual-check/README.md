@@ -58,7 +58,10 @@ jalon) et deux n'en portent pas, dont un jalon :
 - la légende s'ouvre sur Initial, Actuel, Avance, Retard, sans recouvrement ;
 - le sélecteur rapide affiche l'état actif ;
 - **les hauteurs de ligne sont identiques à celles du widget standard** : la
-  superposition des barres ne fait grandir aucune ligne.
+  superposition des barres ne fait grandir aucune ligne ;
+- les zones d'écart sont **plus fines que les barres** et chaque barre comparée
+  porte sa borne de fin : à hauteur égale, elles se lisaient comme le
+  prolongement de la barre.
 
 Poignée d'avancement du Mini-Gantt :
 

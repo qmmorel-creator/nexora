@@ -463,7 +463,13 @@ test("mode standard : aucune barre de référence, aucune zone, aucune ligne plu
   assert.match(html, /cmpMs && cmpMs\.referenceVisible && /);
   // Les barres comparées vivent en position absolue dans la piste : la hauteur
   // de ligne est inchangée.
-  assert.match(html, /\.lp-widget-minigantt-cmpzone\{ position:absolute; top:0; height:9px; border-radius:2px; box-sizing:border-box; border:1px solid;/);
+  // Les zones d'écart sont PLUS FINES que la barre et centrées sur son axe :
+  // sans quoi elles se lisent comme son prolongement, et la poignée
+  // d'avancement semble avoir de la course qu'elle n'a pas.
+  assert.match(html, /\.lp-widget-minigantt-cmpzone\{ position:absolute; top:50%; height:6px; transform:translateY\(-50%\);/);
+  // Et la barre comparée porte une borne de fin, que la poignée ronde ne dit pas.
+  assert.match(html, /\.lp-widget-minigantt-bar\.is-compared::after\{/);
+  assert.match(html, /\(cmpBars \? " is-compared" : ""\)/);
 });
 
 // 18. Widget étroit ----------------------------------------------------------

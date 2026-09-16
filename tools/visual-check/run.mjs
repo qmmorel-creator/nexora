@@ -114,6 +114,12 @@ const seen = await page.evaluate(() => {
       return { c, vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
     }),
     cmpLabels: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmplabel"),
+    // Hauteurs comparées : une zone d'écart ne doit jamais avoir la géométrie de
+    // la barre, sinon elle se lit comme son prolongement.
+    cmpZoneHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone")].map((el) => Math.round(el.getBoundingClientRect().height)))],
+    cmpBarHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar")].map((el) => Math.round(el.getBoundingClientRect().height)))],
+    cmpBarCaps: document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar.is-compared").length,
+    standardBarCaps: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-bar.is-compared, #harness-second-minigantt .lp-widget-minigantt-bar.is-compared").length,
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
     cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
@@ -1034,6 +1040,14 @@ expect(seen.cmpRefBars.length === 5, `Comparaison : ${seen.cmpRefBars.length} ba
 seen.cmpRefBars.forEach((b, i) => {
   expect(b.w > 2 && b.h > 2, `Comparaison : barre de référence ${i + 1} de surface nulle (${b.w}×${b.h})`);
 });
+// « On ne sait pas si le curseur est au bout de la tâche » : une zone d'écart ne
+// doit jamais avoir la hauteur de la barre, et une barre comparée porte une
+// borne de fin que la poignée ronde ne dit pas.
+expect(seen.cmpZoneHeights.length && seen.cmpBarHeights.length && Math.max(...seen.cmpZoneHeights) < Math.min(...seen.cmpBarHeights),
+  `Comparaison : les zones d'écart (${seen.cmpZoneHeights.join("/")} px) ne sont pas plus fines que les barres (${seen.cmpBarHeights.join("/")} px) — elles se lisent comme leur prolongement`);
+expect(seen.cmpBarCaps === 5, `Comparaison : ${seen.cmpBarCaps} barre(s) portent une borne de fin, 5 attendues (une par tâche comparée)`);
+expect(seen.standardBarCaps === 0, `Mode standard : ${seen.standardBarCaps} barre(s) marquées comparées, 0 attendue`);
+
 expect(seen.cmpLate.length >= 1, `Comparaison : ${seen.cmpLate.length} zone(s) de retard, au moins 1 attendue`);
 expect(seen.cmpAhead.length >= 1, `Comparaison : ${seen.cmpAhead.length} zone(s) d'avance, au moins 1 attendue`);
 expect(seen.cmpFreed.length >= 1, `Comparaison : ${seen.cmpFreed.length} zone(s) d'avance en fin de tâche, au moins 1 attendue`);

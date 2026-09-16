@@ -395,6 +395,15 @@ mais conserve les valeurs saisies.
   ce côté s'efface au profit d'un pointillé fin.
 - **Actuel** — la barre existante, inchangée : couleur métier, point
   d'avancement, glisser-déposer, infobulle.
+Les trois zones d'écart ci-dessous sont des **rubans de 6 px centrés sur l'axe
+de la barre**, donc plus fins qu'elle et visiblement posés *à côté* d'elle. À
+égalité de hauteur, l'œil les lisait comme son prolongement : on ne savait plus
+si la poignée d'avancement était au bout de la tâche ou s'il restait de la
+course. Pour la même raison, une barre comparée porte une **borne de fin** — un
+montant plein de 2 px dans sa couleur métier, qui dépasse de 1,5 px en haut et
+en bas. C'est elle qui dit « la tâche s'arrête ici » ; la poignée ronde, elle,
+ne dit que « l'avancement en est là ».
+
 - **Retard** (`late`) — la part de la période actuelle postérieure à la fin de
   référence, hachures **montantes** rouge corail (`#E4572E`).
 - **Avance au début** (`ahead`) — la part de la période actuelle antérieure au
