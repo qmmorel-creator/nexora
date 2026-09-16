@@ -26,6 +26,7 @@ const EXPORTS = [
   "GANTT_FRAME_BAR_CLEARANCE", "normalizeHighlightFrames",
   "normalizeGanttBlockOpacity", "ganttBlockFill",
   "normalizeGanttBlockBorderWidth", "ganttBlockBorder", "GANTT_BLOCK_BORDER_WIDTH_MAX", "GANTT_BLOCK_DEFAULT_BORDER_WIDTH",
+  "normalizeTaskFrameIcon", "miniGanttFrameCornerIcon",
   "GANTT_BLOCK_OPACITY_MAX", "GANTT_BLOCK_DEFAULT_OPACITY", "GANTT_DECISION_DEFAULT_OPACITY",
 ];
 
@@ -46,12 +47,14 @@ const {
   ganttBlockBorder,
   GANTT_BLOCK_BORDER_WIDTH_MAX,
   GANTT_BLOCK_DEFAULT_BORDER_WIDTH,
+  normalizeTaskFrameIcon,
+  miniGanttFrameCornerIcon,
+  MINIGANTT_CHECK_FRAME_CORNER_ICON,
   GANTT_BLOCK_OPACITY_MAX,
   GANTT_BLOCK_DEFAULT_OPACITY,
   GANTT_DECISION_DEFAULT_OPACITY,
   miniGanttToggleTaskFrame,
   MINIGANTT_CHECK_FRAME_ICON,
-  MINIGANTT_CHECK_FRAME_CORNER_ICON,
   GANTT_FRAME_BAR_CLEARANCE,
   isGanttIsoDate,
   validateTemporalBlock,
@@ -891,9 +894,11 @@ test("le trait est composé à un seul endroit, épaisseur, style et couleur", (
   assert.ok(ganttBlockBorder({}).endsWith(GANTT_BLOCK_DEFAULT_COLOR));
   assert.equal(ganttBlockBorder(null), `1.5px dashed ${GANTT_BLOCK_DEFAULT_COLOR}`);
   // Les quatre rendus passent par cette composition : plus aucune valeur codée
-  // en dur dans les diagrammes.
+  // en dur dans les diagrammes. Et c'est un CADRE, pas deux montants verticaux :
+  // le bloc était borné à gauche et à droite, sans haut ni bas.
   assert.doesNotMatch(html, /borderLeft: "1\.5px " \+/);
-  assert.match(html, /borderLeft: ganttBlockBorder\(shape\.block\)/);
+  assert.doesNotMatch(html, /borderLeft: ganttBlockBorder\(shape\.block\)/);
+  assert.match(html, /border: ganttBlockBorder\(shape\.block\)/);
 });
 
 test("le réglage survit à la normalisation, dans les trois formes de bloc", () => {
@@ -907,4 +912,38 @@ test("le réglage survit à la normalisation, dans les trois formes de bloc", ()
     { id: "b2", title: "Gros œuvre", startDate: "2026-08-21", endDate: "2026-09-20", color: "#22B07D" },
   ]);
   assert.equal(sansReglage.borderWidth, 1.5);
+});
+
+// --- Icône de la pastille d'un encadré -------------------------------------
+//
+// Le triangle rouge reste le défaut ; la tâche peut lui substituer le sien, par
+// une URL saisie dans sa fiche. La résolution se fait à l'AFFICHAGE, pas à la
+// pose : changer l'URL met à jour l'encadré déjà posé, sans réécrire la
+// configuration du widget, et décocher puis recocher ne perd pas le réglage.
+
+test("le triangle rouge reste le défaut, et la tâche peut lui substituer le sien", () => {
+  const cadre = { id: "f1", autoTaskId: "t1", cornerIconUrl: MINIGANTT_CHECK_FRAME_CORNER_ICON };
+  // Aucune icône sur la tâche : le défaut, exactement comme avant.
+  assert.equal(miniGanttFrameCornerIcon(cadre, { id: "t1" }), MINIGANTT_CHECK_FRAME_CORNER_ICON);
+  assert.equal(miniGanttFrameCornerIcon(cadre, undefined), MINIGANTT_CHECK_FRAME_CORNER_ICON);
+  // Une URL sur la tâche prend la main.
+  assert.equal(miniGanttFrameCornerIcon(cadre, { id: "t1", ganttFrameIcon: "https://ex.test/i.png" }), "https://ex.test/i.png");
+  // Un encadré de coche enregistré SANS pastille en retrouve une : sans cela il
+  // resterait nu, l'étiquette de gauche ayant disparu en #48.
+  assert.equal(miniGanttFrameCornerIcon({ id: "f2", autoTaskId: "t1" }, null), MINIGANTT_CHECK_FRAME_CORNER_ICON);
+  // Un encadré posé à la MAIN garde la sienne : rien ne la lui impose, et
+  // l'icône d'une tâche qu'il contiendrait ne s'y substitue pas.
+  assert.equal(miniGanttFrameCornerIcon({ id: "f3", cornerIconUrl: "" }, { ganttFrameIcon: "https://ex.test/i.png" }), "");
+  assert.equal(miniGanttFrameCornerIcon({ id: "f4", cornerIconUrl: "https://ex.test/a.png" }, { ganttFrameIcon: "https://ex.test/b.png" }), "https://ex.test/a.png");
+});
+
+test("l'URL d'icône est nettoyée avant d'être gardée", () => {
+  assert.equal(normalizeTaskFrameIcon("  https://ex.test/i.png  "), "https://ex.test/i.png");
+  assert.equal(normalizeTaskFrameIcon(""), "");
+  assert.equal(normalizeTaskFrameIcon("   "), "");
+  assert.equal(normalizeTaskFrameIcon(null), "");
+  assert.equal(normalizeTaskFrameIcon(42), "");
+  // La fiche de la tâche porte le champ, et l'enregistrement le normalise.
+  assert.match(html, /id="task-frame-icon"/);
+  assert.match(html, /ganttFrameIcon: normalizeTaskFrameIcon\(ganttFrameIcon\)/);
 });

@@ -1239,8 +1239,7 @@
                   left: shape.x0,
                   width: shape.width,
                   background: ganttBlockFill(shape.block),
-                  borderLeft: ganttBlockBorder(shape.block),
-                  borderRight: ganttBlockBorder(shape.block),
+                  border: ganttBlockBorder(shape.block),
                 }}
               />
             ))}
@@ -4787,6 +4786,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     () => miniGanttSortTasks([...projTasks, ...milestoneTasks], sortKey, sortDir),
     [projTasks, milestoneTasks, sortKey, sortDir]
   );
+  // Index des tâches rendues, par identifiant. Servait déjà, recalculé sur
+  // place, à l'ancrage des annotations ; la pastille d'un encadré en a besoin
+  // elle aussi, pour lire l'icône choisie dans la fiche de la tâche.
+  const tasksById = useMemo(
+    () => new Map([...projTasks, ...milestoneTasks].map((t) => [t.id, t])),
+    [projTasks, milestoneTasks]
+  );
 
   // IMPORTANT : tous les Hooks doivent être appelés à chaque rendu, dans le
   // même ordre — le early-return "aucune tâche" est donc repoussé après TOUS
@@ -4919,6 +4925,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
   }, [isEmpty,minDateStr,maxDateStr,ticks]);
   const secondaryTicks = useMemo(() => (isEmpty ? [] : widgetSecondaryTicks(minDateStr, maxDateStr)), [minDateStr, maxDateStr, isEmpty]);
+  /* Troisième niveau, un cran plus fin encore : année → trimestre → mois,
+     trimestre → mois → semaine, mois → semaine → jour. Il se tait de lui-même
+     quand il deviendrait un peigne illisible (voir widgetTertiaryTicks). */
+  const tertiaryTicks = useMemo(() => (isEmpty ? [] : widgetTertiaryTicks(minDateStr, maxDateStr)), [minDateStr, maxDateStr, isEmpty]);
   // Contexte supplémentaire : à un zoom suffisamment large (peu de jours affichés),
   // on ajoute le jour de la semaine sous chaque étiquette de date, et on teinte
   // légèrement les week-ends — comme dans la vue Planning Projets complète.
@@ -5458,7 +5468,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       if (!Number.isFinite(idx) || idx < minIdx || idx > maxIdx) return;
       items.push({ kind: "milestone", id: m.id, idx, label: m.title, color: m.color, type: m.type, data: m });
     });
-    const taskById = new Map([...projTasks, ...milestoneTasks].map((t) => [t.id, t]));
+    const taskById = tasksById;
     configNotes.forEach((n) => {
       let idx = null;
       if (n.anchor.kind === "date") idx = dayIndex(n.anchor.date);
@@ -5483,7 +5493,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       item.leftPct = ((item.idx - minIdx) / span) * 100;
     });
     return items;
-  }, [configMilestones, configNotes, riskSegments, projTasks, milestoneTasks, minIdx, maxIdx, span, trackWidth]);
+  }, [configMilestones, configNotes, riskSegments, tasksById, minIdx, maxIdx, span, trackWidth]);
 
   const stripLaneCount = stripShapes.length ? Math.max(...stripShapes.map((s) => s.lane)) + 1 : 0;
 
@@ -5626,6 +5636,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {/* Sous-graduations : le pas intermédiaire est porté par l'axe LUI-MÊME,
             pas seulement par la grille de fond. Sans elles, l'axe annuel
             n'offrait que sept traits sur sept ans. */}
+        {tertiaryTicks.map((d) => (
+          <span key={"axis-sub3-" + d} className="lp-widget-minigantt-axis-subtick is-fine" style={{ left: pctFor(dayIndex(d)) }} />
+        ))}
         {secondaryTicks.map((d) => (
           <span key={"axis-sub-" + d} className="lp-widget-minigantt-axis-subtick" style={{ left: pctFor(dayIndex(d)) }} />
         ))}
@@ -5776,6 +5789,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {weekendBands.map((idx) => (
         <span key={"we-" + idx} className="lp-widget-minigantt-weekend" style={{ left: pctFor(idx), width: `${(1 / span) * 100}%` }} />
       ))}
+      {tertiaryTicks.map((d) => (
+        <span key={"ter-" + d} className="lp-widget-minigantt-sub-sep is-fine" style={{ left: pctFor(dayIndex(d)) }} />
+      ))}
       {secondaryTicks.map((d) => (
         <span key={"sec-" + d} className="lp-widget-minigantt-sub-sep" style={{ left: pctFor(dayIndex(d)) }} />
       ))}
@@ -5920,11 +5936,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         <span
           key={"cmp-" + kind}
           className="lp-widget-minigantt-cmplabel"
-          style={{
-            left: (zone.leftPct + zone.widthPct / 2) + "%",
-            transform: "translate(-50%, -50%)",
-            color: miniGanttComparisonZoneColor(kind),
-          }}
+          /* Sur le bord EXTÉRIEUR de la zone — celui qui s'éloigne de la barre —
+             et jamais en son centre : centrée, elle masquait la trame qu'elle
+             commente et, sur une zone courte, débordait des deux côtés. Un
+             démarrage anticipé s'écrit donc à gauche, un retard de fin à droite. */
+          style={kind === "ahead"
+            ? { left: zone.leftPct + "%", transform: "translate(calc(-100% - 3px), -50%)", color: miniGanttComparisonZoneColor(kind) }
+            : { left: (zone.leftPct + zone.widthPct) + "%", transform: "translate(3px, -50%)", color: miniGanttComparisonZoneColor(kind) }}
           aria-hidden="true"
         >
           {miniGanttComparisonDeltaLabel(days)}
@@ -6168,6 +6186,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               top: shape.lane * MINIGANTT_PHASE_LANE_H,
               color: shape.block.color,
               borderColor: shape.block.color,
+              // « Continue » doit vraiment donner du continu : la pastille du
+              // titre imposait ses pointillés (décision) ou ses points (méta
+              // bloc) par la feuille de style, quel que soit le réglage du bloc.
+              borderStyle: shape.block.borderStyle,
               background: "color-mix(in srgb, " + shape.block.color + " 16%, var(--surface))",
             }}
             title={shape.block.meta
@@ -6233,8 +6255,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             left: `${shape.leftPct}%`,
             width: `${shape.widthPct}%`,
             background: ganttBlockFill(shape.block),
-            borderLeft: ganttBlockBorder(shape.block),
-            borderRight: ganttBlockBorder(shape.block),
+            border: ganttBlockBorder(shape.block),
           }}
         />
       ))}
@@ -6277,9 +6298,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 border: `1.5px ${seg.frame.borderStyle} ${seg.frame.color}`,
               }}
             />
-            {seg.frame.cornerIconUrl && (
+            {miniGanttFrameCornerIcon(seg.frame, tasksById.get(seg.frame.autoTaskId)) && (
               <img
-                src={seg.frame.cornerIconUrl}
+                src={miniGanttFrameCornerIcon(seg.frame, tasksById.get(seg.frame.autoTaskId))}
                 alt=""
                 className="lp-widget-minigantt-frame-corner"
                 referrerPolicy="no-referrer"
@@ -6449,24 +6470,51 @@ function widgetAxisTicks(minDate, maxDate) {
    Le garde-fou passe de 300 à 600 : sept ans de trimestres tiennent largement,
    mais une fenêtre à dates fixes de vingt ans en demanderait quatre-vingts de
    plus, et la boucle doit rester bornée quoi qu'il arrive. */
-function widgetSecondaryTicks(minDate, maxDate) {
+/* Échelle des graduations, du plus large au plus fin. Descendre « d'un cran »,
+   c'est avancer d'une case dans cette suite — l'axe porte donc jusqu'à TROIS
+   niveaux : son unité, puis deux sous-grilles de plus en plus fines. */
+const WIDGET_AXIS_SCALE = ["year", "quarter", "month", "week", "day"];
+
+function widgetFinerUnit(unit, crans) {
+  const i = WIDGET_AXIS_SCALE.indexOf(unit);
+  if (i === -1) return null;
+  return WIDGET_AXIS_SCALE[i + crans] || null;
+}
+
+/* Sous-graduations à `crans` niveaux sous l'unité de l'axe.
+
+   Un garde-fou de densité, et pas seulement de boucle : sous une échelle
+   mensuelle, le troisième niveau est le JOUR, soit jusqu'à 550 traits sur une
+   piste de quelques centaines de pixels — un aplat gris, pas un repère. Au-delà
+   de MINIGANTT_SUBGRID_MAX traits, le niveau se tait, et l'axe reste lisible à
+   tous les zooms sans qu'on ait à le régler. */
+const MINIGANTT_SUBGRID_MAX = 180;
+
+function widgetSubTicks(minDate, maxDate, crans) {
   const spanDays = Math.max(1, dayIndex(maxDate) - dayIndex(minDate));
   const unit = widgetAxisUnit(spanDays);
-  const subUnit = unit === "week" ? "day"
-    : unit === "month" ? "week"
-    : unit === "quarter" ? "month"
-    : unit === "year" ? "quarter"
-    : null;
+  const subUnit = widgetFinerUnit(unit, crans);
   if (!subUnit) return [];
   const ticks = [];
   let cur = unitStart(minDate, subUnit);
   let guard = 0;
-  while (dayIndex(cur) <= dayIndex(maxDate) && guard < 600) {
+  while (dayIndex(cur) <= dayIndex(maxDate) && guard < 1200) {
     if (dayIndex(cur) >= dayIndex(minDate)) ticks.push(cur);
     cur = addDays(cur, unitLen(cur, subUnit));
     guard++;
   }
-  return ticks;
+  return ticks.length > MINIGANTT_SUBGRID_MAX ? [] : ticks;
+}
+
+// Un cran sous l'unité de l'axe : année → trimestre, mois → semaine…
+function widgetSecondaryTicks(minDate, maxDate) {
+  return widgetSubTicks(minDate, maxDate, 1);
+}
+
+// Deux crans : année → mois, trimestre → semaine, mois → jour. C'est ce niveau
+// qui se tait le premier quand la piste ne peut plus le porter.
+function widgetTertiaryTicks(minDate, maxDate) {
+  return widgetSubTicks(minDate, maxDate, 2);
 }
 
 // Heat map mensuelle compacte : grille calendrier sur 3 mois consécutifs, navigable
