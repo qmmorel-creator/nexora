@@ -1,6 +1,5 @@
 kTypes={taskTypes} setTaskTypes={setTaskTypes}
           teamMembers={teamMembers} setTeamMembers={setTeamMembers}
-          customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs}
           gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
           syncedCalendarSettings={syncedCalendarSettings} setSyncedCalendarSettings={setSyncedCalendarSettings} onSyncSyncedCalendars={syncPublicCalendarsToProjects}
           metaFilters={metaFilters} setMetaFilters={setMetaFilters}
@@ -55,7 +54,6 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           taskTypes={taskTypes}
           tasks={tasks}
           teamMembers={teamMembers}
-          customFieldDefs={customFieldDefs}
           inheritedFolder={quickEditProject.__new ? null : projectFolders.find((f)=>f.id===quickEditProject.folderId)}
           defaultColor={PROJECT_PALETTES[appearance.projectPalette] ? PROJECT_PALETTES[appearance.projectPalette][projects.length % PROJECT_PALETTES[appearance.projectPalette].length] : PROJECT_PALETTES.default[0]}
           onSave={(data) => {
@@ -262,21 +260,6 @@ function filterFieldOptions(field, ctx) {
   if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
   if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
   if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
-  if (field && field.startsWith("cf:")) {
-    const id = field.slice(3);
-    const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
-    if (!def) return [];
-    if (def.type === "checkbox") return [{ value: "true", label: "Oui" }, { value: "false", label: "Non" }];
-    if (def.type === "select") return (def.options || []).map((o) => ({ value: o, label: o }));
-    // Texte / nombre / date : pas de liste fermée — on propose les valeurs
-    // réellement déjà utilisées dans les tâches, comme pour "Responsable".
-    const values = new Set();
-    (ctx.tasks || []).forEach((t) => {
-      const v = t.customFields ? t.customFields[id] : undefined;
-      if (v !== undefined && v !== null && v !== "") values.add(String(v));
-    });
-    return [...values].sort().map((v) => ({ value: v, label: def.type === "date" ? fmtShort(v) : v }));
-  }
   return [];
 }
 
@@ -289,20 +272,9 @@ function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
   return (
     <div className="lp-filter-condition-row">
       <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
-        {fieldsOverride ? (
-          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
-        ) : (
-          <>
-            <optgroup label="Champs standards">
-              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
-            </optgroup>
-            {(ctx.customFieldDefs || []).length > 0 && (
-              <optgroup label="Champs personnalisés">
-                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
-              </optgroup>
-            )}
-          </>
-        )}
+        {fieldsOverride
+          ? fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
+          : ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
       </select>
       {isTitleField ? (
         <div className="lp-mode-toggle lp-mode-toggle-icon">
@@ -1129,7 +1101,6 @@ const SETTINGS_TABS = [
   { key: "statuses", label: "Statuts", icon: "settings" },
   { key: "taskTypes", label: "Types", icon: "tag" },
   { key: "users", label: "Utilisateurs", icon: "user" },
-  { key: "customFields", label: "Champs personnalisés", icon: "hash" },
   { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
   { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
   { key: "gcal", label: "Google Calendar", icon: "calendar" },
@@ -2247,7 +2218,6 @@ function SettingsModal({
   statuses, setStatuses,
   taskTypes, setTaskTypes,
   teamMembers, setTeamMembers,
-  customFieldDefs, setCustomFieldDefs,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
@@ -2303,7 +2273,7 @@ function SettingsModal({
           </div>
           <div className="lp-settings-content">
             {activeTab === "projects" && (
-              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} customFieldDefs={customFieldDefs} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
+              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
             )}
             {activeTab === "statuses" && (
               <StatusManager embedded statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />
@@ -2313,9 +2283,6 @@ function SettingsModal({
             )}
             {activeTab === "users" && (
               <TeamMemberManager embedded teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} pushToast={pushToast} />
-            )}
-            {activeTab === "customFields" && (
-              <CustomFieldManager embedded customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs} tasks={tasks} projects={projects} pushToast={pushToast} />
             )}
             {activeTab === "syncedCalendars" && (
               <SyncedCalendarsSettingsPane
@@ -2341,7 +2308,7 @@ function SettingsModal({
               <MetaTemporalBlocksSettingsPane metaTemporalBlocks={metaTemporalBlocks} setMetaTemporalBlocks={setMetaTemporalBlocks} dashboards={dashboards || []} />
             )}
             {activeTab === "metaFilters" && (
-              <MetaFiltersSettingsPane metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders, customFieldDefs }} />
+              <MetaFiltersSettingsPane metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders }} />
             )}
             {activeTab === "appearance" && (
               <AppearanceModal embedded appearance={appearance} setAppearance={setAppearance} saveStatus={saveStatus} saveError={saveError} pushToast={pushToast} />
@@ -2965,14 +2932,6 @@ function ListView({ tasks, ctx, gradient, progressColorByStatus, setTasks, onOpe
           {GROUP_OPTIONS.map((k) => (
             <label className="lp-checkbox-line" key={k}><input type="radio" name="lp-gb" checked={groupBy === k} onChange={() => setGroupBy(k)} /> {fieldLabel(k, ctx)}</label>
           ))}
-          {(ctx.customFieldDefs || []).length > 0 && (
-            <>
-              <div className="lp-dropdown-group-label">Champs personnalisés</div>
-              {ctx.customFieldDefs.map((f) => (
-                <label className="lp-checkbox-line" key={f.id}><input type="radio" name="lp-gb" checked={groupBy === "cf:" + f.id} onChange={() => setGroupBy("cf:" + f.id)} /> {f.name}</label>
-              ))}
-            </>
-          )}
         </DropdownButton>
         {!embedded && (
           <DropdownButton label="" icon={<Columns3 size={14} />} title="Colonnes affichées">
@@ -4559,16 +4518,13 @@ function miniGanttClampWindow(window, bounds) {
    widget, les réglages de la vue et le menu « Regrouper » de l'en-tête.
 
    Les trois en offraient chacun une version différente : la fiche connaissait
-   l'inactivité et les champs personnalisés, la vue et le menu non, alors que
+   l'inactivité, la vue et le menu non, alors que
    `groupTasks` sait grouper sur N'IMPORTE quelle clé de `fieldDef` (#86). Rien
    n'est calculé ici : on rend des CLÉS, et chaque appelant les traduit avec
    `fieldLabel`, qui vit hors de ce bloc. */
 const MINIGANTT_GROUPBY_FIELDS = ["project", "status", "criticality", "taskType", "assignee", "milestone", "inactivity", "period"];
-function miniGanttGroupByKeys(ctx) {
-  const customs = (ctx && Array.isArray(ctx.customFieldDefs) ? ctx.customFieldDefs : [])
-    .filter((f) => f && f.id)
-    .map((f) => "cf:" + f.id);
-  return ["none", ...MINIGANTT_GROUPBY_FIELDS, ...customs];
+function miniGanttGroupByKeys() {
+  return ["none", ...MINIGANTT_GROUPBY_FIELDS];
 }
 
 /* Message d'erreur du cadrage « Dates fixes », vide quand tout va bien.
@@ -6245,9 +6201,9 @@ function normalizeProjectTreemapConfig(widget) {
   const fields = [];
   rawFields.forEach((key) => {
     if (typeof key !== "string" || !key) return;
-    if (!known.has(key) && !key.startsWith("cf:")) return;
-    // Un dossier, une priorité, un budget, un risque : ces champs appartiennent
-    // au projet. Sur une tuile de statut ils resteraient vides sans explication.
+    if (!known.has(key)) return;
+    // Un dossier, une priorité, un budget : ces champs appartiennent au projet.
+    // Sur une tuile de statut ils resteraient vides sans explication.
     if (tileBy !== "project" && TREEMAP_PROJECT_ONLY_FIELDS.includes(key)) return;
     // Le statut dominant d'une tuile de statut, c'est ce statut : une tautologie.
     if (tileBy === "status" && key === "dominantStatus") return;
@@ -7255,7 +7211,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, customFieldDefs, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -7301,8 +7257,6 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   }, [projectId, taskTypeId]);
   const [milestone, setMilestone] = useState(base.milestone || false);
   const [milestoneIcon, setMilestoneIcon] = useState(base.milestoneIcon || "");
-  const [customFields, setCustomFields] = useState(base.customFields || {});
-  const setCustomField = (fieldId, value) => setCustomFields((prev) => ({ ...prev, [fieldId]: value }));
   const [attachments, setAttachments] = useState(base.attachments || []);
   const [attachError, setAttachError] = useState("");
   const [driveName, setDriveName] = useState("");
@@ -7511,7 +7465,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -7616,7 +7570,9 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       checklist,
       dependsOn,
       recurrence,
-      customFields,
+      // Plus d'éditeur dans l'interface : la valeur déjà stockée (écrite par le
+      // MCP) est rendue telle quelle, jamais écrasée par un enregistrement.
+      customFields: base.customFields || {},
       attachments,
       // Un projet qui n'est plus adossé à un calendrier perd son méta bloc :
       // la période n'est alors plus tenue à jour par l'agenda.
@@ -8239,36 +8195,6 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         </div>
       </div>
 
-      {(() => {
-        // Ne montre que les champs personnalisés du projet actuellement sélectionné
-        // pour cette tâche (ou les champs "Tous les projets", pour compatibilité
-        // avec ceux créés avant l'introduction du cloisonnement par projet).
-        const relevantFields = (customFieldDefs || []).filter((f) => !f.projectId || f.projectId === projectId);
-        return relevantFields.length > 0 && (
-        <div className="lp-field">
-          <label>Champs personnalisés</label>
-          <div className="lp-custom-fields-grid">
-            {relevantFields.map((f) => (
-              <div className="lp-custom-field-item" key={f.id}>
-                <label>{f.name}</label>
-                {f.type === "text" && <input type="text" value={customFields[f.id] || ""} onChange={(e) => setCustomField(f.id, e.target.value)} />}
-                {f.type === "number" && <input type="number" value={customFields[f.id] ?? ""} onChange={(e) => setCustomField(f.id, e.target.value === "" ? "" : Number(e.target.value))} />}
-                {f.type === "date" && <input type="date" value={customFields[f.id] || ""} onChange={(e) => setCustomField(f.id, e.target.value)} />}
-                {f.type === "select" && (
-                  <select value={customFields[f.id] || ""} onChange={(e) => setCustomField(f.id, e.target.value)}>
-                    <option value="">—</option>
-                    {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                )}
-                {f.type === "checkbox" && (
-                  <label className="lp-checkbox-line"><input type="checkbox" checked={!!customFields[f.id]} onChange={(e) => setCustomField(f.id, e.target.checked)} /> {customFields[f.id] ? "Oui" : "Non"}</label>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-        );
-      })()}
 
       <div className="lp-field lp-drive-panel">
         <div className="lp-drive-panel-head">
@@ -8703,10 +8629,10 @@ function ProjectNavigationDefaultsEditor({ value, onChange, ctx, inheritedLabel 
   );
 }
 
-function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs, onClose }) {
+function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, onClose }) {
   const current = folders.find((f)=>f.id===folder.id) || folder;
   const [navigationDefaults, setNavigationDefaults] = useState(current.navigationDefaults || {});
-  const ctx = { projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs };
+  const ctx = { projects, statuses, taskTypes, tasks, teamMembers, projectFolders };
 
   const save = () => {
     setFolders((prev)=>prev.map((f)=>f.id===folder.id ? {...f,navigationDefaults} : f));
@@ -8733,7 +8659,7 @@ function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, s
   );
 }
 
-function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, teamMembers, customFieldDefs, onDeleteProject, onBulkDelete, palette, onClose, embedded }) {
+function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, teamMembers, onDeleteProject, onBulkDelete, palette, onClose, embedded }) {
   const [formTarget, setFormTarget] = useState(null); // null | "new" | projet à modifier
   const [folderNavTarget, setFolderNavTarget] = useState(null);
 
@@ -8802,7 +8728,6 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           taskTypes={taskTypes}
           tasks={tasks}
           teamMembers={teamMembers}
-          customFieldDefs={customFieldDefs}
           inheritedFolder={formTarget === "new" ? null : projectFolders.find((f)=>f.id===formTarget.folderId)}
           defaultColor={palette[projects.length % palette.length]}
           onSave={handleSave}
@@ -8826,7 +8751,6 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           tasks={tasks}
           teamMembers={teamMembers}
           projectFolders={projectFolders}
-          customFieldDefs={customFieldDefs}
           onClose={()=>setFolderNavTarget(null)}
         />
       )}
@@ -8836,7 +8760,7 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
 
 
 
-function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, customFieldDefs, inheritedFolder, defaultColor, onSave, onClose }) {
+function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, inheritedFolder, defaultColor, onSave, onClose }) {
   const [name, setName] = useState(project?.name || "");
   const [icon, setIcon] = useState(project?.icon || "tabler:route");
   const [color, setColor] = useState(project?.color || defaultColor || PROJECT_PALETTES.default[0]);
@@ -8973,7 +8897,7 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
         <ProjectNavigationDefaultsEditor
           value={navigationDefaults}
           onChange={setNavigationDefaults}
-          ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs}}
+          ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
           inheritedLabel={inheritedFolder?.navigationDefaults?.view
             ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
             : "Conserver la vue actuelle"}
@@ -9039,16 +8963,6 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, pushToast, onCl
   return <Modal title="Utilisateurs" onClose={onClose} wide>{body}</Modal>;
 }
 
-// Types de champ personnalisé disponibles — volontairement limités à des types
-// simples et robustes (pas de champ "formule" ou de dépendances entre champs)
-// pour rester fiables et faciles à comprendre dans un contexte chantier.
-const CUSTOM_FIELD_TYPES = [
-  { key: "text", label: "Texte" },
-  { key: "number", label: "Nombre" },
-  { key: "date", label: "Date" },
-  { key: "select", label: "Liste déroulante" },
-  { key: "checkbox", label: "Case à cocher" },
-];
 
 // Réglages Google Calendar : quels calendriers synchroniser (un projet sera
 // créé par calendrier coché), et sur quelle fenêtre temporelle. La liste des
@@ -9155,121 +9069,7 @@ function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalList
   );
 }
 
-function CustomFieldManager({ customFieldDefs, setCustomFieldDefs, tasks, projects, pushToast, onClose, embedded }) {
-  const [formTarget, setFormTarget] = useState(null); // null | "new" | définition à modifier
 
-  const handleSave = (data) => {
-    if (formTarget === "new") setCustomFieldDefs((prev) => [...prev, { id: uid(), ...data }]);
-    else setCustomFieldDefs((prev) => prev.map((f) => (f.id === formTarget.id ? { ...f, ...data } : f)));
-    setFormTarget(null);
-  };
-  const [confirmRemoveField, setConfirmRemoveField] = useState(null); // { field, count } | null
-  const removeField = (f) => {
-    const count = tasks.filter((t) => t.customFields && t.customFields[f.id] !== undefined && t.customFields[f.id] !== "" && t.customFields[f.id] !== null).length;
-    if (count > 0) { setConfirmRemoveField({ field: f, count }); return; }
-    setCustomFieldDefs((prev) => prev.filter((x) => x.id !== f.id));
-  };
-  const moveField = (id, dir) => {
-    setCustomFieldDefs((prev) => {
-      const idx = prev.findIndex((f) => f.id === id);
-      const swapIdx = idx + dir;
-      if (idx === -1 || swapIdx < 0 || swapIdx >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-      return next;
-    });
-  };
-  const projectName = (id) => (id ? projects.find((p) => p.id === id)?.name || "(projet supprimé)" : null);
-
-  const body = (
-    <>
-      <div className="lp-section-title">Champs personnalisés des tâches</div>
-      <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 12 }}>
-        Ex. numéro de lot, référence marché, zone chantier... Propres à UN projet — les tâches d'un autre projet ne les affichent pas. Ces champs apparaissent dans la fiche de chaque tâche du projet concerné et peuvent servir de colonnes dans le Tableur.
-      </p>
-      {customFieldDefs.length === 0 && <div className="lp-empty" style={{ padding: 12 }}>Aucun champ personnalisé pour l'instant.</div>}
-      {customFieldDefs.map((f, i) => (
-        <div className="lp-manage-item" key={f.id}>
-          <div className="lp-view-order-arrows">
-            <button type="button" className="lp-icon-btn" disabled={i === 0} onClick={() => moveField(f.id, -1)} title="Monter"><ChevronUp size={12} /></button>
-            <button type="button" className="lp-icon-btn" disabled={i === customFieldDefs.length - 1} onClick={() => moveField(f.id, 1)} title="Descendre"><ChevronDown size={12} /></button>
-          </div>
-          <span className="lp-project-dot" style={{ background: "var(--text-muted)", width: 24, height: 24 }}><Hash size={13} color="#fff" /></span>
-          <span className="lp-manage-name">
-            {f.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({CUSTOM_FIELD_TYPES.find((t) => t.key === f.type)?.label || f.type})</span>
-            <span className={"lp-cf-scope-badge" + (f.projectId ? "" : " lp-cf-scope-badge-global")}>{f.projectId ? projectName(f.projectId) : "Tous les projets"}</span>
-          </span>
-          <button className="lp-icon-btn" onClick={() => setFormTarget(f)}><Pencil size={14} /></button>
-          <button className="lp-icon-btn" onClick={() => removeField(f)}><Trash2 size={15} /></button>
-        </div>
-      ))}
-      <hr className="lp-divider" />
-      <button className="lp-btn lp-btn-primary" onClick={() => setFormTarget("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouveau champ</button>
-      {formTarget && (
-        <CustomFieldFormModal
-          field={formTarget === "new" ? null : formTarget}
-          projects={projects}
-          onSave={handleSave}
-          onClose={() => setFormTarget(null)}
-        />
-      )}
-      {confirmRemoveField && (
-        <ConfirmModal
-          title="Supprimer le champ"
-          message={`${confirmRemoveField.count} tâche${confirmRemoveField.count > 1 ? "s ont" : " a"} une valeur pour « ${confirmRemoveField.field.name} ». La supprimer effacera aussi ces valeurs. Continuer ?`}
-          danger
-          confirmLabel="Supprimer"
-          onConfirm={() => { setCustomFieldDefs((prev) => prev.filter((x) => x.id !== confirmRemoveField.field.id)); setConfirmRemoveField(null); }}
-          onClose={() => setConfirmRemoveField(null)}
-        />
-      )}
-    </>
-  );
-
-  if (embedded) return <div className="lp-settings-pane">{body}</div>;
-  return <Modal title="Champs personnalisés" onClose={onClose} wide>{body}</Modal>;
-}
-
-function CustomFieldFormModal({ field, projects, onSave, onClose }) {
-  const [name, setName] = useState(field?.name || "");
-  const [type, setType] = useState(field?.type || "text");
-  const [optionsText, setOptionsText] = useState((field?.options || []).join("\n"));
-  const [projectId, setProjectId] = useState(field?.projectId || (projects[0]?.id ?? ""));
-  const [nameError, setNameError] = useState(false);
-
-  const submit = () => {
-    if (!name.trim()) { setNameError(true); return; }
-    const options = type === "select" ? optionsText.split("\n").map((s) => s.trim()).filter(Boolean) : undefined;
-    onSave({ name: name.trim(), type, options, projectId: projectId || null });
-  };
-
-  return (
-    <Modal title={field ? "Modifier le champ" : "Nouveau champ personnalisé"} onClose={onClose} footer={
-      <>
-        <button className="lp-btn" onClick={onClose}>Annuler</button>
-        <button className="lp-btn lp-btn-primary" onClick={submit}>{field ? "Enregistrer les modifications" : "Ajouter le champ"}</button>
-      </>
-    }>
-      <NamedField label="Nom du champ" value={name} onChange={(v) => { setName(v); if (nameError && v.trim()) setNameError(false); }} error={nameError} onEnter={submit} placeholder="Ex. Numéro de lot" autoFocus />
-      <div className="lp-field">
-        <label>Projet <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(le champ n'apparaîtra que sur les tâches de ce projet)</span></label>
-        <ProjectSelect projects={projects} value={projectId} onChange={setProjectId} emptyLabel={`Tous les projets${field && !field.projectId ? " (réglage existant)" : " — déconseillé, préfère un projet précis"}`} />
-      </div>
-      <div className="lp-field">
-        <label>Type</label>
-        <select value={type} onChange={(e) => setType(e.target.value)}>
-          {CUSTOM_FIELD_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-        </select>
-      </div>
-      {type === "select" && (
-        <div className="lp-field">
-          <label>Options <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(une par ligne)</span></label>
-          <textarea rows={4} value={optionsText} onChange={(e) => setOptionsText(e.target.value)} placeholder={"Lot 1\nLot 2\nLot 3"} />
-        </div>
-      )}
-    </Modal>
-  );
-}
 
 function TeamMemberFormModal({ member, onSave, onClose }) {
   const [name, setName] = useState(member?.name || "");

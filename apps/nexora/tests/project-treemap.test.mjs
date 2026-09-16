@@ -303,8 +303,10 @@ test("une configuration absente, partielle ou illisible reste affichable", () =>
 
   // Le nom du projet est réinséré même si la configuration l'a perdu : sans lui
   // la tuile ne désigne plus rien.
+  // Une clé inconnue — dont les anciennes clés « cf: » des champs personnalisés
+  // retirés — est écartée, et un doublon n'apparaît qu'une fois.
   const stripped = T.normalizeProjectTreemapConfig({ treemapFields: ["progress", "inconnu", "cf:abc", "progress"] });
-  assert.deepEqual(stripped.fields, ["projectName", "progress", "cf:abc"]);
+  assert.deepEqual(stripped.fields, ["projectName", "progress"]);
 
   // Un mode ou une palette inconnus retombent sur une valeur sûre.
   assert.equal(T.normalizeProjectTreemapConfig({ treemapColorMode: "n'importe quoi" }).colorMode, "sizeFilterGradient");
@@ -468,9 +470,9 @@ test("le score de criticité d'une tâche ne dépend pas de l'axe choisi", () =>
 });
 
 test("les champs propres au projet sont retirés dès que la tuile n'en est plus un", () => {
-  const projet = T.normalizeProjectTreemapConfig({ treemapTileBy: "project", treemapFields: ["projectName", "budget", "folder", "riskCount", "priority", "progress"] });
+  const projet = T.normalizeProjectTreemapConfig({ treemapTileBy: "project", treemapFields: ["projectName", "budget", "folder", "priority", "progress"] });
   assert.ok(T.TREEMAP_PROJECT_ONLY_FIELDS.every((k) => projet.fields.includes(k)), "sur un projet, ces champs restent proposés");
-  const statut = T.normalizeProjectTreemapConfig({ treemapTileBy: "status", treemapFields: ["projectName", "budget", "folder", "riskCount", "priority", "progress"] });
+  const statut = T.normalizeProjectTreemapConfig({ treemapTileBy: "status", treemapFields: ["projectName", "budget", "folder", "priority", "progress"] });
   assert.deepEqual(statut.fields, ["projectName", "progress"]);
 });
 

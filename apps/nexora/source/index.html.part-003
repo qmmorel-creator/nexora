@@ -1915,13 +1915,8 @@ function BulkDatesPicker({ onApplyDates, onShift }) {
   );
 }
 
-function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete, toolbarSlot, prefs, setPrefs, customFieldDefs }) {
-  // Les champs personnalisés s'ajoutent comme colonnes dynamiques, préfixées
-  // "cf:" pour ne jamais entrer en collision avec les colonnes standards.
-  const allColOptions = useMemo(() => [
-    ...TABLE_COL_OPTIONS,
-    ...(customFieldDefs || []).map((f) => ({ key: "cf:" + f.id, label: f.name, w: 130, customField: f })),
-  ], [customFieldDefs]);
+function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete, toolbarSlot, prefs, setPrefs }) {
+  const allColOptions = TABLE_COL_OPTIONS;
   const cols = prefs.cols || ["project", "status", "start", "end", "progress", "assignee", "lastInteraction", "inactivity"];
   const setCols = (updater) => setPrefs((p) => ({ ...p, cols: typeof updater === "function" ? updater(p.cols || []) : updater }));
   const groupBy = prefs.groupBy || "none";
@@ -1983,14 +1978,6 @@ function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete
           {GROUP_OPTIONS.map((k) => (
             <label className="lp-checkbox-line" key={k}><input type="radio" name="lp-table-gb" checked={groupBy === k} onChange={() => setGroupBy(k)} /> {fieldLabel(k, ctx)}</label>
           ))}
-          {(customFieldDefs || []).length > 0 && (
-            <>
-              <div className="lp-dropdown-group-label">Champs personnalisés</div>
-              {customFieldDefs.map((f) => (
-                <label className="lp-checkbox-line" key={f.id}><input type="radio" name="lp-table-gb" checked={groupBy === "cf:" + f.id} onChange={() => setGroupBy("cf:" + f.id)} /> {f.name}</label>
-              ))}
-            </>
-          )}
         </DropdownButton>
         <DropdownButton label="" icon={<Columns3 size={14} />} title="Colonnes affichées">
           {allColOptions.map((c) => (
@@ -2158,25 +2145,6 @@ function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete
                     {cols.includes("inactivity") && (
                       <td><span className="lp-dep-badge" title={`Dernière interaction : ${formatLastInteraction(t)}`}>{formatInteractionAge(t)}</span></td>
                     )}
-                    {(customFieldDefs || []).filter((f) => cols.includes("cf:" + f.id)).map((f) => {
-                      const val = t.customFields ? t.customFields[f.id] : undefined;
-                      const setVal = (v) => updateTask(t.id, { customFields: { ...(t.customFields || {}), [f.id]: v } });
-                      return (
-                        <td key={f.id}>
-                          {f.type === "text" && <InlineTextField value={val || ""} onCommit={setVal} />}
-                          {f.type === "number" && <input type="number" className="lp-table-inline-number" value={val ?? ""} onChange={(e) => setVal(e.target.value === "" ? "" : Number(e.target.value))} />}
-                          {f.type === "date" && (val ? <InlineDateField value={val} onCommit={setVal} /> : <span className="lp-empty-cell" onClick={() => setVal(iso(new Date()))}>—</span>)}
-                          {f.type === "select" && (
-                            <InlineChipSelect
-                              options={[{ value: "", label: "—", color: "#CBD5E1" }, ...(f.options || []).map((o) => ({ value: o, label: o, color: "var(--text-muted)" }))]}
-                              value={val || ""}
-                              onChange={setVal}
-                            />
-                          )}
-                          {f.type === "checkbox" && <input type="checkbox" checked={!!val} onChange={(e) => setVal(e.target.checked)} style={{ display: "block", margin: "0 auto" }} />}
-                        </td>
-                      );
-                    })}
                     <td className="lp-table-th-actions">
                       <button className="lp-icon-btn" onClick={() => duplicateTask(t)} title="Dupliquer cette tâche"><Bookmark size={13} /></button>
                       <button className="lp-icon-btn" onClick={() => onDelete(t)} title="Supprimer"><Trash2 size={13} /></button>
@@ -2243,7 +2211,6 @@ const WIDGET_METRICS = [
 
 const CUSTOM_CARD_BLOCK_TYPES = [
   { key:"aggregate", label:"Agrégation standard" },
-  { key:"customAggregate", label:"Agrégation d'un champ numérique" },
   { key:"taskTitle", label:"Titre de la tâche" },
   { key:"project", label:"Projet" },
   { key:"status", label:"Statut" },
@@ -2252,13 +2219,11 @@ const CUSTOM_CARD_BLOCK_TYPES = [
   { key:"assignee", label:"Responsable" },
   { key:"progress", label:"Avancement" },
   { key:"description", label:"Description" },
-  { key:"customField", label:"Champ personnalisé" },
   { key:"staticText", label:"Texte libre" },
 ];
 
 const CUSTOM_CARD_DEFAULT_ICONS = {
   aggregate:"tabler:calculator",
-  customAggregate:"tabler:chart-bar",
   taskTitle:"tabler:circle-check",
   project:"tabler:folder",
   status:"tabler:traffic-lights",
@@ -2267,7 +2232,6 @@ const CUSTOM_CARD_DEFAULT_ICONS = {
   assignee:"tabler:user",
   progress:"tabler:progress",
   description:"tabler:align-left",
-  customField:"tabler:forms",
   staticText:"tabler:text-size",
 };
 
@@ -2288,12 +2252,6 @@ const CHART_STYLES = [
 const GAUGE_METRICS = [
   { key: "avgProgress", label: "Avancement moyen" },
   { key: "doneRatio", label: "Taux de tâches terminées" },
-];
-const AGGREGATE_TYPES = [
-  { key: "sum", label: "Somme" },
-  { key: "avg", label: "Moyenne" },
-  { key: "min", label: "Minimum" },
-  { key: "max", label: "Maximum" },
 ];
 
 function widgetDefaultFilter() {
@@ -2321,7 +2279,6 @@ function activeWidgetFilterCount(filter) {
   ["onlyLate", "onlyMilestone", "excludeDone", "assigneeEmpty"].forEach((k) => { if (f[k]) n += 1; });
   ["dueWithinDays", "pastDays", "inactivityDays"].forEach((k) => { if (f[k] !== "" && f[k] != null) n += 1; });
   if (f.datePreset) n += 1;
-  if ((f.customFieldConditions || []).length) n += (f.customFieldConditions || []).length;
   n += countFilterGroup(f.advanced);
   return n;
 }
@@ -2376,11 +2333,6 @@ function applyWidgetFilter(tasks, filter, ctx) {
     }
     if (f.datePreset) {
       if (!matchesDatePreset(t[f.datePresetField || "end"], f.datePreset)) return false;
-    }
-    if (f.customFieldConditions && f.customFieldConditions.length) {
-      for (const cond of f.customFieldConditions) {
-        if (!evalFilterCondition(t, cond)) return false;
-      }
     }
     // Groupes de conditions multiples ET/OU (imbriqués) — mécanisme le plus
     // général, utilisé notamment par le filtre de PAGE de tableau de bord.
@@ -3197,7 +3149,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen}/>
                 )}
                 {w.type === "chart" && (
-                  <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} aggregateField={w.aggregateField} aggregateType={w.aggregateType || "sum"} />
+                  <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} />
                 )}
                 {w.type === "list" && (
                   <WidgetList tasks={scoped} sortBy={w.sortBy || "end"} limit={w.limit || 6} groupBy={w.groupBy} ctx={ctx} onOpen={onOpen} />
@@ -3338,19 +3290,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   );
 }
 
-// Agrège un ensemble de tâches selon un champ personnalisé numérique — somme,
-// moyenne, minimum ou maximum. Sans champ choisi (aggregateField vide), le
-// comportement d'origine est conservé : un simple comptage de tâches.
-function aggregateTasksValue(tasksArr, aggregateField, aggregateType) {
-  if (!aggregateField) return tasksArr.length;
-  const fieldId = aggregateField.startsWith("cf:") ? aggregateField.slice(3) : aggregateField;
-  const nums = tasksArr.map((t) => Number(t.customFields?.[fieldId])).filter((n) => Number.isFinite(n));
-  if (nums.length === 0) return 0;
-  if (aggregateType === "avg") return nums.reduce((s, n) => s + n, 0) / nums.length;
-  if (aggregateType === "min") return Math.min(...nums);
-  if (aggregateType === "max") return Math.max(...nums);
-  return nums.reduce((s, n) => s + n, 0); // "sum" par défaut
-}
 // Arrondit proprement pour l'affichage : entier si c'en est un, sinon 1 décimale.
 function fmtAggregateValue(v) {
   if (!Number.isFinite(v)) return "0";
@@ -3358,16 +3297,16 @@ function fmtAggregateValue(v) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-function computeStackedData(tasks, groupBy, stackBy, ctx, aggregateField, aggregateType) {
+function computeStackedData(tasks, groupBy, stackBy, ctx) {
   const primary = groupTasks(tasks, groupBy, ctx).filter((g) => g.tasks.length > 0);
   const stackKeys = groupTasks(tasks, stackBy, ctx).filter((g) => g.tasks.length > 0);
   return primary.map((pg) => ({
     label: pg.label,
-    total: aggregateTasksValue(pg.tasks, aggregateField, aggregateType),
+    total: pg.tasks.length,
     segments: stackKeys
       .map((sg) => {
         const segTasks = pg.tasks.filter((t) => matchesGroupKey(t, stackBy, sg.key, ctx));
-        return { label: sg.label, color: sg.color || "var(--text-muted)", value: aggregateTasksValue(segTasks, aggregateField, aggregateType) };
+        return { label: sg.label, color: sg.color || "var(--text-muted)", value: segTasks.length };
       })
       .filter((s) => s.value > 0),
   }));
@@ -3401,7 +3340,7 @@ function GaugeChart({ value, size = 120, metricLabel, count }) {
   );
 }
 
-function BarChartSimple({ data, horizontal, isAggregate }) {
+function BarChartSimple({ data, horizontal }) {
   const [hover, setHover] = useState(null); // { d, x, y }
   const max = Math.max(1, ...data.map((d) => d.value));
   const openTip = (d, e) => setHover({ d, x: e.clientX, y: e.clientY });
@@ -3434,7 +3373,7 @@ function BarChartSimple({ data, horizontal, isAggregate }) {
           ))}
           {hover && (
             <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
-              {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
+              {hover.d.label} — {fmtAggregateValue(hover.d.value)} ({pctFor(hover.d.value)}%)
             </WidgetPointerTooltip>
           )}
         </div>
@@ -3456,7 +3395,7 @@ function BarChartSimple({ data, horizontal, isAggregate }) {
         ))}
         {hover && (
           <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
-            {hover.d.label} — {fmtAggregateValue(hover.d.value)}{!isAggregate && ` (${pctFor(hover.d.value)}%)`}
+            {hover.d.label} — {fmtAggregateValue(hover.d.value)} ({pctFor(hover.d.value)}%)
           </WidgetPointerTooltip>
         )}
       </div>
@@ -3559,17 +3498,15 @@ function StackedBarChart({ data }) {
   );
 }
 
-function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx, aggregateField, aggregateType }) {
+function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx }) {
   const [hover, setHover] = useState(null);
   const style = chartStyle || "pie";
-  const isAggregate = !!aggregateField;
-  const aggLabel = AGGREGATE_TYPES.find((a) => a.key === (aggregateType || "sum"))?.label || "";
 
   // Tous les hooks sont appelés inconditionnellement (règle des Hooks React) —
   // on calcule les trois formes de données possibles, puis on choisit laquelle
   // afficher selon le style choisi.
   const lineGroups = useMemo(() => groupTasks(tasks, "period", ctx).filter((g) => g.tasks.length > 0), [tasks, ctx]);
-  const stackedData = useMemo(() => computeStackedData(tasks, groupBy || "project", stackBy || "status", ctx, aggregateField, aggregateType), [tasks, groupBy, stackBy, ctx, aggregateField, aggregateType]);
+  const stackedData = useMemo(() => computeStackedData(tasks, groupBy || "project", stackBy || "status", ctx), [tasks, groupBy, stackBy, ctx]);
   const groups = useMemo(() => groupTasks(tasks, groupBy, ctx).filter((g) => g.tasks.length > 0), [tasks, groupBy, ctx]);
 
   if (style === "gauge") {
@@ -3597,11 +3534,11 @@ function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx, ag
     return <StackedBarChart data={stackedData} />;
   }
 
-  const data = groups.map((g) => ({ label: g.label, value: aggregateTasksValue(g.tasks, aggregateField, aggregateType), color: g.color || "var(--text-muted)" }));
+  const data = groups.map((g) => ({ label: g.label, value: g.tasks.length, color: g.color || "var(--text-muted)" }));
   if (data.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune donnée pour ce filtre.</div>;
 
   if (style === "bar" || style === "barh") {
-    return <BarChartSimple data={data} horizontal={style === "barh"} isAggregate={isAggregate} />;
+    return <BarChartSimple data={data} horizontal={style === "barh"} />;
   }
 
   // style === "pie"
@@ -3619,7 +3556,7 @@ function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx, ag
       </div>
       {hover && (
         <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
-          {hover.s.label} — {fmtAggregateValue(hover.s.value)}{!isAggregate && ` (${hover.s.pct}%)`}
+          {hover.s.label} — {fmtAggregateValue(hover.s.value)} ({hover.s.pct}%)
         </WidgetPointerTooltip>
       )}
     </div>
@@ -3701,28 +3638,9 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen }) {
 
   const projectOf = (t) => ctx.projects.find((p)=>p.id===t?.projectId);
   const statusOfTask = (t) => ctx.statuses.find((st)=>st.id===t?.statusId);
-  const customDef = (id) => (ctx.customFieldDefs || []).find((f)=>f.id===id);
-
-  const aggregateCustom = (block) => {
-    if (!block.fieldId) return "—";
-    const vals=(tasks || [])
-      .map((t)=>Number(t.customFields?.[block.fieldId]))
-      .filter((v)=>Number.isFinite(v));
-    if (!vals.length) return "—";
-    const mode=block.aggregateType || "sum";
-    let value=0;
-    if (mode==="avg") value=vals.reduce((a,b)=>a+b,0)/vals.length;
-    else if (mode==="min") value=Math.min(...vals);
-    else if (mode==="max") value=Math.max(...vals);
-    else value=vals.reduce((a,b)=>a+b,0);
-    return Number.isInteger(value)
-      ? value.toLocaleString("fr-FR")
-      : value.toLocaleString("fr-FR",{maximumFractionDigits:2});
-  };
 
   const valueFor = (b) => {
     if (b.kind==="aggregate") return computeKpiValue(tasks || [],b.metric || "count",ctx);
-    if (b.kind==="customAggregate") return aggregateCustom(b);
     if (b.kind==="staticText") return b.text || "—";
     if (!refTask) return "—";
     if (b.kind==="taskTitle") return refTask.title || "Sans titre";
@@ -3733,19 +3651,11 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen }) {
     if (b.kind==="assignee") return refTask.assignee || "Non assigné";
     if (b.kind==="progress") return `${Math.max(0,Math.min(100,Number(refTask.progress)||0))}%`;
     if (b.kind==="description") return refTask.desc || refTask.description || "—";
-    if (b.kind==="customField") {
-      const val=refTask.customFields?.[b.fieldId];
-      if (val == null || val === "") return "—";
-      if (Array.isArray(val)) return val.join(", ");
-      return String(val);
-    }
     return "—";
   };
 
   const defaultLabel = (b) => {
     if (b.kind==="aggregate") return WIDGET_METRICS.find((m)=>m.key===(b.metric||"count"))?.label || "Agrégation";
-    if (b.kind==="customAggregate") return customDef(b.fieldId)?.name || "Agrégation";
-    if (b.kind==="customField") return customDef(b.fieldId)?.name || "Champ";
     return ({
       taskTitle:"Tâche", project:"Projet", status:"Statut", start:"Début", end:"Fin",
       assignee:"Responsable", progress:"Avancement", description:"Description", staticText:""
@@ -3754,7 +3664,7 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen }) {
 
   return (
     <div className={"lp-custom-card surface-"+cardSurface} style={{"--custom-card-cols":columns,...cardShellStyle}}>
-      {!refTask && blocks.some((b)=>!["aggregate","customAggregate","staticText"].includes(b.kind)) && (
+      {!refTask && blocks.some((b)=>!["aggregate","staticText"].includes(b.kind)) && (
         <div className="lp-custom-card-warning">Aucune tâche de référence disponible pour les blocs individuels.</div>
       )}
       <div className="lp-custom-card-grid">
@@ -8718,28 +8628,6 @@ function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onE
     showZeroProjects: cfg.showZeroProjects,
   }), [tileEntities, bucketIdOf, tasks, sizeIds, colorIds, factsOf, extras, cfg.colorMode, cfg.showZeroProjects]);
 
-  // Champs personnalisés numériques : somme sur les tâches retenues par le
-  // filtre de taille. Calculé seulement si un tel champ est réellement affiché.
-  const customFieldIds = useMemo(
-    () => cfg.fields.filter((f) => f.startsWith("cf:")).map((f) => f.slice(3)),
-    [cfg.fields]
-  );
-  const customValues = useMemo(() => {
-    if (!customFieldIds.length) return {};
-    const map = {};
-    tasks.forEach((t) => {
-      const bucketId = sizeIds.has(t.id) ? bucketIdOf(t) : null;
-      if (!bucketId) return;
-      customFieldIds.forEach((id) => {
-        const raw = Number(t.customFields ? t.customFields[id] : undefined);
-        if (!Number.isFinite(raw)) return;
-        if (!map[bucketId]) map[bucketId] = {};
-        map[bucketId][id] = (map[bucketId][id] || 0) + raw;
-      });
-    });
-    return map;
-  }, [tasks, sizeIds, customFieldIds, bucketIdOf]);
-
   const domain = useMemo(() => treemapColorDomain(rows, cfg.colorMode), [rows, cfg.colorMode]);
   const legend = useMemo(
     () => (cfg.showLegend ? treemapLegendBuckets(rows, cfg.colorMode, cfg.palette, cfg.direction) : []),
@@ -8857,13 +8745,6 @@ function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onE
       const folder = (ctx.projectFolders || []).find((f) => f.id === row.project.folderId);
       if (!folder) return null;
       return <span className={chipClass} key={key} title="Dossier du projet">{folder.name}</span>;
-    }
-    if (key.startsWith("cf:")) {
-      const id = key.slice(3);
-      const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
-      const value = customValues[row.projectId] ? customValues[row.projectId][id] : undefined;
-      if (!def || value === undefined) return null;
-      return <span className={chipClass} key={key} title={`${def.name} — somme sur les tâches retenues`}>{def.name} : {fmtNumber(value)}</span>;
     }
     return null;
   };
@@ -9293,33 +9174,6 @@ function TaskFilterFields({ filter, setFilter, ctx }) {
           </select>
         </div>
       </div>
-      {(ctx.customFieldDefs || []).length > 0 && (
-        <div className="lp-field">
-          <label>Champs personnalisés</label>
-          {(filter.customFieldConditions || []).map((cond, idx) => (
-            <FilterConditionRow
-              key={idx}
-              cond={cond}
-              ctx={ctx}
-              onChange={(c) => setFilter((f) => {
-                const next = [...(f.customFieldConditions || [])];
-                next[idx] = c;
-                return { ...f, customFieldConditions: next };
-              })}
-              onRemove={() => setFilter((f) => ({ ...f, customFieldConditions: (f.customFieldConditions || []).filter((_, i) => i !== idx) }))}
-              fieldsOverride={ctx.customFieldDefs.map((cf) => "cf:" + cf.id)}
-            />
-          ))}
-          <button
-            type="button"
-            className="lp-btn"
-            style={{ marginTop: 6 }}
-            onClick={() => setFilter((f) => ({ ...f, customFieldConditions: [...(f.customFieldConditions || []), { field: "cf:" + ctx.customFieldDefs[0].id, mode: "is", values: [] }] }))}
-          >
-            <Plus size={12} style={{ marginRight: 3, verticalAlign: -2 }} />Ajouter une condition
-          </button>
-        </div>
-      )}
       <hr className="lp-divider" style={{ margin: "14px 0" }} />
       <div className="lp-section-title">Conditions avancées <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(groupes multiples combinables en ET / OU, y compris sur le titre)</span></div>
       <FilterGroupEditor group={filter.advanced || { op: "and", items: [] }} onChange={(g) => setFilter((f) => ({ ...f, advanced: g }))} ctx={ctx} />
@@ -9424,8 +9278,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [chartStyle, setChartStyle] = useState(widget?.chartStyle || "pie");
   const [gaugeMetric, setGaugeMetric] = useState(widget?.gaugeMetric || "avgProgress");
   const [stackBy, setStackBy] = useState(widget?.stackBy || "status");
-  const [aggregateField, setAggregateField] = useState(widget?.aggregateField || "");
-  const [aggregateType, setAggregateType] = useState(widget?.aggregateType || "sum");
   const [sortBy, setSortBy] = useState(widget?.sortBy || "end");
   const [limit, setLimit] = useState(widget?.limit || 6);
   const [filter, setFilter] = useState(widgetFilterFor(widget || {}));
@@ -9512,8 +9364,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [treemapBorder, setTreemapBorder] = useState(treemapCfg.border);
   const [treemapSizeFilterOpen, setTreemapSizeFilterOpen] = useState(false);
   const [treemapColorFilterOpen, setTreemapColorFilterOpen] = useState(false);
-  // Champs proposés : le catalogue, plus les champs personnalisés numériques —
-  // les seuls qui puissent être agrégés depuis les tâches d'un projet.
   // Le catalogue suit le champ qui porte les tuiles : proposer « Dossier » sur
   // des tuiles de statut donnerait une capsule que le normalisateur retire à
   // l'enregistrement — une case qui se coche et ne tient pas.
@@ -9522,8 +9372,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       .filter((f) => treemapTileBy === "project" || !TREEMAP_PROJECT_ONLY_FIELDS.includes(f.key))
       .filter((f) => !(treemapTileBy === "status" && f.key === "dominantStatus"))
       .map((f) => (f.key === "projectName" ? { ...f, label: TREEMAP_TILE_BY_LABELS[treemapTileBy].tileName } : f)),
-    ...(ctx.customFieldDefs || []).filter((f) => f.type === "number").map((f) => ({ key: "cf:" + f.id, label: f.name })),
-  ], [ctx.customFieldDefs, treemapTileBy]);
+  ], [treemapTileBy]);
   const treemapFieldLabel = (key) => treemapFieldCatalogue.find((f) => f.key === key)?.label || key;
   const moveTreemapField = (key, dir) => setTreemapFields((prev) => {
     const i = prev.indexOf(key);
@@ -9607,7 +9456,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "taskDetail") return !!taskDetailTaskId;
     if (type === "customCard") {
       if (!cardBlocks.length) return false;
-      if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","customAggregate","staticText"].includes(b.kind))) return false;
+      if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText"].includes(b.kind))) return false;
       return true;
     }
     if (type === "budget") return !!budgetProjectId;
@@ -9650,8 +9499,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "chart") {
       data.chartStyle = chartStyle;
       if (chartStyle === "gauge") data.gaugeMetric = gaugeMetric;
-      else if (chartStyle === "stackedBar") { data.groupBy = groupBy; data.stackBy = stackBy; data.aggregateField = aggregateField || null; data.aggregateType = aggregateType; }
-      else if (chartStyle !== "line") { data.groupBy = groupBy; data.aggregateField = aggregateField || null; data.aggregateType = aggregateType; }
+      else if (chartStyle === "stackedBar") { data.groupBy = groupBy; data.stackBy = stackBy; }
+      else if (chartStyle !== "line") { data.groupBy = groupBy; }
     }
     if (type === "list") { data.sortBy = sortBy; data.limit = Number(limit) || 6; data.groupBy = listGroupBy; }
     if (type === "countdown") { data.countdownMode = countdownMode; data.countdownDate = countdownDate; data.countdownTaskId = countdownTaskId; }
@@ -10106,33 +9955,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                   </div>
                 )}
 
-                {b.kind === "customAggregate" && (
-                  <div className="lp-row2">
-                    <div className="lp-field">
-                      <label>Champ numérique</label>
-                      <select value={b.fieldId || ""} onChange={(e)=>updateCardBlock(b.id,{fieldId:e.target.value})}>
-                        <option value="">— Choisir —</option>
-                        {(ctx.customFieldDefs || []).filter((f)=>f.type==="number").map((f)=><option key={f.id} value={f.id}>{f.name}</option>)}
-                      </select>
-                    </div>
-                    <div className="lp-field">
-                      <label>Agrégation</label>
-                      <select value={b.aggregateType || "sum"} onChange={(e)=>updateCardBlock(b.id,{aggregateType:e.target.value})}>
-                        {AGGREGATE_TYPES.map((a)=><option key={a.key} value={a.key}>{a.label}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                )}
 
-                {b.kind === "customField" && (
-                  <div className="lp-field">
-                    <label>Champ personnalisé</label>
-                    <select value={b.fieldId || ""} onChange={(e)=>updateCardBlock(b.id,{fieldId:e.target.value})}>
-                      <option value="">— Choisir —</option>
-                      {(ctx.customFieldDefs || []).map((f)=><option key={f.id} value={f.id}>{f.name}</option>)}
-                    </select>
-                  </div>
-                )}
 
                 {b.kind === "staticText" && (
                   <div className="lp-field">
@@ -10189,27 +10012,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               </div>
             </div>
           )}
-          {chartStyle !== "gauge" && chartStyle !== "line" && (
-            <div className="lp-row2">
-              <div className="lp-field">
-                <label>Valeur affichée</label>
-                <select value={aggregateField} onChange={(e) => setAggregateField(e.target.value)}>
-                  <option value="">Nombre de tâches</option>
-                  {(ctx.customFieldDefs || []).filter((f) => f.type === "number").map((f) => (
-                    <option key={f.id} value={"cf:" + f.id}>{f.name} (champ numérique)</option>
-                  ))}
-                </select>
-              </div>
-              {aggregateField && (
-                <div className="lp-field">
-                  <label>Agrégation</label>
-                  <select value={aggregateType} onChange={(e) => setAggregateType(e.target.value)}>
-                    {AGGREGATE_TYPES.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
-                  </select>
-                </div>
-              )}
-            </div>
-          )}
         </>
       )}
       {type === "list" && (
@@ -10238,11 +10040,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             <option value="assignee">Responsable</option>
             <option value="inactivity">Inactivité</option>
             <option value="period">Période</option>
-            {(ctx.customFieldDefs || []).length > 0 && (
-              <optgroup label="Champs personnalisés">
-                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
-              </optgroup>
-            )}
           </select>
         </div>
       )}

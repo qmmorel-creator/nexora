@@ -78,7 +78,7 @@ function AnnotationsHarness() {
   const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
   const [projects, setProjects] = useState([...seedProjects, calendarProject]);
   const [statuses, setStatuses] = useState(seedStatuses);
-  const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], customFieldDefs: [], expenses: [], risks: [], myName: null };
+  const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
     temporalBlocks: [
@@ -242,7 +242,7 @@ function AnnotationsHarness() {
   const [ganttViewSettingsOpen, setGanttViewSettingsOpen] = useState(false);
   const [ganttWidgetFormOpen, setGanttWidgetFormOpen] = useState(false);
   const [ganttViewPrefs, setGanttViewPrefs] = useState(() => normalizeMiniGanttViewPrefs({ groupBy: "project" }));
-  const parityCtx = { ...ctx, customFieldDefs: [{ id: "lot", name: "Lot de travaux", type: "text" }] };
+  const parityCtx = ctx;
   const parityWidget = { id: "parite", type: "minigantt", title: "Mini-Gantt", groupBy: "project", colorBy: "status", miniGanttFields: ["end"] };
   const noop = () => {};
   return (
@@ -268,14 +268,6 @@ function AnnotationsHarness() {
             selectedProjectIds={[]}
             onToggleProject={noop}
           />
-        </div>
-      </div>
-      <div>
-        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>CENTRE DE PILOTAGE SANS AUCUNE TÂCHE</h2>
-        {/* Issue #72 : le filtre texte s'applique aussi à cette vue, qui ne
-            rencontrait jamais de liste vide avant lui. */}
-        <div id="harness-control-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 1200, height: 360, overflow: "auto", marginBottom: 18 }}>
-          <ControlTowerView tasks={[]} ctx={ctx} risks={[]} momentumSnapshots={[]} activityLog={[]} onOpenTask={noop} onSelectProject={noop} onNavigate={noop} />
         </div>
       </div>
       <div>
@@ -314,10 +306,6 @@ function AnnotationsHarness() {
             taskBaselines={{}}
             setTasks={noop}
             pushToast={noop}
-            risks={[]}
-            workflows={[]}
-            workflowExecutionLog={[]}
-            onOpenAutomations={noop}
             shortcutPrefs={{}}
             metaTemporalBlocks={[]}
             dashboardId="d1"
@@ -422,7 +410,6 @@ function AnnotationsHarness() {
             widget={treemapWidget}
             tasks={tasks}
             ctx={ctx}
-            risks={[{ id: "r1", projectId: "p1", status: "open" }, { id: "r2", projectId: "p1", status: "closed" }]}
             expenses={[]}
             onOpenProject={(id) => setOpenedProjectId(id)}
             onEditProject={noop}
@@ -434,7 +421,7 @@ function AnnotationsHarness() {
         <div id="harness-treemap-narrow" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 8, background: "var(--surface)", width: 300, height: 150, marginBottom: 18 }}>
           <WidgetProjectTreemap
             widget={{ ...treemapWidget, treemapShowSearch: false, treemapShowLegend: false, treemapCompact: true }}
-            tasks={tasks} ctx={ctx} risks={[]} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
+            tasks={tasks} ctx={ctx} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
           />
         </div>
         <span id="harness-transfer-done" style={{ fontFamily: "monospace", fontSize: 12 }}>{transferDone}</span>
@@ -503,7 +490,7 @@ function AnnotationsHarness() {
         <div id="harness-treemap-status" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, height: 300, marginBottom: 18 }}>
           <WidgetProjectTreemap
             widget={statusTreemapWidget}
-            tasks={tasks} ctx={ctx} risks={[]} expenses={[]}
+            tasks={tasks} ctx={ctx} expenses={[]}
             onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
           />
         </div>
@@ -596,7 +583,6 @@ function AnnotationsHarness() {
             teamMembers={seedTeamMembers}
             gradient={appearance.gradient}
             progressColorByStatus={false}
-            customFieldDefs={[]}
             shortcutPrefs={{}}
             onClose={() => setTaskCreateOpen(false)}
             onSave={(data) => { setCreatedTask(data); setTaskCreateOpen(false); }}
@@ -615,7 +601,6 @@ function AnnotationsHarness() {
             teamMembers={seedTeamMembers}
             gradient={appearance.gradient}
             progressColorByStatus={false}
-            customFieldDefs={[]}
             shortcutPrefs={{}}
             onClose={() => setTaskModalOpen(false)}
             onSave={() => setTaskModalOpen(false)}
