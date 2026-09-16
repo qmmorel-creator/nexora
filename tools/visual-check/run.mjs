@@ -146,6 +146,20 @@ const seen = await page.evaluate(() => {
     // Ordre des lignes : barres et jalons doivent se mêler, pas se suivre.
     ordreTitres: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-label-title")].map((el) => el.textContent.trim()),
     ordreParTitre: [...document.querySelectorAll("#harness-nofields-minigantt .lp-widget-minigantt-label-title")].map((el) => el.textContent.trim()),
+    /* Barre d'outils : toutes les commandes sur UNE bande, au-dessus de l'axe.
+       On mesure leurs sommets — empilées en colonne, ils diffèrent. */
+    toolbarTops: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-toolbar > *")].map((el) => Math.round(el.getBoundingClientRect().top)))],
+    toolbarCount: document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-toolbar > *").length,
+    toolbarAboveAxis: (() => {
+      const bar = document.querySelector("#harness-comparison-minigantt .lp-widget-minigantt-toolbar");
+      const axe = document.querySelector("#harness-comparison-minigantt .lp-widget-minigantt-axis");
+      if (!bar || !axe) return null;
+      return Math.round(axe.getBoundingClientRect().top - bar.getBoundingClientRect().bottom);
+    })(),
+    // Sous-grille : le contexte temporel entre deux graduations étiquetées.
+    anneesSubTicks: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-axis-subtick").length,
+    anneesTicks: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-axis-tick").length,
+    anneesGrille: document.querySelectorAll("#harness-years-minigantt .lp-widget-minigantt-sub-sep").length,
     // Cadrage glissant : l'axe suit le calendrier, les tâches hors fenêtre sortent.
     rollingRows: document.querySelectorAll("#harness-rolling-minigantt .lp-widget-minigantt-row").length,
     rollingAxis: [...document.querySelectorAll("#harness-rolling-minigantt .lp-widget-minigantt-axis-tick-label")].map((el) => el.textContent.trim()),
@@ -533,7 +547,7 @@ try {
          TOUS les libellés de la barre de contrôles et on vérifie qu'aucun mode
          n'y subsiste, plutôt que de compter — un décompte laisserait passer un
          mode qui prendrait la place d'un bouton retiré. */
-      boutons: Array.from(document.querySelectorAll(`${sel} .lp-widget-minigantt-axis-controls button`))
+      boutons: Array.from(document.querySelectorAll(`${sel} .lp-widget-minigantt-toolbar button`))
         .map((b) => (b.textContent || "").trim()),
       /* L'emphase demandée : gras du titre et liseré rouge épais de la barre.
          Mesuré sur le RENDU : une règle bien écrite mais surclassée par une
@@ -1103,6 +1117,21 @@ expect(seen.ordreParTitre.length > 1 && seen.ordreParTitre.join("|") === [...see
   `Mini-Gantt : le tri par titre n'est pas alphabétique (${seen.ordreParTitre.join(" | ")})`);
 expect(seen.ordreParTitre.join("|") !== seen.ordreTitres.join("|"),
   "Mini-Gantt : deux widgets aux tris différents rendent le même ordre — le réglage n'est pas propre au widget");
+
+// --- Barre d'outils --------------------------------------------------------
+// Toutes les commandes d'affichage sur une seule bande, au-dessus de l'axe.
+expect(seen.toolbarCount >= 4, `Barre d'outils : ${seen.toolbarCount} commande(s), au moins 4 attendues (mode, tri, étendue, zoom)`);
+expect(Math.max(...seen.toolbarTops) - Math.min(...seen.toolbarTops) <= 2,
+  `Barre d'outils : les commandes sont empilées au lieu d'être côte à côte (sommets à ${seen.toolbarTops.join("/")} px)`);
+expect(seen.toolbarAboveAxis !== null && seen.toolbarAboveAxis >= 0, `Barre d'outils : elle n'est pas au-dessus de l'axe (${seen.toolbarAboveAxis} px)`);
+
+// --- Sous-grille verticale -------------------------------------------------
+// Neuf ans à dates fixes : l'axe n'offrait que ses graduations annuelles, sans
+// rien entre elles. Les trimestres lui rendent son contexte temporel.
+expect(seen.anneesTicks > 0, "Échelle annuelle : aucune graduation sur l'axe");
+expect(seen.anneesSubTicks >= 20, `Échelle annuelle : ${seen.anneesSubTicks} sous-graduation(s) sur l'axe, au moins 20 attendues (les trimestres)`);
+expect(seen.anneesSubTicks > seen.anneesTicks, `Échelle annuelle : la sous-grille (${seen.anneesSubTicks}) n'est pas plus fine que les graduations (${seen.anneesTicks})`);
+expect(seen.anneesGrille >= 20, `Échelle annuelle : ${seen.anneesGrille} trait(s) de sous-grille dans le diagramme, au moins 20 attendus`);
 
 // --- Cadrage « Fenêtre glissante » -----------------------------------------
 // Un mois avant, un mois après : le jeu d'essai s'étend de juillet à septembre,

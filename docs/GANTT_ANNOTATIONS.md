@@ -290,6 +290,43 @@ standard) et réordonner. Un bloc dont les dates sont invalides, ou dont la fin
 précède le début, affiche l'erreur sous les champs, n'est pas dessiné, et bloque
 l'enregistrement de la fiche du widget.
 
+## Barre d'outils du Mini-Gantt
+
+Toutes les commandes d'affichage tiennent sur **une bande pleine largeur au-dessus
+de l'axe** : mode Standard / Comparaison, ordre des lignes, étendue temporelle,
+zoom, puis les trois boutons d'annotation. Elles étaient empilées en colonne dans
+la gouttière de 26 % à gauche de l'axe — trois blocs superposés qui mangeaient la
+hauteur du diagramme pendant que la bande du haut restait vide. La barre passe à
+la ligne plutôt que de déborder sur un widget étroit.
+
+Chaque commande écrit la **même propriété** que son réglage des paramètres,
+jamais un état local : les deux ne peuvent pas se contredire. Le partage des
+rôles est celui-ci — la barre d'outils va vite (préréglages, bascules), la fiche
+du widget règle finement (mois sur mesure, dates fixes, champs affichés).
+
+Le menu « Étendue » propose quatre préréglages de fenêtre glissante
+(`MINIGANTT_RANGE_PRESETS`). Un cadrage réglé à la main dans les paramètres n'en
+coche aucun : le menu l'annonce alors en toutes lettres plutôt que de laisser
+croire à un préréglage. Choisir un cadrage depuis la barre **relâche toujours la
+fenêtre à dates fixes**, sinon elle primerait et le clic resterait sans effet.
+
+Les options d'un menu sont regroupées par section. Ce n'est pas que de la mise en
+page : `DropdownButton` ajoute un champ « Rechercher… » au-delà de six enfants
+directs, ce qui n'a aucun sens pour six choix figés — le regroupement ramène le
+compte sous le seuil.
+
+## Sous-grille temporelle
+
+Entre deux graduations étiquetées, l'axe et la grille de fond portent une
+**sous-graduation** : les jours sous les semaines, les semaines sous les mois,
+les mois sous les trimestres, et désormais **les trimestres sous les années**.
+Le pas annuel n'en avait aucune — sur un diagramme de sept ans, on voyait sept
+traits et rien entre eux, impossible de situer une barre au trimestre près. Le
+pas journalier reste sans sous-grille : il n'y a rien de plus fin qu'un jour.
+
+La marque est deux fois plus courte et plus pâle que les graduations étiquetées :
+elle donne le pas sans jamais rivaliser avec les dates écrites au-dessus.
+
 ## Ordre des lignes et étendue temporelle — Mini-Gantt uniquement
 
 Deux réglages du widget, dans ses paramètres, avec pour valeur par défaut

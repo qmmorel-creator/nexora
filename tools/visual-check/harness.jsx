@@ -599,6 +599,22 @@ function AnnotationsHarness() {
             groupBy="none"
           />
         </div>
+        {/* Échelle ANNUELLE : neuf ans à dates fixes. C'est le cas où l'axe
+            n'offrait que neuf traits et rien entre eux — la sous-grille par
+            trimestres lui rend son contexte temporel. */}
+        <div id="harness-years-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{
+              id: "w12", type: "minigantt", colorBy: "status", miniGanttFields: ["end"],
+              miniGanttRange: { mode: "fixed" },
+              miniGanttWindow: { start: "2019-01-01", end: "2027-12-31" },
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
         {/* Cadrage « Fenêtre glissante » : l'axe ne dépend plus des tâches mais du
             calendrier. Les tâches hors fenêtre ne sont pas dessinées du tout —
             elles étaient écrasées contre le bord en une barre de 2 %. */}
