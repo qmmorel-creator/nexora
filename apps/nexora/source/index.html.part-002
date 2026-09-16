@@ -3849,6 +3849,136 @@ function miniGanttRowEmphasis(taskId, riskSegments, criticalIds) {
 }
 // === NEXORA:GANTT-ANNOTATIONS:END ===
 
+// === NEXORA:WIDGET-TRANSFER:START ===
+/* Déplacer ou dupliquer un widget vers un autre tableau de bord (issue #58).
+
+   Le modèle : un « plan » — un tableau de bord, ou la page « Aujourd'hui » —
+   porte des PAGES, et chaque page porte ses widgets. Un transfert touche donc
+   deux plans à la fois, parfois le même.
+
+   Tout est ici, en fonctions pures qui prennent et rendent la LISTE ENTIÈRE des
+   plans. Ce n'est pas de la coquetterie : les deux magasins de l'application
+   (`nexora:dashboards` et `nexora:todayWidgets`) sont des états React distincts,
+   et traiter le retrait et la pose comme deux écritures séparées suffirait à
+   perdre le widget d'un côté sans le poser de l'autre — ou à le laisser dans les
+   deux. En rendant l'état complet d'un coup, il n'existe aucun instant où le
+   widget est nulle part, ou partout. */
+
+const WIDGET_TRANSFER_MODES = ["move", "duplicate"];
+
+function widgetTransferNormalizeMode(mode) {
+  return WIDGET_TRANSFER_MODES.includes(mode) ? mode : "move";
+}
+
+/* Destinations proposées, à plat : une entrée par page, préfixée du nom de son
+   plan. La liste est construite ici et non dans la fiche pour que l'ordre et
+   les libellés soient éprouvés par un test plutôt que relus à l'écran. */
+function widgetTransferTargets(boards) {
+  const out = [];
+  (Array.isArray(boards) ? boards : []).forEach((board) => {
+    if (!board || !board.id) return;
+    const pages = Array.isArray(board.pages) ? board.pages.filter((p) => p && p.id) : [];
+    pages.forEach((page) => {
+      out.push({
+        boardId: board.id,
+        pageId: page.id,
+        boardName: board.name || "Sans nom",
+        pageName: page.name || "Page",
+        // Un plan à page unique n'a pas à afficher « Tableau › Page 1 » :
+        // l'onglet n'existe pas pour l'utilisateur, le nommer l'égare.
+        label: pages.length > 1
+          ? `${board.name || "Sans nom"} › ${page.name || "Page"}`
+          : (board.name || "Sans nom"),
+      });
+    });
+  });
+  return out;
+}
+
+/* Où se trouve un widget, tous plans confondus. Rendre null plutôt que de
+   lever : l'appelant doit pouvoir dire « introuvable » à l'utilisateur au lieu
+   de casser la fiche. */
+function widgetTransferLocate(boards, widgetId) {
+  for (const board of (Array.isArray(boards) ? boards : [])) {
+    for (const page of (Array.isArray(board?.pages) ? board.pages : [])) {
+      const widget = (Array.isArray(page?.widgets) ? page.widgets : []).find((w) => w && w.id === widgetId);
+      if (widget) return { boardId: board.id, pageId: page.id, widget };
+    }
+  }
+  return null;
+}
+
+/* Copie d'un widget : nouvel identifiant, titre suffixé.
+
+   Jamais deux pages qui partagent le même identifiant de widget — sinon
+   redimensionner la copie déplacerait l'original, et la duplication d'un
+   tableau de bord partirait d'un état déjà ambigu.
+
+   `layout: undefined` est VOLONTAIRE, ici comme au déplacement : la position
+   dans la grille d'origine n'a aucun sens sur une autre page, où elle
+   chevaucherait ce qui s'y trouve déjà. Le tableau de destination replace le
+   widget par son propre tassement (packWidgets) dès qu'il s'affiche, comme
+   pour un widget créé sans position. */
+function widgetTransferCopy(widget, makeId) {
+  return {
+    ...widget,
+    id: typeof makeId === "function" ? makeId() : `${widget.id}-copie`,
+    title: `${widget.title || "Widget"} (copie)`,
+    layout: undefined,
+  };
+}
+
+/* Le transfert, sur la liste entière des plans.
+
+   `patch` porte les réglages en cours dans la fiche : sans lui, « Enregistrer »
+   et « Changer de tableau de bord » se contrediraient — le widget partirait
+   avec sa configuration d'avant, et les modifications à l'écran seraient
+   perdues sans un mot.
+
+   Rend LA MÊME liste quand il n'y a rien à faire (destination inconnue, widget
+   introuvable, déplacement vers la page où il est déjà) : l'appelant s'en sert
+   pour n'écrire nulle part. */
+function widgetTransferApply(boards, widgetId, target, mode, makeId, patch) {
+  const list = Array.isArray(boards) ? boards : [];
+  const normalized = widgetTransferNormalizeMode(mode);
+  const found = widgetTransferLocate(list, widgetId);
+  const targetBoard = list.find((b) => b && b.id === target?.boardId);
+  const targetPage = (Array.isArray(targetBoard?.pages) ? targetBoard.pages : []).find((p) => p && p.id === target?.pageId);
+  if (!found || !targetBoard || !targetPage) return list;
+  if (normalized === "move" && found.boardId === targetBoard.id && found.pageId === targetPage.id) return list;
+  const patched = { ...found.widget, ...(patch && typeof patch === "object" ? patch : {}) };
+  const posed = normalized === "duplicate"
+    ? widgetTransferCopy(patched, makeId)
+    : { ...patched, layout: undefined };
+  return list.map((board) => {
+    const pages = Array.isArray(board?.pages) ? board.pages : [];
+    let touched = false;
+    const nextPages = pages.map((page) => {
+      let widgets = Array.isArray(page?.widgets) ? page.widgets : [];
+      const isSource = board.id === found.boardId && page.id === found.pageId;
+      const isTarget = board.id === targetBoard.id && page.id === targetPage.id;
+      // La source se traite EN PREMIER : quand elle est aussi la destination,
+      // poser avant de retirer effacerait ce qu'on vient de poser.
+      if (isSource) {
+        widgets = normalized === "move"
+          ? widgets.filter((w) => !w || w.id !== widgetId)
+          // Dupliquer enregistre aussi la fiche sur l'original : sinon les
+          // réglages affichés ne partiraient qu'avec la copie et sembleraient
+          // s'être perdus sur le widget resté en place.
+          : widgets.map((w) => (w && w.id === widgetId ? patched : w));
+        touched = true;
+      }
+      if (isTarget) {
+        widgets = [...widgets, posed];
+        touched = true;
+      }
+      return widgets === page.widgets ? page : { ...page, widgets };
+    });
+    return touched ? { ...board, pages: nextPages } : board;
+  });
+}
+// === NEXORA:WIDGET-TRANSFER:END ===
+
 // === NEXORA:HEATMAP-GRID:START ===
 /* Heat map en grille (issue #51).
 

@@ -2517,7 +2517,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, risks, workflows, workflowExecutionLog, onOpenAutomations, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -2724,6 +2724,19 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   const saveWidget = (data) => {
     if (editingWidget === "new") setWidgets((prev) => packWidgets([...prev, { id: uid(), ...data }]));
     else setWidgets((prev) => prev.map((w) => (w.id === editingWidget.id ? { ...w, ...data } : w)));
+    setEditingWidget(null);
+  };
+  /* Changer de tableau de bord depuis la fiche du widget (issue #58).
+
+     Le transfert ne passe PAS par setWidgets : celui-ci n'écrit que dans la page
+     affichée, alors qu'un transfert touche deux pages — parfois dans deux
+     magasins différents. Il remonte donc jusqu'à l'application, qui écrit les
+     deux d'un coup. Les réglages en cours dans la fiche (`data`) partent avec le
+     widget : sans eux, « Enregistrer » et « Changer de tableau de bord »
+     se contrediraient. */
+  const transferEditedWidget = ({ data, target, mode }) => {
+    if (!editingWidget || editingWidget === "new" || !onTransferWidget) return;
+    onTransferWidget({ widgetId: editingWidget.id, target, mode, patch: data });
     setEditingWidget(null);
   };
 
@@ -3290,6 +3303,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
           pageFilter={activePage?.filter}
           onSave={saveWidget}
           onClose={() => setEditingWidget(null)}
+          transferBoards={transferBoards}
+          boardId={boardId}
+          currentPageId={activePageId}
+          onTransfer={onTransferWidget ? transferEditedWidget : undefined}
         />
       )}
       {filterPageTarget && (
@@ -9034,13 +9051,33 @@ function PageFilterModal({ page, onSave, onSaveMeta, onClose, ctx }) {
   );
 }
 
-function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onClose }) {
+function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onClose, transferBoards, boardId, currentPageId, onTransfer }) {
   const [type, setType] = useState(widget?.type || "kpi");
   const [title, setTitle] = useState(widget?.title || "");
   const [typeSearch, setTypeSearch] = useState("");
   // À la création on affiche le catalogue ; à l'édition il reste replié pour
   // accéder immédiatement aux réglages de configuration.
   const [typePickerOpen, setTypePickerOpen] = useState(() => !widget);
+  /* Changer de tableau de bord (issue #58). Proposé seulement sur un widget qui
+     EXISTE : un widget en cours de création n'a pas encore d'emplacement à
+     quitter, et le proposer laisserait croire qu'on peut le créer ailleurs. */
+  const transferTargets = useMemo(() => widgetTransferTargets(transferBoards || []), [transferBoards]);
+  const transferOffered = !!widget && !!onTransfer && transferTargets.length > 1;
+  const [transferOpen, setTransferOpen] = useState(false);
+  /* La liste déroulante travaille sur des INDEX et non sur une clé composée de
+     l'identifiant du tableau et de celui de la page : deux identifiants
+     concaténés peuvent se confondre dès qu'un séparateur apparaît dans l'un
+     d'eux — et « nexora:today » en contient déjà un. */
+  const transferIsHere = (t) => t.boardId === boardId && t.pageId === currentPageId;
+  const [transferIndex, setTransferIndex] = useState("");
+  /* Par défaut, la première destination QUI N'EST PAS celle où le widget se
+     trouve déjà : ouvrir sur « ici » invite à valider un transfert qui ne fait
+     rien. */
+  const transferSelected = transferTargets[Number(transferIndex)]
+    || transferTargets.find((t) => !transferIsHere(t))
+    || transferTargets[0]
+    || null;
+  const [transferMode, setTransferMode] = useState("move");
   const [cardTaskMode, setCardTaskMode] = useState(widget?.cardTaskMode || "first");
   const [cardTaskId, setCardTaskId] = useState(widget?.cardTaskId || "");
   const [cardColumns, setCardColumns] = useState(Math.max(1, Math.min(3, Number(widget?.cardColumns) || 2)));
@@ -9230,8 +9267,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return true;
   })();
 
-  const submit = () => {
-    if (!isValid) return;
+  /* Les réglages de la fiche, rassemblés une fois pour deux sorties :
+     l'enregistrement classique, et le transfert vers un autre tableau de bord
+     (#58) qui doit emporter EXACTEMENT la même configuration. Deux
+     constructions séparées se seraient désynchronisées au premier réglage
+     ajouté à un type de widget. */
+  const buildData = () => {
     // Si aucun titre n'a été saisi, en génère un par défaut ("Type de widget N") —
     // toujours modifiable ensuite depuis la fiche du widget.
     let finalTitle = title.trim();
@@ -9321,7 +9362,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (bandColor) data.bandColor = bandColor; else data.bandColor = null;
     if (titleEmoji.trim()) data.titleEmoji = titleEmoji.trim(); else data.titleEmoji = null;
     if (type === "nextBestAction" || type === "dailyBriefing") data.onlyMine = onlyMine;
-    onSave(data);
+    return data;
+  };
+
+  const submit = () => {
+    if (!isValid) return;
+    onSave(buildData());
   };
 
   return (
@@ -9332,6 +9378,75 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       </>
     }>
       <div className="lp-field"><label>Titre <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — sinon généré automatiquement)</span></label><input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex. Tâches en retard" autoFocus /></div>
+
+      {/* Changer de tableau de bord (issue #58). Replié par défaut : c'est un
+          geste rare, et déplié il pousserait les réglages du widget plus bas à
+          chaque ouverture de la fiche. */}
+      {transferOffered && (
+        <div className="lp-widget-transfer">
+          <div className="lp-widget-transfer-row">
+            <span className="lp-widget-transfer-label"><LayoutDashboard size={13} /> Emplacement</span>
+            <span className="lp-widget-transfer-here">{transferTargets.find(transferIsHere)?.label || "—"}</span>
+            <button
+              type="button"
+              className="lp-btn lp-btn-mini"
+              onClick={() => setTransferOpen((v) => !v)}
+              aria-expanded={transferOpen}
+            >
+              Changer de tableau de bord
+              <ChevronDown size={12} style={{ transform: transferOpen ? "rotate(180deg)" : "none" }} />
+            </button>
+          </div>
+
+          {transferOpen && (
+            <div className="lp-widget-transfer-panel">
+              <div className="lp-field">
+                <label>Tableau de bord de destination</label>
+                <select
+                  value={transferSelected ? String(transferTargets.indexOf(transferSelected)) : ""}
+                  onChange={(e) => setTransferIndex(e.target.value)}
+                >
+                  {transferTargets.map((t, i) => (
+                    <option key={`${t.boardId}-${t.pageId}-${i}`} value={String(i)}>
+                      {t.label}{transferIsHere(t) ? " — ici" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="lp-field">
+                <label>Ce qu'il advient du widget</label>
+                <div className="lp-widget-transfer-modes">
+                  <label className={transferMode === "move" ? "active" : undefined}>
+                    <input type="radio" name="lp-widget-transfer-mode" checked={transferMode === "move"} onChange={() => setTransferMode("move")} />
+                    <span><strong>Le déplacer</strong> — il quitte ce tableau de bord.</span>
+                  </label>
+                  <label className={transferMode === "duplicate" ? "active" : undefined}>
+                    <input type="radio" name="lp-widget-transfer-mode" checked={transferMode === "duplicate"} onChange={() => setTransferMode("duplicate")} />
+                    <span><strong>Le dupliquer</strong> — une copie indépendante part là-bas, l'original reste ici.</span>
+                  </label>
+                </div>
+              </div>
+
+              <p className="lp-widget-transfer-hint">
+                Les réglages affichés dans cette fiche partent avec le widget. Sa position
+                dans la grille est recalculée à l'arrivée : elle n'aurait pas de sens sur
+                une autre page.
+              </p>
+
+              <button
+                type="button"
+                className="lp-btn lp-btn-primary"
+                disabled={!isValid || !transferSelected || (transferMode === "move" && transferIsHere(transferSelected))}
+                title={transferMode === "move" && transferSelected && transferIsHere(transferSelected) ? "Le widget est déjà sur ce tableau de bord" : undefined}
+                onClick={() => onTransfer({ data: buildData(), target: { boardId: transferSelected.boardId, pageId: transferSelected.pageId }, mode: transferMode })}
+              >
+                {transferMode === "move" ? "Déplacer le widget" : "Dupliquer le widget"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="lp-widget-type-hard-selector">
         <div className="lp-widget-type-hard-selector-row">

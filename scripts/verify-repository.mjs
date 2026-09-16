@@ -537,6 +537,29 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
 }
 
+/* Changer un widget de tableau de bord (issue #58).
+   Le calcul est couvert par tests/widget-transfer.test.mjs. Ce qui ne l'est pas,
+   c'est la CHAÎNE qui va de la fiche au magasin : quatre maillons, dont trois
+   peuvent se défaire sans la moindre erreur — un bouton qui n'appelle plus
+   rien, une fiche montée sans son émetteur, un transfert calculé et jamais
+   écrit. Le widget resterait simplement sur place, en silence. */
+{
+  assert.match(builtSource, /Changer de tableau de bord/,
+    "Le bouton « Changer de tableau de bord » a disparu de la fiche du widget.");
+  assert.match(builtSource, /onTransfer\(\{ data: buildData\(\)/,
+    "Le bouton de transfert ne transmet plus les réglages de la fiche : le widget partirait avec sa configuration d'avant.");
+  assert.match(builtSource, /onTransfer=\{onTransferWidget \? transferEditedWidget : undefined\}/,
+    "La fiche du widget n'est plus montée avec son émetteur de transfert : le bouton disparaîtrait.");
+  assert.match(builtSource, /const after = widgetTransferApply\(before, widgetId, target, mode, uid, patch\);/,
+    "Le transfert ne passe plus par widgetTransferApply : retrait et pose redeviendraient deux écritures séparées.");
+  /* Les DEUX surfaces doivent recevoir le câblage : « Aujourd'hui » et les
+     tableaux de bord partagent le même composant, et n'en câbler qu'une
+     donnerait un bouton présent d'un côté, absent de l'autre. */
+  const mounts = builtSource.match(/onTransferWidget=\{transferWidget\}/g) || [];
+  assert.equal(mounts.length, 2,
+    `Le transfert n'est câblé que sur ${mounts.length} des 2 surfaces (« Aujourd'hui » et les tableaux de bord).`);
+}
+
 /* Feuille de style embarquée : pas un seul accent grave à l'intérieur.
 
    Les blocs `<style>{`…`}</style>` sont des littéraux gabarits JavaScript. Un

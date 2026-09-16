@@ -309,6 +309,33 @@ try {
   coche.error = String(error).split("\n")[0];
 }
 
+/* Changer de tableau de bord depuis la fiche du widget (issue #58).
+   La logique du transfert est couverte par tests/widget-transfer.test.mjs ; ce
+   qui ne l'est pas, c'est la fiche : le bouton peut disparaître, la liste
+   proposer la mauvaise chose, ou le bouton de validation partir sans les
+   réglages en cours — autant de pannes muettes. */
+const transfert = { bouton: 0, options: 0, defaut: "", ici: 0, done: "" };
+try {
+  await page.locator("#harness-open-treemap-form").click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(300);
+  transfert.bouton = await page.locator(".lp-modal .lp-widget-transfer .lp-btn-mini").count();
+  await page.locator(".lp-modal .lp-widget-transfer .lp-btn-mini").click();
+  const cible = page.locator(".lp-modal .lp-widget-transfer-panel select").first();
+  transfert.options = await cible.locator("option").count();
+  // La destination proposée d'emblée ne doit PAS être celle où le widget se
+  // trouve déjà : ouvrir sur « ici » invite à valider un transfert vide.
+  transfert.defaut = (await cible.locator("option:checked").innerText()).trim();
+  transfert.ici = await cible.locator("option", { hasText: "— ici" }).count();
+  await cible.selectOption({ label: "Chantiers › Suivi" });
+  await page.locator(".lp-modal .lp-widget-transfer-modes label").nth(1).click();
+  await page.locator(".lp-modal .lp-widget-transfer-panel .lp-btn-primary").click();
+  await page.waitForTimeout(400);
+  transfert.done = (await page.locator("#harness-transfer-done").innerText()).trim();
+} catch (error) {
+  transfert.error = String(error).split("\n")[0];
+}
+
 /* Bandeau de paramètres du widget (issue #56). Le contrôle porte sur ce qui
    défile SOUS le bandeau, pas sur le bandeau lui-même : la panne réelle était
    un axe collant calé sur une barre d'onglets absente, qui laissait une bande
@@ -974,6 +1001,16 @@ expect(coche.rightGap !== null && coche.rightGap >= 6, `Coche du Mini-Gantt : le
 expect(coche.cornerOffsetX !== null && Math.abs(coche.cornerOffsetX) <= 2 && Math.abs(coche.cornerOffsetY) <= 2,
   `Coche du Mini-Gantt : la pastille est décalée de (${coche.cornerOffsetX}, ${coche.cornerOffsetY}) px du coin supérieur droit du cadre — elle doit y rester centrée`);
 expect(coche.apres === 0, `Coche du Mini-Gantt : ${coche.apres} encadré(s) restant(s) après avoir décoché, 0 attendu`);
+
+expect(!transfert.error, `contrôle du changement de tableau de bord interrompu : ${transfert.error}`);
+expect(transfert.bouton === 1, `Fiche du widget : ${transfert.bouton} bouton « Changer de tableau de bord », 1 attendu`);
+expect(transfert.options === 3, `Fiche du widget : ${transfert.options} destination(s) proposée(s), 3 attendues (Aujourd'hui, Chantiers › Page 1, Chantiers › Suivi)`);
+expect(transfert.defaut === "Aujourd'hui", `Fiche du widget : la destination proposée d'emblée est « ${transfert.defaut} » — ce doit être la première qui n'est pas celle où le widget se trouve déjà`);
+expect(transfert.ici === 1, `Fiche du widget : ${transfert.ici} destination marquée « ici » — l'emplacement actuel doit se reconnaître dans la liste`);
+// mode | tableau | page | titre | un réglage du widget : le transfert doit
+// emporter la configuration de la fiche, pas seulement l'identité du widget.
+expect(/^duplicate\|d1\|p2\|/.test(transfert.done), `Fiche du widget : le transfert transmis est « ${transfert.done} », attendu « duplicate|d1|p2|… »`);
+expect(/\|true$/.test(transfert.done), `Fiche du widget : les réglages du widget ne partent pas avec lui (« ${transfert.done} »)`);
 
 expect(!bandeau.error, `contrôle du bandeau de paramètres interrompu : ${bandeau.error}`);
 /* Le rectangle de collage part du bord intérieur de la zone défilante : l'axe

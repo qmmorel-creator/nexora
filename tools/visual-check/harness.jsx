@@ -85,6 +85,15 @@ function AnnotationsHarness() {
     treemapShowUpcoming: true,
   });
   const [treemapFormOpen, setTreemapFormOpen] = useState(false);
+  /* Changer de tableau de bord (issue #58). Deux plans, dont un à deux pages :
+     c'est ce qui distingue « Aujourd'hui » (page unique, nommée par son plan)
+     de « Chantiers › Suivi ». Le banc n'écrit rien, il enregistre l'intention
+     transmise par la fiche — c'est elle qui doit être juste. */
+  const transferBoards = [
+    { id: "today", name: "Aujourd'hui", pages: [{ id: "tp", name: "Aujourd'hui", widgets: [] }] },
+    { id: "d1", name: "Chantiers", pages: [{ id: "p1", name: "Page 1", widgets: [treemapWidget] }, { id: "p2", name: "Suivi", widgets: [] }] },
+  ];
+  const [transferDone, setTransferDone] = useState("");
   // Nuage des échéances : des dates calculées À PARTIR D'AUJOURD'HUI, pour que
   // les contrôles restent vrais quel que soit le jour où le banc est lancé.
   // « sc5 » n'a pas de date de fin : elle ne doit jamais devenir un point.
@@ -249,6 +258,7 @@ function AnnotationsHarness() {
             tasks={tasks} ctx={ctx} risks={[]} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
           />
         </div>
+        <span id="harness-transfer-done" style={{ fontFamily: "monospace", fontSize: 12 }}>{transferDone}</span>
         {treemapFormOpen && (
           <WidgetFormModal
             widget={treemapWidget}
@@ -257,6 +267,13 @@ function AnnotationsHarness() {
             pageFilter={null}
             onSave={(data) => { setTreemapWidget((w) => ({ ...w, ...data })); setTreemapFormOpen(false); }}
             onClose={() => setTreemapFormOpen(false)}
+            transferBoards={transferBoards}
+            boardId="d1"
+            currentPageId="p1"
+            onTransfer={({ data, target, mode }) => {
+              setTransferDone(`${mode}|${target.boardId}|${target.pageId}|${data.title}|${data.treemapShowUpcoming}`);
+              setTreemapFormOpen(false);
+            }}
           />
         )}
       </div>

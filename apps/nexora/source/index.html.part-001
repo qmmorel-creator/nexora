@@ -3491,6 +3491,23 @@ function GlobalStyles() {
         .lp-widget-appearance-panel{ display:flex; flex-direction:column; gap:12px; padding:4px 2px 2px; }
 
         
+        /* Changer de tableau de bord depuis la fiche du widget (issue #58).
+           Même boîte que le sélecteur de type juste en dessous : c'est le même
+           registre — « où et quoi », avant les réglages du widget. */
+        .lp-widget-transfer{ margin:0 0 16px 0; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+        .lp-widget-transfer-row{ min-height:48px; padding:8px 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .lp-widget-transfer-label{ display:flex; align-items:center; gap:8px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.25px; color:var(--text-600); }
+        .lp-widget-transfer-here{ flex:1 1 auto; min-width:0; font-size:12px; font-weight:650; color:var(--text-900); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .lp-btn-mini{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; font-size:11.5px; }
+        .lp-widget-transfer-panel{ border-top:1px solid var(--border); padding:12px; display:flex; flex-direction:column; gap:12px; }
+        .lp-widget-transfer-panel .lp-field{ margin:0; }
+        .lp-widget-transfer-modes{ display:flex; flex-direction:column; gap:6px; }
+        /* Le choix se clique sur toute la ligne, pas seulement sur le rond :
+           un libellé de deux lignes rendait la cible ridiculement petite. */
+        .lp-widget-transfer-modes label{ display:flex; align-items:flex-start; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:12px; font-weight:500; color:var(--text-900); text-transform:none; letter-spacing:normal; cursor:pointer; }
+        .lp-widget-transfer-modes label.active{ border-color:var(--signal); background:var(--paper-soft); }
+        .lp-widget-transfer-modes input{ margin-top:2px; flex:0 0 auto; }
+        .lp-widget-transfer-hint{ margin:0; font-size:11.5px; line-height:1.45; color:var(--text-600); }
         .lp-widget-type-hard-selector{
           display:block !important;
           visibility:visible !important;
@@ -9104,6 +9121,48 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
   };
 
+  /* Changer un widget de tableau de bord (issue #58).
+
+     Les widgets vivent dans DEUX magasins distincts — les tableaux de bord
+     (`nexora:dashboards`) et la page « Aujourd'hui » (`nexora:todayWidgets`) —
+     et un transfert peut aller de l'un à l'autre. Le calcul est donc fait une
+     seule fois sur la liste entière des plans (`widgetTransferApply`, fonction
+     pure et éprouvée par tests/widget-transfer.test.mjs), puis réécrit magasin
+     par magasin. Traiter le retrait et la pose comme deux gestes séparés
+     suffirait à perdre le widget entre les deux. */
+  const TODAY_BOARD_ID = "nexora:today";
+  const widgetTransferBoards = useMemo(() => ([
+    { id: TODAY_BOARD_ID, name: "Aujourd'hui", pages: todayPages },
+    ...dashboards.map((d) => ({ id: d.id, name: d.name || "Sans nom", pages: dashboardPages(d) })),
+  ]), [todayPages, dashboards]);
+
+  const writeBoardPages = (boardId, nextPages) => {
+    if (boardId === TODAY_BOARD_ID) {
+      setTodayData((prev) => ({ ...(prev || TODAY_DATA_FALLBACK), pages: nextPages }));
+      return;
+    }
+    setDashboards((prev) => prev.map((d) => {
+      if (d.id !== boardId) return d;
+      // La page active du tableau de destination ne doit pas changer sous les
+      // yeux de son propriétaire ; elle n'est recalculée que si elle a disparu.
+      const activeId = d.activePageId && nextPages.some((p) => p.id === d.activePageId) ? d.activePageId : (nextPages[0]?.id || null);
+      return { ...d, pages: nextPages, activePageId: activeId };
+    }));
+  };
+
+  const transferWidget = ({ widgetId, target, mode, patch }) => {
+    const before = widgetTransferBoards;
+    const after = widgetTransferApply(before, widgetId, target, mode, uid, patch);
+    if (after === before) { pushToast({ message: "Le widget est déjà là : rien à déplacer." }); return; }
+    // Seuls les plans réellement touchés sont réécrits : recréer les autres
+    // relancerait une écriture Firebase par tableau de bord à chaque transfert.
+    after.forEach((board, index) => { if (board !== before[index]) writeBoardPages(board.id, board.pages); });
+    const destination = widgetTransferTargets(before).find((t) => t.boardId === target?.boardId && t.pageId === target?.pageId);
+    const title = (patch && patch.title) || widgetTransferLocate(before, widgetId)?.widget?.title || "Widget";
+    const verbe = widgetTransferNormalizeMode(mode) === "duplicate" ? "dupliqué dans" : "déplacé vers";
+    pushToast({ message: `Widget « ${title} » ${verbe} « ${destination?.label || "?"} ».` });
+  };
+
   const createDashboard = (name, folderId) => {
     const d = { id: uid(), name: name.trim(), folderId: folderId || null, widgets: [] };
     setDashboards((prev) => [...prev, d]);
@@ -11624,14 +11683,14 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "control" && <ControlTowerView tasks={metaFilteredTasks} ctx={ctx} risks={risks} momentumSnapshots={momentumSnapshots} activityLog={activityLog} onOpenTask={openEditTask} onSelectProject={selectProjectAndNavigate} onNavigate={setView} />}
-          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} customFieldDefs={customFieldDefs} />}
           {view === "chiffrage" && <ChiffrageView projects={projects} setProjects={setProjects} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} expenses={expenses} setExpenses={setExpenses} budgetLines={budgetLines} setBudgetLines={setBudgetLines} tasks={metaFilteredTasks} ctx={ctx} prefs={viewPrefs.chiffrage} setPrefs={setChiffragePrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "automations" && <AutomationsView workflows={workflows} setWorkflows={setWorkflows} workflowExecutionLog={workflowExecutionLog} ctx={ctx} prefs={viewPrefs.automations || {}} setPrefs={setAutomationsPrefs} toolbarSlot={viewToolbarSlot} dispatchWorkflowEvent={dispatchWorkflowEvent} pushToast={pushToast} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} tasks={metaFilteredTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={metaFilteredTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
         </div>
       </main>
 
