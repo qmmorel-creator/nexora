@@ -21,3 +21,17 @@ test('Every task type receives dates, preserving explicit dates and Paris receip
  assert.throws(()=>ensureTaskDates({start:'2026-02-30'},now),/Invalid/);
 });
 test('Create and update cannot persist empty dates',async()=>{const {db}=fakeDb(),r=repository(db,'u');const t=await r.createTask({title:'Dates',projectId:'p',idempotencyKey:'dates',sourceReceivedDate:'2026-09-03'});assert.equal(t.task.start,'2026-09-03');assert.equal(t.task.end,'2026-09-03');const u=await r.mutateTask({taskId:t.task.id,expectedVersion:t.version,idempotencyKey:'clear-dates',changes:{start:null,end:null}});assert.equal(u.task.start,'2026-09-03');assert.equal(u.task.end,'2026-09-03');assert.equal((await r.createTask({title:'Dates',projectId:'p',idempotencyKey:'dates',sourceReceivedDate:'2026-09-03'})).task.start,'2026-09-03');});
+test('Task baselines support validated merge-only writes',async()=>{
+ const {db,data}=fakeDb(),r=repository(db,'u'),path='users/u/kv_store/nexora:taskBaselines';
+ data.set(path,{value:JSON.stringify({kept:{start:'2026-09-01',end:'2026-09-02',capturedAt:'2026-09-03'}}),revision:'baseline-v1',storageMode:'inline'});
+ const result=await r.mutateResource({resource:'taskBaselines',action:'replace_settings',expectedRevision:'baseline-v1',idempotencyKey:'baseline-merge',changes:{updated:{start:'2026-09-04',end:'2026-09-05',capturedAt:'2026-09-06'}}});
+ assert.equal(result.ok,true);
+ const stored=await r.readResource({resource:'taskBaselines',offset:0,limit:50});
+ assert.deepEqual(stored.value,{kept:{start:'2026-09-01',end:'2026-09-02',capturedAt:'2026-09-03'},updated:{start:'2026-09-04',end:'2026-09-05',capturedAt:'2026-09-06'}});
+ await assert.rejects(()=>r.mutateResource({resource:'taskBaselines',action:'update',id:'updated',expectedRevision:stored.revision,idempotencyKey:'bad-action',changes:{start:'2026-09-04',end:'2026-09-05',capturedAt:'2026-09-06'}}),/only supports replace_settings/);
+ for(const [key,baseline,pattern] of [
+  ['bad-date',{start:'2026-02-30',end:'2026-09-05',capturedAt:'2026-09-06'},/Invalid baseline start/],
+  ['reversed',{start:'2026-09-06',end:'2026-09-05',capturedAt:'2026-09-06'},/precedes start/],
+  ['extra',{start:'2026-09-04',end:'2026-09-05',capturedAt:'2026-09-06',extra:true},/contain only/]
+ ])await assert.rejects(()=>r.mutateResource({resource:'taskBaselines',action:'replace_settings',expectedRevision:stored.revision,idempotencyKey:key,changes:{updated:baseline}}),pattern);
+});
