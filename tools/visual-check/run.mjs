@@ -122,6 +122,17 @@ const seen = await page.evaluate(() => {
     cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
     standardRefBars: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-refbar, #harness-second-minigantt .lp-widget-minigantt-refbar, #harness-nofields-minigantt .lp-widget-minigantt-refbar").length,
     standardRows: rects("#harness-second-minigantt .lp-widget-minigantt-row"),
+    // Avancement à 100 % : la poignée devient une pastille de validation.
+    doneHandles: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-progress-handle.is-done")].map((el) => {
+      const b = el.getBoundingClientRect();
+      const c = getComputedStyle(el).backgroundColor;
+      const [r, v, bl] = (c.match(/\d+/g) || []).map(Number);
+      return { w: Math.round(b.width), h: Math.round(b.height), coches: el.querySelectorAll("svg").length, vert: Number.isFinite(v) && v > r + 40 && v > bl + 40 };
+    }),
+    plainHandles: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-progress-handle:not(.is-done)")].map((el) => ({
+      w: Math.round(el.getBoundingClientRect().width),
+      coches: el.querySelectorAll("svg").length,
+    })),
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
@@ -1047,6 +1058,15 @@ seen.cmpRows.forEach((row, i) => {
   if (!ref) return;
   expect(Math.abs(row.h - ref.h) <= 2, `Comparaison : la ligne ${i + 1} mesure ${row.h} px contre ${ref.h} px en mode standard — la superposition ne doit pas faire grandir la ligne`);
 });
+
+// Avancement à 100 % : le rond blanc laisse place à une pastille de validation.
+// Le jeu d'essai n'a qu'une tâche terminée — les autres gardent leur rond.
+expect(seen.doneHandles.length === 1, `Mini-Gantt : ${seen.doneHandles.length} pastille(s) de validation, 1 attendue (une seule tâche à 100 %)`);
+expect(seen.doneHandles.every((h) => h.coches === 1), `Mini-Gantt : une pastille de validation ne porte pas sa coche (${JSON.stringify(seen.doneHandles)})`);
+expect(seen.doneHandles.every((h) => h.vert), `Mini-Gantt : une pastille de validation n'est pas verte (${JSON.stringify(seen.doneHandles)})`);
+expect(seen.plainHandles.length > 0, "Mini-Gantt : plus aucune poignée d'avancement ordinaire");
+expect(seen.plainHandles.every((h) => h.coches === 0), "Mini-Gantt : une tâche non terminée porte une coche de validation");
+expect(seen.doneHandles.every((h) => seen.plainHandles.every((p) => h.w > p.w)), `Mini-Gantt : la pastille de validation n'est pas plus grande que le rond ordinaire (${JSON.stringify(seen.doneHandles)} contre ${JSON.stringify(seen.plainHandles)})`);
 
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.

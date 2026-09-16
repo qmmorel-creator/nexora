@@ -60,6 +60,12 @@ jalon) et deux n'en portent pas, dont un jalon :
 - **les hauteurs de ligne sont identiques à celles du widget standard** : la
   superposition des barres ne fait grandir aucune ligne.
 
+Poignée d'avancement du Mini-Gantt :
+
+- une tâche à 100 % remplace son rond blanc par une pastille verte à coche,
+  plus grande que le rond ordinaire ;
+- les tâches non terminées gardent leur rond, sans coche.
+
 Fiche de CRÉATION d'une tâche :
 
 - la comparaison est activée d'emblée et les deux champs sont remplis avec les
