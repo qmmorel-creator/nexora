@@ -2481,6 +2481,9 @@ function normalizeMiniGanttViewPrefs(prefs) {
     miniGanttWindow: old.miniGanttWindow || null,
     miniGanttZoomLevel: old.miniGanttZoomLevel ?? null,
     miniGanttComparisonEnabled: !!old.miniGanttComparisonEnabled,
+    // Filtre propre à la vue, au même format que celui d'un widget — il
+    // s'applique EN PLUS des filtres de la page, jamais à leur place.
+    filter: old.filter && typeof old.filter === "object" ? old.filter : null,
   };
 }
 // === NEXORA:MINIGANTT-MIGRATION:END ===
@@ -4906,24 +4909,29 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const minDateStr = addDays("2020-01-01", minIdx);
   const maxDateStr = addDays("2020-01-01", maxIdx);
   const ticks = isEmpty ? [] : widgetAxisTicks(minDateStr, maxDateStr);
-  const axisDisplayTicks = useMemo(() => {
+  /* DEUX lignes, pas une.
+
+     Les bornes exactes de la fenêtre et les graduations de l'axe partageaient
+     la même ligne, dédoublonnées par la seule égalité des dates : une borne au
+     12/03/2022 et la graduation « 2022 » sont deux dates différentes, elles se
+     superposaient donc à quelques pixels près, et l'on lisait « 20222022 »
+     (retour de test). Elles n'ont pas non plus le même rôle : l'unité de l'axe
+     est la MÉTRIQUE, les bornes ne sont qu'un repère de cadrage.
+
+     Ligne du haut — l'unité (années, trimestres, mois…), accentuée.
+     Ligne du bas — les deux bornes, discrètes, chacune calée sur son bord. */
+  const axisEdges = useMemo(() => {
     if (isEmpty) return [];
     const dayLabel = (d) => {
       const dt = new Date(d + "T00:00:00");
-      return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}`;
+      return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${dt.getFullYear()}`;
     };
-    const merged = [
-      { date:minDateStr, label:dayLabel(minDateStr), edge:"start" },
-      ...ticks.map((t)=>({...t,edge:null})),
-      { date:maxDateStr, label:dayLabel(maxDateStr), edge:"end" },
+    if (minDateStr === maxDateStr) return [{ date: minDateStr, label: dayLabel(minDateStr), edge: "start" }];
+    return [
+      { date: minDateStr, label: dayLabel(minDateStr), edge: "start" },
+      { date: maxDateStr, label: dayLabel(maxDateStr), edge: "end" },
     ];
-    const byDate = new Map();
-    merged.forEach((t)=>{
-      const existing=byDate.get(t.date);
-      if (!existing || t.edge) byDate.set(t.date,t);
-    });
-    return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
-  }, [isEmpty,minDateStr,maxDateStr,ticks]);
+  }, [isEmpty, minDateStr, maxDateStr]);
   const secondaryTicks = useMemo(() => (isEmpty ? [] : widgetSecondaryTicks(minDateStr, maxDateStr)), [minDateStr, maxDateStr, isEmpty]);
   /* Troisième niveau, un cran plus fin encore : année → trimestre → mois,
      trimestre → mois → semaine, mois → semaine → jour. Il se tait de lui-même
@@ -5611,22 +5619,44 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
+  /* La vue Gantt porte désormais la MÊME barre d'outils que le widget — mode,
+     tri, étendue, zoom, annotations —, rendue comme une bande pleine largeur
+     au-dessus de l'axe. Elle n'en avait qu'un extrait dans l'en-tête de page
+     (zoom, regroupement, annotations), et il fallait ouvrir les réglages pour
+     le reste : un même diagramme se pilotait de deux façons différentes selon
+     qu'on le regardait dans un tableau de bord ou en pleine page (#80).
+
+     L'en-tête de page ne garde donc que ce qui lui est PROPRE et n'a pas de
+     place dans la bande : le regroupement (déjà une commande de page ailleurs)
+     et l'accès aux réglages de la vue. */
   const viewToolbar = toolbarSlot ? (
     <ViewToolbarPortal slot={toolbarSlot}>
-      <button className="lp-tool-btn" type="button" onClick={zoomOut} title="Zoom arrière">−</button>
-      <button className={"lp-tool-btn" + (zoomIsAuto ? " active" : "")} type="button" onClick={resetZoom} title="Zoom automatique">Auto</button>
-      <button className="lp-tool-btn" type="button" onClick={zoomIn} title="Zoom avant">+</button>
       {onOpenSettings && <button className="lp-tool-btn" type="button" onClick={onOpenSettings} title="Réglages de la vue"><Settings size={14} /> Réglages</button>}
       <DropdownButton label="Regrouper" icon={<Layers size={14} />} title="Regroupement des lignes">
         {["none", ...WIDGET_GROUPBY_FIELDS].map((key) => <button key={key} type="button" className="lp-dropdown-action-row" onClick={() => onUpdateWidget?.({ groupBy: key })}>{key === "none" ? "Aucun regroupement" : fieldLabel(key, ctx)}</button>)}
       </DropdownButton>
-      {editable && <DropdownButton label="Annotations" icon={<StickyNote size={14} />} title="Blocs, encadrés et jalons">
-        <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })}><Layers size={13} /> Ajouter un bloc</button>
-        <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })}><Crosshair size={13} /> Ajouter un encadré</button>
-        <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })}><Milestone size={13} /> Ajouter un jalon</button>
-      </DropdownButton>}
     </ViewToolbarPortal>
   ) : null;
+
+  /* Éclaircie des étiquettes de l'unité : deux voisines qui se toucheraient ne
+     sont pas rendues toutes les deux — on garde la première et on saute la
+     suivante. Volontairement calculé SANS Hook, juste avant le rendu de l'axe :
+     il dépend de la largeur mesurée de la piste, qui n'est connue qu'ici, et
+     c'est un parcours de quelques dizaines de graduations. */
+  const axisUnitTicks = (() => {
+    if (isEmpty) return [];
+    const trackPx = trackWidth || 420;
+    const kept = [];
+    let occupeJusqua = -Infinity;
+    ticks.forEach((t) => {
+      const x = ((dayIndex(t.date) - minIdx) / span) * trackPx;
+      const demi = widgetAxisLabelWidth(t.label) / 2;
+      if (x - demi < occupeJusqua) return;
+      occupeJusqua = x + demi + MINIGANTT_AXIS_LABEL_GAP;
+      kept.push(t);
+    });
+    return kept;
+  })();
 
   const Axis = () => (
     <div className="lp-widget-minigantt-axis">
@@ -5645,21 +5675,29 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {weekendBands.map((idx) => (
           <span key={"we-" + idx} className="lp-widget-minigantt-weekend" style={{ left: pctFor(idx), width: `${(1 / span) * 100}%`, top:18, bottom:0 }} />
         ))}
-        {axisDisplayTicks.map((tick) => {
+        {axisUnitTicks.map((tick) => {
           const left = pctFor(dayIndex(tick.date));
           return (
-            <React.Fragment key={tick.date}>
+            <React.Fragment key={"unit-" + tick.date}>
               <span className="lp-widget-minigantt-axis-tick" style={{ left }} />
-              <span
-                className={"lp-widget-minigantt-axis-tick-label"+(tick.edge ? ` edge-${tick.edge}` : "")}
-                style={{ left }}
-              >
+              <span className="lp-widget-minigantt-axis-tick-label" style={{ left }}>
                 {tick.label}
                 {showDayContext && <span className="lp-widget-minigantt-axis-dow">{DOW_SHORT[new Date(tick.date + "T00:00:00").getDay()]}</span>}
               </span>
             </React.Fragment>
           );
         })}
+        {/* Ligne du bas : les bornes de la fenêtre, et rien d'autre. Elles
+            disent OÙ l'on est, pas ce qu'on mesure. */}
+        {axisEdges.map((tick) => (
+          <span
+            key={"edge-" + tick.edge}
+            className={"lp-widget-minigantt-axis-edge-label edge-" + tick.edge}
+            style={{ left: pctFor(dayIndex(tick.date)) }}
+          >
+            {tick.label}
+          </span>
+        ))}
         {showToday && (
           <span className="lp-widget-minigantt-axis-today" style={{ left: pctFor(todayIdx) }}>Aujourd'hui</span>
         )}
@@ -5715,7 +5753,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // stripShapes et riskLabelLayout ne font que parcourir des collections, et les
   // valeurs intermédiaires (stripLaneCount, toolbar) se gardent déjà elles-mêmes
   // contre une liste vide. C'est aussi la convention du composant, dont les hooks
-  // antérieurs (axisDisplayTicks, weekendBands) testent isEmpty À L'INTÉRIEUR.
+  // antérieurs (axisUnitTicks, weekendBands) testent isEmpty À L'INTÉRIEUR.
   if (isEmpty) return <div className="lp-empty" style={{ padding: 16 }}>Aucune tâche pour ce filtre.</div>;
 
   // Largeur RÉELLE de la piste, déjà mesurée pour les étiquettes de risque :
@@ -6236,16 +6274,26 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
-  const bandLayer = (!rowsBand || !temporalBlockShapes.length) ? null : (
-    <div
-      className="lp-widget-minigantt-band-layer"
-      style={{
-        left: "calc(26% + 6px)",
-        right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
-        top: rowsBand.top,
-        height: rowsBand.height,
-      }}
-    >
+  /* Le bloc temporel se dessine en DEUX couches, et non plus en une.
+
+     Le remplissage doit rester DERRIÈRE les barres — c'est une teinte de fond,
+     elle situe, elle ne masque pas. Le cadre, lui, doit passer DEVANT tout :
+     posé avec le remplissage, il était recouvert par la moindre barre qui le
+     traversait, et « Continue » ne donnait jamais un trait continu à l'œil
+     (retour de test). Séparer les deux est la seule façon d'avoir un vrai
+     cadre sans rendre la teinte opaque.
+
+     Les deux couches partagent exactement la même géométrie : même gouttière,
+     même réserve de champs, mêmes bornes. */
+  const bandGeometry = !rowsBand ? null : {
+    left: "calc(26% + 6px)",
+    right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
+    top: rowsBand.top,
+    height: rowsBand.height,
+  };
+
+  const bandLayer = (!bandGeometry || !temporalBlockShapes.length) ? null : (
+    <div className="lp-widget-minigantt-band-layer" style={bandGeometry}>
       {temporalBlockShapes.map((shape) => (
         <span
           key={shape.block.id}
@@ -6255,6 +6303,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             left: `${shape.leftPct}%`,
             width: `${shape.widthPct}%`,
             background: ganttBlockFill(shape.block),
+          }}
+        />
+      ))}
+    </div>
+  );
+
+  const bandFrameLayer = (!bandGeometry || !temporalBlockShapes.length) ? null : (
+    <div className="lp-widget-minigantt-band-frames" style={bandGeometry}>
+      {temporalBlockShapes.map((shape) => (
+        <span
+          key={shape.block.id}
+          data-block-frame-id={shape.block.id}
+          className="lp-widget-minigantt-tblock-frame"
+          style={{
+            left: `${shape.leftPct}%`,
+            width: `${shape.widthPct}%`,
             border: ganttBlockBorder(shape.block),
           }}
         />
@@ -6365,7 +6429,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
         {viewToolbar}
         {bandLayer}
-        {!toolbarSlot && toolbar}
+        {toolbar}
         <Axis />
         {phasesHeader}
         {stripHeader}
@@ -6373,6 +6437,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <GridOverlay />
           {orderedTasks.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))}
         </div>
+        {bandFrameLayer}
         {annotationLayer}
         <Tooltip />
         {annotationModal}
@@ -6398,7 +6463,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
       {viewToolbar}
       {bandLayer}
-      {!toolbarSlot && toolbar}
+      {toolbar}
       <Axis />
       {phasesHeader}
       {stripHeader}
@@ -6421,6 +6486,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </div>
         );
       })}
+      {bandFrameLayer}
       {annotationLayer}
       <Tooltip />
       {annotationModal}
@@ -6432,6 +6498,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 // automatiquement le pas d'affichage (jour/semaine/mois/trimestre/année) selon
 // l'étendue réelle des dates du widget, pour rester lisible quel que soit le zoom
 // — même logique d'ajustement automatique que la vue Planning Projets complète.
+/* Largeur estimée d'une étiquette d'axe, en pixels. Mono 10 px gras : ~6,2 px
+   par caractère, volontairement un peu généreux — sous-estimer laisserait deux
+   étiquettes se toucher, ce que l'éclaircie est précisément là pour éviter. */
+const MINIGANTT_AXIS_LABEL_GAP = 10;
+function widgetAxisLabelWidth(label) {
+  return 4 + String(label || "").length * 6.2;
+}
+
 function widgetAxisUnit(spanDays) {
   return spanDays <= 18 ? "day" : spanDays <= 70 ? "week" : spanDays <= 550 ? "month" : spanDays <= 1500 ? "quarter" : "year";
 }
@@ -8270,6 +8344,17 @@ function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
         <div className="lp-field" style={{ marginTop: 10 }}><label>Étendue temporelle</label><div className="lp-density-row">{[["auto", "Automatique"], ["rolling", "Fenêtre glissante"], ["fixed", "Dates fixes"]].map(([key, label]) => <button key={key} type="button" className={"lp-density-btn" + (range.mode === key ? " active" : "")} onClick={() => patchRange({ mode: key })}>{label}</button>)}</div>{range.mode === "auto" && <label className="lp-checkbox-line" style={{ marginTop: 8 }}><input type="checkbox" checked={range.includeToday} onChange={(e) => patchRange({ includeToday: e.target.checked })} /> Toujours inclure aujourd'hui</label>}{range.mode === "rolling" && <div className="lp-row2" style={{ marginTop: 8 }}><div className="lp-field"><label>Mois avant aujourd'hui</label><input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={range.beforeMonths} onChange={(e) => patchRange({ beforeMonths: e.target.value })} /></div><div className="lp-field"><label>Mois après aujourd'hui</label><input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={range.afterMonths} onChange={(e) => patchRange({ afterMonths: e.target.value })} /></div></div>}{range.mode === "fixed" && <div className="lp-row2" style={{ marginTop: 8 }}><div className="lp-field"><label>Du</label><input type="date" value={prefs.miniGanttWindow?.start || ""} onChange={(e) => setPrefs({ miniGanttWindow: { ...(prefs.miniGanttWindow || {}), start: e.target.value } })} /></div><div className="lp-field"><label>Au</label><input type="date" value={prefs.miniGanttWindow?.end || ""} onChange={(e) => setPrefs({ miniGanttWindow: { ...(prefs.miniGanttWindow || {}), end: e.target.value } })} /></div></div>}</div>
         <div className="lp-field" style={{ marginTop: 10 }}><label>Mode d'affichage</label><div className="lp-density-row"><button type="button" className={"lp-density-btn" + (!prefs.miniGanttComparisonEnabled ? " active" : "")} onClick={() => setPrefs({ miniGanttComparisonEnabled: false })}>Standard</button><button type="button" className={"lp-density-btn" + (prefs.miniGanttComparisonEnabled ? " active" : "")} onClick={() => setPrefs({ miniGanttComparisonEnabled: true })}>Comparaison</button></div></div>
       </div>
+      {/* Le filtre du widget, à l'identique : c'est le même composant de
+          formulaire, donc les mêmes champs et les mêmes règles. Il resserre ce
+          que la page laisse passer, il ne s'y substitue pas. */}
+      <div className="lp-widget-config-section">
+        <div className="lp-widget-config-title"><Search size={12} /> Filtrer les tâches prises en compte</div>
+        <TaskFilterFields
+          filter={{ ...widgetDefaultFilter(), ...(prefs.filter || {}) }}
+          setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next({ ...widgetDefaultFilter(), ...(prefs.filter || {}) }) : next })}
+          ctx={ctx}
+        />
+      </div>
       <div className="lp-widget-config-section"><div className="lp-widget-config-title"><StickyNote size={12} /> Annotations</div><MiniGanttAnnotationsEditor blocks={annotations.temporalBlocks || []} frames={annotations.highlightFrames || []} milestones={annotations.milestones || []} risks={collectTaskDelayRisks(tasks || [])} notes={annotations.notes || []} tasks={datedTasks} ctx={ctx} defaultStart={defaultStart} defaultEnd={defaultEnd} onChange={patchAnnotations} /></div>
     </Modal>
   );
@@ -8278,11 +8363,17 @@ function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
 function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, toolbarSlot }) {
   const widget = normalizeMiniGanttViewPrefs(prefs);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /* Le filtre de la vue s'applique EN PLUS de ceux de la page, jamais à leur
+     place : `tasks` arrive déjà filtré par la page, on ne fait que resserrer. */
+  const scoped = useMemo(
+    () => (widget.filter ? applyWidgetFilter(tasks || [], widget.filter, ctx) : (tasks || [])),
+    [tasks, widget.filter, ctx]
+  );
   return (
     <section className="lp-minigantt-view" aria-label="Gantt">
       <WidgetMiniGantt
         widget={widget}
-        tasks={tasks}
+        tasks={scoped}
         ctx={ctx}
         groupBy={widget.groupBy}
         onOpen={onOpen}
@@ -8292,7 +8383,7 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         toolbarSlot={toolbarSlot}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      {settingsOpen && <MiniGanttViewSettings prefs={widget} setPrefs={setPrefs} tasks={tasks} ctx={ctx} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <MiniGanttViewSettings prefs={widget} setPrefs={setPrefs} tasks={scoped} ctx={ctx} onClose={() => setSettingsOpen(false)} />}
     </section>
   );
 }

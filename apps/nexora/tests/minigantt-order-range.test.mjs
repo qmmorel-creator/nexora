@@ -263,3 +263,57 @@ test("en mode auto, la fenêtre couvre l'étendue entière, des deux côtés", (
   assert.equal(w.minIdx, ganttDayNumber("2022-03-01"), "la plus ancienne date reste dans le cadre");
   assert.equal(w.maxIdx, ganttDayNumber("2026-11-30"), "et la plus lointaine aussi");
 });
+
+// --- La vue Gantt reprend les réglages du widget (#80) ----------------------
+//
+// Un même diagramme se pilotait de deux façons selon qu'on le regardait dans un
+// tableau de bord ou en pleine page : la vue n'avait qu'un extrait de la barre
+// d'outils dans l'en-tête de page, et il fallait ouvrir les réglages pour le
+// reste.
+
+test("la vue porte la MÊME barre d'outils que le widget", () => {
+  // La bande pleine largeur n'est plus conditionnée à l'absence de slot : elle
+  // est rendue dans les deux cas, widget comme vue.
+  assert.doesNotMatch(html, /!toolbarSlot && toolbar/);
+  // L'en-tête de page ne garde que ce qui lui est propre — les commandes
+  // reprises dans la bande n'y sont plus en double.
+  const portail = html.slice(html.indexOf("const viewToolbar = toolbarSlot ?"), html.indexOf("const Axis = () =>"));
+  assert.match(portail, /Réglages de la vue/);
+  assert.match(portail, /Regroupement des lignes/);
+  assert.doesNotMatch(portail, /Zoom arrière/);
+  assert.doesNotMatch(portail, /Ajouter un bloc/);
+});
+
+test("la vue a son propre filtre de tâches, qui resserre sans se substituer", () => {
+  // Même composant de formulaire que le widget : mêmes champs, mêmes règles.
+  const reglages = html.slice(html.indexOf("function MiniGanttViewSettings"), html.indexOf("function MiniGanttView("));
+  assert.match(reglages, /Filtrer les tâches prises en compte/);
+  assert.match(reglages, /<TaskFilterFields/);
+  // Il s'applique PAR-DESSUS les tâches déjà filtrées par la page.
+  assert.match(html, /widget\.filter \? applyWidgetFilter\(tasks \|\| \[\], widget\.filter, ctx\) : \(tasks \|\| \[\]\)/);
+  // Et la préférence est normalisée comme les autres : absente = aucun filtre.
+  assert.match(html, /filter: old\.filter && typeof old\.filter === "object" \? old\.filter : null/);
+});
+
+test("le cadre d'un bloc temporel passe devant les lignes, son remplissage derrière", () => {
+  // Deux couches, et pas une : le remplissage situe, le cadre délimite.
+  assert.match(html, /\.lp-widget-minigantt-band-frames\{ position:absolute; z-index:6;/);
+  assert.match(html, /\.lp-widget-minigantt-band-layer\{ position:absolute; z-index:0;/);
+  // Le remplissage ne porte plus de trait, le cadre ne porte plus de fond.
+  assert.match(html, /"lp-widget-minigantt-tblock-frame"/);
+  assert.match(html, /\.lp-widget-minigantt-tblock-frame\{[^}]*background:transparent;/);
+});
+
+test("l'axe sépare la métrique de ses bornes, sur deux lignes", () => {
+  // Les bornes de la fenêtre et les graduations partageaient la même ligne,
+  // dédoublonnées par la seule égalité des dates : une borne au 12/03/2022 et
+  // la graduation « 2022 » se superposaient à quelques pixels près.
+  assert.doesNotMatch(html, /axisDisplayTicks/);
+  assert.match(html, /"lp-widget-minigantt-axis-edge-label edge-"/);
+  // L'unité est la métrique : plus grande et plus sombre que les bornes.
+  const metrique = html.slice(html.indexOf(".lp-widget-minigantt-axis-tick-label{"), html.indexOf(".lp-widget-minigantt-axis-edge-label{"));
+  assert.match(metrique, /font-size:11px/);
+  assert.match(metrique, /color:var\(--text-900\)/);
+  const bornes = html.slice(html.indexOf(".lp-widget-minigantt-axis-edge-label{"));
+  assert.match(bornes.slice(0, 400), /font-size:8\.5px/);
+});
