@@ -1057,6 +1057,12 @@ function GlobalStyles() {
         .lp-search-input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
         .lp-search-clear{ position:absolute; right:6px; background:none; border:none; cursor:pointer; color:var(--text-600); display:flex; padding:3px; border-radius:5px; }
         .lp-search-clear:hover{ background:var(--paper-soft); color:var(--text-900); }
+        /* Filtre des tableaux de bord (#72) : un peu plus large que celui des
+           autres vues, parce qu'il est seul de son espèce sur ces surfaces et
+           qu'il accueille des mots entiers plutôt que des fragments. */
+        .lp-board-search-wrap{ flex:0 1 210px; }
+        .lp-board-search-count{ flex:0 0 auto; margin-left:6px; font-size:11px; font-weight:700; color:var(--text-600); white-space:nowrap; }
+        .lp-board-search-count.is-empty{ color:var(--danger-text); }
         .lp-dashboard-central-btn{ display:flex; align-items:center; gap:5px; padding:6px 10px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface); color:var(--text-900); font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .12s ease, color .12s ease, border-color .12s ease; }
         .lp-dashboard-central-btn:hover{ background:var(--paper-soft); }
         .lp-dashboard-central-btn.active{ background:var(--ink); border-color:var(--ink); color:#fff; }
@@ -10541,13 +10547,35 @@ export default function LePlan({ currentUser, onSignOut }) {
     () => mergeMetaTemporalBlocks(metaTemporalBlocks, tasks),
     [metaTemporalBlocks, tasks]
   );
+  /* Filtre textuel des surfaces « tableau de bord » (issue #72).
+
+     Il vit à part des filtres de vue, et c'est volontaire : ces surfaces
+     partent du socle méta-filtré et n'appliquent pas `filters`. Le brancher sur
+     `filters.search` l'aurait fait partager son état avec les autres vues, où
+     la recherche balaie tout autre chose.
+
+     `boardSearchApplied` est la valeur RETARDÉE. La zone de saisie reste
+     pilotée par `boardSearch`, donc la frappe ne rame jamais ; seul le
+     recalcul des vues attend la fin de la rafale. */
+  const [boardSearch, setBoardSearch] = useState("");
+  const [boardSearchApplied, setBoardSearchApplied] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setBoardSearchApplied(boardSearch), 120);
+    return () => clearTimeout(id);
+  }, [boardSearch]);
+  const boardTasks = useMemo(
+    () => filterTasksByText(metaFilteredTasks, boardSearchApplied),
+    [metaFilteredTasks, boardSearchApplied]
+  );
+  const boardSearchActive = !!boardSearchApplied.trim();
+
   const todayPresentationTasks = useMemo(() => {
     const rank = { action:0, activity:1, milestone:2 };
-    return [...metaFilteredTasks].sort((a,b) => {
+    return [...boardTasks].sort((a,b) => {
       const ta = getTaskType(a), tb = getTaskType(b);
       return (rank[ta] ?? 9) - (rank[tb] ?? 9) || (a.end || "").localeCompare(b.end || "");
     });
-  }, [metaFilteredTasks]);
+  }, [boardTasks]);
 
   const filteredTasks = useMemo(() => {
     const base = metaFilteredTasks.filter((t) => matchTaskFilters(t, filters, ctx));
@@ -11671,7 +11699,35 @@ export default function LePlan({ currentUser, onSignOut }) {
             Méta
             {metaFilterCount > 0 && <span className="lp-filter-badge">{metaFilterCount}</span>}
           </button>
-          {!["dashboard", "control"].includes(view) && (
+          {/* Filtre textuel des surfaces « tableau de bord » (issue #72).
+              Il ne s'ajoute pas au champ de recherche des autres vues : il le
+              REMPLACE là où celui-ci était masqué, faute de pouvoir filtrer
+              quoi que ce soit. La barre du haut porte donc toujours un champ de
+              recherche, quelle que soit la vue. */}
+          {["dashboard", "control", "today"].includes(view) && (
+            <div className="lp-search-wrap lp-board-search-wrap">
+              <span className="lp-search-icon">⌕</span>
+              <input
+                type="text"
+                className="lp-search-input"
+                placeholder="Nom ou description…"
+                value={boardSearch}
+                onChange={(e) => setBoardSearch(e.target.value)}
+                aria-label="Filtrer les tâches sur leur nom ou leur description"
+              />
+              {boardSearch && (
+                <button className="lp-search-clear" onClick={() => setBoardSearch("")} title="Effacer le filtre"><X size={13} /></button>
+              )}
+            </div>
+          )}
+          {["dashboard", "control", "today"].includes(view) && boardSearchActive && (
+            /* Sans ce compte, un filtre qui ne ramène rien donne des widgets
+               vides sans qu'on sache si c'est la recherche ou les données. */
+            <span className={"lp-board-search-count" + (boardTasks.length === 0 ? " is-empty" : "")}>
+              {boardTasks.length === 0 ? "Aucune tâche" : `${boardTasks.length} tâche${boardTasks.length > 1 ? "s" : ""}`}
+            </span>
+          )}
+          {!["dashboard", "control", "today"].includes(view) && (
           <>
           <div className="lp-search-wrap">
             <span className="lp-search-icon">⌕</span>
@@ -11816,7 +11872,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} gradient={appearance.gradient} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "control" && <ControlTowerView tasks={metaFilteredTasks} ctx={ctx} risks={risks} momentumSnapshots={momentumSnapshots} activityLog={activityLog} onOpenTask={openEditTask} onSelectProject={selectProjectAndNavigate} onNavigate={setView} />}
+          {view === "control" && <ControlTowerView tasks={boardTasks} ctx={ctx} risks={risks} momentumSnapshots={momentumSnapshots} activityLog={activityLog} onOpenTask={openEditTask} onSelectProject={selectProjectAndNavigate} onNavigate={setView} />}
           {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} customFieldDefs={customFieldDefs} />}
           {view === "chiffrage" && <ChiffrageView projects={projects} setProjects={setProjects} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} expenses={expenses} setExpenses={setExpenses} budgetLines={budgetLines} setBudgetLines={setBudgetLines} tasks={metaFilteredTasks} ctx={ctx} prefs={viewPrefs.chiffrage} setPrefs={setChiffragePrefs} toolbarSlot={viewToolbarSlot} />}
@@ -11824,7 +11880,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={metaFilteredTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} momentumSnapshots={momentumSnapshots} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} risks={risks} workflows={workflows} workflowExecutionLog={workflowExecutionLog} onOpenAutomations={() => setView("automations")} shortcutPrefs={shortcutPrefs} />}
         </div>
       </main>
 

@@ -557,6 +557,30 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "L'axe des criticités ne suit plus l'ordre d'urgence : « Bas » se retrouverait en tête.");
 }
 
+/* Filtre textuel des surfaces « tableau de bord » (issue #72).
+   Le calcul est couvert par tests/board-search.test.mjs. Ce qui ne l'est pas,
+   c'est le CÂBLAGE : un champ qui se saisit sans que rien ne le consomme, ou
+   une surface oubliée, ne produit aucune erreur — la recherche paraît
+   simplement sans effet. */
+{
+  assert.match(builtSource, /const boardTasks = useMemo\(\s*\(\) => filterTasksByText\(metaFilteredTasks, boardSearchApplied\)/,
+    "La liste filtrée par le texte n'est plus calculée.");
+  /* La valeur retardée est ce qui rend la frappe fluide : sans elle, chaque
+     caractère recalcule tous les widgets de la page. */
+  assert.match(builtSource, /setTimeout\(\(\) => setBoardSearchApplied\(boardSearch\), \d+\)/,
+    "Le filtre n'est plus retardé : chaque caractère recalculerait toute la page.");
+  assert.match(builtSource, /value=\{boardSearch\}/, "Le champ de filtre a disparu de la barre du haut.");
+  /* Les TROIS surfaces qui partent du socle méta-filtré doivent le consommer.
+     En oublier une donnerait un champ qui filtre ici et pas là. */
+  for (const [surface, motif] of [
+    ["Centre de pilotage", /<ControlTowerView tasks=\{boardTasks\}/],
+    ["Tableau de bord", /view === "dashboard" && <DashboardView[^\n]*tasks=\{boardTasks\}/],
+    ["Aujourd'hui", /return \[\.\.\.boardTasks\]\.sort/],
+  ]) {
+    assert.match(builtSource, motif, `La vue « ${surface} » ne consomme plus la liste filtrée par le texte.`);
+  }
+}
+
 /* Changer un widget de tableau de bord (issue #58).
    Le calcul est couvert par tests/widget-transfer.test.mjs. Ce qui ne l'est pas,
    c'est la CHAÎNE qui va de la fiche au magasin : quatre maillons, dont trois
