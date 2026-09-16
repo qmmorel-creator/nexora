@@ -74,7 +74,7 @@ await page.route("**/*", (route) => {
 });
 
 await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "load", timeout: 90000 });
-await page.waitForSelector(".lp-gantt-wrap", { timeout: 90000 });
+await page.waitForSelector(".lp-widget-minigantt", { timeout: 90000 });
 await page.waitForTimeout(2500);
 
 const seen = await page.evaluate(() => {
@@ -83,10 +83,6 @@ const seen = await page.evaluate(() => {
     return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), text: el.textContent.trim() };
   });
   return {
-    ganttBlocks: document.querySelectorAll(".lp-gantt-tblock").length,
-    ganttBlockLabels: rects(".lp-gantt-tblock-label"),
-    ganttFrames: rects(".lp-gantt-frame"),
-    ganttFrameLabels: rects(".lp-gantt-frame-label"),
     miniBlocks: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-tblock").length,
     miniPhases: rects("#harness-first-minigantt .lp-widget-minigantt-phase"),
     miniFrames: rects("#harness-first-minigantt .lp-widget-minigantt-frame"),
@@ -1008,9 +1004,6 @@ const failures = [];
 const expect = (ok, message) => { if (!ok) failures.push(message); };
 
 expect(pageErrors.length === 0, `erreurs JavaScript au rendu :\n    ${pageErrors.slice(0, 5).join("\n    ")}`);
-expect(seen.ganttBlocks > 0, "Gantt complet : aucun bloc temporel dessiné");
-expect(seen.ganttBlockLabels.length === 2, `Gantt complet : ${seen.ganttBlockLabels.length} étiquette(s) de bloc, 2 attendues`);
-expect(seen.ganttFrames.length === 3, `Gantt complet : ${seen.ganttFrames.length} cadre(s), 3 attendus (l'encadré non successif doit en produire deux)`);
 expect(seen.miniBlocks === 3, `Mini-Gantt : ${seen.miniBlocks} bande(s) de bloc, 3 attendues (2 phases + 1 fenêtre de décision)`);
 expect(seen.miniPhases.length === 3, `Mini-Gantt : ${seen.miniPhases.length} titre(s) de bloc dans la bande d’en-tête, 3 attendus`);
 expect(seen.miniDecisions.length === 1, `Mini-Gantt : ${seen.miniDecisions.length} fenêtre(s) de décision, 1 attendue`);
@@ -1140,12 +1133,12 @@ seen.miniRisks.forEach((risk, i) => {
   expect(risk.w > 2 && risk.h > 2, `Mini-Gantt : couloir de risque ${i + 1} de surface nulle (${risk.w}×${risk.h})`);
 });
 
-for (const [name, frames] of [["Gantt complet", seen.ganttFrames], ["Mini-Gantt", seen.miniFrames]]) {
+for (const [name, frames] of [["Mini-Gantt", seen.miniFrames]]) {
   frames.forEach((f, i) => expect(f.w > 4 && f.h > 4, `${name} : cadre ${i + 1} de surface nulle (${f.w}×${f.h})`));
 }
 
 // Étiquettes lisibles : aucune ne doit en recouvrir une autre.
-for (const [name, labels] of [["Gantt complet", seen.ganttFrameLabels], ["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels], ["Comparaison (légende)", seen.cmpLegend], ["Comparaison (écarts)", seen.cmpLabels]]) {
+for (const [name, labels] of [["Mini-Gantt", seen.miniFrameLabels], ["Mini-Gantt (titres de bloc)", seen.miniPhases], ["Second Mini-Gantt (méta blocs)", seen.secondMetaChips], ["Mini-Gantt (repères)", seen.miniMarkers], ["Mini-Gantt (légende)", seen.miniLegend], ["Mini-Gantt (étiquettes de risque)", seen.miniRiskLabels], ["Comparaison (légende)", seen.cmpLegend], ["Comparaison (écarts)", seen.cmpLabels]]) {
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       const a = labels[i], b = labels[j];
@@ -1701,4 +1694,4 @@ if (failures.length) {
   failures.forEach((f) => console.error("  - " + f));
   process.exit(1);
 }
-console.log(`Contrôle visuel : OK (${seen.ganttFrames.length} cadres et ${seen.ganttBlockLabels.length} blocs dans le Gantt complet, ${seen.miniFrames.length} cadres et ${seen.miniBlocks} blocs dans le Mini-Gantt)`);
+console.log(`Contrôle visuel : OK (${seen.miniFrames.length} cadres et ${seen.miniBlocks} blocs dans le Mini-Gantt)`);
