@@ -19,12 +19,12 @@ const START = "// === NEXORA:GATEWAY-READ-GUARD:START ===";
 const END = "// === NEXORA:GATEWAY-READ-GUARD:END ===";
 
 const html = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.html"),
+  join(dirname(fileURLToPath(import.meta.url)), "..", ".build", "index.html"),
   "utf8",
 );
 const from = html.indexOf(START);
 const to = html.indexOf(END, from);
-assert.ok(from !== -1 && to > from, "bloc du garde-fou introuvable dans dist/index.html");
+assert.ok(from !== -1 && to > from, "bloc du garde-fou introuvable dans .build/index.html");
 const bloc = html.slice(from + START.length, to);
 
 /* Le bloc est une paire de méthodes d'objet littéral : on le referme pour

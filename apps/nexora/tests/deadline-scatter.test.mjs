@@ -19,9 +19,9 @@ const EXPORTS = [
   "scatterTicks", "SCATTER_MINOR_PER_MAJOR", "SCATTER_LANE_TINT",
 ];
 
-const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START), to = html.indexOf(END);
-assert.ok(from !== -1 && to > from, "bloc du nuage de points introuvable dans dist/index.html");
+assert.ok(from !== -1 && to > from, "bloc du nuage de points introuvable dans .build/index.html");
 const {
   SCATTER_LANE_FIELDS, SCATTER_POINT_RADIUS, SCATTER_POINT_GAP,
   SCATTER_MIN_SPAN_DAYS, SCATTER_WINDOW_MAX_DAYS, SCATTER_LABEL_MAX_POINTS,

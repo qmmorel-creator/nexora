@@ -4,17 +4,17 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
 // Même technique que gantt-annotations.test.mjs : les fonctions testées sont
-// extraites de l'interface RÉELLEMENT construite (dist/index.html, reconstruit par
+// extraites de l'interface RÉELLEMENT construite (.build/index.html, reconstruit par
 // `npm run build` juste avant `npm test`), entre les deux sentinelles du bloc
 // Criticité. Aucune copie du code n'est maintenue à côté.
 const START = "// === NEXORA:CRITICALITY:START ===";
 const END = "// === NEXORA:CRITICALITY:END ===";
 const EXPORTS = ["CRITICALITIES", "criticalityOf", "planUrgentMigration"];
 
-const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START);
 const to = html.indexOf(END);
-assert.ok(from !== -1 && to > from, "bloc Criticité introuvable dans dist/index.html");
+assert.ok(from !== -1 && to > from, "bloc Criticité introuvable dans .build/index.html");
 
 const factory = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`

@@ -70,9 +70,12 @@ const sourceParts = (await readdir(path.join(root, "apps/nexora/source")))
   .filter((name) => name.startsWith("index.html.part-"))
   .sort();
 const sourceBytes = Buffer.concat(await Promise.all(sourceParts.map((name) => readFile(path.join(root, "apps/nexora/source", name)))));
-const builtBytes = await readFile(path.join(root, "apps/nexora/dist/index.html"));
+const builtBytes = await readFile(path.join(root, "apps/nexora/.build/index.html"));
+const productionHtml = await readFile(path.join(root, "apps/nexora/dist/index.html"), "utf8");
+assert.doesNotMatch(productionHtml, /type="text\/babel"|@babel\/standalone/);
+assert.match(productionHtml, /<script type="module">/);
 assert.deepEqual(builtBytes, sourceBytes, "Le build doit reconstruire exactement index.html");
-const builtSource = builtBytes.toString("utf8");
+const builtSource = builtBytes.toString("utf8").replace(/\r\n/g, "\n");
 assert.match(builtSource, /lp-drive-panel/);
 assert.match(builtSource, /params\.get\("driveUrl"\)/);
 // La liaison Nexora → Todoist est supprimée. Le seul flux conservé —

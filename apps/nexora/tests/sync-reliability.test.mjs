@@ -10,7 +10,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const html = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.html"),
+  join(dirname(fileURLToPath(import.meta.url)), "..", ".build", "index.html"),
   "utf8",
 );
 

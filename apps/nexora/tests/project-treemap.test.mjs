@@ -8,14 +8,14 @@ import vm from "node:vm";
 // copie du code n'est maintenue à côté. Le bloc du Treemap s'appuie sur
 // lerpColor, lui aussi encadré par des sentinelles : les deux tranches sont
 // concaténées, jamais recopiées.
-const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 
 function slice(name) {
   const start = `// === NEXORA:${name}:START ===`;
   const end = `// === NEXORA:${name}:END ===`;
   const from = html.indexOf(start);
   const to = html.indexOf(end);
-  assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans dist/index.html`);
+  assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
 
