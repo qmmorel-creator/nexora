@@ -2158,6 +2158,13 @@ const ALL_VIEWS_META = [
 const TOP_LEVEL_VIEW_KEYS = ["control", "projects", "today", "dashboard", "automations", "notifications"];
 // Vues de détail — apparaissent en onglets horizontaux, jamais dans le bandeau.
 const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "calendar", "timeline", "radar", "table", "chiffrage"];
+// Vues sur lesquelles la recherche textuelle de la barre du haut agit réellement.
+// « chiffrage » en est absent : ses totaux budgétaires ne doivent pas bouger au
+// gré d'une recherche. « automations » et « notifications » n'affichent pas de
+// tâches. Ailleurs, le champ serait un leurre — on le masque plutôt.
+const SEARCHABLE_VIEW_KEYS = ["dashboard", "control", "projects", "gantt", "heatmap", "calendar", "timeline", "radar", "today", "table"];
+// Vues alimentées par le socle méta-filtré + recherche, sans les filtres de vue.
+const META_SCOPED_VIEW_KEYS = ["dashboard", "control", "today"];
 
 const PROJECT_DEFAULT_VIEW_OPTIONS = [
   { key:"projects", label:"Métro" },
@@ -3084,6 +3091,16 @@ function countFilterGroup(group) {
   if (!group || !group.items) return 0;
   return group.items.reduce((n, item) => n + (item.items ? countFilterGroup(item) : 1), 0);
 }
+// Normalisation commune à toutes les recherches textuelles sur les tâches :
+// minuscules ET suppression des diacritiques, pour que « réunion » trouve
+// « Reunion » et inversement. Le même passage s'applique au texte cherché et
+// au texte parcouru, sinon la comparaison n'est plus symétrique.
+function normalizeSearchText(value) {
+  return String(value == null ? "" : value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
 function taskSearchHaystack(task, ctx) {
   const proj = ctx.projects.find((p) => p.id === task.projectId);
   const st = ctx.statuses.find((s) => s.id === task.statusId);
@@ -3102,13 +3119,18 @@ function taskSearchHaystack(task, ctx) {
     String(task.progress),
     ...(task.checklist || []).map((i) => i.text),
   ];
-  return parts.filter(Boolean).join(" \u241F ").toLowerCase();
+  return normalizeSearchText(parts.filter(Boolean).join(" \u241F "));
+}
+// Filtre textuel seul, extrait de matchTaskFilters : les surfaces qui ne
+// passent pas par les filtres de vue (tableaux de bord, centre de pilotage)
+// l'appliquent directement sur le socle méta-filtré.
+function matchTaskSearch(task, query, ctx) {
+  const q = normalizeSearchText(query).trim();
+  if (!q) return true;
+  return taskSearchHaystack(task, ctx).includes(q);
 }
 function matchTaskFilters(task, f, ctx) {
-  if (f.search.trim()) {
-    const q = f.search.trim().toLowerCase();
-    if (!taskSearchHaystack(task, ctx).includes(q)) return false;
-  }
+  if (!matchTaskSearch(task, f.search, ctx)) return false;
   if (f.milestone === "yes" && getTaskType(task) !== "milestone") return false;
   if (f.milestone === "no" && getTaskType(task) === "milestone") return false;
   if (task.progress < f.progressMin || task.progress > f.progressMax) return false;
