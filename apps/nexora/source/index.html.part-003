@@ -2427,10 +2427,61 @@ function defaultLayoutForType(type) {
   if (type === "heatmapGrid") return { w: 9, h: 7 };
   if (type === "automations") return { w: 4, h: 5 };
   if (type === "automationAlerts") return { w: 4, h: 4 };
-  if (type === "embedMetro" || type === "embedGantt" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
+  if (type === "embedMetro" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
   if (type === "projectMomentum") return { w: 4, h: 6 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
+
+// === NEXORA:MINIGANTT-MIGRATION:START ===
+/* Compatibilité de lecture strictement isolée (#80). `embedGantt` n'est plus
+   un type créable ni rendu ; il peut seulement exister dans une sauvegarde
+   antérieure. Cette migration conserve toutes les propriétés inconnues et
+   l'identité du widget, afin que synchronisation, imports et duplications ne
+   perdent aucune donnée utilisateur. */
+const LEGACY_EMBED_GANTT_TYPE = "embed" + "Gantt";
+const MINI_GANTT_DEFAULTS = {
+  showMilestones: true,
+  miniGanttFields: ["assignee", "status", "taskType", "end", "progress"],
+  miniGanttFieldsLayout: "aligned",
+  miniGanttSort: "start",
+  miniGanttSortDir: "asc",
+  miniGanttRange: { mode: "auto", includeToday: true },
+  miniGanttWindow: null,
+  miniGanttZoomLevel: null,
+  miniGanttComparisonEnabled: false,
+};
+function migrateLegacyMiniGanttWidget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_EMBED_GANTT_TYPE) return widget;
+  const next = { ...widget, type: "minigantt" };
+  Object.entries(MINI_GANTT_DEFAULTS).forEach(([key, value]) => {
+    if (next[key] === undefined) next[key] = Array.isArray(value) ? [...value] : (value && typeof value === "object" ? { ...value } : value);
+  });
+  return next;
+}
+function migrateLegacyMiniGanttData(value) {
+  if (Array.isArray(value)) return value.map(migrateLegacyMiniGanttData);
+  if (!value || typeof value !== "object") return value;
+  if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
+  const next = {};
+  Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
+  return next;
+}
+function normalizeMiniGanttViewPrefs(prefs) {
+  const old = prefs && typeof prefs === "object" ? prefs : {};
+  return {
+    ...old,
+    groupBy: old.groupBy || old.ganttGroupBy || "project",
+    miniGanttFields: old.miniGanttFields || old.ganttCols || MINI_GANTT_DEFAULTS.miniGanttFields,
+    miniGanttFieldsLayout: old.miniGanttFieldsLayout || "aligned",
+    miniGanttSort: old.miniGanttSort || "start",
+    miniGanttSortDir: old.miniGanttSortDir || "asc",
+    miniGanttRange: old.miniGanttRange || MINI_GANTT_DEFAULTS.miniGanttRange,
+    miniGanttWindow: old.miniGanttWindow || null,
+    miniGanttZoomLevel: old.miniGanttZoomLevel ?? null,
+    miniGanttComparisonEnabled: !!old.miniGanttComparisonEnabled,
+  };
+}
+// === NEXORA:MINIGANTT-MIGRATION:END ===
 
 function computeBudgetStats(projectId, projects, expenses) {
   const project = projects.find((p) => p.id === projectId);
@@ -3138,7 +3189,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 onAutoSize={() => autoSizeWidget(w)}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedGantt" || w.type === "embedTimeline" || w.type === "embedRadar"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedTimeline" || w.type === "embedRadar"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3284,9 +3335,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedMetro" && (
                   <WidgetEmbedMetro widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} expenses={expenses} setTasks={setTasks} pushToast={pushToast} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} metaBlocks={scopedMetaBlocks} />
-                )}
-                {w.type === "embedGantt" && (
-                  <WidgetEmbedGantt widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} />
                 )}
                 {w.type === "embedTimeline" && (
                   <WidgetEmbedTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} />
@@ -4668,7 +4716,7 @@ function MiniGanttProgressRing({ progress }) {
   );
 }
 
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "", metaBlocks }) {
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "", metaBlocks, toolbarSlot }) {
   const colorBy = widget.colorBy || "status"; // "status" | "project"
   const rowFields = widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"];
   // "aligned" = colonne à largeur fixe alignée à droite (les barres restent
@@ -5426,6 +5474,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     riskSegments.length ? { key: "risk", label: "Risque", color: "#D64545" } : null,
   ].filter(Boolean);
 
+  const viewToolbar = toolbarSlot ? (
+    <ViewToolbarPortal slot={toolbarSlot}>
+      <button className="lp-tool-btn" type="button" onClick={zoomOut} title="Zoom arrière">−</button>
+      <button className={"lp-tool-btn" + (zoomIsAuto ? " active" : "")} type="button" onClick={resetZoom} title="Zoom automatique">Auto</button>
+      <button className="lp-tool-btn" type="button" onClick={zoomIn} title="Zoom avant">+</button>
+      <DropdownButton label="Regrouper" icon={<Layers size={14} />} title="Regroupement des lignes">
+        {["none", ...WIDGET_GROUPBY_FIELDS].map((key) => <button key={key} type="button" className="lp-dropdown-action-row" onClick={() => onUpdateWidget?.({ groupBy: key })}>{key === "none" ? "Aucun regroupement" : fieldLabel(key, ctx)}</button>)}
+      </DropdownButton>
+      {editable && <DropdownButton label="Annotations" icon={<StickyNote size={14} />} title="Blocs, encadrés et jalons">
+        <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })}><Layers size={13} /> Ajouter un bloc</button>
+        <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })}><Crosshair size={13} /> Ajouter un encadré</button>
+        <button type="button" className="lp-dropdown-action-row" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })}><Milestone size={13} /> Ajouter un jalon</button>
+      </DropdownButton>}
+    </ViewToolbarPortal>
+  ) : null;
+
   const Axis = () => (
     <div className="lp-widget-minigantt-axis">
       <div className="lp-widget-minigantt-axis-spacer">
@@ -6167,6 +6231,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   if (!groupBy || groupBy === "none") {
     return (
       <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
+        {viewToolbar}
         {bandLayer}
         <Axis />
         {legendRow}
@@ -6199,6 +6264,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   };
   return (
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
+      {viewToolbar}
       {bandLayer}
       <Axis />
       {legendRow}
@@ -8002,6 +8068,29 @@ function WidgetProjectMomentum({ widget, tasks, ctx, snapshots, onOpen }) {
 // Action. Reste lisible avec beaucoup de tâches grâce à un simple classement
 // (plutôt qu'un graphe de nœuds, qui deviendrait illisible au-delà de
 // quelques éléments) — la même liste sert de vue desktop et mobile.
+/* Vue principale : elle adapte uniquement la persistance de vue au contrat du
+   widget. Toute la préparation temporelle et le rendu restent dans
+   WidgetMiniGantt, ce qui interdit un second moteur Gantt. */
+function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, pastDays, toolbarSlot }) {
+  const widget = normalizeMiniGanttViewPrefs(prefs);
+  return (
+    <section className="lp-minigantt-view" aria-label="MINI GANTT">
+      <WidgetMiniGantt
+        widget={widget}
+        tasks={tasks}
+        ctx={ctx}
+        groupBy={widget.groupBy}
+        onOpen={onOpen}
+        onUpdateWidget={(patch) => setPrefs(patch)}
+        onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((task) => task.id === taskId ? { ...task, ...patch, lastInteraction: new Date().toISOString() } : task))}
+        metaBlocks={metaBlocks || []}
+        pastDays={pastDays || ""}
+        toolbarSlot={toolbarSlot}
+      />
+    </section>
+  );
+}
+
 // Widget "Chemin critique" — regroupe par projet, puis affiche chaque niveau
 // du chemin (computeCriticalLevels, déjà utilisé par la vue Planning Projets
 // complète) sous forme de chaîne verticale ; plusieurs tâches dans un même
@@ -9058,25 +9147,6 @@ function ganttAnnotationsOf(widget) {
   return stored && typeof stored === "object" ? stored : {};
 }
 
-function WidgetEmbedGantt({ widget, tasks, ctx, onOpen, appearance, setTasks, externalToolbarSlot, onUpdateWidget }) {
-  const annotations = ganttAnnotationsOf(widget);
-  return (
-    <EmbeddedViewShell initialPrefs={{ bubbleFields: [] }} externalToolbarSlot={externalToolbarSlot}>
-      {({ toolbarSlot, prefs, setPrefs }) => (
-        <GanttView
-          tasks={tasks} ctx={ctx} appearance={appearance} setAppearance={() => {}}
-          setTasks={setTasks || (() => {})} setProjects={() => {}} setStatuses={() => {}}
-          onOpen={onOpen} onAdd={() => {}} onDelete={() => {}} onMarkDone={() => {}} onCycleStatus={() => {}} onBulkDelete={() => {}}
-          prefs={prefs} setPrefs={setPrefs} toolbarSlot={toolbarSlot}
-          annotations={annotations}
-          onAnnotationsChange={onUpdateWidget ? ((next) => onUpdateWidget({ ganttAnnotations: next })) : undefined}
-          embedded
-        />
-      )}
-    </EmbeddedViewShell>
-  );
-}
-
 function WidgetEmbedTimeline({ tasks, ctx, onOpen, setTasks, externalToolbarSlot }) {
   const [listPrefs, setListPrefsState] = useState({ visibleFields: ["project", "status"], sortBy: "none" });
   const setListPrefs = (patch) => setListPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
@@ -9141,7 +9211,6 @@ const WIDGET_TYPE_META = [
   { key: "automations", label: "Automatisations", icon: Zap, group: "Suivi" },
   { key: "automationAlerts", label: "Automation Alerts", icon: ShieldAlert, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
-  { key: "embedGantt", label: "Gantt (complet)", icon: Rows3, group: "Planning" },
   { key: "embedTimeline", label: "Timeline + Liste (complet)", icon: Waypoints, group: "Planning" },
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
 ];
@@ -9526,7 +9595,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "criticalPath" || type === "projectPulse" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedGantt" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "deadlineScatter" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
+  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "criticalPath" || type === "projectPulse" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "deadlineScatter" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -9561,7 +9630,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     // Un cadrage « Dates fixes » incomplet ou à l'envers n'a pas d'axe : la
     // fiche le dit sous les champs et refuse l'enregistrement.
     if (type === "minigantt") return ganttAnnotationsValid && !miniGanttWindowError;
-    if (type === "embedGantt") return ganttAnnotationsValid;
     return true;
   })();
 
@@ -9643,7 +9711,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.treemapBorder = treemapBorder;
     }
     if (type === "budgetCompare") data.budgetCompareProjectIds = budgetCompareProjectIds;
-    if (type === "embedGantt" || type === "minigantt") {
+    if (type === "minigantt") {
       data.ganttAnnotations = {
         temporalBlocks: normalizeTemporalBlocks(ganttAnnotations.temporalBlocks),
         highlightFrames: pruneHighlightFrames(ganttAnnotations.highlightFrames, ganttTasks.map((t) => t.id)),
@@ -10722,7 +10790,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </>
       )}
 
-      {(type === "embedGantt" || type === "minigantt") && (
+      {type === "minigantt" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
             Les annotations ci-dessous sont enregistrées avec ce widget : elles suivent sa duplication, celle de l'onglet et celle du tableau de bord, sans jamais modifier les tâches.
@@ -10831,7 +10899,7 @@ function MetroHeroArt() {
 function LandingPage({ onGetStarted, onLogin }) {
   const FEATURES = [
     { icon: "🚇", title: "Planning Projets", text: "Chaque projet devient une ligne de métro : bifurcations pour les tâches, épaisseur du trait selon l'avancement." },
-    { icon: "📊", title: "Gantt complet", text: "Zoom du jour à 5 ans, groupement, dépendances entre tâches, tout en un coup d'œil." },
+    { icon: "📊", title: "MINI GANTT", text: "Planning visuel unique : regroupements, annotations, risques et comparaison." },
     { icon: "🎯", title: "Radar annuel", text: "Vue circulaire de toute l'année, pour voir la charge se répartir dans le temps." },
     { icon: "🗂️", title: "Tableur type Airtable", text: "Édition en masse, duplication, ajout rapide — sans jamais quitter la grille." },
   ];
