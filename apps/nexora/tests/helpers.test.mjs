@@ -139,9 +139,15 @@ test("audit and report endpoints are authenticated and idempotent", async () => 
 test("scheduled reports guard Paris local time across both UTC offsets", async () => {
   const morning = await import("node:fs/promises").then(fs => fs.readFile(new URL("../netlify/functions/nexora-report-morning-scheduled.ts", import.meta.url), "utf8"));
   const evening = await import("node:fs/promises").then(fs => fs.readFile(new URL("../netlify/functions/nexora-report-evening-scheduled.ts", import.meta.url), "utf8"));
-  assert.match(morning, /local\.hour !== 7 \|\| local\.minute !== 0/);
+  // Le garde porte désormais sur une FENÊTRE autour de l'heure de Paris, pas sur la
+  // minute exacte : une invocation retardée d'une minute annulait la journée entière,
+  // en silence. Son comportement est couvert par report-schedule.test.mjs ; ce qui se
+  // vérifie ici est ce qu'aucun test de comportement ne peut voir — que les fonctions
+  // appellent bien le garde partagé, et que la DOUBLE programmation, qui absorbe le
+  // changement d'heure, est toujours en place.
+  assert.match(morning, /shouldRunReport\(local, 7, 0\)/);
   assert.match(morning, /schedule: "0 5,6 \* \* \*"/);
-  assert.match(evening, /local\.hour !== 20 \|\| local\.minute !== 30/);
+  assert.match(evening, /shouldRunReport\(local, 20, 30\)/);
   assert.match(evening, /schedule: "30 18,19 \* \* \*"/);
   assert.match(morning, /saveAssistantReport/);
   assert.match(evening, /saveAssistantReport/);
