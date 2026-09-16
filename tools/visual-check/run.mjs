@@ -100,6 +100,13 @@ const seen = await page.evaluate(() => {
     // au mode près — ce qui permet de comparer les hauteurs de ligne des deux.
     cmpStrips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpstrip"),
     cmpSegRef: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-reference"),
+    /* La durée initiale, cerclée par-dessus les trames : elle doit être là sur
+       CHAQUE ligne comparée, quelle que soit la coloration dessous. */
+    cmpRefFrames: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpref")].map((el) => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return { w: Math.round(r.width), h: Math.round(r.height), fond: cs.backgroundColor, trait: cs.borderTopWidth };
+    }),
     cmpSegLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-late"),
     cmpSegAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-ahead"),
     /* Couleur RÉELLEMENT peinte des segments d'avance. Elle est portée par le
@@ -1275,6 +1282,9 @@ expect(seen.cmpStripUnderBar.every((gap) => gap >= 0 && gap <= 1),
 expect(seen.cmpSegBorders.every((b) => b === "0px/0px"), `Comparaison : un segment du ruban porte une bordure (${seen.cmpSegBorders.join(", ")}) — les jonctions doivent se faire par la seule trame`);
 expect(seen.cmpSegGaps.every((g) => g <= 1), `Comparaison : les segments d'un ruban ne sont pas jointifs (écarts ${seen.cmpSegGaps.join("/")} px)`);
 
+expect(seen.cmpRefFrames.length === 5, `Comparaison : ${seen.cmpRefFrames.length} période(s) de référence cerclée(s), 5 attendues — la durée initiale doit se lire sur chaque ligne comparée`);
+expect(seen.cmpRefFrames.every((f) => f.w > 1 && f.h > 1), `Comparaison : un cercle de référence est de surface nulle (${JSON.stringify(seen.cmpRefFrames)})`);
+expect(seen.cmpRefFrames.every((f) => f.fond === "rgba(0, 0, 0, 0)"), `Comparaison : le cercle de référence a un fond (${seen.cmpRefFrames.map((f) => f.fond).join(", ")}) — il masquerait la trame qu'il encadre`);
 expect(seen.cmpSegRef.length >= 1, `Comparaison : ${seen.cmpSegRef.length} segment(s) de période tenue, au moins 1 attendu`);
 expect(seen.cmpSegLate.length >= 1, `Comparaison : ${seen.cmpSegLate.length} segment(s) de retard, au moins 1 attendu`);
 expect(seen.cmpSegAhead.length >= 1, `Comparaison : ${seen.cmpSegAhead.length} segment(s) d'avance, au moins 1 attendu`);

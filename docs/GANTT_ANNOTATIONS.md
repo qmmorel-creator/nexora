@@ -684,6 +684,22 @@ Un plan abandonné n'a pas « pris du retard » : il est resté où il était. I
 reste donc **gris, en entier**, et le rouge ne couvre que l'entre-deux et la
 période réelle.
 
+### La durée initiale se lit toujours
+
+Les trames disent ce qui a **bougé** ; elles ne disent pas combien de temps le
+plan **prévoyait**. Dès que le réel sort du plan, la frontière entre « prévu »
+et « glissé » se devinait au seul changement de trame — et pas dans tous les
+cas : une tâche d'un seul jour au milieu d'un plan de trois mois n'en montrait
+aucune.
+
+La période de référence est donc **cerclée à part**, par-dessus les trames,
+exactement sur ses deux dates, sans remplissage. Le contour est le **même noir
+que la barre réelle** : les deux formes se répondent — le **plein** pour le
+réel, au-dessus ; le **creux** pour le prévu, en dessous. `reference` sort de
+`miniGanttComparisonStrip` en % **du ruban**, comme les segments ; tronqué par
+le bord de la fenêtre, le cercle perd son montant de ce côté, pour dire qu'il
+continue au-delà du cadre.
+
 Le ruban porte le **même contour que la barre réelle, en gris** : les deux
 étages se répondent, et le ruban se détache du fond comme du bloc temporel qu'il
 traverse. Il est posé par une ombre plutôt qu'une bordure — le conteneur est en
