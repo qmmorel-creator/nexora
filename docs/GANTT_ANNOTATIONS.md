@@ -341,13 +341,38 @@ diagramme, pas de tâche masquée, pas de hauteur de ligne modifiée. Un même
 widget mélange donc sans réglage supplémentaire des tâches et des jalons
 comparables et non comparables.
 
-### Les références sont un historique
+### À la création, la référence vaut les dates demandées
 
-`referenceStart` et `referenceEnd` ne bougent **jamais** toutes seules. Déplacer
-une barre dans un Mini-Gantt écrit `start` / `end` et laisse la référence là où
-elle est — c'est tout l'intérêt de la comparaison. La seule réécriture possible
-est le bouton **Copier les dates actuelles comme référence** de la fiche tâche,
-et seulement au clic.
+Une tâche **nouvelle** naît avec sa planification initiale pour référence : ce
+qu'on demande à la création *est* le plan de départ. La fiche de création ouvre
+donc la comparaison activée et les deux champs remplis, et la référence **suit**
+les dates tant qu'on n'y touche pas — régler le début puis la fin après
+l'ouverture aboutit bien à « référence = dates demandées ». Le premier geste sur
+le bloc (l'interrupteur, un champ de date, le bouton de copie) arrête
+définitivement ce calage, et l'enregistrement le fige.
+
+Rien n'est posé en douce pour autant : la référence est **visible et modifiable**
+avant d'enregistrer. Si une dépendance décale la tâche à l'enregistrement, c'est
+sur les dates **réellement enregistrées** que la référence se cale — une tâche ne
+naît jamais en retard sur son propre plan.
+
+La règle vaut pour les autres créations d'une tâche par l'utilisateur (ajout
+rapide, import tabulaire, action de workflow) via `withCreationComparison`.
+Deux exceptions, et elles seules :
+
+- une tâche **existante** n'en gagne jamais : ouvrir puis enregistrer une fiche
+  ancienne ne lui fabrique aucune référence ;
+- les tâches **importées d'un agenda** restent en dehors — leurs dates
+  appartiennent à Google Calendar et sont réécrites à chaque synchronisation,
+  une « planification initiale » n'y voudrait rien dire.
+
+### Ensuite, les références sont un historique
+
+Une fois la tâche créée, `referenceStart` et `referenceEnd` ne bougent **jamais**
+toutes seules. Déplacer une barre dans un Mini-Gantt écrit `start` / `end` et
+laisse la référence là où elle est — c'est tout l'intérêt de la comparaison. La
+seule réécriture possible est le bouton **Copier les dates actuelles comme
+référence** de la fiche tâche, et seulement au clic.
 
 Pour une tâche avec durée, les deux champs sont demandés et la fin doit être
 postérieure ou égale au début. Pour un **jalon**, seul *Fin / jalon référence*
@@ -359,17 +384,24 @@ mais conserve les valeurs saisies.
 
 ### Ce qui est dessiné
 
-- **Référence** — la fenêtre initialement prévue, en arrière-plan : deux
-  **montants pleins de 3 px** aux dates de référence, reliés par un trait
-  tireté, en gris bleuté soutenu (`#63719A`) sur un remplissage très léger.
-  Ce sont les montants qui portent la lecture : l'œil attrape l'écart entre
-  celui de droite et la fin réelle de la barre. Elle déborde de 3 px au-dessus
-  et au-dessous de la barre actuelle, donc elle reste discernable sur une
-  superposition parfaite ; tout est en position absolue dans la piste, la ligne
-  ne grandit pas d'un pixel. Tronquée par le bord de la fenêtre, le montant de
-  ce côté s'efface au profit d'un pointillé fin.
+- **Référence** — la période initialement prévue, sur le rail du bas : un filet
+  plein en gris bleuté (`#63719A`), sans contour ni montants. Tronquée par le
+  bord de la fenêtre, elle s'évanouit de ce côté et son angle s'ouvre — elle
+  continue au-delà du cadre.
 - **Actuel** — la barre existante, inchangée : couleur métier, point
   d'avancement, glisser-déposer, infobulle.
+**Deux étages, pas une seule bande.** La barre actuelle reste seule sur sa
+ligne ; la référence et les écarts vivent sur un **rail de 4 px juste en
+dessous**. C'est la structure qui sépare, pas un habillage. Trois essais ont
+précédé celui-ci — référence en filet de 1 px superposé (invisible), puis en
+fenêtre à montants épais (trois objets empilés sur quinze pixels) — et tous
+butaient sur le même reproche : on ne savait plus si la poignée d'avancement
+était au bout de la tâche ou s'il restait de la course. Avec le rail, la
+question ne se pose plus : rien ne peut plus se confondre avec la barre.
+
+Le rail est en position absolue dans une piste en `overflow` visible, donc la
+hauteur de ligne reste exactement celle du mode Standard.
+
 - **Retard** (`late`) — la part de la période actuelle postérieure à la fin de
   référence, hachures **montantes** rouge corail (`#E4572E`).
 - **Avance au début** (`ahead`) — la part de la période actuelle antérieure au
@@ -380,7 +412,9 @@ mais conserve les valeurs saisies.
   peinte en gris, comme une simple trace de la référence — une tâche terminée en
   avance n'affichait alors rien de vert à l'écran.
 - **Jalon comparé** — un losange fantôme gris à la date de référence, le jalon
-  actuel inchangé, et un segment fin entre les deux.
+  actuel inchangé, et un segment fin entre les deux. Un jalon n'a pas de barre :
+  il n'a donc pas de rail du bas, et tout reste sur sa ligne — l'écart chiffré
+  compris.
 
 La couleur ne porte jamais seule l'information : chaque zone a son **motif**, et
 l'écart est écrit en chiffres (`−3 j`, `+8 j`, `0 j` — négatif = avance,
@@ -422,9 +456,10 @@ plage, inchangés. En mode Standard, la plage ne bouge pas d'un jour.
 
 Aucune migration. Une tâche sans `comparison` et un widget sans
 `miniGanttComparisonEnabled` rendent exactement comme avant. Rien n'initialise
-une référence à partir des dates actuelles, et la normalisation rend `null`
-plutôt qu'un objet vide : une tâche d'avant ce changement reste identique à
-elle-même après un aller-retour dans la fiche. Les données de comparaison sont
+une référence au CHARGEMENT — seule la création d'une tâche en pose une, et elle
+est affichée avant d'être enregistrée — et la normalisation rend `null` plutôt
+qu'un objet vide : une tâche d'avant ce changement reste identique à elle-même
+après un aller-retour dans la fiche. Les données de comparaison sont
 des propriétés métier ordinaires de la tâche : elles suivent les imports,
 exports, sauvegardes et synchronisations comme les autres.
 

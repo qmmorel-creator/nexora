@@ -106,14 +106,28 @@ const seen = await page.evaluate(() => {
     cmpLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-late"),
     cmpAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead"),
     cmpFreed: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed"),
-    // Couleur RÉELLEMENT peinte des zones d'avance : le vert doit dominer.
+    /* Couleur RÉELLEMENT peinte des zones d'avance. Elle est portée par le
+       MOTIF, pas par un contour : les rubans n'en ont plus. On lit donc la
+       première couleur du dégradé hachuré, telle que le navigateur la calcule. */
     cmpAheadColors: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead, #harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed")].map((el) => {
-      const c = getComputedStyle(el).borderTopColor;
-      const m = c.match(/\d+/g) || [];
-      const [r, v, b] = m.map(Number);
-      return { c, vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
+      const c = getComputedStyle(el).backgroundImage;
+      const m = c.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+      const [r, v, b] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [];
+      return { c: m ? m[0] : c.slice(0, 40), vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
     }),
     cmpLabels: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmplabel"),
+    // Hauteurs comparées : une zone d'écart ne doit jamais avoir la géométrie de
+    // la barre, sinon elle se lit comme son prolongement.
+    cmpZoneHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone")].map((el) => Math.round(el.getBoundingClientRect().height)))],
+    cmpBarHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar")].map((el) => Math.round(el.getBoundingClientRect().height)))],
+    // Le rail doit vivre SOUS la barre : c'est ce qui laisse la barre actuelle
+    // seule sur sa ligne. Mesuré ligne par ligne, sur la ligne qui porte les deux.
+    cmpRailUnderBar: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-row")].map((row) => {
+      const bar = row.querySelector(".lp-widget-minigantt-bar");
+      const rail = row.querySelector(".lp-widget-minigantt-refbar");
+      if (!bar || !rail) return null;
+      return Math.round(rail.getBoundingClientRect().top - bar.getBoundingClientRect().bottom);
+    }).filter((v) => v !== null),
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
     cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
@@ -122,6 +136,17 @@ const seen = await page.evaluate(() => {
     cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
     standardRefBars: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-refbar, #harness-second-minigantt .lp-widget-minigantt-refbar, #harness-nofields-minigantt .lp-widget-minigantt-refbar").length,
     standardRows: rects("#harness-second-minigantt .lp-widget-minigantt-row"),
+    // Avancement à 100 % : la poignée devient une pastille de validation.
+    doneHandles: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-progress-handle.is-done")].map((el) => {
+      const b = el.getBoundingClientRect();
+      const c = getComputedStyle(el).backgroundColor;
+      const [r, v, bl] = (c.match(/\d+/g) || []).map(Number);
+      return { w: Math.round(b.width), h: Math.round(b.height), coches: el.querySelectorAll("svg").length, vert: Number.isFinite(v) && v > r + 40 && v > bl + 40 };
+    }),
+    plainHandles: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-progress-handle:not(.is-done)")].map((el) => ({
+      w: Math.round(el.getBoundingClientRect().width),
+      coches: el.querySelectorAll("svg").length,
+    })),
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
     miniLegend: rects("#harness-first-minigantt .lp-widget-minigantt-legend-item"),
@@ -875,6 +900,44 @@ try {
   taskMeta.error = String(error).split("\n")[0];
 }
 
+/* Création d'une tâche : la référence doit naître calée sur les dates demandées,
+   VISIBLE dans la fiche, suivre un changement de dates tant qu'on n'y touche
+   pas, et se figer telle quelle à l'enregistrement. */
+const creation = { checked: null, start: "", end: "", startApresDate: "", endApresDate: "", startApresSaisie: "", enregistre: null };
+try {
+  await page.locator("#harness-open-task-create").click();
+  await page.waitForSelector(".lp-modal #task-comparison", { timeout: 10000 });
+  creation.checked = await page.locator(".lp-modal #task-comparison").isChecked();
+  creation.start = await page.locator(".lp-modal #task-comparison-start").inputValue();
+  creation.end = await page.locator(".lp-modal #task-comparison-end").inputValue();
+  creation.dates = {
+    start: await page.locator(".lp-modal input[type=date]").first().inputValue(),
+    end: await page.locator(".lp-modal input[type=date]").nth(1).inputValue(),
+  };
+  // Changer la date de début APRÈS l'ouverture : la référence suit, puisque
+  // c'est bien la date demandée qui fait la planification initiale.
+  await page.locator(".lp-modal input[type=date]").first().fill("2026-10-05");
+  await page.waitForTimeout(350);
+  creation.startApresDate = await page.locator(".lp-modal #task-comparison-start").inputValue();
+  creation.endApresDate = await page.locator(".lp-modal #task-comparison-end").inputValue();
+  // …mais dès qu'on saisit une référence à la main, elle cesse de suivre.
+  await page.locator(".lp-modal #task-comparison-start").fill("2026-01-15");
+  await page.waitForTimeout(250);
+  await page.locator(".lp-modal input[type=date]").first().fill("2026-11-02");
+  await page.waitForTimeout(350);
+  creation.startApresSaisie = await page.locator(".lp-modal #task-comparison-start").inputValue();
+  // Enregistrer fige ce qui est à l'écran.
+  await page.locator('.lp-modal input[placeholder="Ex. Revue DOE"]').fill("Tâche de banc");
+  await page.locator(".lp-modal").getByRole("button", { name: "Enregistrer" }).click();
+  await page.waitForTimeout(400);
+  creation.enregistre = JSON.parse(await page.locator("#harness-created-comparison").textContent());
+} catch (error) {
+  creation.error = String(error).split("\n")[0];
+  // La fiche reste ouverte si un geste a échoué : la refermer, sinon tous les
+  // contrôles suivants tombent sur une modale qu'ils n'attendent pas.
+  try { await page.keyboard.press("Escape"); await page.waitForTimeout(300); } catch { /* rien à refermer */ }
+}
+
 // Recherche rapide des listes déroulantes des paramètres : on ouvre la fiche
 // d'un risque, on filtre la liste des tâches et on vérifie que la sélection
 // s'applique. Sans ce contrôle, une liste déroulante peut redevenir un <select>
@@ -985,6 +1048,14 @@ expect(seen.cmpRefBars.length === 5, `Comparaison : ${seen.cmpRefBars.length} ba
 seen.cmpRefBars.forEach((b, i) => {
   expect(b.w > 2 && b.h > 2, `Comparaison : barre de référence ${i + 1} de surface nulle (${b.w}×${b.h})`);
 });
+// « On ne sait pas si le curseur est au bout de la tâche » : une zone d'écart ne
+// doit jamais avoir la hauteur de la barre, et une barre comparée porte une
+// borne de fin que la poignée ronde ne dit pas.
+expect(seen.cmpZoneHeights.length && seen.cmpBarHeights.length && Math.max(...seen.cmpZoneHeights) < Math.min(...seen.cmpBarHeights),
+  `Comparaison : les zones d'écart (${seen.cmpZoneHeights.join("/")} px) ne sont pas plus fines que les barres (${seen.cmpBarHeights.join("/")} px) — elles se liraient comme leur prolongement`);
+expect(seen.cmpRailUnderBar.length === 5, `Comparaison : ${seen.cmpRailUnderBar.length} ligne(s) portent barre et rail, 5 attendues`);
+expect(seen.cmpRailUnderBar.every((gap) => gap >= 0), `Comparaison : le rail de référence chevauche la barre (écarts ${seen.cmpRailUnderBar.join("/")} px) — la barre actuelle doit rester seule sur sa ligne`);
+
 expect(seen.cmpLate.length >= 1, `Comparaison : ${seen.cmpLate.length} zone(s) de retard, au moins 1 attendue`);
 expect(seen.cmpAhead.length >= 1, `Comparaison : ${seen.cmpAhead.length} zone(s) d'avance, au moins 1 attendue`);
 expect(seen.cmpFreed.length >= 1, `Comparaison : ${seen.cmpFreed.length} zone(s) d'avance en fin de tâche, au moins 1 attendue`);
@@ -1009,6 +1080,15 @@ seen.cmpRows.forEach((row, i) => {
   if (!ref) return;
   expect(Math.abs(row.h - ref.h) <= 2, `Comparaison : la ligne ${i + 1} mesure ${row.h} px contre ${ref.h} px en mode standard — la superposition ne doit pas faire grandir la ligne`);
 });
+
+// Avancement à 100 % : le rond blanc laisse place à une pastille de validation.
+// Le jeu d'essai n'a qu'une tâche terminée — les autres gardent leur rond.
+expect(seen.doneHandles.length === 1, `Mini-Gantt : ${seen.doneHandles.length} pastille(s) de validation, 1 attendue (une seule tâche à 100 %)`);
+expect(seen.doneHandles.every((h) => h.coches === 1), `Mini-Gantt : une pastille de validation ne porte pas sa coche (${JSON.stringify(seen.doneHandles)})`);
+expect(seen.doneHandles.every((h) => h.vert), `Mini-Gantt : une pastille de validation n'est pas verte (${JSON.stringify(seen.doneHandles)})`);
+expect(seen.plainHandles.length > 0, "Mini-Gantt : plus aucune poignée d'avancement ordinaire");
+expect(seen.plainHandles.every((h) => h.coches === 0), "Mini-Gantt : une tâche non terminée porte une coche de validation");
+expect(seen.doneHandles.every((h) => seen.plainHandles.every((p) => h.w > p.w)), `Mini-Gantt : la pastille de validation n'est pas plus grande que le rond ordinaire (${JSON.stringify(seen.doneHandles)} contre ${JSON.stringify(seen.plainHandles)})`);
 
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.
@@ -1539,6 +1619,16 @@ expect(taskComparison.errorsAfterCopy === 0, `Fiche de tâche : ${taskComparison
 // Désactiver masque les champs SANS effacer l'historique saisi.
 expect(taskComparison.fieldsAfterUncheck === 0, `Fiche de tâche : ${taskComparison.fieldsAfterUncheck} champ(s) encore visible(s) après désactivation, 0 attendu`);
 expect(taskComparison.startAfterRecheck === "2026-08-05", `Fiche de tâche : la date de référence est perdue par une désactivation temporaire (${taskComparison.startAfterRecheck})`);
+
+// Création d'une tâche : la référence naît calée sur les dates demandées.
+expect(!creation.error, `contrôle de la fiche de création interrompu : ${creation.error}`);
+expect(creation.checked === true, "Fiche de création : la comparaison n'est pas activée d'emblée");
+expect(creation.start === creation.dates?.start && creation.end === creation.dates?.end,
+  `Fiche de création : la référence (${creation.start} → ${creation.end}) ne reprend pas les dates demandées (${creation.dates?.start} → ${creation.dates?.end})`);
+expect(creation.startApresDate === "2026-10-05", `Fiche de création : la référence ne suit pas un changement de date (${creation.startApresDate})`);
+expect(creation.startApresSaisie === "2026-01-15", `Fiche de création : une référence saisie à la main est écrasée par un changement de date (${creation.startApresSaisie})`);
+expect(creation.enregistre && creation.enregistre.enabled === true && creation.enregistre.referenceStart === "2026-01-15",
+  `Fiche de création : la référence enregistrée n'est pas celle affichée (${JSON.stringify(creation.enregistre)})`);
 
 // Tableaux Markdown (issue #71).
 expect(taskMeta.mdTables === 1, `Fiche de tâche : ${taskMeta.mdTables} tableau(x) rendu(s) dans l'aperçu, 1 attendu`);

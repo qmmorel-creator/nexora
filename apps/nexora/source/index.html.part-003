@@ -1971,7 +1971,7 @@ function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete
   const addQuickTask = () => {
     if (!newTitle.trim()) return;
     const today = iso(new Date());
-    setTasks((prev) => [...prev, { id: uid(), title: newTitle.trim(), projectId: ctx.projects[0]?.id || null, statusId: ctx.statuses[0]?.id || null, taskTypeId: getDefaultTaskTypeForProject(ctx.taskTypes, ctx.projects, ctx.projects[0]?.id)?.id || null, start: today, end: today, progress: 0, milestone: false, desc: "", assignee: "", checklist: [], lastInteraction:new Date().toISOString() }]);
+    setTasks((prev) => [...prev, withCreationComparison({ id: uid(), title: newTitle.trim(), projectId: ctx.projects[0]?.id || null, statusId: ctx.statuses[0]?.id || null, taskTypeId: getDefaultTaskTypeForProject(ctx.taskTypes, ctx.projects, ctx.projects[0]?.id)?.id || null, start: today, end: today, progress: 0, milestone: false, desc: "", assignee: "", checklist: [], lastInteraction:new Date().toISOString() })]);
     setNewTitle("");
   };
 
@@ -5354,7 +5354,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const comparisonLegendItems = !comparisonOn || !comparisonByTask.size ? [] : [
     {
       key: "cmp-ref", label: "Initial", color: MINIGANTT_COMPARISON_REF_COLOR,
-      background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 14%, transparent)`,
+      background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 42%, transparent)`,
       title: "Période de référence, dessinée en arrière-plan de la barre actuelle",
     },
     {
@@ -5674,16 +5674,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const barColor = (colorBy === "project" ? proj?.color : colorBy === "taskType" ? tt?.color : st?.color) || proj?.color || st?.color || "var(--text-muted)";
     const paleBg = typeof barColor === "string" && barColor.startsWith("#") ? barColor + "3a" : "var(--paper-soft)";
     const pct = Math.max(0, Math.min(100, Math.round(t.progress || 0)));
-    // Comparaison : la référence se dessine DANS la même piste, en arrière-plan
-    // de la barre actuelle. Aucune ligne ne grandit — tout est en position
-    // absolue dans une piste en `overflow:visible`.
+    // Comparaison : la référence et les écarts se dessinent sur un RAIL FIN
+    // sous la barre, dans la même piste. La barre actuelle reste donc seule sur
+    // sa ligne. Aucune ligne ne grandit — tout est en position absolue dans une
+    // piste en `overflow:visible`.
     const cmp = comparisonByTask.get(t.id) || null;
     const cmpBars = cmp ? miniGanttComparisonBars(cmp, { minIdx, maxIdx, span }) : null;
     const cmpHasRisks = risksByTask.has(t.id);
     const cmpLabelVisible = (zone) => miniGanttComparisonLabelVisible(zone, {
       trackPx: comparisonTrackPx, todayPct: comparisonTodayPct, hasRisks: cmpHasRisks,
     });
-    /* Une zone d'écart et, si la place le permet, sa valeur en jours.
+    /* Une zone d'écart et, si la place le permet, sa valeur en jours. Elle se
+       pose sur le rail du bas, dans le prolongement de la référence.
        `freed` — la part de référence que la tâche n'atteint pas — est une
        AVANCE : elle se peint en vert et porte son chiffre, comme les autres.
        Elle partageait la couleur de la référence, et une tâche terminée en
@@ -5696,7 +5698,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         <React.Fragment key={"cmp-" + kind}>
           <span
             className={"lp-widget-minigantt-cmpzone is-" + kind}
-            style={{ left: zone.leftPct + "%", width: zone.widthPct + "%", borderColor: color, background: miniGanttComparisonZonePattern(kind) }}
+            style={{ left: zone.leftPct + "%", width: zone.widthPct + "%", background: miniGanttComparisonZonePattern(kind) }}
             aria-hidden="true"
           />
           {cmpLabelVisible(zone) && (
@@ -5732,7 +5734,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 left: cmpBars.reference.leftPct + "%",
                 width: cmpBars.reference.widthPct + "%",
                 borderColor: MINIGANTT_COMPARISON_REF_COLOR,
-                background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 14%, transparent)`,
+                background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 42%, transparent)`,
               }}
               aria-hidden="true"
             />
@@ -5755,11 +5757,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                   onMouseDown={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                   onTouchStart={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                 />
+                {/* À 100 %, la poignée devient une pastille de validation :
+                    la barre pleine se lit alors d'un coup d'œil, sans avoir à
+                    comparer le rond à l'extrémité de la barre. Elle reste une
+                    poignée — c'est par elle qu'on revient en arrière. */}
                 <div
-                  className="lp-widget-minigantt-progress-handle" style={{ left: `${pct}%` }} title={`Glisser pour changer l'avancement (${pct}%)`}
+                  className={"lp-widget-minigantt-progress-handle" + (pct >= 100 ? " is-done" : "")}
+                  style={{ left: `${pct}%` }}
+                  title={pct >= 100 ? "Avancement à 100 % — glisser pour revenir en arrière" : `Glisser pour changer l'avancement (${pct}%)`}
                   onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-bar"))}
                   onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-bar"))}
-                />
+                >
+                  {pct >= 100 && <Check size={8} strokeWidth={4} aria-hidden="true" />}
+                </div>
               </>
             )}
           </div>
@@ -5820,7 +5830,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           )}
           {cmpMs && cmpMs.link && miniGanttComparisonLabelVisible(cmpMs.link, { trackPx: comparisonTrackPx, todayPct: comparisonTodayPct }) && (
             <span
-              className="lp-widget-minigantt-cmplabel"
+              className="lp-widget-minigantt-cmplabel is-milestone"
               style={{ left: (cmpMs.link.leftPct + cmpMs.link.widthPct / 2) + "%", transform: "translate(-50%, -50%)", color: cmpMsColor }}
               aria-hidden="true"
             >
