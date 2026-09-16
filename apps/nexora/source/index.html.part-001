@@ -1,4 +1,4 @@
-nGlyph({ icon, size = 16, style, stroke = 1.8 }) {
+({ icon, size = 16, style, stroke = 1.8 }) {
   if (!icon) return null;
   if (typeof icon !== "string") return null;
   if (icon.startsWith("tabler:")) {
@@ -2311,6 +2311,11 @@ function GlobalStyles() {
         .lp-widget-note:focus{ outline:none; }
         .lp-widget-note-edit{ width:100%; box-sizing:border-box; border:1px solid var(--border); border-radius:var(--radius-sm); padding:9px 10px; font-size:13px; font-family:inherit; resize:vertical; }
         .lp-widget-minigantt{ display:flex; flex-direction:column; gap:4px; min-width:0; overflow:hidden; }
+        /* La vue MINI GANTT garde le moteur du widget, mais occupe toute la
+           surface disponible, sans cadre de carte ni hauteur arbitraire. */
+        .lp-minigantt-view{ width:100%; min-height:calc(100vh - 210px); padding:12px 14px 24px; }
+        .lp-minigantt-view > .lp-widget-minigantt{ min-height:calc(100vh - 246px); padding:14px; border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:auto; }
+        @media (max-width:760px){ .lp-minigantt-view{ min-height:0; padding:8px 0 18px; } .lp-minigantt-view > .lp-widget-minigantt{ min-height:0; border-radius:10px; padding:10px; } }
         /* flex-start plutôt que center : la colonne de contrôles (zoom + actions
            d'annotation) s'allonge vers le bas sans décaler l'axe des dates. */
         .lp-widget-minigantt-axis{ display:flex; align-items:flex-start; gap:6px; margin-bottom:7px; min-width:0; overflow:visible; }
@@ -5102,7 +5107,7 @@ function GlobalStyles() {
         /* Glisser un bras de Gantt (déplacement / redimensionnement) déclenche
            un scroll de page par défaut au doigt : on neutralise ce geste natif
            uniquement sur les poignées de drag, le JS gère lui-même le suivi
-           du doigt (voir startDrag / onMove dans GanttView). */
+           du doigt (voir startDrag / onMove du moteur Mini Gantt). */
         @media (hover:none){
           .lp-gantt-bar, .lp-gantt-handle{ touch-action:none; }
         }
@@ -9145,7 +9150,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       try {
         if (window.storage) {
           const res = await storageGetWithTimeout("nexora:dashboards", 10000);
-          if (res && res.value && !cancelled) { markJustHydrated("nexora:dashboards"); setDashboardsLoaded(true); setDashboards(JSON.parse(res.value)); return; }
+          if (res && res.value && !cancelled) { markJustHydrated("nexora:dashboards"); setDashboardsLoaded(true); setDashboards(migrateLegacyMiniGanttData(JSON.parse(res.value))); return; }
         }
       } catch (e) {
         const msg = (e && e.message) || String(e);
@@ -9324,7 +9329,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       try {
         if (window.storage) {
           const res = await storageGetWithTimeout("nexora:todayWidgets", 10000);
-          if (res && res.value && !cancelled) { markJustHydrated("nexora:todayWidgets"); setTodayData(JSON.parse(res.value)); setTodayDataLoaded(true); return; }
+          if (res && res.value && !cancelled) { markJustHydrated("nexora:todayWidgets"); setTodayData(migrateLegacyMiniGanttData(JSON.parse(res.value))); setTodayDataLoaded(true); return; }
         }
       } catch (e) {
         const msg = (e && e.message) || String(e);
@@ -9514,7 +9519,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       try {
         if (window.storage) {
           const res = await storageGetWithTimeout("nexora:views", 10000);
-          if (res && res.value && !cancelled) setSavedViews(JSON.parse(res.value));
+          if (res && res.value && !cancelled) setSavedViews(migrateLegacyMiniGanttData(JSON.parse(res.value)));
         }
       } catch (e) {
         const msg=(e&&e.message)||String(e);
@@ -9530,7 +9535,7 @@ export default function LePlan({ currentUser, onSignOut }) {
 
   const [viewPrefs, setViewPrefs] = useState({
     list: { groupBy: "status", visibleFields: ["project", "status", "start", "end", "progress"] },
-    gantt: { ganttGroupBy: "project", bubbleFields: ["status", "project", "assignee", "start", "end", "progress", "checklist"], ganttCols: ["status", "assignee", "start", "end", "progress"], zoomKey: "week" },
+    gantt: normalizeMiniGanttViewPrefs({ groupBy: "project" }),
     calendar: { mode: "week", cardFields: ["project", "status", "assignee", "progress"] },
     timeline: { minDate: null, maxDate: null, zoom: "month", cardFields: ["project", "status"] },
     radar: { year: new Date().getFullYear(), colorBy: "project" },
@@ -9549,7 +9554,7 @@ export default function LePlan({ currentUser, onSignOut }) {
             const parsed = JSON.parse(res.value);
             setViewPrefs((v) => ({
               list: { ...v.list, ...parsed.list },
-              gantt: { ...v.gantt, ...parsed.gantt },
+              gantt: normalizeMiniGanttViewPrefs({ ...v.gantt, ...parsed.gantt }),
               calendar: { ...v.calendar, ...parsed.calendar },
               timeline: { ...v.timeline, ...parsed.timeline },
               radar: { ...v.radar, ...parsed.radar },
@@ -9873,7 +9878,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   };
 
   const setListPrefs = (patch) => setViewPrefs((v) => ({ ...v, list: { ...v.list, ...(typeof patch === "function" ? patch(v.list) : patch) } }));
-  const setGanttPrefs = (patch) => setViewPrefs((v) => ({ ...v, gantt: { ...v.gantt, ...(typeof patch === "function" ? patch(v.gantt) : patch) } }));
+  const setGanttPrefs = (patch) => setViewPrefs((v) => ({ ...v, gantt: normalizeMiniGanttViewPrefs({ ...v.gantt, ...(typeof patch === "function" ? patch(v.gantt) : patch) }) }));
   const setCalendarPrefs = (patch) => setViewPrefs((v) => ({ ...v, calendar: { ...v.calendar, ...(typeof patch === "function" ? patch(v.calendar) : patch) } }));
   const setTimelinePrefs = (patch) => setViewPrefs((v) => ({ ...v, timeline: { ...v.timeline, ...(typeof patch === "function" ? patch(v.timeline) : patch) } }));
   const setRadarPrefs = (patch) => setViewPrefs((v) => ({ ...v, radar: { ...v.radar, ...(typeof patch === "function" ? patch(v.radar) : patch) } }));
@@ -9958,7 +9963,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         Object.keys(v.viewPrefs || {}).forEach((key) => {
           if (!(key in restored)) restored[key] = { ...(v.viewPrefs[key] || {}) };
         });
-        return restored;
+        return { ...restored, gantt: normalizeMiniGanttViewPrefs(restored.gantt) };
       });
     }
 
@@ -12052,7 +12057,7 @@ export default function LePlan({ currentUser, onSignOut }) {
               </DropdownButton>
             </div>
           )}
-          {view === "gantt" && <GanttView tasks={filteredTasks} ctx={ctx} appearance={appearance} setAppearance={setAppearance} setTasks={setTasks} setProjects={setProjects} setStatuses={setStatuses} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} pastDays={filters.pastDays} toolbarSlot={viewToolbarSlot} />}
           {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
           {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} gradient={appearance.gradient} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
