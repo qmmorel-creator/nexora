@@ -98,39 +98,56 @@ const seen = await page.evaluate(() => {
     secondMetaChips: rects("#harness-second-minigantt .lp-widget-minigantt-phase.is-meta"),
     // Mode Comparaison : tout est relevé sur le widget dédié, jumeau du second
     // au mode près — ce qui permet de comparer les hauteurs de ligne des deux.
-    cmpRefBars: rects("#harness-comparison-minigantt .lp-widget-minigantt-refbar"),
-    cmpLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-late"),
-    cmpAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead"),
-    cmpFreed: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed"),
-    /* Couleur RÉELLEMENT peinte des zones d'avance. Elle est portée par le
-       MOTIF, pas par un contour : les rubans n'en ont plus. On lit donc la
-       première couleur du dégradé hachuré, telle que le navigateur la calcule. */
-    cmpAheadColors: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-ahead, #harness-comparison-minigantt .lp-widget-minigantt-cmpzone.is-freed")].map((el) => {
+    cmpStrips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpstrip"),
+    cmpSegRef: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-reference"),
+    cmpSegLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-late"),
+    cmpSegAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-ahead"),
+    /* Couleur RÉELLEMENT peinte des segments d'avance. Elle est portée par le
+       MOTIF, pas par un contour : le ruban n'en a aucun. On lit donc la première
+       couleur du dégradé hachuré, telle que le navigateur la calcule. */
+    cmpAheadColors: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-ahead")].map((el) => {
       const c = getComputedStyle(el).backgroundImage;
       const m = c.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
       const [r, v, b] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [];
       return { c: m ? m[0] : c.slice(0, 40), vert: Number.isFinite(v) && v > r + 40 && v > b + 40 };
     }),
+    // Jonctions SANS bordure : c'est la trame, et elle seule, qui sépare deux
+    // segments. Un liseré suffirait à rendre le ruban brouillon.
+    cmpSegBorders: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg")].map((el) => getComputedStyle(el).borderTopWidth + "/" + getComputedStyle(el).borderLeftWidth))],
+    // Segments JOINTIFS : d'un ruban à l'autre, le bord droit d'un segment doit
+    // coïncider avec le bord gauche du suivant, à moins d'un pixel.
+    cmpSegGaps: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpstrip")].map((strip) => {
+      const segs = [...strip.querySelectorAll(".lp-widget-minigantt-cmpseg")]
+        .map((el) => el.getBoundingClientRect())
+        .sort((a, b) => a.left - b.left);
+      let pire = 0;
+      for (let i = 1; i < segs.length; i += 1) pire = Math.max(pire, Math.abs(segs[i].left - segs[i - 1].right));
+      return Math.round(pire);
+    }),
     cmpLabels: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmplabel"),
-    // Hauteurs comparées : une zone d'écart ne doit jamais avoir la géométrie de
-    // la barre, sinon elle se lit comme son prolongement.
-    cmpZoneHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpzone")].map((el) => Math.round(el.getBoundingClientRect().height)))],
+    // Hauteurs comparées : le ruban ne doit jamais avoir la géométrie de la
+    // barre, sinon il se lit comme son prolongement.
+    cmpStripHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpstrip")].map((el) => Math.round(el.getBoundingClientRect().height)))],
     cmpBarHeights: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar")].map((el) => Math.round(el.getBoundingClientRect().height)))],
-    // Le rail doit vivre SOUS la barre : c'est ce qui laisse la barre actuelle
-    // seule sur sa ligne. Mesuré ligne par ligne, sur la ligne qui porte les deux.
-    cmpRailUnderBar: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-row")].map((row) => {
+    // Le ruban vit SOUS la barre et COLLÉ à elle : c'est ce qui laisse la barre
+    // actuelle seule sur sa ligne tout en gardant les deux étages solidaires.
+    cmpStripUnderBar: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-row")].map((row) => {
       const bar = row.querySelector(".lp-widget-minigantt-bar");
-      const rail = row.querySelector(".lp-widget-minigantt-refbar");
-      if (!bar || !rail) return null;
-      return Math.round(rail.getBoundingClientRect().top - bar.getBoundingClientRect().bottom);
+      const strip = row.querySelector(".lp-widget-minigantt-cmpstrip");
+      if (!bar || !strip) return null;
+      return Math.round(strip.getBoundingClientRect().top - bar.getBoundingClientRect().bottom);
     }).filter((v) => v !== null),
+    // Contour noir de la barre comparée : la tâche RÉELLE reste l'objet le plus
+    // net de la ligne. Le widget standard, lui, ne doit pas bouger.
+    cmpBarOutlined: document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-bar.is-compared").length,
+    standardBarOutlined: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-bar.is-compared, #harness-second-minigantt .lp-widget-minigantt-bar.is-compared").length,
     cmpChips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpchip"),
     cmpGhosts: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-ghost"),
     cmpLinks: rects("#harness-comparison-minigantt .lp-widget-minigantt-ms-link"),
     cmpLegend: rects("#harness-comparison-minigantt .lp-widget-minigantt-legend-item"),
     cmpRows: rects("#harness-comparison-minigantt .lp-widget-minigantt-row"),
     cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
-    standardRefBars: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-refbar, #harness-second-minigantt .lp-widget-minigantt-refbar, #harness-nofields-minigantt .lp-widget-minigantt-refbar").length,
+    standardStrips: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-cmpstrip, #harness-second-minigantt .lp-widget-minigantt-cmpstrip, #harness-nofields-minigantt .lp-widget-minigantt-cmpstrip").length,
     standardRows: rects("#harness-second-minigantt .lp-widget-minigantt-row"),
     // Avancement à 100 % : la poignée devient une pastille de validation.
     doneHandles: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-progress-handle.is-done")].map((el) => {
@@ -1121,26 +1138,31 @@ seen.miniBlockAlign.forEach((b) => {
 // Le jeu d'essai pose une référence sur cinq tâches (retard, avance, conforme,
 // décalage intégral, jalon en retard) et en laisse deux sans référence, dont un
 // jalon : le widget doit accepter les deux dans le même diagramme.
-expect(seen.standardRefBars === 0, `Mode standard : ${seen.standardRefBars} barre(s) de référence dessinée(s), 0 attendue — des dates de référence sur les tâches ne doivent rien changer tant que le widget est en mode Standard`);
-expect(seen.cmpRefBars.length === 5, `Comparaison : ${seen.cmpRefBars.length} barre(s) de référence, 5 attendues (les jalons n'en ont pas)`);
-seen.cmpRefBars.forEach((b, i) => {
-  expect(b.w > 2 && b.h > 2, `Comparaison : barre de référence ${i + 1} de surface nulle (${b.w}×${b.h})`);
+expect(seen.standardStrips === 0, `Mode standard : ${seen.standardStrips} ruban(s) de comparaison dessiné(s), 0 attendu — des dates de référence sur les tâches ne doivent rien changer tant que le widget est en mode Standard`);
+expect(seen.standardBarOutlined === 0, `Mode standard : ${seen.standardBarOutlined} barre(s) portent le contour de comparaison, 0 attendue`);
+expect(seen.cmpStrips.length === 5, `Comparaison : ${seen.cmpStrips.length} ruban(s) de comparaison, 5 attendus (les jalons n'en ont pas)`);
+expect(seen.cmpBarOutlined === 5, `Comparaison : ${seen.cmpBarOutlined} barre(s) cerclée(s) de noir, 5 attendues — la tâche réelle doit rester l'objet le plus net de la ligne`);
+seen.cmpStrips.forEach((b, i) => {
+  expect(b.w > 2 && b.h > 2, `Comparaison : ruban ${i + 1} de surface nulle (${b.w}×${b.h})`);
 });
-// « On ne sait pas si le curseur est au bout de la tâche » : une zone d'écart ne
-// doit jamais avoir la hauteur de la barre, et une barre comparée porte une
-// borne de fin que la poignée ronde ne dit pas.
-expect(seen.cmpZoneHeights.length && seen.cmpBarHeights.length && Math.max(...seen.cmpZoneHeights) < Math.min(...seen.cmpBarHeights),
-  `Comparaison : les zones d'écart (${seen.cmpZoneHeights.join("/")} px) ne sont pas plus fines que les barres (${seen.cmpBarHeights.join("/")} px) — elles se liraient comme leur prolongement`);
-expect(seen.cmpRailUnderBar.length === 5, `Comparaison : ${seen.cmpRailUnderBar.length} ligne(s) portent barre et rail, 5 attendues`);
-expect(seen.cmpRailUnderBar.every((gap) => gap >= 0), `Comparaison : le rail de référence chevauche la barre (écarts ${seen.cmpRailUnderBar.join("/")} px) — la barre actuelle doit rester seule sur sa ligne`);
+// « On ne sait pas si le curseur est au bout de la tâche » : le ruban ne doit
+// jamais avoir la hauteur de la barre, sans quoi il se lirait comme sa suite.
+expect(seen.cmpStripHeights.length && seen.cmpBarHeights.length && Math.max(...seen.cmpStripHeights) < Math.min(...seen.cmpBarHeights),
+  `Comparaison : le ruban (${seen.cmpStripHeights.join("/")} px) n'est pas plus fin que les barres (${seen.cmpBarHeights.join("/")} px) — il se lirait comme leur prolongement`);
+expect(seen.cmpStripUnderBar.length === 5, `Comparaison : ${seen.cmpStripUnderBar.length} ligne(s) portent barre et ruban, 5 attendues`);
+expect(seen.cmpStripUnderBar.every((gap) => gap >= 0 && gap <= 1),
+  `Comparaison : le ruban n'est pas collé sous la barre (écarts ${seen.cmpStripUnderBar.join("/")} px, 0 attendu) — chevauchement ou interligne`);
+// Un seul bloc : aucune bordure, et aucun jour de blanc entre deux segments.
+expect(seen.cmpSegBorders.every((b) => b === "0px/0px"), `Comparaison : un segment du ruban porte une bordure (${seen.cmpSegBorders.join(", ")}) — les jonctions doivent se faire par la seule trame`);
+expect(seen.cmpSegGaps.every((g) => g <= 1), `Comparaison : les segments d'un ruban ne sont pas jointifs (écarts ${seen.cmpSegGaps.join("/")} px)`);
 
-expect(seen.cmpLate.length >= 1, `Comparaison : ${seen.cmpLate.length} zone(s) de retard, au moins 1 attendue`);
-expect(seen.cmpAhead.length >= 1, `Comparaison : ${seen.cmpAhead.length} zone(s) d'avance, au moins 1 attendue`);
-expect(seen.cmpFreed.length >= 1, `Comparaison : ${seen.cmpFreed.length} zone(s) d'avance en fin de tâche, au moins 1 attendue`);
-// Terminer plus tôt que prévu EST une avance : la zone doit être verte à
-// l'écran, pas grise. C'est ce que le premier essai ne montrait pas.
-expect(seen.cmpAheadColors.every((c) => c.vert), `Comparaison : une zone d'avance n'est pas verte à l'écran (${JSON.stringify(seen.cmpAheadColors)})`);
-expect(seen.cmpAheadColors.length >= 2, `Comparaison : ${seen.cmpAheadColors.length} zone(s) d'avance relevée(s), au moins 2 attendues (début anticipé et fin anticipée)`);
+expect(seen.cmpSegRef.length >= 1, `Comparaison : ${seen.cmpSegRef.length} segment(s) de période tenue, au moins 1 attendu`);
+expect(seen.cmpSegLate.length >= 1, `Comparaison : ${seen.cmpSegLate.length} segment(s) de retard, au moins 1 attendu`);
+expect(seen.cmpSegAhead.length >= 1, `Comparaison : ${seen.cmpSegAhead.length} segment(s) d'avance, au moins 1 attendu`);
+// Terminer plus tôt que prévu EST une avance : le segment doit être vert à
+// l'écran, pas gris. C'est ce que le premier essai ne montrait pas.
+expect(seen.cmpAheadColors.every((c) => c.vert), `Comparaison : un segment d'avance n'est pas vert à l'écran (${JSON.stringify(seen.cmpAheadColors)})`);
+expect(seen.cmpAheadColors.length >= 2, `Comparaison : ${seen.cmpAheadColors.length} segment(s) d'avance relevé(s), au moins 2 attendus (début anticipé et fin anticipée)`);
 expect(seen.cmpGhosts.length === 1, `Comparaison : ${seen.cmpGhosts.length} losange(s) fantôme, 1 attendu (le jalon comparé ; celui sans référence n'en a pas)`);
 expect(seen.cmpLinks.length === 1, `Comparaison : ${seen.cmpLinks.length} segment(s) de liaison de jalon, 1 attendu`);
 expect(seen.cmpChips.length === 6, `Comparaison : ${seen.cmpChips.length} indicateur(s) d'écart, 6 attendus (5 tâches + 1 jalon)`);

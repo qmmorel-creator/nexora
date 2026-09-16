@@ -4084,6 +4084,91 @@ function miniGanttComparisonBars(cmp, window) {
   return { reference, ahead, late, freed };
 }
 
+/* RUBAN de comparaison — un seul bloc continu, collé sous la barre.
+
+   Le rail précédent juxtaposait trois objets qui se chevauchaient (référence,
+   avance, retard), chacun avec son contour : trop discret de loin, brouillon de
+   près (retour de test). On raisonne désormais par PARTITION du temps couvert
+   par l'une OU l'autre des deux périodes, découpé aux quatre dates :
+
+     gris  — plan et réel coïncident, c'est la période tenue ;
+     rouge — le temps que le réel occupe au-delà du plan, ou que le plan
+             réservait avant que le réel ne démarre ;
+     vert  — le temps rendu : prévu et non consommé, ou consommé en avance.
+
+   Les segments sont DISJOINTS et JOINTIFS : aucune bordure n'est nécessaire,
+   seule la trame change d'un segment à l'autre, et le ruban se lit comme une
+   seule pièce. Ils sont exprimés en % DU RUBAN, pas de la piste : le rendu les
+   pose dans un conteneur en overflow:hidden, ce qui arrondit proprement les
+   deux extrémités sans arrondir les jonctions internes. */
+function miniGanttComparisonStrip(cmp, window) {
+  if (!cmp || cmp.milestone) return null;
+  const minIdx = Number(window && window.minIdx);
+  const maxIdx = Number(window && window.maxIdx);
+  const span = Math.max(1, Number(window && window.span) || (maxIdx - minIdx));
+  if (!Number.isFinite(minIdx) || !Number.isFinite(maxIdx)) return null;
+  const refStart = cmp.referenceStartIdx;
+  const refEnd = cmp.referenceEndIdx;
+  const curStart = cmp.currentStartIdx;
+  const curEnd = cmp.currentEndIdx;
+  if (![refStart, refEnd, curStart, curEnd].every((n) => Number.isFinite(n))) return null;
+  const from = Math.min(refStart, curStart);
+  const to = Math.max(refEnd, curEnd);
+  if (to < minIdx || from > maxIdx) return null;
+  const clipFrom = Math.max(minIdx, from);
+  const clipTo = Math.min(maxIdx, to);
+  if (clipTo < clipFrom) return null;
+  const inner = clipTo - clipFrom;
+  // Bornes de découpe : les quatre dates qui tombent dans la fenêtre, plus les
+  // deux bords. Le Set retire les doublons — deux dates confondues ne doivent
+  // pas produire un segment de largeur nulle.
+  const cuts = Array.from(new Set(
+    [refStart, refEnd, curStart, curEnd]
+      .filter((n) => n > clipFrom && n < clipTo)
+      .concat([clipFrom, clipTo])
+  )).sort((a, b) => a - b);
+  const segments = [];
+  for (let i = 0; i < cuts.length - 1; i += 1) {
+    const a = cuts[i];
+    const b = cuts[i + 1];
+    if (b <= a) continue;
+    // On classe par le MILIEU du segment : jamais par une borne, qui appartient
+    // aux deux côtés à la fois.
+    const mid = (a + b) / 2;
+    const inRef = mid > refStart && mid < refEnd;
+    const inCur = mid > curStart && mid < curEnd;
+    const kind = inRef && inCur
+      ? "reference"
+      : inRef
+        ? (mid < curStart ? "late" : "ahead")
+        : inCur
+          ? (mid < refStart ? "ahead" : "late")
+          // Ni l'un ni l'autre : les deux périodes sont DISJOINTES et c'est
+          // l'entre-deux. Il appartient au décalage qui l'a créé.
+          : (mid > refEnd ? "late" : "ahead");
+    const widthPct = (inner > 0 ? (b - a) / inner : 1) * 100;
+    const previous = segments[segments.length - 1];
+    if (previous && previous.kind === kind) {
+      previous.widthPct += widthPct;
+      continue;
+    }
+    segments.push({ kind, leftPct: (inner > 0 ? (a - clipFrom) / inner : 0) * 100, widthPct });
+  }
+  // Tâche d'un seul jour parfaitement conforme : les quatre dates sont
+  // confondues, il n'y a aucun segment à découper — le ruban existe quand même,
+  // sans quoi la ligne ne montrerait plus rien du tout.
+  if (!segments.length) segments.push({ kind: "reference", leftPct: 0, widthPct: 100 });
+  return {
+    leftPct: ((clipFrom - minIdx) / span) * 100,
+    // Même plancher de 2 % que la barre actuelle : sur une tâche très courte,
+    // un ruban plus fin serait invisible.
+    widthPct: Math.max(2, (inner / span) * 100),
+    clippedStart: from < minIdx,
+    clippedEnd: to > maxIdx,
+    segments,
+  };
+}
+
 // Jalon comparé : deux positions et le segment qui les relie. Le segment est
 // borné à la fenêtre, mais sa présence ne dépend pas d'elle — un jalon de
 // référence hors champ reste signalé par l'écart chiffré et l'infobulle.
@@ -4195,6 +4280,13 @@ function miniGanttComparisonToneColor(tone) {
    motif reste plus aéré que celui d'`ahead` pour qu'on distingue encore
    « partie prise avant le début prévu » de « temps rendu à la fin ». */
 function miniGanttComparisonZonePattern(kind) {
+  // Période TENUE : la trame grise penche dans l'autre sens (135°) que les deux
+  // trames d'écart, et pose un fond très clair. C'est ce contraste de SENS, pas
+  // seulement de couleur, qui fait lire les jonctions du ruban sans y mettre la
+  // moindre bordure.
+  if (kind === "reference") {
+    return `repeating-linear-gradient(135deg, ${MINIGANTT_COMPARISON_REF_COLOR}61 0 2px, transparent 2px 5px), ${MINIGANTT_COMPARISON_REF_COLOR}17`;
+  }
   if (kind === "late") {
     return `repeating-linear-gradient(45deg, ${MINIGANTT_COMPARISON_LATE_COLOR}8c 0 3px, transparent 3px 6px)`;
   }
@@ -4208,6 +4300,7 @@ function miniGanttComparisonZonePattern(kind) {
 // gagné —, elle doit donc porter la même couleur.
 function miniGanttComparisonZoneColor(kind) {
   if (kind === "late") return MINIGANTT_COMPARISON_LATE_COLOR;
+  if (kind === "reference") return MINIGANTT_COMPARISON_REF_COLOR;
   return MINIGANTT_COMPARISON_AHEAD_COLOR;
 }
 
@@ -4359,6 +4452,30 @@ function miniGanttRangeWindow(range, bounds) {
   const lo = r.includeToday && Number.isFinite(todayIdx) ? Math.min(min, todayIdx) : min;
   const hi = r.includeToday && Number.isFinite(todayIdx) ? Math.max(max, todayIdx) : max;
   return { minIdx: lo, maxIdx: Math.max(lo + 1, hi) };
+}
+
+/* Fenêtre à dates fixes HÉRITÉE de l'ancien bouton de cadrage (#48), encore
+   portée par les widgets enregistrés à l'époque. Elle primait sur tout, y
+   compris sur le mode automatique : un widget qui avait gardé une fenêtre
+   2023-2029 cachait le passé et réservait trois années vides à l'avenir, sans
+   que rien dans l'interface ne dise pourquoi (retour de test).
+
+   Elle reste la MÉMOIRE du cadrage « Dates fixes » — c'est là que ses deux
+   dates sont rangées —, mais elle ne survit plus à un autre choix : dès que le
+   widget demande « Auto » ou une fenêtre glissante, c'est ce réglage qui décide.
+   Aucune migration : un widget sans réglage d'étendue se comporte exactement
+   comme avant. */
+function miniGanttPinnedWindow(widget) {
+  const w = widget && typeof widget === "object" ? widget : {};
+  const range = w.miniGanttRange;
+  if (range && typeof range === "object" && normalizeMiniGanttRange(range).mode !== "fixed") return null;
+  const win = w.miniGanttWindow;
+  if (!win || typeof win !== "object") return null;
+  if (!isGanttIsoDate(win.start) || !isGanttIsoDate(win.end)) return null;
+  const minIdx = ganttDayNumber(win.start);
+  const maxIdx = ganttDayNumber(win.end);
+  if (minIdx == null || maxIdx == null) return null;
+  return { minIdx, maxIdx: Math.max(minIdx + 1, maxIdx) };
 }
 
 /* Ramène une fenêtre DANS des bornes utiles, en conservant sa largeur.

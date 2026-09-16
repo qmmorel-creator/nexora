@@ -33,6 +33,7 @@ const {
   miniGanttComparisonToneLabel,
   miniGanttComparisonDeltaAria,
   miniGanttComparisonBars,
+  miniGanttComparisonStrip,
   miniGanttComparisonMilestone,
   miniGanttComparisonRangeIndices,
   miniGanttComparisonTooltipLines,
@@ -54,7 +55,7 @@ const {
   "taskComparisonFromCurrentDates", "withCreationComparison",
   "miniGanttComparisonEnabledOn", "miniGanttTaskComparison",
   "miniGanttComparisonTone", "miniGanttComparisonDeltaLabel", "miniGanttComparisonToneLabel",
-  "miniGanttComparisonDeltaAria", "miniGanttComparisonBars", "miniGanttComparisonMilestone",
+  "miniGanttComparisonDeltaAria", "miniGanttComparisonBars", "miniGanttComparisonStrip", "miniGanttComparisonMilestone",
   "miniGanttComparisonRangeIndices", "miniGanttComparisonTooltipLines",
   "miniGanttComparisonLabelVisible", "miniGanttComparisonToneColor", "miniGanttComparisonZonePattern",
   "miniGanttComparisonZoneColor",
@@ -233,11 +234,15 @@ test("une superposition parfaite laisse la référence discernable, et la barre 
   assert.equal(bars.ahead, null);
   assert.equal(bars.late, null);
   assert.equal(bars.freed, null);
-  // Le contour, lui, est porté par la feuille de style : la barre de référence
-  // déborde de 2 px en haut et en bas sans changer la hauteur de la ligne.
-  // La référence vit sur un RAIL FIN sous la barre : c'est la structure, et non
-  // un habillage, qui sépare le délai prévu du délai réel.
-  assert.match(html, /\.lp-widget-minigantt-refbar\{\s*\n\s*position:absolute; top:11px; height:4px;/);
+  // La référence vit sur un RUBAN collé sous la barre : c'est la structure, et
+  // non un habillage, qui sépare le délai prévu du délai réel. Le ruban tient
+  // dans l'interligne — la hauteur de ligne ne change pas.
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px;/);
+  // Superposition parfaite : le ruban est d'un seul tenant, tout en référence.
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.equal(ruban.segments.length, 1);
+  assert.equal(ruban.segments[0].kind, "reference");
+  assert.equal(Math.round(ruban.segments[0].widthPct), 100);
 });
 
 // 11. Jalons ----------------------------------------------------------------
@@ -457,19 +462,17 @@ test("mode standard : aucune barre de référence, aucune zone, aucune ligne plu
   assert.deepEqual(miniGanttComparisonRangeIndices(taches, false), []);
   // La table des comparaisons est vide tant que le widget est en mode standard.
   assert.match(html, /const map = new Map\(\);\s*\n\s*if \(!comparisonOn\) return map;/);
-  // Les éléments de comparaison ne se rendent que si `cmpBars` / `cmpMs` existe.
-  assert.match(html, /cmpBars && cmpBars\.reference && /);
+  // Les éléments de comparaison ne se rendent que si `cmpStrip` / `cmpMs` existe.
+  assert.match(html, /\{cmpStrip && \(/);
   assert.match(html, /cmpMs && cmpMs\.referenceVisible && /);
-  // Les barres comparées vivent en position absolue dans la piste : la hauteur
-  // de ligne est inchangée.
-  // Les écarts partagent CE MÊME RAIL, jamais la bande de la barre : à hauteur
-  // égale ils se lisaient comme son prolongement, et la poignée d'avancement
-  // semblait avoir devant elle une course qui n'existait pas.
-  assert.match(html, /\.lp-widget-minigantt-cmpzone\{ position:absolute; top:11px; height:4px;/);
-  // La barre actuelle, elle, reste exactement ce qu'elle était : rien ne s'y
-  // ajoute, aucune classe de comparaison ne la touche.
-  assert.doesNotMatch(html, /lp-widget-minigantt-bar\.is-compared/);
-  assert.match(html, /<div className="lp-widget-minigantt-bar" style=\{\{ left: left \+ "%"/);
+  // Le ruban vit en position absolue dans la piste, sous la barre : la hauteur
+  // de ligne est inchangée. Les écarts n'ont JAMAIS la bande de la barre : à
+  // hauteur égale ils se lisaient comme son prolongement, et la poignée
+  // d'avancement semblait avoir devant elle une course qui n'existait pas.
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px;/);
+  // Le contour noir de la barre est conditionné par `cmp` : hors mode
+  // Comparaison, la barre reste rigoureusement celle d'avant.
+  assert.match(html, /"lp-widget-minigantt-bar" \+ \(cmp \? " is-compared" : ""\)/);
 });
 
 // 18. Widget étroit ----------------------------------------------------------
@@ -564,4 +567,87 @@ test("l'avance et le retard ne passent jamais par la seule couleur", () => {
   assert.match(html, /key: "cmp-late", label: "Retard"/);
   assert.match(html, /key: "cmp-ref", label: "Initial"/);
   assert.match(html, /key: "cmp-current", label: "Actuel"/);
+});
+
+// 19. Le ruban continu -------------------------------------------------------
+//
+// Le rail précédent juxtaposait trois objets qui se chevauchaient. Le ruban
+// PARTITIONNE le temps couvert par l'une ou l'autre période : les segments sont
+// disjoints, jointifs, et se suivent toujours de gauche à droite.
+const kinds = (ruban) => ruban.segments.map((s) => s.kind);
+const jointif = (ruban) => {
+  let curseur = 0;
+  for (const seg of ruban.segments) {
+    assert.ok(Math.abs(seg.leftPct - curseur) < 0.001, `segment ${seg.kind} jointif au précédent`);
+    curseur = seg.leftPct + seg.widthPct;
+  }
+  assert.ok(Math.abs(curseur - 100) < 0.001, "les segments couvrent tout le ruban");
+};
+
+test("un retard de fin peint le ruban en gris puis en rouge, d'un seul tenant", () => {
+  const cmp = miniGanttTaskComparison(tache({ end: "2026-09-26", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["reference", "late"]);
+  jointif(ruban);
+  assert.equal(ruban.clippedStart, false);
+  assert.equal(ruban.clippedEnd, false);
+});
+
+test("une fin en avance peint la part rendue en vert", () => {
+  const cmp = miniGanttTaskComparison(tache({ end: "2026-09-04", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["reference", "ahead"]);
+  jointif(ruban);
+});
+
+test("un départ tardif ET une fin en retard encadrent la période tenue", () => {
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-08-20", end: "2026-09-26", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["late", "reference", "late"]);
+  jointif(ruban);
+});
+
+test("un départ anticipé ouvre le ruban en vert", () => {
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-08-04", end: "2026-09-18", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
+  assert.deepEqual(kinds(ruban), ["ahead", "reference"]);
+  jointif(ruban);
+});
+
+test("deux périodes DISJOINTES ne laissent pas de trou : l'entre-deux appartient au décalage", () => {
+  // La tâche a été repoussée en bloc, après la fin prévue.
+  const cmp = miniGanttTaskComparison(tache({ start: "2026-10-01", end: "2026-10-20", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-11-01"));
+  // Un seul segment : trois morceaux rouges consécutifs sont FUSIONNÉS, sinon
+  // deux jonctions invisibles resteraient dans le ruban.
+  assert.deepEqual(kinds(ruban), ["late"]);
+  jointif(ruban);
+});
+
+test("le ruban se coupe au bord de la fenêtre, et le signale", () => {
+  const cmp = miniGanttTaskComparison(tache({ end: "2026-09-26", ...ref("2026-08-12", "2026-09-18") }));
+  const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-20", "2026-09-22"));
+  assert.equal(ruban.clippedStart, true);
+  assert.equal(ruban.clippedEnd, true);
+  assert.ok(ruban.leftPct >= -0.001 && ruban.leftPct <= 0.001, "le ruban part du bord gauche");
+  jointif(ruban);
+});
+
+test("hors fenêtre, ou sur un jalon, il n'y a pas de ruban du tout", () => {
+  const cmp = miniGanttTaskComparison(tache({ end: "2026-09-26", ...ref("2026-08-12", "2026-09-18") }));
+  assert.equal(miniGanttComparisonStrip(cmp, fenetre("2027-01-01", "2027-03-01")), null);
+  const jalon = miniGanttTaskComparison({
+    id: "m1", title: "Mise en service", milestone: true, start: "2026-09-26", end: "2026-09-26",
+    comparison: { enabled: true, referenceEnd: "2026-09-18" },
+  });
+  assert.equal(miniGanttComparisonStrip(jalon, fenetre("2026-08-01", "2026-10-01")), null);
+});
+
+test("les segments se touchent SANS bordure : seule la trame les sépare", () => {
+  // Aucune bordure, aucun arrondi interne dans la feuille de style…
+  assert.match(html, /\.lp-widget-minigantt-cmpseg\{ position:absolute; top:0; bottom:0; \}/);
+  // …et la trame de la période tenue penche dans l'AUTRE sens que les écarts.
+  assert.match(miniGanttComparisonZonePattern("reference"), /135deg/);
+  assert.match(miniGanttComparisonZonePattern("late"), /\(45deg/);
+  assert.match(miniGanttComparisonZonePattern("ahead"), /-45deg/);
 });

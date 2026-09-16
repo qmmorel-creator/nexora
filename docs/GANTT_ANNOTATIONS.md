@@ -425,8 +425,24 @@ réserver la moitié de la piste au trajet jusqu'à aujourd'hui.
 
 Les dates fixes continuent de vivre dans `miniGanttWindow` — le rendu la lisait
 déjà, et un widget qui en portait une (héritée du bouton de cadrage retiré en
-#48) ne change pas de forme. Les autres modes la relâchent, sinon elle primerait
-sur eux. Les boutons − / Auto / + du widget la relâchent aussi.
+#48) ne change pas de forme. `miniGanttPinnedWindow(widget)` est le seul point
+d'entrée : elle rend la fenêtre tant qu'**aucun** cadrage explicite n'a été
+choisi, ou que le cadrage choisi est « Dates fixes » ; elle rend `null` dès que
+le widget demande « Auto » ou une fenêtre glissante. Sans cette règle, un widget
+qui avait gardé une fenêtre 2023-2029 cachait le passé et réservait trois années
+vides à l'avenir quel que soit le mode, sans que rien dans l'interface ne dise
+pourquoi. Les boutons − / Auto / + du widget la relâchent aussi.
+
+### Le cadrage automatique se cale sur les extrêmes réels
+
+Le filtre « X jours dans le passé » choisit les **tâches**, pas le cadrage. Il
+bornait aussi le côté **gauche** de l'axe — et lui seul. Comme il ne regarde que
+la date de **fin**, une tâche démarrée en 2022 et terminée cette année le
+passait, puis se retrouvait amputée de son début, hors cadre, pendant que rien
+ne bornait le côté droit : le mode automatique cachait le passé tout en montrant
+des années vides à venir. Cette troncature est supprimée — le mode automatique
+couvre la plus ancienne et la plus lointaine des dates réellement dessinées,
+dates de référence comprises.
 
 Une comparaison activée sans dates fixes valides **bloque l'enregistrement** de
 la fiche, avec l'erreur sous les champs.
@@ -531,39 +547,48 @@ mais conserve les valeurs saisies.
 
 ### Ce qui est dessiné
 
-- **Référence** — la période initialement prévue, sur le rail du bas : un filet
-  plein en gris bleuté (`#63719A`), sans contour ni montants. Tronquée par le
-  bord de la fenêtre, elle s'évanouit de ce côté et son angle s'ouvre — elle
-  continue au-delà du cadre.
-- **Actuel** — la barre existante, inchangée : couleur métier, point
-  d'avancement, glisser-déposer, infobulle.
-**Deux étages, pas une seule bande.** La barre actuelle reste seule sur sa
-ligne ; la référence et les écarts vivent sur un **rail de 4 px juste en
-dessous**. C'est la structure qui sépare, pas un habillage. Trois essais ont
-précédé celui-ci — référence en filet de 1 px superposé (invisible), puis en
-fenêtre à montants épais (trois objets empilés sur quinze pixels) — et tous
-butaient sur le même reproche : on ne savait plus si la poignée d'avancement
-était au bout de la tâche ou s'il restait de la course. Avec le rail, la
-question ne se pose plus : rien ne peut plus se confondre avec la barre.
+- **Actuel** — la barre existante, **inchangée** : couleur métier, remplissage
+  d'avancement, poignée, glisser-déposer, infobulle. Une seule chose s'y ajoute
+  en mode Comparaison, un **contour noir** (`.is-compared`) : le contour
+  standard, à 12 % d'opacité, se noyait dans la trame du ruban collé dessous.
+- **Le ruban** — un **seul bloc continu de 8 px, collé sous la barre**, sans
+  interligne. Il ne juxtapose plus trois objets qui se chevauchent : il
+  **partitionne** le temps couvert par l'une ou l'autre période, découpé aux
+  quatre dates, en segments **disjoints et jointifs**.
 
-Le rail est en position absolue dans une piste en `overflow` visible, donc la
-hauteur de ligne reste exactement celle du mode Standard.
+| Segment | Ce qu'il dit | Trame |
+|---|---|---|
+| `reference` | plan et réel coïncident — la période **tenue** | gris bleuté (`#63719A`), hachures à **135°** |
+| `late` | le temps que le réel occupe au-delà du plan, ou que le plan réservait avant que le réel ne démarre | rouge corail (`#E4572E`), hachures **montantes** (45°) |
+| `ahead` | le temps **rendu** : prévu et non consommé, ou consommé en avance | vert (`#1F9D6B`), hachures **descendantes** (−45°) |
 
-- **Retard** (`late`) — la part de la période actuelle postérieure à la fin de
-  référence, hachures **montantes** rouge corail (`#E4572E`).
-- **Avance au début** (`ahead`) — la part de la période actuelle antérieure au
-  début de référence, hachures **descendantes** vertes (`#1F9D6B`).
-- **Avance à la fin** (`freed`) — la fin de référence que la tâche n'atteint
-  pas : c'est du temps gagné, donc **le même vert**, avec un trait tireté et un
-  motif plus aéré pour rester distinct du démarrage anticipé. Elle a d'abord été
-  peinte en gris, comme une simple trace de la référence — une tâche terminée en
-  avance n'affichait alors rien de vert à l'écran.
+**Aucune bordure interne.** C'est le changement de **sens** de la trame, pas un
+liseré, qui fait lire les jonctions — un cadre de plus rechargerait ce qu'on
+vient d'alléger. Les deux extrémités du ruban sont arrondies par un conteneur en
+`overflow:hidden` ; les jonctions internes, jamais. Deux segments consécutifs de
+même nature sont **fusionnés** : une tâche repoussée en bloc donne un seul
+segment rouge, pas trois morceaux séparés par des jonctions invisibles.
+
+**Deux étages collés, pas une seule bande.** La barre actuelle reste seule sur
+sa ligne ; le plan et les écarts vivent sur le ruban, juste en dessous. C'est la
+structure qui sépare, pas un habillage. Quatre essais ont précédé celui-ci —
+référence en filet de 1 px superposé (invisible), fenêtre à montants épais
+(trois objets empilés sur quinze pixels), puis un rail de 4 px à trois objets
+qui se chevauchaient, assez sobre pour n'être pas vu. Tous butaient sur le même
+reproche : on ne savait plus si la poignée d'avancement était au bout de la
+tâche ou s'il restait de la course. Avec le ruban, la question ne se pose plus,
+et le plan se voit enfin.
+
+Le ruban est en position absolue dans une piste en `overflow` visible et tient
+dans l'interligne : la hauteur de ligne reste **exactement** celle du mode
+Standard.
+
 - **Jalon comparé** — un losange fantôme gris à la date de référence, le jalon
   actuel inchangé, et un segment fin entre les deux. Un jalon n'a pas de barre :
-  il n'a donc pas de rail du bas, et tout reste sur sa ligne — l'écart chiffré
-  compris.
+  il n'a donc pas de ruban, et tout reste sur sa ligne — l'écart chiffré
+  compris. `miniGanttComparisonStrip` rend `null` pour un jalon.
 
-La couleur ne porte jamais seule l'information : chaque zone a son **motif**, et
+La couleur ne porte jamais seule l'information : chaque segment a son **motif**, et
 l'écart est écrit en chiffres (`−3 j`, `+8 j`, `0 j` — négatif = avance,
 positif = retard). Les écarts de début et de fin sont calculés **séparément** :
 

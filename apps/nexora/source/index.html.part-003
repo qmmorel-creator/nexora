@@ -3249,17 +3249,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
                     metaBlocks={scopedMetaBlocks}
-                    pastDays={
-                      (() => {
-                        const vals = [
-                          activePage?.filter?.pastDays,
-                          widgetFilterFor(w)?.pastDays
-                        ]
-                          .filter(v => v !== "" && v != null && !Number.isNaN(Number(v)))
-                          .map(Number);
-                        return vals.length ? Math.min(...vals) : "";
-                      })()
-                    }
                   />
                 )}
                 {w.type === "criticalPath" && (
@@ -4719,7 +4708,7 @@ function MiniGanttProgressRing({ progress }) {
   );
 }
 
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, pastDays = "", metaBlocks, toolbarSlot, onOpenSettings }) {
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings }) {
   // Les Mini Gantt existants n'avaient pas toujours de `groupBy`. La vue
   // consolidée doit néanmoins fournir ses en-têtes repliables : Projet devient
   // le défaut de lecture, sans modifier une configuration explicitement à
@@ -4829,16 +4818,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? todayIdx
     : Math.max(...allForRange.map((t) => dayIndex(t.end)), ...comparisonRangeIdx);
 
-  // Le filtre "X jours dans le passé" pilote aussi l'axe du Mini Gantt.
-  // Vide = toute l'étendue naturelle.
-  const parsedPastDays =
-    pastDays === "" || pastDays == null || Number.isNaN(Number(pastDays))
-      ? null
-      : Math.max(0, Number(pastDays));
-
-  const filterMinIdx =
-    parsedPastDays == null ? naturalMinIdx : todayIdx - parsedPastDays;
-
   /* Cadrage temporel du widget. Trois modes, un seul réglage :
        auto    — l'étendue des tâches retenues ;
        rolling — une fenêtre glissante autour d'aujourd'hui, en mois ;
@@ -4846,10 +4825,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      Absent, c'est `auto` : un widget d'avant ce réglage ne bouge pas. */
   const rangeCfg = normalizeMiniGanttRange(widget.miniGanttRange);
 
-  // La ligne "aujourd'hui" reste visible dans l'axe même si toutes les tâches
-  // affichées sont entièrement passées ou entièrement futures — sauf si le
-  // cadrage automatique demande explicitement le contraire.
-  const filteredMinIdx = Math.max(naturalMinIdx, filterMinIdx);
+  /* Le filtre « X jours dans le passé » choisit les TÂCHES, pas le cadrage.
+     Il bornait aussi le côté GAUCHE de l'axe — et lui seul : une tâche démarrée
+     en 2022 et terminée cette année passait le filtre (qui ne regarde que la
+     date de FIN) mais se retrouvait amputée de son début, hors cadre, pendant
+     que rien ne bornait le côté droit. D'où un cadrage automatique qui cachait
+     le passé tout en réservant des années vides à l'avenir (retour de test).
+     Le mode automatique se cale désormais sur la plus ancienne et la plus
+     lointaine des dates réellement dessinées, sans exception.
+
+     La ligne « aujourd'hui » reste visible dans l'axe même si toutes les tâches
+     affichées sont entièrement passées ou entièrement futures — sauf si le
+     cadrage automatique demande explicitement le contraire. */
+  const filteredMinIdx = naturalMinIdx;
   const autoWindow = miniGanttRangeWindow(rangeCfg, {
     minIdx: filteredMinIdx, maxIdx: naturalMaxIdx, todayIdx, todayIso: today,
   }) || { minIdx: filteredMinIdx, maxIdx: Math.max(filteredMinIdx + 1, naturalMaxIdx) };
@@ -4878,11 +4866,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      et c'est aussi la fenêtre qu'un widget enregistré avant le retrait du
      bouton de cadrage (#48) a pu garder. Elle prime sur le zoom automatique
      comme sur les niveaux manuels, et les boutons − / Auto / + la relâchent. */
-  const pinnedWindow = widget.miniGanttWindow
-    && isGanttIsoDate(widget.miniGanttWindow.start)
-    && isGanttIsoDate(widget.miniGanttWindow.end)
-    ? { minIdx: dayIndex(widget.miniGanttWindow.start), maxIdx: dayIndex(widget.miniGanttWindow.end) }
-    : null;
+  const pinnedWindow = miniGanttPinnedWindow(widget);
 
   /* Le zoom manuel était CENTRÉ SUR AUJOURD'HUI, sans borne : à un niveau
      large, il réservait la moitié de la piste à des années vides pendant qu'il
@@ -5485,12 +5469,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const comparisonLegendItems = !comparisonOn || !comparisonByTask.size ? [] : [
     {
       key: "cmp-ref", label: "Initial", color: MINIGANTT_COMPARISON_REF_COLOR,
-      background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 42%, transparent)`,
-      title: "Période de référence, dessinée en arrière-plan de la barre actuelle",
+      background: miniGanttComparisonZonePattern("reference"),
+      title: "Période tenue — plan et réel coïncident. Hachures descendantes, sur le ruban collé sous la barre",
     },
     {
       key: "cmp-current", label: "Actuel", color: "var(--text-900)",
-      title: "Période actuelle, au premier plan, dans la couleur métier de la tâche",
+      title: "Période actuelle : la barre pleine, cerclée de noir, seule sur sa ligne",
     },
     {
       key: "cmp-ahead", label: "Avance", color: MINIGANTT_COMPARISON_AHEAD_COLOR,
@@ -5940,37 +5924,33 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const cmpInWindow = !!cmp && cmp.referenceEndIdx >= minIdx && cmp.referenceStartIdx <= maxIdx;
     if ((rawEndIdx < minIdx || rawStartIdx > maxIdx) && !cmpInWindow) return null;
     const cmpBars = cmp ? miniGanttComparisonBars(cmp, { minIdx, maxIdx, span }) : null;
+    const cmpStrip = cmp ? miniGanttComparisonStrip(cmp, { minIdx, maxIdx, span }) : null;
     const cmpHasRisks = risksByTask.has(t.id);
     const cmpLabelVisible = (zone) => miniGanttComparisonLabelVisible(zone, {
       trackPx: comparisonTrackPx, todayPct: comparisonTodayPct, hasRisks: cmpHasRisks,
     });
-    /* Une zone d'écart et, si la place le permet, sa valeur en jours. Elle se
-       pose sur le rail du bas, dans le prolongement de la référence.
+    /* La VALEUR en jours d'un écart, posée au centre de la zone concernée si la
+       place le permet. Le dessin de la zone, lui, appartient au ruban : ce sont
+       les mêmes bornes, mais le ruban les rend d'une seule pièce.
        `freed` — la part de référence que la tâche n'atteint pas — est une
-       AVANCE : elle se peint en vert et porte son chiffre, comme les autres.
-       Elle partageait la couleur de la référence, et une tâche terminée en
-       avance n'affichait alors rien de vert (retour de test). */
-    const cmpZone = (zone, kind, days) => {
-      if (!zone) return null;
-      const color = miniGanttComparisonZoneColor(kind);
-      const centerPct = zone.leftPct + zone.widthPct / 2;
+       AVANCE : elle porte son chiffre en vert comme les autres. Elle partageait
+       la couleur de la référence, et une tâche terminée en avance n'affichait
+       alors rien de vert (retour de test). */
+    const cmpZoneLabel = (zone, kind, days) => {
+      if (!zone || !cmpLabelVisible(zone)) return null;
       return (
-        <React.Fragment key={"cmp-" + kind}>
-          <span
-            className={"lp-widget-minigantt-cmpzone is-" + kind}
-            style={{ left: zone.leftPct + "%", width: zone.widthPct + "%", background: miniGanttComparisonZonePattern(kind) }}
-            aria-hidden="true"
-          />
-          {cmpLabelVisible(zone) && (
-            <span
-              className="lp-widget-minigantt-cmplabel"
-              style={{ left: centerPct + "%", transform: "translate(-50%, -50%)", color }}
-              aria-hidden="true"
-            >
-              {miniGanttComparisonDeltaLabel(days)}
-            </span>
-          )}
-        </React.Fragment>
+        <span
+          key={"cmp-" + kind}
+          className="lp-widget-minigantt-cmplabel"
+          style={{
+            left: (zone.leftPct + zone.widthPct / 2) + "%",
+            transform: "translate(-50%, -50%)",
+            color: miniGanttComparisonZoneColor(kind),
+          }}
+          aria-hidden="true"
+        >
+          {miniGanttComparisonDeltaLabel(days)}
+        </span>
       );
     };
     return (
@@ -5985,22 +5965,28 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       >
         <RowLabel t={t} proj={proj} />
         <div className="lp-widget-minigantt-track">
-          {cmpBars && cmpBars.reference && (
+          {cmpStrip && (
             <span
-              className={"lp-widget-minigantt-refbar"
-                + (cmpBars.reference.clippedStart ? " is-clipped-start" : "")
-                + (cmpBars.reference.clippedEnd ? " is-clipped-end" : "")}
-              style={{
-                left: cmpBars.reference.leftPct + "%",
-                width: cmpBars.reference.widthPct + "%",
-                borderColor: MINIGANTT_COMPARISON_REF_COLOR,
-                background: `color-mix(in srgb, ${MINIGANTT_COMPARISON_REF_COLOR} 42%, transparent)`,
-              }}
+              className={"lp-widget-minigantt-cmpstrip"
+                + (cmpStrip.clippedStart ? " is-clipped-start" : "")
+                + (cmpStrip.clippedEnd ? " is-clipped-end" : "")}
+              style={{ left: cmpStrip.leftPct + "%", width: cmpStrip.widthPct + "%" }}
               aria-hidden="true"
-            />
+            >
+              {cmpStrip.segments.map((seg, i) => (
+                <span
+                  key={seg.kind + "-" + i}
+                  className={"lp-widget-minigantt-cmpseg is-" + seg.kind}
+                  style={{
+                    left: seg.leftPct + "%",
+                    width: seg.widthPct + "%",
+                    background: miniGanttComparisonZonePattern(seg.kind),
+                  }}
+                />
+              ))}
+            </span>
           )}
-          {cmpBars && cmpZone(cmpBars.freed, "freed", cmp.endDeltaDays)}
-          <div className="lp-widget-minigantt-bar" style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}>
+          <div className={"lp-widget-minigantt-bar" + (cmp ? " is-compared" : "")} style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}>
             {/* Progression visuelle : portion remplie de la couleur pleine du
                 statut/projet/type, sur fond pâle de la même couleur pour le
                 reste de la durée — cohérent avec le diagramme du Mini Gantt. */}
@@ -6033,8 +6019,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               </>
             )}
           </div>
-          {cmpBars && cmpZone(cmpBars.ahead, "ahead", cmp.startDeltaDays)}
-          {cmpBars && cmpZone(cmpBars.late, "late", cmp.endDeltaDays)}
+          {cmpBars && cmpZoneLabel(cmpBars.freed, "freed", cmp.endDeltaDays)}
+          {cmpBars && cmpZoneLabel(cmpBars.ahead, "ahead", cmp.startDeltaDays)}
+          {cmpBars && cmpZoneLabel(cmpBars.late, "late", cmp.endDeltaDays)}
           <RowRisks taskId={t.id} />
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={left + width} />}
         </div>
@@ -8264,7 +8251,7 @@ function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
   );
 }
 
-function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, pastDays, toolbarSlot }) {
+function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, toolbarSlot }) {
   const widget = normalizeMiniGanttViewPrefs(prefs);
   const [settingsOpen, setSettingsOpen] = useState(false);
   return (
@@ -8278,7 +8265,6 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         onUpdateWidget={(patch) => setPrefs(patch)}
         onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((task) => task.id === taskId ? { ...task, ...patch, lastInteraction: new Date().toISOString() } : task))}
         metaBlocks={metaBlocks || []}
-        pastDays={pastDays || ""}
         toolbarSlot={toolbarSlot}
         onOpenSettings={() => setSettingsOpen(true)}
       />
