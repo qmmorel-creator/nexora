@@ -2423,6 +2423,7 @@ function defaultLayoutForType(type) {
   if (type === "riskMatrix") return { w: 5, h: 6 };
   if (type === "projectTreemap") return { w: 8, h: 7 };
   if (type === "deadlineScatter") return { w: 10, h: 7 };
+  if (type === "bubbles") return { w: 8, h: 7 };
   if (type === "heatmapGrid") return { w: 9, h: 7 };
   if (type === "automations") return { w: 4, h: 5 };
   if (type === "automationAlerts") return { w: 4, h: 4 };
@@ -2489,6 +2490,304 @@ function normalizeMiniGanttViewPrefs(prefs) {
   };
 }
 // === NEXORA:MINIGANTT-MIGRATION:END ===
+
+// === NEXORA:BUBBLES:START ===
+/* Widget « Bulles » (#92) — toute la logique SANS rendu vit ici, derrière ces
+   sentinelles, et c'est ce bloc que `tests/bubbles.test.mjs` extrait de
+   l'interface réellement construite. Aucune copie du code n'est maintenue à
+   côté : si le bloc change, les tests suivent.
+
+   Le principe du widget est repris de Bubble Plan — une bulle descriptive par
+   tâche, ses champs sous la bulle, des macro-bulles qui enveloppent plusieurs
+   tâches — mais tout ce qui touche à l'AXE DU TEMPS, à la fenêtre, au zoom, au
+   tri et aux groupes reste celui du Mini-Gantt : ce bloc n'en redéfinit rien.
+   Les deux fonctions qui ont besoin d'une brique du Mini-Gantt la reçoivent en
+   ARGUMENT (`bubbleMacroSegments`) ou reçoivent son résultat déjà calculé
+   (`bubbleColorMap`), plutôt que d'en refaire une variante qui divergerait. */
+
+const BUBBLE_MACRO_DEFAULT_COLOR = "#245EDB"; // life-blue : la couleur d'action de Nexora
+const BUBBLE_MACRO_DEFAULT_OPACITY = 12;
+const BUBBLE_MACRO_OPACITY_MAX = 60;
+const BUBBLE_MACRO_DEFAULT_BORDER_WIDTH = 1.5;
+const BUBBLE_MACRO_BORDER_WIDTH_MAX = 6;
+/* Marge ajoutée à chaque niveau d'imbrication. Une tâche peut appartenir à
+   plusieurs macro-bulles : sans ce pas, les deux enveloppes se confondraient
+   en un seul trait épais. */
+const BUBBLE_MACRO_NEST_STEP = 5;
+/* Dégagement minimal entre le trait d'une enveloppe et la bulle qu'elle
+   entoure — même rôle que GANTT_FRAME_BAR_CLEARANCE pour les encadrés. */
+const BUBBLE_MACRO_CLEARANCE = 3;
+const BUBBLE_SIZES = ["compact", "normal", "large"];
+/* Champs proposés sous la bulle. La liste n'est pas arbitraire : ce sont
+   exactement les clés que `FieldValue` — le formateur partagé avec tous les
+   autres widgets — sait rendre. En proposer d'autres (un champ personnalisé,
+   par exemple) afficherait une case à cocher sans effet. */
+const BUBBLE_ROW_FIELD_OPTIONS = [
+  "project", "status", "criticality", "taskType", "assignee",
+  "start", "end", "period", "milestone", "checklist", "progress",
+];
+const BUBBLE_FIELDS_LAYOUTS = ["under", "inline"];
+
+/* Palette de repli, pour les champs dont les valeurs n'ont PAS de couleur à
+   elles (responsable, période, champ personnalisé texte). Ce sont les teintes
+   déjà employées ailleurs dans Nexora — jalons, labels, treemap — et non une
+   nouvelle gamme. */
+const BUBBLE_PALETTE = [
+  "#4F6AF5", "#22B07D", "#F2A93B", "#8B5CF6", "#0EA5E9",
+  "#D64545", "#EC4899", "#14B8A6", "#6366F1", "#F97316",
+];
+
+const BUBBLES_DEFAULTS = {
+  bubbleColorBy: "status",
+  bubbleFields: ["assignee", "status", "end", "progress"],
+  bubbleFieldsLayout: "under",
+  bubbleSize: "normal",
+  bubbleShowDates: true,
+  bubbleShowProgress: true,
+  bubbleShowDescription: false,
+  bubbleShowLegend: false,
+  bubbleMacroGrouping: true,
+  bubbleMacros: [],
+};
+
+function normalizeBubbleSize(value) {
+  return BUBBLE_SIZES.includes(value) ? value : BUBBLES_DEFAULTS.bubbleSize;
+}
+
+function normalizeBubbleFieldsLayout(value) {
+  return BUBBLE_FIELDS_LAYOUTS.includes(value) ? value : BUBBLES_DEFAULTS.bubbleFieldsLayout;
+}
+
+/* Liste de champs : on garde l'ORDRE choisi par l'utilisateur (c'est l'ordre
+   d'affichage sous la bulle) et on dédoublonne. Une liste vide est un choix
+   légitime — la bulle se lit alors seule — et non une absence de réglage : le
+   défaut ne s'y substitue que si la valeur n'est pas une liste. */
+function normalizeBubbleFields(list) {
+  if (!Array.isArray(list)) return [...BUBBLES_DEFAULTS.bubbleFields];
+  const seen = new Set();
+  const out = [];
+  list.forEach((key) => {
+    if (typeof key !== "string" || !key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  });
+  return out;
+}
+
+function normalizeBubbleOpacity(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return BUBBLE_MACRO_DEFAULT_OPACITY;
+  return Math.min(BUBBLE_MACRO_OPACITY_MAX, Math.max(0, Math.round(n)));
+}
+
+// Au demi-pixel, comme l'épaisseur d'un bloc temporel.
+function normalizeBubbleBorderWidth(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return BUBBLE_MACRO_DEFAULT_BORDER_WIDTH;
+  return Math.min(BUBBLE_MACRO_BORDER_WIDTH_MAX, Math.max(0, Math.round(n * 2) / 2));
+}
+
+function normalizeBubbleMacroBorderStyle(value) { return value === "dashed" ? "dashed" : "solid"; }
+
+function isBubbleHexColor(value) {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+/* Même style de retour que `validateTemporalBlock` : un message court sous le
+   champ, et aucun enregistrement tant qu'il est présent. Une macro-bulle SANS
+   tâche est valide — on la crée souvent avant de choisir ses tâches — mais
+   l'éditeur signale qu'elle ne sera pas dessinée. */
+function validateBubbleMacro(macro) {
+  const label = macro && typeof macro.label === "string" ? macro.label.trim() : "";
+  if (!label) return { ok: false, error: "Le libellé est obligatoire." };
+  return { ok: true, error: "" };
+}
+
+function normalizeBubbleMacros(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((m) => m && typeof m === "object" && m.id)
+    .map((m) => ({
+      ...m,
+      id: String(m.id),
+      label: typeof m.label === "string" ? m.label : "",
+      taskIds: Array.isArray(m.taskIds) ? [...new Set(m.taskIds.filter((id) => typeof id === "string" && id))] : [],
+      color: isBubbleHexColor(m.color) ? m.color : BUBBLE_MACRO_DEFAULT_COLOR,
+      opacity: normalizeBubbleOpacity(m.opacity),
+      borderStyle: normalizeBubbleMacroBorderStyle(m.borderStyle),
+      borderWidth: normalizeBubbleBorderWidth(m.borderWidth),
+      showProgress: m.showProgress !== false,
+    }));
+}
+
+/* Nettoyage explicite, déclenché depuis l'éditeur uniquement — jamais au
+   rendu, pour qu'un simple filtre de widget ne détruise pas une configuration.
+   À la différence de `pruneHighlightFrames`, une macro-bulle vidée de toutes
+   ses tâches est CONSERVÉE : elle porte un libellé et une couleur choisis à la
+   main, et l'éditeur sait dire qu'elle n'est pas dessinée. */
+function pruneBubbleMacros(macros, knownTaskIds) {
+  const known = new Set(Array.isArray(knownTaskIds) ? knownTaskIds : []);
+  return normalizeBubbleMacros(macros).map((m) => ({ ...m, taskIds: m.taskIds.filter((id) => known.has(id)) }));
+}
+
+// Remplissage et cadre calculés en UN SEUL endroit, comme ganttBlockFill /
+// ganttBlockBorder pour les blocs temporels : les deux couches de rendu et
+// l'aperçu de l'éditeur appellent ces fonctions.
+function bubbleMacroFill(macro) {
+  const color = isBubbleHexColor(macro && macro.color) ? macro.color : BUBBLE_MACRO_DEFAULT_COLOR;
+  return `color-mix(in srgb, ${color} ${normalizeBubbleOpacity(macro && macro.opacity)}%, transparent)`;
+}
+
+function bubbleMacroBorder(macro) {
+  const color = isBubbleHexColor(macro && macro.color) ? macro.color : BUBBLE_MACRO_DEFAULT_COLOR;
+  const width = normalizeBubbleBorderWidth(macro && macro.borderWidth);
+  if (width === 0) return "none";
+  return `${width}px ${normalizeBubbleMacroBorderStyle(macro && macro.borderStyle)} ${color}`;
+}
+
+/* Un widget « Bulles » lu depuis le stockage : chaque réglage absent ou
+   invalide retombe sur son défaut, et TOUTE propriété inconnue est conservée.
+   C'est ce qui permet de passer un widget de Mini-Gantt à Bulles et
+   inversement sans rien perdre : fenêtre, zoom, tri, groupes et annotations
+   sont les MÊMES clés (`miniGantt*`, `ganttAnnotations`) et ne sont pas
+   touchées ici — elles restent normalisées par leurs propres fonctions. */
+function normalizeBubblesWidget(widget) {
+  const w = widget && typeof widget === "object" ? widget : {};
+  return {
+    ...w,
+    bubbleColorBy: typeof w.bubbleColorBy === "string" && w.bubbleColorBy ? w.bubbleColorBy : BUBBLES_DEFAULTS.bubbleColorBy,
+    bubbleFields: normalizeBubbleFields(w.bubbleFields),
+    bubbleFieldsLayout: normalizeBubbleFieldsLayout(w.bubbleFieldsLayout),
+    bubbleSize: normalizeBubbleSize(w.bubbleSize),
+    bubbleShowDates: w.bubbleShowDates !== false,
+    bubbleShowProgress: w.bubbleShowProgress !== false,
+    bubbleShowDescription: w.bubbleShowDescription === true,
+    bubbleShowLegend: w.bubbleShowLegend === true,
+    bubbleMacroGrouping: w.bubbleMacroGrouping !== false,
+    bubbleMacros: normalizeBubbleMacros(w.bubbleMacros),
+  };
+}
+
+/* Teinte de repli d'une valeur de groupe, par HACHAGE de sa clé et non par son
+   rang dans la liste. Le rang change dès qu'une valeur apparaît ou disparaît :
+   « Jean » changerait de couleur parce qu'un autre responsable a été ajouté,
+   et deux widgets affichant des sous-ensembles différents ne s'accorderaient
+   jamais. Le hachage donne la même couleur à la même valeur partout et
+   toujours. Deux valeurs peuvent tomber sur la même teinte — c'est le prix
+   assumé de cette stabilité, et la légende lève l'ambiguïté. */
+function bubblePaletteColor(key) {
+  const text = key === undefined || key === null ? "" : String(key);
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) % 100000007;
+  return BUBBLE_PALETTE[hash % BUBBLE_PALETTE.length];
+}
+
+/* La couleur d'une bulle est celle de SON GROUPE, au sens de « grouper par ».
+
+   L'entrée est le résultat de `groupTasks(tasks, colorBy, ctx)` — la fonction
+   qui sert déjà aux en-têtes de groupe, aux listes et aux graphiques. Elle
+   renvoie pour chaque groupe une `color` quand la valeur en a une (statut,
+   projet, type, criticité) et `var(--text-muted)` quand elle n'en a pas
+   (responsable, période, texte libre). C'est exactement à ce cas-là, et à lui
+   seul, que la palette de repli s'applique : reproduire ici la résolution des
+   couleurs par champ serait une seconde vérité.
+
+   Retourne une Map identifiant de tâche → { color, groupKey, groupLabel }. */
+function bubbleColorMap(groups) {
+  const out = new Map();
+  (Array.isArray(groups) ? groups : []).forEach((group) => {
+    if (!group || !Array.isArray(group.tasks)) return;
+    const own = typeof group.color === "string" && group.color && !group.color.startsWith("var(") ? group.color : "";
+    const color = own || bubblePaletteColor(group.key);
+    group.tasks.forEach((task) => {
+      if (task && task.id) out.set(task.id, { color, groupKey: String(group.key), groupLabel: group.label || "" });
+    });
+  });
+  return out;
+}
+
+/* Légende : un rang par groupe RÉELLEMENT représenté, dans l'ordre où
+   `groupTasks` les rend, avec la couleur résolue comme ci-dessus. Un groupe
+   vide n'y figure pas — il n'y a rien à surligner. */
+function bubbleLegendEntries(groups) {
+  return (Array.isArray(groups) ? groups : [])
+    .filter((group) => group && Array.isArray(group.tasks) && group.tasks.length > 0)
+    .map((group) => {
+      const own = typeof group.color === "string" && group.color && !group.color.startsWith("var(") ? group.color : "";
+      return {
+        key: String(group.key),
+        label: group.label || "",
+        color: own || bubblePaletteColor(group.key),
+        count: group.tasks.length,
+      };
+    });
+}
+
+/* Géométrie d'une macro-bulle. Le découpage en séries de LIGNES CONTIGUËS est
+   délégué à `ganttFrameSegments`, passée en argument : c'est la fonction déjà
+   éprouvée des encadrés du Gantt, qui sait qu'un en-tête de groupe coupe la
+   continuité et qui travaille sur les hauteurs MESURÉES des lignes. Des tâches
+   non successives produisent donc plusieurs enveloppes, exactement comme un
+   encadré — et non une enveloppe géante qui avalerait les tâches voisines.
+
+   `nestLevel` est le rang de la macro-bulle dans la liste : il écarte les
+   enveloppes qui se recouvrent, pour que deux macro-bulles partageant une
+   tâche restent deux traits lisibles. */
+function bubbleMacroSegments(rows, macro, frameSegments, nestLevel) {
+  if (typeof frameSegments !== "function") return [];
+  const normalized = normalizeBubbleMacros([macro])[0];
+  if (!normalized || !normalized.taskIds.length) return [];
+  const level = Number.isFinite(Number(nestLevel)) ? Math.max(0, Math.round(Number(nestLevel))) : 0;
+  const padding = BUBBLE_MACRO_CLEARANCE + level * BUBBLE_MACRO_NEST_STEP;
+  return frameSegments(rows, { taskIds: normalized.taskIds, padding })
+    .map((seg, i) => ({ ...seg, macro: normalized, level, key: normalized.id + "-" + i }));
+}
+
+/* Avancement agrégé d'une macro-bulle, PONDÉRÉ PAR LA DURÉE : une tâche de
+   trois mois à 0 % ne doit pas peser autant qu'un jalon d'un jour à 100 %.
+   Les cellules arrivent déjà réduites à ce qui compte (`{ progress, days }`),
+   pour que cette fonction ne dépende ni du calendrier ni du modèle de tâche.
+   Aucune durée exploitable — que des jalons, par exemple — fait retomber sur
+   une moyenne simple plutôt que sur une division par zéro. */
+function bubbleMacroProgress(cells) {
+  const list = (Array.isArray(cells) ? cells : []).filter((c) => c && typeof c === "object");
+  if (!list.length) return null;
+  const clamp = (v) => Math.max(0, Math.min(100, Number(v) || 0));
+  const weights = list.map((c) => Math.max(0, Number(c.days) || 0));
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  if (total <= 0) {
+    return Math.round(list.reduce((sum, c) => sum + clamp(c.progress), 0) / list.length);
+  }
+  const weighted = list.reduce((sum, c, i) => sum + clamp(c.progress) * weights[i], 0);
+  return Math.round(weighted / total);
+}
+
+/* Ordre des lignes quand « regrouper les tâches d'une macro-bulle » est actif :
+   les lignes d'une même macro-bulle sont amenées côte à côte, macro-bulles
+   dans leur ordre de déclaration, puis tout le reste dans l'ordre du tri
+   normal. C'est ce qui donne à une macro-bulle la BANDE unique de Bubble Plan
+   au lieu d'une enveloppe trouée.
+
+   Une tâche rattachée à deux macro-bulles ne peut être qu'à un endroit : elle
+   suit la PREMIÈRE qui la réclame, et l'autre se segmente autour. Option
+   inactive : l'ordre reçu est rendu tel quel, sans copie inutile. */
+function bubbleRowOrder(orderedIds, macros, options) {
+  const ids = Array.isArray(orderedIds) ? orderedIds.filter((id) => typeof id === "string" && id) : [];
+  if (!options || options.grouping === false) return ids;
+  const known = new Set(ids);
+  const placed = new Set();
+  const out = [];
+  normalizeBubbleMacros(macros).forEach((macro) => {
+    macro.taskIds.forEach((id) => {
+      if (!known.has(id) || placed.has(id)) return;
+      placed.add(id);
+      out.push(id);
+    });
+  });
+  ids.forEach((id) => { if (!placed.has(id)) out.push(id); });
+  return out;
+}
+// === NEXORA:BUBBLES:END ===
 
 function computeBudgetStats(projectId, projects, expenses) {
   const project = projects.find((p) => p.id === projectId);
@@ -2820,6 +3119,20 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
       const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
       targetHPx = 50 /* axe : zoom + actions d'annotation */ + rows * 20 + groupCount * 22 /* en-têtes de groupe */ + FRAME_CHROME_PX;
+    } else if (w.type === "bubbles") {
+      /* Même comptage de lignes que le Mini-Gantt, mais une ligne de bulles
+         est bien plus haute qu'une barre de 9 px : hauteur de la bulle (selon
+         le réglage), plus une ligne de champs quand ils sont rangés dessous. */
+      const scopedAll = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
+      const scoped = scopedAll.filter((t) => !t.milestone && t.start && t.end);
+      const scopedMilestones = w.showMilestones !== false ? scopedAll.filter((t) => t.milestone && t.end) : [];
+      const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
+      const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
+      const cfg = normalizeBubblesWidget(w);
+      const bubbleH = cfg.bubbleSize === "compact" ? 34 : cfg.bubbleSize === "large" ? 60 : 46;
+      const fieldsH = cfg.bubbleFieldsLayout === "under" && cfg.bubbleFields.length ? 20 : 0;
+      const legendH = cfg.bubbleShowLegend ? 22 : 0;
+      targetHPx = 50 + rows * (bubbleH + fieldsH + 10) + groupCount * 22 + legendH + FRAME_CHROME_PX;
     } else if (w.type === "list") {
       const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
       const rows = Math.max(1, Math.min(w.limit || 6, scoped.length));
@@ -3245,6 +3558,18 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "minigantt" && (
                   <WidgetMiniGantt
+                    widget={w}
+                    tasks={scoped}
+                    groupBy={w.groupBy}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
+                    onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
+                    metaBlocks={scopedMetaBlocks}
+                  />
+                )}
+                {w.type === "bubbles" && (
+                  <WidgetBubbles
                     widget={w}
                     tasks={scoped}
                     groupBy={w.groupBy}
@@ -4712,7 +5037,16 @@ function MiniGanttProgressRing({ progress }) {
   );
 }
 
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings }) {
+/* `bubbleMode` — widget « Bulles » (#92). Le diagramme est le MÊME : axe,
+   fenêtre, zoom, groupes repliables, annotations, infobulles, glisser des dates
+   et de l'avancement. Seule la LIGNE change : une bulle descriptive au lieu
+   d'une barre, ses champs sous la bulle, et des macro-bulles par-dessus. C'est
+   un mode de lecture, pas un second diagramme — un clone aurait divergé du
+   premier au premier correctif d'axe, comme l'avaient fait les deux
+   formulaires de réglages avant #86.
+   Hors de ce mode, pas une branche ci-dessous ne s'exécute : le Mini-Gantt rend
+   exactement ce qu'il rendait. */
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode }) {
   // Les Mini Gantt existants n'avaient pas toujours de `groupBy`. La vue
   // consolidée doit néanmoins fournir ses en-têtes repliables : Projet devient
   // le défaut de lecture, sans modifier une configuration explicitement à
@@ -4721,11 +5055,40 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? "project"
     : groupBy;
   const colorBy = widget.colorBy || "status"; // "status" | "project"
-  const rowFields = widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"];
+  /* Réglages propres aux bulles, normalisés une fois pour toutes. Ils vivent
+     sous leurs propres clés (`bubble*`) et ne remplacent jamais celles du
+     Mini-Gantt : un même widget peut donc passer d'un mode à l'autre sans rien
+     perdre de sa fenêtre, de son zoom, de son tri ni de ses annotations. */
+  const bubbleCfg = bubbleMode ? normalizeBubblesWidget(widget) : null;
+  /* Clés STABLES pour les dépendances des mémos : `bubbleCfg` est un objet neuf
+     à chaque rendu (il normalise), le donner en dépendance reviendrait à tout
+     recalculer à chaque trame. */
+  const bubbleColorByKey = bubbleMode ? bubbleCfg.bubbleColorBy : "";
+  const bubbleMacroGroupingOn = !!(bubbleMode && bubbleCfg.bubbleMacroGrouping);
+  const bubbleMacrosKey = bubbleMode ? JSON.stringify(bubbleCfg.bubbleMacros) : "";
+
+  /* Regroupement des lignes d'une macro-bulle. Déclaré ICI, avant le premier
+     mémo qui l'appelle : une fonction en `const` invoquée pendant le rendu
+     d'un useMemo situé plus haut lèverait une ReferenceError de zone morte. */
+  const bubbleMacroReorder = (list) => {
+    if (!bubbleMacroGroupingOn || !bubbleCfg.bubbleMacros.length) return list;
+    const byId = new Map(list.map((t) => [t.id, t]));
+    return bubbleRowOrder(list.map((t) => t.id), bubbleCfg.bubbleMacros, { grouping: true })
+      .map((id) => byId.get(id))
+      .filter(Boolean);
+  };
+
+  const rowFields = bubbleMode
+    ? bubbleCfg.bubbleFields
+    : (widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"]);
   // "aligned" = colonne à largeur fixe alignée à droite (les barres restent
   // alignées d'une ligne à l'autre) ; "inline" = juste après la barre/le
   // jalon, ancré sur sa position réelle dans le temps.
-  const fieldsLayout = widget.miniGanttFieldsLayout === "inline" ? "inline" : "aligned";
+  // En mode bulles, "under" range les champs SOUS la bulle : il n'y a alors
+  // aucune colonne de droite, et la piste occupe toute la largeur.
+  const fieldsLayout = bubbleMode
+    ? bubbleCfg.bubbleFieldsLayout
+    : (widget.miniGanttFieldsLayout === "inline" ? "inline" : "aligned");
   /* Largeur de la colonne de champs alignée à droite. Elle ne peut pas rester
      FIXE : quatre champs plus l'anneau d'avancement dépassent largement
      deux cents pixels, et le surplus débordait hors du widget, où le cadre le
@@ -4748,6 +5111,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const fieldNodes = useRef({});
   const FIELDS_COL_WIDTH = fieldsColWidth;
   const [hover, setHover] = useState(null); // { t, x, y }
+  // Surlignage par la légende du mode bulles : clé de groupe mise en avant, ou
+  // null. C'est une mise en avant, jamais un filtre — rien ne disparaît.
+  const [bubbleHighlight, setBubbleHighlight] = useState(null);
   const [collapsed, setCollapsed] = useState({}); // { [groupKey]: true }
   const toggleGroup = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const showMilestones = widget.showMilestones !== false;
@@ -4788,8 +5154,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const sortKey = normalizeMiniGanttSort(widget.miniGanttSort);
   const sortDir = normalizeMiniGanttSortDir(widget.miniGanttSortDir);
   const orderedTasks = useMemo(
-    () => miniGanttSortTasks([...projTasks, ...milestoneTasks], sortKey, sortDir),
-    [projTasks, milestoneTasks, sortKey, sortDir]
+    /* Mode bulles : « regrouper les tâches d'une macro-bulle » amène leurs
+       lignes côte à côte, pour qu'une macro-bulle forme une bande d'un seul
+       tenant au lieu d'une enveloppe trouée. C'est le SEUL endroit qui décide
+       de l'ordre des lignes — le regroupement par champ repart de cette liste
+       et le réapplique groupe par groupe (voir macroOrderedGroups). */
+    () => bubbleMacroReorder(miniGanttSortTasks([...projTasks, ...milestoneTasks], sortKey, sortDir)),
+    [projTasks, milestoneTasks, sortKey, sortDir, bubbleMacroGroupingOn, bubbleMacrosKey]
   );
   // Index des tâches rendues, par identifiant. Servait déjà, recalculé sur
   // place, à l'ancrage des annotations ; la pastille d'un encadré en a besoin
@@ -5161,14 +5532,37 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           .map((g) => ({ ...g, tasks: miniGanttSortTasks(g.tasks, sortKey, sortDir) }))
   ), [orderedTasks, effectiveGroupBy, ctx, sortKey, sortDir]);
 
+  /* Mode bulles : « regrouper les tâches d'une macro-bulle » amène leurs lignes
+     côte à côte, DANS chaque groupe — une macro-bulle forme alors une bande
+     d'un seul tenant au lieu d'une enveloppe trouée. Le regroupement ne
+     traverse jamais une frontière de groupe : l'en-tête resterait au-dessus de
+     lignes qui ne lui appartiennent pas. */
+  const macroOrderedGroups = useMemo(() => {
+    if (!bubbleMacroGroupingOn || !bubbleCfg.bubbleMacros.length) return rowGroups;
+    return rowGroups.map((g) => ({ ...g, tasks: bubbleMacroReorder(g.tasks) }));
+  }, [rowGroups, bubbleMacrosKey, bubbleMacroGroupingOn]);
+
+  /* Couleur des bulles : celle du GROUPE au sens de « grouper par », mais avec
+     SON champ à elle (`bubbleColorBy`), indépendant du regroupement des lignes
+     — on peut grouper par projet et colorer par statut. `groupTasks` est la
+     seule source : elle sait déjà quelle couleur porte un statut, un projet, un
+     type ou une criticité. `bubbleColorMap` n'y ajoute que la teinte de repli
+     des valeurs qui n'en ont pas (responsable, période, texte libre). */
+  const bubbleGroups = useMemo(
+    () => (bubbleMode ? groupTasks(orderedTasks, bubbleColorByKey, ctx).filter((g) => g.tasks.length > 0) : []),
+    [bubbleMode, orderedTasks, bubbleColorByKey, ctx]
+  );
+  const bubbleColors = useMemo(() => bubbleColorMap(bubbleGroups), [bubbleGroups]);
+  const bubbleLegend = useMemo(() => bubbleLegendEntries(bubbleGroups), [bubbleGroups]);
+
   const visibleRows = useMemo(() => {
     const rows = [];
-    rowGroups.forEach((g) => {
+    macroOrderedGroups.forEach((g) => {
       if (collapsed[g.key]) return;
       g.tasks.forEach((t) => rows.push({ id: t.id, groupKey: g.key, start: t.milestone ? t.end : t.start, end: t.end }));
     });
     return rows;
-  }, [rowGroups, collapsed]);
+  }, [macroOrderedGroups, collapsed]);
 
   // Les cadres suivent la mise en page mesurée plutôt qu'un second calcul de
   // disposition : un zoom, un filtre, un repli de groupe ou un déplacement de
@@ -5381,6 +5775,57 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       .filter(Boolean);
   }, [configSpans, visibleRows, rowRects, minIdx, maxIdx, span]);
 
+  /* Macro-bulles (#92). La géométrie vient de `bubbleMacroSegments`, qui
+     délègue le découpage en séries de lignes CONTIGUËS à `ganttFrameSegments` —
+     la fonction des encadrés, qui sait qu'un en-tête de groupe coupe la
+     continuité et qui travaille sur les hauteurs MESURÉES. Des tâches non
+     successives donnent donc plusieurs enveloppes, jamais une enveloppe géante
+     qui avalerait les tâches voisines.
+
+     Le rang de la macro-bulle dans la liste sert de niveau d'imbrication : deux
+     macro-bulles qui partagent une tâche restent deux traits lisibles. */
+  const bubbleMacroShapes = useMemo(() => {
+    if (!bubbleMode || !bubbleCfg.bubbleMacros.length) return [];
+    const rows = visibleRows
+      .map((row) => {
+        const rect = rowRects[row.id];
+        if (!rect) return null;
+        const startIdx = dayIndex(row.start);
+        const endIdx = dayIndex(row.end);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        return { id: row.id, groupKey: row.groupKey, top: rect.top, height: rect.height, startIdx, endIdx };
+      })
+      .filter(Boolean);
+    if (!rows.length) return [];
+    const shapes = [];
+    bubbleCfg.bubbleMacros.forEach((macro, level) => {
+      bubbleMacroSegments(rows, macro, ganttFrameSegments, level).forEach((seg) => shapes.push(seg));
+    });
+    // Deux libellés qui se superposeraient sont décalés vers le bas — même
+    // règle que les étiquettes d'encadré.
+    const placed = [];
+    shapes.slice().sort((a, b) => a.top - b.top || a.startIdx - b.startIdx).forEach((shape) => {
+      shape.labelOffset = placed.filter((x) => Math.abs(x.top - shape.top) < 26 && Math.abs(x.startIdx - shape.startIdx) / span < 0.12).length * 12;
+      placed.push(shape);
+    });
+    return shapes;
+  }, [bubbleMode, bubbleMacrosKey, visibleRows, rowRects, span]);
+
+  /* Avancement agrégé d'une enveloppe : moyenne PONDÉRÉE PAR LA DURÉE des
+     tâches qu'elle contient. Une tâche de trois mois à 0 % ne doit pas peser
+     autant qu'un jalon d'un jour à 100 %. */
+  const bubbleMacroPct = (seg) => {
+    if (!seg.macro.showProgress) return null;
+    const cells = seg.ids.map((id) => {
+      const task = tasksById.get(id);
+      if (!task) return null;
+      const startIdx = dayIndex(task.milestone ? task.end : task.start);
+      const endIdx = dayIndex(task.end);
+      return { progress: task.progress, days: Number.isFinite(startIdx) && Number.isFinite(endIdx) ? Math.max(0, endIdx - startIdx) : 0 };
+    }).filter(Boolean);
+    return bubbleMacroProgress(cells);
+  };
+
   // Les blocs sont exprimés en pourcentage, comme les barres du Mini-Gantt, et
   // bornés à la fenêtre affichée : le zoom et le filtre « jours dans le passé »
   // les recadrent sans code supplémentaire.
@@ -5495,6 +5940,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      autres n'ont pas, et les repères tombent à côté. */
   const fieldsColumnShown = fieldsLayout === "aligned"
     && (rowFields.length > 0 || comparisonByTask.size > 0);
+
+  /* Largeur de la colonne d'étiquettes de gauche, en UN SEUL endroit. Le mode
+     bulles la supprime — le titre vit dans la bulle, et l'y répéter volerait un
+     quart de la piste — mais toutes les couches en superposition (grille,
+     blocs temporels, encadrés, macro-bulles, axe) doivent s'aligner sur la
+     MÊME valeur, sinon les repères tombent à côté des pistes. La feuille de
+     style lit la même bascule par `--mg-label-w`. */
+  const labelInsetCss = bubbleMode ? "0%" : "26%";
+  const layerInsets = {
+    left: `calc(${labelInsetCss} + 6px)`,
+    right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
+  };
 
   const emphasisFor = (taskId) => (emphasisOn ? miniGanttRowEmphasis(taskId, riskSegments, criticalIds) : "none");
 
@@ -5871,7 +6328,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const GridOverlay = () => (
     <div
       className="lp-widget-minigantt-gridoverlay"
-      style={{ left: "calc(26% + 6px)", right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
+      style={layerInsets}
     >
       {weekendBands.map((idx) => (
         <span key={"we-" + idx} className="lp-widget-minigantt-weekend" style={{ left: pctFor(idx), width: `${(1 / span) * 100}%` }} />
@@ -5938,8 +6395,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
        dès qu'une seule portait un indicateur d'écart.
        Aucune colonne pour personne reste le cas de l'issue #66 : là, rien
        n'est rendu nulle part, et la piste va jusqu'au bord. */
-    if (!fieldsColumnShown && !hasComparison) return null;
-    if (fieldsLayout === "inline" && !rowFields.length && !hasComparison) return null;
+    if (fieldsLayout === "under") {
+      if (!rowFields.length) return null;
+    } else {
+      if (!fieldsColumnShown && !hasComparison) return null;
+      if (fieldsLayout === "inline" && !rowFields.length && !hasComparison) return null;
+    }
     const content = (
       <>
         {rowFields.filter((f) => f !== "progress").map((f) => (
@@ -5953,6 +6414,24 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         <ComparisonChip t={t} />
       </>
     );
+    if (fieldsLayout === "under") {
+      /* En FLUX sous la bulle, et non en position absolue : c'est ce qui fait
+         grandir la piste, donc la ligne, donc la hauteur mesurée dont vivent
+         les macro-bulles et les encadrés. La marge gauche cale les champs sur
+         le bord gauche de la bulle ; elle est plafonnée pour qu'une bulle de
+         fin de fenêtre ne réduise pas ses champs à une colonne d'un mot. */
+      const anchor = Math.max(0, Math.min(70, Number(anchorPct) || 0));
+      return (
+        <div
+          className="lp-bubble-fields"
+          style={{ marginTop: "var(--lp-bubble-h)", marginLeft: anchor + "%", maxWidth: (100 - anchor) + "%" }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {content}
+        </div>
+      );
+    }
     if (fieldsLayout === "inline") {
       return (
         <div
@@ -5978,7 +6457,208 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     );
   };
 
+  /* --- Mode bulles (#92) : la ligne, et rien d'autre -----------------------
+
+     Une bulle occupe la piste comme une barre — même calcul de position, même
+     écrêtage à la fenêtre — mais porte son titre, son avancement et, en
+     option, sa description. Les champs choisis se rangent SOUS elle, en flux :
+     la piste grandit d'elle-même, la hauteur de ligne est donc MESURÉE, et les
+     macro-bulles comme les encadrés suivent sans second calcul de disposition.
+
+     Largeur : proportionnelle à la durée, avec un plancher en PIXELS (et non en
+     pourcentage) pour qu'un titre reste lisible sur une tâche d'un jour, puis
+     ramenée dans la piste pour qu'une bulle de fin de fenêtre ne déborde pas du
+     cadre du widget. */
+  const BUBBLE_MIN_PX = 90;
+  // Place minimale, en pixels, pour écrire une date à côté d'une bulle.
+  const BUBBLE_DATE_ROOM_PX = 46;
+  // Demi-largeur d'une bulle de jalon, pour la ramener dans la piste quand sa
+  // date tombe tout au bord.
+  const BUBBLE_MILESTONE_HALF_PX = 60;
+  const bubbleTrackPx = trackWidth || 420;
+  const bubbleWidthPct = (leftPct, rawWidthPct) => {
+    const minPct = Math.min(60, (BUBBLE_MIN_PX / bubbleTrackPx) * 100);
+    return Math.max(0.4, Math.min(Math.max(rawWidthPct, minPct), 100 - leftPct));
+  };
+  // Surlignage par la légende : cliquer une valeur atténue les bulles des
+  // autres groupes. C'est une mise en avant, pas un filtre — rien ne disparaît.
+  const bubbleDimmed = (taskId) => {
+    if (!bubbleHighlight) return false;
+    const entry = bubbleColors.get(taskId);
+    return !entry || entry.groupKey !== bubbleHighlight;
+  };
+  const bubbleColorOf = (t) => (bubbleColors.get(t.id) || {}).color || "var(--text-muted)";
+
+  const BubbleFoot = ({ t, color, pct }) => {
+    if (!bubbleCfg.bubbleShowProgress) return null;
+    const st = ctx.statuses.find((s) => s.id === t.statusId);
+    return (
+      <div className="lp-bubble-foot">
+        <span className="lp-bubble-foot-dot" style={{ background: st?.color || color }} />
+        <span className="lp-bubble-foot-label">{st?.name || "Sans statut"}</span>
+        <span className="lp-bubble-foot-pct">{pct}%</span>
+      </div>
+    );
+  };
+
+  const BubbleEdgeDates = ({ t, leftPct, widthPct }) => {
+    // Les dates s'écrivent DEHORS, à gauche et à droite de la bulle : dedans,
+    // elles mangeraient le titre dès que la tâche est courte. Sous 44 px de
+    // piste, il n'y a pas la place pour les deux : on n'en écrit aucune plutôt
+    // que de les superposer.
+    if (!bubbleCfg.bubbleShowDates || (widthPct / 100) * bubbleTrackPx < 44) return null;
+    /* Chaque date ne s'écrit que s'il reste la place de l'écrire DANS la piste :
+       collée au bord, elle sortait de la piste et le cadre du widget la
+       coupait. Une seule des deux peut donc manquer. */
+    const roomLeftPx = (leftPct / 100) * bubbleTrackPx;
+    const roomRightPx = ((100 - leftPct - widthPct) / 100) * bubbleTrackPx;
+    return (
+      <>
+        {roomLeftPx >= BUBBLE_DATE_ROOM_PX && (
+          <span className="lp-bubble-date is-start" style={{ left: leftPct + "%" }}>{fmtShort(t.start)}</span>
+        )}
+        {roomRightPx >= BUBBLE_DATE_ROOM_PX && (
+          <span className="lp-bubble-date is-end" style={{ left: (leftPct + widthPct) + "%" }}>{fmtShort(t.end)}</span>
+        )}
+      </>
+    );
+  };
+
+  const BubbleRow = (t) => {
+    const rawStartIdx = dayIndex(t.start);
+    const rawEndIdx = dayIndex(t.end);
+    if (rawEndIdx < minIdx || rawStartIdx > maxIdx) return null;
+    const visibleStartIdx = Math.max(minIdx, rawStartIdx);
+    const visibleEndIdx = Math.min(maxIdx, rawEndIdx);
+    const leftPct = ((visibleStartIdx - minIdx) / span) * 100;
+    const widthPct = bubbleWidthPct(leftPct, ((Math.max(visibleStartIdx, visibleEndIdx) - visibleStartIdx) / span) * 100);
+    const color = bubbleColorOf(t);
+    const pct = Math.max(0, Math.min(100, Math.round(t.progress || 0)));
+    const dimmed = bubbleDimmed(t.id);
+    const late = isTaskLate(t, ctx);
+    return (
+      <div
+        className={"lp-widget-minigantt-row is-" + emphasisFor(t.id)}
+        key={t.id}
+        ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
+        onClick={openTaskUnlessDragged(t)}
+        onMouseEnter={(e) => openTip(t, e)}
+        onMouseMove={(e) => openTip(t, e)}
+        onMouseLeave={() => setHover(null)}
+      >
+        <div className="lp-widget-minigantt-track">
+          <BubbleEdgeDates t={t} leftPct={leftPct} widthPct={widthPct} />
+          <div
+            className={"lp-bubble" + (late ? " is-late" : "") + (dimmed ? " is-dimmed" : "")}
+            style={{
+              left: leftPct + "%",
+              width: widthPct + "%",
+              borderColor: color,
+              // Lavis de la couleur du groupe sur la surface du thème : le texte
+              // garde --text-900 et reste lisible en thème clair comme sombre,
+              // ce qu'un aplat de couleur pleine ne garantirait pas.
+              background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
+            }}
+            title={t.title}
+          >
+            <span className="lp-bubble-progress" style={{ width: pct + "%", background: color }} />
+            <div className="lp-bubble-head">
+              <span className="lp-bubble-title">{t.title}</span>
+            </div>
+            {bubbleCfg.bubbleShowDescription && String(t.desc ?? t.description ?? "").trim() && (
+              <div className="lp-bubble-desc">{String(t.desc ?? t.description ?? "").trim()}</div>
+            )}
+            <BubbleFoot t={t} color={color} pct={pct} />
+            {onUpdateTask && (
+              <>
+                <div
+                  className="lp-bubble-handle left" title="Glisser pour changer la date de début"
+                  onMouseDown={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+                  onTouchStart={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+                />
+                <div
+                  className="lp-bubble-handle right" title="Glisser pour changer la date de fin"
+                  onMouseDown={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+                  onTouchStart={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+                />
+                {/* L'avancement se mesure sur la BULLE, pas sur la piste : la
+                    poignée reste exactement sous le pointeur, comme celle de la
+                    barre se mesure sur la barre. */}
+                <div
+                  className={"lp-bubble-progress-handle" + (pct >= 100 ? " is-done" : "")}
+                  style={{ left: pct + "%" }}
+                  title={pct >= 100 ? "Avancement à 100 % — glisser pour revenir en arrière" : `Glisser pour changer l'avancement (${pct}%)`}
+                  onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
+                  onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
+                >
+                  {pct >= 100 && <Check size={7} strokeWidth={4} aria-hidden="true" />}
+                </div>
+              </>
+            )}
+          </div>
+          {fieldsLayout === "inline" && <RowFields t={t} anchorPct={leftPct + widthPct} />}
+          {fieldsLayout === "under" && <RowFields t={t} anchorPct={leftPct} />}
+        </div>
+      </div>
+    );
+  };
+
+  const BubbleMilestoneRow = (t) => {
+    const idx = dayIndex(t.end);
+    if (idx < minIdx || idx > maxIdx) return null;
+    const leftPct = ((idx - minIdx) / span) * 100;
+    const color = bubbleColorOf(t);
+    const icon = resolveMilestoneIcon(t, ctx);
+    const dimmed = bubbleDimmed(t.id);
+    const dragHandlers = onUpdateTask ? {
+      onMouseDown: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
+      onTouchStart: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
+    } : {};
+    return (
+      <div
+        className="lp-widget-minigantt-row"
+        key={t.id}
+        ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
+        onClick={openTaskUnlessDragged(t)}
+        onMouseEnter={(e) => openTip(t, e)}
+        onMouseMove={(e) => openTip(t, e)}
+        onMouseLeave={() => setHover(null)}
+      >
+        <div className="lp-widget-minigantt-track">
+          {/* Un jalon n'a qu'une date : sa bulle est compacte et CENTRÉE sur
+              cette date — lui donner une largeur fabriquerait une durée. */}
+          <div
+            className={"lp-bubble-milestone" + (dimmed ? " is-dimmed" : "")}
+            /* Centré sur sa date par translateX(-50%), SAUF tout au bord de la
+               piste : là, la moitié de la bulle sortait de la piste et le cadre
+               du widget la coupait. Elle s'aligne alors sur le bord. */
+            style={{
+              left: leftPct + "%",
+              borderColor: color,
+              background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
+              ...((leftPct / 100) * bubbleTrackPx < BUBBLE_MILESTONE_HALF_PX
+                ? { left: 0, transform: "none" }
+                : ((100 - leftPct) / 100) * bubbleTrackPx < BUBBLE_MILESTONE_HALF_PX
+                  ? { left: "100%", transform: "translateX(-100%)" }
+                  : null),
+            }}
+            title={`${t.title} · ${fmtShort(t.end)}`}
+            {...dragHandlers}
+          >
+            {icon
+              ? <IconGlyph icon={icon} size={12} />
+              : <span className="lp-bubble-milestone-glyph" style={{ background: color }} />}
+            <span className="lp-bubble-milestone-title">{t.title}</span>
+            {bubbleCfg.bubbleShowDates && <span className="lp-bubble-milestone-date">{fmtShort(t.end)}</span>}
+          </div>
+          {fieldsLayout === "inline" && <RowFields t={t} anchorPct={leftPct} />}
+          {fieldsLayout === "under" && <RowFields t={t} anchorPct={leftPct} />}
+        </div>
+      </div>
+    );
+  };
   const Row = (t) => {
+    if (bubbleMode) return BubbleRow(t);
     const rawStartIdx = dayIndex(t.start);
     const rawEndIdx = dayIndex(t.end);
     const visibleStartIdx = Math.max(minIdx, rawStartIdx);
@@ -6126,6 +6806,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   };
 
   const MilestoneRow = (t) => {
+    if (bubbleMode) return BubbleMilestoneRow(t);
     const proj = ctx.projects.find((p) => p.id === t.projectId);
     const st = ctx.statuses.find((s) => s.id === t.statusId);
     const tt = (ctx.taskTypes || []).find((x) => x.id === t.taskTypeId);
@@ -6350,8 +7031,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      Les deux couches partagent exactement la même géométrie : même gouttière,
      même réserve de champs, mêmes bornes. */
   const bandGeometry = !rowsBand ? null : {
-    left: "calc(26% + 6px)",
-    right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
+    ...layerInsets,
     top: rowsBand.top,
     height: rowsBand.height,
   };
@@ -6414,7 +7094,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const spanLayer = (!rowsBand || !spanShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-span-layer"
-      style={{ left: "calc(26% + 6px)", right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0, top: 0, bottom: 0 }}
+      style={{ ...layerInsets, top: 0, bottom: 0 }}
     >
       {spanShapes.map(({ annot, y, leftPct, widthPct }) => (
         <span
@@ -6444,6 +7124,107 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
+  /* Macro-bulles, en DEUX couches comme un bloc temporel : le remplissage
+     derrière les bulles (il situe, il ne masque pas), le cadre et son libellé
+     devant. Posé avec le remplissage, le cadre serait recouvert par la moindre
+     bulle qui le traverse, et « bordure continue » ne donnerait pas un trait
+     continu à l'œil. */
+  const bubbleMacroGeometry = (seg) => {
+    const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
+    const to = Math.max(minIdx, Math.min(maxIdx, seg.endIdx));
+    const leftPct = ((from - minIdx) / span) * 100;
+    const widthPct = Math.max(1, ((to - from) / span) * 100);
+    const inset = seg.padding;
+    return {
+      leftPct, widthPct, inset,
+      left: `calc(${leftPct}% - ${inset}px)`,
+      width: `calc(${widthPct}% + ${inset * 2}px)`,
+    };
+  };
+
+  const bubbleMacroLayer = !bubbleMacroShapes.length ? null : (
+    <div className="lp-bubble-macro-layer" style={{ ...layerInsets, top: 0, bottom: 0 }}>
+      {bubbleMacroShapes.map((seg) => {
+        const g = bubbleMacroGeometry(seg);
+        return (
+          <span
+            key={"macro-fill-" + seg.key}
+            className="lp-bubble-macro"
+            style={{ left: g.left, width: g.width, top: seg.top, height: seg.height, background: bubbleMacroFill(seg.macro) }}
+          />
+        );
+      })}
+    </div>
+  );
+
+  const bubbleMacroFrameLayer = !bubbleMacroShapes.length ? null : (
+    <div className="lp-bubble-macro-frames" style={{ ...layerInsets, top: 0, bottom: 0 }}>
+      {bubbleMacroShapes.map((seg) => {
+        const g = bubbleMacroGeometry(seg);
+        const pct = bubbleMacroPct(seg);
+        return (
+          <React.Fragment key={"macro-" + seg.key}>
+            <span
+              className="lp-bubble-macro-frame"
+              style={{ left: g.left, width: g.width, top: seg.top, height: seg.height, border: bubbleMacroBorder(seg.macro) }}
+            />
+            {/* Libellé centré sur l'enveloppe PAR LE NAVIGATEUR
+                (translateX(-50%) en feuille de style) : un centrage calculé en
+                pixels resterait périmé jusqu'au chargement de la police. */}
+            <span
+              className="lp-bubble-macro-label"
+              style={{
+                left: (g.leftPct + g.widthPct / 2) + "%",
+                top: Math.max(0, seg.top - 9) + (seg.labelOffset || 0),
+                background: seg.macro.color,
+              }}
+              title={`${seg.macro.label}${pct === null ? "" : ` — avancement agrégé ${pct} %`}`}
+            >
+              {seg.macro.label}
+            </span>
+            {pct !== null && (
+              <>
+                <span
+                  className="lp-bubble-macro-progress"
+                  style={{ left: g.left, width: g.width, top: seg.top + seg.height - 5 }}
+                >
+                  <span className="lp-bubble-macro-progress-fill" style={{ width: pct + "%", background: seg.macro.color }} />
+                </span>
+                <span
+                  className="lp-bubble-macro-progress-label"
+                  style={{ left: `calc(${g.leftPct + g.widthPct}% + ${seg.padding + 3}px)`, top: seg.top + seg.height - 9, color: seg.macro.color }}
+                >
+                  {pct}%
+                </span>
+              </>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+
+  /* Légende du champ qui colore. Elle ne redit pas ce que le diagramme montre
+     déjà — elle NOMME les couleurs, ce qu'aucune bulle ne peut faire seule dès
+     que l'on colore par responsable ou par période. Cliquer un rang met son
+     groupe en avant ; recliquer relâche. */
+  const bubbleLegendBar = (!bubbleMode || !bubbleCfg.bubbleShowLegend || !bubbleLegend.length) ? null : (
+    <div className="lp-bubble-legend">
+      {bubbleLegend.map((entry) => (
+        <button
+          key={entry.key}
+          type="button"
+          className={"lp-bubble-legend-item" + (bubbleHighlight && bubbleHighlight !== entry.key ? " is-dimmed" : "")}
+          title={`${entry.label} — ${entry.count} tâche${entry.count > 1 ? "s" : ""}${bubbleHighlight === entry.key ? " (mise en avant : cliquer pour relâcher)" : ""}`}
+          onClick={() => setBubbleHighlight((cur) => (cur === entry.key ? null : entry.key))}
+        >
+          <span className="lp-bubble-legend-mark" style={{ background: entry.color }} />
+          <span className="lp-bubble-legend-label">{entry.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+
   // Étiquettes de blocs et cadres : une seule couche au-dessus des lignes,
   // sur la même bande horizontale que la grille de fond. Ce sont des variables
   // et non des composants définis ici : un composant recréé à chaque rendu
@@ -6451,7 +7232,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const annotationLayer = (!rowsBand || !frameShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-annot-layer"
-      style={{ left: "calc(26% + 6px)", right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0 }}
+      style={layerInsets}
     >
       {frameShapes.map((seg) => {
         const from = Math.max(minIdx, Math.min(maxIdx, seg.startIdx));
@@ -6544,12 +7325,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     document.body
   );
 
+  /* Classe racine : le mode bulles y ajoute sa bascule de largeur d'étiquette
+     et sa hauteur de bulle. Rien d'autre ne change dans la mise en page. */
+  const rootClass = "lp-widget-minigantt"
+    + (bubbleMode ? " is-bubbles size-" + bubbleCfg.bubbleSize : "");
+
   if (!groupBy || groupBy === "none") {
     return (
-      <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
+      <div className={rootClass} style={{ position: "relative" }} ref={rootRef}>
         {viewToolbar}
         {bandLayer}
         {milestoneRuleLayer}
+        {bubbleMacroLayer}
         {toolbar}
         <Axis />
         {phasesHeader}
@@ -6561,13 +7348,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {bandFrameLayer}
         {annotationLayer}
         {spanLayer}
+        {bubbleMacroFrameLayer}
+        {bubbleLegendBar}
         <Tooltip />
         {annotationModal}
       </div>
     );
   }
 
-  const groups = rowGroups;
+  const groups = macroOrderedGroups;
   // Fond d'un groupe : une teinte très diluée de la couleur du champ de
   // regroupement — projet, statut… — pour remplacer les larges aplats blancs
   // qui séparaient les groupes. Un champ sans couleur propre (responsable,
@@ -6582,10 +7371,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return `color-mix(in srgb, ${base} 7%, transparent)`;
   };
   return (
-    <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
+    <div className={rootClass + " lp-widget-minigantt-grouped"} style={{ position: "relative" }} ref={rootRef}>
       {viewToolbar}
       {bandLayer}
       {milestoneRuleLayer}
+      {bubbleMacroLayer}
       {toolbar}
       <Axis />
       {phasesHeader}
@@ -6612,10 +7402,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {bandFrameLayer}
       {annotationLayer}
       {spanLayer}
+      {bubbleMacroFrameLayer}
+      {bubbleLegendBar}
       <Tooltip />
       {annotationModal}
     </div>
   );
+}
+
+/* Widget « Bulles » (#92). Volontairement une ENVELOPPE de trois lignes, et non
+   un second diagramme : l'axe, la fenêtre, le zoom, les groupes repliables, les
+   annotations, les infobulles et le glisser des dates sont ceux du Mini-Gantt,
+   et le rester est la seule façon qu'un correctif d'axe profite aux deux.
+   Ce qui est propre aux bulles vit dans le bloc NEXORA:BUBBLES (logique) et
+   dans les branches `bubbleMode` de WidgetMiniGantt (rendu de la ligne). */
+function WidgetBubbles(props) {
+  return <WidgetMiniGantt {...props} bubbleMode />;
 }
 
 // Axe temporel compact, partagé par les widgets Mini-Gantt et Mini métro : choisit
@@ -8597,6 +9399,266 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
   );
 }
 
+
+/* Réglages d'affichage du widget « Bulles » (#92) — UN SEUL formulaire, comme
+   `MiniGanttDisplayFields` dont il est le pendant (la leçon de #86 : deux
+   copies d'un formulaire divergent toujours). Contrat identique : `value`
+   porte les MÊMES clés que le widget enregistré, `onChange` reçoit un
+   correctif partiel de ces clés.
+
+   Tout ce qui concerne le CADRAGE — étendue temporelle, fenêtre à dates fixes,
+   ordre des lignes — passe par les normalisateurs du Mini-Gantt, sans copie :
+   c'est le même axe, ce sont donc les mêmes réglages, et un widget qui change
+   de type les garde. */
+function BubblesDisplayFields({ value, onChange, ctx }) {
+  const cfg = normalizeBubblesWidget(value || {});
+  const sortKey = normalizeMiniGanttSort(value.miniGanttSort);
+  const sortDir = normalizeMiniGanttSortDir(value.miniGanttSortDir);
+  const range = normalizeMiniGanttRange(value.miniGanttRange);
+  const windowStart = value.miniGanttWindow?.start || "";
+  const windowEnd = value.miniGanttWindow?.end || "";
+  const windowError = miniGanttWindowMessage(range, windowStart, windowEnd);
+  const patchRange = (patch) => onChange({ miniGanttRange: normalizeMiniGanttRange({ ...range, ...patch }) });
+  const patchWindow = (patch) => onChange({ miniGanttWindow: { start: windowStart, end: windowEnd, ...patch } });
+  const toggleField = (key) => onChange({
+    bubbleFields: cfg.bubbleFields.includes(key)
+      ? cfg.bubbleFields.filter((f) => f !== key)
+      : [...cfg.bubbleFields, key],
+  });
+  return (
+    <>
+      <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
+        Chaque tâche devient une bulle posée sur l'axe du temps, à sa date et à sa durée. Les champs cochés plus bas se rangent sous la bulle.
+      </p>
+      <div className="lp-field">
+        <label>Grouper par <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(sections repliables, qui séparent visuellement les bulles)</span></label>
+        <select value={value.groupBy || "none"} onChange={(e) => onChange({ groupBy: e.target.value })}>
+          {miniGanttGroupByKeys(ctx).map((key) => (
+            <option key={key} value={key}>{key === "none" ? "Aucun regroupement" : fieldLabel(key, ctx)}</option>
+          ))}
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Colorer par <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(indépendant du regroupement)</span></label>
+        <select value={cfg.bubbleColorBy} onChange={(e) => onChange({ bubbleColorBy: e.target.value })}>
+          {miniGanttGroupByKeys(ctx).filter((key) => key !== "none").map((key) => (
+            <option key={key} value={key}>{fieldLabel(key, ctx)}</option>
+          ))}
+        </select>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 4, marginBottom: 0 }}>
+          La bulle prend la couleur de sa valeur — celle du statut, du projet, du type ou de la criticité. Un champ dont les valeurs n'ont pas de couleur à elles (responsable, période…) reçoit une teinte stable, la même partout pour la même valeur.
+        </p>
+      </div>
+      <label className="lp-checkbox-line">
+        <input type="checkbox" checked={cfg.bubbleShowLegend} onChange={(e) => onChange({ bubbleShowLegend: e.target.checked })} /> Afficher la légende des couleurs (cliquer un rang met son groupe en avant)
+      </label>
+      <label className="lp-checkbox-line">
+        <input type="checkbox" checked={value.showMilestones !== false} onChange={(e) => onChange({ showMilestones: e.target.checked })} /> Afficher les jalons (bulle compacte centrée sur leur date, avec leur icône propre)
+      </label>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Dans la bulle</label>
+        <label className="lp-checkbox-line">
+          <input type="checkbox" checked={cfg.bubbleShowProgress} onChange={(e) => onChange({ bubbleShowProgress: e.target.checked })} /> Statut et avancement en pied de bulle
+        </label>
+        <label className="lp-checkbox-line">
+          <input type="checkbox" checked={cfg.bubbleShowDescription} onChange={(e) => onChange({ bubbleShowDescription: e.target.checked })} /> Première ligne de la description
+        </label>
+        <label className="lp-checkbox-line">
+          <input type="checkbox" checked={cfg.bubbleShowDates} onChange={(e) => onChange({ bubbleShowDates: e.target.checked })} /> Dates de début et de fin aux extrémités
+        </label>
+      </div>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Hauteur des bulles</label>
+        <div className="lp-density-row">
+          {BUBBLE_SIZES.map((size) => (
+            <button
+              key={size}
+              type="button"
+              className={"lp-density-btn" + (cfg.bubbleSize === size ? " active" : "")}
+              onClick={() => onChange({ bubbleSize: size })}
+            >
+              {size === "compact" ? "Compacte" : size === "large" ? "Haute" : "Normale"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Champs affichés</label>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -2, marginBottom: 6 }}>
+          Chaque champ garde la même mise en forme (pastille, badge, format de date…) que partout ailleurs dans Nexora. Un champ vide ne laisse pas de trou.
+        </p>
+        {BUBBLE_ROW_FIELD_OPTIONS.map((f) => (
+          <label className="lp-checkbox-line" key={f}>
+            <input type="checkbox" checked={cfg.bubbleFields.includes(f)} onChange={() => toggleField(f)} /> {fieldLabel(f, ctx)}
+          </label>
+        ))}
+      </div>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Disposition de ces champs</label>
+        <div className="lp-density-row">
+          <button type="button" className={"lp-density-btn" + (cfg.bubbleFieldsLayout === "under" ? " active" : "")} onClick={() => onChange({ bubbleFieldsLayout: "under" })}>Sous la bulle</button>
+          <button type="button" className={"lp-density-btn" + (cfg.bubbleFieldsLayout === "inline" ? " active" : "")} onClick={() => onChange({ bubbleFieldsLayout: "inline" })}>À la suite de la bulle</button>
+        </div>
+      </div>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Ordre des lignes</label>
+        <div className="lp-density-row">
+          {MINIGANTT_SORT_KEYS.map((k) => (
+            <button key={k} type="button" className={"lp-density-btn" + (sortKey === k ? " active" : "")} onClick={() => onChange({ miniGanttSort: k })}>
+              {MINIGANTT_SORT_LABELS[k]}
+            </button>
+          ))}
+        </div>
+        <div className="lp-density-row" style={{ marginTop: 6 }}>
+          <button type="button" className={"lp-density-btn" + (sortDir === "asc" ? " active" : "")} onClick={() => onChange({ miniGanttSortDir: "asc" })}>Croissant</button>
+          <button type="button" className={"lp-density-btn" + (sortDir === "desc" ? " active" : "")} onClick={() => onChange({ miniGanttSortDir: "desc" })}>Décroissant</button>
+        </div>
+      </div>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Étendue temporelle</label>
+        <div className="lp-density-row">
+          <button type="button" className={"lp-density-btn" + (range.mode === "auto" ? " active" : "")} onClick={() => patchRange({ mode: "auto" })}>Automatique</button>
+          <button type="button" className={"lp-density-btn" + (range.mode === "rolling" ? " active" : "")} onClick={() => patchRange({ mode: "rolling" })}>Fenêtre glissante</button>
+          <button type="button" className={"lp-density-btn" + (range.mode === "fixed" ? " active" : "")} onClick={() => patchRange({ mode: "fixed" })}>Dates fixes</button>
+        </div>
+        {range.mode === "auto" && (
+          <label className="lp-checkbox-line" style={{ marginTop: 8 }}>
+            <input type="checkbox" checked={range.includeToday} onChange={(e) => patchRange({ includeToday: e.target.checked })} />
+            {" "}Toujours inclure la ligne « Aujourd'hui »
+          </label>
+        )}
+        {range.mode === "rolling" && (
+          <div className="lp-row2" style={{ marginTop: 8 }}>
+            <div className="lp-field">
+              <label>Mois avant aujourd'hui</label>
+              <input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={range.beforeMonths} onChange={(e) => patchRange({ beforeMonths: e.target.value })} />
+            </div>
+            <div className="lp-field">
+              <label>Mois après aujourd'hui</label>
+              <input type="number" min="0" max={MINIGANTT_RANGE_MAX_MONTHS} value={range.afterMonths} onChange={(e) => patchRange({ afterMonths: e.target.value })} />
+            </div>
+          </div>
+        )}
+        {range.mode === "fixed" && (
+          <div className="lp-row2" style={{ marginTop: 8 }}>
+            <div className="lp-field">
+              <label>Du</label>
+              <input type="date" value={windowStart} onChange={(e) => patchWindow({ start: e.target.value })} />
+            </div>
+            <div className="lp-field">
+              <label>Au</label>
+              <input type="date" value={windowEnd} min={windowStart || undefined} onChange={(e) => patchWindow({ end: e.target.value })} />
+            </div>
+          </div>
+        )}
+        {windowError && <p className="lp-gantt-annot-error">{windowError}</p>}
+      </div>
+    </>
+  );
+}
+
+/* Éditeur des macro-bulles. Plusieurs par widget, chacune avec son libellé, sa
+   couleur, son habillage et sa multisélection de tâches AVEC RECHERCHE —
+   `GanttTaskMultiSelect`, la liste déjà utilisée par les encadrés du Gantt :
+   elle groupe par projet, compte les tâches retenues et signale celles qui ont
+   disparu. La réécrire aurait donné une seconde ergonomie pour le même geste. */
+function BubbleMacrosEditor({ macros, tasks, ctx, onChange }) {
+  const list = normalizeBubbleMacros(macros);
+  const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const knownTaskIds = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks]);
+
+  const patchMacro = (id, values) => onChange(list.map((m) => (m.id === id ? { ...m, ...values } : m)));
+  const move = (id, dir) => {
+    const i = list.findIndex((m) => m.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const add = () => {
+    const created = {
+      id: uid(), label: "Nouvelle macro-bulle", color: BUBBLE_MACRO_DEFAULT_COLOR,
+      opacity: BUBBLE_MACRO_DEFAULT_OPACITY, borderStyle: "solid",
+      borderWidth: BUBBLE_MACRO_DEFAULT_BORDER_WIDTH, taskIds: [], showProgress: true,
+    };
+    onChange([...list, created]);
+    setOpen(true);
+    setEditingId(created.id);
+  };
+  const duplicate = (macro) => {
+    const copy = { ...macro, id: uid(), label: `${macro.label} (copie)` };
+    const i = list.findIndex((m) => m.id === macro.id);
+    onChange([...list.slice(0, i + 1), copy, ...list.slice(i + 1)]);
+    setEditingId(copy.id);
+  };
+
+  return (
+    <>
+      <MiniGanttListSection
+        icon={<Layers size={13} />} title="Macro-bulles" count={list.length}
+        hint="Une enveloppe colorée autour des bulles de plusieurs tâches : une phase, un lot, un chantier. Elle vit dans ce widget et ne modifie aucune tâche. L'ordre ci-dessous est celui de l'imbrication et du regroupement des lignes."
+        open={open} onToggle={() => setOpen((o) => !o)} onAdd={add} addLabel="Ajouter une macro-bulle"
+      >
+        {list.map((macro) => {
+          const check = validateBubbleMacro(macro);
+          const missing = macro.taskIds.filter((id) => !knownTaskIds.has(id));
+          return (
+            <MiniGanttAnnotationRow
+              key={macro.id} item={macro} list={list} editing={editingId === macro.id}
+              onToggleEdit={() => setEditingId(editingId === macro.id ? null : macro.id)}
+              onMove={(dir) => move(macro.id, dir)}
+              onDuplicate={() => duplicate(macro)}
+              onDelete={() => setPendingDelete(macro)}
+              warning={!check.ok}
+              swatch={<span className="lp-bubble-macro-swatch" style={{ background: bubbleMacroFill(macro), borderColor: macro.color }} />}
+              title={macro.label || "Sans libellé"}
+              subtitle={macro.taskIds.length === 0
+                ? "aucune tâche — non dessinée"
+                : `${macro.taskIds.length} tâche${macro.taskIds.length > 1 ? "s" : ""}${missing.length ? ` · ${missing.length} introuvable${missing.length > 1 ? "s" : ""}` : ""}`}
+            >
+              <div className="lp-field">
+                <label>Libellé</label>
+                <input type="text" value={macro.label} onChange={(e) => patchMacro(macro.id, { label: e.target.value })} placeholder="Phase essais, Lot 1, Marche probatoire…" />
+              </div>
+              {!check.ok && <p className="lp-gantt-annot-error">{check.error}</p>}
+              <div className="lp-field">
+                <label>Couleur</label>
+                <ColorPicker value={macro.color} onChange={(color) => patchMacro(macro.id, { color })} />
+              </div>
+              <GanttBlockOpacityRow
+                block={{ ...macro, kind: "phase" }}
+                onChange={(values) => patchMacro(macro.id, values)}
+              />
+              <GanttAnnotationBorderRow value={macro.borderStyle} onChange={(borderStyle) => patchMacro(macro.id, { borderStyle })} />
+              <GanttBlockBorderWidthRow block={macro} onChange={(values) => patchMacro(macro.id, values)} />
+              <label className="lp-checkbox-line">
+                <input type="checkbox" checked={macro.showProgress !== false} onChange={(e) => patchMacro(macro.id, { showProgress: e.target.checked })} /> Afficher l'avancement agrégé (moyenne pondérée par la durée)
+              </label>
+              <GanttTaskMultiSelect
+                tasks={tasks} ctx={ctx} value={macro.taskIds}
+                onChange={(taskIds) => patchMacro(macro.id, { taskIds })}
+                label="Tâches rattachées"
+                hint="Les tâches non successives produisent plusieurs enveloppes."
+              />
+            </MiniGanttAnnotationRow>
+          );
+        })}
+      </MiniGanttListSection>
+      {pendingDelete && (
+        <ConfirmModal
+          title="Supprimer cette macro-bulle ?"
+          message={`« ${pendingDelete.label || "Sans libellé"} » ne sera plus dessinée. Les tâches qu'elle rassemblait ne changent pas.`}
+          confirmLabel="Supprimer"
+          onConfirm={() => { onChange(list.filter((m) => m.id !== pendingDelete.id)); setPendingDelete(null); }}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
+    </>
+  );
+}
 /* Vue principale : elle adapte uniquement la persistance de vue au contrat du
    widget. Toute la préparation temporelle et le rendu restent dans
    WidgetMiniGantt, ce qui interdit un second moteur Gantt. */
@@ -9760,6 +10822,7 @@ const WIDGET_TYPE_META = [
   { key: "list", label: "Liste", icon: List, group: "Indicateurs" },
   { key: "taskDetail", label: "Tâche détaillée", icon: List, group: "Indicateurs" },
   { key: "minigantt", label: "Mini-Gantt", icon: GanttChartSquare, group: "Planning" },
+  { key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" },
   { key: "milestoneTimeline", label: "Timeline des jalons", icon: Milestone, group: "Planning" },
   { key: "verticalMetroTimeline", label: "Timeline verticale métro", icon: TrainTrack, group: "Planning" },
   { key: "metroDeadline", label: "Métro / Échéances", icon: CalendarClock, group: "Planning" },
@@ -10023,7 +11086,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [sortBy, setSortBy] = useState(widget?.sortBy || "end");
   const [limit, setLimit] = useState(widget?.limit || 6);
   const [filter, setFilter] = useState(widgetFilterFor(widget || {}));
-  const [listGroupBy, setListGroupBy] = useState((widget?.type === "list" || widget?.type === "minigantt") && widget?.groupBy ? widget.groupBy : "none");
+  const [listGroupBy, setListGroupBy] = useState((widget?.type === "list" || widget?.type === "minigantt" || widget?.type === "bubbles") && widget?.groupBy ? widget.groupBy : "none");
   const [showMilestones, setShowMilestones] = useState(widget?.showMilestones !== false);
   // Trait vertical sous les jalons : absent = décoché (#95).
   const [miniGanttMilestoneRules, setMiniGanttMilestoneRules] = useState(!!widget?.miniGanttMilestoneRules);
@@ -10046,6 +11109,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   /* Les réglages d'affichage sont édités par un composant partagé avec la vue
      Gantt : il rend un correctif aux clés du widget enregistré, que la fiche
      range dans son état local jusqu'à l'enregistrement. */
+  /* Réglages du widget « Bulles » (#92) : UN seul état pour toutes ses clés
+     propres, plutôt qu'une quinzaine de useState. Les clés PARTAGÉES avec le
+     Mini-Gantt (regroupement, jalons, tri, cadrage, annotations) restent dans
+     l'état existant : la fiche garde une seule source de vérité par réglage, et
+     changer un widget de Mini-Gantt à Bulles ne perd rien. */
+  const [bubbleSettings, setBubbleSettings] = useState(() => normalizeBubblesWidget(widget || {}));
+  const applyBubblePatch = (patch) => {
+    applyMiniGanttPatch(patch);
+    if (Object.keys(patch).some((key) => key.startsWith("bubble"))) {
+      setBubbleSettings((prev) => normalizeBubblesWidget({ ...prev, ...patch }));
+    }
+  };
   const applyMiniGanttPatch = (patch) => {
     if ("groupBy" in patch) setListGroupBy(patch.groupBy);
     if ("showMilestones" in patch) setShowMilestones(patch.showMilestones);
@@ -10193,7 +11268,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "criticalPath" || type === "projectPulse" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "deadlineScatter" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
+  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "projectPulse" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "deadlineScatter" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -10228,6 +11303,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     // Un cadrage « Dates fixes » incomplet ou à l'envers n'a pas d'axe : la
     // fiche le dit sous les champs et refuse l'enregistrement.
     if (type === "minigantt") return ganttAnnotationsValid && !miniGanttWindowError;
+    // Une macro-bulle sans libellé ne serait qu'une enveloppe anonyme : la
+    // fiche refuse l'enregistrement, comme pour un bloc temporel sans titre.
+    if (type === "bubbles") {
+      return ganttAnnotationsValid && !miniGanttWindowError
+        && bubbleSettings.bubbleMacros.every((m) => validateBubbleMacro(m).ok);
+    }
     return true;
   })();
 
@@ -10309,7 +11390,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.treemapBorder = treemapBorder;
     }
     if (type === "budgetCompare") data.budgetCompareProjectIds = budgetCompareProjectIds;
-    if (type === "minigantt") {
+    if (type === "minigantt" || type === "bubbles") {
       data.ganttAnnotations = {
         temporalBlocks: normalizeTemporalBlocks(ganttAnnotations.temporalBlocks),
         highlightFrames: pruneHighlightFrames(ganttAnnotations.highlightFrames, ganttTasks.map((t) => t.id)),
@@ -10332,6 +11413,37 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         ? { start: miniGanttWindowStart, end: miniGanttWindowEnd }
         : null;
       if (widget?.miniGanttZoomLevel != null) data.miniGanttZoomLevel = widget.miniGanttZoomLevel;
+    }
+    if (type === "bubbles") {
+      // Les clés du cadrage et du regroupement sont celles du Mini-Gantt, aux
+      // mêmes noms : un widget qui change de type garde sa fenêtre, son zoom,
+      // son tri et ses annotations.
+      data.groupBy = listGroupBy;
+      data.showMilestones = showMilestones;
+      data.miniGanttSort = miniGanttSort;
+      data.miniGanttSortDir = miniGanttSortDir;
+      data.miniGanttRange = normalizeMiniGanttRange(miniGanttRange);
+      data.miniGanttWindow = miniGanttRange.mode === "fixed" && !miniGanttWindowError
+        ? { start: miniGanttWindowStart, end: miniGanttWindowEnd }
+        : null;
+      if (widget?.miniGanttZoomLevel != null) data.miniGanttZoomLevel = widget.miniGanttZoomLevel;
+      const bubbles = normalizeBubblesWidget({
+        ...bubbleSettings,
+        // Une tâche supprimée entre-temps quitte la macro-bulle à
+        // l'ENREGISTREMENT, jamais au rendu : un filtre de widget ne doit pas
+        // détruire une configuration.
+        bubbleMacros: pruneBubbleMacros(bubbleSettings.bubbleMacros, ganttTasks.map((t) => t.id)),
+      });
+      data.bubbleColorBy = bubbles.bubbleColorBy;
+      data.bubbleFields = bubbles.bubbleFields;
+      data.bubbleFieldsLayout = bubbles.bubbleFieldsLayout;
+      data.bubbleSize = bubbles.bubbleSize;
+      data.bubbleShowDates = bubbles.bubbleShowDates;
+      data.bubbleShowProgress = bubbles.bubbleShowProgress;
+      data.bubbleShowDescription = bubbles.bubbleShowDescription;
+      data.bubbleShowLegend = bubbles.bubbleShowLegend;
+      data.bubbleMacroGrouping = bubbles.bubbleMacroGrouping;
+      data.bubbleMacros = bubbles.bubbleMacros;
     }
     if (titleColor) data.titleColor = titleColor; else data.titleColor = null;
     if (bgColor) data.bgColor = bgColor; else data.bgColor = null;
@@ -11300,37 +12412,57 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         />
       )}
 
-      {type === "minigantt" && (
+      {type === "bubbles" && (
+        /* Même contrat que le Mini-Gantt : un formulaire partagé, qui ne
+           connaît que des clés, et la fiche qui les range dans son état local
+           jusqu'à l'enregistrement. */
+        <BubblesDisplayFields
+          value={{
+            ...bubbleSettings,
+            groupBy: listGroupBy,
+            showMilestones,
+            miniGanttSort,
+            miniGanttSortDir,
+            miniGanttRange,
+            miniGanttWindow: { start: miniGanttWindowStart, end: miniGanttWindowEnd },
+          }}
+          onChange={applyBubblePatch}
+          ctx={ctx}
+        />
+      )}
+
+      {type === "bubbles" && (
+        <BubbleMacrosEditor
+          macros={bubbleSettings.bubbleMacros}
+          tasks={ganttTasks}
+          ctx={ctx}
+          onChange={(bubbleMacros) => applyBubblePatch({ bubbleMacros })}
+        />
+      )}
+
+      {(type === "minigantt" || type === "bubbles") && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
             Les annotations ci-dessous sont enregistrées avec ce widget : elles suivent sa duplication, celle de l'onglet et celle du tableau de bord, sans jamais modifier les tâches.
           </p>
-          {type === "minigantt" ? (
-            <MiniGanttAnnotationsEditor
-              blocks={ganttAnnotations.temporalBlocks}
-              frames={ganttAnnotations.highlightFrames}
-              milestones={ganttAnnotations.milestones}
-              risks={ganttTaskRisks}
-              notes={ganttAnnotations.notes}
-              spans={ganttAnnotations.spans}
-              allowSpans
-              tasks={ganttTasks}
-              ctx={ctx}
-              defaultStart={ganttDefaultStart}
-              defaultEnd={ganttDefaultEnd}
-              onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
-            />
-          ) : (
-            <GanttAnnotationsEditor
-              blocks={ganttAnnotations.temporalBlocks}
-              frames={ganttAnnotations.highlightFrames}
-              tasks={ganttTasks}
-              ctx={ctx}
-              defaultStart={ganttDefaultStart}
-              defaultEnd={ganttDefaultEnd}
-              onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
-            />
-          )}
+          {/* Un seul éditeur, pour les deux types : les blocs temporels, les
+              encadrés, les jalons et les annotations sont les MÊMES couches,
+              dessinées par le même diagramme. La branche « sans jalons ni
+              annotations » qui vivait ici ne servait plus personne. */}
+          <MiniGanttAnnotationsEditor
+            blocks={ganttAnnotations.temporalBlocks}
+            frames={ganttAnnotations.highlightFrames}
+            milestones={ganttAnnotations.milestones}
+            risks={ganttTaskRisks}
+            notes={ganttAnnotations.notes}
+            spans={ganttAnnotations.spans}
+            allowSpans
+            tasks={ganttTasks}
+            ctx={ctx}
+            defaultStart={ganttDefaultStart}
+            defaultEnd={ganttDefaultEnd}
+            onChange={(patch) => setGanttAnnotations((prev) => ({ ...prev, ...patch }))}
+          />
         </>
       )}
 

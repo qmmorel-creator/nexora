@@ -9,6 +9,11 @@ sans jamais modifier les tâches :
   hauteur utile de la zone graphique, borné par deux limites verticales ;
 - **encadré** — un cadre qui met en évidence une ou plusieurs tâches.
 
+Le Mini-Gantt en ajoute trois qui lui sont propres — **jalon**, **annotation**
+(une bulle courte ancrée à une date, une tâche, un jalon ou un risque) et
+**annotation horizontale** (un trait d'une date à une autre, à la hauteur d'une
+tâche) — décrites plus bas.
+
 ## Où c'est stocké
 
 Les annotations appartiennent à la **configuration de l'affichage**, jamais aux
@@ -60,6 +65,7 @@ type GanttAnnotations = {
   // Propres au Mini-Gantt :
   milestones?: MiniGanttMilestone[];
   notes?: MiniGanttNote[];
+  spans?: MiniGanttSpan[];
 };
 
 // Les risques de délai NE sont pas ici : ils appartiennent à la tâche.
@@ -333,7 +339,93 @@ type MiniGanttNote = {
   id: string; title: string; text?: string;
   anchor: { kind: "task" | "risk" | "milestone" | "date"; id?: string | null; date?: string | null };
 };
+
+type MiniGanttSpan = {          // annotation horizontale (#93)
+  id: string;
+  label?: string;               // texte libre, facultatif
+  startDate: string;            // AAAA-MM-JJ
+  endDate: string;              // AAAA-MM-JJ, >= startDate
+  taskId: string;               // donne l'emplacement en Y, et RIEN d'autre
+  color?: string;               // défaut #0EA5E9
+  borderStyle?: "dashed" | "solid";
+  thickness?: number;           // 0,5 à 6 px, défaut 2
+  opacity?: number;             // 10 à 100 %, défaut 100
+  position?: "above" | "center" | "below";   // défaut center
+};
 ```
+
+## Annotations horizontales — Mini-Gantt uniquement
+
+Entre le bloc temporel — toute la hauteur du diagramme — et le jalon — un point
+sur une date —, il manquait l'objet intermédiaire : un trait qui court d'une
+date à une autre, **à la hauteur d'une tâche**, avec un petit rond à chaque bout
+et un texte libre.
+
+La tâche de rattachement ne sert **qu'à** l'emplacement vertical : les dates du
+trait sont les siennes, elles ne suivent jamais celles de la tâche. C'est ce qui
+distingue une annotation horizontale d'un risque de délai, qui prolonge la barre.
+
+Tout se règle comme un bloc temporel : couleur, style de trait, épaisseur,
+opacité — plus la position dans la ligne (au-dessus de la barre, sur elle, en
+dessous).
+
+Géométrie : `miniGanttSpanRows(rows, spans)` donne le Y à partir des lignes
+**mesurées** (`rowRects`), exactement comme les encadrés ; le X se calcule en
+pourcentage de la piste et se borne à la fenêtre affichée, comme une barre. Une
+annotation dont la tâche n'est pas montée — filtrée, groupe replié, hors plafond
+d'affichage — ou dont les deux dates tombent hors de la fenêtre n'est pas
+dessinée : jamais une erreur de rendu.
+
+Le calque (`.lp-widget-minigantt-span-layer`) passe **au-dessus** des barres :
+un trait posé derrière la barre de sa propre ligne serait invisible. Il ne capte
+pas le pointeur — seule l'étiquette est cliquable, et elle rouvre l'éditeur sur
+cette annotation.
+
+## Formes des repères de jalon
+
+La couleur seule ne distingue pas deux choix : dans une liste déroulante, cinq
+pastilles rondes de teintes voisines se ressemblent, et une fois le choix fait le
+bouton fermé ne dit plus rien du tout (#94). Chaque type de jalon porte donc sa
+**forme** :
+
+| Type | Forme |
+|---|---|
+| `standard` | losange |
+| `decision` | cercle |
+| `contractual` | carré |
+| `delivery` | triangle |
+| `commissioning` | étoile |
+
+`MINIGANTT_MILESTONE_SHAPES` / `miniGanttMilestoneShape()` sont **la** référence :
+le sélecteur de type, le résumé de la ligne dans l'éditeur et le repère dessiné
+dans le diagramme la lisent tous les trois, donc ils ne peuvent pas montrer trois
+formes différentes pour le même jalon. Le rendu CSS est une classe unique
+(`.lp-annot-shape.shape-*`).
+
+Une option de `SearchableSelect` peut porter un `glyph` — un repère visuel libre
+qui remplace la pastille de couleur dans la liste **et** sur le bouton fermé.
+Les natures de bloc, les ancrages d'une annotation et la gravité d'un risque
+s'en servent.
+
+Le menu d'un `SearchableSelect` s'ouvre **vers le haut** quand la place manque
+vers le bas dans le cadre qui le rogne (une modale, sinon la fenêtre). Sans cela,
+un sélecteur posé bas dans un formulaire déroulait sa liste hors du cadre : elle
+paraissait vide alors qu'elle était pleine.
+
+## Trait vertical sous un jalon
+
+`widget.miniGanttMilestoneRules` — un booléen à la racine du widget, réglé par
+la case « Prolonger chaque jalon d'annotation par un trait vertical pleine
+hauteur » des réglages d'affichage, donc commun à la fiche du widget et à la vue
+Gantt (c'est le même formulaire).
+
+Activé, chaque jalon prolonge son repère par un trait vertical sur toute la
+hauteur des lignes, à sa couleur. Le calque
+(`.lp-widget-minigantt-rule-layer`) reprend exactement la géométrie de la bande
+des blocs temporels et son `z-index: 0` : le trait passe donc **derrière** les
+lignes (`z-index: 1`), barres et textes compris — il situe, il ne masque pas.
+
+Absent = décoché : un widget enregistré avant ce réglage ne bouge pas d'un pixel.
 
 **Risques** — ils sont portés par la **tâche** (`task.delayRisks`), pas par le
 widget : un même risque apparaît donc dans tous les Mini-Gantt qui affichent
@@ -817,6 +909,19 @@ l'interface, sans copie à maintenir en parallèle. `scripts/verify-repository.m
 vérifie que ces sentinelles et le rendu des annotations restent présents dans le
 build.
 
+`apps/nexora/tests/gantt-span-annotations.test.mjs` couvre les annotations
+horizontales depuis les mêmes sentinelles : validation (deux dates valides et une
+tâche, texte facultatif), normalisation **idempotente** des réglages, placement
+vertical selon la position choisie et dans la ligne de la bonne tâche, mise à
+l'écart d'une annotation dont la tâche n'est pas affichée, et unicité des formes
+de repère — deux types de jalon ne doivent jamais partager une forme.
+
+Le contrôle visuel vérifie en plus, sur le rendu réel : le trait posé dans la
+ligne de sa tâche, le trait ignoré quand la tâche n'est pas affichée, le calque
+des traits au-dessus des barres, les traits verticaux de jalon présents
+uniquement dans le widget qui coche le réglage et en `z-index: 0`, et des
+repères tous distincts à l'écran.
+
 
 ## La vue Gantt et le widget : mêmes réglages (#80)
 
@@ -839,3 +944,16 @@ resserre ce que la page laisse passer.
 Reste propre au widget, faute d'objet équivalent dans la vue : la
 personnalisation du **cadre** (icône du titre, couleur du titre, couleur du
 bandeau, couleur de fond). La vue n'a pas de cadre de widget à habiller.
+
+## Le widget « Bulles » partage ces annotations
+
+Le widget « Bulles » (`docs/WIDGET_BULLES.md`) n'est pas un second diagramme :
+c'est le Mini-Gantt rendu en bulles descriptives. Il lit donc la **même** clé
+`widget.ganttAnnotations`, dessine les mêmes blocs temporels, encadrés, jalons et
+annotations, et se règle avec le **même** éditeur.
+
+Ses **macro-bulles** sont une couche de plus, propre à ce widget
+(`widget.bubbleMacros`) — mais leur géométrie ne réimplémente rien : elle appelle
+`ganttFrameSegments`, la fonction des encadrés, qui sait déjà qu'un en-tête de
+groupe coupe la continuité des lignes.
+

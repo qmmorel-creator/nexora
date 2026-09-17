@@ -89,6 +89,22 @@ Barre d'outils et sous-grille du Mini-Gantt :
   et le diagramme une sous-grille verticale : sans elles, neuf traits et rien
   entre eux.
 
+Widget « Bulles » (#92) — deux widgets, dont un avec deux macro-bulles
+imbriquées, l'une posée sur des tâches **non successives** :
+
+- les bulles et les bulles de jalon se rendent, et **aucune barre de Mini-Gantt**
+  n'est dessinée : le mode bulles remplace la barre, il ne s'y ajoute pas ;
+- la colonne d'étiquettes de gauche disparaît — le titre vit dans la bulle ;
+- les champs rangés **sous** une bulle restent dans leur ligne : en position
+  absolue, ils débordaient sur la ligne suivante et la hauteur mesurée les
+  ignorait ;
+- trois enveloppes pour deux macro-bulles (l'une coupée en deux), chacune avec
+  son remplissage, son libellé et une surface non nulle, toutes dans la zone des
+  lignes ;
+- deux enveloppes imbriquées ne partagent pas le même sommet ;
+- le second widget, groupé par projet et coloré par responsable, rend ses
+  en-têtes de groupe et une légende d'au moins deux rangs.
+
 Ordre des lignes et cadrage du Mini-Gantt :
 
 - un jalon placé **entre deux barres** apparaît bien entre elles, et non en bas

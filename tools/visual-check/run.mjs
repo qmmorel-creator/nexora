@@ -1198,6 +1198,44 @@ const releverPanneau = async (bouton) => {
   return releve;
 };
 
+/* Widget « Bulles » (#92). Ce que le banc doit prouver, et que ni les tests
+   d'extraction ni la relecture ne peuvent dire : les bulles se rendent, les
+   champs rangés SOUS une bulle restent dans leur ligne (en position absolue,
+   ils débordaient sur la ligne suivante et la hauteur mesurée les ignorait),
+   et les enveloppes des macro-bulles ont une surface non nulle, restent dans
+   la zone des lignes et se décalent quand elles s'imbriquent. */
+const bulles = await page.evaluate(() => {
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), text: el.textContent.trim() };
+  };
+  const root = document.querySelector("#harness-bubbles .lp-widget-minigantt");
+  if (!root) return { error: "widget Bulles absent du banc" };
+  const rows = [...root.querySelectorAll(".lp-widget-minigantt-row")].map((row) => ({
+    row: box(row),
+    bubble: row.querySelector(".lp-bubble, .lp-bubble-milestone") ? box(row.querySelector(".lp-bubble, .lp-bubble-milestone")) : null,
+    fields: row.querySelector(".lp-bubble-fields") ? box(row.querySelector(".lp-bubble-fields")) : null,
+  }));
+  const grouped = document.querySelector("#harness-bubbles-grouped .lp-widget-minigantt");
+  return {
+    rows,
+    bubbles: root.querySelectorAll(".lp-bubble").length,
+    milestones: root.querySelectorAll(".lp-bubble-milestone").length,
+    bars: root.querySelectorAll(".lp-widget-minigantt-bar").length,
+    frames: [...root.querySelectorAll(".lp-bubble-macro-frame")].map(box),
+    fills: [...root.querySelectorAll(".lp-bubble-macro")].map(box),
+    labels: [...root.querySelectorAll(".lp-bubble-macro-label")].map(box),
+    progress: [...root.querySelectorAll(".lp-bubble-macro-progress")].map(box),
+    axis: root.querySelector(".lp-widget-minigantt-axis") ? box(root.querySelector(".lp-widget-minigantt-axis")) : null,
+    // Le mode bulles supprime la colonne d'étiquettes de gauche : le titre vit
+    // dans la bulle. La piste doit donc partir du bord du widget.
+    labelColumn: root.querySelectorAll(".lp-widget-minigantt-label").length,
+    legend: grouped ? [...grouped.querySelectorAll(".lp-bubble-legend-item")].map(box) : [],
+    groupHeads: grouped ? grouped.querySelectorAll(".lp-widget-minigantt-group-head").length : 0,
+    groupedBubbles: grouped ? grouped.querySelectorAll(".lp-bubble, .lp-bubble-milestone").length : 0,
+  };
+});
+
 const parite = {};
 try {
   /* Page rechargée : les scénarios précédents laissent des modales ouvertes,
@@ -2038,6 +2076,40 @@ expect((taskMeta.critShape || []).every((f) => /^11x11:50%$/.test(f)),
 expect(taskMeta.critDotAfterPick === 1, "Fiche de tâche : après avoir choisi un niveau, la pastille n'apparaît pas sur la valeur fermée");
 
 expect(!seen.miniRiskButton, "Mini-Gantt : le bouton « + Risque » devrait avoir disparu — les risques s'éditent dans la fiche de la tâche");
+
+// --- Widget « Bulles » (#92) ------------------------------------------------
+expect(!bulles.error, `Bulles : ${bulles.error || ""}`);
+if (!bulles.error) {
+  expect(bulles.bubbles > 0, "Bulles : aucune bulle rendue");
+  expect(bulles.milestones > 0, "Bulles : aucun jalon rendu en bulle compacte");
+  expect(bulles.bars === 0, `Bulles : ${bulles.bars} barre(s) de Mini-Gantt dessinée(s) — le mode bulles remplace la barre, il ne s'y ajoute pas`);
+  expect(bulles.labelColumn === 0, "Bulles : la colonne d'étiquettes de gauche est rendue — en mode bulles, le titre vit dans la bulle");
+  // Les champs sous la bulle doivent rester DANS leur ligne : c'est le défaut
+  // que la position absolue produisait (débordement sur la ligne suivante).
+  const debordent = bulles.rows.filter((r) => r.fields && (r.fields.bottom > r.row.bottom + 1 || r.fields.top < r.row.top - 1));
+  expect(debordent.length === 0, `Bulles : ${debordent.length} ligne(s) dont les champs débordent de la ligne — ils doivent compter dans sa hauteur`);
+  const horsBulle = bulles.rows.filter((r) => r.bubble && (r.bubble.bottom > r.row.bottom + 2 || r.bubble.top < r.row.top - 2));
+  expect(horsBulle.length === 0, `Bulles : ${horsBulle.length} bulle(s) sortent de leur ligne`);
+  // Deux macro-bulles, dont une sur des tâches NON successives : trois
+  // enveloppes, chacune avec son remplissage, son libellé et sa surface.
+  expect(bulles.frames.length === 3, `Bulles : ${bulles.frames.length} enveloppe(s) de macro-bulle, 3 attendues (une contiguë, une coupée en deux)`);
+  expect(bulles.fills.length === bulles.frames.length, `Bulles : ${bulles.fills.length} remplissage(s) pour ${bulles.frames.length} cadre(s) — les deux couches doivent aller par paires`);
+  expect(bulles.labels.length === 3, `Bulles : ${bulles.labels.length} libellé(s) de macro-bulle, 3 attendus`);
+  expect(bulles.frames.every((f) => f.right - f.left > 4 && f.bottom - f.top > 4), "Bulles : une enveloppe a une surface nulle");
+  const bandeHaut = Math.min(...bulles.rows.map((r) => r.row.top));
+  const bandeBas = Math.max(...bulles.rows.map((r) => r.row.bottom));
+  expect(bulles.frames.every((f) => f.top >= bandeHaut - 12 && f.bottom <= bandeBas + 12),
+    "Bulles : une enveloppe sort de la zone des lignes");
+  expect(bulles.progress.length > 0, "Bulles : aucune barre d'avancement agrégé sur les macro-bulles");
+  // Imbrication : deux macro-bulles partagent une tâche, leurs enveloppes ne
+  // doivent pas confondre leurs traits.
+  const tops = bulles.frames.map((f) => f.top).sort((a, b) => a - b);
+  expect(new Set(tops).size === tops.length, "Bulles : deux enveloppes imbriquées partagent exactement le même sommet");
+  // Second widget : groupé par projet, coloré par responsable, avec légende.
+  expect(bulles.groupHeads >= 2, `Bulles groupées : ${bulles.groupHeads} en-tête(s) de groupe`);
+  expect(bulles.groupedBubbles > 0, "Bulles groupées : aucune bulle dans les groupes");
+  expect(bulles.legend.length >= 2, `Bulles : légende à ${bulles.legend.length} rang(s), au moins 2 attendus (un par responsable présent)`);
+}
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
 expect(scoped.labels.length === 2, `Paramètres : ${scoped.labels.length} tâche(s) proposée(s), 2 attendues (seul le projet filtré)`);
