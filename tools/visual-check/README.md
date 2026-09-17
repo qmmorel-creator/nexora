@@ -92,6 +92,15 @@ imbriquées, l'une posée sur des tâches **non successives** :
 - deux enveloppes imbriquées ne partagent pas le même sommet ;
 - le second widget, groupé par projet et coloré par responsable, rend ses
   en-têtes de groupe et une légende d'au moins deux rangs ;
+- les couches superposées partent du **même bord gauche** que la piste d'une
+  ligne — axe, grille et cadres de macro-bulles : une gouttière de flex en trop
+  les décalait toutes de 6 px (#104) ;
+- les champs rangés sous une bulle tiennent **exactement sa largeur**, bord
+  gauche et bord droit (#103) ;
+- une macro-bulle contenant une tâche d'un jour et deux jalons **contient
+  entièrement** leurs bulles : largeur minimale et jalon centré compris (#104) ;
+- survoler le corps d'une bulle ouvre l'infobulle, survoler la **poignée
+  d'avancement** ne l'ouvre pas, et quitter la poignée la redonne (#106) ;
 - un troisième widget réglé sur **trois lignes de description** (#97) : la
   description est bien coupée à trois lignes, la bulle gagne exactement la
   hauteur de ses deux lignes supplémentaires, et son **pied — statut et

@@ -43,6 +43,9 @@ const {
   normalizeBubbleSize,
   normalizeBubbleDescriptionLines,
   bubbleHeightPx,
+  bubbleRowExtent,
+  BUBBLE_MIN_PX,
+  BUBBLE_MILESTONE_W,
   BUBBLE_HEIGHT_PX,
   BUBBLE_DESC_LINE_PX,
   BUBBLE_DESC_LINES_MAX,
@@ -70,6 +73,7 @@ const {
     "normalizeBubbleFields", "normalizeBubbleFieldsLayout",
     "normalizeBubbleSize", "normalizeBubbleOpacity", "normalizeBubbleBorderWidth",
     "normalizeBubbleDescriptionLines", "bubbleHeightPx",
+    "bubbleRowExtent", "BUBBLE_MIN_PX", "BUBBLE_MILESTONE_W",
     "BUBBLE_HEIGHT_PX", "BUBBLE_DESC_LINE_PX", "BUBBLE_DESC_LINES_MAX",
     "validateBubbleMacro", "normalizeBubbleMacros", "pruneBubbleMacros",
     "bubbleMacroFill", "bubbleMacroBorder", "normalizeBubblesWidget",
@@ -332,8 +336,11 @@ test("le mode bulles ne s'active que par son drapeau", () => {
   assert.match(html, /if \(bubbleMode\) return BubbleMilestoneRow\(t\);/);
   // La colonne d'étiquettes de gauche a UNE seule définition, partagée par
   // toutes les couches en superposition.
-  assert.match(html, /const labelInsetCss = bubbleMode \? "0%" : "26%";/);
-  assert.doesNotMatch(html, /calc\(26% \+ 6px\)/, "une couche garde un retrait de 26 % codé en dur");
+  assert.match(html, /const layerInsetLeft = bubbleMode \? 0 : "calc\(26% \+ 6px\)";/);
+  // Une seule occurrence : celle de la définition ci-dessus. Toute couche qui
+  // recopierait ce retrait se désalignerait le jour où il change.
+  assert.equal((html.match(/calc\(26% \+ 6px\)/g) || []).length, 1,
+    "une couche garde un retrait codé en dur au lieu de lire layerInsetLeft");
 });
 
 test("les réglages des bulles et ceux du Mini-Gantt ne partagent aucune clé d'affichage", () => {
@@ -393,4 +400,74 @@ test("la hauteur de bulle n'a qu'une source : le rendu et l'auto-dimensionnement
   assert.doesNotMatch(html, /--lp-bubble-h:\s*\d+px/, "la feuille de style refixe une hauteur de bulle");
   // La description est coupée par la variable, pas par une valeur en dur.
   assert.match(html, /-webkit-line-clamp:var\(--lp-bubble-desc-lines, 1\)/);
+});
+
+// --- Étendue réelle d'une ligne (#104) -------------------------------------
+//
+// L'enveloppe d'une macro-bulle se calculait sur les DATES. Or une bulle courte
+// s'étend au-delà de sa date de fin (largeur minimale en pixels) et la bulle
+// d'un jalon s'étend des deux côtés de sa date unique (elle est centrée) :
+// toutes deux sortaient du cadre.
+
+test("l'étendue d'une ligne tient compte de la largeur minimale d'une bulle", () => {
+  // 10 px par jour : une bulle de 90 px couvre 9 jours.
+  const courte = bubbleRowExtent({ startIdx: 100, endIdx: 102 }, 10);
+  assert.equal(courte.startIdx, 100, "le début ne bouge pas : la bulle part de sa date");
+  assert.equal(courte.endIdx, 100 + BUBBLE_MIN_PX / 10);
+  assert.ok(courte.endIdx > 102, "une tâche de deux jours occupe plus que deux jours");
+  // Une tâche déjà plus longue que le plancher n'est pas étendue.
+  const longue = bubbleRowExtent({ startIdx: 100, endIdx: 200 }, 10);
+  assert.deepEqual(longue, { startIdx: 100, endIdx: 200 });
+});
+
+test("l'étendue d'un jalon s'étend des DEUX côtés de sa date", () => {
+  const half = BUBBLE_MILESTONE_W / 2 / 10;
+  const jalon = bubbleRowExtent({ startIdx: 150, endIdx: 150, milestone: true }, 10);
+  assert.equal(jalon.startIdx, 150 - half);
+  assert.equal(jalon.endIdx, 150 + half);
+  // Une piste plus large donne moins de jours pour la même largeur en pixels.
+  const large = bubbleRowExtent({ startIdx: 150, endIdx: 150, milestone: true }, 40);
+  assert.ok(large.endIdx - large.startIdx < jalon.endIdx - jalon.startIdx);
+});
+
+test("sans mesure de piste, l'étendue reste celle des dates", () => {
+  // Au premier rendu la piste n'est pas mesurée : mieux vaut les dates nues
+  // qu'une marge inventée à partir d'un repli.
+  assert.deepEqual(bubbleRowExtent({ startIdx: 10, endIdx: 12 }, 0), { startIdx: 10, endIdx: 12 });
+  assert.deepEqual(bubbleRowExtent({ startIdx: 10, endIdx: 12 }, -5), { startIdx: 10, endIdx: 12 });
+  assert.deepEqual(bubbleRowExtent({ startIdx: 10, endIdx: 12 }, "x"), { startIdx: 10, endIdx: 12 });
+  assert.equal(bubbleRowExtent(null, 10), null);
+  assert.equal(bubbleRowExtent({ startIdx: "hier", endIdx: 12 }, 10), null);
+});
+
+test("seules les macro-bulles utilisent cette étendue, pas les encadrés du Gantt", () => {
+  // Les encadrés entourent des BARRES, dont la géométrie suit exactement les
+  // dates : leur donner la marge d'une bulle les élargirait pour rien.
+  const macro = html.indexOf("const bubbleMacroShapes");
+  const frames = html.indexOf("const frameShapes");
+  assert.ok(macro !== -1 && frames !== -1);
+  const corpsMacro = html.slice(macro, macro + 1800);
+  const corpsFrames = html.slice(frames, frames + 1200);
+  assert.match(corpsMacro, /bubbleRowExtent\(/, "les macro-bulles n'utilisent pas l'étendue réelle");
+  assert.doesNotMatch(corpsFrames, /bubbleRowExtent\(/, "les encadrés du Gantt ont été contaminés");
+});
+
+// --- Champs sous la bulle (#103) et infobulle des poignées (#106) ----------
+
+test("les champs sous la bulle reçoivent la boîte de la bulle", () => {
+  // Bulle de tâche : sa gauche et sa largeur en pourcentage de la piste.
+  assert.match(html, /<RowFields t=\{t\} box=\{\{ left: leftPct \+ "%", width: widthPct \+ "%" \}\} \/>/);
+  // Bulle de jalon : la boîte fixe qu'elle partage avec ses champs.
+  assert.match(html, /<RowFields t=\{t\} box=\{\{ left: msBox\.fieldsLeft, width: BUBBLE_MILESTONE_W \+ "px" \}\} \/>/);
+  assert.match(html, /style=\{\{ marginTop: "var\(--lp-bubble-h\)", marginLeft: fieldsBox\.left, width: fieldsBox\.width \}\}/);
+});
+
+test("l'infobulle se tait pendant un glisser et au survol d'une poignée", () => {
+  assert.match(html, /const openTip = \(t, e\) => \{\s*if \(dragStateRef\.current\) return;/);
+  assert.match(html, /const handleHoverGuard = \{/);
+  /* Posé sur les SIX poignées : début, fin et avancement de la bulle, et les
+     trois mêmes sur la barre du Mini-Gantt — le défaut y est moins visible
+     (une barre fait 9 px de haut) mais il est de même nature. */
+  assert.equal((html.match(/\{\.\.\.handleHoverGuard\}/g) || []).length, 6,
+    "une poignée n'écarte pas l'infobulle");
 });

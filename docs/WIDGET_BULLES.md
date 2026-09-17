@@ -94,6 +94,15 @@ position absolue, ils ne comptaient pas dans la hauteur de la ligne, débordaien
 sur la ligne suivante, et la géométrie mesurée dont vivent les macro-bulles et
 les encadrés ignorait leur hauteur. Le banc visuel contrôle ce point.
 
+Ils tiennent en outre **exactement la boîte de la bulle** — même bord gauche,
+même bord droit (#103). Ils s'étalaient auparavant jusqu'au bord de la piste :
+une bulle courte portait une rangée bien plus large qu'elle, qui empiétait sur
+la place des voisines et ne se rattachait plus à rien à l'œil. Trop étroits pour
+une ligne, ils passent à la ligne, et la ligne du diagramme grandit d'autant.
+
+C'est pour cela que la bulle d'un **jalon** a une largeur **fixe** de 120 px et
+non un maximum : sans largeur connue, ses champs ne pouvaient pas tenir la même.
+
 Chaque champ passe par `FieldValue`, le formateur partagé avec tout Nexora : une
 pastille de statut est la même pastille partout. Corollaire assumé :
 `BUBBLE_ROW_FIELD_OPTIONS` ne propose **que** les clés que `FieldValue` sait
@@ -148,6 +157,24 @@ fonction — pas un mannequin qui dirait ce qu'on veut entendre.
 `nestLevel` est le rang de la macro-bulle dans la liste. Une tâche peut
 appartenir à plusieurs macro-bulles ; sans ce décalage, les deux enveloppes
 confondraient leurs traits.
+
+### Ce qu'une bulle occupe, et non ce que ses dates disent
+
+L'enveloppe se calculait sur les **dates** des tâches. Mais une bulle n'occupe
+pas exactement ses dates : une bulle de tâche ne descend jamais sous 90 px — elle
+s'étend donc à droite de sa date de fin quand la tâche est courte — et une bulle
+de jalon est **centrée** sur sa date unique — elle s'étend donc des deux côtés.
+Les deux sortaient du cadre, et l'enveloppe cessait de dire ce qu'elle contient
+(#104).
+
+`bubbleRowExtent(row, pxPerDay)` traduit ces deux largeurs en index de jour, à
+partir de la largeur **mesurée** de la piste. Sans mesure — au premier rendu —
+elle rend les dates nues plutôt qu'une marge inventée à partir d'un repli.
+
+Les encadrés du Gantt, eux, gardent les dates : ils entourent des **barres**,
+dont la géométrie suit exactement les dates, et leur donner la marge d'une bulle
+les élargirait pour rien. Un test vérifie que cette étendue ne les a pas
+contaminés.
 
 ### Deux couches, pas une
 
@@ -235,6 +262,46 @@ une couleur choisis à la main, et l'éditeur sait dire qu'elle n'est pas dessin
 C'est la différence avec `pruneHighlightFrames`, qui supprime un encadré vide. Le
 nettoyage n'a lieu qu'à l'**enregistrement**, jamais au rendu : un filtre de
 widget ne doit pas détruire une configuration.
+
+## Un décalage de 6 px, et ce qu'il apprend
+
+En retirant la colonne d'étiquettes du mode bulles, j'avais gardé la **gouttière
+de 6 px** que le flex mettait entre cette colonne et la piste. Une ligne sans
+étiquette n'a qu'un enfant, donc aucune gouttière — mais l'axe et les bandes de
+repères gardaient la leur autour d'une cale de largeur nulle. Résultat : les
+pistes de l'axe partaient 6 px à droite de celles des lignes, et **toutes** les
+couches superposées avec elles — grille, ligne du jour, blocs temporels,
+encadrés, cadres de macro-bulles.
+
+Personne ne l'avait vu, parce que 6 px sur une piste de 900 se lisent comme une
+approximation de rendu. Il est sorti en cherchant pourquoi des bulles
+dépassaient de leur macro-bulle : le cadre n'était pas trop petit, il était
+décalé.
+
+Deux conséquences dans le code :
+
+- `layerInsetLeft` est la **seule** définition de ce retrait, et un test vérifie
+  qu'il n'est recopié nulle part ;
+- le banc visuel compare désormais le bord gauche de la piste d'une ligne, celui
+  de l'axe, celui de la grille et celui de la couche des macro-bulles. C'est le
+  contrôle qui aurait attrapé le défaut le jour où il a été écrit.
+
+## L'infobulle s'écarte des poignées
+
+L'infobulle se pose 14 px en bas à droite du curseur ; la poignée d'avancement
+vit sur le bord inférieur de la bulle. S'en approcher la faisait donc disparaître
+sous l'infobulle, et l'on glissait à l'aveugle (#106).
+
+Deux règles, et rien de plus — le placement de `WidgetPointerTooltip`, partagée
+par plusieurs widgets, n'est pas touché :
+
+- aucune infobulle pendant un glisser en cours (`openTip` lit `dragStateRef`) ;
+- aucune infobulle au survol d'une poignée, qui porte déjà son propre libellé.
+
+La règle vaut pour les six poignées, celles de la barre du Mini-Gantt comprises :
+le défaut y est moins visible — une barre fait 9 px de haut — mais il est de même
+nature. Quitter la poignée redonne l'infobulle : elle s'écarte le temps du geste,
+elle ne disparaît pas.
 
 ## Nettoyage au passage
 
