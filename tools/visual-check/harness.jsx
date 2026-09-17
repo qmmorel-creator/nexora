@@ -689,6 +689,26 @@ function AnnotationsHarness() {
             case fait plus de cent pixels et porte un nom ; en mois, une
             quinzaine, et il ne reste que la couleur. Un widget qui ne serait
             éprouvé qu'en semaine laisserait passer des lettres coupées. */}
+        {/* Granularite « Plage » (#124) : deux dates a la main. Le banc la monte
+            parce que le defaut precedent n'etait visible qu'ICI — la fonction
+            rendait la bonne fenetre, c'est l'enregistrement qui perdait les
+            dates. */}
+        <div id="harness-staffing-plage" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 240 }}>
+          <WidgetStaffing
+            widget={{
+              id: "wsP", type: "staffing", staffingRange: "custom",
+              staffingStart: "2026-09-21", staffingEnd: "2026-10-02",
+              staffingOffset: 0,
+              staffingMembers: seedTeamMembers.slice(0, 2).map((m) => m.name),
+              staffingShowWeekends: true, staffingShowLoad: false,
+            }}
+            ctx={ctx}
+            staffing={staffing}
+            onUpdateStaffing={setStaffing}
+            onUpdateWorkshops={setHarnessWorkshops}
+            onUpdateWidget={noop}
+          />
+        </div>
         <div id="harness-staffing-week" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
           <WidgetStaffing
             widget={{ id: "ws1", type: "staffing", staffingRange: "week", staffingOffset: 0, staffingMembers: seedTeamMembers.map((m) => m.name), staffingExtraMembers: [{ name: "Intérim — Sofiane", color: "#EC4899" }], staffingShowWeekends: true, staffingShowLoad: true }}
