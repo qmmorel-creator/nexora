@@ -237,7 +237,7 @@ test("une superposition parfaite laisse la référence discernable, et la barre 
   // La référence vit sur un RUBAN collé sous la barre : c'est la structure, et
   // non un habillage, qui sépare le délai prévu du délai réel. Le ruban tient
   // dans l'interligne — la hauteur de ligne ne change pas.
-  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px;/);
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:10px; height:7px;/);
   // Superposition parfaite : le ruban est d'un seul tenant, tout en référence.
   const ruban = miniGanttComparisonStrip(cmp, fenetre("2026-08-01", "2026-10-01"));
   assert.equal(ruban.segments.length, 1);
@@ -469,7 +469,7 @@ test("mode standard : aucune barre de référence, aucune zone, aucune ligne plu
   // de ligne est inchangée. Les écarts n'ont JAMAIS la bande de la barre : à
   // hauteur égale ils se lisaient comme son prolongement, et la poignée
   // d'avancement semblait avoir devant elle une course qui n'existait pas.
-  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px;/);
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:10px; height:7px;/);
   // Le contour noir de la barre est conditionné par `cmp` : hors mode
   // Comparaison, la barre reste rigoureusement celle d'avant.
   assert.match(html, /"lp-widget-minigantt-bar" \+ \(cmp \? " is-compared" : ""\)/);
@@ -732,6 +732,56 @@ test("la période de référence est cerclée à part, sur ses dates exactes", (
   assert.match(html, /\.lp-widget-minigantt-bar\.is-compared\{ box-shadow:0 0 0 1px rgba\(16,21,31,0\.85\); \}/);
   // Et il partage la géométrie du ruban, pour que les deux anneaux se
   // superposent au lieu de s'accoler.
-  assert.match(html, /\.lp-widget-minigantt-cmpref\{\s*\n\s*position:absolute; top:9px; height:8px; border-radius:2px;/);
-  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:9px; height:8px; border-radius:2px;/);
+  assert.match(html, /\.lp-widget-minigantt-cmpref\{\s*\n\s*position:absolute; top:10px; height:7px; border-radius:2px;/);
+  assert.match(html, /\.lp-widget-minigantt-cmpstrip\{\s*\n\s*position:absolute; top:10px; height:7px; border-radius:2px;/);
+});
+
+// 20. Jonction barre / ruban (#118) ------------------------------------------
+//
+// Ce test ne relit pas des valeurs : il vérifie la RELATION entre elles. Les
+// anneaux sont posés en ombre portée à l'extérieur de la boîte ; deux boîtes
+// simplement voisines mettent donc leurs deux anneaux côte à côte, et c'est
+// exactement le double trait qu'on a vu à l'écran. La seule géométrie qui donne
+// un trait unique est celle où le ruban commence UN pixel plus bas que le bas de
+// la barre — sa bande d'anneau est alors celle de la barre.
+test("un seul trait entre la barre réelle et le ruban de référence", () => {
+  /* La règle est cherchée EN DÉBUT DE LIGNE : `.lp-widget-minigantt-bar{` est
+     aussi la fin de `.lp-widget-minigantt-row.is-critical .lp-widget-minigantt-bar{`,
+     qui ne porte, elle, qu'un contour d'accentuation. */
+  const regle = (selecteur) => {
+    const m = new RegExp("^\\s*" + selecteur.replace(/[.]/g, "\\.") + "\\{([^}]*)\\}", "m").exec(html);
+    assert.ok(m, selecteur + " introuvable dans la feuille de style");
+    return m[1];
+  };
+  // `top:0` s'écrit sans unité : le `px` est donc facultatif.
+  const px = (bloc, prop) => {
+    const m = new RegExp(prop + ":(-?[\\d.]+)(?:px)?\\s*;").exec(bloc);
+    assert.ok(m, prop + " introuvable");
+    return Number(m[1]);
+  };
+  const anneau = (bloc) => {
+    const m = /box-shadow:0 0 0 ([\d.]+)px/.exec(bloc);
+    assert.ok(m, "anneau introuvable");
+    return Number(m[1]);
+  };
+
+  const barre = regle(".lp-widget-minigantt-bar");
+  const ruban = regle(".lp-widget-minigantt-cmpstrip");
+  const reference = regle(".lp-widget-minigantt-cmpref");
+  const comparee = regle(".lp-widget-minigantt-bar.is-compared");
+
+  const basDeLaBarre = px(barre, "top") + px(barre, "height");
+  // La barre porte son anneau SOUS elle, de `basDeLaBarre` à +1 px. Le ruban
+  // doit commencer là où cet anneau finit : leurs deux anneaux occupent alors
+  // la même bande, et il n'en reste qu'un à l'œil.
+  assert.equal(px(ruban, "top"), basDeLaBarre + anneau(comparee));
+  // La fenêtre de référence partage la géométrie du ruban — c'est ce qui fait
+  // que son anneau noir couvre le gris au lieu de s'y accoler.
+  assert.equal(px(reference, "top"), px(ruban, "top"));
+  assert.equal(px(reference, "height"), px(ruban, "height"));
+
+  // Empreinte totale inchangée : le ruban, anneau compris, tient toujours dans
+  // la piste (9 px), le bas de ligne (3 px) et l'interligne (6 px). Sans cette
+  // borne, descendre le ruban le ferait mordre sur la ligne suivante.
+  assert.equal(px(ruban, "top") + px(ruban, "height") + anneau(ruban), 18);
 });

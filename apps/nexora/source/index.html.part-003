@@ -4963,7 +4963,7 @@ function MiniGanttProgressRing({ progress }) {
    formulaires de réglages avant #86.
    Hors de ce mode, pas une branche ci-dessous ne s'exécute : le Mini-Gantt rend
    exactement ce qu'il rendait. */
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode }) {
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
   // Les Mini Gantt existants n'avaient pas toujours de `groupBy`. La vue
   // consolidée doit néanmoins fournir ses en-têtes repliables : Projet devient
   // le défaut de lecture, sans modifier une configuration explicitement à
@@ -5048,33 +5048,39 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const [collapsed, setCollapsed] = useState({}); // { [groupKey]: true }
   const toggleGroup = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const showMilestones = widget.showMilestones !== false;
-  // Au-delà du plafond d'affichage, on ne garde jamais les tâches/jalons les
-  // plus ANCIENS au détriment des tâches en cours ou futures : on priorise
-  // d'abord tout ce qui se termine aujourd'hui ou après (tri chronologique
-  // croissant), puis on complète avec le passé le plus récent si de la place
-  // reste — sinon un widget avec beaucoup d'historique fini par ne plus
-  // montrer aucune tâche future en mode auto.
-  const projTasks = useMemo(() => {
-    const all = tasks.filter((t) => !t.milestone && t.start && t.end);
-    if (all.length <= 20) return [...all].sort((a, b) => a.start.localeCompare(b.start));
-    const todayStr = iso(new Date());
-    const upcoming = all.filter((t) => t.end >= todayStr).sort((a, b) => a.start.localeCompare(b.start));
-    const past = all.filter((t) => t.end < todayStr).sort((a, b) => b.end.localeCompare(a.end));
-    return [...upcoming, ...past.slice(0, Math.max(0, 20 - upcoming.length))]
-      .slice(0, 20)
-      .sort((a, b) => a.start.localeCompare(b.start));
-  }, [tasks]);
-  const milestoneTasks = useMemo(() => {
-    if (!showMilestones) return [];
-    const all = tasks.filter((t) => t.milestone && t.end);
-    if (all.length <= 12) return [...all].sort((a, b) => a.end.localeCompare(b.end));
-    const todayStr = iso(new Date());
-    const upcoming = all.filter((t) => t.end >= todayStr).sort((a, b) => a.end.localeCompare(b.end));
-    const past = all.filter((t) => t.end < todayStr).sort((a, b) => b.end.localeCompare(a.end));
-    return [...upcoming, ...past.slice(0, Math.max(0, 12 - upcoming.length))]
-      .slice(0, 12)
-      .sort((a, b) => a.end.localeCompare(b.end));
-  }, [tasks, showMilestones]);
+  /* Plafond d'affichage : une TUILE de tableau de bord, haute de quelques
+     centimètres, ne peut pas montrer deux cents lignes — d'où ces vingt barres
+     et ces douze jalons. La VUE Gantt, elle, occupe la page entière et n'a
+     aucune raison de s'y tenir : le même plafond y faisait disparaître des
+     tâches qu'on voyait dans le Tableur et dans le Métro, sans le dire, y
+     compris à statut identique (#115). `showAllRows` lève la limite ; il n'est
+     posé que par la vue plein écran, aucun widget enregistré ne change de
+     rendu. */
+  const rowLimits = showAllRows
+    ? { bars: Infinity, milestones: Infinity }
+    : { bars: MINIGANTT_WIDGET_MAX_BARS, milestones: MINIGANTT_WIDGET_MAX_MILESTONES };
+  const barLimit = rowLimits.bars;
+  const milestoneLimit = rowLimits.milestones;
+  // Le choix des lignes retenues sous le plafond vit dans miniGanttCapRows :
+  // une barre a besoin d'un début ET d'une fin, un jalon d'une fin, et la date
+  // qui les ordonne n'est pas la même — le reste est commun.
+  const projTasks = useMemo(
+    () => miniGanttCapRows(tasks.filter((t) => !t.milestone && t.start && t.end), barLimit, "start", iso(new Date())),
+    [tasks, barLimit]
+  );
+  const milestoneTasks = useMemo(
+    () => (showMilestones ? miniGanttCapRows(tasks.filter((t) => t.milestone && t.end), milestoneLimit, "end", iso(new Date())) : []),
+    [tasks, showMilestones, milestoneLimit]
+  );
+  /* Ce que le diagramme NE MONTRE PAS, dit à voix haute. Deux causes, un seul
+     nombre : le plafond ci-dessus, et les tâches dont il manque une date — une
+     barre a besoin d'un début ET d'une fin, un jalon d'une fin. Les jalons
+     masqués par le réglage « afficher les jalons » ne comptent pas : ils sont
+     cachés à la demande, pas à l'insu de l'utilisateur. */
+  const hiddenCount = useMemo(() => {
+    const considered = showMilestones ? (tasks || []) : (tasks || []).filter((t) => !t.milestone);
+    return Math.max(0, considered.length - projTasks.length - milestoneTasks.length);
+  }, [tasks, projTasks, milestoneTasks, showMilestones]);
   /* Ordre d'affichage : UNE seule liste triée, barres et jalons confondus.
 
      Auparavant les jalons étaient tous rendus après toutes les barres : un
@@ -7427,6 +7433,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? <span className="lp-widget-minigantt-rows-tail" style={{ height: rowsTail }} aria-hidden="true" />
     : null;
 
+  /* Le silence était la moitié du défaut de #115 : une tâche absente du
+     diagramme ne se distingue pas d'une tâche qu'aucun filtre ne retient. Ce
+     pied dit combien il en manque, et pourquoi. Dans la vue plein écran il n'y
+     a plus de plafond : ce qui reste ne peut venir que d'une date manquante. */
+  const hiddenNote = hiddenCount > 0
+    ? (
+      <div className="lp-widget-minigantt-hidden-note">
+        {hiddenCount} tâche{hiddenCount > 1 ? "s" : ""} {hiddenCount > 1 ? "ne sont pas affichées" : "n'est pas affichée"}
+        {showAllRows
+          ? " : il leur manque une date de début ou de fin."
+          : ` : ce widget montre au plus ${MINIGANTT_WIDGET_MAX_BARS} barres et ${MINIGANTT_WIDGET_MAX_MILESTONES} jalons, et une tâche sans date de début ou de fin n'a pas de barre. La vue Gantt les affiche toutes.`}
+      </div>
+    )
+    : null;
+
   if (!groupBy || groupBy === "none") {
     return (
       <div className={rootClass} style={rootStyle} ref={rootRef}>
@@ -7443,6 +7464,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           {orderedTasks.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))}
         </div>
         {rowsTailSpacer}
+        {hiddenNote}
         {bandFrameLayer}
         {annotationLayer}
         {spanLayer}
@@ -7498,6 +7520,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         );
       })}
       {rowsTailSpacer}
+      {hiddenNote}
       {bandFrameLayer}
       {annotationLayer}
       {spanLayer}
@@ -9760,6 +9783,9 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         widget={widget}
         tasks={scoped}
         ctx={ctx}
+        /* La vue occupe la page : elle montre TOUT ce que les filtres laissent
+           passer, sans le plafond des tuiles de tableau de bord (#115). */
+        showAllRows
         groupBy={widget.groupBy}
         onOpen={onOpen}
         onUpdateWidget={(patch) => setPrefs(patch)}
