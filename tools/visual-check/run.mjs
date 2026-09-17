@@ -409,11 +409,37 @@ const seen = await page.evaluate(() => {
         zLigne: ligne ? getComputedStyle(ligne).zIndex : "",
       };
     })(),
-    rules: {
-      premier: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-rule").length,
-      second: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-rule").length,
-      z: (() => { const el = document.querySelector("#harness-first-minigantt .lp-widget-minigantt-rule-layer"); return el ? getComputedStyle(el).zIndex : ""; })(),
-    },
+    /* Trait vertical d'un jalon (#95) : deux des quatre repères le portent, et
+       chacun doit PROLONGER son losange — départ au repère, arrivée au bas des
+       lignes. Tout est relevé dans le référentiel du widget. */
+    rules: (() => {
+      const host = document.querySelector("#harness-first-minigantt");
+      if (!host) return { premier: 0, second: 0, z: "", traits: [], lignes: null };
+      const base = host.getBoundingClientRect();
+      const repere = (id) => {
+        const el = [...host.querySelectorAll(".lp-widget-minigantt-marker.is-milestone")]
+          .find((m) => (m.textContent || "").trim().startsWith(id));
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return { x: Math.round(b.x - base.x), haut: Math.round(b.y - base.y), bas: Math.round(b.y - base.y + b.height) };
+      };
+      const lignes = [...host.querySelectorAll(".lp-widget-minigantt-row")].map((el) => el.getBoundingClientRect());
+      return {
+        premier: host.querySelectorAll(".lp-widget-minigantt-rule").length,
+        second: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-rule").length,
+        z: (() => { const el = host.querySelector(".lp-widget-minigantt-rule-layer"); return el ? getComputedStyle(el).zIndex : ""; })(),
+        traits: [...host.querySelectorAll(".lp-widget-minigantt-rule")].map((el) => {
+          const b = el.getBoundingClientRect();
+          return { x: Math.round(b.x - base.x), haut: Math.round(b.y - base.y), bas: Math.round(b.y - base.y + b.height) };
+        }),
+        lignes: lignes.length ? {
+          haut: Math.round(Math.min(...lignes.map((b) => b.y)) - base.y),
+          bas: Math.round(Math.max(...lignes.map((b) => b.y + b.height)) - base.y),
+        } : null,
+        codir: repere("Décision CODIR"),
+        essais: repere("Essais en eau"),
+      };
+    })(),
     /* Un symbole par type de jalon : deux types ne doivent jamais se
        ressembler. Le repère est un tracé SVG depuis que les symboles sont
        réglables — son empreinte est donc le tracé lui-même, plus sa couleur :
@@ -1311,6 +1337,41 @@ try {
   poignee.error = String(error).split("\n")[0];
 }
 
+/* Le trait vertical se coche-t-il VRAIMENT là où l'issue le demande, dans les
+   paramètres du jalon, et le diagramme suit-il ? (#95) Compter des traits déjà
+   posés dans la fixture ne le dit pas : le premier essai portait un réglage qui
+   ne se voyait nulle part. On ouvre donc le jalon depuis son propre losange, on
+   coche, et on recompte. */
+const reglageJalon = {};
+try {
+  await page.reload({ waitUntil: "load", timeout: 90000 });
+  await page.waitForSelector("#harness-first-minigantt .lp-widget-minigantt-marker", { timeout: 90000 });
+  await page.waitForTimeout(1500);
+  const widget = page.locator("#harness-first-minigantt");
+  reglageJalon.avant = await widget.locator(".lp-widget-minigantt-rule").count();
+  // « Mise en service » n'a pas de trait dans la fixture : c'est celui-là qu'on
+  // coche, en passant par son losange comme le ferait n'importe qui.
+  await widget.locator(".lp-widget-minigantt-marker-label", { hasText: "Mise en service" }).first().click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  const modale = page.locator(".lp-modal").last();
+  const ligne = modale.locator(".lp-checkbox-line", { hasText: "trait vertical" }).first();
+  reglageJalon.presente = await ligne.count();
+  reglageJalon.libelle = reglageJalon.presente ? (await ligne.textContent()).replace(/\s+/g, " ").trim() : "";
+  if (reglageJalon.presente) {
+    const coche = ligne.locator("input[type=checkbox]");
+    reglageJalon.cocheAvant = await coche.isChecked();
+    await coche.click();
+    await page.waitForTimeout(300);
+    reglageJalon.cocheApres = await coche.isChecked();
+  }
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(600);
+  reglageJalon.apres = await widget.locator(".lp-widget-minigantt-rule").count();
+} catch (error) {
+  reglageJalon.error = String(error).split("\n")[0];
+}
+
 const parite = {};
 try {
   /* Page rechargée : les scénarios précédents laissent des modales ouvertes,
@@ -1405,13 +1466,52 @@ if (seen.spans) {
     `Annotations horizontales : le calque (z=${seen.spans.zTrait}) doit passer au-dessus des lignes (z=${seen.spans.zLigne}), sinon le trait disparaît sous la barre`);
 }
 
-// --- Trait vertical sous les jalons (#95) ----------------------------------
-expect(seen.rules.premier === 4,
-  `Jalons : ${seen.rules.premier} trait(s) vertical(aux), 4 attendus — un par jalon quand le réglage est coché`);
+// --- Trait vertical d'un jalon, propre à chaque jalon (#95) ----------------
+expect(seen.rules.premier === 2,
+  `Jalons : ${seen.rules.premier} trait(s) vertical(aux), 2 attendus — un par jalon COCHÉ, et deux des quatre le sont`);
 expect(seen.rules.second === 0,
-  `Jalons : ${seen.rules.second} trait(s) vertical(aux) dans le second Mini-Gantt, 0 attendu — le réglage est propre à chaque widget`);
+  `Jalons : ${seen.rules.second} trait(s) vertical(aux) dans le second Mini-Gantt, 0 attendu — il n'y porte aucun jalon`);
 expect(seen.rules.z === "0",
   `Jalons : le calque des traits verticaux est en z-index ${seen.rules.z}, 0 attendu — il doit rester derrière les barres et les textes`);
+{
+  /* Le trait PROLONGE le losange : il part de la bande de repères, au couloir
+     de son propre repère, et descend jusqu'au bas des lignes. Le compter ne
+     suffisait pas — c'est précisément ce qui manquait au premier essai. */
+  const lignes = seen.rules.lignes;
+  expect(lignes, "Jalons : aucune ligne mesurée dans le premier Mini-Gantt");
+  seen.rules.traits.forEach((trait, i) => {
+    expect(trait.haut < lignes.haut,
+      `Jalon ${i + 1} : le trait commence à y=${trait.haut}, sous le haut des lignes (${lignes.haut}) — il doit partir du losange, au-dessus`);
+    expect(Math.abs(trait.bas - lignes.bas) <= 2,
+      `Jalon ${i + 1} : le trait s'arrête à y=${trait.bas}, alors que les lignes finissent à ${lignes.bas} — il doit courir sur toute la hauteur`);
+  });
+  [["Décision CODIR", seen.rules.codir], ["Essais en eau", seen.rules.essais]].forEach(([nom, marque]) => {
+    expect(marque, `Jalon « ${nom} » : repère introuvable dans la bande`);
+    const trait = seen.rules.traits.find((t) => Math.abs(t.x - marque.x) <= 6);
+    expect(trait, `Jalon « ${nom} » : aucun trait à l'aplomb du losange (x=${marque?.x})`);
+    // Les deux repères ne sont pas sur le même couloir : chaque trait doit
+    // démarrer dans le couloir de SON losange, pas au sommet de la bande.
+    expect(trait && trait.haut >= marque.haut && trait.haut <= marque.bas,
+      `Jalon « ${nom} » : le trait démarre à y=${trait?.haut}, hors de son losange (${marque?.haut}→${marque?.bas})`);
+  });
+  expect(seen.rules.codir && seen.rules.essais && seen.rules.codir.haut !== seen.rules.essais.haut,
+    "Jalons : les deux repères cochés devraient occuper deux couloirs différents — le banc ne prouve plus rien sinon");
+}
+
+// --- Le réglage est bien dans les paramètres du jalon, et il agit (#95) ----
+expect(!reglageJalon.error, `Jalons : scénario du réglage en échec (${reglageJalon.error})`);
+if (!reglageJalon.error) {
+  expect(reglageJalon.presente,
+    "Jalons : aucune case « trait vertical » dans les paramètres du jalon — c'est pourtant là qu'elle est demandée");
+  expect(/ce jalon/i.test(reglageJalon.libelle),
+    `Jalons : la case parle de « ${reglageJalon.libelle} » — elle doit viser CE jalon, pas tout le diagramme`);
+  expect(reglageJalon.cocheAvant === false,
+    "Jalons : « Mise en service » arrive déjà coché — le trait doit être absent par défaut");
+  expect(reglageJalon.cocheApres === true,
+    "Jalons : la case ne retient pas le clic");
+  expect(reglageJalon.apres === reglageJalon.avant + 1,
+    `Jalons : ${reglageJalon.avant} trait(s) avant, ${reglageJalon.apres} après — cocher la case doit en ajouter exactement un`);
+}
 
 // --- Une forme par type de jalon (#94) -------------------------------------
 expect(seen.markerShapes.length === 5,
