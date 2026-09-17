@@ -3816,6 +3816,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     tasks={scoped}
                     groupBy={w.groupBy}
                     ctx={ctx}
+                    staffing={staffing}
                     onOpen={onOpen}
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
@@ -3828,6 +3829,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     tasks={scoped}
                     groupBy={w.groupBy}
                     ctx={ctx}
+                    staffing={staffing}
                     onOpen={onOpen}
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
@@ -5214,7 +5216,10 @@ function MiniGanttProgressRing({ progress }) {
    formulaires de réglages avant #86.
    Hors de ce mode, pas une branche ci-dessous ne s'exécute : le Mini-Gantt rend
    exactement ce qu'il rendait. */
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
+function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
+  // Absences (#134) : l'atelier « absence » du catalogue Charge personnel,
+  // reconnu par son nom — lecture seule, jamais posé depuis le Gantt.
+  const absenceWorkshopId = useMemo(() => staffingAbsenceWorkshopId(ctx.workshops), [ctx.workshops]);
   // Les Mini Gantt existants n'avaient pas toujours de `groupBy`. La vue
   // consolidée doit néanmoins fournir ses en-têtes repliables : Projet devient
   // le défaut de lecture, sans modifier une configuration explicitement à
@@ -7299,6 +7304,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const rawEndIdx = dayIndex(t.end);
     const visibleStartIdx = Math.max(minIdx, rawStartIdx);
     const visibleEndIdx = Math.min(maxIdx, rawEndIdx);
+    // Absences du responsable (#134), sur la seule portion visible de la barre.
+    const absenceSegs = (staffing && absenceWorkshopId && t.assignee && visibleEndIdx >= visibleStartIdx)
+      ? staffingAbsenceSegments(staffing, t.assignee, addDays("2020-01-01", visibleStartIdx), addDays("2020-01-01", visibleEndIdx), absenceWorkshopId)
+      : [];
     const left = ((visibleStartIdx - minIdx) / span) * 100;
     const width = Math.max(2, ((Math.max(visibleStartIdx, visibleEndIdx) - visibleStartIdx) / span) * 100);
     const proj = ctx.projects.find((p) => p.id === t.projectId);
@@ -7433,6 +7442,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               </>
             )}
           </div>
+          {absenceSegs.map((seg) => {
+            const segLeft = ((dayIndex(seg.start) - minIdx) / span) * 100;
+            const segWidth = Math.max(0.6, ((dayIndex(seg.end) - dayIndex(seg.start) + 1) / span) * 100);
+            return (
+              <span
+                key={"absence-" + seg.start}
+                className="lp-widget-minigantt-absence"
+                style={{ left: segLeft + "%", width: segWidth + "%" }}
+                title={t.assignee + (seg.start === seg.end ? " absent le " + fmtShort(seg.start) : " absent du " + fmtShort(seg.start) + " au " + fmtShort(seg.end))}
+              />
+            );
+          })}
           {cmpBars && cmpZoneLabel(cmpBars.freed, "freed", cmp.endDeltaDays)}
           {cmpBars && cmpZoneLabel(cmpBars.ahead, "ahead", cmp.startDeltaDays)}
           {cmpBars && cmpZoneLabel(cmpBars.late, "late", cmp.endDeltaDays)}
@@ -8229,6 +8250,21 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
     [ctx.teamMembers, cfg.staffingMembers, cfg.staffingExtraMembers]
   );
   const cells = useMemo(() => staffingByCell(staffing), [staffing]);
+  // Couche « Tâches » (#152) : lecture seule, jamais d'écriture croisée avec les
+  // affectations (#124 l'exclut). Un seul index par rendu, servi aux cases et à
+  // l'infobulle.
+  const tasksIndex = useMemo(() => staffingActiveTasksIndex(ctx.tasks, ctx), [ctx.tasks, ctx.statuses]);
+  // Capacité par personne (#163) : le repli à 1 poste couvre l'annuaire d'avant
+  // ce réglage comme les personnes ajoutées à la main, qui n'en ont pas.
+  const capacityByName = useMemo(() => {
+    const map = new Map();
+    (ctx.teamMembers || []).forEach((m) => {
+      if (m && String(m.name || "").trim()) map.set(String(m.name).trim(), normalizeMemberCapacity(m.capacityPerDay));
+    });
+    return map;
+  }, [ctx.teamMembers]);
+  // Totaux par atelier sur la fenêtre affichée (#164).
+  const workshopTotals = useMemo(() => staffingWorkshopTotalsInWindow(staffing, members, days), [staffing, members, days]);
 
   /* La largeur d'une case est MESURÉE, pas supposée : c'est elle qui décide si
      une bande peut porter le nom de son atelier, son code, ou rien du tout. En
@@ -8270,6 +8306,44 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
     return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onDown); };
   }, [picker]);
 
+  /* Glisser-peindre (#154) : la case où le clic démarre donne sa sélection,
+     balayée sur les cases suivantes SANS écrire — seul un aperçu local
+     (`paintPreview`) change à chaque case survolée. Le magasin n'est écrit
+     qu'UNE fois, au relâchement, et seulement si au moins une deuxième case a
+     été touchée : un simple clic reste un simple clic, il ouvre le panneau. */
+  const paintRef = useRef(null); // { member, ids, dates: Set }
+  const justPaintedRef = useRef(false);
+  const [paintPreview, setPaintPreview] = useState(null); // { member, dates: Set }
+  const beginPaint = (member, date, e) => {
+    if (e.button !== 0 || !onUpdateStaffing) return;
+    const ids = cells.get(staffingCellId(member, date)) || [];
+    paintRef.current = { member, ids, dates: new Set([date]) };
+    setPaintPreview({ member, dates: new Set([date]) });
+  };
+  const paintOver = (member, date) => {
+    const p = paintRef.current;
+    if (!p || p.member !== member || p.dates.has(date)) return;
+    p.dates.add(date);
+    setPaintPreview({ member, dates: new Set(p.dates) });
+  };
+  useEffect(() => {
+    if (!paintPreview) return undefined;
+    const onUp = () => {
+      const p = paintRef.current;
+      paintRef.current = null;
+      setPaintPreview(null);
+      if (!p || p.dates.size < 2 || !onUpdateStaffing) return;
+      justPaintedRef.current = true;
+      onUpdateStaffing((prev) => {
+        let next = prev;
+        p.dates.forEach((date) => { next = staffingSetCell(next, p.member, date, p.ids, knownIds); });
+        return next;
+      });
+    };
+    document.addEventListener("mouseup", onUp);
+    return () => document.removeEventListener("mouseup", onUp);
+  }, [paintPreview, knownIds, onUpdateStaffing]);
+
   const periodLabel = cfg.staffingRange === "month"
     ? monthLabel(frame.start)
     : fmtShort(frame.start) + " – " + fmtShort(frame.end);
@@ -8284,6 +8358,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
   };
 
   const openPicker = (member, date, e) => {
+    if (justPaintedRef.current) { justPaintedRef.current = false; return; }
     if (!onUpdateStaffing) return;
     setHover(null);
     setQuery("");
@@ -8368,6 +8443,16 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
             {hover.ids.length > 1 ? hover.ids.length + " postes ce jour-là" : "1 poste ce jour-là"}
           </div>
         </>
+      )}
+      {hover.tasks && hover.tasks.length > 0 && (
+        <div className="lp-cp-tip-tasks">
+          <div className="lp-cp-tip-tasks-title">{hover.tasks.length} tâche{hover.tasks.length > 1 ? "s" : ""} active{hover.tasks.length > 1 ? "s" : ""}</div>
+          {hover.tasks.slice(0, 6).map((t) => <div className="lp-cp-tip-line" key={t.id}>{t.title}</div>)}
+          {hover.tasks.length > 6 && <div className="lp-cp-tip-line">… et {hover.tasks.length - 6} de plus</div>}
+        </div>
+      )}
+      {hover.overCapacity && (
+        <div className="lp-cp-tip-capacity"><AlertTriangle size={11} /> Capacité dépassée ce jour-là</div>
       )}
     </div>,
     document.body
@@ -8541,25 +8626,56 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
                     : member.name.split(/\s+/).map((part) => part.charAt(0)).join("").slice(0, 2).toUpperCase()}
                 </span>
                 <span className="lp-cp-person-name">{member.name}</span>
+                {onUpdateStaffing && (
+                  <span className="lp-cp-person-tools">
+                    <button
+                      type="button"
+                      className="lp-icon-btn lp-cp-person-tool"
+                      title="Répéter la semaine précédente sur la période affichée"
+                      aria-label={"Répéter la semaine précédente pour " + member.name}
+                      onClick={() => onUpdateStaffing((prev) => staffingRepeatPreviousWeek(prev, member.name, days, knownIds))}
+                    >
+                      <RefreshCw size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      className="lp-icon-btn lp-cp-person-tool"
+                      title="Appliquer le motif de la première semaine remplie aux cases encore vides de la période"
+                      aria-label={"Appliquer le motif hebdomadaire pour " + member.name}
+                      onClick={() => onUpdateStaffing((prev) => staffingApplyWeekPattern(prev, member.name, days, knownIds))}
+                    >
+                      <Copy size={11} />
+                    </button>
+                  </span>
+                )}
               </div>
               {days.map((day) => {
                 const ids = cells.get(staffingCellId(member.name, day.iso)) || [];
                 const fill = staffingCellFill(ids, catalogue);
                 const label = staffingCellLabel(fill, cellPx);
+                const activeTasks = cfg.staffingShowTasks ? staffingActiveTasksForCell(tasksIndex, member.name, day.iso) : [];
+                const capacity = capacityByName.get(member.name) || STAFFING_CAPACITY_DEFAULT;
+                const overCapacity = (ids.length + activeTasks.length) > capacity;
+                const painting = !!paintPreview && paintPreview.member === member.name && paintPreview.dates.has(day.iso);
                 return (
                   <button
                     type="button"
                     key={day.iso}
-                    className={"lp-cp-cell" + (ids.length ? " is-filled" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "")}
+                    className={"lp-cp-cell" + (ids.length ? " is-filled" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "") + (overCapacity ? " is-over-capacity" : "") + (painting ? " is-painting" : "")}
                     style={fill ? { background: fill.background } : undefined}
-                    aria-label={member.name + " — " + dayTitle(day.iso) + " — " + (ids.length ? ids.map((id) => (workshopFor(catalogue, id) || {}).name).filter(Boolean).join(", ") : "aucun atelier")}
+                    aria-label={member.name + " — " + dayTitle(day.iso) + " — " + (ids.length ? ids.map((id) => (workshopFor(catalogue, id) || {}).name).filter(Boolean).join(", ") : "aucun atelier") + (activeTasks.length ? " — " + activeTasks.length + " tâche(s) active(s)" : "") + (overCapacity ? " — capacité dépassée" : "")}
                     onClick={(e) => openPicker(member.name, day.iso, e)}
-                    onMouseEnter={(e) => setHover({ member: member.name, color: member.color, date: day.iso, ids, x: e.clientX + 14, y: e.clientY + 16 })}
+                    onMouseDown={(e) => beginPaint(member.name, day.iso, e)}
+                    onMouseEnter={(e) => { if (e.buttons === 1) paintOver(member.name, day.iso); setHover({ member: member.name, color: member.color, date: day.iso, ids, tasks: activeTasks, overCapacity, x: e.clientX + 14, y: e.clientY + 16 }); }}
                     onMouseMove={(e) => setHover((prev) => (prev ? { ...prev, x: e.clientX + 14, y: e.clientY + 16 } : prev))}
                     onMouseLeave={() => setHover(null)}
                   >
                     {label && <span className="lp-cp-label">{label}</span>}
                     {ids.length === 0 && <span className="lp-cp-plus" aria-hidden="true">+</span>}
+                    {cfg.staffingShowTasks && activeTasks.length > 0 && (
+                      <span className={"lp-cp-tasks-badge" + (activeTasks.length > 2 ? " is-high" : "")} aria-hidden="true">{activeTasks.length}</span>
+                    )}
+                    {overCapacity && <AlertTriangle size={10} className="lp-cp-capacity-alert" aria-hidden="true" />}
                   </button>
                 );
               })}
@@ -8591,12 +8707,16 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
       </div>
 
       <div className="lp-cp-legend">
-        {catalogue.map((shop) => (
-          <span className="lp-cp-legend-item" key={shop.id}>
-            <span className="lp-cp-dot" style={{ background: shop.color }} />
-            {shop.name}
-          </span>
-        ))}
+        {catalogue.map((shop) => {
+          const total = workshopTotals.get(shop.id) || 0;
+          return (
+            <span className="lp-cp-legend-item" key={shop.id}>
+              <span className="lp-cp-dot" style={{ background: shop.color }} />
+              {shop.name}
+              {total > 0 && <span className="lp-cp-legend-total">{total}</span>}
+            </span>
+          );
+        })}
       </div>
 
       {tooltip}
@@ -10698,8 +10818,11 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
         <label className="lp-checkbox-line">
           <input type="checkbox" checked={cfg.staffingShowLoad} onChange={(e) => onChange({ staffingShowLoad: e.target.checked })} /> Colonne « Postes » à droite
         </label>
+        <label className="lp-checkbox-line">
+          <input type="checkbox" checked={cfg.staffingShowTasks} onChange={(e) => onChange({ staffingShowTasks: e.target.checked })} /> Couche « Tâches » (nombre de tâches actives par personne et par jour)
+        </label>
         <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
-          Un week-end masqué reste affectable depuis une autre granularité : la case disparaît de la vue, jamais l'affectation.
+          Un week-end masqué reste affectable depuis une autre granularité : la case disparaît de la vue, jamais l'affectation. La couche « Tâches » est en lecture seule — elle ne modifie jamais les affectations (#124).
         </p>
       </div>
     </>
@@ -12416,6 +12539,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.staffingExtraMembers = st.staffingExtraMembers;
       data.staffingShowWeekends = st.staffingShowWeekends;
       data.staffingShowLoad = st.staffingShowLoad;
+      data.staffingShowTasks = st.staffingShowTasks;
     }
     if (titleColor) data.titleColor = titleColor; else data.titleColor = null;
     if (bgColor) data.bgColor = bgColor; else data.bgColor = null;

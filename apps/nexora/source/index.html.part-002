@@ -3801,6 +3801,7 @@ const STAFFING_DEFAULTS = {
   staffingOffset: 0,
   staffingShowWeekends: true,
   staffingShowLoad: true,
+  staffingShowTasks: false,
 };
 
 /* Teinte d'une personne qui n'est PAS dans l'annuaire (#124), par hachage de
@@ -3919,6 +3920,7 @@ function normalizeStaffingWidget(widget) {
     staffingExtraMembers: normalizeStaffingExtraMembers(w.staffingExtraMembers),
     staffingShowWeekends: w.staffingShowWeekends !== false,
     staffingShowLoad: w.staffingShowLoad !== false,
+    staffingShowTasks: w.staffingShowTasks === true,
   };
 }
 
@@ -4057,6 +4059,121 @@ function staffingDayCount(entries, members, dayIso) {
   return (Array.isArray(members) ? members : []).filter((m) => (
     (cells.get(staffingCellId(m && m.name ? m.name : m, dayIso)) || []).length > 0
   )).length;
+}
+
+// --- Couche « Tâches » (#152) -----------------------------------------------
+
+// Une seule traversée des tâches, groupées par responsable : la Charge ne lit
+// jamais les affectations, seulement les dates et le statut (#124 l'exclut en
+// écriture, pas en lecture).
+function staffingActiveTasksIndex(tasks, ctx) {
+  const map = new Map();
+  (Array.isArray(tasks) ? tasks : []).forEach((t) => {
+    if (!t || t.milestone || !t.start || !t.end) return;
+    const member = String(t.assignee || "").trim();
+    if (!member || isTaskDoneGlobal(t, ctx)) return;
+    if (!map.has(member)) map.set(member, []);
+    map.get(member).push(t);
+  });
+  return map;
+}
+function staffingActiveTasksForCell(index, member, dayIso) {
+  const list = (index instanceof Map ? index.get(member) : null) || [];
+  return list.filter((t) => t.start <= dayIso && dayIso <= t.end);
+}
+
+// --- Capacité par personne (#163) -------------------------------------------
+
+const STAFFING_CAPACITY_DEFAULT = 1;
+function normalizeMemberCapacity(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : STAFFING_CAPACITY_DEFAULT;
+}
+
+// --- Totaux par atelier (#164) -----------------------------------------------
+
+// Jours-personnes par atelier sur la fenêtre affichée — ce que la légende
+// chiffre, à la différence de `staffingWorkshopUsage` qui compte sur TOUT
+// l'historique et sert aux Réglages.
+function staffingWorkshopTotalsInWindow(entries, members, days) {
+  const cells = staffingByCell(entries);
+  const totals = new Map();
+  (Array.isArray(members) ? members : []).forEach((m) => {
+    (Array.isArray(days) ? days : []).forEach((day) => {
+      (cells.get(staffingCellId(m.name, day.iso)) || []).forEach((id) => {
+        totals.set(id, (totals.get(id) || 0) + 1);
+      });
+    });
+  });
+  return totals;
+}
+
+// --- Répéter / motif hebdomadaire (#154) ------------------------------------
+
+// Recopie la semaine précédente sur la fenêtre affichée, case par case, en une
+// seule normalisation — jamais case par case depuis l'appelant, sinon chaque
+// case déclencherait sa propre écriture.
+function staffingRepeatPreviousWeek(entries, member, days, knownWorkshopIds) {
+  let next = normalizeStaffingEntries(entries, knownWorkshopIds);
+  const cells = staffingByCell(next);
+  (Array.isArray(days) ? days : []).forEach((day) => {
+    const sourceIds = cells.get(staffingCellId(member, addDays(day.iso, -7))) || [];
+    if (!sourceIds.length) return;
+    next = staffingSetCell(next, member, day.iso, sourceIds, knownWorkshopIds);
+  });
+  return next;
+}
+
+// Motif hebdomadaire (#154) : la première semaine REMPLIE de la fenêtre
+// affichée devient le motif (lundi → ce qui est posé un lundi, etc.), reporté
+// sur les seules cases encore VIDES du reste de la fenêtre. Jamais en silence :
+// un bouton explicite le déclenche, jamais la navigation.
+function staffingApplyWeekPattern(entries, member, days, knownWorkshopIds) {
+  if (!Array.isArray(days) || !days.length) return entries;
+  let next = normalizeStaffingEntries(entries, knownWorkshopIds);
+  const cells = staffingByCell(next);
+  const byDow = new Map();
+  days.slice(0, 7).forEach((day) => {
+    const ids = cells.get(staffingCellId(member, day.iso)) || [];
+    if (ids.length && !byDow.has(day.dow)) byDow.set(day.dow, ids);
+  });
+  days.forEach((day) => {
+    if ((cells.get(staffingCellId(member, day.iso)) || []).length) return;
+    const patternIds = byDow.get(day.dow);
+    if (!patternIds || !patternIds.length) return;
+    next = staffingSetCell(next, member, day.iso, patternIds, knownWorkshopIds);
+  });
+  return next;
+}
+
+// --- Absences dans le Gantt (#134) ------------------------------------------
+
+// L'atelier « absence » n'est pas un type à part : c'est un atelier du
+// catalogue comme un autre, reconnu par son nom — comme #124 le fait déjà
+// pour tout le reste plutôt que d'ajouter un second système.
+function staffingAbsenceWorkshopId(catalogue) {
+  const found = normalizeWorkshops(catalogue).find((w) => /absen/i.test(w.name || ""));
+  return found ? found.id : null;
+}
+// Segments de jours d'absence consécutifs d'un responsable sur [startIso, endIso] —
+// un segment par plage continue, pour poser un seul repère sur trois jours
+// d'affilée plutôt que trois traits collés.
+function staffingAbsenceSegments(staffing, member, startIso, endIso, absenceId) {
+  if (!absenceId || !member || !STAFFING_ISO_RE.test(String(startIso)) || !STAFFING_ISO_RE.test(String(endIso))) return [];
+  const cells = staffingByCell(staffing);
+  const segs = [];
+  let cur = startIso;
+  let segStart = null;
+  let guard = 0;
+  while (cur <= endIso && guard < 1000) {
+    const absent = (cells.get(staffingCellId(member, cur)) || []).includes(absenceId);
+    if (absent && segStart === null) segStart = cur;
+    if (!absent && segStart !== null) { segs.push({ start: segStart, end: addDays(cur, -1) }); segStart = null; }
+    cur = addDays(cur, 1);
+    guard += 1;
+  }
+  if (segStart !== null) segs.push({ start: segStart, end: addDays(cur, -1) });
+  return segs;
 }
 
 /* La liste du sélecteur, telle que le panneau la rend.
@@ -10183,11 +10300,12 @@ function TeamMemberFormModal({ member, onSave, onClose }) {
   const [avatar, setAvatar] = useState(member?.avatarDataUrl || "");
   const [color, setColor] = useState(member?.color || PALETTE[0]);
   const [email, setEmail] = useState(member?.email || "");
+  const [capacityPerDay, setCapacityPerDay] = useState(normalizeMemberCapacity(member?.capacityPerDay));
   const [nameError, setNameError] = useState(false);
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
-    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null });
+    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay) });
   };
 
   return (
@@ -10204,6 +10322,10 @@ function TeamMemberFormModal({ member, onSave, onClose }) {
       </div>
       <div className="lp-field"><label>Logo / avatar (facultatif, sinon pastille de couleur)</label><IconEditor icon={avatar} setIcon={setAvatar} /></div>
       <div className="lp-field"><label>Couleur</label><input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: "100%", height: 36 }} /></div>
+      <div className="lp-field">
+        <label>Capacité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(postes par jour avant alerte de surcharge dans la Charge personnel)</span></label>
+        <input type="number" min="1" step="1" value={capacityPerDay} onChange={(e) => setCapacityPerDay(Math.max(1, Math.round(Number(e.target.value) || 1)))} style={{ maxWidth: 100 }} />
+      </div>
     </Modal>
   );
 }
