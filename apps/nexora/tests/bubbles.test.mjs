@@ -409,14 +409,18 @@ test("la hauteur de bulle se paie en pixels, et seulement si la description est 
 
 test("la hauteur de bulle n'a qu'une source : le rendu et l'auto-dimensionnement l'appellent", () => {
   // Le rendu la pose en variable CSS...
-  assert.match(html, /"--lp-bubble-h": bubbleHeightPx\(widget\) \+ "px"/);
+  assert.match(html, /"--lp-bubble-h": bubbleHeightPx\(widget, titleExtraPx\) \+ "px"/);
   assert.match(html, /"--lp-bubble-desc-lines": bubbleCfg\.bubbleDescriptionLines/);
   /* ...et l'auto-dimensionnement du widget appelle la MÊME fonction, par
      l'intermédiaire de `bubbleLaneHeightPx` — la hauteur d'une LIGNE de bulles,
      bandeau condensé compris (#120, #122). Elle n'ajoute rien à la hauteur de
      la bulle : elle la relit. */
   assert.match(html, /const laneH = bubbleLaneHeightPx\(w\);/);
-  assert.match(html, /function bubbleLaneHeightPx\(widget\) \{[\s\S]*?return bubbleHeightPx\(widget\) \+ fields;/);
+  assert.match(html, /function bubbleLaneHeightPx\(widget, titleExtraPx\) \{[\s\S]*?return bubbleHeightPx\(widget, titleExtraPx\) \+ fields;/);
+  /* Le supplement de titre (#122) passe par la MEME fonction : la piste d'un
+     couloir et l'auto-dimensionnement lisent la hauteur augmentee, ils ne la
+     recalculent pas chacun de leur cote. */
+  assert.match(html, /const bubbleLaneStyle = \{ minHeight: bubbleLaneHeightPx\(widget, titleExtraPx\) \+ "px" \}/);
   // Aucun des deux ne recopie les nombres : c'était le piège d'un widget qui se
   // redimensionne à une hauteur qui n'est pas celle qu'il dessine.
   assert.doesNotMatch(html, /bubbleSize === "compact" \? 34/);
@@ -800,4 +804,40 @@ test("la couche des blocs temporels comprend le débord réservé en pied", () =
      donc où s'arrêtaient les lignes, et non où s'arrête le diagramme. */
   assert.match(html, /height: rowsBand\.height \+ rowsTail,/);
   assert.doesNotMatch(html, /top: rowsBand\.top,\s*height: rowsBand\.height,\s*\};/);
+});
+
+test("les titres se coupent par DÉFAUT, et le réglage les rend entiers (#122)", () => {
+  /* Le défaut est « coupé » : c'est le comportement de toutes les bulles
+     existantes, et le changer aurait rallongé sans prévenir chaque ligne des
+     tableaux de bord déjà en place. */
+  assert.equal(normalizeBubblesWidget({}).bubbleTruncateTitles, true);
+  assert.equal(normalizeBubblesWidget({ bubbleTruncateTitles: false }).bubbleTruncateTitles, false);
+  assert.equal(normalizeBubblesWidget({ bubbleTruncateTitles: "non" }).bubbleTruncateTitles, true);
+
+  // Titres coupés : aucun supplément, quoi qu'on mesure — la bulle tient par
+  // construction dans la hauteur posée.
+  const base = bubbleHeightPx({});
+  assert.equal(bubbleHeightPx({}, 40), base, "le supplément est ignoré tant que les titres sont coupés");
+  assert.equal(bubbleHeightPx({ bubbleTruncateTitles: false }, 40), base + 40);
+  assert.equal(bubbleHeightPx({ bubbleTruncateTitles: false }), base, "rien de mesuré, rien d'ajouté");
+  assert.equal(bubbleHeightPx({ bubbleTruncateTitles: false }, -10), base, "une mesure absurde n'écrase pas la hauteur");
+  assert.equal(bubbleHeightPx({ bubbleTruncateTitles: false }, "grand"), base);
+
+  // Le couloir gagne la même hauteur : c'est ce qui garde les lignes alignées.
+  const lane = bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: ["status"] });
+  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: ["status"], bubbleTruncateTitles: false }, 26), lane + 26);
+});
+
+test("le titre entier n'est pas rogné, et sa hauteur est MESURÉE (#122)", () => {
+  // La classe de la racine porte le mode...
+  assert.match(html, /bubbleMode && !bubbleCfg\.bubbleTruncateTitles \? " is-title-full" : ""/);
+  // ...et la feuille de style lève le rognage à deux lignes pour ce mode seul.
+  assert.match(html, /\.is-title-full \.lp-bubble-title[\s\S]{0,120}-webkit-line-clamp:unset/);
+  /* Le nombre de lignes d'un titre dépend de la largeur réelle de sa bulle : il
+     se mesure. Et c'est le PLUS GRAND supplément qui est appliqué à toutes les
+     lignes — des hauteurs différentes se liraient en escalier. */
+  assert.match(html, /tallest = Math\.max\(tallest, el\.scrollHeight\)/);
+  assert.match(html, /setTitleExtraPx\(\(prev\) => \(prev === extra \? prev : extra\)\)/);
+  // Titres coupés : la mesure ne tourne pas du tout.
+  assert.match(html, /if \(!bubbleMode \|\| bubbleCfg\.bubbleTruncateTitles\) \{/);
 });

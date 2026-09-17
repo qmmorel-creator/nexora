@@ -3632,6 +3632,12 @@ function normalizeWorkshops(list) {
       id: String(w.id),
       name: String(w.name).trim(),
       color: typeof w.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(w.color) ? w.color : WORKSHOP_SEED[0].color,
+      /* Un atelier PERSONNALISÉ est né dans un widget Charge, pas dans les
+         Réglages (#124). La distinction ne change rien à son fonctionnement —
+         elle sert au SÉLECTEUR, qui range les deux populations séparément.
+         Elle se déduit du drapeau et jamais de l'identifiant : un atelier
+         renommé ou recoloré reste du côté où il est né. */
+      custom: w.custom === true,
     }));
   return cleaned.length ? cleaned : WORKSHOP_SEED.map((w) => ({ ...w }));
 }
@@ -3643,6 +3649,53 @@ function normalizeWorkshops(list) {
    personne n'a demandée. */
 function workshopFor(list, id) {
   return normalizeWorkshops(list).find((w) => w.id === String(id)) || null;
+}
+
+/* La palette proposée quand on choisit une couleur — d'atelier personnalisé
+   comme de personne ajoutée à la main. Une LISTE FERMÉE et non un sélecteur
+   libre : dix teintes qui se distinguent les unes des autres sur une case de
+   vingt pixels, là où un nuancier complet laisse choisir deux bleus que
+   personne ne différenciera en quartiers. */
+const STAFFING_COLOR_CHOICES = [
+  "#2C6BE0", "#7A5AF8", "#FF7A3D", "#1FA971", "#E2A63B",
+  "#D64545", "#EC4899", "#14B8A6", "#0EA5E9", "#7A8290",
+];
+
+/* L'identifiant d'un atelier personnalisé est DÉRIVÉ de son nom, comme celui
+   d'une case l'est de la personne et du jour : deux sessions qui créent « Grue »
+   au même moment écrivent alors le même atelier, que la fusion traite comme un
+   seul. Un identifiant tiré au sort aurait donné deux « Grue » indiscernables,
+   chacun avec ses affectations.
+
+   Le suffixe numérique ne sert qu'au cas où le nom est déjà pris par un atelier
+   DIFFÉRENT — sans lui, créer « Grue » écraserait la couleur de l'autre. */
+function staffingCustomWorkshopId(name, catalogue) {
+  const slug = normalizeForMatch(name).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "atelier";
+  const taken = new Set(normalizeWorkshops(catalogue).map((w) => w.id));
+  const base = "ws-perso-" + slug;
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(base + "-" + n) && n < 500) n += 1;
+  return base + "-" + n;
+}
+
+/* Créer un atelier personnalisé depuis le widget. Retourne le catalogue
+   complet et l'atelier créé — ou l'atelier EXISTANT quand le nom est déjà au
+   catalogue : « Grue » saisi deux fois est le même atelier, et deux entrées de
+   même nom se distingueraient seulement à la couleur. */
+function staffingAddCustomWorkshop(catalogue, name, color) {
+  const clean = String(name || "").trim();
+  const list = normalizeWorkshops(catalogue);
+  if (!clean) return { catalogue: list, workshop: null, created: false };
+  const existing = list.find((w) => normalizeForMatch(w.name) === normalizeForMatch(clean));
+  if (existing) return { catalogue: list, workshop: existing, created: false };
+  const workshop = {
+    id: staffingCustomWorkshopId(clean, list),
+    name: clean,
+    color: typeof color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : STAFFING_COLOR_CHOICES[0],
+    custom: true,
+  };
+  return { catalogue: [...list, workshop], workshop, created: true };
 }
 
 /* Code court d'un atelier, pour la bande d'une case trop étroite pour son nom.
@@ -3727,10 +3780,22 @@ function staffingWorkshopUsage(entries, workshopId) {
 
 // --- Fenêtre affichée --------------------------------------------------------
 
-const STAFFING_RANGES = ["month", "twoWeeks", "week"];
+/* « custom » est une plage BORNÉE PAR DEUX DATES, choisie dans la fiche du
+   widget (#124). Elle vient en dernier parce qu'elle ne se navigue pas comme
+   les autres : les trois premières sont des périodes de calendrier, celle-ci
+   est un intervalle que son auteur a fixé. */
+const STAFFING_RANGES = ["month", "twoWeeks", "week", "custom"];
+
+/* Une plage à la main reste une GRILLE, pas un export : au-delà, les colonnes
+   tombent sous le pixel et la page ne se lit plus. La borne est haute exprès —
+   un trimestre passe — et la fiche du widget dit ce qui a été coupé plutôt que
+   de corriger en douce les dates saisies. */
+const STAFFING_CUSTOM_MAX_DAYS = 120;
 
 const STAFFING_DEFAULTS = {
   staffingRange: "month",
+  staffingStart: "",
+  staffingEnd: "",
   staffingMembers: [],
   staffingExtraMembers: [],
   staffingOffset: 0,
@@ -3753,6 +3818,16 @@ function staffingMemberColor(name) {
   return STAFFING_PALETTE[hash % STAFFING_PALETTE.length];
 }
 
+/* Le nom d'une granularite, ecrit UNE fois : la barre du widget et la fiche des
+   reglages montrent les memes boutons, et deux listes auraient fini par ne plus
+   dire la meme chose. */
+function staffingRangeLabel(range) {
+  if (range === "month") return "Mois";
+  if (range === "twoWeeks") return "2 semaines";
+  if (range === "week") return "Semaine";
+  return "Plage";
+}
+
 function normalizeStaffingRange(value) {
   return STAFFING_RANGES.includes(value) ? value : STAFFING_DEFAULTS.staffingRange;
 }
@@ -3764,13 +3839,24 @@ function normalizeStaffingOffset(value) {
   return Math.max(-24, Math.min(24, Math.round(n)));
 }
 
-/* Noms libres saisis dans le widget : nettoyés, dédoublonnés, ordre conservé. */
+/* Personnes saisies dans le widget : nettoyées, dédoublonnées, ordre conservé.
+
+   Deux écritures acceptées, et ce n'est pas une hésitation : les widgets créés
+   avant #124 portent une simple chaîne, ceux d'aujourd'hui un objet
+   { name, color } depuis que la couleur se choisit. Lire les deux ici évite une
+   migration du magasin — et une sauvegarde ancienne rouvre sans perdre
+   personne. Une couleur absente n'est pas une erreur : elle vaut « celle du
+   hachage du nom ». */
 function normalizeStaffingExtraMembers(list) {
   const out = [];
+  const seen = new Set();
   (Array.isArray(list) ? list : []).forEach((raw) => {
-    const name = String(raw || "").trim();
-    if (!name || out.includes(name)) return;
-    out.push(name);
+    const isObject = raw && typeof raw === "object";
+    const name = String((isObject ? raw.name : raw) || "").trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    const color = isObject && typeof raw.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(raw.color) ? raw.color : "";
+    out.push({ name, color });
   });
   return out;
 }
@@ -3780,9 +3866,14 @@ function normalizeStaffingExtraMembers(list) {
 
    Deux populations, et c'est voulu (#124) :
 
-   - les utilisateurs ENREGISTRÉS de Nexora, qu'on coche ou non. Une sélection
-     vide veut dire « tout le monde » — et non « personne », qui ferait d'un
-     widget neuf une grille vide sans rien expliquer ;
+   - les utilisateurs ENREGISTRÉS de Nexora, cochés UN PAR UN. Une sélection
+     vide veut dire « personne » et non « tout le monde » (retour de test
+     #124) : un widget Charge suit une équipe choisie, et la plupart du temps
+     une poignée de gens dans un annuaire qui en compte beaucoup. Déverser
+     l'annuaire entier dans une grille de trente colonnes donnait une grille
+     qu'il fallait vider avant de s'en servir. Le widget explique la grille
+     vide et la fiche coche tout le monde d'un bouton : c'est une grille à
+     remplir, jamais une panne ;
    - des personnes AJOUTÉES À LA MAIN dans le widget, autant qu'on veut. Un
      intérimaire, un sous-traitant, quelqu'un qui n'a pas de compte : les faire
      entrer dans l'annuaire pour les planifier reviendrait à leur ouvrir
@@ -3797,12 +3888,19 @@ function staffingVisibleMembers(teamMembers, selected, extra) {
     .filter((m) => m && String(m.name || "").trim())
     .map((m) => ({ name: String(m.name).trim(), color: typeof m.color === "string" ? m.color : "", avatarDataUrl: m.avatarDataUrl || "", registered: true }));
   const wanted = (Array.isArray(selected) ? selected : []).map((n) => String(n));
-  const kept = wanted.length ? all.filter((m) => wanted.includes(m.name)) : all;
+  const kept = all.filter((m) => wanted.includes(m.name));
   const seen = new Set(kept.map((m) => m.name));
-  normalizeStaffingExtraMembers(extra).forEach((name) => {
-    if (seen.has(name)) return;
-    seen.add(name);
-    kept.push({ name, color: staffingMemberColor(name), avatarDataUrl: "", registered: false });
+  normalizeStaffingExtraMembers(extra).forEach((person) => {
+    if (seen.has(person.name)) return;
+    seen.add(person.name);
+    kept.push({
+      name: person.name,
+      // Couleur choisie si elle l'a été, hachage du nom sinon : jamais le rang,
+      // qui change dès qu'on ajoute quelqu'un au-dessus.
+      color: person.color || staffingMemberColor(person.name),
+      avatarDataUrl: "",
+      registered: false,
+    });
   });
   return kept;
 }
@@ -3813,6 +3911,8 @@ function normalizeStaffingWidget(widget) {
     ...w,
     staffingRange: normalizeStaffingRange(w.staffingRange),
     staffingOffset: normalizeStaffingOffset(w.staffingOffset),
+    staffingStart: STAFFING_ISO_RE.test(String(w.staffingStart || "")) ? String(w.staffingStart) : "",
+    staffingEnd: STAFFING_ISO_RE.test(String(w.staffingEnd || "")) ? String(w.staffingEnd) : "",
     staffingMembers: (Array.isArray(w.staffingMembers) ? w.staffingMembers : [])
       .map((n) => String(n || "").trim())
       .filter((n, i, arr) => n && arr.indexOf(n) === i),
@@ -3825,11 +3925,34 @@ function normalizeStaffingWidget(widget) {
 /* La fenêtre affichée, en dates. Le décalage se compte en PÉRIODES et non en
    jours : « mois suivant » doit tomber sur le mois suivant, pas sur trente
    jours plus tard. Une semaine commence le lundi. */
-function staffingWindow(range, offset, todayIso) {
+function staffingWindow(range, offset, todayIso, custom) {
   const mode = normalizeStaffingRange(range);
   const n = normalizeStaffingOffset(offset);
   const base = STAFFING_ISO_RE.test(String(todayIso)) ? String(todayIso) : iso(new Date());
   const d = new Date(base + "T00:00:00");
+  /* Plage choisie à la main. Deux dates à l'envers sont REMISES À L'ENDROIT
+     plutôt que refusées : on sait ce que quelqu'un qui saisit « du 30 au 12 »
+     voulait dire, et une grille vide ne le lui dirait pas. Le décalage la fait
+     glisser de sa propre longueur — « suivant » montre l'intervalle d'après,
+     de la même durée. Une plage incomplète retombe sur le mois : le widget
+     montre quelque chose pendant qu'on saisit la seconde date. */
+  if (mode === "custom") {
+    const rawStart = custom && STAFFING_ISO_RE.test(String(custom.start)) ? String(custom.start) : "";
+    const rawEnd = custom && STAFFING_ISO_RE.test(String(custom.end)) ? String(custom.end) : "";
+    if (rawStart && rawEnd) {
+      const from = rawStart <= rawEnd ? rawStart : rawEnd;
+      const to = rawStart <= rawEnd ? rawEnd : rawStart;
+      let span = 1;
+      let cur = from;
+      while (cur < to && span < STAFFING_CUSTOM_MAX_DAYS) { cur = addDays(cur, 1); span += 1; }
+      const start = addDays(from, n * span);
+      return { start, end: addDays(start, span - 1) };
+    }
+    return {
+      start: iso(new Date(d.getFullYear(), d.getMonth() + n, 1)),
+      end: iso(new Date(d.getFullYear(), d.getMonth() + n + 1, 0)),
+    };
+  }
   if (mode === "month") {
     return {
       start: iso(new Date(d.getFullYear(), d.getMonth() + n, 1)),
@@ -3957,11 +4080,16 @@ function staffingPickerGroups(catalogue, selectedIds, query) {
       hiddenSelected: all.filter((w) => selected.has(w.id) && !normalizeForMatch(w.name).includes(q)).map((w) => w.name),
     };
   }
-  const chosen = all.filter((w) => selected.has(w.id)).map(decorate);
-  const rest = all.filter((w) => !selected.has(w.id)).map(decorate);
+  /* Deux groupes, par TYPE et non par état (#124) : les ateliers du catalogue
+     des Réglages d'un côté, ceux créés dans un widget de l'autre. Faire
+     remonter les cochés en tête, comme avant, déplaçait les lignes sous le
+     curseur à chaque clic — on cochait « Usine » et « Bureau » changeait de
+     place. L'ordre est maintenant stable, et la coche se voit à la coche. */
+  const standard = all.filter((w) => !w.custom).map(decorate);
+  const custom = all.filter((w) => w.custom).map(decorate);
   const groups = [];
-  if (chosen.length) groups.push({ key: "selected", label: "Sélectionnés", items: chosen });
-  if (rest.length) groups.push({ key: "all", label: chosen.length ? "Tous les ateliers" : "", items: rest });
+  if (standard.length) groups.push({ key: "standard", label: custom.length ? "Ateliers standards" : "", items: standard });
+  if (custom.length) groups.push({ key: "custom", label: "Ateliers personnalisés", items: custom });
   return { mode: "all", groups, hiddenSelected: [] };
 }
 // === NEXORA:STAFFING:END ===

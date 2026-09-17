@@ -106,11 +106,52 @@ se lirait sur aucune. Le libellé est donc réservé à l'aplat.
 Le code court est **dérivé du nom** (`workshopCode`), jamais saisi à part : un
 atelier renommé change de code sans que personne ait à y penser.
 
+### L'infobulle est un carton sombre, et son texte doit s'y lire
+
+Les trois lignes du détail héritaient des couleurs de texte de la **page**
+(`--text-900`, `--text-600`) alors qu'elles se posent sur le carton **sombre** des
+infobulles de Nexora : de l'encre presque noire sur un fond presque noir, où l'on
+ne voyait plus que la pastille de couleur (retour de test). Elles prennent
+désormais les couleurs du carton, comme son titre et sa date juste au-dessus.
+
+C'est le genre de défaut qu'un test de fonction ne voit pas — il n'y a pas de
+fonction fautive. La suite lit donc la **feuille de style construite** et refuse
+que ces trois lignes reprennent une couleur de texte de page.
+
 ### La couleur ne porte jamais seule l'information
 
 Code dans la bande quand il y a la place, nom dans l'infobulle, nom dans la
 légende, et `aria-label` complet sur chaque case. Une grille qui ne se lirait
 qu'en couleur serait illisible pour une partie des gens qui la regardent.
+
+## Un atelier se crée aussi depuis la case
+
+Le besoin se découvre en affectant — « tiens, il manque Grue ». Renvoyer dans les
+Réglages pour revenir ensuite ferait perdre la case qu'on était en train de
+remplir : le sélecteur crée donc l'atelier sur place, avec sa couleur, et le
+**pose aussitôt sur la case**. C'est pour elle qu'on l'a créé.
+
+Il entre dans le **même catalogue** que les autres, marqué `custom`. Un second
+magasin aurait donné deux endroits où chercher « Grue », et deux règles de
+suppression.
+
+Son identifiant est **dérivé de son nom**, comme celui d'une case l'est de la
+personne et du jour : deux sessions qui créent « Grue » au même moment écrivent
+le même atelier, que la fusion traite comme un seul. Un nom déjà au catalogue ne
+crée rien et rend l'atelier **existant** — « Usine » saisi dans le sélecteur est
+l'atelier Usine, et deux entrées de même nom ne se distingueraient qu'à la
+couleur.
+
+### Le sélecteur range par type, pas par état
+
+Deux groupes : **Ateliers standards** (ceux des Réglages) et **Ateliers
+personnalisés** (ceux nés dans un widget). Un seul type au catalogue : pas de
+titre, il n'y a rien à distinguer.
+
+Les ateliers cochés remontaient d'abord en tête. C'était une erreur : les lignes
+se déplaçaient sous le curseur à chaque clic — on cochait « Usine » et « Bureau »
+changeait de place. L'ordre est maintenant celui du catalogue, stable, et la
+coche se voit à la coche.
 
 ## La fenêtre : mois par défaut
 
@@ -118,6 +159,21 @@ Le décalage se compte en **périodes**, pas en jours : « mois suivant » tombe
 le mois suivant, quelle que soit sa longueur — février bissextile et passage
 d'année compris. Une semaine commence le lundi, et un dimanche appartient à la
 semaine qui le précède.
+
+### Une quatrième fenêtre : la plage choisie à la main
+
+Les trois premières granularités sont des **périodes de calendrier** ; « Plage »
+est un intervalle que son auteur fixe, par deux dates. Elle se navigue quand
+même : les flèches la font glisser de sa **propre durée**, pour que « suivant »
+montre l'intervalle d'après, de la même longueur.
+
+Trois décisions à son sujet :
+
+| Cas | Ce qui se passe | Pourquoi |
+|---|---|---|
+| dates à l'envers (« du 30 au 12 ») | remises à l'endroit | on sait ce que la saisie voulait dire ; une grille vide ne le dirait pas |
+| une seule des deux dates | le mois en cours | le widget montre quelque chose pendant qu'on saisit la seconde |
+| plus de 120 jours | ramenée à 120 | c'est une grille, pas un export : au-delà, les colonnes tombent sous le pixel |
 
 Le week-end reste **affectable** : il est atténué, pas retiré. Un chantier
 travaille le samedi, et une grille qui le cacherait mentirait sur la charge.
@@ -130,17 +186,45 @@ granularité.
 **Sélection propre au widget**, et c'est le point : deux widgets côte à côte
 suivent deux équipes différentes.
 
-- Les **utilisateurs enregistrés** de Nexora, qu'on coche ou non. Aucune coche
-  veut dire **tout le monde** — et non « personne », qui ferait d'un widget neuf
-  une grille vide sans rien expliquer. Une personne retirée de l'annuaire
-  disparaît d'elle-même.
+- Les **utilisateurs enregistrés** de Nexora, cochés **un par un**. Aucune coche
+  veut dire **personne**.
 - Des personnes **ajoutées à la main** dans le widget, autant qu'on veut : un
   intérimaire, un sous-traitant, un renfort. Les faire entrer dans l'annuaire
   pour les planifier reviendrait à leur ouvrir Nexora.
 
-Les secondes viennent après les premières, dans l'ordre de saisie, et reçoivent
-une couleur **par hachage de leur nom** — jamais par leur rang, qui change dès
-qu'on ajoute quelqu'un au-dessus.
+Une personne retirée de l'annuaire disparaît d'elle-même ; une personne ajoutée
+à la main reste, elle n'était nulle part ailleurs.
+
+### « Aucune coche » a changé de sens, et c'est délibéré
+
+Une sélection vide affichait d'abord **tout le monde**, pour qu'un widget neuf ne
+s'ouvre pas sur une grille vide. Le retour de test a tranché dans l'autre sens :
+un widget Charge suit une **équipe choisie**, presque toujours une poignée de
+gens dans un annuaire qui en compte beaucoup. Déverser l'annuaire entier dans une
+grille de trente colonnes donnait une grille qu'il fallait **vider avant de s'en
+servir**.
+
+Le risque qu'on voulait éviter n'a pas disparu pour autant — il est traité
+autrement : le widget vide **dit** ce qui lui manque et où cocher, et la fiche
+porte un bouton **« Tout cocher »**. C'est une grille à remplir, jamais une
+panne.
+
+Les personnes ajoutées à la main viennent après les inscrites, dans l'ordre de
+saisie. Un nom libre qui existe déjà dans l'annuaire n'est **pas dupliqué** :
+c'est la même personne, et deux lignes pour un seul nom rendraient ses
+affectations indiscernables, puisqu'elles sont indexées par le nom.
+
+### La couleur d'une personne : choisie, ou dérivée de son nom
+
+La palette est la même que pour les ateliers — **dix teintes**, pas un nuancier
+libre : deux bleus voisins ne se distingueraient sur aucune pastille de 22 px.
+
+Sans choix, la couleur vient du **hachage du nom**, jamais du rang : le rang
+change dès qu'on ajoute quelqu'un au-dessus, et « Karim » changerait de couleur
+sans avoir bougé.
+
+Recolorer quelqu'un ne touche **que** sa couleur. Son nom est la clé de ses
+affectations : le réécrire ici les détacherait de leur personne.
 
 Un nom libre qui existe déjà dans l'annuaire n'est **pas dupliqué** : c'est la
 même personne, et deux lignes pour un seul nom rendraient ses affectations
