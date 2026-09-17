@@ -76,6 +76,14 @@ function AnnotationsHarness() {
     start: "2026-07-15", end: "2026-07-15", progress: 0, milestone: true, assignee: "Quentin", checklist: [],
   };
   const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
+  /* Colonne d'étiquettes calée sur son contenu (retour de test). Des titres
+     COURTS dans un diagramme LARGE : c'est le cas où les 26 % figés laissaient
+     cent cinquante pixels de blanc entre le dernier mot et la piste. Le projet
+     n'est pas affiché à côté du titre — il compterait dans la mesure et
+     masquerait le défaut. */
+  const shortTitleTasks = seedWithRisks
+    .filter((t) => ["t1", "t2", "t4", "t5"].includes(t.id))
+    .map((t, i) => ({ ...t, projectId: "p1", title: ["Étude", "Appel d'offres", "Chantier", "Réception"][i], delayRisks: [], comparison: null }));
   /* Dernière ligne coupée (retour de test). Une ligne peint SOUS sa boîte — rail
      de comparaison, couloir de risque, étiquette de risque — dans l'interligne
      de la suivante ; la dernière n'en a pas, et le widget coupe à son bord. Ce
@@ -759,6 +767,17 @@ function AnnotationsHarness() {
           <WidgetMiniGantt
             widget={{ id: "w11", type: "minigantt", colorBy: "status", miniGanttFields: ["end"], miniGanttRange: { mode: "rolling", beforeMonths: 1, afterMonths: 1 } }}
             tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* Titres courts, diagramme large : la colonne d'étiquettes doit se caler
+            sur son contenu au lieu de réserver 26 % de la largeur. */}
+        <div id="harness-labels-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 1100, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{ id: "w15", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] }}
+            tasks={shortTitleTasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
             onUpdateWidget={noop}
             onUpdateTask={noop}
             groupBy="none"

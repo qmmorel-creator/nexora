@@ -88,6 +88,16 @@ Annotations horizontales, traits de jalon et formes de repère :
 - le catalogue **Réglages > Types de jalon** est monté à côté du diagramme :
   c'est le même catalogue, donc un symbole choisi là est celui qui apparaît ici.
 
+Colonne d'étiquettes (retour de test) :
+
+- sur un diagramme **large à titres courts**, la colonne se cale sur son contenu :
+  il ne reste que la gouttière de 6 px entre le dernier mot et la piste, là où les
+  26 % figés en laissaient plus de deux cents ;
+- sur un diagramme à **titres longs**, elle tient exactement le plafond des 26 % :
+  elle ne doit que rétrécir, jamais grandir ;
+- la grille et la bande des blocs temporels partent du **même bord** que la piste :
+  les couches suivent la colonne mesurée, et non un 26 % écrit en dur.
+
 Dernière ligne du diagramme, à fleur du bord (retour de test) :
 
 - un widget dont la **dernière** ligne porte deux couloirs de risque, leurs

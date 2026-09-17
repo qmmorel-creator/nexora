@@ -409,6 +409,49 @@ const seen = await page.evaluate(() => {
         zLigne: ligne ? getComputedStyle(ligne).zIndex : "",
       };
     })(),
+    /* Colonne d'étiquettes calée sur son contenu (retour de test). Les 26 %
+       figés laissaient un blanc entre le dernier mot et la piste dès que les
+       titres étaient courts. On relève, sur un diagramme à titres COURTS, ce
+       blanc et la largeur de la colonne ; puis, sur un diagramme à titres
+       LONGS, que la colonne tient toujours le plafond — elle ne doit que
+       rétrécir, jamais grandir. Et les couches superposées doivent suivre la
+       colonne : elles partaient d'un 26 % écrit en dur. */
+    colonne: (() => {
+      const relever = (id) => {
+        const host = document.querySelector(id);
+        const root = host ? host.querySelector(".lp-widget-minigantt") : null;
+        if (!root) return null;
+        const label = root.querySelector(".lp-widget-minigantt-label");
+        const track = root.querySelector(".lp-widget-minigantt-track");
+        const grille = root.querySelector(".lp-widget-minigantt-gridoverlay");
+        const bande = root.querySelector(".lp-widget-minigantt-band-layer");
+        if (!label || !track) return null;
+        /* Le dernier mot RÉELLEMENT peint, pas le bord de la boîte : le titre
+           est un `flex:1`, sa boîte épouse la colonne et dirait donc toujours
+           « aucun blanc ». On mesure le texte lui-même. */
+        const range = document.createRange();
+        let contenu = 0;
+        root.querySelectorAll(".lp-widget-minigantt-label").forEach((el) => {
+          const gauche = el.getBoundingClientRect().left;
+          [...el.children].forEach((enfant) => {
+            range.selectNodeContents(enfant);
+            const texte = range.getBoundingClientRect();
+            const droite = texte.width ? texte.right : enfant.getBoundingClientRect().right;
+            contenu = Math.max(contenu, droite - gauche);
+          });
+        });
+        const g = label.getBoundingClientRect();
+        const p = track.getBoundingClientRect();
+        return {
+          largeur: Math.round(g.width),
+          plafond: Math.round(root.getBoundingClientRect().width * 0.26),
+          blanc: Math.round(p.left - g.left - contenu),
+          ecartGrille: grille ? Math.round(grille.getBoundingClientRect().left - p.left) : null,
+          ecartBande: bande ? Math.round(bande.getBoundingClientRect().left - p.left) : null,
+        };
+      };
+      return { courts: relever("#harness-labels-minigantt"), longs: relever("#harness-first-minigantt") };
+    })(),
     /* Dernière ligne coupée (retour de test) : une ligne peint SOUS sa boîte —
        rail de comparaison, couloirs de risque, étiquettes — dans l'interligne
        de la suivante, et la dernière n'en a pas. Le widget coupant à son bord,
@@ -1555,6 +1598,28 @@ expect(seen.rules.z === "0",
     `Jalons : ${new Set(epaisseurs).size} épaisseur(s) distincte(s) (${epaisseurs.join(", ")}) — elle se règle jalon par jalon`);
   expect(epaisseurs.every((e) => parseFloat(e) >= 3),
     `Jalons : un trait à ${epaisseurs.join(", ")} — le défaut ne doit plus descendre sous 3 px`);
+}
+
+// --- La colonne d'étiquettes se cale sur son contenu (retour de test) ------
+expect(seen.colonne && seen.colonne.courts && seen.colonne.longs,
+  "Colonne d'étiquettes : widgets du scénario introuvables dans le banc");
+if (seen.colonne && seen.colonne.courts && seen.colonne.longs) {
+  const { courts, longs } = seen.colonne;
+  expect(courts.blanc <= 10,
+    `Colonne d'étiquettes : ${courts.blanc} px de blanc entre le titre le plus long et la piste — la gouttière fait 6 px, le reste est perdu`);
+  expect(courts.largeur < courts.plafond - 20,
+    `Colonne d'étiquettes : ${courts.largeur} px pour des titres courts, alors que le plafond des 26 % en vaut ${courts.plafond} — elle doit se caler sur son contenu`);
+  // Elle ne doit JAMAIS grandir : sur des titres longs, le plafond tient, et le
+  // diagramme ne perd pas un pixel de piste par rapport à avant.
+  expect(Math.abs(longs.largeur - longs.plafond) <= 1,
+    `Colonne d'étiquettes : ${longs.largeur} px sur des titres longs, ${longs.plafond} attendus — elle ne doit pas dépasser les 26 %`);
+  // Les couches suivent la colonne, sinon la grille et les blocs temporels
+  // flottent à côté de la piste.
+  [["grille", courts.ecartGrille], ["bande des blocs", courts.ecartBande]].forEach(([nom, ecart]) => {
+    if (ecart === null) return;
+    expect(Math.abs(ecart) <= 1,
+      `Colonne d'étiquettes : la ${nom} commence à ${ecart} px du bord de la piste — les couches doivent suivre la colonne mesurée`);
+  });
 }
 
 // --- La dernière ligne tient entière dans le widget (retour de test) -------
