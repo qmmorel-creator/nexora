@@ -409,6 +409,37 @@ const seen = await page.evaluate(() => {
         zLigne: ligne ? getComputedStyle(ligne).zIndex : "",
       };
     })(),
+    /* Dernière ligne coupée (retour de test) : une ligne peint SOUS sa boîte —
+       rail de comparaison, couloirs de risque, étiquettes — dans l'interligne
+       de la suivante, et la dernière n'en a pas. Le widget coupant à son bord,
+       tout cela y disparaissait. On relève le point le plus BAS peint par la
+       dernière ligne, et le bord intérieur du widget. */
+    piedDeLigne: (() => {
+      const host = document.querySelector("#harness-tail-minigantt");
+      const root = host ? host.querySelector(".lp-widget-minigantt") : null;
+      if (!root) return null;
+      const rows = [...root.querySelectorAll(".lp-widget-minigantt-row")];
+      const last = rows[rows.length - 1];
+      if (!last) return null;
+      const bas = last.getBoundingClientRect().bottom;
+      let plusBas = bas;
+      let coupable = "";
+      last.querySelectorAll("*").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (!r.width && !r.height) return;
+        if (r.bottom > plusBas) { plusBas = r.bottom; coupable = el.className.toString(); }
+      });
+      const b = root.getBoundingClientRect();
+      const cs = getComputedStyle(root);
+      return {
+        debord: +(plusBas - bas).toFixed(1),
+        coupable,
+        // Bord INTÉRIEUR : c'est là que `overflow:hidden` tranche.
+        marge: +(b.bottom - parseFloat(cs.borderBottomWidth || 0) - plusBas).toFixed(1),
+        coupe: cs.overflowY,
+        lignes: rows.length,
+      };
+    })(),
     /* Trait vertical d'un jalon (#95) : deux des quatre repères le portent, et
        chacun doit PROLONGER son losange — départ au repère, arrivée au bas des
        lignes. Tout est relevé dans le référentiel du widget. */
@@ -1524,6 +1555,18 @@ expect(seen.rules.z === "0",
     `Jalons : ${new Set(epaisseurs).size} épaisseur(s) distincte(s) (${epaisseurs.join(", ")}) — elle se règle jalon par jalon`);
   expect(epaisseurs.every((e) => parseFloat(e) >= 3),
     `Jalons : un trait à ${epaisseurs.join(", ")} — le défaut ne doit plus descendre sous 3 px`);
+}
+
+// --- La dernière ligne tient entière dans le widget (retour de test) -------
+expect(seen.piedDeLigne, "Dernière ligne : widget du scénario introuvable dans le banc");
+if (seen.piedDeLigne) {
+  const pied = seen.piedDeLigne;
+  expect(pied.lignes >= 2, `Dernière ligne : ${pied.lignes} ligne(s) dans le scénario, au moins deux attendues`);
+  // Sans débord, le contrôle ne prouverait rien : c'est le débord qui était coupé.
+  expect(pied.debord >= 2,
+    `Dernière ligne : elle ne peint que ${pied.debord} px sous sa boîte — le scénario doit porter un couloir de risque et son étiquette, sinon il ne prouve rien`);
+  expect(pied.marge >= 0,
+    `Dernière ligne : ${pied.coupable || "son habillage"} dépasse de ${-pied.marge} px le bord du widget (qui coupe en ${pied.coupe}) — la moitié basse de la ligne est perdue`);
 }
 
 // --- Le réglage est bien dans les paramètres du jalon, et il agit (#95) ----

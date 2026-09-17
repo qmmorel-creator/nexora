@@ -900,6 +900,16 @@ Le ruban est en position absolue dans une piste en `overflow` visible et tient
 dans l'interligne : la hauteur de ligne reste **exactement** celle du mode
 Standard.
 
+**Le pied du diagramme.** Ce que le ruban fait, les couloirs de risque et leurs
+étiquettes le font aussi : ils vivent dans l'interligne, donc **sous** la boîte
+de leur ligne. La dernière ligne, elle, n'a pas d'interligne après elle, et le
+widget coupe à son bord (`overflow:hidden`, `auto` dans la vue) : sa moitié basse
+disparaissait (retour de test). Le rendu mesure donc le débord de la **dernière
+ligne** — sur la ligne elle-même, pas d'après les constantes de placement, pour
+qu'un habillage ajouté demain soit réservé sans que personne y pense — et pose
+exactement autant de hauteur en pied (`.lp-widget-minigantt-rows-tail`). Aucun
+débord, aucun élément.
+
 - **Jalon comparé** — un losange fantôme gris à la date de référence, le jalon
   actuel inchangé, et un segment fin entre les deux. Un jalon n'a pas de barre :
   il n'a donc pas de ruban, et tout reste sur sa ligne — l'écart chiffré

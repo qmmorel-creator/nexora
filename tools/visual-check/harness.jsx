@@ -76,6 +76,18 @@ function AnnotationsHarness() {
     start: "2026-07-15", end: "2026-07-15", progress: 0, milestone: true, assignee: "Quentin", checklist: [],
   };
   const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
+  /* Dernière ligne coupée (retour de test). Une ligne peint SOUS sa boîte — rail
+     de comparaison, couloir de risque, étiquette de risque — dans l'interligne
+     de la suivante ; la dernière n'en a pas, et le widget coupe à son bord. Ce
+     jeu-là met donc tout cela sur la ligne du BAS : c'est le seul moyen de voir
+     si la réserve de pied la rattrape. */
+  const tailTasks = [
+    ...seedWithRisks.filter((t) => t.id === "t1" || t.id === "t2").map((t) => ({ ...t, delayRisks: [], comparison: null })),
+    // Calée AVANT la fin de l'axe (que « t1 » tient au 10 septembre) : une
+    // étiquette de risque qui déborderait de la piste ne serait pas placée du
+    // tout, et le cas d'espèce s'évaporerait.
+    { ...seedWithRisks.find((t) => t.id === "t4"), start: "2026-08-18", end: "2026-08-24" },
+  ];
   const [projects, setProjects] = useState([...seedProjects, calendarProject]);
   const [statuses, setStatuses] = useState(seedStatuses);
   const [harnessMilestoneTypes, setHarnessMilestoneTypes] = useState([
@@ -747,6 +759,18 @@ function AnnotationsHarness() {
           <WidgetMiniGantt
             widget={{ id: "w11", type: "minigantt", colorBy: "status", miniGanttFields: ["end"], miniGanttRange: { mode: "rolling", beforeMonths: 1, afterMonths: 1 } }}
             tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* Dernière ligne à fleur du bord : elle porte deux couloirs de risque,
+            leurs étiquettes et un rail de comparaison, tous peints sous sa
+            boîte. Rien de tout cela ne doit sortir du widget. */}
+        <div id="harness-tail-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
+          <WidgetMiniGantt
+            widget={{ id: "w14", type: "minigantt", colorBy: "status", miniGanttFields: ["end"], miniGanttComparisonEnabled: true }}
+            tasks={tailTasks} ctx={ctx} onOpen={noop} metaBlocks={metaBlocks}
             onUpdateWidget={noop}
             onUpdateTask={noop}
             groupBy="none"
