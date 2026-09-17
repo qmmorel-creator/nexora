@@ -19,9 +19,14 @@ const EXPORTS = [
   "normalizeMiniGanttSpanThickness",
   "normalizeMiniGanttSpanOpacity",
   "miniGanttSpanRows",
-  "miniGanttMilestoneShape",
-  "MINIGANTT_MILESTONE_TYPES",
-  "MINIGANTT_MILESTONE_SHAPES",
+  "normalizeMiniGanttSpanCap",
+  "MINIGANTT_SPAN_CAPS",
+  "MILESTONE_TYPE_SEED",
+  "MILESTONE_SYMBOLS",
+  "MILESTONE_SYMBOL_KEYS",
+  "milestoneSymbolFor",
+  "normalizeMilestoneTypes",
+  "milestoneTypeFor",
   "MINIGANTT_SPAN_DEFAULT_COLOR",
   "MINIGANTT_SPAN_DEFAULT_THICKNESS",
   "MINIGANTT_SPAN_MAX_THICKNESS",
@@ -33,9 +38,14 @@ const {
   normalizeMiniGanttSpanThickness,
   normalizeMiniGanttSpanOpacity,
   miniGanttSpanRows,
-  miniGanttMilestoneShape,
-  MINIGANTT_MILESTONE_TYPES,
-  MINIGANTT_MILESTONE_SHAPES,
+  normalizeMiniGanttSpanCap,
+  MINIGANTT_SPAN_CAPS,
+  MILESTONE_TYPE_SEED,
+  MILESTONE_SYMBOLS,
+  MILESTONE_SYMBOL_KEYS,
+  milestoneSymbolFor,
+  normalizeMilestoneTypes,
+  milestoneTypeFor,
   MINIGANTT_SPAN_DEFAULT_COLOR,
   MINIGANTT_SPAN_DEFAULT_THICKNESS,
   MINIGANTT_SPAN_MAX_THICKNESS,
@@ -152,15 +162,85 @@ test("une annotation dont la tâche n'est pas affichée est ignorée, pas dessin
   assert.equal(gardees[0].span.id, "s1");
 });
 
-// --- Formes des jalons -----------------------------------------------------
-test("chaque type de jalon a SA forme, et deux types n'en partagent jamais une", () => {
-  const formes = MINIGANTT_MILESTONE_TYPES.map((type) => miniGanttMilestoneShape(type));
-  assert.equal(new Set(formes).size, MINIGANTT_MILESTONE_TYPES.length, "deux types se ressembleraient");
-  MINIGANTT_MILESTONE_TYPES.forEach((type) => {
-    assert.equal(miniGanttMilestoneShape(type), MINIGANTT_MILESTONE_SHAPES[type]);
-  });
-  // Un type inconnu ou absent retombe sur la forme du jalon standard.
-  for (const inconnu of [undefined, null, "", "autre chose", 7]) {
-    assert.equal(miniGanttMilestoneShape(inconnu), MINIGANTT_MILESTONE_SHAPES.standard);
+// --- Bouts d'une annotation horizontale (#93) ------------------------------
+test("les bouts se règlent extrémité par extrémité, et retombent sur le rond creux", () => {
+  const [normalisee] = normalizeMiniGanttSpans([span()]);
+  assert.equal(normalisee.capStart, "circle", "valeur par défaut : le rendu d'avant le réglage");
+  assert.equal(normalisee.capEnd, "circle");
+
+  // Les deux extrémités sont indépendantes : « |———▶ » doit être exprimable.
+  const [fleche] = normalizeMiniGanttSpans([span({ capStart: "bar", capEnd: "arrow" })]);
+  assert.equal(fleche.capStart, "bar");
+  assert.equal(fleche.capEnd, "arrow");
+
+  // Un bout inconnu ne fait pas disparaître le trait : il retombe sur le rond.
+  for (const bad of [undefined, null, "", "triangle", 7]) {
+    assert.equal(normalizeMiniGanttSpanCap(bad), "circle", `bout invalide accepté : ${bad}`);
   }
+  MINIGANTT_SPAN_CAPS.forEach((cap) => assert.equal(normalizeMiniGanttSpanCap(cap), cap));
+  assert.ok(MINIGANTT_SPAN_CAPS.includes("none"), "« aucun bout » doit rester possible");
+
+  // Normaliser deux fois ne change plus rien.
+  const une = normalizeMiniGanttSpans([span({ capStart: "diamond", capEnd: "none" })]);
+  assert.deepEqual(normalizeMiniGanttSpans(une), une);
+});
+
+// --- Catalogue des types de jalon (#94) ------------------------------------
+test("le catalogue propose au moins vingt symboles, tous distincts", () => {
+  assert.ok(MILESTONE_SYMBOLS.length >= 20, `${MILESTONE_SYMBOLS.length} symboles, 20 au minimum attendus`);
+  assert.equal(new Set(MILESTONE_SYMBOL_KEYS).size, MILESTONE_SYMBOLS.length, "deux symboles partagent une clé");
+  assert.equal(new Set(MILESTONE_SYMBOLS.map((s) => s.d)).size, MILESTONE_SYMBOLS.length, "deux symboles ont le même tracé");
+  MILESTONE_SYMBOLS.forEach((symbol) => {
+    assert.ok(symbol.label && symbol.label.trim(), `symbole sans libellé : ${symbol.key}`);
+    assert.match(symbol.d, /^M/, `tracé SVG douteux pour ${symbol.key}`);
+  });
+  // Une clé inconnue ne laisse jamais un repère sans dessin.
+  for (const inconnu of [undefined, null, "", "pas-un-symbole", 3]) {
+    assert.equal(milestoneSymbolFor(inconnu), MILESTONE_SYMBOLS[0]);
+  }
+});
+
+test("un catalogue absent ou illisible rend celui de départ, jamais rien", () => {
+  for (const empty of [undefined, null, [], {}, "", 0, [null], [{}], [{ id: "x" }], [{ name: "Sans id" }]]) {
+    assert.deepEqual(normalizeMilestoneTypes(empty), MILESTONE_TYPE_SEED.map((t) => ({ ...t })));
+  }
+  // Les cinq identifiants historiques SONT ceux du catalogue de départ : c'est
+  // ce qui laisse à un jalon déjà posé son type, son nom et sa couleur.
+  assert.deepEqual(
+    MILESTONE_TYPE_SEED.map((t) => t.id),
+    ["standard", "decision", "contractual", "delivery", "commissioning"],
+  );
+  MILESTONE_TYPE_SEED.forEach((t) => assert.ok(MILESTONE_SYMBOL_KEYS.includes(t.symbol), `symbole inconnu : ${t.symbol}`));
+  // Deux types de départ ne partagent ni symbole ni couleur.
+  assert.equal(new Set(MILESTONE_TYPE_SEED.map((t) => t.symbol)).size, MILESTONE_TYPE_SEED.length);
+  assert.equal(new Set(MILESTONE_TYPE_SEED.map((t) => t.color)).size, MILESTONE_TYPE_SEED.length);
+});
+
+test("un type réglé dans les Réglages est nettoyé sans être dénaturé", () => {
+  const [type] = normalizeMilestoneTypes([{ id: "t1", name: "  Revue de conception  ", symbol: "shield", color: "#112233" }]);
+  assert.deepEqual(type, { id: "t1", name: "Revue de conception", symbol: "shield", color: "#112233" });
+
+  // Un symbole inconnu retombe sur le premier, une couleur absente sur celle
+  // du type de départ : un type reste toujours dessinable.
+  const [bancal] = normalizeMilestoneTypes([{ id: "t2", name: "Sans rien", symbol: "licorne" }]);
+  assert.equal(bancal.symbol, MILESTONE_SYMBOLS[0].key);
+  assert.equal(bancal.color, MILESTONE_TYPE_SEED[0].color);
+
+  // Idempotence : relire une configuration déjà enregistrée ne la déforme pas.
+  const une = normalizeMilestoneTypes([{ id: "t3", name: "Essais", symbol: "bolt", color: "#F2A93B" }]);
+  assert.deepEqual(normalizeMilestoneTypes(une), une);
+});
+
+test("un jalon dont le type a disparu prend le premier du catalogue, pas rien", () => {
+  const catalogue = [
+    { id: "a", name: "Revue", symbol: "shield", color: "#112233" },
+    { id: "b", name: "Essais", symbol: "bolt", color: "#F2A93B" },
+  ];
+  assert.equal(milestoneTypeFor(catalogue, "b").name, "Essais");
+  for (const perdu of ["supprime", undefined, null, ""]) {
+    assert.equal(milestoneTypeFor(catalogue, perdu).id, "a", `type perdu mal rattrapé : ${perdu}`);
+  }
+  // Sans catalogue du tout, on retombe sur le type de départ.
+  assert.equal(milestoneTypeFor(null, "decision").id, "decision");
+  assert.equal(milestoneTypeFor(undefined, "inconnu").id, MILESTONE_TYPE_SEED[0].id);
 });

@@ -70,11 +70,16 @@ Annotations horizontales, traits de jalon et formes de repère :
   chaque bout, texte libre — se pose à la hauteur de la ligne de **sa** tâche,
   et son calque passe au-dessus des barres ;
 - celle qui vise une tâche non affichée ne dessine rien, et ne fait rien tomber ;
+- les **deux bouts** d'un trait se règlent séparément : réglés différemment, ils
+  ne se dessinent pas pareil ;
 - le **trait vertical** sous un jalon n'apparaît que dans le widget qui a coché
   le réglage, et son calque reste derrière les barres et les textes ;
-- deux repères de nature différente (décision, mise en service, annotation) ne
-  se dessinent jamais pareil : la **forme** les distingue, pas seulement la
-  couleur.
+- deux repères de nature différente ne se dessinent jamais pareil : le
+  **symbole** les distingue, pas seulement la couleur — y compris pour un type
+  ajouté dans les Réglages et pour un jalon dont le type a été supprimé, qui
+  retombe sur le premier du catalogue ;
+- le catalogue **Réglages > Types de jalon** est monté à côté du diagramme :
+  c'est le même catalogue, donc un symbole choisi là est celui qui apparaît ici.
 
 Alignement des titres de bloc :
 

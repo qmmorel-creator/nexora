@@ -78,7 +78,11 @@ function AnnotationsHarness() {
   const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
   const [projects, setProjects] = useState([...seedProjects, calendarProject]);
   const [statuses, setStatuses] = useState(seedStatuses);
-  const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
+  const [harnessMilestoneTypes, setHarnessMilestoneTypes] = useState([
+    ...MILESTONE_TYPE_SEED,
+    { id: "custom-essais", name: "Essais de mise en eau", symbol: "droplet", color: "#0EA5E9" },
+  ]);
+  const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
     temporalBlocks: [
@@ -100,6 +104,10 @@ function AnnotationsHarness() {
     milestones: [
       { id: "ms1", title: "Décision CODIR", date: "2026-08-18", type: "decision" },
       { id: "ms2", title: "Mise en service", date: "2026-09-22", type: "commissioning" },
+      // Type venu des Réglages, pas du catalogue de départ (#94), et jalon dont
+      // le type a été SUPPRIMÉ : il doit retomber sur le premier, pas disparaître.
+      { id: "ms3", title: "Essais en eau", date: "2026-08-28", type: "custom-essais" },
+      { id: "ms4", title: "Type disparu", date: "2026-07-18", type: "type-supprime" },
     ],
     notes: [
       { id: "n1", title: "Relance hebdo", text: "Point fournisseur le lundi.", anchor: { kind: "task", id: "t2" } },
@@ -108,7 +116,7 @@ function AnnotationsHarness() {
        hauteur sur une tâche. « sp2 » vise une tâche qui n'est PAS affichée : il
        ne doit rien dessiner, et surtout rien faire tomber. */
     spans: [
-      { id: "sp1", label: "Fenêtre de tirage", startDate: "2026-08-03", endDate: "2026-09-04", taskId: "t2", color: "#0EA5E9", borderStyle: "solid", thickness: 2, position: "above" },
+      { id: "sp1", label: "Fenêtre de tirage", startDate: "2026-08-03", endDate: "2026-09-04", taskId: "t2", color: "#0EA5E9", borderStyle: "solid", thickness: 2, position: "above", capStart: "bar", capEnd: "arrow" },
       { id: "sp2", label: "Tâche absente", startDate: "2026-08-03", endDate: "2026-08-20", taskId: "disparue" },
     ],
   };
@@ -756,6 +764,21 @@ function AnnotationsHarness() {
             onUpdateWidget={(patch) => setMiniWidget((w) => ({ ...w, ...patch }))}
             onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
             groupBy="project"
+          />
+        </div>
+      </div>
+
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>RÉGLAGES — TYPES DE JALON</h2>
+        {/* Le catalogue réglé ici est celui que le Mini-Gantt ci-dessus dessine :
+            un symbole choisi dans la grille doit être exactement celui qui
+            apparaît dans le diagramme (#94). */}
+        <div id="harness-milestone-types" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 560, padding: 12 }}>
+          <MilestoneTypeManager
+            embedded
+            milestoneTypes={harnessMilestoneTypes}
+            setMilestoneTypes={setHarnessMilestoneTypes}
+            pushToast={noop}
           />
         </div>
       </div>

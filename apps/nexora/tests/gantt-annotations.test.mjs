@@ -267,8 +267,10 @@ test("les jalons de configuration sont validés et typés", () => {
   ]);
   assert.deepEqual(list.map((m) => m.id), ["m1", "m2"]);
   assert.equal(list[0].type, "decision");
-  assert.equal(list[1].type, "standard", "type inconnu ou absent = standard");
-  assert.ok(list[0].color && list[0].color !== list[1].color, "chaque type a sa couleur par défaut");
+  assert.equal(list[1].type, "standard", "type absent = premier type du catalogue");
+  // Depuis que les types sont un catalogue réglable, la COULEUR appartient au
+  // type : un jalon qui n'en impose pas la laisse vide, et suit son type.
+  assert.equal(list[0].color, "", "sans couleur propre, le jalon suit son type");
   assert.equal(list[1].taskId, null, "un jalon peut n'être rattaché à aucune tâche");
 });
 
