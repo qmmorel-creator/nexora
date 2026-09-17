@@ -104,9 +104,10 @@ function AnnotationsHarness() {
     /* `rule` : le trait vertical pleine hauteur, propre à CHAQUE jalon (#95).
        Deux repères sur quatre le portent — dont « Essais en eau », que la
        bande range sur un second couloir : son trait doit partir de SON losange,
-       pas du premier couloir. */
+       pas du premier couloir. L'un des deux porte une épaisseur propre — elle
+       aussi se règle jalon par jalon —, l'autre garde le défaut. */
     milestones: [
-      { id: "ms1", title: "Décision CODIR", date: "2026-08-18", type: "decision", rule: true },
+      { id: "ms1", title: "Décision CODIR", date: "2026-08-18", type: "decision", rule: true, ruleThickness: 4 },
       { id: "ms2", title: "Mise en service", date: "2026-09-22", type: "commissioning" },
       // Type venu des Réglages, pas du catalogue de départ (#94), et jalon dont
       // le type a été SUPPRIMÉ : il doit retomber sur le premier, pas disparaître.

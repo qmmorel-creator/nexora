@@ -76,6 +76,11 @@ Annotations horizontales, traits de jalon et formes de repère :
   quatre —, il part du losange de **son** repère (donc d'un couloir différent
   pour chacun) et descend jusqu'au bas des lignes, son calque restant derrière
   les barres et les textes ;
+- son **épaisseur** se règle jalon par jalon : celle réglée à 4 px est peinte à
+  4 px, celle laissée au défaut à 3 px, et aucune ne retombe sur le cheveu
+  d'avant. Cocher la case fait apparaître le curseur, et le régler à 5 px se voit
+  dans le diagramme — tout cela relevé sur l'épaisseur **peinte**, pas sur la
+  valeur enregistrée ;
 - deux repères de nature différente ne se dessinent jamais pareil : le
   **symbole** les distingue, pas seulement la couleur — y compris pour un type
   ajouté dans les Réglages et pour un jalon dont le type a été supprimé, qui

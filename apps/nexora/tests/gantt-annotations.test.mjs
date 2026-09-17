@@ -289,6 +289,28 @@ test("le trait vertical appartient au jalon, et il est absent par défaut (#95)"
   assert.deepEqual(MINI.normalizeMiniGanttMilestones([avecTrait]), [avecTrait]);
 });
 
+test("l'épaisseur du trait se règle, au demi-pixel et dans des bornes sûres (#95)", () => {
+  const [defaut, gros, fin, absurde, arrondi] = MINI.normalizeMiniGanttMilestones([
+    { id: "m1", title: "Défaut", date: "2026-06-01", rule: true },
+    { id: "m2", title: "Gros", date: "2026-06-01", rule: true, ruleThickness: 99 },
+    { id: "m3", title: "Fin", date: "2026-06-01", rule: true, ruleThickness: 0 },
+    { id: "m4", title: "Absurde", date: "2026-06-01", rule: true, ruleThickness: "épais" },
+    { id: "m5", title: "Arrondi", date: "2026-06-01", rule: true, ruleThickness: 3.4 },
+  ]);
+  // 1,5 px se perdait dans la sous-grille : le défaut est plus franc, et
+  // entier — une bordure de 2,5 px se peint 2 px sur un écran ordinaire.
+  assert.equal(defaut.ruleThickness, 3);
+  assert.equal(gros.ruleThickness, 6, "bornée en haut");
+  assert.equal(fin.ruleThickness, 0.5, "un trait d'épaisseur nulle n'est plus un trait");
+  assert.equal(absurde.ruleThickness, 3, "une saisie inexploitable retombe sur le défaut");
+  assert.equal(arrondi.ruleThickness, 3.5, "au demi-pixel");
+  // Elle est normalisée même sans trait : cocher la case ne doit pas avoir à
+  // réparer une valeur au passage.
+  const [eteint] = MINI.normalizeMiniGanttMilestones([{ id: "m6", title: "Éteint", date: "2026-06-01", ruleThickness: 4 }]);
+  assert.equal(eteint.rule, false);
+  assert.equal(eteint.ruleThickness, 4);
+});
+
 test("les risques prennent des valeurs par défaut sûres", () => {
   const [risk] = MINI.normalizeMiniGanttRisks([{ id: "r1", taskId: "t1", title: " Retard fournisseur " }]);
   assert.equal(risk.title, "Retard fournisseur");

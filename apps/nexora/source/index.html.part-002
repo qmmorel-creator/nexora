@@ -3710,6 +3710,26 @@ function milestoneInheritsTypeColor(milestone) {
   return !!historique && String(milestone.color).toLowerCase() === historique.color.toLowerCase();
 }
 
+/* Épaisseur du trait vertical d'un jalon (#95). Le trait est né à 1 px, puis
+   1,5 px : trop fin, il se perdait dans la sous-grille (retour de test). Plutôt
+   qu'un troisième chiffre en dur, elle se règle — au demi-pixel, comme celle
+   d'une annotation horizontale et celle des traits d'un bloc temporel, parce
+   qu'en dessous deux réglages voisins rendent pareil à l'écran.
+
+   Le défaut, lui, est un ENTIER : un navigateur ramène une bordure au pixel de
+   l'écran, et 2,5 px se peignent 2 px sur un écran ordinaire — le défaut aurait
+   été plus fin que promis. Les demi-pixels restent utiles sur un écran à haute
+   densité, et le réglage les garde. */
+const MINIGANTT_RULE_DEFAULT_THICKNESS = 3;
+const MINIGANTT_RULE_MAX_THICKNESS = 6;
+
+function normalizeMiniGanttRuleThickness(value) {
+  if (value === null || value === undefined || value === "") return MINIGANTT_RULE_DEFAULT_THICKNESS;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return MINIGANTT_RULE_DEFAULT_THICKNESS;
+  return Math.min(MINIGANTT_RULE_MAX_THICKNESS, Math.max(0.5, Math.round(n * 2) / 2));
+}
+
 function normalizeMiniGanttMilestones(list) {
   if (!Array.isArray(list)) return [];
   return list
@@ -3732,6 +3752,9 @@ function normalizeMiniGanttMilestones(list) {
            l'intérêt est justement de marquer une date et une seule. Absent =
            faux : un jalon posé avant ce choix ne change pas de rendu. */
         rule: !!m.rule,
+        // Toujours normalisée, cochée ou non : le jour où le trait s'allume,
+        // il sort à l'épaisseur voulue, et non au défaut d'une clé absente.
+        ruleThickness: normalizeMiniGanttRuleThickness(m.ruleThickness),
       };
     });
 }
@@ -7179,7 +7202,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
   };
 
   const addMilestone = () => {
-    const created = { id: uid(), title: "Nouveau jalon", date: defaultEnd, type: milestoneTypes[0].id, color: "", taskId: null, rule: false };
+    const created = { id: uid(), title: "Nouveau jalon", date: defaultEnd, type: milestoneTypes[0].id, color: "", taskId: null, rule: false, ruleThickness: MINIGANTT_RULE_DEFAULT_THICKNESS };
     setMilestones([...milestones, created]);
     setOpen((o) => ({ ...o, milestones: true }));
     setEditingId(created.id);
@@ -7313,6 +7336,18 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
               <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -4, marginBottom: 0 }}>
                 Le trait descend du losange jusqu'au bas du diagramme, à la couleur du jalon. Il passe derrière les barres et les textes : il situe la date sur toutes les lignes sans rien masquer. La vue Métro, elle, trace déjà ce trait sous chacun de ses repères, coché ou non.
               </p>
+              {/* L'épaisseur ne se propose que si le trait existe : un curseur
+                  sans trait à régler n'a rien à dire. */}
+              {m.rule && (
+                <div className="lp-field" style={{ marginTop: 8 }}>
+                  <label>Épaisseur du trait — {normalizeMiniGanttRuleThickness(m.ruleThickness)} px</label>
+                  <input
+                    type="range" min="0.5" max={MINIGANTT_RULE_MAX_THICKNESS} step="0.5"
+                    value={normalizeMiniGanttRuleThickness(m.ruleThickness)}
+                    onChange={(e) => patchMilestone(m.id, { ruleThickness: Number(e.target.value) })}
+                  />
+                </div>
+              )}
               <div className="lp-field">
                 <label>Couleur <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>{m.color ? "(propre à ce jalon)" : "(celle du type)"}</span></label>
                 <ColorPicker value={m.color || milestoneTypeFor(milestoneTypes, m.type).color} onChange={(color) => patchMilestone(m.id, { color })} />
