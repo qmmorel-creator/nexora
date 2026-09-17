@@ -6114,6 +6114,45 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       .filter(Boolean);
   }, [configSpans, visibleRows, rowRects, minIdx, maxIdx, span]);
 
+  /* Annotations horizontales en mode BULLES : un couloir réservé, en tête du
+     diagramme (#93).
+
+     Le rattachement à une tâche décide de la hauteur d'un trait. En Gantt, une
+     tâche est une ligne fine et le trait se pose dessus proprement. En bulles,
+     une tâche est une BOÎTE de quarante à soixante pixels, et le trait lui
+     passait en plein milieu — « ça passe en plein à travers » (retour de test).
+
+     Les traits quittent donc les lignes et se rangent dans leur propre couloir,
+     L'UN SOUS L'AUTRE, triés par date de début. Le rattachement à une tâche
+     reste réglable et vaut toujours pour la vue Gantt : le même widget peut
+     passer d'un mode à l'autre, et cacher le champ ferait perdre le réglage au
+     retour. Il est simplement IGNORÉ ici. */
+  const bubbleSpanRows = useMemo(() => {
+    if (!bubbleMode) return [];
+    return configSpans
+      .map((annot) => {
+        const startIdx = dayIndex(annot.startDate);
+        const endIdx = dayIndex(annot.endDate);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        if (endIdx < minIdx || startIdx > maxIdx) return null;
+        const from = Math.max(minIdx, Math.min(maxIdx, startIdx));
+        const to = Math.max(minIdx, Math.min(maxIdx, endIdx));
+        return {
+          annot,
+          startIdx,
+          leftPct: ((from - minIdx) / span) * 100,
+          // Même plancher qu'ailleurs : sans lui, une annotation d'une journée
+          // se réduirait à ses deux bouts collés.
+          widthPct: Math.max(2, ((to - from) / span) * 100),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (
+        a.startIdx - b.startIdx
+        || String(a.annot.label || "").localeCompare(String(b.annot.label || ""), "fr")
+      ));
+  }, [bubbleMode, configSpans, minIdx, maxIdx, span]);
+
   /* Macro-bulles (#92). La géométrie vient de `bubbleMacroSegments`, qui
      délègue le découpage en séries de lignes CONTIGUËS à `ganttFrameSegments` —
      la fonction des encadrés, qui sait qu'un en-tête de groupe coupe la
@@ -7743,44 +7782,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
-  /* Annotations horizontales en mode BULLES : un couloir réservé, en tête du
-     diagramme (#93).
-
-     Le rattachement à une tâche décide de la hauteur d'un trait. En Gantt, une
-     tâche est une ligne fine et le trait se pose dessus proprement. En bulles,
-     une tâche est une BOÎTE de quarante à soixante pixels, et le trait lui
-     passait en plein milieu — « ça passe en plein à travers » (retour de test).
-
-     Les traits quittent donc les lignes et se rangent dans leur propre couloir,
-     L'UN SOUS L'AUTRE, triés par date de début. Le rattachement à une tâche
-     reste réglable et vaut toujours pour la vue Gantt : le même widget peut
-     passer d'un mode à l'autre, et cacher le champ ferait perdre le réglage au
-     retour. Il est simplement IGNORÉ ici. */
-  const bubbleSpanRows = useMemo(() => {
-    if (!bubbleMode) return [];
-    return configSpans
-      .map((annot) => {
-        const startIdx = dayIndex(annot.startDate);
-        const endIdx = dayIndex(annot.endDate);
-        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
-        if (endIdx < minIdx || startIdx > maxIdx) return null;
-        const from = Math.max(minIdx, Math.min(maxIdx, startIdx));
-        const to = Math.max(minIdx, Math.min(maxIdx, endIdx));
-        return {
-          annot,
-          startIdx,
-          leftPct: ((from - minIdx) / span) * 100,
-          // Même plancher qu'ailleurs : sans lui, une annotation d'une journée
-          // se réduirait à ses deux bouts collés.
-          widthPct: Math.max(2, ((to - from) / span) * 100),
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => (
-        a.startIdx - b.startIdx
-        || String(a.annot.label || "").localeCompare(String(b.annot.label || ""), "fr")
-      ));
-  }, [bubbleMode, configSpans, minIdx, maxIdx, span]);
 
   const bubbleSpanLane = (!bubbleMode || !bubbleSpanRows.length) ? null : (
     <>
