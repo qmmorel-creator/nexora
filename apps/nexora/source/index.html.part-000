@@ -2244,6 +2244,12 @@ const FIELD_DEFS = [
   { key: "criticality", label: "Criticité", kind: "select", getValue: (t) => t.criticality || "", optionsFn: () => CRITICALITIES.map((c) => ({ value: c.id, label: c.name, color: c.color })) },
   { key: "taskType", label: "Type", kind: "select", getValue: (t) => t.taskTypeId, optionsFn: (ctx) => sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color: s.color, icon: s.icon })) },
   { key: "assignee", label: "Responsable", kind: "select", getValue: (t) => t.assignee || "", optionsFn: (ctx) => sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color, icon: u.avatarDataUrl })) },
+  // Dérivé de l'équipe du responsable (#159) : aucun champ propre sur la tâche,
+  // c'est teamMembers.teamId qui porte la donnée. `getValue` reçoit `ctx` en
+  // second argument pour cette seule raison — tous les autres champs l'ignorent.
+  { key: "team", label: "Équipe", kind: "select",
+    getValue: (t, ctx) => teamIdForAssignee(t?.assignee, ctx),
+    optionsFn: (ctx) => sortedByName(normalizeTeams(ctx?.teams)).map((tm) => ({ value: tm.id, label: tm.name, color: tm.color })) },
   { key: "milestone", label: "Jalon", kind: "boolean", getValue: (t) => getTaskType(t) === "milestone" },
   { key: "progress", label: "Avancement", kind: "number", getValue: (t) => t.progress },
   { key: "start", label: "Début", kind: "date", getValue: (t) => t.start },
@@ -2367,20 +2373,20 @@ function groupTasks(tasks, fieldKey, ctx) {
   if (!def) return [{ key: "all", label: "Toutes les tâches", color: "var(--text-muted)", tasks }];
   if (def.kind === "boolean") {
     return [
-      { key: "true", label: "Oui", color: "var(--success)", tasks: tasks.filter((t) => def.getValue(t)) },
-      { key: "false", label: "Non", color: "var(--text-muted)", tasks: tasks.filter((t) => !def.getValue(t)) },
+      { key: "true", label: "Oui", color: "var(--success)", tasks: tasks.filter((t) => def.getValue(t, ctx)) },
+      { key: "false", label: "Non", color: "var(--text-muted)", tasks: tasks.filter((t) => !def.getValue(t, ctx)) },
     ];
   }
   if (def.kind === "select") {
     const opts = def.optionsFn(ctx);
-    const groups = opts.map((o) => ({ key: String(o.value), label: o.label, color: o.color, icon: o.icon, tasks: tasks.filter((t) => String(def.getValue(t)) === String(o.value)) }));
-    const rest = tasks.filter((t) => !opts.some((o) => String(o.value) === String(def.getValue(t))));
+    const groups = opts.map((o) => ({ key: String(o.value), label: o.label, color: o.color, icon: o.icon, tasks: tasks.filter((t) => String(def.getValue(t, ctx)) === String(o.value)) }));
+    const rest = tasks.filter((t) => !opts.some((o) => String(o.value) === String(def.getValue(t, ctx))));
     if (rest.length) groups.push({ key: "__none", label: "Non défini", color: "#CBD5E1", tasks: rest });
     return groups;
   }
   const map = new Map();
   tasks.forEach((t) => {
-    const v = def.getValue(t);
+    const v = def.getValue(t, ctx);
     const k = v === undefined || v === null || v === "" ? "__none" : String(v);
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(t);
@@ -2393,13 +2399,13 @@ function matchesGroupKey(task, fieldKey, key, ctx) {
   if (!fieldKey || fieldKey === "none") return true;
   const def = fieldDef(fieldKey, ctx);
   if (!def) return true;
-  if (def.kind === "boolean") return String(!!def.getValue(task)) === key;
+  if (def.kind === "boolean") return String(!!def.getValue(task, ctx)) === key;
   if (key === "__none") {
-    if (def.kind === "select") { const opts = def.optionsFn(ctx); return !opts.some((o) => String(o.value) === String(def.getValue(task))); }
-    const v = def.getValue(task);
+    if (def.kind === "select") { const opts = def.optionsFn(ctx); return !opts.some((o) => String(o.value) === String(def.getValue(task, ctx))); }
+    const v = def.getValue(task, ctx);
     return v === undefined || v === null || v === "";
   }
-  return String(def.getValue(task)) === String(key);
+  return String(def.getValue(task, ctx)) === String(key);
 }
 
 function setTaskField(setTasks, taskId, fieldKey, key) {

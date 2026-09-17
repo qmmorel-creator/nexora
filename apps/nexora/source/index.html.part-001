@@ -2827,6 +2827,27 @@ function GlobalStyles() {
            UNE SEULE grille CSS porte l'en-tête, les lignes et le pied : les
            colonnes s'alignent alors d'elles-mêmes, sans qu'aucun calcul de
            largeur n'ait à être tenu en trois endroits. */
+        /* Organigramme (#167) : sections d'équipe, cartes de personne. Pas de
+           tracé SVG — un regroupement en cartes dit la même chose (qui, dans
+           quelle équipe, avec quels compteurs) sans mesure de layout. */
+        .lp-orgchart{ display:flex; flex-direction:column; gap:14px; height:100%; min-height:0; overflow:auto; }
+        .lp-orgchart-team-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+        .lp-orgchart-team-bar{ width:4px; height:16px; border-radius:2px; flex:0 0 auto; }
+        .lp-orgchart-team-name{ font-size:12.5px; font-weight:800; color:var(--text-900); }
+        .lp-orgchart-team-lead{ font-size:11px; color:var(--text-600); }
+        .lp-orgchart-team-count{ margin-left:auto; font-size:10.5px; font-weight:700; color:var(--text-muted); }
+        .lp-orgchart-members{ display:flex; flex-wrap:wrap; gap:8px; }
+        .lp-orgchart-card{
+          display:flex; flex-direction:column; align-items:center; gap:5px; width:104px; padding:10px 6px;
+          border:1px solid var(--border); border-radius:8px; background:var(--surface); cursor:pointer;
+          font-family:inherit; text-align:center; transition:box-shadow .12s ease, border-color .12s ease;
+        }
+        .lp-orgchart-card:hover{ box-shadow:0 0 0 2px var(--ink) inset; border-color:var(--border-strong); }
+        .lp-orgchart-avatar{ width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:800; color:#fff; overflow:hidden; }
+        .lp-orgchart-name{ font-size:11.5px; font-weight:700; color:var(--text-900); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+        .lp-orgchart-stats{ display:flex; flex-direction:column; gap:1px; }
+        .lp-orgchart-stat{ font-size:9.5px; font-weight:700; color:var(--text-600); }
+        .lp-orgchart-stat.is-late{ color:var(--danger); }
         .lp-cp{ display:flex; flex-direction:column; gap:9px; height:100%; min-height:0; }
         .lp-cp-bar{ display:flex; align-items:center; gap:10px; flex:0 0 auto; flex-wrap:wrap; }
         .lp-cp-nav{ display:flex; align-items:center; gap:3px; }
@@ -6965,6 +6986,10 @@ export default function LePlan({ currentUser, onSignOut }) {
      (une entrée par personne × jour). Les mêler aurait fait relire tout
      l'historique d'affectation à chaque renommage d'atelier. */
   const [workshops, setWorkshops] = useState(() => WORKSHOP_SEED.map((w) => ({ ...w })));
+  // Catalogue d'équipes (#159) : un regroupement, pas une donnée d'affectation —
+  // vide par défaut, contrairement aux ateliers qui doivent toujours en proposer
+  // au moins un.
+  const [teams, setTeams] = useState([]);
   const [staffing, setStaffing] = useState([]);
   const [tasks, setTasksRaw] = useState(seedTasks);
   // Setter compatible avec React.useState, mais enrichi : toute tâche réellement
@@ -7192,6 +7217,8 @@ export default function LePlan({ currentUser, onSignOut }) {
     // qui touchent la même case produisent la même entrée — la fusion tranche
     // sans jamais fabriquer deux affectations pour un seul jour.
     "nexora:workshops", "nexora:staffing",
+    // Catalogue d'équipes (#159) : même forme, même fusion élément par élément.
+    "nexora:teams",
   ]);
 
   // === NEXORA:MCP-SYNC-SPLIT:START ===
@@ -7696,6 +7723,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["taskTypes", "nexora:taskTypes", setTaskTypes],
     ["milestoneTypes", "nexora:milestoneTypes", setMilestoneTypes],
     ["workshops", "nexora:workshops", setWorkshops],
+    ["teams", "nexora:teams", setTeams],
     ["staffing", "nexora:staffing", setStaffing],
     ["tasks", "nexora:tasks", setTasksRaw],
     ["projectFolders", "nexora:projectFolders", setProjectFolders],
@@ -7752,6 +7780,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:taskTypes": taskTypes,
     "nexora:milestoneTypes": milestoneTypes,
     "nexora:workshops": workshops,
+    "nexora:teams": teams,
     "nexora:staffing": staffing,
     "nexora:tasks": tasks,
     "nexora:projectFolders": projectFolders,
@@ -8469,6 +8498,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskTypes", taskTypes); }, [taskTypes, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:milestoneTypes", milestoneTypes); }, [milestoneTypes, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:workshops", workshops); }, [workshops, dataLoaded]);
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:teams", teams); }, [teams, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:staffing", staffing); }, [staffing, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:expenseCategories", expenseCategories); }, [expenseCategories, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:gcalSettings", gcalSettings); }, [gcalSettings, dataLoaded]);
@@ -9844,7 +9874,7 @@ export default function LePlan({ currentUser, onSignOut }) {
      lire le nom et la couleur. Les AFFECTATIONS, elles, n'y entrent pas :
      seul le widget Charge personnel les lit, et les faire transiter par `ctx`
      aurait fait re-rendre tous les autres à chaque case cochée. */
-  const ctx = useMemo(() => ({ projects, statuses, taskTypes, milestoneTypes, workshops, tasks, teamMembers, projectFolders, expenses }), [projects, statuses, taskTypes, milestoneTypes, workshops, tasks, teamMembers, projectFolders, expenses]);
+  const ctx = useMemo(() => ({ projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses }), [projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses]);
   // Relie le compte connecté à un utilisateur de l'app via son email, pour
   // activer "Mes tâches" dans certains widgets sans dupliquer de système d'auth.
   const myName = useMemo(() => {
@@ -11412,4 +11442,5 @@ export default function LePlan({ currentUser, onSignOut }) {
           statuses={statuses} setStatuses={setStatuses}
           milestoneTypes={milestoneTypes} setMilestoneTypes={setMilestoneTypes}
           workshops={workshops} setWorkshops={setWorkshops} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops}
+          teams={teams} setTeams={setTeams}
           tas

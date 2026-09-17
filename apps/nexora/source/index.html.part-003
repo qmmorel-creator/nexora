@@ -2377,6 +2377,7 @@ function defaultLayoutForType(type) {
   if (type === "deadlineScatter") return { w: 10, h: 7 };
   if (type === "bubbles") return { w: 8, h: 7 };
   if (type === "staffing") return { w: 10, h: 7 };
+  if (type === "orgchart") return { w: 9, h: 7 };
   if (type === "heatmapGrid") return { w: 9, h: 7 };
   if (type === "embedMetro" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
@@ -3844,6 +3845,13 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateStaffing={setStaffing}
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateWorkshops={setWorkshops}
+                  />
+                )}
+                {w.type === "orgchart" && (
+                  <WidgetOrgChart
+                    ctx={ctx}
+                    staffing={staffing}
+                    onFilterPerson={(name) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), advanced: { op: "and", items: [{ field: "assignee", mode: "is", values: [name] }] } })}
                   />
                 )}
                 {w.type === "criticalPath" && (
@@ -8213,6 +8221,85 @@ function WidgetBubbles(props) {
   return <WidgetMiniGantt {...props} bubbleMode />;
 }
 
+/* Widget « Organigramme » (#167). Les équipes du catalogue (#159) en sections,
+   les personnes en cartes à l'intérieur — « Sans équipe » en dernier pour
+   quiconque n'a pas encore été rangé. Chaque carte porte trois compteurs du
+   jour (tâches actives, en retard, atelier du jour) et un clic filtre la page
+   sur cette personne, sur le même mécanisme que le clic d'un secteur du
+   Treemap projets. Lecture seule : aucune écriture, ni sur les tâches ni sur
+   les affectations. */
+function WidgetOrgChart({ ctx, staffing, onFilterPerson }) {
+  const today = useMemo(() => iso(new Date()), []);
+  const teamsCatalogue = useMemo(() => normalizeTeams(ctx.teams), [ctx.teams]);
+  const members = ctx.teamMembers || [];
+  const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
+
+  const groups = useMemo(() => {
+    const byTeam = new Map(teamsCatalogue.map((t) => [t.id, { team: t, members: [] }]));
+    const unassigned = [];
+    members.forEach((m) => {
+      const g = m.teamId && byTeam.get(m.teamId);
+      if (g) g.members.push(m); else unassigned.push(m);
+    });
+    const out = teamsCatalogue.map((t) => byTeam.get(t.id)).filter((g) => g.members.length);
+    if (unassigned.length) out.push({ team: null, members: unassigned });
+    return out;
+  }, [teamsCatalogue, members]);
+
+  if (!members.length) {
+    return <div className="lp-empty">Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.</div>;
+  }
+
+  const statsFor = (member) => {
+    const name = member.name;
+    const active = (ctx.tasks || []).filter((t) => t.assignee === name && !t.milestone && !isTaskDoneGlobal(t, ctx));
+    const late = active.filter((t) => t.end && t.end < today);
+    const todayShops = (cellsByMember.get(staffingCellId(name, today)) || [])
+      .map((id) => workshopFor(ctx.workshops, id))
+      .filter(Boolean);
+    return { activeCount: active.length, lateCount: late.length, todayShop: todayShops[0] || null };
+  };
+
+  return (
+    <div className="lp-orgchart">
+      {groups.map((g) => (
+        <div className="lp-orgchart-team" key={g.team ? g.team.id : "__none"}>
+          <div className="lp-orgchart-team-head">
+            <span className="lp-orgchart-team-bar" style={{ background: g.team ? g.team.color : "var(--border-strong)" }} />
+            <span className="lp-orgchart-team-name">{g.team ? g.team.name : "Sans équipe"}</span>
+            {g.team?.leadName && <span className="lp-orgchart-team-lead">Responsable : {g.team.leadName}</span>}
+            <span className="lp-orgchart-team-count">{g.members.length}</span>
+          </div>
+          <div className="lp-orgchart-members">
+            {sortedByName(g.members).map((m) => {
+              const stats = statsFor(m);
+              return (
+                <button
+                  type="button"
+                  className="lp-orgchart-card"
+                  key={m.id || m.name}
+                  onClick={() => onFilterPerson && onFilterPerson(m.name)}
+                  title={"Filtrer la page sur " + m.name}
+                >
+                  <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
+                    {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : m.name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="lp-orgchart-name">{m.name}</span>
+                  <span className="lp-orgchart-stats">
+                    <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
+                    {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
+                    {stats.todayShop && <span className="lp-orgchart-stat" style={{ color: stats.todayShop.color }}>{stats.todayShop.name}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* Widget « Charge personnel » (#124). Les personnes en lignes, les jours en
    colonnes, et dans chaque case les ateliers du jour — plusieurs par jour si
    besoin.
@@ -11950,6 +12037,7 @@ const WIDGET_TYPE_META = [
   { key: "minigantt", label: "Mini-Gantt", icon: GanttChartSquare, group: "Planning" },
   { key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" },
   { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
+  { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
   { key: "milestoneTimeline", label: "Timeline des jalons", icon: Milestone, group: "Planning" },
   { key: "verticalMetroTimeline", label: "Timeline verticale métro", icon: TrainTrack, group: "Planning" },
   { key: "metroDeadline", label: "Métro / Échéances", icon: CalendarClock, group: "Planning" },
