@@ -839,3 +839,16 @@ resserre ce que la page laisse passer.
 Reste propre au widget, faute d'objet équivalent dans la vue : la
 personnalisation du **cadre** (icône du titre, couleur du titre, couleur du
 bandeau, couleur de fond). La vue n'a pas de cadre de widget à habiller.
+
+## Le widget « Bulles » partage ces annotations
+
+Le widget « Bulles » (`docs/WIDGET_BULLES.md`) n'est pas un second diagramme :
+c'est le Mini-Gantt rendu en bulles descriptives. Il lit donc la **même** clé
+`widget.ganttAnnotations`, dessine les mêmes blocs temporels, encadrés, jalons et
+annotations, et se règle avec le **même** éditeur.
+
+Ses **macro-bulles** sont une couche de plus, propre à ce widget
+(`widget.bubbleMacros`) — mais leur géométrie ne réimplémente rien : elle appelle
+`ganttFrameSegments`, la fonction des encadrés, qui sait déjà qu'un en-tête de
+groupe coupe la continuité des lignes.
+
