@@ -195,9 +195,7 @@ Le rattachement à une tâche reste réglable et vaut toujours pour la vue Gantt
 un même widget passe d'un mode à l'autre, et cacher le champ ferait perdre le
 réglage au retour. Il est simplement **ignoré** en bulles.
 
-Les légendes sont posées sur leur **propre ligne**, pleine largeur : leur donner
-une colonne à gauche décalerait la piste de ces bandes, et toutes les couches
-superposées avec elle.
+Ces deux couloirs ne portent **aucune légende écrite** : voir plus haut.
 
 ## Les champs condensés, rattachés à la bulle (#122)
 
@@ -220,48 +218,25 @@ la seule qui soit bornée en largeur comme en hauteur. Le réglage n'est pas
 interdit pour autant — le choix redevient vrai dès qu'on repasse en « une tâche,
 une ligne ».
 
-### Il passe à la ligne, et toutes les bulles gardent la même hauteur
+### Une ligne, et l'infobulle pour le reste
 
-Le bandeau tenait sur une seule ligne et coupait ce qui dépassait : avec sept
-champs, il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien (retour
-de test). Il **passe donc à la ligne**, à la largeur de la bulle.
+Il est passé par une version **repliée sur plusieurs lignes**, qui mettait les
+champs à la largeur de la bulle et régularisait la hauteur du widget. Elle
+répondait à la lettre au défaut — plus rien n'était coupé — mais le résultat
+était laid : un pavé de pastilles sous chaque bulle, plus haut que la bulle
+elle-même (retour de test).
 
-Mais une hauteur qui suivrait chaque bulle donnerait des lignes de diagramme
-toutes différentes — et, en couloirs, une hauteur de ligne impossible à poser
-puisque tout y est en absolu. La hauteur est donc **régularisée** : on prend le
-plus grand nombre de lignes du widget, et toutes les bulles l'adoptent.
+On revient donc à la **ligne unique**, et c'est l'**infobulle** qui porte la
+liste complète : elle a la place, elle ne coûte aucune hauteur au diagramme, et
+elle existait déjà. Les valeurs y restent celles de `FieldValue`, comme dans le
+bandeau et comme partout ailleurs.
 
-Ce nombre est **mesuré**, par les `offsetTop` distincts des pastilles — et non
-par la hauteur du bandeau, qui est justement ce qu'on lui impose : la mesurer
-reviendrait à se mesurer soi-même, et la hauteur ne pourrait alors que croître,
-jamais revenir. `compactFieldLines` est dans les dépendances de sa propre
-mesure, et c'est voulu : la première tombe avant que les bandeaux aient leur
-hauteur définitive, et s'arrêter là figeait le widget sur un compte trop bas. La
-boucle converge en deux passes et s'arrête d'elle-même.
+## Les couloirs réservés n'ont pas de légende
 
-Plafond : **six lignes**. Au-delà, les champs occuperaient plus de place que la
-bulle et ce ne serait plus un bandeau — mais il fallait couvrir les
-configurations réelles, et neuf champs sur une bulle courte en demandent déjà
-cinq.
-
-## Deux étages de teinte quand la description est là (#121)
-
-Description affichée, la bulle était peinte d'un seul lavis : titre et
-description sur le même fond, aucune hiérarchie de lecture. L'**en-tête** garde
-donc désormais la couleur de base, et la **partie description** passe en
-transparence légère de la même couleur.
-
-Deux détails qui ne sont pas des détails :
-
-- l'en-tête est peint en `transparent` et non sur la surface du thème. Posé en
-  aplat, il aurait masqué le **lavis d'avancement** qui court derrière lui, et
-  une bulle à 40 % n'aurait plus montré son avancement que sous son titre ;
-- l'en-tête **épouse le titre** (`flex:0 1 auto`) au lieu de s'étirer sur la
-  hauteur restante : étiré, il repeindrait en couleur de base la zone même qu'on
-  veut voir passer en transparence légère. Il peut encore **rétrécir**, sans
-  quoi un titre sur deux lignes pousserait le pied hors de la bulle.
-
-Description décochée : la bulle ne change pas d'un pixel.
+Jalons et annotations horizontales se rangent en tête du diagramme (voir plus
+bas), **sans titre écrit**. La bande de repères se reconnaît à ses losanges, un
+trait à ses bouts : deux lignes de capitales pour le redire encombraient le haut
+du diagramme sans rien apprendre (retour de test).
 
 ## La couleur, au sens de « grouper par »
 
