@@ -64,6 +64,18 @@ jalon) et deux n'en portent pas, dont un jalon :
   prolongement, et la poignée d'avancement semblait avoir de la course qu'elle
   n'avait pas.
 
+Annotations horizontales, traits de jalon et formes de repère :
+
+- une **annotation horizontale** — trait d'une date à une autre, un rond à
+  chaque bout, texte libre — se pose à la hauteur de la ligne de **sa** tâche,
+  et son calque passe au-dessus des barres ;
+- celle qui vise une tâche non affichée ne dessine rien, et ne fait rien tomber ;
+- le **trait vertical** sous un jalon n'apparaît que dans le widget qui a coché
+  le réglage, et son calque reste derrière les barres et les textes ;
+- deux repères de nature différente (décision, mise en service, annotation) ne
+  se dessinent jamais pareil : la **forme** les distingue, pas seulement la
+  couleur.
+
 Alignement des titres de bloc :
 
 - dans un widget **sans bande de repères** — donc sans la mesure sur laquelle la

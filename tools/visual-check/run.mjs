@@ -377,6 +377,50 @@ const seen = await page.evaluate(() => {
         layer: (() => { const el = host.querySelector(".lp-pm-annot-layer"); return el ? rel(el) : null; })(),
       };
     })(),
+    /* Annotations horizontales (#93), traits verticaux de jalon (#95) et
+       formes de repère (#94) : tout se relève sur le premier Mini-Gantt, le
+       seul du banc à les porter. */
+    spans: (() => {
+      const host = document.querySelector("#harness-first-minigantt");
+      if (!host) return null;
+      const hb = host.getBoundingClientRect();
+      const traits = [...host.querySelectorAll(".lp-widget-minigantt-span")].map((el) => {
+        const b = el.getBoundingClientRect();
+        return {
+          texte: el.textContent.trim(),
+          x: Math.round(b.x - hb.x), y: Math.round(b.y - hb.y), w: Math.round(b.width),
+          milieu: Math.round(b.y - hb.y + b.height / 2),
+          ronds: el.querySelectorAll(".lp-widget-minigantt-span-cap").length,
+        };
+      });
+      // Ligne de « Demande lame pour piste d'accès » (t2), la tâche visée.
+      const ligne = [...host.querySelectorAll(".lp-widget-minigantt-row")]
+        .find((el) => /Demande lame/.test(el.textContent));
+      const lb = ligne ? ligne.getBoundingClientRect() : null;
+      return {
+        traits,
+        ligneVisee: lb ? { haut: Math.round(lb.y - hb.y), bas: Math.round(lb.y - hb.y + lb.height) } : null,
+        // Le calque des traits doit passer AU-DESSUS des lignes, sinon le trait
+        // disparaîtrait sous la barre qu'il accompagne.
+        zTrait: (() => { const el = host.querySelector(".lp-widget-minigantt-span-layer"); return el ? getComputedStyle(el).zIndex : ""; })(),
+        zLigne: ligne ? getComputedStyle(ligne).zIndex : "",
+      };
+    })(),
+    rules: {
+      premier: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-rule").length,
+      second: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-rule").length,
+      z: (() => { const el = document.querySelector("#harness-first-minigantt .lp-widget-minigantt-rule-layer"); return el ? getComputedStyle(el).zIndex : ""; })(),
+    },
+    // Une forme par type de jalon : deux types ne doivent jamais se ressembler.
+    markerShapes: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-marker-glyph")]
+      .map((el) => [...el.classList].find((c) => c.startsWith("shape-")) || ""),
+    // Empreinte de rendu : forme découpée, arrondi, rotation ET remplissage —
+    // un cercle plein et un cercle creux ne sont pas le même repère.
+    markerTransforms: [...new Set([...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-marker-glyph")]
+      .map((el) => {
+        const st = getComputedStyle(el);
+        return [st.clipPath, st.borderRadius, st.transform, st.backgroundColor].join("|");
+      }))],
     treemapTiles: rects("#harness-treemap .lp-widget-treemap-tile"),
     treemapNames: rects("#harness-treemap .lp-widget-treemap-tile-name"),
     treemapRings: document.querySelectorAll("#harness-treemap .lp-widget-treemap-ring").length,
@@ -1221,6 +1265,38 @@ expect(pageErrors.length === 0, `erreurs JavaScript au rendu :\n    ${pageErrors
 expect(seen.miniBlocks === 3, `Mini-Gantt : ${seen.miniBlocks} bande(s) de bloc, 3 attendues (2 phases + 1 fenêtre de décision)`);
 expect(seen.miniPhases.length === 3, `Mini-Gantt : ${seen.miniPhases.length} titre(s) de bloc dans la bande d’en-tête, 3 attendus`);
 expect(seen.miniDecisions.length === 1, `Mini-Gantt : ${seen.miniDecisions.length} fenêtre(s) de décision, 1 attendue`);
+
+// --- Annotations horizontales (#93) ----------------------------------------
+expect(seen.spans !== null, "Mini-Gantt : premier widget introuvable pour les annotations horizontales");
+if (seen.spans) {
+  expect(seen.spans.traits.length === 1,
+    `Annotations horizontales : ${seen.spans.traits.length} trait(s) dessiné(s), 1 attendu — celui dont la tâche n'est pas affichée ne doit rien dessiner`);
+  const trait = seen.spans.traits[0];
+  if (trait) {
+    expect(trait.ronds === 2, `Annotation horizontale : ${trait.ronds} rond(s) d'extrémité, 2 attendus`);
+    expect(/Fenêtre de tirage/.test(trait.texte), `Annotation horizontale : texte « ${trait.texte} », « Fenêtre de tirage » attendu`);
+    expect(trait.w > 20, `Annotation horizontale : largeur de ${trait.w} px — le trait doit couvrir ses deux dates`);
+    const ligne = seen.spans.ligneVisee;
+    expect(ligne && trait.milieu >= ligne.haut && trait.milieu <= ligne.bas,
+      `Annotation horizontale : posée à y=${trait.milieu}, hors de la ligne de sa tâche (${ligne ? `${ligne.haut}→${ligne.bas}` : "introuvable"})`);
+  }
+  expect(Number(seen.spans.zTrait) > Number(seen.spans.zLigne || 0),
+    `Annotations horizontales : le calque (z=${seen.spans.zTrait}) doit passer au-dessus des lignes (z=${seen.spans.zLigne}), sinon le trait disparaît sous la barre`);
+}
+
+// --- Trait vertical sous les jalons (#95) ----------------------------------
+expect(seen.rules.premier === 2,
+  `Jalons : ${seen.rules.premier} trait(s) vertical(aux), 2 attendus — un par jalon quand le réglage est coché`);
+expect(seen.rules.second === 0,
+  `Jalons : ${seen.rules.second} trait(s) vertical(aux) dans le second Mini-Gantt, 0 attendu — le réglage est propre à chaque widget`);
+expect(seen.rules.z === "0",
+  `Jalons : le calque des traits verticaux est en z-index ${seen.rules.z}, 0 attendu — il doit rester derrière les barres et les textes`);
+
+// --- Une forme par type de jalon (#94) -------------------------------------
+expect(new Set(seen.markerShapes).size >= 3,
+  `Repères : ${new Set(seen.markerShapes).size} forme(s) distincte(s) pour ${seen.markerShapes.length} repère(s) — décision, mise en service et annotation doivent se distinguer`);
+expect(seen.markerTransforms.length === seen.markerShapes.length,
+  `Repères : ${seen.markerTransforms.length} rendu(s) distinct(s) pour ${seen.markerShapes.length} repère(s) — deux repères de nature différente ne doivent jamais se dessiner pareil`);
 // Trois risques portent sur une tâche visible, le quatrième vise une tâche
 // supprimée : il doit être ignoré sans erreur.
 expect(seen.miniRisks.length === 8, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque au total, 8 attendus (4 par widget)`);

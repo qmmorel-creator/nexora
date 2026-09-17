@@ -1303,8 +1303,8 @@ function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlo
                   <div className="lp-field">
                     <label>Nature</label>
                     <div className="lp-density-row">
-                      <button type="button" className={"lp-density-btn" + (block.kind !== "decision" ? " active" : "")} onClick={() => patch(block.id, { kind: "phase" })}>Phase</button>
-                      <button type="button" className={"lp-density-btn" + (block.kind === "decision" ? " active" : "")} onClick={() => patch(block.id, { kind: "decision", color: block.color || GANTT_DECISION_DEFAULT_COLOR })}>Fenêtre de décision</button>
+                      <button type="button" className={"lp-density-btn" + (block.kind !== "decision" ? " active" : "")} onClick={() => patch(block.id, { kind: "phase" })}><Layers size={12} /> Phase</button>
+                      <button type="button" className={"lp-density-btn" + (block.kind === "decision" ? " active" : "")} onClick={() => patch(block.id, { kind: "decision", color: block.color || GANTT_DECISION_DEFAULT_COLOR })}><Scale size={12} /> Fenêtre de décision</button>
                     </div>
                   </div>
                   <div className="lp-field">
@@ -3525,6 +3525,120 @@ const MINIGANTT_MILESTONE_LABELS = {
   delivery: "Livraison",
   commissioning: "Mise en service",
 };
+
+/* Forme du repère de chaque type de jalon.
+
+   La couleur seule ne distingue pas deux choix : dans une liste déroulante,
+   cinq pastilles rondes de teintes voisines se ressemblent, et une fois le
+   choix fait le bouton fermé ne dit plus rien du tout (#94). La FORME, elle,
+   se lit toujours — losange, cercle, carré, triangle, étoile —, même en noir
+   et blanc.
+
+   Cette table est LA référence : le sélecteur de type, le résumé de la ligne
+   et le repère dessiné dans le diagramme la lisent tous les trois, donc ils ne
+   peuvent pas montrer trois formes différentes pour le même jalon. */
+const MINIGANTT_MILESTONE_SHAPES = {
+  standard: "diamond",
+  decision: "circle",
+  contractual: "square",
+  delivery: "triangle",
+  commissioning: "star",
+};
+
+function miniGanttMilestoneShape(type) {
+  return MINIGANTT_MILESTONE_SHAPES[type] || MINIGANTT_MILESTONE_SHAPES.standard;
+}
+
+/* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
+
+   Entre le bloc temporel — toute la hauteur du diagramme — et le jalon — un
+   point sur une date —, il manquait l'objet intermédiaire : un trait
+   horizontal qui court d'une date à une autre, À LA HAUTEUR d'une tâche, avec
+   un petit rond à chaque bout et un texte libre (#93).
+
+   Sa tâche de rattachement ne sert QU'À l'emplacement vertical : ses dates
+   sont les siennes, elles ne suivent pas celles de la tâche. Une annotation
+   dont la tâche n'est pas affichée (filtrée, groupe replié, hors plafond) n'est
+   simplement pas dessinée — jamais une erreur de rendu. */
+const MINIGANTT_SPAN_DEFAULT_COLOR = "#0EA5E9";
+const MINIGANTT_SPAN_POSITIONS = ["above", "center", "below"];
+const MINIGANTT_SPAN_POSITION_LABELS = { above: "Au-dessus", center: "Sur la ligne", below: "En dessous" };
+const MINIGANTT_SPAN_DEFAULT_THICKNESS = 2;
+const MINIGANTT_SPAN_MAX_THICKNESS = 6;
+const MINIGANTT_SPAN_DEFAULT_OPACITY = 100;
+
+function validateMiniGanttSpan(span) {
+  const s = span && typeof span === "object" ? span : {};
+  if (!isGanttIsoDate(s.startDate)) return { ok: false, error: "La date de début est invalide." };
+  if (!isGanttIsoDate(s.endDate)) return { ok: false, error: "La date de fin est invalide." };
+  if (s.endDate < s.startDate) return { ok: false, error: "La date de fin doit être postérieure ou égale à la date de début." };
+  if (typeof s.taskId !== "string" || !s.taskId) return { ok: false, error: "Choisis la tâche qui donne la hauteur du trait." };
+  return { ok: true, error: "" };
+}
+
+function normalizeMiniGanttSpanThickness(value) {
+  if (value === null || value === undefined || value === "") return MINIGANTT_SPAN_DEFAULT_THICKNESS;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return MINIGANTT_SPAN_DEFAULT_THICKNESS;
+  // Au demi-pixel, comme les traits d'un bloc temporel : en dessous, deux
+  // réglages voisins rendent pareil à l'écran.
+  return Math.min(MINIGANTT_SPAN_MAX_THICKNESS, Math.max(0.5, Math.round(n * 2) / 2));
+}
+
+function normalizeMiniGanttSpanOpacity(value) {
+  if (value === null || value === undefined || value === "") return MINIGANTT_SPAN_DEFAULT_OPACITY;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return MINIGANTT_SPAN_DEFAULT_OPACITY;
+  return Math.min(100, Math.max(10, n));
+}
+
+function normalizeMiniGanttSpans(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((s) => s && typeof s === "object" && s.id && validateMiniGanttSpan(s).ok)
+    .map((s) => ({
+      id: String(s.id),
+      // Le texte est FACULTATIF : un trait nu reste un repère valable.
+      label: String(s.label || "").trim(),
+      startDate: s.startDate,
+      endDate: s.endDate,
+      taskId: s.taskId,
+      color: typeof s.color === "string" && s.color ? s.color : MINIGANTT_SPAN_DEFAULT_COLOR,
+      borderStyle: normalizeGanttBorderStyle(s.borderStyle),
+      thickness: normalizeMiniGanttSpanThickness(s.thickness),
+      opacity: normalizeMiniGanttSpanOpacity(s.opacity),
+      position: MINIGANTT_SPAN_POSITIONS.includes(s.position) ? s.position : "center",
+    }));
+}
+
+/* Hauteur de chaque annotation horizontale, dans le repère du calque qui les
+   dessine.
+
+   `rows` : les lignes RÉELLEMENT mesurées, `[{ id, top, height }]` en pixels.
+   Une annotation dont la tâche n'y figure pas est ignorée. `position` décide
+   du placement dans la ligne : au-dessus de la barre, sur elle, ou en dessous.
+   Le retrait de 4 px maximum garde le trait DANS sa ligne même quand celle-ci
+   est très basse — sinon deux lignes voisines se voleraient leurs traits. */
+function miniGanttSpanRows(rows, spans) {
+  const byId = new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((r) => r && typeof r.id === "string" && Number.isFinite(Number(r.top)))
+      .map((r) => [r.id, r])
+  );
+  const out = [];
+  normalizeMiniGanttSpans(spans).forEach((span) => {
+    const row = byId.get(span.taskId);
+    if (!row) return;
+    const top = Number(row.top);
+    const height = Number(row.height) || 0;
+    const inset = Math.min(4, height / 4);
+    const y = span.position === "above" ? top + inset
+      : span.position === "below" ? top + height - inset
+      : top + height / 2;
+    out.push({ span, y });
+  });
+  return out;
+}
 
 function normalizeGanttBlockKind(value) { return value === "decision" ? "decision" : "phase"; }
 
@@ -6639,8 +6753,8 @@ function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defa
                       <div className="lp-field">
                         <label>Nature</label>
                         <div className="lp-density-row">
-                          <button type="button" className={"lp-density-btn" + (b.kind !== "decision" ? " active" : "")} onClick={() => patchBlock(b.id, { kind: "phase" })}>Phase</button>
-                          <button type="button" className={"lp-density-btn" + (b.kind === "decision" ? " active" : "")} onClick={() => patchBlock(b.id, { kind: "decision", color: b.color || GANTT_DECISION_DEFAULT_COLOR })}>Fenêtre de décision</button>
+                          <button type="button" className={"lp-density-btn" + (b.kind !== "decision" ? " active" : "")} onClick={() => patchBlock(b.id, { kind: "phase" })}><Layers size={12} /> Phase</button>
+                          <button type="button" className={"lp-density-btn" + (b.kind === "decision" ? " active" : "")} onClick={() => patchBlock(b.id, { kind: "decision", color: b.color || GANTT_DECISION_DEFAULT_COLOR })}><Scale size={12} /> Fenêtre de décision</button>
                         </div>
                         <p className="lp-gantt-annot-hint">Une fenêtre de décision est plus discrète qu'une phase : arbitrage fournisseur, validation de budget, date de gouvernance.</p>
                       </div>
@@ -6743,10 +6857,37 @@ function GanttAnnotationsEditor({ blocks, frames, tasks, ctx, defaultStart, defa
 // d'activité déjà présent dans Nexora (classes lp-activity-search-*) : même
 // panneau, même champ de recherche, même comportement — rien de nouveau à
 // apprendre pour l'utilisateur, aucun style supplémentaire à maintenir.
+//
+// Une option porte `{ id, label, hint, color, glyph }`. `glyph` est un repère
+// visuel libre (forme, icône) : présent, il remplace la pastille de couleur
+// dans la liste ET sur le bouton fermé, pour que deux choix se distinguent
+// sans lire leur étiquette.
 function SearchableSelect({ value, options, onChange, placeholder, searchPlaceholder, emptyLabel }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef(null);
+  /* Sens d'ouverture. Un sélecteur posé BAS dans une modale déroulait sa liste
+     sous le bord du cadre, qui la rognait : elle paraissait vide alors qu'elle
+     était pleine (#94). On mesure donc la place restante dans le cadre qui
+     rogne — la modale quand il y en a une, la fenêtre sinon — et on ouvre du
+     côté le plus large. */
+  const [versLeHaut, setVersLeHaut] = useState(false);
+  const MENU_H = 260; // hauteur maximale du panneau : 250 px de liste + le champ
+  const basculer = () => {
+    if (open) { setOpen(false); return; }
+    const el = ref.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      const cadre = el.closest(".lp-modal");
+      const bornes = cadre ? cadre.getBoundingClientRect() : null;
+      const limiteBas = bornes ? bornes.bottom : window.innerHeight;
+      const limiteHaut = bornes ? bornes.top : 0;
+      const dessous = limiteBas - rect.bottom;
+      const dessus = rect.top - limiteHaut;
+      setVersLeHaut(dessous < MENU_H && dessus > dessous);
+    }
+    setOpen(true);
+  };
   useEffect(() => {
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", close);
@@ -6759,16 +6900,16 @@ function SearchableSelect({ value, options, onChange, placeholder, searchPlaceho
   const choose = (id) => { onChange(id); setQuery(""); setOpen(false); };
   return (
     <div className="lp-activity-search-select" ref={ref}>
-      <button type="button" className="lp-activity-search-trigger" onClick={() => setOpen((v) => !v)}>
+      <button type="button" className="lp-activity-search-trigger" onClick={basculer}>
         <span className="lp-activity-search-trigger-text">
           {selected
-            ? <><strong>{selected.label}</strong>{selected.hint ? <span>{selected.hint}</span> : null}</>
+            ? <>{selected.glyph ? <span className="lp-activity-option-glyph">{selected.glyph}</span> : null}<strong>{selected.label}</strong>{selected.hint ? <span>{selected.hint}</span> : null}</>
             : <span className="lp-activity-empty-value">{placeholder || "Choisir…"}</span>}
         </span>
         <ChevronDown size={15} />
       </button>
       {open && (
-        <div className="lp-activity-search-menu">
+        <div className={"lp-activity-search-menu" + (versLeHaut ? " is-up" : "")}>
           <div className="lp-activity-search-box">
             <Search size={14} />
             <input
@@ -6788,7 +6929,13 @@ function SearchableSelect({ value, options, onChange, placeholder, searchPlaceho
               ? <div className="lp-activity-search-empty">Aucun résultat.</div>
               : filtered.map((o) => (
                   <button type="button" key={o.id} className={"lp-activity-search-option" + (o.id === value ? " selected" : "")} onClick={() => choose(o.id)}>
-                    <span className="lp-activity-option-dot" style={o.color ? { borderColor: o.color } : undefined} />
+                    {/* Une pastille ronde de plus ou de moins ne distingue pas deux
+                        options : quand l'appelant fournit un repère propre à
+                        l'option (forme d'un jalon, icône d'une nature), c'est LUI
+                        qui s'affiche, ici comme sur le bouton fermé (#94). */}
+                    {o.glyph
+                      ? <span className="lp-activity-option-glyph">{o.glyph}</span>
+                      : <span className="lp-activity-option-dot" style={o.color ? { borderColor: o.color } : undefined} />}
                     <span className="lp-activity-option-main">{o.label}</span>
                     {o.hint ? <span className="lp-activity-option-project">{o.hint}</span> : <span />}
                     {o.id === value && <Check size={13} />}
@@ -6823,6 +6970,21 @@ function MiniGanttListSection({ icon, title, hint, items, count, open, onToggle,
   );
 }
 
+/* Repère d'un type de jalon : la MÊME forme que celle dessinée dans le
+   diagramme, prise dans la même table (`miniGanttMilestoneShape`). Il sert au
+   sélecteur de type, au résumé de la ligne et au repère du Mini-Gantt : trois
+   endroits, une seule forme. */
+function MilestoneTypeGlyph({ type, color, size }) {
+  const teinte = color || MINIGANTT_MILESTONE_COLORS[type] || MINIGANTT_MILESTONE_COLORS.standard;
+  const cote = size || 11;
+  return (
+    <span
+      className={"lp-annot-shape shape-" + miniGanttMilestoneShape(type)}
+      style={{ width: cote, height: cote, background: teinte, borderColor: teinte }}
+    />
+  );
+}
+
 function MiniGanttAnnotationRow({ item, list, onMove, onDuplicate, onDelete, editing, onToggleEdit, swatch, title, subtitle, warning, children }) {
   return (
     <div className={"lp-gantt-annot-item" + (editing ? " editing" : "")}>
@@ -6850,9 +7012,10 @@ function MiniGanttAnnotationRow({ item, list, onMove, onDuplicate, onDelete, edi
 // `risks` est ici en LECTURE SEULE : les risques de délai appartiennent à la
 // tâche et s'éditent dans sa fiche. L'éditeur n'en a besoin que pour proposer
 // un risque comme ancre d'annotation.
-function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, tasks, ctx, defaultStart, defaultEnd, onChange, initialSection, autoCreate, focusId }) {
+function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, spans, allowSpans, tasks, ctx, defaultStart, defaultEnd, onChange, initialSection, autoCreate, focusId }) {
   const [open, setOpen] = useState({
     milestones: initialSection === "milestones",
+    spans: initialSection === "spans",
     notes: initialSection === "notes",
   });
   const [editingId, setEditingId] = useState(focusId || null);
@@ -6863,9 +7026,12 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
 
   const setMilestones = (next) => onChange({ milestones: next });
   const setNotes = (next) => onChange({ notes: next });
+  const spanList = Array.isArray(spans) ? spans : [];
+  const setSpans = (next) => onChange({ spans: next });
   const patch = (list, setList) => (id, values) => setList(list.map((x) => (x.id === id ? { ...x, ...values } : x)));
   const patchMilestone = patch(milestones, setMilestones);
   const patchNote = patch(notes, setNotes);
+  const patchSpan = patch(spanList, setSpans);
 
   const moveIn = (list, setList, id, dir, sameGroup) => {
     const i = list.findIndex((x) => x.id === id);
@@ -6892,12 +7058,25 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
     setOpen((o) => ({ ...o, notes: true }));
     setEditingId(created.id);
   };
+  const addSpan = () => {
+    // La première tâche proposée sert de hauteur par défaut : une annotation
+    // horizontale sans tâche n'est pas dessinable, autant en donner une.
+    const created = {
+      id: uid(), label: "Nouvelle annotation", startDate: defaultStart, endDate: defaultEnd,
+      taskId: tasks[0]?.id || "", color: MINIGANTT_SPAN_DEFAULT_COLOR, borderStyle: "solid",
+      thickness: MINIGANTT_SPAN_DEFAULT_THICKNESS, opacity: MINIGANTT_SPAN_DEFAULT_OPACITY, position: "center",
+    };
+    setSpans([...spanList, created]);
+    setOpen((o) => ({ ...o, spans: true }));
+    setEditingId(created.id);
+  };
 
   const autoCreated = useRef(false);
   useEffect(() => {
     if (autoCreated.current || !autoCreate) return;
     autoCreated.current = true;
     if (autoCreate === "milestone") addMilestone();
+    else if (autoCreate === "span") addSpan();
     else if (autoCreate === "note") addNote();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCreate]);
@@ -6913,6 +7092,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
     if (!pendingDelete) return;
     const { kind, item } = pendingDelete;
     if (kind === "milestone") setMilestones(milestones.filter((x) => x.id !== item.id));
+    else if (kind === "span") setSpans(spanList.filter((x) => x.id !== item.id));
     else setNotes(notes.filter((x) => x.id !== item.id));
     setPendingDelete(null);
   };
@@ -6963,7 +7143,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
               onDuplicate={() => duplicateAfter(milestones, setMilestones, m, (x) => ({ title: `${x.title} (copie)` }))}
               onDelete={() => setPendingDelete({ kind: "milestone", item: m })}
               warning={!valid}
-              swatch={<span className="lp-gantt-annot-swatch" style={{ background: m.color || MINIGANTT_MILESTONE_COLORS[m.type] || MINIGANTT_MILESTONE_COLORS.standard, transform: "rotate(45deg)" }} />}
+              swatch={<MilestoneTypeGlyph type={m.type} color={m.color} size={13} />}
               title={m.title || "Sans titre"}
               subtitle={`${MINIGANTT_MILESTONE_LABELS[m.type] || "Jalon"} · ${isGanttIsoDate(m.date) ? fmtShort(m.date) : "—"}`}
             >
@@ -6980,7 +7160,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                   <label>Type</label>
                   <SearchableSelect
                     value={m.type || "standard"}
-                    options={MINIGANTT_MILESTONE_TYPES.map((k) => ({ id: k, label: MINIGANTT_MILESTONE_LABELS[k], color: MINIGANTT_MILESTONE_COLORS[k] }))}
+                    options={MINIGANTT_MILESTONE_TYPES.map((k) => ({ id: k, label: MINIGANTT_MILESTONE_LABELS[k], color: MINIGANTT_MILESTONE_COLORS[k], glyph: <MilestoneTypeGlyph type={k} /> }))}
                     onChange={(id) => patchMilestone(m.id, { type: id || "standard", color: "" })}
                     searchPlaceholder="Rechercher un type…"
                   />
@@ -6999,6 +7179,86 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
           );
         })}
       </MiniGanttListSection>
+
+      {/* Réservé aux diagrammes dont chaque ligne EST une tâche — le Gantt et
+          le Mini-Gantt. La vue Métro trace une ligne par projet : une hauteur
+          calée sur une tâche n'y voudrait rien dire, la section n'y est donc
+          pas proposée plutôt que d'y rester sans effet. */}
+      {allowSpans && (
+      <MiniGanttListSection
+        icon={<Minus size={13} />} title="Annotations horizontales" count={spanList.length}
+        hint="Un trait horizontal d'une date à une autre, avec un rond à chaque bout et un texte libre. La tâche choisie ne donne QUE la hauteur : les dates du trait restent les siennes."
+        open={open.spans} onToggle={() => toggle("spans")} onAdd={addSpan} addLabel="Ajouter une annotation horizontale"
+      >
+        {spanList.map((sp) => {
+          const validation = validateMiniGanttSpan(sp);
+          const epaisseur = normalizeMiniGanttSpanThickness(sp.thickness);
+          const opacite = normalizeMiniGanttSpanOpacity(sp.opacity);
+          return (
+            <MiniGanttAnnotationRow
+              key={sp.id} item={sp} list={spanList} editing={editingId === sp.id}
+              onToggleEdit={() => setEditingId(editingId === sp.id ? null : sp.id)}
+              onMove={(dir) => moveIn(spanList, setSpans, sp.id, dir)}
+              onDuplicate={() => duplicateAfter(spanList, setSpans, sp, (x) => ({ label: x.label ? `${x.label} (copie)` : "" }))}
+              onDelete={() => setPendingDelete({ kind: "span", item: sp })}
+              warning={!validation.ok}
+              swatch={(
+                <span style={{ width: 13, height: 13, flex: "0 0 auto", display: "flex", alignItems: "center" }}>
+                  <span style={{ width: "100%", borderTop: `2px ${sp.borderStyle === "dashed" ? "dashed" : "solid"} ${sp.color || MINIGANTT_SPAN_DEFAULT_COLOR}` }} />
+                </span>
+              )}
+              title={sp.label || "Sans texte"}
+              subtitle={`${isGanttIsoDate(sp.startDate) ? fmtShort(sp.startDate) : "—"} → ${isGanttIsoDate(sp.endDate) ? fmtShort(sp.endDate) : "—"} · ${taskTitle(sp.taskId)}`}
+            >
+              <div className="lp-field">
+                <label>Texte <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif)</span></label>
+                <input type="text" value={sp.label || ""} onChange={(e) => patchSpan(sp.id, { label: e.target.value })} placeholder="Période de tirage, fenêtre d'essais…" />
+              </div>
+              <div className="lp-row2">
+                <div className="lp-field">
+                  <label>Début</label>
+                  <input type="date" value={sp.startDate || ""} onChange={(e) => patchSpan(sp.id, { startDate: e.target.value })} />
+                </div>
+                <div className="lp-field">
+                  <label>Fin</label>
+                  <input type="date" value={sp.endDate || ""} onChange={(e) => patchSpan(sp.id, { endDate: e.target.value })} />
+                </div>
+              </div>
+              <div className="lp-field">
+                <label>Tâche qui donne la hauteur</label>
+                <TaskSelect value={sp.taskId} onSelect={(id) => patchSpan(sp.id, { taskId: id || "" })} />
+              </div>
+              {!validation.ok && <p className="lp-gantt-annot-error">{validation.error}</p>}
+              <div className="lp-field">
+                <label>Position dans la ligne</label>
+                <div className="lp-density-row">
+                  {[["above", <ChevronsUp size={12} />], ["center", <Minus size={12} />], ["below", <ChevronsDown size={12} />]].map(([k, icone]) => (
+                    <button
+                      key={k} type="button"
+                      className={"lp-density-btn" + ((sp.position || "center") === k ? " active" : "")}
+                      onClick={() => patchSpan(sp.id, { position: k })}
+                    >{icone} {MINIGANTT_SPAN_POSITION_LABELS[k]}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="lp-field">
+                <label>Couleur</label>
+                <ColorPicker value={sp.color || MINIGANTT_SPAN_DEFAULT_COLOR} onChange={(color) => patchSpan(sp.id, { color })} />
+              </div>
+              <div className="lp-field">
+                <label>Épaisseur du trait — {epaisseur} px</label>
+                <input type="range" min="0.5" max={MINIGANTT_SPAN_MAX_THICKNESS} step="0.5" value={epaisseur} onChange={(e) => patchSpan(sp.id, { thickness: Number(e.target.value) })} />
+              </div>
+              <div className="lp-field">
+                <label>Opacité — {opacite} %</label>
+                <input type="range" min="10" max="100" step="5" value={opacite} onChange={(e) => patchSpan(sp.id, { opacity: Number(e.target.value) })} />
+              </div>
+              <GanttAnnotationBorderRow value={sp.borderStyle} onChange={(borderStyle) => patchSpan(sp.id, { borderStyle })} />
+            </MiniGanttAnnotationRow>
+          );
+        })}
+      </MiniGanttListSection>
+      )}
 
       <MiniGanttListSection
         icon={<StickyNote size={13} />} title="Annotations" count={notes.length}
@@ -7039,8 +7299,10 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
               <div className="lp-field">
                 <label>Ancrage</label>
                 <div className="lp-density-row">
-                  {[["date", "Date"], ["task", "Tâche"], ["milestone", "Jalon"], ["risk", "Risque"]].map(([k, label]) => (
-                    <button key={k} type="button" className={"lp-density-btn" + (anchor.kind === k ? " active" : "")} onClick={() => setAnchor({ kind: k })}>{label}</button>
+                  {/* Une icône par nature d'ancrage : quatre libellés seuls se
+                      lisent mot à mot, quatre icônes se reconnaissent (#94). */}
+                  {[["date", "Date", <CalendarClock size={12} />], ["task", "Tâche", <CheckCircle2 size={12} />], ["milestone", "Jalon", <Milestone size={12} />], ["risk", "Risque", <ShieldAlert size={12} />]].map(([k, label, icone]) => (
+                    <button key={k} type="button" className={"lp-density-btn" + (anchor.kind === k ? " active" : "")} onClick={() => setAnchor({ kind: k })}>{icone} {label}</button>
                   ))}
                 </div>
               </div>
@@ -7058,7 +7320,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                   <label>Jalon</label>
                   <SearchableSelect
                     value={anchor.id || ""}
-                    options={milestones.map((m) => ({ id: m.id, label: m.title || "Sans titre", hint: isGanttIsoDate(m.date) ? fmtShort(m.date) : "", color: m.color || MINIGANTT_MILESTONE_COLORS[m.type] }))}
+                    options={milestones.map((m) => ({ id: m.id, label: m.title || "Sans titre", hint: isGanttIsoDate(m.date) ? fmtShort(m.date) : "", color: m.color || MINIGANTT_MILESTONE_COLORS[m.type], glyph: <MilestoneTypeGlyph type={m.type} color={m.color} /> }))}
                     onChange={(id) => setAnchor({ id })}
                     placeholder="Choisir un jalon"
                     searchPlaceholder="Rechercher un jalon…"
@@ -7070,7 +7332,14 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                   <label>Risque</label>
                   <SearchableSelect
                     value={anchor.id || ""}
-                    options={risks.map((r) => ({ id: r.id, label: r.title || "Sans titre", hint: taskTitle(r.taskId), color: r.color || MINIGANTT_RISK_DEFAULT_COLOR }))}
+                    options={risks.map((r) => ({
+                      id: r.id, label: r.title || "Sans titre", hint: taskTitle(r.taskId), color: r.color || MINIGANTT_RISK_DEFAULT_COLOR,
+                      // La gravité se lit à l'icône : un risque critique ne doit
+                      // pas ressembler à un risque faible dans la liste (#94).
+                      glyph: r.severity === "critical" || r.severity === "high"
+                        ? <AlertOctagon size={12} color={r.color || MINIGANTT_RISK_DEFAULT_COLOR} />
+                        : <AlertTriangle size={12} color={r.color || MINIGANTT_RISK_DEFAULT_COLOR} />,
+                    }))}
                     onChange={(id) => setAnchor({ id })}
                     placeholder="Choisir un risque"
                     searchPlaceholder="Rechercher un risque…"
@@ -7086,7 +7355,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
       {pendingDelete && (
         <ConfirmModal
           title="Supprimer"
-          message={`Supprimer « ${pendingDelete.item.title || "Sans titre"} » ? Les tâches ne sont pas modifiées.`}
+          message={`Supprimer « ${pendingDelete.item.title || pendingDelete.item.label || "Sans titre"} » ? Les tâches ne sont pas modifiées.`}
           danger confirmLabel="Supprimer"
           onConfirm={confirmDelete}
           onClose={() => setPendingDelete(null)}
@@ -7988,8 +8257,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
               <div className="lp-field">
                 <label>Nature</label>
                 <div className="lp-density-row">
-                  <button type="button" className={"lp-density-btn" + (metaBlock.kind !== "decision" ? " active" : "")} onClick={() => patchMetaBlock({ kind: "phase" })}>Phase</button>
-                  <button type="button" className={"lp-density-btn" + (metaBlock.kind === "decision" ? " active" : "")} onClick={() => patchMetaBlock({ kind: "decision", color: metaBlock.color || GANTT_DECISION_DEFAULT_COLOR })}>Fenêtre de décision</button>
+                  <button type="button" className={"lp-density-btn" + (metaBlock.kind !== "decision" ? " active" : "")} onClick={() => patchMetaBlock({ kind: "phase" })}><Layers size={12} /> Phase</button>
+                  <button type="button" className={"lp-density-btn" + (metaBlock.kind === "decision" ? " active" : "")} onClick={() => patchMetaBlock({ kind: "decision", color: metaBlock.color || GANTT_DECISION_DEFAULT_COLOR })}><Scale size={12} /> Fenêtre de décision</button>
                 </div>
               </div>
               <div className="lp-field">

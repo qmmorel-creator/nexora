@@ -107,10 +107,20 @@ function AnnotationsHarness() {
     notes: [
       { id: "n1", title: "Relance hebdo", text: "Point fournisseur le lundi.", anchor: { kind: "task", id: "t2" } },
     ],
+    /* Annotations horizontales (#93) : un trait d'une date à une autre, calé en
+       hauteur sur une tâche. « sp2 » vise une tâche qui n'est PAS affichée : il
+       ne doit rien dessiner, et surtout rien faire tomber. */
+    spans: [
+      { id: "sp1", label: "Fenêtre de tirage", startDate: "2026-08-03", endDate: "2026-09-04", taskId: "t2", color: "#0EA5E9", borderStyle: "solid", thickness: 2, position: "above" },
+      { id: "sp2", label: "Tâche absente", startDate: "2026-08-03", endDate: "2026-08-20", taskId: "disparue" },
+    ],
   };
   const [prefs, setPrefsState] = useState({ ganttGroupBy: "project", bubbleFields: ["status", "project"], ganttCols: ["status", "start", "end"], zoomKey: "week", ...annotations });
   const setPrefs = (patch) => setPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
-  const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["assignee", "status", "taskType", "end", "progress"], ganttAnnotations: miniAnnotations });
+  // `miniGanttMilestoneRules` : le trait vertical sous chaque jalon (#95). Le
+  // second Mini-Gantt ne le porte PAS — c'est lui qui prouve que le réglage est
+  // propre à son widget et que son absence ne change rien.
+  const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["assignee", "status", "taskType", "end", "progress"], miniGanttMilestoneRules: true, ganttAnnotations: miniAnnotations });
   // Second widget SANS aucune annotation propre : seuls les risques portés par
   // les tâches doivent y apparaître.
   const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });

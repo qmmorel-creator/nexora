@@ -2449,6 +2449,7 @@ const MINI_GANTT_DEFAULTS = {
   miniGanttWindow: null,
   miniGanttZoomLevel: null,
   miniGanttComparisonEnabled: false,
+  miniGanttMilestoneRules: false,
 };
 function migrateLegacyMiniGanttWidget(widget) {
   if (!widget || typeof widget !== "object" || widget.type !== LEGACY_EMBED_GANTT_TYPE) return widget;
@@ -2481,6 +2482,7 @@ function normalizeMiniGanttViewPrefs(prefs) {
     miniGanttWindow: old.miniGanttWindow || null,
     miniGanttZoomLevel: old.miniGanttZoomLevel ?? null,
     miniGanttComparisonEnabled: !!old.miniGanttComparisonEnabled,
+    miniGanttMilestoneRules: !!old.miniGanttMilestoneRules,
     // Filtre propre à la vue, au même format que celui d'un widget — il
     // s'applique EN PLUS des filtres de la page, jamais à leur place.
     filter: old.filter && typeof old.filter === "object" ? old.filter : null,
@@ -5077,6 +5079,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       milestones: rawMilestones,
       risks: rawRisks,
       notes: rawNotes,
+      spans: rawSpans,
       ...patch,
     } });
   };
@@ -5095,6 +5098,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      sélection en mémoire se vidait au rechargement pendant que l'encadré, lui,
      survivait — la case revenait décochée sur une tâche visiblement encadrée. */
   const emphasisOn = widget.miniGanttEmphasis !== false;
+  // Trait vertical pleine hauteur sous chaque jalon : absent = décoché, donc un
+  // widget enregistré avant ce réglage garde exactement son rendu (#95).
+  const milestoneRulesOn = !!widget.miniGanttMilestoneRules;
   const editable = !!onUpdateWidget;
 
   const rawMilestones = useMemo(() => (Array.isArray(annotationStore.milestones) ? annotationStore.milestones : []), [annotationStore.milestones]);
@@ -5108,6 +5114,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     [taskRisks, legacyWidgetRisks]
   );
   const rawNotes = useMemo(() => (Array.isArray(annotationStore.notes) ? annotationStore.notes : []), [annotationStore.notes]);
+  const rawSpans = useMemo(() => (Array.isArray(annotationStore.spans) ? annotationStore.spans : []), [annotationStore.spans]);
+  const configSpans = useMemo(() => normalizeMiniGanttSpans(rawSpans), [rawSpans]);
   const configMilestones = useMemo(() => normalizeMiniGanttMilestones(rawMilestones), [rawMilestones]);
   const configRisks = useMemo(() => normalizeMiniGanttRisks(rawRisks), [rawRisks]);
   const configNotes = useMemo(() => normalizeMiniGanttNotes(rawNotes), [rawNotes]);
@@ -5116,7 +5124,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // par les filtres du widget, pas seulement sur celles que le plafond
   // d'affichage laisse voir : sinon une tâche filtrée « in » mais tronquée de
   // la vue deviendrait impossible à désigner.
-  const editorTasks = useMemo(() => tasks.filter((t) => t.start && t.end), [tasks]);
+  /* Une tâche-jalon n'a qu'une date de FIN : l'exiger des deux côtés vidait le
+     sélecteur de « Tâche rattachée » sur un widget qui n'affiche que des
+     jalons (#94). On garde donc toute tâche datée d'un bout au moins — une
+     tâche sans aucune date ne peut, elle, être placée nulle part. */
+  const editorTasks = useMemo(() => tasks.filter((t) => t.start || t.end), [tasks]);
 
   // Reprise unique des risques enregistrés sur le widget avant qu'ils ne soient
   // rattachés aux tâches : ils sont reversés sur leur tâche puis effacés du
@@ -5335,6 +5347,39 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     });
     return shapes;
   }, [highlightFrames, visibleRows, rowRects, span]);
+
+  /* Annotations horizontales : le trait est placé en X comme une barre —
+     pourcentage de la piste, borné à la fenêtre affichée — et en Y sur la ligne
+     mesurée de sa tâche de rattachement (#93). Une annotation dont la tâche
+     n'est pas montée (filtrée, groupe replié, hors plafond) ou dont les dates
+     tombent entièrement hors de la fenêtre n'est pas dessinée. */
+  const spanShapes = useMemo(() => {
+    if (!configSpans.length) return [];
+    const rows = visibleRows
+      .map((row) => {
+        const rect = rowRects[row.id];
+        return rect ? { id: row.id, top: rect.top, height: rect.height } : null;
+      })
+      .filter(Boolean);
+    if (!rows.length) return [];
+    return miniGanttSpanRows(rows, configSpans)
+      .map(({ span: annot, y }) => {
+        const startIdx = dayIndex(annot.startDate);
+        const endIdx = dayIndex(annot.endDate);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        if (endIdx < minIdx || startIdx > maxIdx) return null;
+        const from = Math.max(minIdx, Math.min(maxIdx, startIdx));
+        const to = Math.max(minIdx, Math.min(maxIdx, endIdx));
+        return {
+          annot, y,
+          leftPct: ((from - minIdx) / span) * 100,
+          // Même plancher que la barre d'une tâche d'un jour : sans lui, une
+          // annotation d'une journée se réduirait à ses deux ronds collés.
+          widthPct: Math.max(2, ((to - from) / span) * 100),
+        };
+      })
+      .filter(Boolean);
+  }, [configSpans, visibleRows, rowRects, minIdx, maxIdx, span]);
 
   // Les blocs sont exprimés en pourcentage, comme les barres du Mini-Gantt, et
   // bornés à la fenêtre affichée : le zoom et le filtre « jours dans le passé »
@@ -5614,6 +5659,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
           <button type="button" onClick={() => setAnnotationPanel({ section: "frames", autoCreate: "frame" })} title="Ajouter un encadré autour d'une ou plusieurs tâches">+ Encadré</button>
           <button type="button" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })} title="Ajouter un jalon ou une décision">+ Jalon</button>
+          <button type="button" onClick={() => setAnnotationPanel({ section: "spans", autoCreate: "span" })} title="Ajouter une annotation horizontale (trait d'une date à une autre, à la hauteur d'une tâche)">+ Trait</button>
         </div>
       )}
     </div>
@@ -6270,7 +6316,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             className={"lp-widget-minigantt-marker is-" + item.kind + (item.type ? " type-" + item.type : "")}
             style={{ left: `${item.leftPct}%`, top: item.lane * 17 }}
           >
-            <span className="lp-widget-minigantt-marker-glyph" style={{ background: item.color, borderColor: item.color }} />
+            <span
+              className={"lp-widget-minigantt-marker-glyph lp-annot-shape shape-" + (item.kind === "note" ? "note" : miniGanttMilestoneShape(item.type))}
+              style={{ background: item.color, borderColor: item.color }}
+            />
             <button
               type="button"
               className="lp-widget-minigantt-marker-label"
@@ -6337,6 +6386,60 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             border: ganttBlockBorder(shape.block),
           }}
         />
+      ))}
+    </div>
+  );
+
+  /* Trait vertical d'un jalon, en option (#95).
+
+     Il reprend EXACTEMENT la géométrie de la bande des blocs temporels, et le
+     même z-index : il court donc sur toute la hauteur des lignes, derrière les
+     barres et derrière les textes. Décoché — la valeur par défaut —, la couche
+     n'existe pas et le rendu ne bouge pas d'un pixel. */
+  const milestoneRuleLayer = (!bandGeometry || !milestoneRulesOn) ? null : (
+    <div className="lp-widget-minigantt-rule-layer" style={bandGeometry}>
+      {stripShapes.filter((item) => item.kind === "milestone").map((item) => (
+        <span
+          key={"rule-" + item.id}
+          className="lp-widget-minigantt-rule"
+          style={{ left: `${item.leftPct}%`, borderLeftColor: item.color }}
+        />
+      ))}
+    </div>
+  );
+
+  /* Annotations horizontales : au-dessus des barres, comme les cadres — un
+     trait posé DERRIÈRE la barre de sa propre ligne serait invisible. Le
+     calque ne capte pas le pointeur, seule l'étiquette est cliquable. */
+  const spanLayer = (!rowsBand || !spanShapes.length) ? null : (
+    <div
+      className="lp-widget-minigantt-span-layer"
+      style={{ left: "calc(26% + 6px)", right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0, top: 0, bottom: 0 }}
+    >
+      {spanShapes.map(({ annot, y, leftPct, widthPct }) => (
+        <span
+          key={"span-" + annot.id}
+          className="lp-widget-minigantt-span"
+          style={{ left: `${leftPct}%`, width: `${widthPct}%`, top: y, opacity: annot.opacity / 100 }}
+        >
+          <span className="lp-widget-minigantt-span-cap" style={{ borderColor: annot.color }} />
+          <span
+            className="lp-widget-minigantt-span-line"
+            style={{ borderTopWidth: annot.thickness, borderTopStyle: annot.borderStyle, borderTopColor: annot.color }}
+          />
+          <span className="lp-widget-minigantt-span-cap" style={{ borderColor: annot.color }} />
+          {annot.label && (
+            <button
+              type="button"
+              className="lp-widget-minigantt-span-label"
+              style={{ color: annot.color }}
+              title={`${annot.label} · ${fmtShort(annot.startDate)} → ${fmtShort(annot.endDate)}`}
+              onClick={() => editable && setAnnotationPanel({ section: "spans", focusId: annot.id })}
+            >
+              {annot.label}
+            </button>
+          )}
+        </span>
       ))}
     </div>
   );
@@ -6426,6 +6529,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         milestones={rawMilestones}
         risks={rawRisks}
         notes={rawNotes}
+        spans={rawSpans}
+        allowSpans
         tasks={editorTasks}
         ctx={ctx}
         defaultStart={minDateStr}
@@ -6444,6 +6549,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       <div className="lp-widget-minigantt" style={{ position: "relative" }} ref={rootRef}>
         {viewToolbar}
         {bandLayer}
+        {milestoneRuleLayer}
         {toolbar}
         <Axis />
         {phasesHeader}
@@ -6454,6 +6560,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         </div>
         {bandFrameLayer}
         {annotationLayer}
+        {spanLayer}
         <Tooltip />
         {annotationModal}
       </div>
@@ -6478,6 +6585,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     <div className="lp-widget-minigantt lp-widget-minigantt-grouped" style={{ position: "relative" }} ref={rootRef}>
       {viewToolbar}
       {bandLayer}
+      {milestoneRuleLayer}
       {toolbar}
       <Axis />
       {phasesHeader}
@@ -6503,6 +6611,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       })}
       {bandFrameLayer}
       {annotationLayer}
+      {spanLayer}
       <Tooltip />
       {annotationModal}
     </div>
@@ -8372,6 +8481,12 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
       <label className="lp-checkbox-line">
         <input type="checkbox" checked={value.showMilestones !== false} onChange={(e) => onChange({ showMilestones: e.target.checked })} /> Afficher les jalons (avec leur émoji propre s'ils en ont un)
       </label>
+      <label className="lp-checkbox-line">
+        <input type="checkbox" checked={!!value.miniGanttMilestoneRules} onChange={(e) => onChange({ miniGanttMilestoneRules: e.target.checked })} /> Prolonger chaque jalon d'annotation par un trait vertical pleine hauteur
+      </label>
+      <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -4, marginBottom: 0 }}>
+        Le trait passe derrière les barres et les textes : il situe une date sur toutes les lignes sans rien masquer.
+      </p>
       <div className="lp-field" style={{ marginTop: 10 }}>
         <label>Couleur des barres</label>
         <div className="lp-density-row">
@@ -8487,9 +8602,11 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
    WidgetMiniGantt, ce qui interdit un second moteur Gantt. */
 function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
   const annotations = ganttAnnotationsOf(prefs);
-  const datedTasks = (tasks || []).filter((task) => task.start && task.end);
-  const defaultStart = datedTasks.reduce((value, task) => !value || task.start < value ? task.start : value, iso(new Date()));
-  const defaultEnd = datedTasks.reduce((value, task) => !value || task.end > value ? task.end : value, iso(new Date()));
+  // Même règle que la modale du widget : une tâche-jalon n'a qu'une date de
+  // fin, l'exiger des deux côtés vidait les sélecteurs (#94).
+  const datedTasks = (tasks || []).filter((task) => task.start || task.end);
+  const defaultStart = datedTasks.reduce((value, task) => (task.start && task.start < value ? task.start : value), iso(new Date()));
+  const defaultEnd = datedTasks.reduce((value, task) => (task.end && task.end > value ? task.end : value), iso(new Date()));
   const patchAnnotations = (patch) => setPrefs({ ganttAnnotations: { ...annotations, ...patch } });
   return (
     <Modal title="Réglages de la vue Gantt" onClose={onClose} wide footer={<button className="lp-btn lp-btn-primary" onClick={onClose}>Terminé</button>}>
@@ -8515,7 +8632,7 @@ function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 8 }}>
           Les annotations ci-dessous sont enregistrées avec la vue Gantt : elles la suivent d'une session à l'autre, sans jamais modifier les tâches.
         </p>
-        <MiniGanttAnnotationsEditor blocks={annotations.temporalBlocks || []} frames={annotations.highlightFrames || []} milestones={annotations.milestones || []} risks={collectTaskDelayRisks(tasks || [])} notes={annotations.notes || []} tasks={datedTasks} ctx={ctx} defaultStart={defaultStart} defaultEnd={defaultEnd} onChange={patchAnnotations} /></div>
+        <MiniGanttAnnotationsEditor blocks={annotations.temporalBlocks || []} frames={annotations.highlightFrames || []} milestones={annotations.milestones || []} risks={collectTaskDelayRisks(tasks || [])} notes={annotations.notes || []} spans={annotations.spans || []} allowSpans tasks={datedTasks} ctx={ctx} defaultStart={defaultStart} defaultEnd={defaultEnd} onChange={patchAnnotations} /></div>
     </Modal>
   );
 }
@@ -9908,6 +10025,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [filter, setFilter] = useState(widgetFilterFor(widget || {}));
   const [listGroupBy, setListGroupBy] = useState((widget?.type === "list" || widget?.type === "minigantt") && widget?.groupBy ? widget.groupBy : "none");
   const [showMilestones, setShowMilestones] = useState(widget?.showMilestones !== false);
+  // Trait vertical sous les jalons : absent = décoché (#95).
+  const [miniGanttMilestoneRules, setMiniGanttMilestoneRules] = useState(!!widget?.miniGanttMilestoneRules);
   const [colorBy, setColorBy] = useState(widget?.colorBy || "status");
   const [miniGanttFields, setMiniGanttFields] = useState(widget?.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"]);
   const [miniGanttFieldsLayout, setMiniGanttFieldsLayout] = useState(widget?.miniGanttFieldsLayout === "inline" ? "inline" : "aligned");
@@ -9930,6 +10049,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const applyMiniGanttPatch = (patch) => {
     if ("groupBy" in patch) setListGroupBy(patch.groupBy);
     if ("showMilestones" in patch) setShowMilestones(patch.showMilestones);
+    if ("miniGanttMilestoneRules" in patch) setMiniGanttMilestoneRules(patch.miniGanttMilestoneRules);
     if ("colorBy" in patch) setColorBy(patch.colorBy);
     if ("miniGanttFields" in patch) setMiniGanttFields(patch.miniGanttFields);
     if ("miniGanttFieldsLayout" in patch) setMiniGanttFieldsLayout(patch.miniGanttFieldsLayout);
@@ -10032,6 +10152,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       highlightFrames: list(stored.highlightFrames),
       milestones: list(stored.milestones),
       notes: list(stored.notes),
+      spans: list(stored.spans),
     };
   });
   // Un bloc dont les dates sont invalides (ou dont la fin précède le début)
@@ -10042,10 +10163,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // qu'il est en cours d'édition dans cette même fiche.
   const ganttTasks = useMemo(() => {
     const pageScoped = applyWidgetFilter(ctx.tasks || [], pageFilter, ctx);
-    return applyWidgetFilter(pageScoped, filter, ctx).filter((t) => t.start && t.end);
+    // Une tâche-jalon n'a qu'une date de fin : l'exiger des deux côtés vidait
+    // le sélecteur de « Tâche rattachée » (#94).
+    return applyWidgetFilter(pageScoped, filter, ctx).filter((t) => t.start || t.end);
   }, [ctx, pageFilter, filter]);
-  const ganttDefaultStart = ganttTasks.length ? ganttTasks.reduce((m, t) => (t.start < m ? t.start : m), ganttTasks[0].start) : iso(new Date());
-  const ganttDefaultEnd = ganttTasks.length ? ganttTasks.reduce((m, t) => (t.end > m ? t.end : m), ganttTasks[0].end) : iso(new Date());
+  // Les bornes par défaut se lisent sur les tâches RÉELLEMENT datées de chaque
+  // côté : depuis que les tâches-jalons (fin seule) sont proposées, prendre la
+  // date de la première venue pouvait donner `undefined`.
+  const ganttDefaultStart = ganttTasks.reduce((m, t) => (t.start && (!m || t.start < m) ? t.start : m), "") || iso(new Date());
+  const ganttDefaultEnd = ganttTasks.reduce((m, t) => (t.end && (!m || t.end > m) ? t.end : m), "") || iso(new Date());
   // Les risques de délai vivent sur les tâches : la fiche les lit et les écrit
   // là, jamais dans la configuration du widget qu'elle enregistre.
   const ganttTaskRisks = useMemo(() => collectTaskDelayRisks(ganttTasks), [ganttTasks]);
@@ -10189,10 +10315,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         highlightFrames: pruneHighlightFrames(ganttAnnotations.highlightFrames, ganttTasks.map((t) => t.id)),
         milestones: normalizeMiniGanttMilestones(ganttAnnotations.milestones),
         notes: normalizeMiniGanttNotes(ganttAnnotations.notes),
+        spans: normalizeMiniGanttSpans(ganttAnnotations.spans),
       };
     }
     if (type === "minigantt") {
       data.groupBy = listGroupBy; data.showMilestones = showMilestones; data.colorBy = colorBy; data.miniGanttFields = miniGanttFields; data.miniGanttFieldsLayout = miniGanttFieldsLayout;
+      data.miniGanttMilestoneRules = miniGanttMilestoneRules;
       data.miniGanttComparisonEnabled = miniGanttComparisonEnabled;
       data.miniGanttSort = miniGanttSort;
       data.miniGanttSortDir = miniGanttSortDir;
@@ -11164,6 +11292,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             miniGanttRange,
             miniGanttWindow: { start: miniGanttWindowStart, end: miniGanttWindowEnd },
             miniGanttComparisonEnabled,
+            miniGanttMilestoneRules,
           }}
           onChange={applyMiniGanttPatch}
           ctx={ctx}
@@ -11183,6 +11312,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               milestones={ganttAnnotations.milestones}
               risks={ganttTaskRisks}
               notes={ganttAnnotations.notes}
+              spans={ganttAnnotations.spans}
+              allowSpans
               tasks={ganttTasks}
               ctx={ctx}
               defaultStart={ganttDefaultStart}
