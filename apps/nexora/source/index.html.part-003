@@ -2399,7 +2399,6 @@ const MINI_GANTT_DEFAULTS = {
   miniGanttWindow: null,
   miniGanttZoomLevel: null,
   miniGanttComparisonEnabled: false,
-  miniGanttMilestoneRules: false,
 };
 function migrateLegacyMiniGanttWidget(widget) {
   if (!widget || typeof widget !== "object" || widget.type !== LEGACY_EMBED_GANTT_TYPE) return widget;
@@ -2432,7 +2431,6 @@ function normalizeMiniGanttViewPrefs(prefs) {
     miniGanttWindow: old.miniGanttWindow || null,
     miniGanttZoomLevel: old.miniGanttZoomLevel ?? null,
     miniGanttComparisonEnabled: !!old.miniGanttComparisonEnabled,
-    miniGanttMilestoneRules: !!old.miniGanttMilestoneRules,
     // Filtre propre à la vue, au même format que celui d'un widget — il
     // s'applique EN PLUS des filtres de la page, jamais à leur place.
     filter: old.filter && typeof old.filter === "object" ? old.filter : null,
@@ -4924,6 +4922,12 @@ function WidgetBudget({ widget, projects, expenses, expenseCategories }) {
 const MINIGANTT_ROW_FIELD_OPTIONS = ["assignee", "status", "criticality", "taskType", "end", "progress"];
 // Hauteur d'un couloir d'étiquettes de bloc temporel : capsule + interligne.
 const MINIGANTT_PHASE_LANE_H = 22;
+/* Hauteur d'un couloir de la bande de repères (jalons et annotations), et
+   hauteur à laquelle le losange est centré dans son couloir. Le trait vertical
+   d'un jalon part de ce point précis : il PROLONGE le losange, il ne flotte pas
+   sous lui (#95). */
+const MINIGANTT_STRIP_LANE_H = 17;
+const MINIGANTT_STRIP_GLYPH_MID = 7.5;
 
 // Anneau de progression du Mini-Gantt : contour coloré selon des paliers fixes
 // (rouge <50 %, orange 50-75 %, bleu 75-90 %, vert ≥90 %), remplacé par un
@@ -5397,9 +5401,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      sélection en mémoire se vidait au rechargement pendant que l'encadré, lui,
      survivait — la case revenait décochée sur une tâche visiblement encadrée. */
   const emphasisOn = widget.miniGanttEmphasis !== false;
-  // Trait vertical pleine hauteur sous chaque jalon : absent = décoché, donc un
-  // widget enregistré avant ce réglage garde exactement son rendu (#95).
-  const milestoneRulesOn = !!widget.miniGanttMilestoneRules;
   const editable = !!onUpdateWidget;
 
   const rawMilestones = useMemo(() => (Array.isArray(annotationStore.milestones) ? annotationStore.milestones : []), [annotationStore.milestones]);
@@ -5503,6 +5504,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const rowNodes = useRef({});
   const stripTrackRef = useRef(null);
   const [rowRects, setRowRects] = useState({});
+  /* Sommet de la bande de repères, mesuré comme les lignes : c'est de là que
+     part le trait vertical d'un jalon (#95). `null` tant qu'aucune bande n'est
+     montée — un widget sans jalon ni annotation n'en a pas. */
+  const [stripTop, setStripTop] = useState(null);
   // Les étiquettes de repères sont placées en PIXELS : estimer leur largeur en
   // pourcentage de la piste donnait des collisions dès que le widget était
   // étroit, la même étiquette n'occupant pas la même fraction d'une piste de
@@ -5552,6 +5557,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       const width = Math.round(track.getBoundingClientRect().width);
       setTrackWidth((prev) => (prev === width ? prev : width));
     }
+    // Même mesure, même repère : le sommet de la bande de repères est pris dans
+    // le référentiel de la racine, comme les lignes ci-dessus.
+    const strip = stripTrackRef.current;
+    const nextStripTop = strip && strip.isConnected
+      ? Math.round(strip.getBoundingClientRect().top - base.top)
+      : null;
+    setStripTop((prev) => (prev === nextStripTop ? prev : nextStripTop));
   }, [visibleRows]);
   useEffect(() => {
     const id = requestAnimationFrame(measureRows);
@@ -5927,7 +5939,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     configMilestones.forEach((m) => {
       const idx = dayIndex(m.date);
       if (!Number.isFinite(idx) || idx < minIdx || idx > maxIdx) return;
-      items.push({ kind: "milestone", id: m.id, idx, label: m.title, color: m.color || milestoneTypeFor(milestoneTypes, m.type).color, type: m.type, data: m });
+      items.push({ kind: "milestone", id: m.id, idx, label: m.title, color: m.color || milestoneTypeFor(milestoneTypes, m.type).color, type: m.type, rule: !!m.rule, data: m });
     });
     const taskById = tasksById;
     configNotes.forEach((n) => {
@@ -6953,14 +6965,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // Jalons de configuration et annotations : une bande dédiée sous les titres
   // de bloc, avec le même placement en lignes que ces derniers.
   const stripHeader = !stripShapes.length ? null : (
-    <div className="lp-widget-minigantt-strip" style={{ height: stripLaneCount * 17 }}>
+    <div className="lp-widget-minigantt-strip" style={{ height: stripLaneCount * MINIGANTT_STRIP_LANE_H }}>
       <span className="lp-widget-minigantt-phases-spacer" />
       <div className="lp-widget-minigantt-strip-track" ref={stripTrackRef}>
         {stripShapes.map((item) => (
           <span
             key={item.kind + "-" + item.id}
             className={"lp-widget-minigantt-marker is-" + item.kind + (item.type ? " type-" + item.type : "")}
-            style={{ left: `${item.leftPct}%`, top: item.lane * 17 }}
+            style={{ left: `${item.leftPct}%`, top: item.lane * MINIGANTT_STRIP_LANE_H }}
           >
             <MilestoneSymbol
               symbol={item.kind === "note" ? "ring" : milestoneTypeFor(milestoneTypes, item.type).symbol}
@@ -7036,19 +7048,38 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
-  /* Trait vertical d'un jalon, en option (#95).
+  /* Trait vertical d'un jalon — le choix appartient au JALON (#95).
 
-     Il reprend EXACTEMENT la géométrie de la bande des blocs temporels, et le
-     même z-index : il court donc sur toute la hauteur des lignes, derrière les
-     barres et derrière les textes. Décoché — la valeur par défaut —, la couche
-     n'existe pas et le rendu ne bouge pas d'un pixel. */
-  const milestoneRuleLayer = (!bandGeometry || !milestoneRulesOn) ? null : (
-    <div className="lp-widget-minigantt-rule-layer" style={bandGeometry}>
-      {stripShapes.filter((item) => item.kind === "milestone").map((item) => (
+     Il PROLONGE le losange : la couche part du sommet de la bande de repères,
+     et chaque trait démarre au couloir de SON repère, exactement comme la vue
+     Métro le fait déjà. Il descend jusqu'au bas des lignes, en z-index 0 comme
+     le remplissage d'un bloc temporel : derrière les barres, derrière les
+     textes, derrière le losange dont il part.
+
+     Aucun jalon coché, aucune couche : le rendu ne bouge pas d'un pixel. */
+  const ruleShapes = stripShapes.filter((item) => item.kind === "milestone" && item.rule);
+  const ruleTop = stripTop != null && stripTop < (bandGeometry ? bandGeometry.top : 0)
+    ? stripTop
+    : (bandGeometry ? bandGeometry.top : 0);
+  const milestoneRuleLayer = (!bandGeometry || !ruleShapes.length) ? null : (
+    <div
+      className="lp-widget-minigantt-rule-layer"
+      style={{ ...layerInsets, top: ruleTop, height: Math.max(0, bandGeometry.top + bandGeometry.height - ruleTop) }}
+    >
+      {ruleShapes.map((item) => (
         <span
           key={"rule-" + item.id}
           className="lp-widget-minigantt-rule"
-          style={{ left: `${item.leftPct}%`, borderLeftColor: item.color }}
+          style={{
+            left: `${item.leftPct}%`,
+            // Départ au losange de CE repère : son couloir dans la bande, puis
+            // le milieu du losange. Sans bande mesurée, le trait reprend la
+            // hauteur des lignes, comme avant.
+            top: stripTop != null && ruleTop === stripTop
+              ? item.lane * MINIGANTT_STRIP_LANE_H + MINIGANTT_STRIP_GLYPH_MID
+              : 0,
+            borderLeftColor: item.color,
+          }}
         />
       ))}
     </div>
@@ -9182,12 +9213,10 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
       <label className="lp-checkbox-line">
         <input type="checkbox" checked={value.showMilestones !== false} onChange={(e) => onChange({ showMilestones: e.target.checked })} /> Afficher les jalons (avec leur émoji propre s'ils en ont un)
       </label>
-      <label className="lp-checkbox-line">
-        <input type="checkbox" checked={!!value.miniGanttMilestoneRules} onChange={(e) => onChange({ miniGanttMilestoneRules: e.target.checked })} /> Prolonger chaque jalon d'annotation par un trait vertical pleine hauteur
-      </label>
-      <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -4, marginBottom: 0 }}>
-        Le trait passe derrière les barres et les textes : il situe une date sur toutes les lignes sans rien masquer.
-      </p>
+      {/* Le trait vertical d'un jalon ne se règle PAS ici : c'est un choix
+          propre à chaque repère, dans les Annotations, jalon par jalon (#95).
+          Un réglage unique pour tout le diagramme imposait le trait sous tous
+          les jalons ou sous aucun. */}
       <div className="lp-field" style={{ marginTop: 10 }}>
         <label>Couleur des barres</label>
         <div className="lp-density-row">
@@ -10630,8 +10659,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [filter, setFilter] = useState(widgetFilterFor(widget || {}));
   const [listGroupBy, setListGroupBy] = useState((widget?.type === "list" || widget?.type === "minigantt" || widget?.type === "bubbles") && widget?.groupBy ? widget.groupBy : "none");
   const [showMilestones, setShowMilestones] = useState(widget?.showMilestones !== false);
-  // Trait vertical sous les jalons : absent = décoché (#95).
-  const [miniGanttMilestoneRules, setMiniGanttMilestoneRules] = useState(!!widget?.miniGanttMilestoneRules);
   const [colorBy, setColorBy] = useState(widget?.colorBy || "status");
   const [miniGanttFields, setMiniGanttFields] = useState(widget?.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"]);
   const [miniGanttFieldsLayout, setMiniGanttFieldsLayout] = useState(widget?.miniGanttFieldsLayout === "inline" ? "inline" : "aligned");
@@ -10666,7 +10693,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const applyMiniGanttPatch = (patch) => {
     if ("groupBy" in patch) setListGroupBy(patch.groupBy);
     if ("showMilestones" in patch) setShowMilestones(patch.showMilestones);
-    if ("miniGanttMilestoneRules" in patch) setMiniGanttMilestoneRules(patch.miniGanttMilestoneRules);
     if ("colorBy" in patch) setColorBy(patch.colorBy);
     if ("miniGanttFields" in patch) setMiniGanttFields(patch.miniGanttFields);
     if ("miniGanttFieldsLayout" in patch) setMiniGanttFieldsLayout(patch.miniGanttFieldsLayout);
@@ -10926,7 +10952,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     }
     if (type === "minigantt") {
       data.groupBy = listGroupBy; data.showMilestones = showMilestones; data.colorBy = colorBy; data.miniGanttFields = miniGanttFields; data.miniGanttFieldsLayout = miniGanttFieldsLayout;
-      data.miniGanttMilestoneRules = miniGanttMilestoneRules;
       data.miniGanttComparisonEnabled = miniGanttComparisonEnabled;
       data.miniGanttSort = miniGanttSort;
       data.miniGanttSortDir = miniGanttSortDir;
@@ -11833,7 +11858,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             miniGanttRange,
             miniGanttWindow: { start: miniGanttWindowStart, end: miniGanttWindowEnd },
             miniGanttComparisonEnabled,
-            miniGanttMilestoneRules,
           }}
           onChange={applyMiniGanttPatch}
           ctx={ctx}

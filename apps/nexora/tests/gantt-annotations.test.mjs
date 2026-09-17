@@ -274,6 +274,21 @@ test("les jalons de configuration sont validés et typés", () => {
   assert.equal(list[1].taskId, null, "un jalon peut n'être rattaché à aucune tâche");
 });
 
+test("le trait vertical appartient au jalon, et il est absent par défaut (#95)", () => {
+  const [sansTrait, avecTrait] = MINI.normalizeMiniGanttMilestones([
+    { id: "m1", title: "Permis", date: "2026-06-01" },
+    { id: "m2", title: "Décision CODIR", date: "2026-06-02", rule: true },
+  ]);
+  assert.equal(sansTrait.rule, false, "absent = pas de trait, donc aucun rendu ne bouge");
+  assert.equal(avecTrait.rule, true, "coché sur CE jalon, et sur lui seul");
+  // Le réglage n'est plus celui du widget : deux jalons de la même liste
+  // peuvent diverger, c'est tout l'objet du changement.
+  assert.notEqual(sansTrait.rule, avecTrait.rule);
+  // Normaliser deux fois ne change rien (les listes passent par ici à chaque
+  // enregistrement comme à chaque rendu).
+  assert.deepEqual(MINI.normalizeMiniGanttMilestones([avecTrait]), [avecTrait]);
+});
+
 test("les risques prennent des valeurs par défaut sûres", () => {
   const [risk] = MINI.normalizeMiniGanttRisks([{ id: "r1", taskId: "t1", title: " Retard fournisseur " }]);
   assert.equal(risk.title, "Retard fournisseur");

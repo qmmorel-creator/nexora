@@ -101,12 +101,16 @@ function AnnotationsHarness() {
       ...annotations.temporalBlocks,
       { id: "b3", title: "Validation budget", startDate: "2026-08-24", endDate: "2026-08-28", kind: "decision" },
     ],
+    /* `rule` : le trait vertical pleine hauteur, propre à CHAQUE jalon (#95).
+       Deux repères sur quatre le portent — dont « Essais en eau », que la
+       bande range sur un second couloir : son trait doit partir de SON losange,
+       pas du premier couloir. */
     milestones: [
-      { id: "ms1", title: "Décision CODIR", date: "2026-08-18", type: "decision" },
+      { id: "ms1", title: "Décision CODIR", date: "2026-08-18", type: "decision", rule: true },
       { id: "ms2", title: "Mise en service", date: "2026-09-22", type: "commissioning" },
       // Type venu des Réglages, pas du catalogue de départ (#94), et jalon dont
       // le type a été SUPPRIMÉ : il doit retomber sur le premier, pas disparaître.
-      { id: "ms3", title: "Essais en eau", date: "2026-08-28", type: "custom-essais" },
+      { id: "ms3", title: "Essais en eau", date: "2026-08-28", type: "custom-essais", rule: true },
       { id: "ms4", title: "Type disparu", date: "2026-07-18", type: "type-supprime" },
     ],
     notes: [
@@ -122,10 +126,7 @@ function AnnotationsHarness() {
   };
   const [prefs, setPrefsState] = useState({ ganttGroupBy: "project", bubbleFields: ["status", "project"], ganttCols: ["status", "start", "end"], zoomKey: "week", ...annotations });
   const setPrefs = (patch) => setPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
-  // `miniGanttMilestoneRules` : le trait vertical sous chaque jalon (#95). Le
-  // second Mini-Gantt ne le porte PAS — c'est lui qui prouve que le réglage est
-  // propre à son widget et que son absence ne change rien.
-  const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["assignee", "status", "taskType", "end", "progress"], miniGanttMilestoneRules: true, ganttAnnotations: miniAnnotations });
+  const [miniWidget, setMiniWidget] = useState({ id: "w1", type: "minigantt", colorBy: "status", miniGanttFields: ["assignee", "status", "taskType", "end", "progress"], ganttAnnotations: miniAnnotations });
   // Second widget SANS aucune annotation propre : seuls les risques portés par
   // les tâches doivent y apparaître.
   const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });

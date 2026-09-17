@@ -462,18 +462,27 @@ paraissait vide alors qu'elle était pleine.
 
 ## Trait vertical sous un jalon
 
-`widget.miniGanttMilestoneRules` — un booléen à la racine du widget, réglé par
-la case « Prolonger chaque jalon d'annotation par un trait vertical pleine
-hauteur » des réglages d'affichage, donc commun à la fiche du widget et à la vue
-Gantt (c'est le même formulaire).
+`milestone.rule` — un booléen porté par **chaque jalon**, coché dans sa propre
+fiche (Annotations > Jalons et décisions > « Prolonger ce jalon par un trait
+vertical pleine hauteur »).
 
-Activé, chaque jalon prolonge son repère par un trait vertical sur toute la
-hauteur des lignes, à sa couleur. Le calque
-(`.lp-widget-minigantt-rule-layer`) reprend exactement la géométrie de la bande
-des blocs temporels et son `z-index: 0` : le trait passe donc **derrière** les
-lignes (`z-index: 1`), barres et textes compris — il situe, il ne masque pas.
+Le réglage a d'abord été posé à la racine du widget, pour tout le diagramme d'un
+coup : il fallait alors accepter le trait sous **tous** les repères ou sous
+aucun, alors que l'intérêt est justement d'en marquer un seul (retour de test
+#95). Il appartient donc au jalon, là où sa date, son type et sa couleur se
+règlent déjà — et il le suit partout : fiche du widget, vue Gantt, duplication,
+transfert vers un autre tableau de bord.
 
-Absent = décoché : un widget enregistré avant ce réglage ne bouge pas d'un pixel.
+Coché, le jalon **prolonge son losange** : le trait part du couloir de son propre
+repère dans la bande, à sa couleur, et descend jusqu'au bas des lignes. C'est la
+géométrie de la vue Métro (`lp-pm-strip-rule`), reprise à l'identique. Le calque
+(`.lp-widget-minigantt-rule-layer`) commence au sommet de la bande de repères et
+garde le `z-index: 0` du remplissage d'un bloc temporel : le trait passe donc
+**derrière** les lignes (`z-index: 1`), barres et textes compris — il situe, il
+ne masque pas.
+
+Absent = décoché : un jalon posé avant ce réglage ne bouge pas d'un pixel, et un
+diagramme sans jalon coché n'a pas de calque du tout.
 
 **Risques** — ils sont portés par la **tâche** (`task.delayRisks`), pas par le
 widget : un même risque apparaît donc dans tous les Mini-Gantt qui affichent
