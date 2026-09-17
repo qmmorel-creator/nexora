@@ -1,5 +1,6 @@
 kTypes={taskTypes} setTaskTypes={setTaskTypes}
           teamMembers={teamMembers} setTeamMembers={setTeamMembers}
+          teams={teams} setTeams={setTeams}
           gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
           syncedCalendarSettings={syncedCalendarSettings} setSyncedCalendarSettings={setSyncedCalendarSettings} onSyncSyncedCalendars={syncPublicCalendarsToProjects}
           metaFilters={metaFilters} setMetaFilters={setMetaFilters}
@@ -1105,6 +1106,7 @@ const SETTINGS_TABS = [
   { key: "milestoneTypes", label: "Types de jalon", icon: "flag" },
   { key: "workshops", label: "Ateliers", icon: "factory" },
   { key: "users", label: "Utilisateurs", icon: "user" },
+  { key: "teams", label: "Équipes", icon: "users" },
   { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
   { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
   { key: "gcal", label: "Google Calendar", icon: "calendar" },
@@ -2224,6 +2226,7 @@ function SettingsModal({
   milestoneTypes, setMilestoneTypes,
   workshops, setWorkshops, staffing, setStaffing,
   teamMembers, setTeamMembers,
+  teams, setTeams,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
@@ -2295,7 +2298,10 @@ function SettingsModal({
               <WorkshopManager embedded workshops={workshops} setWorkshops={setWorkshops} staffing={staffing} setStaffing={setStaffing} pushToast={pushToast} />
             )}
             {activeTab === "users" && (
-              <TeamMemberManager embedded teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} pushToast={pushToast} />
+              <TeamMemberManager embedded teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} setTasks={setTasks} teams={teams} pushToast={pushToast} />
+            )}
+            {activeTab === "teams" && (
+              <TeamCatalogManager embedded teams={teams} setTeams={setTeams} teamMembers={teamMembers} pushToast={pushToast} />
             )}
             {activeTab === "syncedCalendars" && (
               <SyncedCalendarsSettingsPane
@@ -3650,6 +3656,46 @@ function normalizeWorkshops(list) {
 function workshopFor(list, id) {
   return normalizeWorkshops(list).find((w) => w.id === String(id)) || null;
 }
+
+// === NEXORA:TEAMS:START ===
+/* Catalogue d'équipes (#159) — nom, couleur, responsable — sur le modèle exact
+   du catalogue d'ateliers ci-dessus : un réglage, lu partout, jamais mêlé aux
+   données qu'il regroupe. Contrairement aux ateliers, un catalogue vide EXISTE
+   (aucune équipe créée) : rien n'oblige à structurer avant d'avoir des
+   personnes à structurer. `leadName` est un nom, comme `assignee` sur une
+   tâche — pas un identifiant — pour rester lisible même si la personne quitte
+   l'annuaire. */
+function normalizeTeams(list) {
+  const seen = new Set();
+  return (Array.isArray(list) ? list : [])
+    .filter((t) => t && typeof t === "object" && t.id && String(t.name || "").trim())
+    .filter((t) => {
+      const id = String(t.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((t) => ({
+      id: String(t.id),
+      name: String(t.name).trim(),
+      color: typeof t.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(t.color) ? t.color : STAFFING_COLOR_CHOICES[0],
+      leadName: String(t.leadName || "").trim(),
+    }));
+}
+function teamFor(list, id) {
+  if (!id) return null;
+  return normalizeTeams(list).find((t) => t.id === String(id)) || null;
+}
+// L'équipe d'une tâche est celle de son RESPONSABLE — aucun champ propre sur la
+// tâche, pour ne jamais désynchroniser les deux (déplacer quelqu'un d'équipe
+// déplace alors ses tâches sans rien avoir à réécrire).
+function teamIdForAssignee(assigneeName, ctx) {
+  const name = String(assigneeName || "").trim();
+  if (!name) return "";
+  const member = (ctx?.teamMembers || []).find((m) => m && m.name === name);
+  return (member && member.teamId) || "";
+}
+// === NEXORA:TEAMS:END ===
 
 /* La palette proposée quand on choisit une couleur — d'atelier personnalisé
    comme de personne ajoutée à la main. Une LISTE FERMÉE et non un sélecteur
@@ -5473,7 +5519,7 @@ function miniGanttClampWindow(window, bounds) {
    `groupTasks` sait grouper sur N'IMPORTE quelle clé de `fieldDef` (#86). Rien
    n'est calculé ici : on rend des CLÉS, et chaque appelant les traduit avec
    `fieldLabel`, qui vit hors de ce bloc. */
-const MINIGANTT_GROUPBY_FIELDS = ["project", "status", "criticality", "taskType", "assignee", "milestone", "inactivity", "period"];
+const MINIGANTT_GROUPBY_FIELDS = ["project", "status", "criticality", "taskType", "assignee", "team", "milestone", "inactivity", "period"];
 function miniGanttGroupByKeys() {
   return ["none", ...MINIGANTT_GROUPBY_FIELDS];
 }
@@ -5664,7 +5710,7 @@ function widgetTransferApply(boards, widgetId, target, mode, makeId, patch) {
    tâche n'existe tout simplement pas dans le résultat ; une case à zéro y est,
    avec une valeur nulle. */
 
-const HEATMAP_AXIS_FIELDS = ["project", "status", "taskType", "criticality", "assignee", "month"];
+const HEATMAP_AXIS_FIELDS = ["project", "status", "taskType", "criticality", "assignee", "team", "month"];
 const HEATMAP_METRICS = ["count", "late", "criticality", "progress"];
 const HEATMAP_METRIC_LABELS = {
   count: "Nombre de tâches",
@@ -5678,6 +5724,7 @@ const HEATMAP_AXIS_LABELS = {
   taskType: "Type de tâche",
   criticality: "Criticité",
   assignee: "Responsable",
+  team: "Équipe",
   month: "Mois d'échéance",
 };
 // Au-delà, la grille des mois devient un ruban illisible. Ce qui dépasse n'est
@@ -6284,6 +6331,13 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
         idOf: (t) => (typeof t.assignee === "string" && t.assignee.trim()) || HEATMAP_NONE_ID,
       };
     }
+    if (field === "team") {
+      const teams = normalizeTeams(ctx.teams);
+      return {
+        entities: [...teams, { id: HEATMAP_NONE_ID, name: "Sans équipe", color: "#94A3B8" }],
+        idOf: (t) => teamIdForAssignee(t.assignee, ctx) || HEATMAP_NONE_ID,
+      };
+    }
     if (field === "month") {
       const axe = heatmapMonthAxis(tasks.map((t) => heatmapMonthOf(t.end)), today);
       const dans = new Set(axe.ids);
@@ -6306,7 +6360,7 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
       entities: [...(ctx.projects || []), { id: HEATMAP_NONE_ID, name: "Sans projet", color: "#94A3B8" }],
       idOf: (t) => t.projectId || HEATMAP_NONE_ID,
     };
-  }, [ctx.projects, ctx.statuses, ctx.taskTypes, tasks, today]);
+  }, [ctx.projects, ctx.statuses, ctx.taskTypes, ctx.teams, ctx.teamMembers, tasks, today]);
 
   const rowAxis = useMemo(() => axisOf(cfg.rowField), [axisOf, cfg.rowField]);
   const colAxis = useMemo(() => axisOf(cfg.colField), [axisOf, cfg.colField]);
@@ -10143,12 +10197,27 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
 // Table des utilisateurs (Réglages) — nom, couleur, logo/avatar. Sert de source
 // pour le champ "Responsable" (liste déroulante) partout dans l'application.
 // ============================================================================
-function TeamMemberManager({ teamMembers, setTeamMembers, tasks, pushToast, onClose, embedded }) {
+function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams, pushToast, onClose, embedded }) {
   const [formTarget, setFormTarget] = useState(null); // null | "new" | membre à modifier
 
   const handleSave = (data) => {
-    if (formTarget === "new") setTeamMembers((prev) => [...prev, { id: uid(), ...data }]);
-    else setTeamMembers((prev) => prev.map((u) => (u.id === formTarget.id ? { ...u, ...data } : u)));
+    if (formTarget === "new") {
+      setTeamMembers((prev) => [...prev, { id: uid(), ...data }]);
+    } else {
+      // Renommer réécrit `assignee` sur les tâches de la personne (#147) :
+      // `assignee` est un nom, pas un identifiant (contrat MCP et routines
+      // Gmail obligent), donc un renommage sans cette réécriture détache
+      // silencieusement toutes ses tâches — le même critère de comparaison
+      // que le compteur affiché plus bas.
+      const oldName = formTarget.name;
+      const newName = String(data.name || "").trim();
+      if (setTasks && newName && newName !== oldName) {
+        const count = tasks.filter((t) => t.assignee === oldName).length;
+        setTasks((prev) => prev.map((t) => (t.assignee === oldName ? { ...t, assignee: newName } : t)));
+        if (count > 0 && pushToast) pushToast({ message: `${count} tâche${count > 1 ? "s" : ""} réaffectée${count > 1 ? "s" : ""} de « ${oldName} » à « ${newName} ».` });
+      }
+      setTeamMembers((prev) => prev.map((u) => (u.id === formTarget.id ? { ...u, ...data } : u)));
+    }
     setFormTarget(null);
   };
   const removeMember = (u) => {
@@ -10176,6 +10245,7 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, pushToast, onCl
       {formTarget && (
         <TeamMemberFormModal
           member={formTarget === "new" ? null : formTarget}
+          teams={teams}
           onSave={handleSave}
           onClose={() => setFormTarget(null)}
         />
@@ -10295,17 +10365,19 @@ function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalList
 
 
 
-function TeamMemberFormModal({ member, onSave, onClose }) {
+function TeamMemberFormModal({ member, teams, onSave, onClose }) {
   const [name, setName] = useState(member?.name || "");
   const [avatar, setAvatar] = useState(member?.avatarDataUrl || "");
   const [color, setColor] = useState(member?.color || PALETTE[0]);
   const [email, setEmail] = useState(member?.email || "");
   const [capacityPerDay, setCapacityPerDay] = useState(normalizeMemberCapacity(member?.capacityPerDay));
+  const [teamId, setTeamId] = useState(member?.teamId || "");
   const [nameError, setNameError] = useState(false);
+  const teamCatalogue = normalizeTeams(teams);
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
-    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay) });
+    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamId: teamId || null });
   };
 
   return (
@@ -10325,6 +10397,13 @@ function TeamMemberFormModal({ member, onSave, onClose }) {
       <div className="lp-field">
         <label>Capacité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(postes par jour avant alerte de surcharge dans la Charge personnel)</span></label>
         <input type="number" min="1" step="1" value={capacityPerDay} onChange={(e) => setCapacityPerDay(Math.max(1, Math.round(Number(e.target.value) || 1)))} style={{ maxWidth: 100 }} />
+      </div>
+      <div className="lp-field">
+        <label>Équipe <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — sert au regroupement et à l'Organigramme)</span></label>
+        <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          <option value="">Aucune</option>
+          {teamCatalogue.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
       </div>
     </Modal>
   );
@@ -11004,6 +11083,96 @@ function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushT
 
   if (embedded) return <div className="lp-settings-pane">{body}</div>;
   return <Modal title="Gérer les ateliers" onClose={onClose} wide>{body}</Modal>;
+}
+
+// ============================================================================
+// Catalogue d'équipes (#159) — regroupe les utilisateurs pour le regroupement
+// « Grouper par équipe » (Gantt, Bulles, Heat map croisée) et le widget
+// Organigramme. Une liste ordonnée, enregistrée sous `nexora:teams`, sur le
+// modèle exact du gestionnaire d'ateliers ci-dessus.
+// ============================================================================
+function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, embedded }) {
+  const catalogue = normalizeTeams(teams);
+  const [editingId, setEditingId] = useState(null);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
+  const [leadName, setLeadName] = useState("");
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setName("");
+    setColor(STAFFING_COLOR_CHOICES[0]);
+    setLeadName("");
+  };
+  const startEdit = (team) => {
+    setEditingId(team.id);
+    setName(team.name);
+    setColor(team.color);
+    setLeadName(team.leadName || "");
+  };
+  const save = () => {
+    if (!name.trim()) return;
+    if (editingId) {
+      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim() } : t)));
+    } else {
+      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim() }]);
+    }
+    cancelEdit();
+  };
+  // Supprimer une équipe détache ses membres (teamId remis à vide) plutôt que
+  // de les supprimer eux — une équipe est un regroupement, pas un propriétaire.
+  const remove = (team) => {
+    const used = (teamMembers || []).filter((m) => m.teamId === team.id).length;
+    if (used > 0) {
+      const personnes = used > 1 ? `${used} personnes` : "1 personne";
+      if (!window.confirm(`« ${team.name} » compte ${personnes}. Les supprimer de l'équipe (elles restent dans l'annuaire) ?`)) return;
+    }
+    setTeams(catalogue.filter((t) => t.id !== team.id));
+    if (editingId === team.id) cancelEdit();
+  };
+
+  const body = (
+    <>
+      <div className="lp-section-title">Équipes existantes</div>
+      <div style={{ fontSize: 11.5, color: "var(--text-600)", marginBottom: 10, lineHeight: 1.45 }}>
+        Un regroupement des utilisateurs, utilisé pour « Grouper par équipe » dans le Gantt, les Bulles et la Heat map
+        croisée, et par le widget Organigramme. Une équipe ne change jamais les tâches ni les affectations.
+      </div>
+      {catalogue.length === 0 && (
+        <div className="lp-empty" style={{ padding: 12, marginBottom: 10 }}>Aucune équipe créée pour l'instant.</div>
+      )}
+      {catalogue.map((team) => {
+        const count = (teamMembers || []).filter((m) => m.teamId === team.id).length;
+        return (
+          <div className="lp-manage-item" key={team.id}>
+            <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
+            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""})</span></span>
+            <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
+            <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
+          </div>
+        );
+      })}
+
+      <hr className="lp-divider" />
+      <div className="lp-section-title">{editingId ? "Modifier l'équipe" : "Nouvelle équipe"}</div>
+      <div className="lp-field"><label>Nom</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Bureau d'études" /></div>
+      <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} /></div>
+      <div className="lp-field">
+        <label>Responsable <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif)</span></label>
+        <select value={leadName} onChange={(e) => setLeadName(e.target.value)}>
+          <option value="">Aucun</option>
+          {sortedByName(teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
+        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
+      </div>
+    </>
+  );
+
+  if (embedded) return <div className="lp-settings-pane">{body}</div>;
+  return <Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>;
 }
 
 // ============================================================================
