@@ -8227,19 +8227,113 @@ function WidgetBubbles(props) {
    jour (tâches actives, en retard, atelier du jour) et un clic filtre la page
    sur cette personne, sur le même mécanisme que le clic d'un secteur du
    Treemap projets. Lecture seule : aucune écriture, ni sur les tâches ni sur
-   les affectations. */
+   les affectations.
+
+   Une personne peut appartenir à PLUSIEURS équipes (retour de test) : elle
+   apparaît alors dans chacune de leurs sections — ce n'est pas un doublon,
+   c'est la même carte qui existe deux fois. Le responsable d'une équipe, s'il
+   en fait partie, porte un badge et passe en tête de la section plutôt que
+   d'être répété hors de la grille des cartes.
+
+   Les traits de hiérarchie (retour de test : « ça manque ») sont un SVG
+   mesuré, comme le fait déjà la vue Métro pour ses propres flèches — un
+   tracé CSS pur ne sait pas centrer une ligne sur des cartes qui passent à
+   la ligne suivante à une largeur de widget imprévisible. */
+function OrgTeamTree({ team, members, statsFor, onFilterPerson }) {
+  const boxRef = useRef(null);
+  const headRef = useRef(null);
+  const cardRefs = useRef({});
+  const [lines, setLines] = useState([]);
+
+  const orderedMembers = useMemo(() => {
+    if (!team?.leadName) return sortedByName(members);
+    const lead = members.filter((m) => m.name === team.leadName);
+    const rest = sortedByName(members.filter((m) => m.name !== team.leadName));
+    return [...lead, ...rest];
+  }, [members, team]);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const box = boxRef.current?.getBoundingClientRect();
+      const head = headRef.current?.getBoundingClientRect();
+      if (!box || !head) { setLines([]); return; }
+      const from = { x: head.left + head.width / 2 - box.left, y: head.bottom - box.top };
+      const next = orderedMembers.map((m) => {
+        const key = m.id || m.name;
+        const el = cardRefs.current[key];
+        const r = el?.getBoundingClientRect();
+        if (!r) return null;
+        const to = { x: r.left + r.width / 2 - box.left, y: r.top - box.top };
+        const midY = (from.y + to.y) / 2;
+        return { key, d: `M ${from.x} ${from.y} V ${midY} H ${to.x} V ${to.y}` };
+      }).filter(Boolean);
+      setLines(next);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(measure);
+    if (boxRef.current) ro.observe(boxRef.current);
+    return () => ro.disconnect();
+  }, [orderedMembers]);
+
+  return (
+    <div className="lp-orgchart-team-tree" ref={boxRef}>
+      <svg className="lp-orgchart-lines" aria-hidden="true">
+        {lines.map((l) => <path key={l.key} d={l.d} />)}
+      </svg>
+      <div className="lp-orgchart-team-head" ref={headRef}>
+        <span className="lp-orgchart-team-bar" style={{ background: team ? team.color : "var(--border-strong)" }} />
+        <span className="lp-orgchart-team-name">{team ? team.name : "Sans équipe"}</span>
+        {team?.leadName && <span className="lp-orgchart-team-lead">Responsable : {team.leadName}</span>}
+        <span className="lp-orgchart-team-count">{members.length}</span>
+      </div>
+      <div className="lp-orgchart-members">
+        {orderedMembers.map((m) => {
+          const stats = statsFor(m);
+          const isLead = !!team?.leadName && team.leadName === m.name;
+          return (
+            <button
+              type="button"
+              className={"lp-orgchart-card" + (isLead ? " is-lead" : "")}
+              key={m.id || m.name}
+              ref={(el) => { if (el) cardRefs.current[m.id || m.name] = el; else delete cardRefs.current[m.id || m.name]; }}
+              onClick={() => onFilterPerson && onFilterPerson(m.name)}
+              title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
+            >
+              {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
+              <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
+                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : m.name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
+              </span>
+              <span className="lp-orgchart-name">{m.name}</span>
+              <span className="lp-orgchart-stats">
+                <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
+                {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
+                {stats.todayShop && <span className="lp-orgchart-stat" style={{ color: stats.todayShop.color }}>{stats.todayShop.name}</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function WidgetOrgChart({ ctx, staffing, onFilterPerson }) {
   const today = useMemo(() => iso(new Date()), []);
   const teamsCatalogue = useMemo(() => normalizeTeams(ctx.teams), [ctx.teams]);
   const members = ctx.teamMembers || [];
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
 
+  // Une personne peut être dans plusieurs équipes : elle entre dans CHACUNE des
+  // sections correspondantes, et dans « Sans équipe » seulement si aucun de ses
+  // identifiants ne résout plus (équipe supprimée depuis).
   const groups = useMemo(() => {
     const byTeam = new Map(teamsCatalogue.map((t) => [t.id, { team: t, members: [] }]));
     const unassigned = [];
     members.forEach((m) => {
-      const g = m.teamId && byTeam.get(m.teamId);
-      if (g) g.members.push(m); else unassigned.push(m);
+      const ids = memberTeamIds(m).filter((id) => byTeam.has(id));
+      if (!ids.length) { unassigned.push(m); return; }
+      ids.forEach((id) => byTeam.get(id).members.push(m));
     });
     const out = teamsCatalogue.map((t) => byTeam.get(t.id)).filter((g) => g.members.length);
     if (unassigned.length) out.push({ team: null, members: unassigned });
@@ -8263,38 +8357,13 @@ function WidgetOrgChart({ ctx, staffing, onFilterPerson }) {
   return (
     <div className="lp-orgchart">
       {groups.map((g) => (
-        <div className="lp-orgchart-team" key={g.team ? g.team.id : "__none"}>
-          <div className="lp-orgchart-team-head">
-            <span className="lp-orgchart-team-bar" style={{ background: g.team ? g.team.color : "var(--border-strong)" }} />
-            <span className="lp-orgchart-team-name">{g.team ? g.team.name : "Sans équipe"}</span>
-            {g.team?.leadName && <span className="lp-orgchart-team-lead">Responsable : {g.team.leadName}</span>}
-            <span className="lp-orgchart-team-count">{g.members.length}</span>
-          </div>
-          <div className="lp-orgchart-members">
-            {sortedByName(g.members).map((m) => {
-              const stats = statsFor(m);
-              return (
-                <button
-                  type="button"
-                  className="lp-orgchart-card"
-                  key={m.id || m.name}
-                  onClick={() => onFilterPerson && onFilterPerson(m.name)}
-                  title={"Filtrer la page sur " + m.name}
-                >
-                  <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
-                    {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : m.name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="lp-orgchart-name">{m.name}</span>
-                  <span className="lp-orgchart-stats">
-                    <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
-                    {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
-                    {stats.todayShop && <span className="lp-orgchart-stat" style={{ color: stats.todayShop.color }}>{stats.todayShop.name}</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <OrgTeamTree
+          key={g.team ? g.team.id : "__none"}
+          team={g.team}
+          members={g.members}
+          statsFor={statsFor}
+          onFilterPerson={onFilterPerson}
+        />
       ))}
     </div>
   );
@@ -8373,7 +8442,17 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
   const nameW = days.length > 16 ? 146 : 188;
   const loadW = cfg.staffingShowLoad ? 64 : 0;
   const colCount = Math.max(1, days.length);
-  const gutters = STAFFING_GRID_GAP * (colCount + (loadW ? 1 : 0));
+  /* Mode « pixel-art » (#124) : au-delà d'un certain nombre de colonnes, l'écart
+     entre cases devient un quadrillage plus voyant que les couleurs elles-mêmes.
+     Estimé avec l'écart normal — l'écart réel en dépend, mais l'écart pèse trop
+     peu sur la largeur totale pour faire osciller la décision. Les cases se
+     touchent alors, sans coin arrondi ; chacune reste sa propre case cliquable,
+     seul le survol distingue le bon jour. */
+  const estGutters = STAFFING_GRID_GAP * (colCount + (loadW ? 1 : 0));
+  const estCellPx = gridPx > 0 ? Math.max(0, (gridPx - nameW - loadW - estGutters) / colCount) : 0;
+  const pixelArt = estCellPx > 0 && estCellPx < 14;
+  const gridGap = pixelArt ? 0 : STAFFING_GRID_GAP;
+  const gutters = gridGap * (colCount + (loadW ? 1 : 0));
   const cellPx = gridPx > 0 ? Math.max(0, (gridPx - nameW - loadW - gutters) / colCount) : 0;
   const gridTemplate = nameW + "px repeat(" + colCount + ", minmax(0, 1fr))" + (loadW ? " " + loadW + "px" : "");
 
@@ -8682,7 +8761,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
         )}
       </div>
 
-      <div className="lp-cp-grid" ref={gridRef} style={{ gridTemplateColumns: gridTemplate, gap: STAFFING_GRID_GAP }}>
+      <div className={"lp-cp-grid" + (pixelArt ? " is-pixel" : "")} ref={gridRef} style={{ gridTemplateColumns: gridTemplate, gap: gridGap }}>
         <div className="lp-cp-corner">Personne</div>
         {days.map((day) => (
           <div
@@ -8748,7 +8827,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
                   <button
                     type="button"
                     key={day.iso}
-                    className={"lp-cp-cell" + (ids.length ? " is-filled" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "") + (overCapacity ? " is-over-capacity" : "") + (painting ? " is-painting" : "")}
+                    className={"lp-cp-cell" + (ids.length ? " is-filled" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "") + (overCapacity ? " is-over-capacity" : "") + (painting ? " is-painting" : "") + (pixelArt ? " is-pixel" : "")}
                     style={fill ? { background: fill.background } : undefined}
                     aria-label={member.name + " — " + dayTitle(day.iso) + " — " + (ids.length ? ids.map((id) => (workshopFor(catalogue, id) || {}).name).filter(Boolean).join(", ") : "aucun atelier") + (activeTasks.length ? " — " + activeTasks.length + " tâche(s) active(s)" : "") + (overCapacity ? " — capacité dépassée" : "")}
                     onClick={(e) => openPicker(member.name, day.iso, e)}
