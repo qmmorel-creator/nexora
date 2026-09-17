@@ -242,9 +242,14 @@ assert.match(builtSource, /lp-pm-risk is-/);
     ...[...builtSource.matchAll(/storageGetWithTimeout\("([^"]+)"/g)].map((m) => m[1]),
     ...[...builtSource.matchAll(/\["\w+", "(nexora:[^"]+)", set/g)].map((m) => m[1]),
   ]);
-  // Deux exceptions légitimes : un ancien format lu pour migrer, et un index écrit
-  // directement par window.storage.set en dehors du cycle React.
-  const readOnlyByDesign = new Set(["nexora:dashboardWidgets", "nexora:snapshotIndex"]);
+  // Trois exceptions légitimes : un ancien format lu pour migrer, un index écrit
+  // directement par window.storage.set en dehors du cycle React, et un magasin
+  // FIGÉ — nexora:momentumSnapshots, dont plus aucun écrivain n'existe depuis la
+  // suppression du widget Project Momentum (#99). Il reste lu pour que la
+  // sauvegarde complète emporte ce qui y a déjà été enregistré ; rien ne le
+  // modifie, il n'y a donc aucune modification à perdre. Le jour où l'interface
+  // se remet à l'écrire, c'est par persistKey et cette exception saute.
+  const readOnlyByDesign = new Set(["nexora:dashboardWidgets", "nexora:snapshotIndex", "nexora:momentumSnapshots"]);
   const neverWritten = [...read].filter((k) => !persisted.has(k) && !readOnlyByDesign.has(k)).sort();
   assert.deepEqual(neverWritten, [], `clé(s) lues au démarrage et jamais enregistrées : ${neverWritten.join(", ")}`);
 
