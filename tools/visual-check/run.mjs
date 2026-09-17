@@ -430,7 +430,12 @@ const seen = await page.evaluate(() => {
         z: (() => { const el = host.querySelector(".lp-widget-minigantt-rule-layer"); return el ? getComputedStyle(el).zIndex : ""; })(),
         traits: [...host.querySelectorAll(".lp-widget-minigantt-rule")].map((el) => {
           const b = el.getBoundingClientRect();
-          return { x: Math.round(b.x - base.x), haut: Math.round(b.y - base.y), bas: Math.round(b.y - base.y + b.height) };
+          return {
+            x: Math.round(b.x - base.x), haut: Math.round(b.y - base.y), bas: Math.round(b.y - base.y + b.height),
+            // Épaisseur RÉELLEMENT peinte : c'est elle que l'issue met en cause,
+            // pas la valeur enregistrée.
+            epaisseur: getComputedStyle(el).borderLeftWidth,
+          };
         }),
         lignes: lignes.length ? {
           haut: Math.round(Math.min(...lignes.map((b) => b.y)) - base.y),
@@ -1365,9 +1370,20 @@ try {
     await page.waitForTimeout(300);
     reglageJalon.cocheApres = await coche.isChecked();
   }
+  // Le curseur d'épaisseur n'apparaît qu'une fois la case cochée : on le règle
+  // dans la foulée, et le trait doit changer d'épaisseur pour de bon.
+  const curseur = modale.locator(".lp-field", { hasText: "Épaisseur du trait" }).locator("input[type=range]").first();
+  reglageJalon.curseur = await curseur.count();
+  if (reglageJalon.curseur) {
+    await curseur.fill("5");
+    await page.waitForTimeout(300);
+    reglageJalon.curseurLu = await curseur.inputValue();
+  }
   await page.keyboard.press("Escape");
   await page.waitForTimeout(600);
   reglageJalon.apres = await widget.locator(".lp-widget-minigantt-rule").count();
+  reglageJalon.epaisseurs = await widget.locator(".lp-widget-minigantt-rule")
+    .evaluateAll((els) => els.map((el) => getComputedStyle(el).borderLeftWidth));
 } catch (error) {
   reglageJalon.error = String(error).split("\n")[0];
 }
@@ -1496,6 +1512,18 @@ expect(seen.rules.z === "0",
   });
   expect(seen.rules.codir && seen.rules.essais && seen.rules.codir.haut !== seen.rules.essais.haut,
     "Jalons : les deux repères cochés devraient occuper deux couloirs différents — le banc ne prouve plus rien sinon");
+  /* Épaisseur propre à chaque jalon : « Décision CODIR » en porte une de 4 px,
+     « Essais en eau » garde le défaut de 3 px. Les deux doivent donc différer,
+     et aucune ne peut retomber sur le cheveu de 1,5 px d'avant. C'est
+     l'épaisseur PEINTE qui est relevée : un navigateur ramène une bordure au
+     pixel de l'écran, et c'est ce qui se voit qui est en cause. */
+  const epaisseurs = seen.rules.traits.map((t) => t.epaisseur);
+  expect(epaisseurs.includes("4px"),
+    `Jalons : épaisseurs peintes ${epaisseurs.join(", ")} — celle réglée à 4 px n'y est pas`);
+  expect(new Set(epaisseurs).size === 2,
+    `Jalons : ${new Set(epaisseurs).size} épaisseur(s) distincte(s) (${epaisseurs.join(", ")}) — elle se règle jalon par jalon`);
+  expect(epaisseurs.every((e) => parseFloat(e) >= 3),
+    `Jalons : un trait à ${epaisseurs.join(", ")} — le défaut ne doit plus descendre sous 3 px`);
 }
 
 // --- Le réglage est bien dans les paramètres du jalon, et il agit (#95) ----
@@ -1511,6 +1539,12 @@ if (!reglageJalon.error) {
     "Jalons : la case ne retient pas le clic");
   expect(reglageJalon.apres === reglageJalon.avant + 1,
     `Jalons : ${reglageJalon.avant} trait(s) avant, ${reglageJalon.apres} après — cocher la case doit en ajouter exactement un`);
+  expect(reglageJalon.curseur,
+    "Jalons : aucun curseur d'épaisseur sous la case cochée — c'est le réglage demandé");
+  expect(reglageJalon.curseurLu === "5",
+    `Jalons : le curseur affiche « ${reglageJalon.curseurLu} » après un réglage à 5`);
+  expect((reglageJalon.epaisseurs || []).includes("5px"),
+    `Jalons : épaisseurs peintes ${(reglageJalon.epaisseurs || []).join(", ")} — régler le curseur à 5 px doit se voir dans le diagramme`);
 }
 
 // --- Une forme par type de jalon (#94) -------------------------------------

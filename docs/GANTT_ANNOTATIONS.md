@@ -484,6 +484,19 @@ ne masque pas.
 Absent = décoché : un jalon posé avant ce réglage ne bouge pas d'un pixel, et un
 diagramme sans jalon coché n'a pas de calque du tout.
 
+`milestone.ruleThickness` — l'**épaisseur** du trait, réglée au curseur sous la
+case, de 0,5 à 6 px au demi-pixel, comme celle d'une annotation horizontale et
+celle des traits d'un bloc temporel. Le trait est né à 1 px, puis 1,5 px : trop
+fin, il se perdait dans la sous-grille (retour de test #95). Plutôt qu'un
+troisième chiffre en dur, il se règle.
+
+Le défaut est un **entier**, 3 px : un navigateur ramène une bordure au pixel de
+l'écran, et 2,5 px se peignent 2 px sur un écran ordinaire — le défaut aurait été
+plus fin que promis. Les demi-pixels restent utiles sur un écran à haute densité,
+et le réglage les garde. `normalizeMiniGanttRuleThickness` borne, arrondit au
+demi-pixel et retombe sur le défaut : une valeur absente, vide ou inexploitable
+ne peut pas produire un trait invisible.
+
 **Risques** — ils sont portés par la **tâche** (`task.delayRisks`), pas par le
 widget : un même risque apparaît donc dans tous les Mini-Gantt qui affichent
 cette tâche, quelle que soit la configuration de chacun. C'est la seule donnée
