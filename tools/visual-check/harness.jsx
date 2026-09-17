@@ -744,6 +744,52 @@ function AnnotationsHarness() {
             groupBy="none"
           />
         </div>
+        {/* Couloirs réservés des annotations en mode bulles (#93). Le trait
+            rattaché à une tâche lui passait en plein milieu : une tâche est ici
+            une BOÎTE, pas une ligne fine. Jalons et traits se rangent donc dans
+            leurs propres couloirs, en tête du diagramme. */}
+        <div id="harness-bubbles-annot" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb6", bubbleMacros: [],
+              bubbleLayout: "lanes",
+              ganttAnnotations: {
+                temporalBlocks: [], highlightFrames: [], risks: [], notes: [],
+                milestones: [
+                  { id: "bm1", title: "Ordre de service", date: "2026-07-15", type: MILESTONE_TYPE_SEED[0].id, color: "", taskId: null, rule: false },
+                  { id: "bm2", title: "Mise en service", date: "2026-09-18", type: MILESTONE_TYPE_SEED[0].id, color: "", taskId: null, rule: false },
+                ],
+                spans: [
+                  { id: "bs1", label: "Fenêtre de tirage", startDate: "2026-08-03", endDate: "2026-09-04", taskId: "t2", color: "#0EA5E9", borderStyle: "solid", thickness: 2, position: "above", capStart: "bar", capEnd: "arrow" },
+                  { id: "bs2", label: "Période d'essais", startDate: "2026-07-20", endDate: "2026-08-14", taskId: "t1", color: "#22B07D", borderStyle: "dashed", thickness: 2, position: "above", capStart: "dot", capEnd: "dot" },
+                ],
+              },
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* BEAUCOUP de champs sous la bulle (#122). Le bandeau condensé tenait
+            sur une ligne et coupait ce qui dépassait : il ne restait qu'un
+            « Quentin · À pla… » qui ne disait plus rien. Il passe à la ligne, et
+            toutes les bulles du widget adoptent la MÊME hauteur — sans quoi, en
+            couloirs, la hauteur d'une ligne serait impossible à poser. */}
+        <div id="harness-bubbles-fields" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb5", bubbleMacros: [],
+              bubbleLayout: "lanes",
+              bubbleFieldsLayout: "compact",
+              bubbleFields: ["project", "status", "criticality", "taskType", "assignee", "start", "end", "period", "progress"],
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
         {/* Description sur TROIS lignes (#97) : la bulle doit gagner la
             hauteur des lignes demandées, sinon son pied — statut et
             avancement — disparaît sous `overflow:hidden`. */}

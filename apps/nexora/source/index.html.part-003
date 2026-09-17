@@ -2502,7 +2502,30 @@ const BUBBLE_FIELDS_LAYOUTS = ["under", "inline", "compact"];
 /* Hauteur du bandeau condensé, en pixels. Vit ici, comme BUBBLE_HEIGHT_PX, et
    pour la même raison : le rendu la pose, l'auto-dimensionnement du widget la
    relit, et la hauteur d'un couloir s'en déduit. */
-const BUBBLE_FIELDS_COMPACT_PX = 16;
+const BUBBLE_FIELDS_COMPACT_LINE_PX = 14;
+const BUBBLE_FIELDS_COMPACT_PAD_PX = 2;
+const BUBBLE_FIELDS_COMPACT_LINES_MAX = 6;
+const BUBBLE_FIELDS_COMPACT_PX = BUBBLE_FIELDS_COMPACT_LINE_PX + BUBBLE_FIELDS_COMPACT_PAD_PX;
+
+/* Hauteur du bandeau pour un nombre de lignes donné (#122).
+
+   Le bandeau tenait sur UNE ligne et coupait ce qui dépassait : beaucoup de
+   champs, et il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien
+   (retour de test). Il passe donc à la ligne, à la largeur de la bulle.
+
+   Mais une hauteur qui suivrait chaque bulle donnerait des lignes de diagramme
+   toutes différentes — et, en couloirs, une hauteur de ligne impossible à poser
+   puisque tout y est en absolu. La hauteur est donc RÉGULARISÉE : on prend le
+   plus grand nombre de lignes du widget, et toutes les bulles l'adoptent. Le
+   plafond de six lignes n'est pas arbitraire : au-delà, les champs occupent
+   plus de place que la bulle et ce n'est plus un bandeau — mais il faut qu'il
+   couvre les configurations réelles, et neuf champs sur une bulle courte en
+   demandent déjà cinq. */
+function bubbleCompactFieldsHeight(lines) {
+  const n = Number(lines);
+  const safe = Number.isFinite(n) ? Math.min(BUBBLE_FIELDS_COMPACT_LINES_MAX, Math.max(1, Math.round(n))) : 1;
+  return safe * BUBBLE_FIELDS_COMPACT_LINE_PX + BUBBLE_FIELDS_COMPACT_PAD_PX;
+}
 /* Dispositions verticales des bulles (#120).
 
    « lanes » range les bulles d'un même couloir CÔTE À CÔTE sur la ligne de
@@ -2616,10 +2639,10 @@ function bubbleEffectiveFieldsLayout(cfg) {
 /* Hauteur d'une ligne de bulles, en pixels : la bulle, plus le bandeau condensé
    quand il est là. Une seule fonction, relue par le rendu (qui la pose sur la
    piste d'un couloir) et par l'auto-dimensionnement du widget. */
-function bubbleLaneHeightPx(widget) {
+function bubbleLaneHeightPx(widget, compactLines) {
   const cfg = normalizeBubblesWidget(widget);
   const fields = bubbleEffectiveFieldsLayout(cfg) === "compact" && cfg.bubbleFields.length
-    ? BUBBLE_FIELDS_COMPACT_PX
+    ? bubbleCompactFieldsHeight(compactLines)
     : 0;
   return bubbleHeightPx(widget) + fields;
 }
@@ -2854,6 +2877,40 @@ function bubbleRowOrder(orderedIds, macros, options) {
   });
   ids.forEach((id) => { if (!placed.has(id)) out.push(id); });
   return out;
+}
+
+/* Place libre de part et d'autre de chaque bulle d'un couloir, en pixels (#120).
+
+   Les dates s'écrivent DEHORS, à gauche et à droite de la bulle. Seules sur
+   leur ligne, elles ne recouvraient que du vide ; rangées côte à côte, elles se
+   posent dans le MÊME intervalle : la date de fin de l'une à droite, la date de
+   début de la suivante à gauche. Chacune croyait avoir tout l'écart pour elle,
+   et les deux s'écrivaient l'une sur l'autre (retour de test).
+
+   L'écart entre deux voisines est donc PARTAGÉ : chacune n'en compte que la
+   moitié, et les deux dates ne s'écrivent que s'il y a la place pour les deux.
+   Aux extrémités du couloir, il n'y a pas de voisine à ménager — `Infinity`,
+   et c'est le bord de la piste qui borne, dont la bulle se charge déjà.
+
+   L'entrée est la boîte RÉELLEMENT dessinée de chaque bulle, et non ce que
+   `bubbleRowExtent` modélise : celle d'un jalon est recalée contre le bord de
+   la piste dès qu'elle y dépasserait, et les deux divergent là. */
+function bubbleLaneDateRoom(boxes) {
+  const list = (Array.isArray(boxes) ? boxes : [])
+    .filter((b) => b && b.id !== undefined && b.id !== null
+      && Number.isFinite(Number(b.leftPx)) && Number.isFinite(Number(b.rightPx)))
+    .map((b) => ({ id: String(b.id), leftPx: Number(b.leftPx), rightPx: Number(b.rightPx) }))
+    .sort((a, b) => a.leftPx - b.leftPx);
+  const room = new Map();
+  list.forEach((box, i) => {
+    const prev = list[i - 1];
+    const next = list[i + 1];
+    room.set(box.id, {
+      before: prev ? Math.max(0, (box.leftPx - prev.rightPx) / 2) : Infinity,
+      after: next ? Math.max(0, (next.leftPx - box.rightPx) / 2) : Infinity,
+    });
+  });
+  return room;
 }
 
 /* Couloirs : les bulles d'un même regroupement, rangées CÔTE À CÔTE (#120).
@@ -5194,6 +5251,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const rowFields = bubbleMode
     ? bubbleCfg.bubbleFields
     : (widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"]);
+  // Clé STABLE de la liste de champs : la donner telle quelle en dépendance
+  // relancerait la mesure à chaque trame, le tableau étant neuf à chaque rendu.
+  const rowFieldsKey = rowFields.join("|");
   // "aligned" = colonne à largeur fixe alignée à droite (les barres restent
   // alignées d'une ligne à l'autre) ; "inline" = juste après la barre/le
   // jalon, ancré sur sa position réelle dans le temps.
@@ -5748,6 +5808,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      depuis un mémo antérieur lève une ReferenceError de zone morte — le même
      piège que `bubbleMacroReorder` avant elle. */
   const bubbleTrackPx = trackWidth || 420;
+  /* Nombre de lignes du bandeau condensé, MESURÉ (#122). Le bandeau passe à la
+     ligne quand les champs ne tiennent pas, et toutes les bulles adoptent
+     ensuite la plus haute : une hauteur qui suivrait chaque bulle donnerait des
+     lignes de diagramme toutes différentes, et en couloirs une hauteur de ligne
+     impossible à poser.
+
+     On compte les lignes par les `offsetTop` DISTINCTS des pastilles, et non
+     par la hauteur du bandeau : celle-ci est justement ce qu'on lui impose, et
+     la mesurer reviendrait à se mesurer soi-même — la hauteur ne pourrait alors
+     que croître, jamais revenir. */
+  const compactFieldNodes = useRef({});
+  const [compactFieldLines, setCompactFieldLines] = useState(1);
   const measureRows = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -5840,6 +5912,40 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     observer.observe(track);
     return () => observer.disconnect();
   }, [visibleRows, fieldsLayout]);
+
+  /* Combien de lignes le bandeau condensé occupe, sur la bulle qui en demande
+     le plus (#122). Mesuré après chaque rendu qui peut changer le pliage :
+     largeur de piste, champs choisis, disposition, lignes affichées. */
+  useEffect(() => {
+    if (!bubbleMode || fieldsLayout !== "compact") {
+      setCompactFieldLines((prev) => (prev === 1 ? prev : 1));
+      return undefined;
+    }
+    const id = requestAnimationFrame(() => {
+      let lines = 1;
+      Object.values(compactFieldNodes.current).forEach((el) => {
+        if (!el || !el.isConnected) return;
+        const tops = new Set();
+        el.querySelectorAll(":scope > *").forEach((child) => {
+          const rect = child.getBoundingClientRect();
+          if (!rect.width && !rect.height) return;
+          tops.add(Math.round(child.offsetTop));
+        });
+        lines = Math.max(lines, tops.size || 1);
+      });
+      const next = Math.min(BUBBLE_FIELDS_COMPACT_LINES_MAX, lines);
+      setCompactFieldLines((prev) => (prev === next ? prev : next));
+    });
+    return () => cancelAnimationFrame(id);
+    /* `compactFieldLines` est DANS les dépendances, et c'est voulu : la première
+       mesure tombe avant que les bandeaux aient leur hauteur définitive, et
+       s'arrêter là figeait le widget sur un compte trop bas — des champs
+       restaient coupés alors que le pliage en demandait plus. Le compte de
+       lignes ne dépendant pas de la hauteur appliquée (un `offsetTop` continue
+       d'avancer sous l'écrêtage), la boucle converge en deux passes et s'arrête
+       d'elle-même : la mesure suivante rend la même valeur, et l'état ne change
+       plus. */
+  }, [bubbleMode, fieldsLayout, trackWidth, rowFieldsKey, visibleRows, bubblePacked, compactFieldLines]);
 
   // Largeur RÉELLEMENT occupée par les champs d'une ligne. `scrollWidth` ne
   // sert à rien ici : la colonne est en overflow visible, elle ne défile pas et
@@ -6683,6 +6789,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       return (
         <div
           className="lp-bubble-fields is-compact"
+          ref={(el) => { if (el) compactFieldNodes.current[t.id] = el; else delete compactFieldNodes.current[t.id]; }}
           style={{
             borderColor: color || "var(--border)",
             background: color ? `color-mix(in srgb, ${color} 8%, var(--surface))` : "var(--surface)",
@@ -7050,7 +7157,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      position absolue, donc rien ne la fait grandir. Elle vaut exactement la
      bulle plus, s'il y a lieu, le bandeau condensé — d'où l'obligation, en
      couloirs, que les champs prennent cette forme-là (bubbleEffectiveFieldsLayout). */
-  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget) + "px" };
+  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget, compactFieldLines) + "px" };
 
   const BubbleSlot = (t, laneRoom) => {
     const geo = bubbleTaskBox(t);
@@ -7117,12 +7224,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         .filter(Boolean),
       { pxPerDay: bubbleTrackPx / span, packing: true },
     );
-    /* Place LIBRE de part et d'autre de chaque bulle, en pixels, mesurée sur les
-       boîtes RÉELLEMENT dessinées du couloir. Les dates s'écrivent dehors, à
-       gauche et à droite de la bulle : seules sur leur ligne, elles ne
-       recouvraient que du vide ; rangées côte à côte, elles se posaient sur la
-       bulle voisine (retour de test). Aux deux bouts d'un couloir il n'y a que
-       le bord de la piste, dont la bulle se charge déjà. */
+    /* Place LIBRE de part et d'autre de chaque bulle, mesurée sur les boîtes
+       RÉELLEMENT dessinées du couloir, et PARTAGÉE entre deux voisines :
+       `bubbleLaneDateRoom` dit pourquoi. */
     const laneRoom = new Map();
     lanes.forEach((lane) => {
       const boxes = lane.items
@@ -7131,16 +7235,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           const box = t ? bubbleSlotBoxPx(t) : null;
           return box ? { id: row.id, ...box } : null;
         })
-        .filter(Boolean)
-        .sort((a, b) => a.leftPx - b.leftPx);
-      boxes.forEach((box, i) => {
-        const prev = boxes[i - 1];
-        const next = boxes[i + 1];
-        laneRoom.set(box.id, {
-          before: prev ? box.leftPx - prev.rightPx : Infinity,
-          after: next ? next.leftPx - box.rightPx : Infinity,
-        });
-      });
+        .filter(Boolean);
+      bubbleLaneDateRoom(boxes).forEach((value, id) => laneRoom.set(id, value));
     });
     return lanes.map((lane) => (
       <div
@@ -7506,6 +7602,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
   // Jalons de configuration et annotations : une bande dédiée sous les titres
   // de bloc, avec le même placement en lignes que ces derniers.
+  /* En mode bulles, la bande de repères devient un COULOIR NOMMÉ (#93) : c'est
+     là que les jalons se rangent, et on ne choisit plus de tâche à qui les
+     rattacher. La légende est posée sur sa propre ligne, pleine largeur : lui
+     donner une colonne à gauche décalerait la piste de cette bande, et toutes
+     les couches superposées avec elle. */
+  const bubbleStripCaption = (!bubbleMode || !stripShapes.length) ? null : (
+    <div className="lp-bubble-lane-caption">Jalons</div>
+  );
+
   const stripHeader = !stripShapes.length ? null : (
     <div className="lp-widget-minigantt-strip" style={{ height: stripLaneCount * MINIGANTT_STRIP_LANE_H }}>
       <span className="lp-widget-minigantt-phases-spacer" />
@@ -7550,10 +7655,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
      Les deux couches partagent exactement la même géométrie : même gouttière,
      même réserve de champs, mêmes bornes. */
+  /* La hauteur comprend le DÉBORD de la dernière ligne (#113). Le pied de
+     réserve a été ajouté sous les lignes pour que leur habillage ne soit plus
+     tranché ; les blocs temporels, eux, sont une bande continue posée en couche
+     absolue, calculée sur les seules boîtes de lignes. Ils s'arrêtaient donc où
+     s'arrêtaient les lignes, et non où s'arrête désormais le diagramme — un
+     bloc qui court sur toute la hauteur laissait voir du vide sous lui (retour
+     de test). `rowsTail` est la mesure, pas une marge inventée : elle vaut zéro
+     quand rien ne déborde, et la couche retrouve alors exactement sa hauteur
+     d'avant. */
   const bandGeometry = !rowsBand ? null : {
     ...layerInsets,
     top: rowsBand.top,
-    height: rowsBand.height,
+    height: rowsBand.height + rowsTail,
   };
 
   const bandLayer = (!bandGeometry || !temporalBlockShapes.length) ? null : (
@@ -7629,10 +7743,89 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
+  /* Annotations horizontales en mode BULLES : un couloir réservé, en tête du
+     diagramme (#93).
+
+     Le rattachement à une tâche décide de la hauteur d'un trait. En Gantt, une
+     tâche est une ligne fine et le trait se pose dessus proprement. En bulles,
+     une tâche est une BOÎTE de quarante à soixante pixels, et le trait lui
+     passait en plein milieu — « ça passe en plein à travers » (retour de test).
+
+     Les traits quittent donc les lignes et se rangent dans leur propre couloir,
+     L'UN SOUS L'AUTRE, triés par date de début. Le rattachement à une tâche
+     reste réglable et vaut toujours pour la vue Gantt : le même widget peut
+     passer d'un mode à l'autre, et cacher le champ ferait perdre le réglage au
+     retour. Il est simplement IGNORÉ ici. */
+  const bubbleSpanRows = useMemo(() => {
+    if (!bubbleMode) return [];
+    return configSpans
+      .map((annot) => {
+        const startIdx = dayIndex(annot.startDate);
+        const endIdx = dayIndex(annot.endDate);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        if (endIdx < minIdx || startIdx > maxIdx) return null;
+        const from = Math.max(minIdx, Math.min(maxIdx, startIdx));
+        const to = Math.max(minIdx, Math.min(maxIdx, endIdx));
+        return {
+          annot,
+          startIdx,
+          leftPct: ((from - minIdx) / span) * 100,
+          // Même plancher qu'ailleurs : sans lui, une annotation d'une journée
+          // se réduirait à ses deux bouts collés.
+          widthPct: Math.max(2, ((to - from) / span) * 100),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (
+        a.startIdx - b.startIdx
+        || String(a.annot.label || "").localeCompare(String(b.annot.label || ""), "fr")
+      ));
+  }, [bubbleMode, configSpans, minIdx, maxIdx, span]);
+
+  const bubbleSpanLane = (!bubbleMode || !bubbleSpanRows.length) ? null : (
+    <>
+      <div className="lp-bubble-lane-caption">Annotations horizontales</div>
+      <div className="lp-widget-minigantt-rows lp-bubble-annot-rows">
+        {bubbleSpanRows.map(({ annot, leftPct, widthPct }) => (
+          <div className="lp-widget-minigantt-row lp-bubble-annot-row" key={"annot-" + annot.id}>
+            <div className="lp-widget-minigantt-track">
+              <span
+                className="lp-widget-minigantt-span"
+                style={{ left: `${leftPct}%`, width: `${widthPct}%`, top: "50%", opacity: annot.opacity / 100 }}
+              >
+                <SpanCapGlyph cap={annot.capStart} side="start" color={annot.color} />
+                <span
+                  className="lp-widget-minigantt-span-line"
+                  style={{ borderTopWidth: annot.thickness, borderTopStyle: annot.borderStyle, borderTopColor: annot.color }}
+                />
+                <SpanCapGlyph cap={annot.capEnd} side="end" color={annot.color} />
+                {annot.label && (
+                  <button
+                    type="button"
+                    className="lp-widget-minigantt-span-label"
+                    style={{ color: annot.color }}
+                    title={`${annot.label} · ${fmtShort(annot.startDate)} → ${fmtShort(annot.endDate)}`}
+                    onClick={() => editable && setAnnotationPanel({ section: "spans", focusId: annot.id })}
+                  >
+                    {annot.label}
+                  </button>
+                )}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+
   /* Annotations horizontales : au-dessus des barres, comme les cadres — un
      trait posé DERRIÈRE la barre de sa propre ligne serait invisible. Le
-     calque ne capte pas le pointeur, seule l'étiquette est cliquable. */
-  const spanLayer = (!rowsBand || !spanShapes.length) ? null : (
+     calque ne capte pas le pointeur, seule l'étiquette est cliquable.
+
+     En mode bulles, ce calque ne sert plus : les traits vivent dans leur propre
+     couloir (`bubbleSpanLane`), et les y laisser AUSSI les ferait passer au
+     travers des bulles. */
+  const spanLayer = (bubbleMode || !rowsBand || !spanShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-span-layer"
       style={{ ...layerInsets, top: 0, bottom: 0 }}
@@ -7874,7 +8067,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      CSS sur la racine, depuis `bubbleHeightPx` — la même fonction que celle
      dont l'auto-dimensionnement du widget se sert. */
   const rootStyle = bubbleMode
-    ? { position: "relative", "--lp-bubble-h": bubbleHeightPx(widget) + "px", "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines }
+    ? {
+        position: "relative",
+        "--lp-bubble-h": bubbleHeightPx(widget) + "px",
+        "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines,
+        // Hauteur du bandeau condensé, la MÊME pour toutes les bulles du
+        // widget (#122) : mesurée sur celle qui demande le plus de lignes.
+        "--lp-bubble-fields-h": bubbleCompactFieldsHeight(compactFieldLines) + "px",
+      }
     /* La colonne d'étiquettes est posée en PIXELS dès qu'elle est mesurée :
        étiquettes, cale de l'axe, cale des bandes de repères et retrait des
        couches lisent tous cette même variable, et ne peuvent donc pas se
@@ -7918,7 +8118,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {toolbar}
         <Axis />
         {phasesHeader}
+        {bubbleStripCaption}
         {stripHeader}
+        {bubbleSpanLane}
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
           {renderRows(orderedTasks)}
@@ -7959,7 +8161,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {toolbar}
       <Axis />
       {phasesHeader}
+      {bubbleStripCaption}
       {stripHeader}
+      {bubbleSpanLane}
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
         return (
