@@ -2826,9 +2826,43 @@ function computeBudgetStats(projectId, projects, expenses) {
 // se font à la souris, avec un aperçu en transform pendant le geste puis un
 // "snap" sur la grille au relâchement — même logique que le drag des
 // sous-tâches dans la vue Planning Projets (subDragRef plus haut dans ce fichier).
+// === NEXORA:DASHBOARD-GRID:START ===
 const DASHBOARD_COLS = 12;
 const DASHBOARD_ROW_H = 68;
 const DASHBOARD_GAP = 14;
+/* Hauteur d'un widget, en unités de grille : plancher et plafond (#119).
+
+   Le plafond valait 12 unités — environ 970 px — et il était recopié à QUATRE
+   endroits : les deux calculs de redimensionnement, le clamp en pixels de
+   l'aperçu pendant le geste, et le dimensionnement automatique. Un widget
+   Bulles ou Gantt de trente lignes butait dessus : la poignée descendait, le
+   widget ne grandissait plus. Le plafond ne disparaît pas — une valeur infinie
+   ferait d'un glissement maladroit un widget de dix écrans — mais il est porté
+   assez haut pour qu'on ne le rencontre plus en travaillant, et il vit
+   désormais dans UNE constante que tout le monde relit. */
+const DASHBOARD_MIN_ROWS = 2;
+const DASHBOARD_MAX_ROWS = 60;
+
+/* Hauteur ramenée dans ses bornes. `maxRows` est le plafond LOCAL du geste en
+   cours — un redimensionnement par un coin HAUT garde le bord bas où il est, et
+   ne peut donc pas dépasser `y + h`. Il ne remplace pas le plafond global : il
+   s'y ajoute, et c'est le plus bas des deux qui gagne. */
+function clampWidgetRows(rows, maxRows) {
+  const n = Number(rows);
+  if (!Number.isFinite(n)) return DASHBOARD_MIN_ROWS;
+  const local = Number(maxRows);
+  const ceiling = Number.isFinite(local)
+    ? Math.max(DASHBOARD_MIN_ROWS, Math.min(DASHBOARD_MAX_ROWS, local))
+    : DASHBOARD_MAX_ROWS;
+  return Math.max(DASHBOARD_MIN_ROWS, Math.min(ceiling, Math.round(n)));
+}
+
+// Hauteur en pixels d'un widget de `rows` unités, gouttière comprise : la même
+// conversion pour l'aperçu du geste et pour le dimensionnement automatique.
+function dashboardRowsToPx(rows) {
+  return (DASHBOARD_ROW_H + DASHBOARD_GAP) * Math.max(0, Number(rows) || 0) - DASHBOARD_GAP;
+}
+// === NEXORA:DASHBOARD-GRID:END ===
 
 // Bin-packing "skyline" : place les widgets sans layout les uns après les
 // autres, dans le premier espace libre en partant du haut, comme le ferait un
@@ -2957,14 +2991,14 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
 
     if (corner === "br") {
       w = clamp(w + dCols, 2, DASHBOARD_COLS - x);
-      h = clamp(h + dRows, 2, 12);
+      h = clampWidgetRows(h + dRows);
     } else if (corner === "bl") {
       const newW = clamp(w - dCols, 2, x + w);
       x = x + w - newW;
       w = newW;
-      h = clamp(h + dRows, 2, 12);
+      h = clampWidgetRows(h + dRows);
     } else if (corner === "tr") {
-      const newH = clamp(h - dRows, 2, y + h);
+      const newH = clampWidgetRows(h - dRows, y + h);
       y = y + h - newH;
       h = newH;
       w = clamp(w + dCols, 2, DASHBOARD_COLS - x);
@@ -2972,7 +3006,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       const newW = clamp(w - dCols, 2, x + w);
       x = x + w - newW;
       w = newW;
-      const newH = clamp(h - dRows, 2, y + h);
+      const newH = clampWidgetRows(h - dRows, y + h);
       y = y + h - newH;
       h = newH;
     }
@@ -2994,11 +3028,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       2,
       DASHBOARD_COLS
     );
-    const newH = clamp(
-      Math.round((box.height + DASHBOARD_GAP) / rowUnit),
-      2,
-      12
-    );
+    const newH = clampWidgetRows(Math.round((box.height + DASHBOARD_GAP) / rowUnit));
 
     let x = baseLayout.x;
     let y = baseLayout.y;
@@ -3015,7 +3045,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
 
     if (corner === "tl" || corner === "tr") {
       const fixedBottom = baseLayout.y + baseLayout.h;
-      h = clamp(newH, 2, fixedBottom);
+      h = clampWidgetRows(newH, fixedBottom);
       y = Math.max(0, fixedBottom - h);
     }
 
@@ -3158,7 +3188,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       updateWidget(w.id, { layout: { ...w.layout, w: def.w, h: def.h } });
       return;
     }
-    const targetHUnits = clamp(Math.ceil((targetHPx + DASHBOARD_GAP) / (DASHBOARD_ROW_H + DASHBOARD_GAP)), 2, 12);
+    const targetHUnits = clampWidgetRows(Math.ceil((targetHPx + DASHBOARD_GAP) / (DASHBOARD_ROW_H + DASHBOARD_GAP)));
     updateWidget(w.id, { layout: { ...w.layout, w: targetW, h: targetHUnits } });
   };
 
@@ -3338,8 +3368,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     };
 
     const minWidth=Math.max(80,(cellW+DASHBOARD_GAP)*2-DASHBOARD_GAP);
-    const minHeight=Math.max(80,(DASHBOARD_ROW_H+DASHBOARD_GAP)*2-DASHBOARD_GAP);
-    const maxHeight=Math.max(minHeight,(DASHBOARD_ROW_H+DASHBOARD_GAP)*12-DASHBOARD_GAP);
+    const minHeight=Math.max(80,dashboardRowsToPx(DASHBOARD_MIN_ROWS));
+    const maxHeight=Math.max(minHeight,dashboardRowsToPx(DASHBOARD_MAX_ROWS));
 
     const boxFromPointer=(clientX,clientY)=>{
       const gx=clientX-gridRect.left;
