@@ -5508,6 +5508,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      part le trait vertical d'un jalon (#95). `null` tant qu'aucune bande n'est
      montée — un widget sans jalon ni annotation n'en a pas. */
   const [stripTop, setStripTop] = useState(null);
+  /* Ce que la DERNIÈRE ligne peint sous sa propre boîte. Le rail de
+     comparaison, les couloirs de risque et leurs étiquettes vivent dans
+     l'interligne — qui n'existe pas après la dernière ligne. Le widget étant
+     en `overflow:hidden`, tout cela y était coupé net : la dernière ligne
+     n'apparaissait qu'à moitié (retour de test). On mesure le débord plutôt
+     que de le supposer, et on réserve exactement autant en pied. */
+  const [rowsTail, setRowsTail] = useState(0);
   // Les étiquettes de repères sont placées en PIXELS : estimer leur largeur en
   // pourcentage de la piste donnait des collisions dès que le widget était
   // étroit, la même étiquette n'occupant pas la même fraction d'une piste de
@@ -5557,6 +5564,26 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       const width = Math.round(track.getBoundingClientRect().width);
       setTrackWidth((prev) => (prev === width ? prev : width));
     }
+    /* Débord de la dernière ligne. Mesuré sur la ligne elle-même, et non
+       déduit des constantes de placement : un habillage ajouté demain sous une
+       barre sera réservé sans que personne ait à y penser. Une seule ligne est
+       parcourue, celle du bas — c'est la seule qui n'ait pas de suivante pour
+       l'accueillir. */
+    let tail = 0;
+    for (let i = visibleRows.length - 1; i >= 0; i -= 1) {
+      const el = rowNodes.current[visibleRows[i].id];
+      if (!el || !el.isConnected) continue;
+      const bottom = el.getBoundingClientRect().bottom;
+      el.querySelectorAll("*").forEach((child) => {
+        const r = child.getBoundingClientRect();
+        if (!r.width && !r.height) return;
+        tail = Math.max(tail, r.bottom - bottom);
+      });
+      break;
+    }
+    const nextTail = Math.ceil(Math.max(0, tail));
+    setRowsTail((prev) => (prev === nextTail ? prev : nextTail));
+
     // Même mesure, même repère : le sommet de la bande de repères est pris dans
     // le référentiel de la racine, comme les lignes ci-dessus.
     const strip = stripTrackRef.current;
@@ -7335,6 +7362,16 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? { position: "relative", "--lp-bubble-h": bubbleHeightPx(widget) + "px", "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines }
     : { position: "relative" };
 
+  /* Pied de réserve : exactement le débord mesuré de la dernière ligne, et
+     rien quand elle ne déborde pas. Le widget coupe à son bord
+     (`overflow:hidden`), et la dernière ligne s'y trouvait à fleur : son rail
+     de comparaison, ses couloirs de risque et leurs étiquettes étaient
+     tranchés (retour de test). Les lignes précédentes, elles, débordent dans
+     l'interligne de la suivante — il n'y a donc rien à réserver ailleurs. */
+  const rowsTailSpacer = rowsTail > 0
+    ? <span className="lp-widget-minigantt-rows-tail" style={{ height: rowsTail }} aria-hidden="true" />
+    : null;
+
   if (!groupBy || groupBy === "none") {
     return (
       <div className={rootClass} style={rootStyle} ref={rootRef}>
@@ -7350,6 +7387,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           <GridOverlay />
           {orderedTasks.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))}
         </div>
+        {rowsTailSpacer}
         {bandFrameLayer}
         {annotationLayer}
         {spanLayer}
@@ -7404,6 +7442,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           </div>
         );
       })}
+      {rowsTailSpacer}
       {bandFrameLayer}
       {annotationLayer}
       {spanLayer}

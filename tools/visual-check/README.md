@@ -88,6 +88,15 @@ Annotations horizontales, traits de jalon et formes de repère :
 - le catalogue **Réglages > Types de jalon** est monté à côté du diagramme :
   c'est le même catalogue, donc un symbole choisi là est celui qui apparaît ici.
 
+Dernière ligne du diagramme, à fleur du bord (retour de test) :
+
+- un widget dont la **dernière** ligne porte deux couloirs de risque, leurs
+  étiquettes et un ruban de comparaison — tout cela peint sous la boîte de la
+  ligne, dans un interligne qui n'existe pas après elle ;
+- le point le plus bas qu'elle peint doit rester **dans** le widget, qui coupe à
+  son bord : c'est ce contrôle qui échoue si le pied de réserve disparaît ;
+- et elle doit vraiment déborder de sa boîte, sinon le scénario ne prouve rien.
+
 Alignement des titres de bloc :
 
 - dans un widget **sans bande de repères** — donc sans la mesure sur laquelle la
