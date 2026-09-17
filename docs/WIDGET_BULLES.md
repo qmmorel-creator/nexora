@@ -62,6 +62,33 @@ Un **jalon** n'a qu'une date : sa bulle est compacte et centrée sur cette date 
 lui donner une largeur fabriquerait une durée. Tout au bord de la piste, elle
 s'aligne sur le bord au lieu d'être coupée en deux.
 
+La **description** de la tâche s'affiche sous le titre, sur **1 à 3 lignes** au choix
+(`bubbleDescriptionLines`, défaut 1) — réglage #97. Le texte est coupé au nombre de
+lignes demandé, avec ellipsis sur la dernière : une phrase tronquée sans marque se lit
+comme une phrase complète.
+
+Les lignes gagnées **se paient en hauteur de bulle**, et c'est tout l'enjeu de ce
+réglage. La bulle a une hauteur fixe et `overflow:hidden` : deux lignes de plus sans
+hauteur de plus auraient mangé le pied — statut et avancement auraient disparu en
+silence, sans que rien ne le signale. `bubbleHeightPx(widget)` est donc **la seule**
+fonction qui donne cette hauteur, et elle est appelée par deux appelants qui devaient
+absolument s'accorder :
+
+| Appelant | Ce qu'il en fait |
+|---|---|
+| le rendu | la pose en variable CSS `--lp-bubble-h` sur la racine du widget |
+| `onAutoSize` | calcule la hauteur du widget à partir de ses lignes |
+
+Recopier les nombres (34 / 46 / 60 px, 13 px par ligne) dans la feuille de style aurait
+donné deux vérités pour un seul nombre, et un widget qui se redimensionne à une hauteur
+qui n'est pas celle qu'il dessine. Les classes `.size-*` ne portent donc plus de hauteur,
+seulement la règle qui ramène le **titre** à une ligne en densité compacte : c'est la
+description qui gagne les lignes demandées, pas le titre.
+
+Le réglage n'apparaît dans le formulaire **que** lorsque la description est affichée, et
+il reste inerte si on la décoche — la hauteur revient d'elle-même à celle de la densité
+choisie.
+
 Les **champs sous la bulle** sont rendus **en flux**, et c'est important : en
 position absolue, ils ne comptaient pas dans la hauteur de la ligne, débordaient
 sur la ligne suivante, et la géométrie mesurée dont vivent les macro-bulles et
@@ -186,6 +213,7 @@ widget.bubbleSize?: "compact" | "normal" | "large"; // défaut "normal"
 widget.bubbleShowDates?: boolean;                   // défaut true
 widget.bubbleShowProgress?: boolean;                // défaut true
 widget.bubbleShowDescription?: boolean;             // défaut false
+widget.bubbleDescriptionLines?: number;             // 1 à 3, défaut 1
 widget.bubbleShowLegend?: boolean;                  // défaut false
 widget.bubbleMacroGrouping?: boolean;               // défaut true
 ```

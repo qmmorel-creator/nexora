@@ -9,11 +9,11 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    rendu possible sur les tableaux de bord, et qu'aucun d'eux ne rencontrait
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
-  "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "projectPulse", "heatmapMonth",
+  "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
   "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
   "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
-  "customCard", "automations", "automationAlerts", "projectStory",
+  "customCard",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
   // Ceux-là ne se montent qu'avec une cible désignée : c'est justement le cas
   // où le filtre peut la faire disparaître de la liste (issue #72).
@@ -21,9 +21,6 @@ const EMPTY_DASHBOARD_WIDGETS = [
     { id: "vide-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: "t1", layout: { x: 0, y: 40, w: 3, h: 4 } },
     { id: "vide-countdown-task", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: "t1", layout: { x: 3, y: 40, w: 3, h: 4 } },
     { id: "vide-countdown-filtre", type: "countdown", title: "countdown filtre", countdownMode: "filter", layout: { x: 6, y: 40, w: 3, h: 4 } },
-    { id: "vide-momentum", type: "projectMomentum", title: "momentum", momentumProjectId: "p1", layout: { x: 9, y: 40, w: 3, h: 4 } },
-    { id: "vide-timeMachine", type: "timeMachine", title: "timeMachine", timeMachineProjectId: "p1", layout: { x: 0, y: 44, w: 3, h: 4 } },
-    { id: "vide-riskMatrix", type: "riskMatrix", title: "riskMatrix", riskMatrixProjectId: "p1", layout: { x: 3, y: 44, w: 3, h: 4 } },
   ]);
 
 function AnnotationsHarness() {
@@ -81,7 +78,7 @@ function AnnotationsHarness() {
   const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
   const [projects, setProjects] = useState([...seedProjects, calendarProject]);
   const [statuses, setStatuses] = useState(seedStatuses);
-  const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], customFieldDefs: [], expenses: [], risks: [], myName: null };
+  const ctx = { projects, statuses, taskTypes: seedTaskTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
     temporalBlocks: [
@@ -273,7 +270,7 @@ function AnnotationsHarness() {
   const [ganttViewSettingsOpen, setGanttViewSettingsOpen] = useState(false);
   const [ganttWidgetFormOpen, setGanttWidgetFormOpen] = useState(false);
   const [ganttViewPrefs, setGanttViewPrefs] = useState(() => normalizeMiniGanttViewPrefs({ groupBy: "project" }));
-  const parityCtx = { ...ctx, customFieldDefs: [{ id: "lot", name: "Lot de travaux", type: "text" }] };
+  const parityCtx = ctx;
   const parityWidget = { id: "parite", type: "minigantt", title: "Mini-Gantt", groupBy: "project", colorBy: "status", miniGanttFields: ["end"] };
   const noop = () => {};
   return (
@@ -299,14 +296,6 @@ function AnnotationsHarness() {
             selectedProjectIds={[]}
             onToggleProject={noop}
           />
-        </div>
-      </div>
-      <div>
-        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>CENTRE DE PILOTAGE SANS AUCUNE TÂCHE</h2>
-        {/* Issue #72 : le filtre texte s'applique aussi à cette vue, qui ne
-            rencontrait jamais de liste vide avant lui. */}
-        <div id="harness-control-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", width: 1200, height: 360, overflow: "auto", marginBottom: 18 }}>
-          <ControlTowerView tasks={[]} ctx={ctx} risks={[]} momentumSnapshots={[]} activityLog={[]} onOpenTask={noop} onSelectProject={noop} onNavigate={noop} />
         </div>
       </div>
       <div>
@@ -345,10 +334,6 @@ function AnnotationsHarness() {
             taskBaselines={{}}
             setTasks={noop}
             pushToast={noop}
-            risks={[]}
-            workflows={[]}
-            workflowExecutionLog={[]}
-            onOpenAutomations={noop}
             shortcutPrefs={{}}
             metaTemporalBlocks={[]}
             dashboardId="d1"
@@ -453,7 +438,6 @@ function AnnotationsHarness() {
             widget={treemapWidget}
             tasks={tasks}
             ctx={ctx}
-            risks={[{ id: "r1", projectId: "p1", status: "open" }, { id: "r2", projectId: "p1", status: "closed" }]}
             expenses={[]}
             onOpenProject={(id) => setOpenedProjectId(id)}
             onEditProject={noop}
@@ -465,7 +449,7 @@ function AnnotationsHarness() {
         <div id="harness-treemap-narrow" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 8, background: "var(--surface)", width: 300, height: 150, marginBottom: 18 }}>
           <WidgetProjectTreemap
             widget={{ ...treemapWidget, treemapShowSearch: false, treemapShowLegend: false, treemapCompact: true }}
-            tasks={tasks} ctx={ctx} risks={[]} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
+            tasks={tasks} ctx={ctx} expenses={[]} onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
           />
         </div>
         <span id="harness-transfer-done" style={{ fontFamily: "monospace", fontSize: 12 }}>{transferDone}</span>
@@ -534,7 +518,7 @@ function AnnotationsHarness() {
         <div id="harness-treemap-status" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, height: 300, marginBottom: 18 }}>
           <WidgetProjectTreemap
             widget={statusTreemapWidget}
-            tasks={tasks} ctx={ctx} risks={[]} expenses={[]}
+            tasks={tasks} ctx={ctx} expenses={[]}
             onOpenProject={noop} onEditProject={noop} onFilterProject={noop}
           />
         </div>
@@ -627,7 +611,6 @@ function AnnotationsHarness() {
             teamMembers={seedTeamMembers}
             gradient={appearance.gradient}
             progressColorByStatus={false}
-            customFieldDefs={[]}
             shortcutPrefs={{}}
             onClose={() => setTaskCreateOpen(false)}
             onSave={(data) => { setCreatedTask(data); setTaskCreateOpen(false); }}
@@ -646,7 +629,6 @@ function AnnotationsHarness() {
             teamMembers={seedTeamMembers}
             gradient={appearance.gradient}
             progressColorByStatus={false}
-            customFieldDefs={[]}
             shortcutPrefs={{}}
             onClose={() => setTaskModalOpen(false)}
             onSave={() => setTaskModalOpen(false)}
@@ -664,6 +646,22 @@ function AnnotationsHarness() {
             tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
             onUpdateWidget={(patch) => setBubbleWidget((w) => ({ ...w, ...patch }))}
             onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
+            groupBy="none"
+          />
+        </div>
+        {/* Description sur TROIS lignes (#97) : la bulle doit gagner la
+            hauteur des lignes demandées, sinon son pied — statut et
+            avancement — disparaît sous `overflow:hidden`. */}
+        <div id="harness-bubbles-desc" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb3", bubbleMacros: [],
+              bubbleShowDescription: true, bubbleDescriptionLines: 3,
+              bubbleFields: ["status"],
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
             groupBy="none"
           />
         </div>
@@ -785,11 +783,11 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
 if (benchApp) {
   const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
   const benchWidgets = [
-    "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "projectPulse", "heatmapMonth",
+    "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
     "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
-    "customCard", "automationAlerts", "projectStory",
+    "customCard",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },

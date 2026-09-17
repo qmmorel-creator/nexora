@@ -1217,7 +1217,26 @@ const bulles = await page.evaluate(() => {
     fields: row.querySelector(".lp-bubble-fields") ? box(row.querySelector(".lp-bubble-fields")) : null,
   }));
   const grouped = document.querySelector("#harness-bubbles-grouped .lp-widget-minigantt");
+  /* Description sur trois lignes (#97) : on relève la bulle, sa description et
+     son pied — c'est le pied qui disparaît si la hauteur ne suit pas. */
+  const descRoot = document.querySelector("#harness-bubbles-desc .lp-widget-minigantt");
+  const descRows = descRoot ? [...descRoot.querySelectorAll(".lp-widget-minigantt-row")].map((row) => {
+    const bubble = row.querySelector(".lp-bubble");
+    const desc = row.querySelector(".lp-bubble-desc");
+    const foot = row.querySelector(".lp-bubble-foot");
+    return {
+      row: box(row),
+      bubble: bubble ? box(bubble) : null,
+      desc: desc ? { ...box(desc), lines: getComputedStyle(desc).webkitLineClamp } : null,
+      foot: foot ? box(foot) : null,
+    };
+  }).filter((r) => r.desc) : [];
   return {
+    descRows,
+    descBubbleH: descRoot && descRoot.querySelector(".lp-bubble")
+      ? Math.round(descRoot.querySelector(".lp-bubble").getBoundingClientRect().height) : 0,
+    baseBubbleH: root.querySelector(".lp-bubble")
+      ? Math.round(root.querySelector(".lp-bubble").getBoundingClientRect().height) : 0,
     rows,
     bubbles: root.querySelectorAll(".lp-bubble").length,
     milestones: root.querySelectorAll(".lp-bubble-milestone").length,
@@ -1277,9 +1296,15 @@ if (parite.vue && parite.widget) {
     parite.vue.regroupements.length > 0 && parite.vue.regroupements.join("|") === parite.widget.regroupements.join("|"),
     `Regroupements différents entre la vue et le widget :\n    vue    : ${parite.vue.regroupements.join(", ")}\n    widget : ${parite.widget.regroupements.join(", ")}`
   );
-  ["Inactivité (jours)", "Lot de travaux"].forEach((option) => {
+  // « Lot de travaux » était un champ personnalisé : ces champs ont été retirés,
+  // et le menu ne doit plus proposer aucune clé « cf: ».
+  ["Inactivité (jours)"].forEach((option) => {
     expect(parite.vue.regroupements.includes(option), `Réglages de la vue Gantt : regroupement « ${option} » absent du menu`);
   });
+  expect(
+    !parite.vue.regroupements.some((o) => /lot de travaux/i.test(o)),
+    `Réglages de la vue Gantt : un champ personnalisé est revenu dans le menu (${parite.vue.regroupements.join(", ")})`
+  );
   expect(
     /date de début/i.test(parite.vue.erreurDatesFixes),
     `Réglages de la vue Gantt : un cadrage « Dates fixes » sans date ne dit rien (« ${parite.vue.erreurDatesFixes} »)`
@@ -2109,6 +2134,17 @@ if (!bulles.error) {
   expect(bulles.groupHeads >= 2, `Bulles groupées : ${bulles.groupHeads} en-tête(s) de groupe`);
   expect(bulles.groupedBubbles > 0, "Bulles groupées : aucune bulle dans les groupes");
   expect(bulles.legend.length >= 2, `Bulles : légende à ${bulles.legend.length} rang(s), au moins 2 attendus (un par responsable présent)`);
+  // Lignes de description réglables (#97) : la bulle gagne la hauteur des
+  // lignes demandées, et son pied reste visible.
+  expect(bulles.descRows.length > 0, "Bulles : aucune description rendue dans le widget à trois lignes");
+  expect(bulles.descRows.every((r) => r.desc.lines === "3"),
+    `Bulles : la description n'est pas coupée à 3 lignes (${(bulles.descRows[0] || {}).desc?.lines})`);
+  expect(bulles.descBubbleH === bulles.baseBubbleH + 26,
+    `Bulles : bulle à 3 lignes de description haute de ${bulles.descBubbleH}px, ${bulles.baseBubbleH + 26}px attendus (base ${bulles.baseBubbleH} + 2 lignes)`);
+  const piedCoupe = bulles.descRows.filter((r) => r.foot && r.bubble && r.foot.bottom > r.bubble.bottom + 1);
+  expect(piedCoupe.length === 0, `Bulles : ${piedCoupe.length} pied(s) de bulle coupé(s) par la hauteur de la bulle`);
+  const descHorsBulle = bulles.descRows.filter((r) => r.bubble && r.row && r.bubble.bottom > r.row.bottom + 2);
+  expect(descHorsBulle.length === 0, `Bulles : ${descHorsBulle.length} bulle(s) à description sortent de leur ligne`);
 }
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);

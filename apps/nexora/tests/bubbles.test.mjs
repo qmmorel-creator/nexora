@@ -41,6 +41,11 @@ const {
   normalizeBubbleFields,
   normalizeBubbleFieldsLayout,
   normalizeBubbleSize,
+  normalizeBubbleDescriptionLines,
+  bubbleHeightPx,
+  BUBBLE_HEIGHT_PX,
+  BUBBLE_DESC_LINE_PX,
+  BUBBLE_DESC_LINES_MAX,
   normalizeBubbleOpacity,
   normalizeBubbleBorderWidth,
   validateBubbleMacro,
@@ -64,6 +69,8 @@ const {
     "BUBBLE_PALETTE", "BUBBLE_ROW_FIELD_OPTIONS",
     "normalizeBubbleFields", "normalizeBubbleFieldsLayout",
     "normalizeBubbleSize", "normalizeBubbleOpacity", "normalizeBubbleBorderWidth",
+    "normalizeBubbleDescriptionLines", "bubbleHeightPx",
+    "BUBBLE_HEIGHT_PX", "BUBBLE_DESC_LINE_PX", "BUBBLE_DESC_LINES_MAX",
     "validateBubbleMacro", "normalizeBubbleMacros", "pruneBubbleMacros",
     "bubbleMacroFill", "bubbleMacroBorder", "normalizeBubblesWidget",
     "bubblePaletteColor", "bubbleColorMap", "bubbleLegendEntries",
@@ -336,4 +343,54 @@ test("les réglages des bulles et ceux du Mini-Gantt ne partagent aucune clé d'
   assert.ok(bubbleKeys.every((k) => k.startsWith("bubble")), `clé de réglage hors préfixe : ${bubbleKeys.join(", ")}`);
   assert.ok(!bubbleKeys.includes("colorBy"), "les bulles ne doivent pas réutiliser colorBy, qui n'a que trois valeurs");
   assert.ok(!bubbleKeys.includes("miniGanttFields"));
+});
+
+// --- Lignes de description réglables (#97) ---------------------------------
+
+test("le nombre de lignes de description est borné, et vaut 1 par défaut", () => {
+  assert.equal(BUBBLES_DEFAULTS.bubbleDescriptionLines, 1);
+  assert.equal(normalizeBubbleDescriptionLines(2), 2);
+  assert.equal(normalizeBubbleDescriptionLines(0), 1);
+  assert.equal(normalizeBubbleDescriptionLines(-4), 1);
+  assert.equal(normalizeBubbleDescriptionLines(99), BUBBLE_DESC_LINES_MAX);
+  assert.equal(normalizeBubbleDescriptionLines(2.4), 2);
+  assert.equal(normalizeBubbleDescriptionLines("trois"), 1);
+  assert.equal(normalizeBubbleDescriptionLines(undefined), 1);
+  // Un widget enregistré avant ce réglage lit donc 1 ligne : l'affichage qu'il
+  // avait, au pixel près.
+  assert.equal(normalizeBubblesWidget({ type: "bubbles" }).bubbleDescriptionLines, 1);
+});
+
+test("la hauteur de bulle se paie en pixels, et seulement si la description est affichée", () => {
+  const h = (w) => bubbleHeightPx(w);
+  // Sans description, le réglage de lignes est inerte — y compris s'il traîne
+  // dans un widget dont on a décoché la description.
+  assert.equal(h({ bubbleSize: "normal" }), BUBBLE_HEIGHT_PX.normal);
+  assert.equal(h({ bubbleSize: "normal", bubbleDescriptionLines: 3 }), BUBBLE_HEIGHT_PX.normal);
+  assert.equal(h({ bubbleSize: "compact" }), BUBBLE_HEIGHT_PX.compact);
+  assert.equal(h({ bubbleSize: "large" }), BUBBLE_HEIGHT_PX.large);
+  // Une ligne de description ne coûte rien : c'est la hauteur historique.
+  assert.equal(h({ bubbleShowDescription: true, bubbleDescriptionLines: 1 }), BUBBLE_HEIGHT_PX.normal);
+  // Chaque ligne SUPPLÉMENTAIRE se paie, à toutes les densités.
+  assert.equal(h({ bubbleShowDescription: true, bubbleDescriptionLines: 2 }), BUBBLE_HEIGHT_PX.normal + BUBBLE_DESC_LINE_PX);
+  assert.equal(h({ bubbleShowDescription: true, bubbleDescriptionLines: 3 }), BUBBLE_HEIGHT_PX.normal + BUBBLE_DESC_LINE_PX * 2);
+  assert.equal(h({ bubbleSize: "compact", bubbleShowDescription: true, bubbleDescriptionLines: 3 }),
+    BUBBLE_HEIGHT_PX.compact + BUBBLE_DESC_LINE_PX * 2);
+  // Valeur invalide : la hauteur reste celle du défaut, jamais NaN.
+  assert.equal(h({ bubbleSize: "géant", bubbleShowDescription: true, bubbleDescriptionLines: "x" }), BUBBLE_HEIGHT_PX.normal);
+  assert.equal(h(null), BUBBLE_HEIGHT_PX.normal);
+});
+
+test("la hauteur de bulle n'a qu'une source : le rendu et l'auto-dimensionnement l'appellent", () => {
+  // Le rendu la pose en variable CSS...
+  assert.match(html, /"--lp-bubble-h": bubbleHeightPx\(widget\) \+ "px"/);
+  assert.match(html, /"--lp-bubble-desc-lines": bubbleCfg\.bubbleDescriptionLines/);
+  // ...et l'auto-dimensionnement du widget appelle la MÊME fonction.
+  assert.match(html, /const bubbleH = bubbleHeightPx\(w\);/);
+  // Aucun des deux ne recopie les nombres : c'était le piège d'un widget qui se
+  // redimensionne à une hauteur qui n'est pas celle qu'il dessine.
+  assert.doesNotMatch(html, /bubbleSize === "compact" \? 34/);
+  assert.doesNotMatch(html, /--lp-bubble-h:\s*\d+px/, "la feuille de style refixe une hauteur de bulle");
+  // La description est coupée par la variable, pas par une valeur en dur.
+  assert.match(html, /-webkit-line-clamp:var\(--lp-bubble-desc-lines, 1\)/);
 });

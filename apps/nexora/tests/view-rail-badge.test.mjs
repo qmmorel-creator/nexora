@@ -14,19 +14,18 @@ const { viewRailBadgeCount, viewRailBadgeLabel } = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { viewRailBadgeCount, viewRailBadgeLabel };\n})`
 )();
 
-const COUNTS = { projects: 4, dashboards: 2, workflows: 7, unreadNotifications: 3, dueToday: 5 };
+const COUNTS = { projects: 4, dashboards: 2, unreadNotifications: 3, dueToday: 5 };
 
 test("chaque bulle compte ce qu'elle annonce", () => {
   assert.equal(viewRailBadgeCount("projects", COUNTS), 4);
   assert.equal(viewRailBadgeCount("dashboard", COUNTS), 2);
-  assert.equal(viewRailBadgeCount("automations", COUNTS), 7);
   assert.equal(viewRailBadgeCount("notifications", COUNTS), 3);
   assert.equal(viewRailBadgeCount("today", COUNTS), 5);
 });
 
-test("le Centre de pilotage n'agrège aucune collection : pas de badge", () => {
+test("une vue qui n'agrège aucune collection ne porte pas de badge", () => {
   // Un chiffre inventé y serait pire que pas de chiffre du tout.
-  assert.equal(viewRailBadgeCount("control", COUNTS), 0);
+  assert.equal(viewRailBadgeCount("gantt", COUNTS), 0);
   assert.equal(viewRailBadgeCount("vue-inconnue", COUNTS), 0);
 });
 

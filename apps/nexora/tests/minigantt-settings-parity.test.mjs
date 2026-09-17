@@ -28,15 +28,12 @@ test("les regroupements du Mini-Gantt couvrent l'inactivité et la période", ()
   assert.deepEqual(keys.slice(1), MINIGANTT_GROUPBY_FIELDS);
 });
 
-test("les champs personnalisés sont proposés, sous leur clé cf:", () => {
-  const ctx = { customFieldDefs: [{ id: "lot", name: "Lot" }, { id: "phase", name: "Phase" }] };
-  const keys = miniGanttGroupByKeys(ctx);
-  assert.ok(keys.includes("cf:lot"));
-  assert.ok(keys.includes("cf:phase"));
-  // Un contexte incomplet ne doit jamais faire tomber le menu.
+test("la liste des regroupements ne dépend d'aucun argument", () => {
+  // Les champs personnalisés ont disparu : il ne reste que le catalogue fixe,
+  // et l'appelant n'a plus rien à fournir pour l'obtenir en entier.
+  assert.deepEqual(miniGanttGroupByKeys(), miniGanttGroupByKeys(null));
   assert.deepEqual(miniGanttGroupByKeys({}), miniGanttGroupByKeys(undefined));
-  assert.deepEqual(miniGanttGroupByKeys({ customFieldDefs: "n'importe quoi" }), miniGanttGroupByKeys(null));
-  assert.deepEqual(miniGanttGroupByKeys({ customFieldDefs: [{ name: "Sans id" }] }), miniGanttGroupByKeys(null));
+  assert.ok(!miniGanttGroupByKeys().some((k) => k.startsWith("cf:")));
 });
 
 // --- Fenêtre à dates fixes -------------------------------------------------
