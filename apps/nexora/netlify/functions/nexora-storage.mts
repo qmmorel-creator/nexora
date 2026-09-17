@@ -5,6 +5,10 @@ const DATABASE = "(default)";
 const CHUNK_LIMIT = 150000;
 const CHUNK_MARKER = "--nexora-chunk--";
 const CHUNK_MODE = "chunked-v1";
+// Ce relais REST écrit pour le compte d'une session Nexora ouverte dans un
+// navigateur : ses écritures portent donc la même origine que l'adaptateur
+// Firestore direct, et non celle de la passerelle assistant/MCP.
+const WRITE_SOURCE = "browser";
 
 type JsonObject = Record<string, unknown>;
 
@@ -39,6 +43,7 @@ const decodeDocument = (document: any) => {
     value: fieldValue(fields.value),
     updatedAt: fieldValue(fields.updatedAt) || null,
     revision: fieldValue(fields.revision) || null,
+    source: fieldValue(fields.source) || null,
     storageMode: fieldValue(fields.storageMode) || "inline",
     chunkIds: fieldValue(fields.chunkIds) || [],
     chunkCount: Number(fieldValue(fields.chunkCount) || 0),
@@ -121,6 +126,7 @@ const readLogical = async (uid: string, key: string, authorization: string) => {
     value,
     updatedAt: manifest.updatedAt,
     revision: manifest.revision,
+    source: manifest.source,
     storageMode: manifest.storageMode,
     chunkCount: manifest.chunkCount,
   };
@@ -185,6 +191,7 @@ const writeLogical = async (
     value: useChunks ? nullField() : stringField(value),
     updatedAt: stringField(now),
     revision: stringField(revision),
+    source: stringField(WRITE_SOURCE),
     storageMode: stringField(useChunks ? CHUNK_MODE : "inline"),
     chunkCount: intField(useChunks ? chunkIds.length : 0),
     totalLength: intField(value.length),
@@ -205,6 +212,7 @@ const writeLogical = async (
     value,
     updatedAt: now,
     revision,
+    source: WRITE_SOURCE,
     storageMode: useChunks ? CHUNK_MODE : "inline",
     chunkCount: useChunks ? chunkIds.length : 0,
   };
@@ -229,7 +237,7 @@ export default async (req: Request, _context: Context) => {
     if (action === "get" || action === "checkRevision") {
       const result = await readLogical(uid, key, authorization);
       if (!result) return json({ ok: false, code: "NOT_FOUND", error: `Key not found: ${key}` }, 404);
-      return json({ ok: true, result: action === "checkRevision" ? { revision: result.revision } : result });
+      return json({ ok: true, result: action === "checkRevision" ? { revision: result.revision, source: result.source } : result });
     }
 
     if (action === "set") {

@@ -4499,6 +4499,16 @@ function GlobalStyles() {
         }
         .lp-sync-blocked-banner{ position:fixed; top:0; left:0; right:0; width:100%; box-sizing:border-box; z-index:9999; flex-wrap:wrap; max-height:30dvh; overflow:auto; background:var(--danger); color:#fff; display:flex; align-items:center; gap:12px; padding:12px 20px; font-size:13px; box-shadow:0 4px 16px rgba(10,15,25,0.25); }
         .lp-sync-blocked-banner strong{ font-weight:800; }
+        /* Pastille de synchronisation MCP : discrète par construction — elle
+           signale une écriture de l'assistant déjà fusionnée sans risque, pas
+           un conflit. Elle vit en bas à droite et ne réserve aucune hauteur en
+           haut de page, contrairement au bandeau ci-dessus. */
+        .lp-mcp-sync-pill{ position:fixed; right:16px; bottom:16px; z-index:9998; display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text-muted); font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 10px rgba(10,15,25,0.12); }
+        .lp-mcp-sync-pill:hover{ color:var(--text); border-color:var(--accent, #2563eb); }
+        .lp-mcp-sync-pill svg{ color:var(--accent, #2563eb); animation:lp-mcp-sync-spin 1.6s linear infinite; }
+        .lp-mcp-sync-pill[disabled]{ cursor:default; }
+        @keyframes lp-mcp-sync-spin{ to{ transform:rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce){ .lp-mcp-sync-pill svg{ animation:none; } }
         .lp-sync-message{flex:1; min-width:180px;} .lp-sync-message p{margin:4px 0;}
         .lp-sync-blocked-detail{font-size:12px;overflow-wrap:anywhere;} .lp-sync-blocked-detail summary{cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
         .lp-modal-host .lp-overlay{z-index:10000;}
@@ -6778,9 +6788,12 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [taskBaselines, setTaskBaselines] = useState({}); // { [taskId]: {start,end,capturedAt} } — "plan initial" honnête, capturé une seule fois à la première apparition de chaque tâche, jamais réécrit ensuite. Alimente le widget Time Machine.
   const [taskArchive, setTaskArchive] = useState([]); // tâches archivées (retirées de nexora:tasks pour garder ce document sous la limite Firestore), consultables et restaurables depuis Réglages > Données
   const [dataLoaded, setDataLoaded] = useState(false);
-  // { [key]: revision } — une autre session a confirmé une révision différente
-  // de celle connue par CETTE session (détecté en temps réel via window.storage.watch,
-  // voir plus bas). Purement informatif : grâce à la fusion de conflit consciente
+  // { [key]: { revision, source } } — une écriture distante a confirmé une
+  // révision différente de celle connue par CETTE session (détectée en temps
+  // réel via window.storage.watch, voir plus bas). `source` dit QUI a écrit :
+  // « assistant-api » pour la passerelle assistant/MCP, « browser » pour une
+  // autre session Nexora, null pour un manifeste antérieur à ce marquage.
+  // Purement informatif : grâce à la fusion de conflit consciente
   // (attemptPersist), continuer à travailler ici ne perdra rien — mais recharger
   // permet de voir tout de suite ce que l'autre session a ajouté.
   const [remoteChangeDetected, setRemoteChangeDetected] = useState({});
@@ -6877,6 +6890,31 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:dashboards", "nexora:dashboardFolders", "nexora:views", "nexora:taskTypes",
     "nexora:milestoneTypes",
   ]);
+
+  // === NEXORA:MCP-SYNC-SPLIT:START ===
+  // Toute écriture distante n'est pas un conflit. Une écriture de la passerelle
+  // assistant/MCP sur une clé fusionnable se fond automatiquement dans l'état
+  // local (voir attemptPersist : rien n'est jamais écrasé), et l'onglet est
+  // souvent le seul ouvert — le bandeau plein écran « Une autre session a
+  // enregistré des changements » était donc à la fois faux et bruyant.
+  //
+  // On ne relâche la vigilance que là où la fusion garantit l'absence de perte :
+  // origine « assistant-api » ET clé présente dans NEXORA_MERGEABLE_KEYS. Tout
+  // le reste — autre onglet ou autre appareil (« browser »), origine inconnue
+  // (manifeste ancien), ou clé non fusionnable quelle que soit l'origine —
+  // garde le bandeau d'avant, inchangé.
+  const isAssistantMergeableChange = (key, entry, mergeableKeys) =>
+    entry?.source === "assistant-api" && mergeableKeys.has(key);
+
+  const splitRemoteChanges = (detected, mergeableKeys) => {
+    const assistant = [];
+    const conflicts = [];
+    for (const key of Object.keys(detected || {})) {
+      (isAssistantMergeableChange(key, detected[key], mergeableKeys) ? assistant : conflicts).push(key);
+    }
+    return { assistant, conflicts };
+  };
+  // === NEXORA:MCP-SYNC-SPLIT:END ===
 
   // Certaines listes n'ont pas de champ `id` par élément qui identifie
   // vraiment l'élément (ex. favoris = {type,id} où `id` référence une AUTRE
@@ -7781,8 +7819,10 @@ export default function LePlan({ currentUser, onSignOut }) {
     // value is first read as a "peek": its revision is committed locally only
     // after we have verified that no local write appeared during the fetch.
     const unsubs = firebaseWatchedEntries().map(([, key, setter]) =>
-      window.storage.watch(key, async (revision) => {
-        setRemoteChangeDetected((prev) => (prev[key] === revision ? prev : { ...prev, [key]: revision }));
+      window.storage.watch(key, async (revision, source) => {
+        setRemoteChangeDetected((prev) => (prev[key]?.revision === revision
+          ? prev
+          : { ...prev, [key]: { revision, source: source || null } }));
 
         const hasLocalWork = () =>
           pendingPersistRef.current.has(key) || persistScheduledRef.current.has(key);
@@ -7827,10 +7867,13 @@ export default function LePlan({ currentUser, onSignOut }) {
       if (document.visibilityState !== "visible" || !window.storage?.checkRevision) return;
       for (const [, key] of firebaseWatchedEntries()) {
         try {
-          const remoteRevision = await window.storage.checkRevision(key);
+          const remote = await window.storage.checkRevision(key);
+          const remoteRevision = remote?.revision || null;
           const known = window.storage.getKnownRevision(key);
           if (remoteRevision && remoteRevision !== known) {
-            setRemoteChangeDetected((prev) => (prev[key] === remoteRevision ? prev : { ...prev, [key]: remoteRevision }));
+            setRemoteChangeDetected((prev) => (prev[key]?.revision === remoteRevision
+              ? prev
+              : { ...prev, [key]: { revision: remoteRevision, source: remote?.source || null } }));
           }
         } catch (_) { /* vérification best-effort, jamais bloquante */ }
       }
@@ -10215,6 +10258,12 @@ export default function LePlan({ currentUser, onSignOut }) {
   // L’interface apparaît directement après le premier écran de chargement statique/animé.
 
 
+  // Une écriture MCP déjà fusionnée ne mérite pas le même traitement qu'un
+  // vrai conflit : on sépare ici les deux populations, le rendu plus bas ne
+  // fait que les afficher.
+  const { assistant: mcpSyncKeys, conflicts: remoteConflictKeys } =
+    splitRemoteChanges(remoteChangeDetected, NEXORA_MERGEABLE_KEYS);
+
   // Keep every recovery banner above, rather than over, the workspace controls.
   useLayoutEffect(() => {
     const app = document.querySelector(".lp-app");
@@ -10324,17 +10373,34 @@ export default function LePlan({ currentUser, onSignOut }) {
           }}>Retenter maintenant</button>
         </div>
       )}
-      {!syncBlocked && !rescueRecovery && Object.keys(remoteChangeDetected).length > 0 && (
+      {!syncBlocked && !rescueRecovery && remoteConflictKeys.length > 0 && (
         <div className="lp-sync-blocked-banner" style={{background:"var(--accent, #2563eb)"}}>
           <RefreshCw size={16} />
           <span>
-            <strong>Une autre session a enregistré des changements</strong> — {Object.keys(remoteChangeDetected).map((k)=>k.replace("nexora:","")).join(", ")}. Tes propres modifications ne seront pas perdues (fusion automatique), mais recharge pour voir tout de suite ce qui a changé ailleurs.
+            <strong>Une autre session a enregistré des changements</strong> — {remoteConflictKeys.map((k)=>k.replace("nexora:","")).join(", ")}. Tes propres modifications ne seront pas perdues (fusion automatique), mais recharge pour voir tout de suite ce qui a changé ailleurs.
           </span>
           <button className="lp-btn lp-btn-primary" disabled={firebaseRefreshing} onClick={refreshFromFirebase}>
             {firebaseRefreshing ? "Rechargement…" : "Recharger"}
           </button>
           <button className="lp-btn" onClick={() => setRemoteChangeDetected({})}>Continuer sans recharger</button>
         </div>
+      )}
+      {/* L'assistant vient d'écrire une clé fusionnable : la fusion est
+          automatique et sans perte, l'onglet est probablement le seul ouvert.
+          Une pastille suffit — et elle disparaît d'elle-même dès que la valeur
+          distante est adoptée. */}
+      {!syncBlocked && !rescueRecovery && mcpSyncKeys.length > 0 && (
+        <button
+          type="button"
+          className="lp-mcp-sync-pill"
+          aria-live="polite"
+          disabled={firebaseRefreshing}
+          title={`Écriture de l'assistant MCP sur : ${mcpSyncKeys.map((k)=>k.replace("nexora:","")).join(", ")}. Clique pour recharger maintenant.`}
+          onClick={refreshFromFirebase}
+        >
+          <RefreshCw size={13} />
+          {firebaseRefreshing ? "Rechargement…" : "Synchro MCP…"}
+        </button>
       )}
 
       {/* ---------------- Bandeau de vues persistant (icônes) ---------------- */}
