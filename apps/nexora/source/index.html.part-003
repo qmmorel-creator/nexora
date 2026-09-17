@@ -2516,6 +2516,15 @@ const BUBBLE_MACRO_NEST_STEP = 5;
    entoure — même rôle que GANTT_FRAME_BAR_CLEARANCE pour les encadrés. */
 const BUBBLE_MACRO_CLEARANCE = 3;
 const BUBBLE_SIZES = ["compact", "normal", "large"];
+/* Hauteur d'une bulle, par réglage de densité, et hauteur d'une ligne de
+   description. Ces nombres vivent ICI et nulle part ailleurs : le rendu les
+   pose en variable CSS et l'auto-dimensionnement du widget les relit par
+   `bubbleHeightPx`. Recopiés dans la feuille de style, ils auraient fini par
+   diverger, et le widget se serait redimensionné à une hauteur qui n'est pas
+   celle qu'il dessine. */
+const BUBBLE_HEIGHT_PX = { compact: 34, normal: 46, large: 60 };
+const BUBBLE_DESC_LINE_PX = 13;
+const BUBBLE_DESC_LINES_MAX = 3;
 /* Champs proposés sous la bulle. La liste n'est pas arbitraire : ce sont
    exactement les clés que `FieldValue` — le formateur partagé avec tous les
    autres widgets — sait rendre. En proposer d'autres (un champ personnalisé,
@@ -2543,6 +2552,7 @@ const BUBBLES_DEFAULTS = {
   bubbleShowDates: true,
   bubbleShowProgress: true,
   bubbleShowDescription: false,
+  bubbleDescriptionLines: 1,
   bubbleShowLegend: false,
   bubbleMacroGrouping: true,
   bubbleMacros: [],
@@ -2550,6 +2560,29 @@ const BUBBLES_DEFAULTS = {
 
 function normalizeBubbleSize(value) {
   return BUBBLE_SIZES.includes(value) ? value : BUBBLES_DEFAULTS.bubbleSize;
+}
+
+/* Lignes de description : 1 à 3 (#97). Le défaut de 1 est ce que faisait la
+   feuille de style avant que ce soit réglable — un widget enregistré avant ce
+   réglage ne bouge donc pas d'un pixel. Le plafond de 3 n'est pas arbitraire :
+   au-delà, la description occupe plus de place que le titre et l'avancement
+   réunis, et la bulle cesse d'être une bulle. */
+function normalizeBubbleDescriptionLines(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return BUBBLES_DEFAULTS.bubbleDescriptionLines;
+  return Math.min(BUBBLE_DESC_LINES_MAX, Math.max(1, Math.round(n)));
+}
+
+/* Hauteur d'une bulle, en pixels. UNE seule fonction, appelée par le rendu
+   (qui la pose en variable CSS) et par l'auto-dimensionnement du widget (qui
+   calcule la hauteur de ses lignes). Les lignes de description gagnées se
+   paient en hauteur : sans elles, la bulle a `overflow:hidden` et c'est le
+   pied — statut et avancement — qui disparaîtrait en silence. */
+function bubbleHeightPx(widget) {
+  const cfg = normalizeBubblesWidget(widget);
+  const base = BUBBLE_HEIGHT_PX[cfg.bubbleSize] || BUBBLE_HEIGHT_PX.normal;
+  const extraLines = cfg.bubbleShowDescription ? cfg.bubbleDescriptionLines - 1 : 0;
+  return base + Math.max(0, extraLines) * BUBBLE_DESC_LINE_PX;
 }
 
 function normalizeBubbleFieldsLayout(value) {
@@ -2660,6 +2693,7 @@ function normalizeBubblesWidget(widget) {
     bubbleShowDates: w.bubbleShowDates !== false,
     bubbleShowProgress: w.bubbleShowProgress !== false,
     bubbleShowDescription: w.bubbleShowDescription === true,
+    bubbleDescriptionLines: normalizeBubbleDescriptionLines(w.bubbleDescriptionLines),
     bubbleShowLegend: w.bubbleShowLegend === true,
     bubbleMacroGrouping: w.bubbleMacroGrouping !== false,
     bubbleMacros: normalizeBubbleMacros(w.bubbleMacros),
@@ -3127,7 +3161,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
       const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
       const cfg = normalizeBubblesWidget(w);
-      const bubbleH = cfg.bubbleSize === "compact" ? 34 : cfg.bubbleSize === "large" ? 60 : 46;
+      // La hauteur d'une bulle dépend de la densité ET des lignes de
+      // description : une seule fonction la donne, celle que le rendu utilise.
+      const bubbleH = bubbleHeightPx(w);
       const fieldsH = cfg.bubbleFieldsLayout === "under" && cfg.bubbleFields.length ? 20 : 0;
       const legendH = cfg.bubbleShowLegend ? 22 : 0;
       targetHPx = 50 + rows * (bubbleH + fieldsH + 10) + groupCount * 22 + legendH + FRAME_CHROME_PX;
@@ -7224,10 +7260,16 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      et sa hauteur de bulle. Rien d'autre ne change dans la mise en page. */
   const rootClass = "lp-widget-minigantt"
     + (bubbleMode ? " is-bubbles size-" + bubbleCfg.bubbleSize : "");
+  /* Hauteur de bulle et nombre de lignes de description : posés en variables
+     CSS sur la racine, depuis `bubbleHeightPx` — la même fonction que celle
+     dont l'auto-dimensionnement du widget se sert. */
+  const rootStyle = bubbleMode
+    ? { position: "relative", "--lp-bubble-h": bubbleHeightPx(widget) + "px", "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines }
+    : { position: "relative" };
 
   if (!groupBy || groupBy === "none") {
     return (
-      <div className={rootClass} style={{ position: "relative" }} ref={rootRef}>
+      <div className={rootClass} style={rootStyle} ref={rootRef}>
         {viewToolbar}
         {bandLayer}
         {bubbleMacroLayer}
@@ -7264,7 +7306,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return `color-mix(in srgb, ${base} 7%, transparent)`;
   };
   return (
-    <div className={rootClass + " lp-widget-minigantt-grouped"} style={{ position: "relative" }} ref={rootRef}>
+    <div className={rootClass + " lp-widget-minigantt-grouped"} style={rootStyle} ref={rootRef}>
       {viewToolbar}
       {bandLayer}
       {bubbleMacroLayer}
@@ -9346,8 +9388,30 @@ function BubblesDisplayFields({ value, onChange, ctx }) {
           <input type="checkbox" checked={cfg.bubbleShowProgress} onChange={(e) => onChange({ bubbleShowProgress: e.target.checked })} /> Statut et avancement en pied de bulle
         </label>
         <label className="lp-checkbox-line">
-          <input type="checkbox" checked={cfg.bubbleShowDescription} onChange={(e) => onChange({ bubbleShowDescription: e.target.checked })} /> Première ligne de la description
+          <input type="checkbox" checked={cfg.bubbleShowDescription} onChange={(e) => onChange({ bubbleShowDescription: e.target.checked })} /> Description de la tâche
         </label>
+        {/* Réglage sans objet tant que la description n'est pas affichée : il
+            n'apparaît qu'alors, plutôt que d'occuper le formulaire pour rien. */}
+        {cfg.bubbleShowDescription && (
+          <div className="lp-field" style={{ marginTop: 6, marginBottom: 2 }}>
+            <label>Lignes de description</label>
+            <div className="lp-density-row">
+              {[1, 2, 3].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={"lp-density-btn" + (cfg.bubbleDescriptionLines === n ? " active" : "")}
+                  onClick={() => onChange({ bubbleDescriptionLines: n })}
+                >
+                  {n} ligne{n > 1 ? "s" : ""}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              La bulle gagne la hauteur des lignes demandées : le statut et l'avancement en pied restent visibles.
+            </p>
+          </div>
+        )}
         <label className="lp-checkbox-line">
           <input type="checkbox" checked={cfg.bubbleShowDates} onChange={(e) => onChange({ bubbleShowDates: e.target.checked })} /> Dates de début et de fin aux extrémités
         </label>
@@ -11313,6 +11377,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.bubbleShowDates = bubbles.bubbleShowDates;
       data.bubbleShowProgress = bubbles.bubbleShowProgress;
       data.bubbleShowDescription = bubbles.bubbleShowDescription;
+      data.bubbleDescriptionLines = bubbles.bubbleDescriptionLines;
       data.bubbleShowLegend = bubbles.bubbleShowLegend;
       data.bubbleMacroGrouping = bubbles.bubbleMacroGrouping;
       data.bubbleMacros = bubbles.bubbleMacros;

@@ -657,6 +657,22 @@ function AnnotationsHarness() {
             groupBy="none"
           />
         </div>
+        {/* Description sur TROIS lignes (#97) : la bulle doit gagner la
+            hauteur des lignes demandées, sinon son pied — statut et
+            avancement — disparaît sous `overflow:hidden`. */}
+        <div id="harness-bubbles-desc" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb3", bubbleMacros: [],
+              bubbleShowDescription: true, bubbleDescriptionLines: 3,
+              bubbleFields: ["status"],
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
         {/* Bulles GROUPÉES par projet et colorées par responsable : un champ
             dont les valeurs n'ont pas de couleur à elles, donc le cas de la
             palette de repli, avec sa légende. */}

@@ -91,7 +91,11 @@ imbriquées, l'une posée sur des tâches **non successives** :
   lignes ;
 - deux enveloppes imbriquées ne partagent pas le même sommet ;
 - le second widget, groupé par projet et coloré par responsable, rend ses
-  en-têtes de groupe et une légende d'au moins deux rangs.
+  en-têtes de groupe et une légende d'au moins deux rangs ;
+- un troisième widget réglé sur **trois lignes de description** (#97) : la
+  description est bien coupée à trois lignes, la bulle gagne exactement la
+  hauteur de ses deux lignes supplémentaires, et son **pied — statut et
+  avancement — reste visible** au lieu d'être mangé par `overflow:hidden`.
 
 Ordre des lignes et cadrage du Mini-Gantt :
 
