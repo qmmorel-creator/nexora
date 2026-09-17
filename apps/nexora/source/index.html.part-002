@@ -4158,6 +4158,9 @@ function miniGanttComparisonStrip(cmp, window) {
   // Bornes de découpe : les quatre dates qui tombent dans la fenêtre, plus les
   // deux bords. Le Set retire les doublons — deux dates confondues ne doivent
   // pas produire un segment de largeur nulle.
+  /* Les deux périodes se recoupent-elles ? La réponse change la lecture du
+     plan non consommé — voir la classification plus bas. */
+  const chevauchement = Math.max(refStart, curStart) < Math.min(refEnd, curEnd);
   const cuts = Array.from(new Set(
     [refStart, refEnd, curStart, curEnd]
       .filter((n) => n > clipFrom && n < clipTo)
@@ -4176,7 +4179,15 @@ function miniGanttComparisonStrip(cmp, window) {
     const kind = inRef && inCur
       ? "reference"
       : inRef
-        ? (mid < curStart ? "late" : "ahead")
+        /* Part du plan que le réel n'a pas consommée. Elle se peint — départ
+           tardif en rouge, fin anticipée en vert — MAIS seulement si les deux
+           périodes se recoupent quelque part. Sans ce garde-fou, une tâche
+           déplacée EN BLOC voyait tout son plan classé en retard, fusionné avec
+           l'entre-deux et avec la période réelle : un seul pavé rouge d'un bout
+           à l'autre, dans lequel on ne distinguait plus ni la période initiale
+           ni le glissement (retour de test). Le plan n'a pas « pris du retard »,
+           il a été abandonné là où il était : il reste donc gris, en entier. */
+        ? (chevauchement ? (mid < curStart ? "late" : "ahead") : "reference")
         : inCur
           ? (mid < refStart ? "ahead" : "late")
           // Ni l'un ni l'autre : les deux périodes sont DISJOINTES et c'est
@@ -4194,6 +4205,33 @@ function miniGanttComparisonStrip(cmp, window) {
   // confondues, il n'y a aucun segment à découper — le ruban existe quand même,
   // sans quoi la ligne ne montrerait plus rien du tout.
   if (!segments.length) segments.push({ kind: "reference", leftPct: 0, widthPct: 100 });
+  /* La période de RÉFÉRENCE, dessinée à part et par-dessus les segments : un
+     contour, sans remplissage, exactement sur ses deux dates.
+
+     Les trames disent ce qui a bougé ; elles ne disent pas combien de temps le
+     plan prévoyait. Dès que le réel sort du plan, ou qu'il le quitte tout à
+     fait, la frontière entre « prévu » et « glissé » se devinait au changement
+     de trame, et pas dans tous les cas (retour de test) : une tâche d'un seul
+     jour au milieu d'un plan de trois mois ne montrait aucune frontière.
+
+     Contour NOIR, comme la barre réelle : les deux formes se répondent — le
+     plein pour le réel, le creux pour le prévu — et la durée initiale se lit
+     toujours, quelle que soit la coloration dessous.
+
+     Exprimé en % de la PISTE, et non du ruban : le cercle est rendu à CÔTÉ du
+     ruban, pas dedans. Posé dedans, son trait venait s'ajouter au contour du
+     ruban là où les deux coïncident — deux trais d'un pixel accolés, soit un
+     liseré épais et sale sur tout le pourtour d'une tâche conforme (retour de
+     test). Rendus dans le même plan, avec la même géométrie, les deux anneaux
+     se SUPERPOSENT : le noir couvre le gris, et il ne reste qu'un seul trait. */
+  const refFrom = Math.max(clipFrom, refStart);
+  const refTo = Math.min(clipTo, refEnd);
+  const reference = refTo >= refFrom ? {
+    leftPct: ((refFrom - minIdx) / span) * 100,
+    widthPct: ((refTo - refFrom) / span) * 100,
+    clippedStart: refStart < clipFrom,
+    clippedEnd: refEnd > clipTo,
+  } : null;
   return {
     leftPct: ((clipFrom - minIdx) / span) * 100,
     // Même plancher de 2 % que la barre actuelle : sur une tâche très courte,
@@ -4202,6 +4240,7 @@ function miniGanttComparisonStrip(cmp, window) {
     clippedStart: from < minIdx,
     clippedEnd: to > maxIdx,
     segments,
+    reference,
   };
 }
 
@@ -6308,7 +6347,7 @@ function treemapLegendBuckets(rows, colorMode, paletteKey, direction) {
 // Sélecteur multiple de tâches, respectant l'arborescence Projet → tâches du
 // Gantt, avec recherche — même mise en forme (pastille de projet, chip) que le
 // reste de Nexora.
-function GanttTaskMultiSelect({ tasks, ctx, value, onChange }) {
+function GanttTaskMultiSelect({ tasks, ctx, value, onChange, label, hint }) {
   const [query, setQuery] = useState("");
   const selected = Array.isArray(value) ? value : [];
   const needle = query.trim().toLowerCase();
@@ -6332,7 +6371,7 @@ function GanttTaskMultiSelect({ tasks, ctx, value, onChange }) {
   const missing = selected.filter((id) => !tasks.some((t) => t.id === id));
   return (
     <div className="lp-field">
-      <label>Tâches encadrées</label>
+      <label>{label || "Tâches encadrées"}</label>
       <div className="lp-gantt-annot-search">
         <Search size={12} />
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher une tâche…" />
@@ -6359,7 +6398,7 @@ function GanttTaskMultiSelect({ tasks, ctx, value, onChange }) {
       <p className="lp-gantt-annot-hint">
         {selected.length} tâche{selected.length > 1 ? "s" : ""} retenue{selected.length > 1 ? "s" : ""}
         {missing.length > 0 && ` · ${missing.length} tâche${missing.length > 1 ? "s" : ""} introuvable${missing.length > 1 ? "s" : ""}`}
-        {" · "}Les tâches non successives produisent plusieurs cadres.
+        {" · "}{hint || "Les tâches non successives produisent plusieurs cadres."}
       </p>
     </div>
   );

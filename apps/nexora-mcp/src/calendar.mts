@@ -17,12 +17,15 @@ export function calendarConfig(settings,projects,now=new Date()){
  const today=paris(now);
  return {calendars,window:{from:add(today,-past),to:add(today,future)},configVersion:hash({calendars,past,future}),timezone:'Europe/Paris'};
 }
-function eventDates(event){
+const clock=v=>{if(!/^\d{2}:\d{2}$/.test(v||''))throw Error('Invalid calendar time');const [h,m]=v.split(':').map(Number);if(h>23||m>59)throw Error('Invalid calendar time');return v;};
+export function normalizeGoogleCalendarEventDates(event){
  const a=event.start,b=event.end;
  if(a?.date&&b?.date){const start=date(a.date),end=add(date(b.date),-1);if(end<start)throw Error('Invalid all-day interval');return {start,end,startTime:'',endTime:'',gcalAllDay:true};}
  if(!a?.dateTime||!b?.dateTime||!/(Z|[+-]\d{2}:\d{2})$/.test(a.dateTime)||!/(Z|[+-]\d{2}:\d{2})$/.test(b.dateTime)||!Number.isFinite(Date.parse(a.dateTime))||!Number.isFinite(Date.parse(b.dateTime))||Date.parse(b.dateTime)<=Date.parse(a.dateTime))throw Error('Invalid timed event interval');
  const time=v=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Paris',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(v));
- return {start:paris(a.dateTime),end:paris(b.dateTime),startTime:time(a.dateTime),endTime:time(b.dateTime),gcalAllDay:false};
+ const dates={start:date(paris(a.dateTime)),end:date(paris(b.dateTime)),startTime:clock(time(a.dateTime)),endTime:clock(time(b.dateTime)),gcalAllDay:false};
+ if(dates.start>dates.end)throw Error('Invalid timed event interval');
+ return dates;
 }
 export function planCalendarImport({tasks,archive,projects,statuses,taskTypes,settings},args,now=new Date()){
  const config=calendarConfig(settings,projects,now);
@@ -44,7 +47,9 @@ export function planCalendarImport({tasks,archive,projects,statuses,taskTypes,se
    if(archived.some(t=>t.id===old.id)){results.push({eventId:event.id,taskId:old.id,action:'archived'});continue;}
    next.splice(next.findIndex(t=>t.id===old.id),1);archived.push({...old,gcalCancelled:true,archivedAt:now.toISOString(),gcalObservedAt:args.observedAt,updatedAt:now.toISOString()});results.push({eventId:event.id,taskId:old.id,action:'cancelled'});continue;
   }
-  const dates=eventDates(event);if(dates.start>config.window.to||dates.end<config.window.from)throw Error('Event outside configured window');
+  // Cette normalisation et sa validation sont faites avant toute construction de
+  // tâche : un événement invalide fait échouer le lot entier, sans écriture.
+  const dates=normalizeGoogleCalendarEventDates(event);if(dates.start>config.window.to||dates.end<config.window.from)throw Error('Event outside configured window');
   if(old&&archived.some(t=>t.id===old.id)){results.push({eventId:event.id,taskId:old.id,action:'archived-preserved'});continue;}
   const statusName=dates.end<today?'Terminé':dates.start<=today?'En cours':'Planifié';
   const state=statuses.filter(s=>s.name===statusName&&(!s.projectId||s.projectId===target.projectId));if(state.length!==1)throw Error('Computed calendar status missing or ambiguous');

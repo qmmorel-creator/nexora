@@ -9,7 +9,7 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    rendu possible sur les tableaux de bord, et qu'aucun d'eux ne rencontrait
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
-  "kpi", "chart", "list", "minigantt", "criticalPath", "heatmapMonth",
+  "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
   "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
   "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
@@ -111,6 +111,24 @@ function AnnotationsHarness() {
   // Second widget SANS aucune annotation propre : seuls les risques portés par
   // les tâches doivent y apparaître.
   const [otherWidget, setOtherWidget] = useState({ id: "w2", type: "minigantt", colorBy: "status", miniGanttFields: ["end"] });
+  /* Widget « Bulles » (#92). Les deux macro-bulles sont volontairement
+     imbriquées sur « t1 » : la seconde doit s'écarter de la première plutôt
+     que de confondre son trait avec le sien. « m2 » porte des tâches non
+     successives — deux enveloppes attendues. */
+  const [bubbleWidget, setBubbleWidget] = useState({
+    id: "wb1", type: "bubbles",
+    bubbleColorBy: "status",
+    bubbleFields: ["assignee", "status", "end"],
+    bubbleFieldsLayout: "under",
+    bubbleSize: "normal",
+    bubbleShowDates: true,
+    bubbleShowProgress: true,
+    bubbleMacroGrouping: false,
+    bubbleMacros: [
+      { id: "m1", label: "Phase essais", color: "#245EDB", opacity: 14, borderStyle: "solid", borderWidth: 1.5, taskIds: ["t1", "t2"], showProgress: true },
+      { id: "m2", label: "Marche probatoire", color: "#22B07D", opacity: 10, borderStyle: "dashed", borderWidth: 1.5, taskIds: ["t1", "t4"], showProgress: true },
+    ],
+  });
   // Méta blocs des Réglages : définis hors des widgets, ils doivent apparaître
   // dans le second Mini-Gantt qui n'a pourtant aucune annotation propre.
   const settingsMetaBlocks = [
@@ -607,6 +625,35 @@ function AnnotationsHarness() {
             onDelete={noop}
           />
         )}
+        {/* Widget « Bulles » (#92) : le MÊME diagramme, lu en bulles. Deux
+            macro-bulles, dont une posée sur des tâches NON SUCCESSIVES pour
+            vérifier qu'elle produit bien deux enveloppes distinctes, et une
+            seconde qui partage une tâche avec la première pour éprouver
+            l'imbrication. */}
+        <div id="harness-bubbles" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={bubbleWidget}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={(patch) => setBubbleWidget((w) => ({ ...w, ...patch }))}
+            onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
+            groupBy="none"
+          />
+        </div>
+        {/* Bulles GROUPÉES par projet et colorées par responsable : un champ
+            dont les valeurs n'ont pas de couleur à elles, donc le cas de la
+            palette de repli, avec sa légende. */}
+        <div id="harness-bubbles-grouped" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb2", bubbleColorBy: "assignee", bubbleShowLegend: true,
+              bubbleSize: "compact", bubbleFields: ["status", "end"], bubbleMacros: [],
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="project"
+          />
+        </div>
         {/* Aucun champ à droite (issue #66) : la colonne doit disparaître
             complètement et la piste aller jusqu'au bord du widget. */}
         <div id="harness-nofields-minigantt" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 700, marginTop: 14 }}>
@@ -710,11 +757,11 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
 if (benchApp) {
   const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
   const benchWidgets = [
-    "kpi", "chart", "list", "minigantt", "criticalPath", "heatmapMonth",
+    "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
     "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
-    "customCard", "automationAlerts", "projectStory",
+    "customCard",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },

@@ -667,6 +667,45 @@ mais conserve les valeurs saisies.
 | `late` | le temps que le réel occupe au-delà du plan, ou que le plan réservait avant que le réel ne démarre | rouge corail (`#E4572E`), hachures **montantes** (45°) |
 | `ahead` | le temps **rendu** : prévu et non consommé, ou consommé en avance | vert (`#1F9D6B`), hachures **descendantes** (−45°) |
 
+### Une tâche déplacée en bloc garde son plan
+
+La part du plan que le réel n'a pas consommée se peint — départ tardif en rouge,
+fin anticipée en vert — **mais seulement si les deux périodes se recoupent
+quelque part**.
+
+Sans ce garde-fou, une tâche déplacée **en bloc** (plan du 09/06 au 09/09, réel
+du 13/09 au 02/10, aucun recouvrement) voyait ses trois morceaux — plan non
+consommé, entre-deux, période réelle — tous classés en retard, puis fusionnés
+par la règle des voisins de même nature : un seul pavé rouge d'un bout à
+l'autre, dans lequel ni la période initiale ni le glissement ne se lisaient
+plus (retour de test).
+
+Un plan abandonné n'a pas « pris du retard » : il est resté où il était. Il
+reste donc **gris, en entier**, et le rouge ne couvre que l'entre-deux et la
+période réelle.
+
+### La durée initiale se lit toujours
+
+Les trames disent ce qui a **bougé** ; elles ne disent pas combien de temps le
+plan **prévoyait**. Dès que le réel sort du plan, la frontière entre « prévu »
+et « glissé » se devinait au seul changement de trame — et pas dans tous les
+cas : une tâche d'un seul jour au milieu d'un plan de trois mois n'en montrait
+aucune.
+
+La période de référence est donc **cerclée à part**, par-dessus les trames,
+exactement sur ses deux dates, sans remplissage. Le contour est le **même noir
+que la barre réelle** : les deux formes se répondent — le **plein** pour le
+réel, au-dessus ; le **creux** pour le prévu, en dessous.
+
+`reference` sort de `miniGanttComparisonStrip` en % de la **piste**, et non du
+ruban : le cercle est rendu **à côté** du ruban, pas dedans, avec la même
+géométrie (même sommet, même hauteur, même arrondi) et un anneau posé de la même
+façon — une ombre portée **à l'extérieur** de la boîte. C'est ce qui fait que
+les deux anneaux se **superposent** là où ils coïncident : le noir couvre le
+gris, et il ne reste qu'un seul trait. Posé en bordure **intérieure**, son trait
+venait s'ajouter à celui du ruban et une tâche conforme portait un liseré épais
+sur tout son pourtour.
+
 Le ruban porte le **même contour que la barre réelle, en gris** : les deux
 étages se répondent, et le ruban se détache du fond comme du bloc temporel qu'il
 traverse. Il est posé par une ombre plutôt qu'une bordure — le conteneur est en
@@ -800,3 +839,16 @@ resserre ce que la page laisse passer.
 Reste propre au widget, faute d'objet équivalent dans la vue : la
 personnalisation du **cadre** (icône du titre, couleur du titre, couleur du
 bandeau, couleur de fond). La vue n'a pas de cadre de widget à habiller.
+
+## Le widget « Bulles » partage ces annotations
+
+Le widget « Bulles » (`docs/WIDGET_BULLES.md`) n'est pas un second diagramme :
+c'est le Mini-Gantt rendu en bulles descriptives. Il lit donc la **même** clé
+`widget.ganttAnnotations`, dessine les mêmes blocs temporels, encadrés, jalons et
+annotations, et se règle avec le **même** éditeur.
+
+Ses **macro-bulles** sont une couche de plus, propre à ce widget
+(`widget.bubbleMacros`) — mais leur géométrie ne réimplémente rien : elle appelle
+`ganttFrameSegments`, la fonction des encadrés, qui sait déjà qu'un en-tête de
+groupe coupe la continuité des lignes.
+

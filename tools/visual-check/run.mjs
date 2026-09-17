@@ -100,6 +100,23 @@ const seen = await page.evaluate(() => {
     // au mode près — ce qui permet de comparer les hauteurs de ligne des deux.
     cmpStrips: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpstrip"),
     cmpSegRef: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-reference"),
+    /* La durée initiale, cerclée par-dessus les trames : elle doit être là sur
+       CHAQUE ligne comparée, quelle que soit la coloration dessous. */
+    cmpRefFrames: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpref")].map((el) => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      /* Le ruban de la MÊME ligne : les deux anneaux doivent partager sommet et
+         hauteur, faute de quoi ils s'accolent au lieu de se superposer et la
+         tâche conforme porte un liseré épais sur tout son pourtour. */
+      const ruban = el.closest(".lp-widget-minigantt-row")?.querySelector(".lp-widget-minigantt-cmpstrip");
+      const rr = ruban ? ruban.getBoundingClientRect() : null;
+      return {
+        w: Math.round(r.width), h: Math.round(r.height),
+        fond: cs.backgroundColor, bord: cs.borderTopWidth,
+        dTop: rr ? Math.round(r.top - rr.top) : null,
+        dH: rr ? Math.round(r.height - rr.height) : null,
+      };
+    }),
     cmpSegLate: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-late"),
     cmpSegAhead: rects("#harness-comparison-minigantt .lp-widget-minigantt-cmpseg.is-ahead"),
     /* Couleur RÉELLEMENT peinte des segments d'avance. Elle est portée par le
@@ -1137,6 +1154,44 @@ const releverPanneau = async (bouton) => {
   return releve;
 };
 
+/* Widget « Bulles » (#92). Ce que le banc doit prouver, et que ni les tests
+   d'extraction ni la relecture ne peuvent dire : les bulles se rendent, les
+   champs rangés SOUS une bulle restent dans leur ligne (en position absolue,
+   ils débordaient sur la ligne suivante et la hauteur mesurée les ignorait),
+   et les enveloppes des macro-bulles ont une surface non nulle, restent dans
+   la zone des lignes et se décalent quand elles s'imbriquent. */
+const bulles = await page.evaluate(() => {
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), text: el.textContent.trim() };
+  };
+  const root = document.querySelector("#harness-bubbles .lp-widget-minigantt");
+  if (!root) return { error: "widget Bulles absent du banc" };
+  const rows = [...root.querySelectorAll(".lp-widget-minigantt-row")].map((row) => ({
+    row: box(row),
+    bubble: row.querySelector(".lp-bubble, .lp-bubble-milestone") ? box(row.querySelector(".lp-bubble, .lp-bubble-milestone")) : null,
+    fields: row.querySelector(".lp-bubble-fields") ? box(row.querySelector(".lp-bubble-fields")) : null,
+  }));
+  const grouped = document.querySelector("#harness-bubbles-grouped .lp-widget-minigantt");
+  return {
+    rows,
+    bubbles: root.querySelectorAll(".lp-bubble").length,
+    milestones: root.querySelectorAll(".lp-bubble-milestone").length,
+    bars: root.querySelectorAll(".lp-widget-minigantt-bar").length,
+    frames: [...root.querySelectorAll(".lp-bubble-macro-frame")].map(box),
+    fills: [...root.querySelectorAll(".lp-bubble-macro")].map(box),
+    labels: [...root.querySelectorAll(".lp-bubble-macro-label")].map(box),
+    progress: [...root.querySelectorAll(".lp-bubble-macro-progress")].map(box),
+    axis: root.querySelector(".lp-widget-minigantt-axis") ? box(root.querySelector(".lp-widget-minigantt-axis")) : null,
+    // Le mode bulles supprime la colonne d'étiquettes de gauche : le titre vit
+    // dans la bulle. La piste doit donc partir du bord du widget.
+    labelColumn: root.querySelectorAll(".lp-widget-minigantt-label").length,
+    legend: grouped ? [...grouped.querySelectorAll(".lp-bubble-legend-item")].map(box) : [],
+    groupHeads: grouped ? grouped.querySelectorAll(".lp-widget-minigantt-group-head").length : 0,
+    groupedBubbles: grouped ? grouped.querySelectorAll(".lp-bubble, .lp-bubble-milestone").length : 0,
+  };
+});
+
 const parite = {};
 try {
   /* Page rechargée : les scénarios précédents laissent des modales ouvertes,
@@ -1281,6 +1336,12 @@ expect(seen.cmpStripUnderBar.every((gap) => gap >= 0 && gap <= 1),
 expect(seen.cmpSegBorders.every((b) => b === "0px/0px"), `Comparaison : un segment du ruban porte une bordure (${seen.cmpSegBorders.join(", ")}) — les jonctions doivent se faire par la seule trame`);
 expect(seen.cmpSegGaps.every((g) => g <= 1), `Comparaison : les segments d'un ruban ne sont pas jointifs (écarts ${seen.cmpSegGaps.join("/")} px)`);
 
+expect(seen.cmpRefFrames.length === 5, `Comparaison : ${seen.cmpRefFrames.length} période(s) de référence cerclée(s), 5 attendues — la durée initiale doit se lire sur chaque ligne comparée`);
+expect(seen.cmpRefFrames.every((f) => f.w > 1 && f.h > 1), `Comparaison : un cercle de référence est de surface nulle (${JSON.stringify(seen.cmpRefFrames)})`);
+expect(seen.cmpRefFrames.every((f) => f.fond === "rgba(0, 0, 0, 0)"), `Comparaison : le cercle de référence a un fond (${seen.cmpRefFrames.map((f) => f.fond).join(", ")}) — il masquerait la trame qu'il encadre`);
+expect(seen.cmpRefFrames.every((f) => f.bord === "0px"), `Comparaison : le cercle de référence est posé en BORDURE (${seen.cmpRefFrames.map((f) => f.bord).join(", ")}) — son trait s'accolerait à celui du ruban au lieu de le couvrir`);
+expect(seen.cmpRefFrames.every((f) => f.dTop === 0 && f.dH === 0),
+  `Comparaison : le cercle de référence n'a pas la géométrie du ruban (décalages ${JSON.stringify(seen.cmpRefFrames.map((f) => [f.dTop, f.dH]))}) — les deux anneaux s'accoleraient au lieu de se superposer`);
 expect(seen.cmpSegRef.length >= 1, `Comparaison : ${seen.cmpSegRef.length} segment(s) de période tenue, au moins 1 attendu`);
 expect(seen.cmpSegLate.length >= 1, `Comparaison : ${seen.cmpSegLate.length} segment(s) de retard, au moins 1 attendu`);
 expect(seen.cmpSegAhead.length >= 1, `Comparaison : ${seen.cmpSegAhead.length} segment(s) d'avance, au moins 1 attendu`);
@@ -1945,6 +2006,40 @@ expect((taskMeta.critShape || []).every((f) => /^11x11:50%$/.test(f)),
 expect(taskMeta.critDotAfterPick === 1, "Fiche de tâche : après avoir choisi un niveau, la pastille n'apparaît pas sur la valeur fermée");
 
 expect(!seen.miniRiskButton, "Mini-Gantt : le bouton « + Risque » devrait avoir disparu — les risques s'éditent dans la fiche de la tâche");
+
+// --- Widget « Bulles » (#92) ------------------------------------------------
+expect(!bulles.error, `Bulles : ${bulles.error || ""}`);
+if (!bulles.error) {
+  expect(bulles.bubbles > 0, "Bulles : aucune bulle rendue");
+  expect(bulles.milestones > 0, "Bulles : aucun jalon rendu en bulle compacte");
+  expect(bulles.bars === 0, `Bulles : ${bulles.bars} barre(s) de Mini-Gantt dessinée(s) — le mode bulles remplace la barre, il ne s'y ajoute pas`);
+  expect(bulles.labelColumn === 0, "Bulles : la colonne d'étiquettes de gauche est rendue — en mode bulles, le titre vit dans la bulle");
+  // Les champs sous la bulle doivent rester DANS leur ligne : c'est le défaut
+  // que la position absolue produisait (débordement sur la ligne suivante).
+  const debordent = bulles.rows.filter((r) => r.fields && (r.fields.bottom > r.row.bottom + 1 || r.fields.top < r.row.top - 1));
+  expect(debordent.length === 0, `Bulles : ${debordent.length} ligne(s) dont les champs débordent de la ligne — ils doivent compter dans sa hauteur`);
+  const horsBulle = bulles.rows.filter((r) => r.bubble && (r.bubble.bottom > r.row.bottom + 2 || r.bubble.top < r.row.top - 2));
+  expect(horsBulle.length === 0, `Bulles : ${horsBulle.length} bulle(s) sortent de leur ligne`);
+  // Deux macro-bulles, dont une sur des tâches NON successives : trois
+  // enveloppes, chacune avec son remplissage, son libellé et sa surface.
+  expect(bulles.frames.length === 3, `Bulles : ${bulles.frames.length} enveloppe(s) de macro-bulle, 3 attendues (une contiguë, une coupée en deux)`);
+  expect(bulles.fills.length === bulles.frames.length, `Bulles : ${bulles.fills.length} remplissage(s) pour ${bulles.frames.length} cadre(s) — les deux couches doivent aller par paires`);
+  expect(bulles.labels.length === 3, `Bulles : ${bulles.labels.length} libellé(s) de macro-bulle, 3 attendus`);
+  expect(bulles.frames.every((f) => f.right - f.left > 4 && f.bottom - f.top > 4), "Bulles : une enveloppe a une surface nulle");
+  const bandeHaut = Math.min(...bulles.rows.map((r) => r.row.top));
+  const bandeBas = Math.max(...bulles.rows.map((r) => r.row.bottom));
+  expect(bulles.frames.every((f) => f.top >= bandeHaut - 12 && f.bottom <= bandeBas + 12),
+    "Bulles : une enveloppe sort de la zone des lignes");
+  expect(bulles.progress.length > 0, "Bulles : aucune barre d'avancement agrégé sur les macro-bulles");
+  // Imbrication : deux macro-bulles partagent une tâche, leurs enveloppes ne
+  // doivent pas confondre leurs traits.
+  const tops = bulles.frames.map((f) => f.top).sort((a, b) => a - b);
+  expect(new Set(tops).size === tops.length, "Bulles : deux enveloppes imbriquées partagent exactement le même sommet");
+  // Second widget : groupé par projet, coloré par responsable, avec légende.
+  expect(bulles.groupHeads >= 2, `Bulles groupées : ${bulles.groupHeads} en-tête(s) de groupe`);
+  expect(bulles.groupedBubbles > 0, "Bulles groupées : aucune bulle dans les groupes");
+  expect(bulles.legend.length >= 2, `Bulles : légende à ${bulles.legend.length} rang(s), au moins 2 attendus (un par responsable présent)`);
+}
 
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
 expect(scoped.labels.length === 2, `Paramètres : ${scoped.labels.length} tâche(s) proposée(s), 2 attendues (seul le projet filtré)`);
