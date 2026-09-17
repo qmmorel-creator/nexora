@@ -27,3 +27,21 @@ test("missing or duplicate JSX entries fail the build", async () => {
   await assert.rejects(compileUi("<html></html>"), /Expected one JSX entry/);
   await assert.rejects(compileUi('<script type="text/babel">const a=1;</script>'.repeat(2)), /Expected one JSX entry/);
 });
+
+/* Magasin FIGÉ : nexora:momentumSnapshots (#99).
+
+   Le widget Project Momentum a disparu au nettoyage général, mais la capture
+   quotidienne, elle, écrivait toujours une ligne par projet et par jour — un
+   magasin qui grossissait indéfiniment sans un seul lecteur. Le contrat du MCP
+   ne bouge pas : la clé y reste déclarée, et ses données restent lisibles. */
+test("plus personne n'écrit les instantanés de momentum", async () => {
+  const source = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
+  // Le setter n'existe plus que dans sa déclaration useState et son chargement
+  // au démarrage : aucune troisième occurrence, donc aucun écrivain.
+  const occurrences = (source.match(/setMomentumSnapshots/g) || []).length;
+  assert.equal(occurrences, 2, "un écrivain de momentumSnapshots est réapparu");
+  assert.doesNotMatch(source, /persistKey\("nexora:momentumSnapshots"/);
+  // La clé reste emportée par la sauvegarde complète : les instantanés déjà
+  // enregistrés ne doivent pas disparaître des exports.
+  assert.match(source, /"nexora:momentumSnapshots": momentumSnapshots,/);
+});
