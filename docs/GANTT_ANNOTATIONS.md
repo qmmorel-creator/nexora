@@ -322,8 +322,15 @@ type TemporalBlock = { /* … */ kind?: "phase" | "decision" };  // fenêtre de 
 
 type MiniGanttMilestone = {
   id: string; title: string; date: string;
-  type: "standard" | "decision" | "contractual" | "delivery" | "commissioning";
-  color?: string; taskId?: string | null;   // un jalon peut n'être rattaché à rien
+  type: string;        // identifiant d'un type du catalogue (Réglages)
+  color?: string;      // vide = celle du type
+  taskId?: string | null;   // un jalon peut n'être rattaché à rien
+};
+
+type MilestoneType = {   // Réglages > Types de jalon, clé nexora:milestoneTypes
+  id: string; name: string;
+  symbol: string;      // une clé de MILESTONE_SYMBOLS
+  color: string;
 };
 
 type MiniGanttTaskRisk = {   // stocké dans task.delayRisks (sans taskId)
@@ -351,7 +358,11 @@ type MiniGanttSpan = {          // annotation horizontale (#93)
   thickness?: number;           // 0,5 à 6 px, défaut 2
   opacity?: number;             // 10 à 100 %, défaut 100
   position?: "above" | "center" | "below";   // défaut center
+  capStart?: SpanCap;           // bout gauche, défaut circle
+  capEnd?: SpanCap;             // bout droit, défaut circle
 };
+
+type SpanCap = "circle" | "dot" | "square" | "diamond" | "arrow" | "bar" | "none";
 ```
 
 ## Annotations horizontales — Mini-Gantt uniquement
@@ -381,31 +392,68 @@ un trait posé derrière la barre de sa propre ligne serait invisible. Il ne cap
 pas le pointeur — seule l'étiquette est cliquable, et elle rouvre l'éditeur sur
 cette annotation.
 
-## Formes des repères de jalon
+### Les bouts
 
-La couleur seule ne distingue pas deux choix : dans une liste déroulante, cinq
-pastilles rondes de teintes voisines se ressemblent, et une fois le choix fait le
-bouton fermé ne dit plus rien du tout (#94). Chaque type de jalon porte donc sa
-**forme** :
+Le rond creux était figé dans le rendu ; il devient un choix, et un choix **par
+extrémité** : rond creux, rond plein, carré, losange, flèche, trait, ou aucun
+bout. Un trait `|———▶` ne dit pas la même chose qu'un trait `●———●`. Le rond
+creux reste la valeur par défaut, donc une annotation posée avant ce réglage ne
+bouge pas.
 
-| Type | Forme |
-|---|---|
-| `standard` | losange |
-| `decision` | cercle |
-| `contractual` | carré |
-| `delivery` | triangle |
-| `commissioning` | étoile |
+Comme les symboles de jalon, les bouts sont des tracés SVG dessinés par un seul
+composant (`SpanCapGlyph`), lu par le sélecteur **et** par le diagramme : le bout
+choisi est exactement celui qui apparaît. La flèche est la seule à dépendre du
+côté — elle pointe vers l'extérieur du trait. « Aucun » réserve quand même sa
+place : sans cela, le trait s'allongerait selon les bouts choisis et ne
+couvrirait plus ses dates.
 
-`MINIGANTT_MILESTONE_SHAPES` / `miniGanttMilestoneShape()` sont **la** référence :
-le sélecteur de type, le résumé de la ligne dans l'éditeur et le repère dessiné
-dans le diagramme la lisent tous les trois, donc ils ne peuvent pas montrer trois
-formes différentes pour le même jalon. Le rendu CSS est une classe unique
-(`.lp-annot-shape.shape-*`).
+## Types de jalon — un catalogue, dans les Réglages
+
+La liste des types était figée dans le code : cinq types, cinq couleurs, cinq
+formes, impossibles à renommer et impossibles à compléter. Elle est devenue un
+**catalogue réglé dans Réglages > Types de jalon**, comme les statuts et les
+types de tâche — nom, symbole et couleur par type, ajout, suppression,
+réordonnancement. Il vit sous la clé `nexora:milestoneTypes`.
+
+Un jalon enregistre l'**identifiant** de son type. Les cinq identifiants
+historiques (`standard`, `decision`, `contractual`, `delivery`,
+`commissioning`) sont ceux du catalogue de départ : un jalon posé avant ce
+changement garde son type, son nom et sa couleur. Un type supprimé ne casse
+rien — `milestoneTypeFor()` retombe sur le **premier** type du catalogue, et le
+dernier type ne peut pas être supprimé.
+
+La **couleur d'un jalon est facultative** : vide, il prend celle de son type, et
+changer la couleur du type les met tous à jour d'un coup. La normalisation
+remplissait autrefois ce champ avec la couleur figée du type ; elle le rend
+maintenant aux jalons concernés, et seulement à eux — une couleur qui vaut
+exactement celle du type historique n'a pas été choisie, elle a été recopiée.
+
+### Les symboles
+
+`MILESTONE_SYMBOLS` en propose **vingt-huit**, tous distincts : losange, disque,
+anneau, demi-disque, carré, triangle, pentagone, hexagone, octogone, étoiles à
+quatre, cinq et six branches, croix, drapeau, marque-page, bouclier, éclair,
+goutte, flèches, chevron, barre, et leurs variantes creuses.
+
+Ce sont des **tracés SVG** dans une grille de 24×24, et non des icônes d'une
+bibliothèque : le repère mesure neuf pixels dans le diagramme, taille à laquelle
+un trait fin disparaît. Une silhouette pleine, elle, se lit encore. `hollow`
+dessine le contour au lieu du plein, ce qui laisse deux symboles de même
+silhouette rester distincts.
+
+`MilestoneSymbol` est le seul composant qui les dessine : la grille de choix des
+Réglages, le sélecteur de type, le résumé de la ligne dans l'éditeur, le repère
+du Mini-Gantt et celui de la vue Métro l'appellent tous. Ils ne peuvent donc pas
+montrer cinq dessins différents pour le même type. La grille de choix les affiche
+à leur taille de lecture et dans la couleur du type : choisir sur une vignette
+agrandie mène à des repères qu'on ne distingue plus une fois dans le diagramme.
+
+### Les autres sélecteurs
 
 Une option de `SearchableSelect` peut porter un `glyph` — un repère visuel libre
-qui remplace la pastille de couleur dans la liste **et** sur le bouton fermé.
-Les natures de bloc, les ancrages d'une annotation et la gravité d'un risque
-s'en servent.
+qui remplace la pastille de couleur dans la liste **et** sur le bouton fermé. Les
+types de jalon, les bouts d'une annotation horizontale, les natures de bloc, les
+ancrages d'une annotation et la gravité d'un risque s'en servent.
 
 Le menu d'un `SearchableSelect` s'ouvre **vers le haut** quand la place manque
 vers le bas dans le cadre qui le rogne (une modale, sinon la fenêtre). Sans cela,
@@ -910,17 +958,23 @@ vérifie que ces sentinelles et le rendu des annotations restent présents dans 
 build.
 
 `apps/nexora/tests/gantt-span-annotations.test.mjs` couvre les annotations
-horizontales depuis les mêmes sentinelles : validation (deux dates valides et une
-tâche, texte facultatif), normalisation **idempotente** des réglages, placement
-vertical selon la position choisie et dans la ligne de la bonne tâche, mise à
-l'écart d'une annotation dont la tâche n'est pas affichée, et unicité des formes
-de repère — deux types de jalon ne doivent jamais partager une forme.
+horizontales et le catalogue des types, depuis les mêmes sentinelles :
+validation (deux dates valides et une tâche, texte facultatif), normalisation
+**idempotente** des réglages et des bouts, placement vertical selon la position
+choisie et dans la ligne de la bonne tâche, mise à l'écart d'une annotation dont
+la tâche n'est pas affichée ; puis, côté catalogue : au moins vingt symboles tous
+distincts (clé et tracé), repli sur le catalogue de départ quand rien n'est
+enregistré, conservation des cinq identifiants historiques, nettoyage d'un type
+sans le dénaturer, et repli d'un jalon dont le type a disparu sur le premier du
+catalogue.
 
 Le contrôle visuel vérifie en plus, sur le rendu réel : le trait posé dans la
 ligne de sa tâche, le trait ignoré quand la tâche n'est pas affichée, le calque
-des traits au-dessus des barres, les traits verticaux de jalon présents
-uniquement dans le widget qui coche le réglage et en `z-index: 0`, et des
-repères tous distincts à l'écran.
+des traits au-dessus des barres, **deux bouts réellement différents** quand ils
+sont réglés différemment, les traits verticaux de jalon présents uniquement dans
+le widget qui coche le réglage et en `z-index: 0`, et des repères tous distincts
+à l'écran — y compris celui d'un type ajouté dans les Réglages et celui d'un
+jalon dont le type a été supprimé.
 
 
 ## La vue Gantt et le widget : mêmes réglages (#80)

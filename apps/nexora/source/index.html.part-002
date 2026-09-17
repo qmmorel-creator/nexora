@@ -1102,6 +1102,7 @@ const SETTINGS_TABS = [
   { key: "projects", label: "Projets", icon: "folder" },
   { key: "statuses", label: "Statuts", icon: "settings" },
   { key: "taskTypes", label: "Types", icon: "tag" },
+  { key: "milestoneTypes", label: "Types de jalon", icon: "flag" },
   { key: "users", label: "Utilisateurs", icon: "user" },
   { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
   { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
@@ -2219,6 +2220,7 @@ function SettingsModal({
   projects, setProjects, projectFolders, setProjectFolders, tasks, setTasks, onDeleteProject, onBulkDelete, palette,
   statuses, setStatuses,
   taskTypes, setTaskTypes,
+  milestoneTypes, setMilestoneTypes,
   teamMembers, setTeamMembers,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
@@ -2283,6 +2285,9 @@ function SettingsModal({
             )}
             {activeTab === "taskTypes" && (
               <TaskTypeManager embedded taskTypes={taskTypes} setTaskTypes={setTaskTypes} tasks={tasks} projects={projects} pushToast={pushToast} />
+            )}
+            {activeTab === "milestoneTypes" && (
+              <MilestoneTypeManager embedded milestoneTypes={milestoneTypes} setMilestoneTypes={setMilestoneTypes} pushToast={pushToast} />
             )}
             {activeTab === "users" && (
               <TeamMemberManager embedded teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} pushToast={pushToast} />
@@ -3482,14 +3487,6 @@ function pruneHighlightFrames(frames, knownTaskIds) {
 // --- Mini-Gantt : fenêtres de décision, jalons, risques, annotations --------
 // Tout vit dans la configuration du widget, jamais dans les données métier.
 const GANTT_DECISION_DEFAULT_COLOR = "#8B5CF6";
-const MINIGANTT_MILESTONE_TYPES = ["standard", "decision", "contractual", "delivery", "commissioning"];
-const MINIGANTT_MILESTONE_COLORS = {
-  standard: "#4F6AF5",
-  decision: "#8B5CF6",
-  contractual: "#0EA5E9",
-  delivery: "#22B07D",
-  commissioning: "#F2A93B",
-};
 const MINIGANTT_RISK_STYLES = ["solid", "dashed", "hatched"];
 const MINIGANTT_RISK_SEVERITIES = ["low", "medium", "high", "critical"];
 const MINIGANTT_RISK_DEFAULT_COLOR = "#D64545";
@@ -3497,35 +3494,93 @@ const MINIGANTT_RISK_DEFAULT_COLOR = "#D64545";
 // donné : plus la gravité est forte, plus le couloir d'incertitude est long.
 const MINIGANTT_RISK_DEFAULT_DAYS = { low: 2, medium: 5, high: 10, critical: 15 };
 const MINIGANTT_RISK_SEVERITY_LABELS = { low: "faible", medium: "moyen", high: "élevé", critical: "critique" };
-const MINIGANTT_MILESTONE_LABELS = {
-  standard: "Jalon",
-  decision: "Décision",
-  contractual: "Engagement contractuel",
-  delivery: "Livraison",
-  commissioning: "Mise en service",
-};
+/* ==========================================================================
+   TYPES DE JALON — un catalogue, réglé dans Réglages > Types de jalon
+   ==========================================================================
 
-/* Forme du repère de chaque type de jalon.
+   La liste était figée dans le code : cinq types, cinq couleurs, cinq formes,
+   impossibles à renommer et impossibles à compléter (#94). Elle devient un
+   catalogue comme les statuts et les types de tâche — nom, symbole et couleur
+   par type, ajout, suppression, réordonnancement.
 
-   La couleur seule ne distingue pas deux choix : dans une liste déroulante,
-   cinq pastilles rondes de teintes voisines se ressemblent, et une fois le
-   choix fait le bouton fermé ne dit plus rien du tout (#94). La FORME, elle,
-   se lit toujours — losange, cercle, carré, triangle, étoile —, même en noir
-   et blanc.
+   Un jalon enregistre l'IDENTIFIANT de son type. Les cinq identifiants
+   historiques sont ceux du catalogue de départ : un jalon posé avant ce
+   changement garde donc son type, son nom et sa couleur. Un type supprimé ne
+   casse rien — le jalon retombe sur le premier type du catalogue. */
+const MILESTONE_TYPE_SEED = [
+  { id: "standard", name: "Jalon", symbol: "diamond", color: "#4F6AF5" },
+  { id: "decision", name: "Décision", symbol: "circle", color: "#8B5CF6" },
+  { id: "contractual", name: "Engagement contractuel", symbol: "square", color: "#0EA5E9" },
+  { id: "delivery", name: "Livraison", symbol: "triangle", color: "#22B07D" },
+  { id: "commissioning", name: "Mise en service", symbol: "star5", color: "#F2A93B" },
+];
 
-   Cette table est LA référence : le sélecteur de type, le résumé de la ligne
-   et le repère dessiné dans le diagramme la lisent tous les trois, donc ils ne
-   peuvent pas montrer trois formes différentes pour le même jalon. */
-const MINIGANTT_MILESTONE_SHAPES = {
-  standard: "diamond",
-  decision: "circle",
-  contractual: "square",
-  delivery: "triangle",
-  commissioning: "star",
-};
+/* Symboles disponibles.
 
-function miniGanttMilestoneShape(type) {
-  return MINIGANTT_MILESTONE_SHAPES[type] || MINIGANTT_MILESTONE_SHAPES.standard;
+   Ce sont des tracés SVG dans une grille de 24×24, et non des icônes d'une
+   bibliothèque : un trait fin devient illisible à la taille réellement utilisée
+   dans le diagramme — neuf pixels. Une silhouette pleine, elle, se lit encore.
+
+   `hollow` dessine le contour au lieu du plein : c'est ce qui permet à deux
+   symboles de même silhouette de rester distincts. */
+const MILESTONE_SYMBOLS = [
+  { key: "diamond", label: "Losange", d: "M12 1.5 L22.5 12 L12 22.5 L1.5 12 Z" },
+  { key: "diamond-ring", label: "Losange creux", hollow: true, d: "M12 3 L21 12 L12 21 L3 12 Z" },
+  { key: "circle", label: "Disque", d: "M12 2 A10 10 0 1 1 11.99 2 Z" },
+  { key: "ring", label: "Anneau", hollow: true, d: "M12 3.5 A8.5 8.5 0 1 1 11.99 3.5 Z" },
+  { key: "half", label: "Demi-disque", d: "M12 2 A10 10 0 0 1 12 22 Z" },
+  { key: "square", label: "Carré", d: "M2.5 2.5 H21.5 V21.5 H2.5 Z" },
+  { key: "square-ring", label: "Carré creux", hollow: true, d: "M4 4 H20 V20 H4 Z" },
+  { key: "triangle", label: "Triangle", d: "M12 1.5 L22.5 21 H1.5 Z" },
+  { key: "triangle-down", label: "Triangle inversé", d: "M1.5 3 H22.5 L12 22.5 Z" },
+  { key: "pentagon", label: "Pentagone", d: "M12 1.5 L22.5 9.2 L18.5 21.5 H5.5 L1.5 9.2 Z" },
+  { key: "hexagon", label: "Hexagone", d: "M12 1.5 L21.5 7 V17 L12 22.5 L2.5 17 V7 Z" },
+  { key: "octagon", label: "Octogone", d: "M8 1.5 H16 L22.5 8 V16 L16 22.5 H8 L1.5 16 V8 Z" },
+  { key: "star4", label: "Étoile à 4 branches", d: "M12 1 L14.9 9.1 L23 12 L14.9 14.9 L12 23 L9.1 14.9 L1 12 L9.1 9.1 Z" },
+  { key: "star5", label: "Étoile à 5 branches", d: "M12 1.2 L14.9 9.2 L23.4 9.4 L16.7 14.6 L19.1 22.8 L12 17.9 L4.9 22.8 L7.3 14.6 L0.6 9.4 L9.1 9.2 Z" },
+  { key: "star6", label: "Étoile à 6 branches", d: "M12 1.5 L20.6 16.5 H3.4 Z M12 22.5 L3.4 7.5 H20.6 Z" },
+  { key: "cross", label: "Croix de Saint-André", d: "M5 1.8 L12 8.8 L19 1.8 L22.2 5 L15.2 12 L22.2 19 L19 22.2 L12 15.2 L5 22.2 L1.8 19 L8.8 12 L1.8 5 Z" },
+  { key: "plus", label: "Croix", d: "M9.2 1.5 H14.8 V9.2 H22.5 V14.8 H14.8 V22.5 H9.2 V14.8 H1.5 V9.2 H9.2 Z" },
+  { key: "flag", label: "Drapeau", d: "M3 1.5 H6 V22.5 H3 Z M6 3 H21 L16.8 8.5 L21 14 H6 Z" },
+  { key: "bookmark", label: "Marque-page", d: "M4.5 1.5 H19.5 V22.5 L12 16.5 L4.5 22.5 Z" },
+  { key: "shield", label: "Bouclier", d: "M12 1.5 L21 5 V12 C21 17.5 17 21.2 12 22.8 C7 21.2 3 17.5 3 12 V5 Z" },
+  { key: "bolt", label: "Éclair", d: "M14 1 L4 13.8 H10.4 L9.4 23 L20 10 H13.1 Z" },
+  { key: "droplet", label: "Goutte", d: "M12 1.5 C12 1.5 20 10.2 20 15 A8 8 0 0 1 4 15 C4 10.2 12 1.5 12 1.5 Z" },
+  { key: "arrow-right", label: "Flèche droite", d: "M3.5 2 L21 12 L3.5 22 Z" },
+  { key: "arrow-left", label: "Flèche gauche", d: "M20.5 2 L3 12 L20.5 22 Z" },
+  { key: "arrow-up", label: "Flèche haut", d: "M12 1.5 L21.5 11 H16.2 V22.5 H7.8 V11 H2.5 Z" },
+  { key: "arrow-down", label: "Flèche bas", d: "M12 22.5 L2.5 13 H7.8 V1.5 H16.2 V13 H21.5 Z" },
+  { key: "chevron", label: "Chevron", d: "M1.5 4 L12 13.5 L22.5 4 V11 L12 20.5 L1.5 11 Z" },
+  { key: "bar", label: "Barre", d: "M9 1.5 H15 V22.5 H9 Z" },
+];
+
+const MILESTONE_SYMBOL_KEYS = MILESTONE_SYMBOLS.map((symbol) => symbol.key);
+
+function milestoneSymbolFor(key) {
+  return MILESTONE_SYMBOLS.find((symbol) => symbol.key === key) || MILESTONE_SYMBOLS[0];
+}
+
+/* Le catalogue tel que le rendu le lit. Une liste absente, vide ou illisible
+   rend le catalogue de départ : le diagramme n'est JAMAIS sans types, même
+   avant le premier chargement Firebase. */
+function normalizeMilestoneTypes(list) {
+  const cleaned = (Array.isArray(list) ? list : [])
+    .filter((type) => type && typeof type === "object" && type.id && String(type.name || "").trim())
+    .map((type) => ({
+      id: String(type.id),
+      name: String(type.name).trim(),
+      symbol: MILESTONE_SYMBOL_KEYS.includes(type.symbol) ? type.symbol : MILESTONE_SYMBOLS[0].key,
+      color: typeof type.color === "string" && type.color ? type.color : MILESTONE_TYPE_SEED[0].color,
+    }));
+  return cleaned.length ? cleaned : MILESTONE_TYPE_SEED.map((type) => ({ ...type }));
+}
+
+/* Le type d'un jalon. Un identifiant inconnu — type supprimé du catalogue,
+   configuration importée d'ailleurs — retombe sur le PREMIER type plutôt que
+   de laisser le jalon sans nom, sans forme et sans couleur. */
+function milestoneTypeFor(types, id) {
+  const catalogue = normalizeMilestoneTypes(types);
+  return catalogue.find((type) => type.id === id) || catalogue[0];
 }
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
@@ -3545,6 +3600,25 @@ const MINIGANTT_SPAN_POSITION_LABELS = { above: "Au-dessus", center: "Sur la lig
 const MINIGANTT_SPAN_DEFAULT_THICKNESS = 2;
 const MINIGANTT_SPAN_MAX_THICKNESS = 6;
 const MINIGANTT_SPAN_DEFAULT_OPACITY = 100;
+
+/* Bouts du trait. Le rond creux était figé dans le rendu ; il devient un choix,
+   et un choix PAR EXTRÉMITÉ : un trait « |———▶ » ne dit pas la même chose qu'un
+   trait « ●———● ». Le rond creux reste la valeur par défaut, donc une
+   annotation posée avant ce réglage ne bouge pas. */
+const MINIGANTT_SPAN_CAPS = ["circle", "dot", "square", "diamond", "arrow", "bar", "none"];
+const MINIGANTT_SPAN_CAP_LABELS = {
+  circle: "Rond creux",
+  dot: "Rond plein",
+  square: "Carré",
+  diamond: "Losange",
+  arrow: "Flèche",
+  bar: "Trait",
+  none: "Aucun",
+};
+
+function normalizeMiniGanttSpanCap(value) {
+  return MINIGANTT_SPAN_CAPS.includes(value) ? value : "circle";
+}
 
 function validateMiniGanttSpan(span) {
   const s = span && typeof span === "object" ? span : {};
@@ -3587,6 +3661,8 @@ function normalizeMiniGanttSpans(list) {
       thickness: normalizeMiniGanttSpanThickness(s.thickness),
       opacity: normalizeMiniGanttSpanOpacity(s.opacity),
       position: MINIGANTT_SPAN_POSITIONS.includes(s.position) ? s.position : "center",
+      capStart: normalizeMiniGanttSpanCap(s.capStart),
+      capEnd: normalizeMiniGanttSpanCap(s.capEnd),
     }));
 }
 
@@ -3621,18 +3697,34 @@ function miniGanttSpanRows(rows, spans) {
 
 function normalizeGanttBlockKind(value) { return value === "decision" ? "decision" : "phase"; }
 
+/* La couleur d'un jalon est FACULTATIVE : vide, il prend celle de son type, et
+   changer la couleur du type dans les Réglages les met tous à jour d'un coup.
+
+   La normalisation la remplissait autrefois avec la couleur figée du type. Un
+   jalon posé avant le catalogue porterait donc une couleur explicite dont il
+   n'a jamais été question, et resterait sourd au réglage. On rend leur liberté
+   à ceux-là, et seulement à ceux-là : une couleur qui vaut EXACTEMENT celle du
+   type historique n'a pas été choisie, elle a été recopiée. */
+function milestoneInheritsTypeColor(milestone) {
+  const historique = MILESTONE_TYPE_SEED.find((type) => type.id === milestone.type);
+  return !!historique && String(milestone.color).toLowerCase() === historique.color.toLowerCase();
+}
+
 function normalizeMiniGanttMilestones(list) {
   if (!Array.isArray(list)) return [];
   return list
     .filter((m) => m && typeof m === "object" && m.id && isGanttIsoDate(m.date) && String(m.title || "").trim())
     .map((m) => {
-      const type = MINIGANTT_MILESTONE_TYPES.includes(m.type) ? m.type : "standard";
+      // Le type est un identifiant du catalogue, plus une valeur d'une liste
+      // fermée : un type ajouté dans les Réglages doit pouvoir être choisi.
+      const type = typeof m.type === "string" && m.type ? m.type : MILESTONE_TYPE_SEED[0].id;
+      const color = typeof m.color === "string" && m.color ? m.color : "";
       return {
         id: String(m.id),
         title: String(m.title).trim(),
         date: m.date,
         type,
-        color: typeof m.color === "string" && m.color ? m.color : MINIGANTT_MILESTONE_COLORS[type],
+        color: color && !milestoneInheritsTypeColor({ type, color }) ? color : "",
         taskId: typeof m.taskId === "string" && m.taskId ? m.taskId : null,
       };
     });
@@ -6945,18 +7037,74 @@ function MiniGanttListSection({ icon, title, hint, items, count, open, onToggle,
   );
 }
 
-/* Repère d'un type de jalon : la MÊME forme que celle dessinée dans le
-   diagramme, prise dans la même table (`miniGanttMilestoneShape`). Il sert au
-   sélecteur de type, au résumé de la ligne et au repère du Mini-Gantt : trois
-   endroits, une seule forme. */
-function MilestoneTypeGlyph({ type, color, size }) {
-  const teinte = color || MINIGANTT_MILESTONE_COLORS[type] || MINIGANTT_MILESTONE_COLORS.standard;
+/* Un symbole de jalon, dessiné.
+
+   C'est un tracé SVG et non une icône de bibliothèque : le repère mesure neuf
+   pixels dans le diagramme, taille à laquelle un trait fin disparaît. Une
+   silhouette pleine, elle, se lit encore. Le sélecteur de symbole, le
+   sélecteur de type, le résumé de la ligne et le repère du diagramme appellent
+   TOUS ce composant : ils ne peuvent pas montrer quatre dessins différents pour
+   le même type. */
+function MilestoneSymbol({ symbol, color, size, style }) {
+  const def = milestoneSymbolFor(symbol);
   const cote = size || 11;
   return (
-    <span
-      className={"lp-annot-shape shape-" + miniGanttMilestoneShape(type)}
-      style={{ width: cote, height: cote, background: teinte, borderColor: teinte }}
-    />
+    <svg
+      viewBox="0 0 24 24" width={cote} height={cote} aria-hidden="true" focusable="false"
+      style={{ flex: "0 0 auto", display: "block", color: color || "currentColor", overflow: "visible", ...(style || {}) }}
+    >
+      <path
+        d={def.d}
+        fill={def.hollow ? "none" : "currentColor"}
+        stroke={def.hollow ? "currentColor" : "none"}
+        strokeWidth={def.hollow ? 3.4 : 0}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/* Repère d'un TYPE de jalon : son symbole et sa couleur, tels que le catalogue
+   des Réglages les définit. `color` force une couleur propre au jalon. */
+function MilestoneTypeGlyph({ types, type, color, size }) {
+  const def = milestoneTypeFor(types, type);
+  return <MilestoneSymbol symbol={def.symbol} color={color || def.color} size={size} />;
+}
+
+/* Bout d'une annotation horizontale, dessiné.
+
+   Même principe que les symboles de jalon : un tracé SVG, lu par le sélecteur
+   ET par le diagramme, donc le bout choisi est exactement celui qui apparaît.
+   La flèche est la seule à dépendre du côté — elle pointe vers l'extérieur du
+   trait, sinon les deux extrémités montreraient la même direction. */
+function SpanCapGlyph({ cap, side, color, size }) {
+  const choix = normalizeMiniGanttSpanCap(cap);
+  const cote = size || 9;
+  // « Aucun » réserve quand même sa place : sans cela, le trait s'allongerait
+  // d'un bout à l'autre selon les bouts choisis, et ne couvrirait plus ses dates.
+  if (choix === "none") return <span style={{ width: cote, height: cote, flex: "0 0 auto" }} />;
+  const TRACES = {
+    circle: { d: "M12 4 A8 8 0 1 1 11.99 4 Z", creux: true },
+    dot: { d: "M12 4 A8 8 0 1 1 11.99 4 Z" },
+    square: { d: "M4.5 4.5 H19.5 V19.5 H4.5 Z" },
+    diamond: { d: "M12 3 L21 12 L12 21 L3 12 Z" },
+    bar: { d: "M9.5 1.5 H14.5 V22.5 H9.5 Z" },
+    arrow: { d: side === "start" ? "M2.5 12 L20 2 V22 Z" : "M21.5 12 L4 2 V22 Z" },
+  };
+  const trace = TRACES[choix] || TRACES.circle;
+  return (
+    <svg
+      viewBox="0 0 24 24" width={cote} height={cote} aria-hidden="true" focusable="false"
+      style={{ flex: "0 0 auto", display: "block", color: color || "currentColor", overflow: "visible" }}
+    >
+      <path
+        d={trace.d}
+        fill={trace.creux ? "var(--surface)" : "currentColor"}
+        stroke={trace.creux ? "currentColor" : "none"}
+        strokeWidth={trace.creux ? 3.4 : 0}
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -6998,6 +7146,9 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
   const toggle = (key) => setOpen((o) => ({ ...o, [key]: !o[key] }));
   const knownTaskIds = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks]);
   const taskTitle = (id) => tasks.find((t) => t.id === id)?.title || "Tâche introuvable";
+  // Le catalogue des types de jalon vient des Réglages : l'éditeur le lit, il
+  // ne le possède pas et ne le complète jamais de son côté (#94).
+  const milestoneTypes = useMemo(() => normalizeMilestoneTypes(ctx.milestoneTypes), [ctx.milestoneTypes]);
 
   const setMilestones = (next) => onChange({ milestones: next });
   const setNotes = (next) => onChange({ notes: next });
@@ -7022,7 +7173,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
   };
 
   const addMilestone = () => {
-    const created = { id: uid(), title: "Nouveau jalon", date: defaultEnd, type: "standard", color: "", taskId: null };
+    const created = { id: uid(), title: "Nouveau jalon", date: defaultEnd, type: milestoneTypes[0].id, color: "", taskId: null };
     setMilestones([...milestones, created]);
     setOpen((o) => ({ ...o, milestones: true }));
     setEditingId(created.id);
@@ -7040,6 +7191,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
       id: uid(), label: "Nouvelle annotation", startDate: defaultStart, endDate: defaultEnd,
       taskId: tasks[0]?.id || "", color: MINIGANTT_SPAN_DEFAULT_COLOR, borderStyle: "solid",
       thickness: MINIGANTT_SPAN_DEFAULT_THICKNESS, opacity: MINIGANTT_SPAN_DEFAULT_OPACITY, position: "center",
+      capStart: "circle", capEnd: "circle",
     };
     setSpans([...spanList, created]);
     setOpen((o) => ({ ...o, spans: true }));
@@ -7105,7 +7257,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
 
       <MiniGanttListSection
         icon={<Milestone size={13} />} title="Jalons et décisions" count={milestones.length}
-        hint="Permis, décision CODIR, mise en service, engagement contractuel, réception… Un jalon peut n'être rattaché à aucune tâche."
+        hint="Permis, décision CODIR, mise en service, engagement contractuel, réception… Un jalon peut n'être rattaché à aucune tâche. Les types se règlent dans Réglages > Types de jalon."
         open={open.milestones} onToggle={() => toggle("milestones")} onAdd={addMilestone} addLabel="Ajouter un jalon"
       >
         {milestones.map((m) => {
@@ -7118,9 +7270,9 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
               onDuplicate={() => duplicateAfter(milestones, setMilestones, m, (x) => ({ title: `${x.title} (copie)` }))}
               onDelete={() => setPendingDelete({ kind: "milestone", item: m })}
               warning={!valid}
-              swatch={<MilestoneTypeGlyph type={m.type} color={m.color} size={13} />}
+              swatch={<MilestoneTypeGlyph types={milestoneTypes} type={m.type} color={m.color} size={13} />}
               title={m.title || "Sans titre"}
-              subtitle={`${MINIGANTT_MILESTONE_LABELS[m.type] || "Jalon"} · ${isGanttIsoDate(m.date) ? fmtShort(m.date) : "—"}`}
+              subtitle={`${milestoneTypeFor(milestoneTypes, m.type).name} · ${isGanttIsoDate(m.date) ? fmtShort(m.date) : "—"}`}
             >
               <div className="lp-field">
                 <label>Titre</label>
@@ -7135,8 +7287,8 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                   <label>Type</label>
                   <SearchableSelect
                     value={m.type || "standard"}
-                    options={MINIGANTT_MILESTONE_TYPES.map((k) => ({ id: k, label: MINIGANTT_MILESTONE_LABELS[k], color: MINIGANTT_MILESTONE_COLORS[k], glyph: <MilestoneTypeGlyph type={k} /> }))}
-                    onChange={(id) => patchMilestone(m.id, { type: id || "standard", color: "" })}
+                    options={milestoneTypes.map((t) => ({ id: t.id, label: t.name, color: t.color, glyph: <MilestoneSymbol symbol={t.symbol} color={t.color} /> }))}
+                    onChange={(id) => patchMilestone(m.id, { type: id || milestoneTypes[0].id, color: "" })}
                     searchPlaceholder="Rechercher un type…"
                   />
                 </div>
@@ -7147,8 +7299,15 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                 <TaskSelect value={m.taskId} onSelect={(id) => patchMilestone(m.id, { taskId: id })} allowEmpty />
               </div>
               <div className="lp-field">
-                <label>Couleur</label>
-                <ColorPicker value={m.color || MINIGANTT_MILESTONE_COLORS[m.type] || MINIGANTT_MILESTONE_COLORS.standard} onChange={(color) => patchMilestone(m.id, { color })} />
+                <label>Couleur <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>{m.color ? "(propre à ce jalon)" : "(celle du type)"}</span></label>
+                <ColorPicker value={m.color || milestoneTypeFor(milestoneTypes, m.type).color} onChange={(color) => patchMilestone(m.id, { color })} />
+                {/* Sans ce retour, un jalon coloré à la main restait sourd au
+                    réglage de son type pour toujours. */}
+                {m.color && (
+                  <button type="button" className="lp-btn lp-gantt-annot-add" style={{ marginTop: 6 }} onClick={() => patchMilestone(m.id, { color: "" })}>
+                    <Eraser size={13} /> Reprendre la couleur du type
+                  </button>
+                )}
               </div>
             </MiniGanttAnnotationRow>
           );
@@ -7162,7 +7321,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
       {allowSpans && (
       <MiniGanttListSection
         icon={<Minus size={13} />} title="Annotations horizontales" count={spanList.length}
-        hint="Un trait horizontal d'une date à une autre, avec un rond à chaque bout et un texte libre. La tâche choisie ne donne QUE la hauteur : les dates du trait restent les siennes."
+        hint="Un trait horizontal d'une date à une autre, avec le bout de ton choix à chaque extrémité et un texte libre. La tâche choisie ne donne QUE la hauteur : les dates du trait restent les siennes."
         open={open.spans} onToggle={() => toggle("spans")} onAdd={addSpan} addLabel="Ajouter une annotation horizontale"
       >
         {spanList.map((sp) => {
@@ -7214,6 +7373,26 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                       onClick={() => patchSpan(sp.id, { position: k })}
                     >{icone} {MINIGANTT_SPAN_POSITION_LABELS[k]}</button>
                   ))}
+                </div>
+              </div>
+              <div className="lp-row2">
+                <div className="lp-field">
+                  <label>Bout gauche</label>
+                  <SearchableSelect
+                    value={normalizeMiniGanttSpanCap(sp.capStart)}
+                    options={MINIGANTT_SPAN_CAPS.map((k) => ({ id: k, label: MINIGANTT_SPAN_CAP_LABELS[k], glyph: <SpanCapGlyph cap={k} side="start" color={sp.color || MINIGANTT_SPAN_DEFAULT_COLOR} /> }))}
+                    onChange={(id) => patchSpan(sp.id, { capStart: id || "circle" })}
+                    searchPlaceholder="Rechercher un bout…"
+                  />
+                </div>
+                <div className="lp-field">
+                  <label>Bout droit</label>
+                  <SearchableSelect
+                    value={normalizeMiniGanttSpanCap(sp.capEnd)}
+                    options={MINIGANTT_SPAN_CAPS.map((k) => ({ id: k, label: MINIGANTT_SPAN_CAP_LABELS[k], glyph: <SpanCapGlyph cap={k} side="end" color={sp.color || MINIGANTT_SPAN_DEFAULT_COLOR} /> }))}
+                    onChange={(id) => patchSpan(sp.id, { capEnd: id || "circle" })}
+                    searchPlaceholder="Rechercher un bout…"
+                  />
                 </div>
               </div>
               <div className="lp-field">
@@ -7295,7 +7474,7 @@ function MiniGanttAnnotationsEditor({ blocks, frames, milestones, risks, notes, 
                   <label>Jalon</label>
                   <SearchableSelect
                     value={anchor.id || ""}
-                    options={milestones.map((m) => ({ id: m.id, label: m.title || "Sans titre", hint: isGanttIsoDate(m.date) ? fmtShort(m.date) : "", color: m.color || MINIGANTT_MILESTONE_COLORS[m.type], glyph: <MilestoneTypeGlyph type={m.type} color={m.color} /> }))}
+                    options={milestones.map((m) => ({ id: m.id, label: m.title || "Sans titre", hint: isGanttIsoDate(m.date) ? fmtShort(m.date) : "", color: m.color || milestoneTypeFor(milestoneTypes, m.type).color, glyph: <MilestoneTypeGlyph types={milestoneTypes} type={m.type} color={m.color} /> }))}
                     onChange={(id) => setAnchor({ id })}
                     placeholder="Choisir un jalon"
                     searchPlaceholder="Rechercher un jalon…"
@@ -9872,6 +10051,134 @@ function TaskTypeManager({ taskTypes, setTaskTypes, tasks, projects, pushToast, 
 
   if (embedded) return <div className="lp-settings-pane">{body}</div>;
   return <Modal title="Gérer les types" onClose={onClose} wide>{body}</Modal>;
+}
+
+// ============================================================================
+// Types de jalon — catalogue des Réglages
+//
+// Même mécanique que les Statuts et les Types de tâche : une liste ordonnée,
+// éditable, enregistrée sous `nexora:milestoneTypes`. Elle ne touche jamais aux
+// tâches : un type de jalon ne décrit que les JALONS D'ANNOTATION du Gantt,
+// posés dans la configuration d'un widget ou d'une vue.
+// ============================================================================
+function MilestoneTypeManager({ milestoneTypes, setMilestoneTypes, pushToast, onClose, embedded }) {
+  const catalogue = normalizeMilestoneTypes(milestoneTypes);
+  const [editingId, setEditingId] = useState(null);
+  const [name, setName] = useState("");
+  const [symbol, setSymbol] = useState(MILESTONE_SYMBOLS[0].key);
+  const [color, setColor] = useState(MILESTONE_TYPE_SEED[0].color);
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setName("");
+    setSymbol(MILESTONE_SYMBOLS[0].key);
+    setColor(MILESTONE_TYPE_SEED[0].color);
+  };
+
+  const startEdit = (type) => {
+    setEditingId(type.id);
+    setName(type.name);
+    setSymbol(type.symbol);
+    setColor(type.color);
+  };
+
+  const save = () => {
+    if (!name.trim()) return;
+    if (editingId) {
+      setMilestoneTypes(catalogue.map((type) => (type.id === editingId ? { ...type, name: name.trim(), symbol, color } : type)));
+    } else {
+      setMilestoneTypes([...catalogue, { id: uid(), name: name.trim(), symbol, color }]);
+    }
+    cancelEdit();
+  };
+
+  /* Un catalogue vide serait un diagramme sans types : la normalisation
+     rendrait le catalogue de départ et le dernier type supprimé réapparaîtrait
+     sous un autre nom. On refuse donc la suppression du dernier. */
+  const remove = (id) => {
+    if (catalogue.length <= 1) {
+      pushToast?.({ message: "Garde au moins un type de jalon : c'est lui que prennent les jalons dont le type a disparu." });
+      return;
+    }
+    setMilestoneTypes(catalogue.filter((type) => type.id !== id));
+    if (editingId === id) cancelEdit();
+  };
+
+  const move = (idx, dir) => {
+    const next = [...catalogue];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setMilestoneTypes(next);
+  };
+
+  const body = (
+    <>
+      <div className="lp-section-title">Types existants</div>
+      <div style={{ fontSize: 11.5, color: "var(--text-600)", marginBottom: 10, lineHeight: 1.45 }}>
+        Ces types décrivent les <strong>jalons d'annotation</strong> posés sur un Gantt — permis, décision CODIR,
+        engagement contractuel, mise en service… Ils ne modifient jamais les tâches. Le premier de la liste sert de
+        type par défaut, et recueille les jalons dont le type a été supprimé.
+      </div>
+
+      {catalogue.map((type, i) => (
+        <div className="lp-manage-item" key={type.id}>
+          <div className="lp-order-btns">
+            <button onClick={() => move(i, -1)}><ChevronUp size={14} /></button>
+            <button onClick={() => move(i, 1)}><ChevronDown size={14} /></button>
+          </div>
+          <MilestoneSymbol symbol={type.symbol} color={type.color} size={15} />
+          <span className="lp-manage-name" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {type.name}
+            {i === 0 && <span style={{ fontSize: 9.5, color: "var(--text-muted)", fontWeight: 500 }}>Par défaut</span>}
+          </span>
+          <span style={{ fontSize: 11, color: "var(--text-600)" }}>{milestoneSymbolFor(type.symbol).label}</span>
+          <button className="lp-icon-btn" onClick={() => startEdit(type)}><Pencil size={14} /></button>
+          {catalogue.length > 1 && <button className="lp-icon-btn" onClick={() => remove(type.id)}><Trash2 size={15} /></button>}
+        </div>
+      ))}
+
+      <hr className="lp-divider" />
+      <div className="lp-section-title">{editingId ? "Modifier le type" : "Nouveau type"}</div>
+
+      <div className="lp-field">
+        <label>Nom</label>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Revue de conception" />
+      </div>
+
+      <div className="lp-field">
+        <label>Symbole — {milestoneSymbolFor(symbol).label}</label>
+        {/* La grille montre les symboles À LEUR TAILLE DE LECTURE, colorés comme
+            ils le seront : choisir sur une vignette agrandie mène à des repères
+            qu'on ne distingue plus une fois dans le diagramme. */}
+        <div className="lp-milestone-symbol-grid">
+          {MILESTONE_SYMBOLS.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              className={"lp-milestone-symbol-btn" + (symbol === item.key ? " active" : "")}
+              title={item.label}
+              onClick={() => setSymbol(item.key)}
+            >
+              <MilestoneSymbol symbol={item.key} color={color} size={16} />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} /></div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="lp-btn lp-btn-primary" onClick={save}>
+          {editingId ? "Enregistrer les modifications" : "Ajouter le type"}
+        </button>
+        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
+      </div>
+    </>
+  );
+
+  if (embedded) return <div className="lp-settings-pane">{body}</div>;
+  return <Modal title="Gérer les types de jalon" onClose={onClose} wide>{body}</Modal>;
 }
 
 // ============================================================================
@@ -12870,7 +13177,7 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
   const stripItems = useMemo(() => {
     const items = [];
     configMilestones.forEach((m) => {
-      items.push({ kind: "milestone", id: m.id, idx: dayIndex(m.date), label: m.title, color: m.color || MINIGANTT_MILESTONE_COLORS[m.type] || MINIGANTT_MILESTONE_COLORS.standard, type: m.type, data: m });
+      items.push({ kind: "milestone", id: m.id, idx: dayIndex(m.date), label: m.title, color: m.color || milestoneTypeFor(ctx.milestoneTypes, m.type).color, type: m.type, data: m });
     });
     configNotes.forEach((n) => {
       // Une annotation ancrée à une tâche, un jalon ou un risque est ramenée à

@@ -390,7 +390,10 @@ const seen = await page.evaluate(() => {
           texte: el.textContent.trim(),
           x: Math.round(b.x - hb.x), y: Math.round(b.y - hb.y), w: Math.round(b.width),
           milieu: Math.round(b.y - hb.y + b.height / 2),
-          ronds: el.querySelectorAll(".lp-widget-minigantt-span-cap").length,
+          // Les bouts sont des tracés SVG posés en enfants directs du trait :
+          // l'étiquette, elle, est un bouton. « Aucun » rend une place vide.
+          bouts: [...el.children].filter((child) => child.tagName.toLowerCase() === "svg")
+            .map((child) => child.querySelector("path")?.getAttribute("d") || ""),
         };
       });
       // Ligne de « Demande lame pour piste d'accès » (t2), la tâche visée.
@@ -411,16 +414,14 @@ const seen = await page.evaluate(() => {
       second: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-rule").length,
       z: (() => { const el = document.querySelector("#harness-first-minigantt .lp-widget-minigantt-rule-layer"); return el ? getComputedStyle(el).zIndex : ""; })(),
     },
-    // Une forme par type de jalon : deux types ne doivent jamais se ressembler.
-    markerShapes: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-marker-glyph")]
-      .map((el) => [...el.classList].find((c) => c.startsWith("shape-")) || ""),
-    // Empreinte de rendu : forme découpée, arrondi, rotation ET remplissage —
-    // un cercle plein et un cercle creux ne sont pas le même repère.
-    markerTransforms: [...new Set([...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-marker-glyph")]
-      .map((el) => {
-        const st = getComputedStyle(el);
-        return [st.clipPath, st.borderRadius, st.transform, st.backgroundColor].join("|");
-      }))],
+    /* Un symbole par type de jalon : deux types ne doivent jamais se
+       ressembler. Le repère est un tracé SVG depuis que les symboles sont
+       réglables — son empreinte est donc le tracé lui-même, plus sa couleur :
+       un même symbole en deux couleurs reste deux repères distincts. */
+    markerShapes: [...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-marker svg path")]
+      .map((el) => el.getAttribute("d") || ""),
+    markerPrints: [...new Set([...document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-marker svg")]
+      .map((el) => [el.querySelector("path")?.getAttribute("d"), getComputedStyle(el).color].join("|")))],
     treemapTiles: rects("#harness-treemap .lp-widget-treemap-tile"),
     treemapNames: rects("#harness-treemap .lp-widget-treemap-tile-name"),
     treemapRings: document.querySelectorAll("#harness-treemap .lp-widget-treemap-ring").length,
@@ -1336,7 +1337,9 @@ if (seen.spans) {
     `Annotations horizontales : ${seen.spans.traits.length} trait(s) dessiné(s), 1 attendu — celui dont la tâche n'est pas affichée ne doit rien dessiner`);
   const trait = seen.spans.traits[0];
   if (trait) {
-    expect(trait.ronds === 2, `Annotation horizontale : ${trait.ronds} rond(s) d'extrémité, 2 attendus`);
+    expect(trait.bouts.length === 2, `Annotation horizontale : ${trait.bouts.length} bout(s) dessiné(s), 2 attendus`);
+    expect(trait.bouts[0] !== trait.bouts[1],
+      "Annotation horizontale : les deux bouts sont identiques alors qu'un trait et une flèche sont demandés — les extrémités doivent se régler séparément (#93)");
     expect(/Fenêtre de tirage/.test(trait.texte), `Annotation horizontale : texte « ${trait.texte} », « Fenêtre de tirage » attendu`);
     expect(trait.w > 20, `Annotation horizontale : largeur de ${trait.w} px — le trait doit couvrir ses deux dates`);
     const ligne = seen.spans.ligneVisee;
@@ -1348,18 +1351,20 @@ if (seen.spans) {
 }
 
 // --- Trait vertical sous les jalons (#95) ----------------------------------
-expect(seen.rules.premier === 2,
-  `Jalons : ${seen.rules.premier} trait(s) vertical(aux), 2 attendus — un par jalon quand le réglage est coché`);
+expect(seen.rules.premier === 4,
+  `Jalons : ${seen.rules.premier} trait(s) vertical(aux), 4 attendus — un par jalon quand le réglage est coché`);
 expect(seen.rules.second === 0,
   `Jalons : ${seen.rules.second} trait(s) vertical(aux) dans le second Mini-Gantt, 0 attendu — le réglage est propre à chaque widget`);
 expect(seen.rules.z === "0",
   `Jalons : le calque des traits verticaux est en z-index ${seen.rules.z}, 0 attendu — il doit rester derrière les barres et les textes`);
 
 // --- Une forme par type de jalon (#94) -------------------------------------
-expect(new Set(seen.markerShapes).size >= 3,
-  `Repères : ${new Set(seen.markerShapes).size} forme(s) distincte(s) pour ${seen.markerShapes.length} repère(s) — décision, mise en service et annotation doivent se distinguer`);
-expect(seen.markerTransforms.length === seen.markerShapes.length,
-  `Repères : ${seen.markerTransforms.length} rendu(s) distinct(s) pour ${seen.markerShapes.length} repère(s) — deux repères de nature différente ne doivent jamais se dessiner pareil`);
+expect(seen.markerShapes.length === 5,
+  `Repères : ${seen.markerShapes.length} repère(s) dessiné(s), 5 attendus (4 jalons + 1 annotation)`);
+expect(new Set(seen.markerShapes).size >= 4,
+  `Repères : ${new Set(seen.markerShapes).size} symbole(s) distinct(s) pour ${seen.markerShapes.length} repère(s) — décision, mise en service, essais et annotation doivent se distinguer`);
+expect(seen.markerPrints.length === seen.markerShapes.length,
+  `Repères : ${seen.markerPrints.length} rendu(s) distinct(s) pour ${seen.markerShapes.length} repère(s) — deux repères de nature différente ne doivent jamais se dessiner pareil`);
 // Trois risques portent sur une tâche visible, le quatrième vise une tâche
 // supprimée : il doit être ignoré sans erreur.
 expect(seen.miniRisks.length === 8, `Mini-Gantt : ${seen.miniRisks.length} couloir(s) de risque au total, 8 attendus (4 par widget)`);
@@ -1532,7 +1537,7 @@ expect(seen.rollingRows < seen.standardRowCount,
 
 expect(seen.miniRiskLabels.length >= 2, `Mini-Gantt : ${seen.miniRiskLabels.length} étiquette(s) de risque, au moins 2 attendues`);
 // Deux jalons de configuration et une annotation partagent la bande de repères.
-expect(seen.miniMarkers.length === 3, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 3 attendus`);
+expect(seen.miniMarkers.length === 5, `Mini-Gantt : ${seen.miniMarkers.length} repère(s) jalon/annotation, 5 attendus`);
 expect(seen.miniFrames.length === 3, `Mini-Gantt : ${seen.miniFrames.length} cadre(s), 3 attendus`);
 
 // « Le bloc temporel emporte tout » : une bande continue sur toute la hauteur des
