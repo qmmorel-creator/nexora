@@ -5027,6 +5027,20 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const [fieldsColWidth, setFieldsColWidth] = useState(0);
   const fieldNodes = useRef({});
   const FIELDS_COL_WIDTH = fieldsColWidth;
+  /* Largeur de la colonne d'ÉTIQUETTES, mesurée sur son contenu comme celle
+     des champs l'est déjà. Elle valait 26 % de la largeur, quoi qu'il y ait
+     dedans : sur des titres courts, cent cinquante pixels de blanc séparaient
+     le dernier mot de la piste (retour de test).
+
+     Le plafond reste ces 26 % : la colonne ne peut que RÉTRÉCIR, jamais
+     grandir — un titre long est tronqué exactement comme avant, et le
+     diagramme ne perd pas un pixel de piste par rapport à aujourd'hui. Pas de
+     plancher, pour la même raison que la colonne de champs : une colonne large
+     réservée à un titre court, c'est précisément le défaut qu'on corrige.
+
+     `null` = pas encore mesurée : la feuille de style garde ses 26 % le temps
+     d'une trame, plutôt qu'un diagramme qui s'ouvre sur une colonne à zéro. */
+  const [labelColWidth, setLabelColWidth] = useState(null);
   const [hover, setHover] = useState(null); // { t, x, y }
   // Surlignage par la légende du mode bulles : clé de groupe mise en avant, ou
   // null. C'est une mise en avant, jamais un filtre — rien ne disparaît.
@@ -5654,6 +5668,41 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return () => cancelAnimationFrame(id);
   });
 
+  /* Mesure de la colonne d'étiquettes. Le titre est un `flex:1` : sa boîte
+     épouse la colonne, et `scrollWidth` comme `getBoundingClientRect` rendent
+     donc la largeur de la COLONNE, jamais celle du texte — mesurer ainsi
+     revenait à demander à la colonne sa propre largeur, et elle ne rétrécissait
+     jamais. On mesure le TEXTE lui-même, par un Range : sa largeur ne dépend
+     pas de la boîte qui le contient, et la mesure ne peut donc pas entrer en
+     boucle avec ce qu'elle décide. Une case à cocher n'a pas de texte : elle
+     garde la largeur de sa boîte. */
+  const measureLabelColumn = useCallback(() => {
+    const root = rootRef.current;
+    if (!root || bubbleMode) return;
+    const labels = root.querySelectorAll(".lp-widget-minigantt-label");
+    if (!labels.length) return;
+    const range = document.createRange();
+    let needed = 0;
+    labels.forEach((el) => {
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      let width = 0;
+      [...el.children].forEach((child) => {
+        range.selectNodeContents(child);
+        const texte = range.getBoundingClientRect().width;
+        width += Math.ceil(texte || child.getBoundingClientRect().width);
+      });
+      needed = Math.max(needed, width + Math.max(0, el.children.length - 1) * gap + 2);
+    });
+    const rootW = root.getBoundingClientRect().width;
+    const cap = rootW ? Math.round(rootW * 0.26) : Infinity;
+    const next = Math.min(cap, Math.ceil(needed));
+    setLabelColWidth((prev) => (prev !== null && Math.abs(prev - next) <= 1 ? prev : next));
+  }, [bubbleMode]);
+  useEffect(() => {
+    const id = requestAnimationFrame(measureLabelColumn);
+    return () => cancelAnimationFrame(id);
+  });
+
   // Largeur RÉELLE de chaque capsule de bloc temporel. L'estimation ne sert
   // qu'au tout premier rendu : la centrer sur une estimation trop généreuse
   // décalait visiblement l'étiquette par rapport à sa bande.
@@ -5937,7 +5986,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      compter quand même décalait toutes les couches de 6 px vers la droite,
      y compris le cadre des macro-bulles, d'où des bulles qui semblaient en
      sortir (#104). */
-  const layerInsetLeft = bubbleMode ? 0 : "calc(26% + 6px)";
+  const layerInsetLeft = bubbleMode ? 0 : "calc(var(--mg-label-w, 26%) + 6px)";
   const layerInsets = {
     left: layerInsetLeft,
     right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
@@ -7360,7 +7409,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      dont l'auto-dimensionnement du widget se sert. */
   const rootStyle = bubbleMode
     ? { position: "relative", "--lp-bubble-h": bubbleHeightPx(widget) + "px", "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines }
-    : { position: "relative" };
+    /* La colonne d'étiquettes est posée en PIXELS dès qu'elle est mesurée :
+       étiquettes, cale de l'axe, cale des bandes de repères et retrait des
+       couches lisent tous cette même variable, et ne peuvent donc pas se
+       désaligner. Tant qu'elle vaut `null`, la feuille de style garde ses
+       26 %. Le mode bulles, lui, la met à zéro par sa classe — on n'y touche
+       pas. */
+    : { position: "relative", ...(labelColWidth === null ? null : { "--mg-label-w": labelColWidth + "px" }) };
 
   /* Pied de réserve : exactement le débord mesuré de la dernière ligne, et
      rien quand elle ne déborde pas. Le widget coupe à son bord

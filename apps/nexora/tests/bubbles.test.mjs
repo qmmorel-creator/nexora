@@ -334,13 +334,19 @@ test("le mode bulles ne s'active que par son drapeau", () => {
   assert.match(html, /const bubbleCfg = bubbleMode \? normalizeBubblesWidget\(widget\) : null;/);
   assert.match(html, /if \(bubbleMode\) return BubbleRow\(t\);/);
   assert.match(html, /if \(bubbleMode\) return BubbleMilestoneRow\(t\);/);
-  // La colonne d'étiquettes de gauche a UNE seule définition, partagée par
-  // toutes les couches en superposition.
-  assert.match(html, /const layerInsetLeft = bubbleMode \? 0 : "calc\(26% \+ 6px\)";/);
+  /* La colonne d'étiquettes de gauche a UNE seule définition, partagée par
+     toutes les couches en superposition. Elle lit désormais `--mg-label-w`,
+     la variable que le rendu pose après avoir mesuré la colonne : le 26 %
+     n'est plus qu'un repli, pour la trame qui précède la mesure. */
+  assert.match(html, /const layerInsetLeft = bubbleMode \? 0 : "calc\(var\(--mg-label-w, 26%\) \+ 6px\)";/);
   // Une seule occurrence : celle de la définition ci-dessus. Toute couche qui
   // recopierait ce retrait se désalignerait le jour où il change.
-  assert.equal((html.match(/calc\(26% \+ 6px\)/g) || []).length, 1,
+  assert.equal((html.match(/calc\(var\(--mg-label-w, 26%\) \+ 6px\)/g) || []).length, 1,
     "une couche garde un retrait codé en dur au lieu de lire layerInsetLeft");
+  // Et plus personne ne refigure les 26 % dans le rendu : la feuille de style
+  // les garde comme repli, le rendu lit la variable.
+  assert.equal((html.match(/calc\(26% \+ 6px\)/g) || []).length, 0,
+    "un retrait de colonne est resté figé à 26 % dans le rendu");
 });
 
 test("les réglages des bulles et ceux du Mini-Gantt ne partagent aucune clé d'affichage", () => {

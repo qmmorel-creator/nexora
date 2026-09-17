@@ -548,6 +548,30 @@ des collisions dès que le widget était étroit.
 ou un bloc aux dates invalides est ignoré au rendu plutôt que de casser le
 diagramme ; les Gantt existants fonctionnent sans changement.
 
+## La colonne d'étiquettes
+
+`--mg-label-w` — une variable posée sur la racine du diagramme, que lisent les
+étiquettes de ligne, la cale de l'axe, celle de la bande de repères et le retrait
+des couches superposées (`layerInsetLeft`). Une seule définition, donc aucun
+désalignement possible.
+
+Elle valait **26 % de la largeur**, quoi qu'il y ait dedans. Sur des titres
+courts dans un diagramme large, cela laissait deux cents pixels de blanc entre le
+dernier mot et la piste (retour de test). Le rendu mesure donc la colonne sur son
+contenu, comme il le fait déjà pour la colonne de champs, et pose le résultat en
+pixels.
+
+La mesure porte sur le **texte**, par un `Range`, et non sur la boîte : le titre
+est un `flex:1`, sa boîte épouse la colonne, et la mesurer revenait à demander à
+la colonne sa propre largeur — elle ne rétrécissait jamais. Mesurer le texte
+rompt aussi la boucle : sa largeur ne dépend pas de la colonne qui le contient.
+
+Ces 26 % restent le **plafond** : la colonne ne peut que rétrécir. Un titre long
+est tronqué exactement comme avant, et aucun diagramme ne perd de piste par
+rapport à l'état précédent. Pas de plancher, pour la même raison que la colonne
+de champs : réserver large pour un titre court est précisément le défaut corrigé.
+Le mode bulles garde son `--mg-label-w: 0%` — le titre y vit dans la bulle.
+
 ## Règles de rendu
 
 - Un bloc temporel reste au-dessus du fond du diagramme mais sous les barres,
