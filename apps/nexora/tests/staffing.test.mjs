@@ -552,3 +552,24 @@ test("le détail de l'infobulle se lit sur son fond SOMBRE (#124)", () => {
   // Et le carton, lui, reste bien le fond sombre partagé par toutes les infobulles.
   assert.match(html, /\.lp-pie-tooltip\{ background:var\(--ink\); color:#fff;/);
 });
+
+test("TOUT réglage du widget est recopié par l'enregistrement (#124)", () => {
+  /* La granularité « Plage » est restée sans effet parce que ses deux dates
+     manquaient dans le bloc d'enregistrement de la fiche : elle les affichait,
+     l'enregistrement les laissait tomber. Le défaut était invisible aux tests
+     de fonction — la normalisation, elle, faisait son travail.
+
+     Ce contrôle relit le bloc construit et exige une ligne par clé connue :
+     le prochain réglage ajouté ne pourra plus disparaître en silence. */
+  const from = html.indexOf('if (type === "staffing") {');
+  assert.ok(from !== -1, "bloc d'enregistrement du widget Charge introuvable");
+  const bloc = html.slice(from, html.indexOf("}", html.indexOf("data.staffingShowLoad", from)));
+  Object.keys(STAFFING_DEFAULTS).forEach((key) => {
+    assert.ok(
+      bloc.includes("data." + key + " = st." + key + ";"),
+      `le réglage ${key} n'est pas enregistré par la fiche du widget`
+    );
+  });
+  // Et l'offset, qui n'a pas de défaut nommé, est recopié lui aussi.
+  assert.ok(bloc.includes("data.staffingOffset = st.staffingOffset;"));
+});
