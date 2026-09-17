@@ -195,8 +195,13 @@ test("recadrer fait GLISSER la fenêtre, jamais rétrécir", () => {
 
 // --- Branchement dans le widget --------------------------------------------
 test("le widget rend une seule liste triée, et n'écrase plus les tâches hors fenêtre", () => {
-  // Une seule liste : plus de « toutes les barres puis tous les jalons ».
-  assert.match(html, /\{orderedTasks\.map\(\(t\) => \(t\.milestone \? MilestoneRow\(t\) : Row\(t\)\)\)\}/);
+  /* Une seule liste : plus de « toutes les barres puis tous les jalons ». Le
+     rendu des lignes passe désormais par `renderRows`, qui décide en UN seul
+     endroit entre « une tâche, une ligne » et les couloirs de bulles (#120) —
+     c'est là que la liste triée est parcourue. */
+  assert.match(html, /const renderRows = \(list\) => \(\s*bubblePacked\s*\? BubbleLanes\(list\)\s*: list\.map\(\(t\) => \(t\.milestone \? MilestoneRow\(t\) : Row\(t\)\)\)\s*\);/);
+  assert.match(html, /\{renderRows\(orderedTasks\)\}/);
+  assert.match(html, /\{renderRows\(g\.tasks\)\}/);
   assert.doesNotMatch(html, /\{projTasks\.map\(Row\)\}/);
   // Le regroupement retrie chaque groupe, sinon l'ordre ne vaudrait que dans le premier.
   assert.match(html, /tasks: miniGanttSortTasks\(g\.tasks, sortKey, sortDir\)/);

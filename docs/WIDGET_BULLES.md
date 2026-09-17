@@ -41,7 +41,7 @@ Ce qui est propre aux bulles vit donc à deux endroits, et deux seulement :
 | Où | Quoi |
 |---|---|
 | bloc `NEXORA:BUBBLES` | toute la **logique** sans rendu : normalisation, couleurs, géométrie des macro-bulles, ordre des lignes, avancement agrégé |
-| branches `bubbleMode` de `WidgetMiniGantt` | le **rendu d'une ligne** : `BubbleRow`, `BubbleMilestoneRow`, la disposition « sous la bulle », les deux couches de macro-bulles, la légende |
+| branches `bubbleMode` de `WidgetMiniGantt` | le **rendu d'une ligne** : `BubbleRow`, `BubbleMilestoneRow`, les couloirs (`BubbleLanes`, `BubbleSlot`), les dispositions de champs, les deux couches de macro-bulles, la légende |
 
 ## La bulle
 
@@ -77,7 +77,8 @@ absolument s'accorder :
 | Appelant | Ce qu'il en fait |
 |---|---|
 | le rendu | la pose en variable CSS `--lp-bubble-h` sur la racine du widget |
-| `onAutoSize` | calcule la hauteur du widget à partir de ses lignes |
+| `bubbleLaneHeightPx` | y ajoute le bandeau condensé, et donne la hauteur d'une **ligne** de couloir |
+| `onAutoSize` | calcule la hauteur du widget à partir de ses lignes, par `bubbleLaneHeightPx` |
 
 Recopier les nombres (34 / 46 / 60 px, 13 px par ligne) dans la feuille de style aurait
 donné deux vérités pour un seul nombre, et un widget qui se redimensionne à une hauteur
@@ -109,6 +110,97 @@ pastille de statut est la même pastille partout. Corollaire assumé :
 rendre. Les champs personnalisés n'y sont donc pas — les ajouter demanderait
 d'étendre `FieldValue`, qui sert à tous les autres widgets. Un test vérifie que
 chaque champ proposé est bien rendu.
+
+## Les couloirs : les bulles côte à côte (#120)
+
+Au départ, le widget reprenait la géométrie du Mini-Gantt jusqu'au bout : **une
+tâche, une ligne**. Dix tâches disjointes dans le temps donnaient donc dix
+lignes empilées, alors qu'elles tenaient largement sur une seule. C'était un
+Gantt dont les barres avaient été remplacées par des bulles — pas le planning à
+bulles de Bubble Plan, où les bulles d'un couloir **se suivent
+horizontalement** et où l'on ne descend d'une ligne que lorsqu'il n'y a plus la
+place.
+
+`bubbleLaneRows` range donc les lignes d'un regroupement en **couloirs**, par
+placement au premier emplacement libre : chaque bulle part sur la première
+ligne où elle ne touche aucune de celles déjà posées, et une ligne de plus
+n'apparaît que si aucune ne convient.
+
+Trois choix méritent d'être dits :
+
+- **l'ordre reçu est respecté tel quel.** C'est le tri choisi dans le réglage
+  « ordre des lignes » ; le retrier par date ici le ferait mentir ;
+- **le chevauchement se mesure à l'écran, pas au calendrier.** Deux tâches d'un
+  jour à trois jours d'écart ne se chevauchent pas au calendrier, mais leurs
+  bulles ne descendent jamais sous 90 px : c'est `bubbleRowExtent` (#104) qui
+  tranche, la même fonction que celle des macro-bulles ;
+- **le regroupement reste étanche.** On range à l'intérieur d'un groupe, jamais
+  au travers : un en-tête de groupe se retrouverait au-dessus de bulles qui ne
+  lui appartiennent pas.
+
+Une ligne de couloir porte plusieurs bulles, chacune dans un **emplacement**
+(`.lp-bubble-slot`) : c'est lui qui est placé dans la piste, la bulle le
+remplit, et c'est lui qui porte le clic, l'infobulle et la mise en avant — la
+ligne n'est plus l'affaire d'une seule tâche. La mesure des lignes, elle, reste
+indexée **par tâche** : toutes celles d'un couloir pointent sur le même élément,
+et les macro-bulles comme les encadrés continuent de lire `rowRects[id]` sans
+rien savoir des couloirs.
+
+La hauteur d'une ligne de couloir est **posée** et non mesurée
+(`bubbleLaneHeightPx`) : tout y est en position absolue, donc rien ne la ferait
+grandir. Elle vaut la bulle plus, s'il y a lieu, le bandeau condensé — d'où
+l'obligation, en couloirs, que les champs prennent cette forme-là.
+
+Les **dates aux extrémités** s'écrivent dehors, à gauche et à droite de la
+bulle. Seules sur leur ligne, elles ne recouvraient que du vide ; rangées côte à
+côte, elles se posaient sur la bulle voisine. Chaque bulle reçoit donc la place
+libre de part et d'autre, **mesurée sur les boîtes réellement dessinées** du
+couloir — et non sur `bubbleRowExtent`, qui modélise les seules dates, alors que
+la boîte d'un jalon est recalée contre le bord de la piste dès qu'elle y
+dépasserait. Les deux divergent au bord, et c'est le dessin qui décide.
+
+`bubbleLayout: "rows"` rend l'ancien comportement, une tâche par ligne, sans
+rien changer d'autre au rendu.
+
+## Les champs condensés, rattachés à la bulle (#122)
+
+Les champs secondaires s'étalaient en pastilles sur une ou plusieurs rangées
+sous la bulle : beaucoup de hauteur, un lien visuel ténu avec la bulle, et de
+quoi recouvrir la voisine dès que les bulles se rangent côte à côte.
+
+La disposition **« condensée, rattachée »** (défaut) est un bandeau d'**une
+seule ligne**, collé sous la bulle, exactement à sa largeur, **sans bord haut**
+et avec ses arrondis bas : la bulle et son bandeau ne font qu'un bloc. Les
+valeurs sont séparées d'un point médian et la ligne est coupée à droite si la
+bulle est étroite — l'infobulle continue de tout dire.
+
+Les valeurs restent celles de `FieldValue` : c'est la **feuille de style** qui
+condense, pas un second formateur propre aux bulles qui aurait fini par ne plus
+dire la même chose que les autres widgets.
+
+En couloirs, cette forme est **imposée** (`bubbleEffectiveFieldsLayout`) : c'est
+la seule qui soit bornée en largeur comme en hauteur. Le réglage n'est pas
+interdit pour autant — le choix redevient vrai dès qu'on repasse en « une tâche,
+une ligne ».
+
+## Deux étages de teinte quand la description est là (#121)
+
+Description affichée, la bulle était peinte d'un seul lavis : titre et
+description sur le même fond, aucune hiérarchie de lecture. L'**en-tête** garde
+donc désormais la couleur de base, et la **partie description** passe en
+transparence légère de la même couleur.
+
+Deux détails qui ne sont pas des détails :
+
+- l'en-tête est peint en `transparent` et non sur la surface du thème. Posé en
+  aplat, il aurait masqué le **lavis d'avancement** qui court derrière lui, et
+  une bulle à 40 % n'aurait plus montré son avancement que sous son titre ;
+- l'en-tête **épouse le titre** (`flex:0 1 auto`) au lieu de s'étirer sur la
+  hauteur restante : étiré, il repeindrait en couleur de base la zone même qu'on
+  veut voir passer en transparence légère. Il peut encore **rétrécir**, sans
+  quoi un titre sur deux lignes pousserait le pied hors de la bulle.
+
+Description décochée : la bulle ne change pas d'un pixel.
 
 ## La couleur, au sens de « grouper par »
 
@@ -235,7 +327,8 @@ type BubbleMacro = {
 widget.bubbleMacros?: BubbleMacro[];
 widget.bubbleColorBy?: string;                      // défaut "status"
 widget.bubbleFields?: string[];                     // défaut ["assignee","status","end","progress"]
-widget.bubbleFieldsLayout?: "under" | "inline";     // défaut "under"
+widget.bubbleFieldsLayout?: "under" | "inline" | "compact"; // défaut "compact"
+widget.bubbleLayout?: "lanes" | "rows";             // défaut "lanes"
 widget.bubbleSize?: "compact" | "normal" | "large"; // défaut "normal"
 widget.bubbleShowDates?: boolean;                   // défaut true
 widget.bubbleShowProgress?: boolean;                // défaut true
@@ -339,6 +432,14 @@ l'éditeur complet sert les deux types.
   champs restent dans leur ligne, les enveloppes ont une surface non nulle,
   restent dans la zone des lignes et se décalent quand elles s'imbriquent, et
   **aucune barre de Mini-Gantt n'est dessinée** en mode bulles.
+- Le rangement en couloirs (#120) est éprouvé par ses cas limites : des bulles
+  disjointes tiennent sur une ligne, deux qui se chevauchent descendent sans
+  emporter les suivantes, deux tâches d'un jour trop proches à l'écran se
+  séparent, l'ordre reçu n'est pas retrié, et « une tâche, une ligne » ne range
+  rien. Le bandeau condensé (#122) et les deux étages de teinte (#121) sont
+  vérifiés au mot près sur l'interface construite — le trait, les arrondis, le
+  point médian, et l'en-tête peint en `transparent` pour ne pas masquer le
+  lavis d'avancement.
 
 C'est ce banc qui a attrapé le seul vrai défaut de cette livraison : une
 fonction en `const` appelée depuis un `useMemo` situé plus haut, donc une

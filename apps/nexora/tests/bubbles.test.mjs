@@ -63,6 +63,14 @@ const {
   bubbleMacroSegments,
   bubbleMacroProgress,
   bubbleRowOrder,
+  bubbleLaneRows,
+  bubbleLaneHeightPx,
+  bubbleEffectiveFieldsLayout,
+  normalizeBubbleLayout,
+  BUBBLE_LAYOUTS,
+  BUBBLE_FIELDS_LAYOUTS,
+  BUBBLE_FIELDS_COMPACT_PX,
+  BUBBLE_LANE_GAP_PX,
 } = extract(
   "// === NEXORA:BUBBLES:START ===",
   "// === NEXORA:BUBBLES:END ===",
@@ -79,6 +87,9 @@ const {
     "bubbleMacroFill", "bubbleMacroBorder", "normalizeBubblesWidget",
     "bubblePaletteColor", "bubbleColorMap", "bubbleLegendEntries",
     "bubbleMacroSegments", "bubbleMacroProgress", "bubbleRowOrder",
+    "bubbleLaneRows", "bubbleLaneHeightPx", "bubbleEffectiveFieldsLayout",
+    "normalizeBubbleLayout", "BUBBLE_LAYOUTS", "BUBBLE_FIELDS_LAYOUTS",
+    "BUBBLE_FIELDS_COMPACT_PX", "BUBBLE_LANE_GAP_PX",
   ],
 );
 
@@ -398,8 +409,12 @@ test("la hauteur de bulle n'a qu'une source : le rendu et l'auto-dimensionnement
   // Le rendu la pose en variable CSS...
   assert.match(html, /"--lp-bubble-h": bubbleHeightPx\(widget\) \+ "px"/);
   assert.match(html, /"--lp-bubble-desc-lines": bubbleCfg\.bubbleDescriptionLines/);
-  // ...et l'auto-dimensionnement du widget appelle la MÊME fonction.
-  assert.match(html, /const bubbleH = bubbleHeightPx\(w\);/);
+  /* ...et l'auto-dimensionnement du widget appelle la MÊME fonction, par
+     l'intermédiaire de `bubbleLaneHeightPx` — la hauteur d'une LIGNE de bulles,
+     bandeau condensé compris (#120, #122). Elle n'ajoute rien à la hauteur de
+     la bulle : elle la relit. */
+  assert.match(html, /const laneH = bubbleLaneHeightPx\(w\);/);
+  assert.match(html, /function bubbleLaneHeightPx\(widget\) \{[\s\S]*?return bubbleHeightPx\(widget\) \+ fields;/);
   // Aucun des deux ne recopie les nombres : c'était le piège d'un widget qui se
   // redimensionne à une hauteur qui n'est pas celle qu'il dessine.
   assert.doesNotMatch(html, /bubbleSize === "compact" \? 34/);
@@ -462,10 +477,13 @@ test("seules les macro-bulles utilisent cette étendue, pas les encadrés du Gan
 
 test("les champs sous la bulle reçoivent la boîte de la bulle", () => {
   // Bulle de tâche : sa gauche et sa largeur en pourcentage de la piste.
-  assert.match(html, /<RowFields t=\{t\} box=\{\{ left: leftPct \+ "%", width: widthPct \+ "%" \}\} \/>/);
+  assert.match(html, /<RowFields t=\{t\} box=\{\{ left: leftPct \+ "%", width: widthPct \+ "%" \}\} color=\{bubbleColorOf\(t\)\} \/>/);
   // Bulle de jalon : la boîte fixe qu'elle partage avec ses champs.
-  assert.match(html, /<RowFields t=\{t\} box=\{\{ left: msBox\.fieldsLeft, width: BUBBLE_MILESTONE_W \+ "px" \}\} \/>/);
+  assert.match(html, /<RowFields t=\{t\} box=\{\{ left: msBox\.fieldsLeft, width: BUBBLE_MILESTONE_W \+ "px" \}\} color=\{bubbleColorOf\(t\)\} \/>/);
   assert.match(html, /style=\{\{ marginTop: "var\(--lp-bubble-h\)", marginLeft: fieldsBox\.left, width: fieldsBox\.width \}\}/);
+  /* Le bandeau condensé suit la même règle, par le même procédé : en flux,
+     décalé de la hauteur de la bulle, à la largeur de sa boîte (#122). */
+  assert.match(html, /marginTop: "var\(--lp-bubble-h\)", marginLeft: compactBox\.left, width: compactBox\.width/);
 });
 
 test("l'infobulle se tait pendant un glisser et au survol d'une poignée", () => {
@@ -476,4 +494,216 @@ test("l'infobulle se tait pendant un glisser et au survol d'une poignée", () =>
      (une barre fait 9 px de haut) mais il est de même nature. */
   assert.equal((html.match(/\{\.\.\.handleHoverGuard\}/g) || []).length, 6,
     "une poignée n'écarte pas l'infobulle");
+});
+
+// --- Couloirs : les bulles côte à côte (#120) ------------------------------
+//
+// Le widget reprenait la géométrie du Mini-Gantt — une tâche, une ligne — et
+// dix tâches disjointes dans le temps donnaient dix lignes empilées. Ce qu'on
+// veut, c'est Bubble Plan : les bulles d'un couloir se suivent horizontalement
+// et on ne descend d'une ligne que lorsqu'il n'y a plus la place.
+
+const ligne = (id, startIdx, endIdx, extra) => ({ id, startIdx, endIdx, ...extra });
+
+test("des bulles disjointes dans le temps tiennent sur une seule ligne", () => {
+  // 10 px par jour : une bulle de 90 px couvre 9 jours. Trois tâches de 20
+  // jours espacées de 30 ne se gênent donc pas.
+  const lanes = bubbleLaneRows(
+    [ligne("a", 0, 20), ligne("b", 50, 70), ligne("c", 100, 120)],
+    { pxPerDay: 10 },
+  );
+  assert.equal(lanes.length, 1, "trois bulles disjointes occupent trois lignes");
+  assert.deepEqual(lanes[0].items.map((r) => r.id), ["a", "b", "c"]);
+  assert.equal(lanes[0].index, 0);
+});
+
+test("deux bulles qui se chevauchent descendent d'une ligne, pas les suivantes", () => {
+  const lanes = bubbleLaneRows(
+    [ligne("a", 0, 40), ligne("b", 20, 60), ligne("c", 100, 140)],
+    { pxPerDay: 10 },
+  );
+  assert.equal(lanes.length, 2);
+  // « c » retrouve la première ligne : elle est libre après « a ».
+  assert.deepEqual(lanes[0].items.map((r) => r.id), ["a", "c"]);
+  assert.deepEqual(lanes[1].items.map((r) => r.id), ["b"]);
+});
+
+test("le chevauchement se mesure à l'écran, pas au calendrier", () => {
+  /* Deux tâches d'un jour à trois jours d'écart ne se chevauchent pas au
+     calendrier. Leurs bulles, elles, ne descendent jamais sous 90 px : à 10 px
+     par jour, chacune occupe neuf jours et elles se recouvrent largement. Les
+     poser sur la même ligne les rendrait illisibles — c'est tout l'objet de
+     `bubbleRowExtent` (#104). */
+  const serrees = bubbleLaneRows([ligne("a", 0, 0), ligne("b", 3, 3)], { pxPerDay: 10 });
+  assert.equal(serrees.length, 2);
+  // La même paire sur une piste dix fois plus large tient sur une ligne : une
+  // bulle de 90 px n'y couvre plus qu'un jour.
+  const larges = bubbleLaneRows([ligne("a", 0, 0), ligne("b", 3, 3)], { pxPerDay: 100 });
+  assert.equal(larges.length, 1);
+});
+
+test("un écart minimal sépare deux bulles voisines", () => {
+  /* Sans lui, deux bulles qui se suivent se toucheraient bord à bord et on
+     lirait une seule bulle coupée d'un trait. L'écart vaut BUBBLE_LANE_GAP_PX
+     à l'écran : à 1 px par jour, il pèse donc huit jours. */
+  const px = 1;
+  const finDeA = BUBBLE_MIN_PX / px; // « a » occupe 90 jours à cette échelle
+  const colles = bubbleLaneRows([ligne("a", 0, 0), ligne("b", finDeA + 2, finDeA + 2)], { pxPerDay: px, gapPx: BUBBLE_LANE_GAP_PX });
+  assert.equal(colles.length, 2, "deux bulles se touchent au lieu de se séparer");
+  const espacees = bubbleLaneRows([ligne("a", 0, 0), ligne("b", finDeA + 20, finDeA + 20)], { pxPerDay: px });
+  assert.equal(espacees.length, 1);
+});
+
+test("un jalon réserve la place de sa bulle, des deux côtés de sa date", () => {
+  // Bulle de jalon : 120 px de large, centrée. À 10 px par jour, elle occupe
+  // six jours de part et d'autre.
+  const lanes = bubbleLaneRows(
+    [ligne("j1", 100, 100, { milestone: true }), ligne("j2", 105, 105, { milestone: true })],
+    { pxPerDay: 10 },
+  );
+  assert.equal(lanes.length, 2);
+});
+
+test("l'ordre reçu est respecté : le rangement ne retrie rien", () => {
+  // C'est le tri choisi par l'utilisateur. Le retrier ici ferait mentir le
+  // réglage « ordre des lignes » du widget.
+  const lanes = bubbleLaneRows(
+    [ligne("tard", 100, 120), ligne("tot", 0, 20), ligne("milieu", 50, 70)],
+    { pxPerDay: 10 },
+  );
+  assert.equal(lanes.length, 1);
+  assert.deepEqual(lanes[0].items.map((r) => r.id), ["tard", "tot", "milieu"]);
+});
+
+test("« une tâche, une ligne » reste possible, et ne range rien", () => {
+  const lanes = bubbleLaneRows(
+    [ligne("a", 0, 20), ligne("b", 50, 70)],
+    { pxPerDay: 10, packing: false },
+  );
+  assert.equal(lanes.length, 2);
+  assert.deepEqual(lanes.map((l) => l.items.length), [1, 1]);
+  assert.deepEqual(lanes.map((l) => l.key), ["a", "b"]);
+});
+
+test("sans piste mesurée, le rangement retombe sur les dates seules", () => {
+  // Au premier rendu la piste n'est pas mesurée. Mieux vaut des couloirs
+  // calculés sur les dates qu'une géométrie inventée : la mesure tombe à la
+  // trame suivante et le rangement se refait.
+  const lanes = bubbleLaneRows([ligne("a", 0, 10), ligne("b", 20, 30)], {});
+  assert.equal(lanes.length, 1);
+  assert.deepEqual(lanes[0].items.map((r) => r.id), ["a", "b"]);
+});
+
+test("une liste vide ou sans identifiant ne fabrique aucun couloir", () => {
+  assert.deepEqual(bubbleLaneRows([], { pxPerDay: 10 }), []);
+  assert.deepEqual(bubbleLaneRows(null, { pxPerDay: 10 }), []);
+  assert.deepEqual(bubbleLaneRows([{ startIdx: 0, endIdx: 1 }], { pxPerDay: 10 }), []);
+  // Une ligne sans dates exploitables n'est pas dessinée : elle ne peut pas
+  // non plus réserver de place, et garde sa propre ligne.
+  const lanes = bubbleLaneRows([ligne("x", "hier", 10), ligne("a", 0, 10)], { pxPerDay: 10 });
+  assert.equal(lanes.length, 2);
+});
+
+test("le mode de disposition se règle, et « couloirs » est le défaut", () => {
+  assert.deepEqual(BUBBLE_LAYOUTS, ["lanes", "rows"]);
+  assert.equal(BUBBLES_DEFAULTS.bubbleLayout, "lanes");
+  assert.equal(normalizeBubbleLayout(undefined), "lanes");
+  assert.equal(normalizeBubbleLayout("rows"), "rows");
+  assert.equal(normalizeBubbleLayout("colonnes"), "lanes");
+  assert.equal(normalizeBubblesWidget({}).bubbleLayout, "lanes");
+  assert.equal(normalizeBubblesWidget({ bubbleLayout: "rows" }).bubbleLayout, "rows");
+});
+
+test("le rendu décide en un seul endroit entre lignes et couloirs", () => {
+  assert.match(html, /const bubblePacked = bubbleMode && normalizeBubbleLayout\(bubbleCfg\.bubbleLayout\) === "lanes";/);
+  assert.match(html, /bubblePacked\s*\? BubbleLanes\(list\)/);
+  // La mesure des lignes reste indexée PAR TÂCHE : toutes celles d'un couloir
+  // pointent sur le même élément, et les macro-bulles continuent de lire
+  // rowRects[idDeTâche] sans rien savoir des couloirs.
+  assert.match(html, /lane\.items\.forEach\(\(row\) => \{\s*if \(el\) rowNodes\.current\[row\.id\] = el;/);
+});
+
+// --- Description : deux étages de teinte (#121) ----------------------------
+
+test("avec la description, l'en-tête garde la couleur de base et le corps s'éclaircit", () => {
+  // L'en-tête porte la couleur ; le fond de la bulle, lui, s'allège pour que
+  // les deux étages se distinguent.
+  assert.match(html, /const headTint = `color-mix\(in srgb, \$\{color\} 26%, transparent\)`;/);
+  assert.match(html, /background: `color-mix\(in srgb, \$\{color\} \$\{showDesc \? 5 : 10\}%, var\(--surface\)\)`/);
+  /* En `transparent` et non sur la surface du thème : posé en aplat, l'en-tête
+     aurait masqué le lavis d'avancement qui court derrière lui. */
+  assert.doesNotMatch(html, /const headTint = `color-mix\(in srgb, \$\{color\} 26%, var\(--surface\)\)`;/);
+  // Le bandeau épouse le titre : étiré, il repeindrait la zone de description.
+  assert.match(html, /\.lp-bubble\.has-desc \.lp-bubble-head\{ flex:0 1 auto;/);
+  // Sans description, rien ne change : pas de classe, pas de fond d'en-tête.
+  assert.match(html, /const headStyle = showDesc\s*\?[\s\S]*?: undefined;/);
+});
+
+// --- Champs condensés rattachés à la bulle (#122) --------------------------
+
+test("la disposition condensée existe, et les couloirs l'imposent", () => {
+  assert.deepEqual(BUBBLE_FIELDS_LAYOUTS, ["under", "inline", "compact"]);
+  assert.equal(BUBBLES_DEFAULTS.bubbleFieldsLayout, "compact");
+  assert.equal(normalizeBubbleFieldsLayout("compact"), "compact");
+  // Hors couloirs, le choix est respecté tel quel.
+  assert.equal(bubbleEffectiveFieldsLayout({ bubbleLayout: "rows", bubbleFieldsLayout: "under" }), "under");
+  assert.equal(bubbleEffectiveFieldsLayout({ bubbleLayout: "rows", bubbleFieldsLayout: "inline" }), "inline");
+  /* En couloirs, une bulle a des VOISINES : des champs qui s'étalent en
+     plusieurs rangées ou qui débordent à droite viendraient se poser sur
+     elles. Le bandeau condensé est la seule forme qui tienne. */
+  assert.equal(bubbleEffectiveFieldsLayout({ bubbleLayout: "lanes", bubbleFieldsLayout: "under" }), "compact");
+  assert.equal(bubbleEffectiveFieldsLayout({ bubbleLayout: "lanes", bubbleFieldsLayout: "inline" }), "compact");
+});
+
+test("la hauteur d'une ligne de bulles compte le bandeau condensé", () => {
+  const base = BUBBLE_HEIGHT_PX.normal;
+  // Bandeau affiché : la hauteur d'une ligne vaut la bulle plus le bandeau.
+  assert.equal(
+    bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: ["status"] }),
+    base + BUBBLE_FIELDS_COMPACT_PX,
+  );
+  // Aucun champ coché : pas de bandeau, donc pas de hauteur en plus.
+  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: [] }), base);
+  // Hors couloirs et champs « sous la bulle » : la ligne est mesurée au rendu,
+  // cette fonction ne promet que la bulle.
+  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "rows", bubbleFieldsLayout: "under", bubbleFields: ["status"] }), base);
+  // La densité et les lignes de description continuent de compter.
+  assert.equal(
+    bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: ["status"], bubbleSize: "compact", bubbleShowDescription: true, bubbleDescriptionLines: 2 }),
+    BUBBLE_HEIGHT_PX.compact + BUBBLE_DESC_LINE_PX + BUBBLE_FIELDS_COMPACT_PX,
+  );
+});
+
+test("le bandeau condensé reprend le trait et la couleur de sa bulle", () => {
+  // Rattaché : pas de bord haut, les arrondis bas de la bulle, sa couleur.
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*border-top:0;/);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*border-radius:0 0 var\(--radius-sm\) var\(--radius-sm\);/);
+  assert.match(html, /background: color \? `color-mix\(in srgb, \$\{color\} 8%, var\(--surface\)\)` : "var\(--surface\)"/);
+  // Une seule ligne, coupée à droite si la bulle est étroite.
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*flex-wrap:nowrap;/);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*overflow:hidden;/);
+  // Point médian entre deux valeurs, jamais avant la première.
+  assert.match(html, /\.lp-bubble-fields\.is-compact > \* \+ \*::before\{\s*content:"·";/);
+  /* Les valeurs restent celles de FieldValue : c'est la feuille de style qui
+     condense, pas un second formateur qui finirait par diverger. */
+  assert.match(html, /\.lp-bubble-fields\.is-compact \.lp-chip\{/);
+});
+
+test("la place libre entre deux voisines se mesure sur les boîtes DESSINÉES", () => {
+  /* Les dates s'écrivent DEHORS, à gauche et à droite de la bulle. Seules sur
+     leur ligne, elles ne recouvraient que du vide ; rangées côte à côte, elles
+     se posaient sur la bulle voisine (retour de test).
+
+     Le calcul ne passe PAS par `bubbleRowExtent` : celle-là modélise ce qu'une
+     bulle occupe pour le RANGEMENT, à partir des seules dates, alors que la
+     boîte d'un jalon est recalée contre le bord de la piste dès qu'elle y
+     dépasserait. Les deux divergent donc au bord, et c'est la boîte dessinée
+     qui décide s'il reste la place d'écrire une date. */
+  assert.match(html, /const bubbleSlotBoxPx = \(t\) => \{/);
+  assert.match(html, /bubbleTrackPx - centerPx < half \? bubbleTrackPx - BUBBLE_MILESTONE_W : centerPx - half/);
+  assert.match(html, /before: prev \? box\.leftPx - prev\.rightPx : Infinity,/);
+  assert.match(html, /after: next \? next\.leftPx - box\.rightPx : Infinity,/);
+  // Et l'affichage d'une date retient la plus petite des deux places : le bord
+  // de la piste, et la voisine.
+  assert.match(html, /laneRoom && Number\.isFinite\(laneRoom\.before\) \? laneRoom\.before : Infinity,/);
 });
