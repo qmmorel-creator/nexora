@@ -102,7 +102,26 @@ function AnnotationsHarness() {
     ...MILESTONE_TYPE_SEED,
     { id: "custom-essais", name: "Essais de mise en eau", symbol: "droplet", color: "#0EA5E9" },
   ]);
-  const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
+  /* Widget « Charge personnel » (#124) : le catalogue d'ateliers entre dans le
+     contexte partagé, comme les statuts ou les types de jalon, et les
+     affectations restent un état à part — c'est exactement le partage de
+     l'application. */
+  const [harnessWorkshops] = useState(() => WORKSHOP_SEED.map((w) => ({ ...w })));
+  const [staffing, setStaffing] = useState(() => {
+    const [usine, bureau, chantier, atelier, formation, absence] = WORKSHOP_SEED.map((w) => w.id);
+    const jour = (n) => "2026-09-" + String(n).padStart(2, "0");
+    return [
+      { member: seedTeamMembers[0].name, date: jour(14), workshops: [bureau] },
+      { member: seedTeamMembers[0].name, date: jour(15), workshops: [bureau, chantier] },
+      { member: seedTeamMembers[0].name, date: jour(17), workshops: [formation, chantier, usine, bureau] },
+      { member: seedTeamMembers[1].name, date: jour(14), workshops: [usine] },
+      { member: seedTeamMembers[1].name, date: jour(16), workshops: [bureau, usine] },
+      { member: seedTeamMembers[1].name, date: jour(19), workshops: [chantier] },
+      { member: seedTeamMembers[2 % seedTeamMembers.length].name, date: jour(16), workshops: [atelier] },
+      { member: seedTeamMembers[2 % seedTeamMembers.length].name, date: jour(18), workshops: [absence] },
+    ];
+  });
+  const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, workshops: harnessWorkshops, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
     temporalBlocks: [
@@ -665,6 +684,29 @@ function AnnotationsHarness() {
             onDelete={noop}
           />
         )}
+        {/* Widget « Charge personnel » (#124). Deux montages, parce que c'est la
+            DENSITÉ qui décide de ce qu'une bande peut écrire : en semaine, une
+            case fait plus de cent pixels et porte un nom ; en mois, une
+            quinzaine, et il ne reste que la couleur. Un widget qui ne serait
+            éprouvé qu'en semaine laisserait passer des lettres coupées. */}
+        <div id="harness-staffing-week" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
+          <WidgetStaffing
+            widget={{ id: "ws1", type: "staffing", staffingRange: "week", staffingOffset: 0, staffingMembers: [], staffingShowWeekends: true, staffingShowLoad: true }}
+            ctx={ctx}
+            staffing={staffing}
+            onUpdateStaffing={setStaffing}
+            onUpdateWidget={noop}
+          />
+        </div>
+        <div id="harness-staffing-month" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
+          <WidgetStaffing
+            widget={{ id: "ws2", type: "staffing", staffingRange: "month", staffingOffset: 0, staffingMembers: [], staffingShowWeekends: true, staffingShowLoad: true }}
+            ctx={ctx}
+            staffing={staffing}
+            onUpdateStaffing={setStaffing}
+            onUpdateWidget={noop}
+          />
+        </div>
         {/* Widget « Bulles » (#92) : le MÊME diagramme, lu en bulles. Deux
             macro-bulles, dont une posée sur des tâches NON SUCCESSIVES pour
             vérifier qu'elle produit bien deux enveloppes distinctes, et une
@@ -699,6 +741,52 @@ function AnnotationsHarness() {
             tasks={tasks.filter((t) => ["t2", "t3", "t7"].includes(t.id))} ctx={ctx} onOpen={noop} metaBlocks={[]}
             onUpdateWidget={noop}
             onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
+            groupBy="none"
+          />
+        </div>
+        {/* Couloirs réservés des annotations en mode bulles (#93). Le trait
+            rattaché à une tâche lui passait en plein milieu : une tâche est ici
+            une BOÎTE, pas une ligne fine. Jalons et traits se rangent donc dans
+            leurs propres couloirs, en tête du diagramme. */}
+        <div id="harness-bubbles-annot" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb6", bubbleMacros: [],
+              bubbleLayout: "lanes",
+              ganttAnnotations: {
+                temporalBlocks: [], highlightFrames: [], risks: [], notes: [],
+                milestones: [
+                  { id: "bm1", title: "Ordre de service", date: "2026-07-15", type: MILESTONE_TYPE_SEED[0].id, color: "", taskId: null, rule: false },
+                  { id: "bm2", title: "Mise en service", date: "2026-09-18", type: MILESTONE_TYPE_SEED[0].id, color: "", taskId: null, rule: false },
+                ],
+                spans: [
+                  { id: "bs1", label: "Fenêtre de tirage", startDate: "2026-08-03", endDate: "2026-09-04", taskId: "t2", color: "#0EA5E9", borderStyle: "solid", thickness: 2, position: "above", capStart: "bar", capEnd: "arrow" },
+                  { id: "bs2", label: "Période d'essais", startDate: "2026-07-20", endDate: "2026-08-14", taskId: "t1", color: "#22B07D", borderStyle: "dashed", thickness: 2, position: "above", capStart: "dot", capEnd: "dot" },
+                ],
+              },
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
+        {/* BEAUCOUP de champs sous la bulle (#122). Le bandeau condensé tenait
+            sur une ligne et coupait ce qui dépassait : il ne restait qu'un
+            « Quentin · À pla… » qui ne disait plus rien. Il passe à la ligne, et
+            toutes les bulles du widget adoptent la MÊME hauteur — sans quoi, en
+            couloirs, la hauteur d'une ligne serait impossible à poser. */}
+        <div id="harness-bubbles-fields" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb5", bubbleMacros: [],
+              bubbleLayout: "lanes",
+              bubbleFieldsLayout: "compact",
+              bubbleFields: ["project", "status", "criticality", "taskType", "assignee", "start", "end", "period", "progress"],
+            }}
+            tasks={tasks} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
             groupBy="none"
           />
         </div>

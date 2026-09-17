@@ -35,10 +35,10 @@ const { NEXORA_SOURCE_ASSISTANT, NEXORA_SOURCE_BROWSER, storageSourceTag } = fac
   ["NEXORA_SOURCE_ASSISTANT", "NEXORA_SOURCE_BROWSER", "storageSourceTag"],
 );
 
-const { isAssistantMergeableChange, splitRemoteChanges } = factory(
+const { isAssistantMergeableChange, splitRemoteChanges, remoteChangeLabel } = factory(
   "// === NEXORA:MCP-SYNC-SPLIT:START ===",
   "// === NEXORA:MCP-SYNC-SPLIT:END ===",
-  ["isAssistantMergeableChange", "splitRemoteChanges"],
+  ["isAssistantMergeableChange", "splitRemoteChanges", "remoteChangeLabel"],
 );
 
 // ---------------------------------------------------------------------------
@@ -159,4 +159,23 @@ test("les fonctions Netlify marquent leurs propres écritures", async () => {
   assert.match(relay, /const WRITE_SOURCE = "browser";/);
   assert.match(relay, /source: stringField\(WRITE_SOURCE\)/);
   assert.match(relay, /source: result\.source/);
+});
+
+// --- Le bandeau nomme l'origine (#111) --------------------------------------
+//
+// Il ne disait que « tasks », et un bandeau qui reparaît sans qu'on sache d'où
+// vient l'écriture n'est pas diagnosticable : « autre session » désigne un vrai
+// second onglet, « origine inconnue » un manifeste antérieur au marquage —
+// deux causes opposées derrière le même message.
+
+test("le bandeau de conflit nomme la clé ET l'origine de l'écriture", () => {
+  assert.equal(remoteChangeLabel("nexora:tasks", { source: "browser" }), "tasks (autre session)");
+  assert.equal(remoteChangeLabel("nexora:tasks", { source: "assistant-api" }), "tasks (assistant)");
+  // Manifeste écrit avant le marquage : c'est une cause à part entière, et elle
+  // se lit maintenant au lieu de se deviner.
+  assert.equal(remoteChangeLabel("nexora:tasks", { source: null }), "tasks (origine inconnue)");
+  assert.equal(remoteChangeLabel("nexora:tasks", {}), "tasks (origine inconnue)");
+  assert.equal(remoteChangeLabel("nexora:tasks", undefined), "tasks (origine inconnue)");
+  // Une origine inconnue du client est rendue telle quelle plutôt qu'effacée.
+  assert.equal(remoteChangeLabel("nexora:views", { source: "import" }), "views (import)");
 });

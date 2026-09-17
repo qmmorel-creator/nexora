@@ -162,6 +162,43 @@ dépasserait. Les deux divergent au bord, et c'est le dessin qui décide.
 `bubbleLayout: "rows"` rend l'ancien comportement, une tâche par ligne, sans
 rien changer d'autre au rendu.
 
+### L'écart entre deux voisines est partagé
+
+Les dates s'écrivent dehors, à gauche et à droite de la bulle. Deux voisines les
+posent dans le **même intervalle** : la date de fin de l'une à droite, celle de
+début de la suivante à gauche. Chacune croyait avoir tout l'écart pour elle, et
+les deux s'écrivaient l'une sur l'autre (retour de test).
+
+`bubbleLaneDateRoom` n'en donne donc que la **moitié** à chacune : les deux
+dates ne s'écrivent que s'il y a la place pour les deux. Aux extrémités du
+couloir, il n'y a pas de voisine à ménager, et c'est le bord de la piste qui
+borne.
+
+## Jalons et annotations horizontales : deux couloirs réservés
+
+Le rattachement à une tâche décide de la **hauteur** d'un trait ou d'un jalon. En
+Gantt, une tâche est une ligne fine et le trait se pose dessus proprement. En
+bulles, une tâche est une **boîte** de quarante à soixante pixels, et le trait
+lui passait en plein milieu (retour de test).
+
+En mode bulles, jalons et traits quittent donc les lignes pour deux couloirs
+nommés, en tête du diagramme :
+
+- **Jalons** — la bande de repères, désormais légendée ;
+- **Annotations horizontales** — un trait par ligne, **l'un sous l'autre**,
+  triés par date de début.
+
+Le calque des traits calés sur une tâche (`spanLayer`) ne se dessine plus en
+mode bulles : l'y laisser **aussi** les ferait repasser au travers des bulles.
+
+Le rattachement à une tâche reste réglable et vaut toujours pour la vue Gantt —
+un même widget passe d'un mode à l'autre, et cacher le champ ferait perdre le
+réglage au retour. Il est simplement **ignoré** en bulles.
+
+Les légendes sont posées sur leur **propre ligne**, pleine largeur : leur donner
+une colonne à gauche décalerait la piste de ces bandes, et toutes les couches
+superposées avec elle.
+
 ## Les champs condensés, rattachés à la bulle (#122)
 
 Les champs secondaires s'étalaient en pastilles sur une ou plusieurs rangées
@@ -182,6 +219,30 @@ En couloirs, cette forme est **imposée** (`bubbleEffectiveFieldsLayout`) : c'es
 la seule qui soit bornée en largeur comme en hauteur. Le réglage n'est pas
 interdit pour autant — le choix redevient vrai dès qu'on repasse en « une tâche,
 une ligne ».
+
+### Il passe à la ligne, et toutes les bulles gardent la même hauteur
+
+Le bandeau tenait sur une seule ligne et coupait ce qui dépassait : avec sept
+champs, il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien (retour
+de test). Il **passe donc à la ligne**, à la largeur de la bulle.
+
+Mais une hauteur qui suivrait chaque bulle donnerait des lignes de diagramme
+toutes différentes — et, en couloirs, une hauteur de ligne impossible à poser
+puisque tout y est en absolu. La hauteur est donc **régularisée** : on prend le
+plus grand nombre de lignes du widget, et toutes les bulles l'adoptent.
+
+Ce nombre est **mesuré**, par les `offsetTop` distincts des pastilles — et non
+par la hauteur du bandeau, qui est justement ce qu'on lui impose : la mesurer
+reviendrait à se mesurer soi-même, et la hauteur ne pourrait alors que croître,
+jamais revenir. `compactFieldLines` est dans les dépendances de sa propre
+mesure, et c'est voulu : la première tombe avant que les bandeaux aient leur
+hauteur définitive, et s'arrêter là figeait le widget sur un compte trop bas. La
+boucle converge en deux passes et s'arrête d'elle-même.
+
+Plafond : **six lignes**. Au-delà, les champs occuperaient plus de place que la
+bulle et ce ne serait plus un bandeau — mais il fallait couvrir les
+configurations réelles, et neuf champs sur une bulle courte en demandent déjà
+cinq.
 
 ## Deux étages de teinte quand la description est là (#121)
 

@@ -71,6 +71,10 @@ const {
   BUBBLE_FIELDS_LAYOUTS,
   BUBBLE_FIELDS_COMPACT_PX,
   BUBBLE_LANE_GAP_PX,
+  BUBBLE_FIELDS_COMPACT_LINE_PX,
+  BUBBLE_FIELDS_COMPACT_LINES_MAX,
+  bubbleCompactFieldsHeight,
+  bubbleLaneDateRoom,
 } = extract(
   "// === NEXORA:BUBBLES:START ===",
   "// === NEXORA:BUBBLES:END ===",
@@ -90,6 +94,8 @@ const {
     "bubbleLaneRows", "bubbleLaneHeightPx", "bubbleEffectiveFieldsLayout",
     "normalizeBubbleLayout", "BUBBLE_LAYOUTS", "BUBBLE_FIELDS_LAYOUTS",
     "BUBBLE_FIELDS_COMPACT_PX", "BUBBLE_LANE_GAP_PX",
+    "BUBBLE_FIELDS_COMPACT_LINE_PX", "BUBBLE_FIELDS_COMPACT_LINES_MAX",
+    "bubbleCompactFieldsHeight", "bubbleLaneDateRoom",
   ],
 );
 
@@ -414,7 +420,7 @@ test("la hauteur de bulle n'a qu'une source : le rendu et l'auto-dimensionnement
      bandeau condensé compris (#120, #122). Elle n'ajoute rien à la hauteur de
      la bulle : elle la relit. */
   assert.match(html, /const laneH = bubbleLaneHeightPx\(w\);/);
-  assert.match(html, /function bubbleLaneHeightPx\(widget\) \{[\s\S]*?return bubbleHeightPx\(widget\) \+ fields;/);
+  assert.match(html, /function bubbleLaneHeightPx\(widget, compactLines\) \{[\s\S]*?return bubbleHeightPx\(widget\) \+ fields;/);
   // Aucun des deux ne recopie les nombres : c'était le piège d'un widget qui se
   // redimensionne à une hauteur qui n'est pas celle qu'il dessine.
   assert.doesNotMatch(html, /bubbleSize === "compact" \? 34/);
@@ -679,9 +685,12 @@ test("le bandeau condensé reprend le trait et la couleur de sa bulle", () => {
   assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*border-top:0;/);
   assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*border-radius:0 0 var\(--radius-sm\) var\(--radius-sm\);/);
   assert.match(html, /background: color \? `color-mix\(in srgb, \$\{color\} 8%, var\(--surface\)\)` : "var\(--surface\)"/);
-  // Une seule ligne, coupée à droite si la bulle est étroite.
-  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*flex-wrap:nowrap;/);
-  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*overflow:hidden;/);
+  /* Il PASSE À LA LIGNE plutôt que de tronquer (#122) : beaucoup de champs et
+     il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien. Sa
+     hauteur est posée par le rendu, la même pour toutes les bulles du widget. */
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*flex-wrap:wrap;/);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*height:var\(--lp-bubble-fields-h, 16px\);/);
+  assert.match(html, /"--lp-bubble-fields-h": bubbleCompactFieldsHeight\(compactFieldLines\) \+ "px"/);
   // Point médian entre deux valeurs, jamais avant la première.
   assert.match(html, /\.lp-bubble-fields\.is-compact > \* \+ \*::before\{\s*content:"·";/);
   /* Les valeurs restent celles de FieldValue : c'est la feuille de style qui
@@ -701,9 +710,113 @@ test("la place libre entre deux voisines se mesure sur les boîtes DESSINÉES", 
      qui décide s'il reste la place d'écrire une date. */
   assert.match(html, /const bubbleSlotBoxPx = \(t\) => \{/);
   assert.match(html, /bubbleTrackPx - centerPx < half \? bubbleTrackPx - BUBBLE_MILESTONE_W : centerPx - half/);
-  assert.match(html, /before: prev \? box\.leftPx - prev\.rightPx : Infinity,/);
-  assert.match(html, /after: next \? next\.leftPx - box\.rightPx : Infinity,/);
+  assert.match(html, /before: prev \? Math\.max\(0, \(box\.leftPx - prev\.rightPx\) \/ 2\) : Infinity,/);
+  assert.match(html, /after: next \? Math\.max\(0, \(next\.leftPx - box\.rightPx\) \/ 2\) : Infinity,/);
   // Et l'affichage d'une date retient la plus petite des deux places : le bord
   // de la piste, et la voisine.
   assert.match(html, /laneRoom && Number\.isFinite\(laneRoom\.before\) \? laneRoom\.before : Infinity,/);
+});
+
+// --- Retours de test du 17/09 ----------------------------------------------
+
+test("les dates de deux bulles voisines se partagent l'écart qui les sépare", () => {
+  /* Elles se posent dans le MÊME intervalle : la date de fin de l'une à droite,
+     la date de début de la suivante à gauche. Chacune croyait avoir tout
+     l'écart pour elle, et les deux s'écrivaient l'une sur l'autre (#120). */
+  const room = bubbleLaneDateRoom([
+    { id: "a", leftPx: 0, rightPx: 100 },
+    { id: "b", leftPx: 200, rightPx: 300 },
+  ]);
+  assert.equal(room.get("a").after, 50, "la moitié de l'écart, pas l'écart entier");
+  assert.equal(room.get("b").before, 50);
+  // Aux extrémités, il n'y a pas de voisine à ménager.
+  assert.equal(room.get("a").before, Infinity);
+  assert.equal(room.get("b").after, Infinity);
+});
+
+test("le partage de l'écart se fait sur la position RÉELLE, pas sur l'ordre reçu", () => {
+  // L'ordre du couloir suit le tri de l'utilisateur, pas le temps : le calcul
+  // trie donc lui-même sur la gauche mesurée.
+  const room = bubbleLaneDateRoom([
+    { id: "tard", leftPx: 400, rightPx: 500 },
+    { id: "tot", leftPx: 0, rightPx: 100 },
+  ]);
+  assert.equal(room.get("tot").after, 150);
+  assert.equal(room.get("tard").before, 150);
+  // Deux bulles qui se touchent ne laissent aucune place, jamais une négative.
+  const colle = bubbleLaneDateRoom([
+    { id: "a", leftPx: 0, rightPx: 100 },
+    { id: "b", leftPx: 90, rightPx: 200 },
+  ]);
+  assert.equal(colle.get("a").after, 0);
+  assert.equal(colle.get("b").before, 0);
+  // Une boîte sans géométrie exploitable n'entre pas dans le calcul.
+  assert.equal(bubbleLaneDateRoom([{ id: "x" }, null, { leftPx: 1, rightPx: 2 }]).size, 0);
+  assert.equal(bubbleLaneDateRoom(null).size, 0);
+});
+
+test("la hauteur du bandeau condensé suit le nombre de lignes, et se borne", () => {
+  // Une ligne : la hauteur d'origine, au pixel près — un widget qui tient sur
+  // une ligne ne bouge pas.
+  assert.equal(bubbleCompactFieldsHeight(1), BUBBLE_FIELDS_COMPACT_PX);
+  assert.equal(bubbleCompactFieldsHeight(2), BUBBLE_FIELDS_COMPACT_PX + BUBBLE_FIELDS_COMPACT_LINE_PX);
+  assert.equal(bubbleCompactFieldsHeight(3), BUBBLE_FIELDS_COMPACT_PX + BUBBLE_FIELDS_COMPACT_LINE_PX * 2);
+  /* Au-delà de quatre lignes, les champs occuperaient plus de place que la
+     bulle et ce ne serait plus un bandeau. */
+  assert.equal(bubbleCompactFieldsHeight(99), bubbleCompactFieldsHeight(BUBBLE_FIELDS_COMPACT_LINES_MAX));
+  // Valeurs absurdes : une ligne, jamais NaN ni zéro.
+  assert.equal(bubbleCompactFieldsHeight(0), BUBBLE_FIELDS_COMPACT_PX);
+  assert.equal(bubbleCompactFieldsHeight(-3), BUBBLE_FIELDS_COMPACT_PX);
+  assert.equal(bubbleCompactFieldsHeight("beaucoup"), BUBBLE_FIELDS_COMPACT_PX);
+  assert.equal(bubbleCompactFieldsHeight(undefined), BUBBLE_FIELDS_COMPACT_PX);
+});
+
+test("la hauteur d'une ligne de couloir suit celle du bandeau", () => {
+  const base = BUBBLE_HEIGHT_PX.normal;
+  const w = { bubbleLayout: "lanes", bubbleFields: ["status", "assignee", "end"] };
+  assert.equal(bubbleLaneHeightPx(w, 1), base + bubbleCompactFieldsHeight(1));
+  assert.equal(bubbleLaneHeightPx(w, 3), base + bubbleCompactFieldsHeight(3));
+  // Sans champ, pas de bandeau : le nombre de lignes ne change rien.
+  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: [] }, 3), base);
+});
+
+test("le nombre de lignes du bandeau est MESURÉ, et régularisé pour tout le widget", () => {
+  /* On compte les lignes par les offsetTop DISTINCTS des pastilles, et non par
+     la hauteur du bandeau : celle-ci est justement ce qu'on lui impose, et la
+     mesurer reviendrait à se mesurer soi-même — la hauteur ne pourrait alors
+     que croître, jamais revenir. */
+  assert.match(html, /tops\.add\(Math\.round\(child\.offsetTop\)\);/);
+  assert.doesNotMatch(html, /setCompactFieldLines\([^)]*scrollHeight/);
+  // La plus haute l'emporte, et c'est elle que toutes les bulles adoptent.
+  assert.match(html, /lines = Math\.max\(lines, tops\.size \|\| 1\);/);
+});
+
+// --- Couloirs réservés des annotations en mode bulles (#93) ----------------
+
+test("en bulles, les traits quittent les lignes pour leur propre couloir", () => {
+  /* Le rattachement à une tâche décide de la hauteur d'un trait. En Gantt, une
+     tâche est une ligne fine ; en bulles, c'est une BOÎTE, et le trait lui
+     passait en plein milieu. */
+  assert.match(html, /const spanLayer = \(bubbleMode \|\| !rowsBand \|\| !spanShapes\.length\) \? null : \(/);
+  assert.match(html, /const bubbleSpanLane = \(!bubbleMode \|\| !bubbleSpanRows\.length\) \? null : \(/);
+  // Un trait par ligne, triés par date de début.
+  assert.match(html, /a\.startIdx - b\.startIdx/);
+  assert.match(html, /className="lp-widget-minigantt-row lp-bubble-annot-row"/);
+  // Et les deux couloirs sont NOMMÉS.
+  assert.match(html, /<div className="lp-bubble-lane-caption">Jalons<\/div>/);
+  assert.match(html, /<div className="lp-bubble-lane-caption">Annotations horizontales<\/div>/);
+  /* La légende est sur sa propre ligne, pleine largeur : lui donner une colonne
+     à gauche décalerait la piste de ces bandes, et toutes les couches
+     superposées avec elle. */
+  assert.match(html, /\.lp-widget-minigantt\.is-bubbles \.lp-bubble-lane-caption\{/);
+});
+
+// --- Blocs temporels et pied de réserve (#113) -----------------------------
+
+test("la couche des blocs temporels comprend le débord réservé en pied", () => {
+  /* Le pied de réserve a été ajouté sous les lignes ; les blocs, eux, sont une
+     bande continue calculée sur les seules boîtes de lignes. Ils s'arrêtaient
+     donc où s'arrêtaient les lignes, et non où s'arrête le diagramme. */
+  assert.match(html, /height: rowsBand\.height \+ rowsTail,/);
+  assert.doesNotMatch(html, /top: rowsBand\.top,\s*height: rowsBand\.height,\s*\};/);
 });

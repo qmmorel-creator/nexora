@@ -2376,6 +2376,7 @@ function defaultLayoutForType(type) {
   if (type === "projectTreemap") return { w: 8, h: 7 };
   if (type === "deadlineScatter") return { w: 10, h: 7 };
   if (type === "bubbles") return { w: 8, h: 7 };
+  if (type === "staffing") return { w: 10, h: 7 };
   if (type === "heatmapGrid") return { w: 9, h: 7 };
   if (type === "embedMetro" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
@@ -2501,7 +2502,30 @@ const BUBBLE_FIELDS_LAYOUTS = ["under", "inline", "compact"];
 /* Hauteur du bandeau condensé, en pixels. Vit ici, comme BUBBLE_HEIGHT_PX, et
    pour la même raison : le rendu la pose, l'auto-dimensionnement du widget la
    relit, et la hauteur d'un couloir s'en déduit. */
-const BUBBLE_FIELDS_COMPACT_PX = 16;
+const BUBBLE_FIELDS_COMPACT_LINE_PX = 14;
+const BUBBLE_FIELDS_COMPACT_PAD_PX = 2;
+const BUBBLE_FIELDS_COMPACT_LINES_MAX = 6;
+const BUBBLE_FIELDS_COMPACT_PX = BUBBLE_FIELDS_COMPACT_LINE_PX + BUBBLE_FIELDS_COMPACT_PAD_PX;
+
+/* Hauteur du bandeau pour un nombre de lignes donné (#122).
+
+   Le bandeau tenait sur UNE ligne et coupait ce qui dépassait : beaucoup de
+   champs, et il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien
+   (retour de test). Il passe donc à la ligne, à la largeur de la bulle.
+
+   Mais une hauteur qui suivrait chaque bulle donnerait des lignes de diagramme
+   toutes différentes — et, en couloirs, une hauteur de ligne impossible à poser
+   puisque tout y est en absolu. La hauteur est donc RÉGULARISÉE : on prend le
+   plus grand nombre de lignes du widget, et toutes les bulles l'adoptent. Le
+   plafond de six lignes n'est pas arbitraire : au-delà, les champs occupent
+   plus de place que la bulle et ce n'est plus un bandeau — mais il faut qu'il
+   couvre les configurations réelles, et neuf champs sur une bulle courte en
+   demandent déjà cinq. */
+function bubbleCompactFieldsHeight(lines) {
+  const n = Number(lines);
+  const safe = Number.isFinite(n) ? Math.min(BUBBLE_FIELDS_COMPACT_LINES_MAX, Math.max(1, Math.round(n))) : 1;
+  return safe * BUBBLE_FIELDS_COMPACT_LINE_PX + BUBBLE_FIELDS_COMPACT_PAD_PX;
+}
 /* Dispositions verticales des bulles (#120).
 
    « lanes » range les bulles d'un même couloir CÔTE À CÔTE sur la ligne de
@@ -2615,10 +2639,10 @@ function bubbleEffectiveFieldsLayout(cfg) {
 /* Hauteur d'une ligne de bulles, en pixels : la bulle, plus le bandeau condensé
    quand il est là. Une seule fonction, relue par le rendu (qui la pose sur la
    piste d'un couloir) et par l'auto-dimensionnement du widget. */
-function bubbleLaneHeightPx(widget) {
+function bubbleLaneHeightPx(widget, compactLines) {
   const cfg = normalizeBubblesWidget(widget);
   const fields = bubbleEffectiveFieldsLayout(cfg) === "compact" && cfg.bubbleFields.length
-    ? BUBBLE_FIELDS_COMPACT_PX
+    ? bubbleCompactFieldsHeight(compactLines)
     : 0;
   return bubbleHeightPx(widget) + fields;
 }
@@ -2855,6 +2879,40 @@ function bubbleRowOrder(orderedIds, macros, options) {
   return out;
 }
 
+/* Place libre de part et d'autre de chaque bulle d'un couloir, en pixels (#120).
+
+   Les dates s'écrivent DEHORS, à gauche et à droite de la bulle. Seules sur
+   leur ligne, elles ne recouvraient que du vide ; rangées côte à côte, elles se
+   posent dans le MÊME intervalle : la date de fin de l'une à droite, la date de
+   début de la suivante à gauche. Chacune croyait avoir tout l'écart pour elle,
+   et les deux s'écrivaient l'une sur l'autre (retour de test).
+
+   L'écart entre deux voisines est donc PARTAGÉ : chacune n'en compte que la
+   moitié, et les deux dates ne s'écrivent que s'il y a la place pour les deux.
+   Aux extrémités du couloir, il n'y a pas de voisine à ménager — `Infinity`,
+   et c'est le bord de la piste qui borne, dont la bulle se charge déjà.
+
+   L'entrée est la boîte RÉELLEMENT dessinée de chaque bulle, et non ce que
+   `bubbleRowExtent` modélise : celle d'un jalon est recalée contre le bord de
+   la piste dès qu'elle y dépasserait, et les deux divergent là. */
+function bubbleLaneDateRoom(boxes) {
+  const list = (Array.isArray(boxes) ? boxes : [])
+    .filter((b) => b && b.id !== undefined && b.id !== null
+      && Number.isFinite(Number(b.leftPx)) && Number.isFinite(Number(b.rightPx)))
+    .map((b) => ({ id: String(b.id), leftPx: Number(b.leftPx), rightPx: Number(b.rightPx) }))
+    .sort((a, b) => a.leftPx - b.leftPx);
+  const room = new Map();
+  list.forEach((box, i) => {
+    const prev = list[i - 1];
+    const next = list[i + 1];
+    room.set(box.id, {
+      before: prev ? Math.max(0, (box.leftPx - prev.rightPx) / 2) : Infinity,
+      after: next ? Math.max(0, (next.leftPx - box.rightPx) / 2) : Infinity,
+    });
+  });
+  return room;
+}
+
 /* Couloirs : les bulles d'un même regroupement, rangées CÔTE À CÔTE (#120).
 
    Le widget reprenait la géométrie du Mini-Gantt — une tâche, une ligne — et
@@ -3043,7 +3101,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3328,6 +3386,13 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       const fieldsH = bubbleEffectiveFieldsLayout(cfg) === "under" && cfg.bubbleFields.length ? 20 : 0;
       const legendH = cfg.bubbleShowLegend ? 22 : 0;
       targetHPx = 50 + bubbleRows * (laneH + fieldsH + 10) + groupCount * 22 + legendH + FRAME_CHROME_PX;
+    } else if (w.type === "staffing") {
+      /* Une ligne par PERSONNE retenue — le widget ne montre pas des tâches,
+         son dimensionnement ne se déduit donc pas du filtre de tâches. */
+      const cfg = normalizeStaffingWidget(w);
+      const rows = Math.max(1, staffingVisibleMembers(ctx.teamMembers, cfg.staffingMembers).length);
+      targetHPx = 40 /* barre de navigation */ + 28 /* en-tête des jours */
+        + rows * 34 + 22 /* pied « personnes affectées » */ + 26 /* légende */ + FRAME_CHROME_PX;
     } else if (w.type === "list") {
       const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
       const rows = Math.max(1, Math.min(w.limit || 6, scoped.length));
@@ -3770,6 +3835,15 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
                     metaBlocks={scopedMetaBlocks}
+                  />
+                )}
+                {w.type === "staffing" && (
+                  <WidgetStaffing
+                    widget={w}
+                    ctx={ctx}
+                    staffing={staffing}
+                    onUpdateStaffing={setStaffing}
+                    onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                   />
                 )}
                 {w.type === "criticalPath" && (
@@ -5177,6 +5251,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const rowFields = bubbleMode
     ? bubbleCfg.bubbleFields
     : (widget.miniGanttFields || ["assignee", "status", "taskType", "end", "progress"]);
+  // Clé STABLE de la liste de champs : la donner telle quelle en dépendance
+  // relancerait la mesure à chaque trame, le tableau étant neuf à chaque rendu.
+  const rowFieldsKey = rowFields.join("|");
   // "aligned" = colonne à largeur fixe alignée à droite (les barres restent
   // alignées d'une ligne à l'autre) ; "inline" = juste après la barre/le
   // jalon, ancré sur sa position réelle dans le temps.
@@ -5731,6 +5808,18 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      depuis un mémo antérieur lève une ReferenceError de zone morte — le même
      piège que `bubbleMacroReorder` avant elle. */
   const bubbleTrackPx = trackWidth || 420;
+  /* Nombre de lignes du bandeau condensé, MESURÉ (#122). Le bandeau passe à la
+     ligne quand les champs ne tiennent pas, et toutes les bulles adoptent
+     ensuite la plus haute : une hauteur qui suivrait chaque bulle donnerait des
+     lignes de diagramme toutes différentes, et en couloirs une hauteur de ligne
+     impossible à poser.
+
+     On compte les lignes par les `offsetTop` DISTINCTS des pastilles, et non
+     par la hauteur du bandeau : celle-ci est justement ce qu'on lui impose, et
+     la mesurer reviendrait à se mesurer soi-même — la hauteur ne pourrait alors
+     que croître, jamais revenir. */
+  const compactFieldNodes = useRef({});
+  const [compactFieldLines, setCompactFieldLines] = useState(1);
   const measureRows = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -5823,6 +5912,40 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     observer.observe(track);
     return () => observer.disconnect();
   }, [visibleRows, fieldsLayout]);
+
+  /* Combien de lignes le bandeau condensé occupe, sur la bulle qui en demande
+     le plus (#122). Mesuré après chaque rendu qui peut changer le pliage :
+     largeur de piste, champs choisis, disposition, lignes affichées. */
+  useEffect(() => {
+    if (!bubbleMode || fieldsLayout !== "compact") {
+      setCompactFieldLines((prev) => (prev === 1 ? prev : 1));
+      return undefined;
+    }
+    const id = requestAnimationFrame(() => {
+      let lines = 1;
+      Object.values(compactFieldNodes.current).forEach((el) => {
+        if (!el || !el.isConnected) return;
+        const tops = new Set();
+        el.querySelectorAll(":scope > *").forEach((child) => {
+          const rect = child.getBoundingClientRect();
+          if (!rect.width && !rect.height) return;
+          tops.add(Math.round(child.offsetTop));
+        });
+        lines = Math.max(lines, tops.size || 1);
+      });
+      const next = Math.min(BUBBLE_FIELDS_COMPACT_LINES_MAX, lines);
+      setCompactFieldLines((prev) => (prev === next ? prev : next));
+    });
+    return () => cancelAnimationFrame(id);
+    /* `compactFieldLines` est DANS les dépendances, et c'est voulu : la première
+       mesure tombe avant que les bandeaux aient leur hauteur définitive, et
+       s'arrêter là figeait le widget sur un compte trop bas — des champs
+       restaient coupés alors que le pliage en demandait plus. Le compte de
+       lignes ne dépendant pas de la hauteur appliquée (un `offsetTop` continue
+       d'avancer sous l'écrêtage), la boucle converge en deux passes et s'arrête
+       d'elle-même : la mesure suivante rend la même valeur, et l'état ne change
+       plus. */
+  }, [bubbleMode, fieldsLayout, trackWidth, rowFieldsKey, visibleRows, bubblePacked, compactFieldLines]);
 
   // Largeur RÉELLEMENT occupée par les champs d'une ligne. `scrollWidth` ne
   // sert à rien ici : la colonne est en overflow visible, elle ne défile pas et
@@ -5990,6 +6113,45 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       })
       .filter(Boolean);
   }, [configSpans, visibleRows, rowRects, minIdx, maxIdx, span]);
+
+  /* Annotations horizontales en mode BULLES : un couloir réservé, en tête du
+     diagramme (#93).
+
+     Le rattachement à une tâche décide de la hauteur d'un trait. En Gantt, une
+     tâche est une ligne fine et le trait se pose dessus proprement. En bulles,
+     une tâche est une BOÎTE de quarante à soixante pixels, et le trait lui
+     passait en plein milieu — « ça passe en plein à travers » (retour de test).
+
+     Les traits quittent donc les lignes et se rangent dans leur propre couloir,
+     L'UN SOUS L'AUTRE, triés par date de début. Le rattachement à une tâche
+     reste réglable et vaut toujours pour la vue Gantt : le même widget peut
+     passer d'un mode à l'autre, et cacher le champ ferait perdre le réglage au
+     retour. Il est simplement IGNORÉ ici. */
+  const bubbleSpanRows = useMemo(() => {
+    if (!bubbleMode) return [];
+    return configSpans
+      .map((annot) => {
+        const startIdx = dayIndex(annot.startDate);
+        const endIdx = dayIndex(annot.endDate);
+        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+        if (endIdx < minIdx || startIdx > maxIdx) return null;
+        const from = Math.max(minIdx, Math.min(maxIdx, startIdx));
+        const to = Math.max(minIdx, Math.min(maxIdx, endIdx));
+        return {
+          annot,
+          startIdx,
+          leftPct: ((from - minIdx) / span) * 100,
+          // Même plancher qu'ailleurs : sans lui, une annotation d'une journée
+          // se réduirait à ses deux bouts collés.
+          widthPct: Math.max(2, ((to - from) / span) * 100),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (
+        a.startIdx - b.startIdx
+        || String(a.annot.label || "").localeCompare(String(b.annot.label || ""), "fr")
+      ));
+  }, [bubbleMode, configSpans, minIdx, maxIdx, span]);
 
   /* Macro-bulles (#92). La géométrie vient de `bubbleMacroSegments`, qui
      délègue le découpage en séries de lignes CONTIGUËS à `ganttFrameSegments` —
@@ -6666,6 +6828,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       return (
         <div
           className="lp-bubble-fields is-compact"
+          ref={(el) => { if (el) compactFieldNodes.current[t.id] = el; else delete compactFieldNodes.current[t.id]; }}
           style={{
             borderColor: color || "var(--border)",
             background: color ? `color-mix(in srgb, ${color} 8%, var(--surface))` : "var(--surface)",
@@ -7033,7 +7196,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      position absolue, donc rien ne la fait grandir. Elle vaut exactement la
      bulle plus, s'il y a lieu, le bandeau condensé — d'où l'obligation, en
      couloirs, que les champs prennent cette forme-là (bubbleEffectiveFieldsLayout). */
-  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget) + "px" };
+  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget, compactFieldLines) + "px" };
 
   const BubbleSlot = (t, laneRoom) => {
     const geo = bubbleTaskBox(t);
@@ -7100,12 +7263,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         .filter(Boolean),
       { pxPerDay: bubbleTrackPx / span, packing: true },
     );
-    /* Place LIBRE de part et d'autre de chaque bulle, en pixels, mesurée sur les
-       boîtes RÉELLEMENT dessinées du couloir. Les dates s'écrivent dehors, à
-       gauche et à droite de la bulle : seules sur leur ligne, elles ne
-       recouvraient que du vide ; rangées côte à côte, elles se posaient sur la
-       bulle voisine (retour de test). Aux deux bouts d'un couloir il n'y a que
-       le bord de la piste, dont la bulle se charge déjà. */
+    /* Place LIBRE de part et d'autre de chaque bulle, mesurée sur les boîtes
+       RÉELLEMENT dessinées du couloir, et PARTAGÉE entre deux voisines :
+       `bubbleLaneDateRoom` dit pourquoi. */
     const laneRoom = new Map();
     lanes.forEach((lane) => {
       const boxes = lane.items
@@ -7114,16 +7274,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
           const box = t ? bubbleSlotBoxPx(t) : null;
           return box ? { id: row.id, ...box } : null;
         })
-        .filter(Boolean)
-        .sort((a, b) => a.leftPx - b.leftPx);
-      boxes.forEach((box, i) => {
-        const prev = boxes[i - 1];
-        const next = boxes[i + 1];
-        laneRoom.set(box.id, {
-          before: prev ? box.leftPx - prev.rightPx : Infinity,
-          after: next ? next.leftPx - box.rightPx : Infinity,
-        });
-      });
+        .filter(Boolean);
+      bubbleLaneDateRoom(boxes).forEach((value, id) => laneRoom.set(id, value));
     });
     return lanes.map((lane) => (
       <div
@@ -7489,6 +7641,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
   // Jalons de configuration et annotations : une bande dédiée sous les titres
   // de bloc, avec le même placement en lignes que ces derniers.
+  /* En mode bulles, la bande de repères devient un COULOIR NOMMÉ (#93) : c'est
+     là que les jalons se rangent, et on ne choisit plus de tâche à qui les
+     rattacher. La légende est posée sur sa propre ligne, pleine largeur : lui
+     donner une colonne à gauche décalerait la piste de cette bande, et toutes
+     les couches superposées avec elle. */
+  const bubbleStripCaption = (!bubbleMode || !stripShapes.length) ? null : (
+    <div className="lp-bubble-lane-caption">Jalons</div>
+  );
+
   const stripHeader = !stripShapes.length ? null : (
     <div className="lp-widget-minigantt-strip" style={{ height: stripLaneCount * MINIGANTT_STRIP_LANE_H }}>
       <span className="lp-widget-minigantt-phases-spacer" />
@@ -7533,10 +7694,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
      Les deux couches partagent exactement la même géométrie : même gouttière,
      même réserve de champs, mêmes bornes. */
+  /* La hauteur comprend le DÉBORD de la dernière ligne (#113). Le pied de
+     réserve a été ajouté sous les lignes pour que leur habillage ne soit plus
+     tranché ; les blocs temporels, eux, sont une bande continue posée en couche
+     absolue, calculée sur les seules boîtes de lignes. Ils s'arrêtaient donc où
+     s'arrêtaient les lignes, et non où s'arrête désormais le diagramme — un
+     bloc qui court sur toute la hauteur laissait voir du vide sous lui (retour
+     de test). `rowsTail` est la mesure, pas une marge inventée : elle vaut zéro
+     quand rien ne déborde, et la couche retrouve alors exactement sa hauteur
+     d'avant. */
   const bandGeometry = !rowsBand ? null : {
     ...layerInsets,
     top: rowsBand.top,
-    height: rowsBand.height,
+    height: rowsBand.height + rowsTail,
   };
 
   const bandLayer = (!bandGeometry || !temporalBlockShapes.length) ? null : (
@@ -7612,10 +7782,51 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     </div>
   );
 
+
+  const bubbleSpanLane = (!bubbleMode || !bubbleSpanRows.length) ? null : (
+    <>
+      <div className="lp-bubble-lane-caption">Annotations horizontales</div>
+      <div className="lp-widget-minigantt-rows lp-bubble-annot-rows">
+        {bubbleSpanRows.map(({ annot, leftPct, widthPct }) => (
+          <div className="lp-widget-minigantt-row lp-bubble-annot-row" key={"annot-" + annot.id}>
+            <div className="lp-widget-minigantt-track">
+              <span
+                className="lp-widget-minigantt-span"
+                style={{ left: `${leftPct}%`, width: `${widthPct}%`, top: "50%", opacity: annot.opacity / 100 }}
+              >
+                <SpanCapGlyph cap={annot.capStart} side="start" color={annot.color} />
+                <span
+                  className="lp-widget-minigantt-span-line"
+                  style={{ borderTopWidth: annot.thickness, borderTopStyle: annot.borderStyle, borderTopColor: annot.color }}
+                />
+                <SpanCapGlyph cap={annot.capEnd} side="end" color={annot.color} />
+                {annot.label && (
+                  <button
+                    type="button"
+                    className="lp-widget-minigantt-span-label"
+                    style={{ color: annot.color }}
+                    title={`${annot.label} · ${fmtShort(annot.startDate)} → ${fmtShort(annot.endDate)}`}
+                    onClick={() => editable && setAnnotationPanel({ section: "spans", focusId: annot.id })}
+                  >
+                    {annot.label}
+                  </button>
+                )}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+
   /* Annotations horizontales : au-dessus des barres, comme les cadres — un
      trait posé DERRIÈRE la barre de sa propre ligne serait invisible. Le
-     calque ne capte pas le pointeur, seule l'étiquette est cliquable. */
-  const spanLayer = (!rowsBand || !spanShapes.length) ? null : (
+     calque ne capte pas le pointeur, seule l'étiquette est cliquable.
+
+     En mode bulles, ce calque ne sert plus : les traits vivent dans leur propre
+     couloir (`bubbleSpanLane`), et les y laisser AUSSI les ferait passer au
+     travers des bulles. */
+  const spanLayer = (bubbleMode || !rowsBand || !spanShapes.length) ? null : (
     <div
       className="lp-widget-minigantt-span-layer"
       style={{ ...layerInsets, top: 0, bottom: 0 }}
@@ -7857,7 +8068,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      CSS sur la racine, depuis `bubbleHeightPx` — la même fonction que celle
      dont l'auto-dimensionnement du widget se sert. */
   const rootStyle = bubbleMode
-    ? { position: "relative", "--lp-bubble-h": bubbleHeightPx(widget) + "px", "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines }
+    ? {
+        position: "relative",
+        "--lp-bubble-h": bubbleHeightPx(widget) + "px",
+        "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines,
+        // Hauteur du bandeau condensé, la MÊME pour toutes les bulles du
+        // widget (#122) : mesurée sur celle qui demande le plus de lignes.
+        "--lp-bubble-fields-h": bubbleCompactFieldsHeight(compactFieldLines) + "px",
+      }
     /* La colonne d'étiquettes est posée en PIXELS dès qu'elle est mesurée :
        étiquettes, cale de l'axe, cale des bandes de repères et retrait des
        couches lisent tous cette même variable, et ne peuvent donc pas se
@@ -7901,7 +8119,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {toolbar}
         <Axis />
         {phasesHeader}
+        {bubbleStripCaption}
         {stripHeader}
+        {bubbleSpanLane}
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
           {renderRows(orderedTasks)}
@@ -7942,7 +8162,9 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {toolbar}
       <Axis />
       {phasesHeader}
+      {bubbleStripCaption}
       {stripHeader}
+      {bubbleSpanLane}
       {groups.map((g) => {
         const isCollapsed = !!collapsed[g.key];
         return (
@@ -7983,6 +8205,364 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
    dans les branches `bubbleMode` de WidgetMiniGantt (rendu de la ligne). */
 function WidgetBubbles(props) {
   return <WidgetMiniGantt {...props} bubbleMode />;
+}
+
+/* Widget « Charge personnel » (#124). Les personnes en lignes, les jours en
+   colonnes, et dans chaque case les ateliers du jour — plusieurs par jour si
+   besoin.
+
+   Le graphisme est celui de la heat map, délibérément : cases arrondies posées
+   sur une trame régulière, liseré d'accent sur aujourd'hui, week-end atténué,
+   légende en pied. Ce n'est pas une coquetterie — c'est la même lecture « une
+   case = une journée » que Nexora propose déjà ailleurs, et l'apprendre deux
+   fois n'apporterait rien.
+
+   Toute la logique sans rendu vit dans le bloc NEXORA:STAFFING : ce composant
+   ne fait que mesurer, placer et écouter. */
+/* Trois longueurs pour le même jour, choisies sur la largeur MESURÉE d'une
+   case : « lun » quand il y a la place, « lu » en vue mois — où « M » seul ne
+   distinguerait pas mardi de mercredi — et l'initiale en dernier recours. */
+const STAFFING_DOW_LABELS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
+const STAFFING_DOW_SHORT = ["lu", "ma", "me", "je", "ve", "sa", "di"];
+const STAFFING_GRID_GAP = 3;
+
+function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidget }) {
+  const cfg = normalizeStaffingWidget(widget);
+  const catalogue = useMemo(() => normalizeWorkshops(ctx.workshops), [ctx.workshops]);
+  const knownIds = useMemo(() => catalogue.map((w) => w.id), [catalogue]);
+  const todayIso = useMemo(() => iso(new Date()), []);
+  const frame = useMemo(
+    () => staffingWindow(cfg.staffingRange, cfg.staffingOffset, todayIso),
+    [cfg.staffingRange, cfg.staffingOffset, todayIso]
+  );
+  const days = useMemo(
+    () => staffingDays(frame, todayIso, { showWeekends: cfg.staffingShowWeekends }),
+    [frame, todayIso, cfg.staffingShowWeekends]
+  );
+  const members = useMemo(
+    () => staffingVisibleMembers(ctx.teamMembers, cfg.staffingMembers),
+    [ctx.teamMembers, cfg.staffingMembers]
+  );
+  const cells = useMemo(() => staffingByCell(staffing), [staffing]);
+
+  /* La largeur d'une case est MESURÉE, pas supposée : c'est elle qui décide si
+     une bande peut porter le nom de son atelier, son code, ou rien du tout. En
+     vue mois, trente et une colonnes laissent une quinzaine de pixels chacune —
+     y écrire quoi que ce soit donnerait une bouillie de lettres coupées. */
+  const gridRef = useRef(null);
+  const [gridPx, setGridPx] = useState(0);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => {
+      const width = Math.round(el.getBoundingClientRect().width);
+      setGridPx((prev) => (prev === width ? prev : width));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const nameW = cfg.staffingRange === "month" ? 146 : 188;
+  const loadW = cfg.staffingShowLoad ? 64 : 0;
+  const colCount = Math.max(1, days.length);
+  const gutters = STAFFING_GRID_GAP * (colCount + (loadW ? 1 : 0));
+  const cellPx = gridPx > 0 ? Math.max(0, (gridPx - nameW - loadW - gutters) / colCount) : 0;
+  const gridTemplate = nameW + "px repeat(" + colCount + ", minmax(0, 1fr))" + (loadW ? " " + loadW + "px" : "");
+
+  const [picker, setPicker] = useState(null); // { member, date, rect }
+  const [query, setQuery] = useState("");
+  const [hover, setHover] = useState(null);   // { x, y, member, day }
+
+  // Le panneau se ferme au clic dehors et à Échap, comme tous les menus de
+  // Nexora. Il vit en portail : le widget coupe à son bord, et un panneau
+  // rendu dedans serait tranché dès la dernière ligne.
+  useEffect(() => {
+    if (!picker) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setPicker(null); };
+    const onDown = (e) => { if (!e.target.closest || !e.target.closest(".lp-cp-picker")) setPicker(null); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onDown); };
+  }, [picker]);
+
+  const periodLabel = cfg.staffingRange === "month"
+    ? monthLabel(frame.start)
+    : fmtShort(frame.start) + " – " + fmtShort(frame.end);
+
+  const shiftPeriod = (dir) => {
+    if (!onUpdateWidget) return;
+    onUpdateWidget({ staffingOffset: normalizeStaffingOffset(cfg.staffingOffset + dir) });
+  };
+  const setRange = (range) => {
+    if (!onUpdateWidget) return;
+    onUpdateWidget({ staffingRange: range, staffingOffset: 0 });
+  };
+
+  const openPicker = (member, date, e) => {
+    if (!onUpdateStaffing) return;
+    setHover(null);
+    setQuery("");
+    setPicker({ member, date, rect: e.currentTarget.getBoundingClientRect() });
+  };
+
+  const currentIds = picker ? (cells.get(staffingCellId(picker.member, picker.date)) || []) : [];
+  const toggleWorkshop = (id) => {
+    if (!picker || !onUpdateStaffing) return;
+    const next = currentIds.includes(id) ? currentIds.filter((x) => x !== id) : [...currentIds, id];
+    onUpdateStaffing((prev) => staffingSetCell(prev, picker.member, picker.date, next, knownIds));
+  };
+  const clearCell = () => {
+    if (!picker || !onUpdateStaffing) return;
+    onUpdateStaffing((prev) => staffingSetCell(prev, picker.member, picker.date, [], knownIds));
+  };
+
+  const dayTitle = (dayIso) => {
+    const d = new Date(dayIso + "T00:00:00");
+    return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  };
+
+  if (!members.length) {
+    return (
+      <div className="lp-empty">
+        {(ctx.teamMembers || []).length === 0
+          ? "Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs."
+          : "Aucune personne retenue : ouvre les réglages du widget pour en choisir."}
+      </div>
+    );
+  }
+
+  const tooltip = !hover ? null : createPortal(
+    <div
+      className="lp-pie-tooltip lp-widget-metro-tooltip"
+      style={{ position: "fixed", left: hover.x, top: hover.y, zIndex: 100000, maxWidth: 240, pointerEvents: "none" }}
+    >
+      <div className="lp-widget-metro-tooltip-head">
+        <span className="lp-widget-metro-tooltip-dot" style={{ background: hover.color || "var(--text-muted)" }} />
+        <span className="lp-widget-metro-tooltip-title">{hover.member}</span>
+      </div>
+      <div className="lp-widget-metro-tooltip-meta">{dayTitle(hover.date)}</div>
+      {hover.ids.length === 0 ? (
+        <div className="lp-cp-tip-empty">Aucun atelier — cliquer pour en poser</div>
+      ) : (
+        <>
+          {hover.ids.map((id) => {
+            const shop = workshopFor(catalogue, id);
+            if (!shop) return null;
+            return (
+              <div className="lp-cp-tip-line" key={id}>
+                <span className="lp-cp-dot" style={{ background: shop.color }} />
+                <span>{shop.name}</span>
+              </div>
+            );
+          })}
+          <div className="lp-cp-tip-foot">
+            {hover.ids.length > 1 ? hover.ids.length + " postes ce jour-là" : "1 poste ce jour-là"}
+          </div>
+        </>
+      )}
+    </div>,
+    document.body
+  );
+
+  /* Le panneau de sélection. Ancré sous la case, ramené dans la fenêtre quand
+     il en sortirait — une case de fin de mois ouvrait sinon son panneau hors
+     de l'écran. */
+  const pickerNode = !picker ? null : (() => {
+    const W = 264;
+    const H = 330;
+    const left = Math.max(8, Math.min(picker.rect.left, (typeof window !== "undefined" ? window.innerWidth : 1200) - W - 8));
+    const below = picker.rect.bottom + 6;
+    const fitsBelow = below + H < (typeof window !== "undefined" ? window.innerHeight : 900);
+    const top = fitsBelow ? below : Math.max(8, picker.rect.top - H - 6);
+    const picked = staffingPickerGroups(catalogue, currentIds, query);
+    return createPortal(
+      <div className="lp-cp-picker" style={{ position: "fixed", left, top, width: W, zIndex: 100001 }}>
+        <div className="lp-cp-picker-head">
+          <div className="lp-cp-picker-head-text">
+            <span className="lp-cp-picker-who">{picker.member}</span>
+            <span className="lp-cp-picker-when">{dayTitle(picker.date)}</span>
+          </div>
+          <button type="button" className="lp-icon-btn" aria-label="Fermer" onClick={() => setPicker(null)}>
+            <X size={14} />
+          </button>
+        </div>
+        <div className="lp-cp-picker-search">
+          <Search size={13} />
+          <input
+            type="text"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher un atelier…"
+            aria-label="Rechercher un atelier"
+          />
+        </div>
+        <div className="lp-cp-picker-list">
+          {picked.groups.length === 0 && <div className="lp-cp-picker-empty">Aucun atelier ne correspond.</div>}
+          {picked.groups.map((group) => (
+            <div key={group.key}>
+              {group.label && <div className="lp-cp-picker-group">{group.label}</div>}
+              {group.items.map((item) => (
+                <label className={"lp-cp-picker-opt" + (item.checked ? " is-on" : "")} key={item.id}>
+                  <input type="checkbox" checked={item.checked} onChange={() => toggleWorkshop(item.id)} />
+                  <span className="lp-cp-dot" style={{ background: item.color }} />
+                  <span className="lp-cp-picker-opt-name">{item.name}</span>
+                </label>
+              ))}
+            </div>
+          ))}
+          {picked.hiddenSelected.length > 0 && (
+            <div className="lp-cp-picker-note">
+              {picked.hiddenSelected.join(", ")} {picked.hiddenSelected.length > 1 ? "restent cochés" : "reste coché"} : {picked.hiddenSelected.length > 1 ? "ils sortent" : "il sort"} du filtre, pas de la sélection.
+            </div>
+          )}
+        </div>
+        <div className="lp-cp-picker-foot">
+          <span className="lp-cp-picker-count">
+            {currentIds.length === 0 ? "Aucun atelier" : currentIds.length > 1 ? currentIds.length + " ateliers" : "1 atelier"}
+          </span>
+          {currentIds.length > 0 && (
+            <button type="button" className="lp-btn lp-btn-mini" onClick={clearCell}>Tout retirer</button>
+          )}
+          <button type="button" className="lp-btn lp-btn-mini lp-btn-primary" onClick={() => setPicker(null)}>Terminé</button>
+        </div>
+      </div>,
+      document.body
+    );
+  })();
+
+  return (
+    <div className="lp-cp">
+      <div className="lp-cp-bar">
+        <div className="lp-cp-nav">
+          <button type="button" className="lp-tool-btn lp-cp-nav-btn" aria-label="Période précédente" onClick={() => shiftPeriod(-1)}>
+            <ChevronLeft size={13} />
+          </button>
+          <span className="lp-cp-period">{periodLabel}</span>
+          <button type="button" className="lp-tool-btn lp-cp-nav-btn" aria-label="Période suivante" onClick={() => shiftPeriod(1)}>
+            <ChevronRight size={13} />
+          </button>
+        </div>
+        <div className="lp-zoom-group">
+          {STAFFING_RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              className={"lp-zoom-btn" + (cfg.staffingRange === r ? " active" : "")}
+              onClick={() => setRange(r)}
+            >
+              {r === "month" ? "Mois" : r === "twoWeeks" ? "2 semaines" : "Semaine"}
+            </button>
+          ))}
+        </div>
+        {cfg.staffingOffset !== 0 && onUpdateWidget && (
+          <button type="button" className="lp-tool-btn" onClick={() => onUpdateWidget({ staffingOffset: 0 })}>Aujourd'hui</button>
+        )}
+      </div>
+
+      <div className="lp-cp-grid" ref={gridRef} style={{ gridTemplateColumns: gridTemplate, gap: STAFFING_GRID_GAP }}>
+        <div className="lp-cp-corner">Personne</div>
+        {days.map((day) => (
+          <div
+            key={day.iso}
+            className={"lp-cp-head" + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "")}
+            title={dayTitle(day.iso)}
+          >
+            <span className="lp-cp-head-dow">
+              {cellPx >= 30
+                ? STAFFING_DOW_LABELS[day.dow]
+                : cellPx >= 17
+                  ? STAFFING_DOW_SHORT[day.dow]
+                  : STAFFING_DOW_SHORT[day.dow].charAt(0).toUpperCase()}
+            </span>
+            <span className="lp-cp-head-num">{day.num}</span>
+          </div>
+        ))}
+        {cfg.staffingShowLoad && <div className="lp-cp-corner lp-cp-corner-right">Postes</div>}
+
+        {members.map((member) => {
+          const load = staffingMemberLoad(staffing, member.name, days);
+          return (
+            <React.Fragment key={member.name}>
+              <div className="lp-cp-person">
+                <span className="lp-cp-avatar" style={{ background: member.color || "var(--text-muted)" }}>
+                  {member.avatarDataUrl
+                    ? <IconGlyph icon={member.avatarDataUrl} size={16} />
+                    : member.name.split(/\s+/).map((part) => part.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                </span>
+                <span className="lp-cp-person-name">{member.name}</span>
+              </div>
+              {days.map((day) => {
+                const ids = cells.get(staffingCellId(member.name, day.iso)) || [];
+                const bands = staffingBands(ids, catalogue, { cellPx });
+                return (
+                  <button
+                    type="button"
+                    key={day.iso}
+                    className={"lp-cp-cell" + (ids.length ? "" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "")}
+                    aria-label={member.name + " — " + dayTitle(day.iso) + " — " + (ids.length ? ids.map((id) => (workshopFor(catalogue, id) || {}).name).filter(Boolean).join(", ") : "aucun atelier")}
+                    onClick={(e) => openPicker(member.name, day.iso, e)}
+                    onMouseEnter={(e) => setHover({ member: member.name, color: member.color, date: day.iso, ids, x: e.clientX + 14, y: e.clientY + 16 })}
+                    onMouseMove={(e) => setHover((prev) => (prev ? { ...prev, x: e.clientX + 14, y: e.clientY + 16 } : prev))}
+                    onMouseLeave={() => setHover(null)}
+                  >
+                    {bands.map((band, i) => (
+                      <span
+                        key={band.id + "-" + i}
+                        className={"lp-cp-band" + (band.more ? " is-more" : "")}
+                        style={band.more ? undefined : {
+                          background: `color-mix(in srgb, ${band.color} 20%, var(--surface))`,
+                          boxShadow: `0 0 0 1px ${band.color} inset`,
+                          color: `color-mix(in srgb, ${band.color} 72%, var(--text-900))`,
+                        }}
+                      >
+                        {band.label}
+                      </span>
+                    ))}
+                    {ids.length === 0 && <span className="lp-cp-plus" aria-hidden="true">+</span>}
+                  </button>
+                );
+              })}
+              {cfg.staffingShowLoad && (
+                <div className="lp-cp-load">
+                  <span className="lp-cp-load-track">
+                    <span
+                      className="lp-cp-load-fill"
+                      style={{ width: Math.min(100, days.length ? (load / (days.length * 1.4)) * 100 : 0) + "%", background: member.color || "var(--text-muted)" }}
+                    />
+                  </span>
+                  <span className="lp-cp-load-value">{load}</span>
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+
+        <div className="lp-cp-corner lp-cp-foot-label">Personnes affectées</div>
+        {days.map((day) => {
+          const count = staffingDayCount(staffing, members, day.iso);
+          return (
+            <div key={day.iso} className={"lp-cp-foot" + (count === 0 ? " is-zero" : "") + (day.today ? " is-today" : "")}>
+              {count}
+            </div>
+          );
+        })}
+        {cfg.staffingShowLoad && <div />}
+      </div>
+
+      <div className="lp-cp-legend">
+        {catalogue.map((shop) => (
+          <span className="lp-cp-legend-item" key={shop.id}>
+            <span className="lp-cp-dot" style={{ background: shop.color }} />
+            {shop.name}
+          </span>
+        ))}
+      </div>
+
+      {tooltip}
+      {pickerNode}
+    </div>
+  );
 }
 
 // Axe temporel compact, partagé par les widgets Mini-Gantt et Mini métro : choisit
@@ -9900,6 +10480,86 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
    ordre des lignes — passe par les normalisateurs du Mini-Gantt, sans copie :
    c'est le même axe, ce sont donc les mêmes réglages, et un widget qui change
    de type les garde. */
+/* Réglages du widget « Charge personnel » (#124).
+
+   La SÉLECTION DE PERSONNES est propre au widget, et c'est le point : deux
+   widgets côte à côte suivent deux équipes différentes. Aucune personne cochée
+   veut dire « tout le monde » — et non « personne », qui ferait d'un widget
+   neuf une grille vide sans rien expliquer. */
+function StaffingDisplayFields({ value, onChange, ctx }) {
+  const cfg = normalizeStaffingWidget(value);
+  const team = (ctx.teamMembers || [])
+    .filter((m) => m && String(m.name || "").trim())
+    .map((m) => ({ name: String(m.name).trim(), color: m.color || "" }));
+  const toggleMember = (name) => {
+    const on = cfg.staffingMembers.includes(name);
+    onChange({ staffingMembers: on ? cfg.staffingMembers.filter((n) => n !== name) : [...cfg.staffingMembers, name] });
+  };
+  return (
+    <>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Granularité par défaut</label>
+        <div className="lp-density-row">
+          {STAFFING_RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              className={"lp-density-btn" + (cfg.staffingRange === r ? " active" : "")}
+              onClick={() => onChange({ staffingRange: r, staffingOffset: 0 })}
+            >
+              {r === "month" ? "Mois" : r === "twoWeeks" ? "2 semaines" : "Semaine"}
+            </button>
+          ))}
+        </div>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+          La navigation se fait ensuite période par période depuis le widget, et son bouton « Aujourd'hui » y revient.
+        </p>
+      </div>
+
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Personnes affichées</label>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -2, marginBottom: 6 }}>
+          {cfg.staffingMembers.length === 0
+            ? "Aucune coche : tout le monde est affiché, et une personne ajoutée aux Réglages apparaît d'elle-même."
+            : `${cfg.staffingMembers.length} personne${cfg.staffingMembers.length > 1 ? "s" : ""} sur ${team.length}.`}
+        </p>
+        {team.length === 0 && (
+          <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: 0 }}>
+            Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.
+          </p>
+        )}
+        {team.map((member) => (
+          <label className="lp-checkbox-line" key={member.name}>
+            <input
+              type="checkbox"
+              checked={cfg.staffingMembers.includes(member.name)}
+              onChange={() => toggleMember(member.name)}
+            /> {member.name}
+          </label>
+        ))}
+        {cfg.staffingMembers.length > 0 && (
+          <button type="button" className="lp-btn lp-btn-mini" style={{ marginTop: 6 }} onClick={() => onChange({ staffingMembers: [] })}>
+            Tout le monde
+          </button>
+        )}
+      </div>
+
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Affichage</label>
+        <label className="lp-checkbox-line">
+          <input type="checkbox" checked={cfg.staffingShowWeekends} onChange={(e) => onChange({ staffingShowWeekends: e.target.checked })} /> Afficher les week-ends
+        </label>
+        <label className="lp-checkbox-line">
+          <input type="checkbox" checked={cfg.staffingShowLoad} onChange={(e) => onChange({ staffingShowLoad: e.target.checked })} /> Colonne « Postes » à droite
+        </label>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+          Un week-end masqué reste affectable depuis une autre granularité : la case disparaît de la vue, jamais l'affectation.
+        </p>
+      </div>
+    </>
+  );
+}
+
 function BubblesDisplayFields({ value, onChange, ctx }) {
   const cfg = normalizeBubblesWidget(value || {});
   const sortKey = normalizeMiniGanttSort(value.miniGanttSort);
@@ -11012,6 +11672,7 @@ const WIDGET_TYPE_META = [
   { key: "taskDetail", label: "Tâche détaillée", icon: List, group: "Indicateurs" },
   { key: "minigantt", label: "Mini-Gantt", icon: GanttChartSquare, group: "Planning" },
   { key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" },
+  { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
   { key: "milestoneTimeline", label: "Timeline des jalons", icon: Milestone, group: "Planning" },
   { key: "verticalMetroTimeline", label: "Timeline verticale métro", icon: TrainTrack, group: "Planning" },
   { key: "metroDeadline", label: "Métro / Échéances", icon: CalendarClock, group: "Planning" },
@@ -11265,6 +11926,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
      l'état existant : la fiche garde une seule source de vérité par réglage, et
      changer un widget de Mini-Gantt à Bulles ne perd rien. */
   const [bubbleSettings, setBubbleSettings] = useState(() => normalizeBubblesWidget(widget || {}));
+  /* Réglages du widget « Charge personnel » (#124), sur le même principe : un
+     seul état pour toutes ses clés propres. Il ne partage RIEN avec le
+     Mini-Gantt — ni cadrage, ni tri, ni filtre de tâches : ce widget ne montre
+     pas des tâches, il montre des personnes. */
+  const [staffingSettings, setStaffingSettings] = useState(() => normalizeStaffingWidget(widget || {}));
+  const applyStaffingPatch = (patch) => setStaffingSettings((prev) => normalizeStaffingWidget({ ...prev, ...patch }));
   const applyBubblePatch = (patch) => {
     applyMiniGanttPatch(patch);
     if (Object.keys(patch).some((key) => key.startsWith("bubble"))) {
@@ -11577,6 +12244,14 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.bubbleShowLegend = bubbles.bubbleShowLegend;
       data.bubbleMacroGrouping = bubbles.bubbleMacroGrouping;
       data.bubbleMacros = bubbles.bubbleMacros;
+    }
+    if (type === "staffing") {
+      const st = normalizeStaffingWidget(staffingSettings);
+      data.staffingRange = st.staffingRange;
+      data.staffingOffset = st.staffingOffset;
+      data.staffingMembers = st.staffingMembers;
+      data.staffingShowWeekends = st.staffingShowWeekends;
+      data.staffingShowLoad = st.staffingShowLoad;
     }
     if (titleColor) data.titleColor = titleColor; else data.titleColor = null;
     if (bgColor) data.bgColor = bgColor; else data.bgColor = null;
@@ -12445,6 +13120,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           ctx={ctx}
           scope="widget"
         />
+      )}
+
+      {type === "staffing" && (
+        <StaffingDisplayFields value={staffingSettings} onChange={applyStaffingPatch} ctx={ctx} />
       )}
 
       {type === "bubbles" && (
