@@ -792,6 +792,24 @@ const __nexoraKnownValues = new Map();    // key -> last Firebase-confirmed valu
 const __nexoraReadErrors = new Map();     // key -> dernière erreur de lecture
 
 const storageRevisionToken = (data) => data?.revision || data?.updatedAt || null;
+// === NEXORA:SYNC-SOURCE:START ===
+// Toute écriture manifeste porte son origine. « assistant-api » : passerelle
+// assistant/MCP (create_task, update_task, complete_task, archive_task...),
+// écrite par les fonctions Netlify. « browser » : une session Nexora ouverte,
+// qu'elle écrive en direct ou via le relais REST. Sans ce champ les deux sont
+// indiscernables, et une écriture de l'assistant dans l'onglet resté seul
+// ouvert déclenche le bandeau plein écran « Une autre session a enregistré
+// des changements » alors qu'aucun conflit n'existe.
+const NEXORA_SOURCE_ASSISTANT = "assistant-api";
+const NEXORA_SOURCE_BROWSER = "browser";
+// Un manifeste écrit avant cette version n'a pas de champ `source` : on
+// renvoie null, jamais une origine devinée — l'inconnu reste traité comme un
+// vrai conflit, le comportement d'avant.
+const storageSourceTag = (data) => {
+  const raw = data?.source;
+  return typeof raw === "string" && raw ? raw : null;
+};
+// === NEXORA:SYNC-SOURCE:END ===
 
 // Stockage Firestore segmenté.
 //
@@ -962,6 +980,7 @@ const nexoraDirectStorage = {
           value:payload,
           updatedAt:now,
           revision,
+          source:NEXORA_SOURCE_BROWSER,
           storageMode:"inline",
           chunkCount:0,
           totalLength:payload.length,
@@ -996,6 +1015,7 @@ const nexoraDirectStorage = {
         value:null,
         updatedAt:now,
         revision,
+        source:NEXORA_SOURCE_BROWSER,
         storageMode:NEXORA_CHUNK_MODE,
         chunkIds,
         chunkCount:chunkIds.length,
@@ -1111,7 +1131,9 @@ const nexoraDirectStorage = {
       if (!snap.exists()) return;
       const remoteRevision = storageRevisionToken(snap.data());
       const known = __nexoraKnownRevisions.get(key);
-      if (remoteRevision && remoteRevision !== known) onChange(remoteRevision);
+      // L'origine accompagne la révision : elle décide, côté React, entre la
+      // pastille discrète de synchronisation MCP et le bandeau de conflit.
+      if (remoteRevision && remoteRevision !== known) onChange(remoteRevision, storageSourceTag(snap.data()));
     }, () => { /* écoute interrompue (réseau, permissions) : silencieux, le polling au focus prend le relais */ });
   },
 
@@ -1125,7 +1147,8 @@ const nexoraDirectStorage = {
       const ref = doc(db, "users", uid, "kv_store", key);
       const snap = await getDoc(ref);
       if (!snap.exists()) return null;
-      return storageRevisionToken(snap.data());
+      const data = snap.data();
+      return { revision:storageRevisionToken(data), source:storageSourceTag(data) };
     } catch (e) {
       return null; // simple vérification de fraîcheur, jamais critique : échec silencieux
     }
@@ -1328,7 +1351,8 @@ const nexoraServerStorage = {
   async checkRevision(key) {
     try {
       const result = await nexoraServerStorageRequest("checkRevision", { key });
-      return result?.revision || null;
+      if (!result?.revision) return null;
+      return { revision:result.revision, source:storageSourceTag(result) };
     } catch (_) {
       return null;
     }

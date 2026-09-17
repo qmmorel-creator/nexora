@@ -29,6 +29,13 @@ export type LogicalDocument = {
   chunkCount: number;
 };
 
+// Origine des écritures manifestes faites par la passerelle assistant/MCP
+// (create_task, update_task, complete_task, archive_task...). Le client Nexora
+// lit ce champ pour distinguer une synchronisation MCP d'une vraie autre
+// session humaine : sans lui, les deux sont indiscernables et une simple
+// écriture de l'assistant déclenche le bandeau plein écran de conflit.
+export const NEXORA_WRITE_SOURCE = "assistant-api";
+
 export function parseServiceAccount(raw: string | undefined) {
   if (!raw) return null;
   const parsed = JSON.parse(raw);
@@ -349,6 +356,7 @@ function writeStoredArrayInTransaction(
       value: payload,
       updatedAt: now,
       revision,
+      source: NEXORA_WRITE_SOURCE,
       storageMode: "inline",
       chunkIds: [],
       chunkCount: 0,
@@ -368,6 +376,7 @@ function writeStoredArrayInTransaction(
     value: null,
     updatedAt: now,
     revision,
+    source: NEXORA_WRITE_SOURCE,
     storageMode: CHUNK_MODE,
     chunkIds,
     chunkCount: chunkIds.length,
