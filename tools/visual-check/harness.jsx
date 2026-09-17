@@ -102,7 +102,26 @@ function AnnotationsHarness() {
     ...MILESTONE_TYPE_SEED,
     { id: "custom-essais", name: "Essais de mise en eau", symbol: "droplet", color: "#0EA5E9" },
   ]);
-  const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
+  /* Widget « Charge personnel » (#124) : le catalogue d'ateliers entre dans le
+     contexte partagé, comme les statuts ou les types de jalon, et les
+     affectations restent un état à part — c'est exactement le partage de
+     l'application. */
+  const [harnessWorkshops] = useState(() => WORKSHOP_SEED.map((w) => ({ ...w })));
+  const [staffing, setStaffing] = useState(() => {
+    const [usine, bureau, chantier, atelier, formation, absence] = WORKSHOP_SEED.map((w) => w.id);
+    const jour = (n) => "2026-09-" + String(n).padStart(2, "0");
+    return [
+      { member: seedTeamMembers[0].name, date: jour(14), workshops: [bureau] },
+      { member: seedTeamMembers[0].name, date: jour(15), workshops: [bureau, chantier] },
+      { member: seedTeamMembers[0].name, date: jour(17), workshops: [formation, chantier, usine, bureau] },
+      { member: seedTeamMembers[1].name, date: jour(14), workshops: [usine] },
+      { member: seedTeamMembers[1].name, date: jour(16), workshops: [bureau, usine] },
+      { member: seedTeamMembers[1].name, date: jour(19), workshops: [chantier] },
+      { member: seedTeamMembers[2 % seedTeamMembers.length].name, date: jour(16), workshops: [atelier] },
+      { member: seedTeamMembers[2 % seedTeamMembers.length].name, date: jour(18), workshops: [absence] },
+    ];
+  });
+  const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, workshops: harnessWorkshops, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
     temporalBlocks: [
@@ -665,6 +684,29 @@ function AnnotationsHarness() {
             onDelete={noop}
           />
         )}
+        {/* Widget « Charge personnel » (#124). Deux montages, parce que c'est la
+            DENSITÉ qui décide de ce qu'une bande peut écrire : en semaine, une
+            case fait plus de cent pixels et porte un nom ; en mois, une
+            quinzaine, et il ne reste que la couleur. Un widget qui ne serait
+            éprouvé qu'en semaine laisserait passer des lettres coupées. */}
+        <div id="harness-staffing-week" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
+          <WidgetStaffing
+            widget={{ id: "ws1", type: "staffing", staffingRange: "week", staffingOffset: 0, staffingMembers: [], staffingShowWeekends: true, staffingShowLoad: true }}
+            ctx={ctx}
+            staffing={staffing}
+            onUpdateStaffing={setStaffing}
+            onUpdateWidget={noop}
+          />
+        </div>
+        <div id="harness-staffing-month" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
+          <WidgetStaffing
+            widget={{ id: "ws2", type: "staffing", staffingRange: "month", staffingOffset: 0, staffingMembers: [], staffingShowWeekends: true, staffingShowLoad: true }}
+            ctx={ctx}
+            staffing={staffing}
+            onUpdateStaffing={setStaffing}
+            onUpdateWidget={noop}
+          />
+        </div>
         {/* Widget « Bulles » (#92) : le MÊME diagramme, lu en bulles. Deux
             macro-bulles, dont une posée sur des tâches NON SUCCESSIVES pour
             vérifier qu'elle produit bien deux enveloppes distinctes, et une

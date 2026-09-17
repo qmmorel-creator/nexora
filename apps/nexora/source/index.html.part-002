@@ -1103,6 +1103,7 @@ const SETTINGS_TABS = [
   { key: "statuses", label: "Statuts", icon: "settings" },
   { key: "taskTypes", label: "Types", icon: "tag" },
   { key: "milestoneTypes", label: "Types de jalon", icon: "flag" },
+  { key: "workshops", label: "Ateliers", icon: "factory" },
   { key: "users", label: "Utilisateurs", icon: "user" },
   { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
   { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
@@ -2221,6 +2222,7 @@ function SettingsModal({
   statuses, setStatuses,
   taskTypes, setTaskTypes,
   milestoneTypes, setMilestoneTypes,
+  workshops, setWorkshops, staffing, setStaffing,
   teamMembers, setTeamMembers,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
@@ -2288,6 +2290,9 @@ function SettingsModal({
             )}
             {activeTab === "milestoneTypes" && (
               <MilestoneTypeManager embedded milestoneTypes={milestoneTypes} setMilestoneTypes={setMilestoneTypes} pushToast={pushToast} />
+            )}
+            {activeTab === "workshops" && (
+              <WorkshopManager embedded workshops={workshops} setWorkshops={setWorkshops} staffing={staffing} setStaffing={setStaffing} pushToast={pushToast} />
             )}
             {activeTab === "users" && (
               <TeamMemberManager embedded teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} pushToast={pushToast} />
@@ -3582,6 +3587,328 @@ function milestoneTypeFor(types, id) {
   const catalogue = normalizeMilestoneTypes(types);
   return catalogue.find((type) => type.id === id) || catalogue[0];
 }
+
+// === NEXORA:STAFFING:START ===
+/* Widget « Charge personnel » (#124) — toute la logique SANS rendu vit ici,
+   derrière ces sentinelles, et c'est ce bloc que `tests/staffing.test.mjs`
+   extrait de l'interface réellement construite.
+
+   Deux objets, et deux seulement :
+
+   - le CATALOGUE d'ateliers (`nexora:workshops`) : un nom, une couleur, un
+     ordre. Usine, Bureau, Chantier ne sont que des valeurs de départ — rien
+     n'est codé en dur ailleurs ;
+   - les AFFECTATIONS (`nexora:staffing`) : une entrée par couple
+     personne × jour, portant la liste des ateliers de ce jour-là. Une personne
+     peut être sur plusieurs postes le même jour : c'est une LISTE, pas un
+     champ.
+
+   Le tout est sans rapport avec les tâches : une affectation ne crée ni ne
+   modifie jamais une tâche, et réciproquement. */
+
+const WORKSHOP_SEED = [
+  { id: "ws-usine",     name: "Usine",     color: "#2C6BE0" },
+  { id: "ws-bureau",    name: "Bureau",    color: "#7A5AF8" },
+  { id: "ws-chantier",  name: "Chantier",  color: "#FF7A3D" },
+  { id: "ws-atelier",   name: "Atelier",   color: "#1FA971" },
+  { id: "ws-formation", name: "Formation", color: "#E2A63B" },
+  { id: "ws-absence",   name: "Absence",   color: "#7A8290" },
+];
+
+/* Un catalogue vide n'existe pas : il retomberait sur les valeurs de départ et
+   le dernier atelier supprimé réapparaîtrait sous un autre nom. Le gestionnaire
+   refuse donc la suppression du dernier — même règle que les types de jalon. */
+function normalizeWorkshops(list) {
+  const seen = new Set();
+  const cleaned = (Array.isArray(list) ? list : [])
+    .filter((w) => w && typeof w === "object" && w.id && String(w.name || "").trim())
+    .filter((w) => {
+      const id = String(w.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((w) => ({
+      id: String(w.id),
+      name: String(w.name).trim(),
+      color: typeof w.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(w.color) ? w.color : WORKSHOP_SEED[0].color,
+    }));
+  return cleaned.length ? cleaned : WORKSHOP_SEED.map((w) => ({ ...w }));
+}
+
+/* Un atelier INCONNU ne retombe sur rien. C'est la différence avec un type de
+   jalon, qui prend le premier du catalogue pour que le repère reste visible :
+   ici, un atelier supprimé doit disparaître des jours où il était posé — le
+   remplacer silencieusement par « Usine » écrirait une affectation que
+   personne n'a demandée. */
+function workshopFor(list, id) {
+  return normalizeWorkshops(list).find((w) => w.id === String(id)) || null;
+}
+
+/* Code court d'un atelier, pour la bande d'une case trop étroite pour son nom.
+   Dérivé du NOM et non saisi à part : un atelier renommé change de code sans
+   que personne ait à y penser. */
+function workshopCode(name) {
+  const clean = normalizeForMatch(name).replace(/[^a-z0-9]/g, "");
+  return clean ? clean.slice(0, 2).toUpperCase() : "··";
+}
+
+// --- Affectations -----------------------------------------------------------
+
+/* L'identifiant d'une case est DÉRIVÉ de la personne et du jour, jamais tiré au
+   sort. Deux sessions qui affectent la même case produisent alors la même
+   entrée, que la fusion de `NEXORA_MERGEABLE_KEYS` traite comme une seule —
+   avec un identifiant aléatoire, elles auraient fabriqué deux affectations
+   concurrentes pour un seul jour. */
+function staffingCellId(member, date) {
+  return String(member || "").trim() + "|" + String(date || "").trim();
+}
+
+const STAFFING_ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/* Une case VIDE n'est pas une donnée : elle n'est pas écrite. C'est ce qui
+   garde le magasin proportionnel à ce qui est réellement affecté, et non au
+   nombre de personnes multiplié par le nombre de jours.
+
+   `knownWorkshopIds` est le catalogue au moment de la lecture : un atelier
+   supprimé quitte les affectations ICI, à la normalisation, et non par un
+   balayage séparé qu'on oublierait d'appeler. */
+function normalizeStaffingEntries(list, knownWorkshopIds) {
+  const known = Array.isArray(knownWorkshopIds) ? new Set(knownWorkshopIds.map((id) => String(id))) : null;
+  const byId = new Map();
+  (Array.isArray(list) ? list : []).forEach((entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const member = String(entry.member || "").trim();
+    const date = String(entry.date || "").trim();
+    if (!member || !STAFFING_ISO_RE.test(date)) return;
+    const workshops = [];
+    (Array.isArray(entry.workshops) ? entry.workshops : []).forEach((raw) => {
+      const id = String(raw || "");
+      if (!id || workshops.includes(id)) return;
+      if (known && !known.has(id)) return;
+      workshops.push(id);
+    });
+    if (!workshops.length) return;
+    const id = staffingCellId(member, date);
+    byId.set(id, { id, member, date, workshops });
+  });
+  return [...byId.values()].sort((a, b) => (
+    a.date === b.date ? a.member.localeCompare(b.member, "fr") : a.date.localeCompare(b.date)
+  ));
+}
+
+// Identifiant de case → ateliers de ce jour-là. Une seule traversée sert tout
+// le rendu : cases, infobulles, totaux de ligne et de colonne.
+function staffingByCell(entries) {
+  const out = new Map();
+  normalizeStaffingEntries(entries).forEach((e) => out.set(e.id, e.workshops));
+  return out;
+}
+
+function staffingCellWorkshops(entries, member, date) {
+  return staffingByCell(entries).get(staffingCellId(member, date)) || [];
+}
+
+/* Écrire une case. Une liste vide EFFACE l'entrée plutôt que d'en garder une
+   coquille — sans quoi « tout retirer » laisserait une trace indiscernable
+   d'une affectation vide. */
+function staffingSetCell(entries, member, date, workshopIds, knownWorkshopIds) {
+  const id = staffingCellId(member, date);
+  const rest = normalizeStaffingEntries(entries, knownWorkshopIds).filter((e) => e.id !== id);
+  return normalizeStaffingEntries([...rest, { id, member, date, workshops: workshopIds }], knownWorkshopIds);
+}
+
+// Nombre de JOURS où un atelier est posé — ce que les Réglages affichent à
+// côté de son nom, et ce que la confirmation de suppression chiffre.
+function staffingWorkshopUsage(entries, workshopId) {
+  const id = String(workshopId);
+  return normalizeStaffingEntries(entries).filter((e) => e.workshops.includes(id)).length;
+}
+
+// --- Fenêtre affichée --------------------------------------------------------
+
+const STAFFING_RANGES = ["month", "twoWeeks", "week"];
+const STAFFING_MAX_BANDS = 3;
+
+const STAFFING_DEFAULTS = {
+  staffingRange: "month",
+  staffingMembers: [],
+  staffingOffset: 0,
+  staffingShowWeekends: true,
+  staffingShowLoad: true,
+};
+
+function normalizeStaffingRange(value) {
+  return STAFFING_RANGES.includes(value) ? value : STAFFING_DEFAULTS.staffingRange;
+}
+
+function normalizeStaffingOffset(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  // Deux ans de part et d'autre : au-delà, on ne navigue plus, on se perd.
+  return Math.max(-24, Math.min(24, Math.round(n)));
+}
+
+/* Personnes affichées : une sélection PROPRE AU WIDGET, et non l'annuaire.
+   Deux widgets côte à côte suivent ainsi deux équipes différentes. Une
+   sélection vide veut dire « tout le monde » — et non « personne », qui ferait
+   d'un widget neuf une grille vide sans rien expliquer. Une personne
+   sélectionnée puis retirée de l'annuaire disparaît d'elle-même. */
+function staffingVisibleMembers(teamMembers, selected) {
+  const all = (Array.isArray(teamMembers) ? teamMembers : [])
+    .filter((m) => m && String(m.name || "").trim())
+    .map((m) => ({ name: String(m.name).trim(), color: typeof m.color === "string" ? m.color : "", avatarDataUrl: m.avatarDataUrl || "" }));
+  const wanted = (Array.isArray(selected) ? selected : []).map((n) => String(n));
+  if (!wanted.length) return all;
+  return all.filter((m) => wanted.includes(m.name));
+}
+
+function normalizeStaffingWidget(widget) {
+  const w = widget && typeof widget === "object" ? widget : {};
+  return {
+    ...w,
+    staffingRange: normalizeStaffingRange(w.staffingRange),
+    staffingOffset: normalizeStaffingOffset(w.staffingOffset),
+    staffingMembers: (Array.isArray(w.staffingMembers) ? w.staffingMembers : [])
+      .map((n) => String(n || "").trim())
+      .filter((n, i, arr) => n && arr.indexOf(n) === i),
+    staffingShowWeekends: w.staffingShowWeekends !== false,
+    staffingShowLoad: w.staffingShowLoad !== false,
+  };
+}
+
+/* La fenêtre affichée, en dates. Le décalage se compte en PÉRIODES et non en
+   jours : « mois suivant » doit tomber sur le mois suivant, pas sur trente
+   jours plus tard. Une semaine commence le lundi. */
+function staffingWindow(range, offset, todayIso) {
+  const mode = normalizeStaffingRange(range);
+  const n = normalizeStaffingOffset(offset);
+  const base = STAFFING_ISO_RE.test(String(todayIso)) ? String(todayIso) : iso(new Date());
+  const d = new Date(base + "T00:00:00");
+  if (mode === "month") {
+    return {
+      start: iso(new Date(d.getFullYear(), d.getMonth() + n, 1)),
+      end: iso(new Date(d.getFullYear(), d.getMonth() + n + 1, 0)),
+    };
+  }
+  const span = mode === "twoWeeks" ? 14 : 7;
+  const dow = (d.getDay() + 6) % 7; // lundi = 0
+  const start = addDays(base, -dow + n * span);
+  return { start, end: addDays(start, span - 1) };
+}
+
+/* Les colonnes. Le week-end reste AFFECTABLE — il est atténué, pas retiré :
+   un chantier travaille le samedi, et une grille qui le cacherait mentirait
+   sur la charge. L'option ne fait que le masquer quand il est toujours vide. */
+function staffingDays(window, todayIso, options) {
+  const out = [];
+  if (!window || !STAFFING_ISO_RE.test(String(window.start)) || !STAFFING_ISO_RE.test(String(window.end))) return out;
+  const showWeekends = !options || options.showWeekends !== false;
+  let cur = String(window.start);
+  let guard = 0;
+  while (cur <= String(window.end) && guard < 400) {
+    const d = new Date(cur + "T00:00:00");
+    const dow = (d.getDay() + 6) % 7;
+    const weekend = dow >= 5;
+    if (showWeekends || !weekend) {
+      out.push({
+        iso: cur,
+        dow,
+        weekend,
+        num: String(d.getDate()),
+        monthStart: d.getDate() === 1,
+        today: cur === String(todayIso),
+      });
+    }
+    cur = addDays(cur, 1);
+    guard += 1;
+  }
+  return out;
+}
+
+// --- Ce que dessine une case -------------------------------------------------
+
+/* Les bandes d'une case : les ateliers du jour se partagent sa largeur, côte à
+   côte. Au-delà de trois, la dernière bande compte le reste — une quatrième ne
+   serait plus qu'un trait de couleur sans nom.
+
+   Un atelier inconnu (supprimé du catalogue) est simplement absent : c'est la
+   même règle que `workshopFor`, et elle vaut aussi pour un magasin qu'une
+   normalisation n'aurait pas encore traversé. */
+function staffingBands(workshopIds, catalogue, options) {
+  const list = normalizeWorkshops(catalogue);
+  const shops = (Array.isArray(workshopIds) ? workshopIds : [])
+    .map((id) => list.find((w) => w.id === String(id)))
+    .filter(Boolean);
+  if (!shops.length) return [];
+  const cellPx = Number(options && options.cellPx);
+  const label = (shop, count) => {
+    if (!Number.isFinite(cellPx) || cellPx <= 0) return "";
+    const per = cellPx / count;
+    if (count === 1 && per >= 62) return shop.name;
+    return per >= 22 ? workshopCode(shop.name) : "";
+  };
+  if (shops.length <= STAFFING_MAX_BANDS) {
+    return shops.map((shop) => ({ id: shop.id, name: shop.name, color: shop.color, label: label(shop, shops.length), more: false }));
+  }
+  const shown = shops.slice(0, STAFFING_MAX_BANDS - 1);
+  const bands = shown.map((shop) => ({ id: shop.id, name: shop.name, color: shop.color, label: label(shop, STAFFING_MAX_BANDS), more: false }));
+  /* Le compte se tait lui aussi quand la case est trop étroite : « +2 » coupé
+     en « +; » est pire que rien, et l'infobulle dit de toute façon la liste
+     complète. La bande reste, elle : c'est elle qui montre qu'il y a plus. */
+  const roomForCount = Number.isFinite(cellPx) && cellPx / STAFFING_MAX_BANDS >= 16;
+  bands.push({ id: "more", name: "", color: "", label: roomForCount ? "+" + (shops.length - shown.length) : "", more: true });
+  return bands;
+}
+
+/* Charge d'une personne sur la fenêtre : le nombre de POSTES, et non de jours.
+   Deux ateliers le même jour, c'est deux postes — c'est bien ce qu'on cherche
+   à voir quand on parle de charge. */
+function staffingMemberLoad(entries, member, days) {
+  const cells = staffingByCell(entries);
+  return (Array.isArray(days) ? days : []).reduce((sum, day) => (
+    sum + (cells.get(staffingCellId(member, day && day.iso)) || []).length
+  ), 0);
+}
+
+// Personnes affectées un jour donné — le pied de colonne. On compte les
+// PERSONNES, pas les postes : c'est la question « qui travaille ce jour-là ».
+function staffingDayCount(entries, members, dayIso) {
+  const cells = staffingByCell(entries);
+  return (Array.isArray(members) ? members : []).filter((m) => (
+    (cells.get(staffingCellId(m && m.name ? m.name : m, dayIso)) || []).length > 0
+  )).length;
+}
+
+/* La liste du sélecteur, telle que le panneau la rend.
+
+   Sans recherche : les ateliers DÉJÀ POSÉS remontent en tête, puis le reste du
+   catalogue dans l'ordre des Réglages. Avec recherche : un seul groupe, filtré
+   sur le nom sans accent ni casse — et `hiddenSelected` nomme les ateliers
+   cochés que le filtre écarte, pour que le panneau puisse dire qu'ils restent
+   cochés. Sans cela, chercher « at » donnerait l'impression d'avoir tout
+   perdu. */
+function staffingPickerGroups(catalogue, selectedIds, query) {
+  const all = normalizeWorkshops(catalogue);
+  const selected = new Set((Array.isArray(selectedIds) ? selectedIds : []).map((id) => String(id)));
+  const q = normalizeForMatch(query);
+  const decorate = (w) => ({ ...w, checked: selected.has(w.id) });
+  if (q) {
+    const matches = all.filter((w) => normalizeForMatch(w.name).includes(q));
+    return {
+      mode: "search",
+      groups: matches.length ? [{ key: "results", label: "", items: matches.map(decorate) }] : [],
+      hiddenSelected: all.filter((w) => selected.has(w.id) && !normalizeForMatch(w.name).includes(q)).map((w) => w.name),
+    };
+  }
+  const chosen = all.filter((w) => selected.has(w.id)).map(decorate);
+  const rest = all.filter((w) => !selected.has(w.id)).map(decorate);
+  const groups = [];
+  if (chosen.length) groups.push({ key: "selected", label: "Sélectionnés", items: chosen });
+  if (rest.length) groups.push({ key: "all", label: chosen.length ? "Tous les ateliers" : "", items: rest });
+  return { mode: "all", groups, hiddenSelected: [] };
+}
+// === NEXORA:STAFFING:END ===
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 
@@ -10256,6 +10583,121 @@ function MilestoneTypeManager({ milestoneTypes, setMilestoneTypes, pushToast, on
 
   if (embedded) return <div className="lp-settings-pane">{body}</div>;
   return <Modal title="Gérer les types de jalon" onClose={onClose} wide>{body}</Modal>;
+}
+
+// ============================================================================
+// Catalogue d'ateliers (#124) — les lieux ou postes sur lesquels une personne
+// peut être affectée dans le widget « Charge personnel ». Une liste ordonnée,
+// éditable, enregistrée sous `nexora:workshops`. Elle ne touche jamais aux
+// tâches : un atelier ne décrit que des AFFECTATIONS, jamais du travail à faire.
+// ============================================================================
+function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushToast, onClose, embedded }) {
+  const catalogue = normalizeWorkshops(workshops);
+  const [editingId, setEditingId] = useState(null);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(WORKSHOP_SEED[0].color);
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setName("");
+    setColor(WORKSHOP_SEED[0].color);
+  };
+
+  const startEdit = (workshop) => {
+    setEditingId(workshop.id);
+    setName(workshop.name);
+    setColor(workshop.color);
+  };
+
+  const save = () => {
+    if (!name.trim()) return;
+    if (editingId) {
+      setWorkshops(catalogue.map((w) => (w.id === editingId ? { ...w, name: name.trim(), color } : w)));
+    } else {
+      setWorkshops([...catalogue, { id: uid(), name: name.trim(), color }]);
+    }
+    cancelEdit();
+  };
+
+  /* Supprimer un atelier le retire des jours où il était posé — c'est la
+     conséquence, et elle est CHIFFRÉE avant d'être appliquée. Le laisser
+     traîner dans les affectations aurait donné des cases qui ne se dessinent
+     plus sans qu'on sache pourquoi. */
+  const remove = (workshop) => {
+    if (catalogue.length <= 1) {
+      pushToast?.({ message: "Garde au moins un atelier : sans catalogue, le widget Charge personnel n'a rien à proposer." });
+      return;
+    }
+    const used = staffingWorkshopUsage(staffing, workshop.id);
+    if (used > 0) {
+      const jours = used > 1 ? `${used} jours` : "1 jour";
+      if (!window.confirm(`« ${workshop.name} » est posé sur ${jours}. Le supprimer le retirera de ces jours-là. Continuer ?`)) return;
+    }
+    const next = catalogue.filter((w) => w.id !== workshop.id);
+    setWorkshops(next);
+    if (setStaffing) setStaffing((prev) => normalizeStaffingEntries(prev, next.map((w) => w.id)));
+    if (editingId === workshop.id) cancelEdit();
+  };
+
+  const move = (idx, dir) => {
+    const next = [...catalogue];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setWorkshops(next);
+  };
+
+  const body = (
+    <>
+      <div className="lp-section-title">Ateliers existants</div>
+      <div style={{ fontSize: 11.5, color: "var(--text-600)", marginBottom: 10, lineHeight: 1.45 }}>
+        Les lieux ou postes sur lesquels une personne peut être affectée dans le widget <strong>Charge personnel</strong> —
+        usine, bureau, chantier, formation… L'ordre de cette liste est celui du sélecteur, et une personne peut être sur
+        plusieurs ateliers le même jour. Ces ateliers ne modifient jamais les tâches.
+      </div>
+
+      {catalogue.map((workshop, i) => {
+        const used = staffingWorkshopUsage(staffing, workshop.id);
+        return (
+          <div className="lp-manage-item" key={workshop.id}>
+            <div className="lp-order-btns">
+              <button onClick={() => move(i, -1)} aria-label="Monter"><ChevronUp size={14} /></button>
+              <button onClick={() => move(i, 1)} aria-label="Descendre"><ChevronDown size={14} /></button>
+            </div>
+            <span className="lp-workshop-swatch" style={{ background: workshop.color }} aria-hidden="true" />
+            <span className="lp-manage-name">{workshop.name}</span>
+            <span style={{ fontSize: 11, color: "var(--text-600)" }}>
+              {used === 0 ? "aucun jour" : used === 1 ? "1 jour" : `${used} jours`}
+            </span>
+            <button className="lp-icon-btn" onClick={() => startEdit(workshop)} aria-label={`Modifier ${workshop.name}`}><Pencil size={14} /></button>
+            {catalogue.length > 1 && (
+              <button className="lp-icon-btn" onClick={() => remove(workshop)} aria-label={`Supprimer ${workshop.name}`}><Trash2 size={15} /></button>
+            )}
+          </div>
+        );
+      })}
+
+      <hr className="lp-divider" />
+      <div className="lp-section-title">{editingId ? "Modifier l'atelier" : "Nouvel atelier"}</div>
+
+      <div className="lp-field">
+        <label>Nom</label>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Plateforme logistique" />
+      </div>
+
+      <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} /></div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="lp-btn lp-btn-primary" onClick={save}>
+          {editingId ? "Enregistrer les modifications" : "Ajouter l'atelier"}
+        </button>
+        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
+      </div>
+    </>
+  );
+
+  if (embedded) return <div className="lp-settings-pane">{body}</div>;
+  return <Modal title="Gérer les ateliers" onClose={onClose} wide>{body}</Modal>;
 }
 
 // ============================================================================
