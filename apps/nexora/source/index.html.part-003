@@ -2490,7 +2490,29 @@ const BUBBLE_ROW_FIELD_OPTIONS = [
   "project", "status", "criticality", "taskType", "assignee",
   "start", "end", "period", "milestone", "checklist", "progress",
 ];
-const BUBBLE_FIELDS_LAYOUTS = ["under", "inline"];
+/* Dispositions des champs secondaires.
+
+   « compact » (#122) est la version CONDENSÉE et RATTACHÉE à la bulle : un
+   bandeau d'une seule ligne, collé sous elle, exactement à sa largeur, qui
+   reprend son trait et sa couleur. Sa hauteur est donc CONNUE — c'est ce qui
+   permet à une ligne de couloir (#120) d'avoir une hauteur prévisible sans
+   mesurer quoi que ce soit. */
+const BUBBLE_FIELDS_LAYOUTS = ["under", "inline", "compact"];
+/* Hauteur du bandeau condensé, en pixels. Vit ici, comme BUBBLE_HEIGHT_PX, et
+   pour la même raison : le rendu la pose, l'auto-dimensionnement du widget la
+   relit, et la hauteur d'un couloir s'en déduit. */
+const BUBBLE_FIELDS_COMPACT_PX = 16;
+/* Dispositions verticales des bulles (#120).
+
+   « lanes » range les bulles d'un même couloir CÔTE À CÔTE sur la ligne de
+   temps, et ne descend d'une ligne que lorsque deux d'entre elles se
+   chevauchent vraiment — c'est le principe de Bubble Plan. « rows » garde
+   l'ancien comportement, hérité du Mini-Gantt : une tâche, une ligne. */
+const BUBBLE_LAYOUTS = ["lanes", "rows"];
+/* Écart minimal entre deux bulles voisines d'un même couloir, en pixels. Sans
+   lui, deux bulles qui se suivent d'un jour se toucheraient bord à bord et on
+   lirait une seule bulle coupée d'un trait. */
+const BUBBLE_LANE_GAP_PX = 8;
 
 /* Palette de repli, pour les champs dont les valeurs n'ont PAS de couleur à
    elles (responsable, période, champ personnalisé texte). Ce sont les teintes
@@ -2504,7 +2526,8 @@ const BUBBLE_PALETTE = [
 const BUBBLES_DEFAULTS = {
   bubbleColorBy: "status",
   bubbleFields: ["assignee", "status", "end", "progress"],
-  bubbleFieldsLayout: "under",
+  bubbleFieldsLayout: "compact",
+  bubbleLayout: "lanes",
   bubbleSize: "normal",
   bubbleShowDates: true,
   bubbleShowProgress: true,
@@ -2569,6 +2592,35 @@ function bubbleRowExtent(row, pxPerDay) {
 
 function normalizeBubbleFieldsLayout(value) {
   return BUBBLE_FIELDS_LAYOUTS.includes(value) ? value : BUBBLES_DEFAULTS.bubbleFieldsLayout;
+}
+
+function normalizeBubbleLayout(value) {
+  return BUBBLE_LAYOUTS.includes(value) ? value : BUBBLES_DEFAULTS.bubbleLayout;
+}
+
+/* Disposition RÉELLEMENT appliquée aux champs, une fois le mode de mise en page
+   pris en compte (#120 + #122).
+
+   En couloirs, une bulle a des VOISINES sur sa ligne : des champs qui s'étalent
+   en plusieurs rangées (« under ») ou qui débordent à droite (« inline »)
+   viendraient se poser sur elles. La seule forme qui tienne dans ce cas est le
+   bandeau condensé, borné à la largeur de la bulle et haut d'une ligne. On le
+   substitue donc, plutôt que d'interdire le réglage : le choix reste vrai dès
+   qu'on repasse en « une tâche, une ligne ». */
+function bubbleEffectiveFieldsLayout(cfg) {
+  const layout = normalizeBubbleFieldsLayout(cfg && cfg.bubbleFieldsLayout);
+  return normalizeBubbleLayout(cfg && cfg.bubbleLayout) === "lanes" ? "compact" : layout;
+}
+
+/* Hauteur d'une ligne de bulles, en pixels : la bulle, plus le bandeau condensé
+   quand il est là. Une seule fonction, relue par le rendu (qui la pose sur la
+   piste d'un couloir) et par l'auto-dimensionnement du widget. */
+function bubbleLaneHeightPx(widget) {
+  const cfg = normalizeBubblesWidget(widget);
+  const fields = bubbleEffectiveFieldsLayout(cfg) === "compact" && cfg.bubbleFields.length
+    ? BUBBLE_FIELDS_COMPACT_PX
+    : 0;
+  return bubbleHeightPx(widget) + fields;
 }
 
 /* Liste de champs : on garde l'ORDRE choisi par l'utilisateur (c'est l'ordre
@@ -2671,6 +2723,7 @@ function normalizeBubblesWidget(widget) {
     bubbleColorBy: typeof w.bubbleColorBy === "string" && w.bubbleColorBy ? w.bubbleColorBy : BUBBLES_DEFAULTS.bubbleColorBy,
     bubbleFields: normalizeBubbleFields(w.bubbleFields),
     bubbleFieldsLayout: normalizeBubbleFieldsLayout(w.bubbleFieldsLayout),
+    bubbleLayout: normalizeBubbleLayout(w.bubbleLayout),
     bubbleSize: normalizeBubbleSize(w.bubbleSize),
     bubbleShowDates: w.bubbleShowDates !== false,
     bubbleShowProgress: w.bubbleShowProgress !== false,
@@ -2801,6 +2854,74 @@ function bubbleRowOrder(orderedIds, macros, options) {
   ids.forEach((id) => { if (!placed.has(id)) out.push(id); });
   return out;
 }
+
+/* Couloirs : les bulles d'un même regroupement, rangées CÔTE À CÔTE (#120).
+
+   Le widget reprenait la géométrie du Mini-Gantt — une tâche, une ligne — et
+   dix tâches disjointes dans le temps donnaient dix lignes empilées : un Gantt
+   dont les barres ont été remplacées par des bulles. Ce n'est pas ce qu'on
+   cherche. Dans Bubble Plan, les bulles d'un couloir se suivent
+   HORIZONTALEMENT et on ne descend d'une ligne que lorsqu'il n'y a plus la
+   place.
+
+   L'algorithme est le placement au premier emplacement libre : chaque bulle
+   part sur la première ligne où elle ne touche aucune de celles déjà posées,
+   et une ligne de plus n'apparaît que si aucune ne convient. L'ordre reçu est
+   respecté tel quel — c'est le tri choisi par l'utilisateur, et le retrier
+   ici ferait mentir la colonne « ordre » du widget.
+
+   Ce qu'on teste, c'est le CHEVAUCHEMENT À L'ÉCRAN, pas celui des dates :
+   `bubbleRowExtent` sait qu'une bulle courte ne descend jamais sous 90 px et
+   qu'un jalon est centré sur sa date (#104). Deux tâches d'un jour à trois
+   jours d'écart ne se chevauchent pas au calendrier, mais leurs bulles se
+   recouvrent largement — les mettre sur la même ligne les rendrait illisibles.
+
+   Sans largeur de piste mesurée (premier rendu), `pxPerDay` est absent : on
+   retombe sur les dates seules plutôt que d'inventer une géométrie. La mesure
+   tombe à la trame suivante et le placement se refait.
+
+   Entrée : des lignes `{ id, groupKey, startIdx, endIdx, milestone }` DÉJÀ
+   bornées à la fenêtre affichée. Sortie : des couloirs `{ key, groupKey,
+   index, items }`, dans l'ordre d'affichage. */
+function bubbleLaneRows(rows, options) {
+  const opts = options || {};
+  const list = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id);
+  if (!list.length) return [];
+  // « Une tâche, une ligne » reste un choix : un couloir par bulle, et tout le
+  // reste du rendu est identique.
+  if (opts.packing === false) {
+    return list.map((row, index) => ({ key: String(row.id), groupKey: row.groupKey, index, items: [row] }));
+  }
+  const pxPerDay = Number(opts.pxPerDay);
+  const hasScale = Number.isFinite(pxPerDay) && pxPerDay > 0;
+  const gapPx = Number.isFinite(Number(opts.gapPx)) ? Number(opts.gapPx) : BUBBLE_LANE_GAP_PX;
+  const halfGap = hasScale ? (gapPx / pxPerDay) / 2 : 0;
+  const lanes = [];
+  list.forEach((row) => {
+    const extent = bubbleRowExtent(row, hasScale ? pxPerDay : null);
+    // Une ligne sans dates exploitables n'est pas dessinée : elle ne peut pas
+    // non plus réserver de place. Elle garde sa propre ligne, seule.
+    if (!extent) {
+      lanes.push({ items: [row], slots: [{ from: -Infinity, to: Infinity }] });
+      return;
+    }
+    const from = extent.startIdx - halfGap;
+    const to = extent.endIdx + halfGap;
+    let lane = lanes.find((l) => l.slots.every((slot) => to <= slot.from || from >= slot.to));
+    if (!lane) {
+      lane = { items: [], slots: [] };
+      lanes.push(lane);
+    }
+    lane.items.push(row);
+    lane.slots.push({ from, to });
+  });
+  return lanes.map((lane, index) => ({
+    key: String(lane.items[0].id) + "::lane" + index,
+    groupKey: lane.items[0].groupKey,
+    index,
+    items: lane.items,
+  }));
+}
 // === NEXORA:BUBBLES:END ===
 
 function computeBudgetStats(projectId, projects, expenses) {
@@ -2826,9 +2947,43 @@ function computeBudgetStats(projectId, projects, expenses) {
 // se font à la souris, avec un aperçu en transform pendant le geste puis un
 // "snap" sur la grille au relâchement — même logique que le drag des
 // sous-tâches dans la vue Planning Projets (subDragRef plus haut dans ce fichier).
+// === NEXORA:DASHBOARD-GRID:START ===
 const DASHBOARD_COLS = 12;
 const DASHBOARD_ROW_H = 68;
 const DASHBOARD_GAP = 14;
+/* Hauteur d'un widget, en unités de grille : plancher et plafond (#119).
+
+   Le plafond valait 12 unités — environ 970 px — et il était recopié à QUATRE
+   endroits : les deux calculs de redimensionnement, le clamp en pixels de
+   l'aperçu pendant le geste, et le dimensionnement automatique. Un widget
+   Bulles ou Gantt de trente lignes butait dessus : la poignée descendait, le
+   widget ne grandissait plus. Le plafond ne disparaît pas — une valeur infinie
+   ferait d'un glissement maladroit un widget de dix écrans — mais il est porté
+   assez haut pour qu'on ne le rencontre plus en travaillant, et il vit
+   désormais dans UNE constante que tout le monde relit. */
+const DASHBOARD_MIN_ROWS = 2;
+const DASHBOARD_MAX_ROWS = 60;
+
+/* Hauteur ramenée dans ses bornes. `maxRows` est le plafond LOCAL du geste en
+   cours — un redimensionnement par un coin HAUT garde le bord bas où il est, et
+   ne peut donc pas dépasser `y + h`. Il ne remplace pas le plafond global : il
+   s'y ajoute, et c'est le plus bas des deux qui gagne. */
+function clampWidgetRows(rows, maxRows) {
+  const n = Number(rows);
+  if (!Number.isFinite(n)) return DASHBOARD_MIN_ROWS;
+  const local = Number(maxRows);
+  const ceiling = Number.isFinite(local)
+    ? Math.max(DASHBOARD_MIN_ROWS, Math.min(DASHBOARD_MAX_ROWS, local))
+    : DASHBOARD_MAX_ROWS;
+  return Math.max(DASHBOARD_MIN_ROWS, Math.min(ceiling, Math.round(n)));
+}
+
+// Hauteur en pixels d'un widget de `rows` unités, gouttière comprise : la même
+// conversion pour l'aperçu du geste et pour le dimensionnement automatique.
+function dashboardRowsToPx(rows) {
+  return (DASHBOARD_ROW_H + DASHBOARD_GAP) * Math.max(0, Number(rows) || 0) - DASHBOARD_GAP;
+}
+// === NEXORA:DASHBOARD-GRID:END ===
 
 // Bin-packing "skyline" : place les widgets sans layout les uns après les
 // autres, dans le premier espace libre en partant du haut, comme le ferait un
@@ -2888,7 +3043,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, momentumSnapshots, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -2957,14 +3112,14 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
 
     if (corner === "br") {
       w = clamp(w + dCols, 2, DASHBOARD_COLS - x);
-      h = clamp(h + dRows, 2, 12);
+      h = clampWidgetRows(h + dRows);
     } else if (corner === "bl") {
       const newW = clamp(w - dCols, 2, x + w);
       x = x + w - newW;
       w = newW;
-      h = clamp(h + dRows, 2, 12);
+      h = clampWidgetRows(h + dRows);
     } else if (corner === "tr") {
-      const newH = clamp(h - dRows, 2, y + h);
+      const newH = clampWidgetRows(h - dRows, y + h);
       y = y + h - newH;
       h = newH;
       w = clamp(w + dCols, 2, DASHBOARD_COLS - x);
@@ -2972,7 +3127,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       const newW = clamp(w - dCols, 2, x + w);
       x = x + w - newW;
       w = newW;
-      const newH = clamp(h - dRows, 2, y + h);
+      const newH = clampWidgetRows(h - dRows, y + h);
       y = y + h - newH;
       h = newH;
     }
@@ -2994,11 +3149,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       2,
       DASHBOARD_COLS
     );
-    const newH = clamp(
-      Math.round((box.height + DASHBOARD_GAP) / rowUnit),
-      2,
-      12
-    );
+    const newH = clampWidgetRows(Math.round((box.height + DASHBOARD_GAP) / rowUnit));
 
     let x = baseLayout.x;
     let y = baseLayout.y;
@@ -3015,7 +3166,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
 
     if (corner === "tl" || corner === "tr") {
       const fixedBottom = baseLayout.y + baseLayout.h;
-      h = clamp(newH, 2, fixedBottom);
+      h = clampWidgetRows(newH, fixedBottom);
       y = Math.max(0, fixedBottom - h);
     }
 
@@ -3143,12 +3294,40 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       const rows = Math.max(1, Math.min(20, scoped.length)) + Math.min(12, scopedMilestones.length);
       const groupCount = w.groupBy && w.groupBy !== "none" ? groupTasks([...scoped, ...scopedMilestones], w.groupBy, ctx).filter((g) => g.tasks.length > 0).length : 0;
       const cfg = normalizeBubblesWidget(w);
-      // La hauteur d'une bulle dépend de la densité ET des lignes de
-      // description : une seule fonction la donne, celle que le rendu utilise.
-      const bubbleH = bubbleHeightPx(w);
-      const fieldsH = cfg.bubbleFieldsLayout === "under" && cfg.bubbleFields.length ? 20 : 0;
+      /* En couloirs (#120), une ligne porte PLUSIEURS bulles : compter une
+         ligne par tâche réserverait cinq fois la hauteur utile. Le nombre de
+         lignes est alors estimé par le plus grand nombre de tâches qui se
+         chevauchent au même moment — le plancher théorique du rangement — plus
+         une, parce que la largeur minimale d'une bulle en ajoute presque
+         toujours une. La largeur de la piste n'est pas connue ici : mieux vaut
+         une estimation honnête qu'une mesure inventée, et le
+         redimensionnement manuel reste toujours possible ensuite. */
+      const packedRows = (list) => {
+        const bounds = [];
+        list.forEach((t) => {
+          const from = new Date(t.milestone ? t.end : t.start).getTime();
+          const to = new Date(t.end).getTime();
+          if (Number.isFinite(from) && Number.isFinite(to)) bounds.push({ from, to: Math.max(from, to) });
+        });
+        if (!bounds.length) return 1;
+        let peak = 1;
+        bounds.forEach((a) => {
+          const overlap = bounds.filter((b) => a.from <= b.to && b.from <= a.to).length;
+          if (overlap > peak) peak = overlap;
+        });
+        return Math.min(rows, peak + 1);
+      };
+      const bubbleRows = normalizeBubbleLayout(cfg.bubbleLayout) === "lanes"
+        ? packedRows([...scoped, ...scopedMilestones])
+        : rows;
+      /* La hauteur d'une LIGNE de bulles dépend de la densité, des lignes de
+         description ET du bandeau condensé : une seule fonction la donne,
+         celle que le rendu utilise. Les champs « sous la bulle » gardent leur
+         rangée de pastilles, plus haute. */
+      const laneH = bubbleLaneHeightPx(w);
+      const fieldsH = bubbleEffectiveFieldsLayout(cfg) === "under" && cfg.bubbleFields.length ? 20 : 0;
       const legendH = cfg.bubbleShowLegend ? 22 : 0;
-      targetHPx = 50 + rows * (bubbleH + fieldsH + 10) + groupCount * 22 + legendH + FRAME_CHROME_PX;
+      targetHPx = 50 + bubbleRows * (laneH + fieldsH + 10) + groupCount * 22 + legendH + FRAME_CHROME_PX;
     } else if (w.type === "list") {
       const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
       const rows = Math.max(1, Math.min(w.limit || 6, scoped.length));
@@ -3158,7 +3337,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       updateWidget(w.id, { layout: { ...w.layout, w: def.w, h: def.h } });
       return;
     }
-    const targetHUnits = clamp(Math.ceil((targetHPx + DASHBOARD_GAP) / (DASHBOARD_ROW_H + DASHBOARD_GAP)), 2, 12);
+    const targetHUnits = clampWidgetRows(Math.ceil((targetHPx + DASHBOARD_GAP) / (DASHBOARD_ROW_H + DASHBOARD_GAP)));
     updateWidget(w.id, { layout: { ...w.layout, w: targetW, h: targetHUnits } });
   };
 
@@ -3338,8 +3517,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     };
 
     const minWidth=Math.max(80,(cellW+DASHBOARD_GAP)*2-DASHBOARD_GAP);
-    const minHeight=Math.max(80,(DASHBOARD_ROW_H+DASHBOARD_GAP)*2-DASHBOARD_GAP);
-    const maxHeight=Math.max(minHeight,(DASHBOARD_ROW_H+DASHBOARD_GAP)*12-DASHBOARD_GAP);
+    const minHeight=Math.max(80,dashboardRowsToPx(DASHBOARD_MIN_ROWS));
+    const maxHeight=Math.max(minHeight,dashboardRowsToPx(DASHBOARD_MAX_ROWS));
 
     const boxFromPointer=(clientX,clientY)=>{
       const gx=clientX-gridRect.left;
@@ -4963,7 +5142,7 @@ function MiniGanttProgressRing({ progress }) {
    formulaires de réglages avant #86.
    Hors de ce mode, pas une branche ci-dessous ne s'exécute : le Mini-Gantt rend
    exactement ce qu'il rendait. */
-function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode }) {
+function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
   // Les Mini Gantt existants n'avaient pas toujours de `groupBy`. La vue
   // consolidée doit néanmoins fournir ses en-têtes repliables : Projet devient
   // le défaut de lecture, sans modifier une configuration explicitement à
@@ -5003,9 +5182,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // jalon, ancré sur sa position réelle dans le temps.
   // En mode bulles, "under" range les champs SOUS la bulle : il n'y a alors
   // aucune colonne de droite, et la piste occupe toute la largeur.
+  // En mode bulles, « compact » (#122) est le bandeau condensé rattaché à la
+  // bulle, et les couloirs (#120) l'imposent : c'est la seule forme de champs
+  // qui ne déborde pas sur la bulle voisine.
   const fieldsLayout = bubbleMode
-    ? bubbleCfg.bubbleFieldsLayout
+    ? bubbleEffectiveFieldsLayout(bubbleCfg)
     : (widget.miniGanttFieldsLayout === "inline" ? "inline" : "aligned");
+  /* Bulles rangées en couloirs plutôt qu'une par ligne (#120). */
+  const bubblePacked = bubbleMode && normalizeBubbleLayout(bubbleCfg.bubbleLayout) === "lanes";
   /* Largeur de la colonne de champs alignée à droite. Elle ne peut pas rester
      FIXE : quatre champs plus l'anneau d'avancement dépassent largement
      deux cents pixels, et le surplus débordait hors du widget, où le cadre le
@@ -5048,33 +5232,39 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const [collapsed, setCollapsed] = useState({}); // { [groupKey]: true }
   const toggleGroup = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const showMilestones = widget.showMilestones !== false;
-  // Au-delà du plafond d'affichage, on ne garde jamais les tâches/jalons les
-  // plus ANCIENS au détriment des tâches en cours ou futures : on priorise
-  // d'abord tout ce qui se termine aujourd'hui ou après (tri chronologique
-  // croissant), puis on complète avec le passé le plus récent si de la place
-  // reste — sinon un widget avec beaucoup d'historique fini par ne plus
-  // montrer aucune tâche future en mode auto.
-  const projTasks = useMemo(() => {
-    const all = tasks.filter((t) => !t.milestone && t.start && t.end);
-    if (all.length <= 20) return [...all].sort((a, b) => a.start.localeCompare(b.start));
-    const todayStr = iso(new Date());
-    const upcoming = all.filter((t) => t.end >= todayStr).sort((a, b) => a.start.localeCompare(b.start));
-    const past = all.filter((t) => t.end < todayStr).sort((a, b) => b.end.localeCompare(a.end));
-    return [...upcoming, ...past.slice(0, Math.max(0, 20 - upcoming.length))]
-      .slice(0, 20)
-      .sort((a, b) => a.start.localeCompare(b.start));
-  }, [tasks]);
-  const milestoneTasks = useMemo(() => {
-    if (!showMilestones) return [];
-    const all = tasks.filter((t) => t.milestone && t.end);
-    if (all.length <= 12) return [...all].sort((a, b) => a.end.localeCompare(b.end));
-    const todayStr = iso(new Date());
-    const upcoming = all.filter((t) => t.end >= todayStr).sort((a, b) => a.end.localeCompare(b.end));
-    const past = all.filter((t) => t.end < todayStr).sort((a, b) => b.end.localeCompare(a.end));
-    return [...upcoming, ...past.slice(0, Math.max(0, 12 - upcoming.length))]
-      .slice(0, 12)
-      .sort((a, b) => a.end.localeCompare(b.end));
-  }, [tasks, showMilestones]);
+  /* Plafond d'affichage : une TUILE de tableau de bord, haute de quelques
+     centimètres, ne peut pas montrer deux cents lignes — d'où ces vingt barres
+     et ces douze jalons. La VUE Gantt, elle, occupe la page entière et n'a
+     aucune raison de s'y tenir : le même plafond y faisait disparaître des
+     tâches qu'on voyait dans le Tableur et dans le Métro, sans le dire, y
+     compris à statut identique (#115). `showAllRows` lève la limite ; il n'est
+     posé que par la vue plein écran, aucun widget enregistré ne change de
+     rendu. */
+  const rowLimits = showAllRows
+    ? { bars: Infinity, milestones: Infinity }
+    : { bars: MINIGANTT_WIDGET_MAX_BARS, milestones: MINIGANTT_WIDGET_MAX_MILESTONES };
+  const barLimit = rowLimits.bars;
+  const milestoneLimit = rowLimits.milestones;
+  // Le choix des lignes retenues sous le plafond vit dans miniGanttCapRows :
+  // une barre a besoin d'un début ET d'une fin, un jalon d'une fin, et la date
+  // qui les ordonne n'est pas la même — le reste est commun.
+  const projTasks = useMemo(
+    () => miniGanttCapRows(tasks.filter((t) => !t.milestone && t.start && t.end), barLimit, "start", iso(new Date())),
+    [tasks, barLimit]
+  );
+  const milestoneTasks = useMemo(
+    () => (showMilestones ? miniGanttCapRows(tasks.filter((t) => t.milestone && t.end), milestoneLimit, "end", iso(new Date())) : []),
+    [tasks, showMilestones, milestoneLimit]
+  );
+  /* Ce que le diagramme NE MONTRE PAS, dit à voix haute. Deux causes, un seul
+     nombre : le plafond ci-dessus, et les tâches dont il manque une date — une
+     barre a besoin d'un début ET d'une fin, un jalon d'une fin. Les jalons
+     masqués par le réglage « afficher les jalons » ne comptent pas : ils sont
+     cachés à la demande, pas à l'insu de l'utilisateur. */
+  const hiddenCount = useMemo(() => {
+    const considered = showMilestones ? (tasks || []) : (tasks || []).filter((t) => !t.milestone);
+    return Math.max(0, considered.length - projTasks.length - milestoneTasks.length);
+  }, [tasks, projTasks, milestoneTasks, showMilestones]);
   /* Ordre d'affichage : UNE seule liste triée, barres et jalons confondus.
 
      Auparavant les jalons étaient tous rendus après toutes les barres : un
@@ -6424,7 +6614,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // positionné juste après la barre/le jalon, ancré sur sa position réelle.
   // L'indicateur d'écart ci-dessus les suit : il s'affiche même quand aucun
   // champ facultatif n'est configuré.
-  const RowFields = ({ t, anchorPct, box }) => {
+  const RowFields = ({ t, anchorPct, box, color, inSlot }) => {
     const hasComparison = comparisonByTask.has(t.id);
     /* En disposition alignée, la colonne se rend sur TOUTES les lignes dès
        qu'elle existe pour une seule — même celles qui n'ont rien à y mettre.
@@ -6434,7 +6624,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
        dès qu'une seule portait un indicateur d'écart.
        Aucune colonne pour personne reste le cas de l'issue #66 : là, rien
        n'est rendu nulle part, et la piste va jusqu'au bord. */
-    if (fieldsLayout === "under") {
+    if (fieldsLayout === "under" || fieldsLayout === "compact") {
       if (!rowFields.length) return null;
     } else {
       if (!fieldsColumnShown && !hasComparison) return null;
@@ -6453,6 +6643,45 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         <ComparisonChip t={t} />
       </>
     );
+    if (fieldsLayout === "compact") {
+      /* Bandeau CONDENSÉ, rattaché à la bulle (#122).
+
+         Une seule ligne, exactement la largeur de la bulle, le même trait et la
+         même couleur qu'elle, sans bord haut : on lit un bandeau qui APPARTIENT
+         à cette bulle-là, et non une rangée de pastilles posée dessous. Les
+         valeurs restent celles de `FieldValue` — la mise en forme partagée avec
+         tout Nexora — simplement condensées par la feuille de style : un second
+         formateur, propre aux bulles, aurait fini par ne plus dire la même
+         chose que les autres widgets.
+
+         Trop de champs pour la largeur : la ligne est coupée à droite, et
+         l'infobulle de la bulle continue de tout dire.
+
+         En couloir, le bandeau est déjà DANS l'emplacement de la bulle : il n'a
+         rien à se placer. Hors couloir, il se pose comme les champs « sous la
+         bulle », à sa hauteur et à sa largeur. */
+      const compactBox = inSlot
+        ? null
+        : (box || { left: (Number(anchorPct) || 0) + "%", width: (100 - (Number(anchorPct) || 0)) + "%" });
+      return (
+        <div
+          className="lp-bubble-fields is-compact"
+          style={{
+            borderColor: color || "var(--border)",
+            background: color ? `color-mix(in srgb, ${color} 8%, var(--surface))` : "var(--surface)",
+            /* Hors couloir, le bandeau est EN FLUX sous la bulle, décalé de sa
+               hauteur — le même procédé que les champs « sous la bulle » (#103) :
+               c'est lui qui fait grandir la piste, donc la ligne, donc la
+               hauteur mesurée dont vivent les macro-bulles et les encadrés. */
+            ...(compactBox ? { marginTop: "var(--lp-bubble-h)", marginLeft: compactBox.left, width: compactBox.width } : null),
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {content}
+        </div>
+      );
+    }
     if (fieldsLayout === "under") {
       /* En FLUX sous la bulle, et non en position absolue : c'est ce qui fait
          grandir la piste, donc la ligne, donc la hauteur mesurée dont vivent
@@ -6554,7 +6783,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     );
   };
 
-  const BubbleEdgeDates = ({ t, leftPct, widthPct }) => {
+  const BubbleEdgeDates = ({ t, leftPct, widthPct, inSlot, laneRoom }) => {
     // Les dates s'écrivent DEHORS, à gauche et à droite de la bulle : dedans,
     // elles mangeraient le titre dès que la tâche est courte. Sous 44 px de
     // piste, il n'y a pas la place pour les deux : on n'en écrit aucune plutôt
@@ -6563,32 +6792,188 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     /* Chaque date ne s'écrit que s'il reste la place de l'écrire DANS la piste :
        collée au bord, elle sortait de la piste et le cadre du widget la
        coupait. Une seule des deux peut donc manquer. */
-    const roomLeftPx = (leftPct / 100) * bubbleTrackPx;
-    const roomRightPx = ((100 - leftPct - widthPct) / 100) * bubbleTrackPx;
+    /* La place disponible est celle de la piste ET celle que laisse la bulle
+       VOISINE quand il y en a une (#120) : une date écrite dehors ne doit pas
+       venir se poser sur la bulle d'à côté. Hors couloir, il n'y a pas de
+       voisine — le couloir ne contient qu'une bulle. */
+    const roomLeftPx = Math.min(
+      (leftPct / 100) * bubbleTrackPx,
+      laneRoom && Number.isFinite(laneRoom.before) ? laneRoom.before : Infinity,
+    );
+    const roomRightPx = Math.min(
+      ((100 - leftPct - widthPct) / 100) * bubbleTrackPx,
+      laneRoom && Number.isFinite(laneRoom.after) ? laneRoom.after : Infinity,
+    );
+    /* En couloir (#120), la date est posée dans l'EMPLACEMENT de la bulle et
+       non dans la piste : ses bords sont ceux de la bulle, donc 0 % et 100 %.
+       La place disponible, elle, se mesure toujours sur la piste — c'est bien
+       du cadre du widget qu'il s'agit de ne pas sortir. */
     return (
       <>
         {roomLeftPx >= BUBBLE_DATE_ROOM_PX && (
-          <span className="lp-bubble-date is-start" style={{ left: leftPct + "%" }}>{fmtShort(t.start)}</span>
+          <span className="lp-bubble-date is-start" style={{ left: inSlot ? "0%" : leftPct + "%" }}>{fmtShort(t.start)}</span>
         )}
         {roomRightPx >= BUBBLE_DATE_ROOM_PX && (
-          <span className="lp-bubble-date is-end" style={{ left: (leftPct + widthPct) + "%" }}>{fmtShort(t.end)}</span>
+          <span className="lp-bubble-date is-end" style={{ left: inSlot ? "100%" : (leftPct + widthPct) + "%" }}>{fmtShort(t.end)}</span>
         )}
       </>
     );
   };
 
-  const BubbleRow = (t) => {
+  /* Boîte d'une bulle de tâche dans la piste, bornée à la fenêtre affichée et
+     largeur plancher comprise. `null` quand la tâche est entièrement hors
+     fenêtre : il n'y a alors rien à dessiner, ni à placer dans un couloir. */
+  const bubbleTaskBox = (t) => {
     const rawStartIdx = dayIndex(t.start);
     const rawEndIdx = dayIndex(t.end);
+    if (!Number.isFinite(rawStartIdx) || !Number.isFinite(rawEndIdx)) return null;
     if (rawEndIdx < minIdx || rawStartIdx > maxIdx) return null;
     const visibleStartIdx = Math.max(minIdx, rawStartIdx);
     const visibleEndIdx = Math.min(maxIdx, rawEndIdx);
     const leftPct = ((visibleStartIdx - minIdx) / span) * 100;
     const widthPct = bubbleWidthPct(leftPct, ((Math.max(visibleStartIdx, visibleEndIdx) - visibleStartIdx) / span) * 100);
+    return { leftPct, widthPct };
+  };
+
+  /* Boîte RÉELLEMENT occupée par un emplacement, en pixels de piste. Elle ne
+     se déduit pas de `bubbleRowExtent` : celle-là modélise ce qu'une bulle
+     occupe pour le RANGEMENT, à partir des seules dates, quand la boîte d'un
+     jalon, elle, est recalée contre le bord de la piste dès qu'elle y
+     dépasserait (`bubbleMilestoneBox`). C'est la boîte dessinée qu'il faut
+     pour savoir ce qui reste de place entre deux voisines. */
+  const bubbleSlotBoxPx = (t) => {
+    if (t.milestone) {
+      const idx = dayIndex(t.end);
+      if (!Number.isFinite(idx) || idx < minIdx || idx > maxIdx) return null;
+      const centerPx = ((idx - minIdx) / span) * bubbleTrackPx;
+      const half = BUBBLE_MILESTONE_W / 2;
+      const leftPx = centerPx < half
+        ? 0
+        : (bubbleTrackPx - centerPx < half ? bubbleTrackPx - BUBBLE_MILESTONE_W : centerPx - half);
+      return { leftPx, rightPx: leftPx + BUBBLE_MILESTONE_W };
+    }
+    const geo = bubbleTaskBox(t);
+    if (!geo) return null;
+    const leftPx = (geo.leftPct / 100) * bubbleTrackPx;
+    return { leftPx, rightPx: leftPx + (geo.widthPct / 100) * bubbleTrackPx };
+  };
+
+  /* La bulle elle-même. `inSlot` ne change QU'UNE chose : qui porte la
+     position. Posée directement dans la piste, la bulle s'y place en
+     pourcentage ; posée dans un emplacement de couloir (#120), c'est
+     l'emplacement qui est placé et la bulle le remplit. Tout le reste — lavis
+     d'avancement, en-tête, description, pied, poignées — est identique, et
+     doit le rester : deux copies divergeraient au premier correctif. */
+  const BubbleTaskShape = ({ t, leftPct, widthPct, inSlot }) => {
     const color = bubbleColorOf(t);
     const pct = Math.max(0, Math.min(100, Math.round(t.progress || 0)));
     const dimmed = bubbleDimmed(t.id);
     const late = isTaskLate(t, ctx);
+    const desc = String(t.desc ?? t.description ?? "").trim();
+    const showDesc = !!(bubbleCfg.bubbleShowDescription && desc);
+    /* Deux étages de teinte quand la description est là (#121). L'en-tête garde
+       la couleur de base ; le corps — description et pied — passe en
+       transparence légère de LA MÊME couleur. Sans description, la bulle garde
+       son lavis unique : un widget qui ne l'affiche pas ne bouge pas d'un pixel.
+
+       L'en-tête est peint en `transparent` et non sur la surface du thème :
+       posé en aplat, il aurait masqué le lavis d'avancement qui court derrière
+       lui, et une bulle à 40 % n'aurait plus montré son avancement que sous son
+       titre. */
+    const headTint = `color-mix(in srgb, ${color} 26%, transparent)`;
+    const headStyle = showDesc
+      ? { background: headTint, borderBottom: `1px solid color-mix(in srgb, ${color} 38%, transparent)` }
+      : undefined;
+    return (
+      <div
+        className={"lp-bubble" + (late ? " is-late" : "") + (dimmed ? " is-dimmed" : "") + (showDesc ? " has-desc" : "")}
+        style={{
+          ...(inSlot ? null : { left: leftPct + "%", width: widthPct + "%" }),
+          borderColor: color,
+          // Lavis de la couleur du groupe sur la surface du thème : le texte
+          // garde --text-900 et reste lisible en thème clair comme sombre,
+          // ce qu'un aplat de couleur pleine ne garantirait pas. Allégé quand
+          // l'en-tête porte déjà la couleur (#121), pour que les deux étages
+          // se distinguent.
+          background: `color-mix(in srgb, ${color} ${showDesc ? 5 : 10}%, var(--surface))`,
+        }}
+        title={t.title}
+      >
+        <span className="lp-bubble-progress" style={{ width: pct + "%", background: color }} />
+        <div className="lp-bubble-head" style={headStyle}>
+          <span className="lp-bubble-title">{t.title}</span>
+        </div>
+        {showDesc && <div className="lp-bubble-desc">{desc}</div>}
+        <BubbleFoot t={t} color={color} pct={pct} />
+        {onUpdateTask && (
+          <>
+            <div
+              className="lp-bubble-handle left" title="Glisser pour changer la date de début"
+              {...handleHoverGuard}
+              onMouseDown={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+              onTouchStart={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+            />
+            <div
+              className="lp-bubble-handle right" title="Glisser pour changer la date de fin"
+              {...handleHoverGuard}
+              onMouseDown={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+              onTouchStart={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
+            />
+            {/* L'avancement se mesure sur la BULLE, pas sur la piste : la
+                poignée reste exactement sous le pointeur, comme celle de la
+                barre se mesure sur la barre. */}
+            <div
+              className={"lp-bubble-progress-handle" + (pct >= 100 ? " is-done" : "")}
+              style={{ left: pct + "%" }}
+              {...handleHoverGuard}
+              title={pct >= 100 ? "Avancement à 100 % — glisser pour revenir en arrière" : `Glisser pour changer l'avancement (${pct}%)`}
+              onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
+              onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
+            >
+              {pct >= 100 && <Check size={7} strokeWidth={4} aria-hidden="true" />}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  /* Bulle de JALON. Même partage que ci-dessus : le contenu ne sait pas s'il
+     est seul sur sa ligne ou rangé dans un couloir. */
+  const BubbleMilestoneShape = ({ t, msBox, inSlot }) => {
+    const color = bubbleColorOf(t);
+    const icon = resolveMilestoneIcon(t, ctx);
+    const dimmed = bubbleDimmed(t.id);
+    const dragHandlers = onUpdateTask ? {
+      onMouseDown: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
+      onTouchStart: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
+    } : {};
+    return (
+      <div
+        className={"lp-bubble-milestone" + (dimmed ? " is-dimmed" : "")}
+        style={{
+          ...(inSlot ? { position: "relative", transform: "none", width: "100%" } : { left: msBox.left, transform: msBox.transform }),
+          borderColor: color,
+          background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
+        }}
+        title={`${t.title} · ${fmtShort(t.end)}`}
+        {...dragHandlers}
+      >
+        {icon
+          ? <IconGlyph icon={icon} size={12} />
+          : <span className="lp-bubble-milestone-glyph" style={{ background: color }} />}
+        <span className="lp-bubble-milestone-title">{t.title}</span>
+        {bubbleCfg.bubbleShowDates && <span className="lp-bubble-milestone-date">{fmtShort(t.end)}</span>}
+      </div>
+    );
+  };
+
+  /* --- Une tâche, une ligne (disposition « rows ») ------------------------ */
+
+  const BubbleRow = (t) => {
+    const geo = bubbleTaskBox(t);
+    if (!geo) return null;
+    const { leftPct, widthPct } = geo;
     return (
       <div
         className={"lp-widget-minigantt-row is-" + emphasisFor(t.id)}
@@ -6601,59 +6986,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       >
         <div className="lp-widget-minigantt-track">
           <BubbleEdgeDates t={t} leftPct={leftPct} widthPct={widthPct} />
-          <div
-            className={"lp-bubble" + (late ? " is-late" : "") + (dimmed ? " is-dimmed" : "")}
-            style={{
-              left: leftPct + "%",
-              width: widthPct + "%",
-              borderColor: color,
-              // Lavis de la couleur du groupe sur la surface du thème : le texte
-              // garde --text-900 et reste lisible en thème clair comme sombre,
-              // ce qu'un aplat de couleur pleine ne garantirait pas.
-              background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
-            }}
-            title={t.title}
-          >
-            <span className="lp-bubble-progress" style={{ width: pct + "%", background: color }} />
-            <div className="lp-bubble-head">
-              <span className="lp-bubble-title">{t.title}</span>
-            </div>
-            {bubbleCfg.bubbleShowDescription && String(t.desc ?? t.description ?? "").trim() && (
-              <div className="lp-bubble-desc">{String(t.desc ?? t.description ?? "").trim()}</div>
-            )}
-            <BubbleFoot t={t} color={color} pct={pct} />
-            {onUpdateTask && (
-              <>
-                <div
-                  className="lp-bubble-handle left" title="Glisser pour changer la date de début"
-                  {...handleHoverGuard}
-                  onMouseDown={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
-                  onTouchStart={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
-                />
-                <div
-                  className="lp-bubble-handle right" title="Glisser pour changer la date de fin"
-                  {...handleHoverGuard}
-                  onMouseDown={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
-                  onTouchStart={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
-                />
-                {/* L'avancement se mesure sur la BULLE, pas sur la piste : la
-                    poignée reste exactement sous le pointeur, comme celle de la
-                    barre se mesure sur la barre. */}
-                <div
-                  className={"lp-bubble-progress-handle" + (pct >= 100 ? " is-done" : "")}
-                  style={{ left: pct + "%" }}
-                  {...handleHoverGuard}
-                  title={pct >= 100 ? "Avancement à 100 % — glisser pour revenir en arrière" : `Glisser pour changer l'avancement (${pct}%)`}
-                  onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
-                  onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
-                >
-                  {pct >= 100 && <Check size={7} strokeWidth={4} aria-hidden="true" />}
-                </div>
-              </>
-            )}
-          </div>
+          <BubbleTaskShape t={t} leftPct={leftPct} widthPct={widthPct} />
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={leftPct + widthPct} />}
-          {fieldsLayout === "under" && <RowFields t={t} box={{ left: leftPct + "%", width: widthPct + "%" }} />}
+          {(fieldsLayout === "under" || fieldsLayout === "compact")
+            && <RowFields t={t} box={{ left: leftPct + "%", width: widthPct + "%" }} color={bubbleColorOf(t)} />}
         </div>
       </div>
     );
@@ -6663,14 +6999,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const idx = dayIndex(t.end);
     if (idx < minIdx || idx > maxIdx) return null;
     const leftPct = ((idx - minIdx) / span) * 100;
-    const color = bubbleColorOf(t);
-    const icon = resolveMilestoneIcon(t, ctx);
-    const dimmed = bubbleDimmed(t.id);
     const msBox = bubbleMilestoneBox(leftPct);
-    const dragHandlers = onUpdateTask ? {
-      onMouseDown: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
-      onTouchStart: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
-    } : {};
     return (
       <div
         className="lp-widget-minigantt-row"
@@ -6684,29 +7013,149 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         <div className="lp-widget-minigantt-track">
           {/* Un jalon n'a qu'une date : sa bulle est compacte et CENTRÉE sur
               cette date — lui donner une largeur fabriquerait une durée. */}
-          <div
-            className={"lp-bubble-milestone" + (dimmed ? " is-dimmed" : "")}
-            style={{
-              left: msBox.left,
-              transform: msBox.transform,
-              borderColor: color,
-              background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
-            }}
-            title={`${t.title} · ${fmtShort(t.end)}`}
-            {...dragHandlers}
-          >
-            {icon
-              ? <IconGlyph icon={icon} size={12} />
-              : <span className="lp-bubble-milestone-glyph" style={{ background: color }} />}
-            <span className="lp-bubble-milestone-title">{t.title}</span>
-            {bubbleCfg.bubbleShowDates && <span className="lp-bubble-milestone-date">{fmtShort(t.end)}</span>}
-          </div>
+          <BubbleMilestoneShape t={t} msBox={msBox} />
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={leftPct} />}
-          {fieldsLayout === "under" && <RowFields t={t} box={{ left: msBox.fieldsLeft, width: BUBBLE_MILESTONE_W + "px" }} />}
+          {(fieldsLayout === "under" || fieldsLayout === "compact")
+            && <RowFields t={t} box={{ left: msBox.fieldsLeft, width: BUBBLE_MILESTONE_W + "px" }} color={bubbleColorOf(t)} />}
         </div>
       </div>
     );
   };
+
+  /* --- Couloirs : les bulles côte à côte (disposition « lanes », #120) ----
+
+     Une LIGNE porte ici plusieurs bulles, chacune dans son emplacement. C'est
+     l'emplacement qui est placé dans la piste — la bulle le remplit — et c'est
+     lui qui porte le clic, l'infobulle et la mise en avant : la ligne n'est
+     plus l'affaire d'une seule tâche.
+
+     La hauteur d'une ligne de couloir est POSÉE et non mesurée : tout y est en
+     position absolue, donc rien ne la fait grandir. Elle vaut exactement la
+     bulle plus, s'il y a lieu, le bandeau condensé — d'où l'obligation, en
+     couloirs, que les champs prennent cette forme-là (bubbleEffectiveFieldsLayout). */
+  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget) + "px" };
+
+  const BubbleSlot = (t, laneRoom) => {
+    const geo = bubbleTaskBox(t);
+    if (!geo) return null;
+    const { leftPct, widthPct } = geo;
+    return (
+      <div
+        className={"lp-bubble-slot is-" + emphasisFor(t.id)}
+        key={t.id}
+        style={{ left: leftPct + "%", width: widthPct + "%" }}
+        onClick={openTaskUnlessDragged(t)}
+        onMouseEnter={(e) => openTip(t, e)}
+        onMouseMove={(e) => openTip(t, e)}
+        onMouseLeave={() => setHover(null)}
+      >
+        <BubbleEdgeDates t={t} leftPct={leftPct} widthPct={widthPct} inSlot laneRoom={laneRoom} />
+        <BubbleTaskShape t={t} leftPct={leftPct} widthPct={widthPct} inSlot />
+        <RowFields t={t} color={bubbleColorOf(t)} inSlot />
+      </div>
+    );
+  };
+
+  const BubbleMilestoneSlot = (t) => {
+    const idx = dayIndex(t.end);
+    if (idx < minIdx || idx > maxIdx) return null;
+    const leftPct = ((idx - minIdx) / span) * 100;
+    const msBox = bubbleMilestoneBox(leftPct);
+    return (
+      <div
+        className={"lp-bubble-slot is-" + emphasisFor(t.id)}
+        key={t.id}
+        style={{ left: msBox.fieldsLeft, width: BUBBLE_MILESTONE_W + "px" }}
+        onClick={openTaskUnlessDragged(t)}
+        onMouseEnter={(e) => openTip(t, e)}
+        onMouseMove={(e) => openTip(t, e)}
+        onMouseLeave={() => setHover(null)}
+      >
+        <BubbleMilestoneShape t={t} msBox={msBox} inSlot />
+        <RowFields t={t} color={bubbleColorOf(t)} inSlot />
+      </div>
+    );
+  };
+
+  /* Les lignes d'un regroupement, rangées en couloirs. La mesure des lignes
+     (`rowNodes`) reste indexée PAR TÂCHE : toutes celles d'un même couloir
+     pointent sur le même élément, et les macro-bulles comme les encadrés
+     continuent de lire `rowRects[idDeTâche]` sans rien savoir des couloirs. */
+  const BubbleLanes = (tasks) => {
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const lanes = bubbleLaneRows(
+      tasks
+        .map((t) => {
+          const startIdx = dayIndex(t.milestone ? t.end : t.start);
+          const endIdx = dayIndex(t.end);
+          if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+          if (endIdx < minIdx || startIdx > maxIdx) return null;
+          return {
+            id: t.id,
+            milestone: !!t.milestone,
+            startIdx: Math.max(minIdx, Math.min(maxIdx, startIdx)),
+            endIdx: Math.max(minIdx, Math.min(maxIdx, endIdx)),
+          };
+        })
+        .filter(Boolean),
+      { pxPerDay: bubbleTrackPx / span, packing: true },
+    );
+    /* Place LIBRE de part et d'autre de chaque bulle, en pixels, mesurée sur les
+       boîtes RÉELLEMENT dessinées du couloir. Les dates s'écrivent dehors, à
+       gauche et à droite de la bulle : seules sur leur ligne, elles ne
+       recouvraient que du vide ; rangées côte à côte, elles se posaient sur la
+       bulle voisine (retour de test). Aux deux bouts d'un couloir il n'y a que
+       le bord de la piste, dont la bulle se charge déjà. */
+    const laneRoom = new Map();
+    lanes.forEach((lane) => {
+      const boxes = lane.items
+        .map((row) => {
+          const t = byId.get(row.id);
+          const box = t ? bubbleSlotBoxPx(t) : null;
+          return box ? { id: row.id, ...box } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.leftPx - b.leftPx);
+      boxes.forEach((box, i) => {
+        const prev = boxes[i - 1];
+        const next = boxes[i + 1];
+        laneRoom.set(box.id, {
+          before: prev ? box.leftPx - prev.rightPx : Infinity,
+          after: next ? next.leftPx - box.rightPx : Infinity,
+        });
+      });
+    });
+    return lanes.map((lane) => (
+      <div
+        className="lp-widget-minigantt-row lp-bubble-lane"
+        key={lane.key}
+        ref={(el) => {
+          lane.items.forEach((row) => {
+            if (el) rowNodes.current[row.id] = el;
+            else delete rowNodes.current[row.id];
+          });
+        }}
+      >
+        <div className="lp-widget-minigantt-track" style={bubbleLaneStyle}>
+          {lane.items.map((row) => {
+            const t = byId.get(row.id);
+            if (!t) return null;
+            return t.milestone ? BubbleMilestoneSlot(t) : BubbleSlot(t, laneRoom.get(row.id));
+          })}
+        </div>
+      </div>
+    ));
+  };
+
+  /* Les lignes d'une liste de tâches — c'est ici, et nulle part ailleurs, que
+     se décide « une tâche, une ligne » ou « des bulles côte à côte » (#120).
+     Les deux vues groupée et non groupée passent par là. */
+  const renderRows = (list) => (
+    bubblePacked
+      ? BubbleLanes(list)
+      : list.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))
+  );
+
   const Row = (t) => {
     if (bubbleMode) return BubbleRow(t);
     const rawStartIdx = dayIndex(t.start);
@@ -7427,6 +7876,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     ? <span className="lp-widget-minigantt-rows-tail" style={{ height: rowsTail }} aria-hidden="true" />
     : null;
 
+  /* Le silence était la moitié du défaut de #115 : une tâche absente du
+     diagramme ne se distingue pas d'une tâche qu'aucun filtre ne retient. Ce
+     pied dit combien il en manque, et pourquoi. Dans la vue plein écran il n'y
+     a plus de plafond : ce qui reste ne peut venir que d'une date manquante. */
+  const hiddenNote = hiddenCount > 0
+    ? (
+      <div className="lp-widget-minigantt-hidden-note">
+        {hiddenCount} tâche{hiddenCount > 1 ? "s" : ""} {hiddenCount > 1 ? "ne sont pas affichées" : "n'est pas affichée"}
+        {showAllRows
+          ? " : il leur manque une date de début ou de fin."
+          : ` : ce widget montre au plus ${MINIGANTT_WIDGET_MAX_BARS} barres et ${MINIGANTT_WIDGET_MAX_MILESTONES} jalons, et une tâche sans date de début ou de fin n'a pas de barre. La vue Gantt les affiche toutes.`}
+      </div>
+    )
+    : null;
+
   if (!groupBy || groupBy === "none") {
     return (
       <div className={rootClass} style={rootStyle} ref={rootRef}>
@@ -7440,9 +7904,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {stripHeader}
         <div className="lp-widget-minigantt-rows">
           <GridOverlay />
-          {orderedTasks.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))}
+          {renderRows(orderedTasks)}
         </div>
         {rowsTailSpacer}
+        {hiddenNote}
         {bandFrameLayer}
         {annotationLayer}
         {spanLayer}
@@ -7491,13 +7956,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             {!isCollapsed && (
               <div className="lp-widget-minigantt-rows">
                 <GridOverlay />
-                {g.tasks.map((t) => (t.milestone ? MilestoneRow(t) : Row(t)))}
+                {renderRows(g.tasks)}
               </div>
             )}
           </div>
         );
       })}
       {rowsTailSpacer}
+      {hiddenNote}
       {bandFrameLayer}
       {annotationLayer}
       {spanLayer}
@@ -9542,9 +10008,25 @@ function BubblesDisplayFields({ value, onChange, ctx }) {
       <div className="lp-field" style={{ marginTop: 10 }}>
         <label>Disposition de ces champs</label>
         <div className="lp-density-row">
+          <button type="button" className={"lp-density-btn" + (cfg.bubbleFieldsLayout === "compact" ? " active" : "")} onClick={() => onChange({ bubbleFieldsLayout: "compact" })}>Condensée, rattachée</button>
           <button type="button" className={"lp-density-btn" + (cfg.bubbleFieldsLayout === "under" ? " active" : "")} onClick={() => onChange({ bubbleFieldsLayout: "under" })}>Sous la bulle</button>
           <button type="button" className={"lp-density-btn" + (cfg.bubbleFieldsLayout === "inline" ? " active" : "")} onClick={() => onChange({ bubbleFieldsLayout: "inline" })}>À la suite de la bulle</button>
         </div>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+          {bubbleEffectiveFieldsLayout(cfg) === "compact" && cfg.bubbleFieldsLayout !== "compact"
+            ? "En couloirs, les champs prennent la forme condensée : c'est la seule qui ne déborde pas sur la bulle voisine."
+            : "Condensée : une seule ligne collée sous la bulle, à sa largeur exacte, valeurs séparées par un point médian."}
+        </p>
+      </div>
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Disposition des bulles</label>
+        <div className="lp-density-row">
+          <button type="button" className={"lp-density-btn" + (cfg.bubbleLayout === "lanes" ? " active" : "")} onClick={() => onChange({ bubbleLayout: "lanes" })}>Côte à côte (couloirs)</button>
+          <button type="button" className={"lp-density-btn" + (cfg.bubbleLayout === "rows" ? " active" : "")} onClick={() => onChange({ bubbleLayout: "rows" })}>Une tâche, une ligne</button>
+        </div>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+          En couloirs, les bulles d'un même regroupement se rangent au maximum côte à côte sur la ligne de temps ; on ne descend d'une ligne que lorsque deux d'entre elles se chevauchent.
+        </p>
       </div>
       <div className="lp-field" style={{ marginTop: 10 }}>
         <label>Ordre des lignes</label>
@@ -9760,6 +10242,9 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         widget={widget}
         tasks={scoped}
         ctx={ctx}
+        /* La vue occupe la page : elle montre TOUT ce que les filtres laissent
+           passer, sans le plafond des tuiles de tableau de bord (#115). */
+        showAllRows
         groupBy={widget.groupBy}
         onOpen={onOpen}
         onUpdateWidget={(patch) => setPrefs(patch)}
@@ -11083,6 +11568,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.bubbleColorBy = bubbles.bubbleColorBy;
       data.bubbleFields = bubbles.bubbleFields;
       data.bubbleFieldsLayout = bubbles.bubbleFieldsLayout;
+      data.bubbleLayout = bubbles.bubbleLayout;
       data.bubbleSize = bubbles.bubbleSize;
       data.bubbleShowDates = bubbles.bubbleShowDates;
       data.bubbleShowProgress = bubbles.bubbleShowProgress;
