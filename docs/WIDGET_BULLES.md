@@ -481,3 +481,34 @@ C'est ce banc qui a attrapé le seul vrai défaut de cette livraison : une
 fonction en `const` appelée depuis un `useMemo` situé plus haut, donc une
 `ReferenceError` de zone morte qui cassait **aussi** le Mini-Gantt. Aucun test
 d'extraction ne l'aurait vue.
+
+## Tronquer les titres, ou les afficher en entier (#122)
+
+Un titre de bulle est coupé à **deux lignes** — une seule en hauteur compacte, où
+le pied ne laisse pas la place à la seconde. C'est le défaut, et il le reste :
+changer ce réglage aurait rallongé sans prévenir chaque ligne des tableaux de
+bord déjà en place.
+
+Décocher **« Tronquer les titres »** les affiche en entier, sur autant de lignes
+qu'il faut. Deux conséquences, et la seconde est la vraie contrainte :
+
+1. La bulle gagne la hauteur nécessaire.
+2. **Toutes** les lignes prennent la hauteur du titre le plus long du widget.
+
+Le second point n'est pas une commodité. En couloirs (#120), une ligne porte
+plusieurs bulles : des hauteurs différentes se liraient en escalier, et la
+hauteur d'un couloir ne serait plus connue — c'est elle qui rend le rangement
+possible.
+
+### Cette hauteur se MESURE
+
+Le nombre de lignes qu'un titre occupe dépend de la largeur **réelle** de sa
+bulle, que rien ne connaît avant le rendu : `bubbleHeightPx` ne peut pas la
+deviner. Le rendu mesure donc le titre le plus haut, en déduit le supplément
+au-delà des deux lignes déjà réservées, et le passe à **la même fonction** —
+celle que l'auto-dimensionnement du widget relit. Il n'y a toujours qu'une
+hauteur de bulle, et un seul endroit qui la calcule.
+
+La mesure ne tourne **que** si les titres sont entiers : coupés, ils tiennent par
+construction dans la hauteur posée, et mesurer coûterait une lecture de mise en
+page à chaque rendu pour rien.

@@ -2544,6 +2544,7 @@ const BUBBLES_DEFAULTS = {
   bubbleShowDescription: false,
   bubbleDescriptionLines: 1,
   bubbleShowLegend: false,
+  bubbleTruncateTitles: true,
   bubbleMacroGrouping: true,
   bubbleMacros: [],
 };
@@ -2568,11 +2569,17 @@ function normalizeBubbleDescriptionLines(value) {
    calcule la hauteur de ses lignes). Les lignes de description gagnées se
    paient en hauteur : sans elles, la bulle a `overflow:hidden` et c'est le
    pied — statut et avancement — qui disparaîtrait en silence. */
-function bubbleHeightPx(widget) {
+function bubbleHeightPx(widget, titleExtraPx) {
   const cfg = normalizeBubblesWidget(widget);
   const base = BUBBLE_HEIGHT_PX[cfg.bubbleSize] || BUBBLE_HEIGHT_PX.normal;
   const extraLines = cfg.bubbleShowDescription ? cfg.bubbleDescriptionLines - 1 : 0;
-  return base + Math.max(0, extraLines) * BUBBLE_DESC_LINE_PX;
+  /* Le supplement de titre (#122) est MESURE par le rendu, jamais devine ici :
+     le nombre de lignes qu'un titre occupe depend de la largeur reelle de la
+     bulle, que cette fonction ne connait pas. Il vaut zero quand les titres
+     sont coupes, et zero tant que rien n'a ete mesure. */
+  const title = Number(titleExtraPx);
+  const titleRoom = cfg.bubbleTruncateTitles || !Number.isFinite(title) ? 0 : Math.max(0, title);
+  return base + Math.max(0, extraLines) * BUBBLE_DESC_LINE_PX + titleRoom;
 }
 
 /* Étendue RÉELLE d'une ligne, en index de jour : ce que sa bulle occupe, et
@@ -2625,12 +2632,12 @@ function bubbleEffectiveFieldsLayout(cfg) {
 /* Hauteur d'une ligne de bulles, en pixels : la bulle, plus le bandeau condensé
    quand il est là. Une seule fonction, relue par le rendu (qui la pose sur la
    piste d'un couloir) et par l'auto-dimensionnement du widget. */
-function bubbleLaneHeightPx(widget) {
+function bubbleLaneHeightPx(widget, titleExtraPx) {
   const cfg = normalizeBubblesWidget(widget);
   const fields = bubbleEffectiveFieldsLayout(cfg) === "compact" && cfg.bubbleFields.length
     ? BUBBLE_FIELDS_COMPACT_PX
     : 0;
-  return bubbleHeightPx(widget) + fields;
+  return bubbleHeightPx(widget, titleExtraPx) + fields;
 }
 
 /* Liste de champs : on garde l'ORDRE choisi par l'utilisateur (c'est l'ordre
@@ -2740,6 +2747,10 @@ function normalizeBubblesWidget(widget) {
     bubbleShowDescription: w.bubbleShowDescription === true,
     bubbleDescriptionLines: normalizeBubbleDescriptionLines(w.bubbleDescriptionLines),
     bubbleShowLegend: w.bubbleShowLegend === true,
+    /* Titres coupes ou entiers (#122). Le defaut est COUPE : c'est le
+       comportement de toutes les bulles existantes, et le changer aurait
+       rallonge sans prevenir chaque ligne des tableaux de bord deja en place. */
+    bubbleTruncateTitles: w.bubbleTruncateTitles !== false,
     bubbleMacroGrouping: w.bubbleMacroGrouping !== false,
     bubbleMacros: normalizeBubbleMacros(w.bubbleMacros),
   };
@@ -3087,7 +3098,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3830,6 +3841,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     staffing={staffing}
                     onUpdateStaffing={setStaffing}
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
+                    onUpdateWorkshops={setWorkshops}
                   />
                 )}
                 {w.type === "criticalPath" && (
@@ -5770,6 +5782,39 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const rootRef = useRef(null);
   const rowNodes = useRef({});
   const stripTrackRef = useRef(null);
+  /* Titres entiers (#122) : le nombre de lignes qu'un titre occupe depend de la
+     largeur REELLE de sa bulle — il se mesure, il ne se devine pas. On retient
+     le plus grand supplement du widget et on l'applique a TOUTES les lignes :
+     des lignes de hauteurs differentes se liraient en escalier, et les couloirs
+     de #120 n'auraient plus de hauteur connue. C'est la meme regle que la
+     hauteur reguliere demandee pour le bandeau condense. */
+  const [titleExtraPx, setTitleExtraPx] = useState(0);
+  /* La mesure des titres. Elle ne tourne QUE quand les titres sont entiers :
+     coupes, ils tiennent par construction dans la hauteur posee, et mesurer
+     coutait alors une lecture de mise en page a chaque rendu pour zero. */
+  useLayoutEffect(() => {
+    if (!bubbleMode || bubbleCfg.bubbleTruncateTitles) {
+      setTitleExtraPx((prev) => (prev === 0 ? prev : 0));
+      return;
+    }
+    const root = rootRef.current;
+    if (!root) return;
+    const titles = root.querySelectorAll(".lp-bubble-title, .lp-bubble-milestone-title");
+    let tallest = 0;
+    let lineH = 0;
+    titles.forEach((el) => {
+      tallest = Math.max(tallest, el.scrollHeight);
+      const parsed = parseFloat(window.getComputedStyle(el).lineHeight);
+      if (Number.isFinite(parsed)) lineH = Math.max(lineH, parsed);
+    });
+    /* La bulle reserve deja DEUX lignes de titre — une seule en hauteur
+       compacte, ou le pied ne laisse pas la place a la seconde. Le supplement
+       est ce qui depasse cette reserve, et rien d'autre. */
+    const reserved = lineH * (bubbleCfg.bubbleSize === "compact" ? 1 : 2);
+    const extra = Math.max(0, Math.ceil(tallest - reserved));
+    setTitleExtraPx((prev) => (prev === extra ? prev : extra));
+  });
+
   const [rowRects, setRowRects] = useState({});
   /* Sommet de la bande de repères, mesuré comme les lignes : c'est de là que
      part le trait vertical d'un jalon (#95). `null` tant qu'aucune bande n'est
@@ -7136,7 +7181,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      position absolue, donc rien ne la fait grandir. Elle vaut exactement la
      bulle plus, s'il y a lieu, le bandeau condensé — d'où l'obligation, en
      couloirs, que les champs prennent cette forme-là (bubbleEffectiveFieldsLayout). */
-  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget) + "px" };
+  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget, titleExtraPx) + "px" };
 
   const BubbleSlot = (t, laneRoom) => {
     const geo = bubbleTaskBox(t);
@@ -8007,14 +8052,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   /* Classe racine : le mode bulles y ajoute sa bascule de largeur d'étiquette
      et sa hauteur de bulle. Rien d'autre ne change dans la mise en page. */
   const rootClass = "lp-widget-minigantt"
-    + (bubbleMode ? " is-bubbles size-" + bubbleCfg.bubbleSize : "");
+    + (bubbleMode ? " is-bubbles size-" + bubbleCfg.bubbleSize : "")
+    + (bubbleMode && !bubbleCfg.bubbleTruncateTitles ? " is-title-full" : "");
   /* Hauteur de bulle et nombre de lignes de description : posés en variables
      CSS sur la racine, depuis `bubbleHeightPx` — la même fonction que celle
      dont l'auto-dimensionnement du widget se sert. */
   const rootStyle = bubbleMode
     ? {
         position: "relative",
-        "--lp-bubble-h": bubbleHeightPx(widget) + "px",
+        "--lp-bubble-h": bubbleHeightPx(widget, titleExtraPx) + "px",
         "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines,
       }
     /* La colonne d'étiquettes est posée en PIXELS dès qu'elle est mesurée :
@@ -8165,14 +8211,14 @@ const STAFFING_DOW_LABELS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
 const STAFFING_DOW_SHORT = ["lu", "ma", "me", "je", "ve", "sa", "di"];
 const STAFFING_GRID_GAP = 3;
 
-function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidget }) {
+function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidget, onUpdateWorkshops }) {
   const cfg = normalizeStaffingWidget(widget);
   const catalogue = useMemo(() => normalizeWorkshops(ctx.workshops), [ctx.workshops]);
   const knownIds = useMemo(() => catalogue.map((w) => w.id), [catalogue]);
   const todayIso = useMemo(() => iso(new Date()), []);
   const frame = useMemo(
-    () => staffingWindow(cfg.staffingRange, cfg.staffingOffset, todayIso),
-    [cfg.staffingRange, cfg.staffingOffset, todayIso]
+    () => staffingWindow(cfg.staffingRange, cfg.staffingOffset, todayIso, { start: cfg.staffingStart, end: cfg.staffingEnd }),
+    [cfg.staffingRange, cfg.staffingOffset, todayIso, cfg.staffingStart, cfg.staffingEnd]
   );
   const days = useMemo(
     () => staffingDays(frame, todayIso, { showWeekends: cfg.staffingShowWeekends }),
@@ -8201,7 +8247,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
     return () => observer.disconnect();
   }, []);
 
-  const nameW = cfg.staffingRange === "month" ? 146 : 188;
+  const nameW = days.length > 16 ? 146 : 188;
   const loadW = cfg.staffingShowLoad ? 64 : 0;
   const colCount = Math.max(1, days.length);
   const gutters = STAFFING_GRID_GAP * (colCount + (loadW ? 1 : 0));
@@ -8255,6 +8301,30 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
     onUpdateStaffing((prev) => staffingSetCell(prev, picker.member, picker.date, [], knownIds));
   };
 
+  /* Créer un atelier SANS quitter la case (#124) : le besoin se découvre en
+     affectant — « tiens, il manque Grue » —, et renvoyer dans les Réglages
+     pour revenir ensuite ferait perdre la case qu'on était en train de
+     remplir. L'atelier créé est aussitôt posé sur elle : c'est pour elle qu'on
+     l'a créé.
+
+     Il entre dans le MÊME catalogue que les autres, marqué `custom` : un second
+     magasin aurait donné deux endroits où chercher « Grue », et deux règles de
+     suppression. */
+  const [draft, setDraft] = useState(null); // { name, color }
+  const openDraft = () => setDraft({ name: query.trim(), color: STAFFING_COLOR_CHOICES[0] });
+  const createWorkshop = () => {
+    if (!draft || !picker || !onUpdateWorkshops || !onUpdateStaffing) return;
+    const name = String(draft.name || "").trim();
+    if (!name) return;
+    const made = staffingAddCustomWorkshop(catalogue, name, draft.color);
+    if (!made.workshop) return;
+    if (made.created) onUpdateWorkshops(made.catalogue);
+    const nextIds = currentIds.includes(made.workshop.id) ? currentIds : [...currentIds, made.workshop.id];
+    onUpdateStaffing((prev) => staffingSetCell(prev, picker.member, picker.date, nextIds, made.catalogue.map((w) => w.id)));
+    setDraft(null);
+    setQuery("");
+  };
+
   const dayTitle = (dayIso) => {
     const d = new Date(dayIso + "T00:00:00");
     return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
@@ -8265,7 +8335,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
       <div className="lp-empty">
         {(ctx.teamMembers || []).length === 0
           ? "Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs, ou directement dans les réglages de ce widget."
-          : "Aucune personne retenue : ouvre les réglages du widget pour en choisir, ou pour en ajouter à la main."}
+          : "Personne n'est encore affiché : ouvre les réglages du widget pour cocher les personnes à suivre — « Tout cocher » les prend toutes — ou pour en ajouter à la main."}
       </div>
     );
   }
@@ -8355,6 +8425,47 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
               {picked.hiddenSelected.join(", ")} {picked.hiddenSelected.length > 1 ? "restent cochés" : "reste coché"} : {picked.hiddenSelected.length > 1 ? "ils sortent" : "il sort"} du filtre, pas de la sélection.
             </div>
           )}
+          {onUpdateWorkshops && !draft && (
+            <button type="button" className="lp-cp-picker-new" onClick={openDraft}>
+              <Plus size={13} />
+              {query.trim() ? "Créer l’atelier « " + query.trim() + " »" : "Créer un atelier personnalisé"}
+            </button>
+          )}
+          {onUpdateWorkshops && draft && (
+            <div className="lp-cp-draft">
+              <input
+                type="text"
+                autoFocus
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); createWorkshop(); }
+                  if (e.key === "Escape") { e.preventDefault(); setDraft(null); }
+                }}
+                placeholder="Nom de l’atelier"
+                aria-label="Nom du nouvel atelier"
+              />
+              <div className="lp-cp-draft-colors">
+                {STAFFING_COLOR_CHOICES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={"lp-cp-swatch" + (draft.color === c ? " is-on" : "")}
+                    style={{ background: c }}
+                    aria-label={"Couleur " + c}
+                    aria-pressed={draft.color === c}
+                    onClick={() => setDraft({ ...draft, color: c })}
+                  />
+                ))}
+              </div>
+              <div className="lp-cp-draft-foot">
+                <button type="button" className="lp-btn lp-btn-mini" onClick={() => setDraft(null)}>Annuler</button>
+                <button type="button" className="lp-btn lp-btn-mini lp-btn-primary" onClick={createWorkshop} disabled={!draft.name.trim()}>
+                  Créer et poser
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         <div className="lp-cp-picker-foot">
           <span className="lp-cp-picker-count">
@@ -8390,7 +8501,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
               className={"lp-zoom-btn" + (cfg.staffingRange === r ? " active" : "")}
               onClick={() => setRange(r)}
             >
-              {r === "month" ? "Mois" : r === "twoWeeks" ? "2 semaines" : "Semaine"}
+              {staffingRangeLabel(r)}
             </button>
           ))}
         </div>
@@ -10429,14 +10540,20 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
      intérimaire, un sous-traitant, quelqu'un qui n'a pas de compte. L'inscrire
      dans Réglages › Utilisateurs pour le planifier reviendrait à lui ouvrir
      Nexora. */
+  const [newColor, setNewColor] = useState(STAFFING_COLOR_CHOICES[0]);
   const addMember = () => {
     const name = newMember.trim();
     if (!name) return;
-    onChange({ staffingExtraMembers: [...cfg.staffingExtraMembers, name] });
+    onChange({ staffingExtraMembers: [...cfg.staffingExtraMembers, { name, color: newColor }] });
     setNewMember("");
   };
   const removeMember = (name) => onChange({
-    staffingExtraMembers: cfg.staffingExtraMembers.filter((n) => n !== name),
+    staffingExtraMembers: cfg.staffingExtraMembers.filter((m) => m.name !== name),
+  });
+  /* Recolorer quelqu'un ne touche QUE sa couleur : le nom est la cle de ses
+     affectations, et le reecrire ici les detacherait de leur personne. */
+  const recolorMember = (name, color) => onChange({
+    staffingExtraMembers: cfg.staffingExtraMembers.map((m) => (m.name === name ? { ...m, color } : m)),
   });
   return (
     <>
@@ -10450,20 +10567,39 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
               className={"lp-density-btn" + (cfg.staffingRange === r ? " active" : "")}
               onClick={() => onChange({ staffingRange: r, staffingOffset: 0 })}
             >
-              {r === "month" ? "Mois" : r === "twoWeeks" ? "2 semaines" : "Semaine"}
+              {staffingRangeLabel(r)}
             </button>
           ))}
         </div>
         <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
           La navigation se fait ensuite période par période depuis le widget, et son bouton « Aujourd'hui » y revient.
         </p>
+        {cfg.staffingRange === "custom" && (
+          <>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <label style={{ flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-600)" }}>Début</span>
+                <input type="date" value={cfg.staffingStart} onChange={(e) => onChange({ staffingStart: e.target.value, staffingOffset: 0 })} />
+              </label>
+              <label style={{ flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-600)" }}>Fin</span>
+                <input type="date" value={cfg.staffingEnd} onChange={(e) => onChange({ staffingEnd: e.target.value, staffingOffset: 0 })} />
+              </label>
+            </div>
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              {!cfg.staffingStart || !cfg.staffingEnd
+                ? "Tant que l’une des deux dates manque, le widget montre le mois en cours."
+                : "Les flèches font ensuite glisser la plage de sa propre durée. Au-delà de " + STAFFING_CUSTOM_MAX_DAYS + " jours, elle est ramenée à cette longueur : les colonnes tomberaient sous le pixel."}
+            </p>
+          </>
+        )}
       </div>
 
       <div className="lp-field" style={{ marginTop: 10 }}>
         <label>Personnes affichées</label>
         <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -2, marginBottom: 6 }}>
           {cfg.staffingMembers.length === 0
-            ? "Aucune coche : tout le monde est affiché, et une personne ajoutée aux Réglages apparaît d'elle-même."
+            ? "Aucune coche : personne n’est affiché. Coche les personnes à suivre, ou ajoute-en à la main plus bas."
             : `${cfg.staffingMembers.length} personne${cfg.staffingMembers.length > 1 ? "s" : ""} sur ${team.length}.`}
         </p>
         {team.length === 0 && (
@@ -10480,9 +10616,14 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
             /> {member.name}
           </label>
         ))}
-        {cfg.staffingMembers.length > 0 && (
-          <button type="button" className="lp-btn lp-btn-mini" style={{ marginTop: 6 }} onClick={() => onChange({ staffingMembers: [] })}>
-            Tout le monde
+        {team.length > 0 && (
+          <button
+            type="button"
+            className="lp-btn lp-btn-mini"
+            style={{ marginTop: 6 }}
+            onClick={() => onChange({ staffingMembers: cfg.staffingMembers.length === team.length ? [] : team.map((m) => m.name) })}
+          >
+            {cfg.staffingMembers.length === team.length ? "Tout décocher" : "Tout cocher"}
           </button>
         )}
       </div>
@@ -10494,13 +10635,32 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
           n'existent que dans ce widget, et l'inscrire dans Réglages › Utilisateurs reviendrait à lui
           ouvrir l'application.
         </p>
-        {cfg.staffingExtraMembers.map((name) => (
-          <div className="lp-manage-item" key={name}>
-            <span className="lp-workshop-swatch" style={{ background: staffingMemberColor(name), borderRadius: "50%" }} aria-hidden="true" />
-            <span className="lp-manage-name">{name}</span>
-            <button className="lp-icon-btn" onClick={() => removeMember(name)} aria-label={`Retirer ${name}`}>
-              <Trash2 size={15} />
-            </button>
+        {cfg.staffingExtraMembers.map((person) => (
+          <div className="lp-cp-person-row" key={person.name}>
+            <div className="lp-manage-item" style={{ flex: "1 1 auto", minWidth: 0 }}>
+              <span
+                className="lp-workshop-swatch"
+                style={{ background: person.color || staffingMemberColor(person.name), borderRadius: "50%" }}
+                aria-hidden="true"
+              />
+              <span className="lp-manage-name">{person.name}</span>
+              <button className="lp-icon-btn" onClick={() => removeMember(person.name)} aria-label={"Retirer " + person.name}>
+                <Trash2 size={15} />
+              </button>
+            </div>
+            <div className="lp-cp-draft-colors">
+              {STAFFING_COLOR_CHOICES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={"lp-cp-swatch" + ((person.color || staffingMemberColor(person.name)) === c ? " is-on" : "")}
+                  style={{ background: c }}
+                  aria-label={"Couleur " + c + " pour " + person.name}
+                  aria-pressed={(person.color || staffingMemberColor(person.name)) === c}
+                  onClick={() => recolorMember(person.name, c)}
+                />
+              ))}
+            </div>
           </div>
         ))}
         <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
@@ -10514,6 +10674,19 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
             style={{ flex: "1 1 auto", minWidth: 0 }}
           />
           <button type="button" className="lp-btn" onClick={addMember} disabled={!newMember.trim()}>Ajouter</button>
+        </div>
+        <div className="lp-cp-draft-colors" style={{ marginTop: 6 }}>
+          {STAFFING_COLOR_CHOICES.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={"lp-cp-swatch" + (newColor === c ? " is-on" : "")}
+              style={{ background: c }}
+              aria-label={"Couleur " + c + " pour la personne à ajouter"}
+              aria-pressed={newColor === c}
+              onClick={() => setNewColor(c)}
+            />
+          ))}
         </div>
       </div>
 
@@ -10575,6 +10748,14 @@ function BubblesDisplayFields({ value, onChange, ctx }) {
       <label className="lp-checkbox-line">
         <input type="checkbox" checked={cfg.bubbleShowLegend} onChange={(e) => onChange({ bubbleShowLegend: e.target.checked })} /> Afficher la légende des couleurs (cliquer un rang met son groupe en avant)
       </label>
+      <label className="lp-checkbox-line">
+        <input type="checkbox" checked={cfg.bubbleTruncateTitles} onChange={(e) => onChange({ bubbleTruncateTitles: e.target.checked })} /> Tronquer les titres
+      </label>
+      <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -2, marginBottom: 8 }}>
+        {cfg.bubbleTruncateTitles
+          ? "Un titre trop long est coupé à deux lignes — une seule en hauteur compacte. Décoche pour l’afficher en entier : les bulles gagnent alors la hauteur nécessaire."
+          : "Les titres s’affichent en entier, sur autant de lignes qu’il faut. Toutes les lignes prennent la hauteur du titre le plus long, pour que la grille ne se lise pas en escalier."}
+      </p>
       <label className="lp-checkbox-line">
         <input type="checkbox" checked={value.showMilestones !== false} onChange={(e) => onChange({ showMilestones: e.target.checked })} /> Afficher les jalons (bulle compacte centrée sur leur date, avec leur icône propre)
       </label>
@@ -12215,6 +12396,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.bubbleShowDescription = bubbles.bubbleShowDescription;
       data.bubbleDescriptionLines = bubbles.bubbleDescriptionLines;
       data.bubbleShowLegend = bubbles.bubbleShowLegend;
+      data.bubbleTruncateTitles = bubbles.bubbleTruncateTitles;
       data.bubbleMacroGrouping = bubbles.bubbleMacroGrouping;
       data.bubbleMacros = bubbles.bubbleMacros;
     }

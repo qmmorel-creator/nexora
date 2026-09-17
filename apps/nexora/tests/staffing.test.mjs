@@ -31,6 +31,8 @@ const EXPORTS = [
   "staffingVisibleMembers", "staffingWindow", "staffingDays",
   "staffingCellFill", "staffingCellLabel", "staffingMemberColor", "normalizeStaffingExtraMembers",
   "staffingMemberLoad", "staffingDayCount", "staffingPickerGroups",
+  "STAFFING_COLOR_CHOICES", "STAFFING_CUSTOM_MAX_DAYS",
+  "staffingCustomWorkshopId", "staffingAddCustomWorkshop", "staffingRangeLabel",
 ];
 
 const {
@@ -42,6 +44,8 @@ const {
   staffingVisibleMembers, staffingWindow, staffingDays,
   staffingCellFill, staffingCellLabel, staffingMemberColor, normalizeStaffingExtraMembers,
   staffingMemberLoad, staffingDayCount, staffingPickerGroups,
+  STAFFING_COLOR_CHOICES, STAFFING_CUSTOM_MAX_DAYS,
+  staffingCustomWorkshopId, staffingAddCustomWorkshop, staffingRangeLabel,
 } = vm.runInThisContext(
   `(function () {\n`
   + sourceOf("// === NEXORA:DATE-UTILS:START ===", "// === NEXORA:DATE-UTILS:END ===")
@@ -170,7 +174,7 @@ test("le nombre de jours d'un atelier est ce que chiffre la suppression", () => 
 // --- Fenêtre affichée --------------------------------------------------------
 
 test("la granularité par défaut est le MOIS", () => {
-  assert.deepEqual(STAFFING_RANGES, ["month", "twoWeeks", "week"]);
+  assert.deepEqual(STAFFING_RANGES, ["month", "twoWeeks", "week", "custom"]);
   assert.equal(STAFFING_DEFAULTS.staffingRange, "month");
   assert.equal(normalizeStaffingRange(undefined), "month");
   assert.equal(normalizeStaffingRange("trimestre"), "month");
@@ -304,11 +308,22 @@ test("le pied de colonne compte les PERSONNES, pas les postes", () => {
 
 // --- Personnes affichées -----------------------------------------------------
 
-test("la sélection de personnes est propre au widget, et vide veut dire tout le monde", () => {
+test("la sélection de personnes est propre au widget, et vide veut dire PERSONNE", () => {
+  /* Retour de test #124 : une sélection vide n'affiche personne. Déverser
+     l'annuaire entier dans une grille de trente colonnes donnait une grille
+     qu'il fallait vider avant de s'en servir. */
   const team = [{ name: "Maïa", color: "#111111" }, { name: "Vincent" }, { name: "  " }];
-  assert.deepEqual(staffingVisibleMembers(team, []).map((m) => m.name), ["Maïa", "Vincent"]);
-  assert.deepEqual(staffingVisibleMembers(team, undefined).map((m) => m.name), ["Maïa", "Vincent"]);
+  assert.deepEqual(staffingVisibleMembers(team, []), []);
+  assert.deepEqual(staffingVisibleMembers(team, undefined), []);
   assert.deepEqual(staffingVisibleMembers(team, ["Vincent"]).map((m) => m.name), ["Vincent"]);
+  assert.deepEqual(
+    staffingVisibleMembers(team, ["Maïa", "Vincent"]).map((m) => m.name),
+    ["Maïa", "Vincent"],
+    "cocher tout le monde reste possible, et c'est ce que fait le bouton de la fiche"
+  );
+  // Une personne ajoutée à la main s'affiche SANS qu'aucun inscrit soit coché :
+  // c'est le cas d'un widget qui ne suit que des externes.
+  assert.deepEqual(staffingVisibleMembers(team, [], ["Sofiane"]).map((m) => m.name), ["Sofiane"]);
   // Une personne retirée de l'annuaire disparaît d'elle-même du widget.
   assert.deepEqual(staffingVisibleMembers(team, ["Vincent", "Parti"]).map((m) => m.name), ["Vincent"]);
   assert.deepEqual(staffingVisibleMembers([], ["Vincent"]), []);
@@ -319,25 +334,43 @@ test("des personnes s'ajoutent À LA MAIN, en plus de l'annuaire", () => {
      faire entrer dans l'annuaire pour les planifier reviendrait à leur ouvrir
      Nexora (#124). */
   const team = [{ name: "Maïa", color: "#111111" }, { name: "Vincent" }];
-  const vus = staffingVisibleMembers(team, ["Vincent"], ["Sofiane", "Renfort 2"]);
+  const vus = staffingVisibleMembers(team, ["Vincent"], [{ name: "Sofiane" }, "Renfort 2"]);
   assert.deepEqual(vus.map((m) => m.name), ["Vincent", "Sofiane", "Renfort 2"], "les libres suivent, dans l'ordre de saisie");
   assert.equal(vus[0].registered, true);
   assert.equal(vus[1].registered, false);
   assert.ok(vus[1].color, "un nom libre reçoit une couleur, par hachage");
   // Un nom libre qui existe déjà dans l'annuaire n'est pas dupliqué : c'est la
   // même personne, et les affectations sont indexées par le nom.
-  assert.deepEqual(staffingVisibleMembers(team, [], ["Maïa"]).map((m) => m.name), ["Maïa", "Vincent"]);
+  assert.deepEqual(staffingVisibleMembers(team, ["Maïa", "Vincent"], ["Maïa"]).map((m) => m.name), ["Maïa", "Vincent"]);
   // Même chose s'il est écarté par la sélection : on ne le fait pas revenir en
   // double sous une autre identité.
   assert.deepEqual(staffingVisibleMembers(team, ["Vincent"], ["Maïa"]).map((m) => m.name), ["Vincent", "Maïa"]);
   assert.equal(staffingVisibleMembers(team, ["Vincent"], ["Maïa"])[1].registered, false);
 });
 
-test("les noms libres sont nettoyés, dédoublonnés, et gardent leur ordre", () => {
-  assert.deepEqual(normalizeStaffingExtraMembers([" Sofiane ", "Sofiane", "", null, "Renfort"]), ["Sofiane", "Renfort"]);
+test("les personnes ajoutées portent un nom ET une couleur, et les deux écritures se lisent", () => {
+  /* Les widgets d'avant #124 portent une simple chaîne, ceux d'aujourd'hui un
+     objet depuis que la couleur se choisit : lire les deux évite une migration
+     du magasin, et une sauvegarde ancienne rouvre sans perdre personne. */
+  assert.deepEqual(
+    normalizeStaffingExtraMembers([" Sofiane ", "Sofiane", "", null, "Renfort"]),
+    [{ name: "Sofiane", color: "" }, { name: "Renfort", color: "" }]
+  );
+  assert.deepEqual(
+    normalizeStaffingExtraMembers([{ name: " Sofiane ", color: "#123456" }, { name: "Sofiane", color: "#abcdef" }]),
+    [{ name: "Sofiane", color: "#123456" }],
+    "le doublon est écarté, et c'est la PREMIÈRE couleur qui tient"
+  );
+  assert.deepEqual(normalizeStaffingExtraMembers([{ name: "X", color: "rouge" }]), [{ name: "X", color: "" }], "une couleur qui n'en est pas vaut absence");
   assert.deepEqual(normalizeStaffingExtraMembers(null), []);
-  assert.deepEqual(normalizeStaffingWidget({ staffingExtraMembers: ["A", "A", " B "] }).staffingExtraMembers, ["A", "B"]);
+  assert.deepEqual(normalizeStaffingWidget({ staffingExtraMembers: ["A", "A", " B "] }).staffingExtraMembers, [{ name: "A", color: "" }, { name: "B", color: "" }]);
   assert.deepEqual(normalizeStaffingWidget({}).staffingExtraMembers, []);
+});
+
+test("la couleur choisie pour une personne l'emporte sur celle du hachage", () => {
+  const vus = staffingVisibleMembers([], [], [{ name: "Sofiane", color: "#123456" }, { name: "Renfort" }]);
+  assert.equal(vus[0].color, "#123456");
+  assert.equal(vus[1].color, staffingMemberColor("Renfort"), "sans choix, le hachage du nom");
 });
 
 test("la couleur d'un nom libre vient de son NOM, pas de son rang", () => {
@@ -361,18 +394,29 @@ test("les réglages du widget se normalisent sans rien perdre d'inconnu", () => 
 
 // --- Le sélecteur d'ateliers -------------------------------------------------
 
-test("à l'ouverture, les ateliers posés remontent en tête", () => {
+test("le sélecteur range par TYPE, et l'ordre ne bouge pas quand on coche", () => {
+  /* Retour de test #124 : faire remonter les cochés en tête déplaçait les
+     lignes sous le curseur — on cochait « Usine » et « Bureau » changeait de
+     place. L'ordre est celui du catalogue, et la coche se voit à la coche. */
   const picked = staffingPickerGroups(WORKSHOP_SEED, [CHANTIER, USINE], "");
   assert.equal(picked.mode, "all");
-  assert.deepEqual(picked.groups.map((g) => g.key), ["selected", "all"]);
-  // L'ordre des Réglages est conservé à l'intérieur de chaque groupe.
-  assert.deepEqual(picked.groups[0].items.map((i) => i.name), ["Usine", "Chantier"]);
-  assert.ok(picked.groups[0].items.every((i) => i.checked));
-  assert.ok(picked.groups[1].items.every((i) => !i.checked));
+  assert.deepEqual(picked.groups.map((g) => g.key), ["standard"]);
+  assert.deepEqual(picked.groups[0].items.map((i) => i.name), WORKSHOP_SEED.map((w) => w.name));
+  assert.deepEqual(picked.groups[0].items.filter((i) => i.checked).map((i) => i.name), ["Usine", "Chantier"]);
   assert.deepEqual(picked.hiddenSelected, []);
+  // Un seul type au catalogue : pas de titre à écrire, il n'y a rien à distinguer.
+  assert.equal(picked.groups[0].label, "");
 });
 
-test("sans rien de coché, il n'y a qu'un groupe et pas de titre", () => {
+test("les ateliers personnalisés font leur propre groupe", () => {
+  const catalogue = [...WORKSHOP_SEED, { id: "ws-perso-grue", name: "Grue", color: "#123456", custom: true }];
+  const picked = staffingPickerGroups(catalogue, [], "");
+  assert.deepEqual(picked.groups.map((g) => g.key), ["standard", "custom"]);
+  assert.deepEqual(picked.groups.map((g) => g.label), ["Ateliers standards", "Ateliers personnalisés"]);
+  assert.deepEqual(picked.groups[1].items.map((i) => i.name), ["Grue"]);
+});
+
+test("sans rien de coché, les ateliers du catalogue sont tous proposés", () => {
   const picked = staffingPickerGroups(WORKSHOP_SEED, [], "");
   assert.equal(picked.groups.length, 1);
   assert.equal(picked.groups[0].label, "");
@@ -391,4 +435,120 @@ test("la recherche ignore accents et casse, et dit ce qu'elle cache", () => {
   assert.equal(accentue.groups[0].items.length, 1);
   // Aucun résultat : aucun groupe, et le panneau le dira.
   assert.deepEqual(staffingPickerGroups(WORKSHOP_SEED, [], "zzz").groups, []);
+});
+
+/* ---- Plage de dates choisie à la main (#124) ------------------------------ */
+
+test("une plage à la main est bornée par ses deux dates", () => {
+  const win = staffingWindow("custom", 0, "2026-09-17", { start: "2026-10-05", end: "2026-10-09" });
+  assert.deepEqual(win, { start: "2026-10-05", end: "2026-10-09" });
+  assert.equal(staffingDays(win, "2026-09-17", {}).length, 5);
+});
+
+test("deux dates à l'envers sont remises à l'endroit, pas refusées", () => {
+  // On sait ce que quelqu'un qui saisit « du 30 au 12 » voulait dire, et une
+  // grille vide ne le lui dirait pas.
+  assert.deepEqual(
+    staffingWindow("custom", 0, "2026-09-17", { start: "2026-10-09", end: "2026-10-05" }),
+    { start: "2026-10-05", end: "2026-10-09" }
+  );
+});
+
+test("une plage incomplète montre le mois en cours, jamais rien", () => {
+  const mois = { start: "2026-09-01", end: "2026-09-30" };
+  assert.deepEqual(staffingWindow("custom", 0, "2026-09-17", { start: "2026-10-05", end: "" }), mois);
+  assert.deepEqual(staffingWindow("custom", 0, "2026-09-17", null), mois);
+  assert.deepEqual(staffingWindow("custom", 0, "2026-09-17", { start: "hier", end: "demain" }), mois);
+});
+
+test("les flèches font glisser la plage de sa PROPRE durée", () => {
+  const custom = { start: "2026-10-05", end: "2026-10-09" }; // cinq jours
+  assert.deepEqual(staffingWindow("custom", 1, "2026-09-17", custom), { start: "2026-10-10", end: "2026-10-14" });
+  assert.deepEqual(staffingWindow("custom", -1, "2026-09-17", custom), { start: "2026-09-30", end: "2026-10-04" });
+});
+
+test("une plage démesurée est ramenée à une longueur lisible", () => {
+  // Au-delà, les colonnes tombent sous le pixel : c'est une grille, pas un export.
+  const win = staffingWindow("custom", 0, "2026-01-01", { start: "2026-01-01", end: "2027-12-31" });
+  assert.equal(staffingDays(win, "2026-01-01", {}).length, STAFFING_CUSTOM_MAX_DAYS);
+});
+
+test("le nom d'une granularité s'écrit à UN seul endroit", () => {
+  assert.deepEqual(STAFFING_RANGES.map(staffingRangeLabel), ["Mois", "2 semaines", "Semaine", "Plage"]);
+});
+
+/* ---- Ateliers personnalisés (#124) ---------------------------------------- */
+
+test("un atelier du catalogue de départ n'est PAS personnalisé", () => {
+  assert.ok(normalizeWorkshops(WORKSHOP_SEED).every((w) => w.custom === false));
+  assert.equal(normalizeWorkshops([{ id: "x", name: "Grue", color: "#123456", custom: true }])[0].custom, true);
+});
+
+test("l'identifiant d'un atelier personnalisé est DÉRIVÉ de son nom", () => {
+  /* Deux sessions qui créent « Grue » au même moment écrivent alors le même
+     atelier, que la fusion traite comme un seul — un identifiant tiré au sort
+     aurait donné deux « Grue » indiscernables, chacun avec ses affectations. */
+  assert.equal(staffingCustomWorkshopId("Grue à tour", WORKSHOP_SEED), "ws-perso-grue-a-tour");
+  assert.equal(staffingCustomWorkshopId("GRUE", WORKSHOP_SEED), staffingCustomWorkshopId("grue", WORKSHOP_SEED));
+  // Un identifiant déjà pris par un AUTRE atelier ne l'écrase pas.
+  const pris = [...WORKSHOP_SEED, { id: "ws-perso-grue", name: "Autre", color: "#123456", custom: true }];
+  assert.equal(staffingCustomWorkshopId("Grue", pris), "ws-perso-grue-2");
+});
+
+test("créer un atelier depuis le widget l'ajoute au MÊME catalogue", () => {
+  const fait = staffingAddCustomWorkshop(WORKSHOP_SEED, "Grue", "#123456");
+  assert.equal(fait.created, true);
+  assert.equal(fait.workshop.custom, true);
+  assert.equal(fait.workshop.color, "#123456");
+  assert.equal(fait.catalogue.length, WORKSHOP_SEED.length + 1);
+  assert.equal(fait.catalogue[fait.catalogue.length - 1].name, "Grue");
+  // Le catalogue rendu reste lisible par le reste du widget.
+  assert.equal(workshopFor(fait.catalogue, fait.workshop.id).name, "Grue");
+});
+
+test("un nom déjà au catalogue rend l'atelier EXISTANT, sans doublon", () => {
+  // « Usine » saisi dans le sélecteur est l'atelier Usine : deux entrées de même
+  // nom ne se distingueraient qu'à la couleur.
+  const fait = staffingAddCustomWorkshop(WORKSHOP_SEED, "  usine ", "#123456");
+  assert.equal(fait.created, false);
+  assert.equal(fait.workshop.id, WORKSHOP_SEED[0].id);
+  assert.equal(fait.catalogue.length, WORKSHOP_SEED.length);
+});
+
+test("un nom vide ne crée rien", () => {
+  const fait = staffingAddCustomWorkshop(WORKSHOP_SEED, "   ", "#123456");
+  assert.equal(fait.created, false);
+  assert.equal(fait.workshop, null);
+  assert.equal(fait.catalogue.length, WORKSHOP_SEED.length);
+});
+
+test("une couleur qui n'en est pas retombe sur la palette, jamais sur du vide", () => {
+  const fait = staffingAddCustomWorkshop(WORKSHOP_SEED, "Grue", "bleu");
+  assert.equal(fait.workshop.color, STAFFING_COLOR_CHOICES[0]);
+  assert.ok(STAFFING_COLOR_CHOICES.every((c) => /^#[0-9A-Fa-f]{6}$/.test(c)));
+});
+
+test("un atelier personnalisé se pose et se retire comme un autre", () => {
+  const fait = staffingAddCustomWorkshop(WORKSHOP_SEED, "Grue", "#123456");
+  const ids = fait.catalogue.map((w) => w.id);
+  const apres = staffingSetCell([], "Maïa", "2026-09-17", [fait.workshop.id], ids);
+  assert.deepEqual(staffingCellWorkshops(apres, "Maïa", "2026-09-17"), [fait.workshop.id]);
+  // Et il quitte les affectations s'il disparaît du catalogue, comme les autres.
+  assert.deepEqual(normalizeStaffingEntries(apres, WORKSHOP_SEED.map((w) => w.id)), []);
+});
+
+test("le détail de l'infobulle se lit sur son fond SOMBRE (#124)", () => {
+  /* Les trois lignes du détail heritaient des couleurs de texte de la PAGE
+     alors qu'elles se posent sur le carton sombre des infobulles : de l'encre
+     presque noire sur un fond presque noir, où l'on ne voyait plus que la
+     pastille de couleur. Aucune fonction n'était fautive — c'est la feuille de
+     style construite qu'il faut lire. */
+  const bloc = html.slice(html.indexOf(".lp-cp-tip-line{"), html.indexOf(".lp-cp-tip-empty{") + 200);
+  assert.doesNotMatch(bloc, /color:var\(--text-900\)/, "du texte de page sur un carton sombre");
+  assert.doesNotMatch(bloc, /color:var\(--text-600\)/, "du texte de page sur un carton sombre");
+  assert.match(bloc, /\.lp-cp-tip-line\{[^}]*color:#fff/);
+  assert.match(bloc, /\.lp-cp-tip-foot\{[^}]*color:rgba\(255,255,255/);
+  assert.match(bloc, /\.lp-cp-tip-empty\{[^}]*color:rgba\(255,255,255/);
+  // Et le carton, lui, reste bien le fond sombre partagé par toutes les infobulles.
+  assert.match(html, /\.lp-pie-tooltip\{ background:var\(--ink\); color:#fff;/);
 });

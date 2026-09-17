@@ -106,7 +106,7 @@ function AnnotationsHarness() {
      contexte partagé, comme les statuts ou les types de jalon, et les
      affectations restent un état à part — c'est exactement le partage de
      l'application. */
-  const [harnessWorkshops] = useState(() => WORKSHOP_SEED.map((w) => ({ ...w })));
+  const [harnessWorkshops, setHarnessWorkshops] = useState(() => WORKSHOP_SEED.map((w) => ({ ...w })));
   const [staffing, setStaffing] = useState(() => {
     const [usine, bureau, chantier, atelier, formation, absence] = WORKSHOP_SEED.map((w) => w.id);
     const jour = (n) => "2026-09-" + String(n).padStart(2, "0");
@@ -691,19 +691,21 @@ function AnnotationsHarness() {
             éprouvé qu'en semaine laisserait passer des lettres coupées. */}
         <div id="harness-staffing-week" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
           <WidgetStaffing
-            widget={{ id: "ws1", type: "staffing", staffingRange: "week", staffingOffset: 0, staffingMembers: [], staffingShowWeekends: true, staffingShowLoad: true }}
+            widget={{ id: "ws1", type: "staffing", staffingRange: "week", staffingOffset: 0, staffingMembers: seedTeamMembers.map((m) => m.name), staffingExtraMembers: [{ name: "Intérim — Sofiane", color: "#EC4899" }], staffingShowWeekends: true, staffingShowLoad: true }}
             ctx={ctx}
             staffing={staffing}
             onUpdateStaffing={setStaffing}
+            onUpdateWorkshops={setHarnessWorkshops}
             onUpdateWidget={noop}
           />
         </div>
         <div id="harness-staffing-month" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14, height: 300 }}>
           <WidgetStaffing
-            widget={{ id: "ws2", type: "staffing", staffingRange: "month", staffingOffset: 0, staffingMembers: [], staffingShowWeekends: true, staffingShowLoad: true }}
+            widget={{ id: "ws2", type: "staffing", staffingRange: "month", staffingOffset: 0, staffingMembers: seedTeamMembers.map((m) => m.name), staffingExtraMembers: [{ name: "Intérim — Sofiane", color: "#EC4899" }], staffingShowWeekends: true, staffingShowLoad: true }}
             ctx={ctx}
             staffing={staffing}
             onUpdateStaffing={setStaffing}
+            onUpdateWorkshops={setHarnessWorkshops}
             onUpdateWidget={noop}
           />
         </div>
@@ -776,6 +778,26 @@ function AnnotationsHarness() {
             « Quentin · À pla… » qui ne disait plus rien. Il passe à la ligne, et
             toutes les bulles du widget adoptent la MÊME hauteur — sans quoi, en
             couloirs, la hauteur d'une ligne serait impossible à poser. */}
+        {/* Titres ENTIERS (#122) : en couloirs, une ligne porte plusieurs
+            bulles, et c'est la mesure du titre le plus long qui doit donner sa
+            hauteur a TOUTES. Un titre a rallonge est monte expres. */}
+        <div id="harness-bubbles-title-full" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb9", bubbleMacros: [],
+              bubbleLayout: "lanes",
+              bubbleTruncateTitles: false,
+              bubbleFields: [],
+            }}
+            tasks={tasks.map((t, i) => (i === 0
+              ? { ...t, title: "Reprise complete du genie civil du poste de relevage, y compris reseaux enterres et remise en etat des acces" }
+              : t))}
+            ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={noop}
+            groupBy="none"
+          />
+        </div>
         <div id="harness-bubbles-fields" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
           <WidgetBubbles
             widget={{
