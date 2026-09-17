@@ -2474,6 +2474,14 @@ const BUBBLE_SIZES = ["compact", "normal", "large"];
    diverger, et le widget se serait redimensionné à une hauteur qui n'est pas
    celle qu'il dessine. */
 const BUBBLE_HEIGHT_PX = { compact: 34, normal: 46, large: 60 };
+/* Largeur minimale d'une bulle de tâche, et largeur FIXE d'une bulle de jalon.
+   Toutes deux en pixels, parce qu'elles servent la lisibilité d'un titre, pas
+   une durée. Elles vivent ici pour une raison précise : le rendu les applique,
+   et `bubbleRowExtent` en a besoin pour dire ce qu'une bulle OCCUPE vraiment —
+   sans quoi l'enveloppe d'une macro-bulle, calculée sur les seules dates,
+   laisse dépasser les bulles courtes et les jalons (#104). */
+const BUBBLE_MIN_PX = 90;
+const BUBBLE_MILESTONE_W = 120;
 const BUBBLE_DESC_LINE_PX = 13;
 const BUBBLE_DESC_LINES_MAX = 3;
 /* Champs proposés sous la bulle. La liste n'est pas arbitraire : ce sont
@@ -2534,6 +2542,31 @@ function bubbleHeightPx(widget) {
   const base = BUBBLE_HEIGHT_PX[cfg.bubbleSize] || BUBBLE_HEIGHT_PX.normal;
   const extraLines = cfg.bubbleShowDescription ? cfg.bubbleDescriptionLines - 1 : 0;
   return base + Math.max(0, extraLines) * BUBBLE_DESC_LINE_PX;
+}
+
+/* Étendue RÉELLE d'une ligne, en index de jour : ce que sa bulle occupe, et
+   non ce que ses dates disent (#104).
+
+   Une bulle de tâche ne descend jamais sous 90 px — elle s'étend donc à droite
+   de sa date de fin quand la tâche est courte. Une bulle de jalon est centrée
+   sur sa date unique — elle s'étend donc des deux côtés. Une enveloppe de
+   macro-bulle qui ignore ces deux faits laisse la bulle à cheval sur sa
+   bordure, et cesse de dire ce qu'elle contient.
+
+   `pxPerDay` vient de la largeur MESURÉE de la piste : sans mesure (premier
+   rendu), on rend les dates telles quelles plutôt que d'inventer une marge. */
+function bubbleRowExtent(row, pxPerDay) {
+  if (!row) return null;
+  const startIdx = Number(row.startIdx);
+  const endIdx = Number(row.endIdx);
+  if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
+  const px = Number(pxPerDay);
+  if (!Number.isFinite(px) || px <= 0) return { startIdx, endIdx };
+  if (row.milestone) {
+    const halfDays = (BUBBLE_MILESTONE_W / 2) / px;
+    return { startIdx: startIdx - halfDays, endIdx: endIdx + halfDays };
+  }
+  return { startIdx, endIdx: Math.max(endIdx, startIdx + BUBBLE_MIN_PX / px) };
 }
 
 function normalizeBubbleFieldsLayout(value) {
@@ -5215,7 +5248,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // et redondante aussi quand le regroupement se fait déjà par projet.
   const multiProject = new Set([...projTasks, ...milestoneTasks].map((t) => t.projectId)).size > 1;
   const showRowProj = multiProject && groupBy !== "project";
-  const openTip = (t, e) => setHover({ t, x: e.clientX, y: e.clientY });
+  /* L'infobulle ne s'ouvre NI pendant un glisser, NI au survol d'une poignée
+     (#106). Elle se pose 14 px en bas à droite du curseur, et la poignée
+     d'avancement vit sur le bord inférieur d'une bulle : s'en approcher la
+     faisait disparaître sous l'infobulle, et l'on glissait à l'aveugle. La
+     poignée porte son propre libellé au survol, qui dit déjà quoi faire.
+     `dragStateRef` est une ref : elle est déjà posée quand ce survol arrive. */
+  const openTip = (t, e) => {
+    if (dragStateRef.current) return;
+    setHover({ t, x: e.clientX, y: e.clientY });
+  };
+  /* Posé sur chaque poignée : referme l'infobulle, et empêche la ligne de la
+     rouvrir aussitôt par son propre survol. */
+  const handleHoverGuard = {
+    onMouseEnter: (e) => { e.stopPropagation(); setHover(null); },
+    onMouseMove: (e) => { e.stopPropagation(); setHover(null); },
+  };
 
   // Glisser-déposer directement sur la barre : bord gauche = date de début,
   // bord droit = date de fin (ou position du jalon), poignée ronde sur le
@@ -5442,7 +5490,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const rows = [];
     macroOrderedGroups.forEach((g) => {
       if (collapsed[g.key]) return;
-      g.tasks.forEach((t) => rows.push({ id: t.id, groupKey: g.key, start: t.milestone ? t.end : t.start, end: t.end }));
+      g.tasks.forEach((t) => rows.push({ id: t.id, groupKey: g.key, start: t.milestone ? t.end : t.start, end: t.end, milestone: !!t.milestone }));
     });
     return rows;
   }, [macroOrderedGroups, collapsed]);
@@ -5460,6 +5508,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // étroit, la même étiquette n'occupant pas la même fraction d'une piste de
   // 270 px et d'une piste de 900 px.
   const [trackWidth, setTrackWidth] = useState(0);
+  /* Largeur de la piste en pixels, avec repli tant que la mesure n'est pas
+     tombée. Déclarée ICI, juste après la mesure dont elle dépend, et non plus
+     dans la section de rendu des bulles : la géométrie des macro-bulles la lit
+     depuis un useMemo situé plus haut, et une fonction en `const` invoquée
+     depuis un mémo antérieur lève une ReferenceError de zone morte — le même
+     piège que `bubbleMacroReorder` avant elle. */
+  const bubbleTrackPx = trackWidth || 420;
   const measureRows = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -5669,14 +5724,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      macro-bulles qui partagent une tâche restent deux traits lisibles. */
   const bubbleMacroShapes = useMemo(() => {
     if (!bubbleMode || !bubbleCfg.bubbleMacros.length) return [];
+    /* Les bornes d'une ligne sont ici celles de sa BULLE, pas celles de ses
+       dates : `bubbleRowExtent` y ajoute la largeur minimale d'une bulle courte
+       et la demi-largeur d'un jalon centré (#104). Les encadrés du Gantt, eux,
+       gardent les dates — ce sont des barres, et leur géométrie est juste. */
+    const pxPerDay = bubbleTrackPx / span;
     const rows = visibleRows
       .map((row) => {
         const rect = rowRects[row.id];
         if (!rect) return null;
-        const startIdx = dayIndex(row.start);
-        const endIdx = dayIndex(row.end);
-        if (!Number.isFinite(startIdx) || !Number.isFinite(endIdx)) return null;
-        return { id: row.id, groupKey: row.groupKey, top: rect.top, height: rect.height, startIdx, endIdx };
+        const extent = bubbleRowExtent(
+          { startIdx: dayIndex(row.start), endIdx: dayIndex(row.end), milestone: row.milestone },
+          pxPerDay,
+        );
+        if (!extent) return null;
+        return { id: row.id, groupKey: row.groupKey, top: rect.top, height: rect.height, startIdx: extent.startIdx, endIdx: extent.endIdx };
       })
       .filter(Boolean);
     if (!rows.length) return [];
@@ -5824,15 +5886,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   const fieldsColumnShown = fieldsLayout === "aligned"
     && (rowFields.length > 0 || comparisonByTask.size > 0);
 
-  /* Largeur de la colonne d'étiquettes de gauche, en UN SEUL endroit. Le mode
-     bulles la supprime — le titre vit dans la bulle, et l'y répéter volerait un
-     quart de la piste — mais toutes les couches en superposition (grille,
-     blocs temporels, encadrés, macro-bulles, axe) doivent s'aligner sur la
-     MÊME valeur, sinon les repères tombent à côté des pistes. La feuille de
-     style lit la même bascule par `--mg-label-w`. */
-  const labelInsetCss = bubbleMode ? "0%" : "26%";
+  /* Retrait de gauche des couches en superposition — grille, ligne du jour,
+     blocs temporels, encadrés, macro-bulles — en UN SEUL endroit. C'est la
+     colonne d'étiquettes PLUS la gouttière de 6 px que le flex met entre elle
+     et la piste.
+
+     Le mode bulles n'a ni l'une ni l'autre : le titre vit dans la bulle, et une
+     ligne sans étiquette n'a qu'un enfant, donc aucune gouttière (la feuille de
+     style annule celle de l'axe et des bandes de repères, qui gardaient la leur
+     autour d'une cale de largeur nulle). Le retrait y est donc NUL — le
+     compter quand même décalait toutes les couches de 6 px vers la droite,
+     y compris le cadre des macro-bulles, d'où des bulles qui semblaient en
+     sortir (#104). */
+  const layerInsetLeft = bubbleMode ? 0 : "calc(26% + 6px)";
   const layerInsets = {
-    left: `calc(${labelInsetCss} + 6px)`,
+    left: layerInsetLeft,
     right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
   };
 
@@ -6268,7 +6336,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
   // positionné juste après la barre/le jalon, ancré sur sa position réelle.
   // L'indicateur d'écart ci-dessus les suit : il s'affiche même quand aucun
   // champ facultatif n'est configuré.
-  const RowFields = ({ t, anchorPct }) => {
+  const RowFields = ({ t, anchorPct, box }) => {
     const hasComparison = comparisonByTask.has(t.id);
     /* En disposition alignée, la colonne se rend sur TOUTES les lignes dès
        qu'elle existe pour une seule — même celles qui n'ont rien à y mettre.
@@ -6300,14 +6368,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     if (fieldsLayout === "under") {
       /* En FLUX sous la bulle, et non en position absolue : c'est ce qui fait
          grandir la piste, donc la ligne, donc la hauteur mesurée dont vivent
-         les macro-bulles et les encadrés. La marge gauche cale les champs sur
-         le bord gauche de la bulle ; elle est plafonnée pour qu'une bulle de
-         fin de fenêtre ne réduise pas ses champs à une colonne d'un mot. */
-      const anchor = Math.max(0, Math.min(70, Number(anchorPct) || 0));
+         les macro-bulles et les encadrés.
+
+         Les champs tiennent EXACTEMENT la boîte de la bulle — même bord gauche,
+         même bord droit (#103). Ils s'étalaient auparavant jusqu'au bord de la
+         piste : une bulle courte portait une rangée bien plus large qu'elle,
+         qui empiétait sur la place des voisines et ne se rattachait plus à rien
+         à l'œil. Trop étroits pour tenir sur une ligne, ils passent à la ligne
+         et la ligne du diagramme grandit d'autant. */
+      const fieldsBox = box || { left: (Number(anchorPct) || 0) + "%", width: (100 - (Number(anchorPct) || 0)) + "%" };
       return (
         <div
           className="lp-bubble-fields"
-          style={{ marginTop: "var(--lp-bubble-h)", marginLeft: anchor + "%", maxWidth: (100 - anchor) + "%" }}
+          style={{ marginTop: "var(--lp-bubble-h)", marginLeft: fieldsBox.left, width: fieldsBox.width }}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
@@ -6352,13 +6425,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      pourcentage) pour qu'un titre reste lisible sur une tâche d'un jour, puis
      ramenée dans la piste pour qu'une bulle de fin de fenêtre ne déborde pas du
      cadre du widget. */
-  const BUBBLE_MIN_PX = 90;
   // Place minimale, en pixels, pour écrire une date à côté d'une bulle.
   const BUBBLE_DATE_ROOM_PX = 46;
-  // Demi-largeur d'une bulle de jalon, pour la ramener dans la piste quand sa
-  // date tombe tout au bord.
-  const BUBBLE_MILESTONE_HALF_PX = 60;
-  const bubbleTrackPx = trackWidth || 420;
   const bubbleWidthPct = (leftPct, rawWidthPct) => {
     const minPct = Math.min(60, (BUBBLE_MIN_PX / bubbleTrackPx) * 100);
     return Math.max(0.4, Math.min(Math.max(rawWidthPct, minPct), 100 - leftPct));
@@ -6371,6 +6439,20 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     return !entry || entry.groupKey !== bubbleHighlight;
   };
   const bubbleColorOf = (t) => (bubbleColors.get(t.id) || {}).color || "var(--text-muted)";
+  /* Boîte d'une bulle de JALON. Sa largeur est fixe — c'est ce qui permet à ses
+     champs de tenir exactement la même largeur qu'elle (#103), et à
+     `bubbleRowExtent` de dire ce qu'elle occupe. Centrée sur sa date, sauf tout
+     au bord de la piste où elle s'aligne sur le bord : à moitié dehors, le
+     cadre du widget la coupait. */
+  const bubbleMilestoneBox = (leftPct) => {
+    const leftPx = (leftPct / 100) * bubbleTrackPx;
+    const half = BUBBLE_MILESTONE_W / 2;
+    if (leftPx < half) return { left: "0px", transform: "none", fieldsLeft: "0px" };
+    if (bubbleTrackPx - leftPx < half) {
+      return { left: "100%", transform: "translateX(-100%)", fieldsLeft: `calc(100% - ${BUBBLE_MILESTONE_W}px)` };
+    }
+    return { left: leftPct + "%", transform: "translateX(-50%)", fieldsLeft: `calc(${leftPct}% - ${half}px)` };
+  };
 
   const BubbleFoot = ({ t, color, pct }) => {
     if (!bubbleCfg.bubbleShowProgress) return null;
@@ -6456,11 +6538,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               <>
                 <div
                   className="lp-bubble-handle left" title="Glisser pour changer la date de début"
+                  {...handleHoverGuard}
                   onMouseDown={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                   onTouchStart={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                 />
                 <div
                   className="lp-bubble-handle right" title="Glisser pour changer la date de fin"
+                  {...handleHoverGuard}
                   onMouseDown={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                   onTouchStart={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                 />
@@ -6470,6 +6554,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 <div
                   className={"lp-bubble-progress-handle" + (pct >= 100 ? " is-done" : "")}
                   style={{ left: pct + "%" }}
+                  {...handleHoverGuard}
                   title={pct >= 100 ? "Avancement à 100 % — glisser pour revenir en arrière" : `Glisser pour changer l'avancement (${pct}%)`}
                   onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
                   onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-bubble"))}
@@ -6480,7 +6565,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             )}
           </div>
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={leftPct + widthPct} />}
-          {fieldsLayout === "under" && <RowFields t={t} anchorPct={leftPct} />}
+          {fieldsLayout === "under" && <RowFields t={t} box={{ left: leftPct + "%", width: widthPct + "%" }} />}
         </div>
       </div>
     );
@@ -6493,6 +6578,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const color = bubbleColorOf(t);
     const icon = resolveMilestoneIcon(t, ctx);
     const dimmed = bubbleDimmed(t.id);
+    const msBox = bubbleMilestoneBox(leftPct);
     const dragHandlers = onUpdateTask ? {
       onMouseDown: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
       onTouchStart: (e) => startBarDrag(e, t, "move-milestone", e.currentTarget.closest(".lp-widget-minigantt-track")),
@@ -6512,18 +6598,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               cette date — lui donner une largeur fabriquerait une durée. */}
           <div
             className={"lp-bubble-milestone" + (dimmed ? " is-dimmed" : "")}
-            /* Centré sur sa date par translateX(-50%), SAUF tout au bord de la
-               piste : là, la moitié de la bulle sortait de la piste et le cadre
-               du widget la coupait. Elle s'aligne alors sur le bord. */
             style={{
-              left: leftPct + "%",
+              left: msBox.left,
+              transform: msBox.transform,
               borderColor: color,
               background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
-              ...((leftPct / 100) * bubbleTrackPx < BUBBLE_MILESTONE_HALF_PX
-                ? { left: 0, transform: "none" }
-                : ((100 - leftPct) / 100) * bubbleTrackPx < BUBBLE_MILESTONE_HALF_PX
-                  ? { left: "100%", transform: "translateX(-100%)" }
-                  : null),
             }}
             title={`${t.title} · ${fmtShort(t.end)}`}
             {...dragHandlers}
@@ -6535,7 +6614,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
             {bubbleCfg.bubbleShowDates && <span className="lp-bubble-milestone-date">{fmtShort(t.end)}</span>}
           </div>
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={leftPct} />}
-          {fieldsLayout === "under" && <RowFields t={t} anchorPct={leftPct} />}
+          {fieldsLayout === "under" && <RowFields t={t} box={{ left: msBox.fieldsLeft, width: BUBBLE_MILESTONE_W + "px" }} />}
         </div>
       </div>
     );
@@ -6653,11 +6732,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               <>
                 <div
                   className="lp-widget-minigantt-handle left" title="Glisser pour changer la date de début"
+                  {...handleHoverGuard}
                   onMouseDown={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                   onTouchStart={(e) => startBarDrag(e, t, "start", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                 />
                 <div
                   className="lp-widget-minigantt-handle right" title="Glisser pour changer la date de fin"
+                  {...handleHoverGuard}
                   onMouseDown={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                   onTouchStart={(e) => startBarDrag(e, t, "end", e.currentTarget.closest(".lp-widget-minigantt-track"))}
                 />
@@ -6668,6 +6749,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                 <div
                   className={"lp-widget-minigantt-progress-handle" + (pct >= 100 ? " is-done" : "")}
                   style={{ left: `${pct}%` }}
+                  {...handleHoverGuard}
                   title={pct >= 100 ? "Avancement à 100 % — glisser pour revenir en arrière" : `Glisser pour changer l'avancement (${pct}%)`}
                   onMouseDown={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-bar"))}
                   onTouchStart={(e) => startBarDrag(e, t, "progress", e.currentTarget.closest(".lp-widget-minigantt-bar"))}

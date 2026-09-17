@@ -657,6 +657,29 @@ function AnnotationsHarness() {
             groupBy="none"
           />
         </div>
+        {/* Macro-bulle contenant une tâche COURTE et deux JALONS (#104) :
+            une bulle a une largeur minimale en pixels et la bulle d'un jalon
+            est centrée sur sa date, donc toutes trois sortent d'une enveloppe
+            calculée sur les seules dates. Regroupement actif pour que les trois
+            lignes se suivent et ne donnent qu'une enveloppe. */}
+        <div id="harness-bubbles-macro-edge" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 900, marginTop: 14 }}>
+          <WidgetBubbles
+            widget={{
+              ...bubbleWidget, id: "wb4",
+              bubbleMacroGrouping: true,
+              bubbleFields: ["status", "assignee"],
+              bubbleMacros: [
+                { id: "m9", label: "Jalons et tâche courte", color: "#8B5CF6", opacity: 14, borderStyle: "solid", borderWidth: 1.5, taskIds: ["t2", "t3", "t7"], showProgress: true },
+              ],
+            }}
+            /* Seules les tâches de la macro-bulle : le contrôle de contenance
+               peut alors exiger que TOUTE bulle du widget soit dans le cadre. */
+            tasks={tasks.filter((t) => ["t2", "t3", "t7"].includes(t.id))} ctx={ctx} onOpen={noop} metaBlocks={[]}
+            onUpdateWidget={noop}
+            onUpdateTask={(id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))}
+            groupBy="none"
+          />
+        </div>
         {/* Description sur TROIS lignes (#97) : la bulle doit gagner la
             hauteur des lignes demandées, sinon son pied — statut et
             avancement — disparaît sous `overflow:hidden`. */}

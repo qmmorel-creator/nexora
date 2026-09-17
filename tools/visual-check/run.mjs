@@ -1220,6 +1220,32 @@ const bulles = await page.evaluate(() => {
   const grouped = document.querySelector("#harness-bubbles-grouped .lp-widget-minigantt");
   /* Description sur trois lignes (#97) : on relève la bulle, sa description et
      son pied — c'est le pied qui disparaît si la hauteur ne suit pas. */
+  /* Contenance d'une macro-bulle (#104) : chaque bulle de ses tâches doit être
+     DANS son cadre, largeur minimale et jalon centré compris. Et largeur des
+     champs (#103) : mêmes bords que la bulle au-dessus d'eux. */
+  const edgeRoot = document.querySelector("#harness-bubbles-macro-edge .lp-widget-minigantt");
+  const edge = edgeRoot ? {
+    frames: [...edgeRoot.querySelectorAll(".lp-bubble-macro-frame")].map(box),
+    bubbles: [...edgeRoot.querySelectorAll(".lp-bubble, .lp-bubble-milestone")].map(box),
+    rows: [...edgeRoot.querySelectorAll(".lp-widget-minigantt-row")].map((row) => ({
+      bubble: row.querySelector(".lp-bubble, .lp-bubble-milestone") ? box(row.querySelector(".lp-bubble, .lp-bubble-milestone")) : null,
+      fields: row.querySelector(".lp-bubble-fields") ? box(row.querySelector(".lp-bubble-fields")) : null,
+    })),
+  } : null;
+  /* Alignement des couches en mode bulles : la piste d'une ligne, celle de
+     l'axe et la couche des macro-bulles doivent partir du MÊME bord. Un écart
+     de gouttière décalait tout de 6 px, et le cadre d'une macro-bulle avec. */
+  const alignement = (() => {
+    const r = document.querySelector("#harness-bubbles-macro-edge .lp-widget-minigantt");
+    if (!r) return null;
+    const left = (sel) => { const el = r.querySelector(sel); return el ? Math.round(el.getBoundingClientRect().left) : null; };
+    return {
+      ligne: left(".lp-widget-minigantt-track"),
+      axe: left(".lp-widget-minigantt-axis-track"),
+      grille: left(".lp-widget-minigantt-gridoverlay"),
+      macros: left(".lp-bubble-macro-frames"),
+    };
+  })();
   const descRoot = document.querySelector("#harness-bubbles-desc .lp-widget-minigantt");
   const descRows = descRoot ? [...descRoot.querySelectorAll(".lp-widget-minigantt-row")].map((row) => {
     const bubble = row.querySelector(".lp-bubble");
@@ -1233,6 +1259,8 @@ const bulles = await page.evaluate(() => {
     };
   }).filter((r) => r.desc) : [];
   return {
+    alignement,
+    edge,
     descRows,
     descBubbleH: descRoot && descRoot.querySelector(".lp-bubble")
       ? Math.round(descRoot.querySelector(".lp-bubble").getBoundingClientRect().height) : 0,
@@ -1255,6 +1283,33 @@ const bulles = await page.evaluate(() => {
     groupedBubbles: grouped ? grouped.querySelectorAll(".lp-bubble, .lp-bubble-milestone").length : 0,
   };
 });
+
+/* Infobulle et poignées (#106). Approcher la poignée d'avancement ouvrait
+   l'infobulle juste dessus, et l'on glissait à l'aveugle. Le contrôle tient en
+   deux gestes : sur le corps de la bulle l'infobulle doit paraître, sur la
+   poignée elle doit se taire. */
+const poignee = {};
+try {
+  /* Page rechargée : les scénarios précédents laissent des modales ouvertes,
+     dont le voile intercepterait le survol. Le banc est sans état persistant. */
+  await page.reload({ waitUntil: "load", timeout: 90000 });
+  await page.waitForSelector("#harness-bubbles .lp-bubble", { timeout: 90000 });
+  await page.waitForTimeout(1500);
+  const bulle = page.locator("#harness-bubbles .lp-bubble").first();
+  await bulle.scrollIntoViewIfNeeded();
+  await bulle.locator(".lp-bubble-title").hover();
+  await page.waitForTimeout(250);
+  poignee.surLeCorps = await page.locator(".lp-widget-metro-tooltip").count();
+  await bulle.locator(".lp-bubble-progress-handle").hover();
+  await page.waitForTimeout(250);
+  poignee.surLaPoignee = await page.locator(".lp-widget-metro-tooltip").count();
+  // Puis on revient sur le corps : l'information ne doit pas être perdue.
+  await bulle.locator(".lp-bubble-title").hover();
+  await page.waitForTimeout(250);
+  poignee.retourSurLeCorps = await page.locator(".lp-widget-metro-tooltip").count();
+} catch (error) {
+  poignee.error = String(error).split("\n")[0];
+}
 
 const parite = {};
 try {
@@ -2141,7 +2196,36 @@ if (!bulles.error) {
   expect(bulles.legend.length >= 2, `Bulles : légende à ${bulles.legend.length} rang(s), au moins 2 attendus (un par responsable présent)`);
   // Lignes de description réglables (#97) : la bulle gagne la hauteur des
   // lignes demandées, et son pied reste visible.
+  // Alignement des couches : un seul bord de départ pour tout le monde.
+  const al = bulles.alignement;
+  expect(al && al.ligne !== null, "Bulles : piste introuvable pour le contrôle d'alignement");
+  if (al) {
+    ["axe", "grille", "macros"].forEach((clef) => {
+      expect(al[clef] !== null && Math.abs(al[clef] - al.ligne) <= 1,
+        `Bulles : la couche « ${clef} » part de ${al[clef]}px, la piste de ${al.ligne}px — les repères tombent à côté des bulles`);
+    });
+  }
+  // Champs sous la bulle : MÊMES BORDS que la bulle (#103).
+  const bordsFaux = (bulles.edge?.rows || []).filter((r) => r.bubble && r.fields
+    && (Math.abs(r.fields.left - r.bubble.left) > 1 || Math.abs(r.fields.right - r.bubble.right) > 1));
+  expect(bordsFaux.length === 0,
+    `Bulles : ${bordsFaux.length} rangée(s) de champs qui ne tiennent pas la largeur de leur bulle`);
+  // Contenance des macro-bulles (#104) : la bulle d'une tâche courte et celle
+  // d'un jalon doivent rester dans le cadre.
+  expect((bulles.edge?.frames || []).length === 1,
+    `Bulles : ${(bulles.edge?.frames || []).length} enveloppe(s) pour la macro-bulle regroupée, 1 attendue`);
+  if (bulles.edge && bulles.edge.frames.length === 1) {
+    const cadre = bulles.edge.frames[0];
+    const dehors = bulles.edge.bubbles.filter((b) => b.left < cadre.left - 1 || b.right > cadre.right + 1 || b.top < cadre.top - 1 || b.bottom > cadre.bottom + 1);
+    expect(dehors.length === 0,
+      `Bulles : ${dehors.length} bulle(s) sortent du cadre de leur macro-bulle (cadre ${cadre.left}→${cadre.right}, bulles ${bulles.edge.bubbles.map((b) => b.left + "→" + b.right).join(", ")})`);
+  }
   expect(bulles.descRows.length > 0, "Bulles : aucune description rendue dans le widget à trois lignes");
+  // Infobulle et poignée d'avancement (#106).
+  expect(!poignee.error, `Bulles : contrôle de la poignée interrompu (${poignee.error})`);
+  expect(poignee.surLeCorps === 1, `Bulles : ${poignee.surLeCorps} infobulle(s) au survol du corps de la bulle, 1 attendue`);
+  expect(poignee.surLaPoignee === 0, "Bulles : l'infobulle reste ouverte au survol de la poignée d'avancement — elle la masque");
+  expect(poignee.retourSurLeCorps === 1, "Bulles : l'infobulle ne revient pas quand on quitte la poignée");
   expect(bulles.descRows.every((r) => r.desc.lines === "3"),
     `Bulles : la description n'est pas coupée à 3 lignes (${(bulles.descRows[0] || {}).desc?.lines})`);
   expect(bulles.descBubbleH === bulles.baseBubbleH + 26,
