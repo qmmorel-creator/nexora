@@ -643,10 +643,9 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Le widget « Tâche détaillée » reçoit de nouveau la liste réduite par la recherche : son contenu s'évanouirait à la frappe.");
   assert.equal((builtSource.match(/tasksBeforeSearch=\{metaFilteredTasks\}/g) || []).length, 2,
     "Les deux surfaces à widgets ne transmettent plus toutes la liste d'avant la recherche.");
-  /* Les TROIS surfaces qui partent du socle méta-filtré doivent le consommer.
+  /* Les DEUX surfaces qui partent du socle méta-filtré doivent le consommer.
      En oublier une donnerait un champ qui filtre ici et pas là. */
   for (const [surface, motif] of [
-    ["Centre de pilotage", /<ControlTowerView tasks=\{boardTasks\}/],
     ["Tableau de bord", /view === "dashboard" && <DashboardView[^\n]*tasks=\{boardTasks\}/],
     ["Aujourd'hui", /return \[\.\.\.boardTasks\]\.sort/],
   ]) {

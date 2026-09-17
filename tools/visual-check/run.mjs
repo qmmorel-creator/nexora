@@ -1252,9 +1252,15 @@ if (parite.vue && parite.widget) {
     parite.vue.regroupements.length > 0 && parite.vue.regroupements.join("|") === parite.widget.regroupements.join("|"),
     `Regroupements différents entre la vue et le widget :\n    vue    : ${parite.vue.regroupements.join(", ")}\n    widget : ${parite.widget.regroupements.join(", ")}`
   );
-  ["Inactivité (jours)", "Lot de travaux"].forEach((option) => {
+  // « Lot de travaux » était un champ personnalisé : ces champs ont été retirés,
+  // et le menu ne doit plus proposer aucune clé « cf: ».
+  ["Inactivité (jours)"].forEach((option) => {
     expect(parite.vue.regroupements.includes(option), `Réglages de la vue Gantt : regroupement « ${option} » absent du menu`);
   });
+  expect(
+    !parite.vue.regroupements.some((o) => /lot de travaux/i.test(o)),
+    `Réglages de la vue Gantt : un champ personnalisé est revenu dans le menu (${parite.vue.regroupements.join(", ")})`
+  );
   expect(
     /date de début/i.test(parite.vue.erreurDatesFixes),
     `Réglages de la vue Gantt : un cadrage « Dates fixes » sans date ne dit rien (« ${parite.vue.erreurDatesFixes} »)`

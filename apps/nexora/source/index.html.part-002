@@ -1,7 +1,5 @@
 kTypes={taskTypes} setTaskTypes={setTaskTypes}
           teamMembers={teamMembers} setTeamMembers={setTeamMembers}
-          customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs}
-          risks={risks} setRisks={setRisks}
           gcalSettings={gcalSettings} setGcalSettings={setGcalSettings} gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError} onFetchList={fetchGoogleCalendarList}
           syncedCalendarSettings={syncedCalendarSettings} setSyncedCalendarSettings={setSyncedCalendarSettings} onSyncSyncedCalendars={syncPublicCalendarsToProjects}
           metaFilters={metaFilters} setMetaFilters={setMetaFilters}
@@ -12,6 +10,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           enabledViews={enabledViews} setEnabledViews={setEnabledViews}
           viewOrder={viewOrder} setViewOrder={setViewOrder}
           startupPref={startupPref} setStartupPref={setStartupPref} savedViews={savedViews} dashboards={dashboards}
+          projectDefaultView={projectDefaultView} setProjectDefaultView={setProjectDefaultView}
           onOpenImport={() => setImportOpen(true)}
           onOpenMarkdownImport={() => setMarkdownImportOpen(true)}
           onExportFullBackup={exportFullBackup}
@@ -33,7 +32,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           projects={projects}
           tasks={tasks}
           setTasks={setTasks}
-          onConfirm={() => { setProjects((prev) => prev.filter((p) => p.id !== pendingDeleteProject.id)); setRisks((prev) => prev.filter((r) => r.projectId !== pendingDeleteProject.id)); setPendingDeleteProject(null); }}
+          onConfirm={() => { setProjects((prev) => prev.filter((p) => p.id !== pendingDeleteProject.id)); setPendingDeleteProject(null); }}
           onClose={() => setPendingDeleteProject(null)}
         />
       )}
@@ -56,8 +55,8 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           taskTypes={taskTypes}
           tasks={tasks}
           teamMembers={teamMembers}
-          customFieldDefs={customFieldDefs}
           inheritedFolder={quickEditProject.__new ? null : projectFolders.find((f)=>f.id===quickEditProject.folderId)}
+          projectDefaultView={projectDefaultView}
           defaultColor={PROJECT_PALETTES[appearance.projectPalette] ? PROJECT_PALETTES[appearance.projectPalette][projects.length % PROJECT_PALETTES[appearance.projectPalette].length] : PROJECT_PALETTES.default[0]}
           onSave={(data) => {
             if (quickEditProject.__new) setProjects((prev) => [...prev, { id: uid(), ...data }]);
@@ -149,7 +148,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           desktop (view, setView, ALL_VIEWS_META, enabledViews) — aucune logique
           dupliquée, seule la présentation change. */}
       <nav className="lp-mobile-tabbar" aria-label="Navigation principale">
-        {["control", "today", "projects"].map((key) => {
+        {["today", "projects"].map((key) => {
           if (enabledViews[key] === false) return null;
           const meta = ALL_VIEWS_META.find((v) => v.key === key);
           if (!meta) return null;
@@ -177,7 +176,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           <div className="lp-mobile-sheet" role="dialog" aria-modal="true" aria-label="Plus d'options">
             <div className="lp-mobile-sheet-handle" />
             <div className="lp-mobile-sheet-grid">
-              {ALL_VIEWS_META.filter((v) => !["control", "projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
+              {ALL_VIEWS_META.filter((v) => !["projects", "today"].includes(v.key) && enabledViews[v.key] !== false).map((meta) => (
                 <button key={meta.key} type="button" className="lp-mobile-sheet-item" onClick={() => { setView(meta.key); setMobileMoreOpen(false); }}>
                   <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={20} />
                   <span>{meta.label}</span>
@@ -263,21 +262,6 @@ function filterFieldOptions(field, ctx) {
   if (field === "taskType") return sortedByName(ctx.taskTypes || []).map((s) => ({ value: s.id, label: s.name, color:s.color }));
   if (field === "assignee") return sortedByName(ctx.teamMembers || []).map((u) => ({ value: u.name, label: u.name, color: u.color }));
   if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
-  if (field && field.startsWith("cf:")) {
-    const id = field.slice(3);
-    const def = (ctx.customFieldDefs || []).find((f) => f.id === id);
-    if (!def) return [];
-    if (def.type === "checkbox") return [{ value: "true", label: "Oui" }, { value: "false", label: "Non" }];
-    if (def.type === "select") return (def.options || []).map((o) => ({ value: o, label: o }));
-    // Texte / nombre / date : pas de liste fermée — on propose les valeurs
-    // réellement déjà utilisées dans les tâches, comme pour "Responsable".
-    const values = new Set();
-    (ctx.tasks || []).forEach((t) => {
-      const v = t.customFields ? t.customFields[id] : undefined;
-      if (v !== undefined && v !== null && v !== "") values.add(String(v));
-    });
-    return [...values].sort().map((v) => ({ value: v, label: def.type === "date" ? fmtShort(v) : v }));
-  }
   return [];
 }
 
@@ -290,20 +274,9 @@ function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
   return (
     <div className="lp-filter-condition-row">
       <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
-        {fieldsOverride ? (
-          fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
-        ) : (
-          <>
-            <optgroup label="Champs standards">
-              {ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
-            </optgroup>
-            {(ctx.customFieldDefs || []).length > 0 && (
-              <optgroup label="Champs personnalisés">
-                {ctx.customFieldDefs.map((f) => <option key={f.id} value={"cf:" + f.id}>{f.name}</option>)}
-              </optgroup>
-            )}
-          </>
-        )}
+        {fieldsOverride
+          ? fieldsOverride.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)
+          : ADVANCED_FILTER_FIELDS.map((f) => <option key={f} value={f}>{fieldLabel(f, ctx)}</option>)}
       </select>
       {isTitleField ? (
         <div className="lp-mode-toggle lp-mode-toggle-icon">
@@ -1130,7 +1103,6 @@ const SETTINGS_TABS = [
   { key: "statuses", label: "Statuts", icon: "settings" },
   { key: "taskTypes", label: "Types", icon: "tag" },
   { key: "users", label: "Utilisateurs", icon: "user" },
-  { key: "customFields", label: "Champs personnalisés", icon: "hash" },
   { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
   { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
   { key: "gcal", label: "Google Calendar", icon: "calendar" },
@@ -2248,8 +2220,6 @@ function SettingsModal({
   statuses, setStatuses,
   taskTypes, setTaskTypes,
   teamMembers, setTeamMembers,
-  customFieldDefs, setCustomFieldDefs,
-  risks, setRisks,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
@@ -2259,6 +2229,7 @@ function SettingsModal({
   enabledViews, setEnabledViews,
   viewOrder, setViewOrder,
   startupPref, setStartupPref, savedViews, dashboards,
+  projectDefaultView, setProjectDefaultView,
   onOpenImport,
   onOpenMarkdownImport,
   onExportFullBackup,
@@ -2305,7 +2276,7 @@ function SettingsModal({
           </div>
           <div className="lp-settings-content">
             {activeTab === "projects" && (
-              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} risks={risks} setRisks={setRisks} teamMembers={teamMembers} customFieldDefs={customFieldDefs} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
+              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
             )}
             {activeTab === "statuses" && (
               <StatusManager embedded statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />
@@ -2315,9 +2286,6 @@ function SettingsModal({
             )}
             {activeTab === "users" && (
               <TeamMemberManager embedded teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} pushToast={pushToast} />
-            )}
-            {activeTab === "customFields" && (
-              <CustomFieldManager embedded customFieldDefs={customFieldDefs} setCustomFieldDefs={setCustomFieldDefs} tasks={tasks} projects={projects} pushToast={pushToast} />
             )}
             {activeTab === "syncedCalendars" && (
               <SyncedCalendarsSettingsPane
@@ -2343,7 +2311,7 @@ function SettingsModal({
               <MetaTemporalBlocksSettingsPane metaTemporalBlocks={metaTemporalBlocks} setMetaTemporalBlocks={setMetaTemporalBlocks} dashboards={dashboards || []} />
             )}
             {activeTab === "metaFilters" && (
-              <MetaFiltersSettingsPane metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders, customFieldDefs }} />
+              <MetaFiltersSettingsPane metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders }} />
             )}
             {activeTab === "appearance" && (
               <AppearanceModal embedded appearance={appearance} setAppearance={setAppearance} saveStatus={saveStatus} saveError={saveError} pushToast={pushToast} />
@@ -2398,6 +2366,25 @@ function SettingsModal({
                       </select>
                     )}
                   </div>
+                </div>
+
+                <div className="lp-section-title">À l'ouverture d'un projet</div>
+                <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+                  La vue affichée quand tu ouvres un projet. Un dossier ou un projet peut
+                  toujours imposer la sienne depuis sa propre « Ouverture par défaut » — ce
+                  réglage ne sert que lorsqu'aucun des deux n'en a choisi une.
+                </p>
+                <div className="lp-field" style={{ marginBottom: 14 }}>
+                  <label>Vue par défaut</label>
+                  <select
+                    value={projectDefaultView || ""}
+                    onChange={(e) => setProjectDefaultView(e.target.value)}
+                  >
+                    <option value="">Conserver la vue en cours</option>
+                    {PROJECT_DEFAULT_VIEW_OPTIONS
+                      .filter((v) => enabledViews[v.key] !== false)
+                      .map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+                  </select>
                 </div>
 
                 <div className="lp-section-title">Tableau de bord</div>
@@ -2967,14 +2954,6 @@ function ListView({ tasks, ctx, gradient, progressColorByStatus, setTasks, onOpe
           {GROUP_OPTIONS.map((k) => (
             <label className="lp-checkbox-line" key={k}><input type="radio" name="lp-gb" checked={groupBy === k} onChange={() => setGroupBy(k)} /> {fieldLabel(k, ctx)}</label>
           ))}
-          {(ctx.customFieldDefs || []).length > 0 && (
-            <>
-              <div className="lp-dropdown-group-label">Champs personnalisés</div>
-              {ctx.customFieldDefs.map((f) => (
-                <label className="lp-checkbox-line" key={f.id}><input type="radio" name="lp-gb" checked={groupBy === "cf:" + f.id} onChange={() => setGroupBy("cf:" + f.id)} /> {f.name}</label>
-              ))}
-            </>
-          )}
         </DropdownButton>
         {!embedded && (
           <DropdownButton label="" icon={<Columns3 size={14} />} title="Colonnes affichées">
@@ -4600,16 +4579,13 @@ function miniGanttClampWindow(window, bounds) {
    widget, les réglages de la vue et le menu « Regrouper » de l'en-tête.
 
    Les trois en offraient chacun une version différente : la fiche connaissait
-   l'inactivité et les champs personnalisés, la vue et le menu non, alors que
+   l'inactivité, la vue et le menu non, alors que
    `groupTasks` sait grouper sur N'IMPORTE quelle clé de `fieldDef` (#86). Rien
    n'est calculé ici : on rend des CLÉS, et chaque appelant les traduit avec
    `fieldLabel`, qui vit hors de ce bloc. */
 const MINIGANTT_GROUPBY_FIELDS = ["project", "status", "criticality", "taskType", "assignee", "milestone", "inactivity", "period"];
-function miniGanttGroupByKeys(ctx) {
-  const customs = (ctx && Array.isArray(ctx.customFieldDefs) ? ctx.customFieldDefs : [])
-    .filter((f) => f && f.id)
-    .map((f) => "cf:" + f.id);
-  return ["none", ...MINIGANTT_GROUPBY_FIELDS, ...customs];
+function miniGanttGroupByKeys() {
+  return ["none", ...MINIGANTT_GROUPBY_FIELDS];
 }
 
 /* Message d'erreur du cadrage « Dates fixes », vide quand tout va bien.
@@ -5855,7 +5831,7 @@ const TREEMAP_TILE_BY = ["project", "status", "taskType", "criticality"];
 // Réglages et champs de tuile qui n'ont de sens que sur des projets : un dossier,
 // une priorité, un budget ou un risque n'existent pas pour un statut. Affichés
 // quand même, ils resteraient vides sans jamais dire pourquoi.
-const TREEMAP_PROJECT_ONLY_FIELDS = ["riskCount", "budget", "priority", "folder"];
+const TREEMAP_PROJECT_ONLY_FIELDS = ["budget", "priority", "folder"];
 const TREEMAP_PROJECT_ONLY_GROUPS = ["folder", "priority"];
 const TREEMAP_GRADIENT_DIRECTIONS = ["lowToHigh", "highToLow"];
 // Couleur des projets dont la valeur de coloration est absente ou nulle : un
@@ -6261,7 +6237,6 @@ const TREEMAP_TILE_FIELDS = [
   { key: "averageCriticality", label: "Criticité moyenne" },
   { key: "lateTaskCount", label: "Tâches en retard" },
   { key: "urgentTaskCount", label: "Tâches urgentes" },
-  { key: "riskCount", label: "Risques ouverts" },
   { key: "nextMilestone", label: "Prochain jalon" },
   { key: "endDate", label: "Dernière échéance" },
   { key: "budget", label: "Budget consommé" },
@@ -6287,9 +6262,9 @@ function normalizeProjectTreemapConfig(widget) {
   const fields = [];
   rawFields.forEach((key) => {
     if (typeof key !== "string" || !key) return;
-    if (!known.has(key) && !key.startsWith("cf:")) return;
-    // Un dossier, une priorité, un budget, un risque : ces champs appartiennent
-    // au projet. Sur une tuile de statut ils resteraient vides sans explication.
+    if (!known.has(key)) return;
+    // Un dossier, une priorité, un budget : ces champs appartiennent au projet.
+    // Sur une tuile de statut ils resteraient vides sans explication.
     if (tileBy !== "project" && TREEMAP_PROJECT_ONLY_FIELDS.includes(key)) return;
     // Le statut dominant d'une tuile de statut, c'est ce statut : une tautologie.
     if (tileBy === "status" && key === "dominantStatus") return;
@@ -7297,7 +7272,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, customFieldDefs, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -7343,8 +7318,6 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   }, [projectId, taskTypeId]);
   const [milestone, setMilestone] = useState(base.milestone || false);
   const [milestoneIcon, setMilestoneIcon] = useState(base.milestoneIcon || "");
-  const [customFields, setCustomFields] = useState(base.customFields || {});
-  const setCustomField = (fieldId, value) => setCustomFields((prev) => ({ ...prev, [fieldId]: value }));
   const [attachments, setAttachments] = useState(base.attachments || []);
   const [attachError, setAttachError] = useState("");
   const [driveName, setDriveName] = useState("");
@@ -7553,7 +7526,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(customFields) !== JSON.stringify(base.customFields || {}) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -7658,7 +7631,9 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       checklist,
       dependsOn,
       recurrence,
-      customFields,
+      // Plus d'éditeur dans l'interface : la valeur déjà stockée (écrite par le
+      // MCP) est rendue telle quelle, jamais écrasée par un enregistrement.
+      customFields: base.customFields || {},
       attachments,
       // Un projet qui n'est plus adossé à un calendrier perd son méta bloc :
       // la période n'est alors plus tenue à jour par l'agenda.
@@ -8281,36 +8256,6 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         </div>
       </div>
 
-      {(() => {
-        // Ne montre que les champs personnalisés du projet actuellement sélectionné
-        // pour cette tâche (ou les champs "Tous les projets", pour compatibilité
-        // avec ceux créés avant l'introduction du cloisonnement par projet).
-        const relevantFields = (customFieldDefs || []).filter((f) => !f.projectId || f.projectId === projectId);
-        return relevantFields.length > 0 && (
-        <div className="lp-field">
-          <label>Champs personnalisés</label>
-          <div className="lp-custom-fields-grid">
-            {relevantFields.map((f) => (
-              <div className="lp-custom-field-item" key={f.id}>
-                <label>{f.name}</label>
-                {f.type === "text" && <input type="text" value={customFields[f.id] || ""} onChange={(e) => setCustomField(f.id, e.target.value)} />}
-                {f.type === "number" && <input type="number" value={customFields[f.id] ?? ""} onChange={(e) => setCustomField(f.id, e.target.value === "" ? "" : Number(e.target.value))} />}
-                {f.type === "date" && <input type="date" value={customFields[f.id] || ""} onChange={(e) => setCustomField(f.id, e.target.value)} />}
-                {f.type === "select" && (
-                  <select value={customFields[f.id] || ""} onChange={(e) => setCustomField(f.id, e.target.value)}>
-                    <option value="">—</option>
-                    {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                )}
-                {f.type === "checkbox" && (
-                  <label className="lp-checkbox-line"><input type="checkbox" checked={!!customFields[f.id]} onChange={(e) => setCustomField(f.id, e.target.checked)} /> {customFields[f.id] ? "Oui" : "Non"}</label>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-        );
-      })()}
 
       <div className="lp-field lp-drive-panel">
         <div className="lp-drive-panel-head">
@@ -8670,6 +8615,14 @@ function IconEditor({ icon, setIcon }) {
 }
 
 
+/* Ce que « ne rien choisir ici » donne réellement : le réglage général, s'il
+   en existe un, sinon la vue en cours. Le dire évite de promettre « Conserver
+   la vue actuelle » alors qu'un socle imposera autre chose. */
+const projectDefaultViewFallbackLabel = (globalView) => {
+  const label = PROJECT_DEFAULT_VIEW_OPTIONS.find((v) => v.key === globalView)?.label;
+  return label ? `Réglage général (${label})` : "Conserver la vue actuelle";
+};
+
 function ProjectNavigationDefaultsEditor({ value, onChange, ctx, inheritedLabel = "" }) {
   const nav = value || {};
   const viewKey = nav.view || "";
@@ -8745,10 +8698,10 @@ function ProjectNavigationDefaultsEditor({ value, onChange, ctx, inheritedLabel 
   );
 }
 
-function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs, onClose }) {
+function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, projectDefaultView, onClose }) {
   const current = folders.find((f)=>f.id===folder.id) || folder;
   const [navigationDefaults, setNavigationDefaults] = useState(current.navigationDefaults || {});
-  const ctx = { projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs };
+  const ctx = { projects, statuses, taskTypes, tasks, teamMembers, projectFolders };
 
   const save = () => {
     setFolders((prev)=>prev.map((f)=>f.id===folder.id ? {...f,navigationDefaults} : f));
@@ -8769,15 +8722,14 @@ function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, s
         value={navigationDefaults}
         onChange={setNavigationDefaults}
         ctx={ctx}
-        inheritedLabel="Conserver la vue actuelle"
+        inheritedLabel={projectDefaultViewFallbackLabel(projectDefaultView)}
       />
     </Modal>
   );
 }
 
-function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, risks, setRisks, teamMembers, customFieldDefs, onDeleteProject, onBulkDelete, palette, onClose, embedded }) {
+function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, teamMembers, projectDefaultView, onDeleteProject, onBulkDelete, palette, onClose, embedded }) {
   const [formTarget, setFormTarget] = useState(null); // null | "new" | projet à modifier
-  const [riskTarget, setRiskTarget] = useState(null); // projet dont le registre des risques est ouvert
   const [folderNavTarget, setFolderNavTarget] = useState(null);
 
   const handleSave = (data) => {
@@ -8801,10 +8753,6 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
               {statuses.some((st)=>st.projectId===p.id) && <span className="lp-project-setting-badge lp-status-scope-badge" title="Ce projet possède des statuts spécifiques">Spécifiques</span>}
             </span>
             {count > 0 && <button className="lp-icon-btn" onClick={() => onBulkDelete(tasks.filter((t) => t.projectId === p.id).map((t) => t.id), `du projet « ${p.name} »`)} title="Vider ce projet (supprimer toutes ses tâches)"><Eraser size={14} /></button>}
-            <button className="lp-icon-btn" onClick={() => setRiskTarget(p)} title="Registre des risques">
-              <AlertOctagon size={14} />
-              {risks.some((r) => r.projectId === p.id && r.status !== "closed") && <span className="lp-risk-dot-indicator" />}
-            </button>
             <button className="lp-icon-btn" onClick={() => setFormTarget(p)}><Pencil size={14} /></button>
             <button className="lp-icon-btn" onClick={() => onDeleteProject(p)}><Trash2 size={15} /></button>
           </div>
@@ -8849,8 +8797,8 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           taskTypes={taskTypes}
           tasks={tasks}
           teamMembers={teamMembers}
-          customFieldDefs={customFieldDefs}
           inheritedFolder={formTarget === "new" ? null : projectFolders.find((f)=>f.id===formTarget.folderId)}
+          projectDefaultView={projectDefaultView}
           defaultColor={palette[projects.length % palette.length]}
           onSave={handleSave}
           onClose={() => setFormTarget(null)}
@@ -8862,9 +8810,6 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
   return (
     <>
       {embedded ? <div className="lp-settings-pane">{body}</div> : <Modal title="Gérer les projets" onClose={onClose} wide>{body}</Modal>}
-      {riskTarget && (
-        <RiskRegisterModal project={riskTarget} risks={risks} setRisks={setRisks} teamMembers={teamMembers} onClose={() => setRiskTarget(null)} />
-      )}
       {folderNavTarget && (
         <ProjectFolderNavigationModal
           folder={folderNavTarget}
@@ -8876,7 +8821,7 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           tasks={tasks}
           teamMembers={teamMembers}
           projectFolders={projectFolders}
-          customFieldDefs={customFieldDefs}
+          projectDefaultView={projectDefaultView}
           onClose={()=>setFolderNavTarget(null)}
         />
       )}
@@ -8884,156 +8829,9 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
   );
 }
 
-// Registre des risques d'UN projet — liste triée par score décroissant (les
-// risques les plus critiques toujours en tête), avec sélecteur probabilité ×
-// impact façon petite grille cliquable plutôt qu'un simple menu déroulant,
-// pour visualiser le niveau pendant la saisie elle-même.
-function RiskRegisterModal({ project, risks, setRisks, teamMembers, onClose }) {
-  const [formTarget, setFormTarget] = useState(null); // null | "new" | risque à modifier
-  const [statusFilter, setStatusFilter] = useState("open"); // "open" = actif + sous contrôle (masque les clos par défaut)
 
-  const projectRisks = useMemo(() => risks.filter((r) => r.projectId === project.id), [risks, project.id]);
-  const visibleRisks = useMemo(() => {
-    const filtered = statusFilter === "all" ? projectRisks : statusFilter === "open" ? projectRisks.filter((r) => r.status !== "closed") : projectRisks.filter((r) => r.status === statusFilter);
-    return [...filtered].sort((a, b) => riskScoreOf(b) - riskScoreOf(a));
-  }, [projectRisks, statusFilter]);
 
-  const handleSave = (data) => {
-    if (formTarget === "new") setRisks((prev) => [...prev, { id: uid(), projectId: project.id, createdAt: iso(new Date()), ...data }]);
-    else setRisks((prev) => prev.map((r) => (r.id === formTarget.id ? { ...r, ...data } : r)));
-    setFormTarget(null);
-  };
-  const removeRisk = (r) => setRisks((prev) => prev.filter((x) => x.id !== r.id));
-
-  return (
-    <Modal title={`Registre des risques — ${project.name}`} onClose={onClose} wide>
-      <div className="lp-risk-toolbar">
-        <div className="lp-density-row">
-          <button type="button" className={"lp-density-btn" + (statusFilter === "open" ? " active" : "")} onClick={() => setStatusFilter("open")}>Actifs</button>
-          <button type="button" className={"lp-density-btn" + (statusFilter === "all" ? " active" : "")} onClick={() => setStatusFilter("all")}>Tous</button>
-          <button type="button" className={"lp-density-btn" + (statusFilter === "closed" ? " active" : "")} onClick={() => setStatusFilter("closed")}>Clos</button>
-        </div>
-        <button className="lp-btn lp-btn-primary" onClick={() => setFormTarget("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouveau risque</button>
-      </div>
-
-      {visibleRisks.length === 0 && <div className="lp-empty" style={{ padding: 20 }}>Aucun risque {statusFilter === "closed" ? "clos" : statusFilter === "open" ? "actif" : ""} pour l'instant.</div>}
-
-      <div className="lp-risk-list">
-        {visibleRisks.map((r) => {
-          const level = riskLevelOf(r);
-          const statusLabel = RISK_STATUSES.find((s) => s.key === r.status)?.label || "Actif";
-          return (
-            <div className="lp-risk-row" key={r.id} onClick={() => setFormTarget(r)}>
-              <span className="lp-risk-score-badge" style={{ background: level.color }}>{riskScoreOf(r)}</span>
-              <div className="lp-risk-row-main">
-                <div className="lp-risk-row-title">{r.title}</div>
-                <div className="lp-risk-row-meta">
-                  <span style={{ color: level.color, fontWeight: 700 }}>{level.label}</span>
-                  {r.owner && <span>· {r.owner}</span>}
-                  <span>· {statusLabel}</span>
-                </div>
-              </div>
-              <button className="lp-icon-btn" onClick={(e) => { e.stopPropagation(); removeRisk(r); }} title="Supprimer"><Trash2 size={14} /></button>
-            </div>
-          );
-        })}
-      </div>
-
-      {formTarget && (
-        <RiskFormModal
-          risk={formTarget === "new" ? null : formTarget}
-          teamMembers={teamMembers}
-          onSave={handleSave}
-          onClose={() => setFormTarget(null)}
-        />
-      )}
-    </Modal>
-  );
-}
-
-function RiskFormModal({ risk, teamMembers, onSave, onClose }) {
-  const [title, setTitle] = useState(risk?.title || "");
-  const [probability, setProbability] = useState(risk?.probability || 3);
-  const [impact, setImpact] = useState(risk?.impact || 3);
-  const [status, setStatus] = useState(risk?.status || "open");
-  const [owner, setOwner] = useState(risk?.owner || "");
-  const [mitigation, setMitigation] = useState(risk?.mitigation || "");
-  const [titleError, setTitleError] = useState(false);
-
-  const submit = () => {
-    if (!title.trim()) { setTitleError(true); return; }
-    onSave({ title: title.trim(), probability, impact, status, owner: owner.trim() || null, mitigation: mitigation.trim() || null });
-  };
-
-  const previewLevel = riskLevelOf({ probability, impact });
-
-  return (
-    <Modal title={risk ? "Modifier le risque" : "Nouveau risque"} onClose={onClose} footer={
-      <>
-        <button className="lp-btn" onClick={onClose}>Annuler</button>
-        <button className="lp-btn lp-btn-primary" onClick={submit}>{risk ? "Enregistrer les modifications" : "Ajouter le risque"}</button>
-      </>
-    }>
-      <NamedField label="Intitulé" value={title} onChange={(v) => { setTitle(v); if (titleError && v.trim()) setTitleError(false); }} error={titleError} onEnter={submit} placeholder="Ex. Retard livraison charpente" autoFocus />
-
-      <div className="lp-field">
-        <label>Probabilité × Impact <span style={{ fontWeight: 700, textTransform: "none", color: previewLevel.color }}>— {riskScoreOf({ probability, impact })} · {previewLevel.label}</span></label>
-        <div className="lp-risk-grid-picker">
-          <div className="lp-risk-grid-picker-yaxis">
-            {[5, 4, 3, 2, 1].map((p) => <div key={p} className="lp-risk-grid-picker-axislabel">{p}</div>)}
-          </div>
-          <div className="lp-risk-grid-picker-grid">
-            {[5, 4, 3, 2, 1].map((p) => (
-              <React.Fragment key={p}>
-                {[1, 2, 3, 4, 5].map((im) => {
-                  const cellLevel = riskLevelOf({ probability: p, impact: im });
-                  const active = p === probability && im === impact;
-                  return (
-                    <button
-                      type="button"
-                      key={im}
-                      className={"lp-risk-grid-cell" + (active ? " active" : "")}
-                      style={{ background: cellLevel.color + (active ? "" : "33") }}
-                      onClick={() => { setProbability(p); setImpact(im); }}
-                      title={`Probabilité ${p} × Impact ${im} = ${p * im}`}
-                    />
-                  );
-                })}
-              </React.Fragment>
-            ))}
-          </div>
-          <div className="lp-risk-grid-picker-xaxis">
-            {[1, 2, 3, 4, 5].map((im) => <div key={im} className="lp-risk-grid-picker-axislabel">{im}</div>)}
-          </div>
-        </div>
-        <div className="lp-risk-grid-picker-labels">
-          <span>↑ Probabilité</span>
-          <span>Impact →</span>
-        </div>
-      </div>
-
-      <div className="lp-row2">
-        <div className="lp-field">
-          <label>Statut</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            {RISK_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-          </select>
-        </div>
-        <div className="lp-field">
-          <label>Responsable</label>
-          <select value={owner} onChange={(e) => setOwner(e.target.value)}>
-            <option value="">Non assigné</option>
-            {sortedByName(teamMembers || []).map((u) => <option key={u.id} value={u.name}>{u.name}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="lp-field"><label>Plan de mitigation</label><textarea rows={4} value={mitigation} onChange={(e) => setMitigation(e.target.value)} placeholder="Actions prévues pour réduire la probabilité ou l'impact…" /></div>
-    </Modal>
-  );
-}
-
-function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, customFieldDefs, inheritedFolder, defaultColor, onSave, onClose }) {
+function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, inheritedFolder, projectDefaultView, defaultColor, onSave, onClose }) {
   const [name, setName] = useState(project?.name || "");
   const [icon, setIcon] = useState(project?.icon || "tabler:route");
   const [color, setColor] = useState(project?.color || defaultColor || PROJECT_PALETTES.default[0]);
@@ -9170,10 +8968,10 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
         <ProjectNavigationDefaultsEditor
           value={navigationDefaults}
           onChange={setNavigationDefaults}
-          ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders, customFieldDefs}}
+          ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
           inheritedLabel={inheritedFolder?.navigationDefaults?.view
             ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
-            : "Conserver la vue actuelle"}
+            : projectDefaultViewFallbackLabel(projectDefaultView)}
         />
       )}
       {projectFolders.length > 0 && (
@@ -9236,16 +9034,6 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, pushToast, onCl
   return <Modal title="Utilisateurs" onClose={onClose} wide>{body}</Modal>;
 }
 
-// Types de champ personnalisé disponibles — volontairement limités à des types
-// simples et robustes (pas de champ "formule" ou de dépendances entre champs)
-// pour rester fiables et faciles à comprendre dans un contexte chantier.
-const CUSTOM_FIELD_TYPES = [
-  { key: "text", label: "Texte" },
-  { key: "number", label: "Nombre" },
-  { key: "date", label: "Date" },
-  { key: "select", label: "Liste déroulante" },
-  { key: "checkbox", label: "Case à cocher" },
-];
 
 // Réglages Google Calendar : quels calendriers synchroniser (un projet sera
 // créé par calendrier coché), et sur quelle fenêtre temporelle. La liste des
@@ -9352,121 +9140,7 @@ function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalList
   );
 }
 
-function CustomFieldManager({ customFieldDefs, setCustomFieldDefs, tasks, projects, pushToast, onClose, embedded }) {
-  const [formTarget, setFormTarget] = useState(null); // null | "new" | définition à modifier
 
-  const handleSave = (data) => {
-    if (formTarget === "new") setCustomFieldDefs((prev) => [...prev, { id: uid(), ...data }]);
-    else setCustomFieldDefs((prev) => prev.map((f) => (f.id === formTarget.id ? { ...f, ...data } : f)));
-    setFormTarget(null);
-  };
-  const [confirmRemoveField, setConfirmRemoveField] = useState(null); // { field, count } | null
-  const removeField = (f) => {
-    const count = tasks.filter((t) => t.customFields && t.customFields[f.id] !== undefined && t.customFields[f.id] !== "" && t.customFields[f.id] !== null).length;
-    if (count > 0) { setConfirmRemoveField({ field: f, count }); return; }
-    setCustomFieldDefs((prev) => prev.filter((x) => x.id !== f.id));
-  };
-  const moveField = (id, dir) => {
-    setCustomFieldDefs((prev) => {
-      const idx = prev.findIndex((f) => f.id === id);
-      const swapIdx = idx + dir;
-      if (idx === -1 || swapIdx < 0 || swapIdx >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-      return next;
-    });
-  };
-  const projectName = (id) => (id ? projects.find((p) => p.id === id)?.name || "(projet supprimé)" : null);
-
-  const body = (
-    <>
-      <div className="lp-section-title">Champs personnalisés des tâches</div>
-      <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 12 }}>
-        Ex. numéro de lot, référence marché, zone chantier... Propres à UN projet — les tâches d'un autre projet ne les affichent pas. Ces champs apparaissent dans la fiche de chaque tâche du projet concerné et peuvent servir de colonnes dans le Tableur.
-      </p>
-      {customFieldDefs.length === 0 && <div className="lp-empty" style={{ padding: 12 }}>Aucun champ personnalisé pour l'instant.</div>}
-      {customFieldDefs.map((f, i) => (
-        <div className="lp-manage-item" key={f.id}>
-          <div className="lp-view-order-arrows">
-            <button type="button" className="lp-icon-btn" disabled={i === 0} onClick={() => moveField(f.id, -1)} title="Monter"><ChevronUp size={12} /></button>
-            <button type="button" className="lp-icon-btn" disabled={i === customFieldDefs.length - 1} onClick={() => moveField(f.id, 1)} title="Descendre"><ChevronDown size={12} /></button>
-          </div>
-          <span className="lp-project-dot" style={{ background: "var(--text-muted)", width: 24, height: 24 }}><Hash size={13} color="#fff" /></span>
-          <span className="lp-manage-name">
-            {f.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({CUSTOM_FIELD_TYPES.find((t) => t.key === f.type)?.label || f.type})</span>
-            <span className={"lp-cf-scope-badge" + (f.projectId ? "" : " lp-cf-scope-badge-global")}>{f.projectId ? projectName(f.projectId) : "Tous les projets"}</span>
-          </span>
-          <button className="lp-icon-btn" onClick={() => setFormTarget(f)}><Pencil size={14} /></button>
-          <button className="lp-icon-btn" onClick={() => removeField(f)}><Trash2 size={15} /></button>
-        </div>
-      ))}
-      <hr className="lp-divider" />
-      <button className="lp-btn lp-btn-primary" onClick={() => setFormTarget("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouveau champ</button>
-      {formTarget && (
-        <CustomFieldFormModal
-          field={formTarget === "new" ? null : formTarget}
-          projects={projects}
-          onSave={handleSave}
-          onClose={() => setFormTarget(null)}
-        />
-      )}
-      {confirmRemoveField && (
-        <ConfirmModal
-          title="Supprimer le champ"
-          message={`${confirmRemoveField.count} tâche${confirmRemoveField.count > 1 ? "s ont" : " a"} une valeur pour « ${confirmRemoveField.field.name} ». La supprimer effacera aussi ces valeurs. Continuer ?`}
-          danger
-          confirmLabel="Supprimer"
-          onConfirm={() => { setCustomFieldDefs((prev) => prev.filter((x) => x.id !== confirmRemoveField.field.id)); setConfirmRemoveField(null); }}
-          onClose={() => setConfirmRemoveField(null)}
-        />
-      )}
-    </>
-  );
-
-  if (embedded) return <div className="lp-settings-pane">{body}</div>;
-  return <Modal title="Champs personnalisés" onClose={onClose} wide>{body}</Modal>;
-}
-
-function CustomFieldFormModal({ field, projects, onSave, onClose }) {
-  const [name, setName] = useState(field?.name || "");
-  const [type, setType] = useState(field?.type || "text");
-  const [optionsText, setOptionsText] = useState((field?.options || []).join("\n"));
-  const [projectId, setProjectId] = useState(field?.projectId || (projects[0]?.id ?? ""));
-  const [nameError, setNameError] = useState(false);
-
-  const submit = () => {
-    if (!name.trim()) { setNameError(true); return; }
-    const options = type === "select" ? optionsText.split("\n").map((s) => s.trim()).filter(Boolean) : undefined;
-    onSave({ name: name.trim(), type, options, projectId: projectId || null });
-  };
-
-  return (
-    <Modal title={field ? "Modifier le champ" : "Nouveau champ personnalisé"} onClose={onClose} footer={
-      <>
-        <button className="lp-btn" onClick={onClose}>Annuler</button>
-        <button className="lp-btn lp-btn-primary" onClick={submit}>{field ? "Enregistrer les modifications" : "Ajouter le champ"}</button>
-      </>
-    }>
-      <NamedField label="Nom du champ" value={name} onChange={(v) => { setName(v); if (nameError && v.trim()) setNameError(false); }} error={nameError} onEnter={submit} placeholder="Ex. Numéro de lot" autoFocus />
-      <div className="lp-field">
-        <label>Projet <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(le champ n'apparaîtra que sur les tâches de ce projet)</span></label>
-        <ProjectSelect projects={projects} value={projectId} onChange={setProjectId} emptyLabel={`Tous les projets${field && !field.projectId ? " (réglage existant)" : " — déconseillé, préfère un projet précis"}`} />
-      </div>
-      <div className="lp-field">
-        <label>Type</label>
-        <select value={type} onChange={(e) => setType(e.target.value)}>
-          {CUSTOM_FIELD_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-        </select>
-      </div>
-      {type === "select" && (
-        <div className="lp-field">
-          <label>Options <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(une par ligne)</span></label>
-          <textarea rows={4} value={optionsText} onChange={(e) => setOptionsText(e.target.value)} placeholder={"Lot 1\nLot 2\nLot 3"} />
-        </div>
-      )}
-    </Modal>
-  );
-}
 
 function TeamMemberFormModal({ member, onSave, onClose }) {
   const [name, setName] = useState(member?.name || "");
@@ -10467,179 +10141,10 @@ function DayTaskCard({ task, ctx, onOpen, variant }) {
   );
 }
 
-// ============================================================================
-// Vue Calendrier — hebdomadaire (cartes détaillées) ou mensuelle (grille)
-// ============================================================================
-const CAL_FIELD_OPTIONS = ["project", "status", "assignee", "progress", "start", "end", "period", "checklist"];
 const CAL_MONTHS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
-const CAL_DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 
-function tasksActiveOnDay(tasks, dateStr) {
-  return tasks.filter((t) => t.start <= dateStr && t.end >= dateStr);
-}
 
-function CalTaskCard({ task, ctx, cardFields, gradient, onOpen, compact }) {
-  const proj = ctx.projects.find((p) => p.id === task.projectId);
-  const done = isTaskDoneGlobal(task, ctx);
-  const isStart = task.start === task.end ? null : "range";
-  return (
-    <div className={"lp-cal-card" + (done ? " done" : "")} style={{ borderLeftColor: proj?.color || "var(--text-muted)" }} onClick={() => onOpen(task)}>
-      <div className="lp-cal-card-head">
-        <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 15, height: 15, fontSize: 8, flex: "0 0 auto" }}><IconGlyph icon={proj?.icon} size={9} /></span>
-        {task.milestone && <MilestoneGlyph size={13} icon={resolveMilestoneIcon(task, ctx)} />}
-        <span className="lp-cal-card-title">{task.title}</span>
-        {done && <CheckCircle2 size={14} color="var(--success)" style={{ flex: "0 0 auto" }} />}
-      </div>
-      {!compact && cardFields.length > 0 && (
-        <div className="lp-cal-card-fields">
-          {cardFields.map((f) => <FieldValue key={f} fieldKey={f} task={task} ctx={ctx} gradient={gradient} />)}
-        </div>
-      )}
-    </div>
-  );
-}
 
-function CalendarView({ tasks, ctx, onOpen, onAdd, gradient, prefs, setPrefs }) {
-  const today = iso(new Date());
-  const mode = prefs.mode || "week";
-  const setMode = (m) => setPrefs({ mode: m });
-  const cardFields = prefs.cardFields || ["project", "status", "assignee", "progress"];
-  const setCardFields = (updater) => setPrefs((p) => ({ cardFields: typeof updater === "function" ? updater(p.cardFields || []) : updater }));
-  const [anchor, setAnchor] = useState(today);
-  const [selectedDay, setSelectedDay] = useState(null);
-
-  const weekDays = useMemo(() => {
-    const monday = getMonday(anchor);
-    return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  }, [anchor]);
-
-  const monthGrid = useMemo(() => {
-    const d = new Date(anchor + "T00:00:00");
-    const firstOfMonth = iso(new Date(d.getFullYear(), d.getMonth(), 1));
-    const monday = getMonday(firstOfMonth);
-    return Array.from({ length: 42 }, (_, i) => addDays(monday, i));
-  }, [anchor]);
-
-  const curMonthIdx = new Date(anchor + "T00:00:00").getMonth();
-
-  const goPrev = () => {
-    if (mode === "week") { setAnchor((a) => addDays(a, -7)); return; }
-    const d = new Date(anchor + "T00:00:00"); d.setMonth(d.getMonth() - 1); setAnchor(iso(d));
-  };
-  const goNext = () => {
-    if (mode === "week") { setAnchor((a) => addDays(a, 7)); return; }
-    const d = new Date(anchor + "T00:00:00"); d.setMonth(d.getMonth() + 1); setAnchor(iso(d));
-  };
-  const goToday = () => { setAnchor(today); setSelectedDay(null); };
-
-  const weekLabel = () => {
-    const start = weekDays[0], end = weekDays[6];
-    const sd = new Date(start + "T00:00:00"), ed = new Date(end + "T00:00:00");
-    if (sd.getMonth() === ed.getMonth()) return `${sd.getDate()} – ${ed.getDate()} ${CAL_MONTHS_FR[sd.getMonth()]} ${sd.getFullYear()}`;
-    return `${sd.getDate()} ${CAL_MONTHS_FR[sd.getMonth()]} – ${ed.getDate()} ${CAL_MONTHS_FR[ed.getMonth()]} ${sd.getFullYear()}`;
-  };
-
-  const tasksForDayObj = (day) => ({
-    ending: tasks.filter((t) => t.end === day),
-    ongoing: tasks.filter((t) => t.start < day && t.end > day),
-  });
-
-  return (
-    <div className="lp-cal-wrap">
-      <div className="lp-toolbar" style={{ marginBottom: 10 }}>
-        <div className="lp-mode-toggle">
-          <button className={mode !== "month" ? "active" : ""} onClick={() => setMode("week")}>Hebdomadaire</button>
-          <button className={mode === "month" ? "active" : ""} onClick={() => setMode("month")}>Mensuel</button>
-        </div>
-        <button className="lp-tool-btn" onClick={goPrev}>‹</button>
-        <button className="lp-tool-btn" onClick={goToday}><Crosshair size={13} /> Aujourd'hui</button>
-        <button className="lp-tool-btn" onClick={goNext}>›</button>
-        <span style={{ fontWeight: 700, fontSize: 14, marginLeft: 4 }}>
-          {mode === "week" ? weekLabel() : `${CAL_MONTHS_FR[curMonthIdx]} ${new Date(anchor + "T00:00:00").getFullYear()}`}
-        </span>
-        {mode === "week" && (
-          <DropdownButton label="Colonnes des cartes" icon={<Columns3 size={14} />}>
-            {CAL_FIELD_OPTIONS.map((f) => (
-              <label className="lp-checkbox-line" key={f}>
-                <input type="checkbox" checked={cardFields.includes(f)} onChange={() => setCardFields((prev) => prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f])} />
-                {fieldLabel(f)}
-              </label>
-            ))}
-          </DropdownButton>
-        )}
-      </div>
-
-      {mode === "week" ? (
-        <div className="lp-cal-week-grid">
-          {weekDays.map((day) => {
-            const dayTasks = tasksActiveOnDay(tasks, day);
-            const isToday = day === today;
-            const dt = new Date(day + "T00:00:00");
-            return (
-              <div key={day} className={"lp-cal-day-col" + (isToday ? " today" : "")}>
-                <div className="lp-cal-day-header">
-                  <span className="lp-cal-day-name">{CAL_DAY_NAMES[(dt.getDay() + 6) % 7]}</span>
-                  <span className="lp-cal-day-num">{dt.getDate()}</span>
-                  <button className="lp-cal-day-add" onClick={() => onAdd({ start: day, end: day })} title="Ajouter une tâche ce jour"><Plus size={13} /></button>
-                </div>
-                <div className="lp-cal-day-body">
-                  {dayTasks.length === 0 && <div className="lp-cal-empty">Aucune tâche</div>}
-                  {dayTasks.map((t) => <CalTaskCard key={t.id} task={t} ctx={ctx} cardFields={cardFields} gradient={gradient} onOpen={onOpen} />)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="lp-cal-month-layout">
-          <div className="lp-cal-month-left">
-            <div className="lp-cal-month-daynames">
-              {CAL_DAY_NAMES.map((d) => <div key={d}>{d}</div>)}
-            </div>
-            <div className="lp-cal-month-grid">
-              {monthGrid.map((day) => {
-                const dt = new Date(day + "T00:00:00");
-                const inMonth = dt.getMonth() === curMonthIdx;
-                const dayTasks = tasksActiveOnDay(tasks, day);
-                const isToday = day === today;
-                const isSelected = day === selectedDay;
-                const projColors = [...new Set(dayTasks.map((t) => ctx.projects.find((p) => p.id === t.projectId)?.color).filter(Boolean))];
-                return (
-                  <div
-                    key={day}
-                    className={"lp-cal-month-cell" + (inMonth ? "" : " other-month") + (isToday ? " today" : "") + (isSelected ? " selected" : "")}
-                    onClick={() => setSelectedDay(isSelected ? null : day)}
-                  >
-                    <div className="lp-cal-month-cell-head">
-                      <span className="lp-cal-month-cell-num">{dt.getDate()}</span>
-                      {dayTasks.length > 0 && <span className="lp-cal-month-cell-count">{dayTasks.length}</span>}
-                    </div>
-                    <div className="lp-cal-month-dots">
-                      {projColors.slice(0, 6).map((c, i) => <span key={i} className="lp-cal-month-dot" style={{ background: c }} />)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="lp-cal-day-list">
-            <div className="lp-cal-day-list-header">
-              <span style={{ fontWeight: 700, fontSize: 14 }}>{selectedDay ? `Tâches du ${fmtShort(selectedDay)}` : "Sélectionne un jour"}</span>
-              {selectedDay && <button className="lp-icon-btn" onClick={() => setSelectedDay(null)}><X size={16} /></button>}
-            </div>
-            <div className="lp-cal-day-list-body">
-              {!selectedDay && <div className="lp-cal-empty">Clique sur un jour du calendrier pour voir ses tâches</div>}
-              {selectedDay && tasksActiveOnDay(tasks, selectedDay).length === 0 && <div className="lp-cal-empty">Aucune tâche ce jour</div>}
-              {selectedDay && tasksActiveOnDay(tasks, selectedDay).map((t) => (
-                <CalTaskCard key={t.id} task={t} ctx={ctx} cardFields={["project", "status", "assignee", "start", "end", "progress"]} gradient={gradient} onOpen={onOpen} />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ============================================================================
 // Vue Timeline — roadmap horizontal avec bulles alternées anti-chevauchement
