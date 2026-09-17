@@ -2502,30 +2502,16 @@ const BUBBLE_FIELDS_LAYOUTS = ["under", "inline", "compact"];
 /* Hauteur du bandeau condensé, en pixels. Vit ici, comme BUBBLE_HEIGHT_PX, et
    pour la même raison : le rendu la pose, l'auto-dimensionnement du widget la
    relit, et la hauteur d'un couloir s'en déduit. */
-const BUBBLE_FIELDS_COMPACT_LINE_PX = 14;
-const BUBBLE_FIELDS_COMPACT_PAD_PX = 2;
-const BUBBLE_FIELDS_COMPACT_LINES_MAX = 6;
-const BUBBLE_FIELDS_COMPACT_PX = BUBBLE_FIELDS_COMPACT_LINE_PX + BUBBLE_FIELDS_COMPACT_PAD_PX;
+/* Hauteur du bandeau condensé : UNE ligne, et une seule (#122).
 
-/* Hauteur du bandeau pour un nombre de lignes donné (#122).
-
-   Le bandeau tenait sur UNE ligne et coupait ce qui dépassait : beaucoup de
-   champs, et il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien
-   (retour de test). Il passe donc à la ligne, à la largeur de la bulle.
-
-   Mais une hauteur qui suivrait chaque bulle donnerait des lignes de diagramme
-   toutes différentes — et, en couloirs, une hauteur de ligne impossible à poser
-   puisque tout y est en absolu. La hauteur est donc RÉGULARISÉE : on prend le
-   plus grand nombre de lignes du widget, et toutes les bulles l'adoptent. Le
-   plafond de six lignes n'est pas arbitraire : au-delà, les champs occupent
-   plus de place que la bulle et ce n'est plus un bandeau — mais il faut qu'il
-   couvre les configurations réelles, et neuf champs sur une bulle courte en
-   demandent déjà cinq. */
-function bubbleCompactFieldsHeight(lines) {
-  const n = Number(lines);
-  const safe = Number.isFinite(n) ? Math.min(BUBBLE_FIELDS_COMPACT_LINES_MAX, Math.max(1, Math.round(n))) : 1;
-  return safe * BUBBLE_FIELDS_COMPACT_LINE_PX + BUBBLE_FIELDS_COMPACT_PAD_PX;
-}
+   Il est passé par une version à plusieurs lignes, qui repliait les champs à la
+   largeur de la bulle et régularisait la hauteur du widget. Elle répondait à la
+   lettre au défaut — plus rien n'était coupé — mais le résultat était laid : un
+   pavé de pastilles sous chaque bulle, plus haut que la bulle elle-même (retour
+   de test). On revient donc à la ligne unique, et c'est l'INFOBULLE qui porte
+   la liste complète : elle a la place, elle ne coûte aucune hauteur, et elle
+   existait déjà. */
+const BUBBLE_FIELDS_COMPACT_PX = 16;
 /* Dispositions verticales des bulles (#120).
 
    « lanes » range les bulles d'un même couloir CÔTE À CÔTE sur la ligne de
@@ -2639,10 +2625,10 @@ function bubbleEffectiveFieldsLayout(cfg) {
 /* Hauteur d'une ligne de bulles, en pixels : la bulle, plus le bandeau condensé
    quand il est là. Une seule fonction, relue par le rendu (qui la pose sur la
    piste d'un couloir) et par l'auto-dimensionnement du widget. */
-function bubbleLaneHeightPx(widget, compactLines) {
+function bubbleLaneHeightPx(widget) {
   const cfg = normalizeBubblesWidget(widget);
   const fields = bubbleEffectiveFieldsLayout(cfg) === "compact" && cfg.bubbleFields.length
-    ? bubbleCompactFieldsHeight(compactLines)
+    ? BUBBLE_FIELDS_COMPACT_PX
     : 0;
   return bubbleHeightPx(widget) + fields;
 }
@@ -3390,7 +3376,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
       /* Une ligne par PERSONNE retenue — le widget ne montre pas des tâches,
          son dimensionnement ne se déduit donc pas du filtre de tâches. */
       const cfg = normalizeStaffingWidget(w);
-      const rows = Math.max(1, staffingVisibleMembers(ctx.teamMembers, cfg.staffingMembers).length);
+      const rows = Math.max(1, staffingVisibleMembers(ctx.teamMembers, cfg.staffingMembers, cfg.staffingExtraMembers).length);
       targetHPx = 40 /* barre de navigation */ + 28 /* en-tête des jours */
         + rows * 34 + 22 /* pied « personnes affectées » */ + 26 /* légende */ + FRAME_CHROME_PX;
     } else if (w.type === "list") {
@@ -5808,18 +5794,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      depuis un mémo antérieur lève une ReferenceError de zone morte — le même
      piège que `bubbleMacroReorder` avant elle. */
   const bubbleTrackPx = trackWidth || 420;
-  /* Nombre de lignes du bandeau condensé, MESURÉ (#122). Le bandeau passe à la
-     ligne quand les champs ne tiennent pas, et toutes les bulles adoptent
-     ensuite la plus haute : une hauteur qui suivrait chaque bulle donnerait des
-     lignes de diagramme toutes différentes, et en couloirs une hauteur de ligne
-     impossible à poser.
 
-     On compte les lignes par les `offsetTop` DISTINCTS des pastilles, et non
-     par la hauteur du bandeau : celle-ci est justement ce qu'on lui impose, et
-     la mesurer reviendrait à se mesurer soi-même — la hauteur ne pourrait alors
-     que croître, jamais revenir. */
-  const compactFieldNodes = useRef({});
-  const [compactFieldLines, setCompactFieldLines] = useState(1);
   const measureRows = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -5912,40 +5887,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     observer.observe(track);
     return () => observer.disconnect();
   }, [visibleRows, fieldsLayout]);
-
-  /* Combien de lignes le bandeau condensé occupe, sur la bulle qui en demande
-     le plus (#122). Mesuré après chaque rendu qui peut changer le pliage :
-     largeur de piste, champs choisis, disposition, lignes affichées. */
-  useEffect(() => {
-    if (!bubbleMode || fieldsLayout !== "compact") {
-      setCompactFieldLines((prev) => (prev === 1 ? prev : 1));
-      return undefined;
-    }
-    const id = requestAnimationFrame(() => {
-      let lines = 1;
-      Object.values(compactFieldNodes.current).forEach((el) => {
-        if (!el || !el.isConnected) return;
-        const tops = new Set();
-        el.querySelectorAll(":scope > *").forEach((child) => {
-          const rect = child.getBoundingClientRect();
-          if (!rect.width && !rect.height) return;
-          tops.add(Math.round(child.offsetTop));
-        });
-        lines = Math.max(lines, tops.size || 1);
-      });
-      const next = Math.min(BUBBLE_FIELDS_COMPACT_LINES_MAX, lines);
-      setCompactFieldLines((prev) => (prev === next ? prev : next));
-    });
-    return () => cancelAnimationFrame(id);
-    /* `compactFieldLines` est DANS les dépendances, et c'est voulu : la première
-       mesure tombe avant que les bandeaux aient leur hauteur définitive, et
-       s'arrêter là figeait le widget sur un compte trop bas — des champs
-       restaient coupés alors que le pliage en demandait plus. Le compte de
-       lignes ne dépendant pas de la hauteur appliquée (un `offsetTop` continue
-       d'avancer sous l'écrêtage), la boucle converge en deux passes et s'arrête
-       d'elle-même : la mesure suivante rend la même valeur, et l'état ne change
-       plus. */
-  }, [bubbleMode, fieldsLayout, trackWidth, rowFieldsKey, visibleRows, bubblePacked, compactFieldLines]);
 
   // Largeur RÉELLEMENT occupée par les champs d'une ligne. `scrollWidth` ne
   // sert à rien ici : la colonne est en overflow visible, elle ne défile pas et
@@ -6828,7 +6769,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       return (
         <div
           className="lp-bubble-fields is-compact"
-          ref={(el) => { if (el) compactFieldNodes.current[t.id] = el; else delete compactFieldNodes.current[t.id]; }}
           style={{
             borderColor: color || "var(--border)",
             background: color ? `color-mix(in srgb, ${color} 8%, var(--surface))` : "var(--surface)",
@@ -7196,7 +7136,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
      position absolue, donc rien ne la fait grandir. Elle vaut exactement la
      bulle plus, s'il y a lieu, le bandeau condensé — d'où l'obligation, en
      couloirs, que les champs prennent cette forme-là (bubbleEffectiveFieldsLayout). */
-  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget, compactFieldLines) + "px" };
+  const bubbleLaneStyle = { minHeight: bubbleLaneHeightPx(widget) + "px" };
 
   const BubbleSlot = (t, laneRoom) => {
     const geo = bubbleTaskBox(t);
@@ -7534,7 +7474,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
     const hoverCmp = comparisonByTask.get(hover.t.id) || null;
     const cmpLines = hoverCmp ? miniGanttComparisonTooltipLines(hoverCmp, fmtShort) : [];
     const tipW = hoverCmp ? 236 : 190;
-    const tipH = (hover.t.milestone ? 54 : 62) + cmpLines.length * 15;
+    const tipFields = bubbleMode ? rowFields.length : 0;
+    // Deux pastilles par ligne environ, plus le filet de séparation : sans ce
+    // supplément, une infobulle ouverte en bas d'écran se retournerait trop tard
+    // et sortirait de la fenêtre.
+    const tipH = (hover.t.milestone ? 54 : 62) + cmpLines.length * 15
+      + (tipFields ? 12 + Math.ceil(tipFields / 2) * 17 : 0);
     const gap = 8;
     const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
     const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
@@ -7573,6 +7518,17 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
                   {line.value}
                 </span>
               </div>
+            ))}
+          </div>
+        )}
+        {/* Les champs choisis, en entier (#122). Le bandeau sous la bulle tient
+            sur une ligne et coupe ce qui dépasse : c'est ici que la liste
+            complète se lit, sans coûter de hauteur au diagramme. Les valeurs
+            restent celles de `FieldValue`, comme partout ailleurs. */}
+        {bubbleMode && rowFields.length > 0 && (
+          <div className="lp-widget-minigantt-tooltip-fields">
+            {rowFields.map((f) => (
+              <FieldValue key={f} fieldKey={f} task={hover.t} ctx={ctx} />
             ))}
           </div>
         )}
@@ -7641,15 +7597,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
   // Jalons de configuration et annotations : une bande dédiée sous les titres
   // de bloc, avec le même placement en lignes que ces derniers.
-  /* En mode bulles, la bande de repères devient un COULOIR NOMMÉ (#93) : c'est
-     là que les jalons se rangent, et on ne choisit plus de tâche à qui les
-     rattacher. La légende est posée sur sa propre ligne, pleine largeur : lui
-     donner une colonne à gauche décalerait la piste de cette bande, et toutes
-     les couches superposées avec elle. */
-  const bubbleStripCaption = (!bubbleMode || !stripShapes.length) ? null : (
-    <div className="lp-bubble-lane-caption">Jalons</div>
-  );
-
   const stripHeader = !stripShapes.length ? null : (
     <div className="lp-widget-minigantt-strip" style={{ height: stripLaneCount * MINIGANTT_STRIP_LANE_H }}>
       <span className="lp-widget-minigantt-phases-spacer" />
@@ -7784,9 +7731,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
 
 
   const bubbleSpanLane = (!bubbleMode || !bubbleSpanRows.length) ? null : (
-    <>
-      <div className="lp-bubble-lane-caption">Annotations horizontales</div>
-      <div className="lp-widget-minigantt-rows lp-bubble-annot-rows">
+    <div className="lp-widget-minigantt-rows lp-bubble-annot-rows">
         {bubbleSpanRows.map(({ annot, leftPct, widthPct }) => (
           <div className="lp-widget-minigantt-row lp-bubble-annot-row" key={"annot-" + annot.id}>
             <div className="lp-widget-minigantt-track">
@@ -7814,9 +7759,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
               </span>
             </div>
           </div>
-        ))}
-      </div>
-    </>
+      ))}
+    </div>
   );
 
   /* Annotations horizontales : au-dessus des barres, comme les cadres — un
@@ -8072,9 +8016,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         position: "relative",
         "--lp-bubble-h": bubbleHeightPx(widget) + "px",
         "--lp-bubble-desc-lines": bubbleCfg.bubbleDescriptionLines,
-        // Hauteur du bandeau condensé, la MÊME pour toutes les bulles du
-        // widget (#122) : mesurée sur celle qui demande le plus de lignes.
-        "--lp-bubble-fields-h": bubbleCompactFieldsHeight(compactFieldLines) + "px",
       }
     /* La colonne d'étiquettes est posée en PIXELS dès qu'elle est mesurée :
        étiquettes, cale de l'axe, cale des bandes de repères et retrait des
@@ -8119,7 +8060,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
         {toolbar}
         <Axis />
         {phasesHeader}
-        {bubbleStripCaption}
         {stripHeader}
         {bubbleSpanLane}
         <div className="lp-widget-minigantt-rows">
@@ -8162,7 +8102,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateT
       {toolbar}
       <Axis />
       {phasesHeader}
-      {bubbleStripCaption}
       {stripHeader}
       {bubbleSpanLane}
       {groups.map((g) => {
@@ -8240,8 +8179,8 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
     [frame, todayIso, cfg.staffingShowWeekends]
   );
   const members = useMemo(
-    () => staffingVisibleMembers(ctx.teamMembers, cfg.staffingMembers),
-    [ctx.teamMembers, cfg.staffingMembers]
+    () => staffingVisibleMembers(ctx.teamMembers, cfg.staffingMembers, cfg.staffingExtraMembers),
+    [ctx.teamMembers, cfg.staffingMembers, cfg.staffingExtraMembers]
   );
   const cells = useMemo(() => staffingByCell(staffing), [staffing]);
 
@@ -8325,8 +8264,8 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
     return (
       <div className="lp-empty">
         {(ctx.teamMembers || []).length === 0
-          ? "Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs."
-          : "Aucune personne retenue : ouvre les réglages du widget pour en choisir."}
+          ? "Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs, ou directement dans les réglages de ce widget."
+          : "Aucune personne retenue : ouvre les réglages du widget pour en choisir, ou pour en ajouter à la main."}
       </div>
     );
   }
@@ -8485,7 +8424,7 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
           return (
             <React.Fragment key={member.name}>
               <div className="lp-cp-person">
-                <span className="lp-cp-avatar" style={{ background: member.color || "var(--text-muted)" }}>
+                <span className="lp-cp-avatar" style={{ background: member.color || staffingMemberColor(member.name) }}>
                   {member.avatarDataUrl
                     ? <IconGlyph icon={member.avatarDataUrl} size={16} />
                     : member.name.split(/\s+/).map((part) => part.charAt(0)).join("").slice(0, 2).toUpperCase()}
@@ -8494,31 +8433,21 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
               </div>
               {days.map((day) => {
                 const ids = cells.get(staffingCellId(member.name, day.iso)) || [];
-                const bands = staffingBands(ids, catalogue, { cellPx });
+                const fill = staffingCellFill(ids, catalogue);
+                const label = staffingCellLabel(fill, cellPx);
                 return (
                   <button
                     type="button"
                     key={day.iso}
-                    className={"lp-cp-cell" + (ids.length ? "" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "")}
+                    className={"lp-cp-cell" + (ids.length ? " is-filled" : " is-empty") + (day.today ? " is-today" : "") + (day.weekend ? " is-weekend" : "")}
+                    style={fill ? { background: fill.background } : undefined}
                     aria-label={member.name + " — " + dayTitle(day.iso) + " — " + (ids.length ? ids.map((id) => (workshopFor(catalogue, id) || {}).name).filter(Boolean).join(", ") : "aucun atelier")}
                     onClick={(e) => openPicker(member.name, day.iso, e)}
                     onMouseEnter={(e) => setHover({ member: member.name, color: member.color, date: day.iso, ids, x: e.clientX + 14, y: e.clientY + 16 })}
                     onMouseMove={(e) => setHover((prev) => (prev ? { ...prev, x: e.clientX + 14, y: e.clientY + 16 } : prev))}
                     onMouseLeave={() => setHover(null)}
                   >
-                    {bands.map((band, i) => (
-                      <span
-                        key={band.id + "-" + i}
-                        className={"lp-cp-band" + (band.more ? " is-more" : "")}
-                        style={band.more ? undefined : {
-                          background: `color-mix(in srgb, ${band.color} 20%, var(--surface))`,
-                          boxShadow: `0 0 0 1px ${band.color} inset`,
-                          color: `color-mix(in srgb, ${band.color} 72%, var(--text-900))`,
-                        }}
-                      >
-                        {band.label}
-                      </span>
-                    ))}
+                    {label && <span className="lp-cp-label">{label}</span>}
                     {ids.length === 0 && <span className="lp-cp-plus" aria-hidden="true">+</span>}
                   </button>
                 );
@@ -10488,6 +10417,7 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
    neuf une grille vide sans rien expliquer. */
 function StaffingDisplayFields({ value, onChange, ctx }) {
   const cfg = normalizeStaffingWidget(value);
+  const [newMember, setNewMember] = useState("");
   const team = (ctx.teamMembers || [])
     .filter((m) => m && String(m.name || "").trim())
     .map((m) => ({ name: String(m.name).trim(), color: m.color || "" }));
@@ -10495,6 +10425,19 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
     const on = cfg.staffingMembers.includes(name);
     onChange({ staffingMembers: on ? cfg.staffingMembers.filter((n) => n !== name) : [...cfg.staffingMembers, name] });
   };
+  /* Une personne AJOUTÉE À LA MAIN n'entre pas dans l'annuaire (#124) : un
+     intérimaire, un sous-traitant, quelqu'un qui n'a pas de compte. L'inscrire
+     dans Réglages › Utilisateurs pour le planifier reviendrait à lui ouvrir
+     Nexora. */
+  const addMember = () => {
+    const name = newMember.trim();
+    if (!name) return;
+    onChange({ staffingExtraMembers: [...cfg.staffingExtraMembers, name] });
+    setNewMember("");
+  };
+  const removeMember = (name) => onChange({
+    staffingExtraMembers: cfg.staffingExtraMembers.filter((n) => n !== name),
+  });
   return (
     <>
       <div className="lp-field" style={{ marginTop: 10 }}>
@@ -10542,6 +10485,36 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
             Tout le monde
           </button>
         )}
+      </div>
+
+      <div className="lp-field" style={{ marginTop: 10 }}>
+        <label>Personnes ajoutées à la main</label>
+        <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: -2, marginBottom: 6 }}>
+          Quelqu'un qui n'a pas de compte Nexora — intérimaire, sous-traitant, renfort. Ces personnes
+          n'existent que dans ce widget, et l'inscrire dans Réglages › Utilisateurs reviendrait à lui
+          ouvrir l'application.
+        </p>
+        {cfg.staffingExtraMembers.map((name) => (
+          <div className="lp-manage-item" key={name}>
+            <span className="lp-workshop-swatch" style={{ background: staffingMemberColor(name), borderRadius: "50%" }} aria-hidden="true" />
+            <span className="lp-manage-name">{name}</span>
+            <button className="lp-icon-btn" onClick={() => removeMember(name)} aria-label={`Retirer ${name}`}>
+              <Trash2 size={15} />
+            </button>
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input
+            type="text"
+            value={newMember}
+            onChange={(e) => setNewMember(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addMember(); } }}
+            placeholder="Ex. Intérim — Sofiane"
+            aria-label="Nom de la personne à ajouter"
+            style={{ flex: "1 1 auto", minWidth: 0 }}
+          />
+          <button type="button" className="lp-btn" onClick={addMember} disabled={!newMember.trim()}>Ajouter</button>
+        </div>
       </div>
 
       <div className="lp-field" style={{ marginTop: 10 }}>
@@ -12250,6 +12223,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.staffingRange = st.staffingRange;
       data.staffingOffset = st.staffingOffset;
       data.staffingMembers = st.staffingMembers;
+      data.staffingExtraMembers = st.staffingExtraMembers;
       data.staffingShowWeekends = st.staffingShowWeekends;
       data.staffingShowLoad = st.staffingShowLoad;
     }

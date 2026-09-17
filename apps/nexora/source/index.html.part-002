@@ -3728,15 +3728,30 @@ function staffingWorkshopUsage(entries, workshopId) {
 // --- Fenêtre affichée --------------------------------------------------------
 
 const STAFFING_RANGES = ["month", "twoWeeks", "week"];
-const STAFFING_MAX_BANDS = 3;
 
 const STAFFING_DEFAULTS = {
   staffingRange: "month",
   staffingMembers: [],
+  staffingExtraMembers: [],
   staffingOffset: 0,
   staffingShowWeekends: true,
   staffingShowLoad: true,
 };
+
+/* Teinte d'une personne qui n'est PAS dans l'annuaire (#124), par hachage de
+   son nom et non par son rang dans la liste : le rang change dès qu'on ajoute
+   quelqu'un au-dessus, et « Karim » changerait de couleur sans avoir bougé.
+   Même principe que la palette de repli des bulles. */
+const STAFFING_PALETTE = [
+  "#4F6AF5", "#22B07D", "#F2A93B", "#8B5CF6", "#0EA5E9",
+  "#D64545", "#EC4899", "#14B8A6", "#6366F1", "#F97316",
+];
+function staffingMemberColor(name) {
+  const text = String(name || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) % 100000007;
+  return STAFFING_PALETTE[hash % STAFFING_PALETTE.length];
+}
 
 function normalizeStaffingRange(value) {
   return STAFFING_RANGES.includes(value) ? value : STAFFING_DEFAULTS.staffingRange;
@@ -3749,18 +3764,47 @@ function normalizeStaffingOffset(value) {
   return Math.max(-24, Math.min(24, Math.round(n)));
 }
 
+/* Noms libres saisis dans le widget : nettoyés, dédoublonnés, ordre conservé. */
+function normalizeStaffingExtraMembers(list) {
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((raw) => {
+    const name = String(raw || "").trim();
+    if (!name || out.includes(name)) return;
+    out.push(name);
+  });
+  return out;
+}
+
 /* Personnes affichées : une sélection PROPRE AU WIDGET, et non l'annuaire.
-   Deux widgets côte à côte suivent ainsi deux équipes différentes. Une
-   sélection vide veut dire « tout le monde » — et non « personne », qui ferait
-   d'un widget neuf une grille vide sans rien expliquer. Une personne
-   sélectionnée puis retirée de l'annuaire disparaît d'elle-même. */
-function staffingVisibleMembers(teamMembers, selected) {
+   Deux widgets côte à côte suivent ainsi deux équipes différentes.
+
+   Deux populations, et c'est voulu (#124) :
+
+   - les utilisateurs ENREGISTRÉS de Nexora, qu'on coche ou non. Une sélection
+     vide veut dire « tout le monde » — et non « personne », qui ferait d'un
+     widget neuf une grille vide sans rien expliquer ;
+   - des personnes AJOUTÉES À LA MAIN dans le widget, autant qu'on veut. Un
+     intérimaire, un sous-traitant, quelqu'un qui n'a pas de compte : les faire
+     entrer dans l'annuaire pour les planifier reviendrait à leur ouvrir
+     Nexora.
+
+   Les secondes viennent après les premières, dans l'ordre de saisie. Un nom
+   libre qui existe déjà dans l'annuaire n'est pas dupliqué : c'est la même
+   personne, et deux lignes pour un seul nom rendraient les affectations
+   indiscernables — elles sont indexées par le nom. */
+function staffingVisibleMembers(teamMembers, selected, extra) {
   const all = (Array.isArray(teamMembers) ? teamMembers : [])
     .filter((m) => m && String(m.name || "").trim())
-    .map((m) => ({ name: String(m.name).trim(), color: typeof m.color === "string" ? m.color : "", avatarDataUrl: m.avatarDataUrl || "" }));
+    .map((m) => ({ name: String(m.name).trim(), color: typeof m.color === "string" ? m.color : "", avatarDataUrl: m.avatarDataUrl || "", registered: true }));
   const wanted = (Array.isArray(selected) ? selected : []).map((n) => String(n));
-  if (!wanted.length) return all;
-  return all.filter((m) => wanted.includes(m.name));
+  const kept = wanted.length ? all.filter((m) => wanted.includes(m.name)) : all;
+  const seen = new Set(kept.map((m) => m.name));
+  normalizeStaffingExtraMembers(extra).forEach((name) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    kept.push({ name, color: staffingMemberColor(name), avatarDataUrl: "", registered: false });
+  });
+  return kept;
 }
 
 function normalizeStaffingWidget(widget) {
@@ -3772,6 +3816,7 @@ function normalizeStaffingWidget(widget) {
     staffingMembers: (Array.isArray(w.staffingMembers) ? w.staffingMembers : [])
       .map((n) => String(n || "").trim())
       .filter((n, i, arr) => n && arr.indexOf(n) === i),
+    staffingExtraMembers: normalizeStaffingExtraMembers(w.staffingExtraMembers),
     staffingShowWeekends: w.staffingShowWeekends !== false,
     staffingShowLoad: w.staffingShowLoad !== false,
   };
@@ -3828,37 +3873,48 @@ function staffingDays(window, todayIso, options) {
 
 // --- Ce que dessine une case -------------------------------------------------
 
-/* Les bandes d'une case : les ateliers du jour se partagent sa largeur, côte à
-   côte. Au-delà de trois, la dernière bande compte le reste — une quatrième ne
-   serait plus qu'un trait de couleur sans nom.
+/* Le remplissage d'une case (#124).
 
-   Un atelier inconnu (supprimé du catalogue) est simplement absent : c'est la
-   même règle que `workshopFor`, et elle vaut aussi pour un magasin qu'une
-   normalisation n'aurait pas encore traversé. */
-function staffingBands(workshopIds, catalogue, options) {
+   Les ateliers du jour se partageaient sa largeur en bandes verticales. Le
+   partage en QUARTIERS de la heat map dit la même chose et le dit mieux : la
+   diagonale saute aux yeux même sur une case de vingt pixels, là où deux bandes
+   de dix pixels ne se distinguaient plus. C'est exactement le
+   `conic-gradient(from 45deg, …)` de la heat map mensuelle — la même technique,
+   pas une variante.
+
+   Un seul atelier : un aplat. Plusieurs : autant de quartiers égaux, dans
+   l'ordre où ils ont été posés. Aucune limite à trois, contrairement aux
+   bandes : quatre quartiers restent quatre quartiers, là où une quatrième bande
+   n'était plus qu'un trait.
+
+   Un atelier inconnu (supprimé du catalogue) n'occupe aucun quartier. */
+function staffingCellFill(workshopIds, catalogue) {
   const list = normalizeWorkshops(catalogue);
   const shops = (Array.isArray(workshopIds) ? workshopIds : [])
     .map((id) => list.find((w) => w.id === String(id)))
     .filter(Boolean);
-  if (!shops.length) return [];
-  const cellPx = Number(options && options.cellPx);
-  const label = (shop, count) => {
-    if (!Number.isFinite(cellPx) || cellPx <= 0) return "";
-    const per = cellPx / count;
-    if (count === 1 && per >= 62) return shop.name;
-    return per >= 22 ? workshopCode(shop.name) : "";
-  };
-  if (shops.length <= STAFFING_MAX_BANDS) {
-    return shops.map((shop) => ({ id: shop.id, name: shop.name, color: shop.color, label: label(shop, shops.length), more: false }));
-  }
-  const shown = shops.slice(0, STAFFING_MAX_BANDS - 1);
-  const bands = shown.map((shop) => ({ id: shop.id, name: shop.name, color: shop.color, label: label(shop, STAFFING_MAX_BANDS), more: false }));
-  /* Le compte se tait lui aussi quand la case est trop étroite : « +2 » coupé
-     en « +; » est pire que rien, et l'infobulle dit de toute façon la liste
-     complète. La bande reste, elle : c'est elle qui montre qu'il y a plus. */
-  const roomForCount = Number.isFinite(cellPx) && cellPx / STAFFING_MAX_BANDS >= 16;
-  bands.push({ id: "more", name: "", color: "", label: roomForCount ? "+" + (shops.length - shown.length) : "", more: true });
-  return bands;
+  if (!shops.length) return null;
+  if (shops.length === 1) return { background: shops[0].color, shops, single: shops[0] };
+  const seg = 360 / shops.length;
+  const stops = shops.map((w, i) => `${w.color} ${i * seg}deg ${(i + 1) * seg}deg`).join(", ");
+  return { background: `conic-gradient(from 45deg, ${stops})`, shops, single: null };
+}
+
+/* Ce qu'une case écrit par-dessus son remplissage.
+
+   Rien, dès qu'il y a plusieurs ateliers : un mot posé sur une case partagée en
+   quartiers chevaucherait deux couleurs et ne se lirait sur aucune. Un seul
+   atelier laisse un aplat uni, et là le nom tient s'il y a la place — le code à
+   deux lettres sinon, rien du tout sur une case de vue mois.
+
+   L'infobulle et la légende nomment de toute façon les ateliers : la case ne
+   porte jamais seule l'information, même muette. */
+function staffingCellLabel(fill, cellPx) {
+  if (!fill || !fill.single) return "";
+  const px = Number(cellPx);
+  if (!Number.isFinite(px) || px <= 0) return "";
+  if (px >= 62) return fill.single.name;
+  return px >= 22 ? workshopCode(fill.single.name) : "";
 }
 
 /* Charge d'une personne sur la fenêtre : le nombre de POSTES, et non de jours.

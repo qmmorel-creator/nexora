@@ -71,9 +71,6 @@ const {
   BUBBLE_FIELDS_LAYOUTS,
   BUBBLE_FIELDS_COMPACT_PX,
   BUBBLE_LANE_GAP_PX,
-  BUBBLE_FIELDS_COMPACT_LINE_PX,
-  BUBBLE_FIELDS_COMPACT_LINES_MAX,
-  bubbleCompactFieldsHeight,
   bubbleLaneDateRoom,
 } = extract(
   "// === NEXORA:BUBBLES:START ===",
@@ -94,8 +91,7 @@ const {
     "bubbleLaneRows", "bubbleLaneHeightPx", "bubbleEffectiveFieldsLayout",
     "normalizeBubbleLayout", "BUBBLE_LAYOUTS", "BUBBLE_FIELDS_LAYOUTS",
     "BUBBLE_FIELDS_COMPACT_PX", "BUBBLE_LANE_GAP_PX",
-    "BUBBLE_FIELDS_COMPACT_LINE_PX", "BUBBLE_FIELDS_COMPACT_LINES_MAX",
-    "bubbleCompactFieldsHeight", "bubbleLaneDateRoom",
+    "bubbleLaneDateRoom",
   ],
 );
 
@@ -420,7 +416,7 @@ test("la hauteur de bulle n'a qu'une source : le rendu et l'auto-dimensionnement
      bandeau condensé compris (#120, #122). Elle n'ajoute rien à la hauteur de
      la bulle : elle la relit. */
   assert.match(html, /const laneH = bubbleLaneHeightPx\(w\);/);
-  assert.match(html, /function bubbleLaneHeightPx\(widget, compactLines\) \{[\s\S]*?return bubbleHeightPx\(widget\) \+ fields;/);
+  assert.match(html, /function bubbleLaneHeightPx\(widget\) \{[\s\S]*?return bubbleHeightPx\(widget\) \+ fields;/);
   // Aucun des deux ne recopie les nombres : c'était le piège d'un widget qui se
   // redimensionne à une hauteur qui n'est pas celle qu'il dessine.
   assert.doesNotMatch(html, /bubbleSize === "compact" \? 34/);
@@ -688,9 +684,8 @@ test("le bandeau condensé reprend le trait et la couleur de sa bulle", () => {
   /* Il PASSE À LA LIGNE plutôt que de tronquer (#122) : beaucoup de champs et
      il ne restait qu'un « Quentin · À pla… » qui ne disait plus rien. Sa
      hauteur est posée par le rendu, la même pour toutes les bulles du widget. */
-  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*flex-wrap:wrap;/);
-  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*height:var\(--lp-bubble-fields-h, 16px\);/);
-  assert.match(html, /"--lp-bubble-fields-h": bubbleCompactFieldsHeight\(compactFieldLines\) \+ "px"/);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*flex-wrap:nowrap;/);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*height:16px;/);
   // Point médian entre deux valeurs, jamais avant la première.
   assert.match(html, /\.lp-bubble-fields\.is-compact > \* \+ \*::before\{\s*content:"·";/);
   /* Les valeurs restent celles de FieldValue : c'est la feuille de style qui
@@ -755,40 +750,28 @@ test("le partage de l'écart se fait sur la position RÉELLE, pas sur l'ordre re
   assert.equal(bubbleLaneDateRoom(null).size, 0);
 });
 
-test("la hauteur du bandeau condensé suit le nombre de lignes, et se borne", () => {
-  // Une ligne : la hauteur d'origine, au pixel près — un widget qui tient sur
-  // une ligne ne bouge pas.
-  assert.equal(bubbleCompactFieldsHeight(1), BUBBLE_FIELDS_COMPACT_PX);
-  assert.equal(bubbleCompactFieldsHeight(2), BUBBLE_FIELDS_COMPACT_PX + BUBBLE_FIELDS_COMPACT_LINE_PX);
-  assert.equal(bubbleCompactFieldsHeight(3), BUBBLE_FIELDS_COMPACT_PX + BUBBLE_FIELDS_COMPACT_LINE_PX * 2);
-  /* Au-delà de quatre lignes, les champs occuperaient plus de place que la
-     bulle et ce ne serait plus un bandeau. */
-  assert.equal(bubbleCompactFieldsHeight(99), bubbleCompactFieldsHeight(BUBBLE_FIELDS_COMPACT_LINES_MAX));
-  // Valeurs absurdes : une ligne, jamais NaN ni zéro.
-  assert.equal(bubbleCompactFieldsHeight(0), BUBBLE_FIELDS_COMPACT_PX);
-  assert.equal(bubbleCompactFieldsHeight(-3), BUBBLE_FIELDS_COMPACT_PX);
-  assert.equal(bubbleCompactFieldsHeight("beaucoup"), BUBBLE_FIELDS_COMPACT_PX);
-  assert.equal(bubbleCompactFieldsHeight(undefined), BUBBLE_FIELDS_COMPACT_PX);
+test("le bandeau condensé tient sur UNE ligne, et l'infobulle dit le reste", () => {
+  /* Il est passé par une version repliée sur plusieurs lignes : elle ne coupait
+     plus rien, mais donnait un pavé de pastilles plus haut que la bulle
+     elle-même (retour de test). On revient à la ligne unique, et c'est
+     l'infobulle qui porte la liste complète — elle a la place, elle ne coûte
+     aucune hauteur, et elle existait déjà. */
+  assert.equal(BUBBLE_FIELDS_COMPACT_PX, 16);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*flex-wrap:nowrap;/);
+  assert.match(html, /\.lp-bubble-fields\.is-compact\{[^}]*height:16px;/);
+  // Plus aucune mesure de pliage, ni variable CSS de hauteur.
+  assert.doesNotMatch(html, /--lp-bubble-fields-h/);
+  assert.doesNotMatch(html, /compactFieldLines/);
+  // L'infobulle, elle, liste les champs choisis — par le formateur partagé.
+  assert.match(html, /className="lp-widget-minigantt-tooltip-fields"/);
+  assert.match(html, /bubbleMode && rowFields\.length > 0 && \(/);
+  assert.match(html, /<FieldValue key=\{f\} fieldKey=\{f\} task=\{hover\.t\} ctx=\{ctx\} \/>/);
 });
 
-test("la hauteur d'une ligne de couloir suit celle du bandeau", () => {
+test("la hauteur d'une ligne de couloir compte le bandeau, d'une ligne", () => {
   const base = BUBBLE_HEIGHT_PX.normal;
-  const w = { bubbleLayout: "lanes", bubbleFields: ["status", "assignee", "end"] };
-  assert.equal(bubbleLaneHeightPx(w, 1), base + bubbleCompactFieldsHeight(1));
-  assert.equal(bubbleLaneHeightPx(w, 3), base + bubbleCompactFieldsHeight(3));
-  // Sans champ, pas de bandeau : le nombre de lignes ne change rien.
-  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: [] }, 3), base);
-});
-
-test("le nombre de lignes du bandeau est MESURÉ, et régularisé pour tout le widget", () => {
-  /* On compte les lignes par les offsetTop DISTINCTS des pastilles, et non par
-     la hauteur du bandeau : celle-ci est justement ce qu'on lui impose, et la
-     mesurer reviendrait à se mesurer soi-même — la hauteur ne pourrait alors
-     que croître, jamais revenir. */
-  assert.match(html, /tops\.add\(Math\.round\(child\.offsetTop\)\);/);
-  assert.doesNotMatch(html, /setCompactFieldLines\([^)]*scrollHeight/);
-  // La plus haute l'emporte, et c'est elle que toutes les bulles adoptent.
-  assert.match(html, /lines = Math\.max\(lines, tops\.size \|\| 1\);/);
+  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: ["status"] }), base + BUBBLE_FIELDS_COMPACT_PX);
+  assert.equal(bubbleLaneHeightPx({ bubbleLayout: "lanes", bubbleFields: [] }), base);
 });
 
 // --- Couloirs réservés des annotations en mode bulles (#93) ----------------
@@ -802,13 +785,11 @@ test("en bulles, les traits quittent les lignes pour leur propre couloir", () =>
   // Un trait par ligne, triés par date de début.
   assert.match(html, /a\.startIdx - b\.startIdx/);
   assert.match(html, /className="lp-widget-minigantt-row lp-bubble-annot-row"/);
-  // Et les deux couloirs sont NOMMÉS.
-  assert.match(html, /<div className="lp-bubble-lane-caption">Jalons<\/div>/);
-  assert.match(html, /<div className="lp-bubble-lane-caption">Annotations horizontales<\/div>/);
-  /* La légende est sur sa propre ligne, pleine largeur : lui donner une colonne
-     à gauche décalerait la piste de ces bandes, et toutes les couches
-     superposées avec elle. */
-  assert.match(html, /\.lp-widget-minigantt\.is-bubbles \.lp-bubble-lane-caption\{/);
+  /* SANS légende textuelle : la bande de repères se reconnaît à ses losanges et
+     un trait à ses bouts. Deux lignes de capitales pour le redire encombraient
+     le haut du diagramme sans rien apprendre (retour de test). */
+  assert.doesNotMatch(html, /lp-bubble-lane-caption/);
+  assert.doesNotMatch(html, />Annotations horizontales</);
 });
 
 // --- Blocs temporels et pied de réserve (#113) -----------------------------

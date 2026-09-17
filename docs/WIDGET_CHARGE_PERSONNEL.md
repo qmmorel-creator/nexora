@@ -74,29 +74,34 @@ catalogue pour que le repère reste visible : ici, remplacer silencieusement un
 atelier supprimé par « Usine » écrirait une affectation que personne n'a
 demandée. `workshopFor` retourne donc `null`, et la bande disparaît.
 
-## La case : des bandes côte à côte
+## La case : les quartiers de la heat map
 
-Les ateliers du jour **se partagent** la case, comme les colonnes d'un
-histogramme. Une journée pleine se lit d'un bloc, et deux postes se voient sans
-compter — ce que des pastilles empilées ne diraient pas, trois d'entre elles
-occupant la même hauteur qu'une seule.
+Les ateliers du jour se partagent la case en **quartiers égaux**, par un
+`conic-gradient(from 45deg, …)` — exactement la technique de la heat map
+mensuelle, pas une variante.
 
-Au-delà de **trois**, la dernière bande compte le reste : une quatrième ne serait
-plus qu'un trait de couleur sans nom.
+Elle est passée par des **bandes verticales**, qui disaient la même chose. Le
+partage en quartiers le dit mieux : la diagonale saute aux yeux même sur une case
+de vingt pixels, là où deux bandes de dix pixels ne se distinguaient plus
+(retour de test).
 
-### Ce qu'une bande écrit dépend de la largeur MESURÉE
+Conséquence agréable : **aucune limite**. Les bandes s'arrêtaient à trois, une
+quatrième n'étant plus qu'un trait ; quatre quartiers restent quatre quartiers.
 
-Un `ResizeObserver` suit la grille, et `staffingBands` reçoit la largeur réelle
-d'une case :
+### Ce que la case écrit dépend de la largeur MESURÉE
 
-| Place par bande | Ce qui s'écrit |
+Un `ResizeObserver` suit la grille, et `staffingCellLabel` reçoit la largeur
+réelle d'une case :
+
+| Cas | Ce qui s'écrit |
 |---|---|
-| ≥ 62 px, un seul atelier | le nom entier — « Chantier » |
-| ≥ 22 px | le code à deux lettres — « CH » |
-| en dessous | rien : la couleur, et l'infobulle prend le relais |
+| un seul atelier, ≥ 62 px | le nom entier — « Chantier » |
+| un seul atelier, ≥ 22 px | le code à deux lettres — « CH » |
+| un seul atelier, en dessous | rien : la couleur, et l'infobulle prend le relais |
+| **plusieurs ateliers** | rien, quelle que soit la place |
 
-Le compte `+n` se tait à la même enseigne : « +2 » coupé en « +; » est pire que
-rien, et la bande reste — c'est elle qui montre qu'il y a plus.
+Un mot posé sur une case partagée en quartiers chevaucherait deux couleurs et ne
+se lirait sur aucune. Le libellé est donc réservé à l'aplat.
 
 Le code court est **dérivé du nom** (`workshopCode`), jamais saisi à part : un
 atelier renommé change de code sans que personne ait à y penser.
@@ -120,12 +125,26 @@ L'option « afficher les week-ends » ne fait que masquer les colonnes — jamai
 affectations, qui survivent au masquage et reparaissent dans une autre
 granularité.
 
-## Les personnes affichées
+## Les personnes affichées : deux populations
 
 **Sélection propre au widget**, et c'est le point : deux widgets côte à côte
-suivent deux équipes différentes. Aucune personne cochée veut dire **tout le
-monde** — et non « personne », qui ferait d'un widget neuf une grille vide sans
-rien expliquer. Une personne retirée de l'annuaire disparaît d'elle-même.
+suivent deux équipes différentes.
+
+- Les **utilisateurs enregistrés** de Nexora, qu'on coche ou non. Aucune coche
+  veut dire **tout le monde** — et non « personne », qui ferait d'un widget neuf
+  une grille vide sans rien expliquer. Une personne retirée de l'annuaire
+  disparaît d'elle-même.
+- Des personnes **ajoutées à la main** dans le widget, autant qu'on veut : un
+  intérimaire, un sous-traitant, un renfort. Les faire entrer dans l'annuaire
+  pour les planifier reviendrait à leur ouvrir Nexora.
+
+Les secondes viennent après les premières, dans l'ordre de saisie, et reçoivent
+une couleur **par hachage de leur nom** — jamais par leur rang, qui change dès
+qu'on ajoute quelqu'un au-dessus.
+
+Un nom libre qui existe déjà dans l'annuaire n'est **pas dupliqué** : c'est la
+même personne, et deux lignes pour un seul nom rendraient ses affectations
+indiscernables, puisqu'elles sont indexées par le nom.
 
 ## Deux totaux, et ils ne comptent pas la même chose
 

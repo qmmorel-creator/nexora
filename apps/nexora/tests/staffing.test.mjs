@@ -26,9 +26,10 @@ const EXPORTS = [
   "WORKSHOP_SEED", "normalizeWorkshops", "workshopFor", "workshopCode",
   "staffingCellId", "normalizeStaffingEntries", "staffingByCell", "staffingCellWorkshops",
   "staffingSetCell", "staffingWorkshopUsage",
-  "STAFFING_RANGES", "STAFFING_DEFAULTS", "STAFFING_MAX_BANDS",
+  "STAFFING_RANGES", "STAFFING_DEFAULTS",
   "normalizeStaffingRange", "normalizeStaffingOffset", "normalizeStaffingWidget",
-  "staffingVisibleMembers", "staffingWindow", "staffingDays", "staffingBands",
+  "staffingVisibleMembers", "staffingWindow", "staffingDays",
+  "staffingCellFill", "staffingCellLabel", "staffingMemberColor", "normalizeStaffingExtraMembers",
   "staffingMemberLoad", "staffingDayCount", "staffingPickerGroups",
 ];
 
@@ -36,9 +37,10 @@ const {
   WORKSHOP_SEED, normalizeWorkshops, workshopFor, workshopCode,
   staffingCellId, normalizeStaffingEntries, staffingByCell, staffingCellWorkshops,
   staffingSetCell, staffingWorkshopUsage,
-  STAFFING_RANGES, STAFFING_DEFAULTS, STAFFING_MAX_BANDS,
+  STAFFING_RANGES, STAFFING_DEFAULTS,
   normalizeStaffingRange, normalizeStaffingOffset, normalizeStaffingWidget,
-  staffingVisibleMembers, staffingWindow, staffingDays, staffingBands,
+  staffingVisibleMembers, staffingWindow, staffingDays,
+  staffingCellFill, staffingCellLabel, staffingMemberColor, normalizeStaffingExtraMembers,
   staffingMemberLoad, staffingDayCount, staffingPickerGroups,
 } = vm.runInThisContext(
   `(function () {\n`
@@ -233,44 +235,47 @@ test("une fenêtre sans dates valables ne fabrique aucune colonne", () => {
 
 // --- Ce que dessine une case -------------------------------------------------
 
-test("les ateliers d'un jour se partagent la case, trois au plus", () => {
-  assert.equal(STAFFING_MAX_BANDS, 3);
-  const trois = staffingBands([USINE, BUREAU, CHANTIER], WORKSHOP_SEED, { cellPx: 120 });
-  assert.equal(trois.length, 3);
-  assert.ok(trois.every((b) => !b.more));
-  // Au-delà : deux bandes, et la dernière compte le reste.
-  const cinq = staffingBands([USINE, BUREAU, CHANTIER, ATELIER, FORMATION], WORKSHOP_SEED, { cellPx: 120 });
-  assert.equal(cinq.length, 3);
-  assert.deepEqual(cinq.map((b) => b.more), [false, false, true]);
-  assert.equal(cinq[2].label, "+3");
-  /* En vue mois, le compte se tait comme les autres : « +3 » coupé en « +; »
-     est pire que rien. La bande reste, elle — c'est elle qui montre qu'il y a
-     plus — et l'infobulle donne la liste complète. */
-  const serre = staffingBands([USINE, BUREAU, CHANTIER, ATELIER, FORMATION], WORKSHOP_SEED, { cellPx: 20 });
-  assert.equal(serre.length, 3);
-  assert.equal(serre[2].more, true);
-  assert.equal(serre[2].label, "");
+test("un seul atelier remplit la case d'un aplat, plusieurs la partagent en quartiers", () => {
+  /* C'est la technique de la heat map mensuelle, pas une variante : la
+     diagonale saute aux yeux même sur une case de vingt pixels, là où deux
+     bandes de dix pixels ne se distinguaient plus. */
+  const seul = staffingCellFill([CHANTIER], WORKSHOP_SEED);
+  assert.equal(seul.background, WORKSHOP_SEED[2].color, "un aplat, pas un dégradé à une couleur");
+  assert.equal(seul.single.name, "Chantier");
+
+  const deux = staffingCellFill([USINE, CHANTIER], WORKSHOP_SEED);
+  assert.match(deux.background, /^conic-gradient\(from 45deg, /);
+  assert.ok(deux.background.includes("0deg 180deg"), "deux quartiers égaux");
+  assert.ok(deux.background.includes("180deg 360deg"));
+  assert.equal(deux.single, null, "partagée : plus de libellé possible");
+
+  // Aucune limite à trois, contrairement aux bandes : quatre quartiers restent
+  // quatre quartiers, là où une quatrième bande n'était plus qu'un trait.
+  const quatre = staffingCellFill([USINE, BUREAU, CHANTIER, ATELIER], WORKSHOP_SEED);
+  assert.equal((quatre.background.match(/deg /g) || []).length, 4);
+  assert.equal(quatre.shops.length, 4);
 });
 
-test("une bande ne porte un texte que si elle a la place", () => {
-  // Une case large et un seul atelier : le nom en entier.
-  assert.equal(staffingBands([CHANTIER], WORKSHOP_SEED, { cellPx: 118 })[0].label, "Chantier");
-  // Plus étroite : le code court.
-  assert.equal(staffingBands([CHANTIER], WORKSHOP_SEED, { cellPx: 40 })[0].label, "CH");
-  // Deux ateliers dans 40 px : 20 px chacun, plus de place pour rien.
-  assert.deepEqual(staffingBands([CHANTIER, USINE], WORKSHOP_SEED, { cellPx: 40 }).map((b) => b.label), ["", ""]);
-  // Vue mois, colonnes de 16 px : la couleur seule, et l'infobulle prend le relais.
-  assert.equal(staffingBands([CHANTIER], WORKSHOP_SEED, { cellPx: 16 })[0].label, "");
+test("un atelier inconnu n'occupe aucun quartier", () => {
+  assert.equal(staffingCellFill(["ws-supprime"], WORKSHOP_SEED), null);
+  assert.equal(staffingCellFill([], WORKSHOP_SEED), null);
+  const fill = staffingCellFill([USINE, "ws-supprime"], WORKSHOP_SEED);
+  assert.equal(fill.shops.length, 1);
+  assert.equal(fill.background, WORKSHOP_SEED[0].color, "une seule couleur reste : c'est un aplat");
+});
+
+test("une case ne porte un libellé que seule et au large", () => {
+  const seul = staffingCellFill([CHANTIER], WORKSHOP_SEED);
+  assert.equal(staffingCellLabel(seul, 118), "Chantier");
+  assert.equal(staffingCellLabel(seul, 40), "CH");
+  // Vue mois : la couleur seule, et l'infobulle prend le relais.
+  assert.equal(staffingCellLabel(seul, 16), "");
   // Sans mesure de piste (premier rendu), on n'invente pas de texte.
-  assert.equal(staffingBands([CHANTIER], WORKSHOP_SEED, {})[0].label, "");
-});
-
-test("un atelier inconnu n'occupe aucune bande", () => {
-  assert.deepEqual(staffingBands(["ws-supprime"], WORKSHOP_SEED, { cellPx: 100 }), []);
-  const bands = staffingBands([USINE, "ws-supprime"], WORKSHOP_SEED, { cellPx: 100 });
-  assert.equal(bands.length, 1);
-  assert.equal(bands[0].name, "Usine");
-  assert.deepEqual(staffingBands([], WORKSHOP_SEED, { cellPx: 100 }), []);
+  assert.equal(staffingCellLabel(seul, 0), "");
+  /* Partagée en quartiers : rien. Un mot posé là chevaucherait deux couleurs et
+     ne se lirait sur aucune. */
+  assert.equal(staffingCellLabel(staffingCellFill([USINE, CHANTIER], WORKSHOP_SEED), 200), "");
+  assert.equal(staffingCellLabel(null, 200), "");
 });
 
 // --- Totaux ------------------------------------------------------------------
@@ -307,6 +312,40 @@ test("la sélection de personnes est propre au widget, et vide veut dire tout le
   // Une personne retirée de l'annuaire disparaît d'elle-même du widget.
   assert.deepEqual(staffingVisibleMembers(team, ["Vincent", "Parti"]).map((m) => m.name), ["Vincent"]);
   assert.deepEqual(staffingVisibleMembers([], ["Vincent"]), []);
+});
+
+test("des personnes s'ajoutent À LA MAIN, en plus de l'annuaire", () => {
+  /* Un intérimaire, un sous-traitant, quelqu'un qui n'a pas de compte : les
+     faire entrer dans l'annuaire pour les planifier reviendrait à leur ouvrir
+     Nexora (#124). */
+  const team = [{ name: "Maïa", color: "#111111" }, { name: "Vincent" }];
+  const vus = staffingVisibleMembers(team, ["Vincent"], ["Sofiane", "Renfort 2"]);
+  assert.deepEqual(vus.map((m) => m.name), ["Vincent", "Sofiane", "Renfort 2"], "les libres suivent, dans l'ordre de saisie");
+  assert.equal(vus[0].registered, true);
+  assert.equal(vus[1].registered, false);
+  assert.ok(vus[1].color, "un nom libre reçoit une couleur, par hachage");
+  // Un nom libre qui existe déjà dans l'annuaire n'est pas dupliqué : c'est la
+  // même personne, et les affectations sont indexées par le nom.
+  assert.deepEqual(staffingVisibleMembers(team, [], ["Maïa"]).map((m) => m.name), ["Maïa", "Vincent"]);
+  // Même chose s'il est écarté par la sélection : on ne le fait pas revenir en
+  // double sous une autre identité.
+  assert.deepEqual(staffingVisibleMembers(team, ["Vincent"], ["Maïa"]).map((m) => m.name), ["Vincent", "Maïa"]);
+  assert.equal(staffingVisibleMembers(team, ["Vincent"], ["Maïa"])[1].registered, false);
+});
+
+test("les noms libres sont nettoyés, dédoublonnés, et gardent leur ordre", () => {
+  assert.deepEqual(normalizeStaffingExtraMembers([" Sofiane ", "Sofiane", "", null, "Renfort"]), ["Sofiane", "Renfort"]);
+  assert.deepEqual(normalizeStaffingExtraMembers(null), []);
+  assert.deepEqual(normalizeStaffingWidget({ staffingExtraMembers: ["A", "A", " B "] }).staffingExtraMembers, ["A", "B"]);
+  assert.deepEqual(normalizeStaffingWidget({}).staffingExtraMembers, []);
+});
+
+test("la couleur d'un nom libre vient de son NOM, pas de son rang", () => {
+  /* Le rang change dès qu'on ajoute quelqu'un au-dessus, et « Karim » changerait
+     de couleur sans avoir bougé. */
+  assert.equal(staffingMemberColor("Sofiane"), staffingMemberColor("Sofiane"));
+  assert.match(staffingMemberColor("Sofiane"), /^#[0-9A-Fa-f]{6}$/);
+  assert.match(staffingMemberColor(""), /^#[0-9A-Fa-f]{6}$/);
 });
 
 test("les réglages du widget se normalisent sans rien perdre d'inconnu", () => {
