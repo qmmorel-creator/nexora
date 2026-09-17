@@ -9,6 +9,11 @@ sans jamais modifier les tâches :
   hauteur utile de la zone graphique, borné par deux limites verticales ;
 - **encadré** — un cadre qui met en évidence une ou plusieurs tâches.
 
+Le Mini-Gantt en ajoute trois qui lui sont propres — **jalon**, **annotation**
+(une bulle courte ancrée à une date, une tâche, un jalon ou un risque) et
+**annotation horizontale** (un trait d'une date à une autre, à la hauteur d'une
+tâche) — décrites plus bas.
+
 ## Où c'est stocké
 
 Les annotations appartiennent à la **configuration de l'affichage**, jamais aux
@@ -60,6 +65,7 @@ type GanttAnnotations = {
   // Propres au Mini-Gantt :
   milestones?: MiniGanttMilestone[];
   notes?: MiniGanttNote[];
+  spans?: MiniGanttSpan[];
 };
 
 // Les risques de délai NE sont pas ici : ils appartiennent à la tâche.
@@ -316,8 +322,15 @@ type TemporalBlock = { /* … */ kind?: "phase" | "decision" };  // fenêtre de 
 
 type MiniGanttMilestone = {
   id: string; title: string; date: string;
-  type: "standard" | "decision" | "contractual" | "delivery" | "commissioning";
-  color?: string; taskId?: string | null;   // un jalon peut n'être rattaché à rien
+  type: string;        // identifiant d'un type du catalogue (Réglages)
+  color?: string;      // vide = celle du type
+  taskId?: string | null;   // un jalon peut n'être rattaché à rien
+};
+
+type MilestoneType = {   // Réglages > Types de jalon, clé nexora:milestoneTypes
+  id: string; name: string;
+  symbol: string;      // une clé de MILESTONE_SYMBOLS
+  color: string;
 };
 
 type MiniGanttTaskRisk = {   // stocké dans task.delayRisks (sans taskId)
@@ -333,7 +346,134 @@ type MiniGanttNote = {
   id: string; title: string; text?: string;
   anchor: { kind: "task" | "risk" | "milestone" | "date"; id?: string | null; date?: string | null };
 };
+
+type MiniGanttSpan = {          // annotation horizontale (#93)
+  id: string;
+  label?: string;               // texte libre, facultatif
+  startDate: string;            // AAAA-MM-JJ
+  endDate: string;              // AAAA-MM-JJ, >= startDate
+  taskId: string;               // donne l'emplacement en Y, et RIEN d'autre
+  color?: string;               // défaut #0EA5E9
+  borderStyle?: "dashed" | "solid";
+  thickness?: number;           // 0,5 à 6 px, défaut 2
+  opacity?: number;             // 10 à 100 %, défaut 100
+  position?: "above" | "center" | "below";   // défaut center
+  capStart?: SpanCap;           // bout gauche, défaut circle
+  capEnd?: SpanCap;             // bout droit, défaut circle
+};
+
+type SpanCap = "circle" | "dot" | "square" | "diamond" | "arrow" | "bar" | "none";
 ```
+
+## Annotations horizontales — Mini-Gantt uniquement
+
+Entre le bloc temporel — toute la hauteur du diagramme — et le jalon — un point
+sur une date —, il manquait l'objet intermédiaire : un trait qui court d'une
+date à une autre, **à la hauteur d'une tâche**, avec un petit rond à chaque bout
+et un texte libre.
+
+La tâche de rattachement ne sert **qu'à** l'emplacement vertical : les dates du
+trait sont les siennes, elles ne suivent jamais celles de la tâche. C'est ce qui
+distingue une annotation horizontale d'un risque de délai, qui prolonge la barre.
+
+Tout se règle comme un bloc temporel : couleur, style de trait, épaisseur,
+opacité — plus la position dans la ligne (au-dessus de la barre, sur elle, en
+dessous).
+
+Géométrie : `miniGanttSpanRows(rows, spans)` donne le Y à partir des lignes
+**mesurées** (`rowRects`), exactement comme les encadrés ; le X se calcule en
+pourcentage de la piste et se borne à la fenêtre affichée, comme une barre. Une
+annotation dont la tâche n'est pas montée — filtrée, groupe replié, hors plafond
+d'affichage — ou dont les deux dates tombent hors de la fenêtre n'est pas
+dessinée : jamais une erreur de rendu.
+
+Le calque (`.lp-widget-minigantt-span-layer`) passe **au-dessus** des barres :
+un trait posé derrière la barre de sa propre ligne serait invisible. Il ne capte
+pas le pointeur — seule l'étiquette est cliquable, et elle rouvre l'éditeur sur
+cette annotation.
+
+### Les bouts
+
+Le rond creux était figé dans le rendu ; il devient un choix, et un choix **par
+extrémité** : rond creux, rond plein, carré, losange, flèche, trait, ou aucun
+bout. Un trait `|———▶` ne dit pas la même chose qu'un trait `●———●`. Le rond
+creux reste la valeur par défaut, donc une annotation posée avant ce réglage ne
+bouge pas.
+
+Comme les symboles de jalon, les bouts sont des tracés SVG dessinés par un seul
+composant (`SpanCapGlyph`), lu par le sélecteur **et** par le diagramme : le bout
+choisi est exactement celui qui apparaît. La flèche est la seule à dépendre du
+côté — elle pointe vers l'extérieur du trait. « Aucun » réserve quand même sa
+place : sans cela, le trait s'allongerait selon les bouts choisis et ne
+couvrirait plus ses dates.
+
+## Types de jalon — un catalogue, dans les Réglages
+
+La liste des types était figée dans le code : cinq types, cinq couleurs, cinq
+formes, impossibles à renommer et impossibles à compléter. Elle est devenue un
+**catalogue réglé dans Réglages > Types de jalon**, comme les statuts et les
+types de tâche — nom, symbole et couleur par type, ajout, suppression,
+réordonnancement. Il vit sous la clé `nexora:milestoneTypes`.
+
+Un jalon enregistre l'**identifiant** de son type. Les cinq identifiants
+historiques (`standard`, `decision`, `contractual`, `delivery`,
+`commissioning`) sont ceux du catalogue de départ : un jalon posé avant ce
+changement garde son type, son nom et sa couleur. Un type supprimé ne casse
+rien — `milestoneTypeFor()` retombe sur le **premier** type du catalogue, et le
+dernier type ne peut pas être supprimé.
+
+La **couleur d'un jalon est facultative** : vide, il prend celle de son type, et
+changer la couleur du type les met tous à jour d'un coup. La normalisation
+remplissait autrefois ce champ avec la couleur figée du type ; elle le rend
+maintenant aux jalons concernés, et seulement à eux — une couleur qui vaut
+exactement celle du type historique n'a pas été choisie, elle a été recopiée.
+
+### Les symboles
+
+`MILESTONE_SYMBOLS` en propose **vingt-huit**, tous distincts : losange, disque,
+anneau, demi-disque, carré, triangle, pentagone, hexagone, octogone, étoiles à
+quatre, cinq et six branches, croix, drapeau, marque-page, bouclier, éclair,
+goutte, flèches, chevron, barre, et leurs variantes creuses.
+
+Ce sont des **tracés SVG** dans une grille de 24×24, et non des icônes d'une
+bibliothèque : le repère mesure neuf pixels dans le diagramme, taille à laquelle
+un trait fin disparaît. Une silhouette pleine, elle, se lit encore. `hollow`
+dessine le contour au lieu du plein, ce qui laisse deux symboles de même
+silhouette rester distincts.
+
+`MilestoneSymbol` est le seul composant qui les dessine : la grille de choix des
+Réglages, le sélecteur de type, le résumé de la ligne dans l'éditeur, le repère
+du Mini-Gantt et celui de la vue Métro l'appellent tous. Ils ne peuvent donc pas
+montrer cinq dessins différents pour le même type. La grille de choix les affiche
+à leur taille de lecture et dans la couleur du type : choisir sur une vignette
+agrandie mène à des repères qu'on ne distingue plus une fois dans le diagramme.
+
+### Les autres sélecteurs
+
+Une option de `SearchableSelect` peut porter un `glyph` — un repère visuel libre
+qui remplace la pastille de couleur dans la liste **et** sur le bouton fermé. Les
+types de jalon, les bouts d'une annotation horizontale, les natures de bloc, les
+ancrages d'une annotation et la gravité d'un risque s'en servent.
+
+Le menu d'un `SearchableSelect` s'ouvre **vers le haut** quand la place manque
+vers le bas dans le cadre qui le rogne (une modale, sinon la fenêtre). Sans cela,
+un sélecteur posé bas dans un formulaire déroulait sa liste hors du cadre : elle
+paraissait vide alors qu'elle était pleine.
+
+## Trait vertical sous un jalon
+
+`widget.miniGanttMilestoneRules` — un booléen à la racine du widget, réglé par
+la case « Prolonger chaque jalon d'annotation par un trait vertical pleine
+hauteur » des réglages d'affichage, donc commun à la fiche du widget et à la vue
+Gantt (c'est le même formulaire).
+
+Activé, chaque jalon prolonge son repère par un trait vertical sur toute la
+hauteur des lignes, à sa couleur. Le calque
+(`.lp-widget-minigantt-rule-layer`) reprend exactement la géométrie de la bande
+des blocs temporels et son `z-index: 0` : le trait passe donc **derrière** les
+lignes (`z-index: 1`), barres et textes compris — il situe, il ne masque pas.
+
+Absent = décoché : un widget enregistré avant ce réglage ne bouge pas d'un pixel.
 
 **Risques** — ils sont portés par la **tâche** (`task.delayRisks`), pas par le
 widget : un même risque apparaît donc dans tous les Mini-Gantt qui affichent
@@ -816,6 +956,25 @@ et l'évalue tel quel : les tests portent sur le code réellement livré dans
 l'interface, sans copie à maintenir en parallèle. `scripts/verify-repository.mjs`
 vérifie que ces sentinelles et le rendu des annotations restent présents dans le
 build.
+
+`apps/nexora/tests/gantt-span-annotations.test.mjs` couvre les annotations
+horizontales et le catalogue des types, depuis les mêmes sentinelles :
+validation (deux dates valides et une tâche, texte facultatif), normalisation
+**idempotente** des réglages et des bouts, placement vertical selon la position
+choisie et dans la ligne de la bonne tâche, mise à l'écart d'une annotation dont
+la tâche n'est pas affichée ; puis, côté catalogue : au moins vingt symboles tous
+distincts (clé et tracé), repli sur le catalogue de départ quand rien n'est
+enregistré, conservation des cinq identifiants historiques, nettoyage d'un type
+sans le dénaturer, et repli d'un jalon dont le type a disparu sur le premier du
+catalogue.
+
+Le contrôle visuel vérifie en plus, sur le rendu réel : le trait posé dans la
+ligne de sa tâche, le trait ignoré quand la tâche n'est pas affichée, le calque
+des traits au-dessus des barres, **deux bouts réellement différents** quand ils
+sont réglés différemment, les traits verticaux de jalon présents uniquement dans
+le widget qui coche le réglage et en `z-index: 0`, et des repères tous distincts
+à l'écran — y compris celui d'un type ajouté dans les Réglages et celui d'un
+jalon dont le type a été supprimé.
 
 
 ## La vue Gantt et le widget : mêmes réglages (#80)
