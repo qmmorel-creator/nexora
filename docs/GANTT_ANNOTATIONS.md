@@ -313,9 +313,20 @@ le Gantt embarqué. L'éditeur est celui du Mini-Gantt, réutilisé tel quel.
 ## Pilotage — Mini-Gantt uniquement
 
 Le Mini-Gantt étend la même clé `widget.ganttAnnotations` avec trois listes, et
-ajoute quatre réglages à la racine du widget (`miniGanttFocus`,
-`miniGanttPresentation`, `miniGanttEmphasis`, `miniGanttWindow`). Le Gantt
-complet ignore ces champs : les deux widgets restent interchangeables.
+ajoute des réglages à la racine du widget (`miniGanttEmphasis`,
+`miniGanttWindow`, `miniGanttShowDependencies`). Le Gantt complet ignore ces
+champs : les deux widgets restent interchangeables.
+
+Les anciens `miniGanttFocus` et `miniGanttPresentation` ont été retirés (#48) :
+un widget enregistré avec l'un des deux actif s'ouvre normalement, sans lire
+ces champs. Le mode Présentation est réapparu depuis (#161), mais sous une
+forme volontairement différente : un état LOCAL au composant, jamais
+enregistré sur le widget ni sur la vue. Il masque la barre d'outils et les
+poignées de glisser (tout le reste du diagramme reste visible et lisible), et
+son bouton de bascule — seul élément qui reste visible en permanence — permet
+toujours d'en ressortir. Comme il ne persiste nulle part, un rechargement de
+page ne peut jamais rouvrir un widget figé dedans, contrairement au défaut qui
+avait fait retirer les deux modes d'origine.
 
 ```ts
 type TemporalBlock = { /* … */ kind?: "phase" | "decision" };  // fenêtre de décision

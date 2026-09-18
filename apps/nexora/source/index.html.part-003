@@ -3066,14 +3066,14 @@ function packWidgets(widgets) {
   });
 }
 
-function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelete, onDuplicate, onAutoSize, onMoveUp, onMoveDown, onHeaderMouseDown, onResizeMouseDown, children, style, dragging, hasHeaderToolbar, className }) {
+function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelete, onDuplicate, onAutoSize, onMoveUp, onMoveDown, onHeaderMouseDown, onResizeMouseDown, children, style, dragging, hasHeaderToolbar, className, onPrint, printing }) {
   const [headerToolbarNode, setHeaderToolbarNode] = useState(null);
   // onMoveUp/onMoveDown ne sont fournis que par la pile mobile (voir
   // DashboardView) : le glisser-déposer souris (onHeaderMouseDown/
   // onResizeMouseDown) reste le mécanisme de réorganisation ≥640px, inchangé.
   const showMoveButtons = onMoveUp !== undefined || onMoveDown !== undefined;
   return (
-    <div className={"lp-widget-card" + (dragging ? " lp-widget-card-dragging" : "") + (className ? " " + className : "")} style={style}>
+    <div className={"lp-widget-card" + (dragging ? " lp-widget-card-dragging" : "") + (printing ? " lp-print-target" : "") + (className ? " " + className : "")} style={style}>
       <div className="lp-widget-head" onPointerDown={onHeaderMouseDown} style={bandColor ? { background: bandColor } : undefined}>
         <span className="lp-drag-handle" title="Glisser pour déplacer"><GripVertical size={13} /></span>
         {titleEmoji && <IconGlyph icon={titleEmoji} size={14} />}
@@ -3086,6 +3086,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
           </span>
         )}
         {onAutoSize && <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onAutoSize} title="Dimensionner automatiquement selon le contenu" style={titleColor ? { color: titleColor } : undefined}><Wand2 size={13} /></button>}
+        {onPrint && <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onPrint} title="Imprimer ce widget" style={titleColor ? { color: titleColor } : undefined}><Printer size={13} /></button>}
         <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onDuplicate} title="Dupliquer ce widget" style={titleColor ? { color: titleColor } : undefined}><Copy size={13} /></button>
         <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onEdit} title="Configurer ce widget" style={titleColor ? { color: titleColor } : undefined}><Settings size={13} /></button>
         <button className="lp-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onDelete} title="Supprimer ce widget" style={titleColor ? { color: titleColor } : undefined}><Trash2 size={13} /></button>
@@ -3100,11 +3101,24 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, onOpenGanttView }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
   const [filterPageTarget, setFilterPageTarget] = useState(null); // page dont le filtre est en cours d'édition
+  // Impression d'un widget seul (#155) : poser la classe `lp-print-target` sur
+  // sa carte, déclencher `window.print()` une fois la classe posée (rAF, sinon
+  // le navigateur imprime avant le prochain rendu), puis relâcher au retour de
+  // l'impression — `afterprint` se déclenche aussi bien après une impression
+  // réelle qu'après un « Annuler » de la boîte de dialogue.
+  const [printWidgetId, setPrintWidgetId] = useState(null);
+  useEffect(() => {
+    if (!printWidgetId) return;
+    const id = requestAnimationFrame(() => window.print());
+    const onAfter = () => setPrintWidgetId(null);
+    window.addEventListener("afterprint", onAfter);
+    return () => { cancelAnimationFrame(id); window.removeEventListener("afterprint", onAfter); };
+  }, [printWidgetId]);
 
   useEffect(() => {
     const onCreateWidgetShortcut = () => setEditingWidget("new");
@@ -3766,6 +3780,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 onDelete={() => removeWidget(w.id)}
                 onDuplicate={() => duplicateWidget(w)}
                 onAutoSize={() => autoSizeWidget(w)}
+                onPrint={() => setPrintWidgetId(w.id)}
+                printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
                 hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedTimeline" || w.type === "embedRadar"}
@@ -3823,6 +3839,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
                     metaBlocks={scopedMetaBlocks}
+                    widgetHeight={w.layout?.h}
+                    onOpenGanttView={onOpenGanttView ? () => onOpenGanttView(widgetFilterFor(w)) : undefined}
+                    pushToast={pushToast}
                   />
                 )}
                 {w.type === "bubbles" && (
@@ -5244,7 +5263,7 @@ function MiniGanttProgressRing({ progress }) {
 // Amplitude du zoom manuel (#180) : 1,65^8 ≈ 26,7 — de quelques jours à
 // plusieurs années sur la même paire de boutons, sans passer par les réglages.
 const MINIGANTT_ZOOM_MAX = 8;
-function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
+function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows, widgetHeight, onOpenGanttView, pushToast }) {
   // Absences (#134) : l'atelier « absence » du catalogue Charge personnel,
   // reconnu par son nom — lecture seule, jamais posé depuis le Gantt.
   const absenceWorkshopId = useMemo(() => staffingAbsenceWorkshopId(ctx.workshops), [ctx.workshops]);
@@ -5334,6 +5353,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
      d'une trame, plutôt qu'un diagramme qui s'ouvre sur une colonne à zéro. */
   const [labelColWidth, setLabelColWidth] = useState(null);
   const [hover, setHover] = useState(null); // { t, x, y }
+  /* Mode Présentation minimal (#161) : un état LOCAL, jamais enregistré sur le
+     widget ou la vue — la leçon du retrait de l'ancien mode (#48) est que rien
+     ne doit pouvoir rester figé dedans après un rechargement, sans bouton pour
+     en sortir. Il masque la barre d'outils et les poignées de glisser ; le
+     bouton qui le bascule reste toujours visible, lui, pour qu'on puisse
+     toujours en sortir. */
+  const [presentationMode, setPresentationMode] = useState(false);
   // Surlignage par la légende du mode bulles : clé de groupe mise en avant, ou
   // null. C'est une mise en avant, jamais un filtre — rien ne disparaît.
   const [bubbleHighlight, setBubbleHighlight] = useState(null);
@@ -5342,15 +5368,27 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
   const showMilestones = widget.showMilestones !== false;
   /* Plafond d'affichage : une TUILE de tableau de bord, haute de quelques
      centimètres, ne peut pas montrer deux cents lignes — d'où ces vingt barres
-     et ces douze jalons. La VUE Gantt, elle, occupe la page entière et n'a
-     aucune raison de s'y tenir : le même plafond y faisait disparaître des
-     tâches qu'on voyait dans le Tableur et dans le Métro, sans le dire, y
-     compris à statut identique (#115). `showAllRows` lève la limite ; il n'est
-     posé que par la vue plein écran, aucun widget enregistré ne change de
-     rendu. */
+     et ces douze jalons, à la hauteur par défaut (4 unités de grille). La VUE
+     Gantt, elle, occupe la page entière et n'a aucune raison de s'y tenir : le
+     même plafond y faisait disparaître des tâches qu'on voyait dans le
+     Tableur et dans le Métro, sans le dire, y compris à statut identique
+     (#115). `showAllRows` lève la limite ; il n'est posé que par la vue plein
+     écran, aucun widget enregistré ne change de rendu.
+
+     Depuis #119 un widget peut faire plusieurs écrans de haut : le plafond
+     fixe n'avait alors plus la justification d'origine (« une tuile haute de
+     quelques centimètres »). Il grandit désormais avec la hauteur RÉELLE du
+     widget (`widgetHeight`, en unités de grille) — 5 barres par unité, le
+     ratio qui redonne exactement 20 à la hauteur par défaut de 4 — sans jamais
+     descendre sous le plafond d'origine pour un widget resté à sa taille de
+     départ ou plus petit. */
   const rowLimits = showAllRows
     ? { bars: Infinity, milestones: Infinity }
-    : { bars: MINIGANTT_WIDGET_MAX_BARS, milestones: MINIGANTT_WIDGET_MAX_MILESTONES };
+    : (() => {
+        const bars = Math.max(MINIGANTT_WIDGET_MAX_BARS, Math.round((Number(widgetHeight) || 4) * 5));
+        const milestones = Math.max(MINIGANTT_WIDGET_MAX_MILESTONES, Math.round(bars * (MINIGANTT_WIDGET_MAX_MILESTONES / MINIGANTT_WIDGET_MAX_BARS)));
+        return { bars, milestones };
+      })();
   const barLimit = rowLimits.bars;
   const milestoneLimit = rowLimits.milestones;
   // Le choix des lignes retenues sous le plafond vit dans miniGanttCapRows :
@@ -5622,11 +5660,59 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         let nd = addDays(d.origEnd, deltaDays);
         if (dayIndex(nd) < dayIndex(d.origStart)) nd = d.origStart;
         onUpdateTask(d.taskId, { end: nd });
+      } else if (d.mode === "move") {
+        // Geste #148 : la barre entière glisse, durée conservée — jamais de
+        // recalcul de fin à partir d'une durée, pour ne pas glisser d'un jour
+        // sur une durée en mois (arrondi) alors que le début, lui, tombe pile.
+        onUpdateTask(d.taskId, { start: addDays(d.origStart, deltaDays), end: addDays(d.origEnd, deltaDays) });
       }
     }
     function onUp() {
       const d = dragStateRef.current;
-      if (d && d.moved) suppressClickRef.current = true;
+      if (d && d.moved) {
+        suppressClickRef.current = true;
+        if (pushToast && d.mode !== "progress") {
+          const { taskId, origStart, origEnd } = d;
+          /* Successeurs à décaler (#153) : seuls "end" et "move" reculent la
+             FIN — c'est elle qui borne le début des tâches qui dépendent de
+             celle-ci. "start" ne la touche jamais (elle est clampée à l'ancienne
+             fin), donc ne peut pas créer ce conflit-là. Cherché dans les tâches
+             du WIDGET (mêmes filtres que ce qu'il affiche) : un successeur que
+             ce widget ne montre pas ne peut de toute façon pas y être décalé. */
+          const newEnd = (d.mode === "end" || d.mode === "move") ? addDays(origEnd, d.lastDelta) : null;
+          const dependents = newEnd
+            ? tasks.filter((x) => x.id !== taskId && Array.isArray(x.dependsOn) && x.dependsOn.includes(taskId) && x.start && dayIndex(x.start) < dayIndex(newEnd))
+            : [];
+          if (dependents.length) {
+            const n = dependents.length;
+            const shifts = dependents.map((dep) => ({ id: dep.id, origStart: dep.start, origEnd: dep.end, deltaDays: dayIndex(newEnd) - dayIndex(dep.start) }));
+            pushToast({
+              message: `${n} tâche${n > 1 ? "s" : ""} dépendante${n > 1 ? "s" : ""} commence${n > 1 ? "nt" : ""} avant la nouvelle fin — décaler pour garder l'ordre ?`,
+              actionLabel: "Décaler",
+              onAction: () => {
+                // Une seule écriture par tâche, durée conservée — jamais
+                // automatique, seulement proposé, et annulable après coup.
+                shifts.forEach((s) => onUpdateTask(s.id, { start: addDays(s.origStart, s.deltaDays), end: addDays(s.origEnd, s.deltaDays) }));
+                pushToast({
+                  message: `${n} tâche${n > 1 ? "s" : ""} décalée${n > 1 ? "s" : ""}.`,
+                  actionLabel: "Annuler",
+                  onAction: () => shifts.forEach((s) => onUpdateTask(s.id, { start: s.origStart, end: s.origEnd })),
+                });
+              },
+            });
+          } else {
+            // Toast d'annulation (#148) : même geste que le Métro
+            // (`origStart`/`origEnd` restaurés en un clic), pour toute date
+            // modifiée par glisser — jamais pour l'avancement, qui n'est pas une
+            // date et se corrige aussi facilement en sens inverse.
+            pushToast({
+              message: "Dates modifiées.",
+              actionLabel: "Annuler",
+              onAction: () => onUpdateTask(taskId, { start: origStart, end: origEnd }),
+            });
+          }
+        }
+      }
       dragStateRef.current = null;
       document.body.style.cursor = "";
     }
@@ -5639,7 +5725,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
       window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp);
       window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); window.removeEventListener("touchcancel", onUp);
     };
-  }, [onUpdateTask]);
+  }, [onUpdateTask, pushToast, tasks]);
 
   // `refEl` est l'élément SUR LEQUEL le geste se mesure, et il n'est pas le
   // même selon le mode :
@@ -5651,7 +5737,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
   // simple fraction du déplacement de la souris : plus la barre était courte
   // par rapport à la fenêtre affichée, plus le pointeur s'éloignait d'elle.
   const startBarDrag = (e, task, mode, refEl) => {
-    if (!onUpdateTask || !refEl) return;
+    if (!onUpdateTask || !refEl || presentationMode) return;
     const touch = e.touches && e.touches[0];
     if (!touch && e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
@@ -5664,7 +5750,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
       dayWidth: (rect.width / span) || 1,
       lastDelta: 0, lastProgress: task.progress || 0, moved: false,
     };
-    document.body.style.cursor = mode === "progress" ? "ew-resize" : (mode === "move-milestone" ? "grabbing" : "ew-resize");
+    document.body.style.cursor = mode === "progress" ? "ew-resize" : (mode === "move-milestone" || mode === "move" ? "grabbing" : "ew-resize");
   };
   const openTaskUnlessDragged = (t) => () => {
     if (suppressClickRef.current) { suppressClickRef.current = false; return; }
@@ -6342,6 +6428,37 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     return map;
   }, [comparisonOn, projTasks, milestoneTasks]);
 
+  /* Barre sommaire par groupe (#151) : étendue (min début → max fin),
+     avancement moyen pondéré par la durée (même fonction que les macro-bulles,
+     `bubbleMacroProgress`), et en mode Comparaison l'écart de fin CUMULÉ du
+     groupe — la somme des écarts de chaque tâche comparée, pas leur moyenne :
+     c'est la dérive totale du groupe qui intéresse en comité, pas une moyenne
+     qui masquerait deux tâches en avance derrière une seule très en retard. */
+  const groupSummaries = useMemo(() => {
+    const map = new Map();
+    macroOrderedGroups.forEach((g) => {
+      const dated = g.tasks.filter((t) => t.start || t.end);
+      if (!dated.length) { map.set(g.key, null); return; }
+      const startIdxOf = (t) => dayIndex(t.milestone ? t.end : (t.start || t.end));
+      const minI = Math.min(...dated.map(startIdxOf));
+      const maxI = Math.max(...dated.map((t) => dayIndex(t.end || t.start)));
+      const cells = dated.map((t) => ({
+        progress: t.milestone ? (isTaskDoneGlobal(t, ctx) ? 100 : 0) : (t.progress || 0),
+        days: Math.max(1, dayIndex(t.end || t.start) - startIdxOf(t) + 1),
+      }));
+      const avgProgress = bubbleMacroProgress(cells);
+      let driftDays = 0, driftCount = 0;
+      if (comparisonOn) {
+        g.tasks.forEach((t) => {
+          const cmp = comparisonByTask.get(t.id);
+          if (cmp) { driftDays += Number(cmp.endDeltaDays) || 0; driftCount += 1; }
+        });
+      }
+      map.set(g.key, { minIdx: minI, maxIdx: maxI, avgProgress, driftDays, driftCount });
+    });
+    return map;
+  }, [macroOrderedGroups, ctx, comparisonOn, comparisonByTask]);
+
   /* La colonne de droite existe-t-elle dans CE widget ? Une seule réponse pour
      l'axe, la bande des titres de bloc, celle des repères, la légende, la
      grille et chaque ligne : sans quoi les uns réservent la gouttière que les
@@ -6366,6 +6483,119 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     left: layerInsetLeft,
     right: fieldsColumnShown ? `calc(${FIELDS_COL_WIDTH}px + 6px)` : 0,
   };
+
+  /* Flèches de dépendance (#146) : un calque au-dessus des barres, entre les
+     tâches réellement VISIBLES (`rowRects` ne contient que celles-là — groupe
+     replié ou hors fenêtre en sont donc naturellement absentes). Coordonnées en
+     PIXELS (via `trackWidth`), pas en pourcentage : un chemin coudé a besoin
+     d'arithmétique entre ses deux extrémités, que deux chaînes "45%" ne
+     permettent pas. Rouge quand la dépendance finit APRÈS que la tâche ne
+     démarre — le seul signal qui compte ici, pas une esthétique. */
+  const showDependencies = widget.miniGanttShowDependencies !== undefined
+    ? !!widget.miniGanttShowDependencies
+    : !!showAllRows;
+  // #166 : lignes fines pour les items de checklist datés, sous chaque barre.
+  const showSubtasks = !!widget.miniGanttShowSubtasks;
+
+  /* Pied d'impression (#155) : titre, période et légende des annotations —
+     masqué à l'écran, affiché uniquement par la règle `@media print`, pour ne
+     JAMAIS dépendre d'un état React qui devrait rester synchronisé avec le
+     déclenchement de `window.print()` par un autre composant (WidgetFrame).
+     Un type de jalon ou un risque dédupliqué par nom : la légende reste une
+     poignée d'entrées même sur un diagramme chargé. */
+  const printLegendItems = useMemo(() => {
+    const items = [];
+    const seen = new Set();
+    configMilestones.forEach((m) => {
+      const type = milestoneTypeFor(milestoneTypes, m.type);
+      const key = "ms:" + (type.name || m.type);
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({ label: type.name || "Jalon", color: type.color });
+    });
+    configRisks.forEach((r) => {
+      const key = "risk:" + (r.title || r.severity || "risque");
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({ label: r.title || "Risque", color: r.color || "#D64545" });
+    });
+    return items;
+  }, [configMilestones, milestoneTypes, configRisks]);
+  const printFooter = (
+    <div className="lp-widget-minigantt-print-footer">
+      <div className="lp-widget-minigantt-print-footer-title">{widget.title || "Gantt"}</div>
+      {!isEmpty && <div className="lp-widget-minigantt-print-footer-period">{fmtShort(minDateStr)} → {fmtShort(maxDateStr)}</div>}
+      {printLegendItems.length > 0 && (
+        <div className="lp-widget-minigantt-print-footer-legend">
+          {printLegendItems.map((it, i) => (
+            <span key={i} className="lp-widget-minigantt-print-footer-legend-item">
+              <span className="lp-widget-minigantt-print-footer-legend-dot" style={{ background: it.color }} />
+              {it.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+  const depLayer = useMemo(() => {
+    if (!showDependencies || bubbleMode || !rowsBand || !trackWidth) return null;
+    const H = rowsBand.height + rowsTail;
+    const W = trackWidth;
+    const xForPx = (idx) => ((idx - minIdx) / span) * W;
+    const items = [];
+    visibleRows.forEach((row) => {
+      const t = tasksById.get(row.id);
+      if (!t || !Array.isArray(t.dependsOn) || !t.dependsOn.length) return;
+      const toRect = rowRects[row.id];
+      if (!toRect) return;
+      const taskStartIdx = dayIndex(t.milestone ? t.end : t.start);
+      t.dependsOn.forEach((depId) => {
+        if (depId === t.id) return;
+        const dep = tasksById.get(depId);
+        const fromRect = rowRects[depId];
+        if (!dep || !fromRect) return;
+        const depEndIdx = dayIndex(dep.end);
+        const x1 = xForPx(depEndIdx), x2 = xForPx(taskStartIdx);
+        const y1 = fromRect.top - rowsBand.top + fromRect.height / 2;
+        const y2 = toRect.top - rowsBand.top + toRect.height / 2;
+        const conflict = depEndIdx > taskStartIdx;
+        const bend = Math.min(10, Math.abs(y2 - y1) / 2 || 8);
+        const dir = y2 > y1 ? 1 : (y2 < y1 ? -1 : 0);
+        const midX = (x1 + x2) / 2;
+        const d = Math.abs(y2 - y1) < 1
+          ? `M ${x1} ${y1} L ${x2 - 6} ${y2}`
+          : `M ${x1} ${y1} L ${midX - bend} ${y1} Q ${midX} ${y1} ${midX} ${y1 + dir * bend} L ${midX} ${y2 - dir * bend} Q ${midX} ${y2} ${midX + bend} ${y2} L ${x2 - 6} ${y2}`;
+        items.push({ key: depId + "->" + t.id, d, conflict });
+      });
+    });
+    if (!items.length) return null;
+    return (
+      <div className="lp-widget-minigantt-deplayer" style={{ ...layerInsets, top: rowsBand.top, height: H }}>
+        <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ overflow: "visible" }}>
+          <defs>
+            <marker id="mg-dep-arrow" markerWidth="6" markerHeight="6" refX="4.5" refY="2" orient="auto">
+              <path d="M0,0 L5,2 L0,4 Z" fill="var(--text-muted)" />
+            </marker>
+            <marker id="mg-dep-arrow-conflict" markerWidth="6" markerHeight="6" refX="4.5" refY="2" orient="auto">
+              <path d="M0,0 L5,2 L0,4 Z" fill="#D64545" />
+            </marker>
+          </defs>
+          {items.map((it) => (
+            <path
+              key={it.key}
+              d={it.d}
+              fill="none"
+              stroke={it.conflict ? "#D64545" : "var(--text-muted)"}
+              strokeWidth={it.conflict ? 1.6 : 1.2}
+              strokeDasharray={it.conflict ? undefined : "3 3"}
+              opacity={it.conflict ? 0.9 : 0.55}
+              markerEnd={`url(#${it.conflict ? "mg-dep-arrow-conflict" : "mg-dep-arrow"})`}
+            />
+          ))}
+        </svg>
+      </div>
+    );
+  }, [showDependencies, bubbleMode, rowsBand, rowsTail, trackWidth, minIdx, span, visibleRows, rowRects, tasksById, layerInsets.left, layerInsets.right]);
 
   const emphasisFor = (taskId) => (emphasisOn ? miniGanttRowEmphasis(taskId, riskSegments, criticalIds) : "none");
 
@@ -6534,6 +6764,21 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         </div>
       )}
     </div>
+  );
+
+  /* Bouton de bascule du mode Présentation (#161) : rendu HORS de `toolbar`
+     ci-dessus, donc jamais masqué avec elle — sans quoi on entrerait dans le
+     mode sans plus aucun moyen d'en sortir. */
+  const presentationToggle = (
+    <button
+      type="button"
+      className={"lp-widget-minigantt-presentation-toggle" + (presentationMode ? " is-active" : "")}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={() => setPresentationMode((v) => !v)}
+      title={presentationMode ? "Quitter le mode Présentation" : "Mode Présentation — masque la barre d'outils, les poignées et les menus"}
+    >
+      <Presentation size={13} />
+    </button>
   );
 
   /* La vue Gantt porte désormais la MÊME barre d'outils que le widget — mode,
@@ -7393,9 +7638,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         </span>
       );
     };
+    // #166 : items de checklist datés, seulement si le réglage les demande —
+    // un widget qui ne l'active pas ne mesure ni ne filtre rien pour rien.
+    const datedSubtasks = showSubtasks ? (t.checklist || []).filter((i) => i.end) : [];
     return (
       <div
-        className={"lp-widget-minigantt-row is-" + emphasisFor(t.id) + (selectedSet.has(t.id) ? " is-selected" : "")}
+        className={"lp-widget-minigantt-row is-" + emphasisFor(t.id) + (selectedSet.has(t.id) ? " is-selected" : "") + (datedSubtasks.length ? " has-subtasks" : "")}
         key={t.id}
         ref={(el) => { if (el) rowNodes.current[t.id] = el; else delete rowNodes.current[t.id]; }}
         onClick={openTaskUnlessDragged(t)}
@@ -7403,6 +7651,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         onMouseMove={(e) => openTip(t, e)}
         onMouseLeave={() => setHover(null)}
       >
+      <div className="lp-widget-minigantt-row-main">
         <RowLabel t={t} proj={proj} />
         <div className="lp-widget-minigantt-track">
           {cmpStrip && (
@@ -7438,7 +7687,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
               aria-hidden="true"
             />
           )}
-          <div className={"lp-widget-minigantt-bar" + (cmp ? " is-compared" : "")} style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}>
+          <div
+            className={"lp-widget-minigantt-bar" + (cmp ? " is-compared" : "")}
+            style={{ left: left + "%", width: width + "%", background: `linear-gradient(${paleBg}, ${paleBg}), var(--surface)` }}
+            title={onUpdateTask ? "Glisser pour déplacer toute la tâche (durée conservée)" : undefined}
+            onMouseDown={onUpdateTask ? (e) => startBarDrag(e, t, "move", e.currentTarget.closest(".lp-widget-minigantt-track")) : undefined}
+            onTouchStart={onUpdateTask ? (e) => startBarDrag(e, t, "move", e.currentTarget.closest(".lp-widget-minigantt-track")) : undefined}
+          >
             {/* Progression visuelle : portion remplie de la couleur pleine du
                 statut/projet/type, sur fond pâle de la même couleur pour le
                 reste de la durée — cohérent avec le diagramme du Mini Gantt. */}
@@ -7493,6 +7748,30 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
           {fieldsLayout === "inline" && <RowFields t={t} anchorPct={left + width} />}
         </div>
         {fieldsLayout === "aligned" && <RowFields t={t} />}
+      </div>
+      {datedSubtasks.length > 0 && (
+        <div className="lp-widget-minigantt-subrows">
+          {datedSubtasks.map((item) => {
+            const idx = dayIndex(item.end);
+            if (idx < minIdx || idx > maxIdx) return null;
+            return (
+              <div className="lp-widget-minigantt-subrow" key={item.id}>
+                <label className="lp-widget-minigantt-sub-label" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={!!item.done}
+                    onChange={(e) => onUpdateTask && onUpdateTask(t.id, { checklist: (t.checklist || []).map((i) => (i.id === item.id ? { ...i, done: e.target.checked } : i)) })}
+                  />
+                  <span className="lp-widget-minigantt-sub-text" title={item.text}>{item.text}</span>
+                </label>
+                <div className="lp-widget-minigantt-track lp-widget-minigantt-subtrack">
+                  <span className="lp-widget-minigantt-sub-marker" style={{ left: `${((idx - minIdx) / span) * 100}%` }} title={fmtShort(item.end)} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       </div>
     );
   };
@@ -8106,7 +8385,8 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
      et sa hauteur de bulle. Rien d'autre ne change dans la mise en page. */
   const rootClass = "lp-widget-minigantt"
     + (bubbleMode ? " is-bubbles size-" + bubbleCfg.bubbleSize : "")
-    + (bubbleMode && !bubbleCfg.bubbleTruncateTitles ? " is-title-full" : "");
+    + (bubbleMode && !bubbleCfg.bubbleTruncateTitles ? " is-title-full" : "")
+    + (presentationMode ? " is-presentation" : "");
   /* Hauteur de bulle et nombre de lignes de description : posés en variables
      CSS sur la racine, depuis `bubbleHeightPx` — la même fonction que celle
      dont l'auto-dimensionnement du widget se sert. */
@@ -8144,7 +8424,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         {hiddenCount} tâche{hiddenCount > 1 ? "s" : ""} {hiddenCount > 1 ? "ne sont pas affichées" : "n'est pas affichée"}
         {showAllRows
           ? " : il leur manque une date de début ou de fin."
-          : ` : ce widget montre au plus ${MINIGANTT_WIDGET_MAX_BARS} barres et ${MINIGANTT_WIDGET_MAX_MILESTONES} jalons, et une tâche sans date de début ou de fin n'a pas de barre. La vue Gantt les affiche toutes.`}
+          : ` : ce widget montre au plus ${rowLimits.bars} barres et ${rowLimits.milestones} jalons, et une tâche sans date de début ou de fin n'a pas de barre.`}
+        {!showAllRows && onOpenGanttView && (
+          <> <button type="button" className="lp-widget-minigantt-hidden-note-link" onClick={onOpenGanttView}>Ouvrir dans la vue Gantt</button>, qui les affiche toutes.</>
+        )}
       </div>
     )
     : null;
@@ -8153,10 +8436,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     return (
       <div className={rootClass} style={rootStyle} ref={rootRef}>
         {viewToolbar}
+        {presentationToggle}
         {bandLayer}
         {milestoneRuleLayer}
         {bubbleMacroLayer}
-        {toolbar}
+        {!presentationMode && toolbar}
         <Axis />
         {phasesHeader}
         {stripHeader}
@@ -8168,10 +8452,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         {rowsTailSpacer}
         {hiddenNote}
         {bandFrameLayer}
+        {depLayer}
         {annotationLayer}
         {spanLayer}
         {bubbleMacroFrameLayer}
         {bubbleLegendBar}
+        {printFooter}
         <Tooltip />
         {annotationModal}
       </div>
@@ -8195,10 +8481,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
   return (
     <div className={rootClass + " lp-widget-minigantt-grouped"} style={rootStyle} ref={rootRef}>
       {viewToolbar}
+      {presentationToggle}
       {bandLayer}
       {milestoneRuleLayer}
       {bubbleMacroLayer}
-      {toolbar}
+      {!presentationMode && toolbar}
       <Axis />
       {phasesHeader}
       {stripHeader}
@@ -8212,6 +8499,35 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
               <span className="lp-widget-minigantt-group-dot" style={{ background: g.color || "var(--text-muted)" }} />
               <span className="lp-widget-minigantt-group-label">{g.label}</span>
               <span className="lp-widget-minigantt-group-count">{g.tasks.length}</span>
+              {(() => {
+                const sum = groupSummaries.get(g.key);
+                if (!sum) return null;
+                const left = pctFor(Math.max(minIdx, sum.minIdx));
+                const right = pctFor(Math.min(maxIdx, sum.maxIdx));
+                const driftLabel = sum.driftCount > 0
+                  ? ` · ${sum.driftDays >= 0 ? "+" : ""}${sum.driftDays} j cumulés (${sum.driftCount} tâche${sum.driftCount > 1 ? "s" : ""} comparée${sum.driftCount > 1 ? "s" : ""})`
+                  : "";
+                return (
+                  <span
+                    className="lp-widget-minigantt-group-summary"
+                    title={`${fmtShort(addDays("2020-01-01", sum.minIdx))} → ${fmtShort(addDays("2020-01-01", sum.maxIdx))} · ${sum.avgProgress}% d'avancement${driftLabel}`}
+                  >
+                    <span className="lp-widget-minigantt-group-summary-track">
+                      <span className="lp-widget-minigantt-group-summary-span" style={{ left, width: `calc(${right} - ${left})`, background: g.color || "var(--text-muted)" }} />
+                      <span className="lp-widget-minigantt-group-summary-fill" style={{ left, width: `calc((${right} - ${left}) * ${sum.avgProgress / 100})`, background: g.color || "var(--text-muted)" }} />
+                    </span>
+                    <span className="lp-widget-minigantt-group-summary-pct">{sum.avgProgress}%</span>
+                    {sum.driftCount > 0 && (
+                      <span
+                        className="lp-widget-minigantt-group-summary-drift"
+                        style={{ color: miniGanttComparisonToneColor(sum.driftDays > 0 ? "late" : sum.driftDays < 0 ? "ahead" : "ontime") }}
+                      >
+                        {sum.driftDays > 0 ? "+" : ""}{sum.driftDays} j
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
             </div>
             {!isCollapsed && (
               <div className="lp-widget-minigantt-rows">
@@ -8225,10 +8541,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
       {rowsTailSpacer}
       {hiddenNote}
       {bandFrameLayer}
+      {depLayer}
       {annotationLayer}
       {spanLayer}
       {bubbleMacroFrameLayer}
       {bubbleLegendBar}
+      {printFooter}
       <Tooltip />
       {annotationModal}
     </div>
@@ -10798,6 +11116,27 @@ function MiniGanttDisplayFields({ value, onChange, ctx, scope }) {
       <label className="lp-checkbox-line">
         <input type="checkbox" checked={value.showMilestones !== false} onChange={(e) => onChange({ showMilestones: e.target.checked })} /> Afficher les jalons (avec leur émoji propre s'ils en ont un)
       </label>
+      {/* #146 : activé par défaut dans la vue Gantt plein écran (une page dédiée
+          en profite pleinement), désactivé par défaut dans un widget de tableau
+          de bord (une tuile dense s'en passe le plus souvent) — `scope` porte
+          exactement cette distinction. */}
+      <label className="lp-checkbox-line">
+        <input
+          type="checkbox"
+          checked={value.miniGanttShowDependencies !== undefined ? !!value.miniGanttShowDependencies : scope === "view"}
+          onChange={(e) => onChange({ miniGanttShowDependencies: e.target.checked })}
+        /> Flèches de dépendance (fin → début, en rouge si la tâche démarre avant que sa dépendance ne finisse)
+      </label>
+      {/* #166 : la checklist porte déjà une date par item (`item.end`, comme le
+          Métro le dessine en bifurcations) — le Mini-Gantt l'ignorait
+          entièrement. Une ligne fine, cochable, par item daté. */}
+      <label className="lp-checkbox-line">
+        <input
+          type="checkbox"
+          checked={!!value.miniGanttShowSubtasks}
+          onChange={(e) => onChange({ miniGanttShowSubtasks: e.target.checked })}
+        /> Sous-tâches datées (une ligne par item de checklist qui porte une date, cochable directement)
+      </label>
       {/* Le trait vertical d'un jalon ne se règle PAS ici : c'est un choix
           propre à chaque repère, dans les Annotations, jalon par jalon (#95).
           Un réglage unique pour tout le diagramme imposait le trait sous tous
@@ -11447,7 +11786,7 @@ function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
   );
 }
 
-function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, toolbarSlot }) {
+function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, toolbarSlot, pushToast }) {
   const widget = normalizeMiniGanttViewPrefs(prefs);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /* Le filtre de la vue s'applique EN PLUS de ceux de la page, jamais à leur
@@ -11472,6 +11811,7 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         metaBlocks={metaBlocks || []}
         toolbarSlot={toolbarSlot}
         onOpenSettings={() => setSettingsOpen(true)}
+        pushToast={pushToast}
       />
       {settingsOpen && <MiniGanttViewSettings prefs={widget} setPrefs={setPrefs} tasks={scoped} ctx={ctx} onClose={() => setSettingsOpen(false)} />}
     </section>
@@ -12469,6 +12809,11 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // Mode Comparaison : propriété absente = mode Standard. Cet interrupteur et
   // le sélecteur rapide de l'en-tête écrivent la MÊME propriété.
   const [miniGanttComparisonEnabled, setMiniGanttComparisonEnabled] = useState(miniGanttComparisonEnabledOn(widget));
+  // #146 : tri-état — `undefined` laisse le réglage au défaut propre à la
+  // portée (activé dans la vue, désactivé dans un widget), un booléen explicite
+  // prime toujours sur ce défaut.
+  const [miniGanttShowDependencies, setMiniGanttShowDependencies] = useState(widget?.miniGanttShowDependencies);
+  const [miniGanttShowSubtasks, setMiniGanttShowSubtasks] = useState(!!widget?.miniGanttShowSubtasks);
   // Ordre des lignes. Absent = « Date de début » croissant, l'ordre historique.
   const [miniGanttSort, setMiniGanttSort] = useState(normalizeMiniGanttSort(widget?.miniGanttSort));
   const [miniGanttSortDir, setMiniGanttSortDir] = useState(normalizeMiniGanttSortDir(widget?.miniGanttSortDir));
@@ -12509,6 +12854,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if ("miniGanttSort" in patch) setMiniGanttSort(patch.miniGanttSort);
     if ("miniGanttSortDir" in patch) setMiniGanttSortDir(patch.miniGanttSortDir);
     if ("miniGanttComparisonEnabled" in patch) setMiniGanttComparisonEnabled(patch.miniGanttComparisonEnabled);
+    if ("miniGanttShowDependencies" in patch) setMiniGanttShowDependencies(patch.miniGanttShowDependencies);
+    if ("miniGanttShowSubtasks" in patch) setMiniGanttShowSubtasks(patch.miniGanttShowSubtasks);
     if ("miniGanttRange" in patch) setMiniGanttRange(normalizeMiniGanttRange(patch.miniGanttRange));
     if ("miniGanttWindow" in patch) {
       setMiniGanttWindowStart(patch.miniGanttWindow?.start || "");
@@ -12768,6 +13115,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "minigantt") {
       data.groupBy = listGroupBy; data.showMilestones = showMilestones; data.colorBy = colorBy; data.miniGanttFields = miniGanttFields; data.miniGanttFieldsLayout = miniGanttFieldsLayout;
       data.miniGanttComparisonEnabled = miniGanttComparisonEnabled;
+      data.miniGanttShowDependencies = miniGanttShowDependencies;
+      data.miniGanttShowSubtasks = miniGanttShowSubtasks;
       data.miniGanttSort = miniGanttSort;
       data.miniGanttSortDir = miniGanttSortDir;
       data.miniGanttRange = normalizeMiniGanttRange(miniGanttRange);
@@ -13699,6 +14048,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             miniGanttRange,
             miniGanttWindow: { start: miniGanttWindowStart, end: miniGanttWindowEnd },
             miniGanttComparisonEnabled,
+            miniGanttShowDependencies,
+            miniGanttShowSubtasks,
           }}
           onChange={applyMiniGanttPatch}
           ctx={ctx}
