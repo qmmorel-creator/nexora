@@ -10204,6 +10204,23 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
   );
 }
 
+// Enregistre un utilisateur EXISTANT en réécrivant `assignee` sur ses tâches si
+// son nom change (#147) — `assignee` est un nom, pas un identifiant (contrat
+// MCP et routines Gmail obligent), donc un renommage sans cette réécriture
+// détache silencieusement toutes ses tâches. Partagé par le gestionnaire de
+// Réglages et le widget Utilisateur (#173) : le même geste doit avoir le même
+// effet des deux endroits.
+function saveTeamMemberEdit({ target, data, setTeamMembers, tasks, setTasks, pushToast }) {
+  const oldName = target.name;
+  const newName = String(data.name || "").trim();
+  if (setTasks && newName && newName !== oldName) {
+    const count = (tasks || []).filter((t) => t.assignee === oldName).length;
+    setTasks((prev) => prev.map((t) => (t.assignee === oldName ? { ...t, assignee: newName } : t)));
+    if (count > 0 && pushToast) pushToast({ message: `${count} tâche${count > 1 ? "s" : ""} réaffectée${count > 1 ? "s" : ""} de « ${oldName} » à « ${newName} ».` });
+  }
+  setTeamMembers((prev) => prev.map((u) => (u.id === target.id ? { ...u, ...data } : u)));
+}
+
 // ============================================================================
 // Table des utilisateurs (Réglages) — nom, couleur, logo/avatar. Sert de source
 // pour le champ "Responsable" (liste déroulante) partout dans l'application.
@@ -10212,23 +10229,8 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
   const [formTarget, setFormTarget] = useState(null); // null | "new" | membre à modifier
 
   const handleSave = (data) => {
-    if (formTarget === "new") {
-      setTeamMembers((prev) => [...prev, { id: uid(), ...data }]);
-    } else {
-      // Renommer réécrit `assignee` sur les tâches de la personne (#147) :
-      // `assignee` est un nom, pas un identifiant (contrat MCP et routines
-      // Gmail obligent), donc un renommage sans cette réécriture détache
-      // silencieusement toutes ses tâches — le même critère de comparaison
-      // que le compteur affiché plus bas.
-      const oldName = formTarget.name;
-      const newName = String(data.name || "").trim();
-      if (setTasks && newName && newName !== oldName) {
-        const count = tasks.filter((t) => t.assignee === oldName).length;
-        setTasks((prev) => prev.map((t) => (t.assignee === oldName ? { ...t, assignee: newName } : t)));
-        if (count > 0 && pushToast) pushToast({ message: `${count} tâche${count > 1 ? "s" : ""} réaffectée${count > 1 ? "s" : ""} de « ${oldName} » à « ${newName} ».` });
-      }
-      setTeamMembers((prev) => prev.map((u) => (u.id === formTarget.id ? { ...u, ...data } : u)));
-    }
+    if (formTarget === "new") setTeamMembers((prev) => [...prev, { id: uid(), ...data }]);
+    else saveTeamMemberEdit({ target: formTarget, data, setTeamMembers, tasks, setTasks, pushToast });
     setFormTarget(null);
   };
   const removeMember = (u) => {

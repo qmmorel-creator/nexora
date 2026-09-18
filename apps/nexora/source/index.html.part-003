@@ -2362,6 +2362,7 @@ function defaultLayoutForType(type) {
   if (type === "countdown") return { w: 3, h: 3 };
   if (type === "note") return { w: 4, h: 3 };
   if (type === "taskDetail") return { w: 8, h: 7 };
+  if (type === "userProfile") return { w: 8, h: 9 };
   if (type === "budget") return { w: 4, h: 3 };
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
@@ -3099,7 +3100,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3852,6 +3853,17 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     ctx={ctx}
                     staffing={staffing}
                     onFilterPerson={(name) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), advanced: { op: "and", items: [{ field: "assignee", mode: "is", values: [name] }] } })}
+                  />
+                )}
+                {w.type === "userProfile" && (
+                  <WidgetUserProfile
+                    widget={w}
+                    ctx={ctx}
+                    staffing={staffing}
+                    onOpen={onOpen}
+                    setTasks={setTasks}
+                    pushToast={pushToast}
+                    onUpdateTeamMembers={setTeamMembers}
                   />
                 )}
                 {w.type === "criticalPath" && (
@@ -8369,6 +8381,99 @@ function WidgetOrgChart({ ctx, staffing, onFilterPerson }) {
   );
 }
 
+/* Widget « Utilisateur » (#173). Une fiche par personne, choisie dans les
+   réglages du widget : ses paramètres (modifiables sans repasser par
+   Réglages › Utilisateurs), son plan de charge des 30 prochains jours (même
+   lecture que la couche « Tâches » de la Charge personnel, #152), la
+   répartition de ses tâches actives par projet et la liste de celles sur
+   lesquelles elle travaille — réutilisant WidgetChart et WidgetList tels
+   quels plutôt que de redessiner un graphe et une liste. Lecture des tâches
+   et des affectations, écriture uniquement sur la fiche de la personne. */
+function WidgetUserProfile({ widget, ctx, staffing, onOpen, setTasks, pushToast, onUpdateTeamMembers }) {
+  const member = (ctx.teamMembers || []).find((m) => m.name === widget.userProfileMember) || null;
+  const [editing, setEditing] = useState(false);
+  const today = useMemo(() => iso(new Date()), []);
+  const tasksIndex = useMemo(() => staffingActiveTasksIndex(ctx.tasks, ctx), [ctx.tasks, ctx.statuses]);
+
+  if (!widget.userProfileMember) {
+    return <div className="lp-empty">Choisis une personne dans la fiche du widget.</div>;
+  }
+  if (!member) {
+    return <div className="lp-empty">« {widget.userProfileMember} » ne fait plus partie de l'annuaire — choisis une autre personne dans la fiche du widget.</div>;
+  }
+
+  const name = member.name;
+  const activeTasks = useMemo(
+    () => (ctx.tasks || []).filter((t) => t.assignee === name && !t.milestone && !isTaskDoneGlobal(t, ctx)),
+    [ctx.tasks, ctx, name]
+  );
+  const loadDays = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < 30; i += 1) {
+      const dayIso = addDays(today, i);
+      out.push({ iso: dayIso, count: staffingActiveTasksForCell(tasksIndex, name, dayIso).length });
+    }
+    return out;
+  }, [tasksIndex, name, today]);
+  const capacity = normalizeMemberCapacity(member.capacityPerDay);
+  const teamNames = memberTeamIds(member).map((id) => teamFor(ctx.teams, id)?.name).filter(Boolean);
+
+  return (
+    <div className="lp-userprofile">
+      <div className="lp-userprofile-head">
+        <span className="lp-userprofile-avatar" style={{ background: member.color || staffingMemberColor(name) }}>
+          {member.avatarDataUrl ? <IconGlyph icon={member.avatarDataUrl} size={22} /> : name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
+        </span>
+        <div className="lp-userprofile-id">
+          <span className="lp-userprofile-name">{name}</span>
+          <span className="lp-userprofile-meta">
+            {member.email || "Sans email"} · Capacité {capacity}/j{teamNames.length > 0 ? " · " + teamNames.join(", ") : ""}
+          </span>
+        </div>
+        {onUpdateTeamMembers && (
+          <button type="button" className="lp-btn lp-btn-mini" onClick={() => setEditing(true)}>Modifier</button>
+        )}
+      </div>
+
+      <div className="lp-userprofile-section">
+        <div className="lp-userprofile-section-title">Plan de charge — 30 prochains jours</div>
+        <div className="lp-userprofile-load">
+          {loadDays.map((d) => (
+            <span
+              key={d.iso}
+              className={"lp-userprofile-load-cell" + (d.count === 0 ? " is-empty" : d.count >= 3 ? " is-high" : " is-filled")}
+              title={fmtShort(d.iso) + " — " + d.count + " tâche" + (d.count > 1 ? "s" : "") + " active" + (d.count > 1 ? "s" : "")}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="lp-userprofile-row">
+        <div className="lp-userprofile-section lp-userprofile-half">
+          <div className="lp-userprofile-section-title">Répartition par projet</div>
+          <WidgetChart tasks={activeTasks} groupBy="project" chartStyle="pie" ctx={ctx} />
+        </div>
+        <div className="lp-userprofile-section lp-userprofile-half">
+          <div className="lp-userprofile-section-title">{activeTasks.length} tâche{activeTasks.length > 1 ? "s" : ""} en cours</div>
+          <WidgetList tasks={activeTasks} sortBy="end" limit={30} ctx={ctx} onOpen={onOpen} />
+        </div>
+      </div>
+
+      {editing && onUpdateTeamMembers && (
+        <TeamMemberFormModal
+          member={member}
+          teams={ctx.teams}
+          onSave={(data) => {
+            saveTeamMemberEdit({ target: member, data, setTeamMembers: onUpdateTeamMembers, tasks: ctx.tasks, setTasks, pushToast });
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 /* Widget « Charge personnel » (#124). Les personnes en lignes, les jours en
    colonnes, et dans chaque case les ateliers du jour — plusieurs par jour si
    besoin.
@@ -12117,6 +12222,7 @@ const WIDGET_TYPE_META = [
   { key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" },
   { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
   { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
+  { key: "userProfile", label: "Utilisateur", icon: User, group: "Planning" },
   { key: "milestoneTimeline", label: "Timeline des jalons", icon: Milestone, group: "Planning" },
   { key: "verticalMetroTimeline", label: "Timeline verticale métro", icon: TrainTrack, group: "Planning" },
   { key: "metroDeadline", label: "Métro / Échéances", icon: CalendarClock, group: "Planning" },
@@ -12401,6 +12507,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [countdownDate, setCountdownDate] = useState(widget?.countdownDate || "");
   const [countdownTaskId, setCountdownTaskId] = useState(widget?.countdownTaskId || "");
   const [taskDetailTaskId, setTaskDetailTaskId] = useState(widget?.taskDetailTaskId || "");
+  const [userProfileMember, setUserProfileMember] = useState(widget?.userProfileMember || "");
   const [content, setContent] = useState(widget?.content || "");
   const [budgetProjectId, setBudgetProjectId] = useState(widget?.budgetProjectId || ctx.projects[0]?.id || "");
   const [burnRateProjectId, setBurnRateProjectId] = useState(widget?.burnRateProjectId || ctx.projects[0]?.id || "");
@@ -12540,6 +12647,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       return true; // mode "filtre" : toujours valide, vide = toutes les tâches
     }
     if (type === "taskDetail") return !!taskDetailTaskId;
+    if (type === "userProfile") return !!userProfileMember;
     if (type === "customCard") {
       if (!cardBlocks.length) return false;
       if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText"].includes(b.kind))) return false;
@@ -12597,6 +12705,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "list") { data.sortBy = sortBy; data.limit = Number(limit) || 6; data.groupBy = listGroupBy; }
     if (type === "countdown") { data.countdownMode = countdownMode; data.countdownDate = countdownDate; data.countdownTaskId = countdownTaskId; }
     if (type === "taskDetail") data.taskDetailTaskId = taskDetailTaskId;
+    if (type === "userProfile") data.userProfileMember = userProfileMember;
     if (type === "note") data.content = content;
     if (type === "budget") { data.budgetProjectId = budgetProjectId; data.budgetMetric = budgetMetric; }
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
@@ -13193,6 +13302,16 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <p style={{fontSize:12,color:"var(--text-600)",marginTop:6,marginBottom:0}}>
             Recherche par nom de tâche ou par projet. Le projet est affiché pour chaque résultat — seules les tâches correspondant aux filtres ci-dessous (et à ceux de l'onglet) sont proposées.
           </p>
+        </div>
+      )}
+
+      {type === "userProfile" && (
+        <div className="lp-field">
+          <label>Personne</label>
+          <select value={userProfileMember} onChange={(e) => setUserProfileMember(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {sortedByName(ctx.teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+          </select>
         </div>
       )}
 
