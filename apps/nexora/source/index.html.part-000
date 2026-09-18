@@ -3011,11 +3011,42 @@ function getTimeMachine({ project, tasks, taskBaselines, momentumSnapshots }) {
   return { status: "ready", hasBaseline, planStart, planEnd, currentStart, currentEnd, driftDays, forecast, forecastDriftDays, projTasks };
 }
 
-function getDailyBriefing({ tasks, ctx, activityLog }) {
+// #170 : ce que le Daily Briefing dit de demain côté effectifs — combien de
+// personnes sur quel atelier, et qui d'entre elles a des tâches ouvertes qui
+// vont manquer de bras. Repose entièrement sur `staffing` (le widget Charge
+// personnel, #124) : sans affectation posée pour demain, ces deux lignes ne
+// s'affichent simplement pas, plutôt que d'annoncer un silence comme un fait.
+function dailyBriefingStaffingSignals({ staffing, ctx, tasks, tomorrowIso }) {
+  const entries = normalizeStaffingEntries(staffing).filter((e) => e.date === tomorrowIso);
+  if (!entries.length) return { workshopCounts: [], absentAssignees: [], tasksForAbsent: [] };
+  const workshops = normalizeWorkshops(ctx.workshops);
+  const workshopById = new Map(workshops.map((w) => [w.id, w]));
+  const absenceId = staffingAbsenceWorkshopId(ctx.workshops);
+  const membersByWorkshop = new Map();
+  entries.forEach((e) => {
+    e.workshops.forEach((wId) => {
+      if (!membersByWorkshop.has(wId)) membersByWorkshop.set(wId, new Set());
+      membersByWorkshop.get(wId).add(e.member);
+    });
+  });
+  // Comptée par PERSONNE, pas par poste : une personne sur deux ateliers le
+  // même jour ne doit pas compter double dans « N personnes en Chantier ».
+  const workshopCounts = [...membersByWorkshop.entries()]
+    .map(([id, members]) => ({ id, name: workshopById.get(id)?.name || "Atelier", count: members.size }))
+    .sort((a, b) => b.count - a.count);
+  const absentAssignees = [...(membersByWorkshop.get(absenceId) || [])];
+  const tasksForAbsent = absentAssignees.length
+    ? tasks.filter((t) => t.assignee && absentAssignees.includes(t.assignee) && !isTaskDoneGlobal(t, ctx))
+    : [];
+  return { workshopCounts, absentAssignees, tasksForAbsent };
+}
+
+function getDailyBriefing({ tasks, ctx, activityLog, staffing }) {
   const dated = tasks.filter((t) => t.start && t.end);
   const today = iso(new Date());
   const tomorrow = addDays(today, 1);
   const notDone = dated.filter((t) => !isTaskDoneGlobal(t, ctx));
+  const staffingTomorrow = staffing ? dailyBriefingStaffingSignals({ staffing, ctx, tasks, tomorrowIso: tomorrow }) : null;
 
   const overdue = notDone.filter((t) => t.end < today);
   const dueToday = notDone.filter((t) => t.end === today);
@@ -3064,7 +3095,7 @@ function getDailyBriefing({ tasks, ctx, activityLog }) {
     if (reopened.length > 0) recentChanges.push({ key: "reopened", icon: "↺", text: `${reopened.length} tâche${reopened.length > 1 ? "s" : ""} rouverte${reopened.length > 1 ? "s" : ""}`, entries: reopened });
   }
 
-  return { date: today, priorityLevel, alerts, todayItems, dueTomorrowCount: dueTomorrow.length, nextBestAction, atRiskProjects, recentChanges };
+  return { date: today, priorityLevel, alerts, todayItems, dueTomorrowCount: dueTomorrow.length, nextBestAction, atRiskProjects, recentChanges, staffingTomorrow };
 }
 
 // ============================================================================

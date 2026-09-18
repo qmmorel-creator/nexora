@@ -2730,7 +2730,7 @@ function TaskHoverCard({ task, ctx, gradient }) {
   );
 }
 
-function BulkEditBar({ count, ctx, onStatus, onType, onProject, onShiftDays, onDelete, onClear }) {
+function BulkEditBar({ count, ctx, onStatus, onType, onProject, onShiftDays, onFreezeReference, onDelete, onClear }) {
   const [statusOpen, setStatusOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
@@ -2790,6 +2790,11 @@ function BulkEditBar({ count, ctx, onStatus, onType, onProject, onShiftDays, onD
           <button className="lp-tool-btn" disabled={count === 0} onClick={() => onShiftDays(1)}>+1j</button>
           <button className="lp-tool-btn" disabled={count === 0} onClick={() => onShiftDays(7)}>+7j</button>
         </div>
+        {onFreezeReference && (
+          <button className="lp-btn" disabled={count === 0} onClick={onFreezeReference} title="Pose les dates actuelles comme référence de comparaison sur chaque tâche sélectionnée">
+            <Copy size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Figer la référence
+          </button>
+        )}
         <button className="lp-btn lp-btn-danger" disabled={count === 0} onClick={onDelete}><Trash2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Supprimer</button>
         {count > 0 && <button className="lp-icon-btn" onClick={onClear} title="Désélectionner tout"><X size={15} /></button>}
       </div>
@@ -2961,7 +2966,7 @@ function InlineEditableField({ fieldKey, task, ctx, setTasks, gradient, progress
   return <FieldValue fieldKey={fieldKey} task={task} ctx={ctx} gradient={gradient} progressByStatus={progressByStatus} onProgressChange={onProgressChange} />;
 }
 
-function ListView({ tasks, ctx, gradient, progressColorByStatus, setTasks, onOpen, onAdd, onDelete, onMarkDone, onCycleStatus, onBulkDelete, prefs, setPrefs, toolbarSlot, embedded }) {
+function ListView({ tasks, ctx, gradient, progressColorByStatus, setTasks, onOpen, onAdd, onDelete, onMarkDone, onCycleStatus, onBulkDelete, onFreezeReference, prefs, setPrefs, toolbarSlot, embedded }) {
   const groupBy = prefs.groupBy;
   const setGroupBy = (v) => setPrefs({ groupBy: v });
   const visibleFields = prefs.visibleFields;
@@ -3070,6 +3075,7 @@ function ListView({ tasks, ctx, gradient, progressColorByStatus, setTasks, onOpe
           onType={applyBulkType}
           onProject={applyBulkProject}
           onShiftDays={applyBulkDateShift}
+          onFreezeReference={onFreezeReference ? () => { if (selectedIds.length) onFreezeReference(selectedIds, "sélectionnées"); } : undefined}
           onDelete={() => { if (selectedIds.length) { onBulkDelete(selectedIds, "sélectionnées"); setSelectedIds([]); } }}
           onClear={() => setSelectedIds([])}
         />
@@ -4907,13 +4913,38 @@ function ganttDayNumber(value) {
 // pas semer des objets vides dans Firebase ; mais une comparaison désactivée
 // qui porte encore des dates est conservée telle quelle : désactiver ne doit
 // jamais effacer l'historique saisi.
+// #165 : une entrée d'historique de références — la référence REMPLACÉE par un
+// geste « Figer la référence », gardée pour comparer « vs plan initial » et
+// « vs dernière revue » séparément. `label` vide retombe sur une date dans le
+// sélecteur plutôt que de laisser un blanc.
+function normalizeComparisonHistoryEntry(value) {
+  if (!value || typeof value !== "object") return null;
+  const end = isGanttIsoDate(value.end) ? value.end : null;
+  if (!end) return null;
+  const start = isGanttIsoDate(value.start) ? value.start : end;
+  return {
+    start, end,
+    capturedAt: isGanttIsoDate(value.capturedAt) ? value.capturedAt : null,
+    label: typeof value.label === "string" && value.label.trim() ? value.label.trim() : null,
+  };
+}
+function normalizeComparisonHistory(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(normalizeComparisonHistoryEntry).filter(Boolean);
+}
+
 function normalizeTaskComparison(value) {
   if (!value || typeof value !== "object") return null;
   const enabled = value.enabled === true;
   const referenceStart = isGanttIsoDate(value.referenceStart) ? value.referenceStart : null;
   const referenceEnd = isGanttIsoDate(value.referenceEnd) ? value.referenceEnd : null;
-  if (!enabled && !referenceStart && !referenceEnd) return null;
-  return { enabled, referenceStart, referenceEnd };
+  const history = normalizeComparisonHistory(value.history);
+  if (!enabled && !referenceStart && !referenceEnd && !history.length) return null;
+  return {
+    enabled, referenceStart, referenceEnd,
+    capturedAt: isGanttIsoDate(value.capturedAt) ? value.capturedAt : null,
+    history,
+  };
 }
 
 function miniGanttComparisonEnabledOn(widget) {
@@ -4961,6 +4992,29 @@ function taskComparisonFromCurrentDates(task) {
   return { enabled: true, referenceStart: milestone ? null : start, referenceEnd: end };
 }
 
+/* #165 : « Figer la référence » sur une tâche qui EN PORTE DÉJÀ une n'écrase
+   plus silencieusement l'ancienne — elle l'archive dans `comparison.history`
+   avant de la remplacer, pour que « vs plan initial » et « vs dernière revue »
+   restent deux questions posables séparément. Une tâche qui n'a jamais eu de
+   référence exploitable n'archive rien : il n'y a rien à garder. */
+function freezeTaskReference(task) {
+  const seed = taskComparisonFromCurrentDates(task);
+  if (!seed) return null;
+  const milestone = !!(task && task.milestone);
+  const prev = normalizeTaskComparison(task && task.comparison);
+  const history = prev ? prev.history.slice() : [];
+  if (prev && prev.referenceEnd) {
+    const archived = normalizeComparisonHistoryEntry({
+      start: milestone ? prev.referenceEnd : prev.referenceStart,
+      end: prev.referenceEnd,
+      capturedAt: prev.capturedAt,
+      label: history.length === 0 ? "Initiale" : null,
+    });
+    if (archived) history.push(archived);
+  }
+  return { ...seed, capturedAt: iso(new Date()), history };
+}
+
 /* Une tâche NOUVELLE naît avec sa planification initiale pour référence : ce
    qu'on demande à la création EST le plan de départ, et c'est de lui qu'on
    voudra mesurer les dérives plus tard. Elle ne bouge plus ensuite — aucun
@@ -4985,10 +5039,32 @@ function withCreationComparison(task) {
 // Comparaison EXPLOITABLE d'une tâche, ou `null`. `null` n'est jamais une
 // erreur : la ligne retombe simplement sur le rendu standard, sans changer de
 // hauteur ni disparaître.
-function miniGanttTaskComparison(task) {
+function miniGanttTaskComparison(task, taskBaselines, referenceMode) {
   if (!task || typeof task !== "object") return null;
-  const cmp = normalizeTaskComparison(task.comparison);
+  let cmp = normalizeTaskComparison(task.comparison);
+  /* #150 : repli sur taskBaselines quand AUCUNE référence manuelle n'a jamais
+     été posée (`task.comparison` absent, ni même désactivé explicitement) —
+     jamais quand l'utilisateur l'a désactivée en connaissance de cause
+     (`task.comparison` existe alors, avec `enabled:false`). Datée par
+     `capturedAt`, elle donne une référence honnête à une tâche ancienne qui
+     n'en a jamais reçu une à la main. */
+  if (!cmp && task.comparison == null && taskBaselines) {
+    const baseline = taskBaselines[task.id];
+    if (baseline && isGanttIsoDate(baseline.start) && isGanttIsoDate(baseline.end)) {
+      cmp = { enabled: true, referenceStart: baseline.start, referenceEnd: baseline.end };
+    }
+  }
   if (!cmp || !cmp.enabled) return null;
+  /* #165 : « vs plan initial » plutôt que « vs dernière revue » — la référence
+     COURANTE est toujours la dernière revue par construction du geste « Figer
+     la référence » (#149), donc comparer à l'historique ne demande qu'un
+     second point : le tout premier, toujours archivé sous le libellé
+     « Initiale ». Aucune référence n'a encore été remplacée : les deux
+     questions se confondent, et la référence courante répond aux deux. */
+  if (referenceMode === "initial" && cmp.history && cmp.history.length) {
+    const initial = cmp.history[0];
+    cmp = { ...cmp, referenceStart: initial.start, referenceEnd: initial.end };
+  }
   const milestone = !!task.milestone;
   const currentEnd = isGanttIsoDate(task.end) ? task.end : null;
   const currentStart = milestone ? currentEnd : (isGanttIsoDate(task.start) ? task.start : null);
@@ -5249,11 +5325,11 @@ function miniGanttComparisonMilestone(cmp, window) {
 // coupée par le bord du diagramme. Rend une liste d'index de jour à verser
 // telle quelle dans les min/max existants — les blocs, jalons, risques et
 // annotations continuent d'alimenter la même plage, inchangés.
-function miniGanttComparisonRangeIndices(tasks, comparisonOn) {
+function miniGanttComparisonRangeIndices(tasks, comparisonOn, taskBaselines, referenceMode) {
   if (!comparisonOn) return [];
   const out = [];
   (Array.isArray(tasks) ? tasks : []).forEach((task) => {
-    const cmp = miniGanttTaskComparison(task);
+    const cmp = miniGanttTaskComparison(task, taskBaselines, referenceMode);
     if (!cmp) return;
     out.push(cmp.referenceStartIdx, cmp.referenceEndIdx);
   });
@@ -6908,7 +6984,7 @@ function WidgetDeadlineScatter({ widget, tasks, ctx, onOpen }) {
 // (`sizeMatch`, `colorMatch`, `factsOf`), ce qui rend chaque règle testable
 // sans monter l'interface.
 
-const TREEMAP_COLOR_MODES = ["sizeFilterGradient", "secondaryFilterGradient", "averageCriticality"];
+const TREEMAP_COLOR_MODES = ["sizeFilterGradient", "secondaryFilterGradient", "averageCriticality", "averageDrift"];
 const TREEMAP_GROUP_BY = ["none", "folder", "priority", "owner", "criticality"];
 // Champs qui peuvent porter les tuiles (issue #47).
 const TREEMAP_TILE_BY = ["project", "status", "taskType", "criticality"];
@@ -7032,6 +7108,10 @@ function computeTreemapProjects(input) {
     // Rattache une tâche à sa tuile. Par défaut le projet, d'où la compatibilité
     // avec l'unique comportement d'avant l'issue #47.
     bucketIdOf = (t) => t.projectId,
+    // #133 : comparaison à la référence, pour la coloration « dérive ». `null`
+    // par défaut — une tâche sans référence exploitable n'entre simplement pas
+    // dans la moyenne, comme ailleurs dans Nexora.
+    comparisonOf = () => null,
   } = input || {};
 
   const byProject = new Map();
@@ -7051,6 +7131,7 @@ function computeTreemapProjects(input) {
     if (!showZeroProjects && sized.length === 0) return;
 
     let doneCount = 0, lateCount = 0, urgentCount = 0, progressSum = 0, criticalitySum = 0;
+    let driftSum = 0, driftCount = 0;
     let endDate = null;
     let nextMilestone = null;
     const statusTally = new Map();
@@ -7062,6 +7143,10 @@ function computeTreemapProjects(input) {
       if (facts.done) doneCount += 1;
       if (facts.late) lateCount += 1;
       if (facts.urgent) urgentCount += 1;
+      if (colorMode === "averageDrift") {
+        const cmp = comparisonOf(t);
+        if (cmp) { driftSum += cmp.endDeltaDays; driftCount += 1; }
+      }
       progressSum += Math.max(0, Math.min(100, Number(t.progress) || 0));
       criticalitySum += treemapTaskCriticality({ projectPriority: project.priority || "normal", ...facts }).score;
       if (t.end && (!endDate || t.end > endDate)) endDate = t.end;
@@ -7104,6 +7189,8 @@ function computeTreemapProjects(input) {
       owner: best(ownerTally),
       upcoming: upcoming.slice(0, TREEMAP_UPCOMING_MAX),
       upcomingTotal: upcoming.length,
+      driftAvg: driftCount ? Math.round(driftSum / driftCount) : 0,
+      driftCount,
       ...(extras[project.id] || {}),
     });
   });
@@ -7121,6 +7208,9 @@ function treemapColorValue(row, colorMode) {
   if (!row) return 0;
   if (colorMode === "averageCriticality") return row.criticality ? row.criticality.score : 0;
   if (colorMode === "secondaryFilterGradient") return row.colorCount || 0;
+  // #133 : seul le RETARD colore la tuile — un projet en avance ou pile dans les
+  // clous n'est pas un problème à signaler, contrairement à un projet en retard.
+  if (colorMode === "averageDrift") return Math.max(0, row.driftAvg || 0);
   return row.sizeCount || 0;
 }
 
@@ -8619,7 +8709,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -8914,16 +9004,19 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   // Action SECONDAIRE et explicite. Elle n'est appelée que par le clic sur son
   // bouton — aucun enregistrement, aucune modification de date ne la déclenche.
   const copyCurrentDatesAsReference = () => {
-    const next = taskComparisonFromCurrentDates({ milestone, start, end: milestone ? start : end });
-    if (!next) return;
+    const currentEnd = milestone ? start : end;
+    if (!taskComparisonFromCurrentDates({ milestone, start, end: currentEnd })) return;
     comparisonTouched.current = true;
-    setComparison((prev) => ({
-      enabled: true,
+    // #165 : la référence remplacée (si exploitable) part dans l'historique
+    // avant d'être écrasée — `prev` est l'état du FORMULAIRE, pas `task.comparison`,
+    // pour archiver la dernière valeur vue à l'écran même si elle vient d'être
+    // modifiée à la main sans être encore enregistrée.
+    setComparison((prev) => {
+      const frozen = freezeTaskReference({ milestone, start, end: currentEnd, comparison: prev });
       // Un jalon ne touche pas au début de référence : il n'en a pas, et
       // l'écraser perdrait la valeur d'une tâche repassée en jalon.
-      referenceStart: milestone ? prev.referenceStart : next.referenceStart,
-      referenceEnd: next.referenceEnd,
-    }));
+      return milestone ? { ...frozen, referenceStart: prev.referenceStart } : frozen;
+    });
   };
 
   const submit = () => {
@@ -9202,11 +9295,25 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
             </label>
           </div>
           {!comparison.enabled ? (
-            <p className="lp-gantt-annot-hint" style={{ marginTop: 6, marginLeft: 26 }}>
-              {comparison.referenceStart || comparison.referenceEnd
-                ? "Les dates de référence déjà saisies sont conservées : réactiver l'interrupteur les retrouve telles quelles."
-                : "Une fois activée, la planification initiale se compare aux dates actuelles dans les Mini-Gantt réglés sur « Comparaison »."}
-            </p>
+            <>
+              <p className="lp-gantt-annot-hint" style={{ marginTop: 6, marginLeft: 26 }}>
+                {comparison.referenceStart || comparison.referenceEnd
+                  ? "Les dates de référence déjà saisies sont conservées : réactiver l'interrupteur les retrouve telles quelles."
+                  : "Une fois activée, la planification initiale se compare aux dates actuelles dans les Mini-Gantt réglés sur « Comparaison »."}
+              </p>
+              {/* #150 : aucune référence manuelle n'a jamais été posée sur cette
+                  tâche (`base.comparison` — pas l'état local, qui vaut toujours
+                  { enabled:false } par défaut sur une tâche existante) — mais
+                  taskBaselines en porte une, capturée à la première apparition
+                  de la tâche. Les diagrammes en mode Comparaison l'utilisent
+                  déjà en repli ; la fiche le dit pour que ce ne soit jamais une
+                  surprise silencieuse. */}
+              {base.comparison == null && taskBaselines?.[task?.id] && (
+                <p className="lp-gantt-annot-hint" style={{ marginTop: 4, marginLeft: 26 }}>
+                  Référence capturée automatiquement le {fmtShort(taskBaselines[task.id].capturedAt)} (première fois que Nexora a vu cette tâche) — utilisée par défaut dans les Mini-Gantt en mode Comparaison tant qu'aucune référence n'est posée ici.
+                </p>
+              )}
+            </>
           ) : (
             <div style={{ marginTop: 8, marginLeft: 26, display: "flex", flexDirection: "column", gap: 10 }}>
               <p className="lp-gantt-annot-hint" style={{ margin: 0 }}>
@@ -9265,6 +9372,23 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                   </p>
                 );
               })()}
+              {/* #165 : historique en lecture seule — chaque « Figer la référence »
+                  archive la précédente au lieu de l'effacer. Rien d'éditable ici :
+                  seul le geste de la barre d'outils du Gantt (ou ce même bouton)
+                  en ajoute une entrée. */}
+              {Array.isArray(comparison.history) && comparison.history.length > 0 && (
+                <div className="lp-field" style={{ margin: 0 }}>
+                  <label style={{ marginBottom: 4 }}>Historique des références</label>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--text-600)" }}>
+                    {comparison.history.map((h, i) => (
+                      <li key={i}>
+                        {h.label || (h.capturedAt ? `Revue du ${fmtShort(h.capturedAt)}` : `Revue`)}
+                        {" — "}{milestone ? fmtShort(h.end) : `${fmtShort(h.start)} → ${fmtShort(h.end)}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -11871,7 +11995,7 @@ const TIMELINE_BUBBLE_W = 310;
 const TIMELINE_BUBBLE_H = 76; // compactée au maximum : date+titre sur la même ligne, méta sur 2 lignes max
 const TIMELINE_ROW_STEP = TIMELINE_BUBBLE_H + 22; // hauteur de bulle + marge de sécurité entre rangées empilées
 
-function TimelineView({ tasks, ctx, onOpen, prefs, setPrefs, gradient, progressColorByStatus, setTasks, onAdd, onDelete, onMarkDone, onCycleStatus, onBulkDelete, listPrefs, setListPrefs, toolbarSlot, embedded }) {
+function TimelineView({ tasks, ctx, onOpen, prefs, setPrefs, gradient, progressColorByStatus, setTasks, onAdd, onDelete, onMarkDone, onCycleStatus, onBulkDelete, onFreezeReference, listPrefs, setListPrefs, toolbarSlot, embedded }) {
   const timelineCollapsed = !!prefs.timelineCollapsed;
   const listSectionCollapsed = !!prefs.listSectionCollapsed;
   // À l'ouverture de la page, on repart toujours en zoom automatique (plage
@@ -12165,6 +12289,7 @@ function TimelineView({ tasks, ctx, onOpen, prefs, setPrefs, gradient, progressC
           onMarkDone={onMarkDone}
           onCycleStatus={onCycleStatus}
           onBulkDelete={onBulkDelete}
+          onFreezeReference={onFreezeReference}
           prefs={listPrefs}
           setPrefs={setListPrefs}
           toolbarSlot={toolbarSlot}

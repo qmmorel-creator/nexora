@@ -133,7 +133,7 @@ test("une tâche sans comparaison garde le rendu standard", () => {
   // doit jamais effacer l'historique.
   assert.deepEqual(
     normalizeTaskComparison({ enabled: false, referenceStart: "2026-08-01", referenceEnd: "2026-09-01" }),
-    { enabled: false, referenceStart: "2026-08-01", referenceEnd: "2026-09-01" }
+    { enabled: false, referenceStart: "2026-08-01", referenceEnd: "2026-09-01", capturedAt: null, history: [] }
   );
 });
 
@@ -515,7 +515,7 @@ test("l'infobulle enrichie n'est jamais persistante et garde le détail complet"
 test("la comparaison traverse sérialisation et restauration sans perte ni migration", () => {
   const stockee = tache(ref("2026-08-12", "2026-09-18"));
   const relue = JSON.parse(JSON.stringify(stockee));
-  assert.deepEqual(normalizeTaskComparison(relue.comparison), { enabled: true, referenceStart: "2026-08-12", referenceEnd: "2026-09-18" });
+  assert.deepEqual(normalizeTaskComparison(relue.comparison), { enabled: true, referenceStart: "2026-08-12", referenceEnd: "2026-09-18", capturedAt: null, history: [] });
   assert.deepEqual(miniGanttTaskComparison(relue), miniGanttTaskComparison(stockee));
 
   // Une tâche d'avant ce changement reste valide, et ne gagne aucun objet vide.

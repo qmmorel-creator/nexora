@@ -76,7 +76,10 @@ test("un jalon s'ordonne par sa date de fin, la seule qu'il porte", () => {
 test("la VUE Gantt lève le plafond, le widget le garde proportionnel à sa hauteur (#156)", () => {
   // La vue passe `showAllRows` ; aucun widget enregistré ne le porte.
   assert.match(html, /showAllRows\s*\n\s*groupBy=\{widget\.groupBy\}/);
-  assert.match(html, /bubbleMode, showAllRows, widgetHeight, onOpenGanttView, pushToast \}\) \{/);
+  // Préfixe stable plutôt que la liste complète des props : de nouvelles props
+  // s'ajoutent régulièrement en fin de signature (widgetHeight, pushToast,
+  // taskBaselines…) sans rapport avec ce que ce test vérifie.
+  assert.match(html, /function WidgetMiniGantt\(\{ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows\b/);
   // Depuis #156, le plafond n'est plus une constante fixe : il grandit avec la
   // hauteur réelle du widget (5 barres par unité de grille), sans jamais
   // descendre sous le plafond d'origine.

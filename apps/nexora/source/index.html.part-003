@@ -2212,6 +2212,12 @@ const WIDGET_METRICS = [
   { key: "avgProgress", label: "Avancement moyen (%)" },
   { key: "milestoneCount", label: "Nombre de jalons" },
   { key: "urgentCount", label: "Nombre de tâches urgentes" },
+  // #133 : dérive par rapport à la référence de comparaison (task.comparison,
+  // ou taskBaselines en repli depuis #150) — seules les tâches COMPARABLES
+  // (référence exploitable) comptent, une tâche sans référence n'étant ni une
+  // dérive ni un report.
+  { key: "avgDrift", label: "Dérive moyenne (jours)" },
+  { key: "overdueVsRefCount", label: "Tâches reportées (vs référence)" },
 ];
 
 const CUSTOM_CARD_BLOCK_TYPES = [
@@ -2348,7 +2354,15 @@ function applyWidgetFilter(tasks, filter, ctx) {
   });
 }
 
-function computeKpiValue(tasks, metric, ctx) {
+function computeKpiValue(tasks, metric, ctx, taskBaselines) {
+  if (metric === "avgDrift" || metric === "overdueVsRefCount") {
+    const compared = tasks.map((t) => miniGanttTaskComparison(t, taskBaselines)).filter(Boolean);
+    if (metric === "avgDrift") {
+      if (!compared.length) return "—";
+      return Math.round(compared.reduce((s, c) => s + c.endDeltaDays, 0) / compared.length) + " j";
+    }
+    return compared.filter((c) => c.endDeltaDays > 0).length;
+  }
   if (tasks.length === 0) return metric === "avgProgress" ? "—" : 0;
   if (metric === "avgProgress") return Math.round(tasks.reduce((s, t) => s + (Number(t.progress) || 0), 0) / tasks.length) + "%";
   if (metric === "milestoneCount") return tasks.filter((t) => getTaskType(t) === "milestone").length;
@@ -3789,10 +3803,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {(headerToolbarSlot) => (
                 <>
                 {w.type === "kpi" && (
-                  <div className="lp-widget-kpi">{computeKpiValue(scoped, w.metric || "count", ctx)}</div>
+                  <div className="lp-widget-kpi">{computeKpiValue(scoped, w.metric || "count", ctx, taskBaselines)}</div>
                 )}
                 {w.type === "customCard" && (
-                  <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen}/>
+                  <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen} taskBaselines={taskBaselines}/>
                 )}
                 {w.type === "chart" && (
                   <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} />
@@ -3842,6 +3856,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     widgetHeight={w.layout?.h}
                     onOpenGanttView={onOpenGanttView ? () => onOpenGanttView(widgetFilterFor(w)) : undefined}
                     pushToast={pushToast}
+                    taskBaselines={taskBaselines}
+                    onPrintWidget={() => setPrintWidgetId(w.id)}
                   />
                 )}
                 {w.type === "bubbles" && (
@@ -3897,6 +3913,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onOpenProject={onOpenProject}
                     onEditProject={onEditProject}
                     onFilterProject={(projectId) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), projectIds: [projectId] })}
+                    taskBaselines={taskBaselines}
                   />
                 )}
                 {w.type === "deadlineScatter" && (
@@ -3934,7 +3951,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "dailyBriefing" && (
-                  <WidgetDailyBriefing tasks={scoped} ctx={ctx} onOpen={onOpen} onViewDay={onViewDay} activityLog={activityLog} />
+                  <WidgetDailyBriefing tasks={scoped} ctx={ctx} onOpen={onOpen} onViewDay={onViewDay} activityLog={activityLog} staffing={staffing} />
                 )}
                 {w.type === "dominoEffect" && (
                   <WidgetDominoEffect tasks={scoped} ctx={ctx} onOpen={onOpen} />
@@ -4316,7 +4333,7 @@ function WidgetList({ tasks, sortBy, limit, groupBy, ctx, onOpen }) {
 
 
 
-function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen }) {
+function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen, taskBaselines }) {
   const blocks = Array.isArray(widget.cardBlocks) && widget.cardBlocks.length ? widget.cardBlocks : customCardDefaultBlocks();
   const columns = Math.max(1,Math.min(3,Number(widget.cardColumns)||2));
   const accentColor = widget.cardAccentColor || "var(--line-blue)";
@@ -4336,7 +4353,7 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen }) {
   const statusOfTask = (t) => ctx.statuses.find((st)=>st.id===t?.statusId);
 
   const valueFor = (b) => {
-    if (b.kind==="aggregate") return computeKpiValue(tasks || [],b.metric || "count",ctx);
+    if (b.kind==="aggregate") return computeKpiValue(tasks || [],b.metric || "count",ctx,taskBaselines);
     if (b.kind==="staticText") return b.text || "—";
     if (!refTask) return "—";
     if (b.kind==="taskTitle") return refTask.title || "Sans titre";
@@ -5263,7 +5280,7 @@ function MiniGanttProgressRing({ progress }) {
 // Amplitude du zoom manuel (#180) : 1,65^8 ≈ 26,7 — de quelques jours à
 // plusieurs années sur la même paire de boutons, sans passer par les réglages.
 const MINIGANTT_ZOOM_MAX = 8;
-function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows, widgetHeight, onOpenGanttView, pushToast }) {
+function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows, widgetHeight, onOpenGanttView, pushToast, taskBaselines, onPrintWidget }) {
   // Absences (#134) : l'atelier « absence » du catalogue Charge personnel,
   // reconnu par son nom — lecture seule, jamais posé depuis le Gantt.
   const absenceWorkshopId = useMemo(() => staffingAbsenceWorkshopId(ctx.workshops), [ctx.workshops]);
@@ -5453,12 +5470,19 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
   const setComparisonMode = (on) => {
     if (onUpdateWidget) onUpdateWidget({ miniGanttComparisonEnabled: !!on });
   };
+  // #165 : « actuelle » compare à la dernière revue (la référence COURANTE,
+  // toujours la plus récente par construction du geste « Figer la référence ») ;
+  // « initiale » compare au tout premier point de l'historique.
+  const comparisonReference = widget.miniGanttComparisonReference === "initial" ? "initial" : "current";
+  const setComparisonReference = (mode) => {
+    if (onUpdateWidget) onUpdateWidget({ miniGanttComparisonReference: mode });
+  };
   // Les dates de RÉFÉRENCE élargissent la plage automatique au même titre que
   // les dates actuelles : une barre fantôme antérieure ou postérieure ne doit
   // jamais être coupée par le bord du diagramme. Volontairement calculé sans
   // Hook — c'est un parcours de quelques dizaines d'éléments, et aucun Hook
   // conditionnel ne peut se glisser avant le retour anticipé « aucune tâche ».
-  const comparisonRangeIdx = miniGanttComparisonRangeIndices(allForRange, comparisonOn);
+  const comparisonRangeIdx = miniGanttComparisonRangeIndices(allForRange, comparisonOn, taskBaselines, comparisonReference);
 
   const naturalMinIdx = isEmpty
     ? todayIdx
@@ -6422,11 +6446,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     const map = new Map();
     if (!comparisonOn) return map;
     [...projTasks, ...milestoneTasks].forEach((t) => {
-      const cmp = miniGanttTaskComparison(t);
+      const cmp = miniGanttTaskComparison(t, taskBaselines, comparisonReference);
       if (cmp) map.set(t.id, cmp);
     });
     return map;
-  }, [comparisonOn, projTasks, milestoneTasks]);
+  }, [comparisonOn, projTasks, milestoneTasks, taskBaselines, comparisonReference]);
 
   /* Barre sommaire par groupe (#151) : étendue (min début → max fin),
      avancement moyen pondéré par la durée (même fonction que les macro-bulles,
@@ -6611,6 +6635,67 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     if (nextFrames !== rawHighlightFrames) applyAnnotations({ highlightFrames: nextFrames });
   };
 
+  /* Figer la référence en masse depuis la sélection du Gantt (#149). Même
+     fonction pure que le bouton de la fiche (`taskComparisonFromCurrentDates`),
+     mêmes deux temps que la version Tableur (confirmation chiffrée, puis
+     annulable) — mais en toasts : ce widget n'a pas de boîte de confirmation
+     modale à sa disposition, `pushToast` si. */
+  const freezeSelectionReference = () => {
+    if (!onUpdateTask || !pushToast) return;
+    const eligible = [...selectedSet].map((id) => tasksById.get(id)).filter((t) => t && taskComparisonFromCurrentDates(t));
+    if (!eligible.length) { pushToast({ message: "Aucune tâche datée dans la sélection : rien à figer." }); return; }
+    pushToast({
+      message: `Figer la référence de ${eligible.length} tâche${eligible.length > 1 ? "s" : ""} encadrée${eligible.length > 1 ? "s" : ""} ?`,
+      actionLabel: "Confirmer",
+      onAction: () => {
+        const before = new Map(eligible.map((t) => [t.id, t.comparison ?? null]));
+        eligible.forEach((t) => onUpdateTask(t.id, { comparison: freezeTaskReference(t) }));
+        pushToast({
+          message: `Référence figée pour ${eligible.length} tâche${eligible.length > 1 ? "s" : ""}.`,
+          actionLabel: "Annuler",
+          onAction: () => before.forEach((c, id) => onUpdateTask(id, { comparison: c })),
+        });
+      },
+    });
+  };
+  const selectionToolbar = selectedSet.size > 0 ? (
+    <div className="lp-widget-minigantt-selection-bar" onMouseDown={(e) => e.stopPropagation()}>
+      <span className="lp-widget-minigantt-selection-count">{selectedSet.size} tâche{selectedSet.size > 1 ? "s" : ""} encadrée{selectedSet.size > 1 ? "s" : ""}</span>
+      {onUpdateTask && pushToast && (
+        <button type="button" className="lp-btn" onClick={freezeSelectionReference} title="Pose les dates actuelles comme référence de comparaison sur chaque tâche encadrée">
+          <Copy size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Figer la référence
+        </button>
+      )}
+    </div>
+  ) : null;
+
+  /* « Clore la revue » (#170) : le geste de fin de revue de projet, en un clic —
+     figer la référence de TOUTES les tâches affichées (pas seulement celles
+     encadrées, contrairement à `freezeSelectionReference` ci-dessus), imprimer
+     ce widget, et laisser la ligne d'historique s'ajouter d'elle-même (chaque
+     `freezeTaskReference` en pose une). N'existe que dans un widget de tableau
+     de bord : la vue plein écran n'a pas de bouton « imprimer ce widget » à
+     enchaîner. */
+  const closeReview = () => {
+    if (!onUpdateTask || !pushToast) return;
+    const eligible = orderedTasks.filter((t) => taskComparisonFromCurrentDates(t));
+    if (!eligible.length) { pushToast({ message: "Aucune tâche datée ici : rien à clore." }); return; }
+    pushToast({
+      message: `Clore la revue : figer la référence de ${eligible.length} tâche${eligible.length > 1 ? "s" : ""} et imprimer ce widget ?`,
+      actionLabel: "Confirmer",
+      onAction: () => {
+        const before = new Map(eligible.map((t) => [t.id, t.comparison ?? null]));
+        eligible.forEach((t) => onUpdateTask(t.id, { comparison: freezeTaskReference(t) }));
+        if (onPrintWidget) onPrintWidget();
+        pushToast({
+          message: `Revue close : référence figée pour ${eligible.length} tâche${eligible.length > 1 ? "s" : ""}.`,
+          actionLabel: "Annuler",
+          onAction: () => before.forEach((c, id) => onUpdateTask(id, { comparison: c })),
+        });
+      },
+    });
+  };
+
   // Jalons de configuration et annotations partagent la même bande, sous les
   // titres de bloc : un seul mécanisme de placement, donc un seul traitement
   // des collisions. Une annotation est ramenée à la date de son ancre — tâche,
@@ -6677,6 +6762,15 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         <div className="lp-widget-minigantt-zoom lp-widget-minigantt-cmpmode" role="group" aria-label="Mode d'affichage du Mini-Gantt">
           <button type="button" className={comparisonOn ? "" : "active"} aria-pressed={!comparisonOn} onClick={() => setComparisonMode(false)} title="Mode standard — dates actuelles seules">Standard</button>
           <button type="button" className={comparisonOn ? "active" : ""} aria-pressed={comparisonOn} onClick={() => setComparisonMode(true)} title="Mode comparaison — dates de référence, dates actuelles et écarts en jours">Comparaison</button>
+        </div>
+      )}
+      {/* #165 : lequel des deux points de l'historique sert de référence — la
+          dernière revue (toujours la référence courante) ou le tout premier
+          point archivé (« Initiale », le plan de départ). */}
+      {editable && comparisonOn && (
+        <div className="lp-widget-minigantt-zoom lp-widget-minigantt-cmpmode" role="group" aria-label="Référence comparée">
+          <button type="button" className={comparisonReference === "current" ? "active" : ""} aria-pressed={comparisonReference === "current"} onClick={() => setComparisonReference("current")} title="Comparer aux dates de la dernière revue">Dernière revue</button>
+          <button type="button" className={comparisonReference === "initial" ? "active" : ""} aria-pressed={comparisonReference === "initial"} onClick={() => setComparisonReference("initial")} title="Comparer aux dates du plan initial (avant toute revue)">Plan initial</button>
         </div>
       )}
       {editable && (
@@ -6762,6 +6856,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
           <button type="button" onClick={() => setAnnotationPanel({ section: "milestones", autoCreate: "milestone" })} title="Ajouter un jalon ou une décision">+ Jalon</button>
           <button type="button" onClick={() => setAnnotationPanel({ section: "spans", autoCreate: "span" })} title="Ajouter une annotation horizontale (trait d'une date à une autre, à la hauteur d'une tâche)">+ Trait</button>
         </div>
+      )}
+      {onUpdateTask && pushToast && onPrintWidget && (
+        <button type="button" className="lp-btn" onClick={closeReview} title="Fige la référence de toutes les tâches affichées, puis imprime ce widget">
+          <CheckCircle2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Clore la revue
+        </button>
       )}
     </div>
   );
@@ -8441,6 +8540,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         {milestoneRuleLayer}
         {bubbleMacroLayer}
         {!presentationMode && toolbar}
+        {!presentationMode && selectionToolbar}
         <Axis />
         {phasesHeader}
         {stripHeader}
@@ -8486,6 +8586,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
       {milestoneRuleLayer}
       {bubbleMacroLayer}
       {!presentationMode && toolbar}
+      {!presentationMode && selectionToolbar}
       <Axis />
       {phasesHeader}
       {stripHeader}
@@ -10972,9 +11073,9 @@ function WidgetNextBestAction({ tasks, ctx, onOpen }) {
 // Widget "Daily Briefing" : synthèse opérationnelle du jour. Le moteur
 // (getDailyBriefing) est séparé de l'affichage ; il réutilise directement le
 // moteur Next Best Action sans dupliquer de logique de priorisation.
-function WidgetDailyBriefing({ tasks, ctx, onOpen, onViewDay, activityLog }) {
+function WidgetDailyBriefing({ tasks, ctx, onOpen, onViewDay, activityLog, staffing }) {
   const [openAlert, setOpenAlert] = useState(null);
-  const briefing = useMemo(() => getDailyBriefing({ tasks, ctx, activityLog }), [tasks, ctx, activityLog]);
+  const briefing = useMemo(() => getDailyBriefing({ tasks, ctx, activityLog, staffing }), [tasks, ctx, activityLog, staffing]);
   const dateLabel = new Date(briefing.date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 
   const summaryText = {
@@ -11047,6 +11148,35 @@ function WidgetDailyBriefing({ tasks, ctx, onOpen, onViewDay, activityLog }) {
           {briefing.nextBestAction.reasons.slice(0, 2).map((r, i) => (
             <div key={i} className="lp-widget-briefing-nba-reason">→ {r.text}</div>
           ))}
+        </div>
+      )}
+
+      {/* #170 : ce que la Charge personnel dit de demain — silencieux tant
+          qu'aucune affectation n'y est posée pour demain (staffingTomorrow
+          vaut alors null ou des listes vides), plutôt que d'annoncer un
+          silence comme un fait. */}
+      {briefing.staffingTomorrow && briefing.staffingTomorrow.workshopCounts.length > 0 && (
+        <div className="lp-widget-briefing-section">
+          <div className="lp-widget-briefing-section-title">Demain</div>
+          <div className="lp-widget-briefing-change">
+            {briefing.staffingTomorrow.workshopCounts.map((w, i) => (
+              <React.Fragment key={w.id}>{i > 0 ? ", " : ""}{w.count} en {w.name}</React.Fragment>
+            ))}
+          </div>
+          {briefing.staffingTomorrow.tasksForAbsent.length > 0 && (
+            <div>
+              <div className="lp-widget-briefing-change" onClick={() => setOpenAlert((k) => (k === "absentTasks" ? null : "absentTasks"))} style={{ cursor: "pointer" }}>
+                ⚠ {briefing.staffingTomorrow.tasksForAbsent.length} tâche{briefing.staffingTomorrow.tasksForAbsent.length > 1 ? "s" : ""} assignée{briefing.staffingTomorrow.tasksForAbsent.length > 1 ? "s" : ""} à une personne absente
+              </div>
+              {openAlert === "absentTasks" && (
+                <div className="lp-widget-briefing-alert-list">
+                  {briefing.staffingTomorrow.tasksForAbsent.slice(0, 8).map((t) => (
+                    <div key={t.id} className="lp-widget-briefing-alert-item" onClick={() => onOpen(t)}>{t.title} — {t.assignee}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -11786,7 +11916,7 @@ function MiniGanttViewSettings({ prefs, setPrefs, tasks, ctx, onClose }) {
   );
 }
 
-function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, toolbarSlot, pushToast }) {
+function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBlocks, toolbarSlot, pushToast, taskBaselines }) {
   const widget = normalizeMiniGanttViewPrefs(prefs);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /* Le filtre de la vue s'applique EN PLUS de ceux de la page, jamais à leur
@@ -11812,6 +11942,7 @@ function MiniGanttView({ tasks, ctx, onOpen, setTasks, prefs, setPrefs, metaBloc
         toolbarSlot={toolbarSlot}
         onOpenSettings={() => setSettingsOpen(true)}
         pushToast={pushToast}
+        taskBaselines={taskBaselines}
       />
       {settingsOpen && <MiniGanttViewSettings prefs={widget} setPrefs={setPrefs} tasks={scoped} ctx={ctx} onClose={() => setSettingsOpen(false)} />}
     </section>
@@ -12031,7 +12162,7 @@ function TreemapProgressRing({ value, size, color, trackColor, textColor }) {
 // filtre, ou de la criticité moyenne. `tasks` arrive déjà réduit par les
 // méta-filtres, le filtre de page et le filtre du widget : ce composant ne
 // refiltre jamais le périmètre, il ne fait que compter à l'intérieur.
-function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onEditProject, onFilterProject }) {
+function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onEditProject, onFilterProject, taskBaselines }) {
   const cfg = useMemo(() => normalizeProjectTreemapConfig(widget), [widget]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
@@ -12132,6 +12263,10 @@ function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onE
     return map;
   }, [ctx.projects, expenses, tilesAreProjects]);
 
+  // #133 : comparaison à la référence par tâche, pour la coloration « dérive » —
+  // même repli taskBaselines que le Gantt (#150), pour ne jamais raconter deux
+  // histoires différentes du même retard selon le widget consulté.
+  const comparisonOf = useCallback((t) => miniGanttTaskComparison(t, taskBaselines), [taskBaselines]);
   const rows = useMemo(() => computeTreemapProjects({
     projects: tileEntities,
     tasks,
@@ -12142,7 +12277,8 @@ function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onE
     bucketIdOf,
     colorMode: cfg.colorMode,
     showZeroProjects: cfg.showZeroProjects,
-  }), [tileEntities, bucketIdOf, tasks, sizeIds, colorIds, factsOf, extras, cfg.colorMode, cfg.showZeroProjects]);
+    comparisonOf,
+  }), [tileEntities, bucketIdOf, tasks, sizeIds, colorIds, factsOf, extras, cfg.colorMode, cfg.showZeroProjects, comparisonOf]);
 
   const domain = useMemo(() => treemapColorDomain(rows, cfg.colorMode), [rows, cfg.colorMode]);
   const legend = useMemo(
@@ -12278,6 +12414,12 @@ function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onE
         {cfg.colorMode === "secondaryFilterGradient" && <div className="lp-widget-treemap-tooltip-row"><span>Couleur — second filtre</span><strong>{row.colorCount}</strong></div>}
         {cfg.colorMode === "averageCriticality" && <div className="lp-widget-treemap-tooltip-row"><span>Couleur — criticité moyenne</span><strong>{row.criticality.score}/100 · {worst.label}</strong></div>}
         {cfg.colorMode === "sizeFilterGradient" && <div className="lp-widget-treemap-tooltip-row"><span>Couleur — même filtre</span><strong>{row.sizeCount}</strong></div>}
+        {cfg.colorMode === "averageDrift" && (
+          <div className="lp-widget-treemap-tooltip-row">
+            <span>Couleur — dérive moyenne</span>
+            <strong>{row.driftCount ? `${miniGanttComparisonDeltaLabel(row.driftAvg)} (${row.driftCount} tâche${row.driftCount > 1 ? "s" : ""} comparée${row.driftCount > 1 ? "s" : ""})` : "aucune tâche comparable"}</strong>
+          </div>
+        )}
         <div className="lp-widget-treemap-tooltip-sep" />
         <div className="lp-widget-treemap-tooltip-row"><span>Tâches de la tuile (périmètre)</span><strong>{row.taskCount}</strong></div>
         <div className="lp-widget-treemap-tooltip-row"><span>Terminées</span><strong>{row.doneCount}</strong></div>
@@ -13901,11 +14043,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <button type="button" className={"lp-density-btn" + (treemapColorMode === "sizeFilterGradient" ? " active" : "")} onClick={() => setTreemapColorMode("sizeFilterGradient")}>Même filtre</button>
               <button type="button" className={"lp-density-btn" + (treemapColorMode === "secondaryFilterGradient" ? " active" : "")} onClick={() => setTreemapColorMode("secondaryFilterGradient")}>Second filtre</button>
               <button type="button" className={"lp-density-btn" + (treemapColorMode === "averageCriticality" ? " active" : "")} onClick={() => { setTreemapColorMode("averageCriticality"); setTreemapPalette("levels"); }}>Criticité moyenne</button>
+              <button type="button" className={"lp-density-btn" + (treemapColorMode === "averageDrift" ? " active" : "")} onClick={() => setTreemapColorMode("averageDrift")}>Dérive</button>
             </div>
             <p className="lp-gantt-annot-hint">
               {treemapColorMode === "sizeFilterGradient" && "La couleur suit le même comptage que la surface : plus un projet est gros, plus il est intense."}
               {treemapColorMode === "secondaryFilterGradient" && "La couleur suit un second comptage, indépendant de la surface — par exemple taille = tâches actives, couleur = tâches en retard."}
               {treemapColorMode === "averageCriticality" && `Criticité = moyenne, sur les tâches retenues, de : retard ${TREEMAP_CRITICALITY_WEIGHTS.late}, criticité urgente ${TREEMAP_CRITICALITY_WEIGHTS.urgent}, échéance ≤ ${TREEMAP_DUE_SOON_DAYS} j ${TREEMAP_CRITICALITY_WEIGHTS.dueSoon}, jalon ${TREEMAP_CRITICALITY_WEIGHTS.milestone}, inactivité ≥ ${TREEMAP_STALE_DAYS} j ${TREEMAP_CRITICALITY_WEIGHTS.stale}, projet prioritaire ${TREEMAP_CRITICALITY_WEIGHTS.projectPriorityHigh}. Une tâche terminée vaut 0. La règle est rappelée dans l'infobulle de chaque tuile.`}
+              {treemapColorMode === "averageDrift" && "La couleur suit le retard moyen (en jours) des tâches ayant une référence de comparaison — manuelle, ou capturée automatiquement à leur première apparition (#150). Un projet en avance ou à l'heure reste neutre : seul le retard est signalé."}
             </p>
           </div>
           {treemapColorMode === "secondaryFilterGradient" && (

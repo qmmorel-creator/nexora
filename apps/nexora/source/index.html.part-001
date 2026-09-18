@@ -2485,6 +2485,10 @@ function GlobalStyles() {
         /* Pied d'impression (#155) : invisible à l'écran, affiché seulement au
            moment d'imprimer — voir la règle @media print plus bas. */
         .lp-widget-minigantt-print-footer{ display:none; }
+        /* Barre de sélection du Gantt (#149) : même geste « Figer la référence »
+           que le Tableur, sur les tâches encadrées. */
+        .lp-widget-minigantt-selection-bar{ display:flex; align-items:center; gap:10px; padding:6px 8px; margin-bottom:6px; background:var(--paper-soft); border-radius:8px; }
+        .lp-widget-minigantt-selection-count{ font-size:12px; font-weight:700; color:var(--text-600); }
         .lp-widget-minigantt-grouped{ gap:10px; }
         /* Fond teinté d'après la couleur du champ de regroupement. Pas de
            padding HORIZONTAL : la colonne d'étiquettes vaut 26 % de la ligne et
@@ -10448,6 +10452,33 @@ export default function LePlan({ currentUser, onSignOut }) {
     // Ne pas pousser un second toast ici.
     deleteTask(task.id);
   };
+  /* Figer la référence en masse (#149) — le geste de fin de revue de projet :
+     chaque tâche sélectionnée reçoit ses dates ACTUELLES comme nouvelle
+     référence de comparaison, via la même fonction pure que le bouton de la
+     fiche (`taskComparisonFromCurrentDates`). Une tâche sans date exploitable
+     n'entre simplement pas dans le lot — comme la fiche, qui ne propose rien à
+     figer sur une tâche non datée. Annulable, comme la suppression en masse. */
+  const requestFreezeReference = (ids, label) => {
+    const list = (ids || []).filter(Boolean);
+    const eligible = tasks.filter((t) => list.includes(t.id) && taskComparisonFromCurrentDates(t));
+    if (eligible.length === 0) { pushToast({ message: "Aucune tâche datée dans la sélection : rien à figer." }); return; }
+    askConfirm({
+      title: "Figer la référence ?",
+      message: `${eligible.length} tâche${eligible.length > 1 ? "s" : ""} ${label || "sélectionnées"} ${eligible.length > 1 ? "recevront" : "recevra"} ses dates actuelles comme nouvelle référence de comparaison. Une référence déjà posée part dans l'historique (#165).`,
+      confirmLabel: `Figer la référence (${eligible.length})`,
+      onConfirm: () => {
+        const before = new Map(eligible.map((t) => [t.id, t.comparison ?? null]));
+        setTasks((prev) => prev.map((t) => (before.has(t.id) ? { ...t, comparison: freezeTaskReference(t) } : t)));
+        setConfirmState(null);
+        pushToast({
+          message: `Référence figée pour ${eligible.length} tâche${eligible.length > 1 ? "s" : ""}.`,
+          actionLabel: "Annuler",
+          onAction: () => setTasks((prev) => prev.map((t) => (before.has(t.id) ? { ...t, comparison: before.get(t.id) } : t))),
+        });
+      },
+    });
+  };
+
   const requestBulkDelete = (ids, label) => {
     const list = (ids || []).filter(Boolean);
     if (list.length === 0) { pushToast({ message: "Aucune tâche à supprimer ici." }); return; }
@@ -11532,9 +11563,9 @@ export default function LePlan({ currentUser, onSignOut }) {
               </DropdownButton>
             </div>
           )}
-          {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} />}
+          {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} taskBaselines={taskBaselines} />}
           {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
-          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} />}
@@ -11546,7 +11577,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       </main>
 
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} />
+        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal
