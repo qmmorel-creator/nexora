@@ -8550,6 +8550,7 @@ function TaskWritingModeOverlay({
   shortcutPrefs,
   modeLabel = "Mode écriture",
   showTaskMeta = true,
+  onAddChecklistItem,
 }) {
   const [preview, setPreview] = useState(false);
   const textareaRef = useRef(null);
@@ -8598,12 +8599,12 @@ function TaskWritingModeOverlay({
       if (!preview && (ctrlSpace || matchesShortcutCombo(e, shortcutPrefs?.markdownChecklist || "Ctrl+Space"))) {
         e.preventDefault();
         e.stopPropagation();
-        insertMarkdownAtCursor({
-          textarea:textareaRef.current,
-          value:desc || "",
-          insert:"- [ ] ",
-          onChange:onChangeDesc,
-        });
+        // #145 : une sous-tâche structurée quand ce texte EST une description
+        // de tâche (jamais plus une ligne `- [ ] ` qui échapperait au compte du
+        // Tableur) ; une simple note libre (pas de `onAddChecklistItem`, ex.
+        // le widget Note) n'a rien de structuré à proposer et garde le markdown.
+        if (onAddChecklistItem) onAddChecklistItem();
+        else insert("- [ ] ");
         return;
       }
 
@@ -8675,7 +8676,7 @@ function TaskWritingModeOverlay({
                 {meta.icon} {meta.label}
               </button>
             ))}
-            <button type="button" className="lp-callout-insert-btn" onClick={()=>insert("- [ ] ")}>☑ Checklist</button>
+            <button type="button" className="lp-callout-insert-btn" onClick={onAddChecklistItem || (()=>insert("- [ ] "))}>☑ Checklist</button>
           </div>
         )}
 
@@ -8991,6 +8992,32 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const removeItem = (id) => setChecklist((c) => c.filter((i) => i.id !== id));
   const updateItemText = (id, text) => setChecklist((c) => c.map((i) => (i.id === id ? { ...i, text } : i)));
   const updateItemDates = (id, patch) => setChecklist((c) => c.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+  /* #145 : le raccourci et le bouton « Checklist » de la description créaient
+     une simple ligne `- [ ] ` de texte, jamais comptée ailleurs que dans son
+     propre aperçu — une seconde mécanique de case à cocher, en concurrence
+     avec `checklist` ci-dessus. Les deux posent désormais un item structuré,
+     avec le focus dessus pour enchaîner sur la saisie du texte. */
+  const checklistItemRefs = useRef({});
+  const [pendingChecklistFocusId, setPendingChecklistFocusId] = useState(null);
+  useEffect(() => {
+    if (!pendingChecklistFocusId) return;
+    const el = checklistItemRefs.current[pendingChecklistFocusId];
+    if (el) { el.focus(); setPendingChecklistFocusId(null); }
+  }, [pendingChecklistFocusId, checklist]);
+  const addBlankChecklistItem = () => {
+    const id = uid();
+    setChecklist((c) => [...c, { id, text: "", done: false, end, statusId: null, assignee: "" }]);
+    setPendingChecklistFocusId(id);
+  };
+  // Cases déjà tapées à la main dans la description : jamais converties en
+  // silence, seulement proposées.
+  const markdownChecklistFound = useMemo(() => extractMarkdownChecklistItems(desc).items, [desc]);
+  const convertMarkdownChecklist = () => {
+    const { items, remainingText } = extractMarkdownChecklistItems(desc);
+    if (!items.length) return;
+    setChecklist((c) => [...c, ...items.map((it) => ({ id: uid(), text: it.text, done: it.done, end, statusId: null, assignee: "" }))]);
+    setDesc(remainingText);
+  };
 
   const onStartChange = (v) => { setStart(v); if (!milestone) setEnd(addDays(v, duration)); };
   const onEndChange = (v) => { setEnd(v); if (!milestone) setDuration(Math.max(0, dayIndex(v) - dayIndex(start))); };
@@ -9149,6 +9176,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           onChangeDesc={setDesc}
           onClose={()=>setWritingMode(false)}
           shortcutPrefs={shortcutPrefs}
+          onAddChecklistItem={addBlankChecklistItem}
         />
       )}
       {(base.source === "gmail" || base.sourceUrl) && (
@@ -9649,15 +9677,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
               type="button"
               className="lp-callout-insert-btn"
               style={{ color:"var(--text-700)", borderColor:"var(--border-strong)" }}
-              title="Insérer une checklist Markdown"
-              onClick={() => {
-                insertMarkdownAtCursor({
-                  textarea:descRef.current,
-                  value:desc,
-                  insert:"- [ ] ",
-                  onChange:setDesc
-                });
-              }}
+              title="Ajouter une sous-tâche structurée (comptée dans le Tableur et les widgets)"
+              onClick={addBlankChecklistItem}
             >
               ☑ Checklist
             </button>
@@ -9685,7 +9706,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
             onKeyDown={(e) => {
               if (!matchesShortcutCombo(e, shortcutPrefs?.markdownChecklist || "Ctrl+Space")) return;
               e.preventDefault();
-              insertMarkdownAtCursor({ textarea:descRef.current, value:desc, insert:"- [ ] ", onChange:setDesc });
+              addBlankChecklistItem();
             }}
             placeholder="Détails, contacts, liens... (** gras **, * italique *, # titre, - liste, - [ ] tâche, - [x] terminée, boutons ci-dessus pour les callouts :::callout-...:::)"
             rows={14}
@@ -9696,11 +9717,24 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
 
       <div className="lp-field">
         <label>Sous-tâches</label>
+        {markdownChecklistFound.length > 0 && (
+          <p className="lp-gantt-annot-hint" style={{ margin: "0 0 6px" }}>
+            {markdownChecklistFound.length} case{markdownChecklistFound.length > 1 ? "s" : ""} à cocher trouvée{markdownChecklistFound.length > 1 ? "s" : ""} dans la description —{" "}
+            <button
+              type="button"
+              onClick={convertMarkdownChecklist}
+              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontWeight: 700, color: "var(--accent)", textDecoration: "underline", cursor: "pointer" }}
+            >
+              convertir en sous-tâche{markdownChecklistFound.length > 1 ? "s" : ""} structurée{markdownChecklistFound.length > 1 ? "s" : ""}
+            </button>
+          </p>
+        )}
         {checklist.map((item) => (
           <div key={item.id} className="lp-subtask-card">
             <div className="lp-subtask-card-top">
               <input type="checkbox" checked={item.done} onChange={() => toggleItem(item.id)} />
               <input
+                ref={(el) => { if (el) checklistItemRefs.current[item.id] = el; else delete checklistItemRefs.current[item.id]; }}
                 type="text"
                 value={item.text}
                 onChange={(e) => updateItemText(item.id, e.target.value)}
