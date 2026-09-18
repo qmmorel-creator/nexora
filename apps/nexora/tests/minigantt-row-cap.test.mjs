@@ -73,13 +73,16 @@ test("un jalon s'ordonne par sa date de fin, la seule qu'il porte", () => {
 });
 
 // --- Câblage dans l'interface ----------------------------------------------
-test("la VUE Gantt lève le plafond, le widget le garde", () => {
+test("la VUE Gantt lève le plafond, le widget le garde proportionnel à sa hauteur (#156)", () => {
   // La vue passe `showAllRows` ; aucun widget enregistré ne le porte.
   assert.match(html, /showAllRows\s*\n\s*groupBy=\{widget\.groupBy\}/);
-  assert.match(html, /bubbleMode, showAllRows \}\) \{/);
+  assert.match(html, /bubbleMode, showAllRows, widgetHeight, onOpenGanttView, pushToast \}\) \{/);
+  // Depuis #156, le plafond n'est plus une constante fixe : il grandit avec la
+  // hauteur réelle du widget (5 barres par unité de grille), sans jamais
+  // descendre sous le plafond d'origine.
   assert.match(
     html,
-    /const rowLimits = showAllRows\s*\n\s*\? \{ bars: Infinity, milestones: Infinity \}\s*\n\s*: \{ bars: MINIGANTT_WIDGET_MAX_BARS, milestones: MINIGANTT_WIDGET_MAX_MILESTONES \};/
+    /const bars = Math\.max\(MINIGANTT_WIDGET_MAX_BARS, Math\.round\(\(Number\(widgetHeight\) \|\| 4\) \* 5\)\);/
   );
   // Plus aucun plafond écrit en dur dans le rendu des lignes.
   assert.match(html, /miniGanttCapRows\(tasks\.filter\(\(t\) => !t\.milestone && t\.start && t\.end\), barLimit, "start"/);
