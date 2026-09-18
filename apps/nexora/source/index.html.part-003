@@ -3884,7 +3884,12 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetDeadlineScatter widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "heatmapGrid" && (
-                  <WidgetHeatmapGrid widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                  <WidgetHeatmapGrid widget={w}
+                    tasks={scoped}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch, lastInteraction: new Date().toISOString() } : t)))}
+                  />
                 )}
                 {w.type === "heatmapMonth" && (
                   <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
@@ -5236,6 +5241,9 @@ function MiniGanttProgressRing({ progress }) {
    formulaires de réglages avant #86.
    Hors de ce mode, pas une branche ci-dessous ne s'exécute : le Mini-Gantt rend
    exactement ce qu'il rendait. */
+// Amplitude du zoom manuel (#180) : 1,65^8 ≈ 26,7 — de quelques jours à
+// plusieurs années sur la même paire de boutons, sans passer par les réglages.
+const MINIGANTT_ZOOM_MAX = 8;
 function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
   // Absences (#134) : l'atelier « absence » du catalogue Charge personnel,
   // reconnu par son nom — lecture seule, jamais posé depuis le Gantt.
@@ -5453,10 +5461,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
   const usefulMaxIdx = Math.max(naturalMaxIdx, autoMaxIdx, todayIdx);
 
   // Zoom manuel persistant du widget :
-  // null/undefined = automatique ; -2..+2 = niveaux relatifs à l'étendue auto.
-  // + = zoom avant (moins de jours), - = zoom arrière (plus de jours).
+  // null/undefined = automatique ; -MINIGANTT_ZOOM_MAX..+MINIGANTT_ZOOM_MAX =
+  // niveaux relatifs à l'étendue auto. + = zoom avant (moins de jours),
+  // - = zoom arrière (plus de jours). Porté à 8 crans de chaque côté (retour
+  // de test #180) : à 2, l'écart entre le plus zoomé et le moins zoomé ne
+  // couvrait qu'un facteur 1,65² ≈ 2,7 — trop court pour passer d'une vue
+  // "quelques jours" à une vue "plusieurs années" au même bouton.
   const zoomLevel = Number.isFinite(Number(widget.miniGanttZoomLevel))
-    ? clamp(Number(widget.miniGanttZoomLevel), -2, 2)
+    ? clamp(Number(widget.miniGanttZoomLevel), -MINIGANTT_ZOOM_MAX, MINIGANTT_ZOOM_MAX)
     : null;
   const zoomIsAuto = zoomLevel == null;
   const zoomFactor = zoomIsAuto ? 1 : Math.pow(1.65, -zoomLevel);
@@ -5492,7 +5504,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     // Poser un niveau de zoom relâche toujours la fenêtre épinglée : sinon les
     // boutons − / Auto / + resteraient sans effet visible.
     if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null});
-    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-2,2), miniGanttWindow:null});
+    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-MINIGANTT_ZOOM_MAX,MINIGANTT_ZOOM_MAX), miniGanttWindow:null});
   };
   const zoomIn = () => setZoomLevel(zoomIsAuto ? 1 : zoomLevel + 1);
   const zoomOut = () => setZoomLevel(zoomIsAuto ? -1 : zoomLevel - 1);
@@ -6506,11 +6518,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         </DropdownButton>
       )}
       <div className="lp-widget-minigantt-zoom" role="group" aria-label="Zoom du Mini-Gantt">
-        <button type="button" onClick={zoomOut} disabled={!zoomIsAuto && zoomLevel<=-2} title="Zoom arrière">−</button>
+        <button type="button" onClick={zoomOut} disabled={!zoomIsAuto && zoomLevel<=-MINIGANTT_ZOOM_MAX} title="Zoom arrière">−</button>
         <button type="button" onClick={resetZoom} className={zoomIsAuto ? "active" : ""} title="Retour au zoom automatique">
           Auto
         </button>
-        <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=2} title="Zoom avant">+</button>
+        <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=MINIGANTT_ZOOM_MAX} title="Zoom avant">+</button>
         {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
       </div>
       {editable && (
@@ -12523,6 +12535,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [heatmapMetric, setHeatmapMetric] = useState(heatmapCfg.metric);
   const [heatmapPalette, setHeatmapPalette] = useState(heatmapCfg.palette);
   const [heatmapShowValues, setHeatmapShowValues] = useState(heatmapCfg.showValues);
+  const [heatmapShowDescPane, setHeatmapShowDescPane] = useState(heatmapCfg.showDescPane);
   // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
   const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
   const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
@@ -12715,6 +12728,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapMetric = heatmapMetric;
       data.heatmapPalette = heatmapPalette;
       data.heatmapShowValues = heatmapShowValues;
+      data.heatmapShowDescPane = heatmapShowDescPane;
     }
     if (type === "deadlineScatter") {
       data.scatterLaneField = scatterLaneField;
@@ -13430,6 +13444,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <label className="lp-checkbox-line" style={{ marginTop: 8 }}>
             <input type="checkbox" checked={heatmapShowValues} onChange={(e) => setHeatmapShowValues(e.target.checked)} />
             Afficher la valeur dans chaque case
+          </label>
+          <label className="lp-checkbox-line">
+            <input type="checkbox" checked={heatmapShowDescPane} onChange={(e) => setHeatmapShowDescPane(e.target.checked)} />
+            Volet Description (clic sur une tâche de la liste = sa description, à droite)
           </label>
         </>
       )}
