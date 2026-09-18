@@ -2362,6 +2362,7 @@ function defaultLayoutForType(type) {
   if (type === "countdown") return { w: 3, h: 3 };
   if (type === "note") return { w: 4, h: 3 };
   if (type === "taskDetail") return { w: 8, h: 7 };
+  if (type === "userProfile") return { w: 8, h: 9 };
   if (type === "budget") return { w: 4, h: 3 };
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
@@ -3099,7 +3100,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3854,6 +3855,17 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onFilterPerson={(name) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), advanced: { op: "and", items: [{ field: "assignee", mode: "is", values: [name] }] } })}
                   />
                 )}
+                {w.type === "userProfile" && (
+                  <WidgetUserProfile
+                    widget={w}
+                    ctx={ctx}
+                    staffing={staffing}
+                    onOpen={onOpen}
+                    setTasks={setTasks}
+                    pushToast={pushToast}
+                    onUpdateTeamMembers={setTeamMembers}
+                  />
+                )}
                 {w.type === "criticalPath" && (
                   <WidgetCriticalPath tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
@@ -3872,7 +3884,12 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetDeadlineScatter widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "heatmapGrid" && (
-                  <WidgetHeatmapGrid widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                  <WidgetHeatmapGrid widget={w}
+                    tasks={scoped}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch, lastInteraction: new Date().toISOString() } : t)))}
+                  />
                 )}
                 {w.type === "heatmapMonth" && (
                   <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
@@ -5224,6 +5241,9 @@ function MiniGanttProgressRing({ progress }) {
    formulaires de réglages avant #86.
    Hors de ce mode, pas une branche ci-dessous ne s'exécute : le Mini-Gantt rend
    exactement ce qu'il rendait. */
+// Amplitude du zoom manuel (#180) : 1,65^8 ≈ 26,7 — de quelques jours à
+// plusieurs années sur la même paire de boutons, sans passer par les réglages.
+const MINIGANTT_ZOOM_MAX = 8;
 function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows }) {
   // Absences (#134) : l'atelier « absence » du catalogue Charge personnel,
   // reconnu par son nom — lecture seule, jamais posé depuis le Gantt.
@@ -5441,10 +5461,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
   const usefulMaxIdx = Math.max(naturalMaxIdx, autoMaxIdx, todayIdx);
 
   // Zoom manuel persistant du widget :
-  // null/undefined = automatique ; -2..+2 = niveaux relatifs à l'étendue auto.
-  // + = zoom avant (moins de jours), - = zoom arrière (plus de jours).
+  // null/undefined = automatique ; -MINIGANTT_ZOOM_MAX..+MINIGANTT_ZOOM_MAX =
+  // niveaux relatifs à l'étendue auto. + = zoom avant (moins de jours),
+  // - = zoom arrière (plus de jours). Porté à 8 crans de chaque côté (retour
+  // de test #180) : à 2, l'écart entre le plus zoomé et le moins zoomé ne
+  // couvrait qu'un facteur 1,65² ≈ 2,7 — trop court pour passer d'une vue
+  // "quelques jours" à une vue "plusieurs années" au même bouton.
   const zoomLevel = Number.isFinite(Number(widget.miniGanttZoomLevel))
-    ? clamp(Number(widget.miniGanttZoomLevel), -2, 2)
+    ? clamp(Number(widget.miniGanttZoomLevel), -MINIGANTT_ZOOM_MAX, MINIGANTT_ZOOM_MAX)
     : null;
   const zoomIsAuto = zoomLevel == null;
   const zoomFactor = zoomIsAuto ? 1 : Math.pow(1.65, -zoomLevel);
@@ -5480,7 +5504,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     // Poser un niveau de zoom relâche toujours la fenêtre épinglée : sinon les
     // boutons − / Auto / + resteraient sans effet visible.
     if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null});
-    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-2,2), miniGanttWindow:null});
+    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-MINIGANTT_ZOOM_MAX,MINIGANTT_ZOOM_MAX), miniGanttWindow:null});
   };
   const zoomIn = () => setZoomLevel(zoomIsAuto ? 1 : zoomLevel + 1);
   const zoomOut = () => setZoomLevel(zoomIsAuto ? -1 : zoomLevel - 1);
@@ -6494,11 +6518,11 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         </DropdownButton>
       )}
       <div className="lp-widget-minigantt-zoom" role="group" aria-label="Zoom du Mini-Gantt">
-        <button type="button" onClick={zoomOut} disabled={!zoomIsAuto && zoomLevel<=-2} title="Zoom arrière">−</button>
+        <button type="button" onClick={zoomOut} disabled={!zoomIsAuto && zoomLevel<=-MINIGANTT_ZOOM_MAX} title="Zoom arrière">−</button>
         <button type="button" onClick={resetZoom} className={zoomIsAuto ? "active" : ""} title="Retour au zoom automatique">
           Auto
         </button>
-        <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=2} title="Zoom avant">+</button>
+        <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=MINIGANTT_ZOOM_MAX} title="Zoom avant">+</button>
         {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
       </div>
       {editable && (
@@ -8365,6 +8389,99 @@ function WidgetOrgChart({ ctx, staffing, onFilterPerson }) {
           onFilterPerson={onFilterPerson}
         />
       ))}
+    </div>
+  );
+}
+
+/* Widget « Utilisateur » (#173). Une fiche par personne, choisie dans les
+   réglages du widget : ses paramètres (modifiables sans repasser par
+   Réglages › Utilisateurs), son plan de charge des 30 prochains jours (même
+   lecture que la couche « Tâches » de la Charge personnel, #152), la
+   répartition de ses tâches actives par projet et la liste de celles sur
+   lesquelles elle travaille — réutilisant WidgetChart et WidgetList tels
+   quels plutôt que de redessiner un graphe et une liste. Lecture des tâches
+   et des affectations, écriture uniquement sur la fiche de la personne. */
+function WidgetUserProfile({ widget, ctx, staffing, onOpen, setTasks, pushToast, onUpdateTeamMembers }) {
+  const member = (ctx.teamMembers || []).find((m) => m.name === widget.userProfileMember) || null;
+  const [editing, setEditing] = useState(false);
+  const today = useMemo(() => iso(new Date()), []);
+  const tasksIndex = useMemo(() => staffingActiveTasksIndex(ctx.tasks, ctx), [ctx.tasks, ctx.statuses]);
+
+  if (!widget.userProfileMember) {
+    return <div className="lp-empty">Choisis une personne dans la fiche du widget.</div>;
+  }
+  if (!member) {
+    return <div className="lp-empty">« {widget.userProfileMember} » ne fait plus partie de l'annuaire — choisis une autre personne dans la fiche du widget.</div>;
+  }
+
+  const name = member.name;
+  const activeTasks = useMemo(
+    () => (ctx.tasks || []).filter((t) => t.assignee === name && !t.milestone && !isTaskDoneGlobal(t, ctx)),
+    [ctx.tasks, ctx, name]
+  );
+  const loadDays = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < 30; i += 1) {
+      const dayIso = addDays(today, i);
+      out.push({ iso: dayIso, count: staffingActiveTasksForCell(tasksIndex, name, dayIso).length });
+    }
+    return out;
+  }, [tasksIndex, name, today]);
+  const capacity = normalizeMemberCapacity(member.capacityPerDay);
+  const teamNames = memberTeamIds(member).map((id) => teamFor(ctx.teams, id)?.name).filter(Boolean);
+
+  return (
+    <div className="lp-userprofile">
+      <div className="lp-userprofile-head">
+        <span className="lp-userprofile-avatar" style={{ background: member.color || staffingMemberColor(name) }}>
+          {member.avatarDataUrl ? <IconGlyph icon={member.avatarDataUrl} size={22} /> : name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
+        </span>
+        <div className="lp-userprofile-id">
+          <span className="lp-userprofile-name">{name}</span>
+          <span className="lp-userprofile-meta">
+            {member.email || "Sans email"} · Capacité {capacity}/j{teamNames.length > 0 ? " · " + teamNames.join(", ") : ""}
+          </span>
+        </div>
+        {onUpdateTeamMembers && (
+          <button type="button" className="lp-btn lp-btn-mini" onClick={() => setEditing(true)}>Modifier</button>
+        )}
+      </div>
+
+      <div className="lp-userprofile-section">
+        <div className="lp-userprofile-section-title">Plan de charge — 30 prochains jours</div>
+        <div className="lp-userprofile-load">
+          {loadDays.map((d) => (
+            <span
+              key={d.iso}
+              className={"lp-userprofile-load-cell" + (d.count === 0 ? " is-empty" : d.count >= 3 ? " is-high" : " is-filled")}
+              title={fmtShort(d.iso) + " — " + d.count + " tâche" + (d.count > 1 ? "s" : "") + " active" + (d.count > 1 ? "s" : "")}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="lp-userprofile-row">
+        <div className="lp-userprofile-section lp-userprofile-half">
+          <div className="lp-userprofile-section-title">Répartition par projet</div>
+          <WidgetChart tasks={activeTasks} groupBy="project" chartStyle="pie" ctx={ctx} />
+        </div>
+        <div className="lp-userprofile-section lp-userprofile-half">
+          <div className="lp-userprofile-section-title">{activeTasks.length} tâche{activeTasks.length > 1 ? "s" : ""} en cours</div>
+          <WidgetList tasks={activeTasks} sortBy="end" limit={30} ctx={ctx} onOpen={onOpen} />
+        </div>
+      </div>
+
+      {editing && onUpdateTeamMembers && (
+        <TeamMemberFormModal
+          member={member}
+          teams={ctx.teams}
+          onSave={(data) => {
+            saveTeamMemberEdit({ target: member, data, setTeamMembers: onUpdateTeamMembers, tasks: ctx.tasks, setTasks, pushToast });
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      )}
     </div>
   );
 }
@@ -12117,6 +12234,7 @@ const WIDGET_TYPE_META = [
   { key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" },
   { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
   { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
+  { key: "userProfile", label: "Utilisateur", icon: User, group: "Planning" },
   { key: "milestoneTimeline", label: "Timeline des jalons", icon: Milestone, group: "Planning" },
   { key: "verticalMetroTimeline", label: "Timeline verticale métro", icon: TrainTrack, group: "Planning" },
   { key: "metroDeadline", label: "Métro / Échéances", icon: CalendarClock, group: "Planning" },
@@ -12401,6 +12519,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [countdownDate, setCountdownDate] = useState(widget?.countdownDate || "");
   const [countdownTaskId, setCountdownTaskId] = useState(widget?.countdownTaskId || "");
   const [taskDetailTaskId, setTaskDetailTaskId] = useState(widget?.taskDetailTaskId || "");
+  const [userProfileMember, setUserProfileMember] = useState(widget?.userProfileMember || "");
   const [content, setContent] = useState(widget?.content || "");
   const [budgetProjectId, setBudgetProjectId] = useState(widget?.budgetProjectId || ctx.projects[0]?.id || "");
   const [burnRateProjectId, setBurnRateProjectId] = useState(widget?.burnRateProjectId || ctx.projects[0]?.id || "");
@@ -12416,6 +12535,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [heatmapMetric, setHeatmapMetric] = useState(heatmapCfg.metric);
   const [heatmapPalette, setHeatmapPalette] = useState(heatmapCfg.palette);
   const [heatmapShowValues, setHeatmapShowValues] = useState(heatmapCfg.showValues);
+  const [heatmapShowDescPane, setHeatmapShowDescPane] = useState(heatmapCfg.showDescPane);
   // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
   const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
   const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
@@ -12540,6 +12660,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       return true; // mode "filtre" : toujours valide, vide = toutes les tâches
     }
     if (type === "taskDetail") return !!taskDetailTaskId;
+    if (type === "userProfile") return !!userProfileMember;
     if (type === "customCard") {
       if (!cardBlocks.length) return false;
       if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText"].includes(b.kind))) return false;
@@ -12597,6 +12718,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "list") { data.sortBy = sortBy; data.limit = Number(limit) || 6; data.groupBy = listGroupBy; }
     if (type === "countdown") { data.countdownMode = countdownMode; data.countdownDate = countdownDate; data.countdownTaskId = countdownTaskId; }
     if (type === "taskDetail") data.taskDetailTaskId = taskDetailTaskId;
+    if (type === "userProfile") data.userProfileMember = userProfileMember;
     if (type === "note") data.content = content;
     if (type === "budget") { data.budgetProjectId = budgetProjectId; data.budgetMetric = budgetMetric; }
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
@@ -12606,6 +12728,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapMetric = heatmapMetric;
       data.heatmapPalette = heatmapPalette;
       data.heatmapShowValues = heatmapShowValues;
+      data.heatmapShowDescPane = heatmapShowDescPane;
     }
     if (type === "deadlineScatter") {
       data.scatterLaneField = scatterLaneField;
@@ -13204,6 +13327,16 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </div>
       )}
 
+      {type === "userProfile" && (
+        <div className="lp-field">
+          <label>Personne</label>
+          <select value={userProfileMember} onChange={(e) => setUserProfileMember(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {sortedByName(ctx.teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+          </select>
+        </div>
+      )}
+
       {type === "countdown" && (
         <>
           <div className="lp-field">
@@ -13319,6 +13452,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <label className="lp-checkbox-line" style={{ marginTop: 8 }}>
             <input type="checkbox" checked={heatmapShowValues} onChange={(e) => setHeatmapShowValues(e.target.checked)} />
             Afficher la valeur dans chaque case
+          </label>
+          <label className="lp-checkbox-line">
+            <input type="checkbox" checked={heatmapShowDescPane} onChange={(e) => setHeatmapShowDescPane(e.target.checked)} />
+            Volet Description (clic sur une tâche de la liste = sa description, à droite)
           </label>
         </>
       )}

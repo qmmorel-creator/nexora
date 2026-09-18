@@ -1101,6 +1101,7 @@ function AnimationSettingsPane({ appearance, setAppearance, saveStatus, saveErro
 // ============================================================================
 const SETTINGS_TABS = [
   { key: "projects", label: "Projets", icon: "folder" },
+  { key: "taskDefaults", label: "Valeurs par défaut", icon: "list" },
   { key: "statuses", label: "Statuts", icon: "settings" },
   { key: "taskTypes", label: "Types", icon: "tag" },
   { key: "milestoneTypes", label: "Types de jalon", icon: "flag" },
@@ -2218,6 +2219,55 @@ function SnapshotHistoryCard({ snapshotIndex, onRestoreSnapshot, snapshotBusy, p
   );
 }
 
+// ============================================================================
+// Valeurs par défaut à la création d'une tâche (#183) — chaque champ vide vaut
+// « aucun réglage », le comportement d'avant cette fiche (présélection du
+// projet filtré, statut par défaut du projet, reste vide).
+// ============================================================================
+function TaskDefaultsManager({ value, onChange, projects, taskTypes, teamMembers, embedded, onClose }) {
+  const v = value || {};
+  const set = (patch) => onChange({ ...v, ...patch });
+  const body = (
+    <>
+      <div className="lp-section-title">Nouvelle tâche</div>
+      <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 14 }}>
+        Pré-remplit le formulaire de création d'une tâche. Un champ laissé sur « Aucun » garde le
+        comportement actuel (projet du filtre actif si un seul est coché, reste vide sinon).
+      </p>
+      <div className="lp-field">
+        <label>Projet par défaut</label>
+        <select value={v.projectId || ""} onChange={(e) => set({ projectId: e.target.value })}>
+          <option value="">Aucun</option>
+          {sortedByName(projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Type par défaut</label>
+        <select value={v.taskTypeId || ""} onChange={(e) => set({ taskTypeId: e.target.value })}>
+          <option value="">Aucun</option>
+          {sortedByName(taskTypes || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Responsable par défaut</label>
+        <select value={v.assignee || ""} onChange={(e) => set({ assignee: e.target.value })}>
+          <option value="">Aucun</option>
+          {sortedByName(teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Criticité par défaut</label>
+        <select value={v.criticality || ""} onChange={(e) => set({ criticality: e.target.value })}>
+          <option value="">Aucune</option>
+          {CRITICALITIES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+    </>
+  );
+  if (embedded) return <div className="lp-settings-pane">{body}</div>;
+  return <Modal title="Valeurs par défaut" onClose={onClose} wide>{body}</Modal>;
+}
+
 function SettingsModal({
   activeTab, setActiveTab, onClose,
   projects, setProjects, projectFolders, setProjectFolders, tasks, setTasks, onDeleteProject, onBulkDelete, palette,
@@ -2237,6 +2287,7 @@ function SettingsModal({
   viewOrder, setViewOrder,
   startupPref, setStartupPref, savedViews, dashboards,
   projectDefaultView, setProjectDefaultView,
+  taskDefaults, setTaskDefaults,
   onOpenImport,
   onOpenMarkdownImport,
   onExportFullBackup,
@@ -2284,6 +2335,9 @@ function SettingsModal({
           <div className="lp-settings-content">
             {activeTab === "projects" && (
               <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
+            )}
+            {activeTab === "taskDefaults" && (
+              <TaskDefaultsManager embedded value={taskDefaults} onChange={setTaskDefaults} projects={projects} taskTypes={taskTypes} teamMembers={teamMembers} />
             )}
             {activeTab === "statuses" && (
               <StatusManager embedded statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />
@@ -5897,6 +5951,10 @@ function heatmapNormalizeConfig(widget) {
     palette: TREEMAP_PALETTES[w.heatmapPalette] ? w.heatmapPalette : TREEMAP_DEFAULT_PALETTE,
     direction: TREEMAP_GRADIENT_DIRECTIONS.includes(w.heatmapDirection) ? w.heatmapDirection : "lowToHigh",
     showValues: w.heatmapShowValues !== false,
+    // Volet Description (#177) : lecture seule tant que rien n'est coché — un
+    // troisième volet réservé à une tâche en particulier ne se justifie pas
+    // par défaut, il alourdirait un widget qui n'en a jamais eu besoin.
+    showDescPane: w.heatmapShowDescPane === true,
   };
 }
 // === NEXORA:HEATMAP-GRID:END ===
@@ -6268,10 +6326,36 @@ function WidgetPointerTooltip({ x, y, className, children }) {
 }
 // === NEXORA:POINTER-TOOLTIP:END ===
 
-function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
+function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen, onUpdateTask }) {
   const cfg = useMemo(() => heatmapNormalizeConfig(widget), [widget]);
   const [hover, setHover] = useState(null);
   const [selected, setSelected] = useState(null);
+  // Volet Description (#177) : la tâche choisie DANS LA LISTE, distincte de la
+  // case choisie dans la grille — changer de case ne doit pas fermer la
+  // description en cours de lecture tant que la tâche reste dans la liste.
+  const [descTaskId, setDescTaskId] = useState(null);
+  const [descPreview, setDescPreview] = useState(true);
+  const [descPaneWidth, setDescPaneWidth] = useState(null);
+  const descPaneRef = useRef(null);
+  const descDragRef = useRef(null);
+  const startDescResize = (e) => {
+    e.preventDefault();
+    const startWidth = descPaneWidth != null ? descPaneWidth : (descPaneRef.current?.getBoundingClientRect().width || 280);
+    descDragRef.current = { startX: e.clientX, startWidth };
+    const onMove = (ev) => {
+      if (!descDragRef.current) return;
+      const wrapWidth = splitRef.current?.getBoundingClientRect().width || 900;
+      const delta = descDragRef.current.startX - ev.clientX;
+      setDescPaneWidth(Math.max(200, Math.min(Math.max(200, wrapWidth - 260), descDragRef.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      descDragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   // Découpe en deux volets, sur le modèle de la vue Heat map calendaire.
   // null = jamais glissé par l'utilisateur → les deux volets se partagent
   // l'espace à parts strictement égales. Un nombre = largeur en px du volet
@@ -6536,7 +6620,11 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
                 const proj = (ctx.projects || []).find((p) => p.id === t.projectId);
                 const st = (ctx.statuses || []).find((x) => x.id === t.statusId);
                 return (
-                  <div className="lp-widget-hmgrid-tasklist-item" key={t.id} onClick={() => onOpen && onOpen(t)}>
+                  <div
+                    className={"lp-widget-hmgrid-tasklist-item" + (cfg.showDescPane && descTaskId === t.id ? " is-selected" : "")}
+                    key={t.id}
+                    onClick={() => (cfg.showDescPane ? setDescTaskId(t.id) : (onOpen && onOpen(t)))}
+                  >
                     <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
                     <span className="lp-widget-hmgrid-tasklist-title">{t.title || "Sans titre"}</span>
                     {st && <span className="lp-widget-hmgrid-tasklist-status" style={{ color: st.color }}>{st.name}</span>}
@@ -6547,6 +6635,47 @@ function WidgetHeatmapGrid({ widget, tasks, ctx, onOpen }) {
           </>
         )}
       </div>
+
+      {cfg.showDescPane && (() => {
+        const descTask = descTaskId ? tasks.find((t) => t.id === descTaskId) : null;
+        return (
+          <>
+            <div className="lp-widget-hmgrid-resize-handle" onMouseDown={startDescResize} title="Glisser pour redimensionner" />
+            <div
+              className="lp-widget-hmgrid-descpane"
+              ref={descPaneRef}
+              style={descPaneWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${descPaneWidth}px` }}
+            >
+              <div className="lp-widget-hmgrid-tasklist-head">
+                <span>{descTask ? descTask.title || "Sans titre" : "Aucune tâche choisie"}</span>
+                {descTask && (
+                  <div className="lp-desc-mode-toggle">
+                    <button type="button" className={descPreview ? "active" : ""} onClick={() => setDescPreview(true)}>Aperçu</button>
+                    <button type="button" className={!descPreview ? "active" : ""} onClick={() => setDescPreview(false)}>Écrire</button>
+                  </div>
+                )}
+              </div>
+              {!descTask ? (
+                <div className="lp-widget-hmgrid-tasklist-empty">Clique sur une tâche de la liste pour lire ou modifier sa description.</div>
+              ) : descPreview ? (
+                <div
+                  className="lp-desc-preview lp-widget-hmgrid-descpane-body"
+                  dangerouslySetInnerHTML={{
+                    __html: renderMarkdown(descTask.desc ?? descTask.description ?? "", true) || '<p style="color:var(--text-muted)">Aucune description.</p>',
+                  }}
+                />
+              ) : (
+                <textarea
+                  className="lp-widget-hmgrid-descpane-body lp-widget-hmgrid-descpane-edit"
+                  value={descTask.desc ?? descTask.description ?? ""}
+                  onChange={(e) => onUpdateTask && onUpdateTask(descTask.id, { desc: e.target.value })}
+                  placeholder="Écris ici… Markdown pris en charge."
+                />
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -10204,6 +10333,23 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
   );
 }
 
+// Enregistre un utilisateur EXISTANT en réécrivant `assignee` sur ses tâches si
+// son nom change (#147) — `assignee` est un nom, pas un identifiant (contrat
+// MCP et routines Gmail obligent), donc un renommage sans cette réécriture
+// détache silencieusement toutes ses tâches. Partagé par le gestionnaire de
+// Réglages et le widget Utilisateur (#173) : le même geste doit avoir le même
+// effet des deux endroits.
+function saveTeamMemberEdit({ target, data, setTeamMembers, tasks, setTasks, pushToast }) {
+  const oldName = target.name;
+  const newName = String(data.name || "").trim();
+  if (setTasks && newName && newName !== oldName) {
+    const count = (tasks || []).filter((t) => t.assignee === oldName).length;
+    setTasks((prev) => prev.map((t) => (t.assignee === oldName ? { ...t, assignee: newName } : t)));
+    if (count > 0 && pushToast) pushToast({ message: `${count} tâche${count > 1 ? "s" : ""} réaffectée${count > 1 ? "s" : ""} de « ${oldName} » à « ${newName} ».` });
+  }
+  setTeamMembers((prev) => prev.map((u) => (u.id === target.id ? { ...u, ...data } : u)));
+}
+
 // ============================================================================
 // Table des utilisateurs (Réglages) — nom, couleur, logo/avatar. Sert de source
 // pour le champ "Responsable" (liste déroulante) partout dans l'application.
@@ -10212,23 +10358,8 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
   const [formTarget, setFormTarget] = useState(null); // null | "new" | membre à modifier
 
   const handleSave = (data) => {
-    if (formTarget === "new") {
-      setTeamMembers((prev) => [...prev, { id: uid(), ...data }]);
-    } else {
-      // Renommer réécrit `assignee` sur les tâches de la personne (#147) :
-      // `assignee` est un nom, pas un identifiant (contrat MCP et routines
-      // Gmail obligent), donc un renommage sans cette réécriture détache
-      // silencieusement toutes ses tâches — le même critère de comparaison
-      // que le compteur affiché plus bas.
-      const oldName = formTarget.name;
-      const newName = String(data.name || "").trim();
-      if (setTasks && newName && newName !== oldName) {
-        const count = tasks.filter((t) => t.assignee === oldName).length;
-        setTasks((prev) => prev.map((t) => (t.assignee === oldName ? { ...t, assignee: newName } : t)));
-        if (count > 0 && pushToast) pushToast({ message: `${count} tâche${count > 1 ? "s" : ""} réaffectée${count > 1 ? "s" : ""} de « ${oldName} » à « ${newName} ».` });
-      }
-      setTeamMembers((prev) => prev.map((u) => (u.id === formTarget.id ? { ...u, ...data } : u)));
-    }
+    if (formTarget === "new") setTeamMembers((prev) => [...prev, { id: uid(), ...data }]);
+    else saveTeamMemberEdit({ target: formTarget, data, setTeamMembers, tasks, setTasks, pushToast });
     setFormTarget(null);
   };
   const removeMember = (u) => {

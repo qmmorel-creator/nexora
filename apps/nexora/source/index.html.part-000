@@ -1630,20 +1630,32 @@ function mdTableHtml(parsed, inline) {
   return `<div class="lp-md-table-wrap"><table class="lp-md-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-const renderMarkdown = (text, interactive = false) => {
-  if (!text) return "";
-  const lines = escapeHtml(text).split("\n");
+const mdInline = (s) => s
+  .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+  .replace(/\*(.+?)\*/g, "<em>$1</em>")
+  .replace(/`(.+?)`/g, "<code>$1</code>")
+  .replace(/\[(.+?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+/* Cœur du rendu, partagé par le document entier ET par l'intérieur d'un
+   callout (#178) : un callout n'acceptait jusque-là que du texte en ligne
+   (gras, italique, liens) — une liste, un titre ou un tableau écrit dedans
+   restait du texte brut, faute d'un second passage par ce même moteur.
+
+   `entries` porte `{ text, lineIndex }` plutôt que des chaînes nues : `text`
+   est DÉJÀ échappé (une seule passe HTML, au tout début de `renderMarkdown`),
+   `lineIndex` reste le numéro de ligne dans le texte ORIGINAL, y compris
+   pour les lignes recopiées à l'intérieur d'un callout — c'est ce qui permet
+   à une case à cocher, aussi profondément imbriquée soit-elle, de continuer à
+   se retrouver par `toggleMarkdownTaskLine`. */
+const renderMarkdownBlocks = (entries, interactive) => {
   let html = "";
   let inList = false;
-  const inline = (s) => s
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`(.+?)`/g, "<code>$1</code>")
-    .replace(/\[(.+?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  const rawLines = entries.map((e) => e.text);
   let i = 0;
-  while (i < lines.length) {
-    const line = lines[i].trimEnd();
+  while (i < entries.length) {
+    const line = entries[i].text.trimEnd();
+    const lineIndex = entries[i].lineIndex;
     // Callout : "> [!type] Titre facultatif" puis des lignes "> ..." qui suivent.
     const calloutStart = line.match(/^&gt;\s*\[!(\w+)\]([+-])?\s*(.*)$/);
     if (calloutStart) {
@@ -1655,33 +1667,19 @@ const renderMarkdown = (text, interactive = false) => {
       //   "-" = fermé par défaut
       const foldMode = calloutStart[2] || "+";
       const title = calloutStart[3].trim();
-      const bodyLines = [];
+      const bodyEntries = [];
       i++;
 
-      while (i < lines.length && /^&gt;\s?/.test(lines[i])) {
-        bodyLines.push({
-          html: lines[i].replace(/^&gt;\s?/, ""),
-          lineIndex: i
-        });
+      while (i < entries.length && /^&gt;\s?/.test(entries[i].text)) {
+        bodyEntries.push({ text: entries[i].text.replace(/^&gt;\s?/, ""), lineIndex: entries[i].lineIndex });
         i++;
       }
 
-      const bodyHtml = bodyLines.map(({html: bodyLine, lineIndex}) => {
-        const taskMatch = bodyLine.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
-        if (taskMatch) {
-          const checked = taskMatch[1].toLowerCase() === "x";
-          return `<label class="lp-callout-task${checked ? " is-done" : ""}">` +
-            `<input class="lp-md-task-checkbox" type="checkbox" ${checked ? "checked" : ""} ${interactive ? `data-md-line="${lineIndex}"` : "disabled"} aria-label="${checked ? "Terminé" : "À faire"}" />` +
-            `<span>${inline(taskMatch[2])}</span>` +
-            `</label>`;
-        }
-        return bodyLine.trim() ? `<p>${inline(bodyLine)}</p>` : "";
-      }).join("");
-
-      const headingHtml = `<span>${meta.icon}</span><span>${title ? inline(title) : meta.label}</span>`;
+      const bodyHtml = renderMarkdownBlocks(bodyEntries, interactive);
+      const headingHtml = `<span>${meta.icon}</span><span>${title ? mdInline(title) : meta.label}</span>`;
       html += `<details class="lp-callout lp-callout-foldable" ${foldMode === "+" ? "open" : ""} style="border-color:${meta.color};background:${meta.bg}">`;
       html += `<summary class="lp-callout-head lp-callout-summary" style="color:${meta.color}">${headingHtml}<span class="lp-callout-chevron">›</span></summary>`;
-      if (bodyLines.length > 0) html += `<div class="lp-callout-body">${bodyHtml}</div>`;
+      if (bodyEntries.length > 0) html += `<div class="lp-callout-body">${bodyHtml}</div>`;
       html += `</details>`;
       continue;
     }
@@ -1696,40 +1694,29 @@ const renderMarkdown = (text, interactive = false) => {
       const meta = CALLOUT_TYPES[type];
       const foldMode = calloutFenceStart[2] || "+";
       const title = calloutFenceStart[3].trim();
-      const bodyLines = [];
+      const bodyEntries = [];
       i++;
 
-      while (i < lines.length && lines[i].trim() !== ":::") {
-        bodyLines.push({ html: lines[i], lineIndex: i });
+      while (i < entries.length && entries[i].text.trim() !== ":::") {
+        bodyEntries.push({ text: entries[i].text, lineIndex: entries[i].lineIndex });
         i++;
       }
-      if (i < lines.length) i++; // consomme la balise de fermeture ":::"
+      if (i < entries.length) i++; // consomme la balise de fermeture ":::"
 
-      const bodyHtml = bodyLines.map(({html: bodyLine, lineIndex}) => {
-        const taskMatch = bodyLine.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
-        if (taskMatch) {
-          const checked = taskMatch[1].toLowerCase() === "x";
-          return `<label class="lp-callout-task${checked ? " is-done" : ""}">` +
-            `<input class="lp-md-task-checkbox" type="checkbox" ${checked ? "checked" : ""} ${interactive ? `data-md-line="${lineIndex}"` : "disabled"} aria-label="${checked ? "Terminé" : "À faire"}" />` +
-            `<span>${inline(taskMatch[2])}</span>` +
-            `</label>`;
-        }
-        return bodyLine.trim() ? `<p>${inline(bodyLine)}</p>` : "";
-      }).join("");
-
-      const headingHtml = `<span>${meta.icon}</span><span>${title ? inline(title) : meta.label}</span>`;
+      const bodyHtml = renderMarkdownBlocks(bodyEntries, interactive);
+      const headingHtml = `<span>${meta.icon}</span><span>${title ? mdInline(title) : meta.label}</span>`;
       html += `<details class="lp-callout lp-callout-foldable" ${foldMode === "+" ? "open" : ""} style="border-color:${meta.color};background:${meta.bg}">`;
       html += `<summary class="lp-callout-head lp-callout-summary" style="color:${meta.color}">${headingHtml}<span class="lp-callout-chevron">›</span></summary>`;
-      if (bodyLines.length > 0) html += `<div class="lp-callout-body">${bodyHtml}</div>`;
+      if (bodyEntries.length > 0) html += `<div class="lp-callout-body">${bodyHtml}</div>`;
       html += `</details>`;
       continue;
     }
     // Tableau GFM. Placé AVANT les listes et le paragraphe par défaut, qui
     // avaleraient chaque ligne du tableau une par une.
-    const table = mdTableParse(lines, i);
+    const table = mdTableParse(rawLines, i);
     if (table) {
       closeList();
-      html += mdTableHtml(table, inline);
+      html += mdTableHtml(table, mdInline);
       i = table.next;
       continue;
     }
@@ -1739,8 +1726,8 @@ const renderMarkdown = (text, interactive = false) => {
       if (!inList) { html += '<ul class="lp-md-task-list">'; inList = true; }
       const checked = taskMatch[1].toLowerCase() === "x";
       html += `<li class="lp-md-task-item${checked ? " is-done" : ""}">` +
-        `<input class="lp-md-task-checkbox" type="checkbox" ${checked ? "checked" : ""} ${interactive ? `data-md-line="${i}"` : "disabled"} aria-label="${checked ? "Terminé" : "À faire"}" />` +
-        `<span>${inline(taskMatch[2])}</span>` +
+        `<input class="lp-md-task-checkbox" type="checkbox" ${checked ? "checked" : ""} ${interactive ? `data-md-line="${lineIndex}"` : "disabled"} aria-label="${checked ? "Terminé" : "À faire"}" />` +
+        `<span>${mdInline(taskMatch[2])}</span>` +
         `</li>`;
       i++;
       continue;
@@ -1749,20 +1736,26 @@ const renderMarkdown = (text, interactive = false) => {
     const listMatch = line.match(/^[-*]\s+(.*)/);
     if (listMatch) {
       if (!inList) { html += "<ul>"; inList = true; }
-      html += `<li>${inline(listMatch[1])}</li>`;
+      html += `<li>${mdInline(listMatch[1])}</li>`;
       i++;
       continue;
     }
     closeList();
-    if (/^###\s+/.test(line)) html += `<h4>${inline(line.replace(/^###\s+/, ""))}</h4>`;
-    else if (/^##\s+/.test(line)) html += `<h3>${inline(line.replace(/^##\s+/, ""))}</h3>`;
-    else if (/^#\s+/.test(line)) html += `<h2>${inline(line.replace(/^#\s+/, ""))}</h2>`;
+    if (/^###\s+/.test(line)) html += `<h4>${mdInline(line.replace(/^###\s+/, ""))}</h4>`;
+    else if (/^##\s+/.test(line)) html += `<h3>${mdInline(line.replace(/^##\s+/, ""))}</h3>`;
+    else if (/^#\s+/.test(line)) html += `<h2>${mdInline(line.replace(/^#\s+/, ""))}</h2>`;
     else if (line === "") html += "<br/>";
-    else html += `<p>${inline(line)}</p>`;
+    else html += `<p>${mdInline(line)}</p>`;
     i++;
   }
   closeList();
   return html;
+};
+
+const renderMarkdown = (text, interactive = false) => {
+  if (!text) return "";
+  const entries = escapeHtml(text).split("\n").map((t, lineIndex) => ({ text: t, lineIndex }));
+  return renderMarkdownBlocks(entries, interactive);
 };
 // === NEXORA:MARKDOWN:END ===
 
