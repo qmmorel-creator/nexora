@@ -3820,7 +3820,7 @@ function workshopFor(list, id) {
    l'annuaire. */
 function normalizeTeams(list) {
   const seen = new Set();
-  return (Array.isArray(list) ? list : [])
+  const base = (Array.isArray(list) ? list : [])
     .filter((t) => t && typeof t === "object" && t.id && String(t.name || "").trim())
     .filter((t) => {
       const id = String(t.id);
@@ -3833,11 +3833,58 @@ function normalizeTeams(list) {
       name: String(t.name).trim(),
       color: typeof t.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(t.color) ? t.color : STAFFING_COLOR_CHOICES[0],
       leadName: String(t.leadName || "").trim(),
+      // Équipe parente (#167, retour de test) : imbrique les équipes entre
+      // elles pour l'Organigramme hiérarchique — vide par défaut (équipe de
+      // premier niveau, comme avant ce champ).
+      parentTeamId: t.parentTeamId ? String(t.parentTeamId) : "",
     }));
+  const byId = new Map(base.map((t) => [t.id, t]));
+  // Une équipe parente inexistante, ou qui reboucle jusqu'à l'équipe elle-même
+  // (A parent de B, B parent de A, ou une chaîne plus longue), casserait tout
+  // calcul d'arbre — jamais devinée autrement, on la vide simplement.
+  return base.map((t) => {
+    if (!t.parentTeamId || !byId.has(t.parentTeamId)) return { ...t, parentTeamId: "" };
+    const chain = new Set([t.id]);
+    let cur = byId.get(t.parentTeamId);
+    while (cur) {
+      if (chain.has(cur.id)) return { ...t, parentTeamId: "" };
+      chain.add(cur.id);
+      cur = cur.parentTeamId ? byId.get(cur.parentTeamId) : null;
+    }
+    return t;
+  });
 }
 function teamFor(list, id) {
   if (!id) return null;
   return normalizeTeams(list).find((t) => t.id === String(id)) || null;
+}
+// Ancêtres (parent, grand-parent…) d'une équipe, l'équipe elle-même comprise —
+// sert à exclure les cycles au moment du CHOIX d'une équipe parente dans les
+// réglages, avant même que normalizeTeams n'ait à les casser.
+function teamAncestorAndSelfIds(teamId, teams) {
+  const catalogue = normalizeTeams(teams);
+  const byId = new Map(catalogue.map((t) => [t.id, t]));
+  const out = new Set();
+  let cur = teamId ? byId.get(String(teamId)) : null;
+  while (cur && !out.has(cur.id)) {
+    out.add(cur.id);
+    cur = cur.parentTeamId ? byId.get(cur.parentTeamId) : null;
+  }
+  return out;
+}
+// Descendants d'une équipe (enfants, petits-enfants…), l'équipe elle-même
+// comprise — une équipe ne peut jamais devenir sa propre descendante.
+function teamDescendantAndSelfIds(teamId, teams) {
+  const catalogue = normalizeTeams(teams);
+  const out = new Set([String(teamId)]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    catalogue.forEach((t) => {
+      if (t.parentTeamId && out.has(t.parentTeamId) && !out.has(t.id)) { out.add(t.id); grew = true; }
+    });
+  }
+  return out;
 }
 // Une personne peut appartenir à PLUSIEURS équipes (retour de test sur #167) :
 // `teamIds` est la forme courante, `teamId` le repli d'un utilisateur enregistré
@@ -3847,6 +3894,72 @@ function memberTeamIds(member) {
   if (!member) return [];
   if (Array.isArray(member.teamIds)) return [...new Set(member.teamIds.filter(Boolean).map(String))];
   return member.teamId ? [String(member.teamId)] : [];
+}
+// Responsable direct d'une personne (#167, retour de test) : un NOM, comme
+// `leadName`/`assignee` — pas un identifiant — pour rester lisible même si la
+// personne quitte l'annuaire. Vide = rattachée à sa seule équipe, comme avant
+// ce champ (voir buildOrgHierarchyTree).
+function memberManagerName(member) {
+  return member && typeof member.managerName === "string" ? member.managerName.trim() : "";
+}
+// Une personne et tous ceux qui, directement ou en cascade, la comptent comme
+// responsable — sert à exclure les cycles au moment du CHOIX d'un responsable
+// dans les réglages (X ne peut jamais reporter à quelqu'un qui reporte déjà,
+// même indirectement, à X).
+function memberDescendantAndSelfNames(name, teamMembers) {
+  const list = teamMembers || [];
+  const out = new Set([name]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    list.forEach((m) => {
+      const mgr = memberManagerName(m);
+      if (mgr && out.has(mgr) && !out.has(m.name)) { out.add(m.name); grew = true; }
+    });
+  }
+  return out;
+}
+// Construit l'arbre hiérarchique complet du widget Organigramme, mode « SVG
+// hiérarchique classique » (#167, retour de test) : les équipes s'imbriquent
+// entre elles via parentTeamId, et sous chacune, ses membres — SAUF une
+// personne avec un responsable direct (managerName) résolvable et sans
+// cycle, qui devient alors l'enfant du NŒUD DE CETTE PERSONNE plutôt que de
+// son équipe, où qu'elle se trouve dans l'arbre. Une personne dans plusieurs
+// équipes (multi-équipe) n'apparaît qu'une fois, sous la PREMIÈRE qui
+// résout — un arbre montre une seule ligne hiérarchique par personne,
+// contrairement à la vue « Par groupe » qui peut se permettre de répéter
+// une carte. Retourne la liste des racines (équipes sans parent, plus
+// « Sans équipe » si non vide) ; chaque nœud est { type:"team", team,
+// children } ou { type:"person", member, children }.
+function buildOrgHierarchyTree(teams, members) {
+  const catalogue = normalizeTeams(teams);
+  const list = members || [];
+  const teamNodes = new Map(catalogue.map((t) => [t.id, { type: "team", team: t, children: [] }]));
+  const personNodes = new Map(list.map((m) => [m.name, { type: "person", member: m, children: [] }]));
+
+  const roots = [];
+  catalogue.forEach((t) => {
+    const node = teamNodes.get(t.id);
+    if (t.parentTeamId && teamNodes.has(t.parentTeamId)) teamNodes.get(t.parentTeamId).children.push(node);
+    else roots.push(node);
+  });
+
+  const unassigned = { type: "team", team: null, children: [] };
+  list.forEach((m) => {
+    const node = personNodes.get(m.name);
+    const mgrName = memberManagerName(m);
+    const mgrNode = mgrName && mgrName !== m.name ? personNodes.get(mgrName) : null;
+    // Anti-cycle : revérifié ici (déjà empêché au choix dans le formulaire)
+    // pour une donnée importée ou plus ancienne — le responsable choisi ne
+    // doit jamais être, même en cascade, un subordonné de cette personne.
+    const safeManager = mgrNode && !memberDescendantAndSelfNames(m.name, list).has(mgrName) ? mgrNode : null;
+    if (safeManager) { safeManager.children.push(node); return; }
+    const teamIds = memberTeamIds(m).filter((id) => teamNodes.has(id));
+    if (teamIds.length) { teamNodes.get(teamIds[0]).children.push(node); return; }
+    unassigned.children.push(node);
+  });
+  if (unassigned.children.length) roots.push(unassigned);
+  return roots;
 }
 // L'équipe d'une tâche, pour le regroupement Gantt/Bulles/Heat map, est celle
 // de son RESPONSABLE — aucun champ propre sur la tâche. Une personne dans
@@ -10740,6 +10853,7 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
         <TeamMemberFormModal
           member={formTarget === "new" ? null : formTarget}
           teams={teams}
+          teamMembers={teamMembers}
           onSave={handleSave}
           onClose={() => setFormTarget(null)}
         />
@@ -10859,15 +10973,22 @@ function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalList
 
 
 
-function TeamMemberFormModal({ member, teams, onSave, onClose }) {
+function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
   const [name, setName] = useState(member?.name || "");
   const [avatar, setAvatar] = useState(member?.avatarDataUrl || "");
   const [color, setColor] = useState(member?.color || PALETTE[0]);
   const [email, setEmail] = useState(member?.email || "");
   const [capacityPerDay, setCapacityPerDay] = useState(normalizeMemberCapacity(member?.capacityPerDay));
   const [teamIds, setTeamIds] = useState(() => memberTeamIds(member));
+  const [managerName, setManagerName] = useState(() => memberManagerName(member));
   const [nameError, setNameError] = useState(false);
   const teamCatalogue = normalizeTeams(teams);
+  // Une personne ne peut jamais reporter à quelqu'un qui reporte déjà, même en
+  // cascade, à elle-même (#167, retour de test) — exclu de la liste avant même
+  // que le rattachement à l'arbre n'ait à casser le cycle. Elle-même l'est
+  // aussi : on ne peut pas être son propre responsable.
+  const excludedManagerNames = member?.name ? memberDescendantAndSelfNames(member.name, teamMembers) : new Set();
+  const managerOptions = sortedByName((teamMembers || []).filter((m) => !excludedManagerNames.has(m.name)));
   const toggleTeam = (id) => setTeamIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   // #159 (retour du 17/09) : recherche rapide dès que le catalogue s'allonge —
   // les équipes déjà cochées restent listées à part, pour ne jamais disparaître
@@ -10882,7 +11003,7 @@ function TeamMemberFormModal({ member, teams, onSave, onClose }) {
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
-    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamIds, teamId: null });
+    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamIds, teamId: null, managerName: managerName.trim() });
   };
 
   return (
@@ -10933,6 +11054,13 @@ function TeamMemberFormModal({ member, teams, onSave, onClose }) {
             <input type="checkbox" checked={teamIds.includes(t.id)} onChange={() => toggleTeam(t.id)} /> {t.name}
           </label>
         ))}
+      </div>
+      <div className="lp-field">
+        <label>Responsable direct <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette personne à un·e collègue précis·e plutôt qu'à sa seule équipe, pour l'Organigramme hiérarchique)</span></label>
+        <select value={managerName} onChange={(e) => setManagerName(e.target.value)}>
+          <option value="">Aucun (rattachée à son équipe)</option>
+          {managerOptions.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
       </div>
     </Modal>
   );
@@ -11626,25 +11754,33 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
   const [name, setName] = useState("");
   const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
   const [leadName, setLeadName] = useState("");
+  const [parentTeamId, setParentTeamId] = useState("");
 
   const cancelEdit = () => {
     setEditingId(null);
     setName("");
     setColor(STAFFING_COLOR_CHOICES[0]);
     setLeadName("");
+    setParentTeamId("");
   };
   const startEdit = (team) => {
     setEditingId(team.id);
     setName(team.name);
     setColor(team.color);
     setLeadName(team.leadName || "");
+    setParentTeamId(team.parentTeamId || "");
   };
+  // Une équipe ne peut jamais devenir la parente d'une de ses propres
+  // équipes parentes/grand-parentes (#167, retour de test) : exclue de la
+  // liste avant même que normalizeTeams n'ait à casser le cycle.
+  const excludedParentIds = editingId ? teamDescendantAndSelfIds(editingId, catalogue) : new Set();
+  const parentOptions = catalogue.filter((t) => !excludedParentIds.has(t.id));
   const save = () => {
     if (!name.trim()) return;
     if (editingId) {
-      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim() } : t)));
+      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId } : t)));
     } else {
-      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim() }]);
+      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId }]);
     }
     cancelEdit();
   };
@@ -11672,10 +11808,11 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
       )}
       {catalogue.map((team) => {
         const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
+        const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
         return (
           <div className="lp-manage-item" key={team.id}>
             <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
-            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""})</span></span>
+            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""})</span></span>
             <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
             <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
           </div>
@@ -11691,6 +11828,13 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
         <select value={leadName} onChange={(e) => setLeadName(e.target.value)}>
           <option value="">Aucun</option>
           {sortedByName(teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Équipe parente <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — imbrique cette équipe dans une autre pour l'Organigramme hiérarchique)</span></label>
+        <select value={parentTeamId} onChange={(e) => setParentTeamId(e.target.value)}>
+          <option value="">Aucune (équipe de premier niveau)</option>
+          {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
