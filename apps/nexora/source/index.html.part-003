@@ -2426,16 +2426,13 @@ function defaultLayoutForType(type) {
   if (type === "budget") return { w: 4, h: 3 };
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
-  if (type === "milestoneTimeline") return { w: 6, h: 4 };
-  if (type === "verticalMetroTimeline") return { w: 6, h: 7 };
-  if (type === "metroDeadline") return { w: 8, h: 6 };
+  if (type === "echeances") return { w: 8, h: 6 };
   if (type === "blockers") return { w: 5, h: 5 };
   if (type === "nextBestAction") return { w: 4, h: 6 };
   if (type === "dailyBriefing") return { w: 4, h: 7 };
   if (type === "dominoEffect") return { w: 4, h: 6 };
   if (type === "budgetBurnRate") return { w: 4, h: 5 };
   if (type === "projectTreemap") return { w: 8, h: 7 };
-  if (type === "deadlineScatter") return { w: 10, h: 7 };
   if (type === "bubbles") return { w: 8, h: 7 };
   if (type === "staffing") return { w: 10, h: 7 };
   if (type === "orgchart") return { w: 9, h: 7 };
@@ -2471,10 +2468,26 @@ function migrateLegacyMiniGanttWidget(widget) {
   });
   return next;
 }
+// #160/#176 : « Timeline des jalons », « Timeline verticale métro » et
+// « Métro / Échéances » fusionnent avec « Nuage des échéances » dans un seul
+// widget « Échéances » à orientation choisie. Une sauvegarde ancienne migre
+// vers l'orientation la plus proche de son ancien rendu — jamais reconstruite
+// depuis zéro, jamais perdue : le widget garde son identité et son titre.
+const ECHEANCES_LEGACY_ORIENTATION = {
+  milestoneTimeline: "verticale",
+  verticalMetroTimeline: "verticale",
+  metroDeadline: "horizontale",
+  deadlineScatter: "nuage",
+};
+function migrateLegacyEcheancesWidget(widget) {
+  if (!widget || typeof widget !== "object" || !(widget.type in ECHEANCES_LEGACY_ORIENTATION)) return widget;
+  return { ...widget, type: "echeances", echeancesOrientation: ECHEANCES_LEGACY_ORIENTATION[widget.type] };
+}
 function migrateLegacyMiniGanttData(value) {
   if (Array.isArray(value)) return value.map(migrateLegacyMiniGanttData);
   if (!value || typeof value !== "object") return value;
   if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
+  if (value.type in ECHEANCES_LEGACY_ORIENTATION) return migrateLegacyEcheancesWidget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
   return next;
@@ -3404,7 +3417,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     let targetHPx;
     if (w.type === "taskDetail") {
       targetHPx = 510;
-    } else if (w.type === "metroDeadline") {
+    } else if (w.type === "echeances" && (w.echeancesOrientation || "horizontale") === "horizontale") {
       const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx).filter((t) => t.end);
       const projectCount = Math.max(1, new Set(scoped.map((t) => t.projectId).filter(Boolean)).size);
       targetHPx = 54 + projectCount * 82 + FRAME_CHROME_PX;
@@ -3962,9 +3975,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     taskBaselines={taskBaselines}
                   />
                 )}
-                {w.type === "deadlineScatter" && (
-                  <WidgetDeadlineScatter widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
                 {w.type === "heatmapGrid" && (
                   <WidgetHeatmapGrid widget={w}
                     tasks={scoped}
@@ -3976,14 +3986,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "heatmapMonth" && (
                   <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
                 )}
-                {w.type === "milestoneTimeline" && (
-                  <WidgetMilestoneTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "metroDeadline" && (
-                  <WidgetMetroDeadline tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
-                {w.type === "verticalMetroTimeline" && (
-                  <WidgetVerticalMetroTimeline
+                {w.type === "echeances" && (
+                  <WidgetEcheances
+                    widget={w}
                     tasks={scoped}
                     ctx={ctx}
                     onOpen={onOpen}
@@ -9813,6 +9818,23 @@ function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
 // coloré, avec l'icône personnalisée du jalon si elle existe.
 
 
+// #160/#176 : point d'entrée unique du widget « Échéances » — un choix
+// d'orientation plutôt que quatre widgets séparés. Chaque orientation délègue
+// au rendu déjà existant et éprouvé (aucun n'est réécrit), migration comprise :
+// `migrateLegacyEcheancesWidget` fait déjà correspondre une ancienne sauvegarde
+// à l'orientation la plus proche avant que ce composant ne s'exécute.
+const ECHEANCES_ORIENTATIONS = ["horizontale", "verticale", "nuage"];
+function WidgetEcheances({ widget, tasks, ctx, onOpen, onUpdateDates }) {
+  const orientation = ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale";
+  if (orientation === "verticale") {
+    return <WidgetVerticalMetroTimeline tasks={tasks} ctx={ctx} onOpen={onOpen} onUpdateDates={onUpdateDates} />;
+  }
+  if (orientation === "nuage") {
+    return <WidgetDeadlineScatter widget={widget} tasks={tasks} ctx={ctx} onOpen={onOpen} />;
+  }
+  return <WidgetMetroDeadline tasks={tasks} ctx={ctx} onOpen={onOpen} />;
+}
+
 function WidgetMetroDeadline({ tasks, ctx, onOpen }) {
   const wrapRef = useRef(null);
   const scrollRef = useRef(null);
@@ -10433,94 +10455,6 @@ function WidgetMetroDeadline({ tasks, ctx, onOpen }) {
         <span>{dated.length} échéance{dated.length>1?"s":""}</span>
         <span>{layouts.length} projet{layouts.length>1?"s":""}</span>
         <span>Échelle : {effectiveScale === "day" ? "jour" : effectiveScale === "week" ? "semaine" : effectiveScale === "month" ? "mois" : effectiveScale === "quarter" ? "trimestre" : "année"}</span>
-      </div>
-    </div>
-  );
-}
-
-
-function WidgetMilestoneTimeline({ tasks, ctx, onOpen }) {
-  const today = iso(new Date());
-  const upcoming = useMemo(
-    () => tasks.filter((t) => t.milestone && t.end && t.end >= today && !isTaskDoneGlobal(t, ctx)).sort((a, b) => a.end.localeCompare(b.end)).slice(0, 12),
-    [tasks, ctx, today]
-  );
-  const isEmpty = upcoming.length === 0;
-
-  const relLabel = (d) => {
-    const n = dayIndex(d) - dayIndex(today);
-    if (n === 0) return "Aujourd'hui";
-    if (n === 1) return "Demain";
-    if (n <= 6) return `Dans ${n} jours`;
-    if (n <= 13) return "La semaine prochaine";
-    return `Dans ${Math.round(n / 7)} semaines`;
-  };
-
-  // Position verticale PROPORTIONNELLE à l'écart de dates entre jalons — mais
-  // toujours au moins ROW_MIN_GAP entre deux repères consécutifs, pour que des
-  // jalons rapprochés (voire à la même date) ne se chevauchent jamais : on
-  // calcule la position "idéale" puis on la repousse au minimum nécessaire si
-  // besoin (le même principe qu'un algorithme d'évitement d'étiquettes).
-  // IMPORTANT : tous les Hooks doivent être appelés à chaque rendu, dans le
-  // même ordre — le early-return "aucun jalon" est donc repoussé après TOUS
-  // les Hooks (voir plus bas), avec des valeurs de repli sûres ici plutôt que
-  // de sauter des Hooks (ce qui provoquait un crash React dès qu'un filtre ne
-  // matchait plus aucun jalon).
-  const ROW_MIN_GAP = 58;
-  const PX_PER_DAY = 15;
-  const MAX_SPAN_HEIGHT = 640; // évite un widget interminable si les dates s'étalent sur des mois
-  const GUTTER = 34; // colonne de contexte de date, à gauche du rail
-  const firstIdx = isEmpty ? dayIndex(today) : dayIndex(upcoming[0].end);
-  const lastIdx = isEmpty ? dayIndex(today) : dayIndex(upcoming[upcoming.length - 1].end);
-  const totalDays = Math.max(1, lastIdx - firstIdx);
-  const pxPerDay = Math.min(PX_PER_DAY, MAX_SPAN_HEIGHT / totalDays);
-  const idealY = (d) => (dayIndex(d) - firstIdx) * pxPerDay;
-  const positions = useMemo(() => {
-    if (isEmpty) return [];
-    let prevY = 0;
-    return upcoming.map((t, i) => {
-      const y = i === 0 ? idealY(t.end) : Math.max(idealY(t.end), prevY + ROW_MIN_GAP);
-      prevY = y;
-      return y;
-    });
-  }, [upcoming, isEmpty]);
-  const totalHeight = isEmpty ? 0 : positions[positions.length - 1] + 44;
-
-  // Contexte de date à gauche du rail — semaine / mois / trimestre / année
-  // choisis automatiquement selon l'écart total couvert (même logique que les
-  // axes des autres widgets), positionné à sa date réelle sur l'échelle
-  // proportionnelle (indépendant du repoussement anti-chevauchement des jalons,
-  // ce ne sont que des repères de contexte, jamais cliquables).
-  const dateTicks = useMemo(() => (isEmpty ? [] : widgetAxisTicks(upcoming[0].end, upcoming[upcoming.length - 1].end)), [upcoming, isEmpty]);
-
-  if (isEmpty) return <div className="lp-empty" style={{ padding: 16 }}>Aucun jalon à venir pour ce filtre.</div>;
-
-  return (
-    <div className="lp-widget-msltl-list">
-      <div className="lp-widget-msltl-track" style={{ height: totalHeight }}>
-        {dateTicks.map((tick) => (
-          <div key={tick.date} className="lp-widget-msltl-tick" style={{ top: idealY(tick.date), width: GUTTER - 8 }}>{tick.label}</div>
-        ))}
-        <div className="lp-widget-msltl-spine" style={{ left: GUTTER + 13, top: 13, height: Math.max(0, positions[positions.length - 1]) }} />
-        {upcoming.map((t, i) => {
-          const proj = ctx.projects.find((p) => p.id === t.projectId);
-          const color = proj?.color || "var(--text-muted)";
-          const icon = resolveMilestoneIcon(t, ctx);
-          return (
-            <div className="lp-widget-msltl-row" key={t.id} style={{ top: positions[i], left: GUTTER }} onClick={() => onOpen(t)}>
-              <div className="lp-widget-msltl-marker" style={{ borderColor: color }}>
-                {icon ? <IconGlyph icon={icon} size={13} /> : <span className="lp-widget-msltl-dot" style={{ background: color }} />}
-              </div>
-              <div className="lp-widget-msltl-info">
-                <div className="lp-widget-msltl-title">{t.title}</div>
-                <div className="lp-widget-msltl-meta">
-                  {proj && <div className="lp-widget-msltl-project" style={{ color }}>{proj.name}</div>}
-                  <div className="lp-widget-msltl-date">{fmtShort(t.end)} · {relLabel(t.end)}</div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );
@@ -12755,9 +12689,10 @@ const WIDGET_TYPE_META = [
   { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
   { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
   { key: "userProfile", label: "Utilisateur", icon: User, group: "Planning" },
-  { key: "milestoneTimeline", label: "Timeline des jalons", icon: Milestone, group: "Planning" },
-  { key: "verticalMetroTimeline", label: "Timeline verticale métro", icon: TrainTrack, group: "Planning" },
-  { key: "metroDeadline", label: "Métro / Échéances", icon: CalendarClock, group: "Planning" },
+  // #160/#176 : fusion de 4 widgets qui répondaient tous à « quand tombent les
+  // échéances ? » (Timeline des jalons, Timeline verticale métro, Métro /
+  // Échéances, Nuage des échéances) en un seul, avec un choix d'orientation.
+  { key: "echeances", label: "Échéances", icon: CalendarClock, group: "Planning" },
   { key: "criticalPath", label: "Chemin critique", icon: GitBranch, group: "Planning" },
   { key: "nextBestAction", label: "Next Best Action", icon: Zap, group: "Intelligence" },
   { key: "dailyBriefing", label: "Daily Briefing", icon: Sunrise, group: "Intelligence" },
@@ -12769,7 +12704,6 @@ const WIDGET_TYPE_META = [
   { key: "dominoEffect", label: "Domino Effect", icon: GitBranch, group: "Intelligence" },
   { key: "budgetBurnRate", label: "Budget Burn Rate", icon: Flame, group: "Suivi" },
   { key: "projectTreemap", label: "Treemap projets", icon: Grid3x3, group: "Suivi" },
-  { key: "deadlineScatter", label: "Nuage des échéances", icon: Crosshair, group: "Suivi" },
   { key: "heatmapGrid", label: "Heat map croisée", icon: Grid3x3, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
   { key: "embedTimeline", label: "Timeline + Liste (complet)", icon: Waypoints, group: "Planning" },
@@ -13054,6 +12988,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [scatterLaneField, setScatterLaneField] = useState(
     SCATTER_LANE_FIELDS.includes(widget?.scatterLaneField) ? widget.scatterLaneField : "project"
   );
+  // #160 : orientation du widget Échéances — seul réglage qui lui soit propre,
+  // les trois rendus se partageant sinon les mêmes réglages que ci-dessus
+  // (couloirs, plage) ou aucun (horizontale, verticale).
+  const [echeancesOrientation, setEcheancesOrientation] = useState(
+    ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale"
+  );
   // Heat map — la normalisation reste seul juge des défauts et des collisions
   // d'axes ; la fiche ne fait qu'éditer.
   const heatmapCfg = useMemo(() => heatmapNormalizeConfig(widget || {}), [widget]);
@@ -13167,7 +13107,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "milestoneTimeline" || type === "verticalMetroTimeline" || type === "metroDeadline" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "deadlineScatter" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
+  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "echeances" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -13257,11 +13197,14 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
     }
-    if (type === "deadlineScatter") {
-      data.scatterLaneField = scatterLaneField;
-      data.scatterWindowMode = scatterWindowMode;
-      data.scatterWindowBefore = Number(scatterWindowBefore);
-      data.scatterWindowAfter = Number(scatterWindowAfter);
+    if (type === "echeances") {
+      data.echeancesOrientation = echeancesOrientation;
+      if (echeancesOrientation === "nuage") {
+        data.scatterLaneField = scatterLaneField;
+        data.scatterWindowMode = scatterWindowMode;
+        data.scatterWindowBefore = Number(scatterWindowBefore);
+        data.scatterWindowAfter = Number(scatterWindowAfter);
+      }
     }
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
@@ -13547,8 +13490,24 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
       <div className="lp-widget-config-section">
         <div className="lp-widget-config-title"><SlidersHorizontal size={12} /> Configuration</div>
-        {["criticalPath", "heatmapMonth", "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers"].includes(type) && (
+        {["criticalPath", "heatmapMonth", "blockers"].includes(type) && (
           <p style={{ fontSize: 12, color: "var(--text-600)", margin: 0 }}>Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.</p>
+        )}
+        {type === "echeances" && (
+          <div className="lp-field">
+            <label>Orientation</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (echeancesOrientation === "horizontale" ? " active" : "")} onClick={() => setEcheancesOrientation("horizontale")}>Horizontale (métro)</button>
+              <button type="button" className={"lp-density-btn" + (echeancesOrientation === "verticale" ? " active" : "")} onClick={() => setEcheancesOrientation("verticale")}>Verticale</button>
+              <button type="button" className={"lp-density-btn" + (echeancesOrientation === "nuage" ? " active" : "")} onClick={() => setEcheancesOrientation("nuage")}>Nuage</button>
+            </div>
+            {echeancesOrientation === "horizontale" && (
+              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Une ligne de métro par projet, les échéances en stations sur un axe temporel commun.</p>
+            )}
+            {echeancesOrientation === "verticale" && (
+              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Un rail vertical unique, jalons et tâches datées confondus, du plus proche au plus lointain.</p>
+            )}
+          </div>
         )}
         {type === "kpi" && (
         <div className="lp-field">
@@ -13980,7 +13939,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           </label>
         </>
       )}
-      {type === "deadlineScatter" && (
+      {type === "echeances" && echeancesOrientation === "nuage" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
             Un point = une tâche, placée selon le nombre de jours qui la sépare de son échéance : à droite ce qui vient,
