@@ -7823,13 +7823,24 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     if (bubbleMode) return BubbleRow(t);
     const rawStartIdx = dayIndex(t.start);
     const rawEndIdx = dayIndex(t.end);
-    const visibleStartIdx = Math.max(minIdx, rawStartIdx);
-    const visibleEndIdx = Math.min(maxIdx, rawEndIdx);
+    const cmp = comparisonByTask.get(t.id) || null;
+    const cmpInWindow = !!cmp && cmp.referenceEndIdx >= minIdx && cmp.referenceStartIdx <= maxIdx;
+    const outOfWindow = (rawEndIdx < minIdx || rawStartIdx > maxIdx) && !cmpInWindow;
+    /* #180 (retour de test) : le zoom ne définit QUE l'affichage, jamais quelles
+       tâches existent — seul un cadrage EXPLICITEMENT restreint (dates fixes,
+       fenêtre glissante) exclut légitimement une tâche hors période, parce que
+       c'est le choix assumé de ce cadrage. En cadrage automatique, zoomer ne
+       doit jamais faire disparaître une ligne : elle se réduit à un repère au
+       bord le plus proche plutôt que de s'effacer. */
+    const frameRestricts = !!pinnedWindow || rangeCfg.mode !== "auto";
+    if (outOfWindow && frameRestricts) return null;
+    const visibleStartIdx = Math.min(maxIdx, Math.max(minIdx, rawStartIdx));
+    const visibleEndIdx = Math.min(maxIdx, Math.max(minIdx, rawEndIdx));
     // Absences du responsable (#134), sur la seule portion visible de la barre.
     const absenceSegs = (staffing && absenceWorkshopId && t.assignee && visibleEndIdx >= visibleStartIdx)
       ? staffingAbsenceSegments(staffing, t.assignee, addDays("2020-01-01", visibleStartIdx), addDays("2020-01-01", visibleEndIdx), absenceWorkshopId)
       : [];
-    const left = ((visibleStartIdx - minIdx) / span) * 100;
+    const left = Math.min(98, ((visibleStartIdx - minIdx) / span) * 100);
     const width = Math.max(2, ((Math.max(visibleStartIdx, visibleEndIdx) - visibleStartIdx) / span) * 100);
     const proj = ctx.projects.find((p) => p.id === t.projectId);
     const st = ctx.statuses.find((s) => s.id === t.statusId);
@@ -7841,15 +7852,6 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     // sous la barre, dans la même piste. La barre actuelle reste donc seule sur
     // sa ligne. Aucune ligne ne grandit — tout est en position absolue dans une
     // piste en `overflow:visible`.
-    const cmp = comparisonByTask.get(t.id) || null;
-    /* Une tâche entièrement HORS de la fenêtre affichée n'est pas dessinée. Un
-       cadrage glissant ou à dates fixes en exclut forcément, et les écraser
-       contre le bord donnait une barre de 2 % qui ne voulait rien dire. Les
-       jalons appliquaient déjà cette règle ; les barres la rejoignent. Une
-       référence encore dans la fenêtre suffit à garder la ligne : c'est elle
-       qu'on est venu comparer. */
-    const cmpInWindow = !!cmp && cmp.referenceEndIdx >= minIdx && cmp.referenceStartIdx <= maxIdx;
-    if ((rawEndIdx < minIdx || rawStartIdx > maxIdx) && !cmpInWindow) return null;
     const cmpBars = cmp ? miniGanttComparisonBars(cmp, { minIdx, maxIdx, span }) : null;
     const cmpStrip = cmp ? miniGanttComparisonStrip(cmp, { minIdx, maxIdx, span }) : null;
     const cmpHasRisks = risksByTask.has(t.id);
@@ -8026,8 +8028,10 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     const st = ctx.statuses.find((s) => s.id === t.statusId);
     const tt = (ctx.taskTypes || []).find((x) => x.id === t.taskTypeId);
     const milestoneIdx = dayIndex(t.end);
-    if (milestoneIdx < minIdx || milestoneIdx > maxIdx) return null;
-    const posIdxPct = ((milestoneIdx - minIdx) / span) * 100;
+    // #180 : même règle que les barres — le zoom seul ne fait jamais
+    // disparaître un jalon, un cadrage explicitement restreint le peut encore.
+    if ((milestoneIdx < minIdx || milestoneIdx > maxIdx) && (!!pinnedWindow || rangeCfg.mode !== "auto")) return null;
+    const posIdxPct = Math.min(98, Math.max(0, ((milestoneIdx - minIdx) / span) * 100));
     const posPct = `${posIdxPct}%`;
     const customMsIcon = resolveMilestoneIcon(t, ctx);
     // Jalon comparé : un losange fantôme gris à la date de référence, le jalon

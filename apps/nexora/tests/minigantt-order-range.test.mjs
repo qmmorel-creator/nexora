@@ -206,7 +206,12 @@ test("le widget rend une seule liste triée, et n'écrase plus les tâches hors 
   // Le regroupement retrie chaque groupe, sinon l'ordre ne vaudrait que dans le premier.
   assert.match(html, /tasks: miniGanttSortTasks\(g\.tasks, sortKey, sortDir\)/);
   // Une barre entièrement hors fenêtre n'est plus écrasée contre le bord.
-  assert.match(html, /if \(\(rawEndIdx < minIdx \|\| rawStartIdx > maxIdx\) && !cmpInWindow\) return null;/);
+  // #180 (retour de test) : le zoom manuel ne doit jamais faire disparaître une
+  // ligne — seul un cadrage explicitement restreint (dates fixes, fenêtre
+  // glissante) exclut encore une tâche hors période.
+  assert.match(html, /const outOfWindow = \(rawEndIdx < minIdx \|\| rawStartIdx > maxIdx\) && !cmpInWindow;/);
+  assert.match(html, /const frameRestricts = !!pinnedWindow \|\| rangeCfg\.mode !== "auto";/);
+  assert.match(html, /if \(outOfWindow && frameRestricts\) return null;/);
   // Et le zoom manuel passe par le recadrage.
   assert.match(html, /const manualWindow = miniGanttClampWindow\(/);
 });
