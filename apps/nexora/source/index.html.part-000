@@ -2325,6 +2325,10 @@ const PROJECT_DEFAULT_VIEW_OPTIONS = [
   { key:"timeline", label:"Timeline + Liste" },
   { key:"radar", label:"Radar" },
   { key:"table", label:"Tableur" },
+  // #137 : ouvre la vue Tableau de bord au lieu d'une vue de tâches — utile
+  // avec une page dont le filtre porte sur "Projet courant" (CURRENT_PROJECT_FILTER) :
+  // ses widgets se scopent alors automatiquement au projet ouvert.
+  { key:"dashboard", label:"Tableau de bord contextuel" },
 ];
 
 const projectNavigationZoomOptions = (viewKey) => {
@@ -2432,6 +2436,36 @@ const taskTypeLabel = (task) => task?.milestone ? "Jalon" : "Tâche";
 const ADVANCED_FILTER_FIELDS = ["title", "project", "status", "criticality", "taskType", "assignee", "milestone", "start", "end", "inactivity"];
 
 const NO_PROJECT_FILTER = "__nexora_without_project__";
+// === NEXORA:CURRENT-PROJECT-FILTER:START ===
+// #137 : sentinelle "Projet courant" — résolue à l'ÉVALUATION du filtre avec
+// le(s) projet(s) actuellement ouvert(s) (ctx.activeProjectIds), jamais figée
+// dans la donnée du filtre elle-même (voir resolveProjectFilterIds).
+const CURRENT_PROJECT_FILTER = "__nexora_current_project__";
+// Aucune tâche ne porte jamais cet id : utilisé quand "Projet courant" est
+// demandé sans qu'aucun projet ne soit ouvert, pour que le filtre ne matche
+// explicitement RIEN plutôt que de retomber sur tout le portefeuille.
+const CURRENT_PROJECT_FILTER_NONE = "__nexora_current_project_none__";
+
+// Aide partagée : la ou les valeurs de la condition "project" au premier
+// niveau du filtre avancé — utilisée par les raccourcis de la sidebar et par
+// resolveProjectFilterIds ci-dessous.
+function getProjectFilterIds(f) {
+  const items = (f && f.advanced && f.advanced.items) || [];
+  const cond = items.find((it) => it.field === "project" && it.mode !== "isnot");
+  return cond ? (cond.values || []) : [];
+}
+
+// Développe la sentinelle "Projet courant" dans une liste projectIds — à
+// l'évaluation seulement, jamais dans la donnée persistée d'un filtre de
+// page/widget ou de budgetProjectId.
+function resolveProjectFilterIds(ids, ctx) {
+  if (!Array.isArray(ids) || !ids.includes(CURRENT_PROJECT_FILTER)) return ids;
+  const current = (ctx && ctx.activeProjectIds) || [];
+  const rest = ids.filter((id) => id !== CURRENT_PROJECT_FILTER);
+  if (current.length) return [...new Set([...rest, ...current])];
+  return rest.length ? rest : [CURRENT_PROJECT_FILTER_NONE];
+}
+// === NEXORA:CURRENT-PROJECT-FILTER:END ===
 
 const defaultFilters = () => ({
   search: "",

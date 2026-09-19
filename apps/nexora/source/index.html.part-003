@@ -2345,16 +2345,21 @@ function activeWidgetFilterCount(filter) {
 
 function applyWidgetFilter(tasks, filter, ctx) {
   const f = { ...widgetDefaultFilter(), ...(filter || {}) };
+  // #137 : la sentinelle "Projet courant" se développe ICI, à l'évaluation,
+  // avec le(s) projet(s) actuellement ouvert(s) — jamais dans la donnée
+  // persistée du filtre, qui reste "Projet courant" quel que soit le projet
+  // affiché au moment où le réglage a été fait.
+  const projectIds = resolveProjectFilterIds(f.projectIds, ctx);
   return tasks.filter((t) => {
-    if (f.projectIds && f.projectIds.length) {
+    if (projectIds && projectIds.length) {
       // Même règle que le filtre global : une tâche à deux projets matche si SON
       // PRINCIPAL OU SON SECONDAIRE est dans la liste — sinon un widget filtré sur
       // le second projet la faisait disparaître entièrement.
       const hasNoProject = !t.projectId && !t.secondaryProjectId;
       const inList =
-        (hasNoProject && f.projectIds.includes(NO_PROJECT_FILTER)) ||
-        (!!t.projectId && f.projectIds.includes(t.projectId)) ||
-        (!!t.secondaryProjectId && f.projectIds.includes(t.secondaryProjectId));
+        (hasNoProject && projectIds.includes(NO_PROJECT_FILTER)) ||
+        (!!t.projectId && projectIds.includes(t.projectId)) ||
+        (!!t.secondaryProjectId && projectIds.includes(t.secondaryProjectId));
       if (f.projectIdsMode === "is not" ? inList : !inList) return false;
     }
     if (f.statusIds && f.statusIds.length) {
@@ -3982,7 +3987,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetNote widget={w} onChange={(content) => updateWidget(w.id, { content })} shortcutPrefs={shortcutPrefs} />
                 )}
                 {w.type === "budget" && (
-                  <WidgetBudget widget={w} projects={ctx.projects} expenses={expenses} expenseCategories={expenseCategories} />
+                  <WidgetBudget widget={w} projects={ctx.projects} expenses={expenses} expenseCategories={expenseCategories} activeProjectIds={ctx.activeProjectIds} />
                 )}
                 {w.type === "minigantt" && !showEmptyFunnel && (
                   <WidgetMiniGantt
@@ -5345,9 +5350,19 @@ function WidgetNote({ widget, onChange, shortcutPrefs }) {
   );
 }
 
-function WidgetBudget({ widget, projects, expenses, expenseCategories }) {
-  const projectId = widget.budgetProjectId || projects[0]?.id || null;
-  if (!projectId) return <div className="lp-empty" style={{ padding: 16 }}>Aucun projet.</div>;
+function WidgetBudget({ widget, projects, expenses, expenseCategories, activeProjectIds }) {
+  // #137 : plus de repli silencieux sur le premier projet du portefeuille —
+  // sans projet choisi (ou "Projet courant" sans projet ouvert), état vide
+  // explicite plutôt qu'un budget arbitraire.
+  const isCurrent = widget.budgetProjectId === CURRENT_PROJECT_FILTER;
+  const projectId = isCurrent ? ((activeProjectIds && activeProjectIds[0]) || null) : (widget.budgetProjectId || null);
+  if (!projectId) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {isCurrent ? "Aucun projet sélectionné : ouvre un projet pour voir son budget." : "Choisis un projet dans les réglages du widget."}
+      </div>
+    );
+  }
   const stats = computeBudgetStats(projectId, projects, expenses);
   const categories = stats.project?.budgetCategories || expenseCategories;
   const metric = widget.budgetMetric || "engaged";
@@ -13030,6 +13045,9 @@ function TaskFilterFields({ filter, setFilter, ctx }) {
       <FilterMultiSelect
         label="Projets"
         options={[
+          // #137 : sentinelle résolue à l'évaluation avec le(s) projet(s)
+          // actuellement ouvert(s) — jamais figée dans la donnée du filtre.
+          { id:CURRENT_PROJECT_FILTER, name:"Projet courant", color:"var(--accent)" },
           { id:NO_PROJECT_FILTER, name:"Sans projet", color:"#94A3B8" },
           ...sortedByName(ctx.projects),
         ]}
@@ -13283,7 +13301,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [taskDetailTaskId, setTaskDetailTaskId] = useState(widget?.taskDetailTaskId || "");
   const [userProfileMember, setUserProfileMember] = useState(widget?.userProfileMember || "");
   const [content, setContent] = useState(widget?.content || "");
-  const [budgetProjectId, setBudgetProjectId] = useState(widget?.budgetProjectId || ctx.projects[0]?.id || "");
+  // #137 : plus de repli silencieux sur le premier projet du portefeuille à
+  // la création du widget — "Projet courant" si un projet est déjà ouvert
+  // (le cas d'usage le plus probable en ajoutant ce widget), sinon vide,
+  // un choix explicite étant requis.
+  const [budgetProjectId, setBudgetProjectId] = useState(
+    widget?.budgetProjectId || ((ctx.activeProjectIds || [])[0] ? CURRENT_PROJECT_FILTER : "")
+  );
   const [burnRateProjectId, setBurnRateProjectId] = useState(widget?.burnRateProjectId || ctx.projects[0]?.id || "");
   // Nuage des échéances — un seul réglage propre : le champ qui définit les couloirs.
   const [scatterLaneField, setScatterLaneField] = useState(
@@ -14185,7 +14209,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <>
           <div className="lp-field">
             <label>Projet</label>
-            <ProjectSelect projects={ctx.projects} value={budgetProjectId} onChange={setBudgetProjectId} />
+            <ProjectSelect projects={ctx.projects} value={budgetProjectId} onChange={setBudgetProjectId} allowCurrent />
           </div>
           <div className="lp-field">
             <label>Mesure</label>

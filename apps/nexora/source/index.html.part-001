@@ -703,7 +703,7 @@ function CriticalitySelect({ value, onChange }) {
 }
 // === NEXORA:CRITICALITY-SELECT:END ===
 
-function ProjectSelect({ projects, value, onChange, emptyLabel }) {
+function ProjectSelect({ projects, value, onChange, emptyLabel, allowCurrent }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ref = useRef(null);
@@ -717,12 +717,17 @@ function ProjectSelect({ projects, value, onChange, emptyLabel }) {
   const sorted = sortedByName(projects);
   const filtered = q.trim() ? sorted.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase())) : sorted;
   const current = projects.find((p) => p.id === value);
+  // #137 : sentinelle "Projet courant", résolue à l'évaluation (jamais figée
+  // ici) — seuls les usages qui l'acceptent explicitement (allowCurrent) la
+  // proposent, les autres gardent le sélecteur simple qu'ils avaient.
+  const isCurrentSentinel = allowCurrent && value === CURRENT_PROJECT_FILTER;
+  const showCurrentOption = allowCurrent && (!q.trim() || "projet courant".includes(q.trim().toLowerCase()));
   const showEmptyOption = !!emptyLabel && (!q.trim() || emptyLabel.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <div className="lp-color-select" ref={ref}>
       <button type="button" className="lp-color-select-btn" onClick={() => setOpen((o) => !o)}>
-        {value && <span className="lp-color-select-swatch" style={{ background: current?.color || "var(--text-muted)" }} />}
-        <span className="lp-color-select-label">{value ? (current?.name || "Choisir un projet") : (emptyLabel || "Choisir un projet")}</span>
+        {value && <span className="lp-color-select-swatch" style={{ background: isCurrentSentinel ? "var(--accent)" : (current?.color || "var(--text-muted)") }} />}
+        <span className="lp-color-select-label">{isCurrentSentinel ? "Projet courant" : (value ? (current?.name || "Choisir un projet") : (emptyLabel || "Choisir un projet"))}</span>
         <ChevronDown size={14} />
       </button>
       {open && (
@@ -733,6 +738,12 @@ function ProjectSelect({ projects, value, onChange, emptyLabel }) {
           {showEmptyOption && (
             <button type="button" className={"lp-color-select-option" + (!value ? " active" : "")} onClick={() => { onChange(""); setOpen(false); }}>
               {emptyLabel}
+            </button>
+          )}
+          {showCurrentOption && (
+            <button type="button" className={"lp-color-select-option" + (isCurrentSentinel ? " active" : "")} onClick={() => { onChange(CURRENT_PROJECT_FILTER); setOpen(false); }}>
+              <span className="lp-color-select-swatch" style={{ background: "var(--accent)" }} />
+              Projet courant
             </button>
           )}
           {filtered.map((p) => (
@@ -10015,7 +10026,13 @@ export default function LePlan({ currentUser, onSignOut }) {
      lire le nom et la couleur. Les AFFECTATIONS, elles, n'y entrent pas :
      seul le widget Charge personnel les lit, et les faire transiter par `ctx`
      aurait fait re-rendre tous les autres à chaque case cochée. */
-  const ctx = useMemo(() => ({ projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses }), [projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses]);
+  // activeProjectIds (#137) : le ou les projets actuellement ouverts dans le
+  // filtre global — c'est la valeur que "Projet courant" développe dans un
+  // filtre de page/widget ou un budgetProjectId (resolveProjectFilterIds).
+  const ctx = useMemo(
+    () => ({ projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses, activeProjectIds: getProjectFilterIds(filters) }),
+    [projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses, filters]
+  );
   // Relie le compte connecté à un utilisateur de l'app via son email, pour
   // activer "Mes tâches" dans certains widgets sans dupliquer de système d'auth.
   const myName = useMemo(() => {
@@ -10661,12 +10678,8 @@ export default function LePlan({ currentUser, onSignOut }) {
     setPendingDeleteProject(project);
   };
 
-  // Helper : trouve la condition "project" au premier niveau du groupe avancé (utilisé par les raccourcis de la sidebar)
-  const getProjectFilterIds = (f) => {
-    const items = (f.advanced && f.advanced.items) || [];
-    const cond = items.find((it) => it.field === "project" && it.mode !== "isnot");
-    return cond ? (cond.values || []) : [];
-  };
+  // getProjectFilterIds est désormais un helper de portée globale (part-000,
+  // partagé avec resolveProjectFilterIds pour #137).
   const setProjectFilterIds = (f, ids) => {
     const currentAdv = f.advanced || { op: "and", items: [] };
     const otherItems = (currentAdv.items || []).filter((it) => it.field !== "project");
