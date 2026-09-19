@@ -3172,6 +3172,35 @@ function packWidgets(widgets) {
   });
 }
 
+// #130 : widgets dont l'état vide se limite à un message générique du type
+// « aucune tâche pour ce filtre » — sans autre information calculée (pas de
+// notion de dépendances manquantes, d'affectation du lendemain, etc.). Pour
+// ceux-là, un widget vide ne dit jamais QUELLE couche de filtre a tout
+// retiré ; on remplace leur message générique par l'échelle méta → page →
+// widget. Les types absents (dominoEffect, nextBestAction pour leurs
+// messages nuancés hors filtre, dailyBriefing qui montre aussi du contenu
+// indépendant des tâches, taskDetail/customCard/projectTreemap dont un
+// compte à zéro n'est pas forcément un état "vide", les vues « complet »
+// embarquées qui gèrent déjà leur propre état vide) restent inchangés.
+const WIDGET_EMPTY_FUNNEL_TYPES = new Set(["chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth", "heatmapGrid", "echeances"]);
+function WidgetEmptyFunnel({ rawCount, metaCount, pageCount, onOpenMetaFilters, onOpenPageFilter, onOpenWidgetSettings }) {
+  const step = (n) => `${n} tâche${n > 1 ? "s" : ""}`;
+  return (
+    <div className="lp-widget-empty-funnel">
+      <p className="lp-widget-empty-funnel-hint">Ce widget n'affiche aucune tâche. Chaque étape ci-dessous dit où elles ont été retirées — clique pour l'ajuster.</p>
+      <div className="lp-widget-empty-funnel-steps">
+        <span className="lp-widget-empty-funnel-step">{step(rawCount)}</span>
+        <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
+        <button type="button" className="lp-widget-empty-funnel-step is-link" onClick={onOpenMetaFilters} title="Ouvrir les méta-filtres">méta {metaCount}</button>
+        <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
+        <button type="button" className="lp-widget-empty-funnel-step is-link" onClick={onOpenPageFilter} title="Ouvrir le filtre de cette page">page {pageCount}</button>
+        <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
+        <button type="button" className="lp-widget-empty-funnel-step is-link is-zero" onClick={onOpenWidgetSettings} title="Ouvrir les réglages de ce widget">widget 0</button>
+      </div>
+    </div>
+  );
+}
+
 function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelete, onDuplicate, onAutoSize, onMoveUp, onMoveDown, onHeaderMouseDown, onResizeMouseDown, children, style, dragging, hasHeaderToolbar, className, onPrint, printing }) {
   const [headerToolbarNode, setHeaderToolbarNode] = useState(null);
   // onMoveUp/onMoveDown ne sont fournis que par la pile mobile (voir
@@ -3207,7 +3236,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, onOpenGanttView }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, onOpenGanttView, onOpenMetaFilters }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3239,6 +3268,13 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   // Le filtre de PAGE s'applique en base à tous ses widgets, combiné en ET
   // avec le filtre propre à chaque widget — jamais l'un à la place de l'autre.
   const pageFilteredTasks = useMemo(() => applyWidgetFilter(tasks, activePage?.filter, ctx), [tasks, activePage, ctx]);
+  /* #130 : un widget vide ne disait pas QUELLE couche avait tout retiré —
+     méta-filtres, recherche (repliée dans le compte méta, déjà appliquée avant
+     `tasks`), filtre de page ou filtre du widget. `rawTaskCount`/`metaTaskCount`
+     forment les deux premiers barreaux de l'échelle ; `pageFilteredTasks.length`
+     et `scoped.length` (calculé par tâche de widget plus bas) les deux derniers. */
+  const rawTaskCount = (ctx.tasks || []).length;
+  const metaTaskCount = (tasksBeforeSearch || tasks).length;
   // Méta blocs applicables ici : ceux qui visent ce tableau de bord, et ceux
   // qui valent pour tous. Hors tableau de bord (page « Aujourd'hui »),
   // dashboardId vaut null et seuls les seconds s'appliquent.
@@ -3848,6 +3884,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
             if (!w.layout) return null;
             let scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
             if (w.onlyMine && myName) scoped = scoped.filter((t) => t.assignee === myName);
+            const showEmptyFunnel = WIDGET_EMPTY_FUNNEL_TYPES.has(w.type) && scoped.length === 0;
             const isGesturing = !isMobileStack && gesture && gesture.id === w.id;
             const dx = isGesturing && gesture.mode === "move" ? gesture.dx : 0;
             const dy = isGesturing && gesture.mode === "move" ? gesture.dy : 0;
@@ -3894,13 +3931,23 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
               >
                 {(headerToolbarSlot) => (
                 <>
+                {showEmptyFunnel && (
+                  <WidgetEmptyFunnel
+                    rawCount={rawTaskCount}
+                    metaCount={metaTaskCount}
+                    pageCount={pageFilteredTasks.length}
+                    onOpenMetaFilters={onOpenMetaFilters}
+                    onOpenPageFilter={() => setFilterPageTarget(activePage)}
+                    onOpenWidgetSettings={() => setEditingWidget(w)}
+                  />
+                )}
                 {w.type === "customCard" && (
                   <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen} taskBaselines={taskBaselines}/>
                 )}
-                {w.type === "chart" && (
+                {w.type === "chart" && !showEmptyFunnel && (
                   <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} />
                 )}
-                {w.type === "list" && (
+                {w.type === "list" && !showEmptyFunnel && (
                   <WidgetList tasks={scoped} sortBy={w.sortBy || "end"} limit={w.limit || 6} groupBy={w.groupBy} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "taskDetail" && (
@@ -3928,7 +3975,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "budget" && (
                   <WidgetBudget widget={w} projects={ctx.projects} expenses={expenses} expenseCategories={expenseCategories} />
                 )}
-                {w.type === "minigantt" && (
+                {w.type === "minigantt" && !showEmptyFunnel && (
                   <WidgetMiniGantt
                     widget={w}
                     tasks={scoped}
@@ -3946,7 +3993,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onPrintWidget={() => setPrintWidgetId(w.id)}
                   />
                 )}
-                {w.type === "bubbles" && (
+                {w.type === "bubbles" && !showEmptyFunnel && (
                   <WidgetBubbles
                     widget={w}
                     tasks={scoped}
@@ -3987,7 +4034,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateTeamMembers={setTeamMembers}
                   />
                 )}
-                {w.type === "criticalPath" && (
+                {w.type === "criticalPath" && !showEmptyFunnel && (
                   <WidgetCriticalPath tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "projectTreemap" && (
@@ -4002,7 +4049,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     taskBaselines={taskBaselines}
                   />
                 )}
-                {w.type === "heatmapGrid" && (
+                {w.type === "heatmapGrid" && !showEmptyFunnel && (
                   <WidgetHeatmapGrid widget={w}
                     tasks={scoped}
                     ctx={ctx}
@@ -4010,10 +4057,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch, lastInteraction: new Date().toISOString() } : t)))}
                   />
                 )}
-                {w.type === "heatmapMonth" && (
+                {w.type === "heatmapMonth" && !showEmptyFunnel && (
                   <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
                 )}
-                {w.type === "echeances" && (
+                {w.type === "echeances" && !showEmptyFunnel && (
                   <WidgetEcheances
                     widget={w}
                     tasks={scoped}
