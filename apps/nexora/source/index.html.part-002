@@ -1695,6 +1695,12 @@ function TaskArchiveSettingsPane({ tasks, taskArchive, projects, statuses, onArc
   const currentSize = useMemo(() => JSON.stringify(tasks).length, [tasks]);
   const pct = Math.min(100, Math.round((currentSize / FIRESTORE_DOC_LIMIT) * 100));
   const gaugeColor = pct >= 90 ? "var(--danger)" : pct >= 70 ? "#d97706" : "var(--success)";
+  // #129 (retour de test) : la corbeille reçoit désormais aussi les tâches
+  // supprimées depuis l'interface (purgées pour de bon après 30 jours), pas
+  // seulement celles archivées manuellement — elle mérite sa propre jauge.
+  const archiveSize = useMemo(() => JSON.stringify(taskArchive).length, [taskArchive]);
+  const archivePct = Math.min(100, Math.round((archiveSize / FIRESTORE_DOC_LIMIT) * 100));
+  const archiveGaugeColor = archivePct >= 90 ? "var(--danger)" : archivePct >= 70 ? "#d97706" : "var(--success)";
 
   // Classement des tâches les plus lourdes en octets JSON, avec le champ qui
   // pèse le plus dans chacune (généralement la description). Sert à repérer
@@ -1770,9 +1776,10 @@ function TaskArchiveSettingsPane({ tasks, taskArchive, projects, statuses, onArc
 
   return (
     <>
-      <div className="lp-section-title">Fiabilité de la sauvegarde</div>
+      <div className="lp-section-title">Archivage &amp; corbeille</div>
       <div style={{ fontSize:11.5, color:"var(--text-600)", lineHeight:1.5, marginBottom:8 }}>
         <strong>nexora:tasks</strong> est le document le plus lourd de l'appli — au-delà de 1 048 576 octets (la limite d'un document Firestore), chaque sauvegarde échoue. La jauge ci-dessous montre où tu en es en ce moment.
+        Supprimer une tâche (#129) l'envoie ici plutôt que de l'effacer directement — restaurable à tout moment, purgée pour de bon après 30 jours.
       </div>
       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
         <div style={{ flex:1, height:8, borderRadius:4, background:"var(--border)", overflow:"hidden" }}>
@@ -1907,6 +1914,18 @@ function TaskArchiveSettingsPane({ tasks, taskArchive, projects, statuses, onArc
 
       {taskArchive.length > 0 && (
         <div style={{ marginTop:12 }}>
+          {/* #129 (retour de test) : nexora:taskArchive reçoit maintenant aussi
+              les suppressions depuis l'interface — sa propre jauge, sur le
+              même modèle que nexora:tasks ci-dessus. */}
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+            <div style={{ flex:1, height:8, borderRadius:4, background:"var(--border)", overflow:"hidden" }}>
+              <div style={{ width:`${archivePct}%`, height:"100%", background:archiveGaugeColor, transition:"width .2s ease" }} />
+            </div>
+            <span style={{ fontSize:11.5, fontWeight:700, color:archiveGaugeColor, flex:"0 0 auto" }}>{archivePct}%</span>
+          </div>
+          <div style={{ fontSize:11, color:"var(--text-600)", marginBottom:8 }}>
+            nexora:taskArchive · {archiveSize.toLocaleString("fr-FR")} / {FIRESTORE_DOC_LIMIT.toLocaleString("fr-FR")} octets — purgée automatiquement après 30 jours
+          </div>
           <button className="lp-btn" onClick={() => setArchiveOpen((v) => !v)}>
             {archiveOpen ? "Masquer" : "Voir"} les {taskArchive.length} tâche{taskArchive.length > 1 ? "s" : ""} archivée{taskArchive.length > 1 ? "s" : ""}
           </button>
@@ -13354,7 +13373,7 @@ function pmMeasureText(text, font) {
   return c.measureText(text).width;
 }
 
-function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, setPrefs, setTasks, pushToast, expenses, embedded, isHomepage, onSelectProject, selectedProjectIds, onToggleProject, metaTemporalBlocks, annotations, onAnnotationsChange }) {
+function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, setPrefs, setTasks, setTaskArchive, pushToast, expenses, embedded, isHomepage, onSelectProject, selectedProjectIds, onToggleProject, metaTemporalBlocks, annotations, onAnnotationsChange }) {
   const dated = useMemo(() => tasks.filter((t) => t.start && t.end), [tasks]);
   const [expandedActivities, setExpandedActivities] = useState(() => new Set());
   const toggleActivityActions = (id) => setExpandedActivities((prev) => {
@@ -13552,16 +13571,23 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
     )));
     clearSelection();
   };
+  // #129 (retour de test) : même corbeille datée que la suppression depuis la
+  // fiche/le Tableur (deleteTask/requestBulkDelete) — voir leur commentaire.
   const deleteSelected = () => {
     const n = selectedIds.size;
     const removedSnapshot = tasks.filter((t) => selectedIds.has(t.id));
+    const archived = removedSnapshot.map((t) => ({ ...t, archivedAt: new Date().toISOString() }));
     setTasks((prev) => prev.filter((t) => !selectedIds.has(t.id)));
+    if (setTaskArchive) setTaskArchive((prev) => [...prev, ...archived]);
     if (pushToast) {
       pushToast({
         message: `${n} tâche${n > 1 ? "s" : ""} supprimée${n > 1 ? "s" : ""}.`,
         actionLabel: "Annuler",
         duration: 8000,
-        onAction: () => setTasks((prev) => [...prev, ...removedSnapshot.filter((t) => !prev.some((p) => p.id === t.id))]),
+        onAction: () => {
+          if (setTaskArchive) setTaskArchive((prev) => prev.filter((t) => !selectedIds.has(t.id)));
+          setTasks((prev) => [...prev, ...removedSnapshot.filter((t) => !prev.some((p) => p.id === t.id))]);
+        },
       });
     }
     clearSelection();

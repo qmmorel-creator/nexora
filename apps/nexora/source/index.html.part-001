@@ -10476,18 +10476,27 @@ export default function LePlan({ currentUser, onSignOut }) {
     .trim()
     .toLowerCase();
 
+  // #129 (retour de test) : « Supprimer » n'efface plus directement — la
+  // tâche part dans nexora:taskArchive (corbeille datée, Réglages > Données),
+  // exactement comme archiveTasks ci-dessous, avec le même geste "Annuler" de
+  // 8 s qu'avant ce changement. Restaurable depuis la corbeille au-delà des
+  // 8 s, purgée pour de bon après 30 jours (voir purgeOldArchivedTasks).
   const deleteTask = (id) => {
     const removed = tasks.find((t) => t.id === id);
-    setTasks((prev) => prev.filter((t) => t.id !== id));
     setTaskModal(null);
-    if (removed) {
-      pushToast({
-        message: `Tâche « ${removed.title} » supprimée.`,
-        actionLabel: "Annuler",
-        duration: 8000,
-        onAction: () => setTasks((prev) => (prev.some((t) => t.id === removed.id) ? prev : [...prev, removed])),
-      });
-    }
+    if (!removed) return;
+    const archived = { ...removed, archivedAt: new Date().toISOString() };
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    setTaskArchive((prev) => [...prev, archived]);
+    pushToast({
+      message: `Tâche « ${removed.title} » supprimée.`,
+      actionLabel: "Annuler",
+      duration: 8000,
+      onAction: () => {
+        setTaskArchive((prev) => prev.filter((t) => t.id !== removed.id));
+        setTasks((prev) => (prev.some((t) => t.id === removed.id) ? prev : [...prev, removed]));
+      },
+    });
   };
   const markTaskDone = (taskId) => {
     setTasks((prev) => {
@@ -10599,14 +10608,21 @@ export default function LePlan({ currentUser, onSignOut }) {
       danger: true,
       confirmLabel: `Supprimer (${list.length})`,
       onConfirm: () => {
+        // #129 (retour de test) : même corbeille datée que la suppression
+        // unitaire (deleteTask) — voir son commentaire pour le détail.
         const removedSnapshot = tasks.filter((t) => list.includes(t.id));
+        const archived = removedSnapshot.map((t) => ({ ...t, archivedAt: new Date().toISOString() }));
         setTasks((prev) => prev.filter((t) => !list.includes(t.id)));
+        setTaskArchive((prev) => [...prev, ...archived]);
         setConfirmState(null);
         pushToast({
           message: `${removedSnapshot.length} tâche${removedSnapshot.length > 1 ? "s" : ""} supprimée${removedSnapshot.length > 1 ? "s" : ""}`,
           actionLabel: "Annuler",
           duration: 8000,
-          onAction: () => setTasks((prev) => [...prev, ...removedSnapshot.filter((t) => !prev.some((p) => p.id === t.id))]),
+          onAction: () => {
+            setTaskArchive((prev) => prev.filter((t) => !list.includes(t.id)));
+            setTasks((prev) => [...prev, ...removedSnapshot.filter((t) => !prev.some((p) => p.id === t.id))]);
+          },
         });
       },
     });
@@ -10660,6 +10676,23 @@ export default function LePlan({ currentUser, onSignOut }) {
       },
     });
   };
+
+  // Purge automatique de la corbeille après 30 jours (#129, retour de test) :
+  // une tâche archivée depuis plus longtemps — supprimée depuis l'interface
+  // ou archivée manuellement, peu importe l'origine — part pour de bon, sans
+  // confirmation (c'est le comportement promis, pas une action ponctuelle).
+  // Se déclenche à chaque changement de nexora:taskArchive ; après avoir
+  // purgé, le prochain passage ne trouve plus rien d'expiré et ne fait rien —
+  // converge en deux passages, jamais de boucle.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const expired = taskArchive.filter((t) => t.archivedAt && Date.parse(t.archivedAt) < cutoff);
+    if (!expired.length) return;
+    const expiredIds = new Set(expired.map((t) => t.id));
+    setTaskArchive((prev) => prev.filter((t) => !expiredIds.has(t.id)));
+    pushToast({ message: `${expired.length} tâche${expired.length > 1 ? "s" : ""} archivée${expired.length > 1 ? "s" : ""} depuis plus de 30 jours supprimée${expired.length > 1 ? "s" : ""} définitivement.` });
+  }, [dataLoaded, taskArchive]);
 
   // Archive en un clic toutes les tâches terminées depuis plus de daysThreshold
   // jours (basé sur lastInteraction, la meilleure approximation disponible pour
@@ -11703,12 +11736,12 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
+          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} taskBaselines={taskBaselines} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
-          {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
+          {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
         </div>
       </main>
 
