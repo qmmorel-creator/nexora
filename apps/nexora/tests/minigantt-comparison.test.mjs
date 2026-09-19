@@ -304,7 +304,7 @@ test("une référence invalide ou incomplète ne casse rien : la tâche garde le
   // Comparaison désactivée : aucune erreur, donc aucun blocage.
   assert.equal(taskComparisonIsValid({ enabled: false }, {}), true);
   // Et la fiche refuse bien d'enregistrer tant qu'une erreur reste.
-  assert.match(html, /if \(comparisonBlocksSave\) return;/);
+  assert.match(html, /if \(comparisonBlocksSave\) \{ setActiveTab\("planning"\); return; \}/);
 });
 
 // 13. Plage automatique ------------------------------------------------------

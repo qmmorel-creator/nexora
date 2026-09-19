@@ -8936,6 +8936,11 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const [descPreview, setDescPreview] = useState(true);
   const [writingMode, setWritingMode] = useState(false);
   const descRef = useRef(null);
+  // #169 : onglet « Planning » — regroupe dates, durée, dépendances, référence
+  // et risques, distincts des données de contenu (description, pièces
+  // jointes, checklist) qui restent sur l'onglet principal. Disposition
+  // seulement : aucun état ni traitement ne change de section.
+  const [activeTab, setActiveTab] = useState("main");
 
   const [assignee, setAssignee] = useState(base.assignee || "");
   const [checklist, setChecklist] = useState(base.checklist || []);
@@ -9060,11 +9065,12 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   const submit = () => {
-    if (!title.trim()) { setTitleError(true); return; }
+    if (!title.trim()) { setTitleError(true); setActiveTab("main"); return; }
     if (!projectId || !statusId) return;
     // Les messages sont déjà affichés sous les champs : il n'y a rien à poser
-    // ici, seulement à refuser l'enregistrement.
-    if (comparisonBlocksSave) return;
+    // ici, seulement à refuser l'enregistrement. Le champ fautif vit sur
+    // l'onglet Planning depuis #169 — on y bascule pour qu'il reste visible.
+    if (comparisonBlocksSave) { setActiveTab("planning"); return; }
     setTitleError(false);
     // Contrainte fin→début : une tâche ne peut jamais commencer avant que toutes
     // ses dépendances soient terminées. Si c'est le cas (dépendance ajoutée après
@@ -9206,6 +9212,15 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           )}
         </div>
       )}
+      <div className="lp-task-tabs">
+        <button type="button" className={"lp-task-tab-btn" + (activeTab === "main" ? " active" : "")} onClick={() => setActiveTab("main")}>Général</button>
+        <button type="button" className={"lp-task-tab-btn" + (activeTab === "planning" ? " active" : "")} onClick={() => setActiveTab("planning")}>
+          Planning
+          {(conflictingDeps.length > 0 || comparisonBlocksSave) && <AlertTriangle size={11} style={{ marginLeft: 4, verticalAlign: -1, color: "var(--danger)" }} />}
+        </button>
+      </div>
+      {activeTab === "main" && (
+      <>
       <div className="lp-field">
         <label>Titre</label>
         <input
@@ -9280,6 +9295,10 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       <div className="lp-row2">
         <div className="lp-field"><label>Responsable</label><AssigneeSelect members={teamMembers} value={assignee} onChange={setAssignee} /></div>
       </div>
+      </>
+      )}
+      {activeTab === "planning" && (
+      <>
       <div className="lp-checkbox-row"><input type="checkbox" id="ms" checked={milestone} onChange={(e) => setMilestone(e.target.checked)} /><label htmlFor="ms" style={{ margin: 0, textTransform: "none", fontWeight: 500, fontSize: 13 }}>Il s'agit d'un jalon (date unique)</label></div>
       {milestone && (
         <div className="lp-field" style={{ maxWidth: 220 }}>
@@ -9660,6 +9679,10 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           )}
         </div>
       )}
+      </>
+      )}
+      {activeTab === "main" && (
+      <>
       <div className="lp-field"><label>Avancement — {progress}%</label><input type="range" min="0" max="100" value={progress} onChange={(e) => setProgress(Number(e.target.value))} className="lp-gradient-slider" style={{ width: "100%", background: sliderGradientBg(progress, gradient, progressColorByStatus ? statuses.find((s) => s.id === statusId)?.color : null) }} /></div>
       <div className="lp-field">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
@@ -9841,6 +9864,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         {attachError && <p style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 6, marginBottom: 0 }}>{attachError}</p>}
         <p style={{ fontSize: 11, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Les fichiers joints directement sont limités à {Math.round(MAX_ATTACHMENT_BYTES / 1024)} Ko (stockés dans la fiche elle-même) — pour les plans et gros documents, préfère un lien externe.</p>
       </div>
+      </>
+      )}
     </Modal>
   );
 }
