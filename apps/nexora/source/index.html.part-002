@@ -2712,7 +2712,7 @@ function TaskHoverCard({ task, ctx, gradient }) {
     <div className="lp-hover-card">
       <div className="lp-hover-card-header">
         {proj && <span className="lp-project-dot" style={{ background: proj.color, width: 14, height: 14, fontSize: 8, flex: "0 0 auto" }}><IconGlyph icon={proj.icon} size={9} /></span>}
-        <strong style={{ fontSize: 12, flex: 1 }}>{task.milestone && <MilestoneGlyph size={11} style={{ marginRight: 4, verticalAlign: -2 }} icon={resolveMilestoneIcon(task, ctx)} />}{task.title}</strong>
+        <strong style={{ fontSize: 12, flex: 1 }}>{task.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={task.milestoneTypeId} icon={resolveMilestoneIcon(task, ctx)} size={11} style={{ marginRight: 4, verticalAlign: -2 }} />}{task.title}</strong>
       </div>
       <div className="lp-hover-card-chips">
         {st && <span className="lp-chip" style={{ background: st.color + "22", color: st.color }}>{st.name}</span>}
@@ -3153,7 +3153,7 @@ function ListView({ tasks, ctx, gradient, progressColorByStatus, setTasks, onOpe
                     <button className={"lp-mark-done" + (done ? " done" : "")} draggable={false} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onMarkDone(t.id); }} title="Marquer comme terminé"><CheckCircle2 size={15} /></button><button className="lp-cycle-btn" draggable={false} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onCycleStatus(t.id); }} title="Changer le statut"><RefreshCw size={13} /></button>
                     <div className="lp-row-title">
                       <span className="lp-project-dot" style={{ background: ctx.projects.find((x) => x.id === t.projectId)?.color, width: 16, height: 16, fontSize: 9, flex: "0 0 auto" }}><IconGlyph icon={ctx.projects.find((x) => x.id === t.projectId)?.icon} size={11} /></span>
-                      {t.milestone && <MilestoneGlyph size={14} icon={resolveMilestoneIcon(t, ctx)} />}
+                      {t.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={14} />}
                       <InlineTextField value={t.title} placeholder="Titre" onCommit={(v) => v.trim() && setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, title: v.trim() } : x)))} style={{ fontWeight: 500 }} />
                       {getPrimaryGoogleDriveAttachment(t) && (
                         <a className="lp-icon-btn lp-drive-quick-link" href={getPrimaryGoogleDriveAttachment(t).url} target="_blank" rel="noopener noreferrer" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} title={`Ouvrir dans Google Drive${getGoogleDriveAttachments(t).length > 1 ? ` (${getGoogleDriveAttachments(t).length} liens)` : ""}`}><Folder size={13} /></a>
@@ -8033,10 +8033,20 @@ function MilestoneSymbol({ symbol, color, size, style }) {
 }
 
 /* Repère d'un TYPE de jalon : son symbole et sa couleur, tels que le catalogue
-   des Réglages les définit. `color` force une couleur propre au jalon. */
-function MilestoneTypeGlyph({ types, type, color, size }) {
+   des Réglages les définit. `color` force une couleur propre au jalon.
+
+   #157 : catalogue UNIQUE pour les jalons-tâches et les jalons-annotations —
+   avant, une tâche-jalon utilisait resolveMilestoneIcon/GLOBAL_MILESTONE_STYLE
+   (un style unique pour toute l'appli) pendant que les annotations avaient
+   leur propre catalogue de 28 symboles. `icon` est l'émoji/URL propre à CETTE
+   tâche (resolveMilestoneIcon) : un remplacement FACULTATIF, prioritaire sur
+   le symbole du type quand il est posé. Sans lui, `type` (le milestoneTypeId
+   de la tâche, ou l'identifiant du jalon-annotation) choisit le symbole et la
+   couleur dans le même catalogue des deux côtés. */
+function MilestoneTypeGlyph({ types, type, color, size, icon, style }) {
+  if (icon) return <IconGlyph icon={icon} size={size} style={style} />;
   const def = milestoneTypeFor(types, type);
-  return <MilestoneSymbol symbol={def.symbol} color={color || def.color} size={size} />;
+  return <MilestoneSymbol symbol={def.symbol} color={color || def.color} size={size} style={style} />;
 }
 
 /* Bout d'une annotation horizontale, dessiné.
@@ -8710,7 +8720,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines, milestoneTypes }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -8756,6 +8766,9 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   }, [projectId, taskTypeId]);
   const [milestone, setMilestone] = useState(base.milestone || false);
   const [milestoneIcon, setMilestoneIcon] = useState(base.milestoneIcon || "");
+  // #157 : catalogue unique — le symbole/couleur du jalon-tâche vient
+  // maintenant du même catalogue que les jalons-annotations du Gantt.
+  const [milestoneTypeId, setMilestoneTypeId] = useState(base.milestoneTypeId || "");
   const [attachments, setAttachments] = useState(base.attachments || []);
   const [attachError, setAttachError] = useState("");
   const [driveName, setDriveName] = useState("");
@@ -9090,6 +9103,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       taskTypeId,
       milestone,
       milestoneIcon: milestoneIcon || null,
+      milestoneTypeId: milestone ? (milestoneTypeId || null) : null,
       start: finalStart,
       end: finalEnd,
       progress,
@@ -9267,6 +9281,17 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         <div className="lp-field"><label>Responsable</label><AssigneeSelect members={teamMembers} value={assignee} onChange={setAssignee} /></div>
       </div>
       <div className="lp-checkbox-row"><input type="checkbox" id="ms" checked={milestone} onChange={(e) => setMilestone(e.target.checked)} /><label htmlFor="ms" style={{ margin: 0, textTransform: "none", fontWeight: 500, fontSize: 13 }}>Il s'agit d'un jalon (date unique)</label></div>
+      {milestone && (
+        <div className="lp-field" style={{ maxWidth: 220 }}>
+          <label>Type de jalon</label>
+          <select value={milestoneTypeId} onChange={(e) => setMilestoneTypeId(e.target.value)}>
+            <option value="">Par défaut ({normalizeMilestoneTypes(milestoneTypes)[0]?.name})</option>
+            {normalizeMilestoneTypes(milestoneTypes).map((mt) => (
+              <option key={mt.id} value={mt.id}>{mt.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="lp-checkbox-row">
         <input type="checkbox" id="noDate" checked={!start} onChange={(e) => { if (e.target.checked) { setStart(""); setEnd(""); } else { setStart(iso(new Date())); setEnd(addDays(iso(new Date()), 5)); } }} />
         <label htmlFor="noDate" style={{ margin: 0, textTransform: "none", fontWeight: 500, fontSize: 13 }}>Aucune date (n'apparaîtra pas dans le Gantt, la Timeline, le Radar ni la Heat map)</label>
@@ -12004,7 +12029,7 @@ function DayTaskCard({ task, ctx, onOpen, variant }) {
   return (
     <div className={"lp-day-task-card lp-day-task-" + variant + (done ? " done" : "")} onClick={() => onOpen(task)}>
       {proj && <span className="lp-project-dot" style={{ background: proj.color, width: 12, height: 12, fontSize: 7, flex: "0 0 auto" }}><IconGlyph icon={proj.icon} size={7} /></span>}
-      {task.milestone && <MilestoneGlyph size={10} icon={resolveMilestoneIcon(task, ctx)} />}
+      {task.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={task.milestoneTypeId} icon={resolveMilestoneIcon(task, ctx)} size={10} />}
       <span className="lp-day-task-title">{task.title}</span>
       {st && <span className="lp-chip" style={{ background: st.color + "22", color: st.color, fontSize: 9, padding: "1px 5px", flex: "0 0 auto" }}>{st.name}</span>}
       {done && <CheckCircle2 size={11} color="var(--success)" style={{ flex: "0 0 auto" }} />}
@@ -12194,7 +12219,7 @@ function TimelineView({ tasks, ctx, onOpen, prefs, setPrefs, gradient, progressC
           <div className="lp-tl-bubble-head">
             <div className="lp-tl-bubble-date" style={{ background: color }}>{fmtShort(t.end)}</div>
             <div className="lp-tl-bubble-title">
-              {t.milestone && <MilestoneGlyph size={11} icon={resolveMilestoneIcon(t, ctx)} />} {t.title}
+              {t.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={11} />} {t.title}
             </div>
           </div>
           <div className="lp-tl-bubble-meta">
@@ -12485,7 +12510,7 @@ function RadarView({ tasks, ctx, onOpen, appearance, prefs, setPrefs, toolbarSlo
     const st = ctx.statuses.find((s) => s.id === t.statusId);
     return (
       <>
-        <div className={compact ? "lp-radar-tooltip-title-sm" : "lp-radar-tooltip-title"}>{t.milestone && <MilestoneGlyph size={compact ? 9 : 12} icon={resolveMilestoneIcon(t, ctx)} />} {t.title}</div>
+        <div className={compact ? "lp-radar-tooltip-title-sm" : "lp-radar-tooltip-title"}>{t.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={compact ? 9 : 12} />} {t.title}</div>
         {(tooltipFields.includes("project") || tooltipFields.includes("status")) && (
           <div className="lp-radar-tooltip-row">
             {tooltipFields.includes("project") && proj && <span className="lp-chip lp-radar-chip-sm" style={{ background: proj.color + "22", color: proj.color }}>{!compact && <IconGlyph icon={proj.icon} size={9} />} {proj.name}</span>}
@@ -12878,7 +12903,7 @@ function RadarView({ tasks, ctx, onOpen, appearance, prefs, setPrefs, toolbarSlo
             {milestones.map((t) => (
               <div key={t.id} className="lp-tl-list-row" onClick={() => onOpen(t)}>
                 <span className="lp-project-dot" style={{ background: colorFor(t), width: 14, height: 14, fontSize: 0 }} />
-                <MilestoneGlyph size={12} icon={resolveMilestoneIcon(t, ctx)} />
+                <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={12} />
                 <span className="lp-tl-list-title">{t.title}</span>
                 <span className="lp-tl-list-date">{fmtShort(t.end)}</span>
               </div>
