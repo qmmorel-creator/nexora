@@ -8720,7 +8720,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines, milestoneTypes }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, gradient, progressColorByStatus, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines, milestoneTypes, activityLog }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -8941,6 +8941,14 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   // jointes, checklist) qui restent sur l'onglet principal. Disposition
   // seulement : aucun état ni traitement ne change de section.
   const [activeTab, setActiveTab] = useState("main");
+  // #142 : le journal d'activité existe déjà (créations, réaffectations,
+  // échéances déplacées, blocages, réouvertures) mais rien ne le montrait par
+  // tâche — seul le Daily Briefing le lisait, agrégé sur 24 h. On ne fait ici
+  // que le FILTRER pour cette tâche précise, sans toucher à sa collecte.
+  const taskActivityLog = useMemo(
+    () => (Array.isArray(activityLog) ? activityLog.filter((e) => e.taskId === task.id) : []),
+    [activityLog, task.id]
+  );
 
   const [assignee, setAssignee] = useState(base.assignee || "");
   const [checklist, setChecklist] = useState(base.checklist || []);
@@ -9218,7 +9226,50 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
           Planning
           {(conflictingDeps.length > 0 || comparisonBlocksSave) && <AlertTriangle size={11} style={{ marginLeft: 4, verticalAlign: -1, color: "var(--danger)" }} />}
         </button>
+        {!isNew && (
+          <button type="button" className={"lp-task-tab-btn" + (activeTab === "history" ? " active" : "")} onClick={() => setActiveTab("history")}>Historique</button>
+        )}
       </div>
+      {activeTab === "history" && (
+      <>
+      <div className="lp-field">
+        {taskBaselines?.[task?.id] && (
+          <div className="lp-gantt-annot-item" style={{ marginBottom: 10 }}>
+            <div className="lp-gantt-annot-head" style={{ cursor: "default" }}>
+              <span className="lp-gantt-annot-summary">
+                <strong>Référence initiale</strong>
+                <span>
+                  {milestone ? fmtShort(taskBaselines[task.id].end) : `${fmtShort(taskBaselines[task.id].start)} → ${fmtShort(taskBaselines[task.id].end)}`}
+                  {" · capturée le "}{fmtShort(taskBaselines[task.id].capturedAt)}
+                </span>
+              </span>
+            </div>
+          </div>
+        )}
+        {taskActivityLog.length === 0 ? (
+          <p className="lp-gantt-annot-hint" style={{ marginTop: 0 }}>Aucun événement enregistré pour cette tâche.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {taskActivityLog.map((entry) => {
+              const meta = ACTIVITY_LOG_ENTRY_META[entry.type] || { icon: "•", label: entry.type };
+              const detail = activityLogEntryDetail(entry);
+              return (
+                <div className="lp-gantt-annot-item" key={entry.id}>
+                  <div className="lp-gantt-annot-head" style={{ cursor: "default" }}>
+                    <span className="lp-gantt-annot-swatch" style={{ background: "transparent", border: "none", fontSize: 13 }}>{meta.icon}</span>
+                    <span className="lp-gantt-annot-summary">
+                      <strong>{meta.label}</strong>
+                      <span>{detail}{detail ? " · " : ""}{entry.at ? new Date(entry.at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      </>
+      )}
       {activeTab === "main" && (
       <>
       <div className="lp-field">
