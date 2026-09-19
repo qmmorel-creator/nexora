@@ -9,8 +9,8 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    rendu possible sur les tableaux de bord, et qu'aucun d'eux ne rencontrait
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
-  "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-  "echeances", "blockers",
+  "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
+  "echeances",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
   "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
   "customCard",
@@ -19,8 +19,8 @@ const EMPTY_DASHBOARD_WIDGETS = [
   // où le filtre peut la faire disparaître de la liste (issue #72).
   .concat([
     { id: "vide-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: "t1", layout: { x: 0, y: 40, w: 3, h: 4 } },
-    { id: "vide-countdown-task", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: "t1", layout: { x: 3, y: 40, w: 3, h: 4 } },
-    { id: "vide-countdown-filtre", type: "countdown", title: "countdown filtre", countdownMode: "filter", layout: { x: 6, y: 40, w: 3, h: 4 } },
+    { id: "vide-countdown-task", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb1", kind: "daysRemaining", countdownMode: "task", countdownTaskId: "t1" }], layout: { x: 3, y: 40, w: 3, h: 4 } },
+    { id: "vide-countdown-filtre", type: "customCard", title: "countdown filtre", cardBlocks: [{ id: "cdb2", kind: "daysRemaining", countdownMode: "filter" }], layout: { x: 6, y: 40, w: 3, h: 4 } },
   ]);
 
 function AnnotationsHarness() {
@@ -984,15 +984,15 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
 if (benchApp) {
   const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
   const benchWidgets = [
-    "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-    "echeances", "blockers",
+    "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
+    "echeances",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
     "customCard",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
-    { id: "banc-countdown", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: seedTasks[0]?.id, layout: { x: 3, y: 96, w: 3, h: 4 } },
+    { id: "banc-countdown", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb3", kind: "daysRemaining", countdownMode: "task", countdownTaskId: seedTasks[0]?.id }], layout: { x: 3, y: 96, w: 3, h: 4 } },
   );
   const mem = new Map(Object.entries({
     "nexora:tasks": JSON.stringify(benchTasks),

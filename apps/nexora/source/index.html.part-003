@@ -2277,6 +2277,8 @@ const CUSTOM_CARD_BLOCK_TYPES = [
   { key:"progress", label:"Avancement" },
   { key:"description", label:"Description" },
   { key:"staticText", label:"Texte libre" },
+  // #140 : reprend l'ancien widget « Compte à rebours » comme bloc.
+  { key:"daysRemaining", label:"Jours restants" },
 ];
 
 const CUSTOM_CARD_DEFAULT_ICONS = {
@@ -2290,6 +2292,7 @@ const CUSTOM_CARD_DEFAULT_ICONS = {
   progress:"tabler:progress",
   description:"tabler:align-left",
   staticText:"tabler:text-size",
+  daysRemaining:"tabler:hourglass",
 };
 
 const customCardDefaultBlocks = () => ([
@@ -2417,9 +2420,7 @@ function computeKpiValue(tasks, metric, ctx, taskBaselines) {
 }
 
 function defaultLayoutForType(type) {
-  if (type === "kpi") return { w: 3, h: 2 };
   if (type === "customCard") return { w: 5, h: 4 };
-  if (type === "countdown") return { w: 3, h: 3 };
   if (type === "note") return { w: 4, h: 3 };
   if (type === "taskDetail") return { w: 8, h: 7 };
   if (type === "userProfile") return { w: 8, h: 9 };
@@ -2427,7 +2428,6 @@ function defaultLayoutForType(type) {
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
   if (type === "echeances") return { w: 8, h: 6 };
-  if (type === "blockers") return { w: 5, h: 5 };
   if (type === "nextBestAction") return { w: 4, h: 6 };
   if (type === "dailyBriefing") return { w: 4, h: 7 };
   if (type === "dominoEffect") return { w: 4, h: 6 };
@@ -2483,11 +2483,44 @@ function migrateLegacyEcheancesWidget(widget) {
   if (!widget || typeof widget !== "object" || !(widget.type in ECHEANCES_LEGACY_ORIENTATION)) return widget;
   return { ...widget, type: "echeances", echeancesOrientation: ECHEANCES_LEGACY_ORIENTATION[widget.type] };
 }
+// #140 : « Tâches bloquantes » migre vers Domino Effect, tri « nombre de
+// tâches bloquées » — le même critère que son propre classement d'origine.
+const LEGACY_BLOCKERS_TYPE = "blockers";
+function migrateLegacyBlockersWidget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_BLOCKERS_TYPE) return widget;
+  return { ...widget, type: "dominoEffect", dominoSortBy: "directImpact" };
+}
+// #140 : « Chiffre clé » et « Compte à rebours » migrent vers la Carte
+// personnalisable, chacun comme un unique bloc en emphase Grande, sans
+// libellé ni icône (fidèle à leur ancien rendu : juste la valeur).
+const LEGACY_KPI_TYPE = "kpi";
+const LEGACY_COUNTDOWN_TYPE = "countdown";
+function migrateLegacySingleBlockCardWidget(widget) {
+  if (!widget || typeof widget !== "object") return widget;
+  if (widget.type !== LEGACY_KPI_TYPE && widget.type !== LEGACY_COUNTDOWN_TYPE) return widget;
+  const soleBlock = widget.type === LEGACY_KPI_TYPE
+    ? { metric: widget.metric || "count" }
+    : { countdownMode: widget.countdownMode || "date", countdownDate: widget.countdownDate || "", countdownTaskId: widget.countdownTaskId || "" };
+  const { metric, countdownMode, countdownDate, countdownTaskId, ...rest } = widget;
+  return {
+    ...rest,
+    type: "customCard",
+    cardColumns: 1,
+    cardBlocks: [{
+      id: uid(), kind: widget.type === LEGACY_KPI_TYPE ? "aggregate" : "daysRemaining",
+      ...soleBlock,
+      emphasis: "hero", showIcon: false, showLabel: false, label: "",
+      icon: "", color: "", bgColor: "", accent: "none",
+    }],
+  };
+}
 function migrateLegacyMiniGanttData(value) {
   if (Array.isArray(value)) return value.map(migrateLegacyMiniGanttData);
   if (!value || typeof value !== "object") return value;
   if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
   if (value.type in ECHEANCES_LEGACY_ORIENTATION) return migrateLegacyEcheancesWidget(value);
+  if (value.type === LEGACY_BLOCKERS_TYPE) return migrateLegacyBlockersWidget(value);
+  if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
   return next;
@@ -3861,9 +3894,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
               >
                 {(headerToolbarSlot) => (
                 <>
-                {w.type === "kpi" && (
-                  <div className="lp-widget-kpi">{computeKpiValue(scoped, w.metric || "count", ctx, taskBaselines)}</div>
-                )}
                 {w.type === "customCard" && (
                   <WidgetCustomCard widget={w} tasks={scoped} allTasks={tasks} ctx={ctx} onOpen={onOpen} taskBaselines={taskBaselines}/>
                 )}
@@ -3891,9 +3921,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onChangeTask={(taskId)=>updateWidget(w.id,{taskDetailTaskId:taskId})}
                     onUpdateTask={(taskId,patch)=>setTasks((prev)=>prev.map((t)=>t.id===taskId ? {...t,...patch,lastInteraction:new Date().toISOString()} : t))}
                   />
-                )}
-                {w.type === "countdown" && (
-                  <WidgetCountdown widget={w} tasks={tasks} ctx={ctx} />
                 )}
                 {w.type === "note" && (
                   <WidgetNote widget={w} onChange={(content) => updateWidget(w.id, { content })} shortcutPrefs={shortcutPrefs} />
@@ -3995,9 +4022,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     onUpdateDates={(taskId, patch) => setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, ...patch } : t))}
                   />
                 )}
-                {w.type === "blockers" && (
-                  <WidgetBlockers tasks={scoped} ctx={ctx} onOpen={onOpen} />
-                )}
                 {w.type === "nextBestAction" && (
                   <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
@@ -4005,7 +4029,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetDailyBriefing tasks={scoped} ctx={ctx} onOpen={onOpen} onViewDay={onViewDay} activityLog={activityLog} staffing={staffing} />
                 )}
                 {w.type === "dominoEffect" && (
-                  <WidgetDominoEffect tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                  <WidgetDominoEffect widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "budgetBurnRate" && (
                   <WidgetBudgetBurnRate widget={w} ctx={ctx} expenses={expenses || []} onOpen={onOpen} />
@@ -4403,9 +4427,36 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen, taskBaselines 
   const projectOf = (t) => ctx.projects.find((p)=>p.id===t?.projectId);
   const statusOfTask = (t) => ctx.statuses.find((st)=>st.id===t?.statusId);
 
+  // #140 : reprend WidgetCountdown — "task" cherche dans allTasks (une cible
+  // épinglée doit rester trouvable même hors du filtre du widget, comme avant) ;
+  // "filter" utilise `tasks`, déjà filtré au niveau du widget par le tableau de
+  // bord, donc équivalent au ré-appel de applyWidgetFilter que faisait l'ancien
+  // widget sur la liste complète.
+  const daysRemainingInfo = (b) => {
+    let targetDate = b.countdownDate || null;
+    let label = "";
+    if (b.countdownMode === "task" && b.countdownTaskId) {
+      const t = (allTasks || tasks || []).find((x) => x.id === b.countdownTaskId);
+      if (t) { targetDate = t.end; label = t.title; }
+    } else if (b.countdownMode === "filter") {
+      const dated = (tasks || []).filter((t) => t.end);
+      const todayStr = iso(new Date());
+      const upcoming = dated.filter((t) => t.end >= todayStr).sort((a, c) => a.end.localeCompare(c.end));
+      const t = upcoming[0] || [...dated].sort((a, c) => c.end.localeCompare(a.end))[0];
+      if (t) { targetDate = t.end; label = t.title; }
+    }
+    return { targetDate, label };
+  };
+
   const valueFor = (b) => {
     if (b.kind==="aggregate") return computeKpiValue(tasks || [],b.metric || "count",ctx,taskBaselines);
     if (b.kind==="staticText") return b.text || "—";
+    if (b.kind==="daysRemaining") {
+      const { targetDate } = daysRemainingInfo(b);
+      if (!targetDate) return "—";
+      const days = dayIndex(targetDate) - dayIndex(iso(new Date()));
+      return days === 0 ? "Aujourd'hui" : days > 0 ? `${days} j` : `${Math.abs(days)} j de retard`;
+    }
     if (!refTask) return "—";
     if (b.kind==="taskTitle") return refTask.title || "Sans titre";
     if (b.kind==="project") return projectOf(refTask)?.name || "Sans projet";
@@ -4422,13 +4473,14 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen, taskBaselines 
     if (b.kind==="aggregate") return WIDGET_METRICS.find((m)=>m.key===(b.metric||"count"))?.label || "Agrégation";
     return ({
       taskTitle:"Tâche", project:"Projet", status:"Statut", start:"Début", end:"Fin",
-      assignee:"Responsable", progress:"Avancement", description:"Description", staticText:""
+      assignee:"Responsable", progress:"Avancement", description:"Description", staticText:"",
+      daysRemaining:"Jours restants",
     })[b.kind] || "";
   };
 
   return (
     <div className={"lp-custom-card surface-"+cardSurface} style={{"--custom-card-cols":columns,...cardShellStyle}}>
-      {!refTask && blocks.some((b)=>!["aggregate","staticText"].includes(b.kind)) && (
+      {!refTask && blocks.some((b)=>!["aggregate","staticText","daysRemaining"].includes(b.kind)) && (
         <div className="lp-custom-card-warning">Aucune tâche de référence disponible pour les blocs individuels.</div>
       )}
       <div className="lp-custom-card-grid">
@@ -5060,36 +5112,6 @@ function WidgetTaskDetail({ widget, tasks, allTasks, ctx, onOpen, onUpdateTask, 
   );
 }
 
-function WidgetCountdown({ widget, tasks, ctx }) {
-  let targetDate = widget.countdownDate || null;
-  let label = "";
-  if (widget.countdownMode === "task" && widget.countdownTaskId) {
-    const t = tasks.find((x) => x.id === widget.countdownTaskId);
-    if (t) { targetDate = t.end; label = t.title; }
-  } else if (widget.countdownMode === "filter") {
-    // Cible automatiquement la prochaine échéance parmi les tâches filtrées —
-    // pratique pour un compte à rebours qui reste à jour sans jamais avoir à
-    // repointer manuellement une tâche précise.
-    const scoped = applyWidgetFilter(tasks, widget.filter, ctx).filter((t) => t.end);
-    const todayStr = iso(new Date());
-    const upcoming = scoped.filter((t) => t.end >= todayStr).sort((a, b) => a.end.localeCompare(b.end));
-    const t = upcoming[0] || [...scoped].sort((a, b) => b.end.localeCompare(a.end))[0]; // sinon l'échéance passée la plus récente
-    if (t) { targetDate = t.end; label = t.title; }
-  }
-  if (!targetDate) return <div className="lp-empty" style={{ padding: 16 }}>{widget.countdownMode === "filter" ? "Aucune tâche ne correspond à ce filtre." : "Choisis une date ou une tâche à suivre."}</div>;
-  const days = dayIndex(targetDate) - dayIndex(iso(new Date()));
-  return (
-    <div className="lp-widget-countdown">
-      <div className={"lp-widget-countdown-num" + (days < 0 ? " lp-widget-countdown-late" : "")}>
-        {days === 0 ? "Aujourd'hui" : days > 0 ? days : Math.abs(days)}
-      </div>
-      <div className="lp-widget-countdown-sub">
-        {days > 0 ? `jour${days > 1 ? "s" : ""} restant${days > 1 ? "s" : ""}` : days < 0 ? `jour${Math.abs(days) > 1 ? "s" : ""} de retard` : ""}
-      </div>
-      <div className="lp-widget-countdown-date">{label ? `${label} · ` : ""}{fmtShort(targetDate)}</div>
-    </div>
-  );
-}
 
 function WidgetNote({ widget, onChange, shortcutPrefs }) {
   const content = widget.content || "";
@@ -10878,52 +10900,6 @@ function WidgetVerticalMetroTimeline({ tasks, ctx, onOpen, onUpdateDates }) {
   );
 }
 
-// Tâches les plus bloquantes : classe par ordre décroissant les tâches non
-// terminées qui bloquent le plus d'autres tâches (elles-mêmes non terminées) via
-// le champ dependsOn — avec, pour chacune, le détail des tâches qu'elle bloque.
-function WidgetBlockers({ tasks, ctx, onOpen }) {
-  const notDone = useMemo(() => tasks.filter((t) => !isTaskDoneGlobal(t, ctx)), [tasks, ctx]);
-  const blockers = useMemo(() => {
-    const byId = Object.fromEntries(notDone.map((t) => [t.id, t]));
-    const blockedBy = {}; // blockerId -> [tâches bloquées]
-    notDone.forEach((t) => {
-      (t.dependsOn || []).forEach((depId) => {
-        if (byId[depId]) (blockedBy[depId] = blockedBy[depId] || []).push(t);
-      });
-    });
-    return Object.entries(blockedBy)
-      .map(([id, blocked]) => ({ task: byId[id], blocked }))
-      .filter((b) => b.task)
-      .sort((a, b) => b.blocked.length - a.blocked.length)
-      .slice(0, 10);
-  }, [notDone]);
-
-  if (blockers.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune tâche bloquante pour ce filtre — pas de dépendance en cours entre tâches non terminées.</div>;
-
-  return (
-    <div className="lp-widget-blockers">
-      {blockers.map(({ task: t, blocked }, i) => {
-        const proj = ctx.projects.find((p) => p.id === t.projectId);
-        const late = isTaskLate(t, ctx);
-        return (
-          <div className="lp-widget-blockers-row" key={t.id} onClick={() => onOpen(t)}>
-            <span className="lp-widget-blockers-rank">{i + 1}</span>
-            <div className="lp-widget-blockers-info">
-              <div className="lp-widget-blockers-title">
-                {proj && <span className="lp-widget-minigantt-dot" style={{ background: proj.color || "var(--text-muted)" }} />}
-                {t.title}
-                {late && <AlertTriangle size={11} className="lp-widget-blockers-late-icon" />}
-              </div>
-              <div className="lp-widget-blockers-detail">bloque {blocked.map((b) => b.title).join(", ")}</div>
-            </div>
-            <span className="lp-widget-blockers-count">{blocked.length}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // Widget "Next Best Action" : détermine l'action la plus utile à réaliser
 // maintenant parmi toutes les tâches éligibles, et explique pourquoi. Le moteur
 // (getNextBestAction) est totalement séparé de ce composant, qui ne fait que
@@ -11983,10 +11959,19 @@ function WidgetCriticalPath({ tasks, ctx, onOpen }) {
 }
 
 
-function WidgetDominoEffect({ tasks, ctx, onOpen }) {
+// #140 : « Tâches bloquantes » classait les mêmes bloqueurs que Domino Effect,
+// par un score plus simple — le nombre de tâches bloquées DIRECTEMENT. Plutôt
+// que deux widgets, Domino Effect gagne ce tri en alternative au sien (impact
+// total, pondéré par cascade/chemin critique/échéance) ; l'ancien widget est
+// migré à la lecture vers celui-ci en sélectionnant ce tri.
+function WidgetDominoEffect({ widget, tasks, ctx, onOpen }) {
   const [expandedId, setExpandedId] = useState(null);
   const results = useMemo(() => getDominoEffect({ tasks, ctx }), [tasks, ctx]);
-  const top = results.slice(0, 8);
+  const sorted = useMemo(() => {
+    if (widget?.dominoSortBy !== "directImpact") return results;
+    return [...results].sort((a, b) => b.directImpact - a.directImpact || b.totalImpact - a.totalImpact || a.task.id.localeCompare(b.task.id));
+  }, [results, widget?.dominoSortBy]);
+  const top = sorted.slice(0, 8);
 
   if (results.length === 0) {
     return (
@@ -12679,7 +12664,8 @@ function WidgetEmbedRadar({ tasks, ctx, onOpen, appearance, externalToolbarSlot 
 // chaque type garde une icône reconnaissable pour un repérage plus rapide.
 const WIDGET_TYPE_GROUPS = ["Indicateurs", "Planning", "Intelligence", "Suivi"];
 const WIDGET_TYPE_META = [
-  { key: "kpi", label: "Chiffre clé", icon: Hash, group: "Indicateurs" },
+  // #140 : « Chiffre clé » devient un préréglage de la Carte (un bloc
+  // Agrégation seul, en emphase Grande) plutôt qu'un type séparé.
   { key: "customCard", label: "Carte personnalisable", icon: LayoutDashboard, group: "Indicateurs" },
   { key: "chart", label: "Graphique", icon: BarChart3, group: "Indicateurs" },
   { key: "list", label: "Liste", icon: List, group: "Indicateurs" },
@@ -12696,9 +12682,8 @@ const WIDGET_TYPE_META = [
   { key: "criticalPath", label: "Chemin critique", icon: GitBranch, group: "Planning" },
   { key: "nextBestAction", label: "Next Best Action", icon: Zap, group: "Intelligence" },
   { key: "dailyBriefing", label: "Daily Briefing", icon: Sunrise, group: "Intelligence" },
-  { key: "blockers", label: "Tâches bloquantes", icon: ShieldAlert, group: "Intelligence" },
   { key: "heatmapMonth", label: "Heat map mensuelle", icon: Grid3x3, group: "Suivi" },
-  { key: "countdown", label: "Compte à rebours", icon: CalendarClock, group: "Suivi" },
+  // #140 : « Compte à rebours » devient un bloc « Jours restants » de la Carte.
   { key: "budget", label: "Budget", icon: Wallet, group: "Suivi" },
   { key: "note", label: "Note libre", icon: StickyNote, group: "Suivi" },
   { key: "dominoEffect", label: "Domino Effect", icon: GitBranch, group: "Intelligence" },
@@ -12843,7 +12828,7 @@ function PageFilterModal({ page, onSave, onSaveMeta, onClose, ctx }) {
 }
 
 function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onClose, transferBoards, boardId, currentPageId, onTransfer }) {
-  const [type, setType] = useState(widget?.type || "kpi");
+  const [type, setType] = useState(widget?.type || "customCard");
   const [title, setTitle] = useState(widget?.title || "");
   const [typeSearch, setTypeSearch] = useState("");
   // À la création on affiche le catalogue ; à l'édition il reste replié pour
@@ -12907,7 +12892,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       ? widget.cardBlocks
       : customCardDefaultBlocks()
   );
-  const [metric, setMetric] = useState(widget?.metric || "count");
   const [groupBy, setGroupBy] = useState(widget?.groupBy || "status");
   const [chartStyle, setChartStyle] = useState(widget?.chartStyle || "pie");
   const [gaugeMetric, setGaugeMetric] = useState(widget?.gaugeMetric || "avgProgress");
@@ -12976,9 +12960,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       setMiniGanttWindowEnd(patch.miniGanttWindow?.end || "");
     }
   };
-  const [countdownMode, setCountdownMode] = useState(widget?.countdownMode || "date");
-  const [countdownDate, setCountdownDate] = useState(widget?.countdownDate || "");
-  const [countdownTaskId, setCountdownTaskId] = useState(widget?.countdownTaskId || "");
   const [taskDetailTaskId, setTaskDetailTaskId] = useState(widget?.taskDetailTaskId || "");
   const [userProfileMember, setUserProfileMember] = useState(widget?.userProfileMember || "");
   const [content, setContent] = useState(widget?.content || "");
@@ -12994,6 +12975,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [echeancesOrientation, setEcheancesOrientation] = useState(
     ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale"
   );
+  // #140 : tri de Domino Effect — reprend le critère de l'ancien widget « Tâches
+  // bloquantes » (nombre de tâches bloquées directement) en alternative au tri
+  // par défaut (impact total pondéré).
+  const [dominoSortBy, setDominoSortBy] = useState(widget?.dominoSortBy === "directImpact" ? "directImpact" : "score");
   // Heat map — la normalisation reste seul juge des défauts et des collisions
   // d'axes ; la fiche ne fait qu'éditer.
   const heatmapCfg = useMemo(() => heatmapNormalizeConfig(widget || {}), [widget]);
@@ -13107,7 +13092,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "kpi" || type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "echeances" || type === "blockers" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || (type === "countdown" && countdownMode === "filter");
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "echeances" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -13121,16 +13106,11 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // Grise le bouton "Ajouter" tant qu'un champ requis pour ce type de widget manque —
   // évite de créer un widget qui s'afficherait vide faute d'une info essentielle.
   const isValid = (() => {
-    if (type === "countdown") {
-      if (countdownMode === "date") return !!countdownDate;
-      if (countdownMode === "task") return !!countdownTaskId;
-      return true; // mode "filtre" : toujours valide, vide = toutes les tâches
-    }
     if (type === "taskDetail") return !!taskDetailTaskId;
     if (type === "userProfile") return !!userProfileMember;
     if (type === "customCard") {
       if (!cardBlocks.length) return false;
-      if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText"].includes(b.kind))) return false;
+      if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText","daysRemaining"].includes(b.kind))) return false;
       return true;
     }
     if (type === "budget") return !!budgetProjectId;
@@ -13164,7 +13144,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     }
     const data = { type, title: finalTitle };
     if (usesTaskFilter) data.filter = filter;
-    if (type === "kpi") data.metric = metric;
     if (type === "customCard") {
       data.cardTaskMode = cardTaskMode;
       data.cardTaskId = cardTaskId || null;
@@ -13183,7 +13162,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       else if (chartStyle !== "line") { data.groupBy = groupBy; }
     }
     if (type === "list") { data.sortBy = sortBy; data.limit = Number(limit) || 6; data.groupBy = listGroupBy; }
-    if (type === "countdown") { data.countdownMode = countdownMode; data.countdownDate = countdownDate; data.countdownTaskId = countdownTaskId; }
     if (type === "taskDetail") data.taskDetailTaskId = taskDetailTaskId;
     if (type === "userProfile") data.userProfileMember = userProfileMember;
     if (type === "note") data.content = content;
@@ -13206,6 +13184,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
+    if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
       data.treemapSizeFilter = treemapSizeFilter;
@@ -13490,8 +13469,22 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
       <div className="lp-widget-config-section">
         <div className="lp-widget-config-title"><SlidersHorizontal size={12} /> Configuration</div>
-        {["criticalPath", "heatmapMonth", "blockers"].includes(type) && (
+        {["criticalPath", "heatmapMonth"].includes(type) && (
           <p style={{ fontSize: 12, color: "var(--text-600)", margin: 0 }}>Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.</p>
+        )}
+        {type === "dominoEffect" && (
+          <div className="lp-field">
+            <label>Trier par</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (dominoSortBy === "score" ? " active" : "")} onClick={() => setDominoSortBy("score")}>Impact total (défaut)</button>
+              <button type="button" className={"lp-density-btn" + (dominoSortBy === "directImpact" ? " active" : "")} onClick={() => setDominoSortBy("directImpact")}>Nombre de tâches bloquées</button>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              {dominoSortBy === "directImpact"
+                ? "Classe par nombre de tâches bloquées directement — le tri de l'ancien widget « Tâches bloquantes »."
+                : "Classe par impact total : tâches bloquées (directes et en cascade), chemin critique et échéance."}
+            </p>
+          </div>
         )}
         {type === "echeances" && (
           <div className="lp-field">
@@ -13509,14 +13502,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             )}
           </div>
         )}
-        {type === "kpi" && (
-        <div className="lp-field">
-          <label>Mesure</label>
-          <select value={metric} onChange={(e) => setMetric(e.target.value)}>
-            {WIDGET_METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-          </select>
-        </div>
-      )}
       {type === "customCard" && (
         <div className="lp-custom-card-config">
           <div className="lp-row2">
@@ -13711,6 +13696,34 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                     <textarea rows={2} value={b.text || ""} onChange={(e)=>updateCardBlock(b.id,{text:e.target.value})} placeholder="Texte libre à afficher sur la carte…"/>
                   </div>
                 )}
+
+                {b.kind === "daysRemaining" && (
+                  <>
+                    <div className="lp-field">
+                      <label>Suivre</label>
+                      <div className="lp-density-row">
+                        <button type="button" className={"lp-density-btn" + ((b.countdownMode || "date") === "date" ? " active" : "")} onClick={()=>updateCardBlock(b.id,{countdownMode:"date"})}>Une date fixe</button>
+                        <button type="button" className={"lp-density-btn" + (b.countdownMode === "task" ? " active" : "")} onClick={()=>updateCardBlock(b.id,{countdownMode:"task"})}>Une tâche / un jalon</button>
+                        <button type="button" className={"lp-density-btn" + (b.countdownMode === "filter" ? " active" : "")} onClick={()=>updateCardBlock(b.id,{countdownMode:"filter"})}>Prochaine échéance filtrée</button>
+                      </div>
+                    </div>
+                    {(b.countdownMode || "date") === "date" && (
+                      <div className="lp-field"><label>Date cible</label><input type="date" value={b.countdownDate || ""} onChange={(e)=>updateCardBlock(b.id,{countdownDate:e.target.value})} /></div>
+                    )}
+                    {b.countdownMode === "task" && (
+                      <div className="lp-field">
+                        <label>Tâche ou jalon</label>
+                        <select value={b.countdownTaskId || ""} onChange={(e)=>updateCardBlock(b.id,{countdownTaskId:e.target.value})}>
+                          <option value="">— Choisir —</option>
+                          {ctx.tasks.map((t) => <option key={t.id} value={t.id}>{t.title} ({fmtShort(t.end)})</option>)}
+                        </select>
+                      </div>
+                    )}
+                    {b.countdownMode === "filter" && (
+                      <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 0, marginBottom: 0 }}>La tâche dont l'échéance est la plus proche parmi celles qui correspondent au filtre du widget (plus bas) est suivie automatiquement.</p>
+                    )}
+                  </>
+                )}
               </div>
             ))}
             {!cardBlocks.length && <div className="lp-empty" style={{padding:12}}>Ajoute au moins un bloc à la carte.</div>}
@@ -13815,34 +13828,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             {sortedByName(ctx.teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
           </select>
         </div>
-      )}
-
-      {type === "countdown" && (
-        <>
-          <div className="lp-field">
-            <label>Suivre</label>
-            <div className="lp-density-row">
-              <button className={"lp-density-btn" + (countdownMode === "date" ? " active" : "")} onClick={() => setCountdownMode("date")}>Une date fixe</button>
-              <button className={"lp-density-btn" + (countdownMode === "task" ? " active" : "")} onClick={() => setCountdownMode("task")}>Une tâche / un jalon</button>
-              <button className={"lp-density-btn" + (countdownMode === "filter" ? " active" : "")} onClick={() => setCountdownMode("filter")}>Prochaine échéance filtrée</button>
-            </div>
-          </div>
-          {countdownMode === "date" && (
-            <div className="lp-field"><label>Date cible</label><input type="date" value={countdownDate} onChange={(e) => setCountdownDate(e.target.value)} /></div>
-          )}
-          {countdownMode === "task" && (
-            <div className="lp-field">
-              <label>Tâche ou jalon</label>
-              <select value={countdownTaskId} onChange={(e) => setCountdownTaskId(e.target.value)}>
-                <option value="">— Choisir —</option>
-                {ctx.tasks.map((t) => <option key={t.id} value={t.id}>{t.title} ({fmtShort(t.end)})</option>)}
-              </select>
-            </div>
-          )}
-          {countdownMode === "filter" && (
-            <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 0 }}>La tâche dont l'échéance est la plus proche parmi celles qui correspondent au filtre ci-dessous est suivie automatiquement — plus besoin de repointer une tâche précise à chaque fois.</p>
-          )}
-        </>
       )}
 
       {type === "note" && (
