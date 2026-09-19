@@ -4067,7 +4067,13 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   />
                 )}
                 {w.type === "heatmapMonth" && !showEmptyFunnel && (
-                  <WidgetHeatmapMonth tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} />
+                  <WidgetHeatmapMonth widget={w}
+                    tasks={scoped}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    appearance={appearance}
+                    onUpdateTask={(taskId, patch) => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch, lastInteraction: new Date().toISOString() } : t)))}
+                  />
                 )}
                 {w.type === "echeances" && !showEmptyFunnel && (
                   <WidgetEcheances
@@ -9680,7 +9686,7 @@ function widgetTertiaryTicks(minDate, maxDate) {
 // (conic-gradient) selon la couleur de chacun. Les jours en retard gardent un
 // contour rouge distinct, pour rester un signal d'alerte reconnaissable même si la
 // couleur de fond est désormais celle du projet plutôt qu'un dégradé de charge.
-function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
+function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearance }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [hoverDay, setHoverDay] = useState(null); // { day, x, y }
   const [selectedDay, setSelectedDay] = useState(null); // jour cliqué : ouvre le panneau de liste à droite
@@ -9691,6 +9697,34 @@ function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
   const dragRef = useRef(null);
   const wrapRef = useRef(null);
   const daylistRef = useRef(null);
+  // Volet Description (#177) : même fonctionnement que la Heat map croisée —
+  // la tâche choisie DANS LA LISTE, distincte du jour choisi dans le calendrier ;
+  // changer de jour ne doit pas fermer la description en cours de lecture tant
+  // que la tâche reste dans la liste du jour affiché.
+  const showDescPane = widget?.heatmapMonthShowDescPane === true;
+  const [descTaskId, setDescTaskId] = useState(null);
+  const [descPreview, setDescPreview] = useState(true);
+  const [descPaneWidth, setDescPaneWidth] = useState(null);
+  const descPaneRef = useRef(null);
+  const descDragRef = useRef(null);
+  const startDescResize = (e) => {
+    e.preventDefault();
+    const startWidth = descPaneWidth != null ? descPaneWidth : (descPaneRef.current?.getBoundingClientRect().width || 280);
+    descDragRef.current = { startX: e.clientX, startWidth };
+    const onMove = (ev) => {
+      if (!descDragRef.current) return;
+      const wrapWidth = wrapRef.current?.getBoundingClientRect().width || 900;
+      const delta = descDragRef.current.startX - ev.clientX;
+      setDescPaneWidth(Math.max(200, Math.min(Math.max(200, wrapWidth - 260), descDragRef.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      descDragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   const startResize = (e) => {
     e.preventDefault();
     const startWidth = listWidth != null ? listWidth : (daylistRef.current?.getBoundingClientRect().width || 400);
@@ -9884,7 +9918,11 @@ function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
               const proj = ctx.projects.find((p) => p.id === t.projectId);
               const st = ctx.statuses.find((s) => s.id === t.statusId);
               return (
-                <div className="lp-widget-heatmap-daylist-item" key={t.id} onClick={() => onOpen(t)}>
+                <div
+                  className={"lp-widget-heatmap-daylist-item" + (showDescPane && descTaskId === t.id ? " is-selected" : "")}
+                  key={t.id}
+                  onClick={() => (showDescPane ? setDescTaskId(t.id) : onOpen(t))}
+                >
                   <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
                   <span className="lp-widget-heatmap-daylist-title">{t.title}</span>
                   {st && <span className="lp-widget-heatmap-daylist-status" style={{ color: st.color }}>{st.name}</span>}
@@ -9896,6 +9934,47 @@ function WidgetHeatmapMonth({ tasks, ctx, onOpen, appearance }) {
           <div className="lp-widget-heatmap-daylist-empty">Clique sur un jour du calendrier pour voir les tâches qui s'y terminent.</div>
         )}
       </div>
+
+      {showDescPane && (() => {
+        const descTask = descTaskId ? tasks.find((t) => t.id === descTaskId) : null;
+        return (
+          <>
+            <div className="lp-widget-hmgrid-resize-handle" onMouseDown={startDescResize} title="Glisser pour redimensionner" />
+            <div
+              className="lp-widget-hmgrid-descpane"
+              ref={descPaneRef}
+              style={descPaneWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${descPaneWidth}px` }}
+            >
+              <div className="lp-widget-hmgrid-tasklist-head">
+                <span>{descTask ? descTask.title || "Sans titre" : "Aucune tâche choisie"}</span>
+                {descTask && (
+                  <div className="lp-desc-mode-toggle">
+                    <button type="button" className={descPreview ? "active" : ""} onClick={() => setDescPreview(true)}>Aperçu</button>
+                    <button type="button" className={!descPreview ? "active" : ""} onClick={() => setDescPreview(false)}>Écrire</button>
+                  </div>
+                )}
+              </div>
+              {!descTask ? (
+                <div className="lp-widget-hmgrid-tasklist-empty">Clique sur une tâche de la liste pour lire ou modifier sa description.</div>
+              ) : descPreview ? (
+                <div
+                  className="lp-desc-preview lp-widget-hmgrid-descpane-body"
+                  dangerouslySetInnerHTML={{
+                    __html: renderMarkdown(descTask.desc ?? descTask.description ?? "", true) || '<p style="color:var(--text-muted)">Aucune description.</p>',
+                  }}
+                />
+              ) : (
+                <textarea
+                  className="lp-widget-hmgrid-descpane-body lp-widget-hmgrid-descpane-edit"
+                  value={descTask.desc ?? descTask.description ?? ""}
+                  onChange={(e) => onUpdateTask && onUpdateTask(descTask.id, { desc: e.target.value })}
+                  placeholder="Écris ici… Markdown pris en charge."
+                />
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -13088,6 +13167,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [heatmapPalette, setHeatmapPalette] = useState(heatmapCfg.palette);
   const [heatmapShowValues, setHeatmapShowValues] = useState(heatmapCfg.showValues);
   const [heatmapShowDescPane, setHeatmapShowDescPane] = useState(heatmapCfg.showDescPane);
+  // Heat map mensuelle (#177) : même volet Description, indépendant de la croisée
+  // ci-dessus puisque les deux widgets ont chacun leur fiche de réglages.
+  const [heatmapMonthShowDescPane, setHeatmapMonthShowDescPane] = useState(widget?.heatmapMonthShowDescPane === true);
   // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
   const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
   const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
@@ -13274,6 +13356,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapPalette = heatmapPalette;
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
+    }
+    if (type === "heatmapMonth") {
+      data.heatmapMonthShowDescPane = heatmapMonthShowDescPane;
     }
     if (type === "echeances") {
       data.echeancesOrientation = echeancesOrientation;
@@ -13569,7 +13654,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
       <div className="lp-widget-config-section">
         <div className="lp-widget-config-title"><SlidersHorizontal size={12} /> Configuration</div>
-        {["criticalPath", "heatmapMonth"].includes(type) && (
+        {type === "criticalPath" && (
           <p style={{ fontSize: 12, color: "var(--text-600)", margin: 0 }}>Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.</p>
         )}
         {type === "dominoEffect" && (
@@ -14020,6 +14105,17 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           </label>
           <label className="lp-checkbox-line">
             <input type="checkbox" checked={heatmapShowDescPane} onChange={(e) => setHeatmapShowDescPane(e.target.checked)} />
+            Volet Description (clic sur une tâche de la liste = sa description, à droite)
+          </label>
+        </>
+      )}
+      {type === "heatmapMonth" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.
+          </p>
+          <label className="lp-checkbox-line">
+            <input type="checkbox" checked={heatmapMonthShowDescPane} onChange={(e) => setHeatmapMonthShowDescPane(e.target.checked)} />
             Volet Description (clic sur une tâche de la liste = sa description, à droite)
           </label>
         </>
