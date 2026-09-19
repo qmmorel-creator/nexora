@@ -703,7 +703,7 @@ function CriticalitySelect({ value, onChange }) {
 }
 // === NEXORA:CRITICALITY-SELECT:END ===
 
-function ProjectSelect({ projects, value, onChange, emptyLabel }) {
+function ProjectSelect({ projects, value, onChange, emptyLabel, allowCurrent }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ref = useRef(null);
@@ -717,12 +717,17 @@ function ProjectSelect({ projects, value, onChange, emptyLabel }) {
   const sorted = sortedByName(projects);
   const filtered = q.trim() ? sorted.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase())) : sorted;
   const current = projects.find((p) => p.id === value);
+  // #137 : sentinelle "Projet courant", résolue à l'évaluation (jamais figée
+  // ici) — seuls les usages qui l'acceptent explicitement (allowCurrent) la
+  // proposent, les autres gardent le sélecteur simple qu'ils avaient.
+  const isCurrentSentinel = allowCurrent && value === CURRENT_PROJECT_FILTER;
+  const showCurrentOption = allowCurrent && (!q.trim() || "projet courant".includes(q.trim().toLowerCase()));
   const showEmptyOption = !!emptyLabel && (!q.trim() || emptyLabel.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <div className="lp-color-select" ref={ref}>
       <button type="button" className="lp-color-select-btn" onClick={() => setOpen((o) => !o)}>
-        {value && <span className="lp-color-select-swatch" style={{ background: current?.color || "var(--text-muted)" }} />}
-        <span className="lp-color-select-label">{value ? (current?.name || "Choisir un projet") : (emptyLabel || "Choisir un projet")}</span>
+        {value && <span className="lp-color-select-swatch" style={{ background: isCurrentSentinel ? "var(--accent)" : (current?.color || "var(--text-muted)") }} />}
+        <span className="lp-color-select-label">{isCurrentSentinel ? "Projet courant" : (value ? (current?.name || "Choisir un projet") : (emptyLabel || "Choisir un projet"))}</span>
         <ChevronDown size={14} />
       </button>
       {open && (
@@ -733,6 +738,12 @@ function ProjectSelect({ projects, value, onChange, emptyLabel }) {
           {showEmptyOption && (
             <button type="button" className={"lp-color-select-option" + (!value ? " active" : "")} onClick={() => { onChange(""); setOpen(false); }}>
               {emptyLabel}
+            </button>
+          )}
+          {showCurrentOption && (
+            <button type="button" className={"lp-color-select-option" + (isCurrentSentinel ? " active" : "")} onClick={() => { onChange(CURRENT_PROJECT_FILTER); setOpen(false); }}>
+              <span className="lp-color-select-swatch" style={{ background: "var(--accent)" }} />
+              Projet courant
             </button>
           )}
           {filtered.map((p) => (
@@ -1165,6 +1176,14 @@ function GlobalStyles() {
         input[type=range].lp-gradient-slider::-moz-range-thumb{ width:12px; height:12px; border-radius:50%; background:var(--surface); border:2px solid var(--ink); cursor:pointer; box-shadow:0 1px 2px rgba(10,15,25,0.25); }
         .lp-row-progress span{ font-size:11px; color:var(--text-600); width:30px; text-align:right; }
         .lp-empty{ padding:24px; text-align:center; color:var(--text-600); font-size:13px; }
+        .lp-widget-empty-funnel{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; height:100%; padding:20px; text-align:center; }
+        .lp-widget-empty-funnel-hint{ margin:0; font-size:12.5px; color:var(--text-600); max-width:320px; }
+        .lp-widget-empty-funnel-steps{ display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:4px; }
+        .lp-widget-empty-funnel-arrow{ color:var(--text-muted); flex:0 0 auto; }
+        .lp-widget-empty-funnel-step{ font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--text-700); background:var(--paper-soft); border:1px solid var(--border); border-radius:var(--radius-sm); padding:4px 9px; white-space:nowrap; }
+        button.lp-widget-empty-funnel-step.is-link{ cursor:pointer; color:var(--accent); border-color:color-mix(in srgb, var(--accent) 35%, var(--border)); transition:background .12s ease; }
+        button.lp-widget-empty-funnel-step.is-link:hover{ background:color-mix(in srgb, var(--accent) 10%, var(--paper-soft)); }
+        button.lp-widget-empty-funnel-step.is-zero{ color:var(--danger-text); border-color:color-mix(in srgb, var(--danger) 35%, var(--border)); }
 
         .lp-swimlane{ margin-bottom:20px; }
         .lp-swimlane-label{ font-size:12px; font-weight:700; color:var(--text-600); margin-bottom:8px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:.3px; }
@@ -1368,6 +1387,9 @@ function GlobalStyles() {
         .lp-today-row:hover{ background:var(--paper-soft); }
         .lp-today-row-title{ flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .lp-today-row-date{ font-family:var(--font-mono); font-size:10.5px; color:var(--text-600); font-weight:600; white-space:nowrap; }
+        .lp-today-row-actions{ display:flex; align-items:center; gap:2px; flex:0 0 auto; opacity:0; transition:opacity .1s ease; }
+        .lp-today-row:hover .lp-today-row-actions{ opacity:1; }
+        .lp-today-row-shift{ font-family:var(--font-mono); font-size:10px; font-weight:700; width:auto; padding:0 5px; }
         .lp-widget-list .lp-today-row{ padding:4px 6px; }
         .lp-today-charts{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
         .lp-today-chart-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
@@ -1536,8 +1558,7 @@ function GlobalStyles() {
           .lp-custom-card-item{grid-column:1!important}
         }
 
-.lp-widget-kpi{ font-family:var(--font-mono); font-size:var(--fs-display-xl); font-weight:700; color:var(--text-900); line-height:1; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
-        .lp-task-detail{ display:flex; flex-direction:column; gap:12px; min-height:100%; }
+.lp-task-detail{ display:flex; flex-direction:column; gap:12px; min-height:100%; }
         .lp-task-detail-sticky-head{
           position:sticky;
           top:0;
@@ -1834,11 +1855,6 @@ function GlobalStyles() {
         .lp-filter-meta-groups-row{ display:flex; flex-wrap:wrap; gap:5px; }
         .lp-filter-meta-chip{ display:flex; align-items:center; gap:4px; font-size:11px; font-weight:600; padding:4px 9px; border-radius:4px; border:1px solid var(--border); background:var(--surface); color:var(--text-600); cursor:pointer; }
         .lp-filter-meta-chip:hover{ background:var(--paper-soft); color:var(--text-900); }
-        .lp-widget-countdown{ display:flex; flex-direction:column; align-items:flex-start; gap:2px; height:100%; justify-content:center; }
-        .lp-widget-countdown-num{ font-family:var(--font-mono); font-size:36px; font-weight:700; color:var(--text-900); line-height:1; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
-        .lp-widget-countdown-late{ color:var(--danger-text); }
-        .lp-widget-countdown-sub{ font-size:11.5px; font-weight:700; color:var(--text-600); text-transform:uppercase; letter-spacing:.3px; }
-        .lp-widget-countdown-date{ font-size:11.5px; color:var(--text-600); margin-top:4px; }
 
         .lp-widget-critpath{ display:flex; flex-direction:column; gap:16px; overflow-y:auto; height:100%; }
         .lp-widget-critpath-project{ display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:.3px; color:var(--text-900); margin-bottom:6px; }
@@ -1912,18 +1928,10 @@ function GlobalStyles() {
         .lp-widget-heatmap-daylist-empty{ font-size:11px; color:var(--text-600); line-height:1.5; }
         .lp-widget-heatmap-daylist-item{ cursor:pointer; padding:5px 6px; border-radius:8px; display:flex; align-items:center; gap:7px; }
         .lp-widget-heatmap-daylist-item:hover{ background:var(--paper-soft); }
+        .lp-widget-heatmap-daylist-item.is-selected{ background:color-mix(in srgb, var(--accent) 14%, transparent); }
         .lp-widget-heatmap-daylist-title{ font-size:11px; font-weight:700; color:var(--text-900); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .lp-widget-heatmap-daylist-status{ flex:0 0 auto; font-size:9.5px; font-weight:700; white-space:nowrap; }
 
-        .lp-widget-blockers{ display:flex; flex-direction:column; gap:2px; overflow-y:auto; height:100%; }
-        .lp-widget-blockers-row{ display:flex; align-items:center; gap:10px; padding:4px 4px; cursor:pointer; border-radius:8px; }
-        .lp-widget-blockers-row:hover{ background:var(--paper-soft); }
-        .lp-widget-blockers-rank{ flex:0 0 auto; width:18px; height:18px; border-radius:50%; background:var(--paper-soft); font-size:10px; font-weight:800; color:var(--text-600); display:flex; align-items:center; justify-content:center; }
-        .lp-widget-blockers-info{ flex:1; min-width:0; }
-        .lp-widget-blockers-title{ display:flex; align-items:center; gap:5px; font-size:12px; font-weight:700; color:var(--text-900); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-widget-blockers-late-icon{ color:var(--danger-text); flex:0 0 auto; }
-        .lp-widget-blockers-detail{ font-size:10.5px; color:var(--text-600); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
-        .lp-widget-blockers-count{ flex:0 0 auto; font-family:var(--font-mono); font-size:12.5px; font-weight:700; color:var(--danger-text); background:color-mix(in srgb, var(--danger) 12%, white); border-radius:var(--radius-sm); padding:2px 9px; }
 
         .lp-widget-nba{ display:flex; flex-direction:column; gap:10px; height:100%; overflow-y:auto; }
         .lp-widget-nba-card{ display:flex; flex-direction:column; gap:8px; }
@@ -1984,7 +1992,13 @@ function GlobalStyles() {
         .lp-widget-briefing-nba-title{ font-size:12.5px; font-weight:800; color:var(--text-900); cursor:pointer; }
         .lp-widget-briefing-nba-title:hover{ text-decoration:underline; }
         .lp-widget-briefing-nba-reason{ font-size:11px; color:var(--text-600); font-weight:600; }
-        .lp-widget-briefing-change{ font-size:11.5px; color:var(--text-900); font-weight:600; padding:2px 0; }
+        .lp-widget-briefing-change{ padding:2px 0; }
+        .lp-widget-briefing-change-summary{ font-size:11.5px; color:var(--text-900); font-weight:600; }
+        .lp-widget-briefing-change-entries{ display:flex; flex-wrap:wrap; gap:4px; margin-top:3px; padding-left:16px; }
+        .lp-widget-briefing-change-entry{ font-size:10.5px; font-weight:600; color:var(--accent); background:none; border:none; padding:0; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+        .lp-widget-briefing-change-entry:hover{ color:var(--ink); }
+        .lp-widget-briefing-change-entry:disabled{ color:var(--text-muted); cursor:default; text-decoration:none; }
+        .lp-widget-briefing-change-entry:not(:last-child)::after{ content:","; color:var(--text-muted); margin-left:-2px; }
 
 
 
@@ -2485,6 +2499,10 @@ function GlobalStyles() {
         /* Pied d'impression (#155) : invisible à l'écran, affiché seulement au
            moment d'imprimer — voir la règle @media print plus bas. */
         .lp-widget-minigantt-print-footer{ display:none; }
+        /* Barre de sélection du Gantt (#149) : même geste « Figer la référence »
+           que le Tableur, sur les tâches encadrées. */
+        .lp-widget-minigantt-selection-bar{ display:flex; align-items:center; gap:10px; padding:6px 8px; margin-bottom:6px; background:var(--paper-soft); border-radius:8px; }
+        .lp-widget-minigantt-selection-count{ font-size:12px; font-weight:700; color:var(--text-600); }
         .lp-widget-minigantt-grouped{ gap:10px; }
         /* Fond teinté d'après la couleur du champ de regroupement. Pas de
            padding HORIZONTAL : la colonne d'étiquettes vaut 26 % de la ligne et
@@ -2881,22 +2899,24 @@ function GlobalStyles() {
            UNE SEULE grille CSS porte l'en-tête, les lignes et le pied : les
            colonnes s'alignent alors d'elles-mêmes, sans qu'aucun calcul de
            largeur n'ait à être tenu en trois endroits. */
-        /* Organigramme (#167) : sections d'équipe, cartes de personne. Pas de
-           tracé SVG — un regroupement en cartes dit la même chose (qui, dans
-           quelle équipe, avec quels compteurs) sans mesure de layout. */
+        /* Organigramme (#167) : sections d'équipe, cartes de personne, reliées
+           par un tracé SVG mesuré — voir le tronc-et-branches ci-dessous. */
         .lp-orgchart{ display:flex; flex-direction:column; gap:22px; height:100%; min-height:0; overflow:auto; }
         /* Conteneur de mesure du tracé (#167) : position:relative pour que le
            SVG mesuré (top:0, taille du conteneur) se cale exactement sur
            l'en-tête et les cartes qu'il relie. */
         .lp-orgchart-team-tree{ position:relative; }
         .lp-orgchart-lines{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
-        .lp-orgchart-lines path{ fill:none; stroke:var(--border-strong); stroke-width:1.5; }
+        .lp-orgchart-lines path{ fill:none; stroke:var(--border-strong); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
         .lp-orgchart-team-head{ display:flex; align-items:center; gap:8px; margin-bottom:20px; position:relative; z-index:1; }
         .lp-orgchart-team-bar{ width:4px; height:16px; border-radius:2px; flex:0 0 auto; }
         .lp-orgchart-team-name{ font-size:12.5px; font-weight:800; color:var(--text-900); }
         .lp-orgchart-team-lead{ font-size:11px; color:var(--text-600); }
         .lp-orgchart-team-count{ margin-left:auto; font-size:10.5px; font-weight:700; color:var(--text-muted); }
-        .lp-orgchart-members{ display:flex; flex-wrap:wrap; gap:16px 8px; position:relative; z-index:1; }
+        /* Marge gauche réservée (#167) : jamais occupée par une carte, quelle
+           que soit la ligne de la grille — c'est là que le tronc vertical du
+           tracé descend sans jamais pouvoir passer sous une carte. */
+        .lp-orgchart-members{ display:flex; flex-wrap:wrap; gap:16px 8px; padding-left:16px; position:relative; z-index:1; }
         .lp-orgchart-card{
           position:relative; display:flex; flex-direction:column; align-items:center; gap:5px; width:104px; padding:10px 6px;
           border:1px solid var(--border); border-radius:8px; background:var(--surface); cursor:pointer;
@@ -2913,6 +2933,20 @@ function GlobalStyles() {
         .lp-orgchart-stats{ display:flex; flex-direction:column; gap:1px; }
         .lp-orgchart-stat{ font-size:9.5px; font-weight:700; color:var(--text-600); }
         .lp-orgchart-stat.is-late{ color:var(--danger); }
+
+        /* Organigramme — mode hiérarchique classique (#167, retour de test) :
+           arbre unique (racine optionnelle → équipes → personnes), disposé
+           par un calcul arithmétique de largeurs de carte fixes — jamais par
+           une mesure DOM après retour à la ligne, donc jamais de trait
+           recouvert par une carte. */
+        .lp-orghier-wrap{ height:100%; min-height:0; overflow:auto; }
+        .lp-orghier{ position:relative; margin:4px; }
+        .lp-orghier-lines{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
+        .lp-orghier-lines path{ fill:none; stroke:var(--border-strong); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+        .lp-orghier-node{ position:absolute; display:flex; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); font-size:11.5px; font-weight:800; color:var(--text-900); box-sizing:border-box; }
+        .lp-orghier-node-root{ justify-content:center; background:var(--paper-soft); border-color:var(--border-strong); }
+        .lp-orghier-node-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+        .lp-orghier-node-member{ position:absolute; }
 
         /* Widget Utilisateur (#173). */
         .lp-userprofile{ display:flex; flex-direction:column; gap:16px; height:100%; min-height:0; overflow:auto; }
@@ -3168,19 +3202,6 @@ function GlobalStyles() {
         .lp-widget-metro-station{ transition:r .12s ease, stroke-width .12s ease; }
         .lp-widget-metro-station:hover{ stroke-width:2.5; }
         .lp-widget-metro-tooltip{ line-height:1.5; min-width:120px; }
-        .lp-widget-msltl-list{ height:100%; overflow-y:auto; overflow-x:hidden; padding-right:2px; }
-        .lp-widget-msltl-track{ position:relative; min-height:100%; }
-        .lp-widget-msltl-spine{ position:absolute; left:13px; width:2px; background:var(--border); }
-        .lp-widget-msltl-tick{ position:absolute; left:0; text-align:right; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.2px; color:var(--text-600); transform:translateY(-50%); opacity:0.85; }
-        .lp-widget-msltl-row{ position:absolute; left:0; right:0; display:flex; align-items:flex-start; gap:10px; padding:4px; border-radius:8px; cursor:pointer; min-width:0; }
-        .lp-widget-msltl-row:hover{ background:var(--paper-soft); }
-        .lp-widget-msltl-marker{ position:relative; z-index:1; width:26px; height:26px; border-radius:50%; border:2px solid; background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:12px; flex:0 0 auto; }
-        .lp-widget-msltl-dot{ width:8px; height:8px; border-radius:50%; }
-        .lp-widget-msltl-info{ flex:1; min-width:0; padding-top:1px; }
-        .lp-widget-msltl-title{ font-size:12.5px; font-weight:700; color:var(--text-900); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-widget-msltl-meta{ margin-top:1px; }
-        .lp-widget-msltl-project{ font-size:10.5px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-widget-msltl-date{ font-size:10.5px; font-weight:600; color:var(--text-600); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
         /* Timeline verticale métro — version 2.
            Deux infrastructures parallèles :
@@ -3882,6 +3903,9 @@ function GlobalStyles() {
         .lp-desc-mode-toggle{ display:flex; gap:2px; background:var(--paper-soft); border-radius:var(--radius-sm); padding:2px; }
         .lp-desc-mode-toggle button{ border:none; background:none; padding:4px 10px; font-size:11.5px; font-weight:700; border-radius:calc(var(--radius-sm) - 1px); cursor:pointer; color:var(--text-600); transition:background .12s ease, color .12s ease; }
         .lp-desc-mode-toggle button.active{ background:var(--surface); color:var(--text-900); box-shadow:0 1px 3px rgba(10,15,25,0.15); }
+        .lp-task-tabs{ display:flex; gap:4px; background:var(--paper-soft); padding:3px; border-radius:var(--radius-sm); margin-bottom:14px; }
+        .lp-task-tab-btn{ flex:1 1 auto; display:flex; align-items:center; justify-content:center; gap:4px; border:none; background:none; padding:7px 14px; font-size:12.5px; font-weight:700; border-radius:calc(var(--radius-sm) - 1px); cursor:pointer; color:var(--text-600); transition:background .12s ease, color .12s ease; }
+        .lp-task-tab-btn.active{ background:var(--surface); color:var(--text-900); box-shadow:0 1px 3px rgba(10,15,25,0.15); }
         
 .lp-md-task-list{
   list-style:none !important;
@@ -4257,6 +4281,12 @@ function GlobalStyles() {
         .lp-manage-item{ display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--border); min-width:0; }
         .lp-manage-item > .lp-manage-name{ overflow:hidden; }
         .lp-manage-item .lp-icon-btn{ position:relative; }
+        /* Templates de tâche (#183) : mêmes rangées .lp-manage-item que les
+           autres catalogues, formulaire d'édition en dessous plutôt qu'une
+           modale séparée. */
+        .lp-manage-actions{ display:flex; gap:4px; flex:0 0 auto; }
+        .lp-manage-edit-form{ margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
+        .lp-manage-edit-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 
         .lp-risk-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
         .lp-risk-list{ display:flex; flex-direction:column; gap:6px; }
@@ -7192,8 +7222,16 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [projectDefaultView, setProjectDefaultView] = useState("");
   // Valeurs par défaut à la création d'une tâche (#183) : appliquées seulement
   // là où rien de plus précis n'a déjà décidé (contexte d'ouverture, filtre de
-  // projet actif) — vide = le comportement d'avant ce réglage.
-  const [taskDefaults, setTaskDefaults] = useState({ projectId: "", taskTypeId: "", assignee: "", criticality: "" });
+  // projet actif) — vide = le comportement d'avant ce réglage. Retour de
+  // test : élargi à tous les champs qu'une présélection a du sens de porter
+  // (statut, second projet, type de tâche) — champ vide = "Aucun" partout.
+  const [taskDefaults, setTaskDefaults] = useState({
+    projectId: "", secondaryProjectId: "", taskTypeId: "", statusId: "", assignee: "", criticality: "", milestone: "",
+  });
+  // Templates de tâche nommés (#183, retour de test) : mêmes champs que les
+  // valeurs par défaut ci-dessus, mais nommés et choisis à la volée (clic
+  // droit sur un bouton d'ajout) plutôt que systématiquement appliqués.
+  const [taskTemplates, setTaskTemplates] = useState([]);
   const [lastOpenedView, setLastOpenedView] = useState("projects");
   const [lastOpenedViewLoaded, setLastOpenedViewLoaded] = useState(false);
   useEffect(() => {
@@ -7336,6 +7374,17 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:workshops", "nexora:staffing",
     // Catalogue d'équipes (#159) : même forme, même fusion élément par élément.
     "nexora:teams",
+    // Templates de tâche nommés (#183) : liste d'objets identifiables, même
+    // fusion élément par élément que les catalogues ci-dessus.
+    "nexora:taskTemplates",
+    // Google Agenda (#184) : deux objets-cartes (réglages, état de sync), pas
+    // des listes, mais mergeKeyedCollections fusionne déjà ce cas (branche
+    // "isMap", chaque champ de premier niveau devient l'unité fusionnée) —
+    // il manquait juste ici. Sans elles, toute écriture assistant (import
+    // Google Agenda via MCP, sans second onglet) déclenchait le bandeau
+    // « une autre session a enregistré des changements » alors qu'aucune
+    // autre session n'existait.
+    "nexora:gcalSettings", "nexora:gcalSyncState",
   ]);
 
   // === NEXORA:MCP-SYNC-SPLIT:START ===
@@ -7862,6 +7911,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["startupPref", "nexora:startupPref", setStartupPref],
     ["projectDefaultView", "nexora:projectDefaultView", setProjectDefaultView],
     ["taskDefaults", "nexora:taskDefaults", setTaskDefaults],
+    ["taskTemplates", "nexora:taskTemplates", setTaskTemplates],
     ["favorites", "nexora:favorites", setFavorites],
   ];
 
@@ -7920,6 +7970,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:startupPref": startupPref,
     "nexora:projectDefaultView": projectDefaultView,
     "nexora:taskDefaults": taskDefaults,
+    "nexora:taskTemplates": taskTemplates,
     "nexora:favorites": favorites,
     "nexora:appearance": appearance,
     "nexora:enabledViews": enabledViews,
@@ -8630,6 +8681,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:startupPref", startupPref); }, [startupPref, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:projectDefaultView", projectDefaultView); }, [projectDefaultView, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskDefaults", taskDefaults); }, [taskDefaults, dataLoaded]);
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskTemplates", taskTemplates); }, [taskTemplates, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:favorites", favorites); }, [favorites, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:expenses", expenses); }, [expenses, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:budgetLines", budgetLines); }, [budgetLines, dataLoaded]);
@@ -8758,8 +8810,8 @@ export default function LePlan({ currentUser, onSignOut }) {
   // Tableaux de bord modulables — plusieurs tableaux possibles, organisés en
   // dossiers comme les projets et les vues enregistrées.
   const defaultDashboardWidgets = () => ([
-    { id: uid(), type: "kpi", title: "Tâches actives", metric: "count", layout: { x: 0, y: 0, w: 3, h: 2 }, filter: { projectIds: [], statusIds: [], onlyLate: false, onlyMilestone: false, excludeDone: true } },
-    { id: uid(), type: "kpi", title: "Tâches en retard", metric: "count", layout: { x: 3, y: 0, w: 3, h: 2 }, filter: { projectIds: [], statusIds: [], onlyLate: true, onlyMilestone: false, excludeDone: true } },
+    { id: uid(), type: "customCard", title: "Tâches actives", cardColumns: 1, cardBlocks: [{ id: uid(), kind: "aggregate", metric: "count", emphasis: "hero", showIcon: false, showLabel: false, label: "", icon: "", color: "", bgColor: "", accent: "none" }], layout: { x: 0, y: 0, w: 3, h: 2 }, filter: { projectIds: [], statusIds: [], onlyLate: false, onlyMilestone: false, excludeDone: true } },
+    { id: uid(), type: "customCard", title: "Tâches en retard", cardColumns: 1, cardBlocks: [{ id: uid(), kind: "aggregate", metric: "count", emphasis: "hero", showIcon: false, showLabel: false, label: "", icon: "", color: "", bgColor: "", accent: "none" }], layout: { x: 3, y: 0, w: 3, h: 2 }, filter: { projectIds: [], statusIds: [], onlyLate: true, onlyMilestone: false, excludeDone: true } },
     { id: uid(), type: "chart", title: "Répartition par statut", groupBy: "status", chartStyle: "pie", layout: { x: 6, y: 0, w: 6, h: 4 }, filter: { projectIds: [], statusIds: [], onlyLate: false, onlyMilestone: false, excludeDone: false } },
     { id: uid(), type: "list", title: "Prochaines échéances", sortBy: "end", limit: 6, layout: { x: 0, y: 2, w: 6, h: 4 }, filter: { projectIds: [], statusIds: [], onlyLate: false, onlyMilestone: false, excludeDone: true } },
   ]);
@@ -8940,10 +8992,10 @@ export default function LePlan({ currentUser, onSignOut }) {
       widgets: packWidgets([
         { id: uid(), type: "dailyBriefing", title: "Point du jour" },
         { id: uid(), type: "nextBestAction", title: "Priorité du moment" },
-        { id: uid(), type: "milestoneTimeline", title: "Prochains jalons" },
+        { id: uid(), type: "echeances", echeancesOrientation: "verticale", title: "Prochains jalons" },
         { id: uid(), type: "chart", title: "Tâches par projet", groupBy: "project", chartStyle: "pie" },
         { id: uid(), type: "chart", title: "Tâches par statut", groupBy: "status", chartStyle: "pie" },
-        { id: uid(), type: "blockers", title: "Tâches bloquantes" },
+        { id: uid(), type: "dominoEffect", dominoSortBy: "directImpact", title: "Tâches bloquantes" },
       ]),
     }],
     activePageId: "default",
@@ -9994,7 +10046,13 @@ export default function LePlan({ currentUser, onSignOut }) {
      lire le nom et la couleur. Les AFFECTATIONS, elles, n'y entrent pas :
      seul le widget Charge personnel les lit, et les faire transiter par `ctx`
      aurait fait re-rendre tous les autres à chaque case cochée. */
-  const ctx = useMemo(() => ({ projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses }), [projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses]);
+  // activeProjectIds (#137) : le ou les projets actuellement ouverts dans le
+  // filtre global — c'est la valeur que "Projet courant" développe dans un
+  // filtre de page/widget ou un budgetProjectId (resolveProjectFilterIds).
+  const ctx = useMemo(
+    () => ({ projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses, activeProjectIds: getProjectFilterIds(filters) }),
+    [projects, statuses, taskTypes, milestoneTypes, workshops, teams, tasks, teamMembers, projectFolders, expenses, filters]
+  );
   // Relie le compte connecté à un utilisateur de l'app via son email, pour
   // activer "Mes tâches" dans certains widgets sans dupliquer de système d'auth.
   const myName = useMemo(() => {
@@ -10055,7 +10113,11 @@ export default function LePlan({ currentUser, onSignOut }) {
         else if (prevBlocked.has(t.id) && !nowBlocked.has(t.id)) entries.push({ id: uid(), type: "unblocked", taskId: t.id, taskTitle: t.title, projectId: t.projectId, at: now });
       });
       prev.forEach((t) => { if (!nowIds.has(t.id)) entries.push({ id: uid(), type: "deleted", taskId: t.id, taskTitle: t.title, projectId: t.projectId, at: now }); });
-      if (entries.length > 0) setActivityLog((log) => [...entries, ...log].slice(0, 300)); // plafonné pour ne pas grossir indéfiniment
+      // #142 : plafond porté de 300 à 2 000 — l'onglet Historique de la fiche de
+      // tâche lit désormais ce journal, 300 entrées le vidait trop vite pour des
+      // tâches actives. `persistKey` segmente déjà toute clé volumineuse
+      // (chunked-v1) sous la limite Firestore de 1 Mio : rien à ajouter ici.
+      if (entries.length > 0) setActivityLog((log) => [...entries, ...log].slice(0, 2000));
     }
     prevTasksForActivityRef.current = tasks;
   }, [tasks, dataLoaded]);
@@ -10222,6 +10284,11 @@ export default function LePlan({ currentUser, onSignOut }) {
         case "status": return (ctx.statuses.find((s) => s.id === t.statusId)?.name || "").toLowerCase();
         case "assignee": return (t.assignee || "").toLowerCase();
         case "inactivity": return taskInteractionAgeDays(t);
+        case "criticality": return CRITICALITIES.findIndex((c) => c.id === t.criticality);
+        case "dependsOn": return (t.dependsOn || []).length;
+        case "referenceEnd": return miniGanttTaskComparison(t, taskBaselines)?.referenceEnd || "";
+        case "delta": return miniGanttTaskComparison(t, taskBaselines)?.endDeltaDays ?? null;
+        case "delayRisks": return (t.delayRisks || []).length;
         default: return "";
       }
     };
@@ -10268,14 +10335,45 @@ export default function LePlan({ currentUser, onSignOut }) {
       else if (taskDefaults.projectId) d.projectId = taskDefaults.projectId;
     }
     // Valeurs par défaut des Réglages (#183) : seulement là où rien de plus
-    // précis (contexte d'ouverture, présélection ci-dessus) n'a déjà décidé.
+    // précis (contexte d'ouverture, présélection ci-dessus, ou template choisi
+    // au clic droit — voir openNewTaskFromTemplate) n'a déjà décidé. Retour de
+    // test : élargi à tous les champs pour lesquels une présélection a du sens.
+    if (!d.secondaryProjectId && taskDefaults.secondaryProjectId) d.secondaryProjectId = taskDefaults.secondaryProjectId;
     if (!d.taskTypeId && taskDefaults.taskTypeId) d.taskTypeId = taskDefaults.taskTypeId;
+    if (!d.statusId && taskDefaults.statusId) d.statusId = taskDefaults.statusId;
     if (!d.assignee && taskDefaults.assignee) d.assignee = taskDefaults.assignee;
     if (!d.criticality && taskDefaults.criticality) d.criticality = taskDefaults.criticality;
+    if (d.milestone === undefined && taskDefaults.milestone) d.milestone = taskDefaults.milestone === "milestone";
     setTaskModalDefaults(d);
     setTaskModal({});
   };
   const openEditTask = (task) => { setTaskModalDefaults(null); setTaskModal(task); };
+
+  // Templates de tâche nommés (#183, retour de test) : un clic droit sur un
+  // bouton d'ajout propose de choisir un template plutôt que d'ouvrir
+  // directement le formulaire — les valeurs qu'il porte s'appliquent comme un
+  // `defaults` explicite (donc prioritaires sur les Valeurs par défaut des
+  // Réglages), mais le CONTEXTE du bouton cliqué (ex. la colonne d'un tableau
+  // groupé) reste prioritaire sur le template pour les champs qu'il fixe déjà.
+  const templateToDefaults = (tpl) => {
+    const v = (tpl && tpl.values) || {};
+    const d = {};
+    if (v.projectId) d.projectId = v.projectId;
+    if (v.secondaryProjectId) d.secondaryProjectId = v.secondaryProjectId;
+    if (v.taskTypeId) d.taskTypeId = v.taskTypeId;
+    if (v.statusId) d.statusId = v.statusId;
+    if (v.assignee) d.assignee = v.assignee;
+    if (v.criticality) d.criticality = v.criticality;
+    if (v.milestone) d.milestone = v.milestone === "milestone";
+    return d;
+  };
+  const openNewTaskFromTemplate = (template, seed) => openNewTask({ ...templateToDefaults(template), ...(seed || {}) });
+  const [addTaskMenu, setAddTaskMenu] = useState(null); // { x, y, seed }
+  const openAddTaskMenu = (e, seed) => {
+    if (!taskTemplates.length) { openNewTask(seed || {}); return; } // rien à choisir : comportement d'avant
+    e.preventDefault();
+    setAddTaskMenu({ x: e.clientX, y: e.clientY, seed: seed || {} });
+  };
 
   // Capture externe (ChatGPT, raccourci, lien)
   // La demande est sauvegardée immédiatement en sessionStorage afin de survivre
@@ -10386,6 +10484,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       pushToast({
         message: `Tâche « ${removed.title} » supprimée.`,
         actionLabel: "Annuler",
+        duration: 8000,
         onAction: () => setTasks((prev) => (prev.some((t) => t.id === removed.id) ? prev : [...prev, removed])),
       });
     }
@@ -10443,11 +10542,54 @@ export default function LePlan({ currentUser, onSignOut }) {
     }));
   };
 
+  // #139 : « Commencer » du widget Next Best Action n'ouvrait que la fiche —
+  // il fallait ensuite changer le statut à la main. Même garde-fous que
+  // cycleStatus (Google Calendar calculé automatiquement, type restreint à un
+  // statut unique) ; ne fait rien si la tâche est déjà « En cours » ou si
+  // aucun statut de ce nom n'existe pour son projet.
+  const startTask = (task) => {
+    setTasks((prev) => prev.map((t) => {
+      if (t.id !== task.id) return t;
+      if (isGoogleCalendarProjectId(t.projectId, projects)) return t;
+      if (restrictedStatusForType(taskTypes, statuses, t.taskTypeId)) return t;
+      const inProgress = getStatusesForProject(statuses, projects, t.projectId).find((s) => /en\s*cours/i.test(s.name || ""));
+      if (!inProgress || t.statusId === inProgress.id) return t;
+      return { ...t, statusId: inProgress.id };
+    }));
+  };
+
   const requestDeleteTask = (task) => {
     // deleteTask gère déjà la suppression ET l'unique notification avec Annuler.
     // Ne pas pousser un second toast ici.
     deleteTask(task.id);
   };
+  /* Figer la référence en masse (#149) — le geste de fin de revue de projet :
+     chaque tâche sélectionnée reçoit ses dates ACTUELLES comme nouvelle
+     référence de comparaison, via la même fonction pure que le bouton de la
+     fiche (`taskComparisonFromCurrentDates`). Une tâche sans date exploitable
+     n'entre simplement pas dans le lot — comme la fiche, qui ne propose rien à
+     figer sur une tâche non datée. Annulable, comme la suppression en masse. */
+  const requestFreezeReference = (ids, label) => {
+    const list = (ids || []).filter(Boolean);
+    const eligible = tasks.filter((t) => list.includes(t.id) && taskComparisonFromCurrentDates(t));
+    if (eligible.length === 0) { pushToast({ message: "Aucune tâche datée dans la sélection : rien à figer." }); return; }
+    askConfirm({
+      title: "Figer la référence ?",
+      message: `${eligible.length} tâche${eligible.length > 1 ? "s" : ""} ${label || "sélectionnées"} ${eligible.length > 1 ? "recevront" : "recevra"} ses dates actuelles comme nouvelle référence de comparaison. Une référence déjà posée part dans l'historique (#165).`,
+      confirmLabel: `Figer la référence (${eligible.length})`,
+      onConfirm: () => {
+        const before = new Map(eligible.map((t) => [t.id, t.comparison ?? null]));
+        setTasks((prev) => prev.map((t) => (before.has(t.id) ? { ...t, comparison: freezeTaskReference(t) } : t)));
+        setConfirmState(null);
+        pushToast({
+          message: `Référence figée pour ${eligible.length} tâche${eligible.length > 1 ? "s" : ""}.`,
+          actionLabel: "Annuler",
+          onAction: () => setTasks((prev) => prev.map((t) => (before.has(t.id) ? { ...t, comparison: before.get(t.id) } : t))),
+        });
+      },
+    });
+  };
+
   const requestBulkDelete = (ids, label) => {
     const list = (ids || []).filter(Boolean);
     if (list.length === 0) { pushToast({ message: "Aucune tâche à supprimer ici." }); return; }
@@ -10463,6 +10605,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         pushToast({
           message: `${removedSnapshot.length} tâche${removedSnapshot.length > 1 ? "s" : ""} supprimée${removedSnapshot.length > 1 ? "s" : ""}`,
           actionLabel: "Annuler",
+          duration: 8000,
           onAction: () => setTasks((prev) => [...prev, ...removedSnapshot.filter((t) => !prev.some((p) => p.id === t.id))]),
         });
       },
@@ -10586,12 +10729,8 @@ export default function LePlan({ currentUser, onSignOut }) {
     setPendingDeleteProject(project);
   };
 
-  // Helper : trouve la condition "project" au premier niveau du groupe avancé (utilisé par les raccourcis de la sidebar)
-  const getProjectFilterIds = (f) => {
-    const items = (f.advanced && f.advanced.items) || [];
-    const cond = items.find((it) => it.field === "project" && it.mode !== "isnot");
-    return cond ? (cond.values || []) : [];
-  };
+  // getProjectFilterIds est désormais un helper de portée globale (part-000,
+  // partagé avec resolveProjectFilterIds pour #137).
   const setProjectFilterIds = (f, ids) => {
     const currentAdv = f.advanced || { op: "and", items: [] };
     const otherItems = (currentAdv.items || []).filter((it) => it.field !== "project");
@@ -11025,7 +11164,7 @@ export default function LePlan({ currentUser, onSignOut }) {
                     style={{"--task-fav-color":p?.color || "var(--text-muted)"}}
                   >
                     {t.milestone
-                      ? <MilestoneGlyph size={15} icon={resolveMilestoneIcon(t,ctx)}/>
+                      ? <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={15}/>
                       : (t.milestoneIcon
                           ? <IconGlyph icon={t.milestoneIcon} size={14}/>
                           : (p?.icon ? <IconGlyph icon={p.icon} size={14}/> : <List size={13}/>))}
@@ -11115,6 +11254,29 @@ export default function LePlan({ currentUser, onSignOut }) {
         />
       )}
 
+      {/* Choix d'un template à la création (#183, retour de test) : clic droit
+          sur un bouton d'ajout — sans effet si aucun template n'existe
+          (openAddTaskMenu ouvre alors directement le formulaire). */}
+      {addTaskMenu && (
+        <QuickContextMenu
+          x={addTaskMenu.x}
+          y={addTaskMenu.y}
+          onClose={() => setAddTaskMenu(null)}
+          items={[
+            ...taskTemplates.map((tpl) => ({
+              label: tpl.name || "Sans nom",
+              icon: <FileText size={13} />,
+              onClick: () => { openNewTaskFromTemplate(tpl, addTaskMenu.seed); setAddTaskMenu(null); },
+            })),
+            {
+              label: "Sans template",
+              icon: <Plus size={13} />,
+              onClick: () => { openNewTask(addTaskMenu.seed); setAddTaskMenu(null); },
+            },
+          ]}
+        />
+      )}
+
       {/* ---------------- Sidebar ---------------- */}
       {/* Scrim mobile : n'existe visuellement que sous 768px (voir CSS) — sur
           desktop/tablette le tiroir latéral classique n'a pas besoin d'un
@@ -11126,7 +11288,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           <img src={NEXORA_LOGO_FULL} alt="Nexora" style={{ width: 140, height: "auto", maxHeight: 32, objectFit: "contain" }} />
         </div>
         <div className="lp-create-row">
-          <button type="button" className="lp-btn lp-btn-primary" onClick={() => openNewTask({})}><Plus size={15} /> Nouvelle tâche</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => openNewTask({})} onContextMenu={(e) => openAddTaskMenu(e, {})} title="Clic droit : choisir un template"><Plus size={15} /> Nouvelle tâche</button>
           <details className="lp-create-menu" onKeyDown={e => { if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary").focus(); } }}>
             <summary>Créer</summary>
             <div className="lp-create-options" onClick={e => { if(e.target.closest("button")){const menu=e.currentTarget.closest("details");menu.open=false;menu.querySelector("summary").focus();} }}>
@@ -11452,6 +11614,11 @@ export default function LePlan({ currentUser, onSignOut }) {
               ["status", "Statut"],
               ["assignee", "Responsable"],
               ["inactivity", "Durée d’inactivité"],
+              ["criticality", "Criticité"],
+              ["dependsOn", "Nombre de dépendances"],
+              ["referenceEnd", "Référence"],
+              ["delta", "Écart à la référence"],
+              ["delayRisks", "Nombre de risques"],
             ].map(([key, label]) => (
               <label className="lp-checkbox-line" key={key}>
                 <input type="radio" name="lp-sort-field" checked={taskSort.field === key} onChange={() => { setTaskSort((s) => ({ ...s, field: key })); }} />
@@ -11532,21 +11699,21 @@ export default function LePlan({ currentUser, onSignOut }) {
               </DropdownButton>
             </div>
           )}
-          {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} />}
+          {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} taskBaselines={taskBaselines} />}
           {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
-          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} />}
-          {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} />}
+          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
+          {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} taskBaselines={taskBaselines} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
         </div>
       </main>
 
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} />
+        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal
@@ -11570,4 +11737,5 @@ export default function LePlan({ currentUser, onSignOut }) {
           workshops={workshops} setWorkshops={setWorkshops} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops}
           teams={teams} setTeams={setTeams}
           taskDefaults={taskDefaults} setTaskDefaults={setTaskDefaults}
+          taskTemplates={taskTemplates} setTaskTemplates={setTaskTemplates}
           tas

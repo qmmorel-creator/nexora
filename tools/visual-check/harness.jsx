@@ -9,18 +9,18 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    rendu possible sur les tableaux de bord, et qu'aucun d'eux ne rencontrait
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
-  "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-  "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
+  "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
+  "echeances",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
-  "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
+  "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
   "customCard",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
   // Ceux-là ne se montent qu'avec une cible désignée : c'est justement le cas
   // où le filtre peut la faire disparaître de la liste (issue #72).
   .concat([
     { id: "vide-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: "t1", layout: { x: 0, y: 40, w: 3, h: 4 } },
-    { id: "vide-countdown-task", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: "t1", layout: { x: 3, y: 40, w: 3, h: 4 } },
-    { id: "vide-countdown-filtre", type: "countdown", title: "countdown filtre", countdownMode: "filter", layout: { x: 6, y: 40, w: 3, h: 4 } },
+    { id: "vide-countdown-task", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb1", kind: "daysRemaining", countdownMode: "task", countdownTaskId: "t1" }], layout: { x: 3, y: 40, w: 3, h: 4 } },
+    { id: "vide-countdown-filtre", type: "customCard", title: "countdown filtre", cardBlocks: [{ id: "cdb2", kind: "daysRemaining", countdownMode: "filter" }], layout: { x: 6, y: 40, w: 3, h: 4 } },
   ]);
 
 function AnnotationsHarness() {
@@ -249,7 +249,7 @@ function AnnotationsHarness() {
     { id: "hm1", projectId: "p1", statusId: "s1", title: "Échéance passée", start: addDays(scatterToday, -20), end: addDays(scatterToday, -10), progress: 0, checklist: [] },
     { id: "hm2", projectId: "p2", statusId: "s2", title: "Échéance à venir", start: scatterToday, end: addDays(scatterToday, 5), progress: 0, checklist: [] },
   ];
-  const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "deadlineScatter", scatterLaneField: "project" });
+  const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "echeances", echeancesOrientation: "nuage", scatterLaneField: "project" });
   const [scatterFormOpen, setScatterFormOpen] = useState(false);
   const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
   // Couloir DENSE : c'est le cas pour lequel le moteur d'étiquettes existe
@@ -272,7 +272,7 @@ function AnnotationsHarness() {
   // Fenêtre fixe étroite (issue #50) : « sc1 » (J-6) et « sc4 » (J+12) sortent
   // d'une fenêtre J-3 → J+5. Ils doivent rester dessinés, rabattus sur le bord
   // et comptés — jamais disparaître.
-  const scatterWindowWidget = { id: "w7", type: "deadlineScatter", scatterLaneField: "project",
+  const scatterWindowWidget = { id: "w7", type: "echeances", echeancesOrientation: "nuage", scatterLaneField: "project",
     scatterWindowMode: "fixed", scatterWindowBefore: 3, scatterWindowAfter: 5 };
 
   // Mêmes tâches, mais une tuile = un STATUT (issue #47) : c'est le câblage du
@@ -1004,15 +1004,15 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
 if (benchApp) {
   const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
   const benchWidgets = [
-    "kpi", "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-    "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "blockers",
+    "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
+    "echeances",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
-    "deadlineScatter", "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
+    "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
     "customCard",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
-    { id: "banc-countdown", type: "countdown", title: "countdown", countdownMode: "task", countdownTaskId: seedTasks[0]?.id, layout: { x: 3, y: 96, w: 3, h: 4 } },
+    { id: "banc-countdown", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb3", kind: "daysRemaining", countdownMode: "task", countdownTaskId: seedTasks[0]?.id }], layout: { x: 3, y: 96, w: 3, h: 4 } },
   );
   const mem = new Map(Object.entries({
     "nexora:tasks": JSON.stringify(benchTasks),

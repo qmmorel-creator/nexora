@@ -64,6 +64,9 @@ test("le zoom et les filtres gardent leurs propres règles", () => {
 
 test("les vues proposées sont toutes des vues qui existent encore", () => {
   const keys = PROJECT_DEFAULT_VIEW_OPTIONS.map((v) => v.key);
-  assert.deepEqual(keys, ["projects", "gantt", "heatmap", "timeline", "radar", "table"]);
+  // #137 : "dashboard" (Tableau de bord contextuel) s'ajoute aux vues de
+  // tâches déjà proposées — utile avec une page dont le filtre porte sur
+  // "Projet courant".
+  assert.deepEqual(keys, ["projects", "gantt", "heatmap", "timeline", "radar", "table", "dashboard"]);
   keys.forEach((k) => assert.equal(normalizeProjectDefaultView(k), k));
 });

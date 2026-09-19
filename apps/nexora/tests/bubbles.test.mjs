@@ -335,7 +335,7 @@ test("le widget « Bulles » est câblé partout où un type doit être connu", 
   assert.match(html, /\{ key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" \}/);
   assert.match(html, /if \(type === "bubbles"\) return \{ w: 8, h: 7 \};/);
   assert.match(html, /type === "minigantt" \|\| type === "bubbles" \|\|/, "le filtre de tâches ignore le type Bulles");
-  assert.match(html, /w\.type === "bubbles" && \(\s*<WidgetBubbles/, "le tableau de bord ne rend pas le widget Bulles");
+  assert.match(html, /w\.type === "bubbles" && !showEmptyFunnel && \(\s*<WidgetBubbles/, "le tableau de bord ne rend pas le widget Bulles");
   assert.match(html, /} else if \(w\.type === "bubbles"\) \{/, "l'auto-dimensionnement ignore le type Bulles");
   assert.match(html, /function WidgetBubbles\(props\) \{\s*return <WidgetMiniGantt \{\.\.\.props\} bubbleMode \/>;/,
     "le widget Bulles ne réutilise pas le diagramme du Mini-Gantt");

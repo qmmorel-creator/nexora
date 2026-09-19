@@ -11,7 +11,7 @@ Les tâches et réunions sont accessibles avec descriptions complètes, checklis
 
 Les domaines métier supplémentaires sont découverts avec list_resources : projets, catalogues, équipes, risques, budgets/dépenses Nexora, échéances, dossiers, tableaux de bord et réglages. read_resource renvoie la révision et la structure exacte. mutate_resource modifie un élément ou fusionne un objet de réglages. Les listes imbriquées fournies remplacent le champ concerné. Les historiques et états de synchronisation restent en lecture seule.
 
-`taskBaselines` — le plan initial du widget Time Machine — s'écrit désormais, mais par un seul chemin et sous contrôle :
+`taskBaselines` — le plan initial de chaque tâche, capturé côté interface à sa première apparition — s'écrit désormais, mais par un seul chemin et sous contrôle. C'est la SEULE écriture qui compte : depuis #150, l'interface lit cette même clé en repli du mode Comparaison du Gantt quand une tâche n'a jamais reçu de référence manuelle — une baseline posée ici y devient donc visible, sans intermédiaire :
 
 - seule l'action `replace_settings` est acceptée ; `create`, `update` et `delete` sont refusés ;
 - `changes` est un objet indexé par identifiant de tâche, chaque entrée valant exactement `{start, end, capturedAt}` en `AAAA-MM-JJ`, avec `start <= end` ; tout champ inattendu, toute date invalide et toute période inversée sont refusés ;

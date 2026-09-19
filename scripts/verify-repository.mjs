@@ -414,7 +414,7 @@ const usesTaskFilterExpr = builtSource.slice(
 );
 assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvable");
 
-/* Nuage des échéances (issue #46).
+/* Échéances — fusion de 4 widgets en 1 avec orientation (issues #46, #160, #176).
    Un widget se déclare à cinq endroits indépendants. Déclaré au catalogue mais
    absent du `switch` de rendu, il s'ajoute au tableau de bord et n'affiche
    RIEN — pas une erreur, pas un message : une tuile vide. Le contrôle visuel
@@ -422,20 +422,28 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
 {
   assert.match(builtSource, /\/\/ === NEXORA:DEADLINE-SCATTER:START ===/, "Le bloc de calcul du nuage des échéances a disparu.");
   assert.match(builtSource, /\/\/ === NEXORA:DEADLINE-SCATTER:END ===/, "La sentinelle de fin du bloc du nuage a disparu.");
-  assert.match(builtSource, /key: "deadlineScatter", label: "Nuage des échéances"/,
-    "Le nuage des échéances n'est plus au catalogue des widgets.");
-  assert.match(builtSource, /<WidgetDeadlineScatter widget=\{w\}/,
-    "Le nuage est au catalogue mais n'est plus rendu : la tuile serait vide, sans erreur.");
-  assert.ok(usesTaskFilterExpr.includes('type === "deadlineScatter"'),
-    "Le nuage ne passe plus par le moteur de filtres : le widget ignorerait son propre filtre.");
-  assert.match(builtSource, /if \(type === "deadlineScatter"\) return \{ w: 10, h: 7 \};/,
-    "Le nuage n'a plus de taille par défaut : il naîtrait écrasé sur la grille.");
+  assert.match(builtSource, /key: "echeances", label: "Échéances"/,
+    "Le widget Échéances n'est plus au catalogue des widgets.");
+  assert.match(builtSource, /<WidgetEcheances\s/,
+    "Échéances est au catalogue mais son composant d'aiguillage a disparu : la tuile serait vide, sans erreur.");
+  assert.match(builtSource, /<WidgetDeadlineScatter widget=\{widget\}/,
+    "L'orientation « nuage » n'appelle plus le rendu du nuage des échéances.");
+  assert.ok(usesTaskFilterExpr.includes('type === "echeances"'),
+    "Échéances ne passe plus par le moteur de filtres : le widget ignorerait son propre filtre.");
+  assert.match(builtSource, /if \(type === "echeances"\) return \{ w: 8, h: 6 \};/,
+    "Échéances n'a plus de taille par défaut : il naîtrait écrasé sur la grille.");
   /* Le réglage doit être À LA FOIS proposé et enregistré : l'un sans l'autre
      donne une liste déroulante qui s'affiche et n'est jamais retenue. */
   assert.match(builtSource, /setScatterLaneField\(e\.target\.value\)/,
     "Le choix des couloirs a disparu de la fiche du widget.");
   assert.match(builtSource, /data\.scatterLaneField = scatterLaneField;/,
     "Le couloir choisi dans la fiche n'est plus enregistré.");
+  /* La migration à la lecture évite qu'une ancienne sauvegarde (un des 4 types
+     fusionnés) devienne un widget de type inconnu, invisible sans message. */
+  assert.match(builtSource, /const ECHEANCES_LEGACY_ORIENTATION = \{/,
+    "La table de migration des anciens widgets d'échéances a disparu.");
+  assert.match(builtSource, /if \(value\.type in ECHEANCES_LEGACY_ORIENTATION\) return migrateLegacyEcheancesWidget\(value\);/,
+    "La migration automatique à la lecture des anciens widgets d'échéances a disparu.");
 }
 
 /* Treemap : le champ qui porte les tuiles (issue #47).
