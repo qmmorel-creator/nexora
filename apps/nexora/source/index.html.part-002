@@ -136,8 +136,9 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
         type="button"
         className="lp-global-add-task"
         onClick={() => openNewTask({})}
+        onContextMenu={(e) => openAddTaskMenu(e, {})}
         aria-label="Créer une tâche"
-        title="Créer une tâche"
+        title="Créer une tâche (clic droit : choisir un template)"
       >
         <Plus size={23} strokeWidth={2.5} />
         <span className="lp-global-add-task-label">Nouvelle tâche</span>
@@ -1102,6 +1103,7 @@ function AnimationSettingsPane({ appearance, setAppearance, saveStatus, saveErro
 const SETTINGS_TABS = [
   { key: "projects", label: "Projets", icon: "folder" },
   { key: "taskDefaults", label: "Valeurs par défaut", icon: "list" },
+  { key: "taskTemplates", label: "Templates de tâche", icon: "list" },
   { key: "statuses", label: "Statuts", icon: "settings" },
   { key: "taskTypes", label: "Types", icon: "tag" },
   { key: "milestoneTypes", label: "Types de jalon", icon: "flag" },
@@ -2222,50 +2224,137 @@ function SnapshotHistoryCard({ snapshotIndex, onRestoreSnapshot, snapshotBusy, p
 // ============================================================================
 // Valeurs par défaut à la création d'une tâche (#183) — chaque champ vide vaut
 // « aucun réglage », le comportement d'avant cette fiche (présélection du
-// projet filtré, statut par défaut du projet, reste vide).
+// projet filtré, statut par défaut du projet, reste vide). Retour de test :
+// élargi à tous les champs qu'une présélection a du sens de porter, avec les
+// mêmes sélecteurs à recherche rapide que le formulaire de tâche lui-même
+// (ProjectSelect, StatusSelect, TaskTypeSelect, AssigneeSelect,
+// CriticalitySelect) — partagé avec les templates nommés ci-dessous.
 // ============================================================================
-function TaskDefaultsManager({ value, onChange, projects, taskTypes, teamMembers, embedded, onClose }) {
+function TaskDefaultFields({ value, onChange, projects, statuses, taskTypes, teamMembers }) {
   const v = value || {};
   const set = (patch) => onChange({ ...v, ...patch });
+  return (
+    <>
+      <div className="lp-field">
+        <label>Projet</label>
+        <ProjectSelect projects={projects || []} value={v.projectId || ""} onChange={(id) => set({ projectId: id })} emptyLabel="Aucun" />
+      </div>
+      <div className="lp-field">
+        <label>Second projet</label>
+        <ProjectSelect projects={projects || []} value={v.secondaryProjectId || ""} onChange={(id) => set({ secondaryProjectId: id })} emptyLabel="Aucun" />
+      </div>
+      <div className="lp-field">
+        <label>Type</label>
+        <TaskTypeSelect taskTypes={taskTypes || []} value={v.taskTypeId || ""} onChange={(id) => set({ taskTypeId: id })} emptyLabel="Aucun" />
+      </div>
+      <div className="lp-field">
+        <label>Statut</label>
+        <StatusSelect statuses={statuses || []} value={v.statusId || ""} onChange={(id) => set({ statusId: id })} emptyLabel="Aucun" />
+      </div>
+      <div className="lp-field">
+        <label>Responsable</label>
+        <AssigneeSelect members={teamMembers || []} value={v.assignee || ""} onChange={(name) => set({ assignee: name })} />
+      </div>
+      <div className="lp-field">
+        <label>Criticité</label>
+        <CriticalitySelect value={v.criticality || ""} onChange={(id) => set({ criticality: id })} />
+      </div>
+      <div className="lp-field">
+        <label>Type de tâche</label>
+        <div className="lp-density-row">
+          <button type="button" className={"lp-density-btn" + (!v.milestone ? " active" : "")} onClick={() => set({ milestone: "" })}>Aucun</button>
+          <button type="button" className={"lp-density-btn" + (v.milestone === "task" ? " active" : "")} onClick={() => set({ milestone: "task" })}>Tâche</button>
+          <button type="button" className={"lp-density-btn" + (v.milestone === "milestone" ? " active" : "")} onClick={() => set({ milestone: "milestone" })}>Jalon</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function TaskDefaultsManager({ value, onChange, projects, statuses, taskTypes, teamMembers, embedded, onClose }) {
   const body = (
     <>
       <div className="lp-section-title">Nouvelle tâche</div>
       <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 14 }}>
         Pré-remplit le formulaire de création d'une tâche. Un champ laissé sur « Aucun » garde le
-        comportement actuel (projet du filtre actif si un seul est coché, reste vide sinon).
+        comportement actuel (projet du filtre actif si un seul est coché, reste vide sinon). Pour des
+        présélections nommées et choisies à la volée, voir l'onglet « Templates de tâche ».
       </p>
-      <div className="lp-field">
-        <label>Projet par défaut</label>
-        <select value={v.projectId || ""} onChange={(e) => set({ projectId: e.target.value })}>
-          <option value="">Aucun</option>
-          {sortedByName(projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      </div>
-      <div className="lp-field">
-        <label>Type par défaut</label>
-        <select value={v.taskTypeId || ""} onChange={(e) => set({ taskTypeId: e.target.value })}>
-          <option value="">Aucun</option>
-          {sortedByName(taskTypes || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-      </div>
-      <div className="lp-field">
-        <label>Responsable par défaut</label>
-        <select value={v.assignee || ""} onChange={(e) => set({ assignee: e.target.value })}>
-          <option value="">Aucun</option>
-          {sortedByName(teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
-        </select>
-      </div>
-      <div className="lp-field">
-        <label>Criticité par défaut</label>
-        <select value={v.criticality || ""} onChange={(e) => set({ criticality: e.target.value })}>
-          <option value="">Aucune</option>
-          {CRITICALITIES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
+      <TaskDefaultFields value={value} onChange={onChange} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
     </>
   );
   if (embedded) return <div className="lp-settings-pane">{body}</div>;
   return <Modal title="Valeurs par défaut" onClose={onClose} wide>{body}</Modal>;
+}
+
+// ============================================================================
+// Templates de tâche nommés (#183, retour de test) : plusieurs jeux de valeurs
+// par défaut, nommés, choisis au clic droit sur un bouton d'ajout plutôt que
+// systématiquement appliqués — voir openNewTaskFromTemplate.
+// ============================================================================
+function TaskTemplatesManager({ templates, setTemplates, projects, statuses, taskTypes, teamMembers, embedded, onClose }) {
+  const [editingId, setEditingId] = useState(null);
+  const [name, setName] = useState("");
+  const [values, setValues] = useState({});
+
+  const startEdit = (tpl) => { setEditingId(tpl.id); setName(tpl.name || ""); setValues(tpl.values || {}); };
+  const startNew = () => { setEditingId("__new__"); setName(""); setValues({}); };
+  const cancelEdit = () => { setEditingId(null); setName(""); setValues({}); };
+
+  const save = () => {
+    if (!name.trim()) return;
+    if (editingId === "__new__") {
+      setTemplates((prev) => [...prev, { id: uid(), name: name.trim(), values }]);
+    } else {
+      setTemplates((prev) => prev.map((t) => (t.id === editingId ? { ...t, name: name.trim(), values } : t)));
+    }
+    cancelEdit();
+  };
+
+  const remove = (id) => {
+    setTemplates((prev) => prev.filter((t) => t.id !== id));
+    if (editingId === id) cancelEdit();
+  };
+
+  const body = (
+    <>
+      <div className="lp-section-title">Templates de tâche</div>
+      <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 14 }}>
+        Un clic droit sur « Nouvelle tâche » (barre latérale ou bouton flottant) propose de choisir un
+        de ces templates — ses valeurs pré-remplissent le formulaire, comme les valeurs par défaut
+        mais nommées et à la carte.
+      </p>
+      {templates.length === 0 && editingId !== "__new__" && (
+        <div className="lp-empty" style={{ padding: 0, marginBottom: 12 }}>Aucun template pour l'instant.</div>
+      )}
+      {templates.map((tpl) => (
+        <div className="lp-manage-item" key={tpl.id}>
+          <span className="lp-manage-name">{tpl.name || "Sans nom"}</span>
+          <div className="lp-manage-actions">
+            <button className="lp-icon-btn" onClick={() => startEdit(tpl)} title="Modifier"><Pencil size={14} /></button>
+            <button className="lp-icon-btn" onClick={() => remove(tpl.id)} title="Supprimer"><Trash2 size={14} /></button>
+          </div>
+        </div>
+      ))}
+      {editingId ? (
+        <div className="lp-manage-edit-form">
+          <div className="lp-field">
+            <label>Nom du template</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Bug urgent, Réunion client…" autoFocus />
+          </div>
+          <TaskDefaultFields value={values} onChange={setValues} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
+          <div className="lp-manage-edit-actions">
+            <button className="lp-btn" onClick={cancelEdit}>Annuler</button>
+            <button className="lp-btn lp-btn-primary" onClick={save} disabled={!name.trim()}>Enregistrer</button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="lp-btn" onClick={startNew}><Plus size={14} /> Nouveau template</button>
+      )}
+    </>
+  );
+  if (embedded) return <div className="lp-settings-pane">{body}</div>;
+  return <Modal title="Templates de tâche" onClose={onClose} wide>{body}</Modal>;
 }
 
 function SettingsModal({
@@ -2288,6 +2377,7 @@ function SettingsModal({
   startupPref, setStartupPref, savedViews, dashboards,
   projectDefaultView, setProjectDefaultView,
   taskDefaults, setTaskDefaults,
+  taskTemplates, setTaskTemplates,
   onOpenImport,
   onOpenMarkdownImport,
   onExportFullBackup,
@@ -2337,7 +2427,10 @@ function SettingsModal({
               <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
             )}
             {activeTab === "taskDefaults" && (
-              <TaskDefaultsManager embedded value={taskDefaults} onChange={setTaskDefaults} projects={projects} taskTypes={taskTypes} teamMembers={teamMembers} />
+              <TaskDefaultsManager embedded value={taskDefaults} onChange={setTaskDefaults} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
+            )}
+            {activeTab === "taskTemplates" && (
+              <TaskTemplatesManager embedded templates={taskTemplates} setTemplates={setTaskTemplates} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
             )}
             {activeTab === "statuses" && (
               <StatusManager embedded statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />

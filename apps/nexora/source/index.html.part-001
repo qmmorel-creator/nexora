@@ -4281,6 +4281,12 @@ function GlobalStyles() {
         .lp-manage-item{ display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--border); min-width:0; }
         .lp-manage-item > .lp-manage-name{ overflow:hidden; }
         .lp-manage-item .lp-icon-btn{ position:relative; }
+        /* Templates de tâche (#183) : mêmes rangées .lp-manage-item que les
+           autres catalogues, formulaire d'édition en dessous plutôt qu'une
+           modale séparée. */
+        .lp-manage-actions{ display:flex; gap:4px; flex:0 0 auto; }
+        .lp-manage-edit-form{ margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
+        .lp-manage-edit-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 
         .lp-risk-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
         .lp-risk-list{ display:flex; flex-direction:column; gap:6px; }
@@ -7216,8 +7222,16 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [projectDefaultView, setProjectDefaultView] = useState("");
   // Valeurs par défaut à la création d'une tâche (#183) : appliquées seulement
   // là où rien de plus précis n'a déjà décidé (contexte d'ouverture, filtre de
-  // projet actif) — vide = le comportement d'avant ce réglage.
-  const [taskDefaults, setTaskDefaults] = useState({ projectId: "", taskTypeId: "", assignee: "", criticality: "" });
+  // projet actif) — vide = le comportement d'avant ce réglage. Retour de
+  // test : élargi à tous les champs qu'une présélection a du sens de porter
+  // (statut, second projet, type de tâche) — champ vide = "Aucun" partout.
+  const [taskDefaults, setTaskDefaults] = useState({
+    projectId: "", secondaryProjectId: "", taskTypeId: "", statusId: "", assignee: "", criticality: "", milestone: "",
+  });
+  // Templates de tâche nommés (#183, retour de test) : mêmes champs que les
+  // valeurs par défaut ci-dessus, mais nommés et choisis à la volée (clic
+  // droit sur un bouton d'ajout) plutôt que systématiquement appliqués.
+  const [taskTemplates, setTaskTemplates] = useState([]);
   const [lastOpenedView, setLastOpenedView] = useState("projects");
   const [lastOpenedViewLoaded, setLastOpenedViewLoaded] = useState(false);
   useEffect(() => {
@@ -7360,6 +7374,9 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:workshops", "nexora:staffing",
     // Catalogue d'équipes (#159) : même forme, même fusion élément par élément.
     "nexora:teams",
+    // Templates de tâche nommés (#183) : liste d'objets identifiables, même
+    // fusion élément par élément que les catalogues ci-dessus.
+    "nexora:taskTemplates",
     // Google Agenda (#184) : deux objets-cartes (réglages, état de sync), pas
     // des listes, mais mergeKeyedCollections fusionne déjà ce cas (branche
     // "isMap", chaque champ de premier niveau devient l'unité fusionnée) —
@@ -7894,6 +7911,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["startupPref", "nexora:startupPref", setStartupPref],
     ["projectDefaultView", "nexora:projectDefaultView", setProjectDefaultView],
     ["taskDefaults", "nexora:taskDefaults", setTaskDefaults],
+    ["taskTemplates", "nexora:taskTemplates", setTaskTemplates],
     ["favorites", "nexora:favorites", setFavorites],
   ];
 
@@ -7952,6 +7970,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:startupPref": startupPref,
     "nexora:projectDefaultView": projectDefaultView,
     "nexora:taskDefaults": taskDefaults,
+    "nexora:taskTemplates": taskTemplates,
     "nexora:favorites": favorites,
     "nexora:appearance": appearance,
     "nexora:enabledViews": enabledViews,
@@ -8662,6 +8681,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:startupPref", startupPref); }, [startupPref, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:projectDefaultView", projectDefaultView); }, [projectDefaultView, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskDefaults", taskDefaults); }, [taskDefaults, dataLoaded]);
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:taskTemplates", taskTemplates); }, [taskTemplates, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:favorites", favorites); }, [favorites, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:expenses", expenses); }, [expenses, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:budgetLines", budgetLines); }, [budgetLines, dataLoaded]);
@@ -10315,14 +10335,45 @@ export default function LePlan({ currentUser, onSignOut }) {
       else if (taskDefaults.projectId) d.projectId = taskDefaults.projectId;
     }
     // Valeurs par défaut des Réglages (#183) : seulement là où rien de plus
-    // précis (contexte d'ouverture, présélection ci-dessus) n'a déjà décidé.
+    // précis (contexte d'ouverture, présélection ci-dessus, ou template choisi
+    // au clic droit — voir openNewTaskFromTemplate) n'a déjà décidé. Retour de
+    // test : élargi à tous les champs pour lesquels une présélection a du sens.
+    if (!d.secondaryProjectId && taskDefaults.secondaryProjectId) d.secondaryProjectId = taskDefaults.secondaryProjectId;
     if (!d.taskTypeId && taskDefaults.taskTypeId) d.taskTypeId = taskDefaults.taskTypeId;
+    if (!d.statusId && taskDefaults.statusId) d.statusId = taskDefaults.statusId;
     if (!d.assignee && taskDefaults.assignee) d.assignee = taskDefaults.assignee;
     if (!d.criticality && taskDefaults.criticality) d.criticality = taskDefaults.criticality;
+    if (d.milestone === undefined && taskDefaults.milestone) d.milestone = taskDefaults.milestone === "milestone";
     setTaskModalDefaults(d);
     setTaskModal({});
   };
   const openEditTask = (task) => { setTaskModalDefaults(null); setTaskModal(task); };
+
+  // Templates de tâche nommés (#183, retour de test) : un clic droit sur un
+  // bouton d'ajout propose de choisir un template plutôt que d'ouvrir
+  // directement le formulaire — les valeurs qu'il porte s'appliquent comme un
+  // `defaults` explicite (donc prioritaires sur les Valeurs par défaut des
+  // Réglages), mais le CONTEXTE du bouton cliqué (ex. la colonne d'un tableau
+  // groupé) reste prioritaire sur le template pour les champs qu'il fixe déjà.
+  const templateToDefaults = (tpl) => {
+    const v = (tpl && tpl.values) || {};
+    const d = {};
+    if (v.projectId) d.projectId = v.projectId;
+    if (v.secondaryProjectId) d.secondaryProjectId = v.secondaryProjectId;
+    if (v.taskTypeId) d.taskTypeId = v.taskTypeId;
+    if (v.statusId) d.statusId = v.statusId;
+    if (v.assignee) d.assignee = v.assignee;
+    if (v.criticality) d.criticality = v.criticality;
+    if (v.milestone) d.milestone = v.milestone === "milestone";
+    return d;
+  };
+  const openNewTaskFromTemplate = (template, seed) => openNewTask({ ...templateToDefaults(template), ...(seed || {}) });
+  const [addTaskMenu, setAddTaskMenu] = useState(null); // { x, y, seed }
+  const openAddTaskMenu = (e, seed) => {
+    if (!taskTemplates.length) { openNewTask(seed || {}); return; } // rien à choisir : comportement d'avant
+    e.preventDefault();
+    setAddTaskMenu({ x: e.clientX, y: e.clientY, seed: seed || {} });
+  };
 
   // Capture externe (ChatGPT, raccourci, lien)
   // La demande est sauvegardée immédiatement en sessionStorage afin de survivre
@@ -11203,6 +11254,29 @@ export default function LePlan({ currentUser, onSignOut }) {
         />
       )}
 
+      {/* Choix d'un template à la création (#183, retour de test) : clic droit
+          sur un bouton d'ajout — sans effet si aucun template n'existe
+          (openAddTaskMenu ouvre alors directement le formulaire). */}
+      {addTaskMenu && (
+        <QuickContextMenu
+          x={addTaskMenu.x}
+          y={addTaskMenu.y}
+          onClose={() => setAddTaskMenu(null)}
+          items={[
+            ...taskTemplates.map((tpl) => ({
+              label: tpl.name || "Sans nom",
+              icon: <FileText size={13} />,
+              onClick: () => { openNewTaskFromTemplate(tpl, addTaskMenu.seed); setAddTaskMenu(null); },
+            })),
+            {
+              label: "Sans template",
+              icon: <Plus size={13} />,
+              onClick: () => { openNewTask(addTaskMenu.seed); setAddTaskMenu(null); },
+            },
+          ]}
+        />
+      )}
+
       {/* ---------------- Sidebar ---------------- */}
       {/* Scrim mobile : n'existe visuellement que sous 768px (voir CSS) — sur
           desktop/tablette le tiroir latéral classique n'a pas besoin d'un
@@ -11214,7 +11288,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           <img src={NEXORA_LOGO_FULL} alt="Nexora" style={{ width: 140, height: "auto", maxHeight: 32, objectFit: "contain" }} />
         </div>
         <div className="lp-create-row">
-          <button type="button" className="lp-btn lp-btn-primary" onClick={() => openNewTask({})}><Plus size={15} /> Nouvelle tâche</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => openNewTask({})} onContextMenu={(e) => openAddTaskMenu(e, {})} title="Clic droit : choisir un template"><Plus size={15} /> Nouvelle tâche</button>
           <details className="lp-create-menu" onKeyDown={e => { if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary").focus(); } }}>
             <summary>Créer</summary>
             <div className="lp-create-options" onClick={e => { if(e.target.closest("button")){const menu=e.currentTarget.closest("details");menu.open=false;menu.querySelector("summary").focus();} }}>
@@ -11663,4 +11737,5 @@ export default function LePlan({ currentUser, onSignOut }) {
           workshops={workshops} setWorkshops={setWorkshops} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops}
           teams={teams} setTeams={setTeams}
           taskDefaults={taskDefaults} setTaskDefaults={setTaskDefaults}
+          taskTemplates={taskTemplates} setTaskTemplates={setTaskTemplates}
           tas
