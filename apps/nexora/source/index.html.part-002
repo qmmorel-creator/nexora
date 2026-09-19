@@ -3914,6 +3914,20 @@ function memberTeamIds(member) {
   if (Array.isArray(member.teamIds)) return [...new Set(member.teamIds.filter(Boolean).map(String))];
   return member.teamId ? [String(member.teamId)] : [];
 }
+// Initiales d'une personne pour son avatar par défaut (pas de logo) — 1 ou 2
+// lettres, en majuscules. Partagé par les cartes de personne ET les chips de
+// responsable dans l'en-tête d'équipe (Organigramme).
+function memberInitials(name) {
+  return String(name || "").split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase();
+}
+// Poste d'une personne dans UNE équipe précise (retour de test sur #167) : un
+// texte libre, par équipe — la même personne peut porter un intitulé
+// différent d'une équipe à l'autre. Vide/absent = aucun poste renseigné.
+function memberRoleInTeam(member, teamId) {
+  if (!member || !teamId || !member.teamRoles || typeof member.teamRoles !== "object") return "";
+  const v = member.teamRoles[teamId];
+  return typeof v === "string" ? v.trim() : "";
+}
 // Responsable direct d'une personne (#167, retour de test) : un NOM, comme
 // `leadName`/`assignee` — pas un identifiant — pour rester lisible même si la
 // personne quitte l'annuaire. Vide = rattachée à sa seule équipe, comme avant
@@ -3953,7 +3967,14 @@ function memberDescendantAndSelfNames(name, teamMembers) {
 function buildOrgHierarchyTree(teams, members) {
   const catalogue = normalizeTeams(teams);
   const list = members || [];
-  const teamNodes = new Map(catalogue.map((t) => [t.id, { type: "team", team: t, children: [] }]));
+  // leadMember résolu une fois ici (retour de test sur #167) : le nœud
+  // d'équipe et son calcul de taille (orgHierNodeSize) doivent voir EXACTEMENT
+  // la même valeur, pour que la boîte réservée à l'affichage du responsable ne
+  // désynchronise jamais du contenu réellement rendu.
+  const teamNodes = new Map(catalogue.map((t) => [
+    t.id,
+    { type: "team", team: t, leadMember: t.leadName ? (list.find((m) => m.name === t.leadName) || null) : null, children: [] },
+  ]));
   const personNodes = new Map(list.map((m) => [m.name, { type: "person", member: m, children: [] }]));
 
   const roots = [];
@@ -3972,8 +3993,12 @@ function buildOrgHierarchyTree(teams, members) {
     // pour une donnée importée ou plus ancienne — le responsable choisi ne
     // doit jamais être, même en cascade, un subordonné de cette personne.
     const safeManager = mgrNode && !memberDescendantAndSelfNames(m.name, list).has(mgrName) ? mgrNode : null;
-    if (safeManager) { safeManager.children.push(node); return; }
+    // Poste (#167, retour de test) : indépendant de savoir sous QUI la carte
+    // se place (équipe ou responsable direct) — c'est toujours la première
+    // équipe résolue qui porte le poste affiché.
     const teamIds = memberTeamIds(m).filter((id) => teamNodes.has(id));
+    node.roleTeamId = teamIds[0] || null;
+    if (safeManager) { safeManager.children.push(node); return; }
     if (teamIds.length) { teamNodes.get(teamIds[0]).children.push(node); return; }
     unassigned.children.push(node);
   });
@@ -11000,6 +11025,10 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
   const [capacityPerDay, setCapacityPerDay] = useState(normalizeMemberCapacity(member?.capacityPerDay));
   const [teamIds, setTeamIds] = useState(() => memberTeamIds(member));
   const [managerName, setManagerName] = useState(() => memberManagerName(member));
+  // Poste par équipe (#167, retour de test) : un texte libre par équipe
+  // cochée, jamais un seul poste global — la même personne peut porter un
+  // intitulé différent d'une équipe à l'autre.
+  const [teamRoles, setTeamRoles] = useState(() => (member?.teamRoles && typeof member.teamRoles === "object" ? { ...member.teamRoles } : {}));
   const [nameError, setNameError] = useState(false);
   const teamCatalogue = normalizeTeams(teams);
   // Une personne ne peut jamais reporter à quelqu'un qui reporte déjà, même en
@@ -11008,7 +11037,11 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
   // aussi : on ne peut pas être son propre responsable.
   const excludedManagerNames = member?.name ? memberDescendantAndSelfNames(member.name, teamMembers) : new Set();
   const managerOptions = sortedByName((teamMembers || []).filter((m) => !excludedManagerNames.has(m.name)));
-  const toggleTeam = (id) => setTeamIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const toggleTeam = (id) => {
+    setTeamIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    // Une équipe décochée n'a plus de poste à porter (retour de test sur #167).
+    if (teamIds.includes(id)) setTeamRoles((r) => { const next = { ...r }; delete next[id]; return next; });
+  };
   // #159 (retour du 17/09) : recherche rapide dès que le catalogue s'allonge —
   // les équipes déjà cochées restent listées à part, pour ne jamais disparaître
   // de la vue quand la recherche filtre la liste principale.
@@ -11022,7 +11055,9 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
-    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamIds, teamId: null, managerName: managerName.trim() });
+    const cleanRoles = {};
+    teamIds.forEach((id) => { if (teamRoles[id] && teamRoles[id].trim()) cleanRoles[id] = teamRoles[id].trim(); });
+    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamIds, teamId: null, managerName: managerName.trim(), teamRoles: cleanRoles });
   };
 
   return (
@@ -11044,18 +11079,27 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
         <input type="number" min="1" step="1" value={capacityPerDay} onChange={(e) => setCapacityPerDay(Math.max(1, Math.round(Number(e.target.value) || 1)))} style={{ maxWidth: 100 }} />
       </div>
       <div className="lp-field">
-        <label>Équipes <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif, plusieurs possibles — sert au regroupement et à l'Organigramme)</span></label>
+        <label>Équipes <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif, plusieurs possibles — sert au regroupement et à l'Organigramme ; un poste peut être précisé par équipe)</span></label>
         {teamCatalogue.length === 0 && (
           <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: 0 }}>Aucune équipe créée pour l'instant (Réglages › Équipes).</p>
         )}
         {selectedTeams.length > 0 && (
-          <div className="lp-dep-chips" style={{ marginBottom: 6 }}>
+          <div className="lp-team-roles-list" style={{ marginBottom: 6 }}>
             {selectedTeams.map((t) => (
-              <span key={t.id} className="lp-chip lp-dep-chip">
-                <span className="lp-dep-chip-dot" style={{ background: t.color || "var(--text-muted)" }} />
-                {t.name}
-                <button onClick={() => toggleTeam(t.id)}><X size={11} /></button>
-              </span>
+              <div key={t.id} className="lp-team-roles-row">
+                <span className="lp-chip lp-dep-chip">
+                  <span className="lp-dep-chip-dot" style={{ background: t.color || "var(--text-muted)" }} />
+                  {t.name}
+                  <button onClick={() => toggleTeam(t.id)}><X size={11} /></button>
+                </span>
+                <input
+                  type="text"
+                  className="lp-team-role-input"
+                  placeholder="Poste (facultatif)"
+                  value={teamRoles[t.id] || ""}
+                  onChange={(e) => setTeamRoles((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                />
+              </div>
             ))}
           </div>
         )}

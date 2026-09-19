@@ -8853,11 +8853,16 @@ function WidgetBubbles(props) {
    mesuré, comme le fait déjà la vue Métro pour ses propres flèches — un
    tracé CSS pur ne sait pas centrer une ligne sur des cartes qui passent à
    la ligne suivante à une largeur de widget imprévisible. */
-function OrgTeamTree({ team, members, statsFor, onFilterPerson }) {
+function OrgTeamTree({ team, members, allMembers, statsFor, onFilterPerson }) {
   const boxRef = useRef(null);
   const headRef = useRef(null);
   const cardRefs = useRef({});
   const [lines, setLines] = useState([]);
+  // Le responsable (retour de test sur #167) s'affiche dans l'EN-TÊTE de
+  // l'équipe, pas seulement sur sa propre carte — cherché dans TOUS les
+  // membres (allMembers), pas seulement ceux de cette équipe : un responsable
+  // n'a pas forcément coché cette équipe pour lui-même.
+  const leadMember = team?.leadName ? (allMembers || members).find((m) => m.name === team.leadName) : null;
 
   const orderedMembers = useMemo(() => {
     if (!team?.leadName) return sortedByName(members);
@@ -8920,10 +8925,20 @@ function OrgTeamTree({ team, members, statsFor, onFilterPerson }) {
       <svg className="lp-orgchart-lines" aria-hidden="true">
         {lines.map((l) => <path key={l.key} d={l.d} />)}
       </svg>
-      <div className="lp-orgchart-team-head" ref={headRef}>
+      <div className={"lp-orgchart-team-head" + (leadMember ? " is-lead" : "")} ref={headRef}>
         <span className="lp-orgchart-team-bar" style={{ background: team ? team.color : "var(--border-strong)" }} />
         <span className="lp-orgchart-team-name">{team ? team.name : "Sans équipe"}</span>
-        {team?.leadName && <span className="lp-orgchart-team-lead">Responsable : {team.leadName}</span>}
+        {leadMember ? (
+          <span className="lp-orgchart-team-lead">
+            <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />
+            <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: leadMember.color || staffingMemberColor(leadMember.name) }}>
+              {leadMember.avatarDataUrl ? <IconGlyph icon={leadMember.avatarDataUrl} size={11} /> : memberInitials(leadMember.name)}
+            </span>
+            {leadMember.name}
+          </span>
+        ) : (
+          team?.leadName && <span className="lp-orgchart-team-lead">Responsable : {team.leadName}</span>
+        )}
         <span className="lp-orgchart-team-count">{members.length}</span>
       </div>
       <div className="lp-orgchart-members">
@@ -8939,11 +8954,15 @@ function OrgTeamTree({ team, members, statsFor, onFilterPerson }) {
               onClick={() => onFilterPerson && onFilterPerson(m.name)}
               title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
             >
+              {/* Responsable qui est AUSSI membre de l'équipe (retour de test) :
+                  simple étoile de repère, sans le cadre doré désormais porté
+                  par l'en-tête — la carte reste une carte de contributeur. */}
               {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
               <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
-                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : m.name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : memberInitials(m.name)}
               </span>
               <span className="lp-orgchart-name">{m.name}</span>
+              {team && memberRoleInTeam(m, team.id) && <span className="lp-orgchart-role">{memberRoleInTeam(m, team.id)}</span>}
               <span className="lp-orgchart-stats">
                 <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
                 {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
@@ -8973,7 +8992,12 @@ const ORGHIER_TEAM_W = 156;
 const ORGHIER_ROOT_W = 176;
 const ORGHIER_ROOT_H = 40;
 const ORGHIER_TEAM_H = 40;
-const ORGHIER_MEMBER_H = 100;
+// Boîte plus grande/haute pour une équipe avec responsable (retour de test
+// sur #167) : deux lignes (responsable, puis nom d'équipe en repère) au lieu
+// d'une seule — voir le rendu du nœud d'équipe plus bas.
+const ORGHIER_TEAM_W_LEAD = 172;
+const ORGHIER_TEAM_H_LEAD = 50;
+const ORGHIER_MEMBER_H = 116;
 const ORGHIER_SIBLING_GAP = 18; // entre deux sous-arbres frères (axe transversal)
 const ORGHIER_LEVEL_GAP = 40; // entre un nœud et ses enfants (axe longitudinal)
 
@@ -8982,10 +9006,13 @@ function orgHierNodeKey(node) {
   if (node.type === "team") return "team:" + (node.team ? node.team.id : "none");
   return "person:" + (node.member.id || node.member.name);
 }
+// La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
+// jamais un second calcul ici : la boîte réservée par le calcul de layout et
+// le contenu réellement rendu doivent toujours voir la même réponse.
 function orgHierNodeSize(node) {
   if (node.type === "person") return { w: ORGHIER_CARD_W, h: ORGHIER_MEMBER_H };
   if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
-  return { w: ORGHIER_TEAM_W, h: ORGHIER_TEAM_H };
+  return node.leadMember ? { w: ORGHIER_TEAM_W_LEAD, h: ORGHIER_TEAM_H_LEAD } : { w: ORGHIER_TEAM_W, h: ORGHIER_TEAM_H };
 }
 function orgHierPersonCount(node) {
   return node.children.reduce((sum, c) => sum + (c.type === "person" ? 1 : orgHierPersonCount(c)), 0);
@@ -9091,15 +9118,37 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
         {teamNodes.map((node) => {
           const r = boxRect(node);
           const isRoot = node.type === "root";
+          const lead = !isRoot ? node.leadMember : null;
           return (
             <div
               key={orgHierNodeKey(node)}
-              className={"lp-orghier-node" + (isRoot ? " lp-orghier-node-root" : " lp-orghier-node-team")}
+              className={"lp-orghier-node" + (isRoot ? " lp-orghier-node-root" : " lp-orghier-node-team") + (lead ? " is-lead" : "")}
               style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
             >
-              {isRoot ? <Network size={13} /> : <span className="lp-orgchart-team-bar" style={{ background: node.team ? node.team.color : "var(--border-strong)" }} />}
-              <span className="lp-orghier-node-title">{isRoot ? "Organisation" : (node.team ? node.team.name : "Sans équipe")}</span>
-              {!isRoot && <span className="lp-orgchart-team-count">{orgHierPersonCount(node)}</span>}
+              {isRoot ? (
+                <><Network size={13} /><span className="lp-orghier-node-title">Organisation</span></>
+              ) : lead ? (
+                <>
+                  {/* Responsable en évidence (retour de test sur #167) : son
+                      identité prend la ligne principale de la boîte d'équipe,
+                      le nom d'équipe redescend en repère sous elle. */}
+                  <div className="lp-orghier-node-lead-row">
+                    <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />
+                    <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: lead.color || staffingMemberColor(lead.name) }}>
+                      {lead.avatarDataUrl ? <IconGlyph icon={lead.avatarDataUrl} size={11} /> : memberInitials(lead.name)}
+                    </span>
+                    <span className="lp-orghier-node-title">{lead.name}</span>
+                    <span className="lp-orgchart-team-count">{orgHierPersonCount(node)}</span>
+                  </div>
+                  <span className="lp-orghier-node-team-sub">{node.team.name}</span>
+                </>
+              ) : (
+                <>
+                  <span className="lp-orgchart-team-bar" style={{ background: node.team ? node.team.color : "var(--border-strong)" }} />
+                  <span className="lp-orghier-node-title">{node.team ? node.team.name : "Sans équipe"}</span>
+                  <span className="lp-orgchart-team-count">{orgHierPersonCount(node)}</span>
+                </>
+              )}
             </div>
           );
         })}
@@ -9119,9 +9168,10 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
             >
               {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
               <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
-                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : m.name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : memberInitials(m.name)}
               </span>
               <span className="lp-orgchart-name">{m.name}</span>
+              {node.roleTeamId && memberRoleInTeam(m, node.roleTeamId) && <span className="lp-orgchart-role">{memberRoleInTeam(m, node.roleTeamId)}</span>}
               <span className="lp-orgchart-stats">
                 <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
                 {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
@@ -9192,6 +9242,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
           key={g.team ? g.team.id : "__none"}
           team={g.team}
           members={g.members}
+          allMembers={members}
           statsFor={statsFor}
           onFilterPerson={onFilterPerson}
         />

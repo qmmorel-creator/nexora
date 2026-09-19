@@ -15,6 +15,7 @@ assert.ok(from !== -1 && to > from, "bloc des équipes introuvable dans .build/i
 const {
   normalizeTeams, teamAncestorAndSelfIds, teamDescendantAndSelfIds,
   memberTeamIds, memberManagerName, memberDescendantAndSelfNames, buildOrgHierarchyTree,
+  memberInitials, memberRoleInTeam,
 } = vm.runInThisContext(
   `(function () {\n` +
   // STAFFING_COLOR_CHOICES est déclaré juste après ce bloc dans la source
@@ -22,7 +23,7 @@ const {
   // repli déterministe suffit ici, la palette elle-même est testée ailleurs.
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
   `${html.slice(from + START.length, to)}\n` +
-  `;return { normalizeTeams, teamAncestorAndSelfIds, teamDescendantAndSelfIds, memberTeamIds, memberManagerName, memberDescendantAndSelfNames, buildOrgHierarchyTree };\n})`
+  `;return { normalizeTeams, teamAncestorAndSelfIds, teamDescendantAndSelfIds, memberTeamIds, memberManagerName, memberDescendantAndSelfNames, buildOrgHierarchyTree, memberInitials, memberRoleInTeam };\n})`
 )();
 
 const team = (id, extra) => ({ id, name: `Équipe ${id}`, ...extra });
@@ -132,4 +133,53 @@ test("buildOrgHierarchyTree : un cycle de responsables (A→B→A) ne boucle jam
   // Les deux retombent sous leur équipe plutôt que de créer un cycle.
   const names = roots[0].children.filter((c) => c.type === "person").map((c) => c.member.name).sort();
   assert.deepEqual(names, ["Alice", "Bob"]);
+});
+
+test("memberInitials", () => {
+  assert.equal(memberInitials("Alice Dupont"), "AD");
+  assert.equal(memberInitials("Marc"), "M");
+  assert.equal(memberInitials(""), "");
+  assert.equal(memberInitials(undefined), "");
+});
+
+test("memberRoleInTeam ne renvoie un poste que pour l'équipe demandée", () => {
+  const m = member("Yann", { teamRoles: { a: "Ingénieur", b: "Technicien" } });
+  assert.equal(memberRoleInTeam(m, "a"), "Ingénieur");
+  assert.equal(memberRoleInTeam(m, "b"), "Technicien");
+  assert.equal(memberRoleInTeam(m, "c"), "");
+  assert.equal(memberRoleInTeam(m, null), "");
+  assert.equal(memberRoleInTeam(null, "a"), "");
+  assert.equal(memberRoleInTeam(member("Sans poste"), "a"), "");
+});
+
+test("buildOrgHierarchyTree : le nœud d'équipe porte son responsable résolu (leadMember)", () => {
+  const teams = [team("a", { leadName: "Claire Dupont" })];
+  const members = [member("Claire Dupont", { teamIds: ["a"] }), member("Marc", { teamIds: ["a"] })];
+  const roots = buildOrgHierarchyTree(teams, members);
+  assert.equal(roots[0].type, "team");
+  assert.equal(roots[0].leadMember?.name, "Claire Dupont");
+});
+
+test("buildOrgHierarchyTree : leadMember est null quand le nom du responsable ne résout plus", () => {
+  const teams = [team("a", { leadName: "Personne Partie" })];
+  const members = [member("Marc", { teamIds: ["a"] })];
+  const roots = buildOrgHierarchyTree(teams, members);
+  assert.equal(roots[0].leadMember, null);
+});
+
+test("buildOrgHierarchyTree : roleTeamId suit la première équipe résolue, même sous un responsable", () => {
+  const teams = [team("a"), team("b")];
+  const members = [
+    member("Alice", { teamIds: ["a"] }),
+    // Yann coche l'équipe b mais reporte à Alice : il doit tout de même
+    // porter le poste qu'il a dans l'équipe b (roleTeamId = "b"), le
+    // rattachement hiérarchique (sous Alice) ne changeant pas où lire son poste.
+    member("Yann", { teamIds: ["b"], managerName: "Alice", teamRoles: { b: "Contributeur" } }),
+  ];
+  const roots = buildOrgHierarchyTree(teams, members);
+  const teamA = roots.find((r) => r.team.id === "a");
+  const yannNode = teamA.children[0].children[0];
+  assert.equal(yannNode.member.name, "Yann");
+  assert.equal(yannNode.roleTeamId, "b");
+  assert.equal(memberRoleInTeam(yannNode.member, yannNode.roleTeamId), "Contributeur");
 });
