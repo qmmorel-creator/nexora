@@ -3236,7 +3236,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, onOpenGanttView, onOpenMetaFilters }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, onOpenGanttView, onOpenMetaFilters, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3948,7 +3948,16 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetChart tasks={scoped} groupBy={w.groupBy || "status"} chartStyle={w.chartStyle || "pie"} gaugeMetric={w.gaugeMetric || "avgProgress"} stackBy={w.stackBy || "project"} ctx={ctx} />
                 )}
                 {w.type === "list" && !showEmptyFunnel && (
-                  <WidgetList tasks={scoped} sortBy={w.sortBy || "end"} limit={w.limit || 6} groupBy={w.groupBy} ctx={ctx} onOpen={onOpen} />
+                  <WidgetList
+                    tasks={scoped}
+                    sortBy={w.sortBy || "end"}
+                    limit={w.limit || 6}
+                    groupBy={w.groupBy}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onMarkDone={onMarkDone}
+                    onShiftEnd={(t) => setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, start: addDays(x.start, 1), end: addDays(x.end, 1) } : x)))}
+                  />
                 )}
                 {w.type === "taskDetail" && (
                   <WidgetTaskDetail
@@ -4070,7 +4079,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   />
                 )}
                 {w.type === "nextBestAction" && (
-                  <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                  <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} onStartTask={onStartTask} />
                 )}
                 {w.type === "dailyBriefing" && (
                   <WidgetDailyBriefing tasks={scoped} ctx={ctx} onOpen={onOpen} onViewDay={onViewDay} activityLog={activityLog} staffing={staffing} />
@@ -4398,7 +4407,7 @@ function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx }) 
   );
 }
 
-function WidgetList({ tasks, sortBy, limit, groupBy, ctx, onOpen }) {
+function WidgetList({ tasks, sortBy, limit, groupBy, ctx, onOpen, onMarkDone, onShiftEnd }) {
   const [collapsed, setCollapsed] = useState({}); // { [groupKey]: true }
   const toggleGroup = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const sorted = useMemo(() => {
@@ -4415,6 +4424,7 @@ function WidgetList({ tasks, sortBy, limit, groupBy, ctx, onOpen }) {
   const Row = (t) => {
     const proj = ctx.projects.find((p) => p.id === t.projectId);
     const st = ctx.statuses.find((s) => s.id === t.statusId);
+    const done = isTaskDoneGlobal(t, ctx);
     return (
       <div className="lp-today-row" key={t.id} onClick={() => onOpen(t)}>
         <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 14, height: 14, fontSize: 9 }}><IconGlyph icon={proj?.icon} size={10} /></span>
@@ -4422,6 +4432,20 @@ function WidgetList({ tasks, sortBy, limit, groupBy, ctx, onOpen }) {
         <span className="lp-today-row-title">{t.title}</span>
         {st && <span className="lp-chip" style={{ background: st.color + "22", color: st.color }}>{st.name}</span>}
         <span className="lp-today-row-date">{fmtShort(t.end)}</span>
+        {/* #139 : un seul geste (ouvrir) ne suffisait pas pour les actions les
+            plus fréquentes — terminer, décaler d'un jour. Révélées au survol
+            pour ne pas alourdir une ligne déjà dense, elles reprennent
+            exactement la logique de lp-mark-done (ListView pleine page) et du
+            décalage de dates en masse (BulkEditBar), plutôt que d'inventer un
+            second comportement. */}
+        <span className="lp-today-row-actions" onClick={(e) => e.stopPropagation()}>
+          {onShiftEnd && t.end && (
+            <button type="button" className="lp-icon-btn lp-today-row-shift" onClick={() => onShiftEnd(t)} title="Décaler d'un jour">+1j</button>
+          )}
+          {onMarkDone && !t.milestone && (
+            <button type="button" className={"lp-mark-done" + (done ? " done" : "")} onClick={() => onMarkDone(t.id)} title={done ? "Rouvrir" : "Marquer comme terminé"}><CheckCircle2 size={14} /></button>
+          )}
+        </span>
       </div>
     );
   };
@@ -10951,7 +10975,7 @@ function WidgetVerticalMetroTimeline({ tasks, ctx, onOpen, onUpdateDates }) {
 // maintenant parmi toutes les tâches éligibles, et explique pourquoi. Le moteur
 // (getNextBestAction) est totalement séparé de ce composant, qui ne fait que
 // l'afficher et gérer les interactions (§20 de la demande).
-function WidgetNextBestAction({ tasks, ctx, onOpen }) {
+function WidgetNextBestAction({ tasks, ctx, onOpen, onStartTask }) {
   const [showWhy, setShowWhy] = useState(false);
   const [showAlternatives, setShowAlternatives] = useState(false);
   const { candidates, blocked } = useMemo(() => getNextBestAction({ tasks, ctx }), [tasks, ctx]);
@@ -11019,7 +11043,7 @@ function WidgetNextBestAction({ tasks, ctx, onOpen }) {
         </div>
         <div className="lp-widget-nba-effort">{top.effortDays > 0 ? `Estimation : ${top.effortDays} jour${top.effortDays > 1 ? "s" : ""}` : "Effort inconnu"}</div>
         <div className="lp-widget-nba-actions">
-          <button className="lp-btn lp-btn-primary" onClick={() => onOpen(top.task)}>Commencer</button>
+          <button className="lp-btn lp-btn-primary" onClick={() => { if (onStartTask) onStartTask(top.task); onOpen(top.task); }}>Commencer</button>
           <button className="lp-btn" onClick={() => setShowWhy((v) => !v)}>Pourquoi ?</button>
         </div>
         {showWhy && (
@@ -11138,8 +11162,33 @@ function WidgetDailyBriefing({ tasks, ctx, onOpen, onViewDay, activityLog, staff
       {briefing.recentChanges.length > 0 && (
         <div className="lp-widget-briefing-section">
           <div className="lp-widget-briefing-section-title">Changements récents (24h)</div>
+          {/* #139 : chaque entrée porte déjà taskId — la ligne agrégée
+              ("3 tâches terminées") reste l'en-tête, et les tâches qu'elle
+              résume sont maintenant listées dessous, cliquables une par une.
+              Recherchée dans ctx.tasks (non filtré) : une tâche marquée
+              terminée puis exclue par le filtre du widget doit rester
+              ouvrable depuis son propre historique. */}
           {briefing.recentChanges.map((c) => (
-            <div className="lp-widget-briefing-change" key={c.key}>{c.icon} {c.text}</div>
+            <div className="lp-widget-briefing-change" key={c.key}>
+              <div className="lp-widget-briefing-change-summary">{c.icon} {c.text}</div>
+              <div className="lp-widget-briefing-change-entries">
+                {c.entries.map((e) => {
+                  const task = (ctx.tasks || []).find((t) => t.id === e.taskId);
+                  return (
+                    <button
+                      type="button"
+                      key={e.id}
+                      className="lp-widget-briefing-change-entry"
+                      disabled={!task}
+                      onClick={() => task && onOpen(task)}
+                      title={task ? "Ouvrir la tâche" : "Tâche introuvable"}
+                    >
+                      {e.taskTitle || "Sans titre"}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </div>
       )}

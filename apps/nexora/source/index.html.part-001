@@ -1376,6 +1376,9 @@ function GlobalStyles() {
         .lp-today-row:hover{ background:var(--paper-soft); }
         .lp-today-row-title{ flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .lp-today-row-date{ font-family:var(--font-mono); font-size:10.5px; color:var(--text-600); font-weight:600; white-space:nowrap; }
+        .lp-today-row-actions{ display:flex; align-items:center; gap:2px; flex:0 0 auto; opacity:0; transition:opacity .1s ease; }
+        .lp-today-row:hover .lp-today-row-actions{ opacity:1; }
+        .lp-today-row-shift{ font-family:var(--font-mono); font-size:10px; font-weight:700; width:auto; padding:0 5px; }
         .lp-widget-list .lp-today-row{ padding:4px 6px; }
         .lp-today-charts{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
         .lp-today-chart-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
@@ -1977,7 +1980,13 @@ function GlobalStyles() {
         .lp-widget-briefing-nba-title{ font-size:12.5px; font-weight:800; color:var(--text-900); cursor:pointer; }
         .lp-widget-briefing-nba-title:hover{ text-decoration:underline; }
         .lp-widget-briefing-nba-reason{ font-size:11px; color:var(--text-600); font-weight:600; }
-        .lp-widget-briefing-change{ font-size:11.5px; color:var(--text-900); font-weight:600; padding:2px 0; }
+        .lp-widget-briefing-change{ padding:2px 0; }
+        .lp-widget-briefing-change-summary{ font-size:11.5px; color:var(--text-900); font-weight:600; }
+        .lp-widget-briefing-change-entries{ display:flex; flex-wrap:wrap; gap:4px; margin-top:3px; padding-left:16px; }
+        .lp-widget-briefing-change-entry{ font-size:10.5px; font-weight:600; color:var(--accent); background:none; border:none; padding:0; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+        .lp-widget-briefing-change-entry:hover{ color:var(--ink); }
+        .lp-widget-briefing-change-entry:disabled{ color:var(--text-muted); cursor:default; text-decoration:none; }
+        .lp-widget-briefing-change-entry:not(:last-child)::after{ content:","; color:var(--text-muted); margin-left:-2px; }
 
 
 
@@ -10440,6 +10449,22 @@ export default function LePlan({ currentUser, onSignOut }) {
     }));
   };
 
+  // #139 : « Commencer » du widget Next Best Action n'ouvrait que la fiche —
+  // il fallait ensuite changer le statut à la main. Même garde-fous que
+  // cycleStatus (Google Calendar calculé automatiquement, type restreint à un
+  // statut unique) ; ne fait rien si la tâche est déjà « En cours » ou si
+  // aucun statut de ce nom n'existe pour son projet.
+  const startTask = (task) => {
+    setTasks((prev) => prev.map((t) => {
+      if (t.id !== task.id) return t;
+      if (isGoogleCalendarProjectId(t.projectId, projects)) return t;
+      if (restrictedStatusForType(taskTypes, statuses, t.taskTypeId)) return t;
+      const inProgress = getStatusesForProject(statuses, projects, t.projectId).find((s) => /en\s*cours/i.test(s.name || ""));
+      if (!inProgress || t.statusId === inProgress.id) return t;
+      return { ...t, statusId: inProgress.id };
+    }));
+  };
+
   const requestDeleteTask = (task) => {
     // deleteTask gère déjà la suppression ET l'unique notification avec Annuler.
     // Ne pas pousser un second toast ici.
@@ -11566,12 +11591,12 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
           {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} />}
+          {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} taskBaselines={taskBaselines} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
-          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} />}
+          {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName={activeDashboard?.name} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("metaFilters"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
         </div>
       </main>
 
