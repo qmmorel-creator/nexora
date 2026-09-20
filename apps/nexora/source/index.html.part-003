@@ -3191,7 +3191,7 @@ function packWidgets(widgets) {
 // compte à zéro n'est pas forcément un état "vide", les vues « complet »
 // embarquées qui gèrent déjà leur propre état vide) restent inchangés.
 const WIDGET_EMPTY_FUNNEL_TYPES = new Set(["chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth", "heatmapGrid", "echeances"]);
-function WidgetEmptyFunnel({ rawCount, metaCount, pageCount, onOpenMetaFilters, onOpenPageFilter, onOpenWidgetSettings }) {
+function WidgetEmptyFunnel({ rawCount, metaCount, dashboardCount, pageCount, onOpenMetaFilters, onOpenPageFilter, onOpenWidgetSettings }) {
   const step = (n) => `${n} tâche${n > 1 ? "s" : ""}`;
   return (
     <div className="lp-widget-empty-funnel">
@@ -3200,6 +3200,11 @@ function WidgetEmptyFunnel({ rawCount, metaCount, pageCount, onOpenMetaFilters, 
         <span className="lp-widget-empty-funnel-step">{step(rawCount)}</span>
         <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
         <button type="button" className="lp-widget-empty-funnel-step is-link" onClick={onOpenMetaFilters} title="Ouvrir les méta-filtres">méta {metaCount}</button>
+        <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
+        {/* Filtre projet de TABLEAU DE BORD (retour de test) : non cliquable, à
+            la différence des autres étapes — il se règle depuis le menu
+            déroulant de l'en-tête, pas depuis une fenêtre à ouvrir. */}
+        <span className="lp-widget-empty-funnel-step" title="Filtre projet du tableau de bord (menu déroulant en en-tête)">tableau {dashboardCount}</span>
         <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
         <button type="button" className="lp-widget-empty-funnel-step is-link" onClick={onOpenPageFilter} title="Ouvrir le filtre de cette page">page {pageCount}</button>
         <ChevronRight size={13} className="lp-widget-empty-funnel-arrow" />
@@ -3244,7 +3249,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3277,14 +3282,23 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   const [gesture, setGesture] = useState(null); // { id, mode: "move"|"resize", dx, dy }
   const gestureRef = useRef(null);
   const activePage = (pages || []).find((p) => p.id === activePageId) || (pages || [])[0];
+  // Filtre projet de TABLEAU DE BORD (retour de test) : une couche de plus,
+  // au-dessus du filtre de page — vaut pour TOUTES les pages, pas seulement
+  // celle affichée, donc calculé sur `tasks` (le socle du tableau de bord)
+  // et jamais réinitialisé en changeant d'onglet.
+  const dashboardFilteredTasks = useMemo(
+    () => (dashboardProjectFilter && dashboardProjectFilter.length ? applyWidgetFilter(tasks, { projectIds: dashboardProjectFilter }, ctx) : tasks),
+    [tasks, dashboardProjectFilter, ctx]
+  );
   // Le filtre de PAGE s'applique en base à tous ses widgets, combiné en ET
   // avec le filtre propre à chaque widget — jamais l'un à la place de l'autre.
-  const pageFilteredTasks = useMemo(() => applyWidgetFilter(tasks, activePage?.filter, ctx), [tasks, activePage, ctx]);
+  const pageFilteredTasks = useMemo(() => applyWidgetFilter(dashboardFilteredTasks, activePage?.filter, ctx), [dashboardFilteredTasks, activePage, ctx]);
   /* #130 : un widget vide ne disait pas QUELLE couche avait tout retiré —
      méta-filtres, recherche (repliée dans le compte méta, déjà appliquée avant
-     `tasks`), filtre de page ou filtre du widget. `rawTaskCount`/`metaTaskCount`
-     forment les deux premiers barreaux de l'échelle ; `pageFilteredTasks.length`
-     et `scoped.length` (calculé par tâche de widget plus bas) les deux derniers. */
+     `tasks`), filtre projet de tableau de bord, filtre de page ou filtre du
+     widget. `rawTaskCount`/`metaTaskCount` forment les deux premiers barreaux
+     de l'échelle ; `dashboardFilteredTasks.length`, `pageFilteredTasks.length`
+     et `scoped.length` (calculé par tâche de widget plus bas) les trois derniers. */
   const rawTaskCount = (ctx.tasks || []).length;
   const metaTaskCount = (tasksBeforeSearch || tasks).length;
   // Méta blocs applicables ici : ceux qui visent ce tableau de bord, et ceux
@@ -3875,6 +3889,44 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     <div className="lp-dashboard-wrap">
       <ViewToolbarPortal slot={toolbarSlot}>
         {dashboardName && <span className="lp-dashboard-name-tag">{dashboardName}</span>}
+        {/* Filtre projet de TABLEAU DE BORD (retour de test) : un seul menu,
+            toujours visible en en-tête, qui vaut pour TOUTES les pages —
+            jamais à reconfigurer en changeant d'onglet (voir le filtre PAR
+            PAGE, lui, réglé depuis l'icône curseurs de chaque onglet
+            ci-dessous). Absent sur "Aujourd'hui", qui n'est pas un tableau
+            de bord enregistré (onUpdateDashboardProjectFilter non fourni).
+            DropdownButton, jamais EntityFilterMultiSelect : ce dernier
+            positionne son panneau en `position:absolute` LOCAL, qui se fait
+            couper par le débordement masqué de la barre d'outils — seul
+            DropdownButton porte son panneau via un portail (document.body),
+            immunisé contre ce découpage. */}
+        {onUpdateDashboardProjectFilter && (() => {
+          const selected = dashboardProjectFilter || [];
+          const toggleDashboardProject = (id) => onUpdateDashboardProjectFilter(
+            selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]
+          );
+          const label = selected.length
+            ? `${selected.length} projet${selected.length > 1 ? "s" : ""}`
+            : "Tous les projets";
+          return (
+            <DropdownButton label={label} icon={<Folder size={13} />} title="Filtre projet du tableau de bord — s'applique à toutes ses pages">
+              <button type="button" className="lp-checkbox-line" style={{ cursor: "pointer", border: "none", background: "none", width: "100%", textAlign: "left" }} onClick={() => onUpdateDashboardProjectFilter([])}>
+                <input type="checkbox" readOnly checked={!selected.length} /> Tous les projets
+              </button>
+              <hr className="lp-divider" />
+              <label className="lp-checkbox-line">
+                <input type="checkbox" checked={selected.includes(NO_PROJECT_FILTER)} onChange={() => toggleDashboardProject(NO_PROJECT_FILTER)} />
+                <span className="swatch small" style={{ background: "#94A3B8" }} /> Sans projet
+              </label>
+              {sortedByName(ctx.projects).map((p) => (
+                <label key={p.id} className="lp-checkbox-line">
+                  <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleDashboardProject(p.id)} />
+                  <span className="swatch small" style={{ background: p.color }} /> {p.name}
+                </label>
+              ))}
+            </DropdownButton>
+          );
+        })()}
         <button className="lp-tool-btn" onClick={() => setEditingWidget("new")} title="Ajouter un widget"><Plus size={14} /> Ajouter un widget</button>
       </ViewToolbarPortal>
 
@@ -3948,6 +4000,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetEmptyFunnel
                     rawCount={rawTaskCount}
                     metaCount={metaTaskCount}
+                    dashboardCount={dashboardFilteredTasks.length}
                     pageCount={pageFilteredTasks.length}
                     onOpenMetaFilters={onOpenMetaFilters}
                     onOpenPageFilter={() => setFilterPageTarget(activePage)}
