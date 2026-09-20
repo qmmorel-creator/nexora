@@ -3244,7 +3244,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -4090,7 +4090,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   />
                 )}
                 {w.type === "habitQuick" && (
-                  <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} viewDate={habitQuickSelectedDate} setViewDate={setHabitQuickSelectedDate} />
+                  <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} viewDate={habitQuickSelectedDate} setViewDate={setHabitQuickSelectedDate} onOpenHabitThemes={onOpenHabitThemes} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
@@ -10509,7 +10509,7 @@ function HabitQuickDayModal({ date, themes, habitLog, setHabitLog, onClose }) {
   );
 }
 
-function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog, viewDate: viewDateProp, setViewDate: setViewDateProp }) {
+function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog, viewDate: viewDateProp, setViewDate: setViewDateProp, onOpenHabitThemes }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes), [ctx.habitThemes]);
   const todayIso = iso(new Date());
   // Contrôlé par DashboardView (partagé avec la Heatmap de la même page) quand
@@ -10534,9 +10534,16 @@ function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog, viewDate: viewDa
   return (
     <div className="lp-widget-habit-quick">
       <div className="lp-widget-habit-quick-head">
-        <div>
-          <div className="lp-widget-habit-quick-title">Quick Habit</div>
-          <div className="lp-widget-habit-quick-sub">Cochez ce que vous avez fait</div>
+        <div className="lp-widget-habit-quick-title-row">
+          <div>
+            <div className="lp-widget-habit-quick-title">Quick Habit</div>
+            <div className="lp-widget-habit-quick-sub">Cochez ce que vous avez fait</div>
+          </div>
+          {onOpenHabitThemes && (
+            <button type="button" className="lp-icon-btn" onClick={onOpenHabitThemes} title="Réglages → Thèmes d'habitudes" aria-label="Réglages des thèmes d'habitudes">
+              <Settings size={13} />
+            </button>
+          )}
         </div>
         <div className="lp-widget-habit-quick-datenav">
           <button className="lp-icon-btn" onClick={() => setViewDate((d) => addDays(d, -1))} aria-label="Jour précédent"><ChevronLeft size={14} /></button>
@@ -10612,7 +10619,6 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   }, []);
 
   const setThemeId = (id) => onUpdateWidget && onUpdateWidget({ habitHeatmapThemeId: id });
-  const setView = (v) => onUpdateWidget && onUpdateWidget({ habitHeatmapView: v });
   const openDay = (dIso) => setQuickDayModal(dIso);
 
   const now = new Date();
@@ -10661,11 +10667,6 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   return (
     <div className="lp-widget-habit-heatmap" ref={rootRef}>
       <div className="lp-widget-habit-heatmap-head">
-        <div className="lp-widget-habit-heatmap-toggle">
-          <button type="button" className={view === "month" ? "active" : ""} onClick={() => setView("month")}>Mensuel</button>
-          <button type="button" className={view === "quarter" ? "active" : ""} onClick={() => setView("quarter")}>3 mois</button>
-          <button type="button" className={view === "year" ? "active" : ""} onClick={() => setView("year")}>Annuel</button>
-        </div>
         <button
           type="button"
           className={"lp-icon-btn" + (themeMenuOpen ? " active" : "")}
@@ -14021,6 +14022,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // équipe (« Sans équipe » en mode Par groupe, racine à part en mode
   // hiérarchique) — visible par défaut, comme avant ce réglage.
   const [orgChartShowUnassigned, setOrgChartShowUnassigned] = useState(widget?.orgChartShowUnassigned !== false);
+  // Vue de la Heatmap habitudes (retour de test) : déplacée ici depuis le
+  // corps du widget, qui n'a plus que la case et sa légende à afficher.
+  const [habitHeatmapView, setHabitHeatmapView] = useState(HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month");
   // #140 : tri de Domino Effect — reprend le critère de l'ancien widget « Tâches
   // bloquantes » (nombre de tâches bloquées directement) en alternative au tri
   // par défaut (impact total pondéré).
@@ -14237,6 +14241,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       }
     }
     if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; }
+    if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
@@ -14560,6 +14565,19 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <input type="checkbox" checked={orgChartShowUnassigned} onChange={() => setOrgChartShowUnassigned((v) => !v)} />
               Afficher les ressources sans équipe
             </label>
+          </div>
+        )}
+        {type === "habitHeatmap" && (
+          <div className="lp-field">
+            <label>Vue</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (habitHeatmapView === "month" ? " active" : "")} onClick={() => setHabitHeatmapView("month")}>Mensuel</button>
+              <button type="button" className={"lp-density-btn" + (habitHeatmapView === "quarter" ? " active" : "")} onClick={() => setHabitHeatmapView("quarter")}>3 mois</button>
+              <button type="button" className={"lp-density-btn" + (habitHeatmapView === "year" ? " active" : "")} onClick={() => setHabitHeatmapView("year")}>Annuel</button>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              Le Thème affiché se choisit dans le widget (icône d'options), pas ici.
+            </p>
           </div>
         )}
         {type === "dominoEffect" && (
