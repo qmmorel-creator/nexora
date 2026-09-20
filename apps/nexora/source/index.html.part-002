@@ -2505,7 +2505,7 @@ function SettingsModal({
                   <TeamMemberManager embedded hideTitle teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} setTasks={setTasks} teams={teams} pushToast={pushToast} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Équipes">
-                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} pushToast={pushToast} />
+                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} setTeamMembers={setTeamMembers} pushToast={pushToast} />
                 </SettingsFoldSection>
               </>
             )}
@@ -11342,7 +11342,7 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
   const body = (
     <>
       {!hideTitle && <div className="lp-section-title">Utilisateurs</div>}
-      {teamMembers.map((u) => {
+      {sortedByName(teamMembers).map((u) => {
         const count = tasks.filter((t) => t.assignee === u.name).length;
         return (
           <div className="lp-manage-item" key={u.id}>
@@ -12267,13 +12267,63 @@ function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushT
   return <Modal title="Gérer les ateliers" onClose={onClose} wide>{body}</Modal>;
 }
 
+// Ajout rapide d'un membre à une équipe (retour de test) : même mécanique
+// que AssigneeSelect (rechercher dans l'annuaire, ou « + Créer » si le nom
+// tapé ne correspond à personne) — mais sans valeur « actuelle » à afficher :
+// le panneau reste ouvert et le champ se vide après chaque ajout, pour en
+// enchaîner plusieurs sans le rouvrir.
+function TeamRosterQuickAdd({ candidates, onAdd, onCreate }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef(null);
+  const searchRef = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  useEffect(() => { if (open) { setQ(""); setTimeout(() => searchRef.current?.focus(), 0); } }, [open]);
+  const trimmedQ = q.trim();
+  const sorted = sortedByName(candidates || []);
+  const filtered = trimmedQ ? sorted.filter((u) => u.name.toLowerCase().includes(trimmedQ.toLowerCase())) : sorted;
+  const exactMatch = trimmedQ && (candidates || []).some((u) => u.name.toLowerCase() === trimmedQ.toLowerCase());
+  const showCreate = !!trimmedQ && !exactMatch;
+  return (
+    <div className="lp-color-select" ref={ref}>
+      <button type="button" className="lp-color-select-btn" onClick={() => setOpen((o) => !o)}>
+        <Plus size={13} />
+        <span className="lp-color-select-label">Ajouter un membre</span>
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <div className="lp-color-select-panel">
+          <input ref={searchRef} type="text" className="lp-select-search" placeholder="Rechercher ou créer…" value={q} onChange={(e) => setQ(e.target.value)} onClick={(e) => e.stopPropagation()} />
+          {filtered.map((u) => (
+            <button type="button" key={u.id} className="lp-color-select-option" onClick={() => { onAdd(u.name); setQ(""); }}>
+              {u.avatarDataUrl ? <IconGlyph icon={u.avatarDataUrl} size={14} /> : <span className="lp-color-select-swatch" style={{ background: u.color }} />}
+              {u.name}
+            </button>
+          ))}
+          {filtered.length === 0 && !showCreate && <div className="lp-select-empty">Aucun résultat</div>}
+          {showCreate && (
+            <button type="button" className="lp-color-select-option lp-color-select-option-create" onClick={() => { onCreate(trimmedQ); setQ(""); }}>
+              <Plus size={13} />
+              {`Créer « ${trimmedQ} »`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============================================================================
 // Catalogue d'équipes (#159) — regroupe les utilisateurs pour le regroupement
 // « Grouper par équipe » (Gantt, Bulles, Heat map croisée) et le widget
 // Organigramme. Une liste ordonnée, enregistrée sous `nexora:teams`, sur le
 // modèle exact du gestionnaire d'ateliers ci-dessus.
 // ============================================================================
-function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, embedded, hideTitle }) {
+function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, pushToast, onClose, embedded, hideTitle }) {
   const catalogue = normalizeTeams(teams);
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState("");
@@ -12321,6 +12371,51 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     if (editingId === team.id) cancelEdit();
   };
 
+  // Ajout/retrait rapide et RÉCIPROQUE d'un membre depuis la fiche équipe
+  // (retour de test) : applique immédiatement, comme la liste ci-dessus —
+  // pas d'attente du bouton « Enregistrer les modifications », qui ne porte
+  // que Nom/Couleur/Responsable/Équipe parente. « Réciproque » parce qu'il
+  // n'existe qu'UNE SEULE source de vérité (member.teamIds) : modifier une
+  // équipe ici écrit exactement le même champ que modifier la personne
+  // depuis l'onglet Utilisateurs, jamais une liste séparée à resynchroniser.
+  const teamRosterMembers = editingId ? sortedByName((teamMembers || []).filter((m) => memberTeamIds(m).includes(editingId))) : [];
+  const addMemberToTeam = (memberId) => {
+    if (!setTeamMembers || !editingId) return;
+    setTeamMembers((prev) => prev.map((m) => (
+      m.id === memberId ? { ...m, teamIds: [...new Set([...memberTeamIds(m), editingId])], teamId: null } : m
+    )));
+  };
+  const addMemberToTeamByName = (name) => {
+    const found = (teamMembers || []).find((m) => m.name === name);
+    if (found) addMemberToTeam(found.id);
+  };
+  const createMemberInTeam = (name) => {
+    if (!setTeamMembers || !editingId) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const existing = (teamMembers || []).find((m) => m.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) { addMemberToTeam(existing.id); return; }
+    setTeamMembers((prev) => [...prev, { id: uid(), name: trimmed, color: staffingMemberColor(trimmed), avatarDataUrl: null, teamIds: [editingId] }]);
+  };
+  const removeMemberFromTeam = (memberId) => {
+    if (!setTeamMembers || !editingId) return;
+    setTeamMembers((prev) => prev.map((m) => {
+      if (m.id !== memberId) return m;
+      const nextRoles = m.teamRoles && typeof m.teamRoles === "object" ? { ...m.teamRoles } : {};
+      delete nextRoles[editingId];
+      return { ...m, teamIds: memberTeamIds(m).filter((id) => id !== editingId), teamRoles: nextRoles };
+    }));
+  };
+  const setMemberRoleInTeam = (memberId, value) => {
+    if (!setTeamMembers || !editingId) return;
+    setTeamMembers((prev) => prev.map((m) => {
+      if (m.id !== memberId) return m;
+      const nextRoles = m.teamRoles && typeof m.teamRoles === "object" ? { ...m.teamRoles } : {};
+      if (value.trim()) nextRoles[editingId] = value; else delete nextRoles[editingId];
+      return { ...m, teamRoles: nextRoles };
+    }));
+  };
+
   const body = (
     <>
       {!hideTitle && <div className="lp-section-title">Équipes existantes</div>}
@@ -12331,7 +12426,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
       {catalogue.length === 0 && (
         <div className="lp-empty" style={{ padding: 12, marginBottom: 10 }}>Aucune équipe créée pour l'instant.</div>
       )}
-      {catalogue.map((team) => {
+      {sortedByName(catalogue).map((team) => {
         const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
         const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
         return (
@@ -12362,6 +12457,36 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
           {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
       </div>
+      {editingId && setTeamMembers && (
+        <div className="lp-field">
+          <label>Membres <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(ajout et retrait immédiats — modifie directement la fiche de la personne, poste compris)</span></label>
+          {teamRosterMembers.length > 0 && (
+            <div className="lp-team-roles-list" style={{ marginBottom: 6 }}>
+              {teamRosterMembers.map((m) => (
+                <div key={m.id} className="lp-team-roles-row">
+                  <span className="lp-chip lp-dep-chip">
+                    <span className="lp-dep-chip-dot" style={{ background: m.color || staffingMemberColor(m.name) }} />
+                    {m.name}
+                    <button onClick={() => removeMemberFromTeam(m.id)}><X size={11} /></button>
+                  </span>
+                  <input
+                    type="text"
+                    className="lp-team-role-input"
+                    placeholder="Poste (facultatif)"
+                    value={memberRoleInTeam(m, editingId)}
+                    onChange={(e) => setMemberRoleInTeam(m.id, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          <TeamRosterQuickAdd
+            candidates={(teamMembers || []).filter((m) => !memberTeamIds(m).includes(editingId))}
+            onAdd={addMemberToTeamByName}
+            onCreate={createMemberInTeam}
+          />
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
         {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
