@@ -9075,24 +9075,39 @@ function orgHierNodeKey(node) {
 // Les membres d'une équipe qui n'ont eux-mêmes aucun subordonné (retour de
 // test, piste B) : listés DANS le panneau de leur équipe plutôt qu'en cartes
 // séparées. Le responsable (node.leadMember, résolu une fois par
-// buildOrgHierarchyTree) est isolé du reste s'il s'y trouve, pour être rendu
-// en premier avec le cadre couleur accent — sinon (responsable qui a
-// lui-même des subordonnés, ou introuvable dans cette équipe) le panneau
-// n'en montre aucun : sa propre carte, plus bas dans l'arbre, porte déjà le
-// repère de responsable (voir leadNames dans OrgHierarchyChart).
+// buildOrgHierarchyTree) est TOUJOURS fusionné dans ce panneau — même s'il a
+// lui-même des subordonnés (retour de test : on ne sépare jamais le
+// responsable du bandeau de son équipe, ce qui le placerait visuellement au
+// même niveau que les équipes dépendantes) — rendu en premier avec le cadre
+// couleur accent. Ses éventuels subordonnés directs sont alors rattachés au
+// nœud d'équipe lui-même (voir orgHierLayoutChildren), puisque sa propre
+// carte n'existe plus. Absent seulement s'il est introuvable dans cette
+// équipe (pas un membre direct de son roster).
 function orgHierEmbeddedRoster(node) {
-  const embedded = node.children.filter((c) => c.type === "person" && c.children.length === 0);
-  const leadIdx = node.leadMember ? embedded.findIndex((c) => c.member.name === node.leadMember.name) : -1;
-  if (leadIdx < 0) return { lead: null, rest: embedded };
-  return { lead: embedded[leadIdx], rest: embedded.filter((_, i) => i !== leadIdx) };
+  const leadIdx = node.leadMember
+    ? node.children.findIndex((c) => c.type === "person" && c.member.name === node.leadMember.name)
+    : -1;
+  const lead = leadIdx >= 0 ? node.children[leadIdx] : null;
+  const rest = node.children.filter((c, i) => i !== leadIdx && c.type === "person" && c.children.length === 0);
+  return { lead, rest };
 }
 // Enfants réellement POSITIONNÉS dans l'arbre : pour une équipe, les membres
 // listés dans son propre panneau (orgHierEmbeddedRoster) n'ont pas de
 // position propre — les compter ici les ferait chercher une position qui
-// n'existe jamais, et les rendre deux fois (dans le panneau ET en carte).
+// n'existe jamais, et les rendre deux fois (dans le panneau ET en carte). Le
+// responsable étant fusionné dans le panneau même s'il a des subordonnés
+// (voir orgHierEmbeddedRoster), ses subordonnés directs sont promus enfants
+// du nœud d'équipe — sinon ils resteraient orphelins d'une carte qui n'existe
+// plus.
 function orgHierLayoutChildren(node) {
   if (node.type !== "team") return node.children;
-  return node.children.filter((c) => c.type === "team" || (c.type === "person" && c.children.length > 0));
+  const { lead } = orgHierEmbeddedRoster(node);
+  const out = [];
+  node.children.forEach((c) => {
+    if (lead && c === lead) { out.push(...c.children); return; }
+    if (c.type === "team" || (c.type === "person" && c.children.length > 0)) out.push(c);
+  });
+  return out;
 }
 // La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
 // jamais un second calcul ici : la boîte réservée par le calcul de layout et
