@@ -4869,6 +4869,57 @@ function habitYearWeeks(theme, log, year) {
 }
 // === NEXORA:HABITS:END ===
 
+// === NEXORA:FIXED-PAGES:START ===
+/* Pages fixes, sans widget : Cockpit du jour et Semaine (fusion de « Radar de
+   la semaine » et « Alertes »). Fonctions pures et testables, comme
+   NEXORA:HABITS ci-dessus — la vue ne fait qu'appeler et afficher. Elles
+   prennent `todayIso` en paramètre explicite plutôt que de lire `new Date()`
+   elles-mêmes, pour rester déterministes en test. */
+
+function fixedPageProjectMeta(task, ctx) {
+  const project = (ctx.projects || []).find((p) => p.id === task.projectId) || null;
+  return { projectName: project?.name || "", projectColor: project?.color || "#7A8290" };
+}
+
+function daysLate(task, todayIso) {
+  return Math.max(0, dayIndex(todayIso) - dayIndex(task.end));
+}
+
+// Tâches en retard (jamais un jalon à venir), de la plus ancienne échéance
+// dépassée à la plus récente — donc les plus urgentes en tête. C'est la liste
+// que partagent le Cockpit (« En retard ») et la page Semaine (« Alertes ») :
+// une seule définition de « en retard » dans toute l'app.
+function overdueTasksSorted(tasks, ctx) {
+  return (tasks || [])
+    .filter((t) => isTaskLate(t, ctx))
+    .sort((a, b) => (a.end || "").localeCompare(b.end || ""))
+    .map((t) => ({ ...t, ...fixedPageProjectMeta(t, ctx) }));
+}
+
+// Tâches/réunions actives un jour donné (en cours ce jour-là, pas seulement
+// dont l'échéance tombe ce jour-là), jamais celles déjà terminées. Les
+// réunions remontent en tête de chaque jour — seul repère de priorité
+// disponible en l'absence d'heure sur les tâches Nexora.
+function tasksForDate(tasks, ctx, dateIso) {
+  return (tasks || [])
+    .filter((t) => !isTaskDoneGlobal(t, ctx) && (t.start || t.end) <= dateIso && (t.end || t.start) >= dateIso)
+    .map((t) => ({ ...t, ...fixedPageProjectMeta(t, ctx), isMeeting: isMeetingTask(t, ctx) }))
+    .sort((a, b) => (
+      a.isMeeting !== b.isMeeting ? (a.isMeeting ? -1 : 1) : String(a.title || "").localeCompare(String(b.title || ""), "fr")
+    ));
+}
+
+// Les N prochains jours (aujourd'hui compris) pour le flux chronologique de
+// la page Semaine (option C) : un groupe par jour.
+function weekFlowDays(tasks, ctx, todayIso, days) {
+  const span = Number.isFinite(days) && days > 0 ? days : 7;
+  return Array.from({ length: span }, (_, i) => {
+    const date = addDays(todayIso, i);
+    return { date, items: tasksForDate(tasks, ctx, date) };
+  });
+}
+// === NEXORA:FIXED-PAGES:END ===
+
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 
    Entre le bloc temporel — toute la hauteur du diagramme — et le jalon — un
