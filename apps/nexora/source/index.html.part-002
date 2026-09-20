@@ -1110,6 +1110,7 @@ const SETTINGS_TABS = [
   { key: "workshops", label: "Ateliers", icon: "factory" },
   { key: "users", label: "Utilisateurs", icon: "user" },
   { key: "teams", label: "Équipes", icon: "users" },
+  { key: "habitThemes", label: "Thèmes d'habitudes", icon: "flag" },
   { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
   { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
   { key: "gcal", label: "Google Calendar", icon: "calendar" },
@@ -2385,6 +2386,7 @@ function SettingsModal({
   workshops, setWorkshops, staffing, setStaffing,
   teamMembers, setTeamMembers,
   teams, setTeams,
+  habitThemes, setHabitThemes, habitLog, setHabitLog,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
@@ -2468,6 +2470,9 @@ function SettingsModal({
             )}
             {activeTab === "teams" && (
               <TeamCatalogManager embedded teams={teams} setTeams={setTeams} teamMembers={teamMembers} pushToast={pushToast} />
+            )}
+            {activeTab === "habitThemes" && (
+              <HabitThemeManager embedded habitThemes={habitThemes} setHabitThemes={setHabitThemes} habitLog={habitLog} setHabitLog={setHabitLog} pushToast={pushToast} />
             )}
             {activeTab === "syncedCalendars" && (
               <SyncedCalendarsSettingsPane
@@ -4577,6 +4582,211 @@ function staffingPickerGroups(catalogue, selectedIds, query) {
   return { mode: "all", groups, hiddenSelected: [] };
 }
 // === NEXORA:STAFFING:END ===
+
+// === NEXORA:HABITS:START ===
+/* Habit Tracker (#193). Même partition que les ateliers/affectations
+   ci-dessus : le catalogue (Thèmes → Habitudes) est un réglage — rarement
+   modifié, lu par les deux widgets —, le journal (`nexora:habitLog`) est une
+   donnée, une entrée par habitude × jour. */
+
+const HABIT_SELECTION_MODES = ["single", "multi"];
+
+function normalizeHabitSelectionMode(value) {
+  return HABIT_SELECTION_MODES.includes(value) ? value : "single";
+}
+
+function normalizeHabits(list) {
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(list) ? list : []).forEach((raw) => {
+    if (!raw || typeof raw !== "object") return;
+    const name = String(raw.name || "").trim();
+    if (!name) return;
+    const id = String(raw.id || "").trim() || name;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, name, color: String(raw.color || "").trim() || "#2C6BE0" });
+  });
+  return out;
+}
+
+// Un thème sans habitude n'a rien à proposer dans Quick Habit ni de quoi
+// colorer le heatmap : il reste dans le catalogue (Réglages peut encore le
+// nommer/renommer), mais les deux widgets l'ignorent silencieusement.
+function normalizeHabitThemes(list) {
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(list) ? list : []).forEach((raw) => {
+    if (!raw || typeof raw !== "object") return;
+    const name = String(raw.name || "").trim();
+    if (!name) return;
+    const id = String(raw.id || "").trim() || name;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      id,
+      name,
+      color: String(raw.color || "").trim() || "#7A8290",
+      selectionMode: normalizeHabitSelectionMode(raw.selectionMode),
+      habits: normalizeHabits(raw.habits),
+    });
+  });
+  return out;
+}
+
+function habitThemeById(themes, themeId) {
+  return normalizeHabitThemes(themes).find((t) => t.id === themeId) || null;
+}
+
+function habitById(themes, habitId) {
+  const catalogue = normalizeHabitThemes(themes);
+  for (const theme of catalogue) {
+    const habit = theme.habits.find((h) => h.id === habitId);
+    if (habit) return { habit, theme };
+  }
+  return null;
+}
+
+// --- Journal (date × habitude) -----------------------------------------------
+
+const HABIT_LOG_ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/* Identifiant DÉRIVÉ, comme staffingCellId : deux sessions qui cochent la
+   même habitude le même jour produisent la même entrée, jamais deux coches
+   concurrentes d'un seul jour. */
+function habitLogCellId(habitId, date) {
+  return String(habitId || "").trim() + "|" + String(date || "").trim();
+}
+
+// Comme les ateliers : une habitude supprimée du catalogue quitte le journal
+// ICI, à la normalisation — jamais par un balayage séparé qu'on oublierait.
+function normalizeHabitLog(list, knownHabitIds) {
+  const known = Array.isArray(knownHabitIds) ? new Set(knownHabitIds.map((id) => String(id))) : null;
+  const byId = new Map();
+  (Array.isArray(list) ? list : []).forEach((entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const habitId = String(entry.habitId || "").trim();
+    const date = String(entry.date || "").trim();
+    if (!habitId || !HABIT_LOG_ISO_RE.test(date)) return;
+    if (known && !known.has(habitId)) return;
+    const id = habitLogCellId(habitId, date);
+    byId.set(id, { id, habitId, date });
+  });
+  return [...byId.values()].sort((a, b) => (
+    a.date === b.date ? a.habitId.localeCompare(b.habitId) : a.date.localeCompare(b.date)
+  ));
+}
+
+function habitLogHabitIdsForDate(log, date) {
+  const d = String(date || "");
+  return normalizeHabitLog(log).filter((e) => e.date === d).map((e) => e.habitId);
+}
+
+/* Bascule une habitude pour une date. Thème « choix unique » : toute autre
+   habitude du même thème, ce jour-là, est retirée en même temps — c'est ce
+   qui donne le comportement radio (Bureau ↔ Télétravail) sans jamais laisser
+   deux habitudes du même thème cochées le même jour. Thème « multi » :
+   l'habitude est indépendante de ses sœurs. */
+function toggleHabitLogEntry(log, themes, habitId, date) {
+  const found = habitById(themes, habitId);
+  const known = normalizeHabitThemes(themes).flatMap((t) => t.habits.map((h) => h.id));
+  if (!found) return normalizeHabitLog(log, known);
+  const current = normalizeHabitLog(log, known);
+  const id = habitLogCellId(habitId, date);
+  const already = current.some((e) => e.id === id);
+  let next = current.filter((e) => e.id !== id);
+  if (found.theme.selectionMode === "single") {
+    const siblingIds = new Set(found.theme.habits.map((h) => h.id));
+    next = next.filter((e) => !(e.date === date && siblingIds.has(e.habitId)));
+  }
+  if (!already) next.push({ id, habitId, date });
+  return normalizeHabitLog(next, known);
+}
+
+function habitThemeUsage(log, themes, themeId) {
+  const theme = habitThemeById(themes, themeId);
+  if (!theme) return 0;
+  const habitIds = new Set(theme.habits.map((h) => h.id));
+  return normalizeHabitLog(log).filter((e) => habitIds.has(e.habitId)).length;
+}
+
+// --- Coloration (une case = les habitudes du thème cochées ce jour-là) -----
+
+function habitCellColors(theme, habitIds) {
+  if (!theme) return [];
+  const ids = new Set(habitIds);
+  return theme.habits.filter((h) => ids.has(h.id)).map((h) => h.color);
+}
+
+// Une couleur : aplat. Plusieurs : dégradé conique à parts égales — même
+// technique que heatmapMonth/heatmapGrid pour une case à entités multiples.
+function habitCellBackground(colors, emptyColor) {
+  const list = (colors || []).filter(Boolean);
+  if (!list.length) return emptyColor || "transparent";
+  if (list.length === 1) return list[0];
+  const seg = 360 / list.length;
+  const stops = list.map((c, i) => c + " " + (i * seg) + "deg " + ((i + 1) * seg) + "deg").join(", ");
+  return "conic-gradient(from 45deg, " + stops + ")";
+}
+
+const HABIT_MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
+
+// --- Grille mensuelle (6 semaines pleines, lundi en tête) -------------------
+
+function habitMonthDays(theme, log, year, month) {
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // lundi = 0
+  const start = new Date(year, month, 1 - startOffset);
+  const todayIso = iso(new Date());
+  const days = [];
+  for (let i = 0; i < 42; i += 1) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const dIso = iso(d);
+    const colors = habitCellColors(theme, habitLogHabitIdsForDate(log, dIso));
+    days.push({
+      date: dIso,
+      day: d.getDate(),
+      inMonth: d.getMonth() === month,
+      isToday: dIso === todayIso,
+      isFuture: dIso > todayIso,
+      colors,
+    });
+  }
+  return days;
+}
+
+// --- Grille annuelle (53 semaines, un repère au premier passage de chaque mois) --
+
+function habitYearWeeks(theme, log, year) {
+  const start = new Date(year, 0, 1);
+  const startDow = (start.getDay() + 6) % 7;
+  const weeks = [];
+  let cursor = new Date(year, 0, 1 - startDow);
+  let lastMonth = -1;
+  for (let w = 0; w < 53; w += 1) {
+    const days = [];
+    let monthLabel = "";
+    for (let i = 0; i < 7; i += 1) {
+      const d = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + i);
+      const inYear = d.getFullYear() === year;
+      if (inYear && d.getDate() <= 7 && d.getMonth() !== lastMonth) {
+        monthLabel = HABIT_MONTH_LABELS[d.getMonth()];
+        lastMonth = d.getMonth();
+      }
+      const dIso = iso(d);
+      const colors = inYear ? habitCellColors(theme, habitLogHabitIdsForDate(log, dIso)) : [];
+      days.push({ date: dIso, inYear, colors });
+    }
+    // monthBoundary distingue « premier mois de la grille » (pas de repère
+    // visuel nécessaire) de « nouveau mois en cours de grille » (léger
+    // espacement dans le rendu, pour distinguer les mois sans alourdir la
+    // vue annuelle d'un trait par mois).
+    weeks.push({ key: "w" + w, monthLabel, monthBoundary: monthLabel !== "" && w > 0, days });
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 7);
+  }
+  return weeks;
+}
+// === NEXORA:HABITS:END ===
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 
@@ -11909,6 +12119,204 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
 
   if (embedded) return <div className="lp-settings-pane">{body}</div>;
   return <Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>;
+}
+
+// ============================================================================
+// Thèmes d'habitudes (#193) — catalogue des Réglages pour le Habit Tracker,
+// sur le modèle des ateliers ci-dessus : un Thème regroupe des Habitudes,
+// chacune avec sa propre couleur (widget Heatmap), et le Thème porte son mode
+// de coche (widget Quick Habit) : choix unique (radio) ou multi-sélection.
+// ============================================================================
+function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog, pushToast, onClose, embedded }) {
+  const catalogue = normalizeHabitThemes(habitThemes);
+  const [editingId, setEditingId] = useState(null);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(PALETTE[0]);
+  const [selectionMode, setSelectionMode] = useState("single");
+  const [newHabitName, setNewHabitName] = useState({}); // themeId -> saisie en cours
+  const [colorEditHabitId, setColorEditHabitId] = useState(null);
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setName("");
+    setColor(PALETTE[0]);
+    setSelectionMode("single");
+  };
+
+  const startEdit = (theme) => {
+    setEditingId(theme.id);
+    setName(theme.name);
+    setColor(theme.color);
+    setSelectionMode(theme.selectionMode);
+  };
+
+  const save = () => {
+    if (!name.trim()) return;
+    if (editingId) {
+      setHabitThemes(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, selectionMode } : t)));
+    } else {
+      setHabitThemes([...catalogue, { id: uid(), name: name.trim(), color, selectionMode, habits: [] }]);
+    }
+    cancelEdit();
+  };
+
+  /* Supprimer un thème efface ses habitudes et, avec elles, les coches du
+     journal qui les référençaient — CHIFFRÉ avant d'être appliqué, comme la
+     suppression d'un atelier. */
+  const remove = (theme) => {
+    const used = habitThemeUsage(habitLog, catalogue, theme.id);
+    if (used > 0) {
+      const coches = used > 1 ? `${used} coches` : "1 coche";
+      if (!window.confirm(`« ${theme.name} » a ${coches} dans le journal. Le supprimer effacera ces coches. Continuer ?`)) return;
+    }
+    const next = catalogue.filter((t) => t.id !== theme.id);
+    setHabitThemes(next);
+    const remainingIds = next.flatMap((t) => t.habits.map((h) => h.id));
+    if (setHabitLog) setHabitLog((prev) => normalizeHabitLog(prev, remainingIds));
+    if (editingId === theme.id) cancelEdit();
+  };
+
+  const move = (idx, dir) => {
+    const next = [...catalogue];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setHabitThemes(next);
+  };
+
+  const addHabit = (theme) => {
+    const label = (newHabitName[theme.id] || "").trim();
+    if (!label) return;
+    setHabitThemes(catalogue.map((t) => (
+      t.id === theme.id ? { ...t, habits: [...t.habits, { id: uid(), name: label, color: theme.color }] } : t
+    )));
+    setNewHabitName((m) => ({ ...m, [theme.id]: "" }));
+  };
+
+  const renameHabit = (theme, habit, label) => {
+    setHabitThemes(catalogue.map((t) => (
+      t.id !== theme.id ? t : { ...t, habits: t.habits.map((h) => (h.id === habit.id ? { ...h, name: label } : h)) }
+    )));
+  };
+
+  const recolorHabit = (theme, habit, next) => {
+    setHabitThemes(catalogue.map((t) => (
+      t.id !== theme.id ? t : { ...t, habits: t.habits.map((h) => (h.id === habit.id ? { ...h, color: next } : h)) }
+    )));
+  };
+
+  const removeHabit = (theme, habit) => {
+    const next = catalogue.map((t) => (
+      t.id !== theme.id ? t : { ...t, habits: t.habits.filter((h) => h.id !== habit.id) }
+    ));
+    setHabitThemes(next);
+    if (colorEditHabitId === habit.id) setColorEditHabitId(null);
+    const remainingIds = next.flatMap((t) => t.habits.map((h) => h.id));
+    if (setHabitLog) setHabitLog((prev) => normalizeHabitLog(prev, remainingIds));
+  };
+
+  const body = (
+    <>
+      <div className="lp-section-title">Thèmes existants</div>
+      <div style={{ fontSize: 11.5, color: "var(--text-600)", marginBottom: 10, lineHeight: 1.45 }}>
+        Un Thème regroupe des Habitudes — Job : bureau / télétravail / déplacement… — Sport : Crossfit / Marche /
+        Running… Son mode décide comment <strong>Quick Habit</strong> coche : une seule habitude à la fois par jour
+        (choix unique), ou plusieurs (multi-sélection). La couleur de chaque Habitude alimente le widget
+        <strong> Heatmap habitudes</strong>.
+      </div>
+
+      {catalogue.map((theme, i) => (
+        <div className="lp-habit-theme-card" key={theme.id}>
+          <div className="lp-manage-item">
+            <div className="lp-order-btns">
+              <button onClick={() => move(i, -1)} aria-label="Monter"><ChevronUp size={14} /></button>
+              <button onClick={() => move(i, 1)} aria-label="Descendre"><ChevronDown size={14} /></button>
+            </div>
+            <span className="lp-workshop-swatch" style={{ background: theme.color }} aria-hidden="true" />
+            <span className="lp-manage-name">{theme.name}</span>
+            <span className="lp-habit-theme-mode-badge">{theme.selectionMode === "multi" ? "Multi-sélection" : "Choix unique"}</span>
+            <button className="lp-icon-btn" onClick={() => startEdit(theme)} aria-label={`Modifier ${theme.name}`}><Pencil size={14} /></button>
+            <button className="lp-icon-btn" onClick={() => remove(theme)} aria-label={`Supprimer ${theme.name}`}><Trash2 size={15} /></button>
+          </div>
+          <div className="lp-habit-list">
+            {theme.habits.map((habit) => (
+              <span className="lp-habit-chip" key={habit.id}>
+                <button
+                  type="button"
+                  className="lp-habit-chip-swatch"
+                  style={{ background: habit.color }}
+                  aria-label={`Couleur de ${habit.name}`}
+                  onClick={() => setColorEditHabitId(colorEditHabitId === habit.id ? null : habit.id)}
+                />
+                <input
+                  type="text"
+                  className="lp-habit-chip-input"
+                  value={habit.name}
+                  onChange={(e) => renameHabit(theme, habit, e.target.value)}
+                />
+                <button type="button" className="lp-habit-chip-remove" aria-label={`Supprimer ${habit.name}`} onClick={() => removeHabit(theme, habit)}>
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <span className="lp-habit-chip lp-habit-chip-add">
+              <input
+                type="text"
+                className="lp-habit-chip-input"
+                placeholder="+ Habitude"
+                value={newHabitName[theme.id] || ""}
+                onChange={(e) => setNewHabitName((m) => ({ ...m, [theme.id]: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") addHabit(theme); }}
+              />
+              <button type="button" className="lp-icon-btn" aria-label={`Ajouter une habitude à ${theme.name}`} onClick={() => addHabit(theme)}>
+                <Plus size={13} />
+              </button>
+            </span>
+          </div>
+          {theme.habits.some((h) => h.id === colorEditHabitId) && (
+            <div className="lp-habit-colorpop">
+              <ColorPicker
+                value={theme.habits.find((h) => h.id === colorEditHabitId).color}
+                onChange={(next) => recolorHabit(theme, theme.habits.find((h) => h.id === colorEditHabitId), next)}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+
+      <hr className="lp-divider" />
+      <div className="lp-section-title">{editingId ? "Modifier le thème" : "Nouveau thème"}</div>
+
+      <div className="lp-field">
+        <label>Nom</label>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Sport" />
+      </div>
+
+      <div className="lp-field">
+        <label>Mode de coche</label>
+        <div className="lp-density-row">
+          <button type="button" className={"lp-density-btn" + (selectionMode === "single" ? " active" : "")} onClick={() => setSelectionMode("single")}>
+            Choix unique
+          </button>
+          <button type="button" className={"lp-density-btn" + (selectionMode === "multi" ? " active" : "")} onClick={() => setSelectionMode("multi")}>
+            Multi-sélection
+          </button>
+        </div>
+      </div>
+
+      <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} /></div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="lp-btn lp-btn-primary" onClick={save}>
+          {editingId ? "Enregistrer les modifications" : "Ajouter le thème"}
+        </button>
+        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
+      </div>
+    </>
+  );
+
+  if (embedded) return <div className="lp-settings-pane">{body}</div>;
+  return <Modal title="Gérer les thèmes d'habitudes" onClose={onClose} wide>{body}</Modal>;
 }
 
 // ============================================================================
