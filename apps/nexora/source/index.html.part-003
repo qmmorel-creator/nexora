@@ -9049,24 +9049,50 @@ function OrgTeamTree({ team, members, allMembers, statsFor, onFilterPerson }) {
 // « transversal / longitudinal » commun aux deux orientations : seule la
 // correspondance finale vers l'écran diffère entre vertical et horizontal.
 const ORGHIER_CARD_W = 104;
-const ORGHIER_TEAM_W = 156;
 const ORGHIER_ROOT_W = 176;
 const ORGHIER_ROOT_H = 40;
-const ORGHIER_TEAM_H = 40;
-// Boîte plus grande/haute pour une équipe avec responsable (retour de test
-// sur #167) : deux lignes PLEINES (nom d'équipe, puis responsable) au lieu
-// d'une seule, chacune avec assez de place pour ne jamais tronquer un nom
-// courant — voir le rendu du nœud d'équipe plus bas.
-const ORGHIER_TEAM_W_LEAD = 200;
-const ORGHIER_TEAM_H_LEAD = 56;
 const ORGHIER_MEMBER_H = 116;
 const ORGHIER_SIBLING_GAP = 18; // entre deux sous-arbres frères (axe transversal)
 const ORGHIER_LEVEL_GAP = 40; // entre un nœud et ses enfants (axe longitudinal)
+// Panneau d'équipe « fusionné » (retour de test, piste B) : les membres SANS
+// subordonné rejoignent le panneau de leur équipe comme une liste, au lieu
+// d'être des cartes séparées reliées par un trait — seules les sous-équipes
+// et les personnes qui ont elles-mêmes des subordonnés restent des nœuds
+// distincts (voir orgHierLayoutChildren). Largeur fixe, hauteur variable
+// selon le nombre de lignes — jamais l'inverse.
+const ORGHIER_TEAM_PANEL_W = 220;
+const ORGHIER_TEAM_BANNER_H = 34;
+const ORGHIER_TEAM_PAD = 16; // 8px haut + 8px bas
+const ORGHIER_TEAM_LEAD_ROW_H = 46;
+const ORGHIER_TEAM_ROW_H = 38;
+const ORGHIER_TEAM_ROW_GAP = 6;
 
 function orgHierNodeKey(node) {
   if (node.type === "root") return "root";
   if (node.type === "team") return "team:" + (node.team ? node.team.id : "none");
   return "person:" + (node.member.id || node.member.name);
+}
+// Les membres d'une équipe qui n'ont eux-mêmes aucun subordonné (retour de
+// test, piste B) : listés DANS le panneau de leur équipe plutôt qu'en cartes
+// séparées. Le responsable (node.leadMember, résolu une fois par
+// buildOrgHierarchyTree) est isolé du reste s'il s'y trouve, pour être rendu
+// en premier avec le cadre couleur accent — sinon (responsable qui a
+// lui-même des subordonnés, ou introuvable dans cette équipe) le panneau
+// n'en montre aucun : sa propre carte, plus bas dans l'arbre, porte déjà le
+// repère de responsable (voir leadNames dans OrgHierarchyChart).
+function orgHierEmbeddedRoster(node) {
+  const embedded = node.children.filter((c) => c.type === "person" && c.children.length === 0);
+  const leadIdx = node.leadMember ? embedded.findIndex((c) => c.member.name === node.leadMember.name) : -1;
+  if (leadIdx < 0) return { lead: null, rest: embedded };
+  return { lead: embedded[leadIdx], rest: embedded.filter((_, i) => i !== leadIdx) };
+}
+// Enfants réellement POSITIONNÉS dans l'arbre : pour une équipe, les membres
+// listés dans son propre panneau (orgHierEmbeddedRoster) n'ont pas de
+// position propre — les compter ici les ferait chercher une position qui
+// n'existe jamais, et les rendre deux fois (dans le panneau ET en carte).
+function orgHierLayoutChildren(node) {
+  if (node.type !== "team") return node.children;
+  return node.children.filter((c) => c.type === "team" || (c.type === "person" && c.children.length > 0));
 }
 // La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
 // jamais un second calcul ici : la boîte réservée par le calcul de layout et
@@ -9074,7 +9100,12 @@ function orgHierNodeKey(node) {
 function orgHierNodeSize(node) {
   if (node.type === "person") return { w: ORGHIER_CARD_W, h: ORGHIER_MEMBER_H };
   if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
-  return node.leadMember ? { w: ORGHIER_TEAM_W_LEAD, h: ORGHIER_TEAM_H_LEAD } : { w: ORGHIER_TEAM_W, h: ORGHIER_TEAM_H };
+  const { lead, rest } = orgHierEmbeddedRoster(node);
+  const rows = (lead ? 1 : 0) + rest.length;
+  const bodyH = rows
+    ? ORGHIER_TEAM_PAD + (lead ? ORGHIER_TEAM_LEAD_ROW_H : 0) + rest.length * ORGHIER_TEAM_ROW_H + Math.max(0, rows - 1) * ORGHIER_TEAM_ROW_GAP
+    : 0;
+  return { w: ORGHIER_TEAM_PANEL_W, h: ORGHIER_TEAM_BANNER_H + bodyH };
 }
 function orgHierPersonCount(node) {
   return node.children.reduce((sum, c) => sum + (c.type === "person" ? 1 : orgHierPersonCount(c)), 0);
@@ -9102,8 +9133,9 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
     const subtreeCrossCache = new Map();
     const subtreeCross = (node) => {
       if (subtreeCrossCache.has(node)) return subtreeCrossCache.get(node);
-      const childSizes = node.children.map(subtreeCross);
-      const size = !node.children.length
+      const kids = orgHierLayoutChildren(node);
+      const childSizes = kids.map(subtreeCross);
+      const size = !kids.length
         ? crossOf(node)
         : Math.max(crossOf(node), childSizes.reduce((s, c) => s + c, 0) + (childSizes.length - 1) * ORGHIER_SIBLING_GAP);
       subtreeCrossCache.set(node, size);
@@ -9115,12 +9147,13 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
       const cross = crossStart + subtreeCross(node) / 2;
       const mainEnd = mainStart + mainOf(node);
       positions.set(node, { cross, mainStart, mainEnd, w: size.w, h: size.h });
-      if (!node.children.length) return;
-      const childSizes = node.children.map(subtreeCross);
+      const kids = orgHierLayoutChildren(node);
+      if (!kids.length) return;
+      const childSizes = kids.map(subtreeCross);
       const total = childSizes.reduce((s, c) => s + c, 0) + (childSizes.length - 1) * ORGHIER_SIBLING_GAP;
       let cursor = cross - total / 2;
       const childMainStart = mainEnd + ORGHIER_LEVEL_GAP;
-      node.children.forEach((child, i) => {
+      kids.forEach((child, i) => {
         place(child, cursor, childMainStart);
         cursor += childSizes[i] + ORGHIER_SIBLING_GAP;
       });
@@ -9151,7 +9184,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
     const out = [];
     const walk = (node) => {
       const p = layout.positions.get(node);
-      node.children.forEach((child) => {
+      orgHierLayoutChildren(node).forEach((child) => {
         const c = layout.positions.get(child);
         const busMain = p.mainEnd + ORGHIER_LEVEL_GAP / 2;
         const a = toScreen(p.cross, p.mainEnd);
@@ -9174,7 +9207,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   const collectNodes = (node) => {
     if (node.type === "person") personNodes.push(node);
     else teamNodes.push(node);
-    node.children.forEach(collectNodes);
+    orgHierLayoutChildren(node).forEach(collectNodes);
   };
   displayRoots.forEach(collectNodes);
 
@@ -9187,39 +9220,60 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
         {teamNodes.map((node) => {
           const r = boxRect(node);
           const isRoot = node.type === "root";
-          const lead = !isRoot ? node.leadMember : null;
+          if (isRoot) {
+            return (
+              <div
+                key={orgHierNodeKey(node)}
+                className="lp-orghier-node lp-orghier-node-root"
+                style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
+              >
+                <Network size={13} /><span className="lp-orghier-node-title">Organisation</span>
+              </div>
+            );
+          }
+          // Piste B (retour de test) : les membres sans subordonné rejoignent
+          // le panneau de leur équipe (orgHierEmbeddedRoster) — bandeau plein
+          // de la couleur d'équipe, responsable en tête avec le cadre couleur
+          // accent et l'étoile, les autres membres à la suite.
+          const { lead, rest } = orgHierEmbeddedRoster(node);
+          const renderRow = (child, isLeadRow) => {
+            const m = child.member;
+            const stats = statsFor(m);
+            return (
+              <button
+                type="button"
+                key={orgHierNodeKey(child)}
+                className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "")}
+                onClick={() => onFilterPerson && onFilterPerson(m.name)}
+                title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
+              >
+                {isLeadRow && <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />}
+                <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: m.color || staffingMemberColor(m.name) }}>
+                  {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={11} /> : memberInitials(m.name)}
+                </span>
+                <span className="lp-orghier-panel-row-name">{m.name}</span>
+                <span className="lp-orghier-panel-row-stats">
+                  <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
+                  {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
+                </span>
+              </button>
+            );
+          };
           return (
             <div
               key={orgHierNodeKey(node)}
-              className={"lp-orghier-node" + (isRoot ? " lp-orghier-node-root" : " lp-orghier-node-team") + (lead ? " is-lead" : "")}
+              className={"lp-orghier-node-panel" + (node.team ? "" : " is-unassigned")}
               style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
             >
-              {isRoot ? (
-                <><Network size={13} /><span className="lp-orghier-node-title">Organisation</span></>
-              ) : lead ? (
-                <>
-                  {/* Le nom de l'équipe reste la ligne principale (retour de
-                      test) — le responsable prend une SECONDE ligne dédiée en
-                      dessous, jamais compressé sur la même ligne. */}
-                  <div className="lp-orghier-node-team-row">
-                    <span className="lp-orgchart-team-bar" style={{ background: node.team.color }} />
-                    <span className="lp-orghier-node-title">{node.team.name}</span>
-                    <span className="lp-orgchart-team-count">{orgHierPersonCount(node)}</span>
-                  </div>
-                  <div className="lp-orghier-node-lead-row">
-                    <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />
-                    <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: lead.color || staffingMemberColor(lead.name) }}>
-                      {lead.avatarDataUrl ? <IconGlyph icon={lead.avatarDataUrl} size={11} /> : memberInitials(lead.name)}
-                    </span>
-                    <span className="lp-orghier-node-title">{lead.name}</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <span className="lp-orgchart-team-bar" style={{ background: node.team ? node.team.color : "var(--border-strong)" }} />
-                  <span className="lp-orghier-node-title">{node.team ? node.team.name : "Sans équipe"}</span>
-                  <span className="lp-orgchart-team-count">{orgHierPersonCount(node)}</span>
-                </>
+              <div className="lp-orghier-panel-banner" style={{ background: node.team ? node.team.color : "var(--text-muted)" }}>
+                <span className="lp-orghier-panel-name">{node.team ? node.team.name : "Sans équipe"}</span>
+                <span className="lp-orghier-panel-count">{orgHierPersonCount(node)}</span>
+              </div>
+              {(lead || rest.length > 0) && (
+                <div className="lp-orghier-panel-body">
+                  {lead && renderRow(lead, true)}
+                  {rest.map((child) => renderRow(child, false))}
+                </div>
               )}
             </div>
           );
@@ -10531,6 +10585,19 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   const [monthOffset, setMonthOffset] = useState(0);
   const [quickDayModal, setQuickDayModal] = useState(null); // iso date | null
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  // Légende cliquable (retour de test) : une habitude masquée sort du calcul
+  // des couleurs des cases — jamais un second thème à part, juste le thème
+  // affiché amputé de cette habitude — donc habitCellBackground redistribue
+  // seul le dégradé conique sur les habitudes restantes, sans rien de plus à
+  // écrire ici. Ids bruts (pas liés au thème affiché) : revenir sur un thème
+  // ne réaffiche pas une habitude masquée ailleurs par erreur, mais aucune
+  // collision possible, les ids sont uniques tous thèmes confondus.
+  const [hiddenHabitIds, setHiddenHabitIds] = useState(() => new Set());
+  const toggleHabitVisibility = (habitId) => setHiddenHabitIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(habitId)) next.delete(habitId); else next.add(habitId);
+    return next;
+  });
   // Largeur réelle du widget (#193 v4, retour de Quentin) : la vue Annuelle
   // tient sur une seule ligne de 53 semaines quand la place le permet, et ne
   // retombe sur deux blocs de ~6 mois que si le widget est trop étroit.
@@ -10553,8 +10620,17 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   const year = base.getFullYear();
   const month = base.getMonth();
 
-  const monthDays = useMemo(() => (theme && view === "month" ? habitMonthDays(theme, habitLog, year, month) : []), [theme, habitLog, year, month, view]);
-  const yearWeeks = useMemo(() => (theme && view === "year" ? habitYearWeeks(theme, habitLog, now.getFullYear()) : []), [theme, habitLog, view]);
+  // Thème affiché amputé des habitudes masquées par la légende — jamais un
+  // second calcul de couleurs, juste un theme.habits plus court : habitCellColors
+  // (appelée par habitMonthDays/habitYearWeeks) n'en tient alors plus compte, et
+  // habitCellBackground redistribue seul le dégradé conique sur ce qui reste.
+  const visibleTheme = useMemo(
+    () => (theme && hiddenHabitIds.size ? { ...theme, habits: theme.habits.filter((h) => !hiddenHabitIds.has(h.id)) } : theme),
+    [theme, hiddenHabitIds]
+  );
+
+  const monthDays = useMemo(() => (visibleTheme && view === "month" ? habitMonthDays(visibleTheme, habitLog, year, month) : []), [visibleTheme, habitLog, year, month, view]);
+  const yearWeeks = useMemo(() => (visibleTheme && view === "year" ? habitYearWeeks(visibleTheme, habitLog, now.getFullYear()) : []), [visibleTheme, habitLog, view]);
   // Une seule ligne de 53 semaines si la largeur du widget le permet (cases à
   // 11px + 3px d'écart, comme le calendrier de contributions GitHub) ; sinon
   // repli sur deux blocs de ~6 mois empilés plutôt qu'une ligne trop large ou
@@ -10567,12 +10643,12 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
     return [yearWeeks.slice(0, half), yearWeeks.slice(half)];
   }, [yearWeeks, widgetWidth]);
   const quarterMonths = useMemo(() => {
-    if (!theme || view !== "quarter") return [];
+    if (!visibleTheme || view !== "quarter") return [];
     return [0, -1, -2].map((offset) => {
       const d = new Date(now.getFullYear(), now.getMonth() + monthOffset + offset, 1);
-      return { year: d.getFullYear(), month: d.getMonth(), days: habitMonthDays(theme, habitLog, d.getFullYear(), d.getMonth()) };
+      return { year: d.getFullYear(), month: d.getMonth(), days: habitMonthDays(visibleTheme, habitLog, d.getFullYear(), d.getMonth()) };
     });
-  }, [theme, habitLog, monthOffset, view]);
+  }, [visibleTheme, habitLog, monthOffset, view]);
 
   if (!themes.length) {
     return (
@@ -10705,12 +10781,21 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
 
       {theme && theme.habits.length > 0 && (
         <div className="lp-widget-habit-heatmap-legend">
-          {theme.habits.map((h) => (
-            <span className="lp-widget-habit-heatmap-legend-item" key={h.id}>
-              <span className="lp-widget-habit-heatmap-legend-dot" style={{ background: h.color }} />
-              {h.name}
-            </span>
-          ))}
+          {theme.habits.map((h) => {
+            const hidden = hiddenHabitIds.has(h.id);
+            return (
+              <button
+                type="button"
+                key={h.id}
+                className={"lp-widget-habit-heatmap-legend-item" + (hidden ? " is-hidden" : "")}
+                onClick={() => toggleHabitVisibility(h.id)}
+                title={hidden ? `Réafficher ${h.name}` : `Masquer ${h.name}`}
+              >
+                <span className="lp-widget-habit-heatmap-legend-dot" style={{ background: h.color }} />
+                {h.name}
+              </button>
+            );
+          })}
         </div>
       )}
 
