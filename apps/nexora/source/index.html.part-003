@@ -10518,6 +10518,18 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   const [monthOffset, setMonthOffset] = useState(0);
   const [quickDayModal, setQuickDayModal] = useState(null); // iso date | null
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  // Largeur réelle du widget (#193 v4, retour de Quentin) : la vue Annuelle
+  // tient sur une seule ligne de 53 semaines quand la place le permet, et ne
+  // retombe sur deux blocs de ~6 mois que si le widget est trop étroit.
+  const rootRef = useRef(null);
+  const [widgetWidth, setWidgetWidth] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(([entry]) => setWidgetWidth(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const setThemeId = (id) => onUpdateWidget && onUpdateWidget({ habitHeatmapThemeId: id });
   const setView = (v) => onUpdateWidget && onUpdateWidget({ habitHeatmapView: v });
@@ -10530,14 +10542,17 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
 
   const monthDays = useMemo(() => (theme && view === "month" ? habitMonthDays(theme, habitLog, year, month) : []), [theme, habitLog, year, month, view]);
   const yearWeeks = useMemo(() => (theme && view === "year" ? habitYearWeeks(theme, habitLog, now.getFullYear()) : []), [theme, habitLog, view]);
-  // Deux blocs de ~6 mois empilés plutôt qu'une seule ligne de 53 semaines :
-  // à taille de case fixe (façon GitHub), une seule ligne serait soit trop
-  // large pour le widget, soit contrainte à des cases minuscules.
+  // Une seule ligne de 53 semaines si la largeur du widget le permet (cases à
+  // 11px + 3px d'écart, comme le calendrier de contributions GitHub) ; sinon
+  // repli sur deux blocs de ~6 mois empilés plutôt qu'une ligne trop large ou
+  // des cases illisibles.
   const yearHalves = useMemo(() => {
     if (!yearWeeks.length) return [];
+    const singleRowWidth = yearWeeks.length * 14 - 3;
+    if (widgetWidth >= singleRowWidth + 8) return [yearWeeks];
     const half = Math.ceil(yearWeeks.length / 2);
     return [yearWeeks.slice(0, half), yearWeeks.slice(half)];
-  }, [yearWeeks]);
+  }, [yearWeeks, widgetWidth]);
   const quarterMonths = useMemo(() => {
     if (!theme || view !== "quarter") return [];
     return [0, -1, -2].map((offset) => {
@@ -10555,7 +10570,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   }
 
   return (
-    <div className="lp-widget-habit-heatmap">
+    <div className="lp-widget-habit-heatmap" ref={rootRef}>
       <div className="lp-widget-habit-heatmap-head">
         <div className="lp-widget-habit-heatmap-toggle">
           <button type="button" className={view === "month" ? "active" : ""} onClick={() => setView("month")}>Mensuel</button>
