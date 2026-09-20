@@ -10024,12 +10024,26 @@ export default function LePlan({ currentUser, onSignOut }) {
           syncedCalendarId: cal.id,
           syncedCalendarKey: item.publicKey || item.id,
           syncedCalendarProvider: item.provider || "",
+          // #138 : posé directement à la génération, jamais laissé au report
+          // de carryOverTaskMetaBlocks ci-dessous — un bloc auto-généré est
+          // reconstruit à l'identique à chaque synchronisation, il ne doit
+          // jamais hériter d'un réglage manuel devenu obsolète.
+          metaBlock: cal.showAsMetaBlock ? syncedCalendarAutoMetaBlock(cal.color) : null,
         });
       });
     });
 
+    // Le report couvre les tâches dont le calendrier N'IMPOSE PAS de bloc
+    // (l'utilisateur a pu en marquer une à la main) ; il ne doit jamais
+    // écraser un bloc automatique tout juste posé ci-dessus.
+    const carried = carryOverTaskMetaBlocks(tasks, freshTasks);
+    const autoBlockCalendarIds = new Set(enabled.filter(c => c.showAsMetaBlock).map(c => c.id));
+    const nextGenerated = carried.map((t, i) => (
+      autoBlockCalendarIds.has(freshTasks[i].syncedCalendarId) ? { ...t, metaBlock: freshTasks[i].metaBlock } : t
+    ));
+
     setProjects(workingProjects);
-    setTasks([...keptTasks, ...carryOverTaskMetaBlocks(tasks, freshTasks)]);
+    setTasks([...keptTasks, ...nextGenerated]);
     const now = new Date().toISOString();
     setSyncedCalendarSettings(prev => ({...prev, calendars: configs, lastSyncAt: now}));
     pushToast?.({message:`Calendriers synchronisés · ${enabled.length} projet${enabled.length>1?"s":""} · ${freshTasks.length} jalon${freshTasks.length>1?"s":""}`});

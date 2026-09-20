@@ -15963,8 +15963,20 @@ function normalizedSyncedCalendars(settings){
       enabled: hit.enabled !== false,
       projectName: hit.projectName || def.defaultProjectName,
       color: hit.color || def.defaultColor,
+      // #138 : bloc temporel plutôt que jalon — régénéré à chaque
+      // synchronisation comme le reste de ce calendrier, jamais modifiable
+      // à la main (voir syncedCalendarAutoMetaBlock).
+      showAsMetaBlock: hit.showAsMetaBlock === true,
     };
   });
+}
+
+// #138 : le méta-bloc qu'un calendrier synchronisé pose lui-même sur ses
+// tâches quand « Afficher comme bloc temporel » est coché — opacité réduite
+// FIXE (jamais réglable) : c'est ce qui le distingue d'un bloc manuel posé
+// depuis les Réglages, dont l'opacité reste au choix de l'utilisateur.
+function syncedCalendarAutoMetaBlock(color) {
+  return { enabled: true, kind: "phase", color, borderStyle: "dashed", opacity: 0.42, dashboardIds: null };
 }
 
 function syncedCalendarItems(calendarId, settings){
@@ -16041,9 +16053,24 @@ function SyncedCalendarsSettingsPane({ settings, setSettings, projects, tasks, o
               style={{width:34,height:30,border:"1px solid var(--border)",borderRadius:6,background:"var(--surface)",padding:3}}
             />
             <div style={{width:110,textAlign:"right",fontSize:9.5,color:"var(--text-muted)"}}>
-              {proj ? `${count} jalon${count>1?"s":""}` : (cal.enabled ? "Projet à créer" : "Désactivé")}
+              {proj ? `${count} ${cal.showAsMetaBlock ? "bloc" : "jalon"}${count>1?"s":""}` : (cal.enabled ? "Projet à créer" : "Désactivé")}
             </div>
           </div>
+        );
+      })}
+      {/* #138 : case séparée, sous la liste — pas dans chaque ligne déjà
+          dense (nom + couleur + compteur) — pour rester lisible. */}
+      <div className="lp-section-title" style={{marginTop:10}}>Affichage</div>
+      {SYNCED_CALENDAR_DEFS.map(def=>{
+        const cal=calendars.find(c=>c.id===def.id);
+        if(!cal.enabled) return null;
+        return (
+          <label key={def.id} className="lp-checkbox-row" style={{padding:"4px 0"}}>
+            <input type="checkbox" checked={!!cal.showAsMetaBlock} onChange={e=>updateCalendar(def.id,{showAsMetaBlock:e.target.checked})}/>
+            <span style={{textTransform:"none",fontSize:12.5}}>
+              {def.label} — afficher comme bloc temporel <span style={{color:"var(--text-600)",fontWeight:400}}>(bande sur le diagramme plutôt qu'un jalon ; régénéré à chaque synchronisation, jamais modifiable à la main)</span>
+            </span>
+          </label>
         );
       })}
 
