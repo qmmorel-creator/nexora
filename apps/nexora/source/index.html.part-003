@@ -3244,7 +3244,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -4044,6 +4044,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     ctx={ctx}
                     staffing={staffing}
                     onFilterPerson={(name) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), advanced: { op: "and", items: [{ field: "assignee", mode: "is", values: [name] }] } })}
+                    onOpenTeamsSettings={onOpenTeamsSettings}
                   />
                 )}
                 {w.type === "userProfile" && (
@@ -9065,6 +9066,11 @@ const ORGHIER_TEAM_BANNER_H = 34;
 const ORGHIER_TEAM_PAD = 16; // 8px haut + 8px bas
 const ORGHIER_TEAM_LEAD_ROW_H = 46;
 const ORGHIER_TEAM_ROW_H = 38;
+// Poste (retour de test) : une ligne de plus dans la rangée quand renseigné
+// (voir memberRoleInTeam) — une hauteur dédiée, jamais mesurée, pour que
+// orgHierNodeSize et le rendu (.has-role côté CSS) restent toujours d'accord.
+const ORGHIER_TEAM_ROW_H_ROLE = 50;
+const ORGHIER_TEAM_LEAD_ROW_H_ROLE = 58;
 const ORGHIER_TEAM_ROW_GAP = 6;
 
 function orgHierNodeKey(node) {
@@ -9109,6 +9115,22 @@ function orgHierLayoutChildren(node) {
   });
   return out;
 }
+// Poste d'une personne dans l'équipe où sa carte/ligne est rendue (retour de
+// test) : toujours celle de sa première équipe résolue (node.roleTeamId,
+// posée une fois par buildOrgHierarchyTree), jamais un poste global — voir
+// memberRoleInTeam. Vide si non renseigné.
+function orgHierMemberRole(personNode) {
+  return personNode.roleTeamId ? memberRoleInTeam(personNode.member, personNode.roleTeamId) : "";
+}
+// Hauteur d'une ligne de roster (retour de test) : bascule vers la variante
+// *_ROLE dès qu'un poste est affiché, pour rester en tous points exacte —
+// orgHierNodeSize (calcul de layout) et renderRow (classe .has-role côté
+// CSS) appellent cette MÊME fonction, jamais un second calcul.
+function orgHierRowHeight(personNode, isLead) {
+  const hasRole = Boolean(orgHierMemberRole(personNode));
+  if (isLead) return hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H;
+  return hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H;
+}
 // La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
 // jamais un second calcul ici : la boîte réservée par le calcul de layout et
 // le contenu réellement rendu doivent toujours voir la même réponse.
@@ -9117,9 +9139,8 @@ function orgHierNodeSize(node) {
   if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
   const { lead, rest } = orgHierEmbeddedRoster(node);
   const rows = (lead ? 1 : 0) + rest.length;
-  const bodyH = rows
-    ? ORGHIER_TEAM_PAD + (lead ? ORGHIER_TEAM_LEAD_ROW_H : 0) + rest.length * ORGHIER_TEAM_ROW_H + Math.max(0, rows - 1) * ORGHIER_TEAM_ROW_GAP
-    : 0;
+  const rowsH = (lead ? orgHierRowHeight(lead, true) : 0) + rest.reduce((sum, c) => sum + orgHierRowHeight(c, false), 0);
+  const bodyH = rows ? ORGHIER_TEAM_PAD + rowsH + Math.max(0, rows - 1) * ORGHIER_TEAM_ROW_GAP : 0;
   return { w: ORGHIER_TEAM_PANEL_W, h: ORGHIER_TEAM_BANNER_H + bodyH };
 }
 function orgHierPersonCount(node) {
@@ -9254,11 +9275,12 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
           const renderRow = (child, isLeadRow) => {
             const m = child.member;
             const stats = statsFor(m);
+            const role = orgHierMemberRole(child);
             return (
               <button
                 type="button"
                 key={orgHierNodeKey(child)}
-                className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "")}
+                className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "") + (role ? " has-role" : "")}
                 onClick={() => onFilterPerson && onFilterPerson(m.name)}
                 title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
               >
@@ -9266,7 +9288,10 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
                 <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: m.color || staffingMemberColor(m.name) }}>
                   {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={11} /> : memberInitials(m.name)}
                 </span>
-                <span className="lp-orghier-panel-row-name">{m.name}</span>
+                <span className="lp-orghier-panel-row-main">
+                  <span className="lp-orghier-panel-row-name">{m.name}</span>
+                  {role && <span className="lp-orghier-panel-row-role">{role}</span>}
+                </span>
                 <span className="lp-orghier-panel-row-stats">
                   <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
                   {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
@@ -9325,7 +9350,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   );
 }
 
-function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
+function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings }) {
   const today = useMemo(() => iso(new Date()), []);
   const teamsCatalogue = useMemo(() => normalizeTeams(ctx.teams), [ctx.teams]);
   const members = ctx.teamMembers || [];
@@ -9352,10 +9377,6 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
     return out;
   }, [teamsCatalogue, members, showUnassigned]);
 
-  if (!members.length) {
-    return <div className="lp-empty">Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.</div>;
-  }
-
   const statsFor = (member) => {
     const name = member.name;
     const active = (ctx.tasks || []).filter((t) => t.assignee === name && !t.milestone && !isTaskDoneGlobal(t, ctx));
@@ -9369,8 +9390,10 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
   // Moteur de rendu (#167, retour de test) : « par groupe » (sections
   // indépendantes, une par équipe) ou « hiérarchique classique » (un seul
   // arbre connecté racine → équipes → personnes).
-  if (widget?.orgChartMode === "hierarchy") {
-    return (
+  const content = !members.length
+    ? <div className="lp-empty">Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.</div>
+    : widget?.orgChartMode === "hierarchy"
+    ? (
       <OrgHierarchyChart
         teams={ctx.teams}
         members={members}
@@ -9379,21 +9402,32 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
         showUnassigned={showUnassigned}
       />
+    )
+    : (
+      <div className="lp-orgchart">
+        {groups.map((g) => (
+          <OrgTeamTree
+            key={g.team ? g.team.id : "__none"}
+            team={g.team}
+            members={g.members}
+            allMembers={members}
+            statsFor={statsFor}
+            onFilterPerson={onFilterPerson}
+          />
+        ))}
+      </div>
     );
-  }
 
   return (
-    <div className="lp-orgchart">
-      {groups.map((g) => (
-        <OrgTeamTree
-          key={g.team ? g.team.id : "__none"}
-          team={g.team}
-          members={g.members}
-          allMembers={members}
-          statsFor={statsFor}
-          onFilterPerson={onFilterPerson}
-        />
-      ))}
+    <div className="lp-widget-orgchart">
+      {onOpenTeamsSettings && (
+        <div className="lp-widget-orgchart-head">
+          <button type="button" className="lp-icon-btn" onClick={onOpenTeamsSettings} title="Réglages → Utilisateurs & Équipes" aria-label="Réglages des utilisateurs et équipes">
+            <Settings size={13} />
+          </button>
+        </div>
+      )}
+      <div className="lp-widget-orgchart-body">{content}</div>
     </div>
   );
 }
