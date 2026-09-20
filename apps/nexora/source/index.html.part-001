@@ -759,7 +759,12 @@ function ProjectSelect({ projects, value, onChange, emptyLabel, allowCurrent }) 
   );
 }
 
-function AssigneeSelect({ members, value, onChange }) {
+// `onCreateMember` (retour de test) : optionnel — quand fourni, un nom tapé
+// qui ne correspond à AUCUN utilisateur existant propose « + Créer ... » en
+// bas de liste, pour ajouter la personne à l'annuaire sans quitter la fiche
+// tâche. Absent (autres appelants), le sélecteur garde son comportement
+// d'origine : rechercher/choisir parmi l'existant, jamais en créer.
+function AssigneeSelect({ members, value, onChange, onCreateMember }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ref = useRef(null);
@@ -771,8 +776,11 @@ function AssigneeSelect({ members, value, onChange }) {
   }, []);
   useEffect(() => { if (open) { setQ(""); setTimeout(() => searchRef.current?.focus(), 0); } }, [open]);
   const sorted = sortedByName(members || []);
-  const filtered = q.trim() ? sorted.filter((u) => u.name.toLowerCase().includes(q.trim().toLowerCase())) : sorted;
+  const trimmedQ = q.trim();
+  const filtered = trimmedQ ? sorted.filter((u) => u.name.toLowerCase().includes(trimmedQ.toLowerCase())) : sorted;
   const current = (members || []).find((u) => u.name === value);
+  const exactMatch = trimmedQ && (members || []).some((u) => u.name.toLowerCase() === trimmedQ.toLowerCase());
+  const showCreate = !!onCreateMember && !!trimmedQ && !exactMatch;
   return (
     <div className="lp-color-select" ref={ref}>
       <button type="button" className="lp-color-select-btn" onClick={() => setOpen((o) => !o)}>
@@ -782,7 +790,7 @@ function AssigneeSelect({ members, value, onChange }) {
       </button>
       {open && (
         <div className="lp-color-select-panel">
-          {(members || []).length > 5 && (
+          {((members || []).length > 5 || onCreateMember) && (
             <input ref={searchRef} type="text" className="lp-select-search" placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} onClick={(e) => e.stopPropagation()} />
           )}
           <button type="button" className={"lp-color-select-option" + (!value ? " active" : "")} onClick={() => { onChange(""); setOpen(false); }}>
@@ -795,7 +803,13 @@ function AssigneeSelect({ members, value, onChange }) {
               {u.name}
             </button>
           ))}
-          {filtered.length === 0 && <div className="lp-select-empty">Aucun résultat</div>}
+          {filtered.length === 0 && !showCreate && <div className="lp-select-empty">Aucun résultat</div>}
+          {showCreate && (
+            <button type="button" className="lp-color-select-option lp-color-select-option-create" onClick={() => { onCreateMember(trimmedQ); setOpen(false); }}>
+              <Plus size={13} />
+              {`Créer « ${trimmedQ} »`}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -4202,6 +4216,10 @@ function GlobalStyles() {
         .lp-color-select-option{ width:100%; display:flex; align-items:center; gap:8px; padding:7px 9px; border:none; background:none; border-radius:7px; font-size:12.5px; cursor:pointer; text-align:left; font-family:inherit; }
         .lp-color-select-option:hover{ background:var(--paper-soft); }
         .lp-color-select-option.active{ background:var(--paper-soft); font-weight:700; }
+        /* Ajout rapide d'utilisateur (retour de test) : distincte des options
+           existantes — couleur d'accent, séparée par un filet au-dessus. */
+        .lp-color-select-option-create{ color:var(--accent); font-weight:600; border-top:1px solid var(--border); margin-top:2px; padding-top:9px; }
+        .lp-color-select-option-create:hover{ background:var(--paper-soft); }
         .lp-field input[type=text], .lp-field input[type=date], .lp-field input[type=number], .lp-field select, .lp-field textarea{ width:100%; border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px 10px; font-size:var(--fs-body); font-family:inherit; background:var(--surface); transition:border-color .12s ease, box-shadow .12s ease; }
         .lp-field input[type=text]:focus, .lp-field input[type=date]:focus, .lp-field input[type=number]:focus, .lp-field textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
         /* Style de base pour TOUT <select> natif de l'app, y compris ceux hors
@@ -11674,7 +11692,13 @@ export default function LePlan({ currentUser, onSignOut }) {
           <>
             {sortedByName(dashboardFolders).map((folder) => {
               const folderDashboards = dashboards.filter((d) => d.folderId === folder.id);
-              const folderCollapsed = !!collapsedDashboardFolders[folder.id];
+              // Replié par défaut (retour de test) — sauf le dossier contenant le
+              // tableau de bord actuellement affiché, même logique que les dossiers
+              // de projets ci-dessus. Un dossier explicitement déplié/replié garde
+              // son choix.
+              const folderCollapsed = collapsedDashboardFolders[folder.id] !== undefined
+                ? collapsedDashboardFolders[folder.id]
+                : !folderDashboards.some((d) => d.id === activeDashboardId);
               return (
                 <div key={folder.id}>
                   <div
@@ -11990,7 +12014,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       </main>
 
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
+        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} setTeamMembers={setTeamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal
