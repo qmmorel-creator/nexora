@@ -1002,7 +1002,12 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
    tâches : un seul qui ne supporte pas une liste réduite à rien fait tomber la
    page entière, et c'est ce qu'il s'agit d'attraper ici. */
 if (benchApp) {
-  const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
+  // #136 : une VRAIE réunion (taskTypeId de type "Réunions"), hier, sans
+  // compte rendu — doit remonter dans le Daily Briefing et porter le champ
+  // dédié dans sa fiche, jamais une tâche dont le titre contient "Réunion".
+  const yesterdayIso = addDaysIso(iso(new Date()), -1);
+  const realMeetingTask = { id: "bench-real-meeting", title: "Point budget hebdo", projectId: seedProjects[0]?.id, statusId: seedStatuses.find((s) => /termin/i.test(s.name))?.id || seedStatuses[0]?.id, taskTypeId: "tt3", start: yesterdayIso, end: yesterdayIso, progress: 100, milestone: false, assignee: "", checklist: [], desc: "Ordre du jour : budget Q3" };
+  const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` })), realMeetingTask];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
     "echeances",
