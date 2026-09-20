@@ -1843,6 +1843,7 @@ const monthLabel = (dateStr) => {
   const dt = new Date(dateStr + "T00:00:00");
   return dt.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
 };
+// === NEXORA:WEEK-UTILS:START ===
 const getMonday = (dateStr) => {
   const dt = new Date(dateStr + "T00:00:00");
   const day = dt.getDay() || 7;
@@ -1856,6 +1857,30 @@ const isoWeek = (dateStr) => {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   return Math.ceil((((d - yearStart) / DAY_MS) + 1) / 7);
 };
+// === NEXORA:WEEK-UTILS:END ===
+// === NEXORA:COMPLETED-PER-WEEK:START ===
+/* #141 : vraie vélocité — tâches TERMINÉES par semaine calendaire
+   (lundi→dimanche, jamais une fenêtre glissante de 7 jours qui découperait
+   le calendrier autrement que le reste de l'app), fondée sur `completedAt`.
+   `tasks` est déjà le lot filtré du widget : respecter son filtre ne
+   demande donc rien de plus ici. */
+function completedPerWeekSeries(tasks, weeksCount, todayIso) {
+  const span = Number.isFinite(weeksCount) && weeksCount > 0 ? Math.floor(weeksCount) : 12;
+  const today = todayIso || iso(new Date());
+  const thisMonday = getMonday(today);
+  const weeks = Array.from({ length: span }, (_, i) => {
+    const monday = addDays(thisMonday, -7 * (span - 1 - i));
+    return { monday, sunday: addDays(monday, 6) };
+  });
+  const counts = weeks.map((w) => (tasks || []).filter((t) => {
+    const d = String(t.completedAt || "").slice(0, 10);
+    return d && d >= w.monday && d <= w.sunday;
+  }).length);
+  const average = counts.length ? counts.reduce((s, v) => s + v, 0) / counts.length : 0;
+  const data = weeks.map((w, i) => ({ label: "S" + isoWeek(w.monday), value: counts[i], weekStart: w.monday }));
+  return { data, average };
+}
+// === NEXORA:COMPLETED-PER-WEEK:END ===
 // Certaines données ont pu être enregistrées sans JSON.stringify (bug de l'outil
 // de saisie rapide iPhone, corrigé depuis) : Firestore accepte alors un tableau/objet
 // natif au lieu d'un texte JSON. On tolère les deux formats pour s'auto-réparer au

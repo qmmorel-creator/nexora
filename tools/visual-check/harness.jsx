@@ -1007,7 +1007,13 @@ if (benchApp) {
   // dédié dans sa fiche, jamais une tâche dont le titre contient "Réunion".
   const yesterdayIso = addDaysIso(iso(new Date()), -1);
   const realMeetingTask = { id: "bench-real-meeting", title: "Point budget hebdo", projectId: seedProjects[0]?.id, statusId: seedStatuses.find((s) => /termin/i.test(s.name))?.id || seedStatuses[0]?.id, taskTypeId: "tt3", start: yesterdayIso, end: yesterdayIso, progress: 100, milestone: false, assignee: "", checklist: [], desc: "Ordre du jour : budget Q3" };
-  const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` })), realMeetingTask];
+  const benchTasks = [
+    // #141 : completedAt réparti sur plusieurs semaines distinctes, sans
+    // muter les objets seedTasks partagés (AnnotationsHarness les réutilise).
+    ...seedTasks.map((t, i) => (i % 3 === 0 ? { ...t, completedAt: addDaysIso(iso(new Date()), -(i % 40)) + "T10:00:00Z" } : t)),
+    ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` })),
+    realMeetingTask,
+  ];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
     "echeances",
@@ -1027,6 +1033,9 @@ if (benchApp) {
     // widgets séparés pour voir les deux bascules sans clic dans le banc.
     { id: "banc-habitHeatmap-year", type: "habitHeatmap", title: "habitHeatmap année", habitHeatmapView: "year", layout: { x: 6, y: 96, w: 6, h: 5 } },
     { id: "banc-habitHeatmap-quarter", type: "habitHeatmap", title: "habitHeatmap 3 mois", habitHeatmapView: "quarter", layout: { x: 0, y: 104, w: 6, h: 6 } },
+    // #141 : style "Terminées par semaine" du widget Graphique, sur des
+    // tâches réellement `completedAt` sur plusieurs semaines distinctes.
+    { id: "banc-chart-completed", type: "chart", title: "chart completedPerWeek", chartStyle: "completedPerWeek", layout: { x: 6, y: 110, w: 4, h: 4 } },
   );
   const benchHabitThemes = [
     { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [

@@ -2307,6 +2307,7 @@ const CHART_STYLES = [
   { key: "barh", label: "Barres horizontales" },
   { key: "gauge", label: "Jauge (%)" },
   { key: "line", label: "Courbe d'évolution" },
+  { key: "completedPerWeek", label: "Terminées par semaine" },
   { key: "stackedBar", label: "Barres empilées" },
 ];
 const GAUGE_METRICS = [
@@ -4268,10 +4269,10 @@ function BarChartSimple({ data, horizontal }) {
   );
 }
 
-function LineChartWidget({ data, width = 320, height = 140 }) {
+function LineChartWidget({ data, width = 320, height = 140, average, legendLabel, unitLabel }) {
   const [hover, setHover] = useState(null); // { p, x, y }
   if (data.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune donnée pour ce filtre.</div>;
-  const max = Math.max(1, ...data.map((d) => d.value));
+  const max = Math.max(1, average || 0, ...data.map((d) => d.value));
   const padX = 8, padY = 14;
   const stepX = data.length > 1 ? (width - padX * 2) / (data.length - 1) : 0;
   const points = data.map((d, i) => {
@@ -4281,11 +4282,18 @@ function LineChartWidget({ data, width = 320, height = 140 }) {
   });
   const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
   const area = `${path} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`;
+  // #141 : moyenne en pointillé — un repère de rythme, jamais une seconde
+  // série de données à part entière (donc pas de points/hover dessus).
+  const averageY = Number.isFinite(average) ? height - padY - (average / max) * (height - padY * 2) : null;
+  const unit = unitLabel || "tâche";
   return (
     <div>
       <div style={{ position: "relative" }}>
         <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
           <path d={area} fill="var(--accent)" opacity="0.12" />
+          {averageY != null && (
+            <line x1={padX} y1={averageY} x2={width - padX} y2={averageY} stroke="var(--text-muted)" strokeWidth="1.5" strokeDasharray="4 3" />
+          )}
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           {points.map((p, i) => (
             <g key={i} onMouseEnter={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseMove={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
@@ -4297,15 +4305,21 @@ function LineChartWidget({ data, width = 320, height = 140 }) {
         </svg>
         {hover && (
           <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
-            {hover.p.d.label} — {hover.p.d.value} tâche{hover.p.d.value > 1 ? "s" : ""}
+            {hover.p.d.label} — {hover.p.d.value} {unit}{hover.p.d.value > 1 ? "s" : ""}
           </WidgetPointerTooltip>
         )}
       </div>
       <div className="lp-widget-legend lp-widget-legend-horizontal">
         <div className="lp-widget-legend-item">
           <span className="lp-widget-legend-dot" style={{ background: "var(--accent)" }} />
-          <span className="lp-widget-legend-label">Nombre de tâches par période</span>
+          <span className="lp-widget-legend-label">{legendLabel || "Nombre de tâches par période"}</span>
         </div>
+        {Number.isFinite(average) && (
+          <div className="lp-widget-legend-item">
+            <span className="lp-widget-legend-dot" style={{ background: "var(--text-muted)" }} />
+            <span className="lp-widget-legend-label">Moyenne — {Math.round(average * 10) / 10}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4391,6 +4405,11 @@ function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx }) 
   if (style === "line") {
     const data = lineGroups.map((g) => ({ label: g.label, value: g.tasks.length }));
     return <LineChartWidget data={data} />;
+  }
+
+  if (style === "completedPerWeek") {
+    const { data, average } = completedPerWeekSeries(tasks, 12);
+    return <LineChartWidget data={data} average={average} legendLabel="Tâches terminées par semaine" unitLabel="terminée" />;
   }
 
   if (style === "stackedBar") {
