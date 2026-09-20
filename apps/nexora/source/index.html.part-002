@@ -11067,6 +11067,17 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
 
 
 
+// #189 : mêmes onglets « Général / Comportement / Statuts & types » que la
+// fiche de tâche (#169) — la fiche de projet mélangeait identité, options
+// d'affichage Métro/Planning et deux longues listes de cases à cocher dans
+// un seul défilement. Onglet « Statuts & types » masqué à la création (les
+// deux listes ne s'affichent que pour un projet existant, comme avant).
+const PROJECT_FORM_TABS = [
+  { key: "main", label: "Général" },
+  { key: "behavior", label: "Comportement" },
+  { key: "catalogs", label: "Statuts & types" },
+];
+
 function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, inheritedFolder, projectDefaultView, defaultColor, onSave, onClose }) {
   const [name, setName] = useState(project?.name || "");
   const [icon, setIcon] = useState(project?.icon || "tabler:route");
@@ -11079,6 +11090,8 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
   const [disabledTaskTypeIds, setDisabledTaskTypeIds] = useState(project?.disabledTaskTypeIds || []);
   const [navigationDefaults, setNavigationDefaults] = useState(project?.navigationDefaults || {});
   const [nameError, setNameError] = useState(false);
+  const [activeTab, setActiveTab] = useState("main");
+  const tabs = project ? PROJECT_FORM_TABS : PROJECT_FORM_TABS.filter((t) => t.key !== "catalogs");
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
@@ -11103,120 +11116,138 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
         <button className="lp-btn lp-btn-primary" onClick={submit}>{project ? "Enregistrer les modifications" : "Ajouter le projet"}</button>
       </>
     }>
-      <NamedField label="Nom" value={name} onChange={(v) => { setName(v); if (nameError && v.trim()) setNameError(false); }} error={nameError} onEnter={submit} placeholder="Ex. Lot 3" autoFocus />
-      <div className="lp-field"><label>Icône</label><IconEditor icon={icon} setIcon={setIcon} /></div>
-      <div className="lp-field"><label>Couleur</label><input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: "100%", height: 36 }} /></div>
-      <div className="lp-field">
-        <label>Icône des jalons <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — sinon le style global s'applique)</span></label>
-        <IconEditor icon={milestoneIcon} setIcon={setMilestoneIcon} />
-      </div>
-      <label className="lp-checkbox-row" style={{ padding: "7px 0" }}>
-        <input type="checkbox" checked={metroTaskIcons} onChange={(e) => setMetroTaskIcons(e.target.checked)} />
-        <span style={{ textTransform: "none", fontWeight: 500 }}>En vue Métro, remplacer le rond de fin de chaque tâche par son icône (ou celle du jalon/du projet à défaut)</span>
-      </label>
-      <div className="lp-field">
-        <label>Priorité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisée par Next Best Action)</span></label>
-        <div className="lp-density-row">
-          <button type="button" className={"lp-density-btn" + (priority === "low" ? " active" : "")} onClick={() => setPriority("low")}>Faible</button>
-          <button type="button" className={"lp-density-btn" + (priority === "normal" ? " active" : "")} onClick={() => setPriority("normal")}>Normale</button>
-          <button type="button" className={"lp-density-btn" + (priority === "high" ? " active" : "")} onClick={() => setPriority("high")}>Prioritaire</button>
-        </div>
-      </div>
-
-      {project && (
-        <div className="lp-field">
-          <label>Statuts disponibles pour ce projet</label>
-          <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
-            Décoche les statuts globaux inutiles pour ce projet. Les statuts protégés restent toujours actifs.
-            Les statuts créés spécifiquement pour ce projet sont toujours affichés ici.
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
-            {(statuses || []).filter((st)=>!st.projectId || st.projectId===project.id).map((st)=>{
-              const protectedStatus=isProtectedStatus(st);
-              const specific=st.projectId===project.id;
-              const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.statusId===st.id).length;
-              const enabled=specific || protectedStatus || !disabledStatusIds.includes(st.id);
-              return (
-                <label key={st.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={specific || protectedStatus}
-                    onChange={(e)=>{
-                      if (e.target.checked) setDisabledStatusIds(prev=>prev.filter(id=>id!==st.id));
-                      else setDisabledStatusIds(prev=>prev.includes(st.id)?prev:[...prev,st.id]);
-                    }}
-                  />
-                  <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
-                    <span className="lp-status-dot" style={{background:st.color,width:10,height:10,flex:"0 0 auto"}}/>
-                    <span className="lp-project-status-row-name">{st.name}</span>
-                    {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
-                    {protectedStatus && <Lock size={11} title="Statut protégé" style={{flex:"0 0 auto"}}/>}
-                    {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
+      {tabs.length > 1 && (
+        <div className="lp-task-tabs">
+          {tabs.map((t) => (
+            <button key={t.key} type="button" className={"lp-task-tab-btn" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
+              {t.label}
+            </button>
+          ))}
         </div>
       )}
 
-      {project && (
-        <div className="lp-field">
-          <label>Types disponibles pour ce projet</label>
-          <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
-            Décoche les types globaux inutiles pour ce projet. Les types verrouillés restent toujours actifs.
-            Les types créés spécifiquement pour ce projet sont toujours affichés ici.
+      {activeTab === "main" && (
+        <>
+          <NamedField label="Nom" value={name} onChange={(v) => { setName(v); if (nameError && v.trim()) setNameError(false); }} error={nameError} onEnter={submit} placeholder="Ex. Lot 3" autoFocus />
+          <div className="lp-field"><label>Icône</label><IconEditor icon={icon} setIcon={setIcon} /></div>
+          <div className="lp-field"><label>Couleur</label><input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: "100%", height: 36 }} /></div>
+          {projectFolders.length > 0 && (
+            <div className="lp-field">
+              <label>Dossier</label>
+              <select value={folderId} onChange={(e) => setFolderId(e.target.value)}>
+                {projectFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="lp-field">
+            <label>Priorité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisée par Next Best Action)</span></label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (priority === "low" ? " active" : "")} onClick={() => setPriority("low")}>Faible</button>
+              <button type="button" className={"lp-density-btn" + (priority === "normal" ? " active" : "")} onClick={() => setPriority("normal")}>Normale</button>
+              <button type="button" className={"lp-density-btn" + (priority === "high" ? " active" : "")} onClick={() => setPriority("high")}>Prioritaire</button>
+            </div>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
-            {(taskTypes || []).filter((tt)=>!tt.projectId || tt.projectId===project.id).map((tt)=>{
-              const lockedType=isLockedTaskType(tt);
-              const specific=tt.projectId===project.id;
-              const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.taskTypeId===tt.id).length;
-              const enabled=specific || lockedType || !disabledTaskTypeIds.includes(tt.id);
-              return (
-                <label key={tt.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={specific || lockedType}
-                    onChange={(e)=>{
-                      if (e.target.checked) setDisabledTaskTypeIds(prev=>prev.filter(id=>id!==tt.id));
-                      else setDisabledTaskTypeIds(prev=>prev.includes(tt.id)?prev:[...prev,tt.id]);
-                    }}
-                  />
-                  <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
-                    <span className="lp-status-dot" style={{background:tt.color,width:10,height:10,flex:"0 0 auto"}}/>
-                    {tt.icon && <IconGlyph icon={tt.icon} size={12}/>}
-                    <span className="lp-project-status-row-name">{tt.name}</span>
-                    {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
-                    {lockedType && <Lock size={11} title="Type verrouillé" style={{flex:"0 0 auto"}}/>}
-                    {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
+        </>
       )}
 
-      {project && (
-        <ProjectNavigationDefaultsEditor
-          value={navigationDefaults}
-          onChange={setNavigationDefaults}
-          ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
-          inheritedLabel={inheritedFolder?.navigationDefaults?.view
-            ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
-            : projectDefaultViewFallbackLabel(projectDefaultView)}
-        />
+      {activeTab === "behavior" && (
+        <>
+          <div className="lp-field">
+            <label>Icône des jalons <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — sinon le style global s'applique)</span></label>
+            <IconEditor icon={milestoneIcon} setIcon={setMilestoneIcon} />
+          </div>
+          <label className="lp-checkbox-row" style={{ padding: "7px 0" }}>
+            <input type="checkbox" checked={metroTaskIcons} onChange={(e) => setMetroTaskIcons(e.target.checked)} />
+            <span style={{ textTransform: "none", fontWeight: 500 }}>En vue Métro, remplacer le rond de fin de chaque tâche par son icône (ou celle du jalon/du projet à défaut)</span>
+          </label>
+          {project && (
+            <ProjectNavigationDefaultsEditor
+              value={navigationDefaults}
+              onChange={setNavigationDefaults}
+              ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
+              inheritedLabel={inheritedFolder?.navigationDefaults?.view
+                ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
+                : projectDefaultViewFallbackLabel(projectDefaultView)}
+            />
+          )}
+        </>
       )}
-      {projectFolders.length > 0 && (
-        <div className="lp-field">
-          <label>Dossier</label>
-          <select value={folderId} onChange={(e) => setFolderId(e.target.value)}>
-            {projectFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-          </select>
-        </div>
+
+      {activeTab === "catalogs" && project && (
+        <>
+          <div className="lp-field">
+            <label>Statuts disponibles pour ce projet</label>
+            <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
+              Décoche les statuts globaux inutiles pour ce projet. Les statuts protégés restent toujours actifs.
+              Les statuts créés spécifiquement pour ce projet sont toujours affichés ici.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
+              {(statuses || []).filter((st)=>!st.projectId || st.projectId===project.id).map((st)=>{
+                const protectedStatus=isProtectedStatus(st);
+                const specific=st.projectId===project.id;
+                const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.statusId===st.id).length;
+                const enabled=specific || protectedStatus || !disabledStatusIds.includes(st.id);
+                return (
+                  <label key={st.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={specific || protectedStatus}
+                      onChange={(e)=>{
+                        if (e.target.checked) setDisabledStatusIds(prev=>prev.filter(id=>id!==st.id));
+                        else setDisabledStatusIds(prev=>prev.includes(st.id)?prev:[...prev,st.id]);
+                      }}
+                    />
+                    <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
+                      <span className="lp-status-dot" style={{background:st.color,width:10,height:10,flex:"0 0 auto"}}/>
+                      <span className="lp-project-status-row-name">{st.name}</span>
+                      {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
+                      {protectedStatus && <Lock size={11} title="Statut protégé" style={{flex:"0 0 auto"}}/>}
+                      {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="lp-field">
+            <label>Types disponibles pour ce projet</label>
+            <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
+              Décoche les types globaux inutiles pour ce projet. Les types verrouillés restent toujours actifs.
+              Les types créés spécifiquement pour ce projet sont toujours affichés ici.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
+              {(taskTypes || []).filter((tt)=>!tt.projectId || tt.projectId===project.id).map((tt)=>{
+                const lockedType=isLockedTaskType(tt);
+                const specific=tt.projectId===project.id;
+                const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.taskTypeId===tt.id).length;
+                const enabled=specific || lockedType || !disabledTaskTypeIds.includes(tt.id);
+                return (
+                  <label key={tt.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={specific || lockedType}
+                      onChange={(e)=>{
+                        if (e.target.checked) setDisabledTaskTypeIds(prev=>prev.filter(id=>id!==tt.id));
+                        else setDisabledTaskTypeIds(prev=>prev.includes(tt.id)?prev:[...prev,tt.id]);
+                      }}
+                    />
+                    <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
+                      <span className="lp-status-dot" style={{background:tt.color,width:10,height:10,flex:"0 0 auto"}}/>
+                      {tt.icon && <IconGlyph icon={tt.icon} size={12}/>}
+                      <span className="lp-project-status-row-name">{tt.name}</span>
+                      {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
+                      {lockedType && <Lock size={11} title="Type verrouillé" style={{flex:"0 0 auto"}}/>}
+                      {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </>
       )}
     </Modal>
   );
