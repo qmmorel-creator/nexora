@@ -106,14 +106,45 @@ test("buildOrgHierarchyTree : un responsable direct prime sur le rattachement d'
   assert.equal(aliceNode.children[0].member.name, "Bob");
 });
 
-test("buildOrgHierarchyTree : multi-équipe sans responsable n'apparaît qu'une fois (première équipe)", () => {
+test("buildOrgHierarchyTree : multi-équipe sans responsable apparaît dans chacune de ses équipes", () => {
   const teams = [team("a"), team("b")];
   const members = [member("Alice", { teamIds: ["a", "b"] })];
   const roots = buildOrgHierarchyTree(teams, members);
   const teamA = roots.find((r) => r.team.id === "a");
   const teamB = roots.find((r) => r.team.id === "b");
+  // Nœud canonique (celui qui pourrait porter des subordonnés) sous la
+  // première équipe qui résout.
   assert.equal(teamA.children.length, 1);
-  assert.equal(teamB.children.length, 0);
+  assert.equal(teamA.children[0].member.name, "Alice");
+  assert.equal(teamA.children[0].roleTeamId, "a");
+  // Ligne « feuille » supplémentaire dans la seconde équipe, sans enfants.
+  assert.equal(teamB.children.length, 1);
+  assert.equal(teamB.children[0].member.name, "Alice");
+  assert.equal(teamB.children[0].children.length, 0);
+  assert.equal(teamB.children[0].roleTeamId, "b");
+});
+
+test("buildOrgHierarchyTree : multi-équipe avec responsable garde une ligne feuille dans ses équipes suivantes", () => {
+  const teams = [team("a"), team("b")];
+  const members = [
+    member("Chef", { teamIds: ["a"] }),
+    member("Alice", { teamIds: ["a", "b"], managerName: "Chef" }),
+  ];
+  const roots = buildOrgHierarchyTree(teams, members);
+  const teamA = roots.find((r) => r.team.id === "a");
+  const teamB = roots.find((r) => r.team.id === "b");
+  // Nœud canonique sous son responsable (équipe "a", sa première équipe,
+  // ne porte donc pas de ligne feuille supplémentaire : le comportement
+  // « responsable direct prime » reste inchangé pour la première équipe).
+  const chefNode = teamA.children.find((c) => c.member?.name === "Chef");
+  assert.equal(chefNode.children.length, 1);
+  assert.equal(chefNode.children[0].member.name, "Alice");
+  assert.equal(teamA.children.length, 1);
+  // Ligne « feuille » dans sa seconde équipe (b), en plus.
+  assert.equal(teamB.children.length, 1);
+  assert.equal(teamB.children[0].member.name, "Alice");
+  assert.equal(teamB.children[0].children.length, 0);
+  assert.equal(teamB.children[0].roleTeamId, "b");
 });
 
 test("buildOrgHierarchyTree : personne sans équipe ni responsable → « Sans équipe »", () => {

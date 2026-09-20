@@ -4001,12 +4001,15 @@ function memberDescendantAndSelfNames(name, teamMembers) {
 // personne avec un responsable direct (managerName) résolvable et sans
 // cycle, qui devient alors l'enfant du NŒUD DE CETTE PERSONNE plutôt que de
 // son équipe, où qu'elle se trouve dans l'arbre. Une personne dans plusieurs
-// équipes (multi-équipe) n'apparaît qu'une fois, sous la PREMIÈRE qui
-// résout — un arbre montre une seule ligne hiérarchique par personne,
-// contrairement à la vue « Par groupe » qui peut se permettre de répéter
-// une carte. Retourne la liste des racines (équipes sans parent, plus
-// « Sans équipe » si non vide) ; chaque nœud est { type:"team", team,
-// children } ou { type:"person", member, children }.
+// équipes (multi-équipe) a une seule ligne hiérarchique « canonique »
+// (celle qui porte ses éventuels subordonnés), placée sous son responsable
+// s'il en a un, sinon sous la PREMIÈRE équipe qui résout. Elle apparaît en
+// plus, sans ses subordonnés, dans CHACUNE de ses autres équipes (#209
+// retour de test), sous forme de ligne « feuille » reprise en liste de
+// roster par le rendu — pour éviter de dupliquer une hiérarchie entière.
+// Retourne la liste des racines (équipes sans parent, plus « Sans équipe »
+// si non vide) ; chaque nœud est { type:"team", team, children } ou
+// { type:"person", member, children }.
 function buildOrgHierarchyTree(teams, members) {
   const catalogue = normalizeTeams(teams);
   const list = members || [];
@@ -4041,6 +4044,13 @@ function buildOrgHierarchyTree(teams, members) {
     // équipe résolue qui porte le poste affiché.
     const teamIds = memberTeamIds(m).filter((id) => teamNodes.has(id));
     node.roleTeamId = teamIds[0] || null;
+    // Équipes portant en plus une ligne « feuille » de cette personne (sans
+    // ses subordonnés, déjà sur le nœud canonique ci-dessus) : toutes ses
+    // équipes sauf la première, que la personne soit sous un responsable ou
+    // sous cette première équipe elle-même (déjà couverte dans les deux cas).
+    teamIds.slice(1).forEach((id) => {
+      teamNodes.get(id).children.push({ type: "person", member: m, children: [], roleTeamId: id });
+    });
     if (safeManager) { safeManager.children.push(node); return; }
     if (teamIds.length) { teamNodes.get(teamIds[0]).children.push(node); return; }
     unassigned.children.push(node);
