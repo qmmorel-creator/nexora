@@ -9080,9 +9080,16 @@ function orgHierPersonCount(node) {
   return node.children.reduce((sum, c) => sum + (c.type === "person" ? 1 : orgHierPersonCount(c)), 0);
 }
 
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation }) {
+function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned }) {
   const horizontal = orientation === "horizontal";
-  const roots = useMemo(() => buildOrgHierarchyTree(teams, members), [teams, members]);
+  const allRoots = useMemo(() => buildOrgHierarchyTree(teams, members), [teams, members]);
+  // « Sans équipe » est toujours la seule racine dont team est null (voir
+  // buildOrgHierarchyTree) — c'est ce qui permet de la retirer ici sans
+  // toucher la fonction pure ni son contrat déjà testé.
+  const roots = useMemo(
+    () => (showUnassigned === false ? allRoots.filter((r) => r.team !== null) : allRoots),
+    [allRoots, showUnassigned]
+  );
   // Une racine visible unique seulement s'il y a plus d'une équipe de premier
   // niveau (ou une « Sans équipe ») à relier — comme la vue « Par groupe »,
   // pas de boîte « Organisation » inutile pour une seule équipe.
@@ -9255,6 +9262,11 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
   const members = ctx.teamMembers || [];
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
 
+  // Réglage « Afficher les ressources sans équipe » (retour de test) : true
+  // par défaut — widgets déjà en place, sans ce champ, gardent leur affichage
+  // actuel.
+  const showUnassigned = widget?.orgChartShowUnassigned !== false;
+
   // Une personne peut être dans plusieurs équipes : elle entre dans CHACUNE des
   // sections correspondantes, et dans « Sans équipe » seulement si aucun de ses
   // identifiants ne résout plus (équipe supprimée depuis).
@@ -9267,9 +9279,9 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
       ids.forEach((id) => byTeam.get(id).members.push(m));
     });
     const out = teamsCatalogue.map((t) => byTeam.get(t.id)).filter((g) => g.members.length);
-    if (unassigned.length) out.push({ team: null, members: unassigned });
+    if (unassigned.length && showUnassigned) out.push({ team: null, members: unassigned });
     return out;
-  }, [teamsCatalogue, members]);
+  }, [teamsCatalogue, members, showUnassigned]);
 
   if (!members.length) {
     return <div className="lp-empty">Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.</div>;
@@ -9296,6 +9308,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson }) {
         statsFor={statsFor}
         onFilterPerson={onFilterPerson}
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
+        showUnassigned={showUnassigned}
       />
     );
   }
@@ -13919,6 +13932,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // vertical (racine en haut) ou horizontal (racine à gauche, défilement
   // horizontal si besoin) — sans effet en mode « Par groupe ».
   const [orgChartOrientation, setOrgChartOrientation] = useState(widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical");
+  // Réglage widget (retour de test) : affiche ou masque les ressources sans
+  // équipe (« Sans équipe » en mode Par groupe, racine à part en mode
+  // hiérarchique) — visible par défaut, comme avant ce réglage.
+  const [orgChartShowUnassigned, setOrgChartShowUnassigned] = useState(widget?.orgChartShowUnassigned !== false);
   // #140 : tri de Domino Effect — reprend le critère de l'ancien widget « Tâches
   // bloquantes » (nombre de tâches bloquées directement) en alternative au tri
   // par défaut (impact total pondéré).
@@ -14134,7 +14151,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; }
+    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; }
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
@@ -14453,6 +14470,11 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                 </div>
               </>
             )}
+            <hr className="lp-divider" style={{ margin: "10px 0" }} />
+            <label className="lp-checkbox-line">
+              <input type="checkbox" checked={orgChartShowUnassigned} onChange={() => setOrgChartShowUnassigned((v) => !v)} />
+              Afficher les ressources sans équipe
+            </label>
           </div>
         )}
         {type === "dominoEffect" && (
