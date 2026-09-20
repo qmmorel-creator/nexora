@@ -10160,6 +10160,23 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false); // feuille "Plus" de la barre de navigation mobile (état d'UI pur, non persisté)
   const sidebarResizing = useRef(false);
+  const sidebarRef = useRef(null);
+  /* Double-clic sur la poignée de redimensionnement : ajuste la largeur au
+     contenu réellement affiché (#179), au lieu d'une largeur fixe qui laisse
+     du vide ou tronque les noms selon les projets/tableaux du moment. Mesure
+     RÉELLE (pas une estimation) : la largeur qu'occuperait le contenu sans
+     troncature, en passant temporairement à `width:max-content` — la mise en
+     page revient à `sidebarWidth` au prochain rendu, React réappliquant le
+     style habituel après ce calcul synchrone. */
+  const fitSidebarWidth = () => {
+    const el = sidebarRef.current;
+    if (!el || sidebarCollapsed) return;
+    const previousWidth = el.style.width;
+    el.style.width = "max-content";
+    const natural = Math.ceil(el.scrollWidth);
+    el.style.width = previousWidth;
+    setSidebarWidth(Math.max(180, Math.min(440, natural + 4)));
+  };
   useEffect(() => {
     function onMove(e) {
       if (!sidebarResizing.current) return;
@@ -11218,7 +11235,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         })}
         {projectFolders.length > 0 && (
           <div className="lp-view-rail-folders" aria-label="Dossiers de projets">
-            {projectFolders.map((folder) => {
+            {sortedByName(projectFolders).map((folder) => {
               const folderProjects = projects.filter((p) => p.folderId === folder.id);
               const folderProjectIds = folderProjects.map((p) => p.id);
               const folderIsActive = folderProjectIds.length > 0 && folderProjectIds.every((id) => activeProjectIds.includes(id)) && activeProjectIds.length === folderProjectIds.length;
@@ -11245,7 +11262,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         {dashboardFolders.length > 0 && (
           <div className="lp-view-rail-folders" aria-label="Dossiers de tableaux de bord">
             <div className="lp-view-rail-folder-group-sep" />
-            {dashboardFolders.map((folder) => {
+            {sortedByName(dashboardFolders).map((folder) => {
               const folderDashboards = dashboards.filter((d) => d.folderId === folder.id);
               const representativeDashboard = folderDashboards.find((d) => d.icon) || folderDashboards[0];
               const folderIcon = folder.icon || representativeDashboard?.icon || "tabler:layout-dashboard";
@@ -11453,7 +11470,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           desktop/tablette le tiroir latéral classique n'a pas besoin d'un
           calque de fermeture au clic. */}
       {!sidebarCollapsed && <div className="lp-sidebar-scrim" onClick={() => setSidebarCollapsed(true)} />}
-      <aside className={"lp-sidebar" + (!sidebarCollapsed ? " lp-sidebar-open" : "")} style={{ width: sidebarCollapsed ? 0 : sidebarWidth, flex: `0 0 ${sidebarCollapsed ? 0 : sidebarWidth}px`, overflow: sidebarCollapsed ? "hidden" : "auto", padding: sidebarCollapsed ? 0 : undefined }}>
+      <aside ref={sidebarRef} className={"lp-sidebar" + (!sidebarCollapsed ? " lp-sidebar-open" : "")} style={{ width: sidebarCollapsed ? 0 : sidebarWidth, flex: `0 0 ${sidebarCollapsed ? 0 : sidebarWidth}px`, overflow: sidebarCollapsed ? "hidden" : "auto", padding: sidebarCollapsed ? 0 : undefined }}>
         <button type="button" className="lp-sidebar-mobile-close" onClick={() => setSidebarCollapsed(true)} aria-label="Fermer le menu" title="Fermer"><X size={18} /></button>
         <div className="lp-logo">
           <img src={NEXORA_LOGO_FULL} alt="Nexora" style={{ width: 140, height: "auto", maxHeight: 32, objectFit: "contain" }} />
@@ -11495,7 +11512,7 @@ export default function LePlan({ currentUser, onSignOut }) {
               Tous les projets
               <span className="lp-project-count">{tasks.length}</span>
             </button>
-            {projectFolders.map((folder) => {
+            {sortedByName(projectFolders).map((folder) => {
               const folderProjects = projects.filter((p) => p.folderId === folder.id);
               // Replié par défaut — sauf le dossier contenant le projet actuellement
               // sélectionné, qui reste visible sans action supplémentaire. Un dossier
@@ -11569,7 +11586,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         </button>
         {sidebarOpen.dashboards && (
           <>
-            {dashboardFolders.map((folder) => {
+            {sortedByName(dashboardFolders).map((folder) => {
               const folderDashboards = dashboards.filter((d) => d.folderId === folder.id);
               const folderCollapsed = !!collapsedDashboardFolders[folder.id];
               return (
@@ -11655,7 +11672,8 @@ export default function LePlan({ currentUser, onSignOut }) {
       <div
         className={"lp-sidebar-resize-wrap" + (sidebarCollapsed ? " lp-sidebar-resize-wrap-collapsed" : "")}
         onMouseDown={sidebarCollapsed ? undefined : startSidebarResize}
-        title={sidebarCollapsed ? undefined : "Glisser pour redimensionner"}
+        onDoubleClick={sidebarCollapsed ? undefined : fitSidebarWidth}
+        title={sidebarCollapsed ? undefined : "Glisser pour redimensionner · double-clic pour ajuster au contenu"}
       >
         <button
           className="lp-sidebar-collapse-btn"

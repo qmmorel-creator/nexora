@@ -5720,13 +5720,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
      comme sur les niveaux manuels, et les boutons − / Auto / + la relâchent. */
   const pinnedWindow = miniGanttPinnedWindow(widget);
 
+  /* Navigation dans le temps À NIVEAU DE ZOOM CONSTANT (retour de test #180) :
+     un décalage en jours, appliqué au centre de la fenêtre manuelle, que les
+     flèches ← / → font glisser d'un tiers de fenêtre à chaque clic — assez
+     pour avancer franchement, assez peu pour ne rien perdre entre deux clics.
+     Sans effet en zoom automatique (qui se recale toujours sur les tâches) ou
+     sur une fenêtre épinglée (dates fixes) : glisser une fenêtre de contenu
+     figée n'aurait pas de sens. */
+  const panOffset = (zoomIsAuto || pinnedWindow) ? 0 : (Number(widget.miniGanttPanOffset) || 0);
+
   /* Le zoom manuel était CENTRÉ SUR AUJOURD'HUI, sans borne : à un niveau
      large, il réservait la moitié de la piste à des années vides pendant qu'il
      coupait les tâches les plus anciennes (retour de test). La fenêtre est
      désormais ramenée dans les bornes utiles — on la fait GLISSER, pas rétrécir,
      pour ne pas trahir le zoom demandé. */
   const manualWindow = miniGanttClampWindow(
-    { minIdx: autoCenter - Math.floor(manualSpan / 2), maxIdx: autoCenter - Math.floor(manualSpan / 2) + manualSpan },
+    { minIdx: autoCenter + panOffset - Math.floor(manualSpan / 2), maxIdx: autoCenter + panOffset - Math.floor(manualSpan / 2) + manualSpan },
     { minIdx: usefulMinIdx, maxIdx: usefulMaxIdx }
   );
 
@@ -5738,14 +5747,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
 
   const setZoomLevel = (next) => {
     if (!onUpdateWidget) return;
-    // Poser un niveau de zoom relâche toujours la fenêtre épinglée : sinon les
-    // boutons − / Auto / + resteraient sans effet visible.
-    if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null});
-    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-MINIGANTT_ZOOM_MAX,MINIGANTT_ZOOM_MAX), miniGanttWindow:null});
+    // Poser un niveau de zoom relâche toujours la fenêtre épinglée ET remet la
+    // navigation à zéro : sinon les boutons − / Auto / + resteraient sans
+    // effet visible, ou repartiraient d'un décalage temporel qui n'aurait
+    // plus de sens au nouveau niveau.
+    if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null, miniGanttPanOffset:null});
+    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-MINIGANTT_ZOOM_MAX,MINIGANTT_ZOOM_MAX), miniGanttWindow:null, miniGanttPanOffset:null});
   };
   const zoomIn = () => setZoomLevel(zoomIsAuto ? 1 : zoomLevel + 1);
   const zoomOut = () => setZoomLevel(zoomIsAuto ? -1 : zoomLevel - 1);
   const resetZoom = () => setZoomLevel(null);
+  // Un tiers de fenêtre par clic : assez pour avancer franchement, assez peu
+  // pour garder un recouvrement et ne pas perdre le fil visuel entre deux clics.
+  const panStep = Math.max(1, Math.round(manualSpan / 3));
+  const canPan = !zoomIsAuto && !pinnedWindow;
+  const panBack = () => onUpdateWidget && onUpdateWidget({ miniGanttPanOffset: panOffset - panStep });
+  const panForward = () => onUpdateWidget && onUpdateWidget({ miniGanttPanOffset: panOffset + panStep });
 
   // dayIndex() est relatif au 01/01/2020 : il ne faut surtout pas
   // reconvertir cet index comme un timestamp Unix, sinon l'axe part vers 1970.
@@ -7024,6 +7041,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=MINIGANTT_ZOOM_MAX} title="Zoom avant">+</button>
         {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
       </div>
+      {canPan && (
+        <div className="lp-widget-minigantt-zoom" role="group" aria-label="Naviguer dans le temps, à ce niveau de zoom">
+          <button type="button" onClick={panBack} disabled={minIdx<=usefulMinIdx} title="Reculer dans le temps"><ChevronLeft size={13} /></button>
+          <button type="button" onClick={panForward} disabled={maxIdx>=usefulMaxIdx} title="Avancer dans le temps"><ChevronRight size={13} /></button>
+        </div>
+      )}
       {editable && (
         <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons">
           <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
