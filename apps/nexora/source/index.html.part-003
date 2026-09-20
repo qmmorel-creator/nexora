@@ -3255,6 +3255,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   // l'impression — `afterprint` se déclenche aussi bien après une impression
   // réelle qu'après un « Annuler » de la boîte de dialogue.
   const [printWidgetId, setPrintWidgetId] = useState(null);
+  // Jour affiché par le(s) widget(s) Quick Habit de cette page — partagé avec
+  // les widgets Heatmap habitudes (mensuel/annuel) de la même page pour y
+  // encadrer le même jour, sans lien s'il n'y a aucun Quick Habit ici.
+  const [habitQuickSelectedDate, setHabitQuickSelectedDate] = useState(iso(new Date()));
   useEffect(() => {
     if (!printWidgetId) return;
     const id = requestAnimationFrame(() => window.print());
@@ -3322,6 +3326,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
   );
 
   const updateWidget = (id, patch) => setWidgets((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+  const hasHabitQuickWidget = useMemo(() => widgets.some((w) => w.type === "habitQuick"), [widgets]);
 
   const computeResizedLayout = (layout, corner, rawDx, rawDy) => {
     const cellUnit = cellW + DASHBOARD_GAP;
@@ -4085,10 +4090,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   />
                 )}
                 {w.type === "habitQuick" && (
-                  <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} />
+                  <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} viewDate={habitQuickSelectedDate} setViewDate={setHabitQuickSelectedDate} />
                 )}
                 {w.type === "habitHeatmap" && (
-                  <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                  <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
                 )}
                 {w.type === "echeances" && !showEmptyFunnel && (
                   <WidgetEcheances
@@ -10437,10 +10442,15 @@ function HabitQuickDayModal({ date, themes, habitLog, setHabitLog, onClose }) {
   );
 }
 
-function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog }) {
+function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog, viewDate: viewDateProp, setViewDate: setViewDateProp }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes), [ctx.habitThemes]);
   const todayIso = iso(new Date());
-  const [viewDate, setViewDate] = useState(todayIso);
+  // Contrôlé par DashboardView (partagé avec la Heatmap de la même page) quand
+  // ces props sont fournies ; sinon repli sur un état local — même logique
+  // que les widgets pilotés/autonomes déjà présents ailleurs dans le fichier.
+  const [viewDateLocal, setViewDateLocal] = useState(todayIso);
+  const viewDate = viewDateProp !== undefined ? viewDateProp : viewDateLocal;
+  const setViewDate = setViewDateProp || setViewDateLocal;
 
   const checkedIds = useMemo(() => new Set(habitLogHabitIdsForDate(habitLog, viewDate)), [habitLog, viewDate]);
   const totalChecked = themes.reduce((sum, t) => sum + t.habits.filter((h) => checkedIds.has(h.id)).length, 0);
@@ -10500,13 +10510,14 @@ function habitEmptyCellBg(day) {
   return day.isWeekend ? "rgba(16,21,31,0.08)" : "var(--paper-soft)";
 }
 
-function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget }) {
+function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget, selectedDate }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes), [ctx.habitThemes]);
   const themeId = themes.some((t) => t.id === widget?.habitHeatmapThemeId) ? widget.habitHeatmapThemeId : (themes[0]?.id || "");
   const theme = habitThemeById(themes, themeId);
   const view = HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month";
   const [monthOffset, setMonthOffset] = useState(0);
   const [quickDayModal, setQuickDayModal] = useState(null); // iso date | null
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
   const setThemeId = (id) => onUpdateWidget && onUpdateWidget({ habitHeatmapThemeId: id });
   const setView = (v) => onUpdateWidget && onUpdateWidget({ habitHeatmapView: v });
@@ -10546,18 +10557,34 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   return (
     <div className="lp-widget-habit-heatmap">
       <div className="lp-widget-habit-heatmap-head">
-        <span className="lp-widget-habit-heatmap-title">Habitudes — Heatmap</span>
-        <div className="lp-widget-habit-heatmap-controls">
-          <div className="lp-widget-habit-heatmap-toggle">
-            <button type="button" className={view === "month" ? "active" : ""} onClick={() => setView("month")}>Mensuel</button>
-            <button type="button" className={view === "quarter" ? "active" : ""} onClick={() => setView("quarter")}>3 mois</button>
-            <button type="button" className={view === "year" ? "active" : ""} onClick={() => setView("year")}>Annuel</button>
-          </div>
-          <select className="lp-widget-habit-heatmap-theme-select" value={themeId} onChange={(e) => setThemeId(e.target.value)} aria-label="Thème affiché">
+        <div className="lp-widget-habit-heatmap-toggle">
+          <button type="button" className={view === "month" ? "active" : ""} onClick={() => setView("month")}>Mensuel</button>
+          <button type="button" className={view === "quarter" ? "active" : ""} onClick={() => setView("quarter")}>3 mois</button>
+          <button type="button" className={view === "year" ? "active" : ""} onClick={() => setView("year")}>Annuel</button>
+        </div>
+        <button
+          type="button"
+          className={"lp-icon-btn" + (themeMenuOpen ? " active" : "")}
+          onClick={() => setThemeMenuOpen((o) => !o)}
+          title={`Thème affiché : ${theme?.name || "—"}`}
+          aria-label="Choisir le thème affiché"
+        >
+          <SlidersHorizontal size={13} />
+        </button>
+      </div>
+      {themeMenuOpen && (
+        <div className="lp-widget-habit-heatmap-themepop">
+          <select
+            className="lp-widget-habit-heatmap-theme-select"
+            value={themeId}
+            onChange={(e) => { setThemeId(e.target.value); setThemeMenuOpen(false); }}
+            aria-label="Thème affiché"
+            autoFocus
+          >
             {themes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
-      </div>
+      )}
 
       {(view === "month" || view === "quarter") && (
         <div className="lp-widget-habit-heatmap-monthnav">
@@ -10579,7 +10606,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
             {monthDays.map((day) => (
               <div
                 key={day.date}
-                className={"lp-widget-habit-heatmap-cell" + (!day.inMonth ? " out" : "") + (day.isToday ? " today" : "") + (day.isFuture ? " future" : "")}
+                className={"lp-widget-habit-heatmap-cell" + (!day.inMonth ? " out" : "") + (day.isToday ? " today" : "") + (day.isFuture ? " future" : "") + (day.date === selectedDate ? " selected" : "")}
                 style={{ background: habitEmptyCellBg(day) }}
                 title={day.date}
                 onDoubleClick={() => openDay(day.date)}
@@ -10632,7 +10659,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
                 {weeksHalf.map((w, wi) => w.days.map((day, di) => (
                   <div
                     key={day.date + "-" + di}
-                    className="lp-widget-habit-heatmap-year-day"
+                    className={"lp-widget-habit-heatmap-year-day" + (day.inYear && day.date === selectedDate ? " selected" : "")}
                     style={{
                       gridColumn: wi + 1,
                       gridRow: di + 2,
