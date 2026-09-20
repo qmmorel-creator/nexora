@@ -58,6 +58,56 @@ test('taskBaselines accepts its very first write on an untouched account',async(
  assert.deepEqual((await r.readResource({resource:'taskBaselines',offset:0,limit:50})).value,{a:{start:'2026-03-01',end:'2026-03-10',capturedAt:'2026-03-01'}});
 });
 
+/* Habit Tracker (#193) — log_habit/get_habit_log reproduisent côté serveur
+   toggleHabitLogEntry/setHabitLogValue du front, pour que le MCP et l'interface
+   restent d'accord sur l'état d'une case. */
+function habitThemesFixture(){
+ return [
+  {id:'job',name:'Job',selectionMode:'single',habits:[{id:'bureau',name:'Bureau',kind:'check'},{id:'teletravail',name:'Télétravail',kind:'check'}]},
+  {id:'sport',name:'Sport',selectionMode:'multi',habits:[{id:'crossfit',name:'Crossfit',kind:'check'},{id:'eau',name:'Verres d\'eau',kind:'numeric',min:0,max:8}]},
+ ];
+}
+function habitFixtureDb(){
+ const {db,data}=fakeDb();
+ data.set('users/u/kv_store/nexora:habitThemes',{value:JSON.stringify(habitThemesFixture()),revision:'initial',storageMode:'inline'});
+ data.set('users/u/kv_store/nexora:habitLog',{value:JSON.stringify([]),revision:'initial',storageMode:'inline'});
+ return {db,data};
+}
+test('log_habit toggles a check habit, and a single theme excludes its siblings',async()=>{
+ const {db}=habitFixtureDb(),r=repository(db,'u');
+ const on=await r.logHabit({habitId:'bureau',date:'2026-09-20',idempotencyKey:'h1'});
+ assert.equal(on.checked,true);assert.equal(on.entry.habitId,'bureau');
+ // Cocher Télétravail le même jour doit décocher Bureau (thème single).
+ const switched=await r.logHabit({habitId:'teletravail',date:'2026-09-20',idempotencyKey:'h2'});
+ assert.equal(switched.checked,true);
+ const day=(await r.habitLog({dateFrom:'2026-09-20',dateTo:'2026-09-20'})).entries;
+ assert.deepEqual(day.map(e=>e.habitId),['teletravail']);
+ // Bascule par nom : recoche Bureau (retire Télétravail), toggle sans value.
+ await r.logHabit({habitName:'Bureau',date:'2026-09-20',idempotencyKey:'h3'});
+ assert.deepEqual((await r.habitLog({dateFrom:'2026-09-20',dateTo:'2026-09-20'})).entries.map(e=>e.habitId),['bureau']);
+ // value=false décoche explicitement, sans rien recocher.
+ await r.logHabit({habitId:'bureau',date:'2026-09-20',value:false,idempotencyKey:'h4'});
+ assert.deepEqual((await r.habitLog({dateFrom:'2026-09-20',dateTo:'2026-09-20'})).entries,[]);
+});
+test('log_habit keeps multi-theme habits independent and clamps numeric values',async()=>{
+ const {db}=habitFixtureDb(),r=repository(db,'u');
+ await r.logHabit({habitId:'crossfit',date:'2026-09-21',idempotencyKey:'m1'});
+ const over=await r.logHabit({habitId:'eau',date:'2026-09-21',value:20,idempotencyKey:'m2'});
+ assert.equal(over.entry.value,8); // bornée à max=8
+ const entries=(await r.habitLog({dateFrom:'2026-09-21',dateTo:'2026-09-21'})).entries;
+ assert.deepEqual(entries.map(e=>e.habitId).sort(),['crossfit','eau']); // pas d'exclusion entre habitudes du thème multi
+ const cleared=await r.logHabit({habitId:'eau',date:'2026-09-21',value:null,idempotencyKey:'m3'});
+ assert.equal(cleared.checked,false);
+ await assert.rejects(()=>r.logHabit({habitId:'eau',date:'2026-09-21',idempotencyKey:'m4'}),/value required/);
+ await assert.rejects(()=>r.logHabit({habitId:'crossfit',date:'2026-09-21',value:3,idempotencyKey:'m5'}),/value must be a boolean/);
+});
+test('log_habit resolves by name and rejects ambiguous or unknown habits',async()=>{
+ const {db}=habitFixtureDb(),r=repository(db,'u');
+ await assert.rejects(()=>r.logHabit({habitName:'Inconnue',idempotencyKey:'x1'}),/not found/);
+ await assert.rejects(()=>r.logHabit({habitId:'nope',idempotencyKey:'x2'}),/Unknown habitId/);
+ const resolved=await r.logHabit({habitName:'crossfit',themeName:'Sport',date:'2026-09-22',idempotencyKey:'x3'});
+ assert.equal(resolved.habit.themeId,'sport');
+});
 test('taskBaselines refuses any other action, and any malformed entry',async()=>{
  const {db}=fakeDb();const r=repository(db,'u');
  const rev=async()=>(await r.readResource({resource:'taskBaselines',offset:0,limit:50})).revision;

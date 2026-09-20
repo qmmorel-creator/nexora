@@ -2,8 +2,13 @@ import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {calendarConfig,planCalendarImport} from './calendar.mts';
 
-export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState'] as const;
-const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState']);
+export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState','habitThemes','habitLog'] as const;
+/* habitLog est en lecture seule ici : les règles métier du journal (exclusivité
+   des thèmes « single », bornage [min,max] des habitudes « numeric », voir
+   toggleHabitLogEntry/setHabitLogValue côté front #193) ne sont pas connues
+   d'une fusion générique par id — seul log_habit les applique. habitThemes,
+   catalogue simple, reste en écriture générique comme les autres catalogues. */
+const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState','habitLog']);
 /* Écriture AUTORISÉE mais bornée : seul replace_settings est accepté, et chaque
    entrée est validée avant fusion. taskBaselines porte le plan initial du widget
    Time Machine — une entrée fausse y reste invisible jusqu'au jour où l'on
@@ -31,6 +36,71 @@ export function validateTaskBaselines(changes) {
   out[taskId]={start:entry.start,end:entry.end,capturedAt:entry.capturedAt};
  }
  return out;
+}
+// --- Habit Tracker (#193) : mêmes règles que le bloc NEXORA:HABITS du front,
+// reproduites ici pour que log_habit les applique côté serveur (single =
+// exclusivité radio entre habitudes sœurs, numeric = valeur bornée [min,max]).
+function normalizeHabitKind(v) {return ['check','numeric'].includes(v)?v:'check';}
+export function normalizeHabits(list) {
+ const out=[],seen=new Set();
+ (Array.isArray(list)?list:[]).forEach(raw=>{
+  if(!raw||typeof raw!=='object')return;
+  const name=String(raw.name||'').trim();if(!name)return;
+  const id=String(raw.id||'').trim()||name;if(seen.has(id))return;seen.add(id);
+  const kind=normalizeHabitKind(raw.kind),min=Number.isFinite(raw.min)?raw.min:0,max=Number.isFinite(raw.max)&&raw.max>min?raw.max:min+10;
+  out.push({id,name,color:String(raw.color||'').trim()||'#2C6BE0',kind,min,max});
+ });
+ return out;
+}
+export function normalizeHabitThemes(list) {
+ const out=[],seen=new Set();
+ (Array.isArray(list)?list:[]).forEach(raw=>{
+  if(!raw||typeof raw!=='object')return;
+  const name=String(raw.name||'').trim();if(!name)return;
+  const id=String(raw.id||'').trim()||name;if(seen.has(id))return;seen.add(id);
+  out.push({id,name,color:String(raw.color||'').trim()||'#7A8290',selectionMode:['single','multi'].includes(raw.selectionMode)?raw.selectionMode:'single',habits:normalizeHabits(raw.habits)});
+ });
+ return out;
+}
+function habitById(themes,habitId) {
+ for(const theme of normalizeHabitThemes(themes)){const habit=theme.habits.find(h=>h.id===habitId);if(habit)return {habit,theme};}
+ return null;
+}
+// Résout une habitude par ID (prioritaire) ou par nom, insensible à la casse et
+// aux accents (comme normalize()) ; themeId/themeName lève l'ambiguïté quand
+// deux thèmes ont une habitude du même nom.
+function findHabit(themes,{habitId,habitName,themeId,themeName}) {
+ const catalogue=normalizeHabitThemes(themes);
+ if(habitId){const found=habitById(catalogue,habitId);if(!found)throw new Error('Unknown habitId');return found;}
+ if(!habitName)throw new Error('habitId or habitName required');
+ let pool=catalogue;
+ if(themeId||themeName){
+  const theme=themeId?catalogue.find(t=>t.id===themeId):catalogue.find(t=>normalize(t.name)===normalize(themeName));
+  if(!theme)throw new Error('Unknown theme');
+  pool=[theme];
+ }
+ const matches=[];
+ for(const theme of pool)for(const habit of theme.habits)if(normalize(habit.name)===normalize(habitName))matches.push({habit,theme});
+ if(!matches.length)throw new Error('Habit not found; use list_resources/read_resource on habitThemes for exact names');
+ if(matches.length>1)throw new Error('Ambiguous habit name across themes; specify themeId or themeName');
+ return matches[0];
+}
+function habitLogCellId(habitId,date) {return String(habitId||'').trim()+'|'+String(date||'').trim();}
+const HABIT_LOG_ISO_RE=/^\d{4}-\d{2}-\d{2}$/;
+// Identifiant DÉRIVÉ (habitId|date) : deux écritures concurrentes sur la même
+// case fusionnent au lieu de dupliquer, comme staffingCellId.
+function normalizeHabitLog(list,knownHabitIds) {
+ const known=Array.isArray(knownHabitIds)?new Set(knownHabitIds.map(String)):null,byId=new Map();
+ (Array.isArray(list)?list:[]).forEach(entry=>{
+  if(!entry||typeof entry!=='object')return;
+  const habitId=String(entry.habitId||'').trim(),date=String(entry.date||'').trim();
+  if(!habitId||!HABIT_LOG_ISO_RE.test(date))return;
+  if(known&&!known.has(habitId))return;
+  const id=habitLogCellId(habitId,date),out={id,habitId,date};
+  if(Number.isFinite(entry.value))out.value=entry.value;
+  byId.set(id,out);
+ });
+ return [...byId.values()].sort((a,b)=>a.date===b.date?a.habitId.localeCompare(b.habitId):a.date.localeCompare(b.date));
 }
 export function fingerprint(v) { return createHash('sha256').update(JSON.stringify(v)).digest('hex'); }
 export function normalize(v) {return String(v??'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();}
@@ -153,6 +223,43 @@ export function repository(db,uid){
     value=value.filter((_,i)=>i!==idx);
    }else value=value.map((x,i)=>i===idx?{...x,...args.changes,id:x.id}:x);}
   }const revision=write(tx,d,value);const entity=Array.isArray(value)?(args.action==='create'?value[value.length-1]:value.find(x=>x.id===args.id)):null;return {ok:true,resource:args.resource,revision,action:args.action,...(entity?{entity:clean(entity)}:{})};});}
+ async function logHabit(args){return atomic('log_habit',args.idempotencyKey,args,async tx=>{
+  const themesDoc=await read('habitThemes',tx),logDoc=await read('habitLog',tx);
+  const themes=normalizeHabitThemes(themesDoc.value),found=findHabit(themes,args);
+  const known=themes.flatMap(t=>t.habits.map(h=>h.id)),date=args.date||parisDate();
+  const current=normalizeHabitLog(logDoc.value,known),id=habitLogCellId(found.habit.id,date);
+  let next=current.filter(e=>e.id!==id);
+  if(found.habit.kind==='numeric'){
+   if(args.value===undefined)throw new Error('value required for a numeric habit (a number, or null to clear)');
+   if(typeof args.value==='boolean')throw new Error('value must be a number or null for a numeric habit');
+   if(args.value!==null){
+    const num=Number(args.value);if(!Number.isFinite(num))throw new Error('value must be a finite number');
+    next.push({id,habitId:found.habit.id,date,value:Math.max(found.habit.min,Math.min(found.habit.max,num))});
+   }
+  } else {
+   if(typeof args.value==='number')throw new Error('value must be a boolean, null, or omitted (toggle) for a check habit');
+   const already=current.some(e=>e.id===id);
+   const nextState=args.value===undefined?!already:args.value===null?false:args.value;
+   if(nextState){
+    if(found.theme.selectionMode==='single'){const siblingIds=new Set(found.theme.habits.map(h=>h.id));next=next.filter(e=>!(e.date===date&&siblingIds.has(e.habitId)));}
+    next.push({id,habitId:found.habit.id,date});
+   }
+  }
+  const normalized=normalizeHabitLog(next,known);write(tx,logDoc,normalized);
+  const entry=normalized.find(e=>e.id===id)||null;
+  return {ok:true,date,habit:{id:found.habit.id,name:found.habit.name,kind:found.habit.kind,themeId:found.theme.id,themeName:found.theme.name,selectionMode:found.theme.selectionMode},entry,checked:!!entry};
+ });}
+ async function habitLog(args){
+  const [themesDoc,logDoc]=await Promise.all([read('habitThemes'),read('habitLog')]);
+  const themes=normalizeHabitThemes(themesDoc.value),known=themes.flatMap(t=>t.habits.map(h=>h.id));
+  let entries=normalizeHabitLog(logDoc.value,known);
+  if(args.dateFrom)entries=entries.filter(e=>e.date>=args.dateFrom);
+  if(args.dateTo)entries=entries.filter(e=>e.date<=args.dateTo);
+  if(args.habitId)entries=entries.filter(e=>e.habitId===args.habitId);
+  if(args.themeId){const theme=themes.find(t=>t.id===args.themeId);if(!theme)throw new Error('Unknown themeId');const ids=new Set(theme.habits.map(h=>h.id));entries=entries.filter(e=>ids.has(e.habitId));}
+  const items=entries.map(e=>{const found=habitById(themes,e.habitId);return {...e,habitName:found?.habit.name??null,themeId:found?.theme.id??null,themeName:found?.theme.name??null};});
+  return {ok:true,revision:logDoc.revision,count:items.length,entries:items};
+ }
  async function googleCalendarConfig(){const d=await snapshot(['gcalSettings','projects']);return {ok:true,...calendarConfig(d.gcalSettings.value,d.projects.value)};}
  async function importGoogleCalendar(args){return atomic('import_google_calendar_events',args.idempotencyKey,args,async tx=>{
   const names=['tasks','taskArchive','projects','statuses','taskTypes','gcalSettings'];
@@ -162,5 +269,5 @@ export function repository(db,uid){
   if(plan.results.some(x=>x.action==='cancelled'))write(tx,d.taskArchive,plan.archive);
   return {ok:true,calendarId:args.calendarId,mode:'readonly-upsert',results:plan.results,counts:plan.results.reduce((out,x)=>(out[x.action]=(out[x.action]||0)+1,out),{}),coverage:'Batch only; missing events are never deleted. Read back each returned task ID.'};
  });}
- return {read,snapshot,catalogs,list,get,createTask,mutateTask,readResource,mutateResource,taskSnapshot,selected,enrich,googleCalendarConfig,importGoogleCalendar};
+ return {read,snapshot,catalogs,list,get,createTask,mutateTask,readResource,mutateResource,taskSnapshot,selected,enrich,googleCalendarConfig,importGoogleCalendar,logHabit,habitLog};
 }
