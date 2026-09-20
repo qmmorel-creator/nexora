@@ -9405,7 +9405,20 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
 
 function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings }) {
   const today = useMemo(() => iso(new Date()), []);
-  const teamsCatalogue = useMemo(() => normalizeTeams(ctx.teams), [ctx.teams]);
+  // Équipes affichées (#209, retour de test) : widget.orgChartHiddenTeamIds
+  // liste celles MASQUÉES — absent/vide = toutes affichées, comme avant ce
+  // réglage. Une équipe masquée disparaît du catalogue vu par les deux modes
+  // de rendu ; ses membres, s'ils n'appartiennent à aucune autre équipe
+  // visible, rejoignent « Sans équipe » — même sort qu'une équipe supprimée
+  // (voir TeamCatalogManager). normalizeTeams gère déjà une équipe dont le
+  // parent a disparu (elle remonte au premier niveau), donc filtrer ici
+  // suffit sans dupliquer cette logique.
+  const hiddenTeamIds = widget?.orgChartHiddenTeamIds;
+  const rawVisibleTeams = useMemo(
+    () => (hiddenTeamIds && hiddenTeamIds.length ? (ctx.teams || []).filter((t) => !hiddenTeamIds.includes(String(t?.id))) : ctx.teams),
+    [ctx.teams, hiddenTeamIds]
+  );
+  const teamsCatalogue = useMemo(() => normalizeTeams(rawVisibleTeams), [rawVisibleTeams]);
   const members = ctx.teamMembers || [];
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
 
@@ -9416,7 +9429,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
 
   // Une personne peut être dans plusieurs équipes : elle entre dans CHACUNE des
   // sections correspondantes, et dans « Sans équipe » seulement si aucun de ses
-  // identifiants ne résout plus (équipe supprimée depuis).
+  // identifiants ne résout plus (équipe supprimée depuis, ou masquée).
   const groups = useMemo(() => {
     const byTeam = new Map(teamsCatalogue.map((t) => [t.id, { team: t, members: [] }]));
     const unassigned = [];
@@ -9448,7 +9461,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     : widget?.orgChartMode === "hierarchy"
     ? (
       <OrgHierarchyChart
-        teams={ctx.teams}
+        teams={rawVisibleTeams}
         members={members}
         statsFor={statsFor}
         onFilterPerson={onFilterPerson}
@@ -14124,6 +14137,19 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // équipe (« Sans équipe » en mode Par groupe, racine à part en mode
   // hiérarchique) — visible par défaut, comme avant ce réglage.
   const [orgChartShowUnassigned, setOrgChartShowUnassigned] = useState(widget?.orgChartShowUnassigned !== false);
+  // Équipes affichées (#209, retour de test) : stocké comme une liste
+  // d'équipes MASQUÉES (widget.orgChartHiddenTeamIds) — un tableau vide veut
+  // dire « aucune masquée » par défaut, sans avoir à connaître le catalogue
+  // au moment où le widget est créé. Le réglage manipule l'inverse (équipes
+  // COCHÉES = affichées), plus lisible pour Tous/Aucun.
+  const [orgChartHiddenTeamIds, setOrgChartHiddenTeamIds] = useState(
+    Array.isArray(widget?.orgChartHiddenTeamIds) ? widget.orgChartHiddenTeamIds : []
+  );
+  const orgChartTeamOptions = useMemo(
+    () => normalizeTeams(ctx.teams).map((t) => ({ id: t.id, name: t.name, color: t.color })),
+    [ctx.teams]
+  );
+  const orgChartVisibleTeamIds = orgChartTeamOptions.map((t) => t.id).filter((id) => !orgChartHiddenTeamIds.includes(id));
   // Vue de la Heatmap habitudes (retour de test) : déplacée ici depuis le
   // corps du widget, qui n'a plus que la case et sa légende à afficher.
   const [habitHeatmapView, setHabitHeatmapView] = useState(HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month");
@@ -14342,7 +14368,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; }
+    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -14667,6 +14693,19 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <input type="checkbox" checked={orgChartShowUnassigned} onChange={() => setOrgChartShowUnassigned((v) => !v)} />
               Afficher les ressources sans équipe
             </label>
+            {orgChartTeamOptions.length > 0 && (
+              <div className="lp-field" style={{ marginTop: 10 }}>
+                <label>Équipes affichées</label>
+                <EntityFilterMultiSelect
+                  options={orgChartTeamOptions}
+                  selectedIds={orgChartVisibleTeamIds}
+                  onToggle={(id) => setOrgChartHiddenTeamIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+                  onSelectAll={() => setOrgChartHiddenTeamIds([])}
+                  onDeselectAll={() => setOrgChartHiddenTeamIds(orgChartTeamOptions.map((t) => t.id))}
+                  emptyLabel="Aucune équipe affichée"
+                />
+              </div>
+            )}
           </div>
         )}
         {type === "habitHeatmap" && (
