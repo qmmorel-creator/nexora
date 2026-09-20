@@ -5,7 +5,7 @@ Site Netlify : 2c0b2293-8b71-471b-8288-21f641256aa2.
 
 ## Capacités
 
-18 outils : list_projects, list_tasks, list_meetings, get_task, get_summary, get_health, get_activity, list_resources, read_resource, create_task, update_task, complete_task, archive_task, restore_task, delete_task, add_attachment, save_meeting_report, mutate_resource.
+20 outils : list_projects, list_tasks, list_meetings, get_task, get_summary, get_health, get_activity, list_resources, read_resource, get_habit_log, create_task, update_task, complete_task, archive_task, restore_task, delete_task, add_attachment, save_meeting_report, mutate_resource, log_habit.
 
 Les tâches et réunions sont accessibles avec descriptions complètes, checklists, pièces jointes liées, responsable, sources Gmail/Drive, dépendances, récurrence et champs personnalisés. Recherche paginée par texte, projet, statut, type, responsable, source, période et état d’archive. Les dates civiles utilisent Europe/Paris. Une échéance (end) et une réalisation (completedAt) sont deux notions distinctes. Les comptes rendus ajoutés sont conservés dans la description, sous un titre explicite. Les anciennes descriptions libres peuvent être des notes ou des ordres du jour : leur nature doit être appréciée sans invention. Une pièce jointe externe nécessite une lecture avec le connecteur de sa source.
 
@@ -20,6 +20,15 @@ Les domaines métier supplémentaires sont découverts avec list_resources : pro
 - `expectedRevision` et `idempotencyKey` s'appliquent comme pour les autres ressources, donc la même requête rejouée ne double jamais l'écriture.
 
 C'est une validation plus stricte que pour un réglage ordinaire, et c'est voulu : une baseline fausse reste invisible jusqu'au jour où l'on compare le réel au prévu. Aucun outil ne modifie les transactions Budget360 ou les événements Google Calendar. Aucun secret de connexion n’est exposé.
+
+## Habit Tracker (#193)
+
+Le catalogue `habitThemes` (thèmes → habitudes) se lit et se modifie comme n'importe quel autre catalogue, via `read_resource`/`mutate_resource`. Le journal `habitLog` (une entrée par habitude × jour, identifiant dérivé `habitId|date`) est en **lecture seule** par ces deux outils génériques : ses règles métier — exclusivité radio entre habitudes sœurs d'un thème en `selectionMode: "single"`, et bornage `[min,max]` d'une habitude `kind: "numeric"` — ne sont pas connues d'une fusion générique par identifiant.
+
+- `log_habit` alimente le journal en langage naturel : l'habitude se désigne par `habitId`, ou par `habitName` (+ `themeId`/`themeName` en cas d'ambiguïté entre thèmes). Pour une habitude `check`, `value=true` coche, `false`/`null` décoche, omis bascule l'état ; cocher une habitude d'un thème `single` décoche automatiquement ses sœurs du même jour. Pour une habitude `numeric`, `value` est un nombre borné à `[min,max]` ou `null` pour effacer l'entrée. `date` par défaut est aujourd'hui (Europe/Paris).
+- `get_habit_log` lit le journal sur une période (`dateFrom`/`dateTo`), filtrable par `habitId`/`themeId`, avec noms de thème/habitude déjà résolus.
+
+Ces deux outils reproduisent exactement `toggleHabitLogEntry`/`setHabitLogValue` du front (`apps/nexora/source/index.html.part-002`), pour que Claude/ChatGPT et l'interface restent toujours d'accord sur l'état d'une case.
 
 ## Données et intégrité
 
