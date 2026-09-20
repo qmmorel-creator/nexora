@@ -1009,17 +1009,45 @@ if (benchApp) {
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
     "customCard",
+    // #193 : monter la VRAIE DashboardView avec ces deux types placés est ce
+    // qui a attrapé le `ReferenceError: habitLog is not defined` — un widget
+    // isolé ne l'aurait jamais reproduit (habitLog manquait dans la signature
+    // de DashboardView elle-même, pas dans le widget).
+    "habitQuick", "habitHeatmap",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
     { id: "banc-countdown", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb3", kind: "daysRemaining", countdownMode: "task", countdownTaskId: seedTasks[0]?.id }], layout: { x: 3, y: 96, w: 3, h: 4 } },
+    // Vue annuelle + vue 3 mois du widget Heatmap habitudes (#193 v2) : deux
+    // widgets séparés pour voir les deux bascules sans clic dans le banc.
+    { id: "banc-habitHeatmap-year", type: "habitHeatmap", title: "habitHeatmap année", habitHeatmapView: "year", layout: { x: 6, y: 96, w: 6, h: 5 } },
+    { id: "banc-habitHeatmap-quarter", type: "habitHeatmap", title: "habitHeatmap 3 mois", habitHeatmapView: "quarter", layout: { x: 0, y: 104, w: 6, h: 6 } },
   );
+  const benchHabitThemes = [
+    { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [
+      { id: "habit-bureau", name: "Bureau", color: "#2C6BE0", kind: "check" },
+      { id: "habit-teletravail", name: "Télétravail", color: "#1FA971", kind: "check" },
+    ] },
+    { id: "theme-sante", name: "Santé", color: "#E2483E", selectionMode: "multi", habits: [
+      { id: "habit-eau", name: "Verres d'eau", color: "#0EA5E9", kind: "numeric", min: 0, max: 8 },
+      { id: "habit-sommeil", name: "Sommeil (h)", color: "#8B5CF6", kind: "numeric", min: 3, max: 9 },
+    ] },
+  ];
+  const benchHabitLog = [
+    { habitId: "habit-bureau", date: "2026-09-14" },
+    { habitId: "habit-teletravail", date: "2026-09-15" },
+    { habitId: "habit-eau", date: "2026-09-15", value: 6 },
+    { habitId: "habit-sommeil", date: "2026-09-15", value: 8 },
+    { habitId: "habit-eau", date: "2026-09-05", value: 2 }, // week-end coché -> ne doit PAS rester grisé
+  ];
   const mem = new Map(Object.entries({
     "nexora:tasks": JSON.stringify(benchTasks),
     "nexora:projects": JSON.stringify(seedProjects),
     "nexora:statuses": JSON.stringify(seedStatuses),
     "nexora:taskTypes": JSON.stringify(seedTaskTypes),
     "nexora:teamMembers": JSON.stringify(seedTeamMembers),
+    "nexora:habitThemes": JSON.stringify(benchHabitThemes),
+    "nexora:habitLog": JSON.stringify(benchHabitLog),
     "nexora:dashboards": JSON.stringify([{ id: "banc-d1", name: "Tableau du banc", folderId: null, pages: [{ id: "banc-p1", name: "Page 1", widgets: benchWidgets }], activePageId: "banc-p1" }]),
     "nexora:activeDashboardId": JSON.stringify("banc-d1"),
   }));
@@ -1033,4 +1061,18 @@ if (benchApp) {
     watch() { return () => {}; },
   };
 }
-root.render(React.createElement(benchApp ? () => React.createElement(LePlan, { currentUser: { uid: "banc", email: "banc@local" }, onSignOut: () => {} }) : AnnotationsHarness));
+/* `<GlobalStyles/>` ne vit normalement que dans AuthGate (habillage de l'écran
+   de connexion) : LePlan monté seul, comme ici, ne l'embarque jamais — sans
+   ce rendu explicite, TOUTES les classes .lp-* du banc application restent
+   sans styles (découvert en vérifiant #193 v2 : les widgets Habitudes
+   rendaient en display:block faute de feuille de style, masquant le vrai
+   comportement CSS derrière une mise en page accidentellement cassée). */
+function BenchApp() {
+  return (
+    <>
+      <GlobalStyles />
+      <LePlan currentUser={{ uid: "banc", email: "banc@local" }} onSignOut={() => {}} />
+    </>
+  );
+}
+root.render(React.createElement(benchApp ? BenchApp : AnnotationsHarness));
