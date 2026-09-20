@@ -1002,24 +1002,66 @@ const benchApp = new URLSearchParams(location.search).get("app") === "1";
    tâches : un seul qui ne supporte pas une liste réduite à rien fait tomber la
    page entière, et c'est ce qu'il s'agit d'attraper ici. */
 if (benchApp) {
-  const benchTasks = [...seedTasks, ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` }))];
+  // #136 : une VRAIE réunion (taskTypeId de type "Réunions"), hier, sans
+  // compte rendu — doit remonter dans le Daily Briefing et porter le champ
+  // dédié dans sa fiche, jamais une tâche dont le titre contient "Réunion".
+  const yesterdayIso = addDaysIso(iso(new Date()), -1);
+  const realMeetingTask = { id: "bench-real-meeting", title: "Point budget hebdo", projectId: seedProjects[0]?.id, statusId: seedStatuses.find((s) => /termin/i.test(s.name))?.id || seedStatuses[0]?.id, taskTypeId: "tt3", start: yesterdayIso, end: yesterdayIso, progress: 100, milestone: false, assignee: "", checklist: [], desc: "Ordre du jour : budget Q3" };
+  const benchTasks = [
+    // #141 : completedAt réparti sur plusieurs semaines distinctes, sans
+    // muter les objets seedTasks partagés (AnnotationsHarness les réutilise).
+    ...seedTasks.map((t, i) => (i % 3 === 0 ? { ...t, completedAt: addDaysIso(iso(new Date()), -(i % 40)) + "T10:00:00Z" } : t)),
+    ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` })),
+    realMeetingTask,
+  ];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
     "echeances",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
     "customCard",
+    // #193 : monter la VRAIE DashboardView avec ces deux types placés est ce
+    // qui a attrapé le `ReferenceError: habitLog is not defined` — un widget
+    // isolé ne l'aurait jamais reproduit (habitLog manquait dans la signature
+    // de DashboardView elle-même, pas dans le widget).
+    "habitQuick", "habitHeatmap",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
     { id: "banc-countdown", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb3", kind: "daysRemaining", countdownMode: "task", countdownTaskId: seedTasks[0]?.id }], layout: { x: 3, y: 96, w: 3, h: 4 } },
+    // Vue annuelle + vue 3 mois du widget Heatmap habitudes (#193 v2) : deux
+    // widgets séparés pour voir les deux bascules sans clic dans le banc.
+    { id: "banc-habitHeatmap-year", type: "habitHeatmap", title: "habitHeatmap année", habitHeatmapView: "year", layout: { x: 6, y: 96, w: 6, h: 5 } },
+    { id: "banc-habitHeatmap-quarter", type: "habitHeatmap", title: "habitHeatmap 3 mois", habitHeatmapView: "quarter", layout: { x: 0, y: 104, w: 6, h: 6 } },
+    // #141 : style "Terminées par semaine" du widget Graphique, sur des
+    // tâches réellement `completedAt` sur plusieurs semaines distinctes.
+    { id: "banc-chart-completed", type: "chart", title: "chart completedPerWeek", chartStyle: "completedPerWeek", layout: { x: 6, y: 110, w: 4, h: 4 } },
   );
+  const benchHabitThemes = [
+    { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [
+      { id: "habit-bureau", name: "Bureau", color: "#2C6BE0", kind: "check" },
+      { id: "habit-teletravail", name: "Télétravail", color: "#1FA971", kind: "check" },
+    ] },
+    { id: "theme-sante", name: "Santé", color: "#E2483E", selectionMode: "multi", habits: [
+      { id: "habit-eau", name: "Verres d'eau", color: "#0EA5E9", kind: "numeric", min: 0, max: 8 },
+      { id: "habit-sommeil", name: "Sommeil (h)", color: "#8B5CF6", kind: "numeric", min: 3, max: 9 },
+    ] },
+  ];
+  const benchHabitLog = [
+    { habitId: "habit-bureau", date: "2026-09-14" },
+    { habitId: "habit-teletravail", date: "2026-09-15" },
+    { habitId: "habit-eau", date: "2026-09-15", value: 6 },
+    { habitId: "habit-sommeil", date: "2026-09-15", value: 8 },
+    { habitId: "habit-eau", date: "2026-09-05", value: 2 }, // week-end coché -> ne doit PAS rester grisé
+  ];
   const mem = new Map(Object.entries({
     "nexora:tasks": JSON.stringify(benchTasks),
     "nexora:projects": JSON.stringify(seedProjects),
     "nexora:statuses": JSON.stringify(seedStatuses),
     "nexora:taskTypes": JSON.stringify(seedTaskTypes),
     "nexora:teamMembers": JSON.stringify(seedTeamMembers),
+    "nexora:habitThemes": JSON.stringify(benchHabitThemes),
+    "nexora:habitLog": JSON.stringify(benchHabitLog),
     "nexora:dashboards": JSON.stringify([{ id: "banc-d1", name: "Tableau du banc", folderId: null, pages: [{ id: "banc-p1", name: "Page 1", widgets: benchWidgets }], activePageId: "banc-p1" }]),
     "nexora:activeDashboardId": JSON.stringify("banc-d1"),
   }));
@@ -1033,4 +1075,18 @@ if (benchApp) {
     watch() { return () => {}; },
   };
 }
-root.render(React.createElement(benchApp ? () => React.createElement(LePlan, { currentUser: { uid: "banc", email: "banc@local" }, onSignOut: () => {} }) : AnnotationsHarness));
+/* `<GlobalStyles/>` ne vit normalement que dans AuthGate (habillage de l'écran
+   de connexion) : LePlan monté seul, comme ici, ne l'embarque jamais — sans
+   ce rendu explicite, TOUTES les classes .lp-* du banc application restent
+   sans styles (découvert en vérifiant #193 v2 : les widgets Habitudes
+   rendaient en display:block faute de feuille de style, masquant le vrai
+   comportement CSS derrière une mise en page accidentellement cassée). */
+function BenchApp() {
+  return (
+    <>
+      <GlobalStyles />
+      <LePlan currentUser={{ uid: "banc", email: "banc@local" }} onSignOut={() => {}} />
+    </>
+  );
+}
+root.render(React.createElement(benchApp ? BenchApp : AnnotationsHarness));

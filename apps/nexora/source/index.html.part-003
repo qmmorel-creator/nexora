@@ -2307,6 +2307,7 @@ const CHART_STYLES = [
   { key: "barh", label: "Barres horizontales" },
   { key: "gauge", label: "Jauge (%)" },
   { key: "line", label: "Courbe d'évolution" },
+  { key: "completedPerWeek", label: "Terminées par semaine" },
   { key: "stackedBar", label: "Barres empilées" },
 ];
 const GAUGE_METRICS = [
@@ -4087,7 +4088,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} />
                 )}
                 {w.type === "habitHeatmap" && (
-                  <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                  <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "echeances" && !showEmptyFunnel && (
                   <WidgetEcheances
@@ -4268,10 +4269,10 @@ function BarChartSimple({ data, horizontal }) {
   );
 }
 
-function LineChartWidget({ data, width = 320, height = 140 }) {
+function LineChartWidget({ data, width = 320, height = 140, average, legendLabel, unitLabel }) {
   const [hover, setHover] = useState(null); // { p, x, y }
   if (data.length === 0) return <div className="lp-empty" style={{ padding: 16 }}>Aucune donnée pour ce filtre.</div>;
-  const max = Math.max(1, ...data.map((d) => d.value));
+  const max = Math.max(1, average || 0, ...data.map((d) => d.value));
   const padX = 8, padY = 14;
   const stepX = data.length > 1 ? (width - padX * 2) / (data.length - 1) : 0;
   const points = data.map((d, i) => {
@@ -4281,11 +4282,18 @@ function LineChartWidget({ data, width = 320, height = 140 }) {
   });
   const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
   const area = `${path} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`;
+  // #141 : moyenne en pointillé — un repère de rythme, jamais une seconde
+  // série de données à part entière (donc pas de points/hover dessus).
+  const averageY = Number.isFinite(average) ? height - padY - (average / max) * (height - padY * 2) : null;
+  const unit = unitLabel || "tâche";
   return (
     <div>
       <div style={{ position: "relative" }}>
         <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
           <path d={area} fill="var(--accent)" opacity="0.12" />
+          {averageY != null && (
+            <line x1={padX} y1={averageY} x2={width - padX} y2={averageY} stroke="var(--text-muted)" strokeWidth="1.5" strokeDasharray="4 3" />
+          )}
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           {points.map((p, i) => (
             <g key={i} onMouseEnter={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseMove={(e) => setHover({ p, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
@@ -4297,15 +4305,21 @@ function LineChartWidget({ data, width = 320, height = 140 }) {
         </svg>
         {hover && (
           <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
-            {hover.p.d.label} — {hover.p.d.value} tâche{hover.p.d.value > 1 ? "s" : ""}
+            {hover.p.d.label} — {hover.p.d.value} {unit}{hover.p.d.value > 1 ? "s" : ""}
           </WidgetPointerTooltip>
         )}
       </div>
       <div className="lp-widget-legend lp-widget-legend-horizontal">
         <div className="lp-widget-legend-item">
           <span className="lp-widget-legend-dot" style={{ background: "var(--accent)" }} />
-          <span className="lp-widget-legend-label">Nombre de tâches par période</span>
+          <span className="lp-widget-legend-label">{legendLabel || "Nombre de tâches par période"}</span>
         </div>
+        {Number.isFinite(average) && (
+          <div className="lp-widget-legend-item">
+            <span className="lp-widget-legend-dot" style={{ background: "var(--text-muted)" }} />
+            <span className="lp-widget-legend-label">Moyenne — {Math.round(average * 10) / 10}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4391,6 +4405,11 @@ function WidgetChart({ tasks, groupBy, chartStyle, gaugeMetric, stackBy, ctx }) 
   if (style === "line") {
     const data = lineGroups.map((g) => ({ label: g.label, value: g.tasks.length }));
     return <LineChartWidget data={data} />;
+  }
+
+  if (style === "completedPerWeek") {
+    const { data, average } = completedPerWeekSeries(tasks, 12);
+    return <LineChartWidget data={data} average={average} legendLabel="Tâches terminées par semaine" unitLabel="terminée" />;
   }
 
   if (style === "stackedBar") {
@@ -5720,13 +5739,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
      comme sur les niveaux manuels, et les boutons − / Auto / + la relâchent. */
   const pinnedWindow = miniGanttPinnedWindow(widget);
 
+  /* Navigation dans le temps À NIVEAU DE ZOOM CONSTANT (retour de test #180) :
+     un décalage en jours, appliqué au centre de la fenêtre manuelle, que les
+     flèches ← / → font glisser d'un tiers de fenêtre à chaque clic — assez
+     pour avancer franchement, assez peu pour ne rien perdre entre deux clics.
+     Sans effet en zoom automatique (qui se recale toujours sur les tâches) ou
+     sur une fenêtre épinglée (dates fixes) : glisser une fenêtre de contenu
+     figée n'aurait pas de sens. */
+  const panOffset = (zoomIsAuto || pinnedWindow) ? 0 : (Number(widget.miniGanttPanOffset) || 0);
+
   /* Le zoom manuel était CENTRÉ SUR AUJOURD'HUI, sans borne : à un niveau
      large, il réservait la moitié de la piste à des années vides pendant qu'il
      coupait les tâches les plus anciennes (retour de test). La fenêtre est
      désormais ramenée dans les bornes utiles — on la fait GLISSER, pas rétrécir,
      pour ne pas trahir le zoom demandé. */
   const manualWindow = miniGanttClampWindow(
-    { minIdx: autoCenter - Math.floor(manualSpan / 2), maxIdx: autoCenter - Math.floor(manualSpan / 2) + manualSpan },
+    { minIdx: autoCenter + panOffset - Math.floor(manualSpan / 2), maxIdx: autoCenter + panOffset - Math.floor(manualSpan / 2) + manualSpan },
     { minIdx: usefulMinIdx, maxIdx: usefulMaxIdx }
   );
 
@@ -5738,14 +5766,22 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
 
   const setZoomLevel = (next) => {
     if (!onUpdateWidget) return;
-    // Poser un niveau de zoom relâche toujours la fenêtre épinglée : sinon les
-    // boutons − / Auto / + resteraient sans effet visible.
-    if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null});
-    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-MINIGANTT_ZOOM_MAX,MINIGANTT_ZOOM_MAX), miniGanttWindow:null});
+    // Poser un niveau de zoom relâche toujours la fenêtre épinglée ET remet la
+    // navigation à zéro : sinon les boutons − / Auto / + resteraient sans
+    // effet visible, ou repartiraient d'un décalage temporel qui n'aurait
+    // plus de sens au nouveau niveau.
+    if (next == null) onUpdateWidget({miniGanttZoomLevel:null, miniGanttWindow:null, miniGanttPanOffset:null});
+    else onUpdateWidget({miniGanttZoomLevel:clamp(next,-MINIGANTT_ZOOM_MAX,MINIGANTT_ZOOM_MAX), miniGanttWindow:null, miniGanttPanOffset:null});
   };
   const zoomIn = () => setZoomLevel(zoomIsAuto ? 1 : zoomLevel + 1);
   const zoomOut = () => setZoomLevel(zoomIsAuto ? -1 : zoomLevel - 1);
   const resetZoom = () => setZoomLevel(null);
+  // Un tiers de fenêtre par clic : assez pour avancer franchement, assez peu
+  // pour garder un recouvrement et ne pas perdre le fil visuel entre deux clics.
+  const panStep = Math.max(1, Math.round(manualSpan / 3));
+  const canPan = !zoomIsAuto && !pinnedWindow;
+  const panBack = () => onUpdateWidget && onUpdateWidget({ miniGanttPanOffset: panOffset - panStep });
+  const panForward = () => onUpdateWidget && onUpdateWidget({ miniGanttPanOffset: panOffset + panStep });
 
   // dayIndex() est relatif au 01/01/2020 : il ne faut surtout pas
   // reconvertir cet index comme un timestamp Unix, sinon l'axe part vers 1970.
@@ -7024,6 +7060,12 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
         <button type="button" onClick={zoomIn} disabled={!zoomIsAuto && zoomLevel>=MINIGANTT_ZOOM_MAX} title="Zoom avant">+</button>
         {!zoomIsAuto && <span className="lp-widget-minigantt-zoom-level">{zoomLevel>0?`+${zoomLevel}`:zoomLevel}</span>}
       </div>
+      {canPan && (
+        <div className="lp-widget-minigantt-zoom" role="group" aria-label="Naviguer dans le temps, à ce niveau de zoom">
+          <button type="button" onClick={panBack} disabled={minIdx<=usefulMinIdx} title="Reculer dans le temps"><ChevronLeft size={13} /></button>
+          <button type="button" onClick={panForward} disabled={maxIdx>=usefulMaxIdx} title="Avancer dans le temps"><ChevronRight size={13} /></button>
+        </div>
+      )}
       {editable && (
         <div className="lp-widget-minigantt-zoom lp-widget-minigantt-annot-buttons">
           <button type="button" onClick={() => setAnnotationPanel({ section: "blocks", autoCreate: "block" })} title="Ajouter un bloc temporel (grande phase transverse)">+ Bloc</button>
@@ -10288,18 +10330,114 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
    naviguer vers le passé corrige une coche oubliée, naviguer vers le futur
    pré-remplit un jour à venir (congé prévu, séance planifiée…) — aucune des
    deux directions n'est restreinte. */
+/* Rendu d'UN thème (habitudes à cocher OU chiffrées) pour une date donnée —
+   partagé par le widget Quick Habit et la fenêtre "Quick Habit" ouverte en
+   double-clic depuis la Heatmap (#193 v2), qui édite TOUS les thèmes d'un
+   coup pour un jour précis. Passer [theme] à toggleHabitLogEntry/setHabitLogValue
+   suffit : elles ne lisent que le thème donné (siblings/min/max). */
+function HabitThemeGroup({ theme, date, habitLog, setHabitLog }) {
+  const checkedIds = useMemo(() => new Set(habitLogHabitIdsForDate(habitLog, date)), [habitLog, date]);
+
+  const toggle = (habitId) => {
+    if (!setHabitLog) return;
+    setHabitLog((prev) => toggleHabitLogEntry(prev, [theme], habitId, date));
+  };
+  const setValue = (habitId, raw) => {
+    if (!setHabitLog) return;
+    setHabitLog((prev) => setHabitLogValue(prev, [theme], habitId, date, raw));
+  };
+
+  return (
+    <div className="lp-widget-habit-quick-theme">
+      <div className="lp-widget-habit-quick-theme-head">
+        <span className="lp-widget-habit-quick-theme-dot" style={{ background: theme.color }} />
+        <span className="lp-widget-habit-quick-theme-name">{theme.name}</span>
+        <span className="lp-widget-habit-quick-theme-mode">{theme.selectionMode === "multi" ? "plusieurs possibles" : "un seul choix"}</span>
+      </div>
+      {theme.habits.length === 0 ? (
+        <div className="lp-widget-habit-quick-theme-empty">Aucune habitude dans ce thème.</div>
+      ) : (
+        <div className="lp-widget-habit-quick-options">
+          {theme.habits.map((habit) => {
+            if (habit.kind === "numeric") {
+              const val = habitLogValueForDate(habitLog, habit.id, date);
+              return (
+                <label
+                  key={habit.id}
+                  className="lp-widget-habit-numeric"
+                  style={val !== null ? { borderColor: habit.color } : undefined}
+                >
+                  <span className="lp-widget-habit-numeric-name">{habit.name}</span>
+                  <input
+                    type="number"
+                    className="lp-widget-habit-numeric-input"
+                    min={habit.min}
+                    max={habit.max}
+                    placeholder={`${habit.min}–${habit.max}`}
+                    value={val === null ? "" : val}
+                    onChange={(e) => setValue(habit.id, e.target.value)}
+                  />
+                </label>
+              );
+            }
+            const active = checkedIds.has(habit.id);
+            if (theme.selectionMode === "multi") {
+              return (
+                <button
+                  key={habit.id}
+                  type="button"
+                  className={"lp-widget-habit-chip" + (active ? " active" : "")}
+                  style={active ? { borderColor: habit.color, background: habit.color + "1f", color: "var(--text-900)" } : undefined}
+                  onClick={() => toggle(habit.id)}
+                >
+                  {active ? <Check size={11} color={habit.color} /> : <span className="lp-widget-habit-chip-empty" />}
+                  {habit.name}
+                </button>
+              );
+            }
+            return (
+              <button
+                key={habit.id}
+                type="button"
+                className={"lp-widget-habit-pill" + (active ? " active" : "")}
+                style={active ? { background: habit.color, borderColor: habit.color, color: textOn(habit.color) } : undefined}
+                onClick={() => toggle(habit.id)}
+              >
+                {habit.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Fenêtre "Quick Habit" ouverte en double-clic sur N'IMPORTE QUEL jour
+   (widget Heatmap habitudes, vue mensuelle ou annuelle) : modifie TOUTES
+   les habitudes de TOUS les thèmes pour cette date, pas seulement celles du
+   thème actuellement affiché par la heatmap. */
+function HabitQuickDayModal({ date, themes, habitLog, setHabitLog, onClose }) {
+  const label = new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return (
+    <Modal title={`Quick Habit — ${label}`} onClose={onClose}>
+      <div className="lp-widget-habit-quick lp-habit-quick-modal-body">
+        {themes.length === 0 ? (
+          <div className="lp-widget-habit-empty">Aucun Thème d'habitude configuré.</div>
+        ) : (
+          themes.map((theme) => <HabitThemeGroup key={theme.id} theme={theme} date={date} habitLog={habitLog} setHabitLog={setHabitLog} />)
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes), [ctx.habitThemes]);
   const todayIso = iso(new Date());
   const [viewDate, setViewDate] = useState(todayIso);
 
   const checkedIds = useMemo(() => new Set(habitLogHabitIdsForDate(habitLog, viewDate)), [habitLog, viewDate]);
-
-  const toggle = (habitId) => {
-    if (!setHabitLog) return;
-    setHabitLog((prev) => toggleHabitLogEntry(prev, themes, habitId, viewDate));
-  };
-
   const totalChecked = themes.reduce((sum, t) => sum + t.habits.filter((h) => checkedIds.has(h.id)).length, 0);
   const dateLabel = viewDate === todayIso ? "Aujourd'hui" : fmtShort(viewDate);
 
@@ -10330,47 +10468,7 @@ function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog }) {
       </div>
 
       {themes.map((theme) => (
-        <div className="lp-widget-habit-quick-theme" key={theme.id}>
-          <div className="lp-widget-habit-quick-theme-head">
-            <span className="lp-widget-habit-quick-theme-dot" style={{ background: theme.color }} />
-            <span className="lp-widget-habit-quick-theme-name">{theme.name}</span>
-            <span className="lp-widget-habit-quick-theme-mode">{theme.selectionMode === "multi" ? "plusieurs possibles" : "un seul choix"}</span>
-          </div>
-          {theme.habits.length === 0 ? (
-            <div className="lp-widget-habit-quick-theme-empty">Aucune habitude dans ce thème.</div>
-          ) : (
-            <div className="lp-widget-habit-quick-options">
-              {theme.habits.map((habit) => {
-                const active = checkedIds.has(habit.id);
-                if (theme.selectionMode === "multi") {
-                  return (
-                    <button
-                      key={habit.id}
-                      type="button"
-                      className={"lp-widget-habit-chip" + (active ? " active" : "")}
-                      style={active ? { borderColor: habit.color, background: habit.color + "1f", color: "var(--text-900)" } : undefined}
-                      onClick={() => toggle(habit.id)}
-                    >
-                      {active ? <Check size={11} color={habit.color} /> : <span className="lp-widget-habit-chip-empty" />}
-                      {habit.name}
-                    </button>
-                  );
-                }
-                return (
-                  <button
-                    key={habit.id}
-                    type="button"
-                    className={"lp-widget-habit-pill" + (active ? " active" : "")}
-                    style={active ? { background: habit.color, borderColor: habit.color, color: textOn(habit.color) } : undefined}
-                    onClick={() => toggle(habit.id)}
-                  >
-                    {habit.name}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <HabitThemeGroup key={theme.id} theme={theme} date={viewDate} habitLog={habitLog} setHabitLog={setHabitLog} />
       ))}
 
       <div className="lp-widget-habit-quick-footer">
@@ -10385,25 +10483,44 @@ function WidgetHabitQuick({ widget, ctx, habitLog, setHabitLog }) {
    conique si plusieurs le même jour), jamais du thème lui-même, à la demande
    explicite de Quentin. Bascule Mensuel/Annuel dans le même widget, comme
    Échéances ou l'Organigramme — pas deux widgets séparés. */
-function WidgetHabitHeatmap({ widget, ctx, habitLog, onUpdateWidget }) {
+const HABIT_HEATMAP_VIEWS = ["month", "year", "quarter"];
+const HABIT_HEATMAP_MONTHS_FULL = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+const HABIT_HEATMAP_DOW = ["L", "M", "M", "J", "V", "S", "D"];
+
+// Fond d'une case vide : léger gris pour un week-end pas encore coché — à la
+// demande explicite de Quentin, tant que rien n'y est posé — sinon la teinte
+// habituelle. Jamais appliqué à une case qui porte une couleur.
+function habitEmptyCellBg(day) {
+  if (day.colors.length) return habitCellBackground(day.colors);
+  return day.isWeekend ? "rgba(16,21,31,0.08)" : "var(--paper-soft)";
+}
+
+function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes), [ctx.habitThemes]);
   const themeId = themes.some((t) => t.id === widget?.habitHeatmapThemeId) ? widget.habitHeatmapThemeId : (themes[0]?.id || "");
   const theme = habitThemeById(themes, themeId);
-  const view = widget?.habitHeatmapView === "year" ? "year" : "month";
+  const view = HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month";
   const [monthOffset, setMonthOffset] = useState(0);
+  const [quickDayModal, setQuickDayModal] = useState(null); // iso date | null
 
   const setThemeId = (id) => onUpdateWidget && onUpdateWidget({ habitHeatmapThemeId: id });
   const setView = (v) => onUpdateWidget && onUpdateWidget({ habitHeatmapView: v });
+  const openDay = (dIso) => setQuickDayModal(dIso);
 
   const now = new Date();
   const base = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const year = base.getFullYear();
   const month = base.getMonth();
-  const MONTHS_FULL = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
-  const DOW = ["L", "M", "M", "J", "V", "S", "D"];
 
-  const monthDays = useMemo(() => (theme ? habitMonthDays(theme, habitLog, year, month) : []), [theme, habitLog, year, month]);
-  const yearWeeks = useMemo(() => (theme ? habitYearWeeks(theme, habitLog, now.getFullYear()) : []), [theme, habitLog]);
+  const monthDays = useMemo(() => (theme && view === "month" ? habitMonthDays(theme, habitLog, year, month) : []), [theme, habitLog, year, month, view]);
+  const yearWeeks = useMemo(() => (theme && view === "year" ? habitYearWeeks(theme, habitLog, now.getFullYear()) : []), [theme, habitLog, view]);
+  const quarterMonths = useMemo(() => {
+    if (!theme || view !== "quarter") return [];
+    return [0, -1, -2].map((offset) => {
+      const d = new Date(now.getFullYear(), now.getMonth() + monthOffset + offset, 1);
+      return { year: d.getFullYear(), month: d.getMonth(), days: habitMonthDays(theme, habitLog, d.getFullYear(), d.getMonth()) };
+    });
+  }, [theme, habitLog, monthOffset, view]);
 
   if (!themes.length) {
     return (
@@ -10420,6 +10537,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, onUpdateWidget }) {
         <div className="lp-widget-habit-heatmap-controls">
           <div className="lp-widget-habit-heatmap-toggle">
             <button type="button" className={view === "month" ? "active" : ""} onClick={() => setView("month")}>Mensuel</button>
+            <button type="button" className={view === "quarter" ? "active" : ""} onClick={() => setView("quarter")}>3 mois</button>
             <button type="button" className={view === "year" ? "active" : ""} onClick={() => setView("year")}>Annuel</button>
           </div>
           <select className="lp-widget-habit-heatmap-theme-select" value={themeId} onChange={(e) => setThemeId(e.target.value)} aria-label="Thème affiché">
@@ -10428,58 +10546,87 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, onUpdateWidget }) {
         </div>
       </div>
 
-      {view === "month" ? (
-        <>
-          <div className="lp-widget-habit-heatmap-monthnav">
-            <span>{MONTHS_FULL[month]} {year}</span>
-            <div>
-              <button className="lp-icon-btn" onClick={() => setMonthOffset((m) => m - 1)} aria-label="Mois précédent"><ChevronLeft size={13} /></button>
-              <button className="lp-icon-btn" onClick={() => setMonthOffset((m) => m + 1)} aria-label="Mois suivant"><ChevronRight size={13} /></button>
-              {monthOffset !== 0 && <button className="lp-icon-btn" onClick={() => setMonthOffset(0)} title="Revenir au mois en cours"><RefreshCw size={11} /></button>}
-            </div>
+      {(view === "month" || view === "quarter") && (
+        <div className="lp-widget-habit-heatmap-monthnav">
+          <span>{view === "month" ? `${HABIT_HEATMAP_MONTHS_FULL[month]} ${year}` : `${HABIT_HEATMAP_MONTHS_FULL[quarterMonths[2]?.month]} — ${HABIT_HEATMAP_MONTHS_FULL[month]} ${year}`}</span>
+          <div>
+            <button className="lp-icon-btn" onClick={() => setMonthOffset((m) => m - 1)} aria-label="Période précédente"><ChevronLeft size={13} /></button>
+            <button className="lp-icon-btn" onClick={() => setMonthOffset((m) => m + 1)} aria-label="Période suivante"><ChevronRight size={13} /></button>
+            {monthOffset !== 0 && <button className="lp-icon-btn" onClick={() => setMonthOffset(0)} title="Revenir à aujourd'hui"><RefreshCw size={11} /></button>}
           </div>
+        </div>
+      )}
+
+      {view === "month" && (
+        <>
           <div className="lp-widget-habit-heatmap-dow">
-            {DOW.map((d, i) => <span key={i}>{d}</span>)}
+            {HABIT_HEATMAP_DOW.map((d, i) => <span key={i}>{d}</span>)}
           </div>
           <div className="lp-widget-habit-heatmap-grid">
             {monthDays.map((day) => (
               <div
                 key={day.date}
                 className={"lp-widget-habit-heatmap-cell" + (!day.inMonth ? " out" : "") + (day.isToday ? " today" : "") + (day.isFuture ? " future" : "")}
-                style={{ background: habitCellBackground(day.colors, "var(--paper-soft)") }}
+                style={{ background: habitEmptyCellBg(day) }}
                 title={day.date}
+                onDoubleClick={() => openDay(day.date)}
               >
                 <span className="lp-widget-habit-heatmap-daynum">{day.day}</span>
               </div>
             ))}
           </div>
         </>
-      ) : (
-        <div className="lp-widget-habit-heatmap-year">
-          <div className="lp-widget-habit-heatmap-year-months">
-            {yearWeeks.map((w) => (
-              <span key={w.key} className="lp-widget-habit-heatmap-year-label" style={{ marginLeft: (w.key === "w0" ? 0 : 3) + (w.monthBoundary ? 5 : 0) }}>
-                {w.monthLabel}
-              </span>
-            ))}
-          </div>
-          <div className="lp-widget-habit-heatmap-year-weeks">
-            {yearWeeks.map((w) => (
-              <div
-                className="lp-widget-habit-heatmap-year-week"
-                key={w.key}
-                style={{ marginLeft: (w.key === "w0" ? 0 : 3) + (w.monthBoundary ? 5 : 0) }}
-              >
-                {w.days.map((day) => (
+      )}
+
+      {view === "quarter" && (
+        <div className="lp-widget-habit-heatmap-quarter">
+          {quarterMonths.map((qm) => (
+            <div className="lp-widget-habit-heatmap-quarter-month" key={qm.year + "-" + qm.month}>
+              <div className="lp-widget-habit-heatmap-quarter-month-label">{HABIT_HEATMAP_MONTHS_FULL[qm.month]} {qm.year}</div>
+              <div className="lp-widget-habit-heatmap-dow lp-widget-habit-heatmap-dow-mini">
+                {HABIT_HEATMAP_DOW.map((d, i) => <span key={i}>{d}</span>)}
+              </div>
+              <div className="lp-widget-habit-heatmap-grid lp-widget-habit-heatmap-grid-mini">
+                {qm.days.map((day) => (
                   <div
                     key={day.date}
-                    className="lp-widget-habit-heatmap-year-day"
-                    style={{ background: day.inYear ? habitCellBackground(day.colors, "var(--paper-soft)") : "transparent" }}
-                    title={day.inYear ? day.date : undefined}
-                  />
+                    className={"lp-widget-habit-heatmap-cell" + (!day.inMonth ? " out" : "") + (day.isToday ? " today" : "") + (day.isFuture ? " future" : "")}
+                    style={{ background: habitEmptyCellBg(day) }}
+                    title={day.date}
+                    onDoubleClick={() => openDay(day.date)}
+                  >
+                    <span className="lp-widget-habit-heatmap-daynum">{day.day}</span>
+                  </div>
                 ))}
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view === "year" && (
+        <div className="lp-widget-habit-heatmap-year">
+          <div className="lp-widget-habit-heatmap-year-grid" style={{ gridTemplateColumns: `repeat(${yearWeeks.length}, minmax(0, 1fr))` }}>
+            {yearWeeks.map((w, wi) => (
+              w.monthLabel ? (
+                <span key={w.key + "-lbl"} className="lp-widget-habit-heatmap-year-label" style={{ gridColumn: wi + 1, gridRow: 1 }}>
+                  {w.monthLabel}
+                </span>
+              ) : null
             ))}
+            {yearWeeks.map((w, wi) => w.days.map((day, di) => (
+              <div
+                key={day.date + "-" + di}
+                className="lp-widget-habit-heatmap-year-day"
+                style={{
+                  gridColumn: wi + 1,
+                  gridRow: di + 2,
+                  background: day.inYear ? habitEmptyCellBg(day) : "transparent",
+                }}
+                title={day.inYear ? day.date : undefined}
+                onDoubleClick={day.inYear ? () => openDay(day.date) : undefined}
+              />
+            )))}
           </div>
         </div>
       )}
@@ -10493,6 +10640,10 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, onUpdateWidget }) {
             </span>
           ))}
         </div>
+      )}
+
+      {quickDayModal && (
+        <HabitQuickDayModal date={quickDayModal} themes={themes} habitLog={habitLog} setHabitLog={setHabitLog} onClose={() => setQuickDayModal(null)} />
       )}
     </div>
   );
@@ -11753,6 +11904,22 @@ function WidgetDailyBriefing({ tasks, ctx, onOpen, onViewDay, activityLog, staff
             return (
               <div className="lp-widget-briefing-item" key={t.id} onClick={() => onOpen(t)}>
                 {t.milestone ? <Milestone size={12} /> : <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 10, height: 10 }} />}
+                <span className="lp-widget-briefing-item-title">{t.title}</span>
+                {proj && <span className="lp-widget-briefing-item-proj">{proj.name}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {briefing.meetingsWithoutReport.length > 0 && (
+        <div className="lp-widget-briefing-section">
+          <div className="lp-widget-briefing-section-title">Réunions sans compte rendu (48 h)</div>
+          {briefing.meetingsWithoutReport.slice(0, 6).map((t) => {
+            const proj = ctx.projects.find((p) => p.id === t.projectId);
+            return (
+              <div className="lp-widget-briefing-item" key={t.id} onClick={() => onOpen(t)}>
+                <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 10, height: 10 }} />
                 <span className="lp-widget-briefing-item-title">{t.title}</span>
                 {proj && <span className="lp-widget-briefing-item-proj">{proj.name}</span>}
               </div>
@@ -15796,8 +15963,20 @@ function normalizedSyncedCalendars(settings){
       enabled: hit.enabled !== false,
       projectName: hit.projectName || def.defaultProjectName,
       color: hit.color || def.defaultColor,
+      // #138 : bloc temporel plutôt que jalon — régénéré à chaque
+      // synchronisation comme le reste de ce calendrier, jamais modifiable
+      // à la main (voir syncedCalendarAutoMetaBlock).
+      showAsMetaBlock: hit.showAsMetaBlock === true,
     };
   });
+}
+
+// #138 : le méta-bloc qu'un calendrier synchronisé pose lui-même sur ses
+// tâches quand « Afficher comme bloc temporel » est coché — opacité réduite
+// FIXE (jamais réglable) : c'est ce qui le distingue d'un bloc manuel posé
+// depuis les Réglages, dont l'opacité reste au choix de l'utilisateur.
+function syncedCalendarAutoMetaBlock(color) {
+  return { enabled: true, kind: "phase", color, borderStyle: "dashed", opacity: 0.42, dashboardIds: null };
 }
 
 function syncedCalendarItems(calendarId, settings){
@@ -15874,9 +16053,24 @@ function SyncedCalendarsSettingsPane({ settings, setSettings, projects, tasks, o
               style={{width:34,height:30,border:"1px solid var(--border)",borderRadius:6,background:"var(--surface)",padding:3}}
             />
             <div style={{width:110,textAlign:"right",fontSize:9.5,color:"var(--text-muted)"}}>
-              {proj ? `${count} jalon${count>1?"s":""}` : (cal.enabled ? "Projet à créer" : "Désactivé")}
+              {proj ? `${count} ${cal.showAsMetaBlock ? "bloc" : "jalon"}${count>1?"s":""}` : (cal.enabled ? "Projet à créer" : "Désactivé")}
             </div>
           </div>
+        );
+      })}
+      {/* #138 : case séparée, sous la liste — pas dans chaque ligne déjà
+          dense (nom + couleur + compteur) — pour rester lisible. */}
+      <div className="lp-section-title" style={{marginTop:10}}>Affichage</div>
+      {SYNCED_CALENDAR_DEFS.map(def=>{
+        const cal=calendars.find(c=>c.id===def.id);
+        if(!cal.enabled) return null;
+        return (
+          <label key={def.id} className="lp-checkbox-row" style={{padding:"4px 0"}}>
+            <input type="checkbox" checked={!!cal.showAsMetaBlock} onChange={e=>updateCalendar(def.id,{showAsMetaBlock:e.target.checked})}/>
+            <span style={{textTransform:"none",fontSize:12.5}}>
+              {def.label} — afficher comme bloc temporel <span style={{color:"var(--text-600)",fontWeight:400}}>(bande sur le diagramme plutôt qu'un jalon ; régénéré à chaque synchronisation, jamais modifiable à la main)</span>
+            </span>
+          </label>
         );
       })}
 
@@ -15936,6 +16130,140 @@ function NotificationsView({ notifications, setNotifications, toolbarSlot }) {
 
 
 
+
+/* Pages fixes, sans widget (#193 suite) : priorisées plutôt qu'exhaustives —
+   la logique (quelles tâches, dans quel ordre) vit dans NEXORA:FIXED-PAGES
+   (part-002), ces deux composants n'en affichent que le résultat. */
+
+function FixedPageRow({ task, onOpen, showLate }) {
+  return (
+    <button type="button" className="lp-fixedpage-row" onClick={() => onOpen(task)}>
+      <span className="lp-fixedpage-row-dot" style={{ background: task.projectColor }} aria-hidden="true" />
+      {task.isMeeting && <span className="lp-fixedpage-row-meeting">Réunion</span>}
+      <span className="lp-fixedpage-row-title">{task.title || "(sans titre)"}</span>
+      {task.projectName && <span className="lp-fixedpage-row-project">{task.projectName}</span>}
+      {showLate && (
+        <span className="lp-fixedpage-row-late">{task._late === 1 ? "1 j de retard" : `${task._late} j de retard`}</span>
+      )}
+    </button>
+  );
+}
+
+function CockpitView({ tasks, ctx, onOpen, toolbarSlot, onOpenWeek }) {
+  const todayIso = iso(new Date());
+  const tomorrowIso = addDays(todayIso, 1);
+  const todayLabel = new Date(todayIso + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+
+  const late = useMemo(() => overdueTasksSorted(tasks, ctx).map((t) => ({ ...t, _late: daysLate(t, todayIso) })), [tasks, ctx, todayIso]);
+  const todayItems = useMemo(() => tasksForDate(tasks, ctx, todayIso), [tasks, ctx, todayIso]);
+  const tomorrowItems = useMemo(() => tasksForDate(tasks, ctx, tomorrowIso), [tasks, ctx, tomorrowIso]);
+  const calm = late.length === 0 && todayItems.length === 0;
+
+  return (
+    <div className="lp-fixedpage-wrap">
+      <ViewToolbarPortal slot={toolbarSlot}>
+        <button className="lp-btn" onClick={onOpenWeek}>Voir la semaine <ChevronRight size={13} style={{ marginLeft: 2, verticalAlign: -2 }} /></button>
+      </ViewToolbarPortal>
+
+      <div className="lp-fixedpage-head">
+        <div className="lp-fixedpage-title">Cockpit du jour</div>
+        <div className="lp-fixedpage-sub">{todayLabel}</div>
+      </div>
+
+      {calm ? (
+        <div className="lp-empty" style={{ padding: 30 }}>Rien en retard, rien de prévu aujourd'hui. Jour calme.</div>
+      ) : (
+        <>
+          {late.length > 0 && (
+            <div className="lp-fixedpage-section">
+              <div className="lp-fixedpage-section-title lp-fixedpage-section-title-danger">En retard <span>{late.length}</span></div>
+              <div className="lp-fixedpage-rows">
+                {late.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} showLate />)}
+              </div>
+            </div>
+          )}
+          <div className="lp-fixedpage-section">
+            <div className="lp-fixedpage-section-title">Aujourd'hui <span>{todayItems.length}</span></div>
+            {todayItems.length === 0 ? (
+              <div className="lp-fixedpage-section-empty">Rien de prévu aujourd'hui.</div>
+            ) : (
+              <div className="lp-fixedpage-rows">
+                {todayItems.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} />)}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="lp-fixedpage-section lp-fixedpage-section-muted">
+        <div className="lp-fixedpage-section-title">Demain, en un coup d'œil <span>{tomorrowItems.length}</span></div>
+        {tomorrowItems.length === 0 ? (
+          <div className="lp-fixedpage-section-empty">Rien de prévu demain.</div>
+        ) : (
+          <div className="lp-fixedpage-rows">
+            {tomorrowItems.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} />)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Semaine — fusion de « Radar de la semaine » et « Alertes » (retenue :
+   option C, flux chronologique). Les Alertes en tête partagent EXACTEMENT la
+   même définition du retard que le Cockpit (overdueTasksSorted) : pas de
+   deuxième notion de « en retard » qui pourrait diverger. */
+function WeekFlowView({ tasks, ctx, onOpen, toolbarSlot }) {
+  const todayIso = iso(new Date());
+  const late = useMemo(() => overdueTasksSorted(tasks, ctx).map((t) => ({ ...t, _late: daysLate(t, todayIso) })), [tasks, ctx, todayIso]);
+  const days = useMemo(() => weekFlowDays(tasks, ctx, todayIso, 7), [tasks, ctx, todayIso]);
+  const ALERTS_CAP = 6;
+  const shownAlerts = late.slice(0, ALERTS_CAP);
+  const hiddenAlerts = late.length - shownAlerts.length;
+
+  return (
+    <div className="lp-fixedpage-wrap">
+      <ViewToolbarPortal slot={toolbarSlot} />
+      <div className="lp-fixedpage-head">
+        <div className="lp-fixedpage-title">Semaine</div>
+        <div className="lp-fixedpage-sub">Alertes, puis les 7 prochains jours</div>
+      </div>
+
+      <div className="lp-fixedpage-section">
+        <div className="lp-fixedpage-section-title lp-fixedpage-section-title-danger">Alertes <span>{late.length}</span></div>
+        {late.length === 0 ? (
+          <div className="lp-fixedpage-section-empty">Aucune tâche en retard, tous projets confondus.</div>
+        ) : (
+          <>
+            <div className="lp-fixedpage-rows">
+              {shownAlerts.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} showLate />)}
+            </div>
+            {hiddenAlerts > 0 && <div className="lp-fixedpage-section-more">+ {hiddenAlerts} autre{hiddenAlerts > 1 ? "s" : ""} en retard</div>}
+          </>
+        )}
+      </div>
+
+      <div className="lp-fixedpage-weekflow">
+        {days.map((d, i) => {
+          const dt = new Date(d.date + "T00:00:00");
+          const label = i === 0 ? "Aujourd'hui" : dt.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+          return (
+            <div className="lp-fixedpage-weekflow-day" key={d.date}>
+              <div className="lp-fixedpage-weekflow-day-label">{label}</div>
+              {d.items.length === 0 ? (
+                <div className="lp-fixedpage-section-empty">Rien de prévu.</div>
+              ) : (
+                <div className="lp-fixedpage-rows">
+                  {d.items.map((t) => <FixedPageRow key={t.id + "-" + d.date} task={t} onOpen={onOpen} />)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 const root = createRoot(document.getElementById('root'));
 root.render(React.createElement(AuthGate));

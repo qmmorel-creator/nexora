@@ -120,7 +120,7 @@ export function repository(db,uid){
   if(action==='archive')next.archivedAt=new Date().toISOString();if(action==='restore')delete next.archivedAt;
   if(action==='delete'&&!archived)throw new Error('Archive task before permanent deletion');
   if(action==='add_attachment'){const a=args.attachment;const list=old.attachments||[];if(!list.some(x=>x.url===a.url||(a.documentId&&(x.documentId===a.documentId||x.id===a.documentId))))next.attachments=[...list,{...a,id:a.id||a.documentId||randomUUID(),addedAt:new Date().toISOString()}];if(args.documentId)next.documentId=args.documentId;}
-  if(action==='save_meeting_report'){if(!c.taskTypes.some(x=>x.id===old.taskTypeId&&['reunion','reunions'].includes(normalize(x.name))))throw new Error('Task is not an explicit meeting');next.desc=(old.desc||'')+'\n\n## Compte rendu — '+parisDate()+'\n'+args.report;}
+  if(action==='save_meeting_report'){if(!c.taskTypes.some(x=>x.id===old.taskTypeId&&['reunion','reunions'].includes(normalize(x.name))))throw new Error('Task is not an explicit meeting');next.meetingReport=(old.meetingReport?old.meetingReport+'\n\n':'')+'## Compte rendu — '+parisDate()+'\n'+args.report;}
   if(action!=='delete')ensureTaskDates(next);validateTask(next,c);next.updatedAt=new Date().toISOString();next.lastInteraction=next.updatedAt;
   const destination=action==='archive'?'taskArchive':action==='restore'?'tasks':active?'tasks':'taskArchive';
   for(const name of ['tasks','taskArchive']){const array=c[name].filter(t=>t.id!==old.id);if(name===destination&&action!=='delete')array.push(next);if(c[name].some(t=>t.id===old.id)||name===destination)write(tx,d[name],array);}

@@ -4595,6 +4595,16 @@ function normalizeHabitSelectionMode(value) {
   return HABIT_SELECTION_MODES.includes(value) ? value : "single";
 }
 
+// « check » : la seule qui existait jusqu'ici, coche binaire. « numeric » :
+// une valeur bornée [min, max] par jour, dont l'intensité de la couleur
+// porte l'information (mixWithWhite ci-dessous) — jamais une variante par
+// bandes/texte, la heatmap reste une heatmap.
+const HABIT_KINDS = ["check", "numeric"];
+
+function normalizeHabitKind(value) {
+  return HABIT_KINDS.includes(value) ? value : "check";
+}
+
 function normalizeHabits(list) {
   const out = [];
   const seen = new Set();
@@ -4605,7 +4615,10 @@ function normalizeHabits(list) {
     const id = String(raw.id || "").trim() || name;
     if (seen.has(id)) return;
     seen.add(id);
-    out.push({ id, name, color: String(raw.color || "").trim() || "#2C6BE0" });
+    const kind = normalizeHabitKind(raw.kind);
+    const min = Number.isFinite(raw.min) ? raw.min : 0;
+    const max = Number.isFinite(raw.max) && raw.max > min ? raw.max : min + 10;
+    out.push({ id, name, color: String(raw.color || "").trim() || "#2C6BE0", kind, min, max });
   });
   return out;
 }
@@ -4660,6 +4673,8 @@ function habitLogCellId(habitId, date) {
 
 // Comme les ateliers : une habitude supprimée du catalogue quitte le journal
 // ICI, à la normalisation — jamais par un balayage séparé qu'on oublierait.
+// `value` (habitudes « numeric ») est conservé quand c'est un nombre fini,
+// sinon l'entrée reste une simple coche booléenne (comme avant #193 v2).
 function normalizeHabitLog(list, knownHabitIds) {
   const known = Array.isArray(knownHabitIds) ? new Set(knownHabitIds.map((id) => String(id))) : null;
   const byId = new Map();
@@ -4670,7 +4685,9 @@ function normalizeHabitLog(list, knownHabitIds) {
     if (!habitId || !HABIT_LOG_ISO_RE.test(date)) return;
     if (known && !known.has(habitId)) return;
     const id = habitLogCellId(habitId, date);
-    byId.set(id, { id, habitId, date });
+    const out = { id, habitId, date };
+    if (Number.isFinite(entry.value)) out.value = entry.value;
+    byId.set(id, out);
   });
   return [...byId.values()].sort((a, b) => (
     a.date === b.date ? a.habitId.localeCompare(b.habitId) : a.date.localeCompare(b.date)
@@ -4680,6 +4697,33 @@ function normalizeHabitLog(list, knownHabitIds) {
 function habitLogHabitIdsForDate(log, date) {
   const d = String(date || "");
   return normalizeHabitLog(log).filter((e) => e.date === d).map((e) => e.habitId);
+}
+
+function habitLogValueForDate(log, habitId, date) {
+  const entry = normalizeHabitLog(log).find((e) => e.habitId === habitId && e.date === date);
+  return entry && Number.isFinite(entry.value) ? entry.value : null;
+}
+
+/* Pose/efface la valeur d'une habitude « numeric » pour une date — pendant
+   de toggleHabitLogEntry pour les habitudes « check ». rawValue vide/null
+   efface l'entrée ; sinon la valeur est bornée à [min, max] de l'habitude. */
+function setHabitLogValue(log, themes, habitId, date, rawValue) {
+  const found = habitById(themes, habitId);
+  const known = normalizeHabitThemes(themes).flatMap((t) => t.habits.map((h) => h.id));
+  const current = normalizeHabitLog(log, known);
+  if (!found) return current;
+  const id = habitLogCellId(habitId, date);
+  const next = current.filter((e) => e.id !== id);
+  if (rawValue === "" || rawValue === null || rawValue === undefined) {
+    return normalizeHabitLog(next, known);
+  }
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return normalizeHabitLog(next, known);
+  const min = Number.isFinite(found.habit.min) ? found.habit.min : 0;
+  const max = Number.isFinite(found.habit.max) && found.habit.max > min ? found.habit.max : min + 10;
+  const clamped = Math.max(min, Math.min(max, num));
+  next.push({ id, habitId, date, value: clamped });
+  return normalizeHabitLog(next, known);
 }
 
 /* Bascule une habitude pour une date. Thème « choix unique » : toute autre
@@ -4712,10 +4756,44 @@ function habitThemeUsage(log, themes, themeId) {
 
 // --- Coloration (une case = les habitudes du thème cochées ce jour-là) -----
 
-function habitCellColors(theme, habitIds) {
+// Intensité [0,1] d'une valeur numérique dans [min, max] de son habitude.
+function habitValueIntensity(habit, value) {
+  const min = Number.isFinite(habit.min) ? habit.min : 0;
+  const max = Number.isFinite(habit.max) && habit.max > min ? habit.max : min + 10;
+  const v = Number.isFinite(value) ? value : min;
+  return Math.max(0, Math.min(1, (v - min) / (max - min)));
+}
+
+// Mélange une couleur avec du blanc : t=0 reste légèrement teinté (jamais
+// invisible, une valeur posée doit rester visible même au minimum), t=1 =
+// couleur pleine. C'est le « gradient visuel » demandé pour les habitudes
+// « numeric », appliqué à la MÊME couleur que l'habitude — jamais une
+// échelle de couleurs séparée.
+function habitIntensityColor(hex, t) {
+  const c = String(hex || "").replace("#", "");
+  if (c.length !== 6) return hex;
+  const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16);
+  const floor = 0.22;
+  const k = floor + Math.max(0, Math.min(1, t)) * (1 - floor);
+  const mix = (ch) => Math.round(255 - (255 - ch) * k);
+  const hx = (n) => n.toString(16).padStart(2, "0");
+  return "#" + hx(mix(r)) + hx(mix(g)) + hx(mix(b));
+}
+
+// Couleurs des habitudes du thème posées un jour donné : aplat pour une
+// habitude « check », intensité proportionnelle à la valeur pour « numeric ».
+function habitCellColors(theme, log, date) {
   if (!theme) return [];
-  const ids = new Set(habitIds);
-  return theme.habits.filter((h) => ids.has(h.id)).map((h) => h.color);
+  const d = String(date || "");
+  const entries = normalizeHabitLog(log).filter((e) => e.date === d);
+  const byHabitId = new Map(entries.map((e) => [e.habitId, e]));
+  const colors = [];
+  theme.habits.forEach((h) => {
+    const entry = byHabitId.get(h.id);
+    if (!entry) return;
+    colors.push(h.kind === "numeric" ? habitIntensityColor(h.color, habitValueIntensity(h, entry.value)) : h.color);
+  });
+  return colors;
 }
 
 // Une couleur : aplat. Plusieurs : dégradé conique à parts égales — même
@@ -4742,13 +4820,15 @@ function habitMonthDays(theme, log, year, month) {
   for (let i = 0; i < 42; i += 1) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const dIso = iso(d);
-    const colors = habitCellColors(theme, habitLogHabitIdsForDate(log, dIso));
+    const colors = habitCellColors(theme, log, dIso);
+    const dow = d.getDay();
     days.push({
       date: dIso,
       day: d.getDate(),
       inMonth: d.getMonth() === month,
       isToday: dIso === todayIso,
       isFuture: dIso > todayIso,
+      isWeekend: dow === 0 || dow === 6,
       colors,
     });
   }
@@ -4774,8 +4854,9 @@ function habitYearWeeks(theme, log, year) {
         lastMonth = d.getMonth();
       }
       const dIso = iso(d);
-      const colors = inYear ? habitCellColors(theme, habitLogHabitIdsForDate(log, dIso)) : [];
-      days.push({ date: dIso, inYear, colors });
+      const colors = inYear ? habitCellColors(theme, log, dIso) : [];
+      const dow = d.getDay();
+      days.push({ date: dIso, inYear, isWeekend: dow === 0 || dow === 6, colors });
     }
     // monthBoundary distingue « premier mois de la grille » (pas de repère
     // visuel nécessaire) de « nouveau mois en cours de grille » (léger
@@ -4787,6 +4868,57 @@ function habitYearWeeks(theme, log, year) {
   return weeks;
 }
 // === NEXORA:HABITS:END ===
+
+// === NEXORA:FIXED-PAGES:START ===
+/* Pages fixes, sans widget : Cockpit du jour et Semaine (fusion de « Radar de
+   la semaine » et « Alertes »). Fonctions pures et testables, comme
+   NEXORA:HABITS ci-dessus — la vue ne fait qu'appeler et afficher. Elles
+   prennent `todayIso` en paramètre explicite plutôt que de lire `new Date()`
+   elles-mêmes, pour rester déterministes en test. */
+
+function fixedPageProjectMeta(task, ctx) {
+  const project = (ctx.projects || []).find((p) => p.id === task.projectId) || null;
+  return { projectName: project?.name || "", projectColor: project?.color || "#7A8290" };
+}
+
+function daysLate(task, todayIso) {
+  return Math.max(0, dayIndex(todayIso) - dayIndex(task.end));
+}
+
+// Tâches en retard (jamais un jalon à venir), de la plus ancienne échéance
+// dépassée à la plus récente — donc les plus urgentes en tête. C'est la liste
+// que partagent le Cockpit (« En retard ») et la page Semaine (« Alertes ») :
+// une seule définition de « en retard » dans toute l'app.
+function overdueTasksSorted(tasks, ctx) {
+  return (tasks || [])
+    .filter((t) => isTaskLate(t, ctx))
+    .sort((a, b) => (a.end || "").localeCompare(b.end || ""))
+    .map((t) => ({ ...t, ...fixedPageProjectMeta(t, ctx) }));
+}
+
+// Tâches/réunions actives un jour donné (en cours ce jour-là, pas seulement
+// dont l'échéance tombe ce jour-là), jamais celles déjà terminées. Les
+// réunions remontent en tête de chaque jour — seul repère de priorité
+// disponible en l'absence d'heure sur les tâches Nexora.
+function tasksForDate(tasks, ctx, dateIso) {
+  return (tasks || [])
+    .filter((t) => !isTaskDoneGlobal(t, ctx) && (t.start || t.end) <= dateIso && (t.end || t.start) >= dateIso)
+    .map((t) => ({ ...t, ...fixedPageProjectMeta(t, ctx), isMeeting: isMeetingTask(t, ctx) }))
+    .sort((a, b) => (
+      a.isMeeting !== b.isMeeting ? (a.isMeeting ? -1 : 1) : String(a.title || "").localeCompare(String(b.title || ""), "fr")
+    ));
+}
+
+// Les N prochains jours (aujourd'hui compris) pour le flux chronologique de
+// la page Semaine (option C) : un groupe par jour.
+function weekFlowDays(tasks, ctx, todayIso, days) {
+  const span = Number.isFinite(days) && days > 0 ? days : 7;
+  return Array.from({ length: span }, (_, i) => {
+    const date = addDays(todayIso, i);
+    return { date, items: tasksForDate(tasks, ctx, date) };
+  });
+}
+// === NEXORA:FIXED-PAGES:END ===
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 
@@ -9396,6 +9528,12 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const [descPreview, setDescPreview] = useState(true);
   const [writingMode, setWritingMode] = useState(false);
   const descRef = useRef(null);
+  // #136 : compte rendu de réunion — champ DÉDIÉ (`meetingReport`), jamais
+  // mélangé à la description/ordre du jour. `save_meeting_report` (MCP)
+  // écrit ici ; `reportEvidence` (nexora.mts) le reconnaît déjà.
+  const [meetingReport, setMeetingReport] = useState(base.meetingReport || "");
+  const [meetingReportPreview, setMeetingReportPreview] = useState(true);
+  const isMeeting = isMeetingTask({ taskTypeId }, { taskTypes });
   // #169 : onglet « Planning » — regroupe dates, durée, dépendances, référence
   // et risques, distincts des données de contenu (description, pièces
   // jointes, checklist) qui restent sur l'onglet principal. Disposition
@@ -9582,6 +9720,11 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       end: finalEnd,
       progress,
       desc,
+      // Jamais effacé par un changement de type : le champ n'est qu'ATTÉNUÉ
+      // hors des tâches « Réunion » (visible seulement là), comme customFields
+      // ci-dessous — un type changé par erreur et corrigé ne doit pas perdre
+      // le compte rendu déjà écrit.
+      meetingReport,
       assignee: assignee.trim(),
       checklist,
       dependsOn,
@@ -10274,6 +10417,33 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         )}
       </div>
 
+      {isMeeting && (
+        <div className="lp-field">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            <label style={{ margin: 0 }}>Compte rendu <span style={{ fontWeight: 400, color: "var(--text-600)", fontSize: 11 }}>(Markdown pris en charge — distinct de la description/ordre du jour)</span></label>
+            <div className="lp-desc-mode-toggle">
+              <button type="button" className={meetingReportPreview ? "" : "active"} onClick={() => setMeetingReportPreview(false)}>Édition</button>
+              <button type="button" className={meetingReportPreview ? "active" : ""} onClick={() => setMeetingReportPreview(true)}>Aperçu</button>
+            </div>
+          </div>
+          {meetingReportPreview ? (
+            <div
+              className="lp-desc-preview"
+              style={{ minHeight: 100 }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(meetingReport, true) || '<p style="color:var(--text-600)">Pas encore de compte rendu.</p>' }}
+            />
+          ) : (
+            <textarea
+              value={meetingReport}
+              onChange={(e) => setMeetingReport(e.target.value)}
+              placeholder="Décisions, points bloquants, suite à donner…"
+              rows={8}
+              style={{ minHeight: 140 }}
+            />
+          )}
+        </div>
+      )}
+
       <div className="lp-field">
         <label>Sous-tâches</label>
         {markdownChecklistFound.length > 0 && (
@@ -10897,6 +11067,17 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
 
 
 
+// #189 : mêmes onglets « Général / Comportement / Statuts & types » que la
+// fiche de tâche (#169) — la fiche de projet mélangeait identité, options
+// d'affichage Métro/Planning et deux longues listes de cases à cocher dans
+// un seul défilement. Onglet « Statuts & types » masqué à la création (les
+// deux listes ne s'affichent que pour un projet existant, comme avant).
+const PROJECT_FORM_TABS = [
+  { key: "main", label: "Général" },
+  { key: "behavior", label: "Comportement" },
+  { key: "catalogs", label: "Statuts & types" },
+];
+
 function ProjectFormModal({ project, projects, projectFolders, statuses, taskTypes, tasks, teamMembers, inheritedFolder, projectDefaultView, defaultColor, onSave, onClose }) {
   const [name, setName] = useState(project?.name || "");
   const [icon, setIcon] = useState(project?.icon || "tabler:route");
@@ -10909,6 +11090,8 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
   const [disabledTaskTypeIds, setDisabledTaskTypeIds] = useState(project?.disabledTaskTypeIds || []);
   const [navigationDefaults, setNavigationDefaults] = useState(project?.navigationDefaults || {});
   const [nameError, setNameError] = useState(false);
+  const [activeTab, setActiveTab] = useState("main");
+  const tabs = project ? PROJECT_FORM_TABS : PROJECT_FORM_TABS.filter((t) => t.key !== "catalogs");
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
@@ -10933,120 +11116,138 @@ function ProjectFormModal({ project, projects, projectFolders, statuses, taskTyp
         <button className="lp-btn lp-btn-primary" onClick={submit}>{project ? "Enregistrer les modifications" : "Ajouter le projet"}</button>
       </>
     }>
-      <NamedField label="Nom" value={name} onChange={(v) => { setName(v); if (nameError && v.trim()) setNameError(false); }} error={nameError} onEnter={submit} placeholder="Ex. Lot 3" autoFocus />
-      <div className="lp-field"><label>Icône</label><IconEditor icon={icon} setIcon={setIcon} /></div>
-      <div className="lp-field"><label>Couleur</label><input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: "100%", height: 36 }} /></div>
-      <div className="lp-field">
-        <label>Icône des jalons <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — sinon le style global s'applique)</span></label>
-        <IconEditor icon={milestoneIcon} setIcon={setMilestoneIcon} />
-      </div>
-      <label className="lp-checkbox-row" style={{ padding: "7px 0" }}>
-        <input type="checkbox" checked={metroTaskIcons} onChange={(e) => setMetroTaskIcons(e.target.checked)} />
-        <span style={{ textTransform: "none", fontWeight: 500 }}>En vue Métro, remplacer le rond de fin de chaque tâche par son icône (ou celle du jalon/du projet à défaut)</span>
-      </label>
-      <div className="lp-field">
-        <label>Priorité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisée par Next Best Action)</span></label>
-        <div className="lp-density-row">
-          <button type="button" className={"lp-density-btn" + (priority === "low" ? " active" : "")} onClick={() => setPriority("low")}>Faible</button>
-          <button type="button" className={"lp-density-btn" + (priority === "normal" ? " active" : "")} onClick={() => setPriority("normal")}>Normale</button>
-          <button type="button" className={"lp-density-btn" + (priority === "high" ? " active" : "")} onClick={() => setPriority("high")}>Prioritaire</button>
-        </div>
-      </div>
-
-      {project && (
-        <div className="lp-field">
-          <label>Statuts disponibles pour ce projet</label>
-          <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
-            Décoche les statuts globaux inutiles pour ce projet. Les statuts protégés restent toujours actifs.
-            Les statuts créés spécifiquement pour ce projet sont toujours affichés ici.
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
-            {(statuses || []).filter((st)=>!st.projectId || st.projectId===project.id).map((st)=>{
-              const protectedStatus=isProtectedStatus(st);
-              const specific=st.projectId===project.id;
-              const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.statusId===st.id).length;
-              const enabled=specific || protectedStatus || !disabledStatusIds.includes(st.id);
-              return (
-                <label key={st.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={specific || protectedStatus}
-                    onChange={(e)=>{
-                      if (e.target.checked) setDisabledStatusIds(prev=>prev.filter(id=>id!==st.id));
-                      else setDisabledStatusIds(prev=>prev.includes(st.id)?prev:[...prev,st.id]);
-                    }}
-                  />
-                  <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
-                    <span className="lp-status-dot" style={{background:st.color,width:10,height:10,flex:"0 0 auto"}}/>
-                    <span className="lp-project-status-row-name">{st.name}</span>
-                    {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
-                    {protectedStatus && <Lock size={11} title="Statut protégé" style={{flex:"0 0 auto"}}/>}
-                    {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
+      {tabs.length > 1 && (
+        <div className="lp-task-tabs">
+          {tabs.map((t) => (
+            <button key={t.key} type="button" className={"lp-task-tab-btn" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
+              {t.label}
+            </button>
+          ))}
         </div>
       )}
 
-      {project && (
-        <div className="lp-field">
-          <label>Types disponibles pour ce projet</label>
-          <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
-            Décoche les types globaux inutiles pour ce projet. Les types verrouillés restent toujours actifs.
-            Les types créés spécifiquement pour ce projet sont toujours affichés ici.
+      {activeTab === "main" && (
+        <>
+          <NamedField label="Nom" value={name} onChange={(v) => { setName(v); if (nameError && v.trim()) setNameError(false); }} error={nameError} onEnter={submit} placeholder="Ex. Lot 3" autoFocus />
+          <div className="lp-field"><label>Icône</label><IconEditor icon={icon} setIcon={setIcon} /></div>
+          <div className="lp-field"><label>Couleur</label><input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: "100%", height: 36 }} /></div>
+          {projectFolders.length > 0 && (
+            <div className="lp-field">
+              <label>Dossier</label>
+              <select value={folderId} onChange={(e) => setFolderId(e.target.value)}>
+                {projectFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="lp-field">
+            <label>Priorité <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisée par Next Best Action)</span></label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (priority === "low" ? " active" : "")} onClick={() => setPriority("low")}>Faible</button>
+              <button type="button" className={"lp-density-btn" + (priority === "normal" ? " active" : "")} onClick={() => setPriority("normal")}>Normale</button>
+              <button type="button" className={"lp-density-btn" + (priority === "high" ? " active" : "")} onClick={() => setPriority("high")}>Prioritaire</button>
+            </div>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
-            {(taskTypes || []).filter((tt)=>!tt.projectId || tt.projectId===project.id).map((tt)=>{
-              const lockedType=isLockedTaskType(tt);
-              const specific=tt.projectId===project.id;
-              const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.taskTypeId===tt.id).length;
-              const enabled=specific || lockedType || !disabledTaskTypeIds.includes(tt.id);
-              return (
-                <label key={tt.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={specific || lockedType}
-                    onChange={(e)=>{
-                      if (e.target.checked) setDisabledTaskTypeIds(prev=>prev.filter(id=>id!==tt.id));
-                      else setDisabledTaskTypeIds(prev=>prev.includes(tt.id)?prev:[...prev,tt.id]);
-                    }}
-                  />
-                  <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
-                    <span className="lp-status-dot" style={{background:tt.color,width:10,height:10,flex:"0 0 auto"}}/>
-                    {tt.icon && <IconGlyph icon={tt.icon} size={12}/>}
-                    <span className="lp-project-status-row-name">{tt.name}</span>
-                    {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
-                    {lockedType && <Lock size={11} title="Type verrouillé" style={{flex:"0 0 auto"}}/>}
-                    {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
+        </>
       )}
 
-      {project && (
-        <ProjectNavigationDefaultsEditor
-          value={navigationDefaults}
-          onChange={setNavigationDefaults}
-          ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
-          inheritedLabel={inheritedFolder?.navigationDefaults?.view
-            ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
-            : projectDefaultViewFallbackLabel(projectDefaultView)}
-        />
+      {activeTab === "behavior" && (
+        <>
+          <div className="lp-field">
+            <label>Icône des jalons <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — sinon le style global s'applique)</span></label>
+            <IconEditor icon={milestoneIcon} setIcon={setMilestoneIcon} />
+          </div>
+          <label className="lp-checkbox-row" style={{ padding: "7px 0" }}>
+            <input type="checkbox" checked={metroTaskIcons} onChange={(e) => setMetroTaskIcons(e.target.checked)} />
+            <span style={{ textTransform: "none", fontWeight: 500 }}>En vue Métro, remplacer le rond de fin de chaque tâche par son icône (ou celle du jalon/du projet à défaut)</span>
+          </label>
+          {project && (
+            <ProjectNavigationDefaultsEditor
+              value={navigationDefaults}
+              onChange={setNavigationDefaults}
+              ctx={{projects, statuses, taskTypes, tasks, teamMembers, projectFolders}}
+              inheritedLabel={inheritedFolder?.navigationDefaults?.view
+                ? `Hériter du dossier (${PROJECT_DEFAULT_VIEW_OPTIONS.find((v)=>v.key===inheritedFolder.navigationDefaults.view)?.label || "vue configurée"})`
+                : projectDefaultViewFallbackLabel(projectDefaultView)}
+            />
+          )}
+        </>
       )}
-      {projectFolders.length > 0 && (
-        <div className="lp-field">
-          <label>Dossier</label>
-          <select value={folderId} onChange={(e) => setFolderId(e.target.value)}>
-            {projectFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-          </select>
-        </div>
+
+      {activeTab === "catalogs" && project && (
+        <>
+          <div className="lp-field">
+            <label>Statuts disponibles pour ce projet</label>
+            <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
+              Décoche les statuts globaux inutiles pour ce projet. Les statuts protégés restent toujours actifs.
+              Les statuts créés spécifiquement pour ce projet sont toujours affichés ici.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
+              {(statuses || []).filter((st)=>!st.projectId || st.projectId===project.id).map((st)=>{
+                const protectedStatus=isProtectedStatus(st);
+                const specific=st.projectId===project.id;
+                const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.statusId===st.id).length;
+                const enabled=specific || protectedStatus || !disabledStatusIds.includes(st.id);
+                return (
+                  <label key={st.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={specific || protectedStatus}
+                      onChange={(e)=>{
+                        if (e.target.checked) setDisabledStatusIds(prev=>prev.filter(id=>id!==st.id));
+                        else setDisabledStatusIds(prev=>prev.includes(st.id)?prev:[...prev,st.id]);
+                      }}
+                    />
+                    <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
+                      <span className="lp-status-dot" style={{background:st.color,width:10,height:10,flex:"0 0 auto"}}/>
+                      <span className="lp-project-status-row-name">{st.name}</span>
+                      {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
+                      {protectedStatus && <Lock size={11} title="Statut protégé" style={{flex:"0 0 auto"}}/>}
+                      {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="lp-field">
+            <label>Types disponibles pour ce projet</label>
+            <div style={{fontSize:11,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
+              Décoche les types globaux inutiles pour ce projet. Les types verrouillés restent toujours actifs.
+              Les types créés spécifiquement pour ce projet sont toujours affichés ici.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--paper-soft)"}}>
+              {(taskTypes || []).filter((tt)=>!tt.projectId || tt.projectId===project.id).map((tt)=>{
+                const lockedType=isLockedTaskType(tt);
+                const specific=tt.projectId===project.id;
+                const usedCount=(tasks || []).filter((t)=>t.projectId===project.id && t.taskTypeId===tt.id).length;
+                const enabled=specific || lockedType || !disabledTaskTypeIds.includes(tt.id);
+                return (
+                  <label key={tt.id} className="lp-checkbox-row" style={{padding:"4px 0",margin:0}}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={specific || lockedType}
+                      onChange={(e)=>{
+                        if (e.target.checked) setDisabledTaskTypeIds(prev=>prev.filter(id=>id!==tt.id));
+                        else setDisabledTaskTypeIds(prev=>prev.includes(tt.id)?prev:[...prev,tt.id]);
+                      }}
+                    />
+                    <span className="lp-project-status-row-label" style={{textTransform:"none",fontWeight:500}}>
+                      <span className="lp-status-dot" style={{background:tt.color,width:10,height:10,flex:"0 0 auto"}}/>
+                      {tt.icon && <IconGlyph icon={tt.icon} size={12}/>}
+                      <span className="lp-project-status-row-name">{tt.name}</span>
+                      {specific && <span className="lp-project-setting-badge lp-status-scope-badge">Spécifique</span>}
+                      {lockedType && <Lock size={11} title="Type verrouillé" style={{flex:"0 0 auto"}}/>}
+                      {usedCount>0 && !enabled && <span style={{color:"var(--warning)",fontSize:10,whiteSpace:"nowrap"}}>· {usedCount} tâche(s) l’utilisent encore</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </>
       )}
     </Modal>
   );
@@ -12135,6 +12336,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
   const [selectionMode, setSelectionMode] = useState("single");
   const [newHabitName, setNewHabitName] = useState({}); // themeId -> saisie en cours
   const [colorEditHabitId, setColorEditHabitId] = useState(null);
+  const [kindEditHabitId, setKindEditHabitId] = useState(null);
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -12188,7 +12390,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
     const label = (newHabitName[theme.id] || "").trim();
     if (!label) return;
     setHabitThemes(catalogue.map((t) => (
-      t.id === theme.id ? { ...t, habits: [...t.habits, { id: uid(), name: label, color: theme.color }] } : t
+      t.id === theme.id ? { ...t, habits: [...t.habits, { id: uid(), name: label, color: theme.color, kind: "check", min: 0, max: 10 }] } : t
     )));
     setNewHabitName((m) => ({ ...m, [theme.id]: "" }));
   };
@@ -12202,6 +12404,28 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
   const recolorHabit = (theme, habit, next) => {
     setHabitThemes(catalogue.map((t) => (
       t.id !== theme.id ? t : { ...t, habits: t.habits.map((h) => (h.id === habit.id ? { ...h, color: next } : h)) }
+    )));
+  };
+
+  const setHabitKind = (theme, habit, kind) => {
+    setHabitThemes(catalogue.map((t) => (
+      t.id !== theme.id ? t : {
+        ...t,
+        habits: t.habits.map((h) => (h.id !== habit.id ? h : {
+          ...h,
+          kind,
+          min: kind === "numeric" ? (Number.isFinite(h.min) ? h.min : 0) : h.min,
+          max: kind === "numeric" ? (Number.isFinite(h.max) && h.max > (h.min || 0) ? h.max : (h.min || 0) + 10) : h.max,
+        })),
+      }
+    )));
+  };
+
+  const setHabitRange = (theme, habit, field, raw) => {
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return;
+    setHabitThemes(catalogue.map((t) => (
+      t.id !== theme.id ? t : { ...t, habits: t.habits.map((h) => (h.id === habit.id ? { ...h, [field]: num } : h)) }
     )));
   };
 
@@ -12240,23 +12464,48 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
           </div>
           <div className="lp-habit-list">
             {theme.habits.map((habit) => (
-              <span className="lp-habit-chip" key={habit.id}>
-                <button
-                  type="button"
-                  className="lp-habit-chip-swatch"
-                  style={{ background: habit.color }}
-                  aria-label={`Couleur de ${habit.name}`}
-                  onClick={() => setColorEditHabitId(colorEditHabitId === habit.id ? null : habit.id)}
-                />
-                <input
-                  type="text"
-                  className="lp-habit-chip-input"
-                  value={habit.name}
-                  onChange={(e) => renameHabit(theme, habit, e.target.value)}
-                />
-                <button type="button" className="lp-habit-chip-remove" aria-label={`Supprimer ${habit.name}`} onClick={() => removeHabit(theme, habit)}>
-                  <X size={11} />
-                </button>
+              <span className="lp-habit-chip-wrap" key={habit.id}>
+                <span className="lp-habit-chip">
+                  <button
+                    type="button"
+                    className="lp-habit-chip-swatch"
+                    style={{ background: habit.color }}
+                    aria-label={`Couleur de ${habit.name}`}
+                    onClick={() => { setColorEditHabitId(colorEditHabitId === habit.id ? null : habit.id); setKindEditHabitId(null); }}
+                  />
+                  <input
+                    type="text"
+                    className="lp-habit-chip-input"
+                    value={habit.name}
+                    onChange={(e) => renameHabit(theme, habit, e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className={"lp-icon-btn lp-habit-chip-kind" + (habit.kind === "numeric" ? " active" : "")}
+                    aria-label={`Type de ${habit.name} : ${habit.kind === "numeric" ? "chiffrée" : "coche"}`}
+                    title={habit.kind === "numeric" ? "Habitude chiffrée (min/max)" : "Habitude à cocher — cliquer pour la rendre chiffrée"}
+                    onClick={() => { setKindEditHabitId(kindEditHabitId === habit.id ? null : habit.id); setColorEditHabitId(null); }}
+                  >
+                    <Hash size={12} />
+                  </button>
+                  <button type="button" className="lp-habit-chip-remove" aria-label={`Supprimer ${habit.name}`} onClick={() => removeHabit(theme, habit)}>
+                    <X size={11} />
+                  </button>
+                </span>
+                {kindEditHabitId === habit.id && (
+                  <div className="lp-habit-kindpop">
+                    <div className="lp-density-row">
+                      <button type="button" className={"lp-density-btn" + (habit.kind !== "numeric" ? " active" : "")} onClick={() => setHabitKind(theme, habit, "check")}>À cocher</button>
+                      <button type="button" className={"lp-density-btn" + (habit.kind === "numeric" ? " active" : "")} onClick={() => setHabitKind(theme, habit, "numeric")}>Chiffrée</button>
+                    </div>
+                    {habit.kind === "numeric" && (
+                      <div className="lp-habit-kindpop-range">
+                        <label>Min <input type="number" value={habit.min} onChange={(e) => setHabitRange(theme, habit, "min", e.target.value)} /></label>
+                        <label>Max <input type="number" value={habit.max} onChange={(e) => setHabitRange(theme, habit, "max", e.target.value)} /></label>
+                      </div>
+                    )}
+                  </div>
+                )}
               </span>
             ))}
             <span className="lp-habit-chip lp-habit-chip-add">

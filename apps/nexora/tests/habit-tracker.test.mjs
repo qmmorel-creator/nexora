@@ -20,10 +20,11 @@ function slice(name) {
 
 const H = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("HABITS")}\n;return {
-    normalizeHabitSelectionMode, normalizeHabits, normalizeHabitThemes,
+    normalizeHabitSelectionMode, normalizeHabitKind, normalizeHabits, normalizeHabitThemes,
     habitThemeById, habitById, habitLogCellId, normalizeHabitLog,
-    habitLogHabitIdsForDate, toggleHabitLogEntry, habitThemeUsage,
-    habitCellColors, habitCellBackground, habitMonthDays, habitYearWeeks,
+    habitLogHabitIdsForDate, habitLogValueForDate, toggleHabitLogEntry, setHabitLogValue, habitThemeUsage,
+    habitCellColors, habitCellBackground, habitValueIntensity, habitIntensityColor,
+    habitMonthDays, habitYearWeeks,
   };\n})`
 )();
 
@@ -139,7 +140,63 @@ test("habitCellBackground : plusieurs couleurs -> dégradé conique en parts ég
 
 test("habitCellColors ne retient que les habitudes du thème effectivement cochées", () => {
   const t = { habits: [habit("h1", { color: "#111111" }), habit("h2", { color: "#222222" })] };
-  assert.deepEqual(H.habitCellColors(t, ["h1", "h9-inconnu"]), ["#111111"]);
+  const log = [{ habitId: "h1", date: "2026-09-20" }, { habitId: "h9-inconnu", date: "2026-09-20" }];
+  assert.deepEqual(H.habitCellColors(t, log, "2026-09-20"), ["#111111"]);
+});
+
+test("habitCellColors ignore les coches d'une autre date", () => {
+  const t = { habits: [habit("h1", { color: "#111111" })] };
+  const log = [{ habitId: "h1", date: "2026-09-19" }];
+  assert.deepEqual(H.habitCellColors(t, log, "2026-09-20"), []);
+});
+
+// --- Habitudes « numeric » ----------------------------------------------------
+
+test("normalizeHabits : type numeric par défaut min 0 / max min+10, kind invalide -> check", () => {
+  const [h1, h2] = H.normalizeHabits([
+    { id: "h1", name: "Verres d'eau", kind: "numeric" },
+    { id: "h2", name: "Autre", kind: "n'importe quoi" },
+  ]);
+  assert.equal(h1.kind, "numeric");
+  assert.equal(h1.min, 0);
+  assert.equal(h1.max, 10);
+  assert.equal(h2.kind, "check");
+});
+
+test("normalizeHabits : min/max fournis et cohérents sont conservés", () => {
+  const [h] = H.normalizeHabits([{ id: "h1", name: "Sommeil", kind: "numeric", min: 4, max: 9 }]);
+  assert.equal(h.min, 4);
+  assert.equal(h.max, 9);
+});
+
+test("setHabitLogValue : pose puis efface une valeur, bornée à [min,max]", () => {
+  const themes = [theme("t1", { habits: [habit("h1", { kind: "numeric", min: 0, max: 8 })] })];
+  let log = H.setHabitLogValue([], themes, "h1", "2026-09-20", 12);
+  assert.equal(H.habitLogValueForDate(log, "h1", "2026-09-20"), 8); // borné au max
+  log = H.setHabitLogValue(log, themes, "h1", "2026-09-20", 3);
+  assert.equal(H.habitLogValueForDate(log, "h1", "2026-09-20"), 3);
+  log = H.setHabitLogValue(log, themes, "h1", "2026-09-20", "");
+  assert.equal(H.habitLogValueForDate(log, "h1", "2026-09-20"), null);
+});
+
+test("habitValueIntensity : 0 au minimum, 1 au maximum", () => {
+  const h = habit("h1", { kind: "numeric", min: 2, max: 10 });
+  assert.equal(H.habitValueIntensity(h, 2), 0);
+  assert.equal(H.habitValueIntensity(h, 10), 1);
+  assert.equal(H.habitValueIntensity(h, 6), 0.5);
+});
+
+test("habitIntensityColor : intensité croissante -> couleur plus saturée (plus proche de la couleur pleine)", () => {
+  const low = H.habitIntensityColor("#2C6BE0", 0);
+  const high = H.habitIntensityColor("#2C6BE0", 1);
+  assert.equal(high, "#2c6be0");
+  assert.notEqual(low, high);
+});
+
+test("habitCellColors : habitude numeric -> couleur graduée selon la valeur posée", () => {
+  const t = { habits: [habit("h1", { color: "#2C6BE0", kind: "numeric", min: 0, max: 10 })] };
+  const log = [{ id: "x", habitId: "h1", date: "2026-09-20", value: 10 }];
+  assert.deepEqual(H.habitCellColors(t, log, "2026-09-20"), ["#2c6be0"]);
 });
 
 // --- Grille mensuelle ---------------------------------------------------------
@@ -158,6 +215,15 @@ test("habitMonthDays : marque le jour d'aujourd'hui et distingue passé/futur", 
   const todayCell = days.find((d) => d.isToday);
   assert.ok(todayCell, "le mois courant doit contenir le jour du jour");
   assert.equal(todayCell.isFuture, false);
+});
+
+test("habitMonthDays : isWeekend marque samedi et dimanche", () => {
+  const t = theme("t1", { habits: [habit("h1")] });
+  const days = H.habitMonthDays(t, [], 2026, 8); // septembre 2026
+  const sat = days.find((d) => d.date === "2026-09-05");
+  const mon = days.find((d) => d.date === "2026-09-07");
+  assert.equal(sat.isWeekend, true);
+  assert.equal(mon.isWeekend, false);
 });
 
 test("habitMonthDays : une coche loguée colore la bonne case", () => {

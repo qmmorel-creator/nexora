@@ -1396,7 +1396,6 @@ window.storage = window.location.protocol === "file:"
 // ============================================================================
 // Constantes & helpers de dates
 // ============================================================================
-const DAY_MS = 86400000;
 const RADIUS_SCALES = {
   sharp:  { sm: "5px",  base: "7px",  lg: "8px" },
   normal: { sm: "6px",  base: "10px", lg: "14px" },
@@ -1509,8 +1508,9 @@ const addDays = (dateStr, n) => {
   dt.setDate(dt.getDate() + n);
   return iso(dt);
 };
-// === NEXORA:DATE-UTILS:END ===
+const DAY_MS = 86400000;
 const dayIndex = (dateStr) => Math.round((new Date(dateStr + "T00:00:00") - new Date("2020-01-01T00:00:00")) / DAY_MS);
+// === NEXORA:DATE-UTILS:END ===
 // === NEXORA:MARKDOWN:START ===
 // Les guillemets et apostrophes DOIVENT être échappés, pas seulement les chevrons :
 // le rendu Markdown interpole l'URL d'un lien dans un attribut entre guillemets
@@ -1843,6 +1843,7 @@ const monthLabel = (dateStr) => {
   const dt = new Date(dateStr + "T00:00:00");
   return dt.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
 };
+// === NEXORA:WEEK-UTILS:START ===
 const getMonday = (dateStr) => {
   const dt = new Date(dateStr + "T00:00:00");
   const day = dt.getDay() || 7;
@@ -1856,6 +1857,30 @@ const isoWeek = (dateStr) => {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   return Math.ceil((((d - yearStart) / DAY_MS) + 1) / 7);
 };
+// === NEXORA:WEEK-UTILS:END ===
+// === NEXORA:COMPLETED-PER-WEEK:START ===
+/* #141 : vraie vélocité — tâches TERMINÉES par semaine calendaire
+   (lundi→dimanche, jamais une fenêtre glissante de 7 jours qui découperait
+   le calendrier autrement que le reste de l'app), fondée sur `completedAt`.
+   `tasks` est déjà le lot filtré du widget : respecter son filtre ne
+   demande donc rien de plus ici. */
+function completedPerWeekSeries(tasks, weeksCount, todayIso) {
+  const span = Number.isFinite(weeksCount) && weeksCount > 0 ? Math.floor(weeksCount) : 12;
+  const today = todayIso || iso(new Date());
+  const thisMonday = getMonday(today);
+  const weeks = Array.from({ length: span }, (_, i) => {
+    const monday = addDays(thisMonday, -7 * (span - 1 - i));
+    return { monday, sunday: addDays(monday, 6) };
+  });
+  const counts = weeks.map((w) => (tasks || []).filter((t) => {
+    const d = String(t.completedAt || "").slice(0, 10);
+    return d && d >= w.monday && d <= w.sunday;
+  }).length);
+  const average = counts.length ? counts.reduce((s, v) => s + v, 0) / counts.length : 0;
+  const data = weeks.map((w, i) => ({ label: "S" + isoWeek(w.monday), value: counts[i], weekStart: w.monday }));
+  return { data, average };
+}
+// === NEXORA:COMPLETED-PER-WEEK:END ===
 // Certaines données ont pu être enregistrées sans JSON.stringify (bug de l'outil
 // de saisie rapide iPhone, corrigé depuis) : Firestore accepte alors un tableau/objet
 // natif au lieu d'un texte JSON. On tolère les deux formats pour s'auto-réparer au
@@ -2276,6 +2301,12 @@ const ALL_VIEWS_META = [
   { key: "timeline", label: "Timeline + Liste", iconKey: "tabler:timeline" },
   { key: "radar", label: "Radar", iconKey: "tabler:radar" },
   { key: "today", label: "Aujourd'hui", iconKey: "tabler:sun" },
+  // Pages fixes, sans widget (#193 suite) : Cockpit du jour reprend l'esprit
+  // d'« Aujourd'hui » mais priorisé plutôt qu'exhaustif ; Semaine fusionne le
+  // radar de la semaine et les alertes en une seule page (retenue : option C,
+  // flux chronologique).
+  { key: "cockpit", label: "Cockpit", iconKey: "tabler:gauge" },
+  { key: "weekFlow", label: "Semaine", iconKey: "tabler:calendar-week" },
   { key: "table", label: "Tableur", iconKey: "tabler:table" },
   { key: "notifications", label: "Notifications", iconKey: "tabler:bell" },
 ];
@@ -2297,6 +2328,8 @@ function viewRailBadgeCount(key, counts) {
     case "dashboard": return n(c.dashboards);
     case "notifications": return n(c.unreadNotifications);
     case "today": return n(c.dueToday);
+    case "cockpit": return n(c.overdue);
+    case "weekFlow": return n(c.overdue);
     default: return 0;
   }
 }
@@ -2314,7 +2347,7 @@ function viewRailBadgeLabel(count) {
 // Destinations de haut niveau — seules celles-ci restent dans le bandeau vertical.
 // Les autres (les "vues" de détail sur les tâches) deviennent des onglets affichés
 // une fois un contexte projet actif, plutôt que des destinations indépendantes.
-const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "dashboard", "notifications"];
+const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications"];
 // Vues de détail — apparaissent en onglets horizontaux, jamais dans le bandeau.
 const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "timeline", "radar", "table"];
 
@@ -2496,11 +2529,6 @@ function isTaskUrgent(task, ctx) {
   const st = ctx.statuses.find((s) => s.id === task.statusId);
   return !!(st && /urgent/i.test(st.name || ""));
 }
-function isTaskDoneGlobal(task, ctx) {
-  const st = ctx.statuses.find((s) => s.id === task.statusId);
-  return !!(st && /termin/i.test(st.name || ""));
-}
-
 // Dernière interaction : horodatage ISO mis à jour à chaque mutation réelle d'un
 // objet tâche/action/activité/jalon. L'âge d'inactivité est calculé à la volée.
 function taskInteractionAgeDays(task, now = new Date()) {
@@ -2640,10 +2668,24 @@ function lerpColor(hexA, hexB, pct) {
   return `#${[r, gCh, bl].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join("")}`;
 }
 // === NEXORA:COLOR-UTILS:END ===
+// === NEXORA:TASK-STATUS:START ===
+function isTaskDoneGlobal(task, ctx) {
+  const st = ctx.statuses.find((s) => s.id === task.statusId);
+  return !!(st && /termin/i.test(st.name || ""));
+}
 function isTaskLate(task, ctx) {
   if (isTaskDoneGlobal(task, ctx)) return false;
   return dayIndex(task.end) < dayIndex(iso(new Date()));
 }
+// Une "réunion" est un type de tâche explicite, jamais deviné sur le titre
+// (une tâche "Préparer la réunion" n'en est pas une) — même définition que
+// `meetingsOnly` côté MCP (apps/nexora-mcp/src/nexora.mts), pour que
+// l'interface et l'assistant s'accordent sur ce qu'est une réunion.
+function isMeetingTask(task, ctx) {
+  const type = (ctx?.taskTypes || []).find((t) => t.id === task?.taskTypeId);
+  return !!type && ["reunion", "reunions"].includes(normalizeForMatch(type.name));
+}
+// === NEXORA:TASK-STATUS:END ===
 // Chemin critique d'un ensemble de tâches (typiquement toutes celles d'un même
 // projet) : part de la tâche qui termine le plus tard, puis remonte les
 // dépendances en choisissant à chaque étape celle(s) qui terminent le plus tard —
@@ -3008,6 +3050,12 @@ function getDailyBriefing({ tasks, ctx, activityLog, staffing }) {
   const overdue = notDone.filter((t) => t.end < today);
   const dueToday = notDone.filter((t) => t.end === today);
   const dueTomorrow = notDone.filter((t) => t.end === tomorrow);
+  // #136 : réunions passées depuis 48h (~2 jours, granularité jour comme le
+  // reste de Nexora) sans compte rendu — signal explicite, jamais déduit
+  // d'une réunion "probablement tenue" sur la seule date.
+  const meetingsWithoutReport = dated.filter((t) => (
+    isMeetingTask(t, ctx) && t.end >= addDays(today, -2) && t.end <= today && !String(t.meetingReport || "").trim()
+  ));
 
   const { candidates, blocked } = getNextBestAction({ tasks, ctx });
   const nextBestAction = candidates[0] || null;
@@ -3052,7 +3100,7 @@ function getDailyBriefing({ tasks, ctx, activityLog, staffing }) {
     if (reopened.length > 0) recentChanges.push({ key: "reopened", icon: "↺", text: `${reopened.length} tâche${reopened.length > 1 ? "s" : ""} rouverte${reopened.length > 1 ? "s" : ""}`, entries: reopened });
   }
 
-  return { date: today, priorityLevel, alerts, todayItems, dueTomorrowCount: dueTomorrow.length, nextBestAction, atRiskProjects, recentChanges, staffingTomorrow };
+  return { date: today, priorityLevel, alerts, todayItems, dueTomorrowCount: dueTomorrow.length, nextBestAction, atRiskProjects, recentChanges, staffingTomorrow, meetingsWithoutReport };
 }
 
 // Préréglages de filtre temporel, réutilisés PARTOUT (filtre général et
