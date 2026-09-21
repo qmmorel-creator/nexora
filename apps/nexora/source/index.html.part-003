@@ -6748,10 +6748,24 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
           if (cmp) { driftDays += Number(cmp.endDeltaDays) || 0; driftCount += 1; }
         });
       }
-      map.set(g.key, { minIdx: minI, maxIdx: maxI, avgProgress, driftDays, driftCount });
+      // Jalons du groupe (#151) : mêmes jalons que ceux des tâches
+      // individuelles, positionnés sur la barre sommaire à leur date, avec la
+      // même règle de couleur que `MilestoneRow` (colorBy).
+      const milestones = g.tasks.filter((t) => t.milestone && t.end).map((t) => {
+        const proj = ctx.projects.find((p) => p.id === t.projectId);
+        const st = ctx.statuses.find((s) => s.id === t.statusId);
+        const tt = (ctx.taskTypes || []).find((x) => x.id === t.taskTypeId);
+        return {
+          id: t.id,
+          idx: dayIndex(t.end),
+          color: (colorBy === "project" ? proj?.color : colorBy === "taskType" ? tt?.color : st?.color) || proj?.color || st?.color || "var(--text-muted)",
+          label: t.title,
+        };
+      });
+      map.set(g.key, { minIdx: minI, maxIdx: maxI, avgProgress, driftDays, driftCount, milestones });
     });
     return map;
-  }, [macroOrderedGroups, ctx, comparisonOn, comparisonByTask]);
+  }, [macroOrderedGroups, ctx, comparisonOn, comparisonByTask, colorBy]);
 
   /* La colonne de droite existe-t-elle dans CE widget ? Une seule réponse pour
      l'axe, la bande des titres de bloc, celle des repères, la légende, la
@@ -8896,6 +8910,14 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
                     <span className="lp-widget-minigantt-group-summary-track">
                       <span className="lp-widget-minigantt-group-summary-span" style={{ left, width: `calc(${right} - ${left})`, background: g.color || "var(--text-muted)" }} />
                       <span className="lp-widget-minigantt-group-summary-fill" style={{ left, width: `calc((${right} - ${left}) * ${sum.avgProgress / 100})`, background: g.color || "var(--text-muted)" }} />
+                      {(sum.milestones || []).map((m) => (
+                        <span
+                          key={m.id}
+                          className="lp-widget-minigantt-milestone lp-widget-minigantt-group-summary-milestone"
+                          style={{ left: pctFor(Math.min(maxIdx, Math.max(minIdx, m.idx))), background: m.color }}
+                          title={m.label}
+                        />
+                      ))}
                     </span>
                     <span className="lp-widget-minigantt-group-summary-pct">{sum.avgProgress}%</span>
                     {sum.driftCount > 0 && (
