@@ -9200,7 +9200,7 @@ function orgHierLayoutSiblings(contours, gap) {
   return { offsets, mergedLeft, mergedRight };
 }
 // === NEXORA:ORGHIER-LAYOUT:END ===
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember }) {
+function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember, rootLabel }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
   // lui-même (qui change justement de taille avec l'échelle) — un
@@ -9444,7 +9444,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
                 className="lp-orghier-node lp-orghier-node-root"
                 style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
               >
-                <Network size={13} /><span className="lp-orghier-node-title">Organisation</span>
+                <Network size={13} /><span className="lp-orghier-node-title">{rootLabel || "Organisation"}</span>
               </div>
             );
           }
@@ -9611,6 +9611,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         showUnassigned={showUnassigned}
         onEditTeam={setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined}
         onEditMember={setTeamMembers ? (member) => setEditMemberName(member.name) : undefined}
+        rootLabel={widget?.orgChartRootLabel && String(widget.orgChartRootLabel).trim() ? String(widget.orgChartRootLabel).trim() : "Organisation"}
       />
     );
 
@@ -10150,7 +10151,48 @@ function WidgetStaffing({ widget, ctx, staffing, onUpdateStaffing, onUpdateWidge
           <button type="button" className="lp-tool-btn lp-cp-nav-btn" aria-label="Période précédente" onClick={() => shiftPeriod(-1)}>
             <ChevronLeft size={13} />
           </button>
-          <span className="lp-cp-period">{periodLabel}</span>
+          {cfg.staffingRange === "custom" && onUpdateWidget ? (
+            /* #248 : en mode « Plage », les deux bornes se changent au clic,
+               directement dans l'en-tête — plus besoin d'ouvrir les réglages
+               du widget. On écrit dans staffingStart/staffingEnd, le MÊME état
+               que la fiche de réglages (StaffingDisplayFields plus bas), pas
+               une copie : les deux éditeurs restent en phase. L'offset repart
+               à 0 comme là-bas, pour que la borne saisie soit bien celle
+               affichée tout de suite, sans décalage de navigation hérité. */
+            <span className="lp-cp-period lp-cp-period-editable">
+              <label className="lp-cp-period-datepick-wrap" title="Changer la date de début">
+                {fmtShort(frame.start)}
+                <input
+                  type="date"
+                  className="lp-cp-period-datepick"
+                  value={frame.start}
+                  max={frame.end}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    onUpdateWidget({ staffingStart: e.target.value, staffingEnd: frame.end, staffingOffset: 0 });
+                  }}
+                  aria-label="Date de début de la plage"
+                />
+              </label>
+              {" – "}
+              <label className="lp-cp-period-datepick-wrap" title="Changer la date de fin">
+                {fmtShort(frame.end)}
+                <input
+                  type="date"
+                  className="lp-cp-period-datepick"
+                  value={frame.end}
+                  min={frame.start}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    onUpdateWidget({ staffingStart: frame.start, staffingEnd: e.target.value, staffingOffset: 0 });
+                  }}
+                  aria-label="Date de fin de la plage"
+                />
+              </label>
+            </span>
+          ) : (
+            <span className="lp-cp-period">{periodLabel}</span>
+          )}
           <button type="button" className="lp-tool-btn lp-cp-nav-btn" aria-label="Période suivante" onClick={() => shiftPeriod(1)}>
             <ChevronRight size={13} />
           </button>
@@ -14482,6 +14524,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [orgChartFolderId, setOrgChartFolderId] = useState(
     typeof widget?.orgChartFolderId === "string" ? widget.orgChartFolderId : ""
   );
+  // Libellé de la boîte racine synthétique (#249) : n'apparaît que quand
+  // plusieurs équipes de premier niveau se regroupent sous une racine commune
+  // (roots.length > 1 dans OrgHierarchyChart). Vide = « Organisation », comme
+  // avant ce réglage — le champ est stocké tel quel, sans valeur par défaut
+  // écrite dedans, pour qu'un widget déjà en place reste identique tant que
+  // personne n'y touche.
+  const [orgChartRootLabel, setOrgChartRootLabel] = useState(
+    typeof widget?.orgChartRootLabel === "string" ? widget.orgChartRootLabel : ""
+  );
   // Vue de la Heatmap habitudes (retour de test) : déplacée ici depuis le
   // corps du widget, qui n'a plus que la case et sa légende à afficher.
   const [habitHeatmapView, setHabitHeatmapView] = useState(HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month");
@@ -14694,7 +14745,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; }
+    if (type === "orgchart") { data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -15036,6 +15087,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                 />
               </div>
             )}
+            <div className="lp-field" style={{ marginTop: 10 }}>
+              <label>Libellé de la racine <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — utilisé seulement quand plusieurs équipes de premier niveau se regroupent)</span></label>
+              <input type="text" value={orgChartRootLabel} onChange={(e) => setOrgChartRootLabel(e.target.value)} placeholder="Organisation" />
+            </div>
           </div>
         )}
         {type === "habitHeatmap" && (
