@@ -12400,6 +12400,16 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
   // (SimpleFolderManager), ouvert depuis un bouton local plutôt que depuis
   // la barre latérale (il n'existe pas d'équivalent équipe côté navigation).
   const [foldersManagerOpen, setFoldersManagerOpen] = useState(false);
+  // Glisser-déposer une équipe vers un dossier (#227) : même mime custom et
+  // même pattern que les dossiers de projets/tableaux de bord (onDragStart/
+  // onDrop sur "application/x-nexora-team", voir renderProjectFolderNode) ;
+  // dragOverFolderKey retient la zone survolée ("" pour "Sans dossier") pour
+  // le feedback visuel pendant le survol.
+  const [dragOverFolderKey, setDragOverFolderKey] = useState(null);
+  const moveTeamToFolder = (teamId, targetFolderId) => {
+    if (!teamId) return;
+    setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, folderId: targetFolderId || "" } : t)));
+  };
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -12513,7 +12523,13 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
           const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
           const parentLabel = parent ? (team.parentLinkType === "transverse" ? " · ↔ " + parent.name : " · sous " + parent.name) : "";
           return (
-            <div className="lp-manage-item" key={team.id}>
+            <div
+              className="lp-manage-item"
+              key={team.id}
+              draggable
+              onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("application/x-nexora-team", team.id); }}
+            >
+              <span className="lp-drag-handle" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} title="Glisser vers un dossier"><GripVertical size={12} /></span>
               <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
               <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parentLabel})</span></span>
               <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
@@ -12523,13 +12539,31 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
         };
         const sortedFolders = sortedByName(folders);
         const unfiled = sortedByName(catalogue.filter((t) => !t.folderId || !folders.some((f) => f.id === t.folderId)));
+        // Zone de dépose d'un dossier : en-tête ET conteneur, pour que le
+        // survol des cartes déjà présentes dans le dossier fonctionne aussi
+        // (même mime "application/x-nexora-team" que le drag handle ci-dessus).
+        const folderDropProps = (key, targetFolderId) => ({
+          onDragOver: (e) => { if (e.dataTransfer.types.includes("application/x-nexora-team")) { e.preventDefault(); setDragOverFolderKey(key); } },
+          onDragLeave: () => setDragOverFolderKey((k) => (k === key ? null : k)),
+          onDrop: (e) => {
+            e.preventDefault();
+            const id = e.dataTransfer.getData("application/x-nexora-team");
+            setDragOverFolderKey(null);
+            if (id) moveTeamToFolder(id, targetFolderId);
+          },
+        });
         return (
           <>
             {sortedFolders.map((folder) => {
               const folderTeams = sortedByName(catalogue.filter((t) => t.folderId === folder.id));
               if (!folderTeams.length) return null;
               return (
-                <div key={folder.id} style={{ marginBottom: 10 }}>
+                <div
+                  key={folder.id}
+                  style={{ marginBottom: 10, borderRadius: 8 }}
+                  className={dragOverFolderKey === folder.id ? "lp-folder-dragover" : ""}
+                  {...folderDropProps(folder.id, folder.id)}
+                >
                   <div className="lp-section-title" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                     <Folder size={12} /> {folder.name}
                   </div>
@@ -12538,7 +12572,11 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
               );
             })}
             {unfiled.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
+              <div
+                style={{ marginBottom: 10, borderRadius: 8 }}
+                className={dragOverFolderKey === "" ? "lp-folder-dragover" : ""}
+                {...folderDropProps("", "")}
+              >
                 {sortedFolders.length > 0 && (
                   <div className="lp-section-title" style={{ fontSize: 11 }}>Sans dossier</div>
                 )}
