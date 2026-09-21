@@ -6957,6 +6957,28 @@ function GlobalStyles() {
         .lp-quote-logo-preview{ margin-top:6px; }
         .lp-quote-logo-preview img{ max-height:60px; max-width:160px; object-fit:contain; border:1px solid var(--border); border-radius:var(--radius-sm); padding:4px; background:var(--surface); }
 
+        /* Catalogue de prestations + chips de compétences (#devis-v2). Les
+           chips sont UI seulement — jamais dans le PDF (design déjà validé). */
+        .lp-quote-chip{ display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:10px; font-weight:700; color:#fff; white-space:nowrap; line-height:1.6; }
+        .lp-quote-chip-row{ display:flex; flex-wrap:wrap; gap:4px; }
+        .lp-quote-chip-picker{ display:flex; flex-wrap:wrap; gap:5px; margin:2px 0 8px; }
+        .lp-quote-chip-btn{ border:none; cursor:pointer; opacity:.4; transition:opacity .12s ease; }
+        .lp-quote-chip-btn.active{ opacity:1; box-shadow:0 0 0 2px color-mix(in srgb, var(--text-primary) 25%, transparent); }
+        .lp-quote-catalog-picker{ display:flex; flex-direction:column; gap:4px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--paper-soft); margin-bottom:10px; max-height:220px; overflow-y:auto; }
+        .lp-quote-catalog-picker-item{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; border-radius:var(--radius-sm); cursor:pointer; text-align:left; border:none; background:none; width:100%; font:inherit; color:inherit; }
+        .lp-quote-catalog-picker-item:hover{ background:var(--surface); }
+        .lp-quote-catalog-picker-label{ font-weight:700; font-size:12px; }
+        .lp-quote-catalog-picker-meta{ font-size:11px; color:var(--text-muted); }
+        .lp-quote-catalog-row, .lp-quote-skill-row{ display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); flex-wrap:wrap; }
+        .lp-quote-catalog-main{ display:flex; flex-direction:column; gap:3px; flex:1 1 160px; min-width:140px; }
+        .lp-quote-catalog-label{ font-weight:700; font-size:12.5px; }
+        .lp-quote-catalog-desc{ font-size:11px; color:var(--text-muted); }
+        .lp-quote-catalog-meta{ font-size:11.5px; color:var(--text-secondary); min-width:90px; text-align:right; }
+        .lp-quote-skill-name{ flex:1; font-size:12.5px; font-weight:600; }
+        .lp-quote-color-swatch{ width:20px; height:20px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; }
+        .lp-quote-color-swatch.active{ border-color:var(--text-primary); }
+        .lp-quote-settings-tabs{ margin-bottom:12px; }
+
     `}</style>
   );
 }
@@ -7312,6 +7334,14 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [quotes, setQuotes] = useState([]);
   const [quoteClients, setQuoteClients] = useState([]);
   const [quoteSettings, setQuoteSettings] = useState(seedQuoteSettings);
+  // Catalogue de prestations et chips de compétences/logiciels (#devis-v2) :
+  // seedés (part-000) pour être utilisables dès la première ouverture, mais
+  // librement éditables/supprimables ensuite — jamais un contenu figé en dur.
+  const [quoteCatalog, setQuoteCatalog] = useState(seedQuoteCatalog);
+  const [quoteSkills, setQuoteSkills] = useState(seedQuoteSkills);
+  // Module Facture (#devis-v2 suite) : mêmes principes de persistance que les
+  // devis ci-dessus — une simple liste d'objets identifiables.
+  const [invoices, setInvoices] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [budgetLines, setBudgetLines] = useState([]); // budget théorique par catégorie et par projet
   const [teamMembers, setTeamMembers] = useState(seedTeamMembers);
@@ -7454,6 +7484,11 @@ export default function LePlan({ currentUser, onSignOut }) {
     // identifiables (même fusion élément par élément) ; quoteSettings est un
     // objet-carte comme gcalSettings juste au-dessus.
     "nexora:quotes", "nexora:quoteClients", "nexora:quoteSettings",
+    // Catalogue de prestations et chips de compétences (#devis-v2) : mêmes
+    // listes d'objets identifiables, même fusion élément par élément.
+    "nexora:quoteCatalog", "nexora:quoteSkills",
+    // Module Facture (#devis-v2 suite) : même forme que quotes, même fusion.
+    "nexora:invoices",
   ]);
 
   // === NEXORA:MCP-SYNC-SPLIT:START ===
@@ -7988,6 +8023,9 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["quotes", "nexora:quotes", setQuotes],
     ["quoteClients", "nexora:quoteClients", setQuoteClients],
     ["quoteSettings", "nexora:quoteSettings", setQuoteSettings],
+    ["quoteCatalog", "nexora:quoteCatalog", setQuoteCatalog],
+    ["quoteSkills", "nexora:quoteSkills", setQuoteSkills],
+    ["invoices", "nexora:invoices", setInvoices],
   ];
 
   // === NEXORA:INTERFACE-SYNC:START ===
@@ -8053,6 +8091,9 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:quotes": quotes,
     "nexora:quoteClients": quoteClients,
     "nexora:quoteSettings": quoteSettings,
+    "nexora:quoteCatalog": quoteCatalog,
+    "nexora:quoteSkills": quoteSkills,
+    "nexora:invoices": invoices,
     "nexora:appearance": appearance,
     "nexora:enabledViews": enabledViews,
     "nexora:viewOrder": viewOrder,
@@ -8770,6 +8811,9 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:quotes", quotes); }, [quotes, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:quoteClients", quoteClients); }, [quoteClients, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:quoteSettings", quoteSettings); }, [quoteSettings, dataLoaded]);
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:quoteCatalog", quoteCatalog); }, [quoteCatalog, dataLoaded]);
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:quoteSkills", quoteSkills); }, [quoteSkills, dataLoaded]);
+  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:invoices", invoices); }, [invoices, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:expenses", expenses); }, [expenses, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:budgetLines", budgetLines); }, [budgetLines, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:teamMembers", teamMembers); }, [teamMembers, dataLoaded]);
@@ -10854,16 +10898,23 @@ export default function LePlan({ currentUser, onSignOut }) {
   // existingId absent -> nouveau devis : numéro attribué à la CRÉATION (voir
   // nextQuoteNumber, part-000), jamais recalculé ensuite même si d'autres
   // devis sont créés après.
+  // Renvoie le devis complet (pas juste son id) : QuotesView s'en sert pour
+  // lancer l'archivage Drive (PDF) juste après la sauvegarde, sans dépendre
+  // du timing de la mise à jour d'état React.
   const saveQuote = (data, existingId) => {
     if (existingId) {
-      setQuotes((prev) => prev.map((q) => (q.id === existingId ? { ...q, ...data, updatedAt: new Date().toISOString() } : q)));
-      return existingId;
+      const now = new Date().toISOString();
+      const current = quotes.find((q) => q.id === existingId);
+      const merged = { ...(current || {}), ...data, id: existingId, updatedAt: now };
+      setQuotes((prev) => prev.map((q) => (q.id === existingId ? merged : q)));
+      return merged;
     }
     const id = uid();
     const number = nextQuoteNumber(quotes);
     const now = new Date().toISOString();
-    setQuotes((prev) => [...prev, { id, number, status: "draft", createdAt: now, updatedAt: now, ...data }]);
-    return id;
+    const quote = { id, number, status: "draft", createdAt: now, updatedAt: now, ...data };
+    setQuotes((prev) => [...prev, quote]);
+    return quote;
   };
 
   // Duplication : un nouveau numéro, un nouveau statut Brouillon, des lignes
@@ -10886,6 +10937,15 @@ export default function LePlan({ currentUser, onSignOut }) {
   // l'utilisateur n'a pas choisi "Créer le projet" ou "Ignorer" — jamais de
   // création silencieuse.
   const [quoteToProjectPrompt, setQuoteToProjectPrompt] = useState(null);
+  // Id de la facture à ouvrir automatiquement en arrivant sur la vue Factures
+  // — posé par "Facturer ce devis" (QuotesView), consommé puis effacé par
+  // InvoicesView (onAutoOpened) : jamais une ouverture silencieuse répétée.
+  const [pendingOpenInvoiceId, setPendingOpenInvoiceId] = useState(null);
+  const facturerQuote = (quote) => {
+    const id = createInvoiceFromQuote(quote);
+    setPendingOpenInvoiceId(id);
+    setView("invoices");
+  };
 
   const setQuoteStatus = (id, status) => {
     setQuotes((prev) => prev.map((q) => (q.id === id ? { ...q, status } : q)));
@@ -10916,6 +10976,155 @@ export default function LePlan({ currentUser, onSignOut }) {
     if (newTasks.length) setTasks((prev) => [...prev, ...newTasks]);
     setQuoteToProjectPrompt(null);
     return projectId;
+  };
+
+  // Catalogue de prestations — créer/mettre à jour par id, comme saveQuote.
+  // L'insertion d'une entrée dans un devis (QuoteFormModal) en fait une
+  // COPIE one-shot dans la ligne : modifier le catalogue ensuite ne touche
+  // jamais les devis déjà créés.
+  const saveCatalogEntry = (entry) => {
+    setQuoteCatalog((prev) => {
+      const exists = prev.some((e) => e.id === entry.id);
+      return exists ? prev.map((e) => (e.id === entry.id ? { ...e, ...entry } : e)) : [...prev, { ...entry, id: entry.id || uid() }];
+    });
+  };
+  const deleteCatalogEntry = (id) => setQuoteCatalog((prev) => prev.filter((e) => e.id !== id));
+
+  // Chips de compétences/logiciels — créer/mettre à jour par id. La
+  // suppression retire aussi l'id de tous les skillIds qui le référencent
+  // (lignes de devis ET entrées de catalogue) : jamais de référence orpheline
+  // invisible dans les données.
+  const saveSkill = (skill) => {
+    setQuoteSkills((prev) => {
+      const exists = prev.some((s) => s.id === skill.id);
+      return exists ? prev.map((s) => (s.id === skill.id ? { ...s, ...skill } : s)) : [...prev, { ...skill, id: skill.id || uid() }];
+    });
+  };
+  const deleteSkill = (id) => {
+    setQuoteSkills((prev) => prev.filter((s) => s.id !== id));
+    setQuoteCatalog((prev) => prev.map((e) => (e.skillIds?.includes(id) ? { ...e, skillIds: e.skillIds.filter((s) => s !== id) } : e)));
+    setQuotes((prev) => prev.map((q) => {
+      if (!(q.lines || []).some((l) => l.skillIds?.includes(id))) return q;
+      return { ...q, lines: q.lines.map((l) => (l.skillIds?.includes(id) ? { ...l, skillIds: l.skillIds.filter((s) => s !== id) } : l)) };
+    }));
+  };
+
+  // ============================================================================
+  // Module Facture — construit sur le modèle du module Devis ci-dessus.
+  // ============================================================================
+  // Crée une facture à partir d'un devis accepté : copie client + lignes +
+  // titre, statut initial "issued", quoteId renseigné (traçabilité), échéance
+  // par défaut +30 jours comme les devis (defaultInvoiceDueDate). Retourne
+  // l'id de la facture créée — comme saveQuote, l'appelant (QuotesView →
+  // bouton "Facturer ce devis") en a besoin pour basculer vers elle.
+  const createInvoiceFromQuote = (quote) => {
+    const id = uid();
+    const number = nextInvoiceNumber(invoices);
+    const now = new Date().toISOString();
+    const todayIso = iso(new Date());
+    const invoice = {
+      id, number, quoteId: quote.id, clientId: quote.clientId, title: quote.title || "",
+      issueDate: todayIso, dueDate: defaultInvoiceDueDate(todayIso),
+      lines: (quote.lines || []).map((l) => ({ ...l, id: uid() })),
+      status: "issued", createdAt: now,
+    };
+    setInvoices((prev) => [...prev, invoice]);
+    // Même archivage Drive automatique que la sauvegarde manuelle d'une
+    // facture (voir saveInvoice/InvoicesView.handleSave) — "Facturer ce
+    // devis" est aussi une création de facture.
+    const client = quoteClients.find((c) => c.id === invoice.clientId);
+    archiveInvoicePdfToDrive(invoice, client, quoteSettings, quoteSkills, quote, null);
+    return id;
+  };
+
+  // Création/édition manuelle libre — comme saveQuote, existingId absent =
+  // nouvelle facture (numéro attribué à la CRÉATION, jamais recalculé
+  // ensuite). Une facture "payée" ou "annulée" reste techniquement éditable
+  // ici (pas de verrou dur) : QuotesView/InvoicesView n'affiche simplement
+  // pas le bouton d'édition pour ces statuts (voir InvoiceFormModal, part-003).
+  // Renvoie la facture complète (pas juste son id) : InvoicesView s'en sert
+  // pour lancer l'archivage Drive (PDF) juste après la sauvegarde, sans
+  // dépendre du timing de la mise à jour d'état React — même principe que
+  // saveQuote ci-dessus.
+  const saveInvoice = (data, existingId) => {
+    if (existingId) {
+      const now = new Date().toISOString();
+      const current = invoices.find((inv) => inv.id === existingId);
+      const merged = { ...(current || {}), ...data, id: existingId, updatedAt: now };
+      setInvoices((prev) => prev.map((inv) => (inv.id === existingId ? merged : inv)));
+      return merged;
+    }
+    const id = uid();
+    const number = nextInvoiceNumber(invoices);
+    const now = new Date().toISOString();
+    const invoice = { id, number, status: "issued", createdAt: now, ...data };
+    setInvoices((prev) => [...prev, invoice]);
+    return invoice;
+  };
+
+  // Duplication : une NOUVELLE facture, son propre numéro dans la séquence
+  // continue (jamais une copie qui réutiliserait un numéro) — même principe
+  // que duplicateQuote.
+  const duplicateInvoice = (invoice) => {
+    const id = uid();
+    const number = nextInvoiceNumber(invoices);
+    const now = new Date().toISOString();
+    setInvoices((prev) => [...prev, {
+      ...invoice, id, number, status: "issued", quoteId: invoice.quoteId,
+      creditNoteOf: undefined, cancelledByInvoiceId: undefined, paidAt: undefined,
+      createdAt: now, updatedAt: undefined,
+      lines: (invoice.lines || []).map((l) => ({ ...l, id: uid() })),
+    }]);
+  };
+
+  // "Payée" est le seul passage de statut manuel qui a un effet de bord :
+  // paidAt est renseigné automatiquement (jamais par ailleurs), pour le Livre
+  // des recettes (InvoicesView). "cancelled" n'est JAMAIS atteignable depuis
+  // ce handler — uniquement via createCreditNote ci-dessous.
+  const setInvoiceStatus = (id, status) => {
+    if (status === "cancelled") return;
+    setInvoices((prev) => prev.map((inv) => {
+      if (inv.id !== id) return inv;
+      return { ...inv, status, paidAt: status === "paid" ? iso(new Date()) : inv.paidAt };
+    }));
+  };
+
+  // Avoir — LA seule façon d'annuler une facture émise : jamais de
+  // suppression (numérotation continue et sans trou, voir nextInvoiceNumber
+  // part-000), jamais de réutilisation de numéro. Crée un nouveau document
+  // dans la même séquence, lignes en montants négatifs (le total et chaque
+  // ligne s'affichent donc négatifs, dans l'UI comme dans le PDF), et marque
+  // la facture d'origine "cancelled" avec une référence croisée dans les deux
+  // sens (cancelledByInvoiceId / creditNoteOf).
+  const createCreditNote = (invoiceId) => {
+    const source = invoices.find((inv) => inv.id === invoiceId);
+    if (!source) return;
+    const id = uid();
+    const number = nextInvoiceNumber(invoices);
+    const now = new Date().toISOString();
+    const negate = (l) => ({
+      ...l, id: uid(),
+      amount: -Math.abs(Number(l.amount) || 0),
+      unitRate: l.kind === "regie" ? -Math.abs(Number(l.unitRate) || 0) : l.unitRate,
+    });
+    const creditNote = {
+      id, number, quoteId: source.quoteId, clientId: source.clientId,
+      title: source.title, issueDate: iso(new Date()), dueDate: iso(new Date()),
+      lines: (source.lines || []).map(negate),
+      status: "issued", creditNoteOf: source.id, createdAt: now,
+    };
+    setInvoices((prev) => [
+      ...prev.map((inv) => (inv.id === source.id ? { ...inv, status: "cancelled", cancelledByInvoiceId: id } : inv)),
+      creditNote,
+    ]);
+    // Un avoir est un document au même titre qu'une facture : même archivage
+    // Drive automatique, fire-and-forget (voir archiveInvoicePdfToDrive,
+    // part-003). "original" = la facture qu'il annule, pour le bandeau AVOIR
+    // du PDF (originalInvoiceNumber).
+    const client = quoteClients.find((c) => c.id === creditNote.clientId);
+    const sourceQuote = creditNote.quoteId ? quotes.find((q) => q.id === creditNote.quoteId) : null;
+    archiveInvoicePdfToDrive(creditNote, client, quoteSettings, quoteSkills, sourceQuote, source.number);
+    return id;
   };
 
   const [pendingDeleteProject, setPendingDeleteProject] = useState(null);
@@ -11756,7 +11965,8 @@ export default function LePlan({ currentUser, onSignOut }) {
           {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} setTeams={setTeams} setTeamFolders={setTeamFolders} habitLog={habitLog} setHabitLog={setHabitLog} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("meta"); setSettingsOpen(true); }} onOpenHabitThemes={() => { setSettingsTab("habitThemes"); setSettingsOpen(true); }} onOpenTeamsSettings={() => { setSettingsTab("peopleTeams"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} taskBaselines={taskBaselines} />}
           {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
-          {view === "quotes" && <QuotesView quotes={quotes} clients={quoteClients} settings={quoteSettings} setSettings={setQuoteSettings} onSaveQuote={saveQuote} onDuplicateQuote={duplicateQuote} onDeleteQuote={deleteQuote} onSetStatus={setQuoteStatus} onAddClient={addQuoteClient} onSaveClient={saveQuoteClient} onDeleteClient={deleteQuoteClient} toolbarSlot={viewToolbarSlot} />}
+          {view === "quotes" && <QuotesView quotes={quotes} clients={quoteClients} settings={quoteSettings} setSettings={setQuoteSettings} catalog={quoteCatalog} skills={quoteSkills} onSaveCatalogEntry={saveCatalogEntry} onDeleteCatalogEntry={deleteCatalogEntry} onSaveSkill={saveSkill} onDeleteSkill={deleteSkill} onSaveQuote={saveQuote} onDuplicateQuote={duplicateQuote} onDeleteQuote={deleteQuote} onSetStatus={setQuoteStatus} onAddClient={addQuoteClient} onSaveClient={saveQuoteClient} onDeleteClient={deleteQuoteClient} onFacturer={facturerQuote} toolbarSlot={viewToolbarSlot} />}
+          {view === "invoices" && <InvoicesView invoices={invoices} quotes={quotes} clients={quoteClients} settings={quoteSettings} setSettings={setQuoteSettings} catalog={quoteCatalog} skills={quoteSkills} onSaveCatalogEntry={saveCatalogEntry} onDeleteCatalogEntry={deleteCatalogEntry} onSaveSkill={saveSkill} onDeleteSkill={deleteSkill} onSaveInvoice={saveInvoice} onDuplicateInvoice={duplicateInvoice} onSetStatus={setInvoiceStatus} onCreateCreditNote={createCreditNote} onAddClient={addQuoteClient} autoOpenId={pendingOpenInvoiceId} onAutoOpened={() => setPendingOpenInvoiceId(null)} toolbarSlot={viewToolbarSlot} />}
           {view === "cockpit" && <CockpitView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} onOpenWeek={() => setView("weekFlow")} />}
           {view === "weekFlow" && <WeekFlowView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
 

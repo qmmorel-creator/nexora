@@ -217,11 +217,61 @@ test("PDF : mentions légales obligatoires toutes présentes dans le code de gé
   assert.match(p3, /SIRET/);
 });
 
+test("PDF : pénalités de retard — formulation BCE + 10 points (guide « Charte et Mentions »), plus l'ancienne formulation", () => {
+  assert.match(p3, /au taux de refinancement de la BCE applicable au début du semestre majoré de 10 points/);
+  assert.doesNotMatch(p3, /3 fois le taux d'intérêt légal/);
+});
+
 test("PDF : charte graphique — couleurs de marque figées en RGB (jsPDF ne lit pas les variables CSS)", () => {
   assert.match(p3, /brand:\s*\[0,\s*74,\s*173\]/); // #004AAD
-  assert.match(p3, /ink:\s*\[47,\s*51,\s*54\]/); // #2F3336
+  assert.match(p3, /ink:\s*\[47,\s*52,\s*55\]/); // #2F3437
   assert.match(p3, /border:\s*\[219,\s*223,\s*219\]/); // #DBDFDB
+  assert.match(p3, /surfaceMuted:\s*\[241,\s*245,\s*250\]/); // #F1F5FA
   assert.match(p3, /roundedRect/); // coins arrondis
+});
+
+test("PDF : format A4 en millimètres, marges de 15mm (guide de personnalisation)", () => {
+  assert.match(p3, /new jsPDF\(\{\s*unit:\s*"mm",\s*format:\s*"a4"\s*\}\)/);
+  const from = p3.indexOf("async function downloadQuotePdf");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /const marginX = 15;/);
+});
+
+test("PDF : bandeau bleu plein en haut de page + libellé fixe « PROPOSITION COMMERCIALE »", () => {
+  assert.match(p3, /function drawQuoteBand/);
+  assert.match(p3, /PROPOSITION COMMERCIALE/);
+});
+
+test("PDF : titre « Devis » en 38pt, structure en 2 pages (Devis + Conditions)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /doc\.setFontSize\(38\)/);
+  assert.match(body, /doc\.text\("Devis", marginX, titleBaseline\)/);
+  assert.match(body, /doc\.addPage\(\)/);
+  assert.match(body, /Conditions & mentions légales/);
+});
+
+test("PDF : pas de ligne TVA — seul un bandeau « TOTAL HT (= TTC) »", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /TOTAL HT \(= TTC\)/);
+  assert.doesNotMatch(body, /TVA\s*20\s*%/);
+});
+
+test("PDF : pagination finale calculée après génération complète (doc.internal.getNumberOfPages)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /doc\.internal\.getNumberOfPages\(\)/);
+  assert.match(body, /doc\.setPage\(p\)/);
+});
+
+test("PDF : bloc « Bon pour accord » visuel en bas de page 2, sans nouveau champ de données", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /05 \/ Bon pour accord/i);
+  assert.match(body, /J'accepte le devis \$\{quote\.number\}/);
+  assert.match(body, /Signature du client/);
 });
 
 test("réglages entreprise : les placeholders demandés sont bien ceux fournis (à remplacer plus tard par Quentin)", () => {
@@ -257,18 +307,158 @@ test("PDF : le logo utilise directement le data-URL déjà stocké — le fetch 
   assert.match(body, /loadQuoteLogoDataUrl\(rawLogoUrl\)/);
 });
 
-test("PDF : les mentions légales sont ancrées en bas de page (position Y fixe dérivée de pageHeight), pas juste après le tableau", () => {
+test("PDF : les mentions légales de la page 2 sont réparties en sections numérotées (02/03/04), avec repli multi-lignes", () => {
   const from = p3.indexOf("async function downloadQuotePdf");
   assert.ok(from !== -1);
   const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
-  // Un calcul de position ancré sur pageHeight, avant l'écriture du bloc de
-  // mentions légales — pas un simple offset après doc.lastAutoTable.finalY.
-  assert.match(body, /pageHeight\s*-\s*marginBottom\s*-\s*legalBlockHeight/);
-  // La hauteur du bloc tient compte du nombre de lignes repliées avec
-  // splitTextToSize (certaines mentions peuvent tenir sur 2 lignes).
   assert.match(body, /doc\.splitTextToSize\(/);
-  assert.match(body, /legalLinesCount/);
-  // Si le tableau déborde dans la zone basse, nouvelle page + mentions
-  // légales ancrées en bas de CETTE nouvelle page.
-  assert.match(body, /if\s*\(tableFinalY > legalBlockY\)\s*\{\s*doc\.addPage\(\);/);
+  assert.match(body, /"02"[\s\S]*"Validité & règlement"/);
+  assert.match(body, /"03"[\s\S]*"Pénalités & indemnités"/);
+  assert.match(body, /"04"[\s\S]*"Identification"/);
+});
+
+// ============================================================================
+// CGV auto-renseignées (#devis-v2)
+// ============================================================================
+
+test("CGV : champs cgvText/cgvUpdatedAt dans quoteSettings (part-000), vides par défaut", () => {
+  const settingsBlock = p0.slice(p0.indexOf("const seedQuoteSettings"), p0.indexOf("};", p0.indexOf("const seedQuoteSettings")));
+  assert.match(settingsBlock, /cgvText:\s*""/);
+  assert.match(settingsBlock, /cgvUpdatedAt:\s*""/);
+});
+
+test("CGV : la version affichée se recalcule à la volée (fmtShort), jamais une chaîne pré-formatée stockée en base", () => {
+  assert.match(p3, /function quoteCgvVersionLabel\(settings\)/);
+  const from = p3.indexOf("function quoteCgvVersionLabel");
+  const body = p3.slice(from, p3.indexOf("\n}", from));
+  assert.match(body, /fmtShort\(settings\.cgvUpdatedAt\)/);
+});
+
+test("CGV : cgvUpdatedAt n'est mis à jour QUE si cgvText a réellement changé (QuotesView, part-003)", () => {
+  const from = p3.indexOf("function QuotesView");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /data\.cgvText\s*!==\s*prev\.cgvText/);
+  assert.match(body, /cgvUpdatedAt:\s*data\.cgvText\s*!==\s*prev\.cgvText\s*\?\s*iso\(new Date\(\)\)\s*:\s*prev\.cgvUpdatedAt/);
+});
+
+test("CGV : réglages entreprise — textarea dédié avec aide contextuelle", () => {
+  const from = p3.indexOf("function QuoteSettingsModal");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /Conditions générales de vente/);
+  assert.match(body, /<textarea[^>]*value=\{cgvText\}/);
+});
+
+test("PDF : page 3 dédiée aux CGV, uniquement si settings.cgvText n'est pas vide (pas de page vide)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /if\s*\(\(settings\?\.cgvText \|\| ""\)\.trim\(\)\)\s*\{/);
+  assert.match(body, /Conditions générales de vente/);
+  assert.match(body, /doc\.splitTextToSize\(paragraph, contentWidth\)/);
+});
+
+test("PDF : bon pour accord référence la version des CGV quand elles sont renseignées, phrase simple sinon", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /ses conditions et ses CGV \(v\.\$\{acceptCgvVersion\}\)/);
+  assert.match(body, /J'accepte le devis \$\{quote\.number\}\.`/);
+});
+
+// ============================================================================
+// Catalogue de prestations (#devis-v2)
+// ============================================================================
+
+test("catalogue : quoteCatalog présent dans les TROIS registres de persistance (part-001), comme quotes/quoteClients", () => {
+  assert.ok(p1.includes('"nexora:quoteCatalog"'));
+  assert.ok(p1.includes('"nexora:quoteSkills"'));
+
+  const mergeableBlock = p1.slice(p1.indexOf("const NEXORA_MERGEABLE_KEYS"), p1.indexOf("]);", p1.indexOf("const NEXORA_MERGEABLE_KEYS")));
+  assert.match(mergeableBlock, /nexora:quoteCatalog/);
+  assert.match(mergeableBlock, /nexora:quoteSkills/);
+
+  const entriesBlock = p1.slice(p1.indexOf("const firebaseStateEntries"), p1.indexOf("];", p1.indexOf("const firebaseStateEntries")));
+  assert.match(entriesBlock, /setQuoteCatalog/);
+  assert.match(entriesBlock, /setQuoteSkills/);
+
+  const backupBlock = p1.slice(p1.indexOf("const fullBackupLivePayload"), p1.indexOf("});", p1.indexOf("const fullBackupLivePayload")));
+  assert.match(backupBlock, /"nexora:quoteCatalog":\s*quoteCatalog/);
+  assert.match(backupBlock, /"nexora:quoteSkills":\s*quoteSkills/);
+});
+
+test("catalogue : seedé avec du contenu réel (Quentin), librement éditable ensuite (saveCatalogEntry/deleteCatalogEntry)", () => {
+  assert.match(p0, /const seedQuoteCatalog = \[/);
+  assert.match(p0, /label:\s*"Assistance technique IA"/);
+  assert.match(p1, /const saveCatalogEntry = /);
+  assert.match(p1, /const deleteCatalogEntry = /);
+});
+
+test("catalogue : bouton « Insérer depuis le catalogue » dans QuoteFormModal, insertion = copie one-shot (pas de référence permanente)", () => {
+  const from = p3.indexOf("function QuoteFormModal");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /Insérer depuis le catalogue/);
+  assert.match(body, /const insertFromCatalog = /);
+  // Copie one-shot : un nouvel id de ligne généré, jamais l'id de l'entrée catalogue.
+  assert.match(body, /id:\s*uid\(\)/);
+});
+
+// ============================================================================
+// Chips de compétences/logiciels (#devis-v2)
+// ============================================================================
+
+test("chips : quoteSkills seedé avec une couleur hex par entrée, palette réutilisant les couleurs de statut existantes", () => {
+  assert.match(p0, /const QUOTE_SKILL_COLORS = \[/);
+  assert.match(p0, /const seedQuoteSkills = \[/);
+  assert.match(p0, /label:\s*"Claude",\s*color:\s*"#[0-9A-Fa-f]{6}"/);
+});
+
+test("chips : deleteSkill retire aussi l'id de skillIds sur les lignes de devis ET les entrées de catalogue (pas de référence orpheline)", () => {
+  const from = p1.indexOf("const deleteSkill = ");
+  assert.ok(from !== -1);
+  const body = p1.slice(from, p1.indexOf("\n  };", from));
+  assert.match(body, /setQuoteSkills/);
+  assert.match(body, /setQuoteCatalog/);
+  assert.match(body, /setQuotes/);
+  assert.match(body, /skillIds\.filter/);
+});
+
+test("chips : sélecteur multi-choix custom sur chaque ligne de devis (composant maison, pas de librairie externe)", () => {
+  assert.match(p3, /function QuoteChipPicker\(/);
+  const from = p3.indexOf("function QuoteFormModal");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /<QuoteChipPicker /);
+  assert.match(body, /toggleLineSkill/);
+});
+
+test("chips : badges colorés affichés dans le catalogue (lecture) via le même composant", () => {
+  assert.match(p3, /function QuoteChipBadges\(/);
+  assert.match(p3, /<QuoteChipBadges /);
+});
+
+// Revirement de la décision initiale (« UI seulement ») : Quentin les veut
+// désormais visibles dans le PDF, sous une autre forme (texte compact gris,
+// pas des badges pleins — voir quoteLineSkillsLabel/attachQuoteSkillsCellDrawer).
+test("chips : libellés de compétences résolus et injectés dans le tableau du PDF devis (pas de badges pleins, juste du texte)", () => {
+  assert.match(p3, /function quoteLineSkillsLabel\(line, skills\)/);
+  assert.match(p3, /Compétences : \$\{labels\.join\(" · "\)\}/);
+  assert.match(p3, /function attachQuoteSkillsCellDrawer\(doc, lines, skills\)/);
+
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /buildQuoteLinesTableRows\(quote\.lines, quoteSkills\)/);
+  assert.match(body, /didDrawCell:\s*attachQuoteSkillsCellDrawer\(doc, quote\.lines, quoteSkills\)/);
+  // Jamais de badge coloré plein (composant React) dans le code PDF.
+  assert.doesNotMatch(body, /QuoteChipBadges|QuoteChipPicker/);
+});
+
+test("chips PDF : un id de compétence orphelin (chip supprimé) est ignoré silencieusement, jamais une erreur", () => {
+  const from = p3.indexOf("function quoteLineSkillsLabel");
+  const body = p3.slice(from, p3.indexOf("\n}", from));
+  assert.match(body, /\.filter\(Boolean\)/);
+});
+
+test("chips PDF : rien n'est ajouté pour une ligne sans skillIds (pas de ligne vide)", () => {
+  const from = p3.indexOf("function quoteLineSkillsLabel");
+  const body = p3.slice(from, p3.indexOf("\n}", from));
+  assert.match(body, /if \(!ids\.length\) return "";/);
 });
