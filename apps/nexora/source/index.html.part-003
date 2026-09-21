@@ -10232,11 +10232,13 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
   const dragRef = useRef(null);
   const wrapRef = useRef(null);
   const daylistRef = useRef(null);
-  // Volet Description (#177) : même fonctionnement que la Heat map croisée —
-  // la tâche choisie DANS LA LISTE, distincte du jour choisi dans le calendrier ;
+  // Volet Description (#177, désormais toujours actif — #216) : la tâche
+  // choisie DANS LA LISTE, distincte du jour choisi dans le calendrier ;
   // changer de jour ne doit pas fermer la description en cours de lecture tant
-  // que la tâche reste dans la liste du jour affiché.
-  const showDescPane = widget?.heatmapMonthShowDescPane === true;
+  // que la tâche reste dans la liste du jour affiché. #216 : simple clic sur
+  // une tâche de la liste → affiche sa description ici (volet 3) ; double-clic
+  // → ouvre la fiche complète (édition), comme ailleurs dans l'app.
+  const showDescPane = true;
   const [descTaskId, setDescTaskId] = useState(null);
   const [descPreview, setDescPreview] = useState(true);
   const [descPaneWidth, setDescPaneWidth] = useState(null);
@@ -10415,7 +10417,15 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
                       onMouseEnter={(e) => dayTasks.length && setHoverDay({ day, tasks: dayTasks, x: e.clientX, y: e.clientY })}
                       onMouseMove={(e) => dayTasks.length && setHoverDay({ day, tasks: dayTasks, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setHoverDay(null)}
-                      onClick={() => setSelectedDay((d) => (d === day ? null : (dayTasks.length ? day : null)))}
+                      onClick={() => {
+                        setSelectedDay((d) => (d === day ? null : (dayTasks.length ? day : null)));
+                        // #216 : simple clic → si le jour ne porte qu'une seule
+                        // tâche, sa description s'affiche directement dans le
+                        // volet 3 (pas besoin de re-cliquer dans la liste) ;
+                        // plusieurs tâches → la liste tranche, comme avant.
+                        setDescTaskId(dayTasks.length === 1 ? dayTasks[0].id : null);
+                      }}
+                      onDoubleClick={() => { if (dayTasks.length === 1) onOpen(dayTasks[0]); }}
                     >
                       {/* Sur une case lavée, le blanc devient illisible : le
                           numéro reprend la couleur du texte ordinaire. */}
@@ -10454,9 +10464,11 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
               const st = ctx.statuses.find((s) => s.id === t.statusId);
               return (
                 <div
-                  className={"lp-widget-heatmap-daylist-item" + (showDescPane && descTaskId === t.id ? " is-selected" : "")}
+                  className={"lp-widget-heatmap-daylist-item" + (descTaskId === t.id ? " is-selected" : "")}
                   key={t.id}
-                  onClick={() => (showDescPane ? setDescTaskId(t.id) : onOpen(t))}
+                  onClick={() => setDescTaskId(t.id)}
+                  onDoubleClick={() => onOpen(t)}
+                  title="Clic : voir la description — double-clic : ouvrir la fiche"
                 >
                   <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
                   <span className="lp-widget-heatmap-daylist-title">{t.title}</span>
@@ -10472,6 +10484,11 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
 
       {showDescPane && (() => {
         const descTask = descTaskId ? tasks.find((t) => t.id === descTaskId) : null;
+        // #216 : une tâche « Réunion » affiche son volet 3 en deux sections
+        // repliées par défaut (Description = ordre du jour, Compte rendu =
+        // champ dédié `meetingReport` écrit par la fiche de tâche, #136) —
+        // jamais mélangées, comme le reste de l'app.
+        const isMeeting = descTask ? isMeetingTask(descTask, ctx) : false;
         return (
           <>
             <div className="lp-widget-hmgrid-resize-handle" onMouseDown={startDescResize} title="Glisser pour redimensionner" />
@@ -10482,7 +10499,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
             >
               <div className="lp-widget-hmgrid-tasklist-head">
                 <span>{descTask ? descTask.title || "Sans titre" : "Aucune tâche choisie"}</span>
-                {descTask && (
+                {descTask && !isMeeting && (
                   <div className="lp-desc-mode-toggle">
                     <button type="button" className={descPreview ? "active" : ""} onClick={() => setDescPreview(true)}>Aperçu</button>
                     <button type="button" className={!descPreview ? "active" : ""} onClick={() => setDescPreview(false)}>Écrire</button>
@@ -10491,6 +10508,25 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
               </div>
               {!descTask ? (
                 <div className="lp-widget-hmgrid-tasklist-empty">Clique sur une tâche de la liste pour lire ou modifier sa description.</div>
+              ) : isMeeting ? (
+                <div className="lp-widget-hmgrid-descpane-body lp-widget-hmgrid-descpane-meeting">
+                  <SettingsFoldSection title="Description">
+                    <div
+                      className="lp-desc-preview"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdown(descTask.desc ?? descTask.description ?? "", true) || '<p style="color:var(--text-muted)">Aucune description.</p>',
+                      }}
+                    />
+                  </SettingsFoldSection>
+                  <SettingsFoldSection title="Compte rendu">
+                    <div
+                      className="lp-desc-preview"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdown(descTask.meetingReport || "", true) || '<p style="color:var(--text-muted)">Pas encore de compte rendu.</p>',
+                      }}
+                    />
+                  </SettingsFoldSection>
+                </div>
               ) : descPreview ? (
                 <div
                   className="lp-desc-preview lp-widget-hmgrid-descpane-body"
@@ -14169,9 +14205,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [heatmapPalette, setHeatmapPalette] = useState(heatmapCfg.palette);
   const [heatmapShowValues, setHeatmapShowValues] = useState(heatmapCfg.showValues);
   const [heatmapShowDescPane, setHeatmapShowDescPane] = useState(heatmapCfg.showDescPane);
-  // Heat map mensuelle (#177) : même volet Description, indépendant de la croisée
-  // ci-dessus puisque les deux widgets ont chacun leur fiche de réglages.
-  const [heatmapMonthShowDescPane, setHeatmapMonthShowDescPane] = useState(widget?.heatmapMonthShowDescPane === true);
   // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
   const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
   const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
@@ -14358,9 +14391,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapPalette = heatmapPalette;
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
-    }
-    if (type === "heatmapMonth") {
-      data.heatmapMonthShowDescPane = heatmapMonthShowDescPane;
     }
     if (type === "echeances") {
       data.echeancesOrientation = echeancesOrientation;
@@ -15177,15 +15207,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </>
       )}
       {type === "heatmapMonth" && (
-        <>
-          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-            Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.
-          </p>
-          <label className="lp-checkbox-line">
-            <input type="checkbox" checked={heatmapMonthShowDescPane} onChange={(e) => setHeatmapMonthShowDescPane(e.target.checked)} />
-            Volet Description (clic sur une tâche de la liste = sa description, à droite)
-          </label>
-        </>
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.
+          Clic sur une tâche de la liste : sa description à droite (volet 3) — double-clic : sa fiche complète.
+        </p>
       )}
       {(type === "habitQuick" || type === "habitHeatmap") && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
