@@ -4102,6 +4102,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     setTeams={setTeams}
                     setTeamMembers={setTeamMembers}
                     setTeamFolders={setTeamFolders}
+                    setTasks={setTasks}
                     pushToast={pushToast}
                   />
                 )}
@@ -9108,7 +9109,7 @@ function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
     || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
     || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
 }
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam }) {
+function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
   // lui-même (qui change justement de taille avec l'échelle) — un
@@ -9330,7 +9331,8 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
                 key={orgHierNodeKey(child)}
                 className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "") + (role ? " has-role" : "")}
                 onClick={() => onFilterPerson && onFilterPerson(m.name)}
-                title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
+                onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
+                title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
               >
                 {isLeadRow && <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />}
                 <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: m.color || staffingMemberColor(m.name) }}>
@@ -9386,7 +9388,8 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
               className={"lp-orgchart-card lp-orghier-node-member" + (isLead ? " is-lead" : "")}
               style={{ left: r.left, top: r.top, width: r.w }}
               onClick={() => onFilterPerson && onFilterPerson(m.name)}
-              title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
+              onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
+              title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
             >
               {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
               <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
@@ -9408,13 +9411,18 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   );
 }
 
-function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, pushToast }) {
+function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, setTasks, pushToast }) {
   const today = useMemo(() => iso(new Date()), []);
   // Modale d'édition d'équipe au double-clic sur une carte (#231) — même
   // TeamFormModal que le crayon de Réglages > Équipe (TeamCatalogManager),
   // rien de dupliqué. null = fermée.
   const [editTeamId, setEditTeamId] = useState(null);
   const editTeam = editTeamId ? (ctx.teams || []).find((t) => t.id === editTeamId) : null;
+  // Modale de réglages complets au double-clic sur un nom d'utilisateur
+  // (#237) — même TeamMemberFormModal que Réglages > Utilisateurs, rien de
+  // dupliqué. null = fermée.
+  const [editMemberName, setEditMemberName] = useState(null);
+  const editMember = editMemberName ? (ctx.teamMembers || []).find((m) => m.name === editMemberName) : null;
   // Équipes affichées (#209, retour de test) : widget.orgChartHiddenTeamIds
   // liste celles MASQUÉES — absent/vide = toutes affichées, comme avant ce
   // réglage. Une équipe masquée disparaît du catalogue vu par les deux modes
@@ -9465,6 +9473,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
         showUnassigned={showUnassigned}
         onEditTeam={setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined}
+        onEditMember={setTeamMembers ? (member) => setEditMemberName(member.name) : undefined}
       />
     );
 
@@ -9489,6 +9498,18 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
           pushToast={pushToast}
           onSave={(data) => { setTeams((ctx.teams || []).map((t) => (t.id === editTeamId ? { ...t, ...data } : t))); setEditTeamId(null); }}
           onClose={() => setEditTeamId(null)}
+        />
+      )}
+      {editMember && (
+        <TeamMemberFormModal
+          member={editMember}
+          teams={ctx.teams}
+          teamMembers={ctx.teamMembers}
+          onSave={(data) => {
+            saveTeamMemberEdit({ target: editMember, data, setTeamMembers, tasks: ctx.tasks, setTasks, pushToast });
+            setEditMemberName(null);
+          }}
+          onClose={() => setEditMemberName(null)}
         />
       )}
     </div>
@@ -9539,7 +9560,12 @@ function WidgetUserProfile({ widget, ctx, staffing, onOpen, setTasks, pushToast,
           {member.avatarDataUrl ? <IconGlyph icon={member.avatarDataUrl} size={22} /> : name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
         </span>
         <div className="lp-userprofile-id">
-          <span className="lp-userprofile-name">{name}</span>
+          <span
+            className="lp-userprofile-name"
+            onDoubleClick={onUpdateTeamMembers ? () => setEditing(true) : undefined}
+            title={onUpdateTeamMembers ? "Double-clic pour modifier l'utilisateur" : undefined}
+            style={onUpdateTeamMembers ? { cursor: "pointer" } : undefined}
+          >{name}</span>
           <span className="lp-userprofile-meta">
             {member.email || "Sans email"} · Capacité {capacity}/j{teamNames.length > 0 ? " · " + teamNames.join(", ") : ""}
           </span>
