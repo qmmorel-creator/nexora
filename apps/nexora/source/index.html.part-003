@@ -9129,7 +9129,10 @@ const ORGHIER_TEAM_ROW_GAP = 6;
 function orgHierNodeKey(node) {
   if (node.type === "root") return "root";
   if (node.type === "team") return "team:" + (node.team ? node.team.id : "none");
-  return "person:" + (node.member.id || node.member.name);
+  // #212 : une personne peut désormais apparaître dans plusieurs équipes —
+  // roleTeamId (distinct par instance) désambiguïse la clé React entre ces
+  // cartes dupliquées de la même personne.
+  return "person:" + (node.member.id || node.member.name) + ":" + (node.roleTeamId || "root");
 }
 // Les membres d'une équipe qui n'ont eux-mêmes aucun subordonné (retour de
 // test, piste B) : listés DANS le panneau de leur équipe plutôt qu'en cartes
@@ -9414,10 +9417,16 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
   // parent a disparu (elle remonte au premier niveau), donc filtrer ici
   // suffit sans dupliquer cette logique.
   const hiddenTeamIds = widget?.orgChartHiddenTeamIds;
-  const rawVisibleTeams = useMemo(
-    () => (hiddenTeamIds && hiddenTeamIds.length ? (ctx.teams || []).filter((t) => !hiddenTeamIds.includes(String(t?.id))) : ctx.teams),
-    [ctx.teams, hiddenTeamIds]
-  );
+  // Filtre par dossier d'équipes (#215) : combiné à orgChartHiddenTeamIds
+  // plutôt que substitué — une équipe reste masquable au cas par cas même
+  // filtrée par dossier.
+  const folderId = widget?.orgChartFolderId || "";
+  const rawVisibleTeams = useMemo(() => {
+    let list = ctx.teams || [];
+    if (folderId) list = normalizeTeams(list).filter((t) => t.folderId === folderId);
+    if (hiddenTeamIds && hiddenTeamIds.length) list = list.filter((t) => !hiddenTeamIds.includes(String(t?.id)));
+    return list;
+  }, [ctx.teams, hiddenTeamIds, folderId]);
   const teamsCatalogue = useMemo(() => normalizeTeams(rawVisibleTeams), [rawVisibleTeams]);
   const members = ctx.teamMembers || [];
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
@@ -10229,11 +10238,13 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
   const dragRef = useRef(null);
   const wrapRef = useRef(null);
   const daylistRef = useRef(null);
-  // Volet Description (#177) : même fonctionnement que la Heat map croisée —
-  // la tâche choisie DANS LA LISTE, distincte du jour choisi dans le calendrier ;
+  // Volet Description (#177, désormais toujours actif — #216) : la tâche
+  // choisie DANS LA LISTE, distincte du jour choisi dans le calendrier ;
   // changer de jour ne doit pas fermer la description en cours de lecture tant
-  // que la tâche reste dans la liste du jour affiché.
-  const showDescPane = widget?.heatmapMonthShowDescPane === true;
+  // que la tâche reste dans la liste du jour affiché. #216 : simple clic sur
+  // une tâche de la liste → affiche sa description ici (volet 3) ; double-clic
+  // → ouvre la fiche complète (édition), comme ailleurs dans l'app.
+  const showDescPane = true;
   const [descTaskId, setDescTaskId] = useState(null);
   const [descPreview, setDescPreview] = useState(true);
   const [descPaneWidth, setDescPaneWidth] = useState(null);
@@ -10412,7 +10423,15 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
                       onMouseEnter={(e) => dayTasks.length && setHoverDay({ day, tasks: dayTasks, x: e.clientX, y: e.clientY })}
                       onMouseMove={(e) => dayTasks.length && setHoverDay({ day, tasks: dayTasks, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setHoverDay(null)}
-                      onClick={() => setSelectedDay((d) => (d === day ? null : (dayTasks.length ? day : null)))}
+                      onClick={() => {
+                        setSelectedDay((d) => (d === day ? null : (dayTasks.length ? day : null)));
+                        // #216 : simple clic → si le jour ne porte qu'une seule
+                        // tâche, sa description s'affiche directement dans le
+                        // volet 3 (pas besoin de re-cliquer dans la liste) ;
+                        // plusieurs tâches → la liste tranche, comme avant.
+                        setDescTaskId(dayTasks.length === 1 ? dayTasks[0].id : null);
+                      }}
+                      onDoubleClick={() => { if (dayTasks.length === 1) onOpen(dayTasks[0]); }}
                     >
                       {/* Sur une case lavée, le blanc devient illisible : le
                           numéro reprend la couleur du texte ordinaire. */}
@@ -10451,9 +10470,11 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
               const st = ctx.statuses.find((s) => s.id === t.statusId);
               return (
                 <div
-                  className={"lp-widget-heatmap-daylist-item" + (showDescPane && descTaskId === t.id ? " is-selected" : "")}
+                  className={"lp-widget-heatmap-daylist-item" + (descTaskId === t.id ? " is-selected" : "")}
                   key={t.id}
-                  onClick={() => (showDescPane ? setDescTaskId(t.id) : onOpen(t))}
+                  onClick={() => setDescTaskId(t.id)}
+                  onDoubleClick={() => onOpen(t)}
+                  title="Clic : voir la description — double-clic : ouvrir la fiche"
                 >
                   <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 12, height: 12, flex: "0 0 auto" }} />
                   <span className="lp-widget-heatmap-daylist-title">{t.title}</span>
@@ -10469,6 +10490,11 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
 
       {showDescPane && (() => {
         const descTask = descTaskId ? tasks.find((t) => t.id === descTaskId) : null;
+        // #216 : une tâche « Réunion » affiche son volet 3 en deux sections
+        // repliées par défaut (Description = ordre du jour, Compte rendu =
+        // champ dédié `meetingReport` écrit par la fiche de tâche, #136) —
+        // jamais mélangées, comme le reste de l'app.
+        const isMeeting = descTask ? isMeetingTask(descTask, ctx) : false;
         return (
           <>
             <div className="lp-widget-hmgrid-resize-handle" onMouseDown={startDescResize} title="Glisser pour redimensionner" />
@@ -10479,7 +10505,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
             >
               <div className="lp-widget-hmgrid-tasklist-head">
                 <span>{descTask ? descTask.title || "Sans titre" : "Aucune tâche choisie"}</span>
-                {descTask && (
+                {descTask && !isMeeting && (
                   <div className="lp-desc-mode-toggle">
                     <button type="button" className={descPreview ? "active" : ""} onClick={() => setDescPreview(true)}>Aperçu</button>
                     <button type="button" className={!descPreview ? "active" : ""} onClick={() => setDescPreview(false)}>Écrire</button>
@@ -10488,6 +10514,25 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
               </div>
               {!descTask ? (
                 <div className="lp-widget-hmgrid-tasklist-empty">Clique sur une tâche de la liste pour lire ou modifier sa description.</div>
+              ) : isMeeting ? (
+                <div className="lp-widget-hmgrid-descpane-body lp-widget-hmgrid-descpane-meeting">
+                  <SettingsFoldSection title="Description">
+                    <div
+                      className="lp-desc-preview"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdown(descTask.desc ?? descTask.description ?? "", true) || '<p style="color:var(--text-muted)">Aucune description.</p>',
+                      }}
+                    />
+                  </SettingsFoldSection>
+                  <SettingsFoldSection title="Compte rendu">
+                    <div
+                      className="lp-desc-preview"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdown(descTask.meetingReport || "", true) || '<p style="color:var(--text-muted)">Pas encore de compte rendu.</p>',
+                      }}
+                    />
+                  </SettingsFoldSection>
+                </div>
               ) : descPreview ? (
                 <div
                   className="lp-desc-preview lp-widget-hmgrid-descpane-body"
@@ -12560,6 +12605,27 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
             ? "Aucune coche : personne n’est affiché. Coche les personnes à suivre, ou ajoute-en à la main plus bas."
             : `${cfg.staffingMembers.length} personne${cfg.staffingMembers.length > 1 ? "s" : ""} sur ${team.length}.`}
         </p>
+        {/* #215 : filtre rapide par dossier d'équipes — coche d'un coup toutes
+            les personnes dont au moins une équipe appartient au dossier choisi,
+            sans changer les autres coches déjà faites. */}
+        {(ctx.teamFolders || []).length > 0 && (
+          <select
+            style={{ marginBottom: 8, width: "100%" }}
+            value=""
+            onChange={(e) => {
+              const folderId = e.target.value;
+              if (!folderId) return;
+              const folderTeamIds = new Set(normalizeTeams(ctx.teams).filter((t) => t.folderId === folderId).map((t) => t.id));
+              const namesInFolder = (ctx.teamMembers || [])
+                .filter((m) => memberTeamIds(m).some((id) => folderTeamIds.has(id)))
+                .map((m) => m.name);
+              onChange({ staffingMembers: Array.from(new Set([...cfg.staffingMembers, ...namesInFolder])) });
+            }}
+          >
+            <option value="">Filtrer par dossier d'équipes…</option>
+            {sortedByName(ctx.teamFolders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        )}
         {team.length === 0 && (
           <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: 0 }}>
             Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.
@@ -14150,6 +14216,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     [ctx.teams]
   );
   const orgChartVisibleTeamIds = orgChartTeamOptions.map((t) => t.id).filter((id) => !orgChartHiddenTeamIds.includes(id));
+  // Filtre par dossier d'équipes (#215) : vide = tous les dossiers (comme
+  // avant ce réglage). Se combine avec orgChartHiddenTeamIds plutôt que de
+  // le remplacer — une équipe reste masquable individuellement même à
+  // l'intérieur d'un dossier filtré.
+  const [orgChartFolderId, setOrgChartFolderId] = useState(
+    typeof widget?.orgChartFolderId === "string" ? widget.orgChartFolderId : ""
+  );
   // Vue de la Heatmap habitudes (retour de test) : déplacée ici depuis le
   // corps du widget, qui n'a plus que la case et sa légende à afficher.
   const [habitHeatmapView, setHabitHeatmapView] = useState(HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month");
@@ -14166,9 +14239,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [heatmapPalette, setHeatmapPalette] = useState(heatmapCfg.palette);
   const [heatmapShowValues, setHeatmapShowValues] = useState(heatmapCfg.showValues);
   const [heatmapShowDescPane, setHeatmapShowDescPane] = useState(heatmapCfg.showDescPane);
-  // Heat map mensuelle (#177) : même volet Description, indépendant de la croisée
-  // ci-dessus puisque les deux widgets ont chacun leur fiche de réglages.
-  const [heatmapMonthShowDescPane, setHeatmapMonthShowDescPane] = useState(widget?.heatmapMonthShowDescPane === true);
   // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
   const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
   const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
@@ -14356,9 +14426,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
     }
-    if (type === "heatmapMonth") {
-      data.heatmapMonthShowDescPane = heatmapMonthShowDescPane;
-    }
     if (type === "echeances") {
       data.echeancesOrientation = echeancesOrientation;
       if (echeancesOrientation === "nuage") {
@@ -14368,7 +14435,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; }
+    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -14693,6 +14760,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <input type="checkbox" checked={orgChartShowUnassigned} onChange={() => setOrgChartShowUnassigned((v) => !v)} />
               Afficher les ressources sans équipe
             </label>
+            {(ctx.teamFolders || []).length > 0 && (
+              <div className="lp-field" style={{ marginTop: 10 }}>
+                <label>Dossier d'équipes <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — restreint aux équipes de ce dossier)</span></label>
+                <select value={orgChartFolderId} onChange={(e) => setOrgChartFolderId(e.target.value)}>
+                  <option value="">Tous les dossiers</option>
+                  {sortedByName(ctx.teamFolders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+            )}
             {orgChartTeamOptions.length > 0 && (
               <div className="lp-field" style={{ marginTop: 10 }}>
                 <label>Équipes affichées</label>
@@ -15174,15 +15250,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </>
       )}
       {type === "heatmapMonth" && (
-        <>
-          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-            Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.
-          </p>
-          <label className="lp-checkbox-line">
-            <input type="checkbox" checked={heatmapMonthShowDescPane} onChange={(e) => setHeatmapMonthShowDescPane(e.target.checked)} />
-            Volet Description (clic sur une tâche de la liste = sa description, à droite)
-          </label>
-        </>
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Ce widget n'a pas de réglage spécifique — choisis les projets concernés dans le filtre ci-dessous.
+          Clic sur une tâche de la liste : sa description à droite (volet 3) — double-clic : sa fiche complète.
+        </p>
       )}
       {(type === "habitQuick" || type === "habitHeatmap") && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>

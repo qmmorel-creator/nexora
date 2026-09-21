@@ -98,40 +98,56 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           onClose={() => setQuickEditViewFolder(null)}
         />
       )}
-      {folderMetro && (
-        <div className={"lp-folder-metro-overlay" + (folderMetroClosing ? " closing" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) closeFolderMetro(); }}>
-          <div className="lp-folder-metro-panel" style={folderMetroPanelStyle} role="dialog" aria-modal="true" aria-label={`Sélecteur du dossier ${folderMetro.folder?.name || ""}`}>
-            <button type="button" className="lp-folder-metro-close" onClick={closeFolderMetro} title="Fermer"><X size={14} /></button>
-            <div className="lp-folder-metro-title">
-              <span className="lp-folder-metro-title-dot" style={{ "--folder-color": folderMetro.folder?.color || "var(--text-muted)" }} />
-              {folderMetro.folder?.name || (folderMetro.type === "project" ? "Dossier" : "Dossier de tableaux de bord")}
-            </div>
-            {folderMetro.items?.length ? (
-              <div className="lp-folder-metro-line-wrap">
-                <div className="lp-folder-metro-stations">
-                  <div className="lp-folder-metro-line" style={{ "--folder-color": folderMetro.folder?.color || "var(--text-muted)" }} />
-                  {folderMetro.items.map((item, i) => {
-                    const itemColor = item.color || folderMetro.folder?.color || "var(--text-muted)";
-                    return (
-                      <button key={item.id} type="button" className="lp-folder-metro-station" onClick={() => navigateFromFolderMetro(item)} title={`Afficher ${item.name}`}>
-                        <span className="lp-folder-metro-name">{item.name}</span>
-                        <span className="lp-folder-metro-dot" style={{ "--folder-color": itemColor }}>
-                          <IconGlyph icon={item.icon || (folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard")} size={13} />
-                        </span>
-                      </button>
-                    );
-                  })}
+      {folderMetro && (() => {
+        // Sous-dossiers illimités (#217) : le dossier courant est le dernier
+        // maillon de `path` ; ses sous-dossiers apparaissent comme stations
+        // « dossier » (cliquer y descend) avant les éléments qu'il contient
+        // directement (projets ou tableaux de bord, selon `type`).
+        const currentFolder = folderMetro.path[folderMetro.path.length - 1];
+        const subfolders = folderChildren(folderMetro.allFolders, currentFolder.id).map((f) => ({ ...f, __isFolder: true }));
+        const leafItems = folderMetro.allItems.filter((it) => it.folderId === currentFolder.id);
+        const stations = [...subfolders, ...leafItems];
+        const defaultIcon = folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard";
+        return (
+          <div className={"lp-folder-metro-overlay" + (folderMetroClosing ? " closing" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) closeFolderMetro(); }}>
+            <div className="lp-folder-metro-panel" style={folderMetroPanelStyle} role="dialog" aria-modal="true" aria-label={`Sélecteur du dossier ${currentFolder?.name || ""}`}>
+              <button type="button" className="lp-folder-metro-close" onClick={closeFolderMetro} title="Fermer"><X size={14} /></button>
+              <div className="lp-folder-metro-title">
+                {folderMetro.path.length > 1 && (
+                  <button type="button" className="lp-folder-metro-back" onClick={backFolderMetro} title={`Revenir à ${folderMetro.path[folderMetro.path.length - 2].name}`}>
+                    <ChevronLeft size={14} />
+                  </button>
+                )}
+                <span className="lp-folder-metro-title-dot" style={{ "--folder-color": currentFolder?.color || "var(--text-muted)" }} />
+                {currentFolder?.name || (folderMetro.type === "project" ? "Dossier" : "Dossier de tableaux de bord")}
+              </div>
+              {stations.length ? (
+                <div className="lp-folder-metro-line-wrap">
+                  <div className="lp-folder-metro-stations">
+                    <div className="lp-folder-metro-line" style={{ "--folder-color": currentFolder?.color || "var(--text-muted)" }} />
+                    {stations.map((item) => {
+                      const itemColor = item.color || currentFolder?.color || "var(--text-muted)";
+                      return (
+                        <button key={item.id} type="button" className={"lp-folder-metro-station" + (item.__isFolder ? " lp-folder-metro-station--folder" : "")} onClick={() => navigateFromFolderMetro(item)} title={item.__isFolder ? `Ouvrir le sous-dossier ${item.name}` : `Afficher ${item.name}`}>
+                          <span className="lp-folder-metro-name">{item.name}</span>
+                          <span className="lp-folder-metro-dot" style={{ "--folder-color": itemColor }}>
+                            <IconGlyph icon={item.icon || (item.__isFolder ? "tabler:folder" : defaultIcon)} size={13} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="lp-folder-metro-empty">
-                <IconGlyph icon={folderMetro.folder?.icon || (folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard")} size={20} />
-                <span>Aucun {folderMetro.type === "project" ? "projet" : "tableau de bord"} dans ce dossier</span>
-              </div>
-            )}
+              ) : (
+                <div className="lp-folder-metro-empty">
+                  <IconGlyph icon={currentFolder?.icon || defaultIcon} size={20} />
+                  <span>Aucun {folderMetro.type === "project" ? "projet" : "tableau de bord"} dans ce dossier</span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       <button
         type="button"
         className="lp-global-add-task"
@@ -2411,9 +2427,9 @@ function SettingsModal({
   milestoneTypes, setMilestoneTypes,
   workshops, setWorkshops, staffing, setStaffing,
   teamMembers, setTeamMembers,
-  teams, setTeams,
+  teams, setTeams, teamFolders, setTeamFolders,
   habitThemes, setHabitThemes, habitLog, setHabitLog,
-  gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
+  gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList, gcalSyncState,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
   metaTemporalBlocks, setMetaTemporalBlocks,
@@ -2475,7 +2491,7 @@ function SettingsModal({
             )}
             {activeTab === "taskDefaults" && (
               <>
-                <SettingsFoldSection title="Valeurs par défaut" defaultOpen>
+                <SettingsFoldSection title="Valeurs par défaut">
                   <TaskDefaultsManager embedded hideTitle value={taskDefaults} onChange={setTaskDefaults} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Templates">
@@ -2485,7 +2501,7 @@ function SettingsModal({
             )}
             {activeTab === "statusesTypes" && (
               <>
-                <SettingsFoldSection title="Statuts" defaultOpen>
+                <SettingsFoldSection title="Statuts">
                   <StatusManager embedded hideTitle statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Types">
@@ -2501,11 +2517,11 @@ function SettingsModal({
             )}
             {activeTab === "peopleTeams" && (
               <>
-                <SettingsFoldSection title="Utilisateurs" defaultOpen>
+                <SettingsFoldSection title="Utilisateurs">
                   <TeamMemberManager embedded hideTitle teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} setTasks={setTasks} teams={teams} pushToast={pushToast} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Équipes">
-                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} pushToast={pushToast} />
+                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} teamFolders={teamFolders} setTeamFolders={setTeamFolders} pushToast={pushToast} />
                 </SettingsFoldSection>
               </>
             )}
@@ -2530,6 +2546,7 @@ function SettingsModal({
                 gcalSettings={gcalSettings} setGcalSettings={setGcalSettings}
                 gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError}
                 onFetchList={onFetchList}
+                gcalSyncState={gcalSyncState}
               />
             )}
             {activeTab === "metaBlocks" && (
@@ -3899,6 +3916,9 @@ function normalizeTeams(list) {
       // elles pour l'Organigramme hiérarchique — vide par défaut (équipe de
       // premier niveau, comme avant ce champ).
       parentTeamId: t.parentTeamId ? String(t.parentTeamId) : "",
+      // Dossier d'équipes (#215) : simple rattachement, comme project.folderId —
+      // vide par défaut (équipe non classée), jamais devinée.
+      folderId: t.folderId ? String(t.folderId) : "",
     }));
   const byId = new Map(base.map((t) => [t.id, t]));
   // Une équipe parente inexistante, ou qui reboucle jusqu'à l'équipe elle-même
@@ -4001,10 +4021,12 @@ function memberDescendantAndSelfNames(name, teamMembers) {
 // personne avec un responsable direct (managerName) résolvable et sans
 // cycle, qui devient alors l'enfant du NŒUD DE CETTE PERSONNE plutôt que de
 // son équipe, où qu'elle se trouve dans l'arbre. Une personne dans plusieurs
-// équipes (multi-équipe) n'apparaît qu'une fois, sous la PREMIÈRE qui
-// résout — un arbre montre une seule ligne hiérarchique par personne,
-// contrairement à la vue « Par groupe » qui peut se permettre de répéter
-// une carte. Retourne la liste des racines (équipes sans parent, plus
+// équipes (multi-équipe, sans responsable direct) apparaît dans CHACUNE
+// d'elles (#212) — sa carte "principale" (avec ses éventuels subordonnés)
+// sous la PREMIÈRE équipe qui résout, et une carte dupliquée (sans
+// subordonnés, déjà rattachés une seule fois) sous chaque équipe
+// supplémentaire — comme la vue « Par groupe » qui répète déjà la carte.
+// Retourne la liste des racines (équipes sans parent, plus
 // « Sans équipe » si non vide) ; chaque nœud est { type:"team", team,
 // children } ou { type:"person", member, children }.
 function buildOrgHierarchyTree(teams, members) {
@@ -4042,7 +4064,18 @@ function buildOrgHierarchyTree(teams, members) {
     const teamIds = memberTeamIds(m).filter((id) => teamNodes.has(id));
     node.roleTeamId = teamIds[0] || null;
     if (safeManager) { safeManager.children.push(node); return; }
-    if (teamIds.length) { teamNodes.get(teamIds[0]).children.push(node); return; }
+    if (teamIds.length) {
+      teamNodes.get(teamIds[0]).children.push(node);
+      // #212 : une personne dans plusieurs équipes doit apparaître dans
+      // CHACUNE, y compris en vue hiérarchique — comme le fait déjà la vue
+      // « Par groupe ». On répète ici sa carte (sans ses propres
+      // subordonnés, déjà rattachés une seule fois ci-dessus, à sa première
+      // équipe) dans chaque équipe supplémentaire.
+      teamIds.slice(1).forEach((id) => {
+        teamNodes.get(id).children.push({ type: "person", member: m, children: [], roleTeamId: id });
+      });
+      return;
+    }
     unassigned.children.push(node);
   });
   if (unassigned.children.length) roots.push(unassigned);
@@ -11342,7 +11375,7 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
   const body = (
     <>
       {!hideTitle && <div className="lp-section-title">Utilisateurs</div>}
-      {teamMembers.map((u) => {
+      {sortedByName(teamMembers).map((u) => {
         const count = tasks.filter((t) => t.assignee === u.name).length;
         return (
           <div className="lp-manage-item" key={u.id}>
@@ -11375,9 +11408,18 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
 // Réglages Google Calendar : quels calendriers synchroniser (un projet sera
 // créé par calendrier coché), et sur quelle fenêtre temporelle. La liste des
 // calendriers n'est chargée qu'à la demande (nécessite l'autorisation Google).
-function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList }) {
+function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList, gcalSyncState }) {
   const selectedIds = new Set((gcalSettings.calendars || []).map((c) => c.id));
   const selectedByCalId = (id) => (gcalSettings.calendars || []).find((c) => c.id === id);
+  // Bandeau discret (#143) : depuis quand la dernière synchro Google Calendar
+  // date-t-elle. L'import réel tourne désormais côté MCP (routine ChatGPT
+  // horaire, cf CALENDAR_IMPORT.md) — cette interface n'a plus de bouton
+  // « Synchroniser » qui écrive quoi que ce soit (voir syncGoogleCalendar,
+  // volontairement neutralisé pour ne jamais purger une tâche MCP valide).
+  // Ce bandeau reste donc purement informatif, pas une relance d'action.
+  const lastSyncAt = gcalSyncState?.lastSyncAt || null;
+  const daysSinceSync = lastSyncAt ? Math.floor((Date.now() - new Date(lastSyncAt).getTime()) / 86400000) : null;
+  const syncStale = daysSinceSync == null || daysSinceSync > 1;
   const toggleCalendar = (cal) => {
     setGcalSettings((prev) => {
       const already = (prev.calendars || []).some((c) => c.id === cal.id);
@@ -11393,6 +11435,16 @@ function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalList
 
   return (
     <div className="lp-settings-pane">
+      {/* #143 : bandeau discret « dernière synchro il y a N j », lu depuis
+          gcalSyncState.lastSyncAt (alimenté par l'import MCP). */}
+      <div className={"lp-gcal-sync-banner" + (syncStale ? " is-stale" : "")}>
+        <RefreshCw size={12} />
+        {daysSinceSync == null
+          ? "Jamais synchronisé pour l'instant."
+          : daysSinceSync <= 0
+          ? "Dernière synchro aujourd'hui."
+          : `Dernière synchro il y a ${daysSinceSync} j${daysSinceSync > 1 ? "ours" : ""}.`}
+      </div>
       <div className="lp-section-title">Fenêtre temporelle</div>
       <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
         Les événements en dehors de cette plage ne sont pas importés — et sont retirés au prochain clic sur « Synchroniser » si tu réduis la fenêtre.
@@ -12273,13 +12325,19 @@ function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushT
 // Organigramme. Une liste ordonnée, enregistrée sous `nexora:teams`, sur le
 // modèle exact du gestionnaire d'ateliers ci-dessus.
 // ============================================================================
-function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, embedded, hideTitle }) {
+function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeamFolders, pushToast, onClose, embedded, hideTitle }) {
   const catalogue = normalizeTeams(teams);
+  const folders = teamFolders || [];
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
   const [leadName, setLeadName] = useState("");
   const [parentTeamId, setParentTeamId] = useState("");
+  const [folderId, setFolderId] = useState("");
+  // Dossiers d'équipes (#215) : même pattern que « Dossiers de projets »
+  // (SimpleFolderManager), ouvert depuis un bouton local plutôt que depuis
+  // la barre latérale (il n'existe pas d'équivalent équipe côté navigation).
+  const [foldersManagerOpen, setFoldersManagerOpen] = useState(false);
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -12287,6 +12345,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     setColor(STAFFING_COLOR_CHOICES[0]);
     setLeadName("");
     setParentTeamId("");
+    setFolderId("");
   };
   const startEdit = (team) => {
     setEditingId(team.id);
@@ -12294,6 +12353,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     setColor(team.color);
     setLeadName(team.leadName || "");
     setParentTeamId(team.parentTeamId || "");
+    setFolderId(team.folderId || "");
   };
   // Une équipe ne peut jamais devenir la parente d'une de ses propres
   // équipes parentes/grand-parentes (#167, retour de test) : exclue de la
@@ -12303,9 +12363,9 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
   const save = () => {
     if (!name.trim()) return;
     if (editingId) {
-      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId } : t)));
+      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId, folderId } : t)));
     } else {
-      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId }]);
+      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId, folderId }]);
     }
     cancelEdit();
   };
@@ -12334,10 +12394,11 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
       {catalogue.map((team) => {
         const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
         const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
+        const folder = team.folderId ? folders.find((f) => f.id === team.folderId) : null;
         return (
           <div className="lp-manage-item" key={team.id}>
             <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
-            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""})</span></span>
+            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""}{folder ? " · 📁 " + folder.name : ""})</span></span>
             <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
             <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
           </div>
@@ -12362,6 +12423,19 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
           {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
       </div>
+      <div className="lp-field">
+        <label>
+          Dossier d'équipes
+          <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}> (facultatif — filtre par dossier dans l'Organigramme et les Utilisateurs)</span>
+        </label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select value={folderId} onChange={(e) => setFolderId(e.target.value)} style={{ flex: 1 }}>
+            <option value="">Aucun</option>
+            {sortedByName(folders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <button type="button" className="lp-btn" onClick={() => setFoldersManagerOpen(true)}>Gérer les dossiers</button>
+        </div>
+      </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
         {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
@@ -12369,8 +12443,20 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     </>
   );
 
-  if (embedded) return <div className="lp-settings-pane">{body}</div>;
-  return <Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>;
+  const foldersModal = foldersManagerOpen && (
+    <SimpleFolderManager
+      title="Dossiers d'équipes"
+      folders={folders}
+      setFolders={setTeamFolders}
+      countInFolder={(id) => catalogue.filter((t) => t.folderId === id).length}
+      pushToast={pushToast}
+      onClose={() => setFoldersManagerOpen(false)}
+      itemLabel="dossier"
+    />
+  );
+
+  if (embedded) return <><div className="lp-settings-pane">{body}</div>{foldersModal}</>;
+  return <><Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>{foldersModal}</>;
 }
 
 // ============================================================================
@@ -12876,40 +12962,69 @@ function SimpleFolderManager({ title, folders, setFolders, countInFolder, pushTo
   const [editingId, setEditingId] = useState(initialEditFolder ? initialEditFolder.id : null);
   const [name, setName] = useState(initialEditFolder ? initialEditFolder.name : "");
   const [color, setColor] = useState(initialEditFolder ? (initialEditFolder.color || PROJECT_PALETTES.default[0]) : PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]);
+  // Sous-dossiers illimités (#217) : parentId choisi soit via « + sous-dossier »
+  // sur une ligne existante, soit via le sélecteur du formulaire.
+  const [parentId, setParentId] = useState(initialEditFolder ? (initialEditFolder.parentId || null) : null);
 
-  const startEdit = (f) => { setEditingId(f.id); setName(f.name); setColor(f.color || PROJECT_PALETTES.default[0]); };
-  const cancelEdit = () => { setEditingId(null); setName(""); setColor(PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]); };
+  const startEdit = (f) => { setEditingId(f.id); setName(f.name); setColor(f.color || PROJECT_PALETTES.default[0]); setParentId(f.parentId || null); };
+  const cancelEdit = () => { setEditingId(null); setName(""); setColor(PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]); setParentId(null); };
+  const startSubfolder = (parent) => { setEditingId(null); setName(""); setColor(PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]); setParentId(parent.id); };
   const save = () => {
     if (!name.trim()) return;
-    if (editingId) setFolders((prev) => prev.map((f) => (f.id === editingId ? { ...f, name: name.trim(), color } : f)));
-    else setFolders((prev) => [...prev, { id: uid(), name: name.trim(), color }]);
+    if (editingId) setFolders((prev) => prev.map((f) => (f.id === editingId ? { ...f, name: name.trim(), color, parentId: parentId || null } : f)));
+    else setFolders((prev) => [...prev, { id: uid(), name: name.trim(), color, parentId: parentId || null }]);
     cancelEdit();
   };
   const remove = (id) => {
     if (countInFolder(id) > 0) { pushToast({ message: `Ce ${itemLabel} contient des éléments. Déplace-les avant de le supprimer.` }); return; }
+    if (folderChildren(folders, id).length > 0) { pushToast({ message: `Ce ${itemLabel} contient des sous-dossiers. Déplace-les ou supprime-les avant.` }); return; }
     setFolders((prev) => prev.filter((f) => f.id !== id));
     if (editingId === id) cancelEdit();
+    if (parentId === id) setParentId(null);
   };
+
+  // Options de rattachement pour le sélecteur du formulaire : tous les dossiers
+  // sauf le dossier en cours d'édition et ses propres descendants (pas de cycle).
+  const excludedIds = editingId ? folderSubtreeIds(folders, editingId) : [];
+  const parentOptions = sortedByName(folders.filter((f) => !excludedIds.includes(f.id)));
+
+  // Rendu hiérarchique récursif : indentation par profondeur, pas de limite.
+  const renderFolderRow = (f, depth) => (
+    <React.Fragment key={f.id}>
+      <div className="lp-manage-item" style={{ paddingLeft: 8 + depth * 20 }}>
+        <span className="lp-project-dot" style={{ background: f.color || "var(--text-muted)", width: 22, height: 22 }}><Folder size={12} color="#fff" /></span>
+        <span className="lp-manage-name">{f.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({countInFolder(f.id)})</span></span>
+        <button className="lp-icon-btn" onClick={() => startSubfolder(f)} title={`Ajouter un sous-${itemLabel}`}><FolderPlus size={14} /></button>
+        <button className="lp-icon-btn" onClick={() => startEdit(f)}><Pencil size={14} /></button>
+        <button className="lp-icon-btn" onClick={() => remove(f.id)}><Trash2 size={15} /></button>
+      </div>
+      {folderChildren(folders, f.id).map((child) => renderFolderRow(child, depth + 1))}
+    </React.Fragment>
+  );
 
   return (
     <Modal title={title} onClose={onClose}>
       <div className="lp-section-title">{capitalize(itemLabel)}s existants</div>
       {folders.length === 0 && <div className="lp-empty" style={{ padding: 12 }}>Aucun {itemLabel} pour l'instant.</div>}
-      {folders.map((f) => (
-        <div className="lp-manage-item" key={f.id}>
-          <span className="lp-project-dot" style={{ background: f.color || "var(--text-muted)", width: 22, height: 22 }}><Folder size={12} color="#fff" /></span>
-          <span className="lp-manage-name">{f.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({countInFolder(f.id)})</span></span>
-          <button className="lp-icon-btn" onClick={() => startEdit(f)}><Pencil size={14} /></button>
-          <button className="lp-icon-btn" onClick={() => remove(f.id)}><Trash2 size={15} /></button>
-        </div>
-      ))}
+      {folderChildren(folders, null).map((f) => renderFolderRow(f, 0))}
       <hr className="lp-divider" />
-      <div className="lp-section-title">{editingId ? `Modifier le ${itemLabel}` : `Nouveau ${itemLabel}`}</div>
+      <div className="lp-section-title">{editingId ? `Modifier le ${itemLabel}` : parentId ? `Nouveau sous-${itemLabel}` : `Nouveau ${itemLabel}`}</div>
       <div className="lp-field"><input type="text" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} placeholder={`Nom du ${itemLabel}`} autoFocus /></div>
       <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} palette={PROJECT_PALETTES.default} /></div>
+      {parentOptions.length > 0 && (
+        <div className="lp-field">
+          <label>Sous-{itemLabel} de</label>
+          <select value={parentId || ""} onChange={(e) => setParentId(e.target.value || null)}>
+            <option value="">— Aucun (racine) —</option>
+            {parentOptions.map((f) => (
+              <option key={f.id} value={f.id}>{"—".repeat(folderDepth(folders, f.id))} {f.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer" : "Ajouter"}</button>
-        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
+        {(editingId || parentId) && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
       </div>
     </Modal>
   );
