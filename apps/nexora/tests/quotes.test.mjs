@@ -436,9 +436,30 @@ test("chips : badges colorés affichés dans le catalogue (lecture) via le même
   assert.match(p3, /<QuoteChipBadges /);
 });
 
-test("chips : jamais affichés dans le code de génération du PDF (UI seulement, décision actée avec Quentin)", () => {
+// Revirement de la décision initiale (« UI seulement ») : Quentin les veut
+// désormais visibles dans le PDF, sous une autre forme (texte compact gris,
+// pas des badges pleins — voir quoteLineSkillsLabel/attachQuoteSkillsCellDrawer).
+test("chips : libellés de compétences résolus et injectés dans le tableau du PDF devis (pas de badges pleins, juste du texte)", () => {
+  assert.match(p3, /function quoteLineSkillsLabel\(line, skills\)/);
+  assert.match(p3, /Compétences : \$\{labels\.join\(" · "\)\}/);
+  assert.match(p3, /function attachQuoteSkillsCellDrawer\(doc, lines, skills\)/);
+
   const from = p3.indexOf("async function downloadQuotePdf");
   const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
-  assert.doesNotMatch(body, /skillIds/);
-  assert.doesNotMatch(body, /QuoteChip/);
+  assert.match(body, /buildQuoteLinesTableRows\(quote\.lines, quoteSkills\)/);
+  assert.match(body, /didDrawCell:\s*attachQuoteSkillsCellDrawer\(doc, quote\.lines, quoteSkills\)/);
+  // Jamais de badge coloré plein (composant React) dans le code PDF.
+  assert.doesNotMatch(body, /QuoteChipBadges|QuoteChipPicker/);
+});
+
+test("chips PDF : un id de compétence orphelin (chip supprimé) est ignoré silencieusement, jamais une erreur", () => {
+  const from = p3.indexOf("function quoteLineSkillsLabel");
+  const body = p3.slice(from, p3.indexOf("\n}", from));
+  assert.match(body, /\.filter\(Boolean\)/);
+});
+
+test("chips PDF : rien n'est ajouté pour une ligne sans skillIds (pas de ligne vide)", () => {
+  const from = p3.indexOf("function quoteLineSkillsLabel");
+  const body = p3.slice(from, p3.indexOf("\n}", from));
+  assert.match(body, /if \(!ids\.length\) return "";/);
 });

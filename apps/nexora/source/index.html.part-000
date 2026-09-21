@@ -770,7 +770,10 @@ import {
   Activity, Sunrise, TrendingUp, ShieldAlert, Grid3x3, Users, History, Flame,
   LayoutDashboard, GripHorizontal, Rows3, Waypoints, Filter,
   Link as LinkIcon, Paperclip, AlertOctagon, ShieldCheck, Save, PanelLeftClose, MoreHorizontal, Star, ChevronLeft, Bell, BookOpen, FileText, CircleDot, Minus,
-  Archive, RotateCcw, Tag, ExternalLink, Printer, Presentation
+  Archive, RotateCcw, Tag, ExternalLink, Printer, Presentation,
+  // Module Facture (#devis-v2 suite) : "Facturer ce devis" (Receipt), marquer
+  // payée (Banknote), créer un avoir (FileMinus).
+  Receipt, Banknote, FileMinus
 } from 'https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
@@ -2360,6 +2363,9 @@ const ALL_VIEWS_META = [
   // Module Devis (Quentin Morel Engineering) : destination de haut niveau,
   // comme Notifications — pas de contexte projet nécessaire pour l'ouvrir.
   { key: "quotes", label: "Devis", iconKey: "tabler:file-invoice" },
+  // Module Facture — construit sur le modèle du module Devis (#devis-v2
+  // suite), même statut de destination de haut niveau.
+  { key: "invoices", label: "Factures", iconKey: "tabler:receipt" },
 ];
 // === NEXORA:VIEW-RAIL-COUNT:START ===
 /* Badge d'une bulle du rail vertical (issue #65).
@@ -2398,7 +2404,7 @@ function viewRailBadgeLabel(count) {
 // Destinations de haut niveau — seules celles-ci restent dans le bandeau vertical.
 // Les autres (les "vues" de détail sur les tâches) deviennent des onglets affichés
 // une fois un contexte projet actif, plutôt que des destinations indépendantes.
-const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications", "quotes"];
+const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications", "quotes", "invoices"];
 // Vues de détail — apparaissent en onglets horizontaux, jamais dans le bandeau.
 const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "timeline", "radar", "table"];
 
@@ -3561,6 +3567,71 @@ function fmtQuoteAmount(n) {
 }
 // === NEXORA:QUOTES:END ===
 
+// ============================================================================
+// === NEXORA:INVOICES:START ===
+// Module Facture — construit sur le modèle du module Devis ci-dessus. Une
+// facture reprend la même forme de ligne (kind/amount/quantity/unitRate/
+// skillIds, voir quoteLineAmount) : pas de duplication de ce calcul, une
+// facture est juste un autre document avec ce type de ligne.
+//
+// Cycle de vie : Émise -> Payée, ou Émise -> Annulée (UNIQUEMENT via un avoir,
+// jamais un simple changement de statut — voir createCreditNote, part-001).
+// "En retard" est, comme "Expiré" pour un devis, JAMAIS écrit en base : il se
+// calcule à l'affichage (effectiveInvoiceStatus) depuis dueDate, pour qu'un
+// passage en "payée" le fasse disparaître sans manipulation supplémentaire.
+const INVOICE_STATUSES = [
+  { key: "issued", label: "Émise", color: "#2C6BE0" },
+  { key: "paid", label: "Payée", color: "var(--success)" },
+  { key: "cancelled", label: "Annulée", color: "var(--text-muted)" },
+  { key: "late", label: "En retard", color: "var(--warning)" },
+];
+// Statuts proposés dans le sélecteur manuel : "Annulée" n'y figure jamais
+// (elle ne s'obtient QUE via createCreditNote), "En retard" non plus (calculé,
+// jamais persistable — même principe que QUOTE_EDITABLE_STATUSES).
+const INVOICE_MANUAL_STATUSES = INVOICE_STATUSES.filter((s) => s.key === "issued" || s.key === "paid");
+
+const DEFAULT_INVOICE_DUE_DAYS = 30;
+
+function invoiceStatusMeta(statusKey) {
+  return INVOICE_STATUSES.find((s) => s.key === statusKey) || INVOICE_STATUSES[0];
+}
+
+function invoiceTotal(invoice) {
+  return (invoice?.lines || []).reduce((sum, l) => sum + quoteLineAmount(l), 0);
+}
+
+function defaultInvoiceDueDate(issueDate, days = DEFAULT_INVOICE_DUE_DAYS) {
+  return addDays(issueDate, days);
+}
+
+// Statut EFFECTIF affiché : une facture "Émise" dont l'échéance est dépassée
+// sans être passée en "payée" devient "En retard" au moment de l'AFFICHAGE
+// seulement — jamais persisté (même principe que effectiveQuoteStatus).
+function effectiveInvoiceStatus(invoice, today = iso(new Date())) {
+  if (!invoice) return "issued";
+  if (invoice.status === "issued" && invoice.dueDate && invoice.dueDate < today) return "late";
+  return invoice.status || "issued";
+}
+
+// Numérotation F-AAAA-NNN — STRICTEMENT continue et sans trou (contrainte
+// légale plus stricte que les devis, qui peuvent avoir des trous si un devis
+// est supprimé) : le compteur inclut TOUS les documents de la séquence,
+// factures ET avoirs confondus (un avoir a son propre numéro dans la même
+// séquence, voir createCreditNote part-001). Aucun handler ne supprime jamais
+// une facture émise ni ne réutilise son numéro — la continuité découle donc
+// naturellement du même principe « déduit des documents existants » que
+// nextQuoteNumber, sans compteur séparé qui pourrait se désynchroniser.
+function nextInvoiceNumber(invoices, year = new Date().getFullYear()) {
+  const prefix = `F-${year}-`;
+  const maxN = (invoices || [])
+    .filter((inv) => typeof inv.number === "string" && inv.number.startsWith(prefix))
+    .map((inv) => parseInt(inv.number.slice(prefix.length), 10))
+    .filter((n) => Number.isFinite(n))
+    .reduce((max, n) => Math.max(max, n), 0);
+  return `${prefix}${String(maxN + 1).padStart(3, "0")}`;
+}
+// === NEXORA:INVOICES:END ===
+
 const seedQuoteSettings = {
   companyName: "Quentin Morel Engineering",
   siret: "000 000 000 00000",
@@ -3581,6 +3652,10 @@ const seedQuoteSettings = {
   // dupliquée en base.
   cgvText: "",
   cgvUpdatedAt: "",
+  // Assurance professionnelle — texte libre (assureur + couverture), utilisé
+  // UNIQUEMENT dans le PDF facture (mention conditionnelle, absente du devis
+  // si vide). Champ optionnel, jamais affiché tant qu'il n'est pas renseigné.
+  insurance: "",
 };
 
 // Palette de couleurs proposée pour un chip de compétence/logiciel (module
