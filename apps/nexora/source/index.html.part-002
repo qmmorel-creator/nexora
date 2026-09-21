@@ -12391,19 +12391,52 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
       {catalogue.length === 0 && (
         <div className="lp-empty" style={{ padding: 12, marginBottom: 10 }}>Aucune équipe créée pour l'instant.</div>
       )}
-      {catalogue.map((team) => {
-        const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
-        const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
-        const folder = team.folderId ? folders.find((f) => f.id === team.folderId) : null;
+      {(() => {
+        // Section « Dossiers d'équipes » (#215) : les équipes sont regroupées
+        // par dossier directement dans l'affichage principal (pas dans une
+        // modale à part) ; une équipe appartient à un seul dossier
+        // (team.folderId). Tri alphabétique des dossiers, puis des équipes
+        // à l'intérieur de chaque dossier ; les équipes sans dossier
+        // apparaissent dans un groupe « Sans dossier » en dernier.
+        const renderTeam = (team) => {
+          const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
+          const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
+          return (
+            <div className="lp-manage-item" key={team.id}>
+              <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
+              <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""})</span></span>
+              <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
+              <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
+            </div>
+          );
+        };
+        const sortedFolders = sortedByName(folders);
+        const unfiled = sortedByName(catalogue.filter((t) => !t.folderId || !folders.some((f) => f.id === t.folderId)));
         return (
-          <div className="lp-manage-item" key={team.id}>
-            <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
-            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""}{folder ? " · 📁 " + folder.name : ""})</span></span>
-            <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
-            <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
-          </div>
+          <>
+            {sortedFolders.map((folder) => {
+              const folderTeams = sortedByName(catalogue.filter((t) => t.folderId === folder.id));
+              if (!folderTeams.length) return null;
+              return (
+                <div key={folder.id} style={{ marginBottom: 10 }}>
+                  <div className="lp-section-title" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                    <Folder size={12} /> {folder.name}
+                  </div>
+                  {folderTeams.map(renderTeam)}
+                </div>
+              );
+            })}
+            {unfiled.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                {sortedFolders.length > 0 && (
+                  <div className="lp-section-title" style={{ fontSize: 11 }}>Sans dossier</div>
+                )}
+                {unfiled.map(renderTeam)}
+              </div>
+            )}
+          </>
         );
-      })}
+      })()}
 
       <hr className="lp-divider" />
       <div className="lp-section-title">{editingId ? "Modifier l'équipe" : "Nouvelle équipe"}</div>
