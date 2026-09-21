@@ -9272,7 +9272,18 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
       return result;
     };
     const positions = new Map();
-    const place = (node, cross, mainStart) => {
+    // Retour de test (superpositions) : deux frères peuvent avoir des
+    // hauteurs propres différentes (#238, texte non tronqué — plus de
+    // membres ou un poste qui passe à la ligne rend une carte plus haute
+    // qu'une autre du même rang). Le contour (#243) ne compacte que l'axe
+    // transversal ; sur l'axe principal, si chaque frère démarre SA propre
+    // ligne d'enfants dès SA propre fin (mainEnd), la ligne d'enfants d'un
+    // frère court peut commencer avant qu'un frère plus haut ne soit
+    // terminé — et le rapprochement de #243 rend ce chevauchement visible.
+    // Fix : tous les enfants d'un même nœud démarrent leur PROPRE ligne
+    // d'enfants au même niveau, celui du frère le plus haut de leur
+    // fratrie — jamais avant que toute la ligne courante ne soit terminée.
+    const place = (node, cross, mainStart, forcedChildMainStart) => {
       const size = orgHierNodeSize(node);
       const mainEnd = mainStart + mainOf(node);
       positions.set(node, { cross, mainStart, mainEnd, w: size.w, h: size.h });
@@ -9280,8 +9291,9 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
       if (!kids.length) return;
       contourOf(node);
       const offsets = siblingOffsetCache.get(node);
-      const childMainStart = mainEnd + ORGHIER_LEVEL_GAP;
-      kids.forEach((child, i) => place(child, cross + offsets[i], childMainStart));
+      const childMainStart = forcedChildMainStart !== undefined ? forcedChildMainStart : mainEnd + ORGHIER_LEVEL_GAP;
+      const sharedGrandMainStart = Math.max(...kids.map((k) => childMainStart + mainOf(k))) + ORGHIER_LEVEL_GAP;
+      kids.forEach((child, i) => place(child, cross + offsets[i], childMainStart, sharedGrandMainStart));
     };
     // Les racines de premier niveau (#235 : déjà réordonnées pour rapprocher
     // les partenaires transverses) sont elles-mêmes traitées comme un groupe
