@@ -106,14 +106,21 @@ test("buildOrgHierarchyTree : un responsable direct prime sur le rattachement d'
   assert.equal(aliceNode.children[0].member.name, "Bob");
 });
 
-test("buildOrgHierarchyTree : multi-équipe sans responsable n'apparaît qu'une fois (première équipe)", () => {
+test("buildOrgHierarchyTree : multi-équipe sans responsable apparaît dans CHACUNE de ses équipes (#212)", () => {
   const teams = [team("a"), team("b")];
   const members = [member("Alice", { teamIds: ["a", "b"] })];
   const roots = buildOrgHierarchyTree(teams, members);
   const teamA = roots.find((r) => r.team.id === "a");
   const teamB = roots.find((r) => r.team.id === "b");
   assert.equal(teamA.children.length, 1);
-  assert.equal(teamB.children.length, 0);
+  assert.equal(teamA.children[0].member.name, "Alice");
+  assert.equal(teamB.children.length, 1);
+  assert.equal(teamB.children[0].member.name, "Alice");
+  // La carte de la première équipe reste l'instance "canonique" (elle
+  // porterait les subordonnés éventuels) ; celle de la seconde est une
+  // carte dupliquée, sans enfants propres.
+  assert.equal(teamA.children[0].children.length, 0);
+  assert.equal(teamB.children[0].children.length, 0);
 });
 
 test("buildOrgHierarchyTree : personne sans équipe ni responsable → « Sans équipe »", () => {

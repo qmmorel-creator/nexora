@@ -4001,10 +4001,12 @@ function memberDescendantAndSelfNames(name, teamMembers) {
 // personne avec un responsable direct (managerName) résolvable et sans
 // cycle, qui devient alors l'enfant du NŒUD DE CETTE PERSONNE plutôt que de
 // son équipe, où qu'elle se trouve dans l'arbre. Une personne dans plusieurs
-// équipes (multi-équipe) n'apparaît qu'une fois, sous la PREMIÈRE qui
-// résout — un arbre montre une seule ligne hiérarchique par personne,
-// contrairement à la vue « Par groupe » qui peut se permettre de répéter
-// une carte. Retourne la liste des racines (équipes sans parent, plus
+// équipes (multi-équipe, sans responsable direct) apparaît dans CHACUNE
+// d'elles (#212) — sa carte "principale" (avec ses éventuels subordonnés)
+// sous la PREMIÈRE équipe qui résout, et une carte dupliquée (sans
+// subordonnés, déjà rattachés une seule fois) sous chaque équipe
+// supplémentaire — comme la vue « Par groupe » qui répète déjà la carte.
+// Retourne la liste des racines (équipes sans parent, plus
 // « Sans équipe » si non vide) ; chaque nœud est { type:"team", team,
 // children } ou { type:"person", member, children }.
 function buildOrgHierarchyTree(teams, members) {
@@ -4042,7 +4044,18 @@ function buildOrgHierarchyTree(teams, members) {
     const teamIds = memberTeamIds(m).filter((id) => teamNodes.has(id));
     node.roleTeamId = teamIds[0] || null;
     if (safeManager) { safeManager.children.push(node); return; }
-    if (teamIds.length) { teamNodes.get(teamIds[0]).children.push(node); return; }
+    if (teamIds.length) {
+      teamNodes.get(teamIds[0]).children.push(node);
+      // #212 : une personne dans plusieurs équipes doit apparaître dans
+      // CHACUNE, y compris en vue hiérarchique — comme le fait déjà la vue
+      // « Par groupe ». On répète ici sa carte (sans ses propres
+      // subordonnés, déjà rattachés une seule fois ci-dessus, à sa première
+      // équipe) dans chaque équipe supplémentaire.
+      teamIds.slice(1).forEach((id) => {
+        teamNodes.get(id).children.push({ type: "person", member: m, children: [], roleTeamId: id });
+      });
+      return;
+    }
     unassigned.children.push(node);
   });
   if (unassigned.children.length) roots.push(unassigned);
