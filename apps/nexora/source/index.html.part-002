@@ -12377,14 +12377,23 @@ function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushT
 // Organigramme. Une liste ordonnée, enregistrée sous `nexora:teams`, sur le
 // modèle exact du gestionnaire d'ateliers ci-dessus.
 // ============================================================================
-function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, teamFolders, setTeamFolders, pushToast, onClose, embedded, hideTitle }) {
+// Modale d'édition/création d'équipe (#231) : point d'entrée UNIQUE, ouverte
+// aussi bien depuis le crayon de TeamCatalogManager que depuis un
+// double-clic sur une carte équipe de l'Organigramme (OrgHierarchyChart,
+// part-003, prop onEditTeam) — plus de formulaire inline dupliqué entre les
+// deux. `team` vaut null pour une création.
+function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, setTeamFolders, pushToast, onSave, onClose }) {
   const catalogue = normalizeTeams(teams);
   const folders = teamFolders || [];
-  const [editingId, setEditingId] = useState(null);
-  const [name, setName] = useState("");
-  const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
-  const [leadName, setLeadName] = useState("");
-  const [parentTeamId, setParentTeamId] = useState("");
+  const editingId = team ? team.id : null;
+  const [name, setName] = useState(team?.name || "");
+  const [color, setColor] = useState(team?.color || STAFFING_COLOR_CHOICES[0]);
+  const [leadName, setLeadName] = useState(team?.leadName || "");
+  const [parentTeamId, setParentTeamId] = useState(team?.parentTeamId || "");
+  // Type de rattachement (#219) : hiérarchique (par défaut, comportement
+  // d'origine) ou transverse — sans effet tant que parentTeamId est vide.
+  const [parentLinkType, setParentLinkType] = useState(team?.parentLinkType === "transverse" ? "transverse" : "hierarchique");
+  const [folderId, setFolderId] = useState(team?.folderId || "");
   // Ajout rapide d'un utilisateur depuis la fiche d'une équipe (#222) : mêmes
   // deux champs que partout ailleurs dans l'app (nom + poste), le rattachement
   // reste RÉCIPROQUE parce qu'il n'existe qu'un seul modèle de rattachement
@@ -12394,53 +12403,16 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
   // équipe sont donc la même écriture, ici sur teamMembers.
   const [quickAddName, setQuickAddName] = useState("");
   const [quickAddRole, setQuickAddRole] = useState("");
-  // Type de rattachement (#219) : hiérarchique (par défaut, comportement
-  // d'origine) ou transverse — sans effet tant que parentTeamId est vide.
-  const [parentLinkType, setParentLinkType] = useState("hierarchique");
-  const [folderId, setFolderId] = useState("");
   // Dossiers d'équipes (#215) : même pattern que « Dossiers de projets »
   // (SimpleFolderManager), ouvert depuis un bouton local plutôt que depuis
   // la barre latérale (il n'existe pas d'équivalent équipe côté navigation).
   const [foldersManagerOpen, setFoldersManagerOpen] = useState(false);
-  // Glisser-déposer une équipe vers un dossier (#227) : même mime custom et
-  // même pattern que les dossiers de projets/tableaux de bord (onDragStart/
-  // onDrop sur "application/x-nexora-team", voir renderProjectFolderNode) ;
-  // dragOverFolderKey retient la zone survolée ("" pour "Sans dossier") pour
-  // le feedback visuel pendant le survol.
-  const [dragOverFolderKey, setDragOverFolderKey] = useState(null);
-  const moveTeamToFolder = (teamId, targetFolderId) => {
-    if (!teamId) return;
-    setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, folderId: targetFolderId || "" } : t)));
-  };
 
-  const cancelEdit = () => {
-    setEditingId(null);
-    setName("");
-    setColor(STAFFING_COLOR_CHOICES[0]);
-    setLeadName("");
-    setParentTeamId("");
-    setParentLinkType("hierarchique");
-    setFolderId("");
-    setQuickAddName("");
-    setQuickAddRole("");
-  };
-  const startEdit = (team) => {
-    setEditingId(team.id);
-    setName(team.name);
-    setColor(team.color);
-    setLeadName(team.leadName || "");
-    setParentTeamId(team.parentTeamId || "");
-    setParentLinkType(team.parentLinkType === "transverse" ? "transverse" : "hierarchique");
-    setFolderId(team.folderId || "");
-    setQuickAddName("");
-    setQuickAddRole("");
-  };
-  const editingTeam = editingId ? catalogue.find((t) => t.id === editingId) : null;
   const teamRoster = editingId ? sortedByName((teamMembers || []).filter((m) => memberTeamIds(m).includes(editingId))) : [];
   // Détache une personne de CETTE équipe uniquement (elle reste dans
-  // l'annuaire, comme la suppression d'une équipe plus haut) — retire son
-  // poste pour cette équipe au passage, comme un décochage dans la fiche
-  // utilisateur (TeamMemberFormModal.toggleTeam).
+  // l'annuaire, comme la suppression d'une équipe dans TeamCatalogManager) —
+  // retire son poste pour cette équipe au passage, comme un décochage dans
+  // la fiche utilisateur (TeamMemberFormModal.toggleTeam).
   const removeFromTeam = (member) => {
     if (!editingId || !setTeamMembers) return;
     setTeamMembers((prev) => prev.map((m) => {
@@ -12473,7 +12445,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
       }
       return [...prev, { id: uid(), name: trimmedName, color: staffingMemberColor(trimmedName), avatarDataUrl: null, teamIds: [teamId], teamId: null, teamRoles: poste ? { [teamId]: poste } : {} }];
     });
-    if (pushToast) pushToast({ message: `« ${trimmedName} » rattaché à « ${editingTeam?.name || "l'équipe"} ».` });
+    if (pushToast) pushToast({ message: `« ${trimmedName} » rattaché à « ${team?.name || "l'équipe"} ».` });
     setQuickAddName("");
     setQuickAddRole("");
   };
@@ -12484,12 +12456,143 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
   const parentOptions = catalogue.filter((t) => !excludedParentIds.has(t.id));
   const save = () => {
     if (!name.trim()) return;
-    if (editingId) {
-      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, folderId } : t)));
+    onSave({ name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, folderId });
+  };
+
+  const foldersModal = foldersManagerOpen && (
+    <SimpleFolderManager
+      title="Dossiers d'équipes"
+      folders={folders}
+      setFolders={setTeamFolders}
+      countInFolder={(id) => catalogue.filter((t) => t.folderId === id).length}
+      pushToast={pushToast}
+      onClose={() => setFoldersManagerOpen(false)}
+      itemLabel="dossier"
+    />
+  );
+
+  return (
+    <>
+      <Modal title={editingId ? `Modifier « ${team.name} »` : "Nouvelle équipe"} onClose={onClose}>
+        <div className="lp-field"><label>Nom</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Bureau d'études" autoFocus /></div>
+        <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} /></div>
+        <div className="lp-field">
+          <label>Responsable <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif)</span></label>
+          <select value={leadName} onChange={(e) => setLeadName(e.target.value)}>
+            <option value="">Aucun</option>
+            {sortedByName(teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+          </select>
+        </div>
+        <div className="lp-field">
+          <label>Équipe parente <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette équipe à une autre dans l'Organigramme)</span></label>
+          <select value={parentTeamId} onChange={(e) => setParentTeamId(e.target.value)}>
+            <option value="">Aucune (équipe de premier niveau)</option>
+            {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        {parentTeamId && (
+          <div className="lp-field">
+            <label>Type de rattachement</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (parentLinkType === "hierarchique" ? " active" : "")} onClick={() => setParentLinkType("hierarchique")}>Hiérarchique</button>
+              <button type="button" className={"lp-density-btn" + (parentLinkType === "transverse" ? " active" : "")} onClick={() => setParentLinkType("transverse")}>Transverse</button>
+            </div>
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              {parentLinkType === "transverse"
+                ? "Lien de liaison horizontal, sans relation parent/enfant — les deux équipes restent chacune à leur niveau."
+                : "L'équipe apparaît sous sa parente, reliée par un trait vertical."}
+            </p>
+          </div>
+        )}
+        <div className="lp-field">
+          <label>
+            Dossier d'équipes
+            <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}> (facultatif — filtre par dossier dans l'Organigramme et les Utilisateurs)</span>
+          </label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <select value={folderId} onChange={(e) => setFolderId(e.target.value)} style={{ flex: 1 }}>
+              <option value="">Aucun</option>
+              {sortedByName(folders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+            <button type="button" className="lp-btn" onClick={() => setFoldersManagerOpen(true)}>Gérer les dossiers</button>
+          </div>
+        </div>
+
+        {editingId && (
+          <>
+            <hr className="lp-divider" />
+            <div className="lp-section-title">Membres de « {team.name} »</div>
+            {teamRoster.length === 0 ? (
+              <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: "0 0 10px" }}>Aucun membre pour l'instant.</p>
+            ) : (
+              teamRoster.map((m) => (
+                <div className="lp-manage-item" key={m.id}>
+                  <span className="lp-project-dot" style={{ background: m.color, width: 22, height: 22 }}>{m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={13} /> : <User size={12} color="#fff" />}</span>
+                  <span className="lp-manage-name">{m.name} {memberRoleInTeam(m, editingId) && <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({memberRoleInTeam(m, editingId)})</span>}</span>
+                  <button className="lp-icon-btn" onClick={() => removeFromTeam(m)} aria-label={`Retirer ${m.name} de l'équipe`} title="Retirer de l'équipe (reste dans l'annuaire)"><X size={14} /></button>
+                </div>
+              ))
+            )}
+            <div className="lp-field" style={{ marginTop: 8 }}>
+              <label>Ajouter rapidement <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisateur existant, ou créé à la volée s'il n'existe pas — avec son poste dans cette équipe)</span></label>
+              <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 160px", minWidth: 160 }}>
+                  <AssigneeSelect members={teamMembers} value={quickAddName} onChange={setQuickAddName} onCreateMember={(nm) => setQuickAddName(nm.trim())} />
+                </div>
+                <input
+                  type="text"
+                  style={{ flex: "1 1 140px", minWidth: 140 }}
+                  placeholder="Poste (facultatif)"
+                  value={quickAddRole}
+                  onChange={(e) => setQuickAddRole(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addQuickMember(); }}
+                />
+                <button type="button" className="lp-btn lp-btn-primary" onClick={addQuickMember} disabled={!quickAddName.trim()}>Ajouter</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
+          <button className="lp-btn" onClick={onClose}>Annuler</button>
+        </div>
+      </Modal>
+      {foldersModal}
+    </>
+  );
+}
+
+function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, teamFolders, setTeamFolders, pushToast, onClose, embedded, hideTitle }) {
+  const catalogue = normalizeTeams(teams);
+  const folders = teamFolders || [];
+  // Modale d'édition/création (#231) : formTeam vaut null (fermée), "new"
+  // (création) ou une équipe du catalogue (édition) — même pattern que
+  // TeamMemberManager/TeamMemberFormModal juste au-dessus dans ce fichier.
+  const [formTeam, setFormTeam] = useState(null);
+  // Glisser-déposer une équipe vers un dossier (#227) : même mime custom et
+  // même pattern que les dossiers de projets/tableaux de bord (onDragStart/
+  // onDrop sur "application/x-nexora-team", voir renderProjectFolderNode) ;
+  // dragOverFolderKey retient la zone survolée ("" pour "Sans dossier") pour
+  // le feedback visuel pendant le survol.
+  const [dragOverFolderKey, setDragOverFolderKey] = useState(null);
+  const moveTeamToFolder = (teamId, targetFolderId) => {
+    if (!teamId) return;
+    setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, folderId: targetFolderId || "" } : t)));
+  };
+  // « Gérer les dossiers » reste accessible sans ouvrir la fiche d'une
+  // équipe (elle vit aussi dans TeamFormModal, pour un accès rapide pendant
+  // l'édition/création) — même modale SimpleFolderManager dans les deux cas.
+  const [foldersManagerOpen, setFoldersManagerOpen] = useState(false);
+
+  const saveTeamForm = (data) => {
+    if (formTeam === "new") {
+      setTeams([...catalogue, { id: uid(), ...data }]);
     } else {
-      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, folderId }]);
+      const editingId = formTeam.id;
+      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, ...data } : t)));
     }
-    cancelEdit();
+    setFormTeam(null);
   };
   // Supprimer une équipe détache ses membres (teamId remis à vide) plutôt que
   // de les supprimer eux — une équipe est un regroupement, pas un propriétaire.
@@ -12500,7 +12603,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
       if (!window.confirm(`« ${team.name} » compte ${personnes}. Les supprimer de l'équipe (elles restent dans l'annuaire) ?`)) return;
     }
     setTeams(catalogue.filter((t) => t.id !== team.id));
-    if (editingId === team.id) cancelEdit();
+    if (formTeam && formTeam !== "new" && formTeam.id === team.id) setFormTeam(null);
   };
 
   const body = (
@@ -12534,7 +12637,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
               <span className="lp-drag-handle" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} title="Glisser vers un dossier"><GripVertical size={12} /></span>
               <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
               <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parentLabel})</span></span>
-              <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
+              <button className="lp-icon-btn" onClick={() => setFormTeam(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
               <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
             </div>
           );
@@ -12590,107 +12693,26 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, team
       })()}
 
       <hr className="lp-divider" />
-      <div className="lp-section-title">{editingId ? "Modifier l'équipe" : "Nouvelle équipe"}</div>
-      <div className="lp-field"><label>Nom</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex. Bureau d'études" /></div>
-      <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} /></div>
-      <div className="lp-field">
-        <label>Responsable <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif)</span></label>
-        <select value={leadName} onChange={(e) => setLeadName(e.target.value)}>
-          <option value="">Aucun</option>
-          {sortedByName(teamMembers || []).map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
-        </select>
-      </div>
-      <div className="lp-field">
-        <label>Équipe parente <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette équipe à une autre dans l'Organigramme)</span></label>
-        <select value={parentTeamId} onChange={(e) => setParentTeamId(e.target.value)}>
-          <option value="">Aucune (équipe de premier niveau)</option>
-          {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-      </div>
-      {parentTeamId && (
-        <div className="lp-field">
-          <label>Type de rattachement</label>
-          <div className="lp-density-row">
-            <button type="button" className={"lp-density-btn" + (parentLinkType === "hierarchique" ? " active" : "")} onClick={() => setParentLinkType("hierarchique")}>Hiérarchique</button>
-            <button type="button" className={"lp-density-btn" + (parentLinkType === "transverse" ? " active" : "")} onClick={() => setParentLinkType("transverse")}>Transverse</button>
-          </div>
-          <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
-            {parentLinkType === "transverse"
-              ? "Lien de liaison horizontal, sans relation parent/enfant — les deux équipes restent chacune à leur niveau."
-              : "L'équipe apparaît sous sa parente, reliée par un trait vertical."}
-          </p>
-        </div>
-      )}
-      <div className="lp-field">
-        <label>
-          Dossier d'équipes
-          <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}> (facultatif — filtre par dossier dans l'Organigramme et les Utilisateurs)</span>
-        </label>
-        <div style={{ display: "flex", gap: 6 }}>
-          <select value={folderId} onChange={(e) => setFolderId(e.target.value)} style={{ flex: 1 }}>
-            <option value="">Aucun</option>
-            {sortedByName(folders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-          </select>
-          <button type="button" className="lp-btn" onClick={() => setFoldersManagerOpen(true)}>Gérer les dossiers</button>
-        </div>
-      </div>
-
-      {editingTeam && (
-        <>
-          <hr className="lp-divider" />
-          <div className="lp-section-title">Membres de « {editingTeam.name} »</div>
-          {teamRoster.length === 0 ? (
-            <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: "0 0 10px" }}>Aucun membre pour l'instant.</p>
-          ) : (
-            teamRoster.map((m) => (
-              <div className="lp-manage-item" key={m.id}>
-                <span className="lp-project-dot" style={{ background: m.color, width: 22, height: 22 }}>{m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={13} /> : <User size={12} color="#fff" />}</span>
-                <span className="lp-manage-name">{m.name} {memberRoleInTeam(m, editingId) && <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({memberRoleInTeam(m, editingId)})</span>}</span>
-                <button className="lp-icon-btn" onClick={() => removeFromTeam(m)} aria-label={`Retirer ${m.name} de l'équipe`} title="Retirer de l'équipe (reste dans l'annuaire)"><X size={14} /></button>
-              </div>
-            ))
-          )}
-          <div className="lp-field" style={{ marginTop: 8 }}>
-            <label>Ajouter rapidement <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisateur existant, ou créé à la volée s'il n'existe pas — avec son poste dans cette équipe)</span></label>
-            <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 160px", minWidth: 160 }}>
-                <AssigneeSelect members={teamMembers} value={quickAddName} onChange={setQuickAddName} onCreateMember={(nm) => setQuickAddName(nm.trim())} />
-              </div>
-              <input
-                type="text"
-                style={{ flex: "1 1 140px", minWidth: 140 }}
-                placeholder="Poste (facultatif)"
-                value={quickAddRole}
-                onChange={(e) => setQuickAddRole(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") addQuickMember(); }}
-              />
-              <button type="button" className="lp-btn lp-btn-primary" onClick={addQuickMember} disabled={!quickAddName.trim()}>Ajouter</button>
-            </div>
-          </div>
-        </>
-      )}
-
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
-        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
-      </div>
+      <button className="lp-btn lp-btn-primary" onClick={() => setFormTeam("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouvelle équipe</button>
     </>
   );
 
-  const foldersModal = foldersManagerOpen && (
-    <SimpleFolderManager
-      title="Dossiers d'équipes"
-      folders={folders}
-      setFolders={setTeamFolders}
-      countInFolder={(id) => catalogue.filter((t) => t.folderId === id).length}
+  const formModal = formTeam && (
+    <TeamFormModal
+      team={formTeam === "new" ? null : formTeam}
+      teams={teams}
+      teamMembers={teamMembers}
+      setTeamMembers={setTeamMembers}
+      teamFolders={teamFolders}
+      setTeamFolders={setTeamFolders}
       pushToast={pushToast}
-      onClose={() => setFoldersManagerOpen(false)}
-      itemLabel="dossier"
+      onSave={saveTeamForm}
+      onClose={() => setFormTeam(null)}
     />
   );
 
-  if (embedded) return <><div className="lp-settings-pane">{body}</div>{foldersModal}</>;
-  return <><Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>{foldersModal}</>;
+  if (embedded) return <><div className="lp-settings-pane">{body}</div>{formModal}</>;
+  return <><Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>{formModal}</>;
 }
 
 // Panneau « Utilisateurs & Équipes » (#228) : regroupe TeamMemberManager et

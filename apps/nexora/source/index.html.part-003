@@ -4099,6 +4099,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     staffing={staffing}
                     onFilterPerson={(name) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), advanced: { op: "and", items: [{ field: "assignee", mode: "is", values: [name] }] } })}
                     onOpenTeamsSettings={onOpenTeamsSettings}
+                    setTeams={setTeams}
+                    setTeamMembers={setTeamMembers}
+                    setTeamFolders={setTeamFolders}
+                    pushToast={pushToast}
                   />
                 )}
                 {w.type === "userProfile" && (
@@ -9109,7 +9113,7 @@ function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
     || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
     || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
 }
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned }) {
+function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
   // lui-même (qui change justement de taille avec l'échelle) — un
@@ -9349,7 +9353,15 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
               className={"lp-orghier-node-panel" + (node.team ? "" : " is-unassigned")}
               style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
             >
-              <div className="lp-orghier-panel-banner" style={{ background: node.team ? node.team.color : "var(--text-muted)" }}>
+              <div
+                className="lp-orghier-panel-banner"
+                style={{ background: node.team ? node.team.color : "var(--text-muted)", cursor: node.team && onEditTeam ? "pointer" : undefined }}
+                // Double-clic pour éditer l'équipe (#231) : seulement sur une
+                // vraie équipe (node.team truthy) — « Sans équipe »/« Organisation »
+                // ne sont pas éditables.
+                onDoubleClick={node.team && onEditTeam ? () => onEditTeam(node.team) : undefined}
+                title={node.team && onEditTeam ? "Double-clic pour modifier l'équipe" : undefined}
+              >
                 <span className="lp-orghier-panel-name">{node.team ? node.team.name : "Sans équipe"}</span>
                 <span className="lp-orghier-panel-count">{orgHierPersonCount(node)}</span>
               </div>
@@ -9396,8 +9408,13 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   );
 }
 
-function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings }) {
+function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, pushToast }) {
   const today = useMemo(() => iso(new Date()), []);
+  // Modale d'édition d'équipe au double-clic sur une carte (#231) — même
+  // TeamFormModal que le crayon de Réglages > Équipe (TeamCatalogManager),
+  // rien de dupliqué. null = fermée.
+  const [editTeamId, setEditTeamId] = useState(null);
+  const editTeam = editTeamId ? (ctx.teams || []).find((t) => t.id === editTeamId) : null;
   // Équipes affichées (#209, retour de test) : widget.orgChartHiddenTeamIds
   // liste celles MASQUÉES — absent/vide = toutes affichées, comme avant ce
   // réglage. Une équipe masquée disparaît du catalogue vu par les deux modes
@@ -9447,6 +9464,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         onFilterPerson={onFilterPerson}
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
         showUnassigned={showUnassigned}
+        onEditTeam={setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined}
       />
     );
 
@@ -9460,6 +9478,19 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         </div>
       )}
       <div className="lp-widget-orgchart-body">{content}</div>
+      {editTeam && (
+        <TeamFormModal
+          team={editTeam}
+          teams={ctx.teams}
+          teamMembers={ctx.teamMembers}
+          setTeamMembers={setTeamMembers}
+          teamFolders={ctx.teamFolders}
+          setTeamFolders={setTeamFolders}
+          pushToast={pushToast}
+          onSave={(data) => { setTeams((ctx.teams || []).map((t) => (t.id === editTeamId ? { ...t, ...data } : t))); setEditTeamId(null); }}
+          onClose={() => setEditTeamId(null)}
+        />
+      )}
     </div>
   );
 }
