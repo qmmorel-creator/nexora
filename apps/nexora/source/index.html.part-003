@@ -4102,6 +4102,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     setTeams={setTeams}
                     setTeamMembers={setTeamMembers}
                     setTeamFolders={setTeamFolders}
+                    setTasks={setTasks}
                     pushToast={pushToast}
                   />
                 )}
@@ -5221,20 +5222,15 @@ function WidgetTaskDetail({ widget, tasks, allTasks, ctx, onOpen, onUpdateTask, 
           <div className="lp-task-detail-fields">
             <div className="lp-task-detail-field">
               <label>Projet</label>
-              <select value={task.projectId || ""} onChange={(e)=>{
-                const nextProjectId=e.target.value;
+              <ProjectSelect projects={ctx.projects} value={task.projectId || ""} onChange={(nextProjectId)=>{
                 const fallback=getDefaultStatusForProject(ctx.statuses,ctx.projects,nextProjectId);
                 update({projectId:nextProjectId,statusId:fallback?.id || task.statusId});
-              }}>
-                {sortedByName(ctx.projects).map((p)=><option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              }} />
             </div>
 
             <div className="lp-task-detail-field">
               <label>Statut{restrictedStatus && <span style={{fontWeight:500,textTransform:"none",color:"var(--text-600)"}}> · automatique</span>}</label>
-              <select value={task.statusId || ""} onChange={(e)=>update({statusId:e.target.value})} disabled={!!restrictedStatus} title={restrictedStatus ? "Statut automatique — imposé par le type de tâche" : undefined}>
-                {allowedStatuses.map((st)=><option key={st.id} value={st.id}>{st.name}</option>)}
-              </select>
+              <StatusSelect statuses={allowedStatuses} value={task.statusId || ""} onChange={(id)=>update({statusId:id})} disabled={!!restrictedStatus} disabledTitle="Statut automatique — imposé par le type de tâche" />
             </div>
 
             <div className="lp-task-detail-field">
@@ -8990,6 +8986,33 @@ const ORGHIER_ROOT_H = 40;
 const ORGHIER_MEMBER_H = 116;
 const ORGHIER_SIBLING_GAP = 18; // entre deux sous-arbres frères (axe transversal)
 const ORGHIER_LEVEL_GAP = 40; // entre un nœud et ses enfants (axe longitudinal)
+// Nom/poste ne sont jamais tronqués (#238) : le texte revient à la ligne
+// plutôt que de finir en ellipse (voir .lp-orgchart-name, .lp-orghier-panel-row-name
+// et .lp-orghier-panel-row-role côté CSS). Le calcul de layout ci-dessous
+// reste un pur calcul géométrique — jamais une mesure DOM après un retour à
+// la ligne, ce qui obligerait à mesurer puis re-positionner tout l'arbre en
+// deux passes. On ESTIME donc le nombre de lignes à partir de la longueur du
+// texte et d'une largeur moyenne de caractère connue pour la carte/ligne
+// concernée (leur largeur est une constante, donc le nombre de caractères
+// par ligne l'est aussi approximativement pour une police donnée),
+// plafonné à un nombre raisonnable de lignes. L'objectif n'est pas un
+// habillage pixel-perfect : juste que le texte ne soit plus jamais tronqué
+// ET que les cartes ne se chevauchent jamais.
+function orgHierEstimateLines(text, charsPerLine, maxLines) {
+  const len = String(text || "").length;
+  if (!len) return 1;
+  return Math.min(Math.max(Math.ceil(len / charsPerLine), 1), maxLines);
+}
+const ORGHIER_ROW_NAME_CHARS_PER_LINE = 20; // ligne de roster, panneau ORGHIER_TEAM_PANEL_W (220px)
+const ORGHIER_ROW_ROLE_CHARS_PER_LINE = 24;
+const ORGHIER_ROW_NAME_EXTRA_LINE_H = 14; // ~ line-height de .lp-orghier-panel-row-name
+const ORGHIER_ROW_ROLE_EXTRA_LINE_H = 12; // ~ line-height de .lp-orghier-panel-row-role
+const ORGHIER_ROW_MAX_LINES = 2;
+const ORGHIER_CARD_NAME_CHARS_PER_LINE = 13; // carte racine, ORGHIER_CARD_W (104px)
+const ORGHIER_CARD_ROLE_CHARS_PER_LINE = 15;
+const ORGHIER_CARD_NAME_EXTRA_LINE_H = 13;
+const ORGHIER_CARD_ROLE_EXTRA_LINE_H = 11;
+const ORGHIER_CARD_MAX_LINES = 2;
 // Panneau d'équipe « fusionné » (retour de test, piste B) : les membres SANS
 // subordonné rejoignent le panneau de leur équipe comme une liste, au lieu
 // d'être des cartes séparées reliées par un trait — seules les sous-équipes
@@ -9066,14 +9089,27 @@ function orgHierMemberRole(personNode) {
 // CSS) appellent cette MÊME fonction, jamais un second calcul.
 function orgHierRowHeight(personNode, isLead) {
   const hasRole = Boolean(orgHierMemberRole(personNode));
-  if (isLead) return hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H;
-  return hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H;
+  const base = isLead
+    ? (hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H)
+    : (hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H);
+  // Lignes SUPPLÉMENTAIRES au-delà de la première (déjà comptée dans base) :
+  // un nom/poste court (l'immense majorité des cas) n'ajoute rien — voir
+  // orgHierEstimateLines et le commentaire au-dessus des constantes ORGHIER_ROW_*.
+  const nameExtraLines = orgHierEstimateLines(personNode.member?.name, ORGHIER_ROW_NAME_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1;
+  const roleExtraLines = hasRole ? orgHierEstimateLines(orgHierMemberRole(personNode), ORGHIER_ROW_ROLE_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1 : 0;
+  return base + nameExtraLines * ORGHIER_ROW_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_ROW_ROLE_EXTRA_LINE_H;
 }
 // La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
 // jamais un second calcul ici : la boîte réservée par le calcul de layout et
 // le contenu réellement rendu doivent toujours voir la même réponse.
 function orgHierNodeSize(node) {
-  if (node.type === "person") return { w: ORGHIER_CARD_W, h: ORGHIER_MEMBER_H };
+  if (node.type === "person") {
+    const role = orgHierMemberRole(node);
+    const nameExtraLines = orgHierEstimateLines(node.member?.name, ORGHIER_CARD_NAME_CHARS_PER_LINE, ORGHIER_CARD_MAX_LINES) - 1;
+    const roleExtraLines = role ? orgHierEstimateLines(role, ORGHIER_CARD_ROLE_CHARS_PER_LINE, ORGHIER_CARD_MAX_LINES) - 1 : 0;
+    const h = ORGHIER_MEMBER_H + nameExtraLines * ORGHIER_CARD_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_CARD_ROLE_EXTRA_LINE_H;
+    return { w: ORGHIER_CARD_W, h };
+  }
   if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
   const { lead, rest } = orgHierEmbeddedRoster(node);
   const rows = (lead ? 1 : 0) + rest.length;
@@ -9113,7 +9149,7 @@ function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
     || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
     || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
 }
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam }) {
+function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
   // lui-même (qui change justement de taille avec l'échelle) — un
@@ -9133,10 +9169,15 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   // « Sans équipe » est toujours la seule racine dont team est null (voir
   // buildOrgHierarchyTree) — c'est ce qui permet de la retirer ici sans
   // toucher la fonction pure ni son contrat déjà testé.
-  const roots = useMemo(
+  const filteredRoots = useMemo(
     () => (showUnassigned === false ? allRoots.filter((r) => r.team !== null) : allRoots),
     [allRoots, showUnassigned]
   );
+  // Rapproche les racines liées par un lien transverse de leur partenaire
+  // (#235) — un simple réordonnancement des racines de premier niveau,
+  // avant le calcul de layout ci-dessous ; celui-ci ne voit donc que
+  // l'ordre déjà optimisé, sans rien savoir des liens transverses.
+  const roots = useMemo(() => reorderOrgHierarchyRoots(filteredRoots, teams), [filteredRoots, teams]);
   // Une racine visible unique seulement s'il y a plus d'une équipe de premier
   // niveau (ou une « Sans équipe ») à relier — comme la vue « Par groupe »,
   // pas de boîte « Organisation » inutile pour une seule équipe.
@@ -9329,8 +9370,14 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
                 type="button"
                 key={orgHierNodeKey(child)}
                 className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "") + (role ? " has-role" : "")}
+                // Hauteur explicite = EXACTEMENT celle réservée par le calcul de
+                // layout (orgHierRowHeight, voir #238) : les classes CSS ci-dessus
+                // ne donnent plus qu'une hauteur MINIMALE de repli, jamais la
+                // valeur qui compte quand le nom/poste passe sur plusieurs lignes.
+                style={{ height: orgHierRowHeight(child, isLeadRow) }}
                 onClick={() => onFilterPerson && onFilterPerson(m.name)}
-                title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
+                onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
+                title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
               >
                 {isLeadRow && <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />}
                 <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: m.color || staffingMemberColor(m.name) }}>
@@ -9386,7 +9433,8 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
               className={"lp-orgchart-card lp-orghier-node-member" + (isLead ? " is-lead" : "")}
               style={{ left: r.left, top: r.top, width: r.w }}
               onClick={() => onFilterPerson && onFilterPerson(m.name)}
-              title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
+              onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
+              title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
             >
               {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
               <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
@@ -9408,13 +9456,18 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   );
 }
 
-function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, pushToast }) {
+function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, setTasks, pushToast }) {
   const today = useMemo(() => iso(new Date()), []);
   // Modale d'édition d'équipe au double-clic sur une carte (#231) — même
   // TeamFormModal que le crayon de Réglages > Équipe (TeamCatalogManager),
   // rien de dupliqué. null = fermée.
   const [editTeamId, setEditTeamId] = useState(null);
   const editTeam = editTeamId ? (ctx.teams || []).find((t) => t.id === editTeamId) : null;
+  // Modale de réglages complets au double-clic sur un nom d'utilisateur
+  // (#237) — même TeamMemberFormModal que Réglages > Utilisateurs, rien de
+  // dupliqué. null = fermée.
+  const [editMemberName, setEditMemberName] = useState(null);
+  const editMember = editMemberName ? (ctx.teamMembers || []).find((m) => m.name === editMemberName) : null;
   // Équipes affichées (#209, retour de test) : widget.orgChartHiddenTeamIds
   // liste celles MASQUÉES — absent/vide = toutes affichées, comme avant ce
   // réglage. Une équipe masquée disparaît du catalogue vu par les deux modes
@@ -9465,6 +9518,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
         showUnassigned={showUnassigned}
         onEditTeam={setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined}
+        onEditMember={setTeamMembers ? (member) => setEditMemberName(member.name) : undefined}
       />
     );
 
@@ -9489,6 +9543,18 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
           pushToast={pushToast}
           onSave={(data) => { setTeams((ctx.teams || []).map((t) => (t.id === editTeamId ? { ...t, ...data } : t))); setEditTeamId(null); }}
           onClose={() => setEditTeamId(null)}
+        />
+      )}
+      {editMember && (
+        <TeamMemberFormModal
+          member={editMember}
+          teams={ctx.teams}
+          teamMembers={ctx.teamMembers}
+          onSave={(data) => {
+            saveTeamMemberEdit({ target: editMember, data, setTeamMembers, tasks: ctx.tasks, setTasks, pushToast });
+            setEditMemberName(null);
+          }}
+          onClose={() => setEditMemberName(null)}
         />
       )}
     </div>
@@ -9539,7 +9605,12 @@ function WidgetUserProfile({ widget, ctx, staffing, onOpen, setTasks, pushToast,
           {member.avatarDataUrl ? <IconGlyph icon={member.avatarDataUrl} size={22} /> : name.split(/\s+/).map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase()}
         </span>
         <div className="lp-userprofile-id">
-          <span className="lp-userprofile-name">{name}</span>
+          <span
+            className="lp-userprofile-name"
+            onDoubleClick={onUpdateTeamMembers ? () => setEditing(true) : undefined}
+            title={onUpdateTeamMembers ? "Double-clic pour modifier l'utilisateur" : undefined}
+            style={onUpdateTeamMembers ? { cursor: "pointer" } : undefined}
+          >{name}</span>
           <span className="lp-userprofile-meta">
             {member.email || "Sans email"} · Capacité {capacity}/j{teamNames.length > 0 ? " · " + teamNames.join(", ") : ""}
           </span>
@@ -14851,10 +14922,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             {(ctx.teamFolders || []).length > 0 && (
               <div className="lp-field" style={{ marginTop: 10 }}>
                 <label>Dossier d'équipes <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — restreint aux équipes de ce dossier)</span></label>
-                <select value={orgChartFolderId} onChange={(e) => setOrgChartFolderId(e.target.value)}>
-                  <option value="">Tous les dossiers</option>
-                  {sortedByName(ctx.teamFolders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={orgChartFolderId}
+                  options={sortedByName(ctx.teamFolders).map((f) => ({ id: f.id, label: f.name }))}
+                  onChange={(id) => setOrgChartFolderId(id)}
+                  placeholder="Tous les dossiers"
+                  emptyLabel="Tous les dossiers"
+                />
               </div>
             )}
             {orgChartTeamOptions.length > 0 && (
