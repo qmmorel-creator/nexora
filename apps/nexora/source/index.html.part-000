@@ -753,6 +753,12 @@ import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
 import { createPortal } from 'https://esm.sh/react-dom@18.2.0';
 import * as TablerIcons from 'https://esm.sh/@tabler/icons-react@3.46.0?deps=react@18.2.0';
 import Papa from 'https://esm.sh/papaparse@5.4.1';
+// Génération de PDF côté client pour le module Devis (#devis) : jsPDF pose le
+// document, jspdf-autotable dessine le tableau des lignes. Aucun stockage
+// binaire ne transite jamais par Firebase — le PDF est généré à la volée dans
+// le navigateur et proposé au téléchargement.
+import { jsPDF } from 'https://esm.sh/jspdf@2.5.2';
+import autoTable from 'https://esm.sh/jspdf-autotable@3.8.4';
 import {
   Plus, X, ChevronDown, ChevronUp, ChevronRight, List, Columns3, BarChart3,
   Milestone, Trash2, Settings, FolderPlus, Check, Pencil,
@@ -2351,6 +2357,9 @@ const ALL_VIEWS_META = [
   { key: "weekFlow", label: "Semaine", iconKey: "tabler:calendar-week" },
   { key: "table", label: "Tableur", iconKey: "tabler:table" },
   { key: "notifications", label: "Notifications", iconKey: "tabler:bell" },
+  // Module Devis (Quentin Morel Engineering) : destination de haut niveau,
+  // comme Notifications — pas de contexte projet nécessaire pour l'ouvrir.
+  { key: "quotes", label: "Devis", iconKey: "tabler:file-invoice" },
 ];
 // === NEXORA:VIEW-RAIL-COUNT:START ===
 /* Badge d'une bulle du rail vertical (issue #65).
@@ -2389,7 +2398,7 @@ function viewRailBadgeLabel(count) {
 // Destinations de haut niveau — seules celles-ci restent dans le bandeau vertical.
 // Les autres (les "vues" de détail sur les tâches) deviennent des onglets affichés
 // une fois un contexte projet actif, plutôt que des destinations indépendantes.
-const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications"];
+const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications", "quotes"];
 // Vues de détail — apparaissent en onglets horizontaux, jamais dans le bandeau.
 const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "timeline", "radar", "table"];
 
@@ -3452,6 +3461,119 @@ const seedTasks = [
   { id: "t6", projectId: "p3", statusId: "s4", title: "Confirmer les personnes CNR aux PI", desc: "PI1 à PI5 + Barnum.", start: "2026-09-01", end: "2026-09-20", progress: 20, milestone: false, assignee: "Anne-Laure Masson", checklist: [ck("PI1 Chiara Antoine", false), ck("PI3 NRI/STA", false)] },
   { id: "t7", projectId: "p3", statusId: "s4", title: "Deadline MAJ Octopus complète", desc: "", start: "2026-09-30", end: "2026-09-30", progress: 0, milestone: true, assignee: "Quentin", checklist: [] },
 ];
+
+// ============================================================================
+// Module Devis — Quentin Morel Engineering (auto-entrepreneur, prestations
+// intellectuelles). Calculs et cycle de vie partagés entre la vue Devis
+// (part-003) et la génération de PDF, derrière des sentinelles pour que les
+// tests éprouvent le VRAI code, comme NEXORA:DATE-UTILS ci-dessus.
+// ============================================================================
+// === NEXORA:QUOTES:START ===
+// Unités de régie disponibles — une ligne de régie est quantité × taux
+// journalier/horaire, une ligne de forfait est un montant fixe. Le devis
+// mélange librement les deux types de ligne.
+const QUOTE_REGIE_UNITS = [
+  { key: "hour", label: "Heure" },
+  { key: "halfDay", label: "Demi-journée" },
+  { key: "day", label: "Jour" },
+];
+
+// Cycle de vie : Brouillon -> Envoyé -> Accepté / Refusé / Expiré. "Expiré"
+// n'est JAMAIS écrit en base (voir effectiveQuoteStatus ci-dessous) — un menu
+// de statut ne propose donc que les quatre premiers ; "Expiré" n'apparaît
+// qu'à l'affichage, calculé depuis la date de validité.
+const QUOTE_STATUSES = [
+  { key: "draft", label: "Brouillon", color: "var(--text-muted)" },
+  { key: "sent", label: "Envoyé", color: "#2C6BE0" },
+  { key: "accepted", label: "Accepté", color: "var(--success)" },
+  { key: "refused", label: "Refusé", color: "var(--danger)" },
+  { key: "expired", label: "Expiré", color: "var(--warning)" },
+];
+const QUOTE_EDITABLE_STATUSES = QUOTE_STATUSES.filter((s) => s.key !== "expired");
+
+const DEFAULT_QUOTE_VALIDITY_DAYS = 30;
+
+function quoteStatusMeta(statusKey) {
+  return QUOTE_STATUSES.find((s) => s.key === statusKey) || QUOTE_STATUSES[0];
+}
+
+// Montant HT d'une ligne — pas de TVA dans ce module (auto-entrepreneur,
+// franchise en base, art. 293 B du CGI : voir les mentions légales du PDF) :
+// HT = TTC partout, donc un seul et unique total.
+function quoteLineAmount(line) {
+  if (!line) return 0;
+  if (line.kind === "regie") {
+    const qty = Number(line.quantity) || 0;
+    const rate = Number(line.unitRate) || 0;
+    return qty * rate;
+  }
+  return Number(line.amount) || 0;
+}
+
+function quoteTotal(quote) {
+  return (quote?.lines || []).reduce((sum, l) => sum + quoteLineAmount(l), 0);
+}
+
+// Numérotation AAAA-NNN : le compteur n'est PAS une valeur stockée à part —
+// il se déduit des devis déjà créés la même année civile, ce qui évite tout
+// désaccord entre un compteur oublié et les devis réels. Incrémenté à la
+// CRÉATION du devis (pas à son passage en "Envoyé").
+function nextQuoteNumber(quotes, year = new Date().getFullYear()) {
+  const yearStr = String(year);
+  const prefix = yearStr + "-";
+  const maxN = (quotes || [])
+    .filter((q) => typeof q.number === "string" && q.number.startsWith(prefix))
+    .map((q) => parseInt(q.number.slice(prefix.length), 10))
+    .filter((n) => Number.isFinite(n))
+    .reduce((max, n) => Math.max(max, n), 0);
+  return `${prefix}${String(maxN + 1).padStart(3, "0")}`;
+}
+
+// Validité par défaut : 30 jours depuis l'émission, éditable ensuite devis
+// par devis (le champ reste un simple champ de formulaire, jamais recalculé
+// une fois posé).
+function defaultQuoteValidUntil(issueDate, days = DEFAULT_QUOTE_VALIDITY_DAYS) {
+  return addDays(issueDate, days);
+}
+
+// Statut EFFECTIF affiché : un devis "Envoyé" dont la date de validité est
+// dépassée sans avoir été accepté/refusé devient "Expiré" au moment de
+// l'AFFICHAGE seulement — jamais persisté, pour qu'une relance (nouvelle
+// validité) le fasse redevenir "Envoyé" sans manipulation supplémentaire.
+function effectiveQuoteStatus(quote, today = iso(new Date())) {
+  if (!quote) return "draft";
+  if (quote.status === "sent" && quote.validUntil && quote.validUntil < today) return "expired";
+  return quote.status || "draft";
+}
+
+// Formatage manuel, volontairement PAS via toLocaleString("fr-FR", ...) :
+// celui-ci insère une espace fine insécable (U+202F) comme séparateur de
+// milliers, que la police Helvetica standard embarquée dans jsPDF (police PDF
+// de base, sans sous-ensemble Unicode complet) ne sait pas rendre — elle
+// affiche un caractère de substitution ("1/800,00 €" au lieu de "1 800,00 €").
+// On garantit donc ici une espace ASCII normale (0x20), lisible partout.
+function fmtQuoteAmount(n) {
+  const value = Number(n) || 0;
+  const fixed = value.toFixed(2).replace(".", ",");
+  const [intPart, decPart] = fixed.split(",");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${grouped},${decPart} €`;
+}
+// === NEXORA:QUOTES:END ===
+
+const seedQuoteSettings = {
+  companyName: "Quentin Morel Engineering",
+  siret: "000 000 000 00000",
+  address: "Adresse à compléter",
+  activity: "Ingénierie / conseil",
+  email: "email@a-completer.fr",
+  phone: "00 00 00 00 00",
+  // Logo : data-URL uploadé directement (chemin principal et fiable,
+  // FileReader.readAsDataURL comme onFileAttach) OU, en option secondaire,
+  // un lien Google Drive validé comme les pièces jointes (isGoogleDriveUrl,
+  // ci-dessus) — plus fragile pour le PDF (fetch cross-origin, CORS).
+  logoUrl: "",
+};
 
 // ============================================================================
 // UI génériques

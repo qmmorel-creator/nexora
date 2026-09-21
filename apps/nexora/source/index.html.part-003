@@ -16976,6 +16976,545 @@ function WeekFlowView({ tasks, ctx, onOpen, toolbarSlot }) {
   );
 }
 
+// ============================================================================
+// Module Devis — Quentin Morel Engineering (auto-entrepreneur, prestations
+// intellectuelles). Les calculs (numérotation, total, statut effectif) vivent
+// derrière NEXORA:QUOTES (part-000, testés en isolation) ; ce fichier ne
+// porte que le rendu et la génération du PDF.
+// ============================================================================
+
+/* Charte graphique du PDF — mêmes teintes que les tokens Nexora
+   (GlobalStyles, part-001 : --line-blue/--accent y valent d'autres couleurs
+   selon le thème, donc on fige ici la palette DEMANDÉE pour les devis,
+   indépendante du thème d'affichage — jsPDF ne peut de toute façon pas lire
+   les variables CSS). */
+const QUOTE_PDF_COLORS = {
+  brand: [0, 74, 173],       // #004AAD — bleu de marque
+  ink: [47, 51, 54],         // #2F3336 — encre/anthracite
+  textStrong: [16, 21, 31],  // #10151F
+  textMuted: [73, 81, 102],  // #495166
+  border: [219, 223, 219],   // #DBDFDB
+  white: [255, 255, 255],
+};
+
+// Mentions légales obligatoires (auto-entrepreneur, franchise en base de TVA,
+// prestations B2B) — texte fixe, jamais éditable depuis l'interface : c'est
+// une obligation réglementaire, pas un réglage.
+const QUOTE_LEGAL_MENTIONS = [
+  "TVA non applicable, art. 293 B du CGI.",
+  "Devis valable jusqu'au {validUntil}. Passé ce délai, un nouveau devis pourra être établi sur demande.",
+  "Conditions de règlement : paiement à réception de facture, par virement bancaire.",
+  "Pénalités de retard : en cas de paiement après la date d'échéance, des pénalités sont exigibles de plein droit, au taux annuel de 3 fois le taux d'intérêt légal, sans qu'un rappel soit nécessaire.",
+  "Une indemnité forfaitaire de recouvrement de 40 € est due de plein droit en cas de retard de paiement (art. L441-10 du Code de commerce, relations entre professionnels).",
+  "SIRET : {siret}",
+];
+
+function quoteLegalMentionsText(quote, settings) {
+  return QUOTE_LEGAL_MENTIONS.map((line) =>
+    line
+      .replace("{validUntil}", quote.validUntil ? fmtShort(quote.validUntil) : "—")
+      .replace("{siret}", settings?.siret || "—")
+  );
+}
+
+// Chargement best-effort d'un logo hébergé sur Google Drive : jsPDF a besoin
+// d'un data-URL, jamais d'une URL distante. Un lien Drive privé ou une
+// restriction CORS fait simplement échouer silencieusement ce chargement —
+// le PDF retombe alors sur le texte seul, comme demandé par la spec.
+async function loadQuoteLogoDataUrl(url) {
+  if (!url) return null;
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!/^image\//.test(blob.type || "")) return null;
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+// Génère et télécharge le PDF d'un devis. Aucun binaire n'est jamais stocké
+// dans Firestore : le document est entièrement reconstruit à la demande à
+// partir des données du devis, du client et des réglages entreprise.
+async function downloadQuotePdf(quote, client, settings) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 40;
+  let y = 54;
+
+  // Liseré vertical bleu de marque, coins arrondis (charte graphique).
+  doc.setFillColor(...QUOTE_PDF_COLORS.brand);
+  doc.roundedRect(marginX, 30, 4, 58, 2, 2, "F");
+
+  // Source de vérité principale : un data-URL déjà stocké dans les réglages
+  // (upload direct depuis QuoteSettingsModal, cf. FileReader.readAsDataURL) —
+  // jsPDF peut l'utiliser tel quel, sans fetch réseau. Le fetch cross-origin
+  // (loadQuoteLogoDataUrl) n'est qu'un repli pour une URL http(s) classique
+  // saisie à la main (lien Google Drive), qui échoue silencieusement si le
+  // lien n'est pas en accès direct public (CORS, authentification, etc.).
+  const rawLogoUrl = settings?.logoUrl || "";
+  const logoDataUrl = rawLogoUrl.startsWith("data:image/")
+    ? rawLogoUrl
+    : await loadQuoteLogoDataUrl(rawLogoUrl);
+  let textX = marginX + 14;
+  if (logoDataUrl) {
+    try {
+      doc.addImage(logoDataUrl, undefined, textX, 30, 46, 46);
+      textX += 58;
+    } catch (e) { /* logo illisible (format non supporté) : on retombe sur le texte seul */ }
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.setTextColor(...QUOTE_PDF_COLORS.ink);
+  doc.text(settings?.companyName || "Quentin Morel Engineering", textX, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...QUOTE_PDF_COLORS.textMuted);
+  y += 15;
+  doc.text(`SIRET ${settings?.siret || "—"}`, textX, y);
+  y += 12;
+  if (settings?.address) { doc.text(settings.address, textX, y); y += 12; }
+  if (settings?.activity) { doc.text(settings.activity, textX, y); y += 12; }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(...QUOTE_PDF_COLORS.brand);
+  doc.text(`Devis ${quote.number}`, pageWidth - marginX, 54, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...QUOTE_PDF_COLORS.textMuted);
+  doc.text(`Émis le ${quote.issueDate ? fmtShort(quote.issueDate) : "—"}`, pageWidth - marginX, 70, { align: "right" });
+  doc.text(`Valable jusqu'au ${quote.validUntil ? fmtShort(quote.validUntil) : "—"}`, pageWidth - marginX, 84, { align: "right" });
+
+  y = Math.max(y, 94) + 14;
+  doc.setDrawColor(...QUOTE_PDF_COLORS.border);
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 20;
+
+  // Bloc client, encadré (coins arrondis).
+  const clientLines = [client?.name, client?.address, client?.email].filter(Boolean);
+  const clientBoxH = 20 + clientLines.length * 13;
+  doc.setDrawColor(...QUOTE_PDF_COLORS.border);
+  doc.roundedRect(marginX, y, pageWidth - marginX * 2, clientBoxH, 4, 4, "S");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.setTextColor(...QUOTE_PDF_COLORS.textStrong);
+  doc.text("Client", marginX + 10, y + 15);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  let clientY = y + 30;
+  clientLines.forEach((line) => { doc.text(String(line), marginX + 10, clientY); clientY += 13; });
+  y += clientBoxH + 16;
+
+  if (quote.title) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...QUOTE_PDF_COLORS.textStrong);
+    doc.text(quote.title, marginX, y);
+    y += 18;
+  }
+
+  // Tableau des lignes — Forfait ou Régie (quantité/unité + taux), total HT
+  // en pied de tableau. Pas de TVA (franchise en base) : HT = TTC partout.
+  const rows = (quote.lines || []).map((l) => [
+    l.description || "",
+    l.kind === "regie" ? `${l.quantity || 0} ${QUOTE_REGIE_UNITS.find((u) => u.key === l.unit)?.label || ""}` : "Forfait",
+    l.kind === "regie" ? fmtQuoteAmount(l.unitRate) : "—",
+    fmtQuoteAmount(quoteLineAmount(l)),
+  ]);
+  autoTable(doc, {
+    startY: y,
+    head: [["Description", "Quantité / unité", "Taux unitaire HT", "Montant HT"]],
+    body: rows,
+    foot: [["", "", "Total HT (= TTC)", fmtQuoteAmount(quoteTotal(quote))]],
+    theme: "grid",
+    styles: { font: "helvetica", fontSize: 9, textColor: QUOTE_PDF_COLORS.textStrong, lineColor: QUOTE_PDF_COLORS.border, lineWidth: 0.5 },
+    headStyles: { fillColor: QUOTE_PDF_COLORS.brand, textColor: QUOTE_PDF_COLORS.white, fontStyle: "bold" },
+    footStyles: { fillColor: QUOTE_PDF_COLORS.white, textColor: QUOTE_PDF_COLORS.textStrong, fontStyle: "bold", lineWidth: 0.5 },
+    columnStyles: { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" } },
+    margin: { left: marginX, right: marginX },
+  });
+
+  // Mentions légales — ANCRÉES en bas de page, jamais juste après le tableau :
+  // on calcule d'abord la hauteur totale qu'elles occuperont (certaines
+  // lignes se replient sur 2 lignes via splitTextToSize), pour en déduire un
+  // Y de départ fixe proche du bas de la page, identique quel que soit le
+  // nombre de lignes du devis.
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginBottom = 40;
+  const legalLineHeight = 10.5;
+  const legalTitleHeight = 12;
+  const legalLines = quoteLegalMentionsText(quote, settings).map((line) =>
+    doc.splitTextToSize(line, pageWidth - marginX * 2)
+  );
+  const legalLinesCount = legalLines.reduce((sum, wrapped) => sum + wrapped.length, 0);
+  const legalBlockHeight = legalTitleHeight + legalLinesCount * legalLineHeight;
+  let legalBlockY = pageHeight - marginBottom - legalBlockHeight;
+
+  // Si le tableau des lignes déborde jusque dans cette zone basse, il
+  // chevaucherait les mentions légales : on ajoute une page et on les ancre
+  // en bas de CETTE nouvelle page (toujours en pied de page, jamais juste
+  // après le tableau).
+  const tableFinalY = doc.lastAutoTable?.finalY || y;
+  if (tableFinalY > legalBlockY) {
+    doc.addPage();
+    legalBlockY = pageHeight - marginBottom - legalBlockHeight;
+  }
+
+  // Mentions légales obligatoires — toujours présentes, jamais tronquées.
+  let footerY = legalBlockY;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...QUOTE_PDF_COLORS.textStrong);
+  doc.text("Mentions légales", marginX, footerY);
+  footerY += legalTitleHeight;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...QUOTE_PDF_COLORS.textMuted);
+  legalLines.forEach((wrapped) => {
+    doc.text(wrapped, marginX, footerY);
+    footerY += legalLineHeight * wrapped.length;
+  });
+
+  doc.save(`Devis-${quote.number}.pdf`);
+}
+
+function QuoteStatusBadge({ status }) {
+  const meta = quoteStatusMeta(status);
+  return <span className="lp-quote-badge" style={{ background: meta.color }}>{meta.label}</span>;
+}
+
+function QuotesView({ quotes, clients, settings, setSettings, onSaveQuote, onDuplicateQuote, onDeleteQuote, onSetStatus, onAddClient, onSaveClient, onDeleteClient, toolbarSlot }) {
+  const [formTarget, setFormTarget] = useState(null); // null | "new" | devis à éditer
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const todayIso = iso(new Date());
+
+  // Les plus récents (numéro décroissant) en tête — un devis récemment créé
+  // n'a pas besoin d'être cherché en bas d'une longue liste.
+  const rows = useMemo(() => [...quotes].sort((a, b) => (b.number || "").localeCompare(a.number || "")), [quotes]);
+
+  const handleSave = (data) => {
+    onSaveQuote(data, formTarget && formTarget !== "new" ? formTarget.id : undefined);
+    setFormTarget(null);
+  };
+
+  return (
+    <div className="lp-quotes-wrap">
+      <ViewToolbarPortal slot={toolbarSlot}>
+        <button className="lp-btn" onClick={() => setSettingsOpen(true)}><Settings size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Réglages entreprise</button>
+        <button className="lp-btn lp-btn-primary" onClick={() => setFormTarget("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouveau devis</button>
+      </ViewToolbarPortal>
+
+      {quotes.length === 0 ? (
+        <div className="lp-empty" style={{ padding: 30 }}>Aucun devis pour l'instant. Crée le premier avec « Nouveau devis ».</div>
+      ) : (
+        <div className="lp-quotes-list">
+          {rows.map((q) => {
+            const client = clients.find((c) => c.id === q.clientId);
+            const status = effectiveQuoteStatus(q, todayIso);
+            return (
+              <div className="lp-quotes-row" key={q.id}>
+                <div className="lp-quotes-row-main">
+                  <span className="lp-quotes-number">{q.number}</span>
+                  <span className="lp-quotes-client">{client?.name || "Client non renseigné"}</span>
+                  {q.title && <span className="lp-quotes-title">{q.title}</span>}
+                </div>
+                <QuoteStatusBadge status={status} />
+                <span className="lp-quotes-amount">{fmtQuoteAmount(quoteTotal(q))}</span>
+                <span className="lp-quotes-date">{q.issueDate ? fmtShort(q.issueDate) : "—"}</span>
+                <select
+                  className="lp-quotes-status-select"
+                  value={q.status}
+                  onChange={(e) => onSetStatus(q.id, e.target.value)}
+                  title="Changer de statut"
+                >
+                  {QUOTE_EDITABLE_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
+                <button className="lp-icon-btn" title="Voir / éditer" onClick={() => setFormTarget(q)}><Pencil size={14} /></button>
+                <button className="lp-icon-btn" title="Dupliquer" onClick={() => onDuplicateQuote(q)}><Copy size={14} /></button>
+                <button className="lp-icon-btn" title="Télécharger le PDF" onClick={() => downloadQuotePdf(q, client, settings)}><Download size={14} /></button>
+                <button className="lp-icon-btn" title="Supprimer" onClick={() => setPendingDelete(q)}><Trash2 size={14} /></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {formTarget && (
+        <QuoteFormModal
+          quote={formTarget === "new" ? null : formTarget}
+          clients={clients}
+          onAddClient={onAddClient}
+          onSave={handleSave}
+          onClose={() => setFormTarget(null)}
+        />
+      )}
+      {settingsOpen && (
+        <QuoteSettingsModal
+          settings={settings}
+          onSave={(data) => { setSettings((prev) => ({ ...prev, ...data })); setSettingsOpen(false); }}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      {pendingDelete && (
+        <ConfirmModal
+          title="Supprimer ce devis ?"
+          message={`Le devis « ${pendingDelete.number} » sera définitivement supprimé. Cette action est irréversible.`}
+          danger
+          confirmLabel="Supprimer"
+          onConfirm={() => { onDeleteQuote(pendingDelete.id); setPendingDelete(null); }}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function QuoteFormModal({ quote, clients, onAddClient, onSave, onClose }) {
+  const isNew = !quote;
+  const [clientId, setClientId] = useState(quote?.clientId || "");
+  const [title, setTitle] = useState(quote?.title || "");
+  const [issueDate, setIssueDate] = useState(quote?.issueDate || iso(new Date()));
+  const [validUntil, setValidUntil] = useState(quote?.validUntil || defaultQuoteValidUntil(quote?.issueDate || iso(new Date())));
+  const [lines, setLines] = useState(
+    quote?.lines?.length ? quote.lines.map((l) => ({ ...l })) : [{ id: uid(), kind: "forfait", description: "", amount: 0 }]
+  );
+  const [notes, setNotes] = useState(quote?.notes || "");
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientAddress, setNewClientAddress] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [newClientPhone, setNewClientPhone] = useState("");
+
+  // La validité par défaut (30 jours) ne se recale QUE pour un nouveau devis
+  // encore vierge : un devis existant garde toujours la date choisie, jamais
+  // recalculée derrière le dos de l'utilisateur.
+  useEffect(() => {
+    if (isNew) setValidUntil(defaultQuoteValidUntil(issueDate));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issueDate]);
+
+  const total = useMemo(() => lines.reduce((sum, l) => sum + quoteLineAmount(l), 0), [lines]);
+
+  const updateLine = (id, patch) => setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const addLine = (kind) => setLines((prev) => [
+    ...prev,
+    kind === "regie"
+      ? { id: uid(), kind: "regie", description: "", quantity: 1, unit: "hour", unitRate: 0 }
+      : { id: uid(), kind: "forfait", description: "", amount: 0 },
+  ]);
+  const removeLine = (id) => setLines((prev) => prev.filter((l) => l.id !== id));
+
+  const createClientInline = () => {
+    if (!newClientName.trim()) return;
+    const client = onAddClient({
+      name: newClientName.trim(), address: newClientAddress.trim(),
+      email: newClientEmail.trim(), phone: newClientPhone.trim(),
+    });
+    setClientId(client.id);
+    setShowNewClient(false);
+    setNewClientName(""); setNewClientAddress(""); setNewClientEmail(""); setNewClientPhone("");
+  };
+
+  const save = () => {
+    onSave({
+      clientId, title: title.trim(), issueDate, validUntil,
+      lines: lines.filter((l) => (l.description || "").trim()),
+      notes,
+    });
+  };
+
+  return (
+    <Modal
+      title={isNew ? "Nouveau devis" : `Devis ${quote.number}`}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button className="lp-btn" onClick={onClose}>Annuler</button>
+          <button className="lp-btn lp-btn-primary" onClick={save} disabled={!clientId || lines.length === 0}>Enregistrer</button>
+        </>
+      }
+    >
+      <div className="lp-field">
+        <label>Client</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ flex: 1 }}>
+            <option value="">— Choisir —</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button type="button" className="lp-btn" onClick={() => setShowNewClient((v) => !v)}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Client</button>
+        </div>
+      </div>
+      {showNewClient && (
+        <div className="lp-quote-inline-client">
+          <div className="lp-field"><label>Nom</label><input value={newClientName} onChange={(e) => setNewClientName(e.target.value)} /></div>
+          <div className="lp-field"><label>Adresse</label><input value={newClientAddress} onChange={(e) => setNewClientAddress(e.target.value)} /></div>
+          <div className="lp-field"><label>Email</label><input value={newClientEmail} onChange={(e) => setNewClientEmail(e.target.value)} /></div>
+          <div className="lp-field"><label>Téléphone</label><input value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} /></div>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={createClientInline}>Créer ce client</button>
+        </div>
+      )}
+      <div className="lp-field"><label>Objet du devis</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex : Mission d'assistance à maîtrise d'ouvrage" /></div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div className="lp-field" style={{ flex: 1 }}><label>Date d'émission</label><input type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></div>
+        <div className="lp-field" style={{ flex: 1 }}><label>Validité jusqu'au</label><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} /></div>
+      </div>
+
+      <div className="lp-section-title">Lignes du devis</div>
+      <div className="lp-quote-lines">
+        {lines.map((l) => (
+          <div className="lp-quote-line-row" key={l.id}>
+            <select
+              value={l.kind}
+              onChange={(e) => updateLine(l.id, e.target.value === "regie"
+                ? { kind: "regie", quantity: l.quantity || 1, unit: l.unit || "hour", unitRate: l.unitRate || 0 }
+                : { kind: "forfait", amount: l.amount || 0 })}
+            >
+              <option value="forfait">Forfait</option>
+              <option value="regie">Régie</option>
+            </select>
+            <input className="lp-quote-line-desc" placeholder="Description" value={l.description} onChange={(e) => updateLine(l.id, { description: e.target.value })} />
+            {l.kind === "regie" ? (
+              <>
+                <input type="number" min="0" step="0.5" style={{ width: 70 }} value={l.quantity} onChange={(e) => updateLine(l.id, { quantity: Number(e.target.value) })} title="Quantité" />
+                <select value={l.unit} onChange={(e) => updateLine(l.id, { unit: e.target.value })}>
+                  {QUOTE_REGIE_UNITS.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
+                </select>
+                <input type="number" min="0" step="1" style={{ width: 90 }} value={l.unitRate} onChange={(e) => updateLine(l.id, { unitRate: Number(e.target.value) })} placeholder="Taux HT" title="Taux unitaire HT" />
+              </>
+            ) : (
+              <input type="number" min="0" step="1" style={{ width: 110 }} value={l.amount} onChange={(e) => updateLine(l.id, { amount: Number(e.target.value) })} placeholder="Montant HT" title="Montant HT" />
+            )}
+            <span className="lp-quote-line-amount">{fmtQuoteAmount(quoteLineAmount(l))}</span>
+            <button type="button" className="lp-icon-btn" onClick={() => removeLine(l.id)} title="Supprimer la ligne"><Trash2 size={13} /></button>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button type="button" className="lp-btn" onClick={() => addLine("forfait")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ligne forfait</button>
+        <button type="button" className="lp-btn" onClick={() => addLine("regie")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ligne régie</button>
+      </div>
+
+      <div className="lp-quote-total">Total HT (TVA non applicable, art. 293 B du CGI — HT = TTC) : <strong>{fmtQuoteAmount(total)}</strong></div>
+
+      <div className="lp-field"><label>Notes internes (non imprimées sur le PDF)</label><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+    </Modal>
+  );
+}
+
+function QuoteSettingsModal({ settings, onSave, onClose }) {
+  const [companyName, setCompanyName] = useState(settings.companyName || "");
+  const [siret, setSiret] = useState(settings.siret || "");
+  const [address, setAddress] = useState(settings.address || "");
+  const [activity, setActivity] = useState(settings.activity || "");
+  const [email, setEmail] = useState(settings.email || "");
+  const [phone, setPhone] = useState(settings.phone || "");
+  const [logoUrl, setLogoUrl] = useState(settings.logoUrl || "");
+  const [logoError, setLogoError] = useState("");
+  // Limite d'upload direct — même valeur et même message que les pièces
+  // jointes de tâche (onFileAttach, part-002) : pas de vrai stockage de
+  // fichiers dans cette appli, donc on se limite aux petits logos pour ne
+  // jamais dépasser la limite de taille d'un document Firestore.
+  const MAX_LOGO_BYTES = 350 * 1024;
+  const isLogoDataUrl = (value) => /^data:image\//.test(String(value || ""));
+
+  const onLogoFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLogoError("");
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoError(`« ${file.name} » fait ${Math.round(file.size / 1024)} Ko — trop volumineux pour être joint directement (limite ${Math.round(MAX_LOGO_BYTES / 1024)} Ko). Utilise plutôt un lien externe (Drive, etc.) ci-dessus.`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setLogoUrl(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  };
+  const removeLogo = () => { setLogoUrl(""); setLogoError(""); };
+
+  const save = () => {
+    const trimmedLogo = logoUrl.trim();
+    // Un data-URL (upload direct) est toujours valide tel quel : c'est le
+    // chemin principal et fiable, il n'a besoin d'aucun fetch réseau au
+    // moment de générer le PDF. Seul un lien externe classique reste soumis
+    // à la validation Google Drive (repli secondaire, potentiellement fragile
+    // — CORS, lien de partage plutôt qu'accès direct au binaire, etc.).
+    if (trimmedLogo && !isLogoDataUrl(trimmedLogo) && !isGoogleDriveUrl(trimmedLogo)) {
+      setLogoError("Colle une URL Google Drive ou Google Docs valide commençant par https://.");
+      return;
+    }
+    onSave({ companyName, siret, address, activity, email, phone, logoUrl: trimmedLogo });
+  };
+
+  return (
+    <Modal
+      title="Réglages entreprise — Devis"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="lp-btn" onClick={onClose}>Annuler</button>
+          <button className="lp-btn lp-btn-primary" onClick={save}>Enregistrer</button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "0 0 4px", lineHeight: 1.45 }}>
+        Ces informations apparaissent sur chaque devis PDF généré. Les valeurs actuelles sont des placeholders, à
+        remplacer par les vraies informations de l'entreprise.
+      </p>
+      <div className="lp-field"><label>Raison sociale</label><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></div>
+      <div className="lp-field"><label>SIRET</label><input value={siret} onChange={(e) => setSiret(e.target.value)} /></div>
+      <div className="lp-field"><label>Adresse</label><input value={address} onChange={(e) => setAddress(e.target.value)} /></div>
+      <div className="lp-field"><label>Activité déclarée</label><input value={activity} onChange={(e) => setActivity(e.target.value)} /></div>
+      <div className="lp-field"><label>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+      <div className="lp-field"><label>Téléphone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+      <div className="lp-field">
+        <label>Logo</label>
+        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "0 0 6px" }}>
+          Importe directement une image (chemin fiable, recommandé) — le lien Google Drive reste
+          disponible en option, mais peut échouer silencieusement dans le PDF (lien privé, CORS).
+        </p>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <label className="lp-btn" style={{ cursor: "pointer", margin: 0 }}>
+            <Upload size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Importer le logo
+            <input type="file" accept="image/*" onChange={onLogoFile} style={{ display: "none" }} />
+          </label>
+          {logoUrl && <button type="button" className="lp-btn" onClick={removeLogo}>Retirer le logo</button>}
+        </div>
+        {logoError && <p style={{ color: "var(--danger)", fontSize: 11, margin: "6px 0 0" }}>{logoError}</p>}
+        {logoUrl && isLogoDataUrl(logoUrl) && (
+          <div className="lp-quote-logo-preview">
+            <img src={logoUrl} alt="Logo" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          </div>
+        )}
+      </div>
+      <div className="lp-field">
+        <label>Ou lien Google Drive (option secondaire, moins fiable)</label>
+        <input
+          value={isLogoDataUrl(logoUrl) ? "" : logoUrl}
+          onChange={(e) => { setLogoUrl(e.target.value); setLogoError(""); }}
+          placeholder="https://drive.google.com/..."
+          disabled={isLogoDataUrl(logoUrl)}
+        />
+      </div>
+      {logoUrl && isGoogleDriveUrl(logoUrl) && !isLogoDataUrl(logoUrl) && (
+        <div className="lp-quote-logo-preview">
+          <img src={logoUrl} alt="Logo" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 const root = createRoot(document.getElementById('root'));
 root.render(React.createElement(AuthGate));
 </script>
