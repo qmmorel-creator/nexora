@@ -98,56 +98,6 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           onClose={() => setQuickEditViewFolder(null)}
         />
       )}
-      {folderMetro && (() => {
-        // Sous-dossiers illimités (#217) : le dossier courant est le dernier
-        // maillon de `path` ; ses sous-dossiers apparaissent comme stations
-        // « dossier » (cliquer y descend) avant les éléments qu'il contient
-        // directement (projets ou tableaux de bord, selon `type`).
-        const currentFolder = folderMetro.path[folderMetro.path.length - 1];
-        const subfolders = folderChildren(folderMetro.allFolders, currentFolder.id).map((f) => ({ ...f, __isFolder: true }));
-        const leafItems = folderMetro.allItems.filter((it) => it.folderId === currentFolder.id);
-        const stations = [...subfolders, ...leafItems];
-        const defaultIcon = folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard";
-        return (
-          <div className={"lp-folder-metro-overlay" + (folderMetroClosing ? " closing" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) closeFolderMetro(); }}>
-            <div className="lp-folder-metro-panel" style={folderMetroPanelStyle} role="dialog" aria-modal="true" aria-label={`Sélecteur du dossier ${currentFolder?.name || ""}`}>
-              <button type="button" className="lp-folder-metro-close" onClick={closeFolderMetro} title="Fermer"><X size={14} /></button>
-              <div className="lp-folder-metro-title">
-                {folderMetro.path.length > 1 && (
-                  <button type="button" className="lp-folder-metro-back" onClick={backFolderMetro} title={`Revenir à ${folderMetro.path[folderMetro.path.length - 2].name}`}>
-                    <ChevronLeft size={14} />
-                  </button>
-                )}
-                <span className="lp-folder-metro-title-dot" style={{ "--folder-color": currentFolder?.color || "var(--text-muted)" }} />
-                {currentFolder?.name || (folderMetro.type === "project" ? "Dossier" : "Dossier de tableaux de bord")}
-              </div>
-              {stations.length ? (
-                <div className="lp-folder-metro-line-wrap">
-                  <div className="lp-folder-metro-stations">
-                    <div className="lp-folder-metro-line" style={{ "--folder-color": currentFolder?.color || "var(--text-muted)" }} />
-                    {stations.map((item) => {
-                      const itemColor = item.color || currentFolder?.color || "var(--text-muted)";
-                      return (
-                        <button key={item.id} type="button" className={"lp-folder-metro-station" + (item.__isFolder ? " lp-folder-metro-station--folder" : "")} onClick={() => navigateFromFolderMetro(item)} title={item.__isFolder ? `Ouvrir le sous-dossier ${item.name}` : `Afficher ${item.name}`}>
-                          <span className="lp-folder-metro-name">{item.name}</span>
-                          <span className="lp-folder-metro-dot" style={{ "--folder-color": itemColor }}>
-                            <IconGlyph icon={item.icon || (item.__isFolder ? "tabler:folder" : defaultIcon)} size={13} />
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <div className="lp-folder-metro-empty">
-                  <IconGlyph icon={currentFolder?.icon || defaultIcon} size={20} />
-                  <span>Aucun {folderMetro.type === "project" ? "projet" : "tableau de bord"} dans ce dossier</span>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
       <button
         type="button"
         className="lp-global-add-task"
@@ -203,7 +153,7 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
               ))}
             </div>
             <hr className="lp-divider" />
-            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setSettingsTab("projects"); setSettingsOpen(true); setMobileMoreOpen(false); }}>
+            <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setSettingsTab("project"); setSettingsOpen(true); setMobileMoreOpen(false); }}>
               <Settings size={20} /><span>Réglages</span>
             </button>
             <button type="button" className="lp-mobile-sheet-item lp-mobile-sheet-item-wide" onClick={() => { setReadmeOpen(true); setMobileMoreOpen(false); }}>
@@ -812,11 +762,21 @@ function GlobalMetaSearchModal({ tasks, taskArchive = [], ctx, onOpenTask, onRes
 // Modale Apparence
 // ============================================================================
 
-const BAR_SHAPES = [
-  { key: "rounded", label: "Arrondi", radius: "6px" },
-  { key: "square", label: "Rectangle", radius: "0px" },
-  { key: "pill", label: "Pilule", radius: "20px" },
-];
+// Réglages d'apparence figés (retour de test) : plus de choix laissé à
+// l'utilisateur sur ces points, quelle que soit une préférence enregistrée
+// avant ce changement — voir leur application dans le chargement de
+// `appearance` (composant racine, part-001).
+const FROZEN_APPEARANCE = {
+  accentColor: "#4f6af5",
+  barShape: "square",
+  density: "compact",
+  logoDataUrl: null,
+  ganttTextColor: null,
+  projectPalette: "default",
+  milestoneStyle: "flag",
+  milestoneCustomUrl: "",
+  viewIcons: {},
+};
 function AppearanceModal({ appearance, setAppearance, saveStatus, saveError, pushToast, onClose, embedded }) {
   const g = appearance.gradient;
   const set = (patch) => setAppearance((a) => ({ ...a, gradient: { ...a.gradient, ...patch } }));
@@ -867,73 +827,11 @@ function AppearanceModal({ appearance, setAppearance, saveStatus, saveError, pus
       </div>
 
       <hr className="lp-divider" />
-      <div className="lp-field">
-        <label>Style des barres du diagramme de Gantt</label>
-        <div className="lp-bar-shape-row">
-          {BAR_SHAPES.map((sh) => (
-            <button key={sh.key} className={"lp-bar-shape-btn" + (( appearance.barShape || "rounded") === sh.key ? " active" : "")} onClick={() => setAppearance((a) => ({ ...a, barShape: sh.key }))}>
-              <span className="lp-bar-shape-preview" style={{ borderRadius: sh.radius }} />
-              {sh.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <hr className="lp-divider" />
-      <div className="lp-checkbox-row">
-        <input type="checkbox" id="autoText" checked={!appearance.ganttTextColor} onChange={(e) => setAppearance((a) => ({ ...a, ganttTextColor: e.target.checked ? null : "#FFFFFF" }))} />
-        <label htmlFor="autoText" style={{ margin: 0, textTransform: "none", fontWeight: 500 }}>Couleur de police du Gantt automatique (contraste avec le fond)</label>
-      </div>
-      {appearance.ganttTextColor && (
-        <div className="lp-field">
-          <label>Couleur de police du Gantt</label>
-          <input type="color" value={appearance.ganttTextColor} onChange={(e) => setAppearance((a) => ({ ...a, ganttTextColor: e.target.value }))} style={{ width: "100%", height: 36 }} />
-        </div>
-      )}
-
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Couleur d'accent</div>
-      <div className="lp-appearance-swatch-row">
-        {ACCENT_PRESETS.map((c) => (
-          <button key={c} className={"lp-appearance-swatch" + (appearance.accentColor === c ? " active" : "")} style={{ background: c }} onClick={() => setAppearance((a) => ({ ...a, accentColor: c }))} title={c} />
-        ))}
-        <input type="color" value={appearance.accentColor || "#FF7A3D"} onChange={(e) => setAppearance((a) => ({ ...a, accentColor: e.target.value }))} className="lp-appearance-swatch-custom" title="Couleur personnalisée" />
-      </div>
-
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Densité d'affichage</div>
-      <div className="lp-density-row">
-        {[["compact", "Compact"], ["comfortable", "Confortable"], ["spacious", "Spacieux"]].map(([k, l]) => (
-          <button key={k} className={"lp-density-btn" + ((appearance.density || "comfortable") === k ? " active" : "")} onClick={() => setAppearance((a) => ({ ...a, density: k }))}>{l}</button>
-        ))}
-      </div>
-
-      <hr className="lp-divider" />
       <div className="lp-section-title">Rayon des angles</div>
       <div className="lp-density-row">
         {[["sharp", "Anguleux"], ["normal", "Normal"], ["round", "Arrondi"]].map(([k, l]) => (
           <button key={k} className={"lp-density-btn" + ((appearance.radiusStyle || "sharp") === k ? " active" : "")} onClick={() => setAppearance((a) => ({ ...a, radiusStyle: k }))} style={{ borderRadius: RADIUS_SCALES[k].sm }}>{l}</button>
         ))}
-      </div>
-
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Logo personnalisé</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 40, height: 40, borderRadius: "var(--radius-sm)", overflow: "hidden", border: "1px solid var(--border)", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--paper-soft)" }}>
-          <img src={appearance.logoDataUrl || NEXORA_ICON} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        </div>
-        <label className="lp-btn" style={{ cursor: "pointer" }}>
-          Choisir une image
-          <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
-            const file = e.target.files && e.target.files[0];
-            if (!file) return;
-            if (file.size > 800 * 1024) { pushToast({ message: "Image trop lourde (max ~800 Ko). Choisis une image plus légère ou compressée." }); return; }
-            const reader = new FileReader();
-            reader.onload = () => setAppearance((a) => ({ ...a, logoDataUrl: reader.result }));
-            reader.readAsDataURL(file);
-          }} />
-        </label>
-        {appearance.logoDataUrl && <button className="lp-btn" onClick={() => setAppearance((a) => ({ ...a, logoDataUrl: null }))}>Réinitialiser</button>}
       </div>
 
       <hr className="lp-divider" />
@@ -953,58 +851,6 @@ function AppearanceModal({ appearance, setAppearance, saveStatus, saveError, pus
       )}
 
       <hr className="lp-divider" />
-      <div className="lp-section-title">Palette des nouveaux projets</div>
-      <div className="lp-density-row" style={{ flexWrap: "wrap" }}>
-        {[["default", "Défaut"], ["pastel", "Pastel"], ["vivid", "Vive"], ["corporate", "Corporate"]].map(([k, l]) => (
-          <button key={k} className={"lp-density-btn" + ((appearance.projectPalette || "default") === k ? " active" : "")} onClick={() => setAppearance((a) => ({ ...a, projectPalette: k }))}>
-            <span style={{ display: "flex", gap: 2, marginRight: 6 }}>
-              {PROJECT_PALETTES[k].slice(0, 4).map((c, i) => <span key={i} style={{ width: 9, height: 9, borderRadius: 3, background: c, display: "inline-block" }} />)}
-            </span>
-            {l}
-          </button>
-        ))}
-      </div>
-
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Style des jalons</div>
-      <div className="lp-density-row" style={{ flexWrap: "wrap" }}>
-        {Object.entries(MILESTONE_STYLES).map(([k, s]) => (
-          <button key={k} className={"lp-density-btn" + ((appearance.milestoneStyle || "flag") === k ? " active" : "")} style={{ flex: "0 0 auto" }} onClick={() => setAppearance((a) => ({ ...a, milestoneStyle: k }))}>
-            <IconGlyph icon={s.icon} size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
-            {s.label}
-          </button>
-        ))}
-        <button className={"lp-density-btn" + (appearance.milestoneStyle === "custom" ? " active" : "")} style={{ flex: "0 0 auto" }} onClick={() => setAppearance((a) => ({ ...a, milestoneStyle: "custom" }))}>
-          🖼️ Image personnalisée
-        </button>
-      </div>
-      {appearance.milestoneStyle === "custom" && (
-        <div className="lp-field" style={{ marginTop: 8 }}>
-          <label>Lien de l'image (redimensionnée automatiquement)</label>
-          <input type="text" value={appearance.milestoneCustomUrl || ""} onChange={(e) => setAppearance((a) => ({ ...a, milestoneCustomUrl: e.target.value }))} placeholder="https://..." />
-          {appearance.milestoneCustomUrl && (
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 12, color: "var(--text-600)" }}>Aperçu :</span>
-              <img src={appearance.milestoneCustomUrl} alt="" style={{ width: 20, height: 20, objectFit: "contain" }} />
-            </div>
-          )}
-        </div>
-      )}
-
-
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Icônes des vues natives</div>
-      <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>Personnalise les icônes des vues principales de Nexora. Le choix est enregistré dans tes préférences et s'applique partout dans l'interface.</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
-        {ALL_VIEWS_META.map((v) => (
-          <div key={v.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--surface)" }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 600, minWidth: 0 }}><IconGlyph icon={appearance.viewIcons?.[v.key] || v.iconKey} size={15} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.label}</span></span>
-            <IconEditor icon={appearance.viewIcons?.[v.key] || v.iconKey} setIcon={(val) => setAppearance((a) => ({ ...a, viewIcons: { ...(a.viewIcons || {}), [v.key]: val || v.iconKey } }))} />
-          </div>
-        ))}
-      </div>
-
-      <hr className="lp-divider" />
       <div className="lp-section-title">Style du tronc commun (tâches à deux projets)</div>
       <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
         En vue Métro, comment afficher la portion partagée d'une tâche entre deux projets.
@@ -1018,99 +864,10 @@ function AppearanceModal({ appearance, setAppearance, saveStatus, saveError, pus
         </button>
       </div>
 
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Aperçu du diagramme</div>
-      <div style={{ background: "#EAEDF3", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-        {[{ w: 68, pct: 65, label: "Revue DOE · 65%" }, { w: 42, pct: 30, label: "PV Contrôles · 30%" }].map((row, i) => (
-          <div key={i} style={{ position: "relative", height: 22, borderRadius: 6, background: barBg, overflow: "hidden", width: `${row.w}%` }}>
-            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${row.pct}%`, background: g.enabled ? `linear-gradient(90deg, ${g.from}, ${g.to})` : "#C7CED9" }} />
-            <div style={{ position: "relative", zIndex: 1, color: appearance.ganttTextColor || (luminance(barBg) > 0.5 ? "#151313" : "#fff"), fontSize: 11, fontWeight: 600, padding: "0 8px", lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</div>
-          </div>
-        ))}
-      </div>
     </>
   );
   if (embedded) return <div className="lp-settings-pane">{body}</div>;
   return <Modal title="Apparence" onClose={onClose} footer={<button className="lp-btn lp-btn-primary" onClick={onClose}>Fermer</button>}>{body}</Modal>;
-}
-
-// ============================================================================
-// Réglages — Animations
-// ============================================================================
-function AnimationSettingsPane({ appearance, setAppearance, saveStatus, saveError }) {
-  const metroAnimations = [
-    { key: "animTodayPulse", icon: <CalendarClock size={15} />, title: 'Pulsation "Aujourd’hui"', desc: "Un halo discret respire autour de la ligne du jour et le repère supérieur pulse légèrement." },
-    { key: "animTrainFlow", icon: <TrainTrack size={15} />, title: "Train circulant sur les lignes", desc: "Un point lumineux parcourt en continu chaque ligne de projet active." },
-    { key: "animLateAlert", icon: <AlertTriangle size={15} />, title: "Halo pulsé sur les retards", desc: "Un anneau d’alerte s’étend autour des stations en retard." },
-    { key: "animLineDraw", icon: <Waypoints size={15} />, title: "Tracé progressif au chargement", desc: "Les lignes se dessinent progressivement à l’ouverture de la carte." },
-    { key: "animSharedShimmer", icon: <Wand2 size={15} />, title: "Reflet sur les tâches partagées", desc: "Un reflet discret parcourt le tronc commun des tâches liées à deux projets." },
-  ];
-  const appAnimations = [
-    { key: "animCheckPop", icon: <CheckCircle2 size={15} />, title: "Validation de tâche", desc: "Petit pop élastique et coche dessinée lors de la complétion." },
-    { key: "animConfetti", icon: <Milestone size={15} />, title: "Fin de projet", desc: "Brève célébration quand un projet atteint 100 %." },
-    { key: "animCountUp", icon: <Activity size={15} />, title: "Chiffres qui comptent", desc: "Les indicateurs montent depuis zéro à leur apparition." },
-    { key: "animBarFill", icon: <BarChart3 size={15} />, title: "Barres qui se remplissent", desc: "Les barres de progression animent leur remplissage au chargement." },
-    { key: "animCardLift", icon: <LayoutDashboard size={15} />, title: "Élévation au survol", desc: "Les cartes et widgets gagnent une légère profondeur au survol." },
-    { key: "animTabSlide", icon: <SlidersHorizontal size={15} />, title: "Indicateur d’onglet", desc: "Le trait actif glisse d’un onglet à l’autre." },
-    { key: "animCascade", icon: <Layers size={15} />, title: "Cascade des widgets", desc: "Les widgets apparaissent successivement à l’ouverture d’un tableau de bord." },
-    { key: "animSkeleton", icon: <RefreshCw size={15} />, title: "Squelette de chargement", desc: "Des blocs animés remplacent l’indicateur simple pendant le chargement." },
-  ];
-
-  const renderRows = (items) => items.map((a) => (
-    <label
-      key={a.key}
-      className="lp-checkbox-row"
-      style={{
-        padding:"10px",
-        alignItems:"flex-start",
-        border:"1px solid var(--border)",
-        borderRadius:"var(--radius)",
-        background:"var(--surface)",
-        marginBottom:6
-      }}
-    >
-      <input
-        type="checkbox"
-        checked={!!appearance[a.key]}
-        onChange={(e) => setAppearance((prev) => ({ ...prev, [a.key]: e.target.checked }))}
-        style={{ marginTop:3 }}
-      />
-      <span style={{ display:"flex", gap:9, minWidth:0, textTransform:"none" }}>
-        <span style={{ color:"var(--line-blue)", marginTop:1, flex:"0 0 auto" }}>{a.icon}</span>
-        <span>
-          <span style={{ fontWeight:650, display:"block", color:"var(--text-primary)" }}>{a.title}</span>
-          <span style={{ fontWeight:400, fontSize:12, lineHeight:1.45, color:"var(--text-600)" }}>{a.desc}</span>
-        </span>
-      </span>
-    </label>
-  ));
-
-  return (
-    <div className="lp-settings-pane">
-      <div className="lp-save-status">
-        {saveStatus === "saving" && <span style={{ color:"var(--text-600)" }}>Enregistrement…</span>}
-        {saveStatus === "saved" && <span style={{ color:"var(--success)" }}><Check size={13} style={{ verticalAlign:-2 }} /> Préférences enregistrées</span>}
-        {saveStatus === "error" && <span style={{ color:"var(--danger)" }}><AlertTriangle size={13} style={{ verticalAlign:-2 }} /> Échec de l’enregistrement — {saveError || "les modifications restent dans cette fenêtre. Vérifie ta connexion puis réessaie."}</span>}
-      </div>
-
-      <div className="lp-section-title">Vue Métro</div>
-      <p style={{ fontSize:12.5, color:"var(--text-600)", marginTop:-6, marginBottom:10 }}>
-        Animations propres au langage cartographique de Nexora. Elles sont indépendantes et désactivées par défaut.
-      </p>
-      {renderRows(metroAnimations)}
-
-      <hr className="lp-divider" />
-      <div className="lp-section-title">Ensemble de l’application</div>
-      <p style={{ fontSize:12.5, color:"var(--text-600)", marginTop:-6, marginBottom:10 }}>
-        Micro-interactions et transitions générales de l’interface.
-      </p>
-      {renderRows(appAnimations)}
-
-      <div style={{ marginTop:14, padding:"9px 11px", borderLeft:"3px solid var(--line-blue)", background:"var(--paper-soft)", fontSize:11.5, lineHeight:1.45, color:"var(--text-600)" }}>
-        Si « Réduire les animations » est activé au niveau du système ou du navigateur, certaines animations peuvent être neutralisées pour l’accessibilité.
-      </div>
-    </div>
-  );
 }
 
 // Section pliable au sein d'un même onglet de Réglages (retour de test :
@@ -1141,25 +898,21 @@ function SettingsFoldSection({ title, defaultOpen, children }) {
 // Réglages — hub unique : projets, statuts, apparence, vues affichées, données
 // ============================================================================
 // Onglets réduits par regroupement en sections pliables (retour de test) —
-// « Tâches » fusionne Valeurs par défaut + Templates, « Statuts & types »
-// fusionne Statuts + Types + Types de jalon, sur le même principe que
-// « Utilisateurs & Équipes » ci-dessous (voir SettingsFoldSection). Triés par
-// ordre alphabétique de leur LABEL — pas par thème — pour rester repérables
-// une fois la liste longue.
+// « Intégrations » fusionne ChatGPT + Google Calendar + Calendriers
+// synchronisés, « Méta » fusionne Méta blocs temporels + Méta-filtres,
+// « Projet » fusionne Projets + Tâches (valeurs par défaut + templates) +
+// Statuts & types (statuts + types + types de jalon), sur le même principe
+// que « Utilisateurs & Équipes » ci-dessous (voir SettingsFoldSection). Triés
+// par ordre alphabétique de leur LABEL — pas par thème — pour rester
+// repérables une fois la liste longue.
 const SETTINGS_TABS = [
-  { key: "animations", label: "Animations", icon: "sparkles" },
   { key: "appearance", label: "Apparence", icon: "palette" },
   { key: "workshops", label: "Ateliers", icon: "factory" },
-  { key: "syncedCalendars", label: "Calendriers synchronisés", icon: "calendar" },
-  { key: "chatgpt", label: "ChatGPT", icon: "sparkles" },
   { key: "data", label: "Données", icon: "upload" },
-  { key: "gcal", label: "Google Calendar", icon: "calendar" },
-  { key: "metaBlocks", label: "Méta blocs temporels", icon: "chart-gantt" },
-  { key: "metaFilters", label: "Méta-filtres", icon: "filter" },
-  { key: "projects", label: "Projets", icon: "folder" },
+  { key: "integrations", label: "Intégrations", icon: "link" },
+  { key: "meta", label: "Méta", icon: "chart-gantt" },
+  { key: "project", label: "Projet", icon: "folder" },
   { key: "shortcuts", label: "Raccourcis", icon: "keyboard" },
-  { key: "statusesTypes", label: "Statuts & types", icon: "settings" },
-  { key: "taskDefaults", label: "Tâches", icon: "list" },
   { key: "habitThemes", label: "Thèmes d'habitudes", icon: "flag" },
   { key: "peopleTeams", label: "Utilisateurs & Équipes", icon: "users" },
   { key: "views", label: "Vues affichées", icon: "layers" },
@@ -1216,7 +969,7 @@ function ShortcutSettingsPane({ shortcutPrefs, setShortcutPrefs }) {
 
 // Réglages > Méta blocs temporels. Même mécanique de liste que les sections
 // d'annotations du Mini-Gantt (lp-gantt-annot-*) : rien de nouveau à styler.
-function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlocks, dashboards }) {
+function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlocks, dashboards, hideTitle }) {
   const [editingId, setEditingId] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const list = Array.isArray(metaTemporalBlocks) ? metaTemporalBlocks : [];
@@ -1261,7 +1014,7 @@ function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlo
 
   return (
     <div className="lp-settings-pane">
-      <div className="lp-section-title">Méta blocs temporels</div>
+      {!hideTitle && <div className="lp-section-title">Méta blocs temporels</div>}
       <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 12, lineHeight: 1.5 }}>
         Une période définie une seule fois ici et dessinée dans les Mini-Gantt des tableaux de bord retenus — congés, absences,
         fermeture de site, gel de production. Les blocs propres à un widget restent indépendants : les deux se dessinent.
@@ -1362,12 +1115,12 @@ function MetaTemporalBlocksSettingsPane({ metaTemporalBlocks, setMetaTemporalBlo
   );
 }
 
-function MetaFiltersSettingsPane({ metaFilters, setMetaFilters, ctx }) {
+function MetaFiltersSettingsPane({ metaFilters, setMetaFilters, ctx, hideTitle }) {
   const count = activeFilterCount(metaFilters);
   const reset = () => setMetaFilters(defaultMetaFilters());
   return (
     <div className="lp-settings-pane">
-      <div className="lp-section-title">Méta-filtres globaux</div>
+      {!hideTitle && <div className="lp-section-title">Méta-filtres globaux</div>}
       <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 10, lineHeight: 1.5 }}>
         Ces filtres constituent le socle de Nexora : ils sont appliqués automatiquement avant les filtres propres à chaque vue,
         tableau de bord, widget ou vue enregistrée. Ils restent actifs lors des changements de vue et ne sont pas remplacés par un filtre local.
@@ -1645,7 +1398,7 @@ function MarkdownImportModal({ projects, setProjects, statuses, setStatuses, tas
 }
 
 
-function ChatGPTCaptureSettingsPane(){
+function ChatGPTCaptureSettingsPane({ hideTitle } = {}){
   const browserOrigin = (typeof window !== "undefined" && window.location.protocol !== "file:") ? window.location.origin : "";
   const savedPublicUrl = (() => {
     try { return localStorage.getItem("nexora:publicCaptureUrl") || ""; } catch(e) { return ""; }
@@ -1684,7 +1437,7 @@ Ne crée pas automatiquement la tâche : le lien doit ouvrir Nexora avec la fich
 
   return (
     <div className="lp-settings-pane">
-      <div className="lp-section-title">ChatGPT → Nexora</div>
+      {!hideTitle && <div className="lp-section-title">ChatGPT → Nexora</div>}
       <p style={{fontSize:12.5,color:"var(--text-600)",marginTop:-6,lineHeight:1.55}}>
         ChatGPT peut analyser tes mails dans ChatGPT puis générer un lien de capture Nexora.
         Un clic ouvre la fiche de tâche préremplie : rien n’est créé avant ta validation.
@@ -2484,21 +2237,15 @@ function SettingsModal({
             ))}
           </div>
           <div className="lp-settings-content">
-            {activeTab === "projects" && (
-              <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
-            )}
-            {activeTab === "taskDefaults" && (
+            {activeTab === "project" && (
               <>
-                <SettingsFoldSection title="Valeurs par défaut">
+                <ProjectManager embedded projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} />
+                <SettingsFoldSection title="Valeurs par défaut des tâches">
                   <TaskDefaultsManager embedded hideTitle value={taskDefaults} onChange={setTaskDefaults} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
                 </SettingsFoldSection>
-                <SettingsFoldSection title="Templates">
+                <SettingsFoldSection title="Templates de tâches">
                   <TaskTemplatesManager embedded hideTitle templates={taskTemplates} setTemplates={setTaskTemplates} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
                 </SettingsFoldSection>
-              </>
-            )}
-            {activeTab === "statusesTypes" && (
-              <>
                 <SettingsFoldSection title="Statuts">
                   <StatusManager embedded hideTitle statuses={statuses} setStatuses={setStatuses} tasks={tasks} projects={projects} pushToast={pushToast} />
                 </SettingsFoldSection>
@@ -2519,38 +2266,44 @@ function SettingsModal({
             {activeTab === "habitThemes" && (
               <HabitThemeManager embedded habitThemes={habitThemes} setHabitThemes={setHabitThemes} habitLog={habitLog} setHabitLog={setHabitLog} pushToast={pushToast} />
             )}
-            {activeTab === "syncedCalendars" && (
-              <SyncedCalendarsSettingsPane
-                settings={syncedCalendarSettings}
-                setSettings={setSyncedCalendarSettings}
-                projects={projects}
-                tasks={tasks}
-                onSync={onSyncSyncedCalendars}
-                pushToast={pushToast}
-              />
+            {activeTab === "integrations" && (
+              <>
+                <SettingsFoldSection title="ChatGPT">
+                  <ChatGPTCaptureSettingsPane hideTitle />
+                </SettingsFoldSection>
+                <SettingsFoldSection title="Google Calendar">
+                  <GcalSettingsManager
+                    gcalSettings={gcalSettings} setGcalSettings={setGcalSettings}
+                    gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError}
+                    onFetchList={onFetchList}
+                    gcalSyncState={gcalSyncState}
+                  />
+                </SettingsFoldSection>
+                <SettingsFoldSection title="Calendriers synchronisés">
+                  <SyncedCalendarsSettingsPane
+                    hideTitle
+                    settings={syncedCalendarSettings}
+                    setSettings={setSyncedCalendarSettings}
+                    projects={projects}
+                    tasks={tasks}
+                    onSync={onSyncSyncedCalendars}
+                    pushToast={pushToast}
+                  />
+                </SettingsFoldSection>
+              </>
             )}
-            {activeTab === "chatgpt" && (
-              <ChatGPTCaptureSettingsPane />
-            )}
-            {activeTab === "gcal" && (
-              <GcalSettingsManager
-                gcalSettings={gcalSettings} setGcalSettings={setGcalSettings}
-                gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError}
-                onFetchList={onFetchList}
-                gcalSyncState={gcalSyncState}
-              />
-            )}
-            {activeTab === "metaBlocks" && (
-              <MetaTemporalBlocksSettingsPane metaTemporalBlocks={metaTemporalBlocks} setMetaTemporalBlocks={setMetaTemporalBlocks} dashboards={dashboards || []} />
-            )}
-            {activeTab === "metaFilters" && (
-              <MetaFiltersSettingsPane metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders }} />
+            {activeTab === "meta" && (
+              <>
+                <SettingsFoldSection title="Méta blocs temporels">
+                  <MetaTemporalBlocksSettingsPane hideTitle metaTemporalBlocks={metaTemporalBlocks} setMetaTemporalBlocks={setMetaTemporalBlocks} dashboards={dashboards || []} />
+                </SettingsFoldSection>
+                <SettingsFoldSection title="Méta-filtres">
+                  <MetaFiltersSettingsPane hideTitle metaFilters={metaFilters} setMetaFilters={setMetaFilters} ctx={{ projects, statuses, tasks, teamMembers, projectFolders }} />
+                </SettingsFoldSection>
+              </>
             )}
             {activeTab === "appearance" && (
               <AppearanceModal embedded appearance={appearance} setAppearance={setAppearance} saveStatus={saveStatus} saveError={saveError} pushToast={pushToast} />
-            )}
-            {activeTab === "animations" && (
-              <AnimationSettingsPane appearance={appearance} setAppearance={setAppearance} saveStatus={saveStatus} saveError={saveError} />
             )}
             {activeTab === "shortcuts" && (
               <ShortcutSettingsPane shortcutPrefs={shortcutPrefs} setShortcutPrefs={setShortcutPrefs} />
@@ -14630,7 +14383,6 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
   const wasTaskDoneRef = useRef({});
   const [justCompletedIds, setJustCompletedIds] = useState(() => new Set());
   useEffect(() => {
-    if (!appearance?.animCheckPop) return undefined;
     const newlyDone = [];
     dated.forEach((t) => {
       const nowDone = isTaskDoneGlobal(t, ctx);
@@ -14648,7 +14400,7 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       });
     }, 500);
     return () => clearTimeout(tm);
-  }, [dated, ctx, appearance?.animCheckPop]);
+  }, [dated, ctx]);
 
   // Hauteur réelle de la barre d'onglets (.lp-detail-tabbar), mesurée
   // dynamiquement : les "top" figés en dur des en-têtes sticky de ce planning
@@ -15808,7 +15560,6 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
     return map;
   }, [rowsWithHeights]);
   useEffect(() => {
-    if (!appearance?.animConfetti) return undefined;
     const newlyComplete = [];
     Object.entries(rowsAvgProgress).forEach(([pid, prog]) => {
       const was = wasProjectDoneRef.current[pid];
@@ -15825,7 +15576,7 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
       });
     }, 1200);
     return () => clearTimeout(tm);
-  }, [rowsAvgProgress, appearance?.animConfetti]);
+  }, [rowsAvgProgress]);
 
   const monthBands = useMemo(() => {
     const arr = [];
@@ -16308,7 +16059,7 @@ function ProjectMetroView({ tasks, ctx, onOpen, toolbarSlot, appearance, prefs, 
   // de dépendance jusqu'au début du successeur. À chaque embranchement, le flux est
   // dupliqué afin de rendre visuellement la propagation du travail dans le graphe.
   const buildTrainFlows = () => {
-    if (!appearance?.animTrainFlow || networkMode) return [];
+    if (networkMode) return [];
 
     const animTasks = dated.filter((t) =>
       !t.milestone &&

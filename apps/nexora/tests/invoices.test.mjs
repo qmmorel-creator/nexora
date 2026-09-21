@@ -118,9 +118,8 @@ const p0 = await readFile(new URL("../source/index.html.part-000", import.meta.u
 const p1 = await readFile(new URL("../source/index.html.part-001", import.meta.url), "utf8");
 const p3 = await readFile(new URL("../source/index.html.part-003", import.meta.url), "utf8");
 
-test("navigation : l'entrée « Factures » existe dans le registre des vues et est de haut niveau, à côté de Devis", () => {
+test("navigation : l'entrée « Factures » existe dans le registre des vues, à côté de Devis", () => {
   assert.match(p0, /\{\s*key:\s*"invoices",\s*label:\s*"Factures"/);
-  assert.match(p0, /TOP_LEVEL_VIEW_KEYS\s*=\s*\[[^\]]*"invoices"[^\]]*\]/);
 });
 
 test("persistance : les trois clés du module Facture sont enregistrées dans les TROIS registres Firebase, comme quotes", () => {

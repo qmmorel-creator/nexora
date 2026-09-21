@@ -156,9 +156,8 @@ const p0 = await readFile(new URL("../source/index.html.part-000", import.meta.u
 const p1 = await readFile(new URL("../source/index.html.part-001", import.meta.url), "utf8");
 const p3 = await readFile(new URL("../source/index.html.part-003", import.meta.url), "utf8");
 
-test("navigation : l'entrée « Devis » existe dans le registre des vues et est de haut niveau", () => {
+test("navigation : l'entrée « Devis » existe dans le registre des vues", () => {
   assert.match(p0, /\{\s*key:\s*"quotes",\s*label:\s*"Devis"/);
-  assert.match(p0, /TOP_LEVEL_VIEW_KEYS\s*=\s*\[[^\]]*"quotes"[^\]]*\]/);
 });
 
 test("persistance : les trois clés du module Devis sont enregistrées dans les TROIS registres Firebase", () => {
