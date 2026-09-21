@@ -98,40 +98,56 @@ kTypes={taskTypes} setTaskTypes={setTaskTypes}
           onClose={() => setQuickEditViewFolder(null)}
         />
       )}
-      {folderMetro && (
-        <div className={"lp-folder-metro-overlay" + (folderMetroClosing ? " closing" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) closeFolderMetro(); }}>
-          <div className="lp-folder-metro-panel" style={folderMetroPanelStyle} role="dialog" aria-modal="true" aria-label={`Sélecteur du dossier ${folderMetro.folder?.name || ""}`}>
-            <button type="button" className="lp-folder-metro-close" onClick={closeFolderMetro} title="Fermer"><X size={14} /></button>
-            <div className="lp-folder-metro-title">
-              <span className="lp-folder-metro-title-dot" style={{ "--folder-color": folderMetro.folder?.color || "var(--text-muted)" }} />
-              {folderMetro.folder?.name || (folderMetro.type === "project" ? "Dossier" : "Dossier de tableaux de bord")}
-            </div>
-            {folderMetro.items?.length ? (
-              <div className="lp-folder-metro-line-wrap">
-                <div className="lp-folder-metro-stations">
-                  <div className="lp-folder-metro-line" style={{ "--folder-color": folderMetro.folder?.color || "var(--text-muted)" }} />
-                  {folderMetro.items.map((item, i) => {
-                    const itemColor = item.color || folderMetro.folder?.color || "var(--text-muted)";
-                    return (
-                      <button key={item.id} type="button" className="lp-folder-metro-station" onClick={() => navigateFromFolderMetro(item)} title={`Afficher ${item.name}`}>
-                        <span className="lp-folder-metro-name">{item.name}</span>
-                        <span className="lp-folder-metro-dot" style={{ "--folder-color": itemColor }}>
-                          <IconGlyph icon={item.icon || (folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard")} size={13} />
-                        </span>
-                      </button>
-                    );
-                  })}
+      {folderMetro && (() => {
+        // Sous-dossiers illimités (#217) : le dossier courant est le dernier
+        // maillon de `path` ; ses sous-dossiers apparaissent comme stations
+        // « dossier » (cliquer y descend) avant les éléments qu'il contient
+        // directement (projets ou tableaux de bord, selon `type`).
+        const currentFolder = folderMetro.path[folderMetro.path.length - 1];
+        const subfolders = folderChildren(folderMetro.allFolders, currentFolder.id).map((f) => ({ ...f, __isFolder: true }));
+        const leafItems = folderMetro.allItems.filter((it) => it.folderId === currentFolder.id);
+        const stations = [...subfolders, ...leafItems];
+        const defaultIcon = folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard";
+        return (
+          <div className={"lp-folder-metro-overlay" + (folderMetroClosing ? " closing" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) closeFolderMetro(); }}>
+            <div className="lp-folder-metro-panel" style={folderMetroPanelStyle} role="dialog" aria-modal="true" aria-label={`Sélecteur du dossier ${currentFolder?.name || ""}`}>
+              <button type="button" className="lp-folder-metro-close" onClick={closeFolderMetro} title="Fermer"><X size={14} /></button>
+              <div className="lp-folder-metro-title">
+                {folderMetro.path.length > 1 && (
+                  <button type="button" className="lp-folder-metro-back" onClick={backFolderMetro} title={`Revenir à ${folderMetro.path[folderMetro.path.length - 2].name}`}>
+                    <ChevronLeft size={14} />
+                  </button>
+                )}
+                <span className="lp-folder-metro-title-dot" style={{ "--folder-color": currentFolder?.color || "var(--text-muted)" }} />
+                {currentFolder?.name || (folderMetro.type === "project" ? "Dossier" : "Dossier de tableaux de bord")}
+              </div>
+              {stations.length ? (
+                <div className="lp-folder-metro-line-wrap">
+                  <div className="lp-folder-metro-stations">
+                    <div className="lp-folder-metro-line" style={{ "--folder-color": currentFolder?.color || "var(--text-muted)" }} />
+                    {stations.map((item) => {
+                      const itemColor = item.color || currentFolder?.color || "var(--text-muted)";
+                      return (
+                        <button key={item.id} type="button" className={"lp-folder-metro-station" + (item.__isFolder ? " lp-folder-metro-station--folder" : "")} onClick={() => navigateFromFolderMetro(item)} title={item.__isFolder ? `Ouvrir le sous-dossier ${item.name}` : `Afficher ${item.name}`}>
+                          <span className="lp-folder-metro-name">{item.name}</span>
+                          <span className="lp-folder-metro-dot" style={{ "--folder-color": itemColor }}>
+                            <IconGlyph icon={item.icon || (item.__isFolder ? "tabler:folder" : defaultIcon)} size={13} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="lp-folder-metro-empty">
-                <IconGlyph icon={folderMetro.folder?.icon || (folderMetro.type === "project" ? "tabler:folder" : "tabler:layout-dashboard")} size={20} />
-                <span>Aucun {folderMetro.type === "project" ? "projet" : "tableau de bord"} dans ce dossier</span>
-              </div>
-            )}
+              ) : (
+                <div className="lp-folder-metro-empty">
+                  <IconGlyph icon={currentFolder?.icon || defaultIcon} size={20} />
+                  <span>Aucun {folderMetro.type === "project" ? "projet" : "tableau de bord"} dans ce dossier</span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       <button
         type="button"
         className="lp-global-add-task"
@@ -12889,40 +12905,69 @@ function SimpleFolderManager({ title, folders, setFolders, countInFolder, pushTo
   const [editingId, setEditingId] = useState(initialEditFolder ? initialEditFolder.id : null);
   const [name, setName] = useState(initialEditFolder ? initialEditFolder.name : "");
   const [color, setColor] = useState(initialEditFolder ? (initialEditFolder.color || PROJECT_PALETTES.default[0]) : PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]);
+  // Sous-dossiers illimités (#217) : parentId choisi soit via « + sous-dossier »
+  // sur une ligne existante, soit via le sélecteur du formulaire.
+  const [parentId, setParentId] = useState(initialEditFolder ? (initialEditFolder.parentId || null) : null);
 
-  const startEdit = (f) => { setEditingId(f.id); setName(f.name); setColor(f.color || PROJECT_PALETTES.default[0]); };
-  const cancelEdit = () => { setEditingId(null); setName(""); setColor(PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]); };
+  const startEdit = (f) => { setEditingId(f.id); setName(f.name); setColor(f.color || PROJECT_PALETTES.default[0]); setParentId(f.parentId || null); };
+  const cancelEdit = () => { setEditingId(null); setName(""); setColor(PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]); setParentId(null); };
+  const startSubfolder = (parent) => { setEditingId(null); setName(""); setColor(PROJECT_PALETTES.default[folders.length % PROJECT_PALETTES.default.length]); setParentId(parent.id); };
   const save = () => {
     if (!name.trim()) return;
-    if (editingId) setFolders((prev) => prev.map((f) => (f.id === editingId ? { ...f, name: name.trim(), color } : f)));
-    else setFolders((prev) => [...prev, { id: uid(), name: name.trim(), color }]);
+    if (editingId) setFolders((prev) => prev.map((f) => (f.id === editingId ? { ...f, name: name.trim(), color, parentId: parentId || null } : f)));
+    else setFolders((prev) => [...prev, { id: uid(), name: name.trim(), color, parentId: parentId || null }]);
     cancelEdit();
   };
   const remove = (id) => {
     if (countInFolder(id) > 0) { pushToast({ message: `Ce ${itemLabel} contient des éléments. Déplace-les avant de le supprimer.` }); return; }
+    if (folderChildren(folders, id).length > 0) { pushToast({ message: `Ce ${itemLabel} contient des sous-dossiers. Déplace-les ou supprime-les avant.` }); return; }
     setFolders((prev) => prev.filter((f) => f.id !== id));
     if (editingId === id) cancelEdit();
+    if (parentId === id) setParentId(null);
   };
+
+  // Options de rattachement pour le sélecteur du formulaire : tous les dossiers
+  // sauf le dossier en cours d'édition et ses propres descendants (pas de cycle).
+  const excludedIds = editingId ? folderSubtreeIds(folders, editingId) : [];
+  const parentOptions = sortedByName(folders.filter((f) => !excludedIds.includes(f.id)));
+
+  // Rendu hiérarchique récursif : indentation par profondeur, pas de limite.
+  const renderFolderRow = (f, depth) => (
+    <React.Fragment key={f.id}>
+      <div className="lp-manage-item" style={{ paddingLeft: 8 + depth * 20 }}>
+        <span className="lp-project-dot" style={{ background: f.color || "var(--text-muted)", width: 22, height: 22 }}><Folder size={12} color="#fff" /></span>
+        <span className="lp-manage-name">{f.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({countInFolder(f.id)})</span></span>
+        <button className="lp-icon-btn" onClick={() => startSubfolder(f)} title={`Ajouter un sous-${itemLabel}`}><FolderPlus size={14} /></button>
+        <button className="lp-icon-btn" onClick={() => startEdit(f)}><Pencil size={14} /></button>
+        <button className="lp-icon-btn" onClick={() => remove(f.id)}><Trash2 size={15} /></button>
+      </div>
+      {folderChildren(folders, f.id).map((child) => renderFolderRow(child, depth + 1))}
+    </React.Fragment>
+  );
 
   return (
     <Modal title={title} onClose={onClose}>
       <div className="lp-section-title">{capitalize(itemLabel)}s existants</div>
       {folders.length === 0 && <div className="lp-empty" style={{ padding: 12 }}>Aucun {itemLabel} pour l'instant.</div>}
-      {folders.map((f) => (
-        <div className="lp-manage-item" key={f.id}>
-          <span className="lp-project-dot" style={{ background: f.color || "var(--text-muted)", width: 22, height: 22 }}><Folder size={12} color="#fff" /></span>
-          <span className="lp-manage-name">{f.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({countInFolder(f.id)})</span></span>
-          <button className="lp-icon-btn" onClick={() => startEdit(f)}><Pencil size={14} /></button>
-          <button className="lp-icon-btn" onClick={() => remove(f.id)}><Trash2 size={15} /></button>
-        </div>
-      ))}
+      {folderChildren(folders, null).map((f) => renderFolderRow(f, 0))}
       <hr className="lp-divider" />
-      <div className="lp-section-title">{editingId ? `Modifier le ${itemLabel}` : `Nouveau ${itemLabel}`}</div>
+      <div className="lp-section-title">{editingId ? `Modifier le ${itemLabel}` : parentId ? `Nouveau sous-${itemLabel}` : `Nouveau ${itemLabel}`}</div>
       <div className="lp-field"><input type="text" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} placeholder={`Nom du ${itemLabel}`} autoFocus /></div>
       <div className="lp-field"><label>Couleur</label><ColorPicker value={color} onChange={setColor} palette={PROJECT_PALETTES.default} /></div>
+      {parentOptions.length > 0 && (
+        <div className="lp-field">
+          <label>Sous-{itemLabel} de</label>
+          <select value={parentId || ""} onChange={(e) => setParentId(e.target.value || null)}>
+            <option value="">— Aucun (racine) —</option>
+            {parentOptions.map((f) => (
+              <option key={f.id} value={f.id}>{"—".repeat(folderDepth(folders, f.id))} {f.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer" : "Ajouter"}</button>
-        {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
+        {(editingId || parentId) && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
       </div>
     </Modal>
   );
