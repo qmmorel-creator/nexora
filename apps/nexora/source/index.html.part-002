@@ -2429,7 +2429,7 @@ function SettingsModal({
   teamMembers, setTeamMembers,
   teams, setTeams,
   habitThemes, setHabitThemes, habitLog, setHabitLog,
-  gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList,
+  gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList, gcalSyncState,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
   metaFilters, setMetaFilters,
   metaTemporalBlocks, setMetaTemporalBlocks,
@@ -2546,6 +2546,7 @@ function SettingsModal({
                 gcalSettings={gcalSettings} setGcalSettings={setGcalSettings}
                 gcalList={gcalList} gcalListLoading={gcalListLoading} gcalListError={gcalListError}
                 onFetchList={onFetchList}
+                gcalSyncState={gcalSyncState}
               />
             )}
             {activeTab === "metaBlocks" && (
@@ -11404,9 +11405,18 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
 // Réglages Google Calendar : quels calendriers synchroniser (un projet sera
 // créé par calendrier coché), et sur quelle fenêtre temporelle. La liste des
 // calendriers n'est chargée qu'à la demande (nécessite l'autorisation Google).
-function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList }) {
+function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList, gcalSyncState }) {
   const selectedIds = new Set((gcalSettings.calendars || []).map((c) => c.id));
   const selectedByCalId = (id) => (gcalSettings.calendars || []).find((c) => c.id === id);
+  // Bandeau discret (#143) : depuis quand la dernière synchro Google Calendar
+  // date-t-elle. L'import réel tourne désormais côté MCP (routine ChatGPT
+  // horaire, cf CALENDAR_IMPORT.md) — cette interface n'a plus de bouton
+  // « Synchroniser » qui écrive quoi que ce soit (voir syncGoogleCalendar,
+  // volontairement neutralisé pour ne jamais purger une tâche MCP valide).
+  // Ce bandeau reste donc purement informatif, pas une relance d'action.
+  const lastSyncAt = gcalSyncState?.lastSyncAt || null;
+  const daysSinceSync = lastSyncAt ? Math.floor((Date.now() - new Date(lastSyncAt).getTime()) / 86400000) : null;
+  const syncStale = daysSinceSync == null || daysSinceSync > 1;
   const toggleCalendar = (cal) => {
     setGcalSettings((prev) => {
       const already = (prev.calendars || []).some((c) => c.id === cal.id);
@@ -11422,6 +11432,16 @@ function GcalSettingsManager({ gcalSettings, setGcalSettings, gcalList, gcalList
 
   return (
     <div className="lp-settings-pane">
+      {/* #143 : bandeau discret « dernière synchro il y a N j », lu depuis
+          gcalSyncState.lastSyncAt (alimenté par l'import MCP). */}
+      <div className={"lp-gcal-sync-banner" + (syncStale ? " is-stale" : "")}>
+        <RefreshCw size={12} />
+        {daysSinceSync == null
+          ? "Jamais synchronisé pour l'instant."
+          : daysSinceSync <= 0
+          ? "Dernière synchro aujourd'hui."
+          : `Dernière synchro il y a ${daysSinceSync} j${daysSinceSync > 1 ? "ours" : ""}.`}
+      </div>
       <div className="lp-section-title">Fenêtre temporelle</div>
       <p style={{ fontSize: 12.5, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
         Les événements en dehors de cette plage ne sont pas importés — et sont retirés au prochain clic sur « Synchroniser » si tu réduis la fenêtre.
