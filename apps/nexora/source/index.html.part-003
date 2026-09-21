@@ -9149,6 +9149,57 @@ function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
     || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
     || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
 }
+// === NEXORA:ORGHIER-LAYOUT:START ===
+// #243 : placement des frères par CONTOUR (Reingold-Tilford simplifié), pas
+// par rectangle englobant. Un "contour" décrit, pour un sous-arbre déjà
+// placé (son propre centre pris comme origine 0), la position gauche/droite
+// occupée à CHAQUE profondeur relative (0 = le nœud lui-même, 1 = ses
+// enfants, 2 = ses petits-enfants...) — contrairement à subtreeCross qui ne
+// retenait qu'un seul maximum global pour tout le sous-arbre. Deux voisins
+// ne sont donc rapprochés que jusqu'à ce qu'ils se touchent réellement à un
+// niveau donné (+ ORGHIER_SIBLING_GAP), jamais moins ni plus — ce qui
+// referme les grands vides quand un voisin large en profondeur côtoie une
+// simple feuille.
+// Fonction pure et générique (aucune dépendance à Team/Member) : chaque
+// "contour" est { left: number[], right: number[] } indexé par profondeur
+// relative, exprimé DANS LE MÊME repère que le retour (le décalage de
+// chaque frère par rapport au premier, offsets[0] valant toujours 0).
+function orgHierLayoutSiblings(contours, gap) {
+  const offsets = [0];
+  let mergedLeft = contours.length ? contours[0].left.slice() : [];
+  let mergedRight = contours.length ? contours[0].right.slice() : [];
+  for (let i = 1; i < contours.length; i++) {
+    const c = contours[i];
+    // Décalage minimal pour que le contour gauche de ce frère ne chevauche
+    // jamais le contour droit déjà fusionné, à AUCUNE profondeur commune.
+    let shift = 0;
+    const depthCount = Math.min(mergedRight.length, c.left.length);
+    for (let d = 0; d < depthCount; d++) {
+      const need = mergedRight[d] + gap - c.left[d];
+      if (need > shift) shift = need;
+    }
+    offsets.push(shift);
+    // Fusionne le contour de ce frère (décalé) dans le contour du groupe,
+    // profondeur par profondeur — utile dès qu'il y a plus de deux frères.
+    const maxLen = Math.max(mergedLeft.length, c.left.length);
+    for (let d = 0; d < maxLen; d++) {
+      const cl = d < c.left.length ? c.left[d] + shift : undefined;
+      const cr = d < c.right.length ? c.right[d] + shift : undefined;
+      if (d < mergedLeft.length) {
+        if (cl !== undefined) mergedLeft[d] = Math.min(mergedLeft[d], cl);
+      } else if (cl !== undefined) {
+        mergedLeft[d] = cl;
+      }
+      if (d < mergedRight.length) {
+        if (cr !== undefined) mergedRight[d] = Math.max(mergedRight[d], cr);
+      } else if (cr !== undefined) {
+        mergedRight[d] = cr;
+      }
+    }
+  }
+  return { offsets, mergedLeft, mergedRight };
+}
+// === NEXORA:ORGHIER-LAYOUT:END ===
 function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
@@ -9187,40 +9238,61 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   const layout = useMemo(() => {
     const crossOf = (node) => (horizontal ? orgHierNodeSize(node).h : orgHierNodeSize(node).w);
     const mainOf = (node) => (horizontal ? orgHierNodeSize(node).w : orgHierNodeSize(node).h);
-    const subtreeCrossCache = new Map();
-    const subtreeCross = (node) => {
-      if (subtreeCrossCache.has(node)) return subtreeCrossCache.get(node);
+    // #243 : contour par profondeur relative (voir orgHierLayoutSiblings),
+    // calculé une fois par nœud (contourCache) — le décalage de chaque
+    // enfant par rapport au centre de son parent est mémorisé à part
+    // (siblingOffsetCache) pour être réutilisé tel quel par place() ci-dessous.
+    const contourCache = new Map();
+    const siblingOffsetCache = new Map();
+    const contourOf = (node) => {
+      if (contourCache.has(node)) return contourCache.get(node);
       const kids = orgHierLayoutChildren(node);
-      const childSizes = kids.map(subtreeCross);
-      const size = !kids.length
-        ? crossOf(node)
-        : Math.max(crossOf(node), childSizes.reduce((s, c) => s + c, 0) + (childSizes.length - 1) * ORGHIER_SIBLING_GAP);
-      subtreeCrossCache.set(node, size);
-      return size;
+      const own = crossOf(node);
+      let result;
+      if (!kids.length) {
+        siblingOffsetCache.set(node, []);
+        result = { left: [-own / 2], right: [own / 2] };
+      } else {
+        const kidContours = kids.map(contourOf);
+        const { offsets, mergedLeft, mergedRight } = orgHierLayoutSiblings(kidContours, ORGHIER_SIBLING_GAP);
+        // Le nœud reste centré exactement au-dessus de ses enfants, comme
+        // avant (#235/#229 restent inchangés) : son propre centre = milieu
+        // de l'étendue totale (toutes profondeurs confondues) du groupe
+        // d'enfants déjà fusionné.
+        const groupMin = Math.min(...mergedLeft);
+        const groupMax = Math.max(...mergedRight);
+        const groupCenter = (groupMin + groupMax) / 2;
+        siblingOffsetCache.set(node, offsets.map((o) => o - groupCenter));
+        result = {
+          left: [-own / 2, ...mergedLeft.map((v) => v - groupCenter)],
+          right: [own / 2, ...mergedRight.map((v) => v - groupCenter)],
+        };
+      }
+      contourCache.set(node, result);
+      return result;
     };
     const positions = new Map();
-    const place = (node, crossStart, mainStart) => {
+    const place = (node, cross, mainStart) => {
       const size = orgHierNodeSize(node);
-      const cross = crossStart + subtreeCross(node) / 2;
       const mainEnd = mainStart + mainOf(node);
       positions.set(node, { cross, mainStart, mainEnd, w: size.w, h: size.h });
       const kids = orgHierLayoutChildren(node);
       if (!kids.length) return;
-      const childSizes = kids.map(subtreeCross);
-      const total = childSizes.reduce((s, c) => s + c, 0) + (childSizes.length - 1) * ORGHIER_SIBLING_GAP;
-      let cursor = cross - total / 2;
+      contourOf(node);
+      const offsets = siblingOffsetCache.get(node);
       const childMainStart = mainEnd + ORGHIER_LEVEL_GAP;
-      kids.forEach((child, i) => {
-        place(child, cursor, childMainStart);
-        cursor += childSizes[i] + ORGHIER_SIBLING_GAP;
-      });
+      kids.forEach((child, i) => place(child, cross + offsets[i], childMainStart));
     };
-    let cursor = 0;
-    displayRoots.forEach((root) => {
-      place(root, cursor, 0);
-      cursor += subtreeCross(root) + ORGHIER_SIBLING_GAP;
-    });
-    const totalCross = Math.max(0, cursor - ORGHIER_SIBLING_GAP);
+    // Les racines de premier niveau (#235 : déjà réordonnées pour rapprocher
+    // les partenaires transverses) sont elles-mêmes traitées comme un groupe
+    // de frères par contour — c'est justement le cas visible du ticket #243
+    // (une équipe large à côté de racines simples sans enfants).
+    const rootContours = displayRoots.map(contourOf);
+    const { offsets: rootOffsets, mergedLeft: rootLeft, mergedRight: rootRight } = orgHierLayoutSiblings(rootContours, ORGHIER_SIBLING_GAP);
+    const canvasMin = rootLeft.length ? Math.min(...rootLeft) : 0;
+    const canvasMax = rootRight.length ? Math.max(...rootRight) : 0;
+    displayRoots.forEach((root, i) => place(root, rootOffsets[i] - canvasMin, 0));
+    const totalCross = Math.max(0, canvasMax - canvasMin);
     let totalMain = 0;
     positions.forEach((p) => { if (p.mainEnd > totalMain) totalMain = p.mainEnd; });
     return { positions, totalCross, totalMain };
