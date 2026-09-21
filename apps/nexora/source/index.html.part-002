@@ -3925,6 +3925,15 @@ function normalizeTeams(list) {
       // buildOrgHierarchyTree et transverseTeamLinks). Sans effet quand
       // parentTeamId est vide.
       parentLinkType: t.parentLinkType === "transverse" ? "transverse" : "hierarchique",
+      // Côté du rattachement transverse (#244) : avant ("left") ou après
+      // ("right") son partenaire dans l'ordre des racines — voir
+      // reorderOrgHierarchyRoots. Sans effet quand parentLinkType n'est pas
+      // "transverse". Répli sur "right" : c'est le comportement d'ORIGINE
+      // de #235 (toujours placé juste après le partenaire), qu'une équipe
+      // qui n'a jamais renseigné ce nouveau champ doit conserver telle
+      // quelle — les organigrammes déjà en place ne doivent pas se
+      // réorganiser tout seuls tant que personne n'a choisi "Gauche".
+      transverseSide: t.transverseSide === "left" ? "left" : "right",
       // Dossier d'équipes (#215) : simple rattachement, comme project.folderId —
       // vide par défaut (équipe non classée), jamais devinée.
       folderId: t.folderId ? String(t.folderId) : "",
@@ -4104,20 +4113,26 @@ function transverseTeamLinks(teams) {
   const byId = new Map(catalogue.map((t) => [t.id, t]));
   return catalogue
     .filter((t) => t.parentTeamId && t.parentLinkType === "transverse" && byId.has(t.parentTeamId))
-    .map((t) => ({ fromId: t.id, toId: t.parentTeamId }));
+    // side (#244) : côté choisi par l'utilisateur pour cette équipe transverse
+    // par rapport à son partenaire — voir reorderOrgHierarchyRoots. Repli
+    // "right" (voir normalizeTeams, même raison : comportement de #235
+    // inchangé tant que rien n'a été choisi explicitement).
+    .map((t) => ({ fromId: t.id, toId: t.parentTeamId, side: t.transverseSide === "left" ? "left" : "right" }));
 }
 // Réordonnance les racines de premier niveau (#235, retour de capture) : une
 // équipe reliée par un lien TRANSVERSE (voir transverseTeamLinks ci-dessus)
 // arrive de base dans l'ordre brut du catalogue, donc parfois loin de son
 // partenaire de rattachement — un trait de liaison qui traverse tout le
 // canevas. Ici, chaque racine porteuse d'un lien transverse (t.id = fromId)
-// est déplacée juste APRÈS la racine qui contient son partenaire (toId),
+// est déplacée juste À CÔTÉ de la racine qui contient son partenaire (toId),
 // même quand ce partenaire est imbriqué plus profond (pas forcément
-// lui-même une racine). Tri STABLE : aucun autre déplacement, seul l'ordre
-// des paires liées change — le layout (subtreeCross, place…) reste intact,
-// seule l'entrée qu'il reçoit change d'ordre. Reste volontairement simple :
-// un seul partenaire retenu par équipe transverse (le premier lien trouvé),
-// pas de résolution d'un graphe de chaînes plus complexe.
+// lui-même une racine) — AVANT si link.side === "left" (#244, choix de
+// l'utilisateur dans TeamFormModal), APRÈS sinon. Tri STABLE : aucun autre
+// déplacement, seul l'ordre des paires liées change — le layout (contour,
+// place…) reste intact, seule l'entrée qu'il reçoit change d'ordre. Reste
+// volontairement simple : un seul partenaire retenu par équipe transverse
+// (le premier lien trouvé), pas de résolution d'un graphe de chaînes plus
+// complexe.
 function reorderOrgHierarchyRoots(roots, teams) {
   const list = Array.isArray(roots) ? roots : [];
   if (list.length < 2) return list;
@@ -4135,22 +4150,23 @@ function reorderOrgHierarchyRoots(roots, teams) {
   links.forEach((link) => {
     if (anchorByFromId.has(link.fromId)) return;
     const targetIdx = rootIndexOfTeam(link.toId);
-    if (targetIdx !== -1) anchorByFromId.set(link.fromId, targetIdx);
+    if (targetIdx !== -1) anchorByFromId.set(link.fromId, { targetIdx, side: link.side });
   });
   if (!anchorByFromId.size) return list;
   const decorated = list.map((root, i) => {
-    const linkedAnchor = root.team ? anchorByFromId.get(root.team.id) : undefined;
+    const linked = root.team ? anchorByFromId.get(root.team.id) : undefined;
     return {
       root,
       i,
       // anchor = position de la racine cible pour une racine transverse,
-      // sa propre position sinon (ne bouge pas) ; isLinked la place juste
-      // APRÈS cette cible (au lieu d'AVANT, qui reste sa propre position).
-      anchor: linkedAnchor !== undefined ? linkedAnchor : i,
-      isLinked: linkedAnchor !== undefined ? 1 : 0,
+      // sa propre position sinon (ne bouge pas) ; order la place AVANT
+      // (side "left") ou APRÈS (side "right") cette cible — la cible
+      // elle-même reste à order 0.
+      anchor: linked !== undefined ? linked.targetIdx : i,
+      order: linked === undefined ? 0 : (linked.side === "left" ? -1 : 1),
     };
   });
-  decorated.sort((a, b) => a.anchor - b.anchor || a.isLinked - b.isLinked || a.i - b.i);
+  decorated.sort((a, b) => a.anchor - b.anchor || a.order - b.order || a.i - b.i);
   return decorated.map((d) => d.root);
 }
 // L'équipe d'une tâche, pour le regroupement Gantt/Bulles/Heat map, est celle
@@ -12444,6 +12460,11 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
   // Type de rattachement (#219) : hiérarchique (par défaut, comportement
   // d'origine) ou transverse — sans effet tant que parentTeamId est vide.
   const [parentLinkType, setParentLinkType] = useState(team?.parentLinkType === "transverse" ? "transverse" : "hierarchique");
+  // Côté du rattachement transverse (#244) : avant ("left") ou après
+  // ("right", par défaut — comportement d'origine #235) son partenaire dans
+  // l'ordre des racines — sans effet tant que parentLinkType n'est pas
+  // "transverse" (voir reorderOrgHierarchyRoots, part-002).
+  const [transverseSide, setTransverseSide] = useState(team?.transverseSide === "left" ? "left" : "right");
   const [folderId, setFolderId] = useState(team?.folderId || "");
   // Ajout rapide d'un utilisateur depuis la fiche d'une équipe (#222) : mêmes
   // deux champs que partout ailleurs dans l'app (nom + poste), le rattachement
@@ -12511,7 +12532,7 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
   const parentOptions = catalogue.filter((t) => !excludedParentIds.has(t.id));
   const save = () => {
     if (!name.trim()) return;
-    onSave({ name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, folderId });
+    onSave({ name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, transverseSide, folderId });
   };
 
   const foldersModal = foldersManagerOpen && (
@@ -12562,6 +12583,20 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
               {parentLinkType === "transverse"
                 ? "Lien de liaison horizontal, sans relation parent/enfant — les deux équipes restent chacune à leur niveau."
                 : "L'équipe apparaît sous sa parente, reliée par un trait vertical."}
+            </p>
+          </div>
+        )}
+        {parentTeamId && parentLinkType === "transverse" && (
+          <div className="lp-field">
+            <label>Côté par rapport au partenaire</label>
+            <div className="lp-density-row">
+              <button type="button" className={"lp-density-btn" + (transverseSide === "left" ? " active" : "")} onClick={() => setTransverseSide("left")}>Gauche</button>
+              <button type="button" className={"lp-density-btn" + (transverseSide === "right" ? " active" : "")} onClick={() => setTransverseSide("right")}>Droite</button>
+            </div>
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+              {transverseSide === "left"
+                ? "Cette équipe est placée juste avant son partenaire dans l'Organigramme."
+                : "Cette équipe est placée juste après son partenaire dans l'Organigramme."}
             </p>
           </div>
         )}
