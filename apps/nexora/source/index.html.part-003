@@ -10470,6 +10470,30 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
    journal toute entrée dont l'habitude n'y figure pas. Leur passer un seul
    thème effaçait donc silencieusement les coches de tous les autres thèmes
    à chaque bascule — régression corrigée le jour même du déploiement. */
+/* Aperçu miniature du pixel du jour pour une section (#221) : réutilise TEL
+   QUEL le calcul canonique de la heatmap mensuelle/annuelle des habitudes —
+   habitCellColors() dérive les couleurs des habitudes cochées/chiffrées ce
+   jour-là pour ce thème, habitCellBackground() les compose (aplat ou dégradé
+   conique si plusieurs) — jamais une logique de couleur dupliquée ici. Les
+   données viennent de habitLog déjà chargé par le widget, aucune lecture
+   Firestore supplémentaire. Purement décoratif : pas de cursor, pas de
+   gestionnaire de clic, exclu de la navigation clavier (rôle "img"). */
+function DailyPixelPreview({ section, date, habitLog, size = 14 }) {
+  const colors = useMemo(() => habitCellColors(section, habitLog, date), [section, habitLog, date]);
+  const empty = colors.length === 0;
+  const bg = habitCellBackground(colors, "var(--paper-soft)");
+  const dateLabel = date ? new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "";
+  return (
+    <span
+      className={"lp-widget-habit-quick-theme-preview" + (empty ? " is-empty" : "")}
+      style={{ width: size, height: size, background: bg }}
+      role="img"
+      aria-label={`Aperçu du pixel ${section?.name || ""} pour le ${dateLabel}`}
+      title="Aperçu du pixel du jour"
+    />
+  );
+}
+
 function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
   const checkedIds = useMemo(() => new Set(habitLogHabitIdsForDate(habitLog, date)), [habitLog, date]);
 
@@ -10487,6 +10511,7 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
       <div className="lp-widget-habit-quick-theme-head">
         <span className="lp-widget-habit-quick-theme-dot" style={{ background: theme.color }} />
         <span className="lp-widget-habit-quick-theme-name">{theme.name}</span>
+        <DailyPixelPreview section={theme} date={date} habitLog={habitLog} size={14} />
         <span className="lp-widget-habit-quick-theme-mode">{theme.selectionMode === "multi" ? "plusieurs possibles" : "un seul choix"}</span>
       </div>
       {theme.habits.length === 0 ? (
@@ -10496,23 +10521,34 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
           {theme.habits.map((habit) => {
             if (habit.kind === "numeric") {
               const val = habitLogValueForDate(habitLog, habit.id, date);
+              const min = Number.isFinite(habit.min) ? habit.min : 0;
+              const max = Number.isFinite(habit.max) ? habit.max : min + 10;
+              // #223 : boutons +/- à la place de l'input number/slider. Pas de
+              // valeur posée -> "-" désactivé (rien à retirer) ; "+" démarre à
+              // `min` (pas min+1) ; setValue() clampe déjà [min, max] et efface
+              // l'entrée sur une valeur vide, réutilisé tel quel ici.
+              const dec = () => {
+                if (val === null) return;
+                const next = val - 1;
+                setValue(habit.id, next < min ? "" : String(next));
+              };
+              const inc = () => {
+                const base = val === null ? min - 1 : val;
+                setValue(habit.id, String(Math.min(max, base + 1)));
+              };
               return (
-                <label
+                <div
                   key={habit.id}
                   className="lp-widget-habit-numeric"
                   style={val !== null ? { borderColor: habit.color } : undefined}
                 >
                   <span className="lp-widget-habit-numeric-name">{habit.name}</span>
-                  <input
-                    type="number"
-                    className="lp-widget-habit-numeric-input"
-                    min={habit.min}
-                    max={habit.max}
-                    placeholder={`${habit.min}–${habit.max}`}
-                    value={val === null ? "" : val}
-                    onChange={(e) => setValue(habit.id, e.target.value)}
-                  />
-                </label>
+                  <div className="lp-widget-habit-numeric-controls">
+                    <button type="button" className="lp-widget-habit-numeric-btn" onClick={dec} disabled={val === null} aria-label={`Diminuer ${habit.name}`}>−</button>
+                    <span className="lp-widget-habit-numeric-value">{val === null ? "–" : val}</span>
+                    <button type="button" className="lp-widget-habit-numeric-btn" onClick={inc} disabled={val !== null && val >= max} aria-label={`Augmenter ${habit.name}`}>+</button>
+                  </div>
+                </div>
               );
             }
             const active = checkedIds.has(habit.id);
@@ -10634,6 +10670,25 @@ const HABIT_HEATMAP_VIEWS = ["month", "year", "quarter"];
 const HABIT_HEATMAP_MONTHS_FULL = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 const HABIT_HEATMAP_DOW = ["L", "M", "M", "J", "V", "S", "D"];
 
+// (#224) Grille annuelle : condense la taille des cases ET l'espacement pour
+// tenir dans l'espace réellement disponible (mesuré par ResizeObserver, même
+// idée que celui de l'Organigramme #219) au lieu d'une case fixe à 11px qui
+// déborde (widget étroit) ou laisse du vide (widget large). `space` est la
+// largeur (colonnes = semaines) ou la hauteur (lignes = repère de mois + 7
+// jours) disponible pour `count` cases ; le résultat reste borné à
+// [YEAR_CELL_MIN, YEAR_CELL_MAX] pour ne jamais devenir illisible ni énorme.
+const YEAR_CELL_MIN = 5;
+const YEAR_CELL_MAX = 15;
+function fitYearGridMetrics(space, count) {
+  if (!space || !count) return { cell: YEAR_CELL_MAX, gap: 3 };
+  const solve = (gap) => Math.max(YEAR_CELL_MIN, Math.min(YEAR_CELL_MAX, (space - gap * (count - 1)) / count));
+  let gap = 3;
+  let cell = solve(gap);
+  if (cell < 9) { gap = 2; cell = solve(gap); }
+  if (cell <= YEAR_CELL_MIN + 0.5) { gap = 1; cell = solve(gap); }
+  return { cell, gap };
+}
+
 // Fond d'une case vide : léger gris pour un week-end pas encore coché — à la
 // demande explicite de Quentin, tant que rien n'y est posé — sinon la teinte
 // habituelle. Jamais appliqué à une case qui porte une couleur.
@@ -10663,18 +10718,21 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
     if (next.has(habitId)) next.delete(habitId); else next.add(habitId);
     return next;
   });
-  // Largeur réelle du widget (#193 v4, retour de Quentin) : la vue Annuelle
-  // tient sur une seule ligne de 53 semaines quand la place le permet, et ne
-  // retombe sur deux blocs de ~6 mois que si le widget est trop étroit.
   const rootRef = useRef(null);
-  const [widgetWidth, setWidgetWidth] = useState(0);
+  // Espace réellement disponible pour la grille annuelle (#224) : mesuré sur
+  // le conteneur `.lp-widget-habit-heatmap-year` lui-même (pas le widget
+  // entier, qui inclut aussi l'en-tête et la légende) — largeur ET hauteur,
+  // pour condenser la taille des cases/l'espacement dans les deux sens au
+  // lieu de garder 11px fixes qui débordent ou laissent du vide.
+  const yearRef = useRef(null);
+  const [yearSize, setYearSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
-    const el = rootRef.current;
+    const el = yearRef.current;
     if (!el || typeof ResizeObserver === "undefined") return undefined;
-    const ro = new ResizeObserver(([entry]) => setWidgetWidth(entry.contentRect.width));
+    const ro = new ResizeObserver(([entry]) => setYearSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [view]);
 
   const setThemeId = (id) => onUpdateWidget && onUpdateWidget({ habitHeatmapThemeId: id });
   const openDay = (dIso) => setQuickDayModal(dIso);
@@ -10695,17 +10753,30 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
 
   const monthDays = useMemo(() => (visibleTheme && view === "month" ? habitMonthDays(visibleTheme, habitLog, year, month) : []), [visibleTheme, habitLog, year, month, view]);
   const yearWeeks = useMemo(() => (visibleTheme && view === "year" ? habitYearWeeks(visibleTheme, habitLog, now.getFullYear()) : []), [visibleTheme, habitLog, view]);
-  // Une seule ligne de 53 semaines si la largeur du widget le permet (cases à
-  // 11px + 3px d'écart, comme le calendrier de contributions GitHub) ; sinon
-  // repli sur deux blocs de ~6 mois empilés plutôt qu'une ligne trop large ou
-  // des cases illisibles.
+  // Une seule ligne de 53 semaines si la largeur disponible permet encore une
+  // case lisible (≥ YEAR_CELL_MIN, comme le calendrier de contributions
+  // GitHub) ; sinon repli sur deux blocs de ~6 mois empilés plutôt qu'une
+  // ligne débordante. Tant que la mesure n'est pas encore arrivée
+  // (yearSize.width === 0, premier rendu), on part du repli le plus sûr.
   const yearHalves = useMemo(() => {
     if (!yearWeeks.length) return [];
-    const singleRowWidth = yearWeeks.length * 14 - 3;
-    if (widgetWidth >= singleRowWidth + 8) return [yearWeeks];
+    const singleRowMinWidth = yearWeeks.length * YEAR_CELL_MIN + (yearWeeks.length - 1) * 1;
+    if (yearSize.width >= singleRowMinWidth) return [yearWeeks];
     const half = Math.ceil(yearWeeks.length / 2);
     return [yearWeeks.slice(0, half), yearWeeks.slice(half)];
-  }, [yearWeeks, widgetWidth]);
+  }, [yearWeeks, yearSize.width]);
+  // Taille de case + espacement condensés (#224) : le plus petit des deux
+  // ajustements (largeur pour les colonnes/semaines, hauteur pour les 8
+  // lignes — le repère de mois + 7 jours) tenant sur CHAQUE bloc affiché ;
+  // deux blocs empilés se partagent la hauteur disponible (moins le gap
+  // vertical entre eux).
+  const yearCols = yearHalves[0] ? yearHalves[0].length : 0;
+  const yearBlockHeight = yearHalves.length > 1 ? Math.max(0, (yearSize.height - 12) / 2) : yearSize.height;
+  const yearMetrics = useMemo(() => {
+    const byWidth = fitYearGridMetrics(yearSize.width, yearCols);
+    const byHeight = fitYearGridMetrics(yearBlockHeight, 8);
+    return { cell: Math.min(byWidth.cell, byHeight.cell), gap: Math.min(byWidth.gap, byHeight.gap) };
+  }, [yearSize.width, yearCols, yearBlockHeight]);
   const quarterMonths = useMemo(() => {
     if (!visibleTheme || view !== "quarter") return [];
     return [0, -1, -2].map((offset) => {
@@ -10808,13 +10879,20 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
       )}
 
       {view === "year" && (
-        <div className="lp-widget-habit-heatmap-year">
+        <div className="lp-widget-habit-heatmap-year" ref={yearRef}>
           {yearHalves.map((weeksHalf, hi) => (
             <div className="lp-widget-habit-heatmap-year-half" key={hi}>
-              <div className="lp-widget-habit-heatmap-year-grid" style={{ gridTemplateColumns: `repeat(${weeksHalf.length}, 11px)` }}>
+              <div
+                className="lp-widget-habit-heatmap-year-grid"
+                style={{
+                  gridTemplateColumns: `repeat(${weeksHalf.length}, ${yearMetrics.cell}px)`,
+                  gridTemplateRows: `${Math.max(9, yearMetrics.cell + 1)}px repeat(7, ${yearMetrics.cell}px)`,
+                  gap: `${yearMetrics.gap}px`,
+                }}
+              >
                 {weeksHalf.map((w, wi) => (
                   w.monthLabel ? (
-                    <span key={w.key + "-lbl"} className="lp-widget-habit-heatmap-year-label" style={{ gridColumn: wi + 1, gridRow: 1 }}>
+                    <span key={w.key + "-lbl"} className="lp-widget-habit-heatmap-year-label" style={{ gridColumn: wi + 1, gridRow: 1, fontSize: yearMetrics.cell < 9 ? "7.5px" : undefined }}>
                       {w.monthLabel}
                     </span>
                   ) : null
@@ -10826,6 +10904,8 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
                     style={{
                       gridColumn: wi + 1,
                       gridRow: di + 2,
+                      width: `${yearMetrics.cell}px`,
+                      height: `${yearMetrics.cell}px`,
                       background: day.inYear ? habitEmptyCellBg(day) : "transparent",
                     }}
                     title={day.inYear ? day.date : undefined}

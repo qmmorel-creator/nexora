@@ -2521,7 +2521,7 @@ function SettingsModal({
                   <TeamMemberManager embedded hideTitle teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} setTasks={setTasks} teams={teams} pushToast={pushToast} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Équipes">
-                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} teamFolders={teamFolders} setTeamFolders={setTeamFolders} pushToast={pushToast} />
+                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} setTeamMembers={setTeamMembers} teamFolders={teamFolders} setTeamFolders={setTeamFolders} pushToast={pushToast} />
                 </SettingsFoldSection>
               </>
             )}
@@ -12375,7 +12375,7 @@ function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushT
 // Organigramme. Une liste ordonnée, enregistrée sous `nexora:teams`, sur le
 // modèle exact du gestionnaire d'ateliers ci-dessus.
 // ============================================================================
-function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeamFolders, pushToast, onClose, embedded, hideTitle }) {
+function TeamCatalogManager({ teams, setTeams, teamMembers, setTeamMembers, teamFolders, setTeamFolders, pushToast, onClose, embedded, hideTitle }) {
   const catalogue = normalizeTeams(teams);
   const folders = teamFolders || [];
   const [editingId, setEditingId] = useState(null);
@@ -12383,6 +12383,15 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
   const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
   const [leadName, setLeadName] = useState("");
   const [parentTeamId, setParentTeamId] = useState("");
+  // Ajout rapide d'un utilisateur depuis la fiche d'une équipe (#222) : mêmes
+  // deux champs que partout ailleurs dans l'app (nom + poste), le rattachement
+  // reste RÉCIPROQUE parce qu'il n'existe qu'un seul modèle de rattachement
+  // équipe/utilisateur (member.teamIds + member.teamRoles, voir memberTeamIds/
+  // memberRoleInTeam) — jamais une liste de membres séparée côté équipe : une
+  // équipe qui « voit » un utilisateur et un utilisateur qui « voit » son
+  // équipe sont donc la même écriture, ici sur teamMembers.
+  const [quickAddName, setQuickAddName] = useState("");
+  const [quickAddRole, setQuickAddRole] = useState("");
   // Type de rattachement (#219) : hiérarchique (par défaut, comportement
   // d'origine) ou transverse — sans effet tant que parentTeamId est vide.
   const [parentLinkType, setParentLinkType] = useState("hierarchique");
@@ -12400,6 +12409,8 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
     setParentTeamId("");
     setParentLinkType("hierarchique");
     setFolderId("");
+    setQuickAddName("");
+    setQuickAddRole("");
   };
   const startEdit = (team) => {
     setEditingId(team.id);
@@ -12409,6 +12420,50 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
     setParentTeamId(team.parentTeamId || "");
     setParentLinkType(team.parentLinkType === "transverse" ? "transverse" : "hierarchique");
     setFolderId(team.folderId || "");
+    setQuickAddName("");
+    setQuickAddRole("");
+  };
+  const editingTeam = editingId ? catalogue.find((t) => t.id === editingId) : null;
+  const teamRoster = editingId ? sortedByName((teamMembers || []).filter((m) => memberTeamIds(m).includes(editingId))) : [];
+  // Détache une personne de CETTE équipe uniquement (elle reste dans
+  // l'annuaire, comme la suppression d'une équipe plus haut) — retire son
+  // poste pour cette équipe au passage, comme un décochage dans la fiche
+  // utilisateur (TeamMemberFormModal.toggleTeam).
+  const removeFromTeam = (member) => {
+    if (!editingId || !setTeamMembers) return;
+    setTeamMembers((prev) => prev.map((m) => {
+      if (m.id !== member.id) return m;
+      const nextRoles = { ...(m.teamRoles || {}) };
+      delete nextRoles[editingId];
+      return { ...m, teamIds: memberTeamIds(m).filter((id) => id !== editingId), teamRoles: nextRoles };
+    }));
+  };
+  // Ajout rapide, réciproque (#222) : une personne déjà dans l'annuaire est
+  // simplement rattachée à cette équipe (poste mis à jour si déjà membre) ;
+  // sinon elle est créée à la volée — même schéma que handleCreateAssignee
+  // (couleur de repli staffingMemberColor) — puis rattachée directement,
+  // sans repasser par Réglages › Utilisateurs.
+  const addQuickMember = () => {
+    const trimmedName = quickAddName.trim();
+    if (!trimmedName || !editingId || !setTeamMembers) return;
+    const poste = quickAddRole.trim();
+    const teamId = editingId;
+    setTeamMembers((prev) => {
+      const existing = prev.find((m) => m.name.toLowerCase() === trimmedName.toLowerCase());
+      if (existing) {
+        return prev.map((m) => {
+          if (m.id !== existing.id) return m;
+          const ids = memberTeamIds(m);
+          const nextRoles = { ...(m.teamRoles || {}) };
+          if (poste) nextRoles[teamId] = poste; else delete nextRoles[teamId];
+          return { ...m, teamIds: ids.includes(teamId) ? ids : [...ids, teamId], teamId: null, teamRoles: nextRoles };
+        });
+      }
+      return [...prev, { id: uid(), name: trimmedName, color: staffingMemberColor(trimmedName), avatarDataUrl: null, teamIds: [teamId], teamId: null, teamRoles: poste ? { [teamId]: poste } : {} }];
+    });
+    if (pushToast) pushToast({ message: `« ${trimmedName} » rattaché à « ${editingTeam?.name || "l'équipe"} ».` });
+    setQuickAddName("");
+    setQuickAddRole("");
   };
   // Une équipe ne peut jamais devenir la parente d'une de ses propres
   // équipes parentes/grand-parentes (#167, retour de test) : exclue de la
@@ -12539,6 +12594,42 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
           <button type="button" className="lp-btn" onClick={() => setFoldersManagerOpen(true)}>Gérer les dossiers</button>
         </div>
       </div>
+
+      {editingTeam && (
+        <>
+          <hr className="lp-divider" />
+          <div className="lp-section-title">Membres de « {editingTeam.name} »</div>
+          {teamRoster.length === 0 ? (
+            <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: "0 0 10px" }}>Aucun membre pour l'instant.</p>
+          ) : (
+            teamRoster.map((m) => (
+              <div className="lp-manage-item" key={m.id}>
+                <span className="lp-project-dot" style={{ background: m.color, width: 22, height: 22 }}>{m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={13} /> : <User size={12} color="#fff" />}</span>
+                <span className="lp-manage-name">{m.name} {memberRoleInTeam(m, editingId) && <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({memberRoleInTeam(m, editingId)})</span>}</span>
+                <button className="lp-icon-btn" onClick={() => removeFromTeam(m)} aria-label={`Retirer ${m.name} de l'équipe`} title="Retirer de l'équipe (reste dans l'annuaire)"><X size={14} /></button>
+              </div>
+            ))
+          )}
+          <div className="lp-field" style={{ marginTop: 8 }}>
+            <label>Ajouter rapidement <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisateur existant, ou créé à la volée s'il n'existe pas — avec son poste dans cette équipe)</span></label>
+            <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 160px", minWidth: 160 }}>
+                <AssigneeSelect members={teamMembers} value={quickAddName} onChange={setQuickAddName} onCreateMember={(nm) => setQuickAddName(nm.trim())} />
+              </div>
+              <input
+                type="text"
+                style={{ flex: "1 1 140px", minWidth: 140 }}
+                placeholder="Poste (facultatif)"
+                value={quickAddRole}
+                onChange={(e) => setQuickAddRole(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addQuickMember(); }}
+              />
+              <button type="button" className="lp-btn lp-btn-primary" onClick={addQuickMember} disabled={!quickAddName.trim()}>Ajouter</button>
+            </div>
+          </div>
+        </>
+      )}
+
       <div style={{ display: "flex", gap: 8 }}>
         <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
         {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
