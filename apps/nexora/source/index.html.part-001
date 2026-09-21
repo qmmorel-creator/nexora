@@ -11312,6 +11312,11 @@ export default function LePlan({ currentUser, onSignOut }) {
       status: "issued", createdAt: now,
     };
     setInvoices((prev) => [...prev, invoice]);
+    // Même archivage Drive automatique que la sauvegarde manuelle d'une
+    // facture (voir saveInvoice/InvoicesView.handleSave) — "Facturer ce
+    // devis" est aussi une création de facture.
+    const client = quoteClients.find((c) => c.id === invoice.clientId);
+    archiveInvoicePdfToDrive(invoice, client, quoteSettings, quoteSkills, quote, null);
     return id;
   };
 
@@ -11320,16 +11325,24 @@ export default function LePlan({ currentUser, onSignOut }) {
   // ensuite). Une facture "payée" ou "annulée" reste techniquement éditable
   // ici (pas de verrou dur) : QuotesView/InvoicesView n'affiche simplement
   // pas le bouton d'édition pour ces statuts (voir InvoiceFormModal, part-003).
+  // Renvoie la facture complète (pas juste son id) : InvoicesView s'en sert
+  // pour lancer l'archivage Drive (PDF) juste après la sauvegarde, sans
+  // dépendre du timing de la mise à jour d'état React — même principe que
+  // saveQuote ci-dessus.
   const saveInvoice = (data, existingId) => {
     if (existingId) {
-      setInvoices((prev) => prev.map((inv) => (inv.id === existingId ? { ...inv, ...data, updatedAt: new Date().toISOString() } : inv)));
-      return existingId;
+      const now = new Date().toISOString();
+      const current = invoices.find((inv) => inv.id === existingId);
+      const merged = { ...(current || {}), ...data, id: existingId, updatedAt: now };
+      setInvoices((prev) => prev.map((inv) => (inv.id === existingId ? merged : inv)));
+      return merged;
     }
     const id = uid();
     const number = nextInvoiceNumber(invoices);
     const now = new Date().toISOString();
-    setInvoices((prev) => [...prev, { id, number, status: "issued", createdAt: now, ...data }]);
-    return id;
+    const invoice = { id, number, status: "issued", createdAt: now, ...data };
+    setInvoices((prev) => [...prev, invoice]);
+    return invoice;
   };
 
   // Duplication : une NOUVELLE facture, son propre numéro dans la séquence
@@ -11387,6 +11400,13 @@ export default function LePlan({ currentUser, onSignOut }) {
       ...prev.map((inv) => (inv.id === source.id ? { ...inv, status: "cancelled", cancelledByInvoiceId: id } : inv)),
       creditNote,
     ]);
+    // Un avoir est un document au même titre qu'une facture : même archivage
+    // Drive automatique, fire-and-forget (voir archiveInvoicePdfToDrive,
+    // part-003). "original" = la facture qu'il annule, pour le bandeau AVOIR
+    // du PDF (originalInvoiceNumber).
+    const client = quoteClients.find((c) => c.id === creditNote.clientId);
+    const sourceQuote = creditNote.quoteId ? quotes.find((q) => q.id === creditNote.quoteId) : null;
+    archiveInvoicePdfToDrive(creditNote, client, quoteSettings, quoteSkills, sourceQuote, source.number);
     return id;
   };
 

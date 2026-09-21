@@ -17555,7 +17555,11 @@ async function archiveQuotePdfToDrive(quote, client, settings, quoteSkills) {
 // affiche juste une référence croisée vers le devis d'origine quand la
 // facture en vient (createInvoiceFromQuote) ; originalInvoiceNumber (optionnel)
 // est le numéro de la facture annulée quand CETTE facture est un avoir.
-async function downloadInvoicePdf(invoice, client, settings, invoiceSkills, sourceQuote, originalInvoiceNumber) {
+// `asBase64` (voir buildInvoicePdfBase64 plus bas, pour l'archivage
+// automatique sur Google Drive) rend le PDF en base64 pur au lieu de
+// déclencher le téléchargement navigateur — même mise en page, jamais
+// dupliquée (même principe que downloadQuotePdf ci-dessus).
+async function downloadInvoicePdf(invoice, client, settings, invoiceSkills, sourceQuote, originalInvoiceNumber, { asBase64 = false } = {}) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -17817,7 +17821,36 @@ async function downloadInvoicePdf(invoice, client, settings, invoiceSkills, sour
     drawQuoteFooter(doc, { marginX, pageWidth, pageHeight, settings, pageNum: p, totalPages });
   }
 
+  if (asBase64) {
+    const dataUri = doc.output("datauristring");
+    return dataUri.slice(dataUri.indexOf(",") + 1);
+  }
   doc.save(`${isCreditNote ? "Avoir" : "Facture"}-${invoice.number}.pdf`);
+}
+
+// PDF en base64 pur (sans le préfixe data:...;base64,), pour l'envoyer tel
+// quel à /api/nexora/drive-archive — jamais de téléchargement déclenché ni de
+// duplication de la mise en page (voir downloadInvoicePdf, option asBase64).
+async function buildInvoicePdfBase64(invoice, client, settings, invoiceSkills, sourceQuote, originalInvoiceNumber) {
+  return downloadInvoicePdf(invoice, client, settings, invoiceSkills, sourceQuote, originalInvoiceNumber, { asBase64: true });
+}
+
+// Archivage automatique sur Google Drive pour une facture (ou un avoir) —
+// même principe que archiveQuotePdfToDrive : fire-and-forget, jamais
+// bloquant, réutilise archivePdfToDrive (voir plus haut, au-dessus de
+// downloadQuotePdf).
+async function archiveInvoicePdfToDrive(invoice, client, settings, invoiceSkills, sourceQuote, originalInvoiceNumber) {
+  try {
+    const isCreditNote = !!invoice.creditNoteOf;
+    const pdfBase64 = await buildInvoicePdfBase64(invoice, client, settings, invoiceSkills, sourceQuote, originalInvoiceNumber);
+    await archivePdfToDrive({
+      clientName: client?.name || "Client sans nom",
+      filename: `${isCreditNote ? "Avoir" : "Facture"}-${invoice.number}.pdf`,
+      pdfBase64,
+    });
+  } catch (error) {
+    console.warn("Archivage Drive (facture) : erreur de génération PDF", error);
+  }
 }
 
 function QuoteStatusBadge({ status }) {
@@ -18564,16 +18597,17 @@ function InvoicesView({ invoices, quotes, clients, settings, setSettings, catalo
   const rows = useMemo(() => [...invoices].sort((a, b) => (b.number || "").localeCompare(a.number || "")), [invoices]);
   const paidRows = useMemo(() => rows.filter((inv) => inv.status === "paid"), [rows]);
 
-  // TODO archivage Drive factures : une fois downloadInvoicePdf/buildInvoicePdfDoc
-  // en place (module Facture encore en cours ailleurs sur cette branche),
-  // brancher ici le même motif que QuotesView.handleSave — onSaveInvoice
-  // renvoyant la facture sauvegardée, puis un archiveInvoicePdfToDrive(saved,
-  // client, settings, ...) fire-and-forget réutilisant archivePdfToDrive
-  // (voir part-003, au-dessus de downloadQuotePdf). Rien à faire ici tant que
-  // la génération PDF facture n'existe pas.
   const handleSave = (data) => {
-    onSaveInvoice(data, formTarget && formTarget !== "new" ? formTarget.id : undefined);
+    const saved = onSaveInvoice(data, formTarget && formTarget !== "new" ? formTarget.id : undefined);
     setFormTarget(null);
+    // Fire-and-forget, même motif que QuotesView.handleSave : ne retarde ni
+    // ne bloque jamais la fermeture du formulaire.
+    if (saved) {
+      const client = clients.find((c) => c.id === saved.clientId);
+      const sourceQuote = saved.quoteId ? quotes.find((q) => q.id === saved.quoteId) : null;
+      const original = saved.creditNoteOf ? invoices.find((i) => i.id === saved.creditNoteOf) : null;
+      archiveInvoicePdfToDrive(saved, client, settings, skills, sourceQuote, original?.number);
+    }
   };
 
   // Export CSV du Livre des recettes — même motif que backupTextDownload

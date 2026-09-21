@@ -116,3 +116,31 @@ test("front : downloadQuotePdf n'est jamais dupliqué pour l'archivage — build
   assert.match(part, /async function downloadQuotePdf\(quote, client, settings, quoteSkills, \{ asBase64 = false \} = \{\}\)/);
   assert.match(part, /async function buildQuotePdfBase64\(quote, client, settings, quoteSkills\) \{\s*\n\s*return downloadQuotePdf\(quote, client, settings, quoteSkills, \{ asBase64: true \}\);/);
 });
+
+test("front : downloadInvoicePdf n'est jamais dupliqué pour l'archivage — même motif que les devis (option asBase64)", async () => {
+  const part = await read("../source/index.html.part-003");
+  assert.match(part, /async function downloadInvoicePdf\([^)]*\{ asBase64 = false \} = \{\}\)/);
+  assert.match(part, /async function buildInvoicePdfBase64\([^)]*\)\s*\{\s*\n\s*return downloadInvoicePdf\(/);
+  assert.match(part, /async function archiveInvoicePdfToDrive\(/);
+});
+
+test("front : l'archivage se déclenche sur les 3 points de sauvegarde d'une facture — saisie manuelle, « Facturer ce devis » et un avoir", async () => {
+  const part003 = await read("../source/index.html.part-003");
+  const part001 = await read("../source/index.html.part-001");
+  assert.match(part003, /archiveInvoicePdfToDrive\(saved, client, settings, skills, sourceQuote, original\?\.number\)/);
+  assert.match(part001, /archiveInvoicePdfToDrive\(invoice, client, quoteSettings, quoteSkills, quote, null\)/);
+  assert.match(part001, /archiveInvoicePdfToDrive\(creditNote, client, quoteSettings, quoteSkills, sourceQuote, source\.number\)/);
+});
+
+test("front : saveQuote et saveInvoice renvoient le document sauvegardé (pas juste son id), nécessaire pour l'archivage synchrone", async () => {
+  const part001 = await read("../source/index.html.part-001");
+  const saveQuoteFrom = part001.indexOf("const saveQuote = (data, existingId) => {");
+  const saveQuoteBody = part001.slice(saveQuoteFrom, part001.indexOf("\n  };", saveQuoteFrom));
+  assert.match(saveQuoteBody, /return merged;/);
+  assert.match(saveQuoteBody, /return quote;/);
+
+  const saveInvoiceFrom = part001.indexOf("const saveInvoice = (data, existingId) => {");
+  const saveInvoiceBody = part001.slice(saveInvoiceFrom, part001.indexOf("\n  };", saveInvoiceFrom));
+  assert.match(saveInvoiceBody, /return merged;/);
+  assert.match(saveInvoiceBody, /return invoice;/);
+});
