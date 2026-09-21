@@ -770,7 +770,10 @@ import {
   Activity, Sunrise, TrendingUp, ShieldAlert, Grid3x3, Users, History, Flame,
   LayoutDashboard, GripHorizontal, Rows3, Waypoints, Filter,
   Link as LinkIcon, Paperclip, AlertOctagon, ShieldCheck, Save, PanelLeftClose, MoreHorizontal, Star, ChevronLeft, Bell, BookOpen, FileText, CircleDot, Minus,
-  Archive, RotateCcw, Tag, ExternalLink, Printer, Presentation
+  Archive, RotateCcw, Tag, ExternalLink, Printer, Presentation,
+  // Module Facture (#devis-v2 suite) : "Facturer ce devis" (Receipt), marquer
+  // payée (Banknote), créer un avoir (FileMinus).
+  Receipt, Banknote, FileMinus
 } from 'https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
@@ -2360,6 +2363,9 @@ const ALL_VIEWS_META = [
   // Module Devis (Quentin Morel Engineering) : destination de haut niveau,
   // comme Notifications — pas de contexte projet nécessaire pour l'ouvrir.
   { key: "quotes", label: "Devis", iconKey: "tabler:file-invoice" },
+  // Module Facture — construit sur le modèle du module Devis (#devis-v2
+  // suite), même statut de destination de haut niveau.
+  { key: "invoices", label: "Factures", iconKey: "tabler:receipt" },
 ];
 // === NEXORA:VIEW-RAIL-COUNT:START ===
 /* Badge d'une bulle du rail vertical (issue #65).
@@ -2398,7 +2404,7 @@ function viewRailBadgeLabel(count) {
 // Destinations de haut niveau — seules celles-ci restent dans le bandeau vertical.
 // Les autres (les "vues" de détail sur les tâches) deviennent des onglets affichés
 // une fois un contexte projet actif, plutôt que des destinations indépendantes.
-const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications", "quotes"];
+const TOP_LEVEL_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "dashboard", "notifications", "quotes", "invoices"];
 // Vues de détail — apparaissent en onglets horizontaux, jamais dans le bandeau.
 const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "timeline", "radar", "table"];
 
@@ -3561,6 +3567,71 @@ function fmtQuoteAmount(n) {
 }
 // === NEXORA:QUOTES:END ===
 
+// ============================================================================
+// === NEXORA:INVOICES:START ===
+// Module Facture — construit sur le modèle du module Devis ci-dessus. Une
+// facture reprend la même forme de ligne (kind/amount/quantity/unitRate/
+// skillIds, voir quoteLineAmount) : pas de duplication de ce calcul, une
+// facture est juste un autre document avec ce type de ligne.
+//
+// Cycle de vie : Émise -> Payée, ou Émise -> Annulée (UNIQUEMENT via un avoir,
+// jamais un simple changement de statut — voir createCreditNote, part-001).
+// "En retard" est, comme "Expiré" pour un devis, JAMAIS écrit en base : il se
+// calcule à l'affichage (effectiveInvoiceStatus) depuis dueDate, pour qu'un
+// passage en "payée" le fasse disparaître sans manipulation supplémentaire.
+const INVOICE_STATUSES = [
+  { key: "issued", label: "Émise", color: "#2C6BE0" },
+  { key: "paid", label: "Payée", color: "var(--success)" },
+  { key: "cancelled", label: "Annulée", color: "var(--text-muted)" },
+  { key: "late", label: "En retard", color: "var(--warning)" },
+];
+// Statuts proposés dans le sélecteur manuel : "Annulée" n'y figure jamais
+// (elle ne s'obtient QUE via createCreditNote), "En retard" non plus (calculé,
+// jamais persistable — même principe que QUOTE_EDITABLE_STATUSES).
+const INVOICE_MANUAL_STATUSES = INVOICE_STATUSES.filter((s) => s.key === "issued" || s.key === "paid");
+
+const DEFAULT_INVOICE_DUE_DAYS = 30;
+
+function invoiceStatusMeta(statusKey) {
+  return INVOICE_STATUSES.find((s) => s.key === statusKey) || INVOICE_STATUSES[0];
+}
+
+function invoiceTotal(invoice) {
+  return (invoice?.lines || []).reduce((sum, l) => sum + quoteLineAmount(l), 0);
+}
+
+function defaultInvoiceDueDate(issueDate, days = DEFAULT_INVOICE_DUE_DAYS) {
+  return addDays(issueDate, days);
+}
+
+// Statut EFFECTIF affiché : une facture "Émise" dont l'échéance est dépassée
+// sans être passée en "payée" devient "En retard" au moment de l'AFFICHAGE
+// seulement — jamais persisté (même principe que effectiveQuoteStatus).
+function effectiveInvoiceStatus(invoice, today = iso(new Date())) {
+  if (!invoice) return "issued";
+  if (invoice.status === "issued" && invoice.dueDate && invoice.dueDate < today) return "late";
+  return invoice.status || "issued";
+}
+
+// Numérotation F-AAAA-NNN — STRICTEMENT continue et sans trou (contrainte
+// légale plus stricte que les devis, qui peuvent avoir des trous si un devis
+// est supprimé) : le compteur inclut TOUS les documents de la séquence,
+// factures ET avoirs confondus (un avoir a son propre numéro dans la même
+// séquence, voir createCreditNote part-001). Aucun handler ne supprime jamais
+// une facture émise ni ne réutilise son numéro — la continuité découle donc
+// naturellement du même principe « déduit des documents existants » que
+// nextQuoteNumber, sans compteur séparé qui pourrait se désynchroniser.
+function nextInvoiceNumber(invoices, year = new Date().getFullYear()) {
+  const prefix = `F-${year}-`;
+  const maxN = (invoices || [])
+    .filter((inv) => typeof inv.number === "string" && inv.number.startsWith(prefix))
+    .map((inv) => parseInt(inv.number.slice(prefix.length), 10))
+    .filter((n) => Number.isFinite(n))
+    .reduce((max, n) => Math.max(max, n), 0);
+  return `${prefix}${String(maxN + 1).padStart(3, "0")}`;
+}
+// === NEXORA:INVOICES:END ===
+
 const seedQuoteSettings = {
   companyName: "Quentin Morel Engineering",
   siret: "000 000 000 00000",
@@ -3573,7 +3644,59 @@ const seedQuoteSettings = {
   // un lien Google Drive validé comme les pièces jointes (isGoogleDriveUrl,
   // ci-dessus) — plus fragile pour le PDF (fetch cross-origin, CORS).
   logoUrl: "",
+  // CGV — rédigées une fois dans les réglages, insérées automatiquement sur
+  // chaque devis (page 3 du PDF, voir downloadQuotePdf part-003).
+  // cgvUpdatedAt n'est mis à jour QUE quand cgvText change réellement (voir
+  // QuotesView, part-003) : la version affichée ("CGV v.JJ/MM/AAAA") s'en
+  // déduit à la volée (fmtShort) plutôt que d'être une chaîne pré-formatée
+  // dupliquée en base.
+  cgvText: "",
+  cgvUpdatedAt: "",
+  // Assurance professionnelle — texte libre (assureur + couverture), utilisé
+  // UNIQUEMENT dans le PDF facture (mention conditionnelle, absente du devis
+  // si vide). Champ optionnel, jamais affiché tant qu'il n'est pas renseigné.
+  insurance: "",
 };
+
+// Palette de couleurs proposée pour un chip de compétence/logiciel (module
+// Devis) — les mêmes couleurs de statut que le reste de l'app (GlobalStyles,
+// part-001 : --line-blue/--success/--warning/--danger/--accent/--graphite),
+// jamais une palette inventée à part. Figées en hex (pas var(--…)) : un chip
+// reste lisible quel que soit le composant qui le rend, et ce ne sont QUE des
+// couleurs de fond (texte toujours blanc dessus, voir .lp-quote-chip).
+const QUOTE_SKILL_COLORS = ["#2C6BE0", "#1FA971", "#E2A63B", "#E2483E", "#FF7A3D", "#495166"];
+
+// Catalogue de compétences/logiciels — seed initial (#XXX) : contenu réel
+// fourni par Quentin, librement éditable/renommable/supprimable ensuite
+// (saveSkill/deleteSkill, part-001) — pas un contenu figé en dur.
+const seedQuoteSkills = [
+  { id: "sk1", label: "Coda", color: "#F97316" },
+  { id: "sk2", label: "Notion", color: "#37352F" },
+  { id: "sk3", label: "Trello", color: "#0079BF" },
+  { id: "sk4", label: "ClickUp", color: "#7B68EE" },
+  { id: "sk5", label: "Claude", color: "#D97757" },
+  { id: "sk6", label: "ChatGPT", color: "#10A37F" },
+  { id: "sk7", label: "Power Platform", color: "#742774" },
+  { id: "sk8", label: "Make.com", color: "#6D00CC" },
+];
+
+// Catalogue de prestations — seed initial (contenu fourni par Quentin),
+// même forme qu'une ligne de devis (voir quoteLineAmount ci-dessus) plus un
+// label court et des skillIds. amount/unitRate laissés à 0 : de simples
+// gabarits de désignation, les tarifs restent à la discrétion de chaque
+// devis (insertion = copie one-shot, jamais de référence permanente).
+const seedQuoteCatalog = [
+  { id: "cat1", label: "Assistance technique IA", description: "Accompagnement ponctuel sur l'usage d'outils IA (Claude, ChatGPT) pour un besoin métier précis : prompts, cas d'usage, dépannage.", kind: "regie", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk5", "sk6"] },
+  { id: "cat2", label: "Assistance technique No Code", description: "Support et dépannage sur un outil No Code déjà en place (Coda, Notion, Make.com, Power Platform...).", kind: "regie", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk1", "sk2", "sk8", "sk7"] },
+  { id: "cat3", label: "Création d'outils No Code", description: "Conception et développement sur-mesure d'une application ou automatisation No Code (Coda, ClickUp, Make.com).", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk1", "sk4", "sk8"] },
+  { id: "cat4", label: "Création d'outils IA", description: "Développement d'un assistant ou agent IA sur-mesure : prompt engineering, intégration API (Claude, ChatGPT).", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk5", "sk6"] },
+  { id: "cat5", label: "Audit & cadrage IA / No Code", description: "État des lieux des processus existants, identification des cas d'usage prioritaires, recommandations priorisées.", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: [] },
+  { id: "cat6", label: "Automatisation de workflows", description: "Connexion entre outils (Make.com, Power Automate) pour fiabiliser un processus métier répétitif.", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk8", "sk7"] },
+  { id: "cat7", label: "Formation IA / No Code", description: "Session de formation à l'usage des outils (Claude, ChatGPT, Coda, etc.) pour un collaborateur ou une équipe.", kind: "regie", amount: 0, unit: "halfDay", unitRate: 0, skillIds: ["sk5", "sk6", "sk1"] },
+  { id: "cat8", label: "Migration d'outils", description: "Accompagnement au changement d'outil (ex: Trello → ClickUp, Notion → Coda), reprise et fiabilisation des données.", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk3", "sk4", "sk2", "sk1"] },
+  { id: "cat9", label: "Maintenance & évolution d'outils existants", description: "Suivi régulier d'un outil déjà livré : corrections, petites évolutions, ajustements.", kind: "regie", amount: 0, unit: "day", unitRate: 0, skillIds: [] },
+  { id: "cat10", label: "Intégration & connecteurs API", description: "Développement de connecteurs sur-mesure entre systèmes via Power Platform, Make.com ou API directes.", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: ["sk7", "sk8"] },
+];
 
 // ============================================================================
 // UI génériques
