@@ -8966,158 +8966,10 @@ function WidgetBubbles(props) {
   return <WidgetMiniGantt {...props} bubbleMode />;
 }
 
-/* Widget « Organigramme » (#167). Les équipes du catalogue (#159) en sections,
-   les personnes en cartes à l'intérieur — « Sans équipe » en dernier pour
-   quiconque n'a pas encore été rangé. Chaque carte porte trois compteurs du
-   jour (tâches actives, en retard, atelier du jour) et un clic filtre la page
-   sur cette personne, sur le même mécanisme que le clic d'un secteur du
-   Treemap projets. Lecture seule : aucune écriture, ni sur les tâches ni sur
-   les affectations.
-
-   Une personne peut appartenir à PLUSIEURS équipes (retour de test) : elle
-   apparaît alors dans chacune de leurs sections — ce n'est pas un doublon,
-   c'est la même carte qui existe deux fois. Le responsable d'une équipe, s'il
-   en fait partie, porte un badge et passe en tête de la section plutôt que
-   d'être répété hors de la grille des cartes.
-
-   Les traits de hiérarchie (retour de test : « ça manque ») sont un SVG
-   mesuré, comme le fait déjà la vue Métro pour ses propres flèches — un
-   tracé CSS pur ne sait pas centrer une ligne sur des cartes qui passent à
-   la ligne suivante à une largeur de widget imprévisible. */
-function OrgTeamTree({ team, members, allMembers, statsFor, onFilterPerson }) {
-  const boxRef = useRef(null);
-  const headRef = useRef(null);
-  const cardRefs = useRef({});
-  const [lines, setLines] = useState([]);
-  // Le responsable (retour de test sur #167) s'affiche dans l'EN-TÊTE de
-  // l'équipe, pas seulement sur sa propre carte — cherché dans TOUS les
-  // membres (allMembers), pas seulement ceux de cette équipe : un responsable
-  // n'a pas forcément coché cette équipe pour lui-même.
-  const leadMember = team?.leadName ? (allMembers || members).find((m) => m.name === team.leadName) : null;
-
-  const orderedMembers = useMemo(() => {
-    if (!team?.leadName) return sortedByName(members);
-    const lead = members.filter((m) => m.name === team.leadName);
-    const rest = sortedByName(members.filter((m) => m.name !== team.leadName));
-    return [...lead, ...rest];
-  }, [members, team]);
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      const box = boxRef.current?.getBoundingClientRect();
-      const head = headRef.current?.getBoundingClientRect();
-      if (!box || !head) { setLines([]); return; }
-      // Tronc-et-branches (#167, retour de test : « les traits partent et ne
-      // se finissent pas ») : l'ancien tracé reliait l'en-tête à chaque carte
-      // par un coude à mi-hauteur COMMUN à toutes les cartes — dès que les
-      // cartes passaient à la ligne suivante (largeur de widget imprévisible),
-      // ce coude traversait les cartes de la ligne précédente et s'y faisait
-      // recouvrir (elles sont en z-index:1, le SVG non), donnant l'impression
-      // d'un trait qui démarre puis s'interrompt avant sa carte. Le tracé
-      // ci-dessous ne passe JAMAIS par une carte : un tronc vertical fixe dans
-      // la marge gauche réservée (jamais occupée par une carte, quelle que
-      // soit la ligne — voir .lp-orgchart-members), et pour chaque carte une
-      // branche tracée uniquement dans l'interligne (le vide entre deux
-      // lignes de la grille) puis dans le vide au-dessus de la carte visée.
-      const SPINE_X = 8; // milieu de la marge gauche réservée
-      const headBottomY = head.bottom - box.top;
-      const headCenterX = head.left + head.width / 2 - box.left;
-      const cards = orderedMembers.map((m) => {
-        const key = m.id || m.name;
-        const el = cardRefs.current[key];
-        const r = el?.getBoundingClientRect();
-        return r ? { key, x: r.left + r.width / 2 - box.left, top: r.top - box.top } : null;
-      }).filter(Boolean);
-      if (!cards.length) { setLines([]); return; }
-      const rows = [];
-      cards.forEach((c) => {
-        let row = rows.find((rw) => Math.abs(rw.top - c.top) < 4);
-        if (!row) { row = { top: c.top, cards: [] }; rows.push(row); }
-        row.cards.push(c);
-      });
-      rows.sort((a, b) => a.top - b.top);
-      const lastBusY = rows[rows.length - 1].top - 8;
-      const next = [{ key: "__trunk", d: `M ${headCenterX} ${headBottomY} H ${SPINE_X} V ${lastBusY}` }];
-      rows.forEach((row) => {
-        const busY = row.top - 8;
-        row.cards.forEach((c) => next.push({ key: c.key, d: `M ${SPINE_X} ${busY} H ${c.x} V ${c.top}` }));
-      });
-      setLines(next);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return undefined;
-    const ro = new ResizeObserver(measure);
-    if (boxRef.current) ro.observe(boxRef.current);
-    return () => ro.disconnect();
-  }, [orderedMembers]);
-
-  return (
-    <div className="lp-orgchart-team-tree" ref={boxRef}>
-      <svg className="lp-orgchart-lines" aria-hidden="true">
-        {lines.map((l) => <path key={l.key} d={l.d} />)}
-      </svg>
-      {/* Le nom de l'équipe reste la ligne principale (retour de test) — le
-          responsable, quand il y en a un, prend une SECONDE ligne dédiée en
-          dessous, jamais compressé sur la même ligne que le nom (c'est ce qui
-          tronquait les deux). */}
-      <div className={"lp-orgchart-team-head" + (leadMember ? " is-lead" : "")} ref={headRef}>
-        <div className="lp-orgchart-team-head-row">
-          <span className="lp-orgchart-team-bar" style={{ background: team ? team.color : "var(--border-strong)" }} />
-          <span className="lp-orgchart-team-name">{team ? team.name : "Sans équipe"}</span>
-          <span className="lp-orgchart-team-count">{members.length}</span>
-        </div>
-        {leadMember ? (
-          <div className="lp-orgchart-team-lead">
-            <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />
-            <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: leadMember.color || staffingMemberColor(leadMember.name) }}>
-              {leadMember.avatarDataUrl ? <IconGlyph icon={leadMember.avatarDataUrl} size={11} /> : memberInitials(leadMember.name)}
-            </span>
-            <span className="lp-orgchart-team-lead-name">{leadMember.name}</span>
-          </div>
-        ) : (
-          team?.leadName && <div className="lp-orgchart-team-lead">Responsable : {team.leadName}</div>
-        )}
-      </div>
-      <div className="lp-orgchart-members">
-        {orderedMembers.map((m) => {
-          const stats = statsFor(m);
-          const isLead = !!team?.leadName && team.leadName === m.name;
-          return (
-            <button
-              type="button"
-              className={"lp-orgchart-card" + (isLead ? " is-lead" : "")}
-              key={m.id || m.name}
-              ref={(el) => { if (el) cardRefs.current[m.id || m.name] = el; else delete cardRefs.current[m.id || m.name]; }}
-              onClick={() => onFilterPerson && onFilterPerson(m.name)}
-              title={(isLead ? "Responsable — " : "") + "Filtrer la page sur " + m.name}
-            >
-              {/* Responsable qui est AUSSI membre de l'équipe (retour de test) :
-                  simple étoile de repère, sans le cadre doré désormais porté
-                  par l'en-tête — la carte reste une carte de contributeur. */}
-              {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
-              <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
-                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : memberInitials(m.name)}
-              </span>
-              <span className="lp-orgchart-name">{m.name}</span>
-              {team && memberRoleInTeam(m, team.id) && <span className="lp-orgchart-role">{memberRoleInTeam(m, team.id)}</span>}
-              <span className="lp-orgchart-stats">
-                <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
-                {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
-                {stats.todayShop && <span className="lp-orgchart-stat" style={{ color: stats.todayShop.color }}>{stats.todayShop.name}</span>}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Organigramme — mode « SVG hiérarchique classique » (#167, retour de test) :
-// alternative à la vue « par groupe » ci-dessus — un seul arbre connecté
+// Organigramme — SVG hiérarchique classique (#167 ; #219 : seul mode de rendu
+// restant, la vue « par groupe » a été retirée) : un seul arbre connecté
 // (racine optionnelle → équipes imbriquées → personnes, chacune sous son
-// équipe ou son responsable direct — voir buildOrgHierarchyTree) plutôt que
-// des sections indépendantes. Layout purement arithmétique (boîtes de taille
+// équipe ou son responsable direct — voir buildOrgHierarchyTree). Layout purement arithmétique (boîtes de taille
 // FIXE, jamais de mesure DOM) : les lignes ne peuvent jamais se faire
 // recouvrir par une carte, à n'importe quelle profondeur — algorithme
 // classique de disposition d'arbre (étendue d'un sous-arbre = max entre sa
@@ -9225,8 +9077,26 @@ function orgHierPersonCount(node) {
   return node.children.reduce((sum, c) => sum + (c.type === "person" ? 1 : orgHierPersonCount(c)), 0);
 }
 
+// Ajustement automatique à la largeur du widget (#219) : en dessous de cette
+// échelle, le contenu deviendrait illisible — on s'y arrête et on laisse le
+// défilement horizontal prendre le relais plutôt que de continuer à réduire.
+const ORGHIER_MIN_FIT_SCALE = 0.42;
 function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned }) {
   const horizontal = orientation === "horizontal";
+  // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
+  // lui-même (qui change justement de taille avec l'échelle) — un
+  // ResizeObserver sur le wrap suffit, pas besoin de réagir à la taille du
+  // canevas mis à l'échelle.
+  const wrapRef = useRef(null);
+  const [wrapWidth, setWrapWidth] = useState(0);
+  useLayoutEffect(() => {
+    const measure = () => setWrapWidth(wrapRef.current?.clientWidth || 0);
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(measure);
+    if (wrapRef.current) ro.observe(wrapRef.current);
+    return () => ro.disconnect();
+  }, []);
   const allRoots = useMemo(() => buildOrgHierarchyTree(teams, members), [teams, members]);
   // « Sans équipe » est toujours la seule racine dont team est null (voir
   // buildOrgHierarchyTree) — c'est ce qui permet de la retirer ici sans
@@ -9315,6 +9185,13 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
 
   const canvasW = horizontal ? layout.totalMain : layout.totalCross;
   const canvasH = horizontal ? layout.totalCross : layout.totalMain;
+  // Échelle qui fait tenir le rendu dans la largeur du widget (#219) : jamais
+  // > 1 (on n'agrandit pas un petit organigramme), plafonnée en bas à
+  // ORGHIER_MIN_FIT_SCALE — passé ce point le défilement horizontal prend le
+  // relais plutôt que de continuer à réduire un contenu devenu illisible.
+  const fitScale = wrapWidth > 0 && canvasW > 0
+    ? Math.max(ORGHIER_MIN_FIT_SCALE, Math.min(1, wrapWidth / canvasW))
+    : 1;
 
   const teamNodes = [];
   const personNodes = [];
@@ -9325,12 +9202,43 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   };
   displayRoots.forEach(collectNodes);
 
+  // Rattachements transverses (#219) : lien de liaison horizontal entre deux
+  // équipes, sans relation parent/enfant — dessiné à part des traits de
+  // hiérarchie ci-dessus, entre les centres des deux panneaux quand les DEUX
+  // sont visibles dans cet arbre (une équipe masquée ou hors du dossier
+  // filtré n'a simplement pas de lien tracé).
+  const teamNodeByTeamId = useMemo(() => {
+    const m = new Map();
+    teamNodes.forEach((n) => { if (n.team) m.set(n.team.id, n); });
+    return m;
+  }, [teamNodes]);
+  const transverseLines = useMemo(() => {
+    const out = [];
+    transverseTeamLinks(teams).forEach((link) => {
+      const nodeA = teamNodeByTeamId.get(link.fromId);
+      const nodeB = teamNodeByTeamId.get(link.toId);
+      if (!nodeA || !nodeB || !layout.positions.has(nodeA) || !layout.positions.has(nodeB)) return;
+      const rA = boxRect(nodeA);
+      const rB = boxRect(nodeB);
+      const ax = rA.left + rA.w / 2, ay = rA.top + rA.h / 2;
+      const bx = rB.left + rB.w / 2, by = rB.top + rB.h / 2;
+      out.push({ key: `transverse:${link.fromId}:${link.toId}`, d: `M ${ax} ${ay} L ${bx} ${by}` });
+    });
+    return out;
+  }, [teams, teamNodeByTeamId, layout]);
+
   return (
-    <div className="lp-orghier-wrap">
-      <div className="lp-orghier" style={{ width: canvasW, height: canvasH }}>
-        <svg className="lp-orghier-lines" aria-hidden="true">
-          {lines.map((l) => <path key={l.key} d={l.d} />)}
-        </svg>
+    <div className="lp-orghier-wrap" ref={wrapRef}>
+      {/* #219 : le calque extérieur réserve l'espace RÉELLEMENT occupé une
+          fois réduit (canvas * fitScale) — sans lui, le wrap continuerait de
+          scroller sur la taille naturelle du contenu, invisible sous la
+          transformation CSS qui ne change que l'apparence, pas la boîte. */}
+      <div style={{ width: canvasW * fitScale, height: canvasH * fitScale }}>
+        <div className="lp-orghier" style={{ width: canvasW, height: canvasH, transform: `scale(${fitScale})`, transformOrigin: "top left" }}>
+          <svg className="lp-orghier-lines" aria-hidden="true">
+            {lines.map((l) => <path key={l.key} d={l.d} />)}
+            {transverseLines.map((l) => <path key={l.key} className="lp-orghier-line-transverse" d={l.d} />)}
+          </svg>
         {teamNodes.map((node) => {
           const r = boxRect(node);
           const isRoot = node.type === "root";
@@ -9423,6 +9331,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
             </button>
           );
         })}
+        </div>
       </div>
     </div>
   );
@@ -9449,7 +9358,6 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     if (hiddenTeamIds && hiddenTeamIds.length) list = list.filter((t) => !hiddenTeamIds.includes(String(t?.id)));
     return list;
   }, [ctx.teams, hiddenTeamIds, folderId]);
-  const teamsCatalogue = useMemo(() => normalizeTeams(rawVisibleTeams), [rawVisibleTeams]);
   const members = ctx.teamMembers || [];
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
 
@@ -9457,22 +9365,6 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
   // par défaut — widgets déjà en place, sans ce champ, gardent leur affichage
   // actuel.
   const showUnassigned = widget?.orgChartShowUnassigned !== false;
-
-  // Une personne peut être dans plusieurs équipes : elle entre dans CHACUNE des
-  // sections correspondantes, et dans « Sans équipe » seulement si aucun de ses
-  // identifiants ne résout plus (équipe supprimée depuis, ou masquée).
-  const groups = useMemo(() => {
-    const byTeam = new Map(teamsCatalogue.map((t) => [t.id, { team: t, members: [] }]));
-    const unassigned = [];
-    members.forEach((m) => {
-      const ids = memberTeamIds(m).filter((id) => byTeam.has(id));
-      if (!ids.length) { unassigned.push(m); return; }
-      ids.forEach((id) => byTeam.get(id).members.push(m));
-    });
-    const out = teamsCatalogue.map((t) => byTeam.get(t.id)).filter((g) => g.members.length);
-    if (unassigned.length && showUnassigned) out.push({ team: null, members: unassigned });
-    return out;
-  }, [teamsCatalogue, members, showUnassigned]);
 
   const statsFor = (member) => {
     const name = member.name;
@@ -9484,13 +9376,11 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     return { activeCount: active.length, lateCount: late.length, todayShop: todayShops[0] || null };
   };
 
-  // Moteur de rendu (#167, retour de test) : « par groupe » (sections
-  // indépendantes, une par équipe) ou « hiérarchique classique » (un seul
-  // arbre connecté racine → équipes → personnes).
+  // Moteur de rendu (#219 : seul mode restant, « par groupe » retiré) :
+  // arbre SVG hiérarchique classique, racine → équipes → personnes.
   const content = !members.length
     ? <div className="lp-empty">Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.</div>
-    : widget?.orgChartMode === "hierarchy"
-    ? (
+    : (
       <OrgHierarchyChart
         teams={rawVisibleTeams}
         members={members}
@@ -9499,20 +9389,6 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
         showUnassigned={showUnassigned}
       />
-    )
-    : (
-      <div className="lp-orgchart">
-        {groups.map((g) => (
-          <OrgTeamTree
-            key={g.team ? g.team.id : "__none"}
-            team={g.team}
-            members={g.members}
-            allMembers={members}
-            statsFor={statsFor}
-            onFilterPerson={onFilterPerson}
-          />
-        ))}
-      </div>
     );
 
   return (
@@ -14214,16 +14090,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [echeancesOrientation, setEcheancesOrientation] = useState(
     ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale"
   );
-  // #167 (retour de test) : moteur de rendu de l'Organigramme — « par groupe »
-  // (sections indépendantes) ou « hiérarchique classique » (un seul arbre).
-  const [orgChartMode, setOrgChartMode] = useState(widget?.orgChartMode === "hierarchy" ? "hierarchy" : "group");
-  // Orientation de l'arbre en mode hiérarchique (#167, retour de test) :
-  // vertical (racine en haut) ou horizontal (racine à gauche, défilement
-  // horizontal si besoin) — sans effet en mode « Par groupe ».
+  // Orientation de l'arbre hiérarchique (#167, retour de test ; #219 : seul
+  // mode de rendu restant) : vertical (racine en haut) ou horizontal (racine
+  // à gauche).
   const [orgChartOrientation, setOrgChartOrientation] = useState(widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical");
   // Réglage widget (retour de test) : affiche ou masque les ressources sans
-  // équipe (« Sans équipe » en mode Par groupe, racine à part en mode
-  // hiérarchique) — visible par défaut, comme avant ce réglage.
+  // équipe (racine « Sans équipe » à part) — visible par défaut, comme avant
+  // ce réglage.
   const [orgChartShowUnassigned, setOrgChartShowUnassigned] = useState(widget?.orgChartShowUnassigned !== false);
   // Équipes affichées (#209, retour de test) : stocké comme une liste
   // d'équipes MASQUÉES (widget.orgChartHiddenTeamIds) — un tableau vide veut
@@ -14457,7 +14330,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; }
+    if (type === "orgchart") { data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -14757,26 +14630,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         )}
         {type === "orgchart" && (
           <div className="lp-field">
-            <label>Rendu</label>
+            {/* #219 : le mode « Par groupe » a été retiré — un seul rendu,
+                l'arbre SVG hiérarchique, ajusté automatiquement à la largeur
+                du widget. */}
+            <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 0, marginBottom: 10 }}>
+              Un seul arbre connecté : équipes imbriquées (réglable dans Réglages › Équipes) et personnes sous leur
+              équipe ou leur responsable direct (réglable dans la fiche de la personne).
+            </p>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--text-900)", display: "block", marginBottom: 4 }}>Orientation</label>
             <div className="lp-density-row">
-              <button type="button" className={"lp-density-btn" + (orgChartMode === "group" ? " active" : "")} onClick={() => setOrgChartMode("group")}>Par groupe</button>
-              <button type="button" className={"lp-density-btn" + (orgChartMode === "hierarchy" ? " active" : "")} onClick={() => setOrgChartMode("hierarchy")}>SVG hiérarchique classique</button>
+              <button type="button" className={"lp-density-btn" + (orgChartOrientation === "vertical" ? " active" : "")} onClick={() => setOrgChartOrientation("vertical")}>Verticale</button>
+              <button type="button" className={"lp-density-btn" + (orgChartOrientation === "horizontal" ? " active" : "")} onClick={() => setOrgChartOrientation("horizontal")}>Horizontale</button>
             </div>
-            {orgChartMode === "group" ? (
-              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Une section par équipe, cartes des membres en grille.</p>
-            ) : (
-              <>
-                <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 10 }}>
-                  Un seul arbre connecté : équipes imbriquées (réglable dans Réglages › Équipes) et personnes sous leur
-                  équipe ou leur responsable direct (réglable dans la fiche de la personne).
-                </p>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "var(--text-900)", display: "block", marginBottom: 4 }}>Orientation</label>
-                <div className="lp-density-row">
-                  <button type="button" className={"lp-density-btn" + (orgChartOrientation === "vertical" ? " active" : "")} onClick={() => setOrgChartOrientation("vertical")}>Verticale</button>
-                  <button type="button" className={"lp-density-btn" + (orgChartOrientation === "horizontal" ? " active" : "")} onClick={() => setOrgChartOrientation("horizontal")}>Horizontale</button>
-                </div>
-              </>
-            )}
             <hr className="lp-divider" style={{ margin: "10px 0" }} />
             <label className="lp-checkbox-line">
               <input type="checkbox" checked={orgChartShowUnassigned} onChange={() => setOrgChartShowUnassigned((v) => !v)} />

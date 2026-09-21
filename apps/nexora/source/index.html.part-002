@@ -3916,6 +3916,12 @@ function normalizeTeams(list) {
       // elles pour l'Organigramme hiérarchique — vide par défaut (équipe de
       // premier niveau, comme avant ce champ).
       parentTeamId: t.parentTeamId ? String(t.parentTeamId) : "",
+      // Type de rattachement (#219) : « hiérarchique » (rendu sous son
+      // parent, trait vertical — comportement d'origine) ou « transverse »
+      // (lien de liaison horizontal, sans relation parent/enfant — voir
+      // buildOrgHierarchyTree et transverseTeamLinks). Sans effet quand
+      // parentTeamId est vide.
+      parentLinkType: t.parentLinkType === "transverse" ? "transverse" : "hierarchique",
       // Dossier d'équipes (#215) : simple rattachement, comme project.folderId —
       // vide par défaut (équipe non classée), jamais devinée.
       folderId: t.folderId ? String(t.folderId) : "",
@@ -4045,7 +4051,10 @@ function buildOrgHierarchyTree(teams, members) {
   const roots = [];
   catalogue.forEach((t) => {
     const node = teamNodes.get(t.id);
-    if (t.parentTeamId && teamNodes.has(t.parentTeamId)) teamNodes.get(t.parentTeamId).children.push(node);
+    // Rattachement transverse (#219) : pas d'imbrication parent/enfant dans
+    // l'arbre — l'équipe reste au premier niveau, le lien se dessine à part
+    // (voir transverseTeamLinks et son rendu dans OrgHierarchyChart).
+    if (t.parentTeamId && t.parentLinkType !== "transverse" && teamNodes.has(t.parentTeamId)) teamNodes.get(t.parentTeamId).children.push(node);
     else roots.push(node);
   });
 
@@ -4080,6 +4089,19 @@ function buildOrgHierarchyTree(teams, members) {
   });
   if (unassigned.children.length) roots.push(unassigned);
   return roots;
+}
+// Rattachements transverses entre équipes (#219) : paires { fromId, toId }
+// pour chaque équipe dont parentTeamId pointe vers une équipe existante avec
+// parentLinkType "transverse" — un lien de liaison horizontal, sans relation
+// hiérarchique. Fonction pure, séparée de buildOrgHierarchyTree : elle ne
+// change rien au positionnement de l'arbre, seulement ce que le rendu doit
+// tracer en plus.
+function transverseTeamLinks(teams) {
+  const catalogue = normalizeTeams(teams);
+  const byId = new Map(catalogue.map((t) => [t.id, t]));
+  return catalogue
+    .filter((t) => t.parentTeamId && t.parentLinkType === "transverse" && byId.has(t.parentTeamId))
+    .map((t) => ({ fromId: t.id, toId: t.parentTeamId }));
 }
 // L'équipe d'une tâche, pour le regroupement Gantt/Bulles/Heat map, est celle
 // de son RESPONSABLE — aucun champ propre sur la tâche. Une personne dans
@@ -12361,6 +12383,9 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
   const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
   const [leadName, setLeadName] = useState("");
   const [parentTeamId, setParentTeamId] = useState("");
+  // Type de rattachement (#219) : hiérarchique (par défaut, comportement
+  // d'origine) ou transverse — sans effet tant que parentTeamId est vide.
+  const [parentLinkType, setParentLinkType] = useState("hierarchique");
   const [folderId, setFolderId] = useState("");
   // Dossiers d'équipes (#215) : même pattern que « Dossiers de projets »
   // (SimpleFolderManager), ouvert depuis un bouton local plutôt que depuis
@@ -12373,6 +12398,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
     setColor(STAFFING_COLOR_CHOICES[0]);
     setLeadName("");
     setParentTeamId("");
+    setParentLinkType("hierarchique");
     setFolderId("");
   };
   const startEdit = (team) => {
@@ -12381,6 +12407,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
     setColor(team.color);
     setLeadName(team.leadName || "");
     setParentTeamId(team.parentTeamId || "");
+    setParentLinkType(team.parentLinkType === "transverse" ? "transverse" : "hierarchique");
     setFolderId(team.folderId || "");
   };
   // Une équipe ne peut jamais devenir la parente d'une de ses propres
@@ -12391,9 +12418,9 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
   const save = () => {
     if (!name.trim()) return;
     if (editingId) {
-      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId, folderId } : t)));
+      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, folderId } : t)));
     } else {
-      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId, folderId }]);
+      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId, parentLinkType, folderId }]);
     }
     cancelEdit();
   };
@@ -12429,10 +12456,11 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
         const renderTeam = (team) => {
           const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
           const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
+          const parentLabel = parent ? (team.parentLinkType === "transverse" ? " · ↔ " + parent.name : " · sous " + parent.name) : "";
           return (
             <div className="lp-manage-item" key={team.id}>
               <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
-              <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""})</span></span>
+              <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parentLabel})</span></span>
               <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
               <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
             </div>
@@ -12478,12 +12506,26 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeam
         </select>
       </div>
       <div className="lp-field">
-        <label>Équipe parente <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — imbrique cette équipe dans une autre pour l'Organigramme hiérarchique)</span></label>
+        <label>Équipe parente <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette équipe à une autre dans l'Organigramme)</span></label>
         <select value={parentTeamId} onChange={(e) => setParentTeamId(e.target.value)}>
           <option value="">Aucune (équipe de premier niveau)</option>
           {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
       </div>
+      {parentTeamId && (
+        <div className="lp-field">
+          <label>Type de rattachement</label>
+          <div className="lp-density-row">
+            <button type="button" className={"lp-density-btn" + (parentLinkType === "hierarchique" ? " active" : "")} onClick={() => setParentLinkType("hierarchique")}>Hiérarchique</button>
+            <button type="button" className={"lp-density-btn" + (parentLinkType === "transverse" ? " active" : "")} onClick={() => setParentLinkType("transverse")}>Transverse</button>
+          </div>
+          <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
+            {parentLinkType === "transverse"
+              ? "Lien de liaison horizontal, sans relation parent/enfant — les deux équipes restent chacune à leur niveau."
+              : "L'équipe apparaît sous sa parente, reliée par un trait vertical."}
+          </p>
+        </div>
+      )}
       <div className="lp-field">
         <label>
           Dossier d'équipes
