@@ -317,3 +317,128 @@ test("PDF : les mentions légales de la page 2 sont réparties en sections numé
   assert.match(body, /"03"[\s\S]*"Pénalités & indemnités"/);
   assert.match(body, /"04"[\s\S]*"Identification"/);
 });
+
+// ============================================================================
+// CGV auto-renseignées (#devis-v2)
+// ============================================================================
+
+test("CGV : champs cgvText/cgvUpdatedAt dans quoteSettings (part-000), vides par défaut", () => {
+  const settingsBlock = p0.slice(p0.indexOf("const seedQuoteSettings"), p0.indexOf("};", p0.indexOf("const seedQuoteSettings")));
+  assert.match(settingsBlock, /cgvText:\s*""/);
+  assert.match(settingsBlock, /cgvUpdatedAt:\s*""/);
+});
+
+test("CGV : la version affichée se recalcule à la volée (fmtShort), jamais une chaîne pré-formatée stockée en base", () => {
+  assert.match(p3, /function quoteCgvVersionLabel\(settings\)/);
+  const from = p3.indexOf("function quoteCgvVersionLabel");
+  const body = p3.slice(from, p3.indexOf("\n}", from));
+  assert.match(body, /fmtShort\(settings\.cgvUpdatedAt\)/);
+});
+
+test("CGV : cgvUpdatedAt n'est mis à jour QUE si cgvText a réellement changé (QuotesView, part-003)", () => {
+  const from = p3.indexOf("function QuotesView");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /data\.cgvText\s*!==\s*prev\.cgvText/);
+  assert.match(body, /cgvUpdatedAt:\s*data\.cgvText\s*!==\s*prev\.cgvText\s*\?\s*iso\(new Date\(\)\)\s*:\s*prev\.cgvUpdatedAt/);
+});
+
+test("CGV : réglages entreprise — textarea dédié avec aide contextuelle", () => {
+  const from = p3.indexOf("function QuoteSettingsModal");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /Conditions générales de vente/);
+  assert.match(body, /<textarea[^>]*value=\{cgvText\}/);
+});
+
+test("PDF : page 3 dédiée aux CGV, uniquement si settings.cgvText n'est pas vide (pas de page vide)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /if\s*\(\(settings\?\.cgvText \|\| ""\)\.trim\(\)\)\s*\{/);
+  assert.match(body, /Conditions générales de vente/);
+  assert.match(body, /doc\.splitTextToSize\(paragraph, contentWidth\)/);
+});
+
+test("PDF : bon pour accord référence la version des CGV quand elles sont renseignées, phrase simple sinon", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /ses conditions et ses CGV \(v\.\$\{acceptCgvVersion\}\)/);
+  assert.match(body, /J'accepte le devis \$\{quote\.number\}\.`/);
+});
+
+// ============================================================================
+// Catalogue de prestations (#devis-v2)
+// ============================================================================
+
+test("catalogue : quoteCatalog présent dans les TROIS registres de persistance (part-001), comme quotes/quoteClients", () => {
+  assert.ok(p1.includes('"nexora:quoteCatalog"'));
+  assert.ok(p1.includes('"nexora:quoteSkills"'));
+
+  const mergeableBlock = p1.slice(p1.indexOf("const NEXORA_MERGEABLE_KEYS"), p1.indexOf("]);", p1.indexOf("const NEXORA_MERGEABLE_KEYS")));
+  assert.match(mergeableBlock, /nexora:quoteCatalog/);
+  assert.match(mergeableBlock, /nexora:quoteSkills/);
+
+  const entriesBlock = p1.slice(p1.indexOf("const firebaseStateEntries"), p1.indexOf("];", p1.indexOf("const firebaseStateEntries")));
+  assert.match(entriesBlock, /setQuoteCatalog/);
+  assert.match(entriesBlock, /setQuoteSkills/);
+
+  const backupBlock = p1.slice(p1.indexOf("const fullBackupLivePayload"), p1.indexOf("});", p1.indexOf("const fullBackupLivePayload")));
+  assert.match(backupBlock, /"nexora:quoteCatalog":\s*quoteCatalog/);
+  assert.match(backupBlock, /"nexora:quoteSkills":\s*quoteSkills/);
+});
+
+test("catalogue : seedé avec du contenu réel (Quentin), librement éditable ensuite (saveCatalogEntry/deleteCatalogEntry)", () => {
+  assert.match(p0, /const seedQuoteCatalog = \[/);
+  assert.match(p0, /label:\s*"Assistance technique IA"/);
+  assert.match(p1, /const saveCatalogEntry = /);
+  assert.match(p1, /const deleteCatalogEntry = /);
+});
+
+test("catalogue : bouton « Insérer depuis le catalogue » dans QuoteFormModal, insertion = copie one-shot (pas de référence permanente)", () => {
+  const from = p3.indexOf("function QuoteFormModal");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /Insérer depuis le catalogue/);
+  assert.match(body, /const insertFromCatalog = /);
+  // Copie one-shot : un nouvel id de ligne généré, jamais l'id de l'entrée catalogue.
+  assert.match(body, /id:\s*uid\(\)/);
+});
+
+// ============================================================================
+// Chips de compétences/logiciels (#devis-v2)
+// ============================================================================
+
+test("chips : quoteSkills seedé avec une couleur hex par entrée, palette réutilisant les couleurs de statut existantes", () => {
+  assert.match(p0, /const QUOTE_SKILL_COLORS = \[/);
+  assert.match(p0, /const seedQuoteSkills = \[/);
+  assert.match(p0, /label:\s*"Claude",\s*color:\s*"#[0-9A-Fa-f]{6}"/);
+});
+
+test("chips : deleteSkill retire aussi l'id de skillIds sur les lignes de devis ET les entrées de catalogue (pas de référence orpheline)", () => {
+  const from = p1.indexOf("const deleteSkill = ");
+  assert.ok(from !== -1);
+  const body = p1.slice(from, p1.indexOf("\n  };", from));
+  assert.match(body, /setQuoteSkills/);
+  assert.match(body, /setQuoteCatalog/);
+  assert.match(body, /setQuotes/);
+  assert.match(body, /skillIds\.filter/);
+});
+
+test("chips : sélecteur multi-choix custom sur chaque ligne de devis (composant maison, pas de librairie externe)", () => {
+  assert.match(p3, /function QuoteChipPicker\(/);
+  const from = p3.indexOf("function QuoteFormModal");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /<QuoteChipPicker /);
+  assert.match(body, /toggleLineSkill/);
+});
+
+test("chips : badges colorés affichés dans le catalogue (lecture) via le même composant", () => {
+  assert.match(p3, /function QuoteChipBadges\(/);
+  assert.match(p3, /<QuoteChipBadges /);
+});
+
+test("chips : jamais affichés dans le code de génération du PDF (UI seulement, décision actée avec Quentin)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.doesNotMatch(body, /skillIds/);
+  assert.doesNotMatch(body, /QuoteChip/);
+});

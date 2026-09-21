@@ -17018,6 +17018,14 @@ function quoteLegalMentionsText(quote, settings) {
   );
 }
 
+// CGV : la version affichée ("v.JJ/MM/AAAA") se déduit à chaque rendu de
+// settings.cgvUpdatedAt (date de dernière modification RÉELLE du texte) —
+// jamais une chaîne pré-formatée dupliquée en base. "" tant que les CGV
+// n'ont jamais été renseignées.
+function quoteCgvVersionLabel(settings) {
+  return settings?.cgvUpdatedAt ? fmtShort(settings.cgvUpdatedAt) : "";
+}
+
 // Chargement best-effort d'un logo hébergé sur Google Drive : jsPDF a besoin
 // d'un data-URL, jamais d'une URL distante. Un lien Drive privé ou une
 // restriction CORS fait simplement échouer silencieusement ce chargement —
@@ -17053,12 +17061,27 @@ function drawQuoteBand(doc, pageWidth) {
 // l'entreprise à défaut) à gauche, libellé fixe "PROPOSITION COMMERCIALE" à
 // droite, puis une ligne de séparation fine. Retourne le Y juste sous cette
 // ligne, point de départ du contenu propre à la page.
+// Boîte maximale d'affichage du logo — le lockup réel de la charte QM est
+// horizontal (icône + raison sociale, ratio large ~3.5:1), pas carré :
+// object-fit "contain" dans cette boîte pour ne jamais l'écraser/déformer,
+// quel que soit le format uploadé.
+const QUOTE_LOGO_MAX_W = 55; // mm
+const QUOTE_LOGO_MAX_H = 16; // mm
+
 function drawQuoteHeader(doc, { marginX, pageWidth, top, logoDataUrl, settings }) {
   let textX = marginX;
   if (logoDataUrl) {
     try {
-      doc.addImage(logoDataUrl, undefined, marginX, top, 16, 16);
-      textX += 20;
+      // getImageProperties donne les dimensions RÉELLES (px) du fichier —
+      // on en déduit une taille d'affichage qui respecte le ratio naturel
+      // (object-fit: contain), au lieu d'une case carrée fixe qui déformait
+      // tout logo non carré (voir charte graphique QM).
+      const props = doc.getImageProperties(logoDataUrl);
+      const ratio = props.width / props.height;
+      let logoW = QUOTE_LOGO_MAX_W, logoH = QUOTE_LOGO_MAX_W / ratio;
+      if (logoH > QUOTE_LOGO_MAX_H) { logoH = QUOTE_LOGO_MAX_H; logoW = QUOTE_LOGO_MAX_H * ratio; }
+      doc.addImage(logoDataUrl, undefined, marginX, top, logoW, logoH);
+      textX += logoW + 6;
     } catch (e) { /* logo illisible (format non supporté) : repli sur le texte seul */ }
   }
   if (!logoDataUrl) {
@@ -17313,11 +17336,70 @@ async function downloadQuotePdf(quote, client, settings) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
   doc.setTextColor(...QUOTE_PDF_COLORS.textStrong);
-  doc.text(`J'accepte le devis ${quote.number}.`, marginX + 6, acceptBoxY + 17);
+  // Référence la version des CGV quand elles sont renseignées — phrase simple
+  // sinon, comme avant leur ajout.
+  const acceptCgvVersion = quoteCgvVersionLabel(settings);
+  const acceptText = acceptCgvVersion
+    ? `J'accepte le devis ${quote.number}, ses conditions et ses CGV (v.${acceptCgvVersion}).`
+    : `J'accepte le devis ${quote.number}.`;
+  doc.text(acceptText, marginX + 6, acceptBoxY + 17);
   doc.text("Nom et qualité : ________________________", marginX + 6, acceptBoxY + 26);
   doc.text("Lieu et date : ________________________", marginX + 6, acceptBoxY + 33);
   doc.setFont("helvetica", "bold");
   doc.text("Signature du client", pageWidth - marginX - 6, acceptBoxY + 17, { align: "right" });
+
+  // ------------------------------------------------------------------ PAGE 3
+  // CGV — uniquement si renseignées dans les réglages (QuoteSettingsModal) :
+  // pas de page vide inutile si settings.cgvText est resté vide. Répartition
+  // en paragraphes (double saut de ligne dans le texte source), avec repli
+  // sur une ou plusieurs pages supplémentaires si le texte est long — mêmes
+  // bandeau/en-tête/pied que la page 2, redessinés à chaque nouvelle page.
+  if ((settings?.cgvText || "").trim()) {
+    const drawCgvPageHead = () => {
+      drawQuoteBand(doc, pageWidth);
+      let hy = drawQuoteHeader(doc, { marginX, pageWidth, top: marginX, logoDataUrl, settings });
+      drawQuoteEyebrow(doc, `${quote.number} / Conditions générales de vente`, marginX, hy);
+      hy += 12;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(26);
+      doc.setTextColor(...QUOTE_PDF_COLORS.ink);
+      doc.text("Conditions générales de vente", marginX, hy);
+      hy += 6;
+      const cgvVersion = quoteCgvVersionLabel(settings);
+      if (cgvVersion) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(...QUOTE_PDF_COLORS.textMuted);
+        doc.text(`CGV v.${cgvVersion}`, marginX, hy + 5);
+      }
+      return hy + 16;
+    };
+
+    doc.addPage();
+    y = drawCgvPageHead();
+
+    const cgvBottomLimit = pageHeight - 22; // hors zone du pied de page
+    const cgvLineH = 5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...QUOTE_PDF_COLORS.textMuted);
+    const paragraphs = settings.cgvText.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    paragraphs.forEach((paragraph) => {
+      const wrapped = doc.splitTextToSize(paragraph, contentWidth);
+      wrapped.forEach((line) => {
+        if (y > cgvBottomLimit) {
+          doc.addPage();
+          y = drawCgvPageHead();
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(9.5);
+          doc.setTextColor(...QUOTE_PDF_COLORS.textMuted);
+        }
+        doc.text(line, marginX, y);
+        y += cgvLineH;
+      });
+      y += 4; // espace entre paragraphes
+    });
+  }
 
   // ---------------------------------------------------------- Pagination finale
   const totalPages = doc.internal.getNumberOfPages();
@@ -17334,7 +17416,46 @@ function QuoteStatusBadge({ status }) {
   return <span className="lp-quote-badge" style={{ background: meta.color }}>{meta.label}</span>;
 }
 
-function QuotesView({ quotes, clients, settings, setSettings, onSaveQuote, onDuplicateQuote, onDeleteQuote, onSetStatus, onAddClient, onSaveClient, onDeleteClient, toolbarSlot }) {
+// Affichage en lecture d'une liste de chips (skillIds -> badges colorés) —
+// utilisé sous chaque ligne de devis et dans le catalogue. UI seulement,
+// jamais dans le PDF (décision actée avec Quentin, design déjà validé).
+function QuoteChipBadges({ skills, ids }) {
+  const list = (ids || []).map((id) => skills.find((s) => s.id === id)).filter(Boolean);
+  if (!list.length) return null;
+  return (
+    <div className="lp-quote-chip-row">
+      {list.map((s) => <span key={s.id} className="lp-quote-chip" style={{ background: s.color }}>{s.label}</span>)}
+    </div>
+  );
+}
+
+// Sélecteur multi-choix custom (pas de librairie externe) : chaque chip
+// disponible en badge coloré, cliquable pour ajouter/retirer — opacité
+// réduite tant qu'il n'est pas sélectionné (voir .lp-quote-chip-btn, part-001).
+function QuoteChipPicker({ skills, selectedIds, onToggle }) {
+  if (!skills.length) return null;
+  return (
+    <div className="lp-quote-chip-picker">
+      {skills.map((s) => {
+        const active = (selectedIds || []).includes(s.id);
+        return (
+          <button
+            key={s.id}
+            type="button"
+            className={"lp-quote-chip lp-quote-chip-btn" + (active ? " active" : "")}
+            style={{ background: s.color }}
+            onClick={() => onToggle(s.id)}
+            title={active ? `Retirer ${s.label}` : `Ajouter ${s.label}`}
+          >
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function QuotesView({ quotes, clients, settings, setSettings, catalog, skills, onSaveCatalogEntry, onDeleteCatalogEntry, onSaveSkill, onDeleteSkill, onSaveQuote, onDuplicateQuote, onDeleteQuote, onSetStatus, onAddClient, onSaveClient, onDeleteClient, toolbarSlot }) {
   const [formTarget, setFormTarget] = useState(null); // null | "new" | devis à éditer
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -17395,6 +17516,8 @@ function QuotesView({ quotes, clients, settings, setSettings, onSaveQuote, onDup
         <QuoteFormModal
           quote={formTarget === "new" ? null : formTarget}
           clients={clients}
+          catalog={catalog}
+          skills={skills}
           onAddClient={onAddClient}
           onSave={handleSave}
           onClose={() => setFormTarget(null)}
@@ -17403,7 +17526,23 @@ function QuotesView({ quotes, clients, settings, setSettings, onSaveQuote, onDup
       {settingsOpen && (
         <QuoteSettingsModal
           settings={settings}
-          onSave={(data) => { setSettings((prev) => ({ ...prev, ...data })); setSettingsOpen(false); }}
+          catalog={catalog}
+          skills={skills}
+          onSaveCatalogEntry={onSaveCatalogEntry}
+          onDeleteCatalogEntry={onDeleteCatalogEntry}
+          onSaveSkill={onSaveSkill}
+          onDeleteSkill={onDeleteSkill}
+          onSave={(data) => {
+            setSettings((prev) => ({
+              ...prev,
+              ...data,
+              // cgvUpdatedAt ne bouge QUE si le texte des CGV a RÉELLEMENT
+              // changé — jamais à chaque sauvegarde de réglages (logo,
+              // SIRET...), sans quoi la version affichée changerait pour rien.
+              cgvUpdatedAt: data.cgvText !== prev.cgvText ? iso(new Date()) : prev.cgvUpdatedAt,
+            }));
+            setSettingsOpen(false);
+          }}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -17421,14 +17560,14 @@ function QuotesView({ quotes, clients, settings, setSettings, onSaveQuote, onDup
   );
 }
 
-function QuoteFormModal({ quote, clients, onAddClient, onSave, onClose }) {
+function QuoteFormModal({ quote, clients, catalog, skills, onAddClient, onSave, onClose }) {
   const isNew = !quote;
   const [clientId, setClientId] = useState(quote?.clientId || "");
   const [title, setTitle] = useState(quote?.title || "");
   const [issueDate, setIssueDate] = useState(quote?.issueDate || iso(new Date()));
   const [validUntil, setValidUntil] = useState(quote?.validUntil || defaultQuoteValidUntil(quote?.issueDate || iso(new Date())));
   const [lines, setLines] = useState(
-    quote?.lines?.length ? quote.lines.map((l) => ({ ...l })) : [{ id: uid(), kind: "forfait", description: "", amount: 0 }]
+    quote?.lines?.length ? quote.lines.map((l) => ({ ...l })) : [{ id: uid(), kind: "forfait", description: "", amount: 0, skillIds: [] }]
   );
   const [notes, setNotes] = useState(quote?.notes || "");
   const [showNewClient, setShowNewClient] = useState(false);
@@ -17436,6 +17575,10 @@ function QuoteFormModal({ quote, clients, onAddClient, onSave, onClose }) {
   const [newClientAddress, setNewClientAddress] = useState("");
   const [newClientEmail, setNewClientEmail] = useState("");
   const [newClientPhone, setNewClientPhone] = useState("");
+  // Catalogue de prestations : la liste se déplie sous le bouton (même motif
+  // que showNewClient ci-dessus) — sélectionner une entrée en fait une COPIE
+  // one-shot dans une nouvelle ligne, jamais une référence permanente.
+  const [showCatalog, setShowCatalog] = useState(false);
 
   // La validité par défaut (30 jours) ne se recale QUE pour un nouveau devis
   // encore vierge : un devis existant garde toujours la date choisie, jamais
@@ -17451,10 +17594,32 @@ function QuoteFormModal({ quote, clients, onAddClient, onSave, onClose }) {
   const addLine = (kind) => setLines((prev) => [
     ...prev,
     kind === "regie"
-      ? { id: uid(), kind: "regie", description: "", quantity: 1, unit: "hour", unitRate: 0 }
-      : { id: uid(), kind: "forfait", description: "", amount: 0 },
+      ? { id: uid(), kind: "regie", description: "", quantity: 1, unit: "hour", unitRate: 0, skillIds: [] }
+      : { id: uid(), kind: "forfait", description: "", amount: 0, skillIds: [] },
   ]);
   const removeLine = (id) => setLines((prev) => prev.filter((l) => l.id !== id));
+  const toggleLineSkill = (lineId, skillId) => setLines((prev) => prev.map((l) => {
+    if (l.id !== lineId) return l;
+    const ids = l.skillIds || [];
+    return { ...l, skillIds: ids.includes(skillId) ? ids.filter((s) => s !== skillId) : [...ids, skillId] };
+  }));
+
+  // Insertion depuis le catalogue : copie one-shot des valeurs de l'entrée
+  // dans une nouvelle ligne — description = label + description du
+  // catalogue, kind/amount/unit/unitRate/skillIds copiés. Librement
+  // modifiable ensuite comme n'importe quelle ligne, sans lien permanent
+  // avec l'entrée catalogue (modifier le catalogue plus tard ne touche
+  // jamais les devis déjà créés).
+  const insertFromCatalog = (entry) => {
+    const description = [entry.label, entry.description].filter(Boolean).join(" — ");
+    setLines((prev) => [
+      ...prev,
+      entry.kind === "regie"
+        ? { id: uid(), kind: "regie", description, quantity: 1, unit: entry.unit || "hour", unitRate: entry.unitRate || 0, skillIds: [...(entry.skillIds || [])] }
+        : { id: uid(), kind: "forfait", description, amount: entry.amount || 0, skillIds: [...(entry.skillIds || [])] },
+    ]);
+    setShowCatalog(false);
+  };
 
   const createClientInline = () => {
     if (!newClientName.trim()) return;
@@ -17515,37 +17680,59 @@ function QuoteFormModal({ quote, clients, onAddClient, onSave, onClose }) {
       <div className="lp-section-title">Lignes du devis</div>
       <div className="lp-quote-lines">
         {lines.map((l) => (
-          <div className="lp-quote-line-row" key={l.id}>
-            <select
-              value={l.kind}
-              onChange={(e) => updateLine(l.id, e.target.value === "regie"
-                ? { kind: "regie", quantity: l.quantity || 1, unit: l.unit || "hour", unitRate: l.unitRate || 0 }
-                : { kind: "forfait", amount: l.amount || 0 })}
-            >
-              <option value="forfait">Forfait</option>
-              <option value="regie">Régie</option>
-            </select>
-            <input className="lp-quote-line-desc" placeholder="Description" value={l.description} onChange={(e) => updateLine(l.id, { description: e.target.value })} />
-            {l.kind === "regie" ? (
-              <>
-                <input type="number" min="0" step="0.5" style={{ width: 70 }} value={l.quantity} onChange={(e) => updateLine(l.id, { quantity: Number(e.target.value) })} title="Quantité" />
-                <select value={l.unit} onChange={(e) => updateLine(l.id, { unit: e.target.value })}>
-                  {QUOTE_REGIE_UNITS.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
-                </select>
-                <input type="number" min="0" step="1" style={{ width: 90 }} value={l.unitRate} onChange={(e) => updateLine(l.id, { unitRate: Number(e.target.value) })} placeholder="Taux HT" title="Taux unitaire HT" />
-              </>
-            ) : (
-              <input type="number" min="0" step="1" style={{ width: 110 }} value={l.amount} onChange={(e) => updateLine(l.id, { amount: Number(e.target.value) })} placeholder="Montant HT" title="Montant HT" />
-            )}
-            <span className="lp-quote-line-amount">{fmtQuoteAmount(quoteLineAmount(l))}</span>
-            <button type="button" className="lp-icon-btn" onClick={() => removeLine(l.id)} title="Supprimer la ligne"><Trash2 size={13} /></button>
+          <div key={l.id}>
+            <div className="lp-quote-line-row">
+              <select
+                value={l.kind}
+                onChange={(e) => updateLine(l.id, e.target.value === "regie"
+                  ? { kind: "regie", quantity: l.quantity || 1, unit: l.unit || "hour", unitRate: l.unitRate || 0 }
+                  : { kind: "forfait", amount: l.amount || 0 })}
+              >
+                <option value="forfait">Forfait</option>
+                <option value="regie">Régie</option>
+              </select>
+              <input className="lp-quote-line-desc" placeholder="Description" value={l.description} onChange={(e) => updateLine(l.id, { description: e.target.value })} />
+              {l.kind === "regie" ? (
+                <>
+                  <input type="number" min="0" step="0.5" style={{ width: 70 }} value={l.quantity} onChange={(e) => updateLine(l.id, { quantity: Number(e.target.value) })} title="Quantité" />
+                  <select value={l.unit} onChange={(e) => updateLine(l.id, { unit: e.target.value })}>
+                    {QUOTE_REGIE_UNITS.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
+                  </select>
+                  <input type="number" min="0" step="1" style={{ width: 90 }} value={l.unitRate} onChange={(e) => updateLine(l.id, { unitRate: Number(e.target.value) })} placeholder="Taux HT" title="Taux unitaire HT" />
+                </>
+              ) : (
+                <input type="number" min="0" step="1" style={{ width: 110 }} value={l.amount} onChange={(e) => updateLine(l.id, { amount: Number(e.target.value) })} placeholder="Montant HT" title="Montant HT" />
+              )}
+              <span className="lp-quote-line-amount">{fmtQuoteAmount(quoteLineAmount(l))}</span>
+              <button type="button" className="lp-icon-btn" onClick={() => removeLine(l.id)} title="Supprimer la ligne"><Trash2 size={13} /></button>
+            </div>
+            {/* Chips de compétences/logiciels de la ligne — sélecteur toggle
+                ET affichage en lecture confondus (cliquer bascule, la couleur
+                pleine indique la sélection actuelle). UI seulement, jamais
+                dans le PDF. */}
+            <QuoteChipPicker skills={skills || []} selectedIds={l.skillIds} onToggle={(skillId) => toggleLineSkill(l.id, skillId)} />
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button type="button" className="lp-btn" onClick={() => addLine("forfait")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ligne forfait</button>
         <button type="button" className="lp-btn" onClick={() => addLine("regie")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ligne régie</button>
+        <button type="button" className="lp-btn" onClick={() => setShowCatalog((v) => !v)}><BookOpen size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Insérer depuis le catalogue</button>
       </div>
+      {showCatalog && (
+        <div className="lp-quote-catalog-picker">
+          {(catalog || []).length === 0 ? (
+            <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Aucune entrée dans le catalogue — ajoute-en depuis Réglages entreprise › Catalogue.</span>
+          ) : (catalog || []).map((entry) => (
+            <button type="button" key={entry.id} className="lp-quote-catalog-picker-item" onClick={() => insertFromCatalog(entry)}>
+              <span className="lp-quote-catalog-picker-label">{entry.label}</span>
+              <span className="lp-quote-catalog-picker-meta">
+                {entry.kind === "regie" ? `Régie · ${fmtQuoteAmount(entry.unitRate || 0)}` : `Forfait · ${fmtQuoteAmount(entry.amount || 0)}`}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="lp-quote-total">Total HT (TVA non applicable, art. 293 B du CGI — HT = TTC) : <strong>{fmtQuoteAmount(total)}</strong></div>
 
@@ -17554,7 +17741,69 @@ function QuoteFormModal({ quote, clients, onAddClient, onSave, onClose }) {
   );
 }
 
-function QuoteSettingsModal({ settings, onSave, onClose }) {
+// Rogne automatiquement les marges blanches/transparentes d'un logo importé,
+// AVANT stockage du data-URL — la charte graphique QM précise explicitement
+// que "les marges blanches ont été retirées pour le placement" : un fichier
+// brut, encadré de blanc, doit être recadré ici pour correspondre au rendu
+// attendu du PDF (drawQuoteHeader, object-fit "contain" dans une boîte
+// serrée). Détection best-effort par bounding box des pixels non-blancs /
+// non-transparents (tolérance de 8 par canal RGB) — un canvas indisponible,
+// une image déjà cadrée pile sur ses bords, ou toute autre erreur retombent
+// simplement sur l'image telle quelle : jamais bloquant pour l'utilisateur.
+async function cropLogoWhiteMargins(dataUrl) {
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = reject;
+      im.src = dataUrl;
+    });
+    const width = img.naturalWidth, height = img.naturalHeight;
+    if (!width || !height) return dataUrl;
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0);
+    const { data } = ctx.getImageData(0, 0, width, height);
+    const TOLERANCE = 8;
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        const isWhite = data[i + 3] === 0 || (data[i] >= 255 - TOLERANCE && data[i + 1] >= 255 - TOLERANCE && data[i + 2] >= 255 - TOLERANCE);
+        if (!isWhite) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    // Rien détecté (image entièrement blanche/transparente), ou bbox = image
+    // entière (déjà cadrée) : ne pas recadrer, inutile.
+    if (maxX < 0 || (minX === 0 && minY === 0 && maxX === width - 1 && maxY === height - 1)) return dataUrl;
+    const cropW = maxX - minX + 1, cropH = maxY - minY + 1;
+    const out = document.createElement("canvas");
+    out.width = cropW; out.height = cropH;
+    const octx = out.getContext("2d");
+    if (!octx) return dataUrl;
+    octx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    return out.toDataURL("image/png");
+  } catch (e) {
+    return dataUrl; // best-effort : jamais bloquant
+  }
+}
+
+const QUOTE_SETTINGS_TABS = [
+  { key: "company", label: "Entreprise" },
+  { key: "cgv", label: "CGV" },
+  { key: "catalog", label: "Catalogue" },
+  { key: "skills", label: "Compétences" },
+];
+
+function QuoteSettingsModal({ settings, catalog, skills, onSaveCatalogEntry, onDeleteCatalogEntry, onSaveSkill, onDeleteSkill, onSave, onClose }) {
+  const [activeTab, setActiveTab] = useState("company");
   const [companyName, setCompanyName] = useState(settings.companyName || "");
   const [siret, setSiret] = useState(settings.siret || "");
   const [address, setAddress] = useState(settings.address || "");
@@ -17563,6 +17812,10 @@ function QuoteSettingsModal({ settings, onSave, onClose }) {
   const [phone, setPhone] = useState(settings.phone || "");
   const [logoUrl, setLogoUrl] = useState(settings.logoUrl || "");
   const [logoError, setLogoError] = useState("");
+  // CGV — rédigées une fois, insérées automatiquement sur chaque devis (page
+  // 3 du PDF). La version affichée se recalcule à la volée depuis
+  // settings.cgvUpdatedAt (voir quoteCgvVersionLabel) : rien à saisir ici.
+  const [cgvText, setCgvText] = useState(settings.cgvText || "");
   // Limite d'upload direct — même valeur et même message que les pièces
   // jointes de tâche (onFileAttach, part-002) : pas de vrai stockage de
   // fichiers dans cette appli, donc on se limite aux petits logos pour ne
@@ -17580,7 +17833,12 @@ function QuoteSettingsModal({ settings, onSave, onClose }) {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => setLogoUrl(String(reader.result || ""));
+    reader.onload = async () => {
+      // Recadrage automatique des marges blanches avant stockage (voir
+      // cropLogoWhiteMargins ci-dessus) — best-effort, jamais bloquant.
+      const raw = String(reader.result || "");
+      setLogoUrl(await cropLogoWhiteMargins(raw));
+    };
     reader.readAsDataURL(file);
   };
   const removeLogo = () => { setLogoUrl(""); setLogoError(""); };
@@ -17596,13 +17854,14 @@ function QuoteSettingsModal({ settings, onSave, onClose }) {
       setLogoError("Colle une URL Google Drive ou Google Docs valide commençant par https://.");
       return;
     }
-    onSave({ companyName, siret, address, activity, email, phone, logoUrl: trimmedLogo });
+    onSave({ companyName, siret, address, activity, email, phone, logoUrl: trimmedLogo, cgvText });
   };
 
   return (
     <Modal
       title="Réglages entreprise — Devis"
       onClose={onClose}
+      wide
       footer={
         <>
           <button className="lp-btn" onClick={onClose}>Annuler</button>
@@ -17610,51 +17869,218 @@ function QuoteSettingsModal({ settings, onSave, onClose }) {
         </>
       }
     >
-      <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "0 0 4px", lineHeight: 1.45 }}>
-        Ces informations apparaissent sur chaque devis PDF généré. Les valeurs actuelles sont des placeholders, à
-        remplacer par les vraies informations de l'entreprise.
-      </p>
-      <div className="lp-field"><label>Raison sociale</label><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></div>
-      <div className="lp-field"><label>SIRET</label><input value={siret} onChange={(e) => setSiret(e.target.value)} /></div>
-      <div className="lp-field"><label>Adresse</label><input value={address} onChange={(e) => setAddress(e.target.value)} /></div>
-      <div className="lp-field"><label>Activité déclarée</label><input value={activity} onChange={(e) => setActivity(e.target.value)} /></div>
-      <div className="lp-field"><label>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-      <div className="lp-field"><label>Téléphone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
-      <div className="lp-field">
-        <label>Logo</label>
-        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "0 0 6px" }}>
-          Importe directement une image (chemin fiable, recommandé) — le lien Google Drive reste
-          disponible en option, mais peut échouer silencieusement dans le PDF (lien privé, CORS).
-        </p>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <label className="lp-btn" style={{ cursor: "pointer", margin: 0 }}>
-            <Upload size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Importer le logo
-            <input type="file" accept="image/*" onChange={onLogoFile} style={{ display: "none" }} />
-          </label>
-          {logoUrl && <button type="button" className="lp-btn" onClick={removeLogo}>Retirer le logo</button>}
-        </div>
-        {logoError && <p style={{ color: "var(--danger)", fontSize: 11, margin: "6px 0 0" }}>{logoError}</p>}
-        {logoUrl && isLogoDataUrl(logoUrl) && (
-          <div className="lp-quote-logo-preview">
-            <img src={logoUrl} alt="Logo" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+      <div className="lp-task-tabs lp-quote-settings-tabs">
+        {QUOTE_SETTINGS_TABS.map((t) => (
+          <button key={t.key} type="button" className={"lp-task-tab-btn" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+
+      {activeTab === "company" && (
+        <>
+          <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "0 0 4px", lineHeight: 1.45 }}>
+            Ces informations apparaissent sur chaque devis PDF généré. Les valeurs actuelles sont des placeholders, à
+            remplacer par les vraies informations de l'entreprise.
+          </p>
+          <div className="lp-field"><label>Raison sociale</label><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></div>
+          <div className="lp-field"><label>SIRET</label><input value={siret} onChange={(e) => setSiret(e.target.value)} /></div>
+          <div className="lp-field"><label>Adresse</label><input value={address} onChange={(e) => setAddress(e.target.value)} /></div>
+          <div className="lp-field"><label>Activité déclarée</label><input value={activity} onChange={(e) => setActivity(e.target.value)} /></div>
+          <div className="lp-field"><label>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+          <div className="lp-field"><label>Téléphone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+          <div className="lp-field">
+            <label>Logo</label>
+            <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "0 0 6px" }}>
+              Importe directement une image (chemin fiable, recommandé) — le lien Google Drive reste
+              disponible en option, mais peut échouer silencieusement dans le PDF (lien privé, CORS).
+              Les marges blanches sont recadrées automatiquement à l'import.
+            </p>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <label className="lp-btn" style={{ cursor: "pointer", margin: 0 }}>
+                <Upload size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Importer le logo
+                <input type="file" accept="image/*" onChange={onLogoFile} style={{ display: "none" }} />
+              </label>
+              {logoUrl && <button type="button" className="lp-btn" onClick={removeLogo}>Retirer le logo</button>}
+            </div>
+            {logoError && <p style={{ color: "var(--danger)", fontSize: 11, margin: "6px 0 0" }}>{logoError}</p>}
+            {logoUrl && isLogoDataUrl(logoUrl) && (
+              <div className="lp-quote-logo-preview">
+                <img src={logoUrl} alt="Logo" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div className="lp-field">
-        <label>Ou lien Google Drive (option secondaire, moins fiable)</label>
-        <input
-          value={isLogoDataUrl(logoUrl) ? "" : logoUrl}
-          onChange={(e) => { setLogoUrl(e.target.value); setLogoError(""); }}
-          placeholder="https://drive.google.com/..."
-          disabled={isLogoDataUrl(logoUrl)}
-        />
-      </div>
-      {logoUrl && isGoogleDriveUrl(logoUrl) && !isLogoDataUrl(logoUrl) && (
-        <div className="lp-quote-logo-preview">
-          <img src={logoUrl} alt="Logo" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-        </div>
+          <div className="lp-field">
+            <label>Ou lien Google Drive (option secondaire, moins fiable)</label>
+            <input
+              value={isLogoDataUrl(logoUrl) ? "" : logoUrl}
+              onChange={(e) => { setLogoUrl(e.target.value); setLogoError(""); }}
+              placeholder="https://drive.google.com/..."
+              disabled={isLogoDataUrl(logoUrl)}
+            />
+          </div>
+          {logoUrl && isGoogleDriveUrl(logoUrl) && !isLogoDataUrl(logoUrl) && (
+            <div className="lp-quote-logo-preview">
+              <img src={logoUrl} alt="Logo" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === "cgv" && (
+        <>
+          <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "0 0 8px", lineHeight: 1.45 }}>
+            Rédigées une fois, insérées automatiquement sur chaque devis (page 3 du PDF, uniquement si ce champ n'est
+            pas vide). La version affichée ({quoteCgvVersionLabel(settings) ? `actuellement CGV v.${quoteCgvVersionLabel(settings)}` : "aucune pour l'instant"}) se
+            recalcule automatiquement depuis la date de dernière modification — rien à saisir à part le texte.
+          </p>
+          <div className="lp-field">
+            <label>Conditions générales de vente</label>
+            <textarea rows={16} value={cgvText} onChange={(e) => setCgvText(e.target.value)} placeholder="Colle ou rédige ici le texte complet des CGV — les paragraphes (ligne vide) sont conservés sur la page 3 du PDF." />
+          </div>
+        </>
+      )}
+
+      {activeTab === "catalog" && (
+        <QuoteCatalogTab catalog={catalog || []} skills={skills || []} onSaveEntry={onSaveCatalogEntry} onDeleteEntry={onDeleteCatalogEntry} />
+      )}
+
+      {activeTab === "skills" && (
+        <QuoteSkillsTab skills={skills || []} onSaveSkill={onSaveSkill} onDeleteSkill={onDeleteSkill} />
       )}
     </Modal>
+  );
+}
+
+// Onglet Catalogue (QuoteSettingsModal) : liste des entrées existantes
+// (édition/suppression) + formulaire d'ajout, mêmes champs qu'une ligne de
+// devis plus un label court et des skillIds.
+function QuoteCatalogTab({ catalog, skills, onSaveEntry, onDeleteEntry }) {
+  const blank = { id: null, label: "", description: "", kind: "forfait", amount: 0, unit: "hour", unitRate: 0, skillIds: [] };
+  const [editing, setEditing] = useState(null); // null = formulaire fermé, sinon l'entrée en cours d'édition/création
+
+  const startNew = () => setEditing({ ...blank });
+  const startEdit = (entry) => setEditing({ ...blank, ...entry });
+  const cancel = () => setEditing(null);
+  const submit = () => {
+    if (!editing.label.trim()) return;
+    onSaveEntry({ ...editing, id: editing.id || uid(), label: editing.label.trim() });
+    setEditing(null);
+  };
+  const toggleSkill = (skillId) => setEditing((prev) => {
+    const ids = prev.skillIds || [];
+    return { ...prev, skillIds: ids.includes(skillId) ? ids.filter((s) => s !== skillId) : [...ids, skillId] };
+  });
+
+  return (
+    <div>
+      <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "0 0 8px", lineHeight: 1.45 }}>
+        Gabarits de lignes réutilisables — « Insérer depuis le catalogue » (dans un devis) en copie les valeurs dans
+        une nouvelle ligne, librement modifiable ensuite : modifier une entrée ici ne change aucun devis déjà créé.
+      </p>
+      <div className="lp-quotes-list" style={{ marginBottom: 10 }}>
+        {catalog.length === 0 && <div className="lp-empty" style={{ padding: 14 }}>Aucune entrée pour l'instant.</div>}
+        {catalog.map((entry) => (
+          <div className="lp-quote-catalog-row" key={entry.id}>
+            <div className="lp-quote-catalog-main">
+              <span className="lp-quote-catalog-label">{entry.label}</span>
+              {entry.description && <span className="lp-quote-catalog-desc">{entry.description}</span>}
+              <QuoteChipBadges skills={skills} ids={entry.skillIds} />
+            </div>
+            <span className="lp-quote-catalog-meta">{entry.kind === "regie" ? `Régie · ${fmtQuoteAmount(entry.unitRate || 0)}` : `Forfait · ${fmtQuoteAmount(entry.amount || 0)}`}</span>
+            <button type="button" className="lp-icon-btn" title="Éditer" onClick={() => startEdit(entry)}><Pencil size={14} /></button>
+            <button type="button" className="lp-icon-btn" title="Supprimer" onClick={() => onDeleteEntry(entry.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {editing ? (
+        <div className="lp-quote-inline-client">
+          <div className="lp-field"><label>Label</label><input value={editing.label} onChange={(e) => setEditing({ ...editing, label: e.target.value })} placeholder="Ex : Audit & cadrage" /></div>
+          <div className="lp-field"><label>Description</label><input value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} /></div>
+          <div className="lp-quote-line-row">
+            <select value={editing.kind} onChange={(e) => setEditing({ ...editing, kind: e.target.value })}>
+              <option value="forfait">Forfait</option>
+              <option value="regie">Régie</option>
+            </select>
+            {editing.kind === "regie" ? (
+              <>
+                <select value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })}>
+                  {QUOTE_REGIE_UNITS.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
+                </select>
+                <input type="number" min="0" step="1" style={{ width: 100 }} value={editing.unitRate} onChange={(e) => setEditing({ ...editing, unitRate: Number(e.target.value) })} placeholder="Taux HT" />
+              </>
+            ) : (
+              <input type="number" min="0" step="1" style={{ width: 110 }} value={editing.amount} onChange={(e) => setEditing({ ...editing, amount: Number(e.target.value) })} placeholder="Montant HT" />
+            )}
+          </div>
+          <QuoteChipPicker skills={skills} selectedIds={editing.skillIds} onToggle={toggleSkill} />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="lp-btn lp-btn-primary" onClick={submit}>{editing.id ? "Mettre à jour" : "Ajouter au catalogue"}</button>
+            <button type="button" className="lp-btn" onClick={cancel}>Annuler</button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="lp-btn" onClick={startNew}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ajouter une entrée</button>
+      )}
+    </div>
+  );
+}
+
+// Onglet Compétences (QuoteSettingsModal) : ajout/suppression/renommage/
+// changement de couleur d'un chip, aperçu visuel en badge à côté de chaque
+// entrée — palette fixe (QUOTE_SKILL_COLORS, part-000), pas de sélecteur de
+// couleur libre.
+function QuoteSkillsTab({ skills, onSaveSkill, onDeleteSkill }) {
+  const [editingId, setEditingId] = useState(null); // id d'un skill existant en édition, ou "new"
+  const [label, setLabel] = useState("");
+  const [color, setColor] = useState(QUOTE_SKILL_COLORS[0]);
+
+  const startNew = () => { setEditingId("new"); setLabel(""); setColor(QUOTE_SKILL_COLORS[0]); };
+  const startEdit = (skill) => { setEditingId(skill.id); setLabel(skill.label); setColor(skill.color); };
+  const cancel = () => setEditingId(null);
+  const submit = () => {
+    if (!label.trim()) return;
+    onSaveSkill({ id: editingId === "new" ? uid() : editingId, label: label.trim(), color });
+    setEditingId(null);
+  };
+
+  return (
+    <div>
+      <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "0 0 8px", lineHeight: 1.45 }}>
+        Chips affichés sur chaque ligne de devis et dans le catalogue (jamais sur le PDF). Supprimer un chip le
+        retire aussi de toutes les lignes et entrées de catalogue qui le référencent.
+      </p>
+      <div className="lp-quotes-list" style={{ marginBottom: 10 }}>
+        {skills.length === 0 && <div className="lp-empty" style={{ padding: 14 }}>Aucun chip pour l'instant.</div>}
+        {skills.map((s) => (
+          <div className="lp-quote-skill-row" key={s.id}>
+            <span className="lp-quote-chip" style={{ background: s.color }}>{s.label}</span>
+            <span className="lp-quote-skill-name" />
+            <button type="button" className="lp-icon-btn" title="Éditer" onClick={() => startEdit(s)}><Pencil size={14} /></button>
+            <button type="button" className="lp-icon-btn" title="Supprimer" onClick={() => onDeleteSkill(s.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {editingId ? (
+        <div className="lp-quote-inline-client">
+          <div className="lp-field"><label>Nom</label><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Ex : Notion" /></div>
+          <div className="lp-field">
+            <label>Couleur</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {QUOTE_SKILL_COLORS.map((c) => (
+                <button key={c} type="button" className={"lp-quote-color-swatch" + (color === c ? " active" : "")} style={{ background: c }} onClick={() => setColor(c)} title={c} />
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="lp-btn lp-btn-primary" onClick={submit}>{editingId === "new" ? "Ajouter" : "Mettre à jour"}</button>
+            <button type="button" className="lp-btn" onClick={cancel}>Annuler</button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="lp-btn" onClick={startNew}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Ajouter un chip</button>
+      )}
+    </div>
   );
 }
 
