@@ -4096,6 +4096,53 @@ function transverseTeamLinks(teams) {
     .filter((t) => t.parentTeamId && t.parentLinkType === "transverse" && byId.has(t.parentTeamId))
     .map((t) => ({ fromId: t.id, toId: t.parentTeamId }));
 }
+// Réordonnance les racines de premier niveau (#235, retour de capture) : une
+// équipe reliée par un lien TRANSVERSE (voir transverseTeamLinks ci-dessus)
+// arrive de base dans l'ordre brut du catalogue, donc parfois loin de son
+// partenaire de rattachement — un trait de liaison qui traverse tout le
+// canevas. Ici, chaque racine porteuse d'un lien transverse (t.id = fromId)
+// est déplacée juste APRÈS la racine qui contient son partenaire (toId),
+// même quand ce partenaire est imbriqué plus profond (pas forcément
+// lui-même une racine). Tri STABLE : aucun autre déplacement, seul l'ordre
+// des paires liées change — le layout (subtreeCross, place…) reste intact,
+// seule l'entrée qu'il reçoit change d'ordre. Reste volontairement simple :
+// un seul partenaire retenu par équipe transverse (le premier lien trouvé),
+// pas de résolution d'un graphe de chaînes plus complexe.
+function reorderOrgHierarchyRoots(roots, teams) {
+  const list = Array.isArray(roots) ? roots : [];
+  if (list.length < 2) return list;
+  const links = transverseTeamLinks(teams);
+  if (!links.length) return list;
+  const containsTeam = (node, teamId) => {
+    if (!node) return false;
+    if (node.team && node.team.id === teamId) return true;
+    return (node.children || []).some((c) => containsTeam(c, teamId));
+  };
+  const rootIndexOfTeam = (teamId) => list.findIndex((root) => containsTeam(root, teamId));
+  // Une équipe transverse = un seul rapprochement (premier lien trouvé) —
+  // suffisant pour le cas visé (une équipe, un lien).
+  const anchorByFromId = new Map();
+  links.forEach((link) => {
+    if (anchorByFromId.has(link.fromId)) return;
+    const targetIdx = rootIndexOfTeam(link.toId);
+    if (targetIdx !== -1) anchorByFromId.set(link.fromId, targetIdx);
+  });
+  if (!anchorByFromId.size) return list;
+  const decorated = list.map((root, i) => {
+    const linkedAnchor = root.team ? anchorByFromId.get(root.team.id) : undefined;
+    return {
+      root,
+      i,
+      // anchor = position de la racine cible pour une racine transverse,
+      // sa propre position sinon (ne bouge pas) ; isLinked la place juste
+      // APRÈS cette cible (au lieu d'AVANT, qui reste sa propre position).
+      anchor: linkedAnchor !== undefined ? linkedAnchor : i,
+      isLinked: linkedAnchor !== undefined ? 1 : 0,
+    };
+  });
+  decorated.sort((a, b) => a.anchor - b.anchor || a.isLinked - b.isLinked || a.i - b.i);
+  return decorated.map((d) => d.root);
+}
 // L'équipe d'une tâche, pour le regroupement Gantt/Bulles/Heat map, est celle
 // de son RESPONSABLE — aucun champ propre sur la tâche. Une personne dans
 // plusieurs équipes y compte pour la PREMIÈRE : ces regroupements attendent une

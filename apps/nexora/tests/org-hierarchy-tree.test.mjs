@@ -15,7 +15,7 @@ assert.ok(from !== -1 && to > from, "bloc des équipes introuvable dans .build/i
 const {
   normalizeTeams, teamAncestorAndSelfIds, teamDescendantAndSelfIds,
   memberTeamIds, memberManagerName, memberDescendantAndSelfNames, buildOrgHierarchyTree,
-  memberInitials, memberRoleInTeam,
+  memberInitials, memberRoleInTeam, transverseTeamLinks, reorderOrgHierarchyRoots,
 } = vm.runInThisContext(
   `(function () {\n` +
   // STAFFING_COLOR_CHOICES est déclaré juste après ce bloc dans la source
@@ -23,7 +23,7 @@ const {
   // repli déterministe suffit ici, la palette elle-même est testée ailleurs.
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
   `${html.slice(from + START.length, to)}\n` +
-  `;return { normalizeTeams, teamAncestorAndSelfIds, teamDescendantAndSelfIds, memberTeamIds, memberManagerName, memberDescendantAndSelfNames, buildOrgHierarchyTree, memberInitials, memberRoleInTeam };\n})`
+  `;return { normalizeTeams, teamAncestorAndSelfIds, teamDescendantAndSelfIds, memberTeamIds, memberManagerName, memberDescendantAndSelfNames, buildOrgHierarchyTree, memberInitials, memberRoleInTeam, transverseTeamLinks, reorderOrgHierarchyRoots };\n})`
 )();
 
 const team = (id, extra) => ({ id, name: `Équipe ${id}`, ...extra });
@@ -140,6 +140,45 @@ test("buildOrgHierarchyTree : un cycle de responsables (A→B→A) ne boucle jam
   // Les deux retombent sous leur équipe plutôt que de créer un cycle.
   const names = roots[0].children.filter((c) => c.type === "person").map((c) => c.member.name).sort();
   assert.deepEqual(names, ["Alice", "Bob"]);
+});
+
+test("reorderOrgHierarchyRoots : une équipe transverse tout à droite se rapproche de son partenaire (#235)", () => {
+  // a, b : deux équipes ordinaires ; c porte un lien transverse vers a (mais
+  // apparaît en dernier dans le catalogue, donc tout à droite avant tri).
+  const teams = [team("a"), team("b"), team("c", { parentTeamId: "a", parentLinkType: "transverse" })];
+  const roots = buildOrgHierarchyTree(teams, []);
+  assert.deepEqual(roots.map((r) => r.team.id), ["a", "b", "c"]);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["a", "c", "b"]);
+});
+
+test("reorderOrgHierarchyRoots : le partenaire peut être imbriqué (pas lui-même une racine)", () => {
+  // b est imbriquée sous a (parentTeamId classique) ; d porte un lien
+  // transverse vers b — sa racine de rattachement est donc a, pas b.
+  const teams = [
+    team("a"), team("b", { parentTeamId: "a" }), team("c"),
+    team("d", { parentTeamId: "b", parentLinkType: "transverse" }),
+  ];
+  const roots = buildOrgHierarchyTree(teams, []);
+  assert.deepEqual(roots.map((r) => r.team.id), ["a", "c", "d"]);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["a", "d", "c"]);
+});
+
+test("reorderOrgHierarchyRoots : aucun lien transverse → ordre inchangé", () => {
+  const teams = [team("a"), team("b"), team("c")];
+  const roots = buildOrgHierarchyTree(teams, []);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["a", "b", "c"]);
+});
+
+test("reorderOrgHierarchyRoots : ne modifie pas le tableau reçu (nouvelle liste)", () => {
+  const teams = [team("a"), team("b", { parentTeamId: "a", parentLinkType: "transverse" })];
+  const roots = buildOrgHierarchyTree(teams, []);
+  const before = roots.slice();
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(roots, before);
+  assert.notEqual(reordered, roots);
 });
 
 test("memberInitials", () => {
