@@ -218,11 +218,61 @@ test("PDF : mentions légales obligatoires toutes présentes dans le code de gé
   assert.match(p3, /SIRET/);
 });
 
+test("PDF : pénalités de retard — formulation BCE + 10 points (guide « Charte et Mentions »), plus l'ancienne formulation", () => {
+  assert.match(p3, /au taux de refinancement de la BCE applicable au début du semestre majoré de 10 points/);
+  assert.doesNotMatch(p3, /3 fois le taux d'intérêt légal/);
+});
+
 test("PDF : charte graphique — couleurs de marque figées en RGB (jsPDF ne lit pas les variables CSS)", () => {
   assert.match(p3, /brand:\s*\[0,\s*74,\s*173\]/); // #004AAD
-  assert.match(p3, /ink:\s*\[47,\s*51,\s*54\]/); // #2F3336
+  assert.match(p3, /ink:\s*\[47,\s*52,\s*55\]/); // #2F3437
   assert.match(p3, /border:\s*\[219,\s*223,\s*219\]/); // #DBDFDB
+  assert.match(p3, /surfaceMuted:\s*\[241,\s*245,\s*250\]/); // #F1F5FA
   assert.match(p3, /roundedRect/); // coins arrondis
+});
+
+test("PDF : format A4 en millimètres, marges de 15mm (guide de personnalisation)", () => {
+  assert.match(p3, /new jsPDF\(\{\s*unit:\s*"mm",\s*format:\s*"a4"\s*\}\)/);
+  const from = p3.indexOf("async function downloadQuotePdf");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /const marginX = 15;/);
+});
+
+test("PDF : bandeau bleu plein en haut de page + libellé fixe « PROPOSITION COMMERCIALE »", () => {
+  assert.match(p3, /function drawQuoteBand/);
+  assert.match(p3, /PROPOSITION COMMERCIALE/);
+});
+
+test("PDF : titre « Devis » en 38pt, structure en 2 pages (Devis + Conditions)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /doc\.setFontSize\(38\)/);
+  assert.match(body, /doc\.text\("Devis", marginX, titleBaseline\)/);
+  assert.match(body, /doc\.addPage\(\)/);
+  assert.match(body, /Conditions & mentions légales/);
+});
+
+test("PDF : pas de ligne TVA — seul un bandeau « TOTAL HT (= TTC) »", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /TOTAL HT \(= TTC\)/);
+  assert.doesNotMatch(body, /TVA\s*20\s*%/);
+});
+
+test("PDF : pagination finale calculée après génération complète (doc.internal.getNumberOfPages)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /doc\.internal\.getNumberOfPages\(\)/);
+  assert.match(body, /doc\.setPage\(p\)/);
+});
+
+test("PDF : bloc « Bon pour accord » visuel en bas de page 2, sans nouveau champ de données", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /05 \/ Bon pour accord/i);
+  assert.match(body, /J'accepte le devis \$\{quote\.number\}/);
+  assert.match(body, /Signature du client/);
 });
 
 test("réglages entreprise : les placeholders demandés sont bien ceux fournis (à remplacer plus tard par Quentin)", () => {
@@ -258,18 +308,12 @@ test("PDF : le logo utilise directement le data-URL déjà stocké — le fetch 
   assert.match(body, /loadQuoteLogoDataUrl\(rawLogoUrl\)/);
 });
 
-test("PDF : les mentions légales sont ancrées en bas de page (position Y fixe dérivée de pageHeight), pas juste après le tableau", () => {
+test("PDF : les mentions légales de la page 2 sont réparties en sections numérotées (02/03/04), avec repli multi-lignes", () => {
   const from = p3.indexOf("async function downloadQuotePdf");
   assert.ok(from !== -1);
   const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
-  // Un calcul de position ancré sur pageHeight, avant l'écriture du bloc de
-  // mentions légales — pas un simple offset après doc.lastAutoTable.finalY.
-  assert.match(body, /pageHeight\s*-\s*marginBottom\s*-\s*legalBlockHeight/);
-  // La hauteur du bloc tient compte du nombre de lignes repliées avec
-  // splitTextToSize (certaines mentions peuvent tenir sur 2 lignes).
   assert.match(body, /doc\.splitTextToSize\(/);
-  assert.match(body, /legalLinesCount/);
-  // Si le tableau déborde dans la zone basse, nouvelle page + mentions
-  // légales ancrées en bas de CETTE nouvelle page.
-  assert.match(body, /if\s*\(tableFinalY > legalBlockY\)\s*\{\s*doc\.addPage\(\);/);
+  assert.match(body, /"02"[\s\S]*"Validité & règlement"/);
+  assert.match(body, /"03"[\s\S]*"Pénalités & indemnités"/);
+  assert.match(body, /"04"[\s\S]*"Identification"/);
 });
