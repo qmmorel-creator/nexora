@@ -9085,6 +9085,30 @@ function orgHierPersonCount(node) {
 // échelle, le contenu deviendrait illisible — on s'y arrête et on laisse le
 // défilement horizontal prendre le relais plutôt que de continuer à réduire.
 const ORGHIER_MIN_FIT_SCALE = 0.42;
+// Marge du détour transverse (#229) : distance entre le trait dérouté et le
+// bord de la carte la plus proche qu'il contourne.
+const ORGHIER_TRANSVERSE_DETOUR_GAP = 14;
+
+// #229 : test d'intersection segment/rectangle (les 4 côtés du rectangle),
+// pour savoir si le tracé direct entre deux équipes liées transversalement
+// traverse une carte intermédiaire qui n'est ni l'origine ni la destination.
+function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
+  const rx1 = rect.left, ry1 = rect.top, rx2 = rect.left + rect.w, ry2 = rect.top + rect.h;
+  // Rejet rapide par boîte englobante avant le test coûteux côté par côté.
+  if (Math.max(x1, x2) < rx1 || Math.min(x1, x2) > rx2 || Math.max(y1, y2) < ry1 || Math.min(y1, y2) > ry2) return false;
+  const cross2d = (ax, ay, bx, by) => ax * by - ay * bx;
+  const segCross = (ax, ay, bx, by, cx, cy, dx, dy) => {
+    const d1 = cross2d(dx - cx, dy - cy, ax - cx, ay - cy);
+    const d2 = cross2d(dx - cx, dy - cy, bx - cx, by - cy);
+    const d3 = cross2d(bx - ax, by - ay, cx - ax, cy - ay);
+    const d4 = cross2d(bx - ax, by - ay, dx - ax, dy - ay);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  };
+  return segCross(x1, y1, x2, y2, rx1, ry1, rx2, ry1)
+    || segCross(x1, y1, x2, y2, rx2, ry1, rx2, ry2)
+    || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
+    || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
+}
 function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
@@ -9218,6 +9242,9 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   }, [teamNodes]);
   const transverseLines = useMemo(() => {
     const out = [];
+    // #229 : cartes d'équipe qui pourraient bloquer le tracé direct — toutes
+    // sauf la racine « Organisation » (jamais entre deux équipes réelles).
+    const obstacles = teamNodes.filter((n) => n.type !== "root").map((n) => ({ node: n, rect: boxRect(n) }));
     transverseTeamLinks(teams).forEach((link) => {
       const nodeA = teamNodeByTeamId.get(link.fromId);
       const nodeB = teamNodeByTeamId.get(link.toId);
@@ -9226,10 +9253,32 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
       const rB = boxRect(nodeB);
       const ax = rA.left + rA.w / 2, ay = rA.top + rA.h / 2;
       const bx = rB.left + rB.w / 2, by = rB.top + rB.h / 2;
-      out.push({ key: `transverse:${link.fromId}:${link.toId}`, d: `M ${ax} ${ay} L ${bx} ${by}` });
+      // #229 : le tracé direct centre-à-centre peut traverser une carte
+      // intermédiaire (ex. une troisième équipe placée entre les deux
+      // équipes liées) — dans ce cas, détour rectiligne qui contourne la
+      // rangée traversée plutôt qu'un moteur de routage générique. Le
+      // détour se fait le long de l'axe « longitudinal » de l'organigramme
+      // (vertical en orientation par défaut, horizontal en orientation
+      // "horizontal") : c'est cet axe, partagé par les cartes d'une même
+      // rangée/colonne, qui permet de sortir de leur alignement.
+      const blockers = obstacles.filter(({ node, rect }) => node !== nodeA && node !== nodeB && orgHierSegIntersectsRect(ax, ay, bx, by, rect));
+      if (!blockers.length) {
+        out.push({ key: `transverse:${link.fromId}:${link.toId}`, d: `M ${ax} ${ay} L ${bx} ${by}` });
+        return;
+      }
+      const d = horizontal
+        ? (() => {
+            const detourX = Math.min(rA.left, rB.left, ...blockers.map((b) => b.rect.left)) - ORGHIER_TRANSVERSE_DETOUR_GAP;
+            return `M ${ax} ${ay} L ${detourX} ${ay} L ${detourX} ${by} L ${bx} ${by}`;
+          })()
+        : (() => {
+            const detourY = Math.min(rA.top, rB.top, ...blockers.map((b) => b.rect.top)) - ORGHIER_TRANSVERSE_DETOUR_GAP;
+            return `M ${ax} ${ay} L ${ax} ${detourY} L ${bx} ${detourY} L ${bx} ${by}`;
+          })();
+      out.push({ key: `transverse:${link.fromId}:${link.toId}`, d });
     });
     return out;
-  }, [teams, teamNodeByTeamId, layout]);
+  }, [teams, teamNodeByTeamId, layout, teamNodes, horizontal]);
 
   return (
     <div className="lp-orghier-wrap" ref={wrapRef}>
