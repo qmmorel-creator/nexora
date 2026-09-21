@@ -8986,6 +8986,33 @@ const ORGHIER_ROOT_H = 40;
 const ORGHIER_MEMBER_H = 116;
 const ORGHIER_SIBLING_GAP = 18; // entre deux sous-arbres frères (axe transversal)
 const ORGHIER_LEVEL_GAP = 40; // entre un nœud et ses enfants (axe longitudinal)
+// Nom/poste ne sont jamais tronqués (#238) : le texte revient à la ligne
+// plutôt que de finir en ellipse (voir .lp-orgchart-name, .lp-orghier-panel-row-name
+// et .lp-orghier-panel-row-role côté CSS). Le calcul de layout ci-dessous
+// reste un pur calcul géométrique — jamais une mesure DOM après un retour à
+// la ligne, ce qui obligerait à mesurer puis re-positionner tout l'arbre en
+// deux passes. On ESTIME donc le nombre de lignes à partir de la longueur du
+// texte et d'une largeur moyenne de caractère connue pour la carte/ligne
+// concernée (leur largeur est une constante, donc le nombre de caractères
+// par ligne l'est aussi approximativement pour une police donnée),
+// plafonné à un nombre raisonnable de lignes. L'objectif n'est pas un
+// habillage pixel-perfect : juste que le texte ne soit plus jamais tronqué
+// ET que les cartes ne se chevauchent jamais.
+function orgHierEstimateLines(text, charsPerLine, maxLines) {
+  const len = String(text || "").length;
+  if (!len) return 1;
+  return Math.min(Math.max(Math.ceil(len / charsPerLine), 1), maxLines);
+}
+const ORGHIER_ROW_NAME_CHARS_PER_LINE = 20; // ligne de roster, panneau ORGHIER_TEAM_PANEL_W (220px)
+const ORGHIER_ROW_ROLE_CHARS_PER_LINE = 24;
+const ORGHIER_ROW_NAME_EXTRA_LINE_H = 14; // ~ line-height de .lp-orghier-panel-row-name
+const ORGHIER_ROW_ROLE_EXTRA_LINE_H = 12; // ~ line-height de .lp-orghier-panel-row-role
+const ORGHIER_ROW_MAX_LINES = 2;
+const ORGHIER_CARD_NAME_CHARS_PER_LINE = 13; // carte racine, ORGHIER_CARD_W (104px)
+const ORGHIER_CARD_ROLE_CHARS_PER_LINE = 15;
+const ORGHIER_CARD_NAME_EXTRA_LINE_H = 13;
+const ORGHIER_CARD_ROLE_EXTRA_LINE_H = 11;
+const ORGHIER_CARD_MAX_LINES = 2;
 // Panneau d'équipe « fusionné » (retour de test, piste B) : les membres SANS
 // subordonné rejoignent le panneau de leur équipe comme une liste, au lieu
 // d'être des cartes séparées reliées par un trait — seules les sous-équipes
@@ -9062,14 +9089,27 @@ function orgHierMemberRole(personNode) {
 // CSS) appellent cette MÊME fonction, jamais un second calcul.
 function orgHierRowHeight(personNode, isLead) {
   const hasRole = Boolean(orgHierMemberRole(personNode));
-  if (isLead) return hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H;
-  return hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H;
+  const base = isLead
+    ? (hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H)
+    : (hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H);
+  // Lignes SUPPLÉMENTAIRES au-delà de la première (déjà comptée dans base) :
+  // un nom/poste court (l'immense majorité des cas) n'ajoute rien — voir
+  // orgHierEstimateLines et le commentaire au-dessus des constantes ORGHIER_ROW_*.
+  const nameExtraLines = orgHierEstimateLines(personNode.member?.name, ORGHIER_ROW_NAME_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1;
+  const roleExtraLines = hasRole ? orgHierEstimateLines(orgHierMemberRole(personNode), ORGHIER_ROW_ROLE_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1 : 0;
+  return base + nameExtraLines * ORGHIER_ROW_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_ROW_ROLE_EXTRA_LINE_H;
 }
 // La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
 // jamais un second calcul ici : la boîte réservée par le calcul de layout et
 // le contenu réellement rendu doivent toujours voir la même réponse.
 function orgHierNodeSize(node) {
-  if (node.type === "person") return { w: ORGHIER_CARD_W, h: ORGHIER_MEMBER_H };
+  if (node.type === "person") {
+    const role = orgHierMemberRole(node);
+    const nameExtraLines = orgHierEstimateLines(node.member?.name, ORGHIER_CARD_NAME_CHARS_PER_LINE, ORGHIER_CARD_MAX_LINES) - 1;
+    const roleExtraLines = role ? orgHierEstimateLines(role, ORGHIER_CARD_ROLE_CHARS_PER_LINE, ORGHIER_CARD_MAX_LINES) - 1 : 0;
+    const h = ORGHIER_MEMBER_H + nameExtraLines * ORGHIER_CARD_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_CARD_ROLE_EXTRA_LINE_H;
+    return { w: ORGHIER_CARD_W, h };
+  }
   if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
   const { lead, rest } = orgHierEmbeddedRoster(node);
   const rows = (lead ? 1 : 0) + rest.length;
@@ -9330,6 +9370,11 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
                 type="button"
                 key={orgHierNodeKey(child)}
                 className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "") + (role ? " has-role" : "")}
+                // Hauteur explicite = EXACTEMENT celle réservée par le calcul de
+                // layout (orgHierRowHeight, voir #238) : les classes CSS ci-dessus
+                // ne donnent plus qu'une hauteur MINIMALE de repli, jamais la
+                // valeur qui compte quand le nom/poste passe sur plusieurs lignes.
+                style={{ height: orgHierRowHeight(child, isLeadRow) }}
                 onClick={() => onFilterPerson && onFilterPerson(m.name)}
                 onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
                 title={(isLeadRow ? "Responsable — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
