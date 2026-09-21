@@ -2446,6 +2446,7 @@ function defaultLayoutForType(type) {
   if (type === "habitQuick") return { w: 5, h: 8 };
   if (type === "habitHeatmap") return { w: 9, h: 7 };
   if (type === "embedMetro" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
+  if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3249,7 +3250,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -4178,6 +4179,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedRadar" && (
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                {w.type === "teamCatalog" && (
+                  <WidgetTeamCatalog ctx={ctx} setTeams={setTeams} setTeamMembers={setTeamMembers} setTeamFolders={setTeamFolders} setTasks={setTasks} pushToast={pushToast} />
                 )}
                 </>
                 )}
@@ -9499,6 +9503,34 @@ function WidgetUserProfile({ widget, ctx, staffing, onOpen, setTasks, pushToast,
   );
 }
 
+/* Widget « Utilisateurs & Équipes » (#228) : reprend TeamAndUserManagerPanel
+   (Réglages > Équipe — Utilisateurs, Équipes, dossiers d'équipes, ajout
+   rapide de membre) directement dans un tableau de bord, sans dupliquer la
+   logique. Seul le conteneur change : défilement interne, hauteur calée sur
+   la carte du widget (comme les autres widgets "complet", ex. WidgetEmbedMetro),
+   puisque la taille du widget est contrainte/redimensionnable. */
+function WidgetTeamCatalog({ ctx, setTeams, setTeamMembers, setTeamFolders, setTasks, pushToast }) {
+  if (!setTeams || !setTeamFolders || !setTeamMembers) {
+    return <div className="lp-empty">Gestion des utilisateurs et équipes indisponible ici.</div>;
+  }
+  // Pas de conteneur spécifique : .lp-widget-body (WidgetFrame) fournit déjà
+  // le défilement interne et le padding communs à tous les widgets.
+  return (
+    <TeamAndUserManagerPanel
+      teamMembers={ctx.teamMembers}
+      setTeamMembers={setTeamMembers}
+      tasks={ctx.tasks}
+      setTasks={setTasks}
+      teams={ctx.teams}
+      setTeams={setTeams}
+      teamFolders={ctx.teamFolders}
+      setTeamFolders={setTeamFolders}
+      pushToast={pushToast}
+      defaultOpen
+    />
+  );
+}
+
 /* Widget « Charge personnel » (#124). Les personnes en lignes, les jours en
    colonnes, et dans chaque case les ateliers du jour — plusieurs par jour si
    besoin.
@@ -13857,6 +13889,9 @@ const WIDGET_TYPE_META = [
   { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
   { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
   { key: "userProfile", label: "Utilisateur", icon: User, group: "Planning" },
+  // #228 : gérer utilisateurs et équipes (Réglages > Équipe) sans ouvrir les
+  // Réglages — reprend TeamAndUserManagerPanel tel quel (voir WidgetTeamCatalog).
+  { key: "teamCatalog", label: "Utilisateurs & Équipes", icon: Users, group: "Planning" },
   // #160/#176 : fusion de 4 widgets qui répondaient tous à « quand tombent les
   // échéances ? » (Timeline des jalons, Timeline verticale métro, Métro /
   // Échéances, Nuage des échéances) en un seul, avec un choix d'orientation.
@@ -15226,6 +15261,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           Ce widget n'a pas de réglage ici — le Thème (Heatmap) et la date (Quick Habit) se choisissent directement
           dans le widget. Les Thèmes et leurs Habitudes se configurent dans Réglages → Thèmes d'habitudes.
+        </p>
+      )}
+      {type === "teamCatalog" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Ce widget n'a pas de réglage ici — il reprend Réglages → Utilisateurs & Équipes tel quel (utilisateurs,
+          équipes, dossiers d'équipes, ajout rapide de membre avec poste), avec défilement interne.
         </p>
       )}
       {type === "echeances" && echeancesOrientation === "nuage" && (
