@@ -55,6 +55,17 @@ test("normalizeTeams : une chaîne valide (B sous A) est conservée", () => {
   assert.equal(teams.find((t) => t.id === "b").parentTeamId, "a");
 });
 
+test("normalizeTeams : transverseSide (#244) retombe sur 'right' par défaut, accepte 'left'", () => {
+  const [a, b, c] = normalizeTeams([
+    team("a"),
+    team("b", { transverseSide: "left" }),
+    team("c", { transverseSide: "n'importe quoi" }),
+  ]);
+  assert.equal(a.transverseSide, "right");
+  assert.equal(b.transverseSide, "left");
+  assert.equal(c.transverseSide, "right");
+});
+
 test("teamAncestorAndSelfIds / teamDescendantAndSelfIds", () => {
   const teams = [team("a"), team("b", { parentTeamId: "a" }), team("c", { parentTeamId: "b" })];
   assert.deepEqual([...teamAncestorAndSelfIds("c", teams)].sort(), ["a", "b", "c"]);
@@ -170,6 +181,45 @@ test("reorderOrgHierarchyRoots : aucun lien transverse → ordre inchangé", () 
   const roots = buildOrgHierarchyTree(teams, []);
   const reordered = reorderOrgHierarchyRoots(roots, teams);
   assert.deepEqual(reordered.map((r) => r.team.id), ["a", "b", "c"]);
+});
+
+test("reorderOrgHierarchyRoots : transverseSide 'left' place l'équipe AVANT son partenaire (#244)", () => {
+  const teams = [
+    team("a"), team("b"),
+    team("c", { parentTeamId: "a", parentLinkType: "transverse", transverseSide: "left" }),
+  ];
+  const roots = buildOrgHierarchyTree(teams, []);
+  assert.deepEqual(roots.map((r) => r.team.id), ["a", "b", "c"]);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["c", "a", "b"]);
+});
+
+test("reorderOrgHierarchyRoots : transverseSide 'right' (par défaut) place l'équipe APRÈS son partenaire, comme #235", () => {
+  const teams = [
+    team("a"), team("b"),
+    team("c", { parentTeamId: "a", parentLinkType: "transverse", transverseSide: "right" }),
+  ];
+  const roots = buildOrgHierarchyTree(teams, []);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["a", "c", "b"]);
+});
+
+test("reorderOrgHierarchyRoots : sans transverseSide renseigné, comportement identique à #235 (repli 'right')", () => {
+  const teams = [team("a"), team("b"), team("c", { parentTeamId: "a", parentLinkType: "transverse" })];
+  const roots = buildOrgHierarchyTree(teams, []);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["a", "c", "b"]);
+});
+
+test("reorderOrgHierarchyRoots : deux équipes transverses vers le même partenaire, une de chaque côté", () => {
+  const teams = [
+    team("a"), team("b"),
+    team("left", { parentTeamId: "a", parentLinkType: "transverse", transverseSide: "left" }),
+    team("right", { parentTeamId: "a", parentLinkType: "transverse", transverseSide: "right" }),
+  ];
+  const roots = buildOrgHierarchyTree(teams, []);
+  const reordered = reorderOrgHierarchyRoots(roots, teams);
+  assert.deepEqual(reordered.map((r) => r.team.id), ["left", "a", "right", "b"]);
 });
 
 test("reorderOrgHierarchyRoots : ne modifie pas le tableau reçu (nouvelle liste)", () => {
