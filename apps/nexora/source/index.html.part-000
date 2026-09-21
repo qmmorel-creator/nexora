@@ -3546,8 +3546,18 @@ function effectiveQuoteStatus(quote, today = iso(new Date())) {
   return quote.status || "draft";
 }
 
+// Formatage manuel, volontairement PAS via toLocaleString("fr-FR", ...) :
+// celui-ci insère une espace fine insécable (U+202F) comme séparateur de
+// milliers, que la police Helvetica standard embarquée dans jsPDF (police PDF
+// de base, sans sous-ensemble Unicode complet) ne sait pas rendre — elle
+// affiche un caractère de substitution ("1/800,00 €" au lieu de "1 800,00 €").
+// On garantit donc ici une espace ASCII normale (0x20), lisible partout.
 function fmtQuoteAmount(n) {
-  return (Number(n) || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const value = Number(n) || 0;
+  const fixed = value.toFixed(2).replace(".", ",");
+  const [intPart, decPart] = fixed.split(",");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${grouped},${decPart} €`;
 }
 // === NEXORA:QUOTES:END ===
 
@@ -3558,8 +3568,10 @@ const seedQuoteSettings = {
   activity: "Ingénierie / conseil",
   email: "email@a-completer.fr",
   phone: "00 00 00 00 00",
-  // Lien Google Drive du logo — même validation que les pièces jointes
-  // (isGoogleDriveUrl, ci-dessus) : jamais d'upload binaire dans ce projet.
+  // Logo : data-URL uploadé directement (chemin principal et fiable,
+  // FileReader.readAsDataURL comme onFileAttach) OU, en option secondaire,
+  // un lien Google Drive validé comme les pièces jointes (isGoogleDriveUrl,
+  // ci-dessus) — plus fragile pour le PDF (fetch cross-origin, CORS).
   logoUrl: "",
 };
 

@@ -130,9 +130,20 @@ test("QUOTE_REGIE_UNITS : heure, demi-journée, jour — rien de plus, rien de m
 
 // --- Formatage ------------------------------------------------------------
 
-test("fmtQuoteAmount : deux décimales, séparateur français, symbole euro", () => {
-  assert.equal(Q.fmtQuoteAmount(1234.5), "1 234,50 €");
+test("fmtQuoteAmount : deux décimales, séparateur français (espace ASCII normale, jamais insécable), symbole euro", () => {
+  assert.equal(Q.fmtQuoteAmount(1234.5), "1 234,50 €");
   assert.equal(Q.fmtQuoteAmount(0), "0,00 €");
+});
+
+test("fmtQuoteAmount : jamais d'espace insécable Unicode dans le séparateur de milliers (illisible dans le PDF avec Helvetica standard)", () => {
+  const out = Q.fmtQuoteAmount(1800);
+  assert.equal(out, "1 800,00 €");
+  // U+202F (espace fine insécable, sortie par défaut de toLocaleString("fr-FR"))
+  // et U+00A0 (espace insécable) doivent être totalement absentes : seule une
+  // espace ASCII normale (0x20) est autorisée comme séparateur de milliers.
+  assert.ok(!out.includes("\u202F"), "ne doit pas contenir d'espace fine insécable U+202F");
+  assert.ok(!out.includes("\u00A0"), "ne doit pas contenir d'espace insécable U+00A0");
+  assert.equal(out.charCodeAt(1), 0x20, "le séparateur de milliers doit être une espace ASCII normale");
 });
 
 // ============================================================================
@@ -226,4 +237,39 @@ test("réglages entreprise : le lien du logo est validé avec la même règle Go
   assert.ok(from !== -1);
   const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
   assert.match(body, /isGoogleDriveUrl\(trimmedLogo\)/);
+});
+
+test("réglages entreprise : un vrai input file d'upload du logo, lu en data-URL (FileReader.readAsDataURL), comme onFileAttach", () => {
+  const from = p3.indexOf("function QuoteSettingsModal");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /<input type="file" accept="image\/\*"/);
+  assert.match(body, /new FileReader\(\)/);
+  assert.match(body, /reader\.readAsDataURL\(file\)/);
+  // Même limite et même message d'erreur que les pièces jointes de tâche.
+  assert.match(body, /350 \* 1024/);
+});
+
+test("PDF : le logo utilise directement le data-URL déjà stocké — le fetch réseau (loadQuoteLogoDataUrl) n'est qu'un repli pour un lien http(s) classique", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /rawLogoUrl\.startsWith\("data:image\/"\)/);
+  assert.match(body, /loadQuoteLogoDataUrl\(rawLogoUrl\)/);
+});
+
+test("PDF : les mentions légales sont ancrées en bas de page (position Y fixe dérivée de pageHeight), pas juste après le tableau", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  // Un calcul de position ancré sur pageHeight, avant l'écriture du bloc de
+  // mentions légales — pas un simple offset après doc.lastAutoTable.finalY.
+  assert.match(body, /pageHeight\s*-\s*marginBottom\s*-\s*legalBlockHeight/);
+  // La hauteur du bloc tient compte du nombre de lignes repliées avec
+  // splitTextToSize (certaines mentions peuvent tenir sur 2 lignes).
+  assert.match(body, /doc\.splitTextToSize\(/);
+  assert.match(body, /legalLinesCount/);
+  // Si le tableau déborde dans la zone basse, nouvelle page + mentions
+  // légales ancrées en bas de CETTE nouvelle page.
+  assert.match(body, /if\s*\(tableFinalY > legalBlockY\)\s*\{\s*doc\.addPage\(\);/);
 });
