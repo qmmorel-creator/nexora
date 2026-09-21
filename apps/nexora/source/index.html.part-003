@@ -2446,6 +2446,7 @@ function defaultLayoutForType(type) {
   if (type === "habitQuick") return { w: 5, h: 8 };
   if (type === "habitHeatmap") return { w: 9, h: 7 };
   if (type === "embedMetro" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
+  if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3249,7 +3250,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -4098,6 +4099,10 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                     staffing={staffing}
                     onFilterPerson={(name) => activePage && onUpdatePageFilter && onUpdatePageFilter(activePage.id, { ...(activePage.filter || widgetDefaultFilter()), advanced: { op: "and", items: [{ field: "assignee", mode: "is", values: [name] }] } })}
                     onOpenTeamsSettings={onOpenTeamsSettings}
+                    setTeams={setTeams}
+                    setTeamMembers={setTeamMembers}
+                    setTeamFolders={setTeamFolders}
+                    pushToast={pushToast}
                   />
                 )}
                 {w.type === "userProfile" && (
@@ -4178,6 +4183,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedRadar" && (
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                {w.type === "teamCatalog" && (
+                  <WidgetTeamCatalog ctx={ctx} setTeams={setTeams} setTeamMembers={setTeamMembers} setTeamFolders={setTeamFolders} setTasks={setTasks} pushToast={pushToast} />
                 )}
                 </>
                 )}
@@ -9081,7 +9089,31 @@ function orgHierPersonCount(node) {
 // échelle, le contenu deviendrait illisible — on s'y arrête et on laisse le
 // défilement horizontal prendre le relais plutôt que de continuer à réduire.
 const ORGHIER_MIN_FIT_SCALE = 0.42;
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned }) {
+// Marge du détour transverse (#229) : distance entre le trait dérouté et le
+// bord de la carte la plus proche qu'il contourne.
+const ORGHIER_TRANSVERSE_DETOUR_GAP = 14;
+
+// #229 : test d'intersection segment/rectangle (les 4 côtés du rectangle),
+// pour savoir si le tracé direct entre deux équipes liées transversalement
+// traverse une carte intermédiaire qui n'est ni l'origine ni la destination.
+function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
+  const rx1 = rect.left, ry1 = rect.top, rx2 = rect.left + rect.w, ry2 = rect.top + rect.h;
+  // Rejet rapide par boîte englobante avant le test coûteux côté par côté.
+  if (Math.max(x1, x2) < rx1 || Math.min(x1, x2) > rx2 || Math.max(y1, y2) < ry1 || Math.min(y1, y2) > ry2) return false;
+  const cross2d = (ax, ay, bx, by) => ax * by - ay * bx;
+  const segCross = (ax, ay, bx, by, cx, cy, dx, dy) => {
+    const d1 = cross2d(dx - cx, dy - cy, ax - cx, ay - cy);
+    const d2 = cross2d(dx - cx, dy - cy, bx - cx, by - cy);
+    const d3 = cross2d(bx - ax, by - ay, cx - ax, cy - ay);
+    const d4 = cross2d(bx - ax, by - ay, dx - ax, dy - ay);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  };
+  return segCross(x1, y1, x2, y2, rx1, ry1, rx2, ry1)
+    || segCross(x1, y1, x2, y2, rx2, ry1, rx2, ry2)
+    || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
+    || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
+}
+function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
   // lui-même (qui change justement de taille avec l'échelle) — un
@@ -9214,6 +9246,9 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
   }, [teamNodes]);
   const transverseLines = useMemo(() => {
     const out = [];
+    // #229 : cartes d'équipe qui pourraient bloquer le tracé direct — toutes
+    // sauf la racine « Organisation » (jamais entre deux équipes réelles).
+    const obstacles = teamNodes.filter((n) => n.type !== "root").map((n) => ({ node: n, rect: boxRect(n) }));
     transverseTeamLinks(teams).forEach((link) => {
       const nodeA = teamNodeByTeamId.get(link.fromId);
       const nodeB = teamNodeByTeamId.get(link.toId);
@@ -9222,13 +9257,40 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
       const rB = boxRect(nodeB);
       const ax = rA.left + rA.w / 2, ay = rA.top + rA.h / 2;
       const bx = rB.left + rB.w / 2, by = rB.top + rB.h / 2;
-      out.push({ key: `transverse:${link.fromId}:${link.toId}`, d: `M ${ax} ${ay} L ${bx} ${by}` });
+      // #229 : le tracé direct centre-à-centre peut traverser une carte
+      // intermédiaire (ex. une troisième équipe placée entre les deux
+      // équipes liées) — dans ce cas, détour rectiligne qui contourne la
+      // rangée traversée plutôt qu'un moteur de routage générique. Le
+      // détour se fait le long de l'axe « longitudinal » de l'organigramme
+      // (vertical en orientation par défaut, horizontal en orientation
+      // "horizontal") : c'est cet axe, partagé par les cartes d'une même
+      // rangée/colonne, qui permet de sortir de leur alignement.
+      const blockers = obstacles.filter(({ node, rect }) => node !== nodeA && node !== nodeB && orgHierSegIntersectsRect(ax, ay, bx, by, rect));
+      if (!blockers.length) {
+        out.push({ key: `transverse:${link.fromId}:${link.toId}`, d: `M ${ax} ${ay} L ${bx} ${by}` });
+        return;
+      }
+      const d = horizontal
+        ? (() => {
+            const detourX = Math.min(rA.left, rB.left, ...blockers.map((b) => b.rect.left)) - ORGHIER_TRANSVERSE_DETOUR_GAP;
+            return `M ${ax} ${ay} L ${detourX} ${ay} L ${detourX} ${by} L ${bx} ${by}`;
+          })()
+        : (() => {
+            const detourY = Math.min(rA.top, rB.top, ...blockers.map((b) => b.rect.top)) - ORGHIER_TRANSVERSE_DETOUR_GAP;
+            return `M ${ax} ${ay} L ${ax} ${detourY} L ${bx} ${detourY} L ${bx} ${by}`;
+          })();
+      out.push({ key: `transverse:${link.fromId}:${link.toId}`, d });
     });
     return out;
-  }, [teams, teamNodeByTeamId, layout]);
+  }, [teams, teamNodeByTeamId, layout, teamNodes, horizontal]);
 
   return (
-    <div className="lp-orghier-wrap" ref={wrapRef}>
+    // Fix clignotement : la mesure (ResizeObserver) porte sur ce calque
+    // stable, qui ne scrolle jamais — lp-orghier-wrap, lui, scrolle et sa
+    // largeur ne doit donc jamais servir de source de mesure (voir le
+    // commentaire CSS de .lp-orghier-outer).
+    <div className="lp-orghier-outer" ref={wrapRef}>
+    <div className="lp-orghier-wrap">
       {/* #219 : le calque extérieur réserve l'espace RÉELLEMENT occupé une
           fois réduit (canvas * fitScale) — sans lui, le wrap continuerait de
           scroller sur la taille naturelle du contenu, invisible sous la
@@ -9291,7 +9353,15 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
               className={"lp-orghier-node-panel" + (node.team ? "" : " is-unassigned")}
               style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
             >
-              <div className="lp-orghier-panel-banner" style={{ background: node.team ? node.team.color : "var(--text-muted)" }}>
+              <div
+                className="lp-orghier-panel-banner"
+                style={{ background: node.team ? node.team.color : "var(--text-muted)", cursor: node.team && onEditTeam ? "pointer" : undefined }}
+                // Double-clic pour éditer l'équipe (#231) : seulement sur une
+                // vraie équipe (node.team truthy) — « Sans équipe »/« Organisation »
+                // ne sont pas éditables.
+                onDoubleClick={node.team && onEditTeam ? () => onEditTeam(node.team) : undefined}
+                title={node.team && onEditTeam ? "Double-clic pour modifier l'équipe" : undefined}
+              >
                 <span className="lp-orghier-panel-name">{node.team ? node.team.name : "Sans équipe"}</span>
                 <span className="lp-orghier-panel-count">{orgHierPersonCount(node)}</span>
               </div>
@@ -9334,11 +9404,17 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
         </div>
       </div>
     </div>
+    </div>
   );
 }
 
-function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings }) {
+function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, pushToast }) {
   const today = useMemo(() => iso(new Date()), []);
+  // Modale d'édition d'équipe au double-clic sur une carte (#231) — même
+  // TeamFormModal que le crayon de Réglages > Équipe (TeamCatalogManager),
+  // rien de dupliqué. null = fermée.
+  const [editTeamId, setEditTeamId] = useState(null);
+  const editTeam = editTeamId ? (ctx.teams || []).find((t) => t.id === editTeamId) : null;
   // Équipes affichées (#209, retour de test) : widget.orgChartHiddenTeamIds
   // liste celles MASQUÉES — absent/vide = toutes affichées, comme avant ce
   // réglage. Une équipe masquée disparaît du catalogue vu par les deux modes
@@ -9388,6 +9464,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         onFilterPerson={onFilterPerson}
         orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
         showUnassigned={showUnassigned}
+        onEditTeam={setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined}
       />
     );
 
@@ -9401,6 +9478,19 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         </div>
       )}
       <div className="lp-widget-orgchart-body">{content}</div>
+      {editTeam && (
+        <TeamFormModal
+          team={editTeam}
+          teams={ctx.teams}
+          teamMembers={ctx.teamMembers}
+          setTeamMembers={setTeamMembers}
+          teamFolders={ctx.teamFolders}
+          setTeamFolders={setTeamFolders}
+          pushToast={pushToast}
+          onSave={(data) => { setTeams((ctx.teams || []).map((t) => (t.id === editTeamId ? { ...t, ...data } : t))); setEditTeamId(null); }}
+          onClose={() => setEditTeamId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -9496,6 +9586,34 @@ function WidgetUserProfile({ widget, ctx, staffing, onOpen, setTasks, pushToast,
         />
       )}
     </div>
+  );
+}
+
+/* Widget « Utilisateurs & Équipes » (#228) : reprend TeamAndUserManagerPanel
+   (Réglages > Équipe — Utilisateurs, Équipes, dossiers d'équipes, ajout
+   rapide de membre) directement dans un tableau de bord, sans dupliquer la
+   logique. Seul le conteneur change : défilement interne, hauteur calée sur
+   la carte du widget (comme les autres widgets "complet", ex. WidgetEmbedMetro),
+   puisque la taille du widget est contrainte/redimensionnable. */
+function WidgetTeamCatalog({ ctx, setTeams, setTeamMembers, setTeamFolders, setTasks, pushToast }) {
+  if (!setTeams || !setTeamFolders || !setTeamMembers) {
+    return <div className="lp-empty">Gestion des utilisateurs et équipes indisponible ici.</div>;
+  }
+  // Pas de conteneur spécifique : .lp-widget-body (WidgetFrame) fournit déjà
+  // le défilement interne et le padding communs à tous les widgets.
+  return (
+    <TeamAndUserManagerPanel
+      teamMembers={ctx.teamMembers}
+      setTeamMembers={setTeamMembers}
+      tasks={ctx.tasks}
+      setTasks={setTasks}
+      teams={ctx.teams}
+      setTeams={setTeams}
+      teamFolders={ctx.teamFolders}
+      setTeamFolders={setTeamFolders}
+      pushToast={pushToast}
+      defaultOpen
+    />
   );
 }
 
@@ -13857,6 +13975,9 @@ const WIDGET_TYPE_META = [
   { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
   { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
   { key: "userProfile", label: "Utilisateur", icon: User, group: "Planning" },
+  // #228 : gérer utilisateurs et équipes (Réglages > Équipe) sans ouvrir les
+  // Réglages — reprend TeamAndUserManagerPanel tel quel (voir WidgetTeamCatalog).
+  { key: "teamCatalog", label: "Utilisateurs & Équipes", icon: Users, group: "Planning" },
   // #160/#176 : fusion de 4 widgets qui répondaient tous à « quand tombent les
   // échéances ? » (Timeline des jalons, Timeline verticale métro, Métro /
   // Échéances, Nuage des échéances) en un seul, avec un choix d'orientation.
@@ -15226,6 +15347,12 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           Ce widget n'a pas de réglage ici — le Thème (Heatmap) et la date (Quick Habit) se choisissent directement
           dans le widget. Les Thèmes et leurs Habitudes se configurent dans Réglages → Thèmes d'habitudes.
+        </p>
+      )}
+      {type === "teamCatalog" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Ce widget n'a pas de réglage ici — il reprend Réglages → Utilisateurs & Équipes tel quel (utilisateurs,
+          équipes, dossiers d'équipes, ajout rapide de membre avec poste), avec défilement interne.
         </p>
       )}
       {type === "echeances" && echeancesOrientation === "nuage" && (
