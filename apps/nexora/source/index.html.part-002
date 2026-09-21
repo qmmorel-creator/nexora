@@ -2427,7 +2427,7 @@ function SettingsModal({
   milestoneTypes, setMilestoneTypes,
   workshops, setWorkshops, staffing, setStaffing,
   teamMembers, setTeamMembers,
-  teams, setTeams,
+  teams, setTeams, teamFolders, setTeamFolders,
   habitThemes, setHabitThemes, habitLog, setHabitLog,
   gcalSettings, setGcalSettings, gcalList, gcalListLoading, gcalListError, onFetchList, gcalSyncState,
   syncedCalendarSettings, setSyncedCalendarSettings, onSyncSyncedCalendars,
@@ -2521,7 +2521,7 @@ function SettingsModal({
                   <TeamMemberManager embedded hideTitle teamMembers={teamMembers} setTeamMembers={setTeamMembers} tasks={tasks} setTasks={setTasks} teams={teams} pushToast={pushToast} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Équipes">
-                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} pushToast={pushToast} />
+                  <TeamCatalogManager embedded hideTitle teams={teams} setTeams={setTeams} teamMembers={teamMembers} teamFolders={teamFolders} setTeamFolders={setTeamFolders} pushToast={pushToast} />
                 </SettingsFoldSection>
               </>
             )}
@@ -3916,6 +3916,9 @@ function normalizeTeams(list) {
       // elles pour l'Organigramme hiérarchique — vide par défaut (équipe de
       // premier niveau, comme avant ce champ).
       parentTeamId: t.parentTeamId ? String(t.parentTeamId) : "",
+      // Dossier d'équipes (#215) : simple rattachement, comme project.folderId —
+      // vide par défaut (équipe non classée), jamais devinée.
+      folderId: t.folderId ? String(t.folderId) : "",
     }));
   const byId = new Map(base.map((t) => [t.id, t]));
   // Une équipe parente inexistante, ou qui reboucle jusqu'à l'équipe elle-même
@@ -12322,13 +12325,19 @@ function WorkshopManager({ workshops, setWorkshops, staffing, setStaffing, pushT
 // Organigramme. Une liste ordonnée, enregistrée sous `nexora:teams`, sur le
 // modèle exact du gestionnaire d'ateliers ci-dessus.
 // ============================================================================
-function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, embedded, hideTitle }) {
+function TeamCatalogManager({ teams, setTeams, teamMembers, teamFolders, setTeamFolders, pushToast, onClose, embedded, hideTitle }) {
   const catalogue = normalizeTeams(teams);
+  const folders = teamFolders || [];
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(STAFFING_COLOR_CHOICES[0]);
   const [leadName, setLeadName] = useState("");
   const [parentTeamId, setParentTeamId] = useState("");
+  const [folderId, setFolderId] = useState("");
+  // Dossiers d'équipes (#215) : même pattern que « Dossiers de projets »
+  // (SimpleFolderManager), ouvert depuis un bouton local plutôt que depuis
+  // la barre latérale (il n'existe pas d'équivalent équipe côté navigation).
+  const [foldersManagerOpen, setFoldersManagerOpen] = useState(false);
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -12336,6 +12345,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     setColor(STAFFING_COLOR_CHOICES[0]);
     setLeadName("");
     setParentTeamId("");
+    setFolderId("");
   };
   const startEdit = (team) => {
     setEditingId(team.id);
@@ -12343,6 +12353,7 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     setColor(team.color);
     setLeadName(team.leadName || "");
     setParentTeamId(team.parentTeamId || "");
+    setFolderId(team.folderId || "");
   };
   // Une équipe ne peut jamais devenir la parente d'une de ses propres
   // équipes parentes/grand-parentes (#167, retour de test) : exclue de la
@@ -12352,9 +12363,9 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
   const save = () => {
     if (!name.trim()) return;
     if (editingId) {
-      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId } : t)));
+      setTeams(catalogue.map((t) => (t.id === editingId ? { ...t, name: name.trim(), color, leadName: leadName.trim(), parentTeamId, folderId } : t)));
     } else {
-      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId }]);
+      setTeams([...catalogue, { id: uid(), name: name.trim(), color, leadName: leadName.trim(), parentTeamId, folderId }]);
     }
     cancelEdit();
   };
@@ -12383,10 +12394,11 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
       {catalogue.map((team) => {
         const count = (teamMembers || []).filter((m) => memberTeamIds(m).includes(team.id)).length;
         const parent = team.parentTeamId ? catalogue.find((t) => t.id === team.parentTeamId) : null;
+        const folder = team.folderId ? folders.find((f) => f.id === team.folderId) : null;
         return (
           <div className="lp-manage-item" key={team.id}>
             <span className="lp-workshop-swatch" style={{ background: team.color }} aria-hidden="true" />
-            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""})</span></span>
+            <span className="lp-manage-name">{team.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} personne{count > 1 ? "s" : ""}{team.leadName ? " · resp. " + team.leadName : ""}{parent ? " · sous " + parent.name : ""}{folder ? " · 📁 " + folder.name : ""})</span></span>
             <button className="lp-icon-btn" onClick={() => startEdit(team)} aria-label={`Modifier ${team.name}`}><Pencil size={14} /></button>
             <button className="lp-icon-btn" onClick={() => remove(team)} aria-label={`Supprimer ${team.name}`}><Trash2 size={15} /></button>
           </div>
@@ -12411,6 +12423,19 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
           {sortedByName(parentOptions).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
       </div>
+      <div className="lp-field">
+        <label>
+          Dossier d'équipes
+          <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}> (facultatif — filtre par dossier dans l'Organigramme et les Utilisateurs)</span>
+        </label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select value={folderId} onChange={(e) => setFolderId(e.target.value)} style={{ flex: 1 }}>
+            <option value="">Aucun</option>
+            {sortedByName(folders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <button type="button" className="lp-btn" onClick={() => setFoldersManagerOpen(true)}>Gérer les dossiers</button>
+        </div>
+      </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button className="lp-btn lp-btn-primary" onClick={save}>{editingId ? "Enregistrer les modifications" : "Ajouter l'équipe"}</button>
         {editingId && <button className="lp-btn" onClick={cancelEdit}>Annuler</button>}
@@ -12418,8 +12443,20 @@ function TeamCatalogManager({ teams, setTeams, teamMembers, pushToast, onClose, 
     </>
   );
 
-  if (embedded) return <div className="lp-settings-pane">{body}</div>;
-  return <Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>;
+  const foldersModal = foldersManagerOpen && (
+    <SimpleFolderManager
+      title="Dossiers d'équipes"
+      folders={folders}
+      setFolders={setTeamFolders}
+      countInFolder={(id) => catalogue.filter((t) => t.folderId === id).length}
+      pushToast={pushToast}
+      onClose={() => setFoldersManagerOpen(false)}
+      itemLabel="dossier"
+    />
+  );
+
+  if (embedded) return <><div className="lp-settings-pane">{body}</div>{foldersModal}</>;
+  return <><Modal title="Gérer les équipes" onClose={onClose} wide>{body}</Modal>{foldersModal}</>;
 }
 
 // ============================================================================

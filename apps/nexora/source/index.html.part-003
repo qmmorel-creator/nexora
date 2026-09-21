@@ -9417,10 +9417,16 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
   // parent a disparu (elle remonte au premier niveau), donc filtrer ici
   // suffit sans dupliquer cette logique.
   const hiddenTeamIds = widget?.orgChartHiddenTeamIds;
-  const rawVisibleTeams = useMemo(
-    () => (hiddenTeamIds && hiddenTeamIds.length ? (ctx.teams || []).filter((t) => !hiddenTeamIds.includes(String(t?.id))) : ctx.teams),
-    [ctx.teams, hiddenTeamIds]
-  );
+  // Filtre par dossier d'équipes (#215) : combiné à orgChartHiddenTeamIds
+  // plutôt que substitué — une équipe reste masquable au cas par cas même
+  // filtrée par dossier.
+  const folderId = widget?.orgChartFolderId || "";
+  const rawVisibleTeams = useMemo(() => {
+    let list = ctx.teams || [];
+    if (folderId) list = normalizeTeams(list).filter((t) => t.folderId === folderId);
+    if (hiddenTeamIds && hiddenTeamIds.length) list = list.filter((t) => !hiddenTeamIds.includes(String(t?.id)));
+    return list;
+  }, [ctx.teams, hiddenTeamIds, folderId]);
   const teamsCatalogue = useMemo(() => normalizeTeams(rawVisibleTeams), [rawVisibleTeams]);
   const members = ctx.teamMembers || [];
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
@@ -12599,6 +12605,27 @@ function StaffingDisplayFields({ value, onChange, ctx }) {
             ? "Aucune coche : personne n’est affiché. Coche les personnes à suivre, ou ajoute-en à la main plus bas."
             : `${cfg.staffingMembers.length} personne${cfg.staffingMembers.length > 1 ? "s" : ""} sur ${team.length}.`}
         </p>
+        {/* #215 : filtre rapide par dossier d'équipes — coche d'un coup toutes
+            les personnes dont au moins une équipe appartient au dossier choisi,
+            sans changer les autres coches déjà faites. */}
+        {(ctx.teamFolders || []).length > 0 && (
+          <select
+            style={{ marginBottom: 8, width: "100%" }}
+            value=""
+            onChange={(e) => {
+              const folderId = e.target.value;
+              if (!folderId) return;
+              const folderTeamIds = new Set(normalizeTeams(ctx.teams).filter((t) => t.folderId === folderId).map((t) => t.id));
+              const namesInFolder = (ctx.teamMembers || [])
+                .filter((m) => memberTeamIds(m).some((id) => folderTeamIds.has(id)))
+                .map((m) => m.name);
+              onChange({ staffingMembers: Array.from(new Set([...cfg.staffingMembers, ...namesInFolder])) });
+            }}
+          >
+            <option value="">Filtrer par dossier d'équipes…</option>
+            {sortedByName(ctx.teamFolders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        )}
         {team.length === 0 && (
           <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: 0 }}>
             Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.
@@ -14189,6 +14216,13 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     [ctx.teams]
   );
   const orgChartVisibleTeamIds = orgChartTeamOptions.map((t) => t.id).filter((id) => !orgChartHiddenTeamIds.includes(id));
+  // Filtre par dossier d'équipes (#215) : vide = tous les dossiers (comme
+  // avant ce réglage). Se combine avec orgChartHiddenTeamIds plutôt que de
+  // le remplacer — une équipe reste masquable individuellement même à
+  // l'intérieur d'un dossier filtré.
+  const [orgChartFolderId, setOrgChartFolderId] = useState(
+    typeof widget?.orgChartFolderId === "string" ? widget.orgChartFolderId : ""
+  );
   // Vue de la Heatmap habitudes (retour de test) : déplacée ici depuis le
   // corps du widget, qui n'a plus que la case et sa légende à afficher.
   const [habitHeatmapView, setHabitHeatmapView] = useState(HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month");
@@ -14401,7 +14435,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; }
+    if (type === "orgchart") { data.orgChartMode = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -14726,6 +14760,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <input type="checkbox" checked={orgChartShowUnassigned} onChange={() => setOrgChartShowUnassigned((v) => !v)} />
               Afficher les ressources sans équipe
             </label>
+            {(ctx.teamFolders || []).length > 0 && (
+              <div className="lp-field" style={{ marginTop: 10 }}>
+                <label>Dossier d'équipes <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — restreint aux équipes de ce dossier)</span></label>
+                <select value={orgChartFolderId} onChange={(e) => setOrgChartFolderId(e.target.value)}>
+                  <option value="">Tous les dossiers</option>
+                  {sortedByName(ctx.teamFolders).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+            )}
             {orgChartTeamOptions.length > 0 && (
               <div className="lp-field" style={{ marginTop: 10 }}>
                 <label>Équipes affichées</label>
