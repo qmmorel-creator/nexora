@@ -266,6 +266,12 @@ test("réglages entreprise : champ assurance professionnelle optionnel, vide par
   assert.match(settingsBlock, /insurance:\s*""/);
 });
 
+test("PDF facture : le site web rejoint email/téléphone dans l'encadré émetteur, comme le PDF devis", () => {
+  const from = p3.indexOf("async function downloadInvoicePdf");
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /\[settings\?\.email, settings\?\.phone, settings\?\.website\]\.filter\(Boolean\)\.join\("  •  "\)/);
+});
+
 test("modèle de données : la forme d'une facture couvre les champs demandés (avoir, référence devis, cycle de vie)", () => {
   const from = p1.indexOf("const saveInvoice = ");
   assert.ok(from !== -1);
