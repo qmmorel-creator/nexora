@@ -41,7 +41,7 @@ if (!logoLine) throw new Error("NEXORA_LOGO_FULL introuvable dans le bundle");
 
 const lib = vm.runInThisContext(`(function (jsPDF) {
 ${logoLine[0]}
-${["DATE-UTILS", "TASK-STATUS", "TASK-KIND", "CRITICALITY", "MEMO-PDF-CORE", "PROJECT-PDF-CORE", "MEMO-PDF-DRAW", "PROJECT-PDF-DRAW"].map(slice).join("\n")}
+${["DATE-UTILS", "COLOR-UTILS", "TASK-STATUS", "TASK-KIND", "CRITICALITY", "MEMO-PDF-CORE", "PROJECT-PDF-CORE", "MEMO-PDF-DRAW", "PROJECT-PDF-DRAW"].map(slice).join("\n")}
 return { buildFicheProjetPdf, projectPdfData, downloadFicheMemoPdf, memoFileName };
 })`)(jsPDF);
 
@@ -70,6 +70,10 @@ if (args.memo) {
     name: "memo-riche", memo: F.memoRichTask, catalogs: F.memoCatalogs, today: F.MAIA_TODAY,
     expect: ["Métadonnées", "Sous-tâches", "Description", "Frise chronologique", "Point d'attention", "Protocole d'expertise.pdf", "Fournir Note de Synthèse des bétons", "Aujourd'hui"],
     order: ["Métadonnées", "Sous-tâches", "Description"],
+  });
+  cases.push({
+    name: "memo-encadre-long", memo: F.memoLongCalloutTask, catalogs: F.memoCatalogs, today: F.MAIA_TODAY,
+    expect: ["Décisions et réserves du comité", "Décision n° 70", "Conclusion après l'encadré", "Note"],
   });
   cases.push({
     name: "memo-reunion-terminee", memo: F.maiaTasks[0], catalogs: F.memoCatalogs, today: F.MAIA_TODAY,

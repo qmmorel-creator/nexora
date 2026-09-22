@@ -139,3 +139,20 @@ export const memoCatalogs = {
     { id: "urgent", name: "Urgent", color: "#DC2626" },
   ],
 };
+
+// Encadré plus long qu'une page : pagination de son fond.
+export const memoLongCalloutTask = {
+  ...memoRichTask, id: "memo-2", title: "Compte rendu détaillé du comité de pilotage", checklist: [], attachments: [], dependsOn: [],
+  desc: [
+    "Introduction avant l'encadré.",
+    "",
+    ":::callout-warning Décisions et réserves du comité",
+    ...Array.from({ length: 70 }, (_, i) => `- Décision n° ${i + 1} : action à mener par le lot concerné avant la prochaine revue.`),
+    ":::",
+    "",
+    "> [!note]",
+    "> Encadré à l'ancienne syntaxe, sans titre.",
+    "",
+    "Conclusion après l'encadré.",
+  ].join("\n"),
+};

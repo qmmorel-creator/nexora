@@ -17913,6 +17913,8 @@ const MEMO_PAPER_SOFT = [241, 243, 248]; // #F1F3F8
 const MEMO_PAGE_W = 210, MEMO_PAGE_H = 297, MEMO_MARGIN = 15;
 const MEMO_CONTENT_W = MEMO_PAGE_W - MEMO_MARGIN * 2;
 const MEMO_BOTTOM_LIMIT = MEMO_PAGE_H - 16;
+// Respiration entre deux sections de la fiche mémo (retour de test #289).
+const MEMO_SECTION_GAP = 8;
 
 function memoFmtFr(dateIso) {
   if (!dateIso) return "";
@@ -18007,7 +18009,7 @@ function memoDrawMiniHeader(doc, title, logoDataUrl) {
   doc.setDrawColor(...MEMO_LINE);
   doc.setLineWidth(0.2);
   doc.line(MEMO_MARGIN, y + 4, MEMO_PAGE_W - MEMO_MARGIN, y + 4);
-  return y + 11;
+  return y + 11; // MEMO_CONTINUATION_TOP
 }
 
 function memoDrawFooter(doc, pageNum, totalPages) {
@@ -18036,6 +18038,97 @@ function memoFitTitleFontSize(doc, title, maxWidth, startSize, minSize) {
   return size;
 }
 
+// Pictogramme dessiné (jamais un emoji : Helvetica ne les porte pas) de
+// chaque type d'encadré, blanc sur une pastille de la couleur du type.
+function memoCalloutIcon(doc, type, cx, cy, rgb) {
+  doc.setFillColor(...rgb);
+  doc.setDrawColor(255, 255, 255);
+  if (type === "warning") {
+    doc.triangle(cx, cy - 1.7, cx + 1.8, cy + 1.3, cx - 1.8, cy + 1.3, "F");
+  } else {
+    doc.circle(cx, cy, 1.6, "F");
+  }
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  if (type === "tip") {
+    doc.setLineWidth(0.4);
+    doc.lines([[0.55, 0.6], [1.1, -1.25]], cx - 0.85, cy + 0.05, [1, 1], "S");
+  } else if (type === "note") {
+    doc.setLineWidth(0.3);
+    doc.line(cx - 0.75, cy - 0.5, cx + 0.75, cy - 0.5);
+    doc.line(cx - 0.75, cy + 0.05, cx + 0.75, cy + 0.05);
+    doc.line(cx - 0.75, cy + 0.6, cx + 0.3, cy + 0.6);
+  } else {
+    doc.setFontSize(6.4);
+    doc.text(type === "info" ? "i" : "!", cx, cy + (type === "warning" ? 1 : 0.8), { align: "center" });
+  }
+}
+
+// Encadré (callout) : fond teinté, bordure fine et filet gauche épais de la
+// couleur du type, pictogramme + titre coloré — comme .lp-callout dans
+// l'application. Le fond doit être posé AVANT le texte : la hauteur (et les
+// éventuels sauts de page) est donc d'abord mesurée à blanc, sur un document
+// jetable, avec les mêmes polices ; un encadré long se poursuit sur la page
+// suivante avec son fond, jamais coupé entre son titre et sa première ligne.
+const MEMO_CONTINUATION_TOP = MEMO_MARGIN + 11; // = retour de memoDrawMiniHeader
+function memoDrawCallout(doc, block, x, width, y, opts) {
+  const meta = MEMO_CALLOUT_TYPES[block.calloutType] || MEMO_CALLOUT_TYPES.note;
+  const color = memoHexToRgb(meta.color), bg = memoHexToRgb(meta.bg);
+  const border = memoHexToRgb(lerpColor(meta.bg, meta.color, 0.45));
+  const titleRgb = memoHexToRgb(projectPdfTextOnPaper(meta.color, meta.bg));
+  const BAR = 1, PAD_X = 4, PAD_TOP = 2.8, PAD_BOTTOM = 2.6;
+  const innerX = x + BAR + PAD_X, innerW = width - BAR - PAD_X * 2;
+  const hasBody = block.blocks.length > 0;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.2);
+  const titleLines = doc.splitTextToSize(projectPdfSafeText(block.title || meta.label), innerW - 5);
+  y += 1.8; // respiration avant l'encadré
+  const headNeed = PAD_TOP + titleLines.length * 3.8 + (hasBody ? 7 : PAD_BOTTOM);
+  if (y - 3 + headNeed > MEMO_BOTTOM_LIMIT) { doc.addPage(); y = opts.onPageBreak(doc); }
+  const top = y - 3;
+  const titleBaseline = top + PAD_TOP + 2.9;
+  const bodyStart = titleBaseline + (titleLines.length - 1) * 3.8 + (hasBody ? 5.4 : 0);
+
+  // Mesure à blanc : nombre de sauts de page et bas de l'encadré.
+  let breaks = 0;
+  let bottom = titleBaseline + (titleLines.length - 1) * 3.8 + 1.2 + PAD_BOTTOM;
+  if (hasBody) {
+    const scratch = new jsPDF({ unit: "mm", format: "a4" });
+    const endY = memoDrawBlocks(scratch, block.blocks, innerX, innerW, bodyStart, {
+      ...opts,
+      onPageBreak: () => { breaks++; return MEMO_CONTINUATION_TOP; },
+    });
+    bottom = endY - 3.2 + PAD_BOTTOM;
+  }
+  const panel = (y1, y2) => {
+    doc.setFillColor(...bg);
+    doc.setDrawColor(...border);
+    doc.setLineWidth(0.25);
+    doc.roundedRect(x, y1, width, y2 - y1, 0.9, 0.9, "FD");
+    doc.setFillColor(...color);
+    doc.rect(x, y1, BAR, y2 - y1, "F");
+  };
+  panel(top, breaks ? MEMO_BOTTOM_LIMIT + 1 : bottom);
+  memoCalloutIcon(doc, block.calloutType, innerX + 1.6, titleBaseline - 1.05, color);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.2);
+  doc.setTextColor(...titleRgb);
+  titleLines.forEach((l, i) => doc.text(l, innerX + 4.6, titleBaseline + i * 3.8));
+  if (hasBody) {
+    let seg = 0;
+    memoDrawBlocks(doc, block.blocks, innerX, innerW, bodyStart, {
+      ...opts,
+      onPageBreak: (d) => {
+        const yTop = opts.onPageBreak(d);
+        seg++;
+        panel(yTop - 4.6, seg === breaks ? bottom : MEMO_BOTTOM_LIMIT + 1);
+        return yTop;
+      },
+    });
+  }
+  return bottom + 2 + 4.2; // respiration après + ligne de base suivante
+}
+
 function memoDrawBlocks(doc, blocks, x, width, y, opts) {
   const { onPageBreak } = opts;
   const ensure = (needed) => {
@@ -18044,9 +18137,10 @@ function memoDrawBlocks(doc, blocks, x, width, y, opts) {
       y = onPageBreak(doc);
     }
   };
-  blocks.forEach((block) => {
+  blocks.forEach((block, idx) => {
     if (block.type === "h2" || block.type === "h3" || block.type === "h4") {
       const size = block.type === "h2" ? 11.5 : block.type === "h3" ? 10 : 9.2;
+      if (idx > 0) y += block.type === "h2" ? 3.2 : block.type === "h3" ? 2.2 : 1.4; // air avant un titre
       ensure(size / 2.6 + 2);
       const lines = memoWrapSegments(doc, block.segments.map((s) => ({ ...s, bold: true })), width, size);
       y = memoDrawSegmentLines(doc, lines, x, y, size / 2.3, size, MEMO_INK);
@@ -18087,23 +18181,7 @@ function memoDrawBlocks(doc, blocks, x, width, y, opts) {
       return;
     }
     if (block.type === "callout") {
-      const meta = { note: [59, 130, 246], info: [14, 165, 233], tip: [34, 176, 125], warning: [217, 119, 6], danger: [220, 38, 38] }[block.calloutType] || [59, 130, 246];
-      const innerX = x + 4, innerW = width - 7;
-      const startY = y;
-      ensure(8);
-      let cy = y + 4;
-      if (block.title) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.4);
-        doc.setTextColor(...meta);
-        doc.text(projectPdfSafeText(block.title), innerX, cy);
-        cy += 4.4;
-      }
-      const innerBottom = memoDrawBlocks(doc, block.blocks, innerX, innerW, cy, opts);
-      doc.setDrawColor(...meta);
-      doc.setLineWidth(1.1);
-      doc.line(x, startY - 3, x, innerBottom - 1.5);
-      y = innerBottom + 1.5;
+      y = memoDrawCallout(doc, block, x, width, y, opts);
       return;
     }
     if (block.type === "table") {
@@ -18265,7 +18343,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
       doc.setLineWidth(0.2);
       doc.line(rx, ry + 1.6, rx + colW, ry + 1.6);
     });
-    y += perCol * 5.6 + 4;
+    y += perCol * 5.6 + MEMO_SECTION_GAP;
   }
 
   // --------------------------------------------------------------- Sous-tâches
@@ -18308,7 +18386,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
       }
       y += lines.length * 3.8 + 1.4;
     });
-    y += 2.6;
+    y += MEMO_SECTION_GAP;
   }
 
   // --------------------------------------------------------------- Description
@@ -18326,7 +18404,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
     y = memoDrawBlocks(doc, memoMarkdownBlocks(f.description), MEMO_MARGIN, MEMO_CONTENT_W, y, {
       onPageBreak: (d) => memoDrawMiniHeader(d, f.title, logoDataUrl),
     });
-    y += 2;
+    y += MEMO_SECTION_GAP;
   }
 
   // ------------------------------------------------------------ Compte rendu
@@ -18342,7 +18420,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
     y = memoDrawBlocks(doc, memoMarkdownBlocks(f.report), MEMO_MARGIN, MEMO_CONTENT_W, y, {
       onPageBreak: (d) => memoDrawMiniHeader(d, f.title, logoDataUrl),
     });
-    y += 2;
+    y += MEMO_SECTION_GAP;
   }
 
   // ---------------------------------------------------------- Pièces jointes
@@ -18361,7 +18439,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
       doc.text(`— ${a.name}`, MEMO_MARGIN, y);
       y += 4.6;
     });
-    y += 2;
+    y += MEMO_SECTION_GAP;
   }
 
   // ------------------------------------------------------------ Dépendances
@@ -18380,7 +18458,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
       doc.text(`— Dépend de : ${d.title}`, MEMO_MARGIN, y);
       y += 4.6;
     });
-    y += 2;
+    y += MEMO_SECTION_GAP;
   }
 
   // ------------------------------------------------------- Frise chronologique
