@@ -36,6 +36,8 @@ test("les identifiants Finance PRO sont déclarés À L'INTÉRIEUR du script ré
     "function FinanceProView",
     "function WidgetFinanceProSynthese",
     "function WidgetFinanceProEcheances",
+    "function FinanceProObligationFormModal",
+    "PRO_TVA_SEUIL_BASE",
   ];
   for (const needle of mustBeInsideScript) {
     const at = html.indexOf(needle);

@@ -2,7 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {calendarConfig,planCalendarImport} from './calendar.mts';
 
-export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState','habitThemes','habitLog','proMissions','proTimeEntries','proExpenseCategories','proExpenses','proBillingSchedule','proPayments','financeProSettings'] as const;
+export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','viewFolders','teamMembers','customFieldDefs','risks','expenses','expenseCategories','budgetLines','deadlines','deadlineSettings','taskBaselines','activityLog','momentumSnapshots','workflows','workflowExecutionLog','notifications','favorites','dashboards','dashboardFolders','dashboardWidgets','enabledViews','appearance','shortcutPrefs','startupPref','metaFilters','syncedCalendarSettings','gcalSyncState','habitThemes','habitLog','proMissions','proTimeEntries','proExpenseCategories','proExpenses','proBillingSchedule','proPayments','financeProSettings','proObligations'] as const;
 /* habitLog est en lecture seule ici : les règles métier du journal (exclusivité
    des thèmes « single », bornage [min,max] des habitudes « numeric », voir
    toggleHabitLogEntry/setHabitLogValue côté front #193) ne sont pas connues
@@ -14,7 +14,7 @@ export const RESOURCES = ['projects','statuses','taskTypes','projectFolders','vi
    non activée : voir NEXORA:FINANCEPRO-CONFIRM, part-004) n'est pas mise en
    œuvre côté MCP. Aucune de ces ressources ne touche à l'infrastructure
    KDM360/Supabase — uniquement les clés Firebase nexora:pro*. */
-const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState','habitLog','proMissions','proTimeEntries','proExpenseCategories','proExpenses','proBillingSchedule','proPayments','financeProSettings']);
+const READ_ONLY = new Set(['activityLog','momentumSnapshots','workflowExecutionLog','gcalSyncState','habitLog','proMissions','proTimeEntries','proExpenseCategories','proExpenses','proBillingSchedule','proPayments','financeProSettings','proObligations']);
 /* Écriture AUTORISÉE mais bornée : seul replace_settings est accepté, et chaque
    entrée est validée avant fusion. taskBaselines porte le plan initial du widget
    Time Machine — une entrée fausse y reste invisible jusqu'au jour où l'on
