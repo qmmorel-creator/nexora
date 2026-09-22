@@ -342,6 +342,31 @@ test("CGV : cgvUpdatedAt n'est mis à jour QUE si cgvText a réellement changé 
   assert.match(body, /cgvUpdatedAt:\s*data\.cgvText\s*!==\s*prev\.cgvText\s*\?\s*iso\(new Date\(\)\)\s*:\s*prev\.cgvUpdatedAt/);
 });
 
+// ============================================================================
+// Site web dans les réglages entreprise, affiché sur le PDF devis (#site-web)
+// ============================================================================
+
+test("réglages : website dans seedQuoteSettings (part-000), champ optionnel", () => {
+  const settingsBlock = p0.slice(p0.indexOf("const seedQuoteSettings"), p0.indexOf("};", p0.indexOf("const seedQuoteSettings")));
+  assert.match(settingsBlock, /website:\s*"/);
+});
+
+test("réglages : QuoteSettingsModal expose un champ « Site web » et le transmet à onSave", () => {
+  const from = p3.indexOf("function QuoteSettingsModal");
+  assert.ok(from !== -1);
+  const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
+  assert.match(body, /useState\(settings\.website \|\| ""\)/);
+  assert.match(body, /Site web/);
+  assert.match(body, /onSave\(\{[^}]*\bwebsite\b[^}]*\}\)/);
+});
+
+test("PDF devis : le site web rejoint email/téléphone dans l'encadré émetteur (downloadQuotePdf)", () => {
+  const from = p3.indexOf("async function downloadQuotePdf");
+  assert.ok(from !== -1, "downloadQuotePdf introuvable");
+  const body = p3.slice(from, p3.indexOf("\nasync function ", from + 1));
+  assert.match(body, /\[settings\?\.email, settings\?\.phone, settings\?\.website\]\.filter\(Boolean\)\.join\("  •  "\)/);
+});
+
 test("CGV : réglages entreprise — textarea dédié avec aide contextuelle", () => {
   const from = p3.indexOf("function QuoteSettingsModal");
   const body = p3.slice(from, p3.indexOf("\nfunction ", from + 1));
