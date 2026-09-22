@@ -18964,6 +18964,11 @@ const PRO_MISSION_STATUSES = [
   { key: "archivee", label: "Archivée", color: "var(--text-muted)" },
 ];
 
+// Ordre du bandeau de phase de la vue Mission (§ tableau de bord par mission)
+// — "archivee" n'y figure pas comme étape : c'est un classement final au même
+// niveau que "cloturee", jamais une phase du cycle de vie qu'on "atteint".
+const PRO_MISSION_PHASE_ORDER = ["prospect", "signee", "en_cours", "cloturee"];
+
 // Nature du temps saisi — au minimum ce que demande la conception (§ Suivi du
 // temps) : production facturable, avant-vente, administratif, formation.
 const PRO_TIME_NATURES = [
@@ -19246,6 +19251,42 @@ function proResteAFacturer(quotes, billingSchedule) {
 
 function proResteAEncaisser(billingSchedule, payments) {
   return proCaFacture(billingSchedule) - proCaEncaisse(payments);
+}
+
+// ---------------------------------------------------------------------------
+// Vue mission — timeline des jalons de facturation et avancement global
+// d'une mission unique (§ tableau de bord par mission).
+// ---------------------------------------------------------------------------
+
+// Lignes de facturation d'UNE mission, triées par échéance — jamais les
+// lignes archivées (mêmes conventions que proActive partout ailleurs).
+function proMissionBillingLines(missionId, billingSchedule) {
+  return proActive(billingSchedule)
+    .filter((l) => l.missionId === missionId)
+    .sort((a, b) => (a.dateCible || "").localeCompare(b.dateCible || ""));
+}
+
+// Paiements rattachés aux lignes de facturation d'UNE mission (un paiement ne
+// référence que `billingScheduleId`, jamais directement une mission).
+function proMissionPayments(missionId, billingSchedule, payments) {
+  const lineIds = new Set(proMissionBillingLines(missionId, billingSchedule).map((l) => l.id));
+  return proActive(payments).filter((p) => lineIds.has(p.billingScheduleId));
+}
+
+// Avancement financier global d'une mission (0 à 1) : part du CA de
+// référence (signé si un devis est lié, sinon facturé) déjà encaissée. Sans
+// aucune ligne de facturation, l'avancement se rabat sur 0 plutôt que sur une
+// division par zéro.
+function proMissionProgress(mission, quotes, billingSchedule, payments) {
+  const lines = proMissionBillingLines(mission?.id, billingSchedule);
+  const missionPayments = proMissionPayments(mission?.id, billingSchedule, payments);
+  const quote = mission?.quoteId ? (quotes || []).find((q) => q.id === mission.quoteId) : null;
+  const caSigne = quote && quote.status === "accepted" ? quoteTotal(quote) : 0;
+  const caFacture = proCaFacture(lines);
+  const caEncaisse = proCaEncaisse(missionPayments);
+  const reference = caSigne || caFacture;
+  const ratio = reference > 0 ? Math.min(1, caEncaisse / reference) : 0;
+  return { caSigne, caFacture, caEncaisse, ratio, lignesCount: lines.length };
 }
 
 // Trésorerie disponible : décision non bloquante (§12.1) — saisie manuelle du
@@ -20155,12 +20196,165 @@ function FinanceProTreasuryView({ financeProSettings, setFinanceProSettings, pro
 }
 
 // ---------------------------------------------------------------------------
-// Vue racine — 5 onglets (docs/finance-pro/maquettes/finance-pro-maquettes.html)
+// Onglet Mission — tableau de bord d'UNE mission, sélecteur rapide, bandeau
+// de phase et timeline des jalons de facturation.
+// ---------------------------------------------------------------------------
+
+function FinanceProMissionPhaseBar({ mission, onChangeStatus }) {
+  const currentIndex = PRO_MISSION_PHASE_ORDER.indexOf(mission.status);
+  const isTerminalAlt = mission.status === "archivee"; // classement final, hors bandeau de phase
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+      {PRO_MISSION_PHASE_ORDER.map((key, i) => {
+        const meta = PRO_MISSION_STATUSES.find((s) => s.key === key);
+        const reached = !isTerminalAlt && i <= currentIndex;
+        const isCurrent = !isTerminalAlt && i === currentIndex;
+        return (
+          <React.Fragment key={key}>
+            {i > 0 && <div style={{ flex: "1 1 24px", height: 2, background: reached ? "var(--accent)" : "var(--border)", minWidth: 16 }} />}
+            <button
+              type="button"
+              onClick={() => onChangeStatus(key)}
+              title={`Passer en « ${meta.label} »`}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none",
+                cursor: "pointer", padding: "0 6px", flex: "0 0 auto",
+              }}
+            >
+              <div style={{
+                width: isCurrent ? 16 : 12, height: isCurrent ? 16 : 12, borderRadius: "50%",
+                background: reached ? "var(--accent)" : "var(--surface, #fff)",
+                border: `2px solid ${reached ? "var(--accent)" : "var(--border)"}`,
+              }} />
+              <span style={{ fontSize: 11, fontWeight: isCurrent ? 800 : 600, color: isCurrent ? "var(--accent)" : "var(--text-muted)", whiteSpace: "nowrap" }}>{meta.label}</span>
+            </button>
+          </React.Fragment>
+        );
+      })}
+      {isTerminalAlt && (
+        <span className="lp-icon-btn" style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "var(--text-muted)", width: "auto", padding: "2px 8px" }}>Archivée</span>
+      )}
+    </div>
+  );
+}
+
+function FinanceProMissionTimeline({ lines }) {
+  const today = iso(new Date());
+  if (!lines.length) return <div className="lp-empty" style={{ padding: 20 }}>Aucune ligne de facturation sur cette mission — ajoute-la depuis l'onglet Factures &amp; encaissements.</div>;
+  return (
+    <div style={{ display: "flex", overflowX: "auto", padding: "10px 6px 4px" }}>
+      {lines.map((l, i) => {
+        const statusMeta = PRO_BILLING_LINE_STATUSES.find((s) => s.key === l.statut) || PRO_BILLING_LINE_STATUSES[0];
+        const late = (l.statut === "a_facturer" || l.statut === "facture") && l.dateCible && l.dateCible < today;
+        const dotColor = late ? "var(--danger)" : statusMeta.color;
+        return (
+          <React.Fragment key={l.id}>
+            {i > 0 && <div style={{ flex: "1 1 30px", minWidth: 20, height: 2, background: "var(--border)", marginTop: 7, alignSelf: "flex-start" }} />}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 118, flex: "0 0 auto", textAlign: "center" }}>
+              <div style={{ width: 14, height: 14, borderRadius: "50%", background: dotColor }} />
+              <div style={{ fontSize: 11, fontWeight: 700 }}>{l.libelle}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{(PRO_BILLING_LINE_TYPES.find((t) => t.key === l.type) || {}).label} · {l.dateCible}</div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: dotColor }}>{late ? "En retard" : statusMeta.label}</div>
+              <div className="num" style={{ fontSize: 11.5, fontWeight: 700 }}>{fmtProEuros(l.montantPrevu)}</div>
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function FinanceProMissionDashboard({ projects, quoteClients, quotes, proMissions, setProMissions, proTimeEntries, proExpenses, proBillingSchedule, proPayments }) {
+  const missions = useMemo(
+    () => proActive(proMissions).slice().sort((a, b) => {
+      const la = proMissionLabel(a, projects, quoteClients), lb = proMissionLabel(b, projects, quoteClients);
+      return la.projectName.localeCompare(lb.projectName);
+    }),
+    [proMissions, projects, quoteClients]
+  );
+  const [selectedId, setSelectedId] = useState(null);
+  useEffect(() => {
+    if (!missions.length) { setSelectedId(null); return; }
+    if (!missions.some((m) => m.id === selectedId)) setSelectedId(missions[0].id);
+  }, [missions, selectedId]);
+
+  if (!missions.length) {
+    return <div className="lp-empty" style={{ padding: 30 }}>Aucune mission Finance PRO pour l'instant — crée-en une dans l'onglet Clients &amp; missions.</div>;
+  }
+
+  const currentIndex = missions.findIndex((m) => m.id === selectedId);
+  const mission = missions[currentIndex] || missions[0];
+  const cycle = (delta) => setSelectedId(missions[(currentIndex + delta + missions.length) % missions.length].id);
+  const { projectName, clientName } = proMissionLabel(mission, projects, quoteClients);
+  const linkedQuote = mission.quoteId ? (quotes || []).find((q) => q.id === mission.quoteId) : null;
+
+  const lines = proMissionBillingLines(mission.id, proBillingSchedule);
+  const missionPayments = proMissionPayments(mission.id, proBillingSchedule, proPayments);
+  const progress = proMissionProgress(mission, quotes, proBillingSchedule, proPayments);
+  const marge = proMargeParMission(mission.id, proBillingSchedule, proExpenses);
+  const missionTimeEntries = proActive(proTimeEntries).filter((t) => t.missionId === mission.id);
+  const { facturableMinutes, nonFacturableMinutes } = proTempsParFacturabilite(missionTimeEntries);
+  const missionExpenses = proActive(proExpenses).filter((e) => e.missionId === mission.id);
+  const depensesTotal = missionExpenses.reduce((s, e) => s + proEuros(e.montantTTC), 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="lp-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button className="lp-icon-btn" title="Mission précédente" onClick={() => cycle(-1)} disabled={missions.length < 2}>‹</button>
+          <select className="lp-input" style={{ maxWidth: 320 }} value={mission.id} onChange={(e) => setSelectedId(e.target.value)}>
+            {missions.map((m) => { const l = proMissionLabel(m, projects, quoteClients); return <option key={m.id} value={m.id}>{l.projectName} — {l.clientName}</option>; })}
+          </select>
+          <button className="lp-icon-btn" title="Mission suivante" onClick={() => cycle(1)} disabled={missions.length < 2}>›</button>
+          <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{currentIndex + 1} / {missions.length}</span>
+          <div style={{ flex: 1 }} />
+          {linkedQuote && <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Devis {linkedQuote.number}</span>}
+        </div>
+
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 800 }}>{projectName}</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{clientName} · {(PRO_BILLING_MODES.find((b) => b.key === mission.billingMode) || {}).label}</div>
+        </div>
+
+        <FinanceProMissionPhaseBar mission={mission} onChangeStatus={(status) => setProMissions((prev) => prev.map((m) => (m.id === mission.id ? { ...m, status, updatedAt: proNowIso(), revision: (m.revision || 1) + 1 } : m)))} />
+
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--text-muted)", marginBottom: 4 }}>
+            <span>Avancement financier global</span>
+            <span style={{ fontWeight: 700, color: "var(--text)" }}>{Math.round(progress.ratio * 100)} %</span>
+          </div>
+          <div style={{ height: 8, borderRadius: 4, background: "var(--border, #e5e5e5)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.round(progress.ratio * 100)}%`, borderRadius: 4, background: "var(--accent)" }} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <FinanceProStatTile label="CA signé" value={fmtProEuros(progress.caSigne)} />
+        <FinanceProStatTile label="CA facturé" value={fmtProEuros(progress.caFacture)} />
+        <FinanceProStatTile label="CA encaissé" value={fmtProEuros(progress.caEncaisse)} />
+        <FinanceProStatTile label="Marge" value={fmtProEuros(marge.marge)} sub={marge.tauxMarge != null ? `${Math.round(marge.tauxMarge * 100)} % du CA facturé` : null} tone={marge.marge < 0 ? "bad" : "good"} />
+        <FinanceProStatTile label="Temps facturable" value={`${Math.round(facturableMinutes / 60 * 10) / 10} h`} sub={nonFacturableMinutes ? `+ ${Math.round(nonFacturableMinutes / 60 * 10) / 10} h non facturable` : null} />
+        <FinanceProStatTile label="Dépenses liées" value={fmtProEuros(depensesTotal)} sub={`${missionExpenses.length} dépense${missionExpenses.length > 1 ? "s" : ""}`} />
+      </div>
+
+      <div className="lp-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 14.5, fontWeight: 700 }}>Timeline de facturation</div>
+        <FinanceProMissionTimeline lines={lines} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vue racine — 6 onglets (docs/finance-pro/maquettes/finance-pro-maquettes.html
+// pour les 5 premiers ; l'onglet Mission a été ajouté ensuite, sur demande)
 // ---------------------------------------------------------------------------
 
 const FINANCE_PRO_TABS = [
   { key: "synthese", label: "Synthèse" },
   { key: "clients", label: "Clients & missions" },
+  { key: "mission", label: "Vue mission" },
   { key: "factures", label: "Factures & encaissements" },
   { key: "depenses", label: "Dépenses & justificatifs" },
   { key: "tresorerie", label: "Trésorerie & prévisions" },
@@ -20191,6 +20385,9 @@ function FinanceProView(props) {
       )}
       {tab === "clients" && (
         <FinanceProClientsView projects={projects} quoteClients={quoteClients} quotes={quotes} proMissions={proMissions} setProMissions={setProMissions} proTimeEntries={proTimeEntries} setProTimeEntries={setProTimeEntries} proBillingSchedule={proBillingSchedule} proExpenses={proExpenses} />
+      )}
+      {tab === "mission" && (
+        <FinanceProMissionDashboard projects={projects} quoteClients={quoteClients} quotes={quotes} proMissions={proMissions} setProMissions={setProMissions} proTimeEntries={proTimeEntries} proExpenses={proExpenses} proBillingSchedule={proBillingSchedule} proPayments={proPayments} />
       )}
       {tab === "factures" && (
         <FinanceProBillingView projects={projects} quoteClients={quoteClients} proMissions={proMissions} proBillingSchedule={proBillingSchedule} setProBillingSchedule={setProBillingSchedule} proPayments={proPayments} setProPayments={setProPayments} />
