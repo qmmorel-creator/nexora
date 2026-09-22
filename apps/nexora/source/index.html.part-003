@@ -18496,6 +18496,948 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
 
 // === NEXORA:MEMO-PDF-DRAW:END ===
 
+// ============================================================================
+// Fiche projet PDF (#291) — synthèse A4 portrait d'un projet avec sa vue
+// Métro. Export client uniquement : lecture des catalogues déjà chargés,
+// aucune écriture Firestore, aucune mutation de tâche ou de projet, aucun
+// effet sur la synchronisation Google Calendar. Les données et la projection
+// Métro viennent des fonctions pures NEXORA:PROJECT-PDF-CORE (part-000) ; ce
+// bloc ne fait que dessiner, en partageant avec la Fiche mémo (#289) le logo,
+// la conversion de couleurs, le format de date et la pagination par en-tête
+// minimal répété.
+// ============================================================================
+// === NEXORA:PROJECT-PDF-DRAW:START ===
+
+const PPDF_PAGE_W = 210, PPDF_PAGE_H = 297, PPDF_M = 12;
+const PPDF_CW = PPDF_PAGE_W - PPDF_M * 2;
+const PPDF_BOTTOM = PPDF_PAGE_H - 10;
+const PPDF_BG = "#EFF1F0";      // --bg
+const PPDF_PAPER = "#FFFFFF";   // --surface
+const PPDF_BORDER = "#DBDFDB";  // --border
+const PPDF_HAIR = "#E6E9E7";    // --quai-clair : séparateurs internes
+const PPDF_TEXT2 = "#495166";   // --text-secondary (8:1 sur blanc)
+const PPDF_ACCENT = "#FF7A3D";  // --accent : repère « aujourd'hui », correspondances
+const PPDF_ACCENT_TEXT = "#CB4000"; // --accent-text (AA sur blanc)
+const PPDF_SUCCESS = "#1FA971"; // --success : station terminée
+const PPDF_DANGER = "#E2483E";  // --danger : retard
+const PPDF_DANGER_TEXT = "#D72C20";
+
+function ppdfColor(doc, kind, hex) {
+  const rgb = memoHexToRgb(hex);
+  if (kind === "fill") doc.setFillColor(...rgb);
+  else if (kind === "draw") doc.setDrawColor(...rgb);
+  else doc.setTextColor(...rgb);
+}
+function ppdfFont(doc, size, style = "normal") {
+  doc.setFont("helvetica", style);
+  doc.setFontSize(size);
+}
+function ppdfWidth(doc, text, size, bold) {
+  ppdfFont(doc, size, bold ? "bold" : "normal");
+  return doc.getTextWidth(String(text));
+}
+function ppdfDash(doc, pattern) {
+  if (typeof doc.setLineDashPattern === "function") doc.setLineDashPattern(pattern || [], 0);
+}
+// Micro-libellé : capitales espacées, gris secondaire lisible (AA).
+function ppdfMicro(doc, text, x, y, { align = "left", color = PPDF_TEXT2, size = 5.8 } = {}) {
+  ppdfFont(doc, size, "bold");
+  ppdfColor(doc, "text", color);
+  doc.text(projectPdfSafeText(text).toUpperCase(), x, y, { align, charSpace: 0.12 });
+}
+function ppdfMicroWidth(doc, text, size = 5.8) {
+  const t = projectPdfSafeText(text).toUpperCase();
+  return ppdfWidth(doc, t, size, true) + 0.12 * Math.max(0, t.length - 1);
+}
+// Micro-libellé contraint à une largeur de cellule : réduit sa taille, puis
+// passe sur deux lignes — jamais tronqué, jamais sur le filet voisin.
+function ppdfMicroFit(doc, text, x, y, maxW, { size = 5.4, color = PPDF_TEXT2 } = {}) {
+  let s = size;
+  while (s > 4.6 && ppdfMicroWidth(doc, text, s) > maxW) s -= 0.2;
+  if (ppdfMicroWidth(doc, text, s) <= maxW) { ppdfMicro(doc, text, x, y, { size: s, color }); return 1; }
+  const words = projectPdfSafeText(text).split(/\s+/);
+  const lines = [];
+  let cur = "";
+  words.forEach((w) => { const c = cur ? cur + " " + w : w; if (ppdfMicroWidth(doc, c, s) <= maxW || !cur) cur = c; else { lines.push(cur); cur = w; } });
+  if (cur) lines.push(cur);
+  lines.forEach((l, i) => ppdfMicro(doc, l, x, y - (lines.length - 1 - i) * s * 0.4, { size: s, color }));
+  return lines.length;
+}
+function ppdfWrap(doc, text, size, bold, maxW) {
+  ppdfFont(doc, size, bold ? "bold" : "normal");
+  const words = projectPdfSafeText(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  words.forEach((w) => {
+    const cand = cur ? cur + " " + w : w;
+    if (doc.getTextWidth(cand) <= maxW || !cur) cur = cand; else { lines.push(cur); cur = w; }
+  });
+  if (cur) lines.push(cur);
+  // Mot plus large que la colonne : coupé, jamais tronqué.
+  return lines.flatMap((l) => {
+    if (doc.getTextWidth(l) <= maxW) return [l];
+    const parts = [];
+    let buf = "";
+    for (const ch of l) { if (doc.getTextWidth(buf + ch) > maxW && buf) { parts.push(buf); buf = ch; } else buf += ch; }
+    if (buf) parts.push(buf);
+    return parts;
+  });
+}
+
+// Pastille de catalogue (statut, type, criticité) : couleur du catalogue,
+// encre choisie pour ≥ 4,5:1. Réduit sa taille plutôt que de déborder de
+// `maxW`, puis passe sur deux lignes : jamais tronquée.
+function ppdfChipLayout(doc, text, maxW, size = 6) {
+  const label = projectPdfSafeText(text);
+  let s = size;
+  while (s > 5 && ppdfWidth(doc, label, s, true) + 3 > maxW) s -= 0.25;
+  const lines = ppdfWidth(doc, label, s, true) + 3 > maxW ? ppdfWrap(doc, label, s, true, maxW - 3) : [label];
+  const w = Math.min(maxW, Math.max(...lines.map((l) => ppdfWidth(doc, l, s, true))) + 3);
+  return { lines, size: s, w, h: lines.length * (s * 0.42) + 1.9 };
+}
+function ppdfChip(doc, x, y, text, hex, maxW = 60, size = 6) {
+  const c = projectPdfChipColors(hex);
+  const L = ppdfChipLayout(doc, text, maxW, size);
+  ppdfColor(doc, "fill", c.bg);
+  doc.roundedRect(x, y, L.w, L.h, 0.7, 0.7, "F");
+  ppdfFont(doc, L.size, "bold");
+  ppdfColor(doc, "text", c.ink);
+  L.lines.forEach((line, i) => doc.text(line, x + 1.5, y + 1.05 + (i + 1) * L.size * 0.42 - 0.35));
+  return L;
+}
+
+function ppdfDiamond(doc, x, y, r, fillHex, strokeHex) {
+  if (fillHex) ppdfColor(doc, "fill", fillHex);
+  if (strokeHex) ppdfColor(doc, "draw", strokeHex);
+  const style = fillHex && strokeHex ? "FD" : fillHex ? "F" : "S";
+  doc.lines([[r, r], [-r, r], [-r, -r], [r, -r]], x, y - r, [1, 1], style, true);
+}
+function ppdfCheck(doc, x, y, r) {
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(Math.max(0.22, r * 0.28));
+  doc.lines([[r * 0.38, r * 0.4], [r * 0.64, -r * 0.8]], x - r * 0.5, y, [1, 1], "S");
+}
+function ppdfLine(doc, pts) {
+  if (pts.length < 2) return;
+  doc.lines(pts.slice(1).map((p, i) => [p[0] - pts[i][0], p[1] - pts[i][1]]), pts[0][0], pts[0][1], [1, 1], "S");
+}
+// Même tracé que branchPath() de la Vue Métro : départ vertical, coude
+// arrondi, puis horizontal jusqu'à la station de fin.
+function ppdfBranchPoints(x0, y0, x1, y1, bend = 2.4) {
+  if (Math.abs(x1 - x0) < 0.2) return [[x0, y0], [x0, y1]];
+  const b = Math.min(bend, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2);
+  const dy = y1 > y0 ? 1 : -1, dx = x1 >= x0 ? 1 : -1;
+  const pts = [[x0, y0], [x0, y1 - dy * b]];
+  for (let i = 1; i <= 6; i++) {
+    const a = (Math.PI / 2) * (i / 6);
+    pts.push([x0 + dx * b * (1 - Math.cos(a)), y1 - dy * b * (1 - Math.sin(a))]);
+  }
+  pts.push([x1, y1]);
+  return pts;
+}
+// Découpe une polyligne à une abscisse curviligne (portion réalisée).
+function ppdfSplitPolyline(pts, ratio) {
+  const segs = pts.slice(1).map((p, i) => Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]));
+  const total = segs.reduce((s, v) => s + v, 0);
+  let left = Math.max(0, Math.min(1, ratio)) * total;
+  const a = [pts[0]];
+  for (let i = 0; i < segs.length; i++) {
+    if (left >= segs[i]) { a.push(pts[i + 1]); left -= segs[i]; continue; }
+    const k = segs[i] ? left / segs[i] : 0;
+    const mid = [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k];
+    a.push(mid);
+    return [a, [mid, ...pts.slice(i + 1)]];
+  }
+  return [a, []];
+}
+
+// Image (logo projet, avatar) rendue dans un disque : le carré de l'image est
+// posé puis ses coins sont masqués par un anneau de la couleur du fond — même
+// résultat qu'un avatar rond de l'application, sans masque de découpe jsPDF.
+function ppdfDiscImage(doc, dataUrl, x, y, r, bgHex) {
+  try {
+    doc.addImage(dataUrl, undefined, x - r, y - r, r * 2, r * 2);
+  } catch (_) { return false; }
+  ppdfColor(doc, "draw", bgHex);
+  doc.setLineWidth(r * 0.5);
+  doc.circle(x, y, r * 1.22, "S");
+  return true;
+}
+function ppdfAvatar(doc, member, x, y, r, images, bgHex = PPDF_PAPER) {
+  const src = member.image ? images.get(member.image.src) : null;
+  ppdfColor(doc, "fill", member.color);
+  doc.circle(x, y, r, "F");
+  if (src && ppdfDiscImage(doc, src, x, y, r, bgHex)) return;
+  const c = projectPdfChipColors(member.color);
+  ppdfColor(doc, "fill", c.bg);
+  doc.circle(x, y, r, "F");
+  ppdfFont(doc, r * 2.3, "bold");
+  ppdfColor(doc, "text", c.ink);
+  doc.text(member.initials, x, y + r * 0.36, { align: "center" });
+}
+
+// Préchargement des images distantes (avatars, icône projet en URL) : une
+// image qui refuse le chargement (CORS, hors ligne) retombe sur l'avatar à
+// initiales / le marqueur de couleur — l'export ne dépend jamais du réseau.
+async function ppdfLoadImages(sources, timeoutMs = 4000) {
+  const out = new Map();
+  await Promise.all([...new Set(sources.filter(Boolean).map((s) => JSON.stringify(s)))].map(async (json) => {
+    const s = JSON.parse(json);
+    if (s.kind === "data") { out.set(s.src, s.src); return; }
+    if (typeof fetch !== "function" || typeof FileReader === "undefined") return;
+    try {
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = setTimeout(() => ctrl && ctrl.abort(), timeoutMs);
+      const res = await fetch(s.src, { mode: "cors", signal: ctrl ? ctrl.signal : undefined });
+      clearTimeout(timer);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      if (!/image\/(png|jpe?g)/i.test(blob.type)) return;
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = reject;
+        fr.readAsDataURL(blob);
+      });
+      out.set(s.src, dataUrl);
+    } catch (_) { /* repli initiales / marqueur */ }
+  }));
+  return out;
+}
+
+function ppdfPanel(doc, x, y, w, h) {
+  ppdfColor(doc, "fill", PPDF_PAPER);
+  ppdfColor(doc, "draw", PPDF_BORDER);
+  doc.setLineWidth(0.2);
+  ppdfDash(doc, null);
+  doc.rect(x, y, w, h, "FD");
+}
+function ppdfPageBackground(doc) {
+  ppdfColor(doc, "fill", PPDF_BG);
+  doc.rect(0, 0, PPDF_PAGE_W, PPDF_PAGE_H, "F");
+}
+
+// --- En-têtes ----------------------------------------------------------------
+function ppdfProjectMarker(doc, data, x, y, r, images) {
+  ppdfColor(doc, "fill", data.project.color);
+  doc.circle(x, y, r, "F");
+  const src = data.project.image ? images.get(data.project.image.src) : null;
+  if (src) ppdfDiscImage(doc, src, x, y, r * 0.78, data.project.color);
+}
+function ppdfHeaderLayout(doc, data) {
+  const logoW = 26;
+  const nameX = PPDF_M + logoW + 11;
+  const maxW = PPDF_PAGE_W - PPDF_M - nameX - 14;
+  const name = projectPdfSafeText(data.project.name) || "Projet";
+  let size = 17;
+  while (size > 11 && ppdfWidth(doc, name, size, true) > maxW) size -= 0.5;
+  const lines = ppdfWidth(doc, name, size, true) > maxW ? ppdfWrap(doc, name, size, true, maxW) : [name];
+  return { logoW, nameX, size, lines, h: Math.max(15, lines.length * size * 0.43 + 6) };
+}
+function ppdfDrawHeader(doc, data, H, logoDataUrl, images) {
+  const y = PPDF_M;
+  if (logoDataUrl) { try { doc.addImage(logoDataUrl, undefined, PPDF_M, y, H.logoW, H.logoW / 2); } catch (_) {} }
+  ppdfColor(doc, "draw", PPDF_BORDER);
+  doc.setLineWidth(0.2);
+  doc.line(PPDF_M + H.logoW + 4, y + 1, PPDF_M + H.logoW + 4, y + H.h - 3);
+  const textH = H.lines.length * H.size * 0.43;
+  const top = y + (H.h - 2 - textH) / 2;
+  const firstBaseline = top + H.size * 0.43 - 0.6;
+  ppdfProjectMarker(doc, data, H.nameX - 3.4, firstBaseline - H.size * 0.3528 * 0.36, 1.8, images);
+  ppdfFont(doc, H.size, "bold");
+  ppdfColor(doc, "text", PPDF_INK);
+  H.lines.forEach((l, i) => doc.text(l, H.nameX, top + (i + 1) * H.size * 0.43 - 0.6));
+  ppdfColor(doc, "draw", PPDF_INK);
+  doc.setLineWidth(0.45);
+  doc.line(PPDF_M, y + H.h, PPDF_PAGE_W - PPDF_M, y + H.h);
+  return y + H.h + 4;
+}
+function ppdfDrawMiniHeader(doc, data, logoDataUrl, images) {
+  const y = PPDF_M;
+  if (logoDataUrl) { try { doc.addImage(logoDataUrl, undefined, PPDF_M, y - 0.5, 12, 6); } catch (_) {} }
+  const name = projectPdfSafeText(data.project.name);
+  const maxW = PPDF_CW - 16 - 22;
+  let size = 8.5;
+  while (size > 6 && ppdfWidth(doc, name, size, true) > maxW) size -= 0.25;
+  const lines = ppdfWidth(doc, name, size, true) > maxW ? ppdfWrap(doc, name, size, true, maxW) : [name];
+  ppdfProjectMarker(doc, data, PPDF_M + 16.5, y + 2.4, 1.3, images);
+  ppdfFont(doc, size, "bold");
+  ppdfColor(doc, "text", PPDF_INK);
+  lines.forEach((l, i) => doc.text(l, PPDF_M + 19, y + 3.4 + i * size * 0.42));
+  const bottom = y + Math.max(7, 3.4 + lines.length * size * 0.42 + 1.4);
+  ppdfColor(doc, "draw", PPDF_BORDER);
+  doc.setLineWidth(0.2);
+  doc.line(PPDF_M, bottom, PPDF_PAGE_W - PPDF_M, bottom);
+  return bottom + 4;
+}
+function ppdfDrawPageNumber(doc, n, total) {
+  ppdfMicro(doc, `${n} / ${total}`, PPDF_PAGE_W - PPDF_M, PPDF_M + 3.4, { align: "right" });
+}
+
+// --- Synthèse ----------------------------------------------------------------
+function ppdfSynthesisCells(data) {
+  const c = data.counts;
+  const cells = [
+    { label: "Tâches", value: String(c.total), sub: `${c.active} active${c.active > 1 ? "s" : ""}`, w: 19 },
+    { label: "En cours", value: String(c.inProgress), dot: data.statusColors.inProgress, w: 18 },
+    { label: "Terminées", value: String(c.done), dot: data.statusColors.done, w: 19 },
+  ];
+  if (c.waitingThird != null) cells.push({ label: "Attente tiers", value: String(c.waitingThird), dot: data.statusColors.waitingThird, w: 22 });
+  if (data.progress != null) cells.push({ label: "Avancement", value: `${data.progress} %`, bar: data.progress, w: 22 });
+  if (data.period) cells.push({ label: "Période", lines: [projectPdfFmtDate(data.period.start), projectPdfFmtDate(data.period.end)], w: 25 });
+  if (data.nextCritical) cells.push({ label: "Prochaine échéance critique", critical: data.nextCritical, w: 0 });
+  const fixed = cells.reduce((s, x) => s + x.w, 0);
+  const flex = cells.filter((x) => !x.w);
+  const rest = PPDF_CW - fixed;
+  if (flex.length) flex.forEach((x) => { x.w = rest / flex.length; });
+  else { const k = PPDF_CW / fixed; cells.forEach((x) => { x.w *= k; }); }
+  return cells;
+}
+function ppdfCriticalLines(doc, crit, w) {
+  const lines = ppdfWrap(doc, crit.row.title, 7.4, true, w - 5);
+  const tags = [projectPdfFmtDate(crit.date)];
+  return { lines, tags };
+}
+function ppdfSynthesisLayout(doc, data) {
+  const cells = ppdfSynthesisCells(data);
+  let kpiH = 17;
+  cells.forEach((cell) => {
+    if (cell.critical) {
+      const L = ppdfCriticalLines(doc, cell.critical, cell.w);
+      cell.layout = L;
+      kpiH = Math.max(kpiH, 6.5 + L.lines.length * 3.2 + 6.8);
+    }
+  });
+  // Répartition des tâches actives par statut et par type (vraies pastilles).
+  const groups = [];
+  if (data.byStatus.length) groups.push({ label: "Actives par statut", items: data.byStatus });
+  if (data.byType.length) groups.push({ label: "Actives par type", items: data.byType });
+  const labelW = 30;
+  const rows = [];
+  groups.forEach((g) => {
+    let x = 0, line = 0;
+    const placed = g.items.map((it) => {
+      const text = `${it.name}  ${it.count}`;
+      const L = ppdfChipLayout(doc, text, PPDF_CW - labelW - 8);
+      if (x && x + L.w > PPDF_CW - labelW - 8) { x = 0; line++; }
+      const p = { it, text, x, line, L };
+      x += L.w + 1.6;
+      return p;
+    });
+    rows.push({ ...g, placed, h: (line + 1) * 5.4 });
+  });
+  const urgent = data.urgent.length ? {
+    text: data.urgent.slice(0, 3).map((r) => `${projectPdfSafeText(r.title)} (${projectPdfFmtDate(r.end)}${r.late ? ", en retard" : ""})`).join(" ; ")
+      + (data.urgent.length > 3 ? ` ; +${data.urgent.length - 3}` : ""),
+  } : null;
+  if (urgent) urgent.lines = ppdfWrap(doc, urgent.text, 6.6, false, PPDF_CW - 30);
+  const distH = rows.reduce((s, r) => s + r.h, 0);
+  const h = kpiH + (urgent ? urgent.lines.length * 2.9 + 3.4 : 0) + (rows.length ? distH + 3.2 : 0);
+  return { cells, kpiH, rows, labelW, urgent, h };
+}
+function ppdfDrawSynthesis(doc, data, S, y) {
+  ppdfPanel(doc, PPDF_M, y, PPDF_CW, S.h);
+  let x = PPDF_M;
+  S.cells.forEach((cell, i) => {
+    const cx = x + 3;
+    if (i) { ppdfColor(doc, "draw", PPDF_HAIR); doc.setLineWidth(0.2); doc.line(x, y + 2.5, x, y + S.kpiH - 2.5); }
+    ppdfMicroFit(doc, cell.label, cx, y + 5.6, cell.w - 5, { size: cell.critical ? 5.6 : 5.4 });
+    if (cell.value != null) {
+      ppdfFont(doc, 13, "bold");
+      ppdfColor(doc, "text", PPDF_INK);
+      let vx = cx;
+      if (cell.dot) { ppdfColor(doc, "fill", cell.dot); doc.circle(cx + 1.1, y + 10.4, 1.1, "F"); vx += 3.2; }
+      ppdfFont(doc, 13, "bold");
+      ppdfColor(doc, "text", PPDF_INK);
+      doc.text(cell.value, vx, y + 12);
+      if (cell.sub) { ppdfFont(doc, 6.2, "normal"); ppdfColor(doc, "text", PPDF_TEXT2); doc.text(cell.sub, cx, y + 15.4); }
+      if (cell.bar != null) {
+        const bw = cell.w - 6;
+        ppdfColor(doc, "fill", PPDF_HAIR);
+        doc.rect(cx, y + 14, bw, 1.1, "F");
+        if (cell.bar > 0) { ppdfColor(doc, "fill", data.project.color); doc.rect(cx, y + 14, (bw * cell.bar) / 100, 1.1, "F"); }
+      }
+    }
+    if (cell.lines) {
+      ppdfFont(doc, 7.6, "bold");
+      ppdfColor(doc, "text", PPDF_INK);
+      doc.text(cell.lines[0], cx, y + 9.8);
+      ppdfFont(doc, 6.2, "normal");
+      ppdfColor(doc, "text", PPDF_TEXT2);
+      doc.text("au", cx, y + 12.6);
+      ppdfFont(doc, 7.6, "bold");
+      ppdfColor(doc, "text", PPDF_INK);
+      doc.text(cell.lines[1], cx, y + 15.4);
+    }
+    if (cell.critical) {
+      const L = cell.layout, crit = cell.critical;
+      const markerColor = crit.row.criticality?.color || crit.row.status?.color || PPDF_INK;
+      if (crit.row.milestone) ppdfDiamond(doc, cx + 1.2, y + 8.6, 1.2, markerColor, null);
+      else { ppdfColor(doc, "fill", markerColor); doc.circle(cx + 1.2, y + 8.6, 1.1, "F"); }
+      ppdfFont(doc, 7.4, "bold");
+      ppdfColor(doc, "text", PPDF_INK);
+      L.lines.forEach((l, k) => doc.text(l, cx + 3.6, y + 9.6 + k * 3.2));
+      let ty = y + 9.6 + L.lines.length * 3.2 + 0.6;
+      let tx = cx + 3.6;
+      ppdfFont(doc, 6.6, "bold");
+      ppdfColor(doc, "text", crit.overdue ? PPDF_DANGER_TEXT : PPDF_TEXT2);
+      doc.text(L.tags[0], tx, ty + 1.2);
+      tx += ppdfWidth(doc, L.tags[0], 6.6, true) + 2;
+      if (crit.row.criticality) tx += ppdfChip(doc, tx, ty - 1.6, crit.row.criticality.name, crit.row.criticality.color, 30, 5.6).w + 1.2;
+      if (crit.overdue) ppdfChip(doc, tx, ty - 1.6, "En retard", PPDF_DANGER, 30, 5.6);
+    }
+    x += cell.w;
+  });
+  let cy = y + S.kpiH;
+  if (S.urgent) {
+    ppdfColor(doc, "draw", PPDF_HAIR);
+    doc.setLineWidth(0.2);
+    doc.line(PPDF_M + 3, cy, PPDF_M + PPDF_CW - 3, cy);
+    const L = ppdfChip(doc, PPDF_M + 3, cy + 1.6, `Urgent · ${data.urgent.length}`, "#DC2626", 26, 5.6);
+    ppdfFont(doc, 6.6, "normal");
+    ppdfColor(doc, "text", PPDF_INK);
+    S.urgent.lines.forEach((l, k) => doc.text(l, PPDF_M + 3 + L.w + 2.4, cy + 4.2 + k * 2.9));
+    cy += S.urgent.lines.length * 2.9 + 3.4;
+  }
+  if (S.rows.length) {
+    ppdfColor(doc, "draw", PPDF_HAIR);
+    doc.setLineWidth(0.2);
+    doc.line(PPDF_M + 3, cy, PPDF_M + PPDF_CW - 3, cy);
+    cy += 1.6;
+    S.rows.forEach((r) => {
+      ppdfMicro(doc, r.label, PPDF_M + 3, cy + 3.3, { size: 5.2 });
+      r.placed.forEach((p) => ppdfChip(doc, PPDF_M + 3 + S.labelW + p.x, cy + 0.6 + p.line * 5.4, p.text, p.it.color, PPDF_CW - S.labelW - 8));
+      cy += r.h;
+    });
+  }
+  return y + S.h + 4;
+}
+
+// --- Vue Métro ---------------------------------------------------------------
+function ppdfLegendItems(proj) {
+  const L = proj.legend, items = [];
+  if (L.milestone) items.push({ key: "milestone", label: "Jalon" });
+  if (L.action) items.push({ key: "action", label: "Action" });
+  if (L.done) items.push({ key: "done", label: "Terminé" });
+  if (L.future) items.push({ key: "future", label: "Prévu" });
+  if (L.late) items.push({ key: "late", label: "En retard" });
+  if (L.dependency) items.push({ key: "dependency", label: "Dépendance" });
+  if (L.correspondence) items.push({ key: "correspondence", label: "Correspondance" });
+  if (L.shared) items.push({ key: "shared", label: "Tronc commun" });
+  if (L.today) items.push({ key: "today", label: "Aujourd'hui" });
+  return items;
+}
+function ppdfDrawLegendGlyph(doc, key, x, y, color) {
+  doc.setLineWidth(0.35);
+  ppdfDash(doc, null);
+  if (key === "milestone") ppdfDiamond(doc, x + 1.3, y, 1.1, color, null);
+  else if (key === "action") { ppdfColor(doc, "fill", PPDF_PAPER); ppdfColor(doc, "draw", color); doc.circle(x + 1.3, y, 0.95, "FD"); }
+  else if (key === "done") { ppdfColor(doc, "fill", PPDF_SUCCESS); doc.circle(x + 1.3, y, 1.05, "F"); ppdfCheck(doc, x + 1.3, y, 1.05); }
+  else if (key === "future") { ppdfColor(doc, "draw", color); doc.setLineWidth(0.5); ppdfDash(doc, [0.8, 0.6]); doc.line(x, y, x + 3.2, y); ppdfDash(doc, null); return 3.2; }
+  else if (key === "late") { ppdfColor(doc, "draw", PPDF_DANGER); doc.setLineWidth(0.4); doc.circle(x + 1.3, y, 1.1, "S"); }
+  else if (key === "dependency") { ppdfColor(doc, "draw", PPDF_TEXT2); doc.setLineWidth(0.3); ppdfDash(doc, [0.25, 0.6]); doc.line(x, y, x + 3.2, y); ppdfDash(doc, null); return 3.2; }
+  else if (key === "correspondence") { ppdfColor(doc, "fill", PPDF_PAPER); ppdfColor(doc, "draw", PPDF_ACCENT); doc.setLineWidth(0.3); doc.circle(x + 1.3, y, 1.25, "FD"); ppdfColor(doc, "fill", PPDF_ACCENT); doc.circle(x + 1.3, y, 0.45, "F"); }
+  else if (key === "shared") { ppdfColor(doc, "draw", color); doc.setLineWidth(0.45); doc.line(x, y - 0.35, x + 3.2, y - 0.35); ppdfColor(doc, "draw", PPDF_ACCENT); doc.line(x, y + 0.35, x + 3.2, y + 0.35); return 3.2; }
+  else if (key === "today") { ppdfColor(doc, "draw", PPDF_ACCENT); doc.setLineWidth(0.35); doc.line(x + 1.3, y - 1.3, x + 1.3, y + 1.3); }
+  return 2.6;
+}
+function ppdfMetroLayout(doc, data, availableH) {
+  const innerW = PPDF_CW - 8;
+  const measure = (text, size, bold) => ppdfWidth(doc, text, size, bold);
+  const build = (spacing) => projectPdfMetroProjection(data, { width: innerW, measure, maxHeight: 150, spacing });
+  let proj = null;
+  // Aère le tracé quand la page le permet, sans jamais pousser le reste ; le
+  // mode numéroté (projet trop dense) n'est retenu qu'à l'espacement normal.
+  for (const spacing of [2, 1.75, 1.5, 1.25, 1]) {
+    const p = build(spacing);
+    if (!p) break;
+    if (spacing === 1 || (!p.numbered && p.height + 24 <= availableH)) { proj = p; break; }
+  }
+  if (!proj) return null;
+  const legend = ppdfLegendItems(proj);
+  const titleW = ppdfMicroWidth(doc, "Vue Métro", 6.2) + 6;
+  let lx = 0, lrow = 0;
+  const legendPlaced = legend.map((it) => {
+    const w = 3.6 + ppdfWidth(doc, it.label, 5.8, false) + 3;
+    if (lx && lx + w > PPDF_CW - 8 - titleW) { lx = 0; lrow++; }
+    const p = { ...it, x: lx, row: lrow };
+    lx += w;
+    return p;
+  });
+  const headH = 7 + lrow * 3.6;
+  const axisH = 5;
+  const footH = proj.todayX != null ? 5 : 2.5;
+  const index = proj.numbered ? proj.stations.map((s) => ({ s, lines: ppdfWrap(doc, `${s.number}. ${s.item.t.title}`, 6.4, false, (PPDF_CW - 14) / 2 - 22) })) : [];
+  return { proj, innerW, legendPlaced, titleW, headH, axisH, footH, h: headH + axisH + proj.height + footH, index };
+}
+function ppdfDrawMetro(doc, data, ML, y) {
+  const { proj } = ML;
+  ppdfPanel(doc, PPDF_M, y, PPDF_CW, ML.h);
+  ppdfMicro(doc, "Vue Métro", PPDF_M + 3, y + 4.8, { size: 6.2 });
+  ML.legendPlaced.forEach((it) => {
+    const lx = PPDF_M + 3 + ML.titleW + it.x, ly = y + 4 + it.row * 3.6;
+    const gw = ppdfDrawLegendGlyph(doc, it.key, lx, ly, data.project.color);
+    ppdfFont(doc, 5.8, "normal");
+    ppdfColor(doc, "text", PPDF_TEXT2);
+    doc.text(it.label, lx + gw + 1, ly + 0.9);
+  });
+  const ox = PPDF_M + 4;
+  const axisY = y + ML.headH + 3.2;
+  const top = y + ML.headH + ML.axisH;
+  const oy = top - proj.top;
+  const bottom = top + proj.height;
+  const X = (x) => ox + x, Y = (v) => oy + v;
+  const lineColor = data.project.color;
+  const today = data.today;
+
+  // Colonnes temporelles (mêmes séparateurs que la Vue Métro), en fond.
+  let lastLabelEnd = -Infinity;
+  proj.separators.forEach((s) => {
+    if (!s.clamped) {
+      ppdfColor(doc, "draw", PPDF_HAIR);
+      doc.setLineWidth(0.2);
+      ppdfDash(doc, null);
+      doc.line(X(s.x), axisY + 1.2, X(s.x), bottom);
+    }
+    const w = ppdfMicroWidth(doc, s.label, 5.2);
+    const lx = Math.min(X(s.x) + 0.8, PPDF_M + PPDF_CW - 3 - w);
+    if (lx > lastLabelEnd + 1.5) { ppdfMicro(doc, s.label, lx, axisY, { size: 5.2 }); lastLabelEnd = lx + w; }
+  });
+  // Repère « aujourd'hui » : trait fin derrière le tracé.
+  if (proj.todayX != null) {
+    ppdfColor(doc, "draw", PPDF_ACCENT);
+    doc.setLineWidth(0.3);
+    doc.line(X(proj.todayX), top - 1, X(proj.todayX), bottom + 1);
+    ppdfColor(doc, "fill", PPDF_ACCENT);
+    doc.triangle(X(proj.todayX) - 1, top - 1.8, X(proj.todayX) + 1, top - 1.8, X(proj.todayX), top - 0.4, "F");
+    ppdfFont(doc, 5.4, "bold");
+    ppdfColor(doc, "text", PPDF_ACCENT_TEXT);
+    const label = "Aujourd'hui";
+    const w = ppdfWidth(doc, label, 5.4, true);
+    const lx = Math.max(PPDF_M + 2, Math.min(X(proj.todayX) - w / 2, PPDF_M + PPDF_CW - 2 - w));
+    doc.text(label, lx, bottom + 3.4);
+  }
+
+  // Dépendances intra-projet : connecteur pointillé discret, sous le reste.
+  proj.connectors.forEach((c) => {
+    const midX = (c.x1 + c.x2) / 2;
+    ppdfColor(doc, "draw", PPDF_TEXT2);
+    doc.setLineWidth(0.3);
+    ppdfDash(doc, [0.25, 0.7]);
+    ppdfLine(doc, [[X(c.x1), Y(c.y1)], [X(midX), Y(c.y1)], [X(midX), Y(c.y2)], [X(c.x2), Y(c.y2)]]);
+    ppdfDash(doc, null);
+  });
+
+  // Ligne du projet : réalisée pleine jusqu'à aujourd'hui, prévue en
+  // pointillé au-delà ; portion d'avancement en trait épais (règle Métro).
+  const xs = X(proj.xStart), xe = X(proj.xEnd), my = Y(0);
+  const splitX = today <= data.period.start ? xs : today >= data.period.end ? xe : X(proj.todayX);
+  ppdfColor(doc, "draw", lineColor);
+  doc.setLineCap && doc.setLineCap("round");
+  doc.setLineWidth(0.9);
+  if (splitX > xs) doc.line(xs, my, splitX, my);
+  if (xe > splitX) { ppdfDash(doc, [1.2, 0.9]); doc.line(splitX, my, xe, my); ppdfDash(doc, null); }
+  if (proj.progress > 0) { doc.setLineWidth(1.6); doc.line(xs, my, xs + (xe - xs) * (proj.progress / 100), my); }
+  // Départ (station) et butoir de fin, comme la Vue Métro.
+  ppdfColor(doc, "fill", PPDF_PAPER);
+  doc.setLineWidth(0.6);
+  doc.circle(xs, my, 1.9, "FD");
+  // Butoir : barre perpendiculaire + demi-disque plein (Terminus de la Vue Métro).
+  doc.setLineWidth(0.7);
+  doc.line(xe + 1.2, my - 2.2, xe + 1.2, my + 2.2);
+  ppdfColor(doc, "fill", lineColor);
+  const half = [];
+  for (let k = 0; k <= 10; k++) { const a = -Math.PI / 2 + (Math.PI * k) / 10; half.push([xe + 1.9 + 1.6 * Math.cos(a), my + 1.6 * Math.sin(a)]); }
+  doc.lines(half.slice(1).map((p, k) => [p[0] - half[k][0], p[1] - half[k][1]]), half[0][0], half[0][1], [1, 1], "F", true);
+
+  // Tracés des stations (bifurcations, tiges des jalons), puis stations, puis libellés.
+  const partnerColor = (t) => (data.partners.find((p) => p.id === t.partnerId) || {}).color || PPDF_ACCENT;
+  proj.stations.forEach((s) => {
+    const t = s.item.t;
+    const color = t.status?.color || lineColor;
+    if (s.item.kind === "milestone") {
+      ppdfColor(doc, "draw", color);
+      doc.setLineWidth(0.45);
+      ppdfDash(doc, [0.25, 0.9]);
+      doc.line(X(s.xEnd), my, X(s.xEnd), Y(s.y));
+      ppdfDash(doc, null);
+      return;
+    }
+    const pts = ppdfBranchPoints(X(s.xStart), my, X(s.xEnd), Y(s.y));
+    const pct = t.done ? 100 : t.progress || 0;
+    const existing = t.start <= today; // départ déjà passé : bifurcation existante
+    const [doneSeg, restSeg] = ppdfSplitPolyline(pts, pct / 100);
+    const strokes = t.shared ? [[color, -0.3], [partnerColor(t), 0.3]] : [[color, 0]];
+    strokes.forEach(([c, off]) => {
+      const shift = (p) => p.map(([px, py]) => [px, py + off]);
+      ppdfColor(doc, "draw", c);
+      doc.setLineWidth(t.shared ? 0.45 : 0.5);
+      if (restSeg.length > 1) {
+        if (!existing || !t.done) ppdfDash(doc, [1, 0.8]);
+        ppdfLine(doc, shift(restSeg));
+        ppdfDash(doc, null);
+      }
+      if (pct > 0 && doneSeg.length > 1) { doc.setLineWidth(t.shared ? 0.7 : 1); ppdfLine(doc, shift(doneSeg)); }
+    });
+    // Départ de bifurcation sur la ligne.
+    ppdfColor(doc, "fill", PPDF_PAPER);
+    ppdfColor(doc, "draw", color);
+    doc.setLineWidth(0.4);
+    doc.circle(X(s.xStart), my, 0.75, "FD");
+  });
+
+  // Correspondances inter-projets : double anneau sous la station.
+  proj.correspondences.forEach((c) => {
+    const cx = X(c.x), cy = Y(c.y);
+    ppdfColor(doc, "fill", PPDF_PAPER);
+    ppdfColor(doc, "draw", c.color || PPDF_ACCENT);
+    doc.setLineWidth(0.35);
+    ppdfDash(doc, [0.5, 0.5]);
+    doc.circle(cx, cy, 3.1, "FD");
+    ppdfDash(doc, null);
+    ppdfColor(doc, "draw", PPDF_ACCENT);
+    doc.circle(cx, cy, 2.45, "S");
+  });
+
+  proj.stations.forEach((s) => {
+    const t = s.item.t;
+    const color = t.status?.color || lineColor;
+    const sx = X(s.xEnd), sy = Y(s.y);
+    if (s.item.kind === "milestone") {
+      // Station sur la ligne (anneau à la couleur du statut), losange au bout de la tige.
+      ppdfColor(doc, "fill", t.done ? PPDF_SUCCESS : PPDF_PAPER);
+      ppdfColor(doc, "draw", t.done ? PPDF_SUCCESS : color);
+      doc.setLineWidth(0.6);
+      doc.circle(sx, my, 1.6, "FD");
+      if (t.done) ppdfCheck(doc, sx, my, 1.6);
+      if (t.late) { ppdfColor(doc, "draw", PPDF_DANGER); doc.setLineWidth(0.4); doc.circle(sx, my, 2.3, "S"); }
+      ppdfColor(doc, "draw", PPDF_PAPER);
+      doc.setLineWidth(0.35);
+      ppdfDiamond(doc, sx, sy, 1.9, t.done ? PPDF_SUCCESS : color, PPDF_PAPER);
+      if (t.done) ppdfCheck(doc, sx, sy, 1.25);
+      if (t.late) { ppdfColor(doc, "draw", PPDF_DANGER); doc.setLineWidth(0.4); ppdfDiamond(doc, sx, sy, 2.6, null, PPDF_DANGER); }
+    } else {
+      if (t.late) { ppdfColor(doc, "draw", PPDF_DANGER); doc.setLineWidth(0.4); doc.circle(sx, sy, 2.2, "S"); }
+      if (t.done) {
+        ppdfColor(doc, "fill", PPDF_SUCCESS);
+        doc.circle(sx, sy, 1.5, "F");
+        ppdfCheck(doc, sx, sy, 1.5);
+      } else {
+        ppdfColor(doc, "fill", PPDF_PAPER);
+        ppdfColor(doc, "draw", t.shared ? partnerColor(t) : color);
+        doc.setLineWidth(t.shared ? 0.35 : 0.55);
+        doc.circle(sx, sy, 1.5, "FD");
+        if (t.shared) { ppdfColor(doc, "draw", color); doc.circle(sx, sy, 0.9, "S"); }
+      }
+    }
+    // Libellé sur fond papier : ne peut ni chevaucher un autre libellé
+    // (garanti par la projection) ni se faire traverser par un tracé.
+    const bx = X(s.box.x1), by = Y(s.box.y1);
+    ppdfColor(doc, "fill", PPDF_PAPER);
+    doc.rect(bx - 0.3, by, s.labelW + 0.3, s.labelH, "F");
+    if (proj.numbered) {
+      ppdfFont(doc, 6.4, "bold");
+      ppdfColor(doc, "text", PPDF_INK);
+      doc.text(s.titleLines[0], bx + 0.6, by + 2.9);
+      return;
+    }
+    ppdfFont(doc, 6.6, "bold");
+    ppdfColor(doc, "text", t.done ? PPDF_TEXT2 : PPDF_INK);
+    s.titleLines.forEach((l, k) => doc.text(l, bx + 0.6, by + 2.6 + k * 2.9));
+    if (s.meta) {
+      ppdfFont(doc, 5.4, "normal");
+      ppdfColor(doc, "text", t.late ? PPDF_DANGER_TEXT : PPDF_TEXT2);
+      doc.text(s.meta, bx + 0.6, by + 2.6 + s.titleLines.length * 2.9 + 0.1);
+    }
+  });
+
+  // Point courant accentué : position d'aujourd'hui sur la ligne.
+  if (proj.todayX != null) {
+    ppdfColor(doc, "fill", PPDF_ACCENT);
+    ppdfColor(doc, "draw", PPDF_PAPER);
+    doc.setLineWidth(0.5);
+    doc.circle(X(proj.todayX), my, 1.25, "FD");
+  }
+  doc.setLineCap && doc.setLineCap("butt");
+  return y + ML.h + 4;
+}
+
+// --- Tableau des tâches actives -----------------------------------------------
+const PPDF_COLS = [
+  { key: "task", label: "Tâche", w: 72 },
+  { key: "status", label: "Statut", w: 27 },
+  { key: "type", label: "Type", w: 25 },
+  { key: "date", label: "Date / fin", w: 26 },
+  { key: "owner", label: "Responsable", w: PPDF_CW - 72 - 27 - 25 - 26 },
+];
+function ppdfTaskRowLayout(doc, r) {
+  const titleLines = ppdfWrap(doc, r.title || "Sans titre", 7.2, true, PPDF_COLS[0].w - 8);
+  const tags = [];
+  if (r.milestone) tags.push({ kind: "milestone", text: "Jalon" });
+  if (r.criticality) tags.push({ kind: "chip", text: r.criticality.name, color: r.criticality.color });
+  if (r.late) tags.push({ kind: "chip", text: "En retard", color: PPDF_DANGER });
+  if (r.lastMilestone) tags.push({ kind: "text", text: "Dernier jalon franchi" });
+  if (r.progress != null && r.progress > 0) tags.push({ kind: "text", text: `Avancement ${r.progress} %` });
+  const status = r.status ? ppdfChipLayout(doc, r.status.name, PPDF_COLS[1].w - 4) : null;
+  const type = r.type ? ppdfChipLayout(doc, r.type.name, PPDF_COLS[2].w - 4) : null;
+  const ownerLines = r.responsible ? ppdfWrap(doc, r.responsible.name, 6.8, false, PPDF_COLS[4].w - 10) : [];
+  const dateMain = r.end ? projectPdfFmtDate(r.end) : "";
+  const dateSub = r.start && r.end && r.start !== r.end ? `début ${projectPdfFmtDate(r.start)}` : "";
+  const h = Math.max(
+    3.2 + titleLines.length * 3.1 + (tags.length ? 4.2 : 0),
+    status ? status.h + 3.4 : 0, type ? type.h + 3.4 : 0,
+    ownerLines.length * 2.9 + 3.6, 8,
+  );
+  return { r, titleLines, tags, status, type, ownerLines, dateMain, dateSub, h: h + 1 };
+}
+function ppdfDrawTableHead(doc, x, y) {
+  let cx = x;
+  PPDF_COLS.forEach((c) => { ppdfMicro(doc, c.label, cx + 2.5, y + 3.6, { size: 5.4 }); cx += c.w; });
+  ppdfColor(doc, "draw", PPDF_INK);
+  doc.setLineWidth(0.3);
+  doc.line(x + 2, y + 5.4, x + PPDF_CW - 2, y + 5.4);
+  return y + 5.4;
+}
+function ppdfDrawTaskRow(doc, L, x, y, images) {
+  const r = L.r;
+  let cx = x;
+  // Tâche : titre + marqueurs réellement présents.
+  if (r.milestone) ppdfDiamond(doc, cx + 3.6, y + 2.4, 1.1, r.done ? PPDF_SUCCESS : (r.status?.color || PPDF_INK), null);
+  else { ppdfColor(doc, "fill", r.done ? PPDF_SUCCESS : (r.status?.color || PPDF_INK)); doc.circle(cx + 3.6, y + 2.4, 0.9, "F"); }
+  ppdfFont(doc, 7.2, "bold");
+  ppdfColor(doc, "text", r.done ? PPDF_TEXT2 : PPDF_INK);
+  L.titleLines.forEach((l, k) => doc.text(l, cx + 6, y + 3.3 + k * 3.1));
+  if (L.tags.length) {
+    let tx = cx + 6;
+    const ty = y + 3.3 + L.titleLines.length * 3.1 - 1.4;
+    L.tags.forEach((tag) => {
+      if (tag.kind === "chip") { tx += ppdfChip(doc, tx, ty, tag.text, tag.color, 30, 5.4).w + 1.2; return; }
+      if (tag.kind === "milestone") {
+        ppdfColor(doc, "draw", PPDF_TEXT2);
+        doc.setLineWidth(0.25);
+        ppdfDiamond(doc, tx + 0.9, ty + 1.45, 0.8, null, PPDF_TEXT2);
+        ppdfFont(doc, 5.6, "bold");
+        ppdfColor(doc, "text", PPDF_TEXT2);
+        doc.text(tag.text, tx + 2.3, ty + 2.35);
+        tx += 2.3 + ppdfWidth(doc, tag.text, 5.6, true) + 2;
+        return;
+      }
+      ppdfFont(doc, 5.6, "normal");
+      ppdfColor(doc, "text", PPDF_TEXT2);
+      doc.text(tag.text, tx, ty + 2.35);
+      tx += ppdfWidth(doc, tag.text, 5.6, false) + 2;
+    });
+  }
+  cx += PPDF_COLS[0].w;
+  if (r.status) ppdfChip(doc, cx + 2.5, y + 1.2, r.status.name, r.status.color, PPDF_COLS[1].w - 4);
+  cx += PPDF_COLS[1].w;
+  if (r.type) ppdfChip(doc, cx + 2.5, y + 1.2, r.type.name, r.type.color, PPDF_COLS[2].w - 4);
+  cx += PPDF_COLS[2].w;
+  if (L.dateMain) {
+    ppdfFont(doc, 6.8, "bold");
+    ppdfColor(doc, "text", r.late ? PPDF_DANGER_TEXT : PPDF_INK);
+    doc.text(L.dateMain, cx + 2.5, y + 3.3);
+    if (L.dateSub) { ppdfFont(doc, 5.6, "normal"); ppdfColor(doc, "text", PPDF_TEXT2); doc.text(L.dateSub, cx + 2.5, y + 6.2); }
+  }
+  cx += PPDF_COLS[3].w;
+  if (r.responsible) {
+    ppdfAvatar(doc, r.responsible, cx + 4.6, y + 3.4, 2.1, images);
+    ppdfFont(doc, 6.8, "normal");
+    ppdfColor(doc, "text", PPDF_INK);
+    L.ownerLines.forEach((l, k) => doc.text(l, cx + 8, y + 3.9 + k * 2.9));
+  }
+  ppdfColor(doc, "draw", PPDF_HAIR);
+  doc.setLineWidth(0.2);
+  doc.line(x + 2, y + L.h, x + PPDF_CW - 2, y + L.h);
+}
+
+// --- État du réseau ----------------------------------------------------------
+function ppdfNetworkCells(data) {
+  const c = data.counts;
+  const cells = [
+    { label: "Projets du périmètre", value: String(data.perimeterCount) },
+    { label: "Tâches actives", value: String(c.active) },
+    { label: "Blocages / attentes", value: String(c.blocked) },
+    { label: "Jalons à venir", value: String(c.upcomingMilestones) },
+  ];
+  if (data.avgPerimeterProgress != null) cells.push({ label: "Avancement moyen", value: `${data.avgPerimeterProgress} %` });
+  if (data.nextCritical) cells.push({ label: "Prochaine échéance critique", value: projectPdfFmtDate(data.nextCritical.date), sub: data.nextCritical.row.title, wide: true, overdue: data.nextCritical.overdue });
+  return cells;
+}
+function ppdfNetworkLayout(doc, data) {
+  const cells = ppdfNetworkCells(data);
+  const n = cells.length + (cells.some((x) => x.wide) ? 1 : 0);
+  const unit = PPDF_CW / n;
+  let h = 15;
+  cells.forEach((cell) => {
+    cell.w = cell.wide ? unit * 2 : unit;
+    if (cell.sub) { cell.subLines = ppdfWrap(doc, cell.sub, 6.2, false, cell.w - 6); h = Math.max(h, 12.6 + cell.subLines.length * 2.7 + 1.4); }
+  });
+  return { cells, h: h + 6 };
+}
+function ppdfDrawNetwork(doc, data, N, y) {
+  ppdfPanel(doc, PPDF_M, y, PPDF_CW, N.h);
+  ppdfColor(doc, "fill", PPDF_INK);
+  doc.rect(PPDF_M, y, PPDF_CW, 0.8, "F");
+  ppdfMicro(doc, "État du réseau", PPDF_M + 3, y + 4.6, { size: 6.2 });
+  let x = PPDF_M;
+  const top = y + 6;
+  N.cells.forEach((cell, i) => {
+    if (i) { ppdfColor(doc, "draw", PPDF_HAIR); doc.setLineWidth(0.2); doc.line(x, top + 1.5, x, y + N.h - 2); }
+    ppdfMicroFit(doc, cell.label, x + 3, top + 4.6, cell.w - 5, { size: 5.2 });
+    ppdfFont(doc, 10.5, "bold");
+    ppdfColor(doc, "text", cell.overdue ? PPDF_DANGER_TEXT : PPDF_INK);
+    doc.text(cell.value, x + 3, top + 9.4);
+    if (cell.subLines) {
+      ppdfFont(doc, 6.2, "normal");
+      ppdfColor(doc, "text", PPDF_TEXT2);
+      cell.subLines.forEach((l, k) => doc.text(l, x + 3, top + 12.4 + k * 2.7));
+    }
+    x += cell.w;
+  });
+  return y + N.h + 4;
+}
+
+// --- Assemblage ----------------------------------------------------------------
+async function buildFicheProjetPdf(projectId, catalogs, { logoDataUrl = NEXORA_LOGO_FULL, todayIso = iso(new Date()) } = {}) {
+  if (typeof jsPDF !== "function") throw new Error("Générateur PDF indisponible : recharge Nexora puis réessaie.");
+  const data = projectPdfData(projectId, catalogs, todayIso);
+  if (!data) throw new Error("Projet introuvable : impossible de générer la fiche projet.");
+  const images = await ppdfLoadImages([data.project.image, ...data.taskRows.map((r) => r.responsible?.image)]);
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  doc.setProperties({ title: `Fiche projet - ${projectPdfSafeText(data.project.name)}`, creator: "Nexora" });
+  ppdfPageBackground(doc);
+
+  const newPage = () => {
+    doc.addPage();
+    ppdfPageBackground(doc);
+    return ppdfDrawMiniHeader(doc, data, logoDataUrl, images);
+  };
+  const H = ppdfHeaderLayout(doc, data);
+  let y = ppdfDrawHeader(doc, data, H, logoDataUrl, images);
+  const S = ppdfSynthesisLayout(doc, data);
+  const rows = data.taskRows.filter((r) => !r.done || r.lastMilestone).map((r) => ppdfTaskRowLayout(doc, r));
+  const N = ppdfNetworkLayout(doc, data);
+  const tableTitleH = 7, headH = 5.4;
+  const tableH = tableTitleH + headH + (rows.length ? rows.reduce((s, L) => s + L.h, 0) : 8) + 2;
+
+  y = ppdfDrawSynthesis(doc, data, S, y);
+
+  // Vue Métro : bloc insécable, aéré si la page le permet.
+  const metroSpace = PPDF_BOTTOM - y - tableH - N.h - 8;
+  const ML = ppdfMetroLayout(doc, data, Math.max(0, metroSpace));
+  if (ML) {
+    if (y + ML.h > PPDF_BOTTOM) y = newPage();
+    y = ppdfDrawMetro(doc, data, ML, y);
+    // Mode numéroté (projet très dense) : index des stations, paginé.
+    if (ML.index.length) {
+      const colW = (PPDF_CW - 8) / 2;
+      let i = 0;
+      while (i < ML.index.length) {
+        if (y + 12 > PPDF_BOTTOM) y = newPage();
+        const startY = y;
+        let colHeights = [0, 0];
+        const blockItems = [];
+        ppdfMicro(doc, "Index des stations", PPDF_M + 3, y + 4.2, { size: 5.8 });
+        let cy = [y + 7, y + 7];
+        let col = 0;
+        while (i < ML.index.length) {
+          const it = ML.index[i];
+          const h = it.lines.length * 2.8 + 1.4;
+          if (cy[col] + h > PPDF_BOTTOM - 2) { if (col === 0) { col = 1; continue; } break; }
+          blockItems.push({ it, x: PPDF_M + 4 + col * colW, y: cy[col] });
+          cy[col] += h;
+          i++;
+          if (col === 0 && i >= Math.ceil(ML.index.length / 2) && cy[0] - startY > 20) col = 1;
+        }
+        colHeights = cy;
+        const blockH = Math.max(...colHeights) - startY + 1.5;
+        ppdfPanel(doc, PPDF_M, startY, PPDF_CW, blockH);
+        ppdfMicro(doc, "Index des stations", PPDF_M + 3, startY + 4.2, { size: 5.8 });
+        blockItems.forEach(({ it, x, y: iy }) => {
+          const t = it.s.item.t;
+          if (it.s.item.kind === "milestone") ppdfDiamond(doc, x + 0.9, iy + 1.2, 0.9, t.done ? PPDF_SUCCESS : (t.status?.color || PPDF_INK), null);
+          else { ppdfColor(doc, "fill", t.done ? PPDF_SUCCESS : (t.status?.color || PPDF_INK)); doc.circle(x + 0.9, iy + 1.2, 0.8, "F"); }
+          ppdfFont(doc, 6.4, "normal");
+          ppdfColor(doc, "text", PPDF_INK);
+          it.lines.forEach((l, k) => doc.text(l, x + 2.8, iy + 2.1 + k * 2.8));
+          ppdfFont(doc, 5.6, "normal");
+          ppdfColor(doc, "text", PPDF_TEXT2);
+          doc.text(projectPdfFmtDate(t.end), x + colW - 3, iy + 2.1, { align: "right" });
+        });
+        y = startY + blockH + 4;
+      }
+    }
+  }
+
+  // Tâches en cours : lignes insécables, en-tête de colonnes répété.
+  const startTable = (withTitle) => {
+    const need = (withTitle ? tableTitleH : 2) + headH + (rows[0] ? rows[0].h : 8);
+    if (y + need > PPDF_BOTTOM) y = newPage();
+    return y;
+  };
+  let tableTop = startTable(true);
+  let segTop = tableTop;
+  let cy = tableTop + tableTitleH;
+  const closeSegment = (bottom) => {
+    // Le cadre est tracé APRÈS le contenu du segment : on le pose sans fond.
+    ppdfColor(doc, "draw", PPDF_BORDER);
+    doc.setLineWidth(0.2);
+    doc.rect(PPDF_M, segTop, PPDF_CW, bottom - segTop, "S");
+  };
+  // Fond blanc du segment : calculé à l'avance pour la page courante.
+  const segmentHeight = (from, startIdx, withTitle) => {
+    let h = (withTitle ? tableTitleH : 2) + headH;
+    let k = startIdx;
+    while (k < rows.length && from + h + rows[k].h + 2 <= PPDF_BOTTOM) { h += rows[k].h; k++; }
+    if (!rows.length) h += 8;
+    return { h: h + 2, end: k };
+  };
+  let idx = 0;
+  let seg = segmentHeight(segTop, 0, true);
+  ppdfColor(doc, "fill", PPDF_PAPER);
+  doc.rect(PPDF_M, segTop, PPDF_CW, seg.h, "F");
+  ppdfMicro(doc, "Tâches en cours", PPDF_M + 3, segTop + 4.8, { size: 6.2 });
+  cy = ppdfDrawTableHead(doc, PPDF_M, cy - 1.6) + 0.2;
+  if (!rows.length) {
+    ppdfFont(doc, 7.2, "normal");
+    ppdfColor(doc, "text", PPDF_TEXT2);
+    doc.text("Aucune tâche active", PPDF_M + 3, cy + 5);
+    cy += 8;
+  }
+  while (idx < rows.length) {
+    if (idx >= seg.end) {
+      closeSegment(segTop + seg.h);
+      y = newPage();
+      segTop = y;
+      seg = segmentHeight(segTop, idx, false);
+      ppdfColor(doc, "fill", PPDF_PAPER);
+      doc.rect(PPDF_M, segTop, PPDF_CW, seg.h, "F");
+      cy = ppdfDrawTableHead(doc, PPDF_M, segTop + 0.4) + 0.2;
+    }
+    ppdfDrawTaskRow(doc, rows[idx], PPDF_M, cy, images);
+    cy += rows[idx].h;
+    idx++;
+  }
+  closeSegment(segTop + seg.h);
+  y = segTop + seg.h + 4;
+
+  // État du réseau : barre basse, jamais coupée.
+  if (y + N.h > PPDF_BOTTOM) y = newPage();
+  ppdfDrawNetwork(doc, data, N, y);
+
+  const total = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= total; p++) { doc.setPage(p); ppdfDrawPageNumber(doc, p, total); }
+  return { doc, data, fileName: projectPdfFileName(data.project.name, todayIso) };
+}
+
+async function downloadFicheProjetPdf(projectId, catalogs, options = {}) {
+  const { doc, fileName } = await buildFicheProjetPdf(projectId, catalogs, options);
+  doc.save(fileName);
+  return fileName;
+}
+// === NEXORA:PROJECT-PDF-DRAW:END ===
+
 function QuoteStatusBadge({ status }) {
   const meta = quoteStatusMeta(status);
   return <span className="lp-quote-badge" style={{ background: meta.color }}>{meta.label}</span>;

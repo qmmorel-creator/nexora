@@ -1760,13 +1760,13 @@ const renderMarkdown = (text, interactive = false) => {
 
 // Nom de fichier stable et sûr : minuscules, accents retirés, tout ce qui
 // n'est pas alphanumérique devient un tiret, jamais deux tirets de suite.
-function memoSlug(text) {
+function memoSlug(text, fallback = "tache") {
   return String(text || "")
     .normalize("NFD").replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "tache";
+    .slice(0, 60) || fallback;
 }
 
 function memoFileName(title, dateIso) {
@@ -1994,6 +1994,475 @@ function memoTaskFields(task, catalogs) {
   };
 }
 // === NEXORA:MEMO-PDF-CORE:END ===
+
+// === NEXORA:PROJECT-PDF-CORE:START ===
+// Fonctions pures de la « Fiche projet PDF » (#291) : agrégation des tâches
+// d'un projet, indicateurs, échéance critique, projection Métro et choix de
+// couleurs. Lecture exclusive des catalogues déjà chargés — aucune écriture,
+// aucune valeur inventée : un indicateur non déterminable vaut `null` et la
+// mise en page le retire. Le dessin jsPDF vit dans NEXORA:PROJECT-PDF-DRAW
+// (index.html.part-003) ; ce bloc reste testable sans navigateur.
+
+// Règle d'avancement d'une ligne de projet de la Vue Métro, extraite de
+// ProjectMetroView (buildRow) pour que la fiche PDF réutilise LA règle de
+// Nexora au lieu d'en recalculer une autre : moyenne des tâches non-jalons,
+// une tâche terminée compte 100 %. `null` quand aucune tâche non-jalon
+// n'existe — la vue affiche alors 0 %, la fiche masque l'indicateur.
+function metroRowProgress(pTasks, ctx) {
+  const vals = (pTasks || [])
+    .filter((t) => getTaskType(t) !== "milestone")
+    .map((t) => (isTaskDoneGlobal(t, ctx) ? 100 : t.progress || 0));
+  return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
+}
+
+function projectPdfFileName(projectName, dateIso) {
+  const day = (dateIso || "").slice(0, 10) || "0000-00-00";
+  return `nexora-fiche-projet-${memoSlug(projectName, "projet")}-${day}.pdf`;
+}
+
+// Les polices standard de jsPDF (Helvetica) n'encodent que Windows-1252 : un
+// caractère hors de cette table sort en octets illisibles dans le PDF. Les
+// équivalents typographiques courants sont convertis, le reste (emoji,
+// pictogrammes) est retiré plutôt qu'imprimé en charabia.
+const PPDF_CP1252_EXTRA = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ";
+const PPDF_REPLACEMENTS = { "→": "->", "←": "<-", "↔": "<->", "⇒": "=>", "≤": "<=", "≥": ">=", "≠": "!=", "✓": "", "✔": "", "✅": "", "⚠": "", "\u00A0": " ", "\u202F": " ", "\u2009": " " };
+function projectPdfSafeText(text) {
+  const out = [];
+  for (const ch of String(text == null ? "" : text)) {
+    if (Object.prototype.hasOwnProperty.call(PPDF_REPLACEMENTS, ch)) { out.push(PPDF_REPLACEMENTS[ch]); continue; }
+    const code = ch.codePointAt(0);
+    if ((code >= 0x20 && code <= 0x7e) || (code >= 0xa0 && code <= 0xff) || PPDF_CP1252_EXTRA.includes(ch)) out.push(ch);
+    else if (code === 0x09 || code === 0x0a) out.push(" ");
+  }
+  return out.join("").replace(/\s{2,}/g, " ").trim();
+}
+
+// --- Contraste WCAG --------------------------------------------------------
+function projectPdfLuminance(hex) {
+  const [r, g, b] = memoHexToRgb(hex).map((c) => c / 255);
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+function projectPdfContrastRatio(hexA, hexB) {
+  const a = projectPdfLuminance(hexA), b = projectPdfLuminance(hexB);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+function projectPdfHex(rgb) {
+  return "#" + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+const PPDF_INK = "#10151F";
+// Pastille lisible (texte ≥ 4,5:1, WCAG AA) : on garde la couleur du
+// catalogue et on choisit l'encre la plus contrastée (blanc ou encre
+// foncée) ; si aucune n'atteint 4,5:1 — teintes moyennes comme #F2A93B sous
+// texte blanc — le fond est assombri par petits pas, sans changer de teinte,
+// jusqu'à passer le seuil avec un texte blanc.
+function projectPdfChipColors(hex) {
+  const base = /^#?[0-9a-f]{6}$/i.test(String(hex || "").trim()) ? projectPdfHex(memoHexToRgb(hex)) : "#8C94A5";
+  const best = (bg) => {
+    const white = projectPdfContrastRatio(bg, "#FFFFFF"), dark = projectPdfContrastRatio(bg, PPDF_INK);
+    return white >= dark ? { ink: "#FFFFFF", ratio: white } : { ink: PPDF_INK, ratio: dark };
+  };
+  let pick = best(base);
+  if (pick.ratio >= 4.5) return { bg: base, ink: pick.ink, ratio: pick.ratio };
+  let rgb = memoHexToRgb(base);
+  for (let i = 0; i < 40; i++) {
+    rgb = rgb.map((c) => c * 0.94);
+    const bg = projectPdfHex(rgb);
+    const white = projectPdfContrastRatio(bg, "#FFFFFF");
+    if (white >= 4.5) return { bg, ink: "#FFFFFF", ratio: white };
+  }
+  return { bg: PPDF_INK, ink: "#FFFFFF", ratio: projectPdfContrastRatio(PPDF_INK, "#FFFFFF") };
+}
+// Couleur de TEXTE posée directement sur papier blanc (libellé de station,
+// nom de projet) : même teinte, assombrie jusqu'à 4,5:1 si besoin.
+function projectPdfTextOnPaper(hex, paper = "#FFFFFF") {
+  let rgb = memoHexToRgb(hex);
+  for (let i = 0; i < 40 && projectPdfContrastRatio(projectPdfHex(rgb), paper) < 4.5; i++) rgb = rgb.map((c) => c * 0.92);
+  return projectPdfHex(rgb);
+}
+
+// --- Images (logo projet, avatars) ------------------------------------------
+// jsPDF n'accepte que PNG/JPEG. Un emoji, une icône « tabler:… » ou
+// « iconify:… » n'est pas une image : repli sur le marqueur de couleur (projet)
+// ou l'avatar à initiales (membre), comme dans l'application.
+function projectPdfImageSource(value) {
+  const v = String(value || "").trim();
+  if (/^data:image\/(png|jpe?g);base64,/i.test(v)) return { kind: "data", src: v, format: /png/i.test(v.slice(0, 20)) ? "PNG" : "JPEG" };
+  if (/^https?:\/\/\S+$/i.test(v)) return { kind: "url", src: v };
+  return null;
+}
+
+function projectPdfMember(name, teamMembers) {
+  if (!name) return null;
+  const member = (teamMembers || []).find((m) => m.name === name) || null;
+  return {
+    name,
+    color: member?.color || "#8593AA",
+    initials: memoInitials(name),
+    image: projectPdfImageSource(member?.avatarDataUrl),
+  };
+}
+
+// --- Agrégation --------------------------------------------------------------
+const PPDF_RE_IN_PROGRESS = /en\s*cours/i;
+const PPDF_RE_WAITING_THIRD = /attente\s*tiers/i;
+const PPDF_RE_WAITING = /attente/i;
+
+function projectPdfGroupCount(list, keyOf, catalog) {
+  const map = new Map();
+  list.forEach((t) => {
+    const item = catalog.find((c) => c.id === keyOf(t));
+    if (!item) return; // aucun libellé fabriqué pour une référence orpheline
+    const cur = map.get(item.id) || { id: item.id, name: item.name, color: item.color || "#8593AA", count: 0 };
+    cur.count++;
+    map.set(item.id, cur);
+  });
+  return [...map.values()].sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name)));
+}
+
+// Prochaine échéance critique : la tâche active de criticité « Urgent » la
+// plus proche (même en retard — c'est alors l'alerte la plus pressante) ; à
+// défaut, le prochain jalon actif à venir. Rien d'autre n'est « critique » dans
+// les données de Nexora : sans candidat, l'indicateur est absent.
+function projectPdfNextCritical(activeTasks, todayIso) {
+  const withEnd = (activeTasks || []).filter((t) => t && t.end);
+  const urgent = withEnd.filter((t) => t.criticality === "urgent");
+  const pool = urgent.length ? urgent : withEnd.filter((t) => getTaskType(t) === "milestone" && t.end >= todayIso);
+  if (!pool.length) return null;
+  const t = [...pool].sort((a, b) => a.end.localeCompare(b.end) || String(a.title || "").localeCompare(String(b.title || "")))[0];
+  return { task: t, date: t.end, overdue: t.end < todayIso, reason: t.criticality === "urgent" ? "urgent" : "milestone" };
+}
+
+function projectPdfData(projectId, catalogs, todayIso) {
+  const { projects = [], statuses = [], taskTypes = [], teamMembers = [], tasks = [] } = catalogs || {};
+  const project = projects.find((p) => p.id === projectId);
+  if (!project) return null;
+  const ctx = { projects, statuses, taskTypes };
+  const statusOf = (t) => statuses.find((s) => s.id === t.statusId) || null;
+  const typeOf = (t) => taskTypes.find((x) => x.id === t.taskTypeId) || null;
+  const critOf = (t) => CRITICALITIES.find((c) => c.id === t.criticality) || null;
+  const isDone = (t) => isTaskDoneGlobal(t, ctx);
+  const statusIs = (t, re) => re.test(statusOf(t)?.name || "");
+
+  const all = tasks.filter((t) => t && (t.projectId === projectId || t.secondaryProjectId === projectId));
+  const active = all.filter((t) => !isDone(t));
+  const done = all.filter(isDone);
+  const dated = all.filter((t) => t.start && t.end);
+
+  // Période : mêmes bornes que la ligne Métro du projet (buildRow).
+  let period = null;
+  if (dated.length) {
+    const ds = [];
+    dated.forEach((t) => { if (getTaskType(t) === "milestone") ds.push(t.end); else ds.push(t.start, t.end); });
+    period = { start: ds.reduce((m, d) => (d < m ? d : m)), end: ds.reduce((m, d) => (d > m ? d : m)) };
+  }
+
+  const disabled = new Set(project.disabledStatusIds || []);
+  const waitingThirdStatusExists = statuses.some((s) => PPDF_RE_WAITING_THIRD.test(s.name || "") && (s.projectId ? s.projectId === projectId : !disabled.has(s.id)));
+  const waitingThird = active.filter((t) => statusIs(t, PPDF_RE_WAITING_THIRD));
+
+  const byId = new Map(tasks.filter(Boolean).map((t) => [t.id, t]));
+  const allIds = new Set(all.map((t) => t.id));
+  // Dépendances RÉELLEMENT définies et résolubles (un identifiant orphelin
+  // disparaît), dans les deux sens : prédécesseurs et successeurs d'autres
+  // projets comptent comme correspondances.
+  const dependencies = [];
+  tasks.forEach((t) => {
+    if (!t || !Array.isArray(t.dependsOn)) return;
+    t.dependsOn.forEach((depId) => {
+      const from = byId.get(depId);
+      if (!from || from.id === t.id) return;
+      if (!allIds.has(t.id) && !allIds.has(from.id)) return;
+      const cross = !(allIds.has(t.id) && allIds.has(from.id));
+      dependencies.push({ fromId: from.id, toId: t.id, cross, otherProjectId: cross ? (allIds.has(t.id) ? from.projectId : t.projectId) : null, from, to: t });
+    });
+  });
+  const blockedIds = new Set(dependencies.filter((d) => allIds.has(d.toId) && !isDone(d.from)).map((d) => d.toId));
+
+  const partnerIds = new Set();
+  all.forEach((t) => {
+    const other = t.projectId === projectId ? t.secondaryProjectId : t.projectId;
+    if (other && other !== projectId) partnerIds.add(other);
+  });
+  dependencies.forEach((d) => { if (d.cross && d.otherProjectId && d.otherProjectId !== projectId) partnerIds.add(d.otherProjectId); });
+  const partners = [...partnerIds].map((id) => projects.find((p) => p.id === id)).filter(Boolean);
+
+  // Avancement : règle Métro sur les tâches datées dont c'est le projet principal.
+  const ownDated = (pid) => tasks.filter((t) => t && t.projectId === pid && t.start && t.end);
+  const progress = metroRowProgress(ownDated(projectId), ctx);
+  const perimeterProgress = [project, ...partners].map((p) => metroRowProgress(ownDated(p.id), ctx)).filter((v) => v != null);
+  const avgPerimeterProgress = perimeterProgress.length ? Math.round(perimeterProgress.reduce((s, v) => s + v, 0) / perimeterProgress.length) : null;
+
+  const milestones = dated.filter((t) => getTaskType(t) === "milestone");
+  const upcomingMilestones = milestones.filter((t) => !isDone(t) && t.end >= todayIso);
+  const nextCritical = projectPdfNextCritical(active, todayIso);
+  const urgentActive = active.filter((t) => t.criticality === "urgent");
+
+  const rowOf = (t, extra = {}) => {
+    const st = statusOf(t), ty = typeOf(t), cr = critOf(t);
+    return {
+      id: t.id,
+      title: t.title || "",
+      status: st ? { name: st.name, color: st.color || "#8593AA" } : null,
+      type: ty ? { name: ty.name, color: ty.color || "#8593AA" } : null,
+      criticality: cr ? { id: cr.id, name: cr.name, color: cr.color } : null,
+      milestone: getTaskType(t) === "milestone",
+      start: t.start || null,
+      end: t.end || null,
+      progress: getTaskType(t) !== "milestone" && Number.isFinite(t.progress) ? Math.max(0, Math.min(100, t.progress)) : null,
+      responsible: projectPdfMember(t.assignee, teamMembers),
+      done: isDone(t),
+      late: !!t.end && !isDone(t) && t.end < todayIso,
+      ...extra,
+    };
+  };
+  // Tableau : toutes les tâches actives, plus le dernier jalon terminé (le
+  // dernier repère significatif franchi) — jamais les autres tâches terminées.
+  const lastDoneMilestone = done.filter((t) => getTaskType(t) === "milestone" && t.end).sort((a, b) => b.end.localeCompare(a.end))[0] || null;
+  const tableTasks = [...active, ...(lastDoneMilestone ? [lastDoneMilestone] : [])]
+    .sort((a, b) => String(a.end || "9999").localeCompare(String(b.end || "9999")) || String(a.title || "").localeCompare(String(b.title || "")));
+  const taskRows = tableTasks.map((t) => rowOf(t, { lastMilestone: t === lastDoneMilestone }));
+
+  return {
+    project: { id: project.id, name: project.name || "", color: project.color || "#8593AA", image: projectPdfImageSource(project.icon) },
+    today: todayIso,
+    counts: {
+      total: all.length,
+      active: active.length,
+      inProgress: active.filter((t) => statusIs(t, PPDF_RE_IN_PROGRESS)).length,
+      done: done.length,
+      waitingThird: waitingThirdStatusExists || waitingThird.length ? waitingThird.length : null,
+      blocked: active.filter((t) => statusIs(t, PPDF_RE_WAITING) || blockedIds.has(t.id)).length,
+      upcomingMilestones: upcomingMilestones.length,
+    },
+    // Couleur de catalogue des familles de statut comptées dans la synthèse.
+    statusColors: {
+      inProgress: statuses.find((x) => PPDF_RE_IN_PROGRESS.test(x.name || ""))?.color || null,
+      done: statuses.find((x) => /termin/i.test(x.name || ""))?.color || null,
+      waitingThird: statuses.find((x) => PPDF_RE_WAITING_THIRD.test(x.name || ""))?.color || null,
+    },
+    byStatus: projectPdfGroupCount(active, (t) => t.statusId, statuses),
+    byType: projectPdfGroupCount(active, (t) => t.taskTypeId, taskTypes),
+    period,
+    progress,
+    avgPerimeterProgress,
+    perimeterCount: 1 + partners.length,
+    partners: partners.map((p) => ({ id: p.id, name: p.name || "", color: p.color || "#8593AA" })),
+    nextCritical: nextCritical ? { ...nextCritical, row: rowOf(nextCritical.task) } : null,
+    urgent: urgentActive.map((t) => rowOf(t)),
+    taskRows,
+    metroTasks: dated.map((t) => rowOf(t, {
+      shared: !!t.secondaryProjectId && t.secondaryProjectId !== t.projectId,
+      partnerId: t.projectId === projectId ? t.secondaryProjectId || null : t.projectId,
+    })),
+    dependencies: dependencies.map((d) => ({ fromId: d.fromId, toId: d.toId, cross: d.cross, otherProjectId: d.otherProjectId, fromTitle: d.from.title || "", toTitle: d.to.title || "" })),
+  };
+}
+
+// --- Projection Métro --------------------------------------------------------
+// Même grammaire que ProjectMetroView : axe temporel horizontal, une ligne =
+// le projet (tronc de départ au butoir), un jalon = station sur la ligne +
+// losange relié en pointillé, une action = bifurcation qui quitte la ligne à
+// sa date de début et finit par une station à sa date de fin, une dépendance
+// intra-projet = connecteur pointillé, inter-projet = correspondance (double
+// anneau), une tâche à deux projets = tronc commun bicolore. Coordonnées en
+// millimètres ; `measure(text, sizePt, bold)` renvoie une largeur en mm
+// (jsPDF en production, approximation dans les tests). Aucun libellé ne se
+// chevauche : placement glouton sur voies au-dessus/au-dessous, les
+// étiquettes et les stations étant des obstacles.
+function projectPdfSeparatorUnit(spanDays) {
+  if (spanDays <= 45) return "week";
+  if (spanDays <= 800) return "month";
+  return "quarter";
+}
+const PPDF_MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+function projectPdfSeparators(startIso, endIso, unit) {
+  const out = [];
+  const d = new Date(startIso + "T00:00:00");
+  if (unit === "week") { const wd = (d.getDay() + 6) % 7; d.setDate(d.getDate() - wd); }
+  else { d.setDate(1); if (unit === "quarter") d.setMonth(Math.floor(d.getMonth() / 3) * 3); }
+  let guard = 0;
+  while (iso(d) <= endIso && guard++ < 400) {
+    const label = unit === "week"
+      ? `${d.getDate()} ${PPDF_MONTHS[d.getMonth()]}`
+      : unit === "quarter"
+        ? `T${Math.floor(d.getMonth() / 3) + 1} ${d.getFullYear()}`
+        : (d.getMonth() === 0 || !out.length ? `${PPDF_MONTHS[d.getMonth()]} ${d.getFullYear()}` : PPDF_MONTHS[d.getMonth()]);
+    out.push({ date: iso(d), label });
+    if (unit === "week") d.setDate(d.getDate() + 7);
+    else d.setMonth(d.getMonth() + (unit === "quarter" ? 3 : 1));
+  }
+  return out;
+}
+
+function projectPdfBoxesOverlap(a, b, pad = 0) {
+  return !(a.x2 + pad <= b.x1 || b.x2 + pad <= a.x1 || a.y2 + pad <= b.y1 || b.y2 + pad <= a.y1);
+}
+
+function projectPdfMetroProjection(data, { width, measure, maxHeight = 150, numbered = false, spacing = 1 } = {}) {
+  const tasks = (data?.metroTasks || []).filter((t) => t.start && t.end);
+  if (!data?.period || !tasks.length) return null;
+  const TITLE_PT = 6.6, META_PT = 5.4, LINE_H = 2.9, META_H = 2.5;
+  const LABEL_MAX_W = Math.min(62, width * 0.36);
+  const padL = 5, padR = 7;
+  const startIdx = dayIndex(data.period.start);
+  const span = Math.max(1, dayIndex(data.period.end) - startIdx);
+  const xFor = (d) => padL + ((dayIndex(d) - startIdx) / span) * (width - padL - padR);
+
+  const wrap = (text, sizePt, maxW) => {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    words.forEach((w) => {
+      const cand = cur ? cur + " " + w : w;
+      if (measure(cand, sizePt, true) <= maxW || !cur) cur = cand; else { lines.push(cur); cur = w; }
+    });
+    if (cur) lines.push(cur);
+    // Un mot plus large que la colonne est coupé en morceaux, jamais tronqué.
+    return lines.flatMap((l) => {
+      if (measure(l, sizePt, true) <= maxW) return [l];
+      const parts = [];
+      let buf = "";
+      for (const ch of l) { if (measure(buf + ch, sizePt, true) > maxW && buf) { parts.push(buf); buf = ch; } else buf += ch; }
+      if (buf) parts.push(buf);
+      return parts;
+    });
+  };
+
+  const items = tasks
+    .map((t) => ({ t, kind: t.milestone ? "milestone" : "action", sort: t.milestone ? t.end : t.start }))
+    .sort((a, b) => a.sort.localeCompare(b.sort) || a.t.end.localeCompare(b.t.end) || a.t.title.localeCompare(b.t.title));
+
+  // Stations fixes sur la ligne (y = 0) : départ, jalons, départs de bifurcation.
+  const obstacles = [];
+  const R = 1.7;
+  const stationBox = (x, y, r = R + 0.6) => ({ x1: x - r, x2: x + r, y1: y - r, y2: y + r });
+  obstacles.push(stationBox(xFor(data.period.start), 0, 2.2));
+  items.forEach((it) => obstacles.push(stationBox(it.kind === "milestone" ? xFor(it.t.end) : xFor(it.t.start), 0, it.kind === "milestone" ? 2.1 : 0.9)));
+  let failed = false;
+
+  const partnersById = new Map((data.partners || []).map((p) => [p.id, p]));
+  const corrByTask = new Map();
+  (data.dependencies || []).filter((d) => d.cross).forEach((d) => {
+    const own = tasks.some((x) => x.id === d.toId) ? d.toId : d.fromId;
+    const name = partnersById.get(d.otherProjectId)?.name;
+    if (!name) return;
+    corrByTask.set(own, [...new Set([...(corrByTask.get(own) || []), name])]);
+  });
+  const LANE_BASE = 6.5 * spacing, LANE_STEP = 4.2 * spacing;
+  const placed = [];
+  let seq = 0;
+  items.forEach((it, idx) => {
+    const t = it.t;
+    const xEnd = xFor(t.end);
+    const xStart = it.kind === "milestone" ? xEnd : xFor(t.start);
+    const number = idx + 1;
+    const titleLines = numbered ? [String(number)] : wrap(projectPdfSafeText(t.title) || "Sans titre", TITLE_PT, LABEL_MAX_W);
+    const partner = t.shared ? partnersById.get(t.partnerId) : null;
+    const corr = corrByTask.get(t.id) || [];
+    const metaParts = [it.kind === "milestone" || t.start === t.end ? projectPdfFmtDate(t.end) : `${projectPdfFmtDate(t.start)} - ${projectPdfFmtDate(t.end)}`];
+    if (partner) metaParts.push(`avec ${projectPdfSafeText(partner.name)}`);
+    corr.forEach((name) => metaParts.push(`corresp. ${projectPdfSafeText(name)}`));
+    const meta = numbered ? "" : metaParts.join(" · ");
+    const labelW = Math.max(...titleLines.map((l) => measure(l, TITLE_PT, true)), meta ? measure(meta, META_PT, false) : 0) + 1.2;
+    const labelH = titleLines.length * LINE_H + (meta ? META_H : 0) + 0.8;
+    const glyphW = it.kind === "milestone" ? 4.2 : 3.2;
+    const preferred = seq++ % 2 === 0 ? -1 : 1;
+    const candidate = (lane, side, onLeft) => {
+      const y = side * (LANE_BASE + lane * LANE_STEP);
+      const lx = onLeft ? xEnd - glyphW / 2 - 0.8 - labelW : xEnd + glyphW / 2 + 0.8;
+      if (lx < 0 || lx + labelW > width) return null;
+      return {
+        y, side,
+        box: { x1: lx, x2: lx + labelW, y1: y - labelH / 2, y2: y + labelH / 2 },
+        glyph: stationBox(xEnd, y, glyphW / 2 + 0.3),
+        // Emprise du tracé : tige verticale (jalon) ou bifurcation (action).
+        trunk: it.kind === "milestone"
+          ? { x1: xEnd - 0.4, x2: xEnd + 0.4, y1: Math.min(0, y), y2: Math.max(0, y) }
+          : { x1: xStart - 0.4, x2: xEnd + 0.4, y1: y - 0.6, y2: y + 0.6 },
+        stem: { x1: xStart - 0.4, x2: xStart + 0.4, y1: Math.min(0, y) + 2.4, y2: Math.max(0, y) - 2.4 },
+      };
+    };
+    // Deux passes : la première refuse aussi qu'une tige ou une bifurcation
+    // passe sous une étiquette voisine ; la seconde (repli) ne garantit plus
+    // que l'absence de chevauchement entre étiquettes et stations — le tracé
+    // passe alors derrière le fond blanc d'une étiquette, jamais à travers
+    // son texte.
+    const fits = (c, strict) => {
+      const hard = [...placed.flatMap((p) => [p.box, p.glyph]), ...obstacles];
+      if (hard.some((o) => projectPdfBoxesOverlap(c.box, o, 0.5) || projectPdfBoxesOverlap(c.glyph, o, 0.3))) return false;
+      if (!strict) return true;
+      return !placed.some((p) => projectPdfBoxesOverlap(c.trunk, p.box, 0.3) || projectPdfBoxesOverlap(p.trunk, c.box, 0.3)
+        || (c.stem.y2 > c.stem.y1 && projectPdfBoxesOverlap(c.stem, p.box, 0.2))
+        || (p.stem.y2 > p.stem.y1 && projectPdfBoxesOverlap(p.stem, c.box, 0.2)));
+    };
+    let chosen = null;
+    for (const strict of [true, false]) {
+      for (let lane = 0; lane < 40 && !chosen; lane++) {
+        for (const side of [preferred, -preferred]) {
+          for (const onLeft of [false, true]) {
+            const c = candidate(lane, side, onLeft);
+            if (c && fits(c, strict)) { chosen = { ...c, relaxed: !strict }; break; }
+          }
+          if (chosen) break;
+        }
+      }
+      if (chosen) break;
+    }
+    if (!chosen) { failed = true; return; }
+    placed.push({ ...chosen, item: it, number, titleLines, meta, xStart, xEnd, labelW, labelH });
+  });
+
+  const top = Math.min(-4, ...placed.map((p) => Math.min(p.box.y1, p.glyph.y1)));
+  const bottom = Math.max(4, ...placed.map((p) => Math.max(p.box.y2, p.glyph.y2)));
+  const height = bottom - top;
+  if (!numbered && (failed || height > maxHeight)) return projectPdfMetroProjection(data, { width, measure, maxHeight, numbered: true, spacing: 1 });
+
+  const posById = new Map(placed.map((p) => [p.item.t.id, p]));
+  const connectors = (data.dependencies || [])
+    .filter((d) => !d.cross && posById.has(d.fromId) && posById.has(d.toId))
+    .map((d) => ({ from: posById.get(d.fromId), to: posById.get(d.toId) }))
+    .map(({ from, to }) => ({ x1: from.xEnd, y1: from.y, x2: to.xStart, y2: to.item.kind === "milestone" ? 0 : to.y, done: from.item.t.done }));
+  const correspondences = (data.dependencies || [])
+    .filter((d) => d.cross && (posById.has(d.fromId) || posById.has(d.toId)))
+    .map((d) => {
+      const own = posById.get(posById.has(d.toId) ? d.toId : d.fromId);
+      return { x: own.xEnd, y: own.y, projectId: d.otherProjectId, color: partnersById.get(d.otherProjectId)?.color || null, incoming: posById.has(d.toId) };
+    });
+
+  const today = data.today;
+  const unit = projectPdfSeparatorUnit(span);
+  const separators = projectPdfSeparators(data.period.start, data.period.end, unit)
+    .map((s) => ({ ...s, x: xFor(s.date < data.period.start ? data.period.start : s.date), clamped: s.date < data.period.start }));
+
+  const kinds = new Set(placed.map((p) => p.item.kind));
+  return {
+    width, height, top, bottom, numbered,
+    xStart: xFor(data.period.start), xEnd: xFor(data.period.end),
+    todayX: today >= data.period.start && today <= data.period.end ? xFor(today) : null,
+    progress: data.progress,
+    stations: placed,
+    connectors, correspondences, separators,
+    legend: {
+      milestone: kinds.has("milestone"),
+      action: kinds.has("action"),
+      done: placed.some((p) => p.item.t.done),
+      late: placed.some((p) => p.item.t.late),
+      dependency: connectors.length > 0,
+      correspondence: correspondences.length > 0,
+      shared: placed.some((p) => p.item.t.shared),
+      today: today >= data.period.start && today <= data.period.end,
+      future: data.period.end > today,
+    },
+  };
+}
+
+function projectPdfFmtDate(dateIso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateIso || ""));
+  if (!m) return "";
+  return `${Number(m[3])} ${PPDF_MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+// === NEXORA:PROJECT-PDF-CORE:END ===
 
 const matchesShortcutCombo = (e, combo) => {
   if (!combo) return false;
@@ -2727,8 +3196,10 @@ function setTaskField(setTasks, taskId, fieldKey, key) {
 }
 
 
+// === NEXORA:TASK-KIND:START ===
 const getTaskType = (task) => task?.milestone ? "milestone" : "action";
 const taskTypeLabel = (task) => task?.milestone ? "Jalon" : "Tâche";
+// === NEXORA:TASK-KIND:END ===
 
 
 const ADVANCED_FILTER_FIELDS = ["title", "project", "status", "criticality", "taskType", "assignee", "milestone", "start", "end", "inactivity"];
