@@ -1,6 +1,6 @@
 # Finance PRO — Audit & conception (phase 1)
 
-Statut : **conception uniquement**. Aucune donnée Firebase modifiée, aucune fonctionnalité métier développée, aucune PR ouverte. Document de travail sur la branche `claude/qme-financial-module-tlrixq`, en attente de validation de Quentin avant tout développement.
+Statut : **conception + implémentation (2026-09-22)**, sur feu vert explicite de Quentin ("lance tout le développement entier"). Lots #268-#277 implémentés dans `apps/nexora/source/index.html.part-004` (nouveau) et branchés sur l'existant — voir le compte rendu de développement posté sur l'issue #267 pour l'état détaillé, les décisions non bloquantes prises seul (avec justification) et les questions restées en stock. Aucune donnée Firebase de production modifiée par ce travail (nouvelles entités vides par défaut). PR ouverte sur demande explicite de Quentin.
 
 Rattachement : ce chantier prend la suite de #252 (Module Devis, livré) et englobe/complète #253 (Facturation électronique). Il ne recrée ni ne duplique ces deux modules — il les rattache à une chaîne financière plus large et leur ajoute le pilotage temps/dépenses/trésorerie qui leur manque.
 
