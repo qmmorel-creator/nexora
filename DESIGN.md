@@ -50,7 +50,7 @@ Ce document décrit le code inspecté le 16 septembre 2026. Le fil directeur ci-
 - Surfaces bordées, ombres discrètes et commandes identifiables.
 - Densité et dispositions adaptées aux usages existants.
 
-Source normative : `apps/nexora/source/index.html.part-000` à `part-004`, notamment la couche finale `body[data-life-app="nexora"]` et les variables `life-*`. Les tokens historiques de `.lp-theme` sont conservés pour compatibilité ; la cascade finale prévaut.
+Source normative : `apps/nexora/source/index.html.part-000` à `part-005`, notamment la couche finale `body[data-life-app="nexora"]` et les variables `life-*` (désormais dans `part-005`, qui ferme le document — `part-004` porte le module Finance PRO, #267). Les tokens historiques de `.lp-theme` sont conservés pour compatibilité ; la cascade finale prévaut.
 
 ## Colors
 
