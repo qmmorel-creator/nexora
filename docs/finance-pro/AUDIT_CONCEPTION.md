@@ -12,7 +12,7 @@ Décisions de cadrage validées par Quentin (2026-09-22) :
 
 Réponses aux questions bloquantes obtenues de Quentin (2026-09-22), détaillées au §12 :
 5. Trésorerie disponible : saisie manuelle du solde (Lot 5), pas d'import bancaire dans un premier temps.
-6. Régime TVA : hypothèse franchise en base maintenue par défaut, **sous réserve de confirmation du CA réel** de Quentin par rapport aux seuils 2026 (37 500 € / seuil majoré 41 250 € pour les prestations de services) — cf. §12.2, point encore ouvert.
+6. Régime TVA : confirmé — CA réel de Quentin inférieur à 37 500 €, franchise en base maintenue (HT = TTC, art. 293 B du CGI), cohérente avec le module Devis (#252) — cf. §12.2.
 7. Ébauche `invoices` : conservée telle quelle comme brouillon technique en attendant #253.
 8. Organisation du code : nouveau fragment dédié `index.html.part-005` pour Finance PRO, plutôt que d'étendre les fragments existants.
 9. Moyens de paiement pro (`proExpense.moyenPaiement`) : `cb_pro`, `virement`, `prelevement`, `especes`, `paiement_en_ligne` (PayPal et plateformes équivalentes).
@@ -260,7 +260,7 @@ Chaque lot = une issue, `zone:finance`, `statut:backlog`, `Ref #<lot>` dans les 
 ## 12. Questions bloquantes — arbitrées par Quentin le 2026-09-22
 
 1. ~~**Comptes de trésorerie pro**~~ — **Tranché** : saisie manuelle du solde dans le Lot 5, pas d'import bancaire dans un premier temps.
-2. **Régime fiscal réel — ENCORE OUVERT.** Seuils 2026 de la franchise en base de TVA pour les prestations de services : **37 500 €** de CA N-1, **seuil majoré 41 250 €** (bascule TVA immédiate dès le mois de franchissement du seuil majoré ; bascule au 1er janvier suivant en cas de seul dépassement du seuil de base). Sources : [Indy — Réforme des seuils de TVA en 2026](https://www.indy.fr/guide/fiscalite/taxes/tva/abaissement-seuil-2026/), [Portail Auto-Entrepreneur — TVA 2026](https://www.portail-autoentrepreneur.fr/academie/statut-auto-entrepreneur/tva), [Les Experts Comptables — Seuil TVA 2026](https://les-experts-comptables.fr/ressources/seuil-tva-auto-entrepreneur). Le module Devis (#252) et les formules du §5 supposent la franchise en base maintenue (HT = TTC) ; **à confirmer par Quentin au regard de son CA réel** avant le Lot 4 (planning de facturation) — si le seuil majoré est dépassé, les règles CA/TVA du §5 devront être révisées pour intégrer la TVA collectée.
+2. ~~**Régime fiscal réel**~~ — **Tranché** : Quentin confirme un CA réel **inférieur à 37 500 €**, donc sous le seuil de franchise en base de TVA pour les prestations de services (seuils 2026 : 37 500 € de CA N-1, seuil majoré 41 250 €). Hypothèse HT = TTC (art. 293 B du CGI) confirmée et maintenue dans les formules du §5, cohérente avec le module Devis (#252). Point à resurveiller si le CA approche 37 500 € dans le futur (pas d'action requise pour l'instant).
 3. ~~**Statut de `invoices`**~~ — **Tranché** : conservée comme brouillon technique en attendant #253, aucun retrait.
 4. ~~**Granularité des fragments `index.html.part-*`**~~ — **Tranché** : nouveau fragment dédié `index.html.part-005` pour Finance PRO.
 5. ~~**Comptes/moyens de paiement pro**~~ — **Tranché** : `cb_pro`, `virement`, `prelevement`, `especes`, `paiement_en_ligne` (PayPal et plateformes équivalentes).
