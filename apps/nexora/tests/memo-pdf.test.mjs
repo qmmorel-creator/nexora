@@ -24,7 +24,7 @@ function slice(name) {
 const M = vm.runInThisContext(
   `(function () {\n${slice("MEMO-PDF-CORE")}\n;return {
     memoSlug, memoFileName, memoHexToRgb, memoContrastInk, memoInitials,
-    memoInlineSegments, memoMarkdownBlocks, memoTaskFields,
+    memoInlineSegments, memoMarkdownBlocks, memoTaskFields, MEMO_CALLOUT_TYPES,
   };\n})`
 )();
 
@@ -189,4 +189,26 @@ test("memoTaskFields : un responsable sans fiche annuaire garde son nom et une c
   assert.equal(f.responsible.name, "Personne Inconnue");
   assert.equal(f.responsible.avatarDataUrl, null);
   assert.ok(f.responsible.color);
+});
+
+test("memoMarkdownBlocks : callout à balises « :::callout-type Titre » … « ::: », comme l'application", () => {
+  const blocks = M.memoMarkdownBlocks(":::callout-tip Mandat de l'expertise\n- Point A\n- Point B\n:::\n\n:::callout-danger\n:::\nSuite");
+  assert.equal(blocks[0].type, "callout");
+  assert.equal(blocks[0].calloutType, "tip");
+  assert.equal(blocks[0].title, "Mandat de l'expertise");
+  assert.deepEqual(blocks[0].blocks.map((b) => b.type), ["li", "li"]);
+  assert.equal(blocks[1].title, "Danger"); // sans titre : libellé du type
+  assert.deepEqual(blocks[1].blocks, []);
+  assert.equal(blocks[2].type, "p");
+});
+
+test("encadrés PDF : mêmes couleurs et fonds que les encadrés de l'application", () => {
+  const literal = /const CALLOUT_TYPES = (\{[\s\S]*?\n\});/.exec(html);
+  assert.ok(literal, "CALLOUT_TYPES introuvable");
+  const app = vm.runInThisContext(`(${literal[1]})`);
+  Object.entries(app).forEach(([type, meta]) => {
+    assert.equal(M.MEMO_CALLOUT_TYPES[type].color, meta.color, type);
+    assert.equal(M.MEMO_CALLOUT_TYPES[type].bg, meta.bg, type);
+    assert.equal(M.MEMO_CALLOUT_TYPES[type].label, meta.label, type);
+  });
 });

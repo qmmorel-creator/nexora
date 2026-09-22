@@ -1802,12 +1802,13 @@ function memoInitials(name) {
 // GFM. Un niveau de callout imbriqué (suffisant pour un compte rendu ; le
 // rendu HTML de l'app en autorise plus, jamais utilisé en pratique dans une
 // fiche tâche).
+// Mêmes couleurs et fonds que CALLOUT_TYPES (rendu HTML de l'application).
 const MEMO_CALLOUT_TYPES = {
-  note: { label: "Note", color: "#3B82F6" },
-  info: { label: "Info", color: "#0EA5E9" },
-  tip: { label: "Astuce", color: "#22B07D" },
-  warning: { label: "Attention", color: "#D97706" },
-  danger: { label: "Danger", color: "#DC2626" },
+  note: { label: "Note", color: "#3B82F6", bg: "#EFF6FF" },
+  info: { label: "Info", color: "#0EA5E9", bg: "#F0F9FF" },
+  tip: { label: "Astuce", color: "#22B07D", bg: "#ECFDF5" },
+  warning: { label: "Attention", color: "#D97706", bg: "#FFFBEB" },
+  danger: { label: "Danger", color: "#DC2626", bg: "#FEF2F2" },
 };
 
 // Segments en ligne : texte, gras, italique, code, lien — jamais de HTML,
@@ -1892,6 +1893,20 @@ function memoMarkdownBlocks(text) {
         i++;
         while (i < srcLines.length && /^>\s?/.test(srcLines[i])) { body.push(srcLines[i].replace(/^>\s?/, "")); i++; }
         out.push({ type: "callout", calloutType: type, title, blocks: parse(body) });
+        continue;
+      }
+
+      // Callout « à balises » (":::callout-type Titre" … ":::"), même syntaxe
+      // que renderMarkdownBlocks : sans titre, le libellé du type en tient lieu.
+      const fenceStart = line.match(/^:::callout-(\w+)([+-])?\s*(.*)$/);
+      if (fenceStart) {
+        flush();
+        const type = MEMO_CALLOUT_TYPES[fenceStart[1].toLowerCase()] ? fenceStart[1].toLowerCase() : "note";
+        const body = [];
+        i++;
+        while (i < srcLines.length && srcLines[i].trim() !== ":::") { body.push(srcLines[i]); i++; }
+        if (i < srcLines.length) i++;
+        out.push({ type: "callout", calloutType: type, title: fenceStart[3].trim() || MEMO_CALLOUT_TYPES[type].label, blocks: parse(body) });
         continue;
       }
 
@@ -2025,7 +2040,7 @@ function projectPdfFileName(projectName, dateIso) {
 // équivalents typographiques courants sont convertis, le reste (emoji,
 // pictogrammes) est retiré plutôt qu'imprimé en charabia.
 const PPDF_CP1252_EXTRA = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ";
-const PPDF_REPLACEMENTS = { "→": "->", "←": "<-", "↔": "<->", "⇒": "=>", "≤": "<=", "≥": ">=", "≠": "!=", "✓": "", "✔": "", "✅": "", "⚠": "", "\u00A0": " ", "\u202F": " ", "\u2009": " " };
+const PPDF_REPLACEMENTS = { "→": "->", "←": "<-", "↔": "<->", "⇒": "=>", "≤": "<=", "≥": ">=", "≠": "!=", "【": " [", "】": "]", "✓": "", "✔": "", "✅": "", "⚠": "", "\u00A0": " ", "\u202F": " ", "\u2009": " " };
 function projectPdfSafeText(text) {
   const out = [];
   for (const ch of String(text == null ? "" : text)) {
@@ -2133,7 +2148,10 @@ function projectPdfNextCritical(activeTasks, todayIso) {
   return { task: t, date: t.end, overdue: t.end < todayIso, reason: t.criticality === "urgent" ? "urgent" : "milestone" };
 }
 
-function projectPdfData(projectId, catalogs, todayIso) {
+// `showDoneOnMetro` (choix fait à l'export) retire les tâches terminées de la
+// ligne Métro uniquement : les compteurs, la période et le tableau restent
+// calculés sur toutes les tâches du projet.
+function projectPdfData(projectId, catalogs, todayIso, { showDoneOnMetro = true } = {}) {
   const { projects = [], statuses = [], taskTypes = [], teamMembers = [], tasks = [] } = catalogs || {};
   const project = projects.find((p) => p.id === projectId);
   if (!project) return null;
@@ -2251,7 +2269,8 @@ function projectPdfData(projectId, catalogs, todayIso) {
     nextCritical: nextCritical ? { ...nextCritical, row: rowOf(nextCritical.task) } : null,
     urgent: urgentActive.map((t) => rowOf(t)),
     taskRows,
-    metroTasks: dated.map((t) => rowOf(t, {
+    showDoneOnMetro,
+    metroTasks: dated.filter((t) => showDoneOnMetro || !isDone(t)).map((t) => rowOf(t, {
       shared: !!t.secondaryProjectId && t.secondaryProjectId !== t.projectId,
       partnerId: t.projectId === projectId ? t.secondaryProjectId || null : t.projectId,
     })),
@@ -2303,7 +2322,7 @@ function projectPdfMetroProjection(data, { width, measure, maxHeight = 150, numb
   const tasks = (data?.metroTasks || []).filter((t) => t.start && t.end);
   if (!data?.period || !tasks.length) return null;
   const TITLE_PT = 6.6, META_PT = 5.4, LINE_H = 2.9, META_H = 2.5;
-  const LABEL_MAX_W = Math.min(62, width * 0.36);
+  const LABEL_MAX_W = Math.min(42, width * 0.26);
   const padL = 5, padR = 7;
   const startIdx = dayIndex(data.period.start);
   const span = Math.max(1, dayIndex(data.period.end) - startIdx);
@@ -2396,18 +2415,41 @@ function projectPdfMetroProjection(data, { width, measure, maxHeight = 150, numb
         || (c.stem.y2 > c.stem.y1 && projectPdfBoxesOverlap(c.stem, p.box, 0.2))
         || (p.stem.y2 > p.stem.y1 && projectPdfBoxesOverlap(p.stem, c.box, 0.2)));
     };
+    // Départs des tracés À VENIR (bifurcations, tiges de jalon) : une
+    // étiquette posée au-dessus d'eux les obligerait à la traverser. Parmi les
+    // premières positions libres, on retient celle qui en recouvre le moins,
+    // puis la plus proche de la ligne.
+    const futureStems = items.slice(idx + 1).map((f) => (f.kind === "milestone" ? xFor(f.t.end) : xFor(f.t.start)));
+    const blocked = (c) => futureStems.filter((fx) => fx >= c.box.x1 - 0.8 && fx <= c.box.x2 + 0.8).length;
     let chosen = null;
-    for (const strict of [true, false]) {
-      for (let lane = 0; lane < 40 && !chosen; lane++) {
+    const fitting = [];
+    for (let lane = 0; lane < 40 && fitting.length < 10; lane++) {
+      for (const side of [preferred, -preferred]) {
+        for (const onLeft of [false, true]) {
+          const c = candidate(lane, side, onLeft);
+          if (c && fits(c, true)) fitting.push({ c, cost: blocked(c) * 6 + lane });
+        }
+      }
+    }
+    if (fitting.length) chosen = { ...fitting.reduce((a, b) => (b.cost < a.cost ? b : a)).c, relaxed: false };
+    // Repli : aucune position sans croisement. On garde la position libre qui
+    // croise le MOINS de tracés (le texte, détouré d'un halo, reste lisible).
+    if (!chosen) {
+      const crossings = (c) => placed.filter((p) => projectPdfBoxesOverlap(c.trunk, p.box, 0.3) || projectPdfBoxesOverlap(p.trunk, c.box, 0.3)
+        || (c.stem.y2 > c.stem.y1 && projectPdfBoxesOverlap(c.stem, p.box, 0.2))
+        || (p.stem.y2 > p.stem.y1 && projectPdfBoxesOverlap(p.stem, c.box, 0.2))).length;
+      let best = null;
+      for (let lane = 0; lane < 40; lane++) {
         for (const side of [preferred, -preferred]) {
           for (const onLeft of [false, true]) {
             const c = candidate(lane, side, onLeft);
-            if (c && fits(c, strict)) { chosen = { ...c, relaxed: !strict }; break; }
+            if (!c || !fits(c, false)) continue;
+            const cost = crossings(c) * 8 + blocked(c) * 3 + lane;
+            if (!best || cost < best.cost) best = { c, cost };
           }
-          if (chosen) break;
         }
       }
-      if (chosen) break;
+      if (best) chosen = { ...best.c, relaxed: true };
     }
     if (!chosen) { failed = true; return; }
     placed.push({ ...chosen, item: it, number, titleLines, meta, xStart, xEnd, labelW, labelH });

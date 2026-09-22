@@ -41,15 +41,18 @@ if (!logoLine) throw new Error("NEXORA_LOGO_FULL introuvable dans le bundle");
 
 const lib = vm.runInThisContext(`(function (jsPDF) {
 ${logoLine[0]}
-${["DATE-UTILS", "TASK-STATUS", "TASK-KIND", "CRITICALITY", "MEMO-PDF-CORE", "PROJECT-PDF-CORE", "PROJECT-PDF-DRAW"].map(slice).join("\n")}
-return { buildFicheProjetPdf, projectPdfData };
+${["DATE-UTILS", "COLOR-UTILS", "TASK-STATUS", "TASK-KIND", "CRITICALITY", "MEMO-PDF-CORE", "PROJECT-PDF-CORE", "MEMO-PDF-DRAW", "PROJECT-PDF-DRAW"].map(slice).join("\n")}
+return { buildFicheProjetPdf, projectPdfData, downloadFicheMemoPdf, memoFileName };
 })`)(jsPDF);
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, v, i, arr) => (v.startsWith("--") ? [...acc, [v.slice(2), arr[i + 1]]] : acc), []));
 const F = await import(path.join(root, "apps/nexora/tests/fixtures/project-pdf-fixtures.mjs"));
 
 const cases = [];
-if (args.catalogs) {
+if (args.memo) {
+  const m = JSON.parse(await readFile(args.memo, "utf8"));
+  cases.push({ name: "memo-instantane", memo: m.task, catalogs: m.catalogs, today: args.today || F.MAIA_TODAY, expect: [] });
+} else if (args.catalogs) {
   cases.push({ name: "instantane", catalogs: JSON.parse(await readFile(args.catalogs, "utf8")), projectId: args.project, today: args.today || F.MAIA_TODAY, expect: [] });
 } else {
   cases.push({
@@ -57,7 +60,25 @@ if (args.catalogs) {
     expect: ["Médiation Maïa Sonnier", "Fournir Note de Synthèse des bétons", "Envoyer la dernière note PN", "Deadline Envois Docs Expertise", "Rapport des Experts", "Réunion expertise amiable Maïa-CNR", "Attente tiers", "Urgent", "État du réseau", "Vue Métro"],
     forbid: ["Tâche d'un autre projet"],
   });
+  cases.push({
+    name: "maia-sans-terminees", catalogs: F.maiaCatalogs, projectId: "qjah9det", today: F.MAIA_TODAY, options: { showDoneOnMetro: false },
+    // La réunion terminée reste dans le tableau (dernier jalon franchi), mais quitte la ligne.
+    expectCount: { "Réunion expertise amiable Maïa-CNR": 1 },
+  });
   cases.push({ name: "projet-long", catalogs: F.makeLongCatalogs(), projectId: F.LONG_PROJECT_ID, today: F.MAIA_TODAY, expect: ["Rapport de synthèse d'exploitation", "Bouclage DREAL", "Tâches en cours", "État du réseau"] });
+  cases.push({
+    name: "memo-riche", memo: F.memoRichTask, catalogs: F.memoCatalogs, today: F.MAIA_TODAY,
+    expect: ["Métadonnées", "Sous-tâches", "Description", "Frise chronologique", "Point d'attention", "Protocole d'expertise.pdf", "Fournir Note de Synthèse des bétons", "Aujourd'hui"],
+    order: ["Métadonnées", "Sous-tâches", "Description"],
+  });
+  cases.push({
+    name: "memo-encadre-long", memo: F.memoLongCalloutTask, catalogs: F.memoCatalogs, today: F.MAIA_TODAY,
+    expect: ["Décisions et réserves du comité", "Décision n° 70", "Conclusion après l'encadré", "Note"],
+  });
+  cases.push({
+    name: "memo-reunion-terminee", memo: F.maiaTasks[0], catalogs: F.memoCatalogs, today: F.MAIA_TODAY,
+    expect: ["Réunion expertise amiable Maïa-CNR", "Métadonnées", "Frise chronologique"],
+  });
   cases.push({ name: "projet-vide", catalogs: { ...F.maiaCatalogs, tasks: [] }, projectId: "qjah9det", today: F.MAIA_TODAY, expect: ["Aucune tâche active"] });
 }
 
@@ -71,7 +92,11 @@ function words(pdfPath) {
   xhtml.split(/<page /).slice(1).forEach((chunk) => {
     const list = [];
     for (const m of chunk.matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g)) {
-      list.push({ x1: +m[1], y1: +m[2], x2: +m[3], y2: +m[4], text: m[5] });
+      const w = { x1: +m[1], y1: +m[2], x2: +m[3], y2: +m[4], text: m[5] };
+      // Un libellé détouré (halo + remplissage) est extrait deux fois au même
+      // endroit : ce doublon exact n'est pas un chevauchement.
+      if (list.some((o) => o.text === w.text && Math.abs(o.x1 - w.x1) < 0.2 && Math.abs(o.y1 - w.y1) < 0.2)) continue;
+      list.push(w);
     }
     pages.push(list);
   });
@@ -85,13 +110,19 @@ const fail = (msg) => { failures++; console.error("  ✗ " + msg); };
 
 for (const c of cases) {
   console.log(`\n${c.name}`);
-  const before = JSON.stringify(c.catalogs);
-  const { doc, data, fileName } = await lib.buildFicheProjetPdf(c.projectId, c.catalogs, { todayIso: c.today });
-  if (JSON.stringify(c.catalogs) !== before) fail("les données d'entrée ont été modifiées par l'export");
+  const before = JSON.stringify([c.catalogs, c.memo]);
+  let doc, data = null, fileName;
+  if (c.memo) {
+    doc = await lib.downloadFicheMemoPdf(c.memo, c.catalogs, { asDoc: true, now: new Date(c.today + "T10:00:00") });
+    fileName = lib.memoFileName(c.memo.title, c.today);
+  } else {
+    ({ doc, data, fileName } = await lib.buildFicheProjetPdf(c.projectId, c.catalogs, { todayIso: c.today, ...(c.options || {}) }));
+  }
+  if (JSON.stringify([c.catalogs, c.memo]) !== before) fail("les données d'entrée ont été modifiées par l'export");
   const pdfPath = path.join(out, `${c.name}.pdf`);
   await writeFile(pdfPath, Buffer.from(doc.output("arraybuffer")));
   console.log(`  fichier proposé : ${fileName}`);
-  if (!/^nexora-fiche-projet-[a-z0-9-]+-\d{4}-\d{2}-\d{2}\.pdf$/.test(fileName)) fail(`nom de fichier invalide : ${fileName}`);
+  if (!/^nexora-fiche-(projet|memo)-[a-z0-9-]+-\d{4}-\d{2}-\d{2}\.pdf$/.test(fileName)) fail(`nom de fichier invalide : ${fileName}`);
 
   const info = execFileSync("pdfinfo", [pdfPath], { encoding: "utf8" });
   const pagesCount = +/Pages:\s+(\d+)/.exec(info)[1];
@@ -102,7 +133,9 @@ for (const c of cases) {
   const pages = words(pdfPath);
   pages.forEach((list, p) => {
     list.forEach((w) => {
-      if (w.x1 < MARGIN - 1.5 || w.x2 > PAGE_W - MARGIN + 1.5 || w.y1 < 0 || w.y2 > BOTTOM + 1.5) fail(`p.${p + 1} « ${w.text} » hors de la zone imprimable`);
+      // La fiche mémo pose son pied de page (numéro de page) à 290 mm.
+      const bottom = c.memo ? (297 - 5) * MM : BOTTOM;
+      if (w.x1 < MARGIN - 1.5 || w.x2 > PAGE_W - MARGIN + 1.5 || w.y1 < 0 || w.y2 > bottom + 1.5) fail(`p.${p + 1} « ${w.text} » hors de la zone imprimable`);
     });
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
@@ -119,8 +152,16 @@ for (const c of cases) {
   const flat = text.replace(/\s+/g, " ").toLocaleLowerCase("fr");
   (c.expect || []).forEach((e) => { if (!flat.includes(e.toLocaleLowerCase("fr"))) fail(`libellé attendu absent : « ${e} »`); });
   (c.forbid || []).forEach((e) => { if (flat.includes(e.toLocaleLowerCase("fr"))) fail(`libellé qui ne devrait pas apparaître : « ${e} »`); });
+  if (c.order) {
+    const pos = c.order.map((e) => flat.indexOf(e.toLocaleLowerCase("fr")));
+    if (pos.some((v, i) => v === -1 || (i && v < pos[i - 1]))) fail(`ordre des sections inattendu : ${c.order.join(" > ")}`);
+  }
+  Object.entries(c.expectCount || {}).forEach(([e, n]) => {
+    const got = flat.split(e.toLocaleLowerCase("fr")).length - 1;
+    if (got !== n) fail(`« ${e} » attendu ${n} fois, trouvé ${got}`);
+  });
   if (/\uFFFD/.test(text)) fail("caractère illisible (U+FFFD) dans le PDF");
-  console.log(`  synthèse : ${JSON.stringify({ total: data.counts.total, enCours: data.counts.inProgress, terminees: data.counts.done, attenteTiers: data.counts.waitingThird, avancement: data.progress, periode: data.period, echeance: data.nextCritical && data.nextCritical.row.title })}`);
+  if (data) console.log(`  synthèse : ${JSON.stringify({ total: data.counts.total, enCours: data.counts.inProgress, terminees: data.counts.done, attenteTiers: data.counts.waitingThird, avancement: data.progress, periode: data.period, echeance: data.nextCritical && data.nextCritical.row.title })}`);
 }
 
 if (failures) { console.error(`\n${failures} contrôle(s) en échec`); process.exit(1); }
