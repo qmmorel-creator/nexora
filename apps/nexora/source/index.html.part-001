@@ -1116,6 +1116,8 @@ function GlobalStyles() {
         .lp-detail-tab:hover{ color:var(--text-900); }
         .lp-detail-tab.active{ color:var(--text-900); border-bottom-color:var(--signal); }
         .lp-detail-tab-spacer{ flex:1; }
+        /* Fiche projet PDF (#291) : action compacte à côté des filtres enregistrés. */
+        .lp-project-pdf-btn{ margin-right:6px; white-space:nowrap; font-size:12px; }
 
         .lp-toolbar{ display:flex; gap:6px; margin-bottom:10px; flex-wrap:nowrap; align-items:center; overflow-x:auto; overflow-y:hidden; padding-bottom:2px; }
         .lp-tool-btn{ display:flex; align-items:center; gap:5px; background:var(--surface); border:1px solid var(--border); padding:5px 9px; border-radius:var(--radius-sm); font-size:11px; font-weight:600; color:var(--text-900); cursor:pointer; white-space:nowrap; transition:background .12s ease, color .12s ease, border-color .12s ease; }
@@ -9960,6 +9962,7 @@ export default function LePlan({ currentUser, onSignOut }) {
 
   const [taskModal, setTaskModal] = useState(null);
   const [impactLineTaskId, setImpactLineTaskId] = useState(null);
+  const [projectPdfBusy, setProjectPdfBusy] = useState(false); // export « Fiche projet PDF » (#291) en cours
   const [toasts, setToasts] = useState([]);
   const toastTimers = useRef({});
   const pushToast = ({ message, actionLabel, onAction, duration = 6000 }) => {
@@ -11322,6 +11325,24 @@ export default function LePlan({ currentUser, onSignOut }) {
   };
   const activeProjectIds = getProjectFilterIds(filters);
   const activeTitle = activeProjectIds.length === 1 ? projectById[activeProjectIds[0]]?.name : "Tous les projets";
+  // Export « Fiche projet PDF » (#291) : strictement en lecture seule et local
+  // au navigateur — lit les catalogues courants (toutes les tâches du projet,
+  // indépendamment des filtres d'affichage), n'écrit rien dans Firestore, ne
+  // modifie ni tâche ni projet, ne touche pas à la synchronisation Google
+  // Calendar. Un échec n'est jamais silencieux : il remonte en toast.
+  const exportProjectPdf = async () => {
+    const projectId = activeProjectIds.length === 1 ? activeProjectIds[0] : null;
+    if (!projectId || projectPdfBusy) return;
+    setProjectPdfBusy(true);
+    try {
+      await downloadFicheProjetPdf(projectId, { projects, statuses, taskTypes, teamMembers, tasks });
+    } catch (e) {
+      console.error("[Nexora] export fiche projet PDF", e);
+      pushToast({ message: `Échec de l'export de la fiche projet PDF : ${(e && e.message) || "erreur inattendue"}. Réessaie, ou vérifie que ton navigateur autorise le téléchargement.`, duration: 9000 });
+    } finally {
+      setProjectPdfBusy(false);
+    }
+  };
   const fCount = activeFilterCount(filters);
   const metaFilterCount = activeFilterCount(metaFilters);
   GLOBAL_MILESTONE_STYLE = appearance.milestoneStyle || "flag";
@@ -12078,6 +12099,19 @@ export default function LePlan({ currentUser, onSignOut }) {
                 <div className="lp-anim-tab-indicator" style={{ left: tabIndicator.left, width: tabIndicator.width }} />
               )}
               <div className="lp-detail-tab-spacer" />
+              {activeProjectIds.length === 1 && projectById[activeProjectIds[0]] && (
+                <button
+                  type="button"
+                  className="lp-btn lp-project-pdf-btn"
+                  onClick={exportProjectPdf}
+                  disabled={projectPdfBusy}
+                  title="Exporter la fiche projet PDF (synthèse A4 avec vue Métro)"
+                  aria-label="Exporter la fiche projet PDF"
+                >
+                  <Download size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
+                  {projectPdfBusy ? "Export…" : "Exporter la fiche projet PDF"}
+                </button>
+              )}
               <DropdownButton label="Filtres enregistrés" icon={<Bookmark size={13} />} title="Vues enregistrées pour ce type d'affichage">
                 {savedViews.filter((v) => v.view === view).length === 0 && (
                   <p style={{ fontSize: 12, color: "var(--text-600)", margin: "2px 4px 8px", maxWidth: 200 }}>Aucun filtre enregistré pour cette vue.</p>
