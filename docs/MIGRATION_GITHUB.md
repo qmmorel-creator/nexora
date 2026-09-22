@@ -23,6 +23,8 @@ Faire de GitHub la source canonique du code sans changer les URLs publiques, le 
 - `NEXORA_USER_UID` — secret ;
 - `NEXORA_ASSISTANT_API_KEY` — secret ;
 - `KDM360_SUPABASE_SECRET_KEY` — secret si les fonctions finance sont conservées ;
+- `QME_INTAKE_SIGNING_KEY` — secret, endpoint d'ingestion prospect QME (nexora#279) — distinct de `NEXORA_ASSISTANT_API_KEY`, jamais partagé avec le site `qme-engineering` autrement que via cette variable ;
+- `QME_SITE_ORIGIN` — configuration publique, origine attendue du site QME (ex. `https://qme-engineering.netlify.app` ou le domaine personnalisé une fois branché) ;
 - `SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES` — valeur publique Firebase uniquement.
 
 ### `nexora-chatgpt-mcp`
