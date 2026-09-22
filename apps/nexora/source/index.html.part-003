@@ -18964,6 +18964,11 @@ const PRO_MISSION_STATUSES = [
   { key: "archivee", label: "Archivée", color: "var(--text-muted)" },
 ];
 
+// Ordre du bandeau de phase de la vue Mission (§ tableau de bord par mission)
+// — "archivee" n'y figure pas comme étape : c'est un classement final au même
+// niveau que "cloturee", jamais une phase du cycle de vie qu'on "atteint".
+const PRO_MISSION_PHASE_ORDER = ["prospect", "signee", "en_cours", "cloturee"];
+
 // Nature du temps saisi — au minimum ce que demande la conception (§ Suivi du
 // temps) : production facturable, avant-vente, administratif, formation.
 const PRO_TIME_NATURES = [
@@ -19019,6 +19024,33 @@ const PRO_BILLING_LINE_STATUSES = [
   { key: "encaisse", label: "Encaissée", color: "var(--success)" },
   { key: "annule", label: "Annulée", color: "var(--text-muted)" },
 ];
+
+// Obligations fiscales/sociales de l'auto-entrepreneur — base (2026-09-22) :
+// une simple liste, saisie manuellement, PAS ENCORE reliée au widget
+// Échéances existant (décision documentée sur #273 : contrat `tasks` non
+// modifié). À compléter plus tard : rappels automatiques, récurrence
+// auto-générée, intégration à la vue Échéances.
+const PRO_OBLIGATION_TYPES = [
+  { key: "urssaf", label: "Déclaration Urssaf" },
+  { key: "cfe", label: "CFE" },
+  { key: "assurance", label: "Assurance professionnelle" },
+  { key: "abonnement", label: "Abonnement / outil" },
+  { key: "autre", label: "Autre" },
+];
+
+const PRO_OBLIGATION_RECURRENCES = [
+  { key: "aucune", label: "Ponctuelle" },
+  { key: "mensuelle", label: "Mensuelle" },
+  { key: "trimestrielle", label: "Trimestrielle" },
+  { key: "annuelle", label: "Annuelle" },
+];
+
+// Seuils de franchise en base de TVA 2026, prestations de services (§12.2,
+// docs/finance-pro/AUDIT_CONCEPTION.md) — confirmés par Quentin le
+// 2026-09-22 : CA réel alors < 37 500 €. Base pour une surveillance simple,
+// pas encore d'alerte proactive (notification) — juste un indicateur affiché.
+const PRO_TVA_SEUIL_BASE = 37500;
+const PRO_TVA_SEUIL_MAJORE = 41250;
 
 // ---------------------------------------------------------------------------
 // Seeds — jamais de contenu figé métier, uniquement un point de départ
@@ -19221,6 +19253,42 @@ function proResteAEncaisser(billingSchedule, payments) {
   return proCaFacture(billingSchedule) - proCaEncaisse(payments);
 }
 
+// ---------------------------------------------------------------------------
+// Vue mission — timeline des jalons de facturation et avancement global
+// d'une mission unique (§ tableau de bord par mission).
+// ---------------------------------------------------------------------------
+
+// Lignes de facturation d'UNE mission, triées par échéance — jamais les
+// lignes archivées (mêmes conventions que proActive partout ailleurs).
+function proMissionBillingLines(missionId, billingSchedule) {
+  return proActive(billingSchedule)
+    .filter((l) => l.missionId === missionId)
+    .sort((a, b) => (a.dateCible || "").localeCompare(b.dateCible || ""));
+}
+
+// Paiements rattachés aux lignes de facturation d'UNE mission (un paiement ne
+// référence que `billingScheduleId`, jamais directement une mission).
+function proMissionPayments(missionId, billingSchedule, payments) {
+  const lineIds = new Set(proMissionBillingLines(missionId, billingSchedule).map((l) => l.id));
+  return proActive(payments).filter((p) => lineIds.has(p.billingScheduleId));
+}
+
+// Avancement financier global d'une mission (0 à 1) : part du CA de
+// référence (signé si un devis est lié, sinon facturé) déjà encaissée. Sans
+// aucune ligne de facturation, l'avancement se rabat sur 0 plutôt que sur une
+// division par zéro.
+function proMissionProgress(mission, quotes, billingSchedule, payments) {
+  const lines = proMissionBillingLines(mission?.id, billingSchedule);
+  const missionPayments = proMissionPayments(mission?.id, billingSchedule, payments);
+  const quote = mission?.quoteId ? (quotes || []).find((q) => q.id === mission.quoteId) : null;
+  const caSigne = quote && quote.status === "accepted" ? quoteTotal(quote) : 0;
+  const caFacture = proCaFacture(lines);
+  const caEncaisse = proCaEncaisse(missionPayments);
+  const reference = caSigne || caFacture;
+  const ratio = reference > 0 ? Math.min(1, caEncaisse / reference) : 0;
+  return { caSigne, caFacture, caEncaisse, ratio, lignesCount: lines.length };
+}
+
 // Trésorerie disponible : décision non bloquante (§12.1) — saisie manuelle du
 // solde dans les réglages, pas d'import bancaire dans cette phase.
 function proTresorerieDisponible(settings) {
@@ -19247,6 +19315,41 @@ function proProvisions(caEncaisse, settings) {
   const taux = settings?.tauxProvisionSocialesFiscales;
   if (taux == null) return 0;
   return caEncaisse * Number(taux);
+}
+
+// CA encaissé sur une année civile donnée (base légale du suivi de seuil de
+// franchise en base pour un auto-entrepreneur : recettes encaissées, pas
+// facturées) — Europe/Paris implicite via le champ `date` déjà saisi en
+// civil.
+function proCaEncaisseAnnee(payments, year = new Date().getFullYear()) {
+  return proActive(payments)
+    .filter((p) => p.statutRapprochement === "rapproche" && typeof p.date === "string" && p.date.startsWith(String(year)))
+    .reduce((sum, p) => sum + proEuros(p.montant), 0);
+}
+
+// Statut du seuil de franchise en base de TVA — indicateur simple (§12.2) :
+// "ok" sous 80 % du seuil de base, "proche" entre 80 % et le seuil de base,
+// "depasse_base" au-delà du seuil de base (franchise maintenue jusqu'à la fin
+// de l'année si le seuil majoré n'est pas atteint), "depasse_majore" au-delà
+// du seuil majoré (bascule TVA immédiate). Jamais d'alerte automatique
+// envoyée ici — juste un indicateur affiché, à compléter plus tard.
+function proSeuilTvaStatus(caAnnuel, seuilBase = PRO_TVA_SEUIL_BASE, seuilMajore = PRO_TVA_SEUIL_MAJORE) {
+  const ratio = seuilBase ? caAnnuel / seuilBase : 0;
+  let status = "ok";
+  if (caAnnuel >= seuilMajore) status = "depasse_majore";
+  else if (caAnnuel >= seuilBase) status = "depasse_base";
+  else if (ratio >= 0.8) status = "proche";
+  return { caAnnuel, seuilBase, seuilMajore, ratio, status };
+}
+
+// Obligations à venir, triées par échéance, avec indicateur de retard —
+// fonction pure pour rester testable comme le reste (base seulement : pas de
+// récurrence auto-générée ni de lien avec le widget Échéances, cf. #273).
+function proUpcomingObligations(obligations, today = iso(new Date())) {
+  return proActive(obligations)
+    .slice()
+    .sort((a, b) => (a.dateEcheance || "").localeCompare(b.dateEcheance || ""))
+    .map((o) => ({ ...o, late: !!(o.dateEcheance && o.dateEcheance < today) }));
 }
 
 // Concentration du CA par client (facturé), triée décroissante.
@@ -19466,7 +19569,7 @@ function FinanceProSynthese({ quotes, proMissions, proBillingSchedule, proPaymen
 // Onglet 2 — Clients, missions et rentabilité (+ suivi du temps, Lot 2)
 // ---------------------------------------------------------------------------
 
-function FinanceProMissionFormModal({ mission, projects, quoteClients, onSave, onClose }) {
+function FinanceProMissionFormModal({ mission, projects, quoteClients, quotes, onSave, onClose }) {
   const [form, setForm] = useState(() => mission && mission !== "new" ? { ...mission } : {
     id: proId(), projectId: "", clientId: "", quoteId: "", billingMode: "regie_journaliere",
     soldDayRate: "", soldHourlyRate: "", status: "prospect", createdAt: proNowIso(), updatedAt: proNowIso(),
@@ -19493,6 +19596,15 @@ function FinanceProMissionFormModal({ mission, projects, quoteClients, onSave, o
           <select className="lp-input" value={form.clientId} onChange={(e) => set({ clientId: e.target.value })}>
             <option value="">— Choisir un client —</option>
             {(quoteClients || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <label className="lp-field">
+          <span>Devis d'origine (optionnel)</span>
+          <select className="lp-input" value={form.quoteId || ""} onChange={(e) => set({ quoteId: e.target.value || "" })} disabled={!form.clientId}>
+            <option value="">— Aucun / mission créée hors devis —</option>
+            {(quotes || []).filter((q) => q.status === "accepted" && q.clientId === form.clientId).map((q) => (
+              <option key={q.id} value={q.id}>{q.number} — {fmtQuoteAmount(quoteTotal(q))}</option>
+            ))}
           </select>
         </label>
         <label className="lp-field">
@@ -19613,16 +19725,18 @@ function FinanceProClientsView({ projects, quoteClients, quotes, proMissions, se
           <div className="lp-empty" style={{ padding: 30 }}>Aucune mission Finance PRO pour l'instant.</div>
         ) : (
           <div className="lp-table-wrap"><table className="lp-table"><thead><tr>
-            <th>Mission</th><th>Client</th><th>Mode</th><th style={{ textAlign: "right" }}>CA facturé</th><th style={{ textAlign: "right" }}>Marge</th><th>Statut</th><th></th>
+            <th>Mission</th><th>Client</th><th>Devis</th><th>Mode</th><th style={{ textAlign: "right" }}>CA facturé</th><th style={{ textAlign: "right" }}>Marge</th><th>Statut</th><th></th>
           </tr></thead><tbody>
             {missions.map((m) => {
               const { projectName, clientName } = proMissionLabel(m, projects, quoteClients);
+              const linkedQuote = m.quoteId ? (quotes || []).find((q) => q.id === m.quoteId) : null;
               const marge = proMargeParMission(m.id, proBillingSchedule, proExpenses);
               const statusMeta = PRO_MISSION_STATUSES.find((s) => s.key === m.status) || PRO_MISSION_STATUSES[0];
               return (
                 <tr key={m.id}>
                   <td style={{ fontWeight: 700 }}>{projectName}</td>
                   <td>{clientName}</td>
+                  <td>{linkedQuote ? linkedQuote.number : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
                   <td>{(PRO_BILLING_MODES.find((b) => b.key === m.billingMode) || {}).label}</td>
                   <td style={{ textAlign: "right" }}>{fmtProEuros(marge.ca)}</td>
                   <td style={{ textAlign: "right" }}>{marge.tauxMarge != null ? Math.round(marge.tauxMarge * 100) + " %" : "—"}</td>
@@ -19667,7 +19781,7 @@ function FinanceProClientsView({ projects, quoteClients, quotes, proMissions, se
         )
       )}
 
-      {missionForm && <FinanceProMissionFormModal mission={missionForm} projects={projects} quoteClients={quoteClients} onSave={saveMission} onClose={() => setMissionForm(null)} />}
+      {missionForm && <FinanceProMissionFormModal mission={missionForm} projects={projects} quoteClients={quoteClients} quotes={quotes} onSave={saveMission} onClose={() => setMissionForm(null)} />}
       {timeForm && <FinanceProTimeEntryFormModal entry={timeForm} proMissions={missions} projects={projects} quoteClients={quoteClients} onSave={saveTimeEntry} onClose={() => setTimeForm(null)} />}
     </div>
   );
@@ -19688,7 +19802,7 @@ function FinanceProBillingFormModal({ line, proMissions, projects, quoteClients,
     <Modal title={line && line !== "new" ? "Modifier la ligne de facturation" : "Nouvelle ligne de facturation"} onClose={onClose} footer={
       <>
         <button className="lp-btn" onClick={onClose}>Annuler</button>
-        <button className="lp-btn lp-btn-primary" onClick={() => { onSave({ ...form, updatedAt: proNowIso(), revision: (form.revision || 1) + 1 }); onClose(); }} disabled={!form.missionId || !form.libelle}>Enregistrer</button>
+        <button className="lp-btn lp-btn-primary" onClick={() => { const mission = (proMissions || []).find((m) => m.id === form.missionId); onSave({ ...form, quoteId: mission?.quoteId || "", updatedAt: proNowIso(), revision: (form.revision || 1) + 1 }); onClose(); }} disabled={!form.missionId || !form.libelle}>Enregistrer</button>
       </>
     }>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -19956,7 +20070,50 @@ function FinanceProExpensesView({ proExpenses, setProExpenses, proExpenseCategor
 // Onglet 5 — Trésorerie et prévisions
 // ---------------------------------------------------------------------------
 
-function FinanceProTreasuryView({ financeProSettings, setFinanceProSettings, proBillingSchedule, proExpenses, proPayments }) {
+// Libellés/tons de l'indicateur de seuil TVA — séparés de proSeuilTvaStatus
+// (qui reste une fonction pure sans JSX) pour rester testable côté logique.
+const PRO_TVA_SEUIL_META = {
+  ok: { label: "Franchise en base — sous 80 % du seuil", tone: "good" },
+  proche: { label: "Franchise en base — approche du seuil", tone: null },
+  depasse_base: { label: "Seuil de base dépassé — franchise maintenue cette année, à surveiller", tone: "bad" },
+  depasse_majore: { label: "Seuil majoré dépassé — TVA due dès ce mois-ci", tone: "bad" },
+};
+
+function FinanceProObligationFormModal({ obligation, onSave, onClose }) {
+  const [form, setForm] = useState(() => obligation && obligation !== "new" ? { ...obligation } : {
+    id: proId(), type: "urssaf", label: "", dateEcheance: iso(new Date()), recurrence: "trimestrielle",
+    notes: "", createdAt: proNowIso(), updatedAt: proNowIso(), revision: 1, archivedAt: null,
+  });
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  return (
+    <Modal title={obligation && obligation !== "new" ? "Modifier l'obligation" : "Nouvelle obligation"} onClose={onClose} footer={
+      <>
+        <button className="lp-btn" onClick={onClose}>Annuler</button>
+        <button className="lp-btn lp-btn-primary" onClick={() => { onSave({ ...form, updatedAt: proNowIso(), revision: (form.revision || 1) + 1 }); onClose(); }} disabled={!form.label || !form.dateEcheance}>Enregistrer</button>
+      </>
+    }>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <label className="lp-field">
+          <span>Type</span>
+          <select className="lp-input" value={form.type} onChange={(e) => set({ type: e.target.value })}>
+            {PRO_OBLIGATION_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+        </label>
+        <label className="lp-field"><span>Libellé</span><input className="lp-input" value={form.label} onChange={(e) => set({ label: e.target.value })} placeholder="Ex. Déclaration Urssaf T3 2026" /></label>
+        <label className="lp-field"><span>Échéance</span><input className="lp-input" type="date" value={form.dateEcheance} onChange={(e) => set({ dateEcheance: e.target.value })} /></label>
+        <label className="lp-field">
+          <span>Récurrence</span>
+          <select className="lp-input" value={form.recurrence} onChange={(e) => set({ recurrence: e.target.value })}>
+            {PRO_OBLIGATION_RECURRENCES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </select>
+        </label>
+        <label className="lp-field"><span>Notes</span><input className="lp-input" value={form.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
+      </div>
+    </Modal>
+  );
+}
+
+function FinanceProTreasuryView({ financeProSettings, setFinanceProSettings, proBillingSchedule, proExpenses, proPayments, proObligations, setProObligations }) {
   const disponible = proTresorerieDisponible(financeProSettings);
   const prev30 = proTresoreriePrevisionnelle(financeProSettings, proBillingSchedule, proExpenses, 30);
   const prev60 = proTresoreriePrevisionnelle(financeProSettings, proBillingSchedule, proExpenses, 60);
@@ -19964,6 +20121,16 @@ function FinanceProTreasuryView({ financeProSettings, setFinanceProSettings, pro
   const provisions = proProvisions(proCaEncaisse(proPayments), financeProSettings);
   const seuil = proEuros(financeProSettings?.seuilTresorerieSecurite);
   const alerte = seuil > 0 && prev90 < seuil;
+  const seuilTva = proSeuilTvaStatus(proCaEncaisseAnnee(proPayments));
+  const seuilTvaMeta = PRO_TVA_SEUIL_META[seuilTva.status];
+
+  const [obligationForm, setObligationForm] = useState(null);
+  const saveObligation = (o) => setProObligations((prev) => {
+    const exists = prev.some((x) => x.id === o.id);
+    return exists ? prev.map((x) => (x.id === o.id ? o : x)) : [...prev, o];
+  });
+  const archiveObligation = (id) => setProObligations((prev) => prev.map((o) => (o.id === id ? { ...o, archivedAt: proNowIso() } : o)));
+  const upcoming = proUpcomingObligations(proObligations);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -19973,6 +20140,7 @@ function FinanceProTreasuryView({ financeProSettings, setFinanceProSettings, pro
         <FinanceProStatTile label="Prévisionnelle 60 j" value={fmtProEuros(prev60)} />
         <FinanceProStatTile label="Prévisionnelle 90 j" value={fmtProEuros(prev90)} tone={alerte ? "bad" : "good"} sub={alerte ? `Sous le seuil de sécurité (${fmtProEuros(seuil)})` : (seuil > 0 ? "Au-dessus du seuil de sécurité" : null)} />
         <FinanceProStatTile label="Provisions (CA encaissé)" value={fmtProEuros(provisions)} sub={financeProSettings?.tauxProvisionSocialesFiscales == null ? "Taux non renseigné (réglages)" : `${Math.round(financeProSettings.tauxProvisionSocialesFiscales * 100)} % du CA encaissé`} />
+        <FinanceProStatTile label="CA encaissé (année civile)" value={fmtProEuros(seuilTva.caAnnuel)} tone={seuilTvaMeta.tone} sub={seuilTvaMeta.label} />
       </div>
 
       <div className="lp-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -19993,17 +20161,200 @@ function FinanceProTreasuryView({ financeProSettings, setFinanceProSettings, pro
           </label>
         </div>
       </div>
+
+      <div className="lp-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="lp-toolbar" style={{ gap: 8, padding: 0 }}>
+          <div style={{ flex: 1, fontSize: 14.5, fontWeight: 700 }}>Obligations fiscales &amp; sociales</div>
+          <button className="lp-btn lp-btn-primary" onClick={() => setObligationForm("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouvelle obligation</button>
+        </div>
+        <p style={{ fontSize: 11.5, color: "var(--text-muted)", margin: 0 }}>Base de suivi manuelle — pas encore reliée à la vue Échéances de Nexora ni de rappel automatique.</p>
+        {upcoming.length === 0 ? (
+          <div className="lp-empty" style={{ padding: 20 }}>Aucune obligation enregistrée pour l'instant.</div>
+        ) : (
+          <div className="lp-table-wrap"><table className="lp-table"><thead><tr>
+            <th>Échéance</th><th>Type</th><th>Libellé</th><th>Récurrence</th><th></th>
+          </tr></thead><tbody>
+            {upcoming.map((o) => (
+              <tr key={o.id}>
+                <td style={{ color: o.late ? "var(--danger)" : "inherit", fontWeight: o.late ? 700 : 400 }}>{o.dateEcheance}</td>
+                <td>{(PRO_OBLIGATION_TYPES.find((t) => t.key === o.type) || {}).label}</td>
+                <td>{o.label}</td>
+                <td>{(PRO_OBLIGATION_RECURRENCES.find((r) => r.key === o.recurrence) || {}).label}</td>
+                <td style={{ textAlign: "right" }}>
+                  <button className="lp-icon-btn" title="Modifier" onClick={() => setObligationForm(o)}><Pencil size={14} /></button>
+                  <button className="lp-icon-btn" title="Archiver" onClick={() => archiveObligation(o.id)}><Trash2 size={14} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody></table></div>
+        )}
+      </div>
+
+      {obligationForm && <FinanceProObligationFormModal obligation={obligationForm} onSave={saveObligation} onClose={() => setObligationForm(null)} />}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Vue racine — 5 onglets (docs/finance-pro/maquettes/finance-pro-maquettes.html)
+// Onglet Mission — tableau de bord d'UNE mission, sélecteur rapide, bandeau
+// de phase et timeline des jalons de facturation.
+// ---------------------------------------------------------------------------
+
+function FinanceProMissionPhaseBar({ mission, onChangeStatus }) {
+  const currentIndex = PRO_MISSION_PHASE_ORDER.indexOf(mission.status);
+  const isTerminalAlt = mission.status === "archivee"; // classement final, hors bandeau de phase
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+      {PRO_MISSION_PHASE_ORDER.map((key, i) => {
+        const meta = PRO_MISSION_STATUSES.find((s) => s.key === key);
+        const reached = !isTerminalAlt && i <= currentIndex;
+        const isCurrent = !isTerminalAlt && i === currentIndex;
+        return (
+          <React.Fragment key={key}>
+            {i > 0 && <div style={{ flex: "1 1 24px", height: 2, background: reached ? "var(--accent)" : "var(--border)", minWidth: 16 }} />}
+            <button
+              type="button"
+              onClick={() => onChangeStatus(key)}
+              title={`Passer en « ${meta.label} »`}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none",
+                cursor: "pointer", padding: "0 6px", flex: "0 0 auto",
+              }}
+            >
+              <div style={{
+                width: isCurrent ? 16 : 12, height: isCurrent ? 16 : 12, borderRadius: "50%",
+                background: reached ? "var(--accent)" : "var(--surface, #fff)",
+                border: `2px solid ${reached ? "var(--accent)" : "var(--border)"}`,
+              }} />
+              <span style={{ fontSize: 11, fontWeight: isCurrent ? 800 : 600, color: isCurrent ? "var(--accent)" : "var(--text-muted)", whiteSpace: "nowrap" }}>{meta.label}</span>
+            </button>
+          </React.Fragment>
+        );
+      })}
+      {isTerminalAlt && (
+        <span className="lp-icon-btn" style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "var(--text-muted)", width: "auto", padding: "2px 8px" }}>Archivée</span>
+      )}
+    </div>
+  );
+}
+
+function FinanceProMissionTimeline({ lines }) {
+  const today = iso(new Date());
+  if (!lines.length) return <div className="lp-empty" style={{ padding: 20 }}>Aucune ligne de facturation sur cette mission — ajoute-la depuis l'onglet Factures &amp; encaissements.</div>;
+  return (
+    <div style={{ display: "flex", overflowX: "auto", padding: "10px 6px 4px" }}>
+      {lines.map((l, i) => {
+        const statusMeta = PRO_BILLING_LINE_STATUSES.find((s) => s.key === l.statut) || PRO_BILLING_LINE_STATUSES[0];
+        const late = (l.statut === "a_facturer" || l.statut === "facture") && l.dateCible && l.dateCible < today;
+        const dotColor = late ? "var(--danger)" : statusMeta.color;
+        return (
+          <React.Fragment key={l.id}>
+            {i > 0 && <div style={{ flex: "1 1 30px", minWidth: 20, height: 2, background: "var(--border)", marginTop: 7, alignSelf: "flex-start" }} />}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 118, flex: "0 0 auto", textAlign: "center" }}>
+              <div style={{ width: 14, height: 14, borderRadius: "50%", background: dotColor }} />
+              <div style={{ fontSize: 11, fontWeight: 700 }}>{l.libelle}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{(PRO_BILLING_LINE_TYPES.find((t) => t.key === l.type) || {}).label} · {l.dateCible}</div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: dotColor }}>{late ? "En retard" : statusMeta.label}</div>
+              <div className="num" style={{ fontSize: 11.5, fontWeight: 700 }}>{fmtProEuros(l.montantPrevu)}</div>
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function FinanceProMissionDashboard({ projects, quoteClients, quotes, proMissions, setProMissions, proTimeEntries, proExpenses, proBillingSchedule, proPayments }) {
+  const missions = useMemo(
+    () => proActive(proMissions).slice().sort((a, b) => {
+      const la = proMissionLabel(a, projects, quoteClients), lb = proMissionLabel(b, projects, quoteClients);
+      return la.projectName.localeCompare(lb.projectName);
+    }),
+    [proMissions, projects, quoteClients]
+  );
+  const [selectedId, setSelectedId] = useState(null);
+  useEffect(() => {
+    if (!missions.length) { setSelectedId(null); return; }
+    if (!missions.some((m) => m.id === selectedId)) setSelectedId(missions[0].id);
+  }, [missions, selectedId]);
+
+  if (!missions.length) {
+    return <div className="lp-empty" style={{ padding: 30 }}>Aucune mission Finance PRO pour l'instant — crée-en une dans l'onglet Clients &amp; missions.</div>;
+  }
+
+  const currentIndex = missions.findIndex((m) => m.id === selectedId);
+  const mission = missions[currentIndex] || missions[0];
+  const cycle = (delta) => setSelectedId(missions[(currentIndex + delta + missions.length) % missions.length].id);
+  const { projectName, clientName } = proMissionLabel(mission, projects, quoteClients);
+  const linkedQuote = mission.quoteId ? (quotes || []).find((q) => q.id === mission.quoteId) : null;
+
+  const lines = proMissionBillingLines(mission.id, proBillingSchedule);
+  const missionPayments = proMissionPayments(mission.id, proBillingSchedule, proPayments);
+  const progress = proMissionProgress(mission, quotes, proBillingSchedule, proPayments);
+  const marge = proMargeParMission(mission.id, proBillingSchedule, proExpenses);
+  const missionTimeEntries = proActive(proTimeEntries).filter((t) => t.missionId === mission.id);
+  const { facturableMinutes, nonFacturableMinutes } = proTempsParFacturabilite(missionTimeEntries);
+  const missionExpenses = proActive(proExpenses).filter((e) => e.missionId === mission.id);
+  const depensesTotal = missionExpenses.reduce((s, e) => s + proEuros(e.montantTTC), 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="lp-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button className="lp-icon-btn" title="Mission précédente" onClick={() => cycle(-1)} disabled={missions.length < 2}>‹</button>
+          <select className="lp-input" style={{ maxWidth: 320 }} value={mission.id} onChange={(e) => setSelectedId(e.target.value)}>
+            {missions.map((m) => { const l = proMissionLabel(m, projects, quoteClients); return <option key={m.id} value={m.id}>{l.projectName} — {l.clientName}</option>; })}
+          </select>
+          <button className="lp-icon-btn" title="Mission suivante" onClick={() => cycle(1)} disabled={missions.length < 2}>›</button>
+          <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{currentIndex + 1} / {missions.length}</span>
+          <div style={{ flex: 1 }} />
+          {linkedQuote && <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Devis {linkedQuote.number}</span>}
+        </div>
+
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 800 }}>{projectName}</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{clientName} · {(PRO_BILLING_MODES.find((b) => b.key === mission.billingMode) || {}).label}</div>
+        </div>
+
+        <FinanceProMissionPhaseBar mission={mission} onChangeStatus={(status) => setProMissions((prev) => prev.map((m) => (m.id === mission.id ? { ...m, status, updatedAt: proNowIso(), revision: (m.revision || 1) + 1 } : m)))} />
+
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--text-muted)", marginBottom: 4 }}>
+            <span>Avancement financier global</span>
+            <span style={{ fontWeight: 700, color: "var(--text)" }}>{Math.round(progress.ratio * 100)} %</span>
+          </div>
+          <div style={{ height: 8, borderRadius: 4, background: "var(--border, #e5e5e5)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.round(progress.ratio * 100)}%`, borderRadius: 4, background: "var(--accent)" }} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <FinanceProStatTile label="CA signé" value={fmtProEuros(progress.caSigne)} />
+        <FinanceProStatTile label="CA facturé" value={fmtProEuros(progress.caFacture)} />
+        <FinanceProStatTile label="CA encaissé" value={fmtProEuros(progress.caEncaisse)} />
+        <FinanceProStatTile label="Marge" value={fmtProEuros(marge.marge)} sub={marge.tauxMarge != null ? `${Math.round(marge.tauxMarge * 100)} % du CA facturé` : null} tone={marge.marge < 0 ? "bad" : "good"} />
+        <FinanceProStatTile label="Temps facturable" value={`${Math.round(facturableMinutes / 60 * 10) / 10} h`} sub={nonFacturableMinutes ? `+ ${Math.round(nonFacturableMinutes / 60 * 10) / 10} h non facturable` : null} />
+        <FinanceProStatTile label="Dépenses liées" value={fmtProEuros(depensesTotal)} sub={`${missionExpenses.length} dépense${missionExpenses.length > 1 ? "s" : ""}`} />
+      </div>
+
+      <div className="lp-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 14.5, fontWeight: 700 }}>Timeline de facturation</div>
+        <FinanceProMissionTimeline lines={lines} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vue racine — 6 onglets (docs/finance-pro/maquettes/finance-pro-maquettes.html
+// pour les 5 premiers ; l'onglet Mission a été ajouté ensuite, sur demande)
 // ---------------------------------------------------------------------------
 
 const FINANCE_PRO_TABS = [
   { key: "synthese", label: "Synthèse" },
   { key: "clients", label: "Clients & missions" },
+  { key: "mission", label: "Vue mission" },
   { key: "factures", label: "Factures & encaissements" },
   { key: "depenses", label: "Dépenses & justificatifs" },
   { key: "tresorerie", label: "Trésorerie & prévisions" },
@@ -20015,7 +20366,7 @@ function FinanceProView(props) {
     proMissions, setProMissions, proTimeEntries, setProTimeEntries,
     proExpenseCategories, setProExpenseCategories, proExpenses, setProExpenses,
     proBillingSchedule, setProBillingSchedule, proPayments, setProPayments,
-    financeProSettings, setFinanceProSettings, toolbarSlot,
+    financeProSettings, setFinanceProSettings, proObligations, setProObligations, toolbarSlot,
   } = props;
   const [tab, setTab] = useState("synthese");
 
@@ -20035,6 +20386,9 @@ function FinanceProView(props) {
       {tab === "clients" && (
         <FinanceProClientsView projects={projects} quoteClients={quoteClients} quotes={quotes} proMissions={proMissions} setProMissions={setProMissions} proTimeEntries={proTimeEntries} setProTimeEntries={setProTimeEntries} proBillingSchedule={proBillingSchedule} proExpenses={proExpenses} />
       )}
+      {tab === "mission" && (
+        <FinanceProMissionDashboard projects={projects} quoteClients={quoteClients} quotes={quotes} proMissions={proMissions} setProMissions={setProMissions} proTimeEntries={proTimeEntries} proExpenses={proExpenses} proBillingSchedule={proBillingSchedule} proPayments={proPayments} />
+      )}
       {tab === "factures" && (
         <FinanceProBillingView projects={projects} quoteClients={quoteClients} proMissions={proMissions} proBillingSchedule={proBillingSchedule} setProBillingSchedule={setProBillingSchedule} proPayments={proPayments} setProPayments={setProPayments} />
       )}
@@ -20042,7 +20396,7 @@ function FinanceProView(props) {
         <FinanceProExpensesView proExpenses={proExpenses} setProExpenses={setProExpenses} proExpenseCategories={proExpenseCategories} proMissions={proMissions} projects={projects} quoteClients={quoteClients} />
       )}
       {tab === "tresorerie" && (
-        <FinanceProTreasuryView financeProSettings={financeProSettings} setFinanceProSettings={setFinanceProSettings} proBillingSchedule={proBillingSchedule} proExpenses={proExpenses} proPayments={proPayments} />
+        <FinanceProTreasuryView financeProSettings={financeProSettings} setFinanceProSettings={setFinanceProSettings} proBillingSchedule={proBillingSchedule} proExpenses={proExpenses} proPayments={proPayments} proObligations={proObligations} setProObligations={setProObligations} />
       )}
     </div>
   );

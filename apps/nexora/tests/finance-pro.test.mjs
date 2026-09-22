@@ -28,6 +28,9 @@ const F = vm.runInThisContext(
     proTempsParFacturabilite, proTauxOccupation, proResteAFacturer, proResteAEncaisser,
     proTresorerieDisponible, proTresoreriePrevisionnelle, proProvisions, proConcentrationCA,
     proCarnetCommandes, proRevenuMensuelRecurrent, proEcartPrevisionRealise,
+    proCaEncaisseAnnee, proSeuilTvaStatus, proUpcomingObligations,
+    proMissionBillingLines, proMissionPayments, proMissionProgress,
+    PRO_TVA_SEUIL_BASE, PRO_TVA_SEUIL_MAJORE,
     proConfirmationPolicy, proRecordAuditEvent,
     PRO_NEVER_AUTO_ACTIONS, PRO_AUTO_COMMIT_AMOUNT_THRESHOLD, PRO_AUTO_COMMIT_CONFIDENCE_THRESHOLD,
   };\n})`
@@ -222,6 +225,102 @@ test("proEcartPrevisionRealise : sur une période close, prévu vs réellement f
   assert.equal(result.prevu, 800 + 200);
   assert.equal(result.realise, 800);
   assert.equal(result.ecart, 800 - 1000);
+});
+
+// --- Seuil de franchise en base de TVA (base auto-entrepreneur) ------------
+
+test("proCaEncaisseAnnee : ne compte que les paiements rapprochés de l'année civile demandée", () => {
+  const payments = [
+    { statutRapprochement: "rapproche", date: "2026-03-10", montant: 1000 },
+    { statutRapprochement: "rapproche", date: "2025-12-20", montant: 9999 }, // autre année
+    { statutRapprochement: "non_rapproche", date: "2026-05-01", montant: 9999 }, // pas rapproché
+    { statutRapprochement: "rapproche", date: "2026-09-01", montant: 500 },
+  ];
+  assert.equal(F.proCaEncaisseAnnee(payments, 2026), 1500);
+});
+
+test("proSeuilTvaStatus : ok sous 80 % du seuil de base", () => {
+  const result = F.proSeuilTvaStatus(10000);
+  assert.equal(result.status, "ok");
+});
+
+test("proSeuilTvaStatus : proche entre 80 % et le seuil de base", () => {
+  const result = F.proSeuilTvaStatus(0.85 * F.PRO_TVA_SEUIL_BASE);
+  assert.equal(result.status, "proche");
+});
+
+test("proSeuilTvaStatus : seuil de base dépassé mais pas le majoré", () => {
+  const result = F.proSeuilTvaStatus(F.PRO_TVA_SEUIL_BASE + 100);
+  assert.equal(result.status, "depasse_base");
+});
+
+test("proSeuilTvaStatus : seuil majoré dépassé -> bascule TVA immédiate", () => {
+  const result = F.proSeuilTvaStatus(F.PRO_TVA_SEUIL_MAJORE + 1);
+  assert.equal(result.status, "depasse_majore");
+});
+
+// --- Obligations fiscales/sociales (base) -----------------------------------
+
+test("proUpcomingObligations : triées par échéance, en retard signalées, archivées exclues", () => {
+  const obligations = [
+    { id: "o1", dateEcheance: "2026-12-01" },
+    { id: "o2", dateEcheance: "2026-01-01" },
+    { id: "o3", dateEcheance: "2026-06-01", archivedAt: "2026-05-01T00:00:00.000Z" },
+  ];
+  const result = F.proUpcomingObligations(obligations, "2026-09-22");
+  assert.deepEqual(result.map((o) => o.id), ["o2", "o1"]);
+  assert.equal(result.find((o) => o.id === "o2").late, true);
+  assert.equal(result.find((o) => o.id === "o1").late, false);
+});
+
+// --- Vue mission : timeline et avancement global ----------------------------
+
+test("proMissionBillingLines : filtre par mission et trie par échéance, exclut les archivées", () => {
+  const billingSchedule = [
+    { id: "l1", missionId: "m1", dateCible: "2026-06-01" },
+    { id: "l2", missionId: "m2", dateCible: "2026-01-01" },
+    { id: "l3", missionId: "m1", dateCible: "2026-02-01" },
+    { id: "l4", missionId: "m1", dateCible: "2026-03-01", archivedAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  const result = F.proMissionBillingLines("m1", billingSchedule);
+  assert.deepEqual(result.map((l) => l.id), ["l3", "l1"]);
+});
+
+test("proMissionPayments : un paiement n'est rattaché qu'aux lignes de LA mission demandée", () => {
+  const billingSchedule = [{ id: "l1", missionId: "m1" }, { id: "l2", missionId: "m2" }];
+  const payments = [
+    { billingScheduleId: "l1", montant: 100 },
+    { billingScheduleId: "l2", montant: 999 },
+  ];
+  const result = F.proMissionPayments("m1", billingSchedule, payments);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].montant, 100);
+});
+
+test("proMissionProgress : ratio basé sur le CA signé (devis lié) quand il existe", () => {
+  const mission = { id: "m1", quoteId: "q1" };
+  const quotes = [{ id: "q1", status: "accepted", lines: [{ kind: "forfait", amount: 1000 }] }];
+  const billingSchedule = [{ id: "l1", missionId: "m1", statut: "facture", montantPrevu: 1000 }];
+  const payments = [{ billingScheduleId: "l1", statutRapprochement: "rapproche", montant: 400 }];
+  const result = F.proMissionProgress(mission, quotes, billingSchedule, payments);
+  assert.equal(result.caSigne, 1000);
+  assert.equal(result.caEncaisse, 400);
+  assert.equal(result.ratio, 0.4);
+});
+
+test("proMissionProgress : sans devis lié ni ligne de facturation -> ratio 0, jamais NaN", () => {
+  const result = F.proMissionProgress({ id: "m1", quoteId: null }, [], [], []);
+  assert.equal(result.ratio, 0);
+  assert.equal(result.caSigne, 0);
+});
+
+test("proMissionProgress : le ratio ne dépasse jamais 1 même si l'encaissé excède la référence", () => {
+  const mission = { id: "m1", quoteId: "q1" };
+  const quotes = [{ id: "q1", status: "accepted", lines: [{ kind: "forfait", amount: 100 }] }];
+  const billingSchedule = [{ id: "l1", missionId: "m1", statut: "encaisse", montantPrevu: 100 }];
+  const payments = [{ billingScheduleId: "l1", statutRapprochement: "rapproche", montant: 500 }]; // acompte + solde mal saisis, exemple limite
+  const result = F.proMissionProgress(mission, quotes, billingSchedule, payments);
+  assert.equal(result.ratio, 1);
 });
 
 // --- Détection de doublon (dépenses) ----------------------------------------
