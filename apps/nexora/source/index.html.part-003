@@ -17894,6 +17894,608 @@ async function archiveInvoicePdfToDrive(invoice, client, settings, invoiceSkills
   }
 }
 
+// ============================================================================
+// Fiche mémo PDF depuis une tâche (#289) — export A4 haut de gamme, client
+// uniquement (aucune écriture Firestore, aucune modification de tâche). Les
+// fonctions pures de préparation des données (NEXORA:MEMO-PDF-CORE) vivent dans
+// index.html.part-000, testables sans navigateur ; ce fichier ne porte que le
+// dessin jsPDF, sur le même modèle que le module Devis juste au-dessus.
+// ============================================================================
+// === NEXORA:MEMO-PDF-DRAW:START ===
+
+const MEMO_INK = [16, 27, 45];        // #101B2D
+const MEMO_INK_SOFT = [69, 83, 107];  // #45536B
+const MEMO_INK_FAINT = [133, 147, 170]; // #8593AA
+const MEMO_ACCENT = [30, 79, 216];    // #1E4FD8
+const MEMO_LINE = [222, 227, 236];    // #DEE3EC
+const MEMO_PAPER_SOFT = [241, 243, 248]; // #F1F3F8
+
+const MEMO_PAGE_W = 210, MEMO_PAGE_H = 297, MEMO_MARGIN = 15;
+const MEMO_CONTENT_W = MEMO_PAGE_W - MEMO_MARGIN * 2;
+const MEMO_BOTTOM_LIMIT = MEMO_PAGE_H - 16;
+
+function memoFmtFr(dateIso) {
+  if (!dateIso) return "";
+  const d = new Date(dateIso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Découpe des segments (gras/italique/code/lien) en lignes qui tiennent dans
+// maxWidth, un mot à la fois — c'est ce qui permet de garder le style de
+// chaque mot (contrairement à doc.splitTextToSize, qui ne connaît qu'une
+// chaîne plate).
+function memoWrapSegments(doc, segments, maxWidth, baseSize) {
+  const words = [];
+  segments.forEach((seg) => {
+    String(seg.text).split(/(\s+)/).forEach((chunk) => {
+      if (chunk === "") return;
+      words.push({ text: chunk, bold: seg.bold, italic: seg.italic, code: seg.code, href: seg.href });
+    });
+  });
+  const widthOf = (w) => {
+    doc.setFont(w.code ? "courier" : "helvetica", w.bold ? "bold" : w.italic ? "italic" : "normal");
+    doc.setFontSize(w.code ? baseSize - 0.5 : baseSize);
+    return doc.getTextWidth(w.text);
+  };
+  const lines = [[]];
+  let lineWidth = 0;
+  words.forEach((w) => {
+    const isSpace = /^\s+$/.test(w.text);
+    const ww = widthOf(w);
+    if (!isSpace && lineWidth + ww > maxWidth && lines[lines.length - 1].length) {
+      lines.push([]);
+      lineWidth = 0;
+    }
+    if (isSpace && lineWidth === 0) return; // pas d'espace en début de ligne
+    lines[lines.length - 1].push(w);
+    lineWidth += ww;
+  });
+  return lines.filter((l) => l.length);
+}
+
+function memoDrawSegmentLines(doc, lines, x, y, lineHeight, baseSize, color = MEMO_INK) {
+  lines.forEach((line) => {
+    let cx = x;
+    line.forEach((w) => {
+      doc.setFont(w.code ? "courier" : "helvetica", w.bold ? "bold" : w.italic ? "italic" : "normal");
+      doc.setFontSize(w.code ? baseSize - 0.5 : baseSize);
+      doc.setTextColor(...(w.href ? MEMO_ACCENT : color));
+      doc.text(w.text, cx, y);
+      if (w.href) {
+        const ww = doc.getTextWidth(w.text);
+        doc.setDrawColor(...MEMO_ACCENT);
+        doc.setLineWidth(0.15);
+        doc.line(cx, y + 0.6, cx + ww, y + 0.6);
+      }
+      cx += doc.getTextWidth(w.text);
+    });
+    y += lineHeight;
+  });
+  return y;
+}
+
+function memoRoundedChip(doc, x, y, text, bg, { fontSize = 7.6 } = {}) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(fontSize);
+  const padX = 2.4, h = 4.6;
+  const w = doc.getTextWidth(text) + padX * 2;
+  doc.setFillColor(...memoHexToRgb(bg));
+  doc.roundedRect(x, y, w, h, 1.1, 1.1, "F");
+  doc.setTextColor(...memoHexToRgb(memoContrastInk(bg)));
+  doc.text(text, x + padX, y + h / 2 + 1.1);
+  return w;
+}
+
+// En-tête minimaliste répétée sur les pages 2+ : logo + titre court + numéro
+// de page (le numéro exact est posé dans la passe finale de pagination).
+function memoDrawMiniHeader(doc, title, logoDataUrl) {
+  let y = MEMO_MARGIN;
+  const logoW = 12, logoH = 6; // ratio 2:1, identique au logo réel
+  if (logoDataUrl) {
+    try { doc.addImage(logoDataUrl, undefined, MEMO_MARGIN, y - 4, logoW, logoH); } catch (_) {}
+  }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...MEMO_INK_SOFT);
+  doc.text(title, MEMO_MARGIN + (logoDataUrl ? logoW + 4 : 0), y);
+  doc.setDrawColor(...MEMO_LINE);
+  doc.setLineWidth(0.2);
+  doc.line(MEMO_MARGIN, y + 4, MEMO_PAGE_W - MEMO_MARGIN, y + 4);
+  return y + 11;
+}
+
+function memoDrawFooter(doc, pageNum, totalPages) {
+  const y = MEMO_PAGE_H - 11;
+  doc.setDrawColor(...MEMO_LINE);
+  doc.setLineWidth(0.2);
+  doc.line(MEMO_MARGIN, y, MEMO_PAGE_W - MEMO_MARGIN, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(...MEMO_INK_FAINT);
+  doc.text("Nexora · export confidentiel", MEMO_MARGIN, y + 4);
+  doc.text(`page ${pageNum}/${totalPages}`, MEMO_PAGE_W - MEMO_MARGIN, y + 4, { align: "right" });
+}
+
+// Titre garanti sur une seule ligne : réduit la taille jusqu'à ce qu'il
+// tienne dans maxWidth plutôt que de le tronquer — mécanique jsPDF de la
+// même idée que l'ajustement JS utilisé sur l'aperçu HTML validé.
+function memoFitTitleFontSize(doc, title, maxWidth, startSize, minSize) {
+  let size = startSize;
+  doc.setFont("helvetica", "bold");
+  while (size > minSize) {
+    doc.setFontSize(size);
+    if (doc.getTextWidth(title) <= maxWidth) break;
+    size -= 0.5;
+  }
+  return size;
+}
+
+// Hauteur nécessaire pour poser `blocks`, SANS rien dessiner — sert à
+// dimensionner le fond du bloc Description avant le texte (jsPDF ne permet
+// pas de dessiner un rectangle derrière un texte déjà posé). Suppose que le
+// bloc reste sur une seule page (le cas réel : la Description est courte,
+// jamais le compte rendu).
+function memoMeasureBlocksHeight(doc, blocks, width) {
+  let h = 0;
+  blocks.forEach((block) => {
+    if (block.type === "h2" || block.type === "h3" || block.type === "h4") {
+      const size = block.type === "h2" ? 11.5 : block.type === "h3" ? 10 : 9.2;
+      const lines = memoWrapSegments(doc, block.segments.map((s) => ({ ...s, bold: true })), width, size);
+      h += lines.length * (size / 2.3) + 1;
+      return;
+    }
+    if (block.type === "p") {
+      const lines = memoWrapSegments(doc, block.segments, width, 8.6);
+      h += lines.length * 4 + 1.6;
+      return;
+    }
+    if (block.type === "li" || block.type === "task") {
+      const lines = memoWrapSegments(doc, block.segments, width - 5, 8.6);
+      h += lines.length * 4 + 0.6;
+      return;
+    }
+    if (block.type === "callout") {
+      h += 4 + (block.title ? 4.4 : 0) + memoMeasureBlocksHeight(doc, block.blocks, width - 7) + 1.5;
+      return;
+    }
+    if (block.type === "table") {
+      h += 3 + block.rows.length * 4.6 + 1.6;
+      return;
+    }
+  });
+  return h;
+}
+
+function memoDrawBlocks(doc, blocks, x, width, y, opts) {
+  const { onPageBreak } = opts;
+  const ensure = (needed) => {
+    if (y + needed > MEMO_BOTTOM_LIMIT) {
+      doc.addPage();
+      y = onPageBreak(doc);
+    }
+  };
+  blocks.forEach((block) => {
+    if (block.type === "h2" || block.type === "h3" || block.type === "h4") {
+      const size = block.type === "h2" ? 11.5 : block.type === "h3" ? 10 : 9.2;
+      ensure(size / 2.6 + 2);
+      const lines = memoWrapSegments(doc, block.segments.map((s) => ({ ...s, bold: true })), width, size);
+      y = memoDrawSegmentLines(doc, lines, x, y, size / 2.3, size, MEMO_INK);
+      y += 1;
+      return;
+    }
+    if (block.type === "p") {
+      const lines = memoWrapSegments(doc, block.segments, width, 8.6);
+      ensure(lines.length * 4 + 1);
+      y = memoDrawSegmentLines(doc, lines, x, y, 4, 8.6, MEMO_INK);
+      y += 1.6;
+      return;
+    }
+    if (block.type === "li") {
+      const lines = memoWrapSegments(doc, block.segments, width - 4, 8.6);
+      ensure(lines.length * 4 + 0.5);
+      doc.setFillColor(...MEMO_INK_SOFT);
+      doc.circle(x + 1, y - 1.2, 0.5, "F");
+      y = memoDrawSegmentLines(doc, lines, x + 4, y, 4, 8.6, MEMO_INK);
+      y += 0.6;
+      return;
+    }
+    if (block.type === "task") {
+      const lines = memoWrapSegments(doc, block.segments, width - 5, 8.6);
+      ensure(lines.length * 4 + 0.5);
+      doc.setDrawColor(...(block.checked ? [23, 138, 76] : [133, 147, 170]));
+      doc.setFillColor(...(block.checked ? [23, 138, 76] : [255, 255, 255]));
+      doc.roundedRect(x, y - 3, 3, 3, 0.6, 0.6, block.checked ? "FD" : "D");
+      if (block.checked) {
+        doc.setDrawColor(255, 255, 255);
+        doc.setLineWidth(0.4);
+        doc.line(x + 0.6, y - 1.6, x + 1.2, y - 0.9);
+        doc.line(x + 1.2, y - 0.9, x + 2.4, y - 2.6);
+      }
+      y = memoDrawSegmentLines(doc, lines, x + 5, y, 4, 8.6, block.checked ? MEMO_INK_FAINT : MEMO_INK);
+      y += 0.6;
+      return;
+    }
+    if (block.type === "callout") {
+      const meta = { note: [59, 130, 246], info: [14, 165, 233], tip: [34, 176, 125], warning: [217, 119, 6], danger: [220, 38, 38] }[block.calloutType] || [59, 130, 246];
+      const innerX = x + 4, innerW = width - 7;
+      const startY = y;
+      ensure(8);
+      let cy = y + 4;
+      if (block.title) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.4);
+        doc.setTextColor(...meta);
+        doc.text(block.title, innerX, cy);
+        cy += 4.4;
+      }
+      const innerBottom = memoDrawBlocks(doc, block.blocks, innerX, innerW, cy, opts);
+      doc.setDrawColor(...meta);
+      doc.setLineWidth(1.1);
+      doc.line(x, startY - 3, x, innerBottom - 1.5);
+      y = innerBottom + 1.5;
+      return;
+    }
+    if (block.type === "table") {
+      const cols = block.header.length;
+      const colW = width / cols;
+      ensure(6);
+      doc.setFillColor(...MEMO_PAPER_SOFT);
+      doc.rect(x, y - 3.6, width, 5.2, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.6);
+      doc.setTextColor(...MEMO_INK_SOFT);
+      block.header.forEach((seg, i) => {
+        const t = seg.map((s) => s.text).join("");
+        doc.text(t, x + i * colW + 1.4, y);
+      });
+      y += 3;
+      doc.setDrawColor(...MEMO_LINE);
+      doc.setLineWidth(0.15);
+      doc.line(x, y - 1.6, x + width, y - 1.6);
+      block.rows.forEach((row) => {
+        ensure(5);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.6);
+        doc.setTextColor(...MEMO_INK);
+        row.forEach((seg, i) => {
+          const t = seg.map((s) => s.text).join("");
+          doc.text(t, x + i * colW + 1.4, y);
+        });
+        y += 4.6;
+        doc.setDrawColor(...MEMO_LINE);
+        doc.line(x, y - 1.6, x + width, y - 1.6);
+      });
+      y += 1.6;
+      return;
+    }
+  });
+  return y;
+}
+
+async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoDataUrl = NEXORA_LOGO_FULL } = {}) {
+  const f = memoTaskFields(task, catalogs);
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = MEMO_MARGIN;
+
+  // --------------------------------------------------------------- En-tête
+  const titleMaxWidth = MEMO_CONTENT_W - (logoDataUrl ? 20 : 0);
+  const titleSize = memoFitTitleFontSize(doc, f.title || "Sans titre", titleMaxWidth, 17, 9);
+  if (logoDataUrl) { try { doc.addImage(logoDataUrl, undefined, MEMO_MARGIN, y - 2, 16, 8); } catch (_) {} }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(titleSize);
+  doc.setTextColor(...MEMO_INK);
+  doc.text(f.title || "Sans titre", MEMO_MARGIN + (logoDataUrl ? 20 : 0), y + 3.5);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.6);
+  doc.setTextColor(...MEMO_INK_FAINT);
+  const exportDate = new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+  doc.text(`Fiche mémo · export du ${exportDate}`, MEMO_MARGIN + (logoDataUrl ? 20 : 0), y);
+  y += 4;
+  doc.setDrawColor(...MEMO_INK);
+  doc.setLineWidth(0.5);
+  doc.line(MEMO_MARGIN, y, MEMO_PAGE_W - MEMO_MARGIN, y);
+  y += 7;
+
+  if (f.milestone) {
+    // Pas de glyphe Unicode (helvetica standard ne porte pas ◆ — octets
+    // illisibles à l'impression) : le losange est dessiné, pas écrit, et la
+    // largeur de la capsule se mesure sur le texte réel plutôt qu'un forfait
+    // qui aurait pu le tronquer.
+    const label = "Jalon";
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.2);
+    const textW = doc.getTextWidth(label);
+    const boxW = textW + 9;
+    doc.setFillColor(...MEMO_INK);
+    doc.roundedRect(MEMO_MARGIN, y - 3.6, boxW, 4.8, 1, 1, "F");
+    const dx = MEMO_MARGIN + 3, dy = y - 1.2;
+    doc.setFillColor(255, 255, 255);
+    doc.triangle(dx, dy - 1.3, dx + 1.3, dy, dx, dy + 1.3, "F");
+    doc.triangle(dx, dy - 1.3, dx - 1.3, dy, dx, dy + 1.3, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.text(label, MEMO_MARGIN + 6, y - 0.4);
+    y += 7;
+  }
+
+  // ---------------------------------------------------------- Bande du haut
+  const leftW = f.hasDescription ? MEMO_CONTENT_W * 0.62 : 0;
+  const rightX = MEMO_MARGIN + leftW + 6;
+  const rightW = MEMO_CONTENT_W - leftW - (f.hasDescription ? 6 : 0);
+  const topBandStartY = y;
+  let leftY = y, rightY = y;
+
+  if (f.hasDescription) {
+    doc.setFillColor(...MEMO_PAPER_SOFT);
+    const descBlocks = memoMarkdownBlocks(f.description);
+    // Pré-calcule la hauteur pour poser le fond avant le texte (jsPDF ne
+    // repasse pas derrière).
+    const descHeight = memoMeasureBlocksHeight(doc, descBlocks, leftW - 8);
+    const probeY = leftY + 8 + descHeight;
+    doc.roundedRect(MEMO_MARGIN, leftY, leftW, probeY - leftY + 3, 1.4, 1.4, "F");
+    doc.setDrawColor(...MEMO_ACCENT);
+    doc.setLineWidth(1.3);
+    doc.line(MEMO_MARGIN, leftY, MEMO_MARGIN, probeY + 3);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("DESCRIPTION", MEMO_MARGIN + 4, leftY + 4.6);
+    leftY = memoDrawBlocks(doc, descBlocks, MEMO_MARGIN + 4, leftW - 8, leftY + 8, { onPageBreak: (d) => memoDrawMiniHeader(d, f.title, logoDataUrl) });
+    leftY += 3;
+  }
+
+  // Métadonnées (droite) — uniquement les champs réellement présents.
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.4);
+  doc.setTextColor(...MEMO_INK_SOFT);
+  doc.text("MÉTADONNÉES", rightX, rightY + 1);
+  doc.setDrawColor(...MEMO_LINE);
+  doc.line(rightX, rightY + 2.4, rightX + rightW, rightY + 2.4);
+  rightY += 6.4;
+
+  const chipRow = (label, chipText, color) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.8);
+    doc.setTextColor(...MEMO_INK_FAINT);
+    doc.text(label, rightX, rightY);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.6);
+    const w = doc.getTextWidth(chipText) + 4.8;
+    memoRoundedChip(doc, rightX + rightW - w, rightY - 3.4, chipText, color);
+    doc.setDrawColor(237, 240, 245);
+    doc.line(rightX, rightY + 1.6, rightX + rightW, rightY + 1.6);
+    rightY += 5.6;
+  };
+  const textRow = (label, value) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.8);
+    doc.setTextColor(...MEMO_INK_FAINT);
+    doc.text(label, rightX, rightY);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...MEMO_INK);
+    doc.text(value, rightX + rightW, rightY, { align: "right" });
+    doc.setDrawColor(237, 240, 245);
+    doc.line(rightX, rightY + 1.6, rightX + rightW, rightY + 1.6);
+    rightY += 5.6;
+  };
+
+  if (f.project) chipRow("Projet", f.project.name, f.project.color);
+  if (f.taskType) chipRow("Type", f.taskType.name, f.taskType.color);
+  if (f.status) chipRow("Statut", f.status.name, f.status.color);
+  if (f.criticality) chipRow("Priorité", f.criticality.name, f.criticality.color);
+  if (f.start) textRow("Début", memoFmtFr(f.start));
+  if (f.end && f.end !== f.start) textRow("Échéance", memoFmtFr(f.end));
+  if (f.responsible) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.8);
+    doc.setTextColor(...MEMO_INK_FAINT);
+    doc.text("Responsable", rightX, rightY);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...MEMO_INK);
+    doc.text(f.responsible.name, rightX + rightW - 8, rightY, { align: "right" });
+    doc.setFillColor(...memoHexToRgb(f.responsible.color));
+    doc.circle(rightX + rightW - 3, rightY - 1, 2.6, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.4);
+    doc.setTextColor(...memoHexToRgb(memoContrastInk(f.responsible.color)));
+    doc.text(f.responsible.initials, rightX + rightW - 3, rightY - 0.4, { align: "center" });
+    doc.setDrawColor(237, 240, 245);
+    doc.line(rightX, rightY + 1.6, rightX + rightW, rightY + 1.6);
+    rightY += 5.6;
+  }
+  if (f.progress != null) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.8);
+    doc.setTextColor(...MEMO_INK_FAINT);
+    doc.text("Avancement", rightX, rightY);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...MEMO_INK);
+    doc.text(`${f.progress} %`, rightX + rightW, rightY, { align: "right" });
+    rightY += 2;
+    doc.setFillColor(237, 240, 245);
+    doc.roundedRect(rightX, rightY, rightW, 1.6, 0.8, 0.8, "F");
+    doc.setFillColor(...MEMO_ACCENT);
+    doc.roundedRect(rightX, rightY, (rightW * f.progress) / 100, 1.6, 0.8, 0.8, "F");
+    rightY += 4.4;
+  }
+
+  y = Math.max(leftY, rightY) + 4;
+
+  // --------------------------------------------------- Sous-tâches (#289)
+  // Placées ENTRE le bloc description/métadonnées et le compte rendu.
+  if (f.checklist.length) {
+    if (y > MEMO_BOTTOM_LIMIT - 12) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("SOUS-TÂCHES", MEMO_MARGIN, y);
+    doc.setDrawColor(...MEMO_LINE);
+    doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
+    y += 5.4;
+    f.checklist.forEach((item) => {
+      if (y > MEMO_BOTTOM_LIMIT - 6) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+      doc.setDrawColor(...(item.done ? [23, 138, 76] : [133, 147, 170]));
+      doc.setFillColor(...(item.done ? [23, 138, 76] : [255, 255, 255]));
+      doc.roundedRect(MEMO_MARGIN, y - 3, 3, 3, 0.6, 0.6, item.done ? "FD" : "D");
+      if (item.done) {
+        doc.setDrawColor(255, 255, 255);
+        doc.setLineWidth(0.4);
+        doc.line(MEMO_MARGIN + 0.6, y - 1.6, MEMO_MARGIN + 1.2, y - 0.9);
+        doc.line(MEMO_MARGIN + 1.2, y - 0.9, MEMO_MARGIN + 2.4, y - 2.6);
+      }
+      doc.setFont("helvetica", item.done ? "normal" : "bold");
+      doc.setFontSize(8.4);
+      doc.setTextColor(...(item.done ? MEMO_INK_FAINT : MEMO_INK));
+      doc.text(item.text, MEMO_MARGIN + 5, y);
+      if (item.date) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.4);
+        doc.setTextColor(...MEMO_INK_FAINT);
+        doc.text(memoFmtFr(item.date), MEMO_PAGE_W - MEMO_MARGIN, y, { align: "right" });
+      }
+      y += 5.2;
+    });
+    y += 2;
+  }
+
+  // ------------------------------------------------------------ Compte rendu
+  if (f.hasReport) {
+    if (y > MEMO_BOTTOM_LIMIT - 12) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("COMPTE RENDU", MEMO_MARGIN, y);
+    doc.setDrawColor(...MEMO_LINE);
+    doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
+    y += 6;
+    y = memoDrawBlocks(doc, memoMarkdownBlocks(f.report), MEMO_MARGIN, MEMO_CONTENT_W, y, {
+      onPageBreak: (d) => memoDrawMiniHeader(d, f.title, logoDataUrl),
+    });
+    y += 2;
+  }
+
+  // ---------------------------------------------------------- Pièces jointes
+  if (f.attachments.length) {
+    if (y > MEMO_BOTTOM_LIMIT - 10) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("PIÈCES JOINTES", MEMO_MARGIN, y);
+    y += 5;
+    f.attachments.forEach((a) => {
+      if (y > MEMO_BOTTOM_LIMIT - 6) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...MEMO_INK);
+      doc.text(`— ${a.name}`, MEMO_MARGIN, y);
+      y += 4.6;
+    });
+    y += 2;
+  }
+
+  // ------------------------------------------------------------ Dépendances
+  if (f.dependencies.length) {
+    if (y > MEMO_BOTTOM_LIMIT - 10) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("DÉPENDANCES", MEMO_MARGIN, y);
+    y += 5;
+    f.dependencies.forEach((d) => {
+      if (y > MEMO_BOTTOM_LIMIT - 6) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...MEMO_INK);
+      doc.text(`— Dépend de : ${d.title}`, MEMO_MARGIN, y);
+      y += 4.6;
+    });
+    y += 2;
+  }
+
+  // ------------------------------------------------------- Frise chronologique
+  if (f.start) {
+    const durationEnd = f.end || f.start;
+    const start = new Date(f.start + "T00:00:00");
+    const end = new Date(durationEnd + "T00:00:00");
+    const rangeStart = new Date(start); rangeStart.setDate(rangeStart.getDate() - 31);
+    const rangeEnd = new Date(end); rangeEnd.setDate(rangeEnd.getDate() + 31);
+    const totalDays = Math.max(1, (rangeEnd - rangeStart) / 86400000);
+    const pct = (d) => ((d - rangeStart) / 86400000 / totalDays) * 100;
+    const timelineH = 22;
+    if (y > MEMO_BOTTOM_LIMIT - timelineH) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+    y = Math.max(y, MEMO_BOTTOM_LIMIT - timelineH); // ancre en bas de la dernière page, comme l'aperçu validé
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("FRISE CHRONOLOGIQUE", MEMO_MARGIN, y);
+    doc.setDrawColor(...MEMO_LINE);
+    doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
+    const axisY = y + 12;
+    doc.setDrawColor(215, 220, 230);
+    doc.setLineWidth(0.6);
+    doc.line(MEMO_MARGIN, axisY, MEMO_PAGE_W - MEMO_MARGIN, axisY);
+    // Portion réellement avancée, épaisse et opaque ; reste de la durée,
+    // fine et translucide — même mécanique que le widget Métro de l'app
+    // (index.html.part-003, ~L214-215 / L329-336).
+    const durX = MEMO_MARGIN + (pct(start) / 100) * MEMO_CONTENT_W;
+    const durEndX = MEMO_MARGIN + (pct(end) / 100) * MEMO_CONTENT_W;
+    doc.setDrawColor(...MEMO_ACCENT);
+    doc.setLineWidth(1);
+    doc.setLineCap?.("round");
+    doc.line(durX, axisY, durEndX, axisY);
+    if (f.progress != null && f.progress > 0) {
+      const progX = durX + ((durEndX - durX) * f.progress) / 100;
+      doc.setLineWidth(1.6);
+      doc.line(durX, axisY, progX, axisY);
+    }
+    // Graduation régulière (hebdomadaire), sans jamais chevaucher les
+    // libellés des stations.
+    doc.setDrawColor(...MEMO_LINE);
+    doc.setLineWidth(0.25);
+    for (let d = new Date(rangeStart); d <= rangeEnd; d.setDate(d.getDate() + 7)) {
+      const tx = MEMO_MARGIN + (pct(d) / 100) * MEMO_CONTENT_W;
+      doc.line(tx, axisY - 1.4, tx, axisY + 1.4);
+    }
+    // Station Début, ronde, centrée EXACTEMENT sur l'axe.
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...MEMO_ACCENT);
+    doc.setLineWidth(0.7);
+    doc.circle(durX, axisY, 1.3, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.6);
+    doc.setTextColor(...MEMO_INK);
+    doc.text(`Début · ${memoFmtFr(f.start)}`, durX, axisY - 4, { align: "center" });
+    if (f.end && f.end !== f.start) {
+      doc.setDrawColor(...MEMO_INK_FAINT);
+      doc.circle(durEndX, axisY, 1.3, "FD");
+      doc.text(`Échéance · ${memoFmtFr(f.end)}`, durEndX, axisY - 4, { align: "center" });
+    }
+    const today = new Date();
+    if (today >= rangeStart && today <= rangeEnd) {
+      const todayX = MEMO_MARGIN + (pct(today) / 100) * MEMO_CONTENT_W;
+      doc.setDrawColor(...MEMO_INK);
+      doc.setLineWidth(0.5);
+      doc.line(todayX, axisY - 4.5, todayX, axisY + 4.5);
+      doc.text("Aujourd'hui", todayX, axisY + 8, { align: "center" });
+    }
+  }
+
+  // -------------------------------------------------------- Pagination finale
+  const totalPages = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) { doc.setPage(p); memoDrawFooter(doc, p, totalPages); }
+
+  if (asBase64) {
+    const dataUri = doc.output("datauristring");
+    return dataUri.slice(dataUri.indexOf(",") + 1);
+  }
+  doc.save(memoFileName(f.title, new Date().toISOString()));
+  return doc;
+}
+
+// === NEXORA:MEMO-PDF-DRAW:END ===
+
 function QuoteStatusBadge({ status }) {
   const meta = quoteStatusMeta(status);
   return <span className="lp-quote-badge" style={{ background: meta.color }}>{meta.label}</span>;

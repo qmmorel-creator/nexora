@@ -1752,7 +1752,248 @@ const renderMarkdown = (text, interactive = false) => {
 };
 // === NEXORA:MARKDOWN:END ===
 
+// === NEXORA:MEMO-PDF-CORE:START ===
+// Fonctions pures de préparation de la « Fiche mémo PDF » (#289) : lecture
+// exclusive des données déjà chargées, aucune valeur inventée pour compléter
+// la mise en page. Séparées du dessin jsPDF (non testable en isolation, voir
+// index.html.part-003) pour rester testables sans navigateur.
 
+// Nom de fichier stable et sûr : minuscules, accents retirés, tout ce qui
+// n'est pas alphanumérique devient un tiret, jamais deux tirets de suite.
+function memoSlug(text) {
+  return String(text || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "tache";
+}
+
+function memoFileName(title, dateIso) {
+  const day = (dateIso || "").slice(0, 10) || "0000-00-00";
+  return `nexora-fiche-memo-${memoSlug(title)}-${day}.pdf`;
+}
+
+function memoHexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!m) return [140, 148, 165];
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// Luminance relative (WCAG) : décide si un texte blanc ou encre foncée reste
+// lisible sur une couleur de fond donnée — jamais une capsule de couleur avec
+// un texte illisible dessus, quelle que soit la couleur choisie pour le projet.
+function memoContrastInk(hexBg) {
+  const [r, g, b] = memoHexToRgb(hexBg).map((c) => c / 255);
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return luminance > 0.55 ? "#101B2D" : "#FFFFFF";
+}
+
+function memoInitials(name) {
+  return String(name || "").trim().split(/\s+/).filter(Boolean)
+    .map((p) => p.charAt(0)).join("").slice(0, 2).toUpperCase() || "?";
+}
+
+// --- Markdown -> blocs structurés (pas de HTML) ----------------------------
+// Reprend la syntaxe de renderMarkdownBlocks ci-dessus : callouts
+// "> [!type] Titre", listes "- "/"- [ ] ", titres "#"/"##"/"###", tableaux
+// GFM. Un niveau de callout imbriqué (suffisant pour un compte rendu ; le
+// rendu HTML de l'app en autorise plus, jamais utilisé en pratique dans une
+// fiche tâche).
+const MEMO_CALLOUT_TYPES = {
+  note: { label: "Note", color: "#3B82F6" },
+  info: { label: "Info", color: "#0EA5E9" },
+  tip: { label: "Astuce", color: "#22B07D" },
+  warning: { label: "Attention", color: "#D97706" },
+  danger: { label: "Danger", color: "#DC2626" },
+};
+
+// Segments en ligne : texte, gras, italique, code, lien — jamais de HTML,
+// une liste de fragments que le dessin jsPDF applique un par un.
+function memoInlineSegments(text) {
+  const raw = String(text == null ? "" : text);
+  // Découpe sur les 4 marqueurs reconnus, dans l'ordre où ils apparaissent.
+  const pattern = /(\*\*.+?\*\*|\*.+?\*|`.+?`|\[.+?\]\(https?:\/\/[^\s)]+\))/g;
+  const segments = [];
+  let last = 0;
+  let m;
+  while ((m = pattern.exec(raw))) {
+    if (m.index > last) segments.push({ text: raw.slice(last, m.index) });
+    const token = m[0];
+    if (token.startsWith("**")) segments.push({ text: token.slice(2, -2), bold: true });
+    else if (token.startsWith("`")) segments.push({ text: token.slice(1, -1), code: true });
+    else if (token.startsWith("[")) {
+      const linkMatch = /^\[(.+)\]\((https?:\/\/[^\s)]+)\)$/.exec(token);
+      segments.push({ text: linkMatch[1], href: linkMatch[2] });
+    } else segments.push({ text: token.slice(1, -1), italic: true });
+    last = pattern.lastIndex;
+  }
+  if (last < raw.length) segments.push({ text: raw.slice(last) });
+  return segments.filter((s) => s.text !== "");
+}
+
+const MEMO_TABLE_DELIM = /^\s*:?-+:?\s*$/;
+function memoTableCells(line) {
+  let s = String(line == null ? "" : line).trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (/(^|[^\\])\|$/.test(s)) s = s.slice(0, -1);
+  const cells = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && s[i + 1] === "|") { cur += "|"; i++; continue; }
+    if (s[i] === "|") { cells.push(cur.trim()); cur = ""; continue; }
+    cur += s[i];
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+function memoTableAligns(line) {
+  if (!/\|/.test(String(line == null ? "" : line))) return null;
+  const cells = memoTableCells(line);
+  if (!cells.length || cells.some((c) => !MEMO_TABLE_DELIM.test(c))) return null;
+  return cells.map((c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : ""));
+}
+function memoTableParse(lines, start) {
+  const head = lines[start];
+  if (!head || !/\|/.test(head)) return null;
+  const aligns = memoTableAligns(lines[start + 1]);
+  if (!aligns) return null;
+  const header = memoTableCells(head);
+  if (header.length !== aligns.length) return null;
+  const body = [];
+  let i = start + 2;
+  while (i < lines.length && lines[i].trim() !== "" && /\|/.test(lines[i])) {
+    const cells = memoTableCells(lines[i]);
+    body.push(Array.from({ length: header.length }, (_, c) => cells[c] || ""));
+    i++;
+  }
+  return { aligns, header, body, next: i };
+}
+
+function memoMarkdownBlocks(text) {
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+
+  const parse = (srcLines) => {
+    const out = [];
+    let buf = null;
+    const flush = () => { if (buf) { out.push(buf); buf = null; } };
+    let i = 0;
+    while (i < srcLines.length) {
+      const line = srcLines[i].trimEnd();
+
+      const calloutStart = line.match(/^>\s*\[!(\w+)\]\s*(.*)$/);
+      if (calloutStart) {
+        flush();
+        const type = MEMO_CALLOUT_TYPES[calloutStart[1].toLowerCase()] ? calloutStart[1].toLowerCase() : "note";
+        const title = calloutStart[2].trim();
+        const body = [];
+        i++;
+        while (i < srcLines.length && /^>\s?/.test(srcLines[i])) { body.push(srcLines[i].replace(/^>\s?/, "")); i++; }
+        out.push({ type: "callout", calloutType: type, title, blocks: parse(body) });
+        continue;
+      }
+
+      const table = memoTableParse(srcLines, i);
+      if (table) {
+        flush();
+        out.push({ type: "table", aligns: table.aligns, header: table.header.map(memoInlineSegments), rows: table.body.map((r) => r.map(memoInlineSegments)) });
+        i = table.next;
+        continue;
+      }
+
+      const taskMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
+      if (taskMatch) {
+        flush();
+        out.push({ type: "task", checked: taskMatch[1].toLowerCase() === "x", segments: memoInlineSegments(taskMatch[2]) });
+        i++;
+        continue;
+      }
+
+      const listMatch = line.match(/^[-*]\s+(.*)/);
+      if (listMatch) {
+        flush();
+        out.push({ type: "li", segments: memoInlineSegments(listMatch[1]) });
+        i++;
+        continue;
+      }
+
+      flush();
+      if (/^###\s+/.test(line)) out.push({ type: "h4", segments: memoInlineSegments(line.replace(/^###\s+/, "")) });
+      else if (/^##\s+/.test(line)) out.push({ type: "h3", segments: memoInlineSegments(line.replace(/^##\s+/, "")) });
+      else if (/^#\s+/.test(line)) out.push({ type: "h2", segments: memoInlineSegments(line.replace(/^#\s+/, "")) });
+      else if (line !== "") buf = { type: "p", segments: memoInlineSegments(line) };
+      i++;
+    }
+    flush();
+    return out;
+  };
+
+  return parse(lines);
+}
+
+// --- Sélection des champs RÉELLEMENT présents sur la tâche ------------------
+// Aucune valeur par défaut fabriquée : un champ absent donne `null` (ou un
+// tableau vide), jamais une donnée inventée pour "faire joli".
+function memoTaskFields(task, catalogs) {
+  const { projects = [], statuses = [], taskTypes = [], teamMembers = [], criticalities = [], tasks = [] } = catalogs || {};
+  const project = projects.find((p) => p.id === task.projectId) || null;
+  const status = statuses.find((s) => s.id === task.statusId) || null;
+  const taskType = taskTypes.find((t) => t.id === task.taskTypeId) || null;
+  const crit = criticalities.find((c) => c.id === task.criticality) || null;
+
+  let responsible = null;
+  if (task.assignee) {
+    const member = teamMembers.find((m) => m.name === task.assignee) || null;
+    responsible = {
+      name: task.assignee,
+      color: member?.color || "#8593AA",
+      avatarDataUrl: member?.avatarDataUrl || null,
+      initials: memoInitials(task.assignee),
+    };
+  }
+
+  const checklist = Array.isArray(task.checklist)
+    ? task.checklist.filter((it) => it && String(it.text || "").trim()).map((it) => ({
+        text: it.text,
+        done: !!it.done,
+        date: it.end || it.start || null,
+      }))
+    : [];
+
+  const attachments = Array.isArray(task.attachments)
+    ? task.attachments.filter((a) => a && a.name).map((a) => ({ name: a.name, kind: a.type === "link" ? "Lien" : "Fichier" }))
+    : [];
+
+  // Dépendances : uniquement celles résolubles dans les tâches déjà chargées
+  // — un identifiant orphelin (tâche supprimée depuis) disparaît plutôt que
+  // d'afficher une ligne vide ou un identifiant brut.
+  const dependencies = Array.isArray(task.dependsOn)
+    ? task.dependsOn.map((id) => tasks.find((t) => t.id === id)).filter(Boolean).map((t) => ({ title: t.title || "Sans titre" }))
+    : [];
+
+  return {
+    title: task.title || "",
+    hasDescription: !!String(task.desc || "").trim(),
+    description: task.desc || "",
+    hasReport: !!String(task.meetingReport || "").trim(),
+    report: task.meetingReport || "",
+    project: project ? { name: project.name, color: project.color || "#8593AA" } : null,
+    taskType: taskType ? { name: taskType.name, color: taskType.color || "#8593AA" } : null,
+    status: status ? { name: status.name, color: status.color || "#8593AA" } : null,
+    criticality: crit ? { name: crit.name, color: crit.color || "#8593AA" } : null,
+    milestone: !!task.milestone,
+    start: task.start || null,
+    end: task.end || null,
+    responsible,
+    progress: Number.isFinite(task.progress) ? Math.max(0, Math.min(100, task.progress)) : null,
+    checklist,
+    attachments,
+    dependencies,
+  };
+}
+// === NEXORA:MEMO-PDF-CORE:END ===
 
 const matchesShortcutCombo = (e, combo) => {
   if (!combo) return false;

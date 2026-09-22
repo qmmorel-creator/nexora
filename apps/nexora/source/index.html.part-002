@@ -9684,11 +9684,40 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
     });
   };
 
+  // Export « Fiche mémo PDF » (#289) : purement client, ne modifie jamais la
+  // tâche ni ne déclenche d'écriture Firestore — l'état du FORMULAIRE (pas
+  // uniquement `task`) est exporté, pour rester fidèle à ce que la fiche
+  // affiche à l'instant du clic, y compris des changements pas encore
+  // enregistrés.
+  const [memoExportBusy, setMemoExportBusy] = useState(false);
+  const [memoExportError, setMemoExportError] = useState("");
+  const handleExportMemoPdf = async () => {
+    setMemoExportError("");
+    setMemoExportBusy(true);
+    try {
+      await downloadFicheMemoPdf(
+        { ...task, title, desc, meetingReport, checklist, attachments, start, end, progress, milestone, criticality, projectId, statusId, taskTypeId, assignee, dependsOn },
+        { projects, statuses, taskTypes, teamMembers, criticalities: CRITICALITIES, tasks }
+      );
+    } catch (e) {
+      setMemoExportError((e && e.message) || "Échec de l'export PDF — réessaie, ou vérifie que ton navigateur autorise le téléchargement.");
+    } finally {
+      setMemoExportBusy(false);
+    }
+  };
+
   return (
     <Modal title={isNew ? "Nouvelle tâche" : "Modifier la tâche"} onClose={onClose} wide extraWide footer={
       <>
+        {memoExportError && <p className="lp-gantt-annot-error" style={{ margin: "0 0 6px" }}>{memoExportError}</p>}
         <div className="lp-task-modal-actions-compact">
           {!isNew && <button className="lp-btn lp-btn-danger" onClick={() => onDelete(task)}><Trash2 size={13} style={{ marginRight: 5, verticalAlign: -2 }} />Supprimer</button>}
+          {!isNew && (
+            <button className="lp-btn" onClick={handleExportMemoPdf} disabled={memoExportBusy} title="Exporter la fiche mémo au format PDF">
+              <Download size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
+              {memoExportBusy ? "Export…" : "Fiche mémo PDF"}
+            </button>
+          )}
           {!isNew && onToggleFavoriteTask && (
             <button
               className={"lp-btn"+(isFavoriteTask ? " lp-task-favorite-active" : "")}
