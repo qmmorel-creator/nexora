@@ -10,6 +10,14 @@ Décisions de cadrage validées par Quentin (2026-09-22) :
 3. Les anciennes structures Nexora `expenses` / `expenseCategories` / `budgetLines` ne sont **pas réutilisées** pour Finance PRO : nouvelles entités dédiées, repartant de zéro. Les anciennes structures restent inchangées pour leur usage actuel (budget générique de projet).
 4. Cette demande prévaut sur le contenu déjà livré si contradiction : les issues existantes sont ajustées en conséquence (labels, portée), sans jamais les fermer ni les passer `statut:fait`.
 
+Réponses aux questions bloquantes obtenues de Quentin (2026-09-22), détaillées au §12 :
+5. Trésorerie disponible : saisie manuelle du solde (Lot 5), pas d'import bancaire dans un premier temps.
+6. Régime TVA : hypothèse franchise en base maintenue par défaut, **sous réserve de confirmation du CA réel** de Quentin par rapport aux seuils 2026 (37 500 € / seuil majoré 41 250 € pour les prestations de services) — cf. §12.2, point encore ouvert.
+7. Ébauche `invoices` : conservée telle quelle comme brouillon technique en attendant #253.
+8. Organisation du code : nouveau fragment dédié `index.html.part-005` pour Finance PRO, plutôt que d'étendre les fragments existants.
+9. Moyens de paiement pro (`proExpense.moyenPaiement`) : `cb_pro`, `virement`, `prelevement`, `especes`, `paiement_en_ligne` (PayPal et plateformes équivalentes).
+10. Provisions sociales/fiscales : champ paramétrable, laissé vide par défaut — pas de taux imposé.
+
 ---
 
 ## 1. Audit factuel de l'existant
@@ -126,7 +134,7 @@ Convention commune à toutes les entités Finance PRO : identifiant `id` (uuid v
 - Seed initial minimal (déplacement, hébergement, matériel, logiciel, sous-traitance, frais bancaires, assurance pro) — à valider avec Quentin, pas de reprise du seed `expenseCategories` existant.
 
 ### 4.5 `proExpense` (nouvelle, distincte de `expenses`)
-- Champs : `id`, `datAchat`, `dateBancaire` (nullable), `fournisseur`, `montantHT`, `tva`, `montantTTC`, `devise` (ISO 4217, défaut EUR), `categoryId`, `moyenPaiement` (`cb_pro`|`virement`|`especes`|`prelevement`), `clientId`/`missionId` (nullable), `refacturable` (bool), `justificatifUrl` (Drive), `statutRapprochement` (`non_rapproche`|`rapproche`), `statutRemboursement` (`n/a`|`a_refacturer`|`refacture`|`rembourse`), `notes`, `externalId` (nullable, pour import), `dedupeHash` (calculé : fournisseur+montant+date, pour détection de doublon à l'import).
+- Champs : `id`, `datAchat`, `dateBancaire` (nullable), `fournisseur`, `montantHT`, `tva`, `montantTTC`, `devise` (ISO 4217, défaut EUR), `categoryId`, `moyenPaiement` (`cb_pro`|`virement`|`prelevement`|`especes`|`paiement_en_ligne` — décidé avec Quentin le 2026-09-22), `clientId`/`missionId` (nullable), `refacturable` (bool), `justificatifUrl` (Drive), `statutRapprochement` (`non_rapproche`|`rapproche`), `statutRemboursement` (`n/a`|`a_refacturer`|`refacture`|`rembourse`), `notes`, `externalId` (nullable, pour import), `dedupeHash` (calculé : fournisseur+montant+date, pour détection de doublon à l'import).
 - Contrainte explicite : `clientId` **ne peut jamais** référencer une entité issue de KDM360 (validation au niveau service applicatif, pas seulement UI).
 
 ### 4.6 `proBillingSchedule` (nouvelle, rattachée à `quotes`/`proMission`)
@@ -195,7 +203,7 @@ Toutes les règles ci-dessous sont **déterministes et pures** (mêmes entrées 
 |---|---|---|
 | Confusion entre `expenses`/`budgetLines` (génériques) et les nouvelles entités `pro*` dans l'UI ou le MCP | Élevée | Nommage strictement distinct, aucune fonction partagée entre les deux familles, revue de code dédiée |
 | Conflits de fusion avec #252/#253 s'ils évoluent en parallèle | Moyenne | Rattacher explicitement chaque lot Finance PRO à ces issues, développer dans des fragments (`part-00x`) isolés autant que possible, synchroniser avec `main` avant chaque lot |
-| Extension du monofichier `index.html.part-*` alourdissant encore la maintenabilité | Moyenne | Découper Finance PRO en fragments dédiés si la taille des parts existantes devient critique (question ouverte, cf. §11) |
+| Extension du monofichier `index.html.part-*` alourdissant encore la maintenabilité | Moyenne | Tranché : Finance PRO développé dans un fragment dédié `index.html.part-005`, sans toucher aux parts existantes (cf. §12.4) |
 | Fuite de données KDM360 vers Finance PRO (ou l'inverse) par copier-coller de code | Élevée | Revue systématique : aucune fonction Finance PRO n'importe `_shared/finance.ts` (KDM360) ; validation service-layer sur les `clientId`/comptes |
 | Double comptage d'indicateurs (CA facturé vs encaissé, avoirs, partiels) | Moyenne | Les formules du §5 sont figées avant développement, testées unitairement avant toute UI |
 | Widget « Échéances » surchargé par de nouvelles catégories | Faible | Filtres/orientation déjà supportés par le widget ; ajout de catégories = donnée, pas nouveau composant |
@@ -249,11 +257,11 @@ Chaque lot = une issue, `zone:finance`, `statut:backlog`, `Ref #<lot>` dans les 
 
 ---
 
-## 12. Questions réellement bloquantes restantes
+## 12. Questions bloquantes — arbitrées par Quentin le 2026-09-22
 
-1. **Comptes de trésorerie pro** (§4.9/§5) : la trésorerie disponible nécessite une source (saisie manuelle du solde, ou import d'un relevé bancaire pro). Aucune décision prise sur ce point — à trancher avant le Lot 5/6.
-2. **Régime fiscal réel** : le document part de l'hypothèse franchise en base de TVA (comme #252/#253) — si ce statut change, les règles TVA du §5 doivent être révisées.
-3. **Statut de `invoices`** (ébauche actuelle) : à conserver comme brouillon technique en attendant #253, ou à retirer pour éviter la confusion avec le futur module Facture conforme ? Décision à prendre avant le Lot 4.
-4. **Granularité des fragments `index.html.part-*`** : faut-il un nouveau fragment dédié Finance PRO (`part-005`) plutôt que d'étendre les parts existantes déjà volumineuses ? Question technique à trancher en Lot 1.
-5. **Comptes/moyens de paiement pro** : liste fermée à définir avec Quentin (CB pro, virement, prélèvement, espèces...) avant le Lot 3.
-6. **Barème de provisions sociales/fiscales** : taux exacts (régime auto-entrepreneur) à fournir par Quentin pour le Lot 6, sinon paramètre laissé vide/configurable.
+1. ~~**Comptes de trésorerie pro**~~ — **Tranché** : saisie manuelle du solde dans le Lot 5, pas d'import bancaire dans un premier temps.
+2. **Régime fiscal réel — ENCORE OUVERT.** Seuils 2026 de la franchise en base de TVA pour les prestations de services : **37 500 €** de CA N-1, **seuil majoré 41 250 €** (bascule TVA immédiate dès le mois de franchissement du seuil majoré ; bascule au 1er janvier suivant en cas de seul dépassement du seuil de base). Sources : [Indy — Réforme des seuils de TVA en 2026](https://www.indy.fr/guide/fiscalite/taxes/tva/abaissement-seuil-2026/), [Portail Auto-Entrepreneur — TVA 2026](https://www.portail-autoentrepreneur.fr/academie/statut-auto-entrepreneur/tva), [Les Experts Comptables — Seuil TVA 2026](https://les-experts-comptables.fr/ressources/seuil-tva-auto-entrepreneur). Le module Devis (#252) et les formules du §5 supposent la franchise en base maintenue (HT = TTC) ; **à confirmer par Quentin au regard de son CA réel** avant le Lot 4 (planning de facturation) — si le seuil majoré est dépassé, les règles CA/TVA du §5 devront être révisées pour intégrer la TVA collectée.
+3. ~~**Statut de `invoices`**~~ — **Tranché** : conservée comme brouillon technique en attendant #253, aucun retrait.
+4. ~~**Granularité des fragments `index.html.part-*`**~~ — **Tranché** : nouveau fragment dédié `index.html.part-005` pour Finance PRO.
+5. ~~**Comptes/moyens de paiement pro**~~ — **Tranché** : `cb_pro`, `virement`, `prelevement`, `especes`, `paiement_en_ligne` (PayPal et plateformes équivalentes).
+6. ~~**Barème de provisions sociales/fiscales**~~ — **Tranché** : champ paramétrable, laissé vide par défaut, aucun taux imposé.
