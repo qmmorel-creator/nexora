@@ -98,3 +98,44 @@ export function makeLongCatalogs() {
 }
 
 export const LONG_PROJECT_ID = PX;
+
+// --- Fiche mémo (#289) --------------------------------------------------------
+// Tâche synthétique complète : toutes les sections de la fiche mémo.
+export const memoRichTask = {
+  id: "memo-1", projectId: "qjah9det", title: "Préparer le dossier de réponse aux experts",
+  taskTypeId: "tt1", statusId: "s3", criticality: "urgent", milestone: false,
+  start: "2026-09-14", end: "2026-10-09", progress: 35, assignee: "Quentin",
+  desc: [
+    "## Objectif",
+    "Consolider les **pièces contractuelles** et la note de synthèse avant l'envoi aux experts.",
+    "",
+    "> [!warning] Point d'attention",
+    "> Les annexes béton doivent être *signées* avant envoi.",
+    "",
+    "- Rassembler les PV de réunion",
+    "- Vérifier la cohérence avec le planning directeur",
+    "- [x] Relire la note PN",
+    "- [ ] Joindre les photos du chantier",
+    "",
+    "| Pièce | Responsable | État |",
+    "| --- | --- | --- |",
+    "| Note de synthèse | Quentin | En cours |",
+    "| Annexes béton | Externes | À faire |",
+  ].join("\n"),
+  checklist: [
+    { id: "c1", text: "Collecter les PV des trois dernières réunions", done: true, end: "2026-09-18" },
+    { id: "c2", text: "Rédiger la note de synthèse des bétons", done: false, end: "2026-09-30" },
+    { id: "c3", text: "Faire valider le dossier par la direction juridique avant l'envoi définitif aux experts", done: false, end: "2026-10-07" },
+  ],
+  attachments: [{ name: "Protocole d'expertise.pdf", type: "file" }, { name: "Planning directeur", type: "link" }],
+  dependsOn: ["he4fp0a2"],
+};
+
+export const memoCatalogs = {
+  projects: maiaCatalogs.projects, statuses, taskTypes, teamMembers, tasks: maiaTasks,
+  criticalities: [
+    { id: "bas", name: "Bas", color: "#1FA971" },
+    { id: "moyen", name: "Moyen", color: "#D97706" },
+    { id: "urgent", name: "Urgent", color: "#DC2626" },
+  ],
+};

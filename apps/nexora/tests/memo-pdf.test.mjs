@@ -190,3 +190,14 @@ test("memoTaskFields : un responsable sans fiche annuaire garde son nom et une c
   assert.equal(f.responsible.avatarDataUrl, null);
   assert.ok(f.responsible.color);
 });
+
+test("memoMarkdownBlocks : callout à balises « :::callout-type Titre » … « ::: », comme l'application", () => {
+  const blocks = M.memoMarkdownBlocks(":::callout-tip Mandat de l'expertise\n- Point A\n- Point B\n:::\n\n:::callout-danger\n:::\nSuite");
+  assert.equal(blocks[0].type, "callout");
+  assert.equal(blocks[0].calloutType, "tip");
+  assert.equal(blocks[0].title, "Mandat de l'expertise");
+  assert.deepEqual(blocks[0].blocks.map((b) => b.type), ["li", "li"]);
+  assert.equal(blocks[1].title, "Danger"); // sans titre : libellé du type
+  assert.deepEqual(blocks[1].blocks, []);
+  assert.equal(blocks[2].type, "p");
+});

@@ -17928,7 +17928,11 @@ function memoFmtFr(dateIso) {
 function memoWrapSegments(doc, segments, maxWidth, baseSize) {
   const words = [];
   segments.forEach((seg) => {
-    String(seg.text).split(/(\s+)/).forEach((chunk) => {
+    String(seg.text).split(/(\s+)/).forEach((raw) => {
+      // Helvetica n'encode que Windows-1252 : emoji et symboles hors table
+      // sont convertis ou retirés (projectPdfSafeText) plutôt qu'imprimés
+      // en charabia.
+      const chunk = /^\s+$/.test(raw) ? raw : projectPdfSafeText(raw);
       if (chunk === "") return;
       words.push({ text: chunk, bold: seg.bold, italic: seg.italic, code: seg.code, href: seg.href });
     });
@@ -17976,6 +17980,7 @@ function memoDrawSegmentLines(doc, lines, x, y, lineHeight, baseSize, color = ME
 }
 
 function memoRoundedChip(doc, x, y, text, bg, { fontSize = 7.6 } = {}) {
+  text = projectPdfSafeText(text);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(fontSize);
   const padX = 2.4, h = 4.6;
@@ -18031,42 +18036,6 @@ function memoFitTitleFontSize(doc, title, maxWidth, startSize, minSize) {
   return size;
 }
 
-// Hauteur nécessaire pour poser `blocks`, SANS rien dessiner — sert à
-// dimensionner le fond du bloc Description avant le texte (jsPDF ne permet
-// pas de dessiner un rectangle derrière un texte déjà posé). Suppose que le
-// bloc reste sur une seule page (le cas réel : la Description est courte,
-// jamais le compte rendu).
-function memoMeasureBlocksHeight(doc, blocks, width) {
-  let h = 0;
-  blocks.forEach((block) => {
-    if (block.type === "h2" || block.type === "h3" || block.type === "h4") {
-      const size = block.type === "h2" ? 11.5 : block.type === "h3" ? 10 : 9.2;
-      const lines = memoWrapSegments(doc, block.segments.map((s) => ({ ...s, bold: true })), width, size);
-      h += lines.length * (size / 2.3) + 1;
-      return;
-    }
-    if (block.type === "p") {
-      const lines = memoWrapSegments(doc, block.segments, width, 8.6);
-      h += lines.length * 4 + 1.6;
-      return;
-    }
-    if (block.type === "li" || block.type === "task") {
-      const lines = memoWrapSegments(doc, block.segments, width - 5, 8.6);
-      h += lines.length * 4 + 0.6;
-      return;
-    }
-    if (block.type === "callout") {
-      h += 4 + (block.title ? 4.4 : 0) + memoMeasureBlocksHeight(doc, block.blocks, width - 7) + 1.5;
-      return;
-    }
-    if (block.type === "table") {
-      h += 3 + block.rows.length * 4.6 + 1.6;
-      return;
-    }
-  });
-  return h;
-}
-
 function memoDrawBlocks(doc, blocks, x, width, y, opts) {
   const { onPageBreak } = opts;
   const ensure = (needed) => {
@@ -18105,6 +18074,7 @@ function memoDrawBlocks(doc, blocks, x, width, y, opts) {
       ensure(lines.length * 4 + 0.5);
       doc.setDrawColor(...(block.checked ? [23, 138, 76] : [133, 147, 170]));
       doc.setFillColor(...(block.checked ? [23, 138, 76] : [255, 255, 255]));
+      doc.setLineWidth(0.3); // sinon hérite du trait épais d'un encadré précédent
       doc.roundedRect(x, y - 3, 3, 3, 0.6, 0.6, block.checked ? "FD" : "D");
       if (block.checked) {
         doc.setDrawColor(255, 255, 255);
@@ -18126,7 +18096,7 @@ function memoDrawBlocks(doc, blocks, x, width, y, opts) {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8.4);
         doc.setTextColor(...meta);
-        doc.text(block.title, innerX, cy);
+        doc.text(projectPdfSafeText(block.title), innerX, cy);
         cy += 4.4;
       }
       const innerBottom = memoDrawBlocks(doc, block.blocks, innerX, innerW, cy, opts);
@@ -18146,20 +18116,20 @@ function memoDrawBlocks(doc, blocks, x, width, y, opts) {
       doc.setFontSize(7.6);
       doc.setTextColor(...MEMO_INK_SOFT);
       block.header.forEach((seg, i) => {
-        const t = seg.map((s) => s.text).join("");
+        const t = projectPdfSafeText(seg.map((s) => s.text).join(""));
         doc.text(t, x + i * colW + 1.4, y);
       });
-      y += 3;
+      y += 4.6;
       doc.setDrawColor(...MEMO_LINE);
       doc.setLineWidth(0.15);
-      doc.line(x, y - 1.6, x + width, y - 1.6);
+      doc.line(x, y - 3, x + width, y - 3);
       block.rows.forEach((row) => {
         ensure(5);
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7.6);
         doc.setTextColor(...MEMO_INK);
         row.forEach((seg, i) => {
-          const t = seg.map((s) => s.text).join("");
+          const t = projectPdfSafeText(seg.map((s) => s.text).join(""));
           doc.text(t, x + i * colW + 1.4, y);
         });
         y += 4.6;
@@ -18173,8 +18143,17 @@ function memoDrawBlocks(doc, blocks, x, width, y, opts) {
   return y;
 }
 
-async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoDataUrl = NEXORA_LOGO_FULL } = {}) {
-  const f = memoTaskFields(task, catalogs);
+async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = false, logoDataUrl = NEXORA_LOGO_FULL, now = new Date() } = {}) {
+  const raw = memoTaskFields(task, catalogs);
+  // Libellés courts rendus tels quels par jsPDF : même nettoyage Windows-1252.
+  const f = {
+    ...raw,
+    title: projectPdfSafeText(raw.title),
+    checklist: raw.checklist.map((it) => ({ ...it, text: projectPdfSafeText(it.text) })),
+    attachments: raw.attachments.map((a) => ({ ...a, name: projectPdfSafeText(a.name) })),
+    dependencies: raw.dependencies.map((d) => ({ ...d, title: projectPdfSafeText(d.title) })),
+  };
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   let y = MEMO_MARGIN;
 
@@ -18190,7 +18169,7 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.6);
   doc.setTextColor(...MEMO_INK_FAINT);
-  const exportDate = new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+  const exportDate = now.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
   doc.text(`Fiche mémo · export du ${exportDate}`, MEMO_MARGIN + (logoDataUrl ? 20 : 0), y);
   y += 4;
   doc.setDrawColor(...MEMO_INK);
@@ -18219,112 +18198,78 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
     y += 7;
   }
 
-  // ---------------------------------------------------------- Bande du haut
-  const leftW = f.hasDescription ? MEMO_CONTENT_W * 0.62 : 0;
-  const rightX = MEMO_MARGIN + leftW + 6;
-  const rightW = MEMO_CONTENT_W - leftW - (f.hasDescription ? 6 : 0);
-  const topBandStartY = y;
-  let leftY = y, rightY = y;
-
-  if (f.hasDescription) {
-    doc.setFillColor(...MEMO_PAPER_SOFT);
-    const descBlocks = memoMarkdownBlocks(f.description);
-    // Pré-calcule la hauteur pour poser le fond avant le texte (jsPDF ne
-    // repasse pas derrière).
-    const descHeight = memoMeasureBlocksHeight(doc, descBlocks, leftW - 8);
-    const probeY = leftY + 8 + descHeight;
-    doc.roundedRect(MEMO_MARGIN, leftY, leftW, probeY - leftY + 3, 1.4, 1.4, "F");
-    doc.setDrawColor(...MEMO_ACCENT);
-    doc.setLineWidth(1.3);
-    doc.line(MEMO_MARGIN, leftY, MEMO_MARGIN, probeY + 3);
+  // ------------------------------------------------------------ Métadonnées
+  // Tout en haut de la fiche, sur toute la largeur et en deux colonnes
+  // (retour de test #289) : uniquement les champs réellement présents.
+  const metaRows = [];
+  if (f.project) metaRows.push({ label: "Projet", chip: f.project });
+  if (f.taskType) metaRows.push({ label: "Type", chip: f.taskType });
+  if (f.status) metaRows.push({ label: "Statut", chip: f.status });
+  if (f.criticality) metaRows.push({ label: "Priorité", chip: f.criticality });
+  if (f.start) metaRows.push({ label: "Début", text: memoFmtFr(f.start) });
+  if (f.end && f.end !== f.start) metaRows.push({ label: "Échéance", text: memoFmtFr(f.end) });
+  if (f.responsible) metaRows.push({ label: "Responsable", responsible: f.responsible });
+  if (f.progress != null) metaRows.push({ label: "Avancement", progress: f.progress });
+  if (metaRows.length) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.4);
     doc.setTextColor(...MEMO_INK_SOFT);
-    doc.text("DESCRIPTION", MEMO_MARGIN + 4, leftY + 4.6);
-    leftY = memoDrawBlocks(doc, descBlocks, MEMO_MARGIN + 4, leftW - 8, leftY + 8, { onPageBreak: (d) => memoDrawMiniHeader(d, f.title, logoDataUrl) });
-    leftY += 3;
+    doc.text("MÉTADONNÉES", MEMO_MARGIN, y);
+    doc.setDrawColor(...MEMO_LINE);
+    doc.setLineWidth(0.2);
+    doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
+    y += 6.4;
+    const gap = 8;
+    const colW = (MEMO_CONTENT_W - gap) / 2;
+    const perCol = Math.ceil(metaRows.length / 2);
+    metaRows.forEach((row, i) => {
+      const col = i < perCol ? 0 : 1;
+      const rx = MEMO_MARGIN + col * (colW + gap);
+      const ry = y + (i % perCol) * 5.6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.8);
+      doc.setTextColor(...MEMO_INK_FAINT);
+      doc.text(row.label, rx, ry);
+      if (row.chip) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.6);
+        const w = doc.getTextWidth(projectPdfSafeText(row.chip.name)) + 4.8;
+        memoRoundedChip(doc, rx + colW - w, ry - 3.4, row.chip.name, row.chip.color);
+      } else if (row.text) {
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(...MEMO_INK);
+        doc.text(row.text, rx + colW, ry, { align: "right" });
+      } else if (row.responsible) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(...MEMO_INK);
+        doc.text(projectPdfSafeText(row.responsible.name), rx + colW - 8, ry, { align: "right" });
+        doc.setFillColor(...memoHexToRgb(row.responsible.color));
+        doc.circle(rx + colW - 3, ry - 1, 2.6, "F");
+        doc.setFontSize(6.4);
+        doc.setTextColor(...memoHexToRgb(memoContrastInk(row.responsible.color)));
+        doc.text(row.responsible.initials, rx + colW - 3, ry - 0.4, { align: "center" });
+      } else if (row.progress != null) {
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(...MEMO_INK);
+        doc.text(`${row.progress} %`, rx + colW, ry, { align: "right" });
+        const barX = rx + 22, barW = colW - 22 - 12;
+        doc.setFillColor(237, 240, 245);
+        doc.roundedRect(barX, ry - 1.8, barW, 1.6, 0.8, 0.8, "F");
+        if (row.progress > 0) {
+          doc.setFillColor(...MEMO_ACCENT);
+          doc.roundedRect(barX, ry - 1.8, (barW * row.progress) / 100, 1.6, 0.8, 0.8, "F");
+        }
+      }
+      doc.setDrawColor(237, 240, 245);
+      doc.setLineWidth(0.2);
+      doc.line(rx, ry + 1.6, rx + colW, ry + 1.6);
+    });
+    y += perCol * 5.6 + 4;
   }
 
-  // Métadonnées (droite) — uniquement les champs réellement présents.
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.4);
-  doc.setTextColor(...MEMO_INK_SOFT);
-  doc.text("MÉTADONNÉES", rightX, rightY + 1);
-  doc.setDrawColor(...MEMO_LINE);
-  doc.line(rightX, rightY + 2.4, rightX + rightW, rightY + 2.4);
-  rightY += 6.4;
-
-  const chipRow = (label, chipText, color) => {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.8);
-    doc.setTextColor(...MEMO_INK_FAINT);
-    doc.text(label, rightX, rightY);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.6);
-    const w = doc.getTextWidth(chipText) + 4.8;
-    memoRoundedChip(doc, rightX + rightW - w, rightY - 3.4, chipText, color);
-    doc.setDrawColor(237, 240, 245);
-    doc.line(rightX, rightY + 1.6, rightX + rightW, rightY + 1.6);
-    rightY += 5.6;
-  };
-  const textRow = (label, value) => {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.8);
-    doc.setTextColor(...MEMO_INK_FAINT);
-    doc.text(label, rightX, rightY);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(...MEMO_INK);
-    doc.text(value, rightX + rightW, rightY, { align: "right" });
-    doc.setDrawColor(237, 240, 245);
-    doc.line(rightX, rightY + 1.6, rightX + rightW, rightY + 1.6);
-    rightY += 5.6;
-  };
-
-  if (f.project) chipRow("Projet", f.project.name, f.project.color);
-  if (f.taskType) chipRow("Type", f.taskType.name, f.taskType.color);
-  if (f.status) chipRow("Statut", f.status.name, f.status.color);
-  if (f.criticality) chipRow("Priorité", f.criticality.name, f.criticality.color);
-  if (f.start) textRow("Début", memoFmtFr(f.start));
-  if (f.end && f.end !== f.start) textRow("Échéance", memoFmtFr(f.end));
-  if (f.responsible) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.8);
-    doc.setTextColor(...MEMO_INK_FAINT);
-    doc.text("Responsable", rightX, rightY);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(...MEMO_INK);
-    doc.text(f.responsible.name, rightX + rightW - 8, rightY, { align: "right" });
-    doc.setFillColor(...memoHexToRgb(f.responsible.color));
-    doc.circle(rightX + rightW - 3, rightY - 1, 2.6, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.4);
-    doc.setTextColor(...memoHexToRgb(memoContrastInk(f.responsible.color)));
-    doc.text(f.responsible.initials, rightX + rightW - 3, rightY - 0.4, { align: "center" });
-    doc.setDrawColor(237, 240, 245);
-    doc.line(rightX, rightY + 1.6, rightX + rightW, rightY + 1.6);
-    rightY += 5.6;
-  }
-  if (f.progress != null) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.8);
-    doc.setTextColor(...MEMO_INK_FAINT);
-    doc.text("Avancement", rightX, rightY);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(...MEMO_INK);
-    doc.text(`${f.progress} %`, rightX + rightW, rightY, { align: "right" });
-    rightY += 2;
-    doc.setFillColor(237, 240, 245);
-    doc.roundedRect(rightX, rightY, rightW, 1.6, 0.8, 0.8, "F");
-    doc.setFillColor(...MEMO_ACCENT);
-    doc.roundedRect(rightX, rightY, (rightW * f.progress) / 100, 1.6, 0.8, 0.8, "F");
-    rightY += 4.4;
-  }
-
-  y = Math.max(leftY, rightY) + 4;
-
-  // --------------------------------------------------- Sous-tâches (#289)
-  // Placées ENTRE le bloc description/métadonnées et le compte rendu.
+  // --------------------------------------------------------------- Sous-tâches
+  // Après les métadonnées, avant la description.
   if (f.checklist.length) {
     if (y > MEMO_BOTTOM_LIMIT - 12) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
     doc.setFont("helvetica", "bold");
@@ -18332,12 +18277,18 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
     doc.setTextColor(...MEMO_INK_SOFT);
     doc.text("SOUS-TÂCHES", MEMO_MARGIN, y);
     doc.setDrawColor(...MEMO_LINE);
+    doc.setLineWidth(0.2);
     doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
     y += 5.4;
     f.checklist.forEach((item) => {
-      if (y > MEMO_BOTTOM_LIMIT - 6) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+      const dateW = item.date ? 26 : 0;
+      doc.setFont("helvetica", item.done ? "normal" : "bold");
+      doc.setFontSize(8.4);
+      const lines = doc.splitTextToSize(String(item.text), MEMO_CONTENT_W - 5 - dateW);
+      if (y + lines.length * 3.8 > MEMO_BOTTOM_LIMIT - 2) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
       doc.setDrawColor(...(item.done ? [23, 138, 76] : [133, 147, 170]));
       doc.setFillColor(...(item.done ? [23, 138, 76] : [255, 255, 255]));
+      doc.setLineWidth(0.2);
       doc.roundedRect(MEMO_MARGIN, y - 3, 3, 3, 0.6, 0.6, item.done ? "FD" : "D");
       if (item.done) {
         doc.setDrawColor(255, 255, 255);
@@ -18348,14 +18299,32 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
       doc.setFont("helvetica", item.done ? "normal" : "bold");
       doc.setFontSize(8.4);
       doc.setTextColor(...(item.done ? MEMO_INK_FAINT : MEMO_INK));
-      doc.text(item.text, MEMO_MARGIN + 5, y);
+      doc.text(lines, MEMO_MARGIN + 5, y);
       if (item.date) {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7.4);
         doc.setTextColor(...MEMO_INK_FAINT);
         doc.text(memoFmtFr(item.date), MEMO_PAGE_W - MEMO_MARGIN, y, { align: "right" });
       }
-      y += 5.2;
+      y += lines.length * 3.8 + 1.4;
+    });
+    y += 2.6;
+  }
+
+  // --------------------------------------------------------------- Description
+  // Toute la largeur de la page, paginée comme le compte rendu.
+  if (f.hasDescription) {
+    if (y > MEMO_BOTTOM_LIMIT - 12) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.4);
+    doc.setTextColor(...MEMO_INK_SOFT);
+    doc.text("DESCRIPTION", MEMO_MARGIN, y);
+    doc.setDrawColor(...MEMO_LINE);
+    doc.setLineWidth(0.2);
+    doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
+    y += 6;
+    y = memoDrawBlocks(doc, memoMarkdownBlocks(f.description), MEMO_MARGIN, MEMO_CONTENT_W, y, {
+      onPageBreak: (d) => memoDrawMiniHeader(d, f.title, logoDataUrl),
     });
     y += 2;
   }
@@ -18415,6 +18384,10 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
   }
 
   // ------------------------------------------------------- Frise chronologique
+  // Chaque repère hebdomadaire porte sa date (retour de test #289) ; les
+  // libellés ne se chevauchent jamais : une date qui toucherait sa voisine
+  // est sautée, « Échéance » descend d'un cran si elle rattrape « Début », et
+  // aucun libellé ne sort des marges.
   if (f.start) {
     const durationEnd = f.end || f.start;
     const start = new Date(f.start + "T00:00:00");
@@ -18422,8 +18395,22 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
     const rangeStart = new Date(start); rangeStart.setDate(rangeStart.getDate() - 31);
     const rangeEnd = new Date(end); rangeEnd.setDate(rangeEnd.getDate() + 31);
     const totalDays = Math.max(1, (rangeEnd - rangeStart) / 86400000);
-    const pct = (d) => ((d - rangeStart) / 86400000 / totalDays) * 100;
-    const timelineH = 22;
+    const xOf = (d) => MEMO_MARGIN + (((d - rangeStart) / 86400000 / totalDays) * MEMO_CONTENT_W);
+    const clampText = (text, cx, size, bold) => {
+      doc.setFont("helvetica", bold ? "bold" : "normal");
+      doc.setFontSize(size);
+      const w = doc.getTextWidth(text);
+      const x1 = Math.max(MEMO_MARGIN, Math.min(cx - w / 2, MEMO_PAGE_W - MEMO_MARGIN - w));
+      return { x1, x2: x1 + w, w };
+    };
+    const hasEnd = f.end && f.end !== f.start;
+    const durX = xOf(start), durEndX = xOf(end);
+    const startLabel = `Début · ${memoFmtFr(f.start)}`;
+    const endLabel = hasEnd ? `Échéance · ${memoFmtFr(f.end)}` : "";
+    const sBox = clampText(startLabel, durX, 6.6, true);
+    const eBox = hasEnd ? clampText(endLabel, durEndX, 6.6, true) : null;
+    const endRaised = !!eBox && eBox.x1 < sBox.x2 + 2;
+    const timelineH = endRaised ? 30 : 26;
     if (y > MEMO_BOTTOM_LIMIT - timelineH) { doc.addPage(); y = memoDrawMiniHeader(doc, f.title, logoDataUrl); }
     y = Math.max(y, MEMO_BOTTOM_LIMIT - timelineH); // ancre en bas de la dernière page, comme l'aperçu validé
     doc.setFont("helvetica", "bold");
@@ -18431,34 +18418,43 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
     doc.setTextColor(...MEMO_INK_SOFT);
     doc.text("FRISE CHRONOLOGIQUE", MEMO_MARGIN, y);
     doc.setDrawColor(...MEMO_LINE);
+    doc.setLineWidth(0.2);
     doc.line(MEMO_MARGIN, y + 1.4, MEMO_PAGE_W - MEMO_MARGIN, y + 1.4);
-    const axisY = y + 12;
+    const axisY = y + (endRaised ? 16 : 12);
     doc.setDrawColor(215, 220, 230);
     doc.setLineWidth(0.6);
     doc.line(MEMO_MARGIN, axisY, MEMO_PAGE_W - MEMO_MARGIN, axisY);
-    // Portion réellement avancée, épaisse et opaque ; reste de la durée,
-    // fine et translucide — même mécanique que le widget Métro de l'app
-    // (index.html.part-003, ~L214-215 / L329-336).
-    const durX = MEMO_MARGIN + (pct(start) / 100) * MEMO_CONTENT_W;
-    const durEndX = MEMO_MARGIN + (pct(end) / 100) * MEMO_CONTENT_W;
+    // Portion réellement avancée, épaisse ; reste de la durée plus fin — même
+    // mécanique que la Vue Métro.
     doc.setDrawColor(...MEMO_ACCENT);
     doc.setLineWidth(1);
     doc.setLineCap?.("round");
     doc.line(durX, axisY, durEndX, axisY);
     if (f.progress != null && f.progress > 0) {
-      const progX = durX + ((durEndX - durX) * f.progress) / 100;
       doc.setLineWidth(1.6);
-      doc.line(durX, axisY, progX, axisY);
+      doc.line(durX, axisY, durX + ((durEndX - durX) * f.progress) / 100, axisY);
     }
-    // Graduation régulière (hebdomadaire), sans jamais chevaucher les
-    // libellés des stations.
-    doc.setDrawColor(...MEMO_LINE);
-    doc.setLineWidth(0.25);
-    for (let d = new Date(rangeStart); d <= rangeEnd; d.setDate(d.getDate() + 7)) {
-      const tx = MEMO_MARGIN + (pct(d) / 100) * MEMO_CONTENT_W;
+    doc.setLineCap?.("butt");
+    // Repères hebdomadaires (lundis) et leur date, sous l'axe.
+    const firstTick = new Date(rangeStart);
+    firstTick.setDate(firstTick.getDate() + ((8 - firstTick.getDay()) % 7));
+    let lastLabelEnd = -Infinity;
+    const todayInRange = today >= rangeStart && today <= rangeEnd;
+    const todayTickX = todayInRange ? xOf(today) : null;
+    for (let d = new Date(firstTick); d <= rangeEnd; d.setDate(d.getDate() + 7)) {
+      const tx = xOf(d);
+      doc.setDrawColor(...MEMO_LINE);
+      doc.setLineWidth(0.25);
       doc.line(tx, axisY - 1.4, tx, axisY + 1.4);
+      const label = d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+      const box = clampText(label, tx, 5.6, false);
+      if (box.x1 < lastLabelEnd + 1.5) continue;
+      if (todayTickX != null && todayTickX > box.x1 - 1 && todayTickX < box.x2 + 1) continue; // le trait « Aujourd'hui » passerait dessus
+      doc.setTextColor(...MEMO_INK_SOFT);
+      doc.text(label, box.x1, axisY + 4.4);
+      lastLabelEnd = box.x2;
     }
-    // Station Début, ronde, centrée EXACTEMENT sur l'axe.
+    // Stations Début / Échéance, centrées exactement sur l'axe.
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...MEMO_ACCENT);
     doc.setLineWidth(0.7);
@@ -18466,19 +18462,25 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
     doc.setFont("helvetica", "bold");
     doc.setFontSize(6.6);
     doc.setTextColor(...MEMO_INK);
-    doc.text(`Début · ${memoFmtFr(f.start)}`, durX, axisY - 4, { align: "center" });
-    if (f.end && f.end !== f.start) {
+    doc.text(startLabel, sBox.x1, axisY - 4);
+    if (hasEnd) {
       doc.setDrawColor(...MEMO_INK_FAINT);
       doc.circle(durEndX, axisY, 1.3, "FD");
-      doc.text(`Échéance · ${memoFmtFr(f.end)}`, durEndX, axisY - 4, { align: "center" });
+      const ey = endRaised ? axisY - 8 : axisY - 4;
+      if (endRaised) { doc.setDrawColor(...MEMO_LINE); doc.setLineWidth(0.2); doc.line(durEndX, axisY - 1.6, durEndX, ey + 1); }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.6);
+      doc.setTextColor(...MEMO_INK);
+      doc.text(endLabel, eBox.x1, ey);
     }
-    const today = new Date();
-    if (today >= rangeStart && today <= rangeEnd) {
-      const todayX = MEMO_MARGIN + (pct(today) / 100) * MEMO_CONTENT_W;
+    if (todayInRange) {
+      const todayX = todayTickX;
       doc.setDrawColor(...MEMO_INK);
       doc.setLineWidth(0.5);
-      doc.line(todayX, axisY - 4.5, todayX, axisY + 4.5);
-      doc.text("Aujourd'hui", todayX, axisY + 8, { align: "center" });
+      doc.line(todayX, axisY - 3, todayX, axisY + 5.6);
+      const tBox = clampText("Aujourd'hui", todayX, 6.6, true);
+      doc.setTextColor(...MEMO_INK);
+      doc.text("Aujourd'hui", tBox.x1, axisY + 8.8);
     }
   }
 
@@ -18486,11 +18488,12 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, logoData
   const totalPages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) { doc.setPage(p); memoDrawFooter(doc, p, totalPages); }
 
+  if (asDoc) return doc; // recette de rendu (tools/pdf-check)
   if (asBase64) {
     const dataUri = doc.output("datauristring");
     return dataUri.slice(dataUri.indexOf(",") + 1);
   }
-  doc.save(memoFileName(f.title, new Date().toISOString()));
+  doc.save(memoFileName(f.title, iso(now)));
   return doc;
 }
 
@@ -18606,6 +18609,15 @@ function ppdfChip(doc, x, y, text, hex, maxW = 60, size = 6) {
   return L;
 }
 
+// Texte détouré d'un halo papier (contour blanc sous le remplissage).
+function ppdfHaloText(doc, text, x, y, color, halo = 0.55) {
+  ppdfColor(doc, "draw", PPDF_PAPER);
+  doc.setLineWidth(halo);
+  ppdfDash(doc, null);
+  doc.text(text, x, y, { renderingMode: "stroke" });
+  ppdfColor(doc, "text", color);
+  doc.text(text, x, y, { renderingMode: "fill" });
+}
 function ppdfDiamond(doc, x, y, r, fillHex, strokeHex) {
   if (fillHex) ppdfColor(doc, "fill", fillHex);
   if (strokeHex) ppdfColor(doc, "draw", strokeHex);
@@ -19130,24 +19142,26 @@ function ppdfDrawMetro(doc, data, ML, y) {
         if (t.shared) { ppdfColor(doc, "draw", color); doc.circle(sx, sy, 0.9, "S"); }
       }
     }
-    // Libellé sur fond papier : ne peut ni chevaucher un autre libellé
-    // (garanti par la projection) ni se faire traverser par un tracé.
+  });
+
+  // Libellés posés APRÈS toutes les stations, sans fond opaque : un fin halo
+  // papier autour des lettres suffit à les détacher d'un tracé qui passerait
+  // dessous, sans masquer la ligne, les bifurcations ni les stations — même
+  // principe que le halo `paint-order: stroke` des libellés de la Vue Métro.
+  // Les libellés ne se chevauchent jamais entre eux (garanti par la projection).
+  proj.stations.forEach((s) => {
+    const t = s.item.t;
     const bx = X(s.box.x1), by = Y(s.box.y1);
-    ppdfColor(doc, "fill", PPDF_PAPER);
-    doc.rect(bx - 0.3, by, s.labelW + 0.3, s.labelH, "F");
     if (proj.numbered) {
       ppdfFont(doc, 6.4, "bold");
-      ppdfColor(doc, "text", PPDF_INK);
-      doc.text(s.titleLines[0], bx + 0.6, by + 2.9);
+      ppdfHaloText(doc, s.titleLines[0], bx + 0.6, by + 2.9, PPDF_INK);
       return;
     }
     ppdfFont(doc, 6.6, "bold");
-    ppdfColor(doc, "text", t.done ? PPDF_TEXT2 : PPDF_INK);
-    s.titleLines.forEach((l, k) => doc.text(l, bx + 0.6, by + 2.6 + k * 2.9));
+    s.titleLines.forEach((l, k) => ppdfHaloText(doc, l, bx + 0.6, by + 2.6 + k * 2.9, t.done ? PPDF_TEXT2 : PPDF_INK));
     if (s.meta) {
       ppdfFont(doc, 5.4, "normal");
-      ppdfColor(doc, "text", t.late ? PPDF_DANGER_TEXT : PPDF_TEXT2);
-      doc.text(s.meta, bx + 0.6, by + 2.6 + s.titleLines.length * 2.9 + 0.1);
+      ppdfHaloText(doc, s.meta, bx + 0.6, by + 2.6 + s.titleLines.length * 2.9 + 0.1, t.late ? PPDF_DANGER_TEXT : PPDF_TEXT2);
     }
   });
 
@@ -19164,35 +19178,48 @@ function ppdfDrawMetro(doc, data, ML, y) {
 
 // --- Tableau des tâches actives -----------------------------------------------
 const PPDF_COLS = [
-  { key: "task", label: "Tâche", w: 72 },
-  { key: "status", label: "Statut", w: 27 },
-  { key: "type", label: "Type", w: 25 },
-  { key: "date", label: "Date / fin", w: 26 },
-  { key: "owner", label: "Responsable", w: PPDF_CW - 72 - 27 - 25 - 26 },
+  { key: "task", label: "Tâche", w: 84 },
+  { key: "status", label: "Statut", w: 24 },
+  { key: "type", label: "Type", w: 22 },
+  { key: "date", label: "Date / fin", w: 27 },
+  { key: "owner", label: "Responsable", w: PPDF_CW - 84 - 24 - 22 - 27 },
 ];
+const PPDF_ROW_H = 6.2;
+// Une tâche = une ligne. Le titre réduit sa taille (7,2 → 5,6 pt) pour tenir
+// à côté de ses marqueurs (avancement, criticité) ; il ne passe sur deux
+// lignes qu'en tout dernier recours — jamais tronqué. Le losange de début de
+// ligne signale un jalon, la date en rouge un retard, la pastille « Terminé »
+// le dernier jalon franchi : aucun libellé supplémentaire n'est nécessaire.
 function ppdfTaskRowLayout(doc, r) {
-  const titleLines = ppdfWrap(doc, r.title || "Sans titre", 7.2, true, PPDF_COLS[0].w - 8);
-  const tags = [];
-  if (r.milestone) tags.push({ kind: "milestone", text: "Jalon" });
-  if (r.criticality) tags.push({ kind: "chip", text: r.criticality.name, color: r.criticality.color });
-  if (r.late) tags.push({ kind: "chip", text: "En retard", color: PPDF_DANGER });
-  if (r.lastMilestone) tags.push({ kind: "text", text: "Dernier jalon franchi" });
-  if (r.progress != null && r.progress > 0) tags.push({ kind: "text", text: `Avancement ${r.progress} %` });
-  const status = r.status ? ppdfChipLayout(doc, r.status.name, PPDF_COLS[1].w - 4) : null;
-  const type = r.type ? ppdfChipLayout(doc, r.type.name, PPDF_COLS[2].w - 4) : null;
-  const ownerLines = r.responsible ? ppdfWrap(doc, r.responsible.name, 6.8, false, PPDF_COLS[4].w - 10) : [];
-  const dateMain = r.end ? projectPdfFmtDate(r.end) : "";
-  const dateSub = r.start && r.end && r.start !== r.end ? `début ${projectPdfFmtDate(r.start)}` : "";
-  const h = Math.max(
-    3.2 + titleLines.length * 3.1 + (tags.length ? 4.2 : 0),
-    status ? status.h + 3.4 : 0, type ? type.h + 3.4 : 0,
-    ownerLines.length * 2.9 + 3.6, 8,
-  );
-  return { r, titleLines, tags, status, type, ownerLines, dateMain, dateSub, h: h + 1 };
+  const colW = PPDF_COLS[0].w - 7.5;
+  const crit = r.criticality ? ppdfChipLayout(doc, r.criticality.name, 20, 5.4) : null;
+  const pct = r.progress != null && r.progress > 0 && !r.done ? `${r.progress} %` : "";
+  const pctW = pct ? ppdfWidth(doc, pct, 5.8, true) + 1.6 : 0;
+  const tagsW = (crit ? crit.w + 1.4 : 0) + pctW;
+  const titleMax = colW - tagsW;
+  const title = projectPdfSafeText(r.title) || "Sans titre";
+  let size = 7.2;
+  while (size > 5.6 && ppdfWidth(doc, title, size, true) > titleMax) size -= 0.2;
+  const titleLines = ppdfWidth(doc, title, size, true) > titleMax ? ppdfWrap(doc, title, size, true, titleMax) : [title];
+  const status = r.status ? ppdfChipLayout(doc, r.status.name, PPDF_COLS[1].w - 3) : null;
+  const type = r.type ? ppdfChipLayout(doc, r.type.name, PPDF_COLS[2].w - 3) : null;
+  const sameYear = r.start && r.end && r.start.slice(0, 4) === r.end.slice(0, 4);
+  const dateText = !r.end ? "" : r.start && r.start !== r.end
+    ? `${sameYear ? projectPdfFmtDate(r.start).replace(/ \d{4}$/, "") : projectPdfFmtDate(r.start)} – ${projectPdfFmtDate(r.end)}`
+    : projectPdfFmtDate(r.end);
+  let dateSize = 6.6;
+  while (dateSize > 5.2 && ppdfWidth(doc, dateText, dateSize, true) > PPDF_COLS[3].w - 3) dateSize -= 0.2;
+  const ownerName = r.responsible ? projectPdfSafeText(r.responsible.name) : "";
+  let ownerSize = 6.8;
+  while (ownerSize > 5.4 && ppdfWidth(doc, ownerName, ownerSize, false) > PPDF_COLS[4].w - 9) ownerSize -= 0.2;
+  const ownerLines = r.responsible ? (ppdfWidth(doc, ownerName, ownerSize, false) > PPDF_COLS[4].w - 9 ? ppdfWrap(doc, ownerName, ownerSize, false, PPDF_COLS[4].w - 9) : [ownerName]) : [];
+  const lines = Math.max(titleLines.length, ownerLines.length, status ? status.lines.length : 1, type ? type.lines.length : 1);
+  const h = lines > 1 ? PPDF_ROW_H + (lines - 1) * 2.8 : PPDF_ROW_H;
+  return { r, titleLines, size, crit, pct, pctW, status, type, dateText, dateSize, ownerLines, ownerSize, h };
 }
 function ppdfDrawTableHead(doc, x, y) {
   let cx = x;
-  PPDF_COLS.forEach((c) => { ppdfMicro(doc, c.label, cx + 2.5, y + 3.6, { size: 5.4 }); cx += c.w; });
+  PPDF_COLS.forEach((c, i) => { ppdfMicro(doc, c.label, cx + (i ? 1.5 : 2.6), y + 3.6, { size: 5.4 }); cx += c.w; });
   ppdfColor(doc, "draw", PPDF_INK);
   doc.setLineWidth(0.3);
   doc.line(x + 2, y + 5.4, x + PPDF_CW - 2, y + 5.4);
@@ -19200,51 +19227,35 @@ function ppdfDrawTableHead(doc, x, y) {
 }
 function ppdfDrawTaskRow(doc, L, x, y, images) {
   const r = L.r;
+  const mid = y + PPDF_ROW_H / 2;
+  const base = mid + 0.95; // ligne de base commune à toute la rangée
   let cx = x;
-  // Tâche : titre + marqueurs réellement présents.
-  if (r.milestone) ppdfDiamond(doc, cx + 3.6, y + 2.4, 1.1, r.done ? PPDF_SUCCESS : (r.status?.color || PPDF_INK), null);
-  else { ppdfColor(doc, "fill", r.done ? PPDF_SUCCESS : (r.status?.color || PPDF_INK)); doc.circle(cx + 3.6, y + 2.4, 0.9, "F"); }
-  ppdfFont(doc, 7.2, "bold");
+  const markColor = r.done ? PPDF_SUCCESS : (r.status?.color || PPDF_INK);
+  if (r.milestone) ppdfDiamond(doc, cx + 3.6, mid, 1.05, markColor, null);
+  else { ppdfColor(doc, "fill", markColor); doc.circle(cx + 3.6, mid, 0.85, "F"); }
+  ppdfFont(doc, L.size, "bold");
   ppdfColor(doc, "text", r.done ? PPDF_TEXT2 : PPDF_INK);
-  L.titleLines.forEach((l, k) => doc.text(l, cx + 6, y + 3.3 + k * 3.1));
-  if (L.tags.length) {
-    let tx = cx + 6;
-    const ty = y + 3.3 + L.titleLines.length * 3.1 - 1.4;
-    L.tags.forEach((tag) => {
-      if (tag.kind === "chip") { tx += ppdfChip(doc, tx, ty, tag.text, tag.color, 30, 5.4).w + 1.2; return; }
-      if (tag.kind === "milestone") {
-        ppdfColor(doc, "draw", PPDF_TEXT2);
-        doc.setLineWidth(0.25);
-        ppdfDiamond(doc, tx + 0.9, ty + 1.45, 0.8, null, PPDF_TEXT2);
-        ppdfFont(doc, 5.6, "bold");
-        ppdfColor(doc, "text", PPDF_TEXT2);
-        doc.text(tag.text, tx + 2.3, ty + 2.35);
-        tx += 2.3 + ppdfWidth(doc, tag.text, 5.6, true) + 2;
-        return;
-      }
-      ppdfFont(doc, 5.6, "normal");
-      ppdfColor(doc, "text", PPDF_TEXT2);
-      doc.text(tag.text, tx, ty + 2.35);
-      tx += ppdfWidth(doc, tag.text, 5.6, false) + 2;
-    });
-  }
+  L.titleLines.forEach((l, k) => doc.text(l, cx + 6, base + k * 2.8));
+  // Marqueurs alignés à droite de la colonne Tâche.
+  let tx = cx + PPDF_COLS[0].w - 1.5;
+  if (L.crit) { tx -= L.crit.w; ppdfChip(doc, tx, mid - L.crit.h / 2, r.criticality.name, r.criticality.color, 20, 5.4); tx -= 1.4; }
+  if (L.pct) { ppdfFont(doc, 5.8, "bold"); ppdfColor(doc, "text", PPDF_TEXT2); doc.text(L.pct, tx, base - 0.1, { align: "right" }); }
   cx += PPDF_COLS[0].w;
-  if (r.status) ppdfChip(doc, cx + 2.5, y + 1.2, r.status.name, r.status.color, PPDF_COLS[1].w - 4);
+  if (L.status) ppdfChip(doc, cx + 1.5, mid - L.status.h / 2, r.status.name, r.status.color, PPDF_COLS[1].w - 3);
   cx += PPDF_COLS[1].w;
-  if (r.type) ppdfChip(doc, cx + 2.5, y + 1.2, r.type.name, r.type.color, PPDF_COLS[2].w - 4);
+  if (L.type) ppdfChip(doc, cx + 1.5, mid - L.type.h / 2, r.type.name, r.type.color, PPDF_COLS[2].w - 3);
   cx += PPDF_COLS[2].w;
-  if (L.dateMain) {
-    ppdfFont(doc, 6.8, "bold");
+  if (L.dateText) {
+    ppdfFont(doc, L.dateSize, "bold");
     ppdfColor(doc, "text", r.late ? PPDF_DANGER_TEXT : PPDF_INK);
-    doc.text(L.dateMain, cx + 2.5, y + 3.3);
-    if (L.dateSub) { ppdfFont(doc, 5.6, "normal"); ppdfColor(doc, "text", PPDF_TEXT2); doc.text(L.dateSub, cx + 2.5, y + 6.2); }
+    doc.text(L.dateText, cx + 1.5, base);
   }
   cx += PPDF_COLS[3].w;
   if (r.responsible) {
-    ppdfAvatar(doc, r.responsible, cx + 4.6, y + 3.4, 2.1, images);
-    ppdfFont(doc, 6.8, "normal");
+    ppdfAvatar(doc, r.responsible, cx + 3.4, mid, 1.9, images);
+    ppdfFont(doc, L.ownerSize, "normal");
     ppdfColor(doc, "text", PPDF_INK);
-    L.ownerLines.forEach((l, k) => doc.text(l, cx + 8, y + 3.9 + k * 2.9));
+    L.ownerLines.forEach((l, k) => doc.text(l, cx + 6.6, base + k * 2.8));
   }
   ppdfColor(doc, "draw", PPDF_HAIR);
   doc.setLineWidth(0.2);
@@ -19299,9 +19310,9 @@ function ppdfDrawNetwork(doc, data, N, y) {
 }
 
 // --- Assemblage ----------------------------------------------------------------
-async function buildFicheProjetPdf(projectId, catalogs, { logoDataUrl = NEXORA_LOGO_FULL, todayIso = iso(new Date()) } = {}) {
+async function buildFicheProjetPdf(projectId, catalogs, { logoDataUrl = NEXORA_LOGO_FULL, todayIso = iso(new Date()), showDoneOnMetro = true } = {}) {
   if (typeof jsPDF !== "function") throw new Error("Générateur PDF indisponible : recharge Nexora puis réessaie.");
-  const data = projectPdfData(projectId, catalogs, todayIso);
+  const data = projectPdfData(projectId, catalogs, todayIso, { showDoneOnMetro });
   if (!data) throw new Error("Projet introuvable : impossible de générer la fiche projet.");
   const images = await ppdfLoadImages([data.project.image, ...data.taskRows.map((r) => r.responsible?.image)]);
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });

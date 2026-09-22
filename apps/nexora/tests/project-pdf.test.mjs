@@ -287,3 +287,26 @@ test("colonnes temporelles : semaine, mois ou trimestre selon la durée, libell�
   assert.equal(P.projectPdfFmtDate("2026-09-18"), "18 sept. 2026");
   assert.equal(P.projectPdfFmtDate(""), "");
 });
+
+// --- Retour de test : choix des tâches terminées sur la ligne Métro ----------
+
+test("showDoneOnMetro=false : les tâches terminées quittent la ligne, pas la synthèse ni le tableau", () => {
+  const d = P.projectPdfData("qjah9det", F.maiaCatalogs, F.MAIA_TODAY, { showDoneOnMetro: false });
+  assert.ok(!d.metroTasks.some((t) => t.done));
+  assert.equal(d.metroTasks.length, 4);
+  assert.equal(d.counts.done, 1);
+  assert.ok(d.taskRows.some((r) => r.title === "Réunion expertise amiable Maïa-CNR" && r.lastMilestone));
+  assert.deepEqual(d.period, maia.period); // la période reste celle du projet
+  const proj = P.projectPdfMetroProjection(d, { width: 178, measure });
+  assert.equal(proj.legend.done, false);
+  assert.equal(proj.stations.length, 4);
+});
+
+test("showDoneOnMetro : affiché par défaut", () => {
+  assert.equal(maia.showDoneOnMetro, true);
+  assert.equal(maia.metroTasks.length, 5);
+});
+
+test("citations 【…】 : converties en crochets lisibles, jamais collées", () => {
+  assert.equal(P.projectPdfSafeText("évolué. 【2-d850c3】【1-61352b】"), "évolué. [2-d850c3] [1-61352b]");
+});

@@ -9963,6 +9963,16 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [taskModal, setTaskModal] = useState(null);
   const [impactLineTaskId, setImpactLineTaskId] = useState(null);
   const [projectPdfBusy, setProjectPdfBusy] = useState(false); // export « Fiche projet PDF » (#291) en cours
+  // Choix de l'export : tâches terminées visibles ou non sur la ligne Métro du
+  // PDF. Simple confort mémorisé dans ce navigateur (jamais synchronisé) ; le
+  // stockage peut être indisponible (navigation privée) : repli sur « oui ».
+  const [projectPdfShowDone, setProjectPdfShowDone] = useState(() => {
+    try { return localStorage.getItem("nexora:projectPdf:showDoneOnMetro") !== "0"; } catch (_) { return true; }
+  });
+  const toggleProjectPdfShowDone = (value) => {
+    setProjectPdfShowDone(value);
+    try { localStorage.setItem("nexora:projectPdf:showDoneOnMetro", value ? "1" : "0"); } catch (_) {}
+  };
   const [toasts, setToasts] = useState([]);
   const toastTimers = useRef({});
   const pushToast = ({ message, actionLabel, onAction, duration = 6000 }) => {
@@ -11335,7 +11345,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     if (!projectId || projectPdfBusy) return;
     setProjectPdfBusy(true);
     try {
-      await downloadFicheProjetPdf(projectId, { projects, statuses, taskTypes, teamMembers, tasks });
+      await downloadFicheProjetPdf(projectId, { projects, statuses, taskTypes, teamMembers, tasks }, { showDoneOnMetro: projectPdfShowDone });
     } catch (e) {
       console.error("[Nexora] export fiche projet PDF", e);
       pushToast({ message: `Échec de l'export de la fiche projet PDF : ${(e && e.message) || "erreur inattendue"}. Réessaie, ou vérifie que ton navigateur autorise le téléchargement.`, duration: 9000 });
@@ -12100,17 +12110,18 @@ export default function LePlan({ currentUser, onSignOut }) {
               )}
               <div className="lp-detail-tab-spacer" />
               {activeProjectIds.length === 1 && projectById[activeProjectIds[0]] && (
-                <button
-                  type="button"
-                  className="lp-btn lp-project-pdf-btn"
-                  onClick={exportProjectPdf}
-                  disabled={projectPdfBusy}
-                  title="Exporter la fiche projet PDF (synthèse A4 avec vue Métro)"
-                  aria-label="Exporter la fiche projet PDF"
-                >
-                  <Download size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
-                  {projectPdfBusy ? "Export…" : "Exporter la fiche projet PDF"}
-                </button>
+                <span className="lp-project-pdf-btn">
+                  <DropdownButton label={projectPdfBusy ? "Export…" : "Fiche projet PDF"} icon={<Download size={13} />} title="Exporter la fiche projet PDF (synthèse A4 avec vue Métro)">
+                    <label className="lp-checkbox-line">
+                      <input type="checkbox" checked={projectPdfShowDone} onChange={(e) => toggleProjectPdfShowDone(e.target.checked)} />
+                      Afficher les tâches terminées sur la ligne Métro
+                    </label>
+                    <hr className="lp-divider" style={{ margin: "6px 0" }} />
+                    <button type="button" className="lp-dropdown-action-row" onClick={exportProjectPdf} disabled={projectPdfBusy}>
+                      <Download size={13} /> Exporter la fiche projet PDF
+                    </button>
+                  </DropdownButton>
+                </span>
               )}
               <DropdownButton label="Filtres enregistrés" icon={<Bookmark size={13} />} title="Vues enregistrées pour ce type d'affichage">
                 {savedViews.filter((v) => v.view === view).length === 0 && (
