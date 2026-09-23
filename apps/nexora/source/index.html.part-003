@@ -2113,6 +2113,7 @@ function defaultLayoutForType(type) {
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
   if (type === "calendar") return { w: 6, h: 8 };
+  if (type === "focusDay") return { w: 4, h: 6 };
   if (type === "nextBestAction") return { w: 4, h: 6 };
   if (type === "dailyBriefing") return { w: 4, h: 7 };
   if (type === "dominoEffect") return { w: 4, h: 6 };
@@ -3660,7 +3661,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedTimeline" || w.type === "embedRadar"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedTimeline" || w.type === "embedRadar" || w.type === "focusDay"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3816,6 +3817,16 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "calendar" && (
                   <WidgetCalendar tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                )}
+                {w.type === "focusDay" && (
+                  <WidgetFocusDay
+                    widget={w}
+                    tasks={scoped}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
+                    externalToolbarSlot={headerToolbarSlot}
+                  />
                 )}
                 {w.type === "heatmapMonth" && !showEmptyFunnel && (
                   <WidgetHeatmapMonth widget={w}
@@ -14556,6 +14567,9 @@ const WIDGET_TYPE_META = [
   { key: "criticalPath", label: "Chemin critique", icon: GitBranch, group: "Planning" },
   // #294 : grille continue + frise horaire du jour, version dense de la vue.
   { key: "calendar", label: "Calendrier", icon: CalendarDays, group: "Planning" },
+  // #333 : mono-jour, sans grille au-dessus — même frise que le zoom jour du
+  // Calendrier (CalendarDayTimeline), avec sa propre date affichée.
+  { key: "focusDay", label: "Focus Journée", icon: Target, group: "Planning" },
   { key: "nextBestAction", label: "Next Best Action", icon: Zap, group: "Intelligence" },
   { key: "dailyBriefing", label: "Daily Briefing", icon: Sunrise, group: "Intelligence" },
   { key: "heatmapMonth", label: "Heat map mensuelle", icon: Grid3x3, group: "Suivi" },
@@ -15033,7 +15047,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -17810,6 +17824,49 @@ function CalendarView({ tasks, ctx, onOpen, onAdd, prefs, setPrefs, toolbarSlot 
 // compacte, dans la hauteur de son cadre.
 function WidgetCalendar({ tasks, ctx, onOpen }) {
   return <CalendarBoard tasks={tasks} ctx={ctx} onOpen={onOpen} compact />;
+}
+
+/* Focus Journée (#333) : le panneau détaillé d'UN SEUL jour, sans la grille
+   semaine/mois du Calendrier au-dessus. Il réutilise CalendarDayTimeline TEL
+   QUEL — en-tête récap, chips « Journée » et frise horaire — pour que le
+   Calendrier et Focus Journée ne portent jamais deux rendus du même panneau.
+   Seule différence : la date vient de la CONFIGURATION DE CE WIDGET
+   (widget.focusDayDate), pas d'une case cliquée dans une grille — exactement
+   comme staffingOffset pour Charge personnel. Le bouton « Aujourd'hui » et le
+   sélecteur de date sont posés dans l'en-tête du widget (barre d'outils
+   fournie par WidgetFrame), à côté des icônes d'action déjà existantes. */
+function WidgetFocusDay({ widget, tasks, ctx, onOpen, onUpdateWidget, externalToolbarSlot }) {
+  const todayIso = iso(new Date());
+  const dateIso = normalizeFocusDayDate(widget.focusDayDate);
+  const setDate = (next) => onUpdateWidget({ focusDayDate: normalizeFocusDayDate(next) });
+  return (
+    <>
+      <ViewToolbarPortal slot={externalToolbarSlot}>
+        <button
+          type="button"
+          className="lp-tool-btn"
+          disabled={dateIso === todayIso}
+          onClick={() => setDate(todayIso)}
+        >
+          Aujourd'hui
+        </button>
+        <button type="button" className="lp-icon-btn" aria-label="Jour précédent" onClick={() => setDate(addDays(dateIso, -1))}>
+          <ChevronLeft size={14} />
+        </button>
+        <input
+          type="date"
+          className="lp-focusday-date-input"
+          value={dateIso}
+          onChange={(e) => e.target.value && setDate(e.target.value)}
+          aria-label="Choisir un jour"
+        />
+        <button type="button" className="lp-icon-btn" aria-label="Jour suivant" onClick={() => setDate(addDays(dateIso, 1))}>
+          <ChevronRight size={14} />
+        </button>
+      </ViewToolbarPortal>
+      <CalendarDayTimeline dateIso={dateIso} tasks={tasks} ctx={ctx} onOpen={onOpen} compact />
+    </>
+  );
 }
 // ============================================================================
 // Module Devis — Quentin Morel Engineering (auto-entrepreneur, prestations
