@@ -841,3 +841,13 @@ test("le titre entier n'est pas rogné, et sa hauteur est MESURÉE (#122)", () =
   // Titres coupés : la mesure ne tourne pas du tout.
   assert.match(html, /if \(!bubbleMode \|\| bubbleCfg\.bubbleTruncateTitles\) \{/);
 });
+
+test("une bulle plus étroite que BUBBLE_MIN_PX passe le titre en une seule ligne (#324)", () => {
+  /* Sous ce plancher, le premier mot du titre ne tient déjà pas sur une ligne :
+     le clamp à DEUX lignes coupait alors ce mot en plein milieu ("Réunio" /
+     "n…"), un fragment illisible plutôt qu'une troncature reconnaissable. Une
+     seule ligne garde le mot entier jusqu'à l'endroit où il est coupé. */
+  assert.match(html, /const narrow = !inSlot && \(widthPct \/ 100\) \* bubbleTrackPx < BUBBLE_MIN_PX;/);
+  assert.match(html, /\(narrow \? " is-narrow" : ""\)/);
+  assert.match(html, /\.lp-bubble\.is-narrow \.lp-bubble-title\{ -webkit-line-clamp:1; \}/);
+});

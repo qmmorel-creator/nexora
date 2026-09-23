@@ -7399,6 +7399,16 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
     const late = isTaskLate(t, ctx);
     const desc = String(t.desc ?? t.description ?? "").trim();
     const showDesc = !!(bubbleCfg.bubbleShowDescription && desc);
+    /* Bulle trop étroite pour DEUX lignes de titre (#324) : sous le plancher de
+       lisibilité (BUBBLE_MIN_PX), un mot courant ne tient déjà pas sur une seule
+       ligne. Le clamp à deux lignes forçait alors la coupure EN PLEIN MILIEU de
+       ce premier mot ("Réunio" / "n…"), ce qui se lit comme un mot inventé —
+       bien pire qu'une troncature classique. En dessous du plancher, une seule
+       ligne d'ellipsis ("Réuni…") reste un mot reconnaissable, coupé au bon
+       endroit. Le plancher `bubbleWidthPct` n'empêche pas cette bulle d'être
+       plus étroite que lui : sur une piste elle-même étroite, il se ramène à
+       60 % de la piste, qui peut rester sous BUBBLE_MIN_PX. */
+    const narrow = !inSlot && (widthPct / 100) * bubbleTrackPx < BUBBLE_MIN_PX;
     /* Deux étages de teinte quand la description est là (#121). L'en-tête garde
        la couleur de base ; le corps — description et pied — passe en
        transparence légère de LA MÊME couleur. Sans description, la bulle garde
@@ -7414,7 +7424,7 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
       : undefined;
     return (
       <div
-        className={"lp-bubble" + (late ? " is-late" : "") + (dimmed ? " is-dimmed" : "") + (showDesc ? " has-desc" : "")}
+        className={"lp-bubble" + (late ? " is-late" : "") + (dimmed ? " is-dimmed" : "") + (showDesc ? " has-desc" : "") + (narrow ? " is-narrow" : "")}
         style={{
           ...(inSlot ? null : { left: leftPct + "%", width: widthPct + "%" }),
           borderColor: color,
@@ -17491,7 +17501,7 @@ function calendarNowMinutes() {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, compact = false, caretCol = null }) {
+function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, compact = false, caretCol = null, fit = false }) {
   const model = useMemo(() => calendarDayModel(tasks, ctx, dateIso), [tasks, ctx, dateIso]);
   const isToday = dateIso === iso(new Date());
   const [nowMin, setNowMin] = useState(calendarNowMinutes);
@@ -17536,7 +17546,7 @@ function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, comp
   const yearLabel = dateIso.slice(0, 4);
 
   return (
-    <div className={"lp-cal-day" + (compact ? " lp-cal-day-compact" : "")} role="region" aria-label={`Frise du ${calendarLongDate(dateIso)}`}>
+    <div className={"lp-cal-day" + (compact ? " lp-cal-day-compact" : "") + (fit ? " lp-cal-day-fit" : "")} role="region" aria-label={`Frise du ${calendarLongDate(dateIso)}`}>
       {caretCol != null && <span className="lp-cal-caret" style={{ left: `calc(${((caretCol + 0.5) * 100) / 7}% - 6px)` }} aria-hidden="true" />}
       <div className="lp-cal-day-head">
         <div className="lp-cal-day-titles">
@@ -18022,13 +18032,21 @@ function WidgetCalendar({ tasks, ctx, onOpen }) {
 
 /* Focus Journée (#333) : le panneau détaillé d'UN SEUL jour, sans la grille
    semaine/mois du Calendrier au-dessus. Il réutilise CalendarDayTimeline TEL
-   QUEL — en-tête récap, chips « Journée » et frise horaire — pour que le
-   Calendrier et Focus Journée ne portent jamais deux rendus du même panneau.
-   Seule différence : la date vient de la CONFIGURATION DE CE WIDGET
-   (widget.focusDayDate), pas d'une case cliquée dans une grille — exactement
-   comme staffingOffset pour Charge personnel. Le bouton « Aujourd'hui » et le
-   sélecteur de date sont posés dans l'en-tête du widget (barre d'outils
-   fournie par WidgetFrame), à côté des icônes d'action déjà existantes. */
+   QUEL — en-tête récap, chips « Journée », hachures des heures creuses et
+   frise horaire complète (heure + durée + ligne statut/échéance sous le
+   titre) — pour que le Calendrier et Focus Journée ne portent jamais deux
+   rendus du même panneau. `compact` (qui allège aussi ces détails visuels
+   pour la mini-grille du widget Calendrier) n'a donc rien à faire ici : Focus
+   Journée n'a pas de grille à alléger, seul `fit` s'applique, pour que la
+   frise se contente de la hauteur du cadre du widget au lieu d'ajouter SON
+   PROPRE défilement vertical par-dessus le défilement horizontal déjà porté
+   par la frise (retour de test, #333) — une seule barre de défilement à la
+   fois. Seule différence de contenu : la date vient de la CONFIGURATION DE
+   CE WIDGET (widget.focusDayDate), pas d'une case cliquée dans une grille —
+   exactement comme staffingOffset pour Charge personnel. Le bouton
+   « Aujourd'hui » et le sélecteur de date sont posés dans l'en-tête du
+   widget (barre d'outils fournie par WidgetFrame), à côté des icônes
+   d'action déjà existantes. */
 function WidgetFocusDay({ widget, tasks, ctx, onOpen, onUpdateWidget, externalToolbarSlot }) {
   const todayIso = iso(new Date());
   const dateIso = normalizeFocusDayDate(widget.focusDayDate);
@@ -18058,7 +18076,7 @@ function WidgetFocusDay({ widget, tasks, ctx, onOpen, onUpdateWidget, externalTo
           <ChevronRight size={14} />
         </button>
       </ViewToolbarPortal>
-      <CalendarDayTimeline dateIso={dateIso} tasks={tasks} ctx={ctx} onOpen={onOpen} compact />
+      <CalendarDayTimeline dateIso={dateIso} tasks={tasks} ctx={ctx} onOpen={onOpen} fit />
     </>
   );
 }
