@@ -1605,6 +1605,27 @@ try {
   await page.mouse.up();
   await page.waitForTimeout(300);
   orgMetro.linkMoved = binomeD0 !== await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
+  // « Cœur produit » remontée au-dessus de la barre de Produit : le lien
+  // remonte depuis la barre et entre par le flanc du bandeau.
+  {
+    const cp = await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Cœur produit"] .lp-orgmetro-badge-bg`).boundingBox();
+    await page.mouse.move(cp.x + 20, cp.y + cp.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(cp.x + 20, cp.y - 20, { steps: 4 });
+    await page.mouse.move(cp.x - 80, cp.y - 140, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    orgMetro.upMove = await page.evaluate((sel) => {
+      const root = document.querySelector(sel);
+      const badge = root.querySelector('.lp-orgmetro-badge[aria-label="Équipe Cœur produit"] .lp-orgmetro-badge-bg').getBoundingClientRect();
+      const drop = root.querySelector('.lp-orgmetro-branches path.lp-orgmetro-line[data-metro-drag="branch:team:o-core"]');
+      const bar = root.querySelector('.lp-orgmetro-branches path.lp-orgmetro-line[data-metro-drag="fork:team:o-prod"]');
+      const barY = bar ? bar.getBoundingClientRect().top : null;
+      return { above: barY !== null && badge.bottom < barY, sideEntry: Boolean(drop) && / H /.test(drop.getAttribute("d")) && / Q /.test(drop.getAttribute("d")) };
+    }, host);
+    orgMetro.overlapsAfterUp = await textOverlaps();
+    await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro-up.png") });
+  }
   // Nœud de bifurcation de « Technique » attrapé et descendu : ses deux
   // lignes (Plateforme, Applications) suivent, la ligne Technique reste.
   const badgeTop = async (name) => (await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`).boundingBox()).y;
@@ -1626,6 +1647,29 @@ try {
   // Plus de vue hiérarchique : aucune bascule de mode, le plan Métro seul.
   orgMetro.modeButtons = await page.locator(`${host} .lp-orgchart-mode-btn`).count();
   orgMetro.hierarchyPanels = await page.locator(`${host} [class*="lp-orghier"]`).count();
+  // Vues enregistrées : replier Exploration, enregistrer « Revue », tout
+  // rétablir (Recentrer), puis recharger la vue → Exploration de nouveau
+  // repliée.
+  {
+    await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Exploration"]`).click();
+    await page.waitForTimeout(500);
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Vues enregistrées"]`).click();
+    await page.locator(`${host} .lp-orgmetro-views input`).fill("Revue");
+    await page.locator(`${host} .lp-orgmetro-views button[type="submit"]`).click();
+    await page.waitForTimeout(200);
+    orgMetro.viewsListed = await page.locator(`${host} .lp-orgmetro-views-name`).allInnerTexts();
+    await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro-views.png") });
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Vues enregistrées"]`).click();
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
+    await page.waitForTimeout(300);
+    orgMetro.viewResetCollapsed = await page.locator(`${host} .lp-orgmetro-badge.is-collapsed`).count();
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Vues enregistrées"]`).click();
+    await page.locator(`${host} .lp-orgmetro-views-load`, { hasText: "Revue" }).click();
+    await page.waitForTimeout(400);
+    orgMetro.viewReloaded = await page.locator(`${host} .lp-orgmetro-badge.is-collapsed[aria-label="Équipe Exploration"]`).count();
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
+    await page.waitForTimeout(300);
+  }
   // Sous-équipes empilées (« Technique ») : Plateforme puis Applications,
   // l'une sous l'autre, à droite du tronc, chacune par un coude.
   const stackHost = "#harness-orgmetro-stacked";
@@ -1675,12 +1719,19 @@ try {
   {
     const techTrunk = page.locator(`${stackHost} .lp-orgmetro-line-hit[data-metro-drag="split:team:o-tech"]`).first();
     orgMetro.splitHandles = await page.locator(`${stackHost} [data-metro-drag="split:team:o-tech"]`).count();
-    const tb = await techTrunk.boundingBox();
+    // Premier segment du tracé = la ligne des membres (le rail suit).
+    const [tx, ty] = await techTrunk.evaluate((path) => {
+      const m = /^M ([\d.-]+) ([\d.-]+) V ([\d.-]+)/.exec(path.getAttribute("d"));
+      const pt = path.ownerSVGElement.createSVGPoint();
+      pt.x = Number(m[1]); pt.y = Number(m[2]) + 6;
+      const sp = pt.matrixTransform(path.getScreenCTM());
+      return [sp.x, sp.y];
+    });
     const appsTop = (await page.locator(`${stackHost} .lp-orgmetro-badge[aria-label="Équipe Applications"] .lp-orgmetro-badge-bg`).boundingBox()).y;
-    await page.mouse.move(tb.x + tb.width / 2, tb.y + 12);
+    await page.mouse.move(tx, ty);
     await page.mouse.down();
-    await page.mouse.move(tb.x + tb.width / 2, tb.y + 40, { steps: 4 });
-    await page.mouse.move(tb.x + tb.width / 2, appsTop - 20, { steps: 8 });
+    await page.mouse.move(tx, ty + 30, { steps: 4 });
+    await page.mouse.move(tx, appsTop - 20, { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(400);
     orgMetro.split = await page.evaluate((sel) => {
@@ -2587,19 +2638,19 @@ expect(scoped.labels.every((l) => /FOR-0129|DREAL/.test(l)), `Paramètres : des 
 expect(!orgMetro.error, `Organigramme Métro : contrôle interrompu (${orgMetro.error})`);
 if (!orgMetro.error) {
   expect(orgMetro.groups === 5, `Organigramme Métro : ${orgMetro.groups} groupe(s) SVG sémantique(s) sur 5 (lignes, branches, correspondances, stations, libellés)`);
-  expect(orgMetro.stations === 21, `Organigramme Métro : ${orgMetro.stations} station(s), 21 attendues (19 personnes + 1 occurrence multi-équipe + la responsable d'Applications en tête de sa ligne)`);
+  expect(orgMetro.stations === 22, `Organigramme Métro : ${orgMetro.stations} station(s), 22 attendues (20 personnes + 1 occurrence multi-équipe + la responsable d'Applications en tête de sa ligne)`);
   expect(orgMetro.duplicates === 2, `Organigramme Métro : ${orgMetro.duplicates} occurrence(s) supplémentaire(s), 2 attendues (Sacha Morin dans Données, Nora Vidal en tête d'Applications)`);
   expect(orgMetro.junctions >= 3, `Organigramme Métro : ${orgMetro.junctions} point(s) de bifurcation, au moins 3 attendus`);
   expect(orgMetro.transverse === 2, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 2 attendues (lien principal de Données + lien secondaire vers Opérations)`);
-  expect(orgMetro.secondary.length === 1 && /226, 166, 59|e2a63b/i.test(orgMetro.secondary[0]), `Organigramme Métro : parent secondaire (Exploration → Données) ${JSON.stringify(orgMetro.secondary)}, un trait plein couleur Exploration attendu`);
-  expect(orgMetro.secondaryWhenHidden === 1, "Organigramme Métro : le parent secondaire disparaît quand on masque les correspondances");
+  expect(orgMetro.secondary.length === 2 && orgMetro.secondary.some((c) => /226, 166, 59|e2a63b/i.test(c)) && orgMetro.secondary.some((c) => /44, 107, 224|2c6be0/i.test(c)), `Organigramme Métro : parent secondaire (Exploration → Données) et rattachement de Laboratoire à Sacha Morin (Applications) ${JSON.stringify(orgMetro.secondary)}, deux traits pleins attendus, couleurs Exploration et Applications`);
+  expect(orgMetro.secondaryWhenHidden === 2, "Organigramme Métro : le parent secondaire disparaît quand on masque les correspondances");
   expect(orgMetro.occurrenceTarget && orgMetro.occurrenceTarget.nearApps, `Organigramme Métro : la relation « Astreinte » ne vise pas l'occurrence de Sacha Morin dans Applications (${JSON.stringify(orgMetro.occurrenceTarget)})`);
   expect(orgMetro.cursors && orgMetro.cursors.every((c) => c === "grab"), `Organigramme Métro : curseur des éléments déplaçables ${JSON.stringify(orgMetro.cursors)}, « grab » attendu`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
   // Responsables : toujours la première station de leur ligne — Nora Vidal
   // dirige Applications sans en être membre, elle y figure quand même.
-  expect(orgMetro.leadHalos === 7, `Organigramme Métro : ${orgMetro.leadHalos} halo(s) de responsable, 7 attendus`);
-  expect(orgMetro.leadStars === 8, `Organigramme Métro : ${orgMetro.leadStars} étoile(s) de responsable, 8 attendues`);
+  expect(orgMetro.leadHalos === 8, `Organigramme Métro : ${orgMetro.leadHalos} halo(s) de responsable, 8 attendus`);
+  expect(orgMetro.leadStars === 9, `Organigramme Métro : ${orgMetro.leadStars} étoile(s) de responsable, 9 attendues`);
   expect(orgMetro.badgeLeads.length === 0, `Organigramme Métro : rappel « Resp. » encore dans un bandeau ${JSON.stringify(orgMetro.badgeLeads)}`);
   expect(/^Nora Vidal/.test(orgMetro.appsFirstStation || ""), `Organigramme Métro : la première station d'Applications est « ${orgMetro.appsFirstStation} », sa responsable Nora Vidal attendue`);
   expect(orgMetro.overlaps.length === 0, `Organigramme Métro : libellés qui se chevauchent dans le rendu réel — ${orgMetro.overlaps.slice(0, 5).join(" ; ")}`);
@@ -2634,6 +2685,8 @@ if (!orgMetro.error) {
   expect(orgMetro.stationDragModal === 0, "Déplacement libre : lâcher une station a ouvert une fiche");
   expect(orgMetro.hubMovedAlone, "Déplacement libre : le grand titre ne se déplace pas seul");
   expect(orgMetro.linkMoved, "Déplacement libre : la relation « Binôme » ne se déplace pas");
+  expect(orgMetro.upMove && orgMetro.upMove.above && orgMetro.upMove.sideEntry, `Déplacement libre : « Cœur produit » ne remonte pas au-dessus de sa barre avec un lien par le flanc (${JSON.stringify(orgMetro.upMove)})`);
+  expect(orgMetro.overlapsAfterUp === 0, `Déplacement libre : ${orgMetro.overlapsAfterUp} superposition(s) de texte après la remontée`);
   expect(Math.abs(orgMetro.forkDrag.tech) < 2 && orgMetro.forkDrag.plat > 30 && Math.abs(orgMetro.forkDrag.plat - orgMetro.forkDrag.apps) < 2, `Organigramme Métro : le nœud de bifurcation ne déplace pas ses lignes (${JSON.stringify(orgMetro.forkDrag)})`);
   expect(orgMetro.forkJog, "Organigramme Métro : le tronc ne rejoint pas le nœud déplacé sur le côté");
   expect(orgMetro.overlapsAfterFork === 0, `Organigramme Métro : ${orgMetro.overlapsAfterFork} texte(s) superposé(s) après déplacement du nœud`);
@@ -2642,6 +2695,7 @@ if (!orgMetro.error) {
   expect(orgMetro.modeButtons === 0 && orgMetro.hierarchyPanels === 0, `Organigramme : la vue hiérarchique n'a pas été retirée (${orgMetro.modeButtons} bouton(s) de mode, ${orgMetro.hierarchyPanels} élément(s) hiérarchique(s))`);
   expect(JSON.stringify(orgMetro.layoutSummaries) === JSON.stringify(["3 équipes à la verticale", "Aucune équipe"]), `Disposition des équipes : listes ${JSON.stringify(orgMetro.layoutSummaries)} — une équipe cochée en verticale doit quitter l'horizontale`);
   expect(orgMetro.produitStacked && orgMetro.produitStacked.stacked && orgMetro.produitStacked.right, `Disposition des équipes : « Produit » en verticale n'empile pas ses sous-équipes après enregistrement (${JSON.stringify(orgMetro.produitStacked)})`);
+  expect(JSON.stringify(orgMetro.viewsListed) === JSON.stringify(["Revue"]) && orgMetro.viewResetCollapsed === 0 && orgMetro.viewReloaded === 1, `Vues enregistrées : enregistrer / recharger ne rétablit pas la disposition (${JSON.stringify({ l: orgMetro.viewsListed, r: orgMetro.viewResetCollapsed, v: orgMetro.viewReloaded })})`);
   expect(orgMetro.elbowMoved && orgMetro.elbowMoved.changed && orgMetro.elbowMoved.badgeStill, `Équipe empilée : le trait horizontal d'Applications ne se déplace pas seul en hauteur (${JSON.stringify(orgMetro.elbowMoved)})`);
   expect(orgMetro.splitHandles >= 1 && orgMetro.split && orgMetro.split.platAbove && orgMetro.split.appsBelow, `Équipe empilée : glisser la ligne de « Technique » ne répartit pas ses sous-équipes au-dessus / au-dessous (${orgMetro.splitHandles}, ${JSON.stringify(orgMetro.split)})`);
   expect(orgMetro.stacked && orgMetro.stacked.below && orgMetro.stacked.rightOfTrunk, `Organigramme Métro : les sous-équipes de « Technique » ne sont pas empilées à droite (${JSON.stringify(orgMetro.stacked)})`);

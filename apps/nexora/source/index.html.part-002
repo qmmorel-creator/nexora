@@ -3284,6 +3284,10 @@ function normalizeTeams(list) {
       // responsable dans l'Organigramme (« Responsable de lot »…), à la place
       // de son poste. Vide = son poste dans l'équipe, sinon « Responsable ».
       leadTitle: String(t.leadTitle || "").trim().slice(0, 80),
+      // Rattachement à un UTILISATEUR (retour de test) : l'équipe dépend de
+      // cette personne ; parentTeamId désigne alors l'équipe de l'occurrence
+      // choisie (la station reliée). Vide = rattachement à l'équipe parente.
+      parentMemberName: t.parentTeamId && t.parentLinkType !== "transverse" ? String(t.parentMemberName || "").trim() : "",
       // Liens transverses supplémentaires (#295, retour de test) : en plus
       // du lien principal (parentTeamId, hiérarchique ou transverse), une
       // équipe peut être reliée à plusieurs autres équipes. Ces liens ne
@@ -3305,11 +3309,11 @@ function normalizeTeams(list) {
     // Liens supplémentaires vers des équipes disparues : ignorés.
     const extraIds = t.extraLinkTeamIds.filter((id) => byId.has(id));
     t = { ...t, extraLinkTeamIds: extraIds, extraLinkTypes: Object.fromEntries(Object.keys(t.extraLinkTypes).filter((id) => extraIds.includes(id)).map((id) => [id, "hierarchique"])) };
-    if (!t.parentTeamId || !byId.has(t.parentTeamId)) return { ...t, parentTeamId: "" };
+    if (!t.parentTeamId || !byId.has(t.parentTeamId)) return { ...t, parentTeamId: "", parentMemberName: "" };
     const chain = new Set([t.id]);
     let cur = byId.get(t.parentTeamId);
     while (cur) {
-      if (chain.has(cur.id)) return { ...t, parentTeamId: "" };
+      if (chain.has(cur.id)) return { ...t, parentTeamId: "", parentMemberName: "" };
       chain.add(cur.id);
       cur = cur.parentTeamId ? byId.get(cur.parentTeamId) : null;
     }
@@ -11695,6 +11699,10 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
   const [leadName, setLeadName] = useState(team?.leadName || "");
   const [leadTitle, setLeadTitle] = useState(team?.leadTitle || "");
   const [parentTeamId, setParentTeamId] = useState(team?.parentTeamId || "");
+  // Rattachée à une équipe (défaut) ou à un utilisateur — dans ce cas
+  // parentTeamId désigne l'équipe de l'occurrence choisie.
+  const [parentMemberName, setParentMemberName] = useState(team?.parentMemberName || "");
+  const [parentKind, setParentKind] = useState(team?.parentMemberName ? "person" : "team");
   // Type de rattachement (#219) : hiérarchique (par défaut, comportement
   // d'origine) ou transverse — sans effet tant que parentTeamId est vide.
   const [parentLinkType, setParentLinkType] = useState(team?.parentLinkType === "transverse" ? "transverse" : "hierarchique");
@@ -11796,7 +11804,8 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
   const parentOptions = catalogue.filter((t) => !excludedParentIds.has(t.id));
   const save = () => {
     if (!name.trim()) return;
-    onSave({ name: name.trim(), color, leadName: leadName.trim(), leadTitle: leadTitle.trim(), parentTeamId, parentLinkType, transverseSide, folderId, extraLinkTeamIds: extraLinkTeamIds.filter((id) => id !== parentTeamId && id !== String(team?.id || "")), extraLinkTypes: Object.fromEntries(extraLinkTeamIds.filter((id) => id !== parentTeamId && extraLinkTypes[id] === "hierarchique").map((id) => [id, "hierarchique"])) });
+    const byPerson = parentKind === "person" && parentMemberName && parentTeamId;
+    onSave({ name: name.trim(), color, leadName: leadName.trim(), leadTitle: leadTitle.trim(), parentTeamId: parentKind === "person" && !byPerson ? "" : parentTeamId, parentLinkType: byPerson ? "hierarchique" : parentLinkType, parentMemberName: byPerson ? parentMemberName : "", transverseSide, folderId, extraLinkTeamIds: extraLinkTeamIds.filter((id) => id !== parentTeamId && id !== String(team?.id || "")), extraLinkTypes: Object.fromEntries(extraLinkTeamIds.filter((id) => id !== parentTeamId && extraLinkTypes[id] === "hierarchique").map((id) => [id, "hierarchique"])) });
   };
 
   const foldersModal = foldersManagerOpen && (
@@ -11831,16 +11840,51 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
           <input type="text" value={leadTitle} maxLength={80} onChange={(e) => setLeadTitle(e.target.value)} placeholder="Ex. Responsable de lot" />
         </div>
         <div className="lp-field">
-          <label>Équipe parente <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette équipe à une autre dans l'Organigramme)</span></label>
-          <SearchableSelect
-            value={parentTeamId}
-            options={sortedByName(parentOptions).map((t) => ({ id: t.id, label: t.name }))}
-            onChange={(id) => setParentTeamId(id)}
-            placeholder="Aucune (équipe de premier niveau)"
-            emptyLabel="Aucune (équipe de premier niveau)"
-          />
+          <label>Rattachée à <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — une autre équipe, ou un utilisateur précis)</span></label>
+          <div className="lp-density-row" style={{ marginBottom: 6 }}>
+            <button type="button" className={"lp-density-btn" + (parentKind === "team" ? " active" : "")} onClick={() => { setParentKind("team"); setParentMemberName(""); }}>Une équipe</button>
+            <button type="button" className={"lp-density-btn" + (parentKind === "person" ? " active" : "")} onClick={() => { setParentKind("person"); setParentLinkType("hierarchique"); }}>Un utilisateur</button>
+          </div>
+          {parentKind === "team" ? (
+            <SearchableSelect
+              value={parentTeamId}
+              options={sortedByName(parentOptions).map((t) => ({ id: t.id, label: t.name }))}
+              onChange={(id) => setParentTeamId(id)}
+              placeholder="Aucune (équipe de premier niveau)"
+              emptyLabel="Aucune (équipe de premier niveau)"
+            />
+          ) : (() => {
+            // Occurrences de la personne : les équipes où elle apparaît
+            // (hors cette équipe et ses sous-équipes).
+            const occ = parentMemberName
+              ? orgChartPersonOccurrenceTeams(parentMemberName, teams, teamMembers).filter((t) => !excludedParentIds.has(t.id))
+              : [];
+            return (
+              <div className="lp-team-parent-person">
+                <SearchableSelect
+                  value={parentMemberName}
+                  options={sortedByName((teamMembers || []).filter((m) => m && m.name)).map((m) => ({ id: m.name, label: m.name }))}
+                  onChange={(nm) => {
+                    setParentMemberName(nm);
+                    const first = nm ? orgChartPersonOccurrenceTeams(nm, teams, teamMembers).filter((t) => !excludedParentIds.has(t.id))[0] : null;
+                    setParentTeamId(first ? first.id : "");
+                  }}
+                  placeholder="Choisir un utilisateur…"
+                  emptyLabel="Aucun"
+                />
+                {parentMemberName && (occ.length ? (
+                  <>
+                    <label style={{ marginTop: 6 }}>Occurrence reliée <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(l'équipe où se trouve la station de {parentMemberName})</span></label>
+                    <SearchableSelect value={parentTeamId} options={occ} onChange={(id) => setParentTeamId(id)} placeholder="Choisir l'occurrence…" emptyLabel="Choisir l'occurrence…" />
+                  </>
+                ) : (
+                  <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: "6px 0 0" }}>Cette personne n'apparaît dans aucune autre équipe : rattachement impossible.</p>
+                ))}
+              </div>
+            );
+          })()}
         </div>
-        {parentTeamId && (
+        {parentTeamId && parentKind === "team" && (
           <div className="lp-field">
             <label>Type de rattachement</label>
             <div className="lp-density-row">
@@ -11854,7 +11898,7 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
             </p>
           </div>
         )}
-        {parentTeamId && parentLinkType === "transverse" && (
+        {parentTeamId && parentKind === "team" && parentLinkType === "transverse" && (
           <div className="lp-field">
             <label>Côté par rapport au partenaire</label>
             <div className="lp-density-row">

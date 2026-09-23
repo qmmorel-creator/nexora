@@ -8800,7 +8800,8 @@ const ORGMETRO_ROW_COL_GAP = 26;
 // et écart vertical entre deux sous-équipes.
 const ORGMETRO_STACK_INDENT = 40;
 const ORGMETRO_STACK_GAP = 24;
-const ORGMETRO_ENTRY_GAP = 18; // lien parent arrivant par le flanc du bandeau
+const ORGMETRO_ENTRY_GAP = 18;
+const ORGMETRO_UP_GAP = 2 * 9 + 6; // hauteur minimale d'un lien qui remonte (deux coudes) // lien parent arrivant par le flanc du bandeau
 const ORGMETRO_SIDE_DROP = 16; // coude → première station rattachée // décalage d'une correspondance le long d'un bord
 const ORGMETRO_LEAD_FALLBACK_ROLE = "Responsable";
 // Repères du responsable, repris de la vue hiérarchique (étoile + cadre de la
@@ -9005,6 +9006,13 @@ function buildOrgMetroGraph(roots, teams, opts) {
     };
     branch.personCount = orgMetroPersonCount(branch);
     if (node.team && horizontal.has(String(node.team.id))) branch.horizontal = true;
+    // Équipe rattachée à un utilisateur (retour de test) : placée sous
+    // l'équipe de l'occurrence choisie, mais reliée à la STATION de la
+    // personne (tracé dessiné avec les liens), jamais à la barre.
+    if (node.team && node.team.parentMemberName && node.team.parentTeamId) {
+      branch.independent = true;
+      branch.personParent = { name: node.team.parentMemberName, at: node.team.parentTeamId };
+    }
     if (node.team && stacked.has(String(node.team.id))) {
       branch.stacked = true;
       branch.stackSplit = Math.max(0, Math.round(Number(stackSplit[String(node.team.id)]) || 0));
@@ -9031,6 +9039,9 @@ function buildOrgMetroGraph(roots, teams, opts) {
 // chaque occurrence comptée dans l'équipe où elle apparaît — comme le compteur
 // du panneau hiérarchique (orgHierPersonCount).
 function orgMetroPersonCount(branch) {
+  // Ligne repliée : son effectif complet, mémorisé avant le repli (le
+  // compteur des lignes parentes ne baisse jamais quand on replie).
+  if (branch.collapsed && Number.isFinite(branch.personCount)) return branch.personCount;
   let n = branch.stations.filter((st) => !st.leadRef).length;
   (branch.sides || []).forEach((sd) => { n += orgMetroPersonCount(sd.branch); });
   branch.children.forEach((c) => { n += orgMetroPersonCount(c); });
@@ -9199,6 +9210,7 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
   let childTop = null;
   let childXs = [];
   let fork = null;
+  let railX = null;
   if (kids.length) {
     forkY = bottom + ORGMETRO_FORK_GAP;
     childTop = Math.ceil((forkY + ORGMETRO_DROP) / ORGMETRO_BAND) * ORGMETRO_BAND;
@@ -9214,10 +9226,20 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
     // de son bandeau quand des sous-équipes sont réparties au-dessus.
     const entryX = (i) => childXs[i] + (kids[i].entry ? kids[i].entry.dx : 0);
     const connectedXs = connected.map((i) => entryX(i));
+    // Rattachement depuis la bulle (retour de test) : quand l'équipe a des
+    // membres, ses sous-équipes ne partent plus du bas de la ligne, à la
+    // suite des personnes, mais d'un rail qui sort du flanc gauche de son
+    // bandeau et longe la ligne par la gauche jusqu'à la barre.
+    railX = orgMetroRailX(branch, c, badge, bottom, stations, row);
+    const fromX = railX !== null ? railX : 0;
     if (connectedXs.length) {
-      const minX = Math.min(0, ...connectedXs);
-      const maxX = Math.max(0, ...connectedXs);
-      fork = { y: forkY, minX, maxX, childXs: connectedXs };
+      const minX = Math.min(fromX, ...connectedXs);
+      const maxX = Math.max(fromX, ...connectedXs);
+      fork = { y: forkY, minX, maxX, childXs: connectedXs, fromDx: fromX };
+      if (railX !== null) {
+        orgMetroContourAdd(c, railX - lineW / 2, -badge.w / 2, badge.h / 2 - lineW / 2, badge.h / 2 + lineW / 2);
+        orgMetroContourAdd(c, railX - lineW / 2, railX + lineW / 2, badge.h / 2, forkY);
+      }
       orgMetroContourAdd(c, minX - lineW, maxX + lineW, forkY - lineW, forkY + ORGMETRO_CORNER);
       connected.forEach((i) => {
         const kw = orgMetroLineWidth(kids[i].branch);
@@ -9235,10 +9257,23 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
       }
     });
   }
-  const trunkEnd = fork ? forkY : lastCy;
+  const rail = fork && railX !== null ? { x: railX, y0: badge.h / 2, y1: forkY } : null;
+  const trunkEnd = fork && !rail ? forkY : lastCy;
   const trunk = trunkEnd !== null && trunkEnd > lineTop ? { y0: lineTop, y1: trunkEnd } : null;
   if (trunk) orgMetroContourAdd(c, -lineW / 2, lineW / 2, trunk.y0, trunk.y1);
-  return { branch, lineW, badge, header, stations, sides, trunk, row, fork, childTop, childXs, kids, stack: [], contour: orgMetroContourFill(c) };
+  return { branch, lineW, badge, header, stations, sides, trunk, rail, row, fork, childTop, childXs, kids, stack: [], contour: orgMetroContourFill(c) };
+}
+// Abscisse du rail qui relie une équipe à ses sous-équipes depuis le flanc
+// gauche de sa bulle (null = pas de rail : équipe sans membre, dont la ligne
+// part déjà de la bulle, ou ligne qui n'est pas une équipe). Le rail passe à
+// gauche de tout ce qui occupe la ligne (membres, rattachés partis à gauche).
+function orgMetroRailX(branch, c, badge, bottom, stations, row, badgeTop) {
+  if (!badge || branch.kind !== "team" || (!stations.length && !row)) return null;
+  let minLeft = -badge.w / 2;
+  const b0 = Math.floor(((badgeTop || 0) + badge.h) / ORGMETRO_BAND);
+  const b1 = Math.ceil(bottom / ORGMETRO_BAND);
+  for (let b = b0; b <= b1; b++) if (c.left[b] !== undefined) minLeft = Math.min(minLeft, c.left[b]);
+  return Math.min(-badge.w / 2 - ORGMETRO_ENTRY_GAP, minLeft - ORGMETRO_SIBLING_GAP);
 }
 // Sous-équipes empilées (réglage par équipe) : au lieu de s'étaler côte à
 // côte sous une barre, elles se rangent LES UNES SOUS LES AUTRES, à droite
@@ -9253,13 +9288,13 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
   // rangent AU-DESSUS du bandeau, les autres en dessous — le bandeau (et le
   // lien qui y arrive) descend le long de la ligne.
   const split = Math.max(0, Math.min(kids.length, Math.round(Number(branch.stackSplit) || 0)));
-  const place = (k, top) => {
+  const place = (k, top, fromDx) => {
     const connected = !k.branch.independent;
     const elbowY = top;
     const kTop = Math.ceil((elbowY + ORGMETRO_DROP) / ORGMETRO_BAND) * ORGMETRO_BAND;
     if (connected) {
       const kw = orgMetroLineWidth(k.branch);
-      orgMetroContourAdd(c, 0, shift + kw / 2, elbowY - kw, elbowY + ORGMETRO_CORNER);
+      orgMetroContourAdd(c, fromDx || 0, shift + kw / 2, elbowY - kw, elbowY + ORGMETRO_CORNER);
       orgMetroContourAdd(c, shift - kw / 2, shift + kw / 2, elbowY, kTop);
     }
     const off = kTop / ORGMETRO_BAND;
@@ -9270,7 +9305,7 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
       c.left[t] = c.left[t] === undefined ? L : Math.min(c.left[t], L);
       c.right[t] = c.right[t] === undefined ? R : Math.max(c.right[t], R);
     }
-    stack.push({ m: k, elbowY, top: kTop, shift, connected });
+    stack.push({ m: k, elbowY, top: kTop, shift, connected, fromDx: fromDx || 0 });
     return Math.ceil((kTop + k.contour.left.length * ORGMETRO_BAND + ORGMETRO_STACK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
   };
   // Partie haute : tout ce qui est déjà mesuré (bandeau, stations,
@@ -9295,7 +9330,7 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
     lineTop += upH;
     bottom += upH;
     let top = 0;
-    kids.slice(0, split).forEach((k) => { top = place(k, top); });
+    kids.slice(0, split).forEach((k) => { top = place(k, top, 0); });
     const firstUp = stack.find((st) => st.connected);
     if (firstUp) {
       upTrunk = { y0: firstUp.elbowY, y1: upH };
@@ -9308,18 +9343,26 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
     orgMetroContourAdd(c, entry.dx - 4, -badge.w / 2, entry.dy - 4, entry.dy + 4);
     orgMetroContourAdd(c, -badge.w / 2, badge.w / 2, upH, upH + badge.h);
   }
+  // Sous-équipes du bas : depuis le rail qui sort de la bulle quand l'équipe
+  // a des membres (jamais à la suite des personnes), sinon depuis la ligne.
+  const railX = orgMetroRailX(branch, c, badge, bottom, stations, row, upH);
   let top = Math.ceil((bottom + ORGMETRO_FORK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
   let lastElbow = null;
   kids.slice(split).forEach((k) => {
     const before = stack.length;
-    top = place(k, top);
+    top = place(k, top, railX !== null ? railX : 0);
     if (stack[before].connected) lastElbow = stack[before].elbowY;
   });
   const lastCy = stations.length ? stations[stations.length - 1].cy : null;
-  const trunkEnd = lastElbow !== null ? lastElbow : row ? row.y : lastCy;
+  const rail = railX !== null && lastElbow !== null ? { x: railX, y0: upH + badge.h / 2, y1: lastElbow } : null;
+  if (rail) {
+    orgMetroContourAdd(c, railX - lineW / 2, -badge.w / 2, rail.y0 - lineW / 2, rail.y0 + lineW / 2);
+    orgMetroContourAdd(c, railX - lineW / 2, railX + lineW / 2, rail.y0, rail.y1);
+  }
+  const trunkEnd = lastElbow !== null && !rail ? lastElbow : row ? row.y : lastCy;
   const trunk = trunkEnd !== null && trunkEnd > lineTop ? { y0: lineTop, y1: trunkEnd } : null;
   if (trunk) orgMetroContourAdd(c, -lineW / 2, lineW / 2, trunk.y0, trunk.y1);
-  return { branch, lineW, badge, badgeTop: upH, header, stations, sides, trunk, upTrunk, entry, row, fork: null, childTop: null, childXs: [], kids: [], stack, contour: orgMetroContourFill(c) };
+  return { branch, lineW, badge, badgeTop: upH, header, stations, sides, trunk, rail, upTrunk, entry, row, fork: null, childTop: null, childXs: [], kids: [], stack, contour: orgMetroContourFill(c) };
 }
 // Disposition horizontale (réglage par équipe) : le tronc descend du bandeau
 // jusqu'à une ligne horizontale qui part vers la droite ; les stations s'y
@@ -9400,6 +9443,7 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
     teamId: b.team ? b.team.id : null, team: b.team, memberName: b.memberName,
     leadName: b.leadName || "", leadOnLine: Boolean(b.leadOnLine), collapsed: Boolean(b.collapsed),
     independent: b.independent, transverse: b.transverse, ancestors,
+    personParent: b.personParent || null,
     x, y,
     badge: m.badge ? {
       x: x - m.badge.w / 2, y: y + (m.badgeTop || 0), w: m.badge.w, h: m.badge.h, lines: m.badge.lines, count: m.badge.count,
@@ -9411,12 +9455,14 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
     // Sous-équipes réparties au-dessus du bandeau : ligne du haut, et point
     // d'arrivée du lien parent sur le flanc gauche du bandeau.
     upTrunk: m.upTrunk ? { x, y0: y + m.upTrunk.y0, y1: y + m.upTrunk.y1 } : null,
+    // Rail depuis le flanc gauche de la bulle vers les sous-équipes.
+    rail: m.rail ? { x: x + m.rail.x, y0: y + m.rail.y0, y1: y + m.rail.y1 } : null,
     entry: m.entry ? { x: x + m.entry.dx, y: y + m.entry.dy } : null,
     stackSplit: m.branch.stacked ? Math.max(0, Math.round(Number(m.branch.stackSplit) || 0)) : 0,
     stackable: Boolean(m.stack && m.stack.length),
     // Disposition horizontale : ligne des stations, du tronc vers la droite.
     row: m.row ? { y: y + m.row.y, x0: x, x1: x + m.row.x1 } : null,
-    fork: m.fork ? { y: y + m.fork.y, minX: x + m.fork.minX, maxX: x + m.fork.maxX, fromX: x, childXs: m.fork.childXs.map((cx) => x + cx) } : null,
+    fork: m.fork ? { y: y + m.fork.y, minX: x + m.fork.minX, maxX: x + m.fork.maxX, fromX: x + (m.fork.fromDx || 0), childXs: m.fork.childXs.map((cx) => x + cx) } : null,
     // Raccord depuis la barre de bifurcation du parent (null = ligne
     // indépendante ou racine du plan).
     // `curved` : branche à une extrémité de la barre, où la ligne parente
@@ -9446,11 +9492,11 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
   (m.stack || []).forEach((st) => {
     const sx = x + st.shift;
     orgMetroPlace(st.m, sx, y + st.top, st.connected ? {
-      elbow: { stacked: true, fromX: x, y0: y + st.elbowY, y: y + st.elbowY, x: sx, y1: y + st.top, color: b.color },
+      elbow: { stacked: true, fromX: x + (st.fromDx || 0), y0: y + st.elbowY, y: y + st.elbowY, x: sx, y1: y + st.top, color: b.color },
     } : null, childAncestors, out);
   });
   m.kids.forEach((k, i) => {
-    orgMetroPlace(k, x + m.childXs[i], y + m.childTop, placed.fork ? { forkY: placed.fork.y, fromX: x, minX: placed.fork.minX, maxX: placed.fork.maxX } : null, childAncestors, out);
+    orgMetroPlace(k, x + m.childXs[i], y + m.childTop, placed.fork ? { forkY: placed.fork.y, fromX: placed.fork.fromX, minX: placed.fork.minX, maxX: placed.fork.maxX } : null, childAncestors, out);
   });
 }
 
@@ -9488,6 +9534,14 @@ function orgMetroBranchPaths(branch) {
   const R = ORGMETRO_CORNER;
   const out = { trunk: null, row: null, fork: null, drop: null };
   if (branch.trunk) out.trunk = orgMetroTrunkD(branch.trunk);
+  // Rail : sort du flanc gauche de la bulle, puis descend.
+  if (branch.rail && branch.badge) {
+    const r = branch.rail;
+    const d = r.y1 - r.y0 > R && branch.badge.x - r.x > R
+      ? `M ${branch.badge.x} ${r.y0} H ${r.x + R} Q ${r.x} ${r.y0} ${r.x} ${r.y0 + R} V ${r.y1}`
+      : `M ${branch.badge.x} ${r.y0} H ${r.x} V ${r.y1}`;
+    out.trunk = (out.trunk ? out.trunk + " " : "") + d;
+  }
   if (branch.upTrunk && branch.upTrunk.y1 > branch.upTrunk.y0) out.trunk = (out.trunk ? out.trunk + " " : "") + `M ${branch.upTrunk.x} ${branch.upTrunk.y0} V ${branch.upTrunk.y1}`;
   if (branch.row && branch.row.x1 > branch.row.x0) out.row = `M ${branch.row.x0} ${branch.row.y} H ${branch.row.x1}`;
   // Changement de couleur (retour de test) : il se fait TOUJOURS sur une
@@ -9496,10 +9550,17 @@ function orgMetroBranchPaths(branch) {
   // coude.
   const f = branch.fork;
   if (f && f.maxX - f.minX > 0.5) {
-    const leftIsChild = f.minX !== f.fromX;
-    const rightIsChild = f.maxX !== f.fromX;
-    let d = leftIsChild ? `M ${f.minX} ${f.y + R} Q ${f.minX} ${f.y} ${f.minX + R} ${f.y}` : `M ${f.minX} ${f.y}`;
-    d += rightIsChild ? ` H ${f.maxX - R} Q ${f.maxX} ${f.y} ${f.maxX} ${f.y + R}` : ` H ${f.maxX}`;
+    // Une extrémité ne tourne que si une ligne en part (jamais au pied du
+    // tronc, quand le nœud a glissé sur le côté à la même hauteur).
+    const isChild = (x) => Math.abs(x - f.fromX) > 0.5 && (f.childXs || []).some((c) => Math.abs(c - x) < 0.5);
+    const leftIsChild = isChild(f.minX);
+    const rightIsChild = isChild(f.maxX);
+    // Coude vers le bas, ou vers le haut pour un lien qui remonte.
+    const ups = f.upXs || [];
+    const sL = ups.some((x) => Math.abs(x - f.minX) < 0.5) ? -1 : 1;
+    const sR = ups.some((x) => Math.abs(x - f.maxX) < 0.5) ? -1 : 1;
+    let d = leftIsChild ? `M ${f.minX} ${f.y + sL * R} Q ${f.minX} ${f.y} ${f.minX + R} ${f.y}` : `M ${f.minX} ${f.y}`;
+    d += rightIsChild ? ` H ${f.maxX - R} Q ${f.maxX} ${f.y} ${f.maxX} ${f.y + sR * R}` : ` H ${f.maxX}`;
     out.fork = d;
   }
   if (branch.elbow) {
@@ -9514,9 +9575,11 @@ function orgMetroBranchPaths(branch) {
   if (branch.drop) {
     const dr = branch.drop;
     // Arrivée par le flanc du bandeau : descente puis coude vers la droite.
+    // s = -1 : lien qui remonte depuis la barre (bandeau au-dessus).
+    const s = dr.y1 < dr.y0 ? -1 : 1;
     out.drop = dr.toX != null && dr.toX - dr.x > R
-      ? `M ${dr.x} ${dr.y0 + (dr.curved ? R : 0)} V ${dr.y1 - R} Q ${dr.x} ${dr.y1} ${dr.x + R} ${dr.y1} H ${dr.toX}`
-      : `M ${dr.x} ${dr.y0 + (dr.curved ? R : 0)} V ${dr.y1}`;
+      ? `M ${dr.x} ${dr.y0 + (dr.curved ? s * R : 0)} V ${dr.y1 - s * R} Q ${dr.x} ${dr.y1} ${dr.x + R} ${dr.y1} H ${dr.toX}`
+      : `M ${dr.x} ${dr.y0 + (dr.curved ? s * R : 0)} V ${dr.y1}`;
   }
   return out;
 }
@@ -9555,6 +9618,24 @@ function orgMetroPolylineD(points) {
 function orgMetroTeamAnchor(layout, teamId) {
   const b = layout.branches.find((x) => x.kind === "team" && x.teamId === teamId);
   return b && b.badge ? { branch: b, rect: b.badge } : null;
+}
+// Station d'une personne à relier : l'occurrence dans l'équipe `at` (sa
+// ligne, ou une branche de rattachés qui en part), sinon la première
+// occurrence ; rectangle = station + libellé.
+function orgMetroPersonAnchor(layout, name, at) {
+  const branchByKey = new Map(layout.branches.map((b) => [b.key, b]));
+  const all = layout.stations.filter((s) => s.name === name).sort((x, y) => Number(x.duplicate) - Number(y.duplicate));
+  const inTeam = (s) => {
+    if (s.branchKey === "team:" + at) return 2;
+    const b = branchByKey.get(s.branchKey);
+    const teamAnc = b ? [...b.ancestors].reverse().find((k) => k.startsWith("team:")) : null;
+    return teamAnc === "team:" + at ? 1 : 0;
+  };
+  const st = (at && [...all].sort((x, y) => inTeam(y) - inTeam(x)).find((s) => inTeam(s) > 0)) || all[0];
+  if (!st) return null;
+  const x0 = st.cx - st.half;
+  const rect = { x: x0, y: Math.min(st.cy - st.half, st.label.y), w: st.label.x + st.label.w - x0, h: Math.max(st.half * 2, st.label.h) };
+  return { rect, station: st, keys: ["station:" + st.key, "label:" + st.key] };
 }
 // Tracé orthogonal entre deux rectangles a et b (de a vers b) : plusieurs
 // candidats, du plus direct au plus prudent ; le premier qui ne traverse
@@ -9602,23 +9683,37 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
   const obstacles = orgMetroObstacles(layout);
   const top = layout.branches.reduce((m, b) => Math.min(m, b.badge ? b.badge.y : b.y), Infinity);
   const out = [];
-  const drawn = (links || []).filter((l) => orgMetroTeamAnchor(layout, l.fromId) && orgMetroTeamAnchor(layout, l.toId));
+  // Extrémité d'arrivée : une équipe (son bandeau) ou, pour une équipe
+  // rattachée à un utilisateur, la station de l'occurrence choisie.
+  const target = (l) => {
+    if (l.person) {
+      const hit = orgMetroPersonAnchor(layout, l.person, l.at);
+      return hit ? { rect: hit.rect, keys: hit.keys, color: hit.station.inactive ? null : hit.station.color, id: "p:" + l.person, person: true } : null;
+    }
+    const hit = orgMetroTeamAnchor(layout, l.toId);
+    return hit ? { rect: hit.rect, keys: ["badge:" + hit.branch.key], color: hit.branch.color, id: l.toId, branch: hit.branch } : null;
+  };
+  const drawn = (links || []).filter((l) => orgMetroTeamAnchor(layout, l.fromId) && target(l));
   // Rang de chaque lien parmi ceux d'un même bandeau (accroches réparties).
   const perTeam = new Map();
-  drawn.forEach((l, i) => [l.fromId, l.toId].forEach((id) => { if (!perTeam.has(id)) perTeam.set(id, []); perTeam.get(id).push(i); }));
+  drawn.forEach((l, i) => [l.fromId, target(l).id].forEach((id) => { if (!perTeam.has(id)) perTeam.set(id, []); perTeam.get(id).push(i); }));
   const slot = (id, i) => { const list = perTeam.get(id); return list.indexOf(i) - (list.length - 1) / 2; };
   drawn.forEach((link, i) => {
     const A = orgMetroTeamAnchor(layout, link.fromId);
-    const B = orgMetroTeamAnchor(layout, link.toId);
-    const others = obstacles.filter((o) => o.key !== "badge:" + A.branch.key && o.key !== "badge:" + B.branch.key);
-    const best = orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(link.toId, i));
-    const key = "transverse:" + link.fromId + ":" + link.toId;
-    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : orgMetroSimplifyRoute(best.pts);
+    const B = target(link);
+    const skip = new Set(["badge:" + A.branch.key, ...B.keys]);
+    const others = obstacles.filter((o) => !skip.has(o.key));
+    const best = orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(B.id, i));
+    const key = link.person ? "person:" + link.fromId + ":" + link.person : "transverse:" + link.fromId + ":" + link.toId;
+    const pts = orgMetroFaceEndpoints(lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts, A.rect, B.rect);
     out.push({
-      key, fromId: link.fromId, toId: link.toId, extra: Boolean(link.extra), hierarchical: link.type === "hierarchique",
+      key, fromId: link.fromId, toId: link.toId || null, extra: Boolean(link.extra), hierarchical: link.type === "hierarchique",
       points: pts, hits: best.hits, d: orgMetroPolylineD(pts),
       // Couleur des rivets d'accroche : celle de chaque ligne reliée.
-      fromColor: A.branch.color || null, toColor: B.branch.color || null,
+      fromColor: A.branch.color || null, toColor: B.color || null, toPerson: link.person || null,
+      // Épaisseur d'un rattachement hiérarchique secondaire = celle du
+      // rattachement principal de l'équipe (sa propre ligne).
+      lineW: A.branch.lineW,
     });
   });
   return out;
@@ -9701,7 +9796,7 @@ function orgMetroJunctions(layout) {
     const pf = parent.fork;
     const bif = Boolean(pf && pf.childXs.length >= 2);
     const change = colorChanges(parent, b);
-    const y = b.drop.y0 + (b.drop.curved ? ORGMETRO_CORNER : 0);
+    const y = b.drop.y0 + (b.drop.curved ? (b.drop.y1 < b.drop.y0 ? -1 : 1) * ORGMETRO_CORNER : 0);
     let show;
     if (b.drop.curved) show = change; // coude d'extrémité : la couleur change en sortie de coude
     else if (b.drop.x !== b.drop.fromX) show = bif || change; // départ en T sur la barre
@@ -9789,9 +9884,15 @@ function orgMetroApplyOffsets(layout, offsets) {
         elbow: null, drop: null,
       };
     }
+    // Retour de test : une ligne peut aussi REMONTER au-dessus de la barre
+    // d'où elle part ; son lien remonte alors depuis la barre et entre par
+    // le flanc gauche de son bandeau. Juste sous la barre, elle s'y arrête.
+    let upEntry = false;
     if (b.drop && parent && parent.fork) {
       const barY = parent.fork.y + inherited.dy;
-      if (b.y + dy < barY + minGap) dy = barY + minGap - b.y;
+      // Jamais sous le grand titre : seules les sous-équipes remontent.
+      if (b.badge && !b.entry && parent.kind !== "hub" && b.y + dy + b.badge.h / 2 < barY - ORGMETRO_UP_GAP) upEntry = true;
+      else if (b.y + dy < barY + minGap) dy = barY + minGap - b.y;
     }
     const t = { dx: inherited.dx + own.dx, dy };
     total.set(b.key, t);
@@ -9799,12 +9900,14 @@ function orgMetroApplyOffsets(layout, offsets) {
     const fk = b.fork ? movedFork(b, t, f) : null;
     return {
       ...b,
+      upEntry,
       x: X(b.x), y: Y(b.y),
       badge: b.badge ? { ...b.badge, x: X(b.badge.x), y: Y(b.badge.y) } : null,
       stations: b.stations.map((st) => ({ ...st, cx: X(st.cx), cy: Y(st.cy), label: { ...st.label, x: X(st.label.x), y: Y(st.label.y) } })),
       trunk: fk ? fk.trunk : b.trunk ? { x: X(b.trunk.x), y0: Y(b.trunk.y0), y1: Y(b.trunk.y1) } : null,
       row: b.row ? { y: Y(b.row.y), x0: X(b.row.x0), x1: X(b.row.x1) } : null,
       upTrunk: b.upTrunk ? { x: X(b.upTrunk.x), y0: Y(b.upTrunk.y0), y1: Y(b.upTrunk.y1) } : null,
+      rail: b.rail ? { x: X(b.rail.x), y0: Y(b.rail.y0), y1: Y(b.rail.y1) } : null,
       entry: b.entry ? { x: X(b.entry.x), y: Y(b.entry.y) } : null,
       fork: fk ? fk.fork : null,
       elbow: b.elbow ? (() => {
@@ -9833,8 +9936,14 @@ function orgMetroApplyOffsets(layout, offsets) {
     const lastSt = p.stations.length ? p.stations[p.stations.length - 1] : null;
     const floor = Math.max(p.badge.y + p.badge.h, lastSt ? lastSt.label.y + lastSt.label.h : -Infinity) + ORGMETRO_CORNER;
     low.forEach((c) => { c.elbow = { ...c.elbow, y: Math.max(c.elbow.y, floor) }; });
-    if (low.length && p.trunk) p.trunk = { ...p.trunk, y1: Math.max(...low.map((c) => c.elbow.y), lastSt ? lastSt.cy : -Infinity) };
+    if (low.length && p.rail) p.rail = { ...p.rail, y1: Math.max(...low.map((c) => c.elbow.y)) };
+    else if (low.length && p.trunk) p.trunk = { ...p.trunk, y1: Math.max(...low.map((c) => c.elbow.y), lastSt ? lastSt.cy : -Infinity) };
     if (up.length && p.upTrunk) p.upTrunk = { ...p.upTrunk, y0: Math.min(...up.map((c) => c.elbow.y)) };
+  });
+  // Ligne remontée au-dessus de sa barre : point d'arrivée sur le flanc
+  // gauche de son bandeau.
+  branches.forEach((b) => {
+    if (b.upEntry && b.badge) b.entry = { x: b.badge.x - ORGMETRO_ENTRY_GAP, y: b.badge.y + b.badge.h / 2 };
   });
   // Barres et raccords recalculés sur les positions finales. La barre couvre
   // le nœud et toutes ses lignes (et le pied du tronc si le nœud a glissé à
@@ -9845,7 +9954,11 @@ function orgMetroApplyOffsets(layout, offsets) {
     const xs = kids.map((c) => (c.entry ? c.entry.x : c.x));
     const ends = [b.fork.fromX, ...xs];
     if (b.trunk && !b.trunk.jog && Math.abs(b.trunk.y1 - b.fork.y) < 0.5) ends.push(b.trunk.x);
-    b.fork = { ...b.fork, childXs: xs, minX: Math.min(...ends), maxX: Math.max(...ends) };
+    // Extrémités de barre d'où un lien REMONTE : le coude tourne vers le haut.
+    const upXs = kids.filter((c) => c.upEntry).map((c) => c.entry.x);
+    b.fork = { ...b.fork, childXs: xs, upXs, minX: Math.min(...ends), maxX: Math.max(...ends) };
+    // Le rail suit le nœud de la barre (déplacé ou non).
+    if (b.rail) b.rail = { ...b.rail, x: b.fork.fromX, y1: b.fork.y };
   });
   branches.forEach((b) => {
     if (!b.drop) return;
@@ -9854,7 +9967,7 @@ function orgMetroApplyOffsets(layout, offsets) {
     if (!f) return;
     const ex = b.entry ? b.entry.x : b.x;
     b.drop = {
-      ...b.drop, x: ex, y0: f.y, y1: b.entry ? b.entry.y : b.y, fromX: f.fromX, toX: b.entry && b.badge ? b.badge.x : null,
+      ...b.drop, x: ex, y0: f.y, y1: b.entry ? b.entry.y : b.y, fromX: f.fromX, toX: b.entry && b.badge ? b.badge.x : null, up: Boolean(b.upEntry),
       curved: ex !== f.fromX && (ex === f.minX || ex === f.maxX) && f.maxX - f.minX > 0.5,
     };
   });
@@ -9874,8 +9987,9 @@ function orgMetroApplyOffsets(layout, offsets) {
       if (b.trunk) b.trunk = { ...b.trunk, x: b.trunk.x + sx, y0: b.trunk.y0 + sy, y1: b.trunk.y1 + sy, jog: b.trunk.jog ? { x: b.trunk.jog.x + sx, y: b.trunk.jog.y + sy } : undefined };
       if (b.row) b.row = { y: b.row.y + sy, x0: b.row.x0 + sx, x1: b.row.x1 + sx };
       if (b.upTrunk) b.upTrunk = { x: b.upTrunk.x + sx, y0: b.upTrunk.y0 + sy, y1: b.upTrunk.y1 + sy };
+      if (b.rail) b.rail = { x: b.rail.x + sx, y0: b.rail.y0 + sy, y1: b.rail.y1 + sy };
       if (b.entry) b.entry = { x: b.entry.x + sx, y: b.entry.y + sy };
-      if (b.fork) b.fork = { ...b.fork, y: b.fork.y + sy, fromX: b.fork.fromX + sx, minX: b.fork.minX + sx, maxX: b.fork.maxX + sx, childXs: b.fork.childXs.map((x) => x + sx) };
+      if (b.fork) b.fork = { ...b.fork, y: b.fork.y + sy, fromX: b.fork.fromX + sx, minX: b.fork.minX + sx, maxX: b.fork.maxX + sx, childXs: b.fork.childXs.map((x) => x + sx), upXs: (b.fork.upXs || []).map((x) => x + sx) };
       if (b.elbow) b.elbow = { ...b.elbow, fromX: b.elbow.fromX + sx, y0: b.elbow.y0 + sy, y: b.elbow.y + sy, x: b.elbow.x + sx, y1: b.elbow.y1 + sy };
       if (b.drop) b.drop = { ...b.drop, x: b.drop.x + sx, y0: b.drop.y0 + sy, y1: b.drop.y1 + sy, fromX: b.drop.fromX + sx, toX: b.drop.toX != null ? b.drop.toX + sx : null };
     };
@@ -9889,13 +10003,17 @@ function orgMetroApplyOffsets(layout, offsets) {
 // barre, coude des rattachés), en rectangles fins.
 function orgMetroLineRects(b) {
   const out = [];
-  const seg = (x1, y1, x2, y2) => out.push({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1) || 1, h: Math.abs(y2 - y1) || 1 });
+  // Chaque trait avec sa demi-épaisseur : même emprise que le contour du
+  // plan par défaut (le plan ne glisse pas au premier déplacement).
+  const hw = (b.lineW || 2) / 2;
+  const seg = (x1, y1, x2, y2) => out.push({ x: Math.min(x1, x2) - hw, y: Math.min(y1, y2) - hw, w: Math.abs(x2 - x1) + 2 * hw, h: Math.abs(y2 - y1) + 2 * hw });
   if (b.trunk) {
     if (b.trunk.jog) { seg(b.trunk.x, b.trunk.y0, b.trunk.x, b.trunk.jog.y); seg(b.trunk.x, b.trunk.jog.y, b.trunk.jog.x, b.trunk.jog.y); seg(b.trunk.jog.x, b.trunk.jog.y, b.trunk.jog.x, b.trunk.y1); }
     else seg(b.trunk.x, b.trunk.y0, b.trunk.x, b.trunk.y1);
   }
   if (b.row) seg(b.row.x0, b.row.y, b.row.x1, b.row.y);
   if (b.upTrunk) seg(b.upTrunk.x, b.upTrunk.y0, b.upTrunk.x, b.upTrunk.y1);
+  if (b.rail) { seg(b.rail.x, b.rail.y0, b.badge ? b.badge.x : b.rail.x, b.rail.y0); seg(b.rail.x, b.rail.y0, b.rail.x, b.rail.y1); }
   if (b.fork) seg(b.fork.minX, b.fork.y, b.fork.maxX, b.fork.y);
   if (b.elbow) { seg(b.elbow.fromX, b.elbow.y, b.elbow.x, b.elbow.y); seg(b.elbow.x, b.elbow.y, b.elbow.x, b.elbow.y1); }
   return out;
@@ -9936,7 +10054,7 @@ function orgMetroFreeOffsets(baseLayout, offsets, key, radius) {
     // parente, raccord de la ligne déplacée).
     const isConnector = (key === "hub" && b.key === "hub") || b.key === parentKey || b.key === forkKey;
     const isDrop = forkKids ? forkKids.has(b.key) : b.key === key;
-    const r = { ...b, fork: isConnector ? null : b.fork, trunk: b.key === forkKey ? null : b.trunk, elbow: b.key === key && b.elbow && b.elbow.stacked ? null : b.elbow };
+    const r = { ...b, fork: isConnector ? null : b.fork, rail: isConnector ? null : b.rail, trunk: b.key === forkKey ? null : b.trunk, elbow: b.key === key && b.elbow && b.elbow.stacked ? null : b.elbow };
     orgMetroLineRects(r).forEach((x) => seg(lines, x.x, x.y, x.x + x.w, x.y + x.h));
     if (b.drop && !isDrop) seg(lines, b.drop.x, b.drop.y0, b.drop.x, b.drop.y1);
   });
@@ -9950,7 +10068,11 @@ function orgMetroFreeOffsets(baseLayout, offsets, key, radius) {
   const allowed = (sy) => {
     if (forkKey) return ((offs[key] && offs[key].dy) || 0) + sy >= 0;
     if (key === "hub") return !moved.fork || moved.badge.y + moved.badge.h + sy <= moved.fork.y - minGap;
-    if (moved.drop && parent && parent.fork) return moved.y + sy >= parent.fork.y + minGap;
+    // L'ajustement reste du même côté de la barre que l'endroit visé : sous
+    // la barre, ou — si la ligne a été remontée exprès — au-dessus.
+    if (moved.drop && parent && parent.fork) return moved.upEntry
+      ? moved.badge.y + moved.badge.h / 2 + sy < parent.fork.y - ORGMETRO_UP_GAP
+      : moved.y + sy >= parent.fork.y + minGap;
     return true;
   };
   const cands = [];
@@ -10000,6 +10122,20 @@ function orgMetroShiftRoute(points, dx, dy) {
       pts = [a, [xm, a[1]], [xm, b[1]], b];
     }
   }
+  // Raccords aux deux bouts (retour de test : « déplacer ce trait vers le
+  // bas ») : un court segment reste accroché à chaque point de liaison, tout
+  // le reste du tracé — y compris le segment qui touche l'extrémité — se
+  // déplace, puis un coude le raccorde au point de liaison.
+  if (pts.length >= 3) {
+    const stub = (p, q) => {
+      const len = Math.abs(q[0] - p[0]) + Math.abs(q[1] - p[1]);
+      if (len <= ORGMETRO_ROUTE_GUTTER * 2) return null;
+      return [p[0] + Math.sign(q[0] - p[0]) * ORGMETRO_ROUTE_GUTTER, p[1] + Math.sign(q[1] - p[1]) * ORGMETRO_ROUTE_GUTTER];
+    };
+    const s0 = stub(pts[0], pts[1]);
+    const s1 = stub(pts[pts.length - 1], pts[pts.length - 2]);
+    pts = [pts[0], ...(s0 ? [s0] : []), ...pts.slice(1, -1), ...(s1 ? [s1] : []), pts[pts.length - 1]];
+  }
   const first = pts[0], last = pts[pts.length - 1];
   const inner = pts.slice(1, -1).map((p) => [p[0] + dx, p[1] + dy]);
   const out = [first];
@@ -10014,6 +10150,32 @@ function orgMetroShiftRoute(points, dx, dy) {
   if (lastVertical) { if (z[0] !== last[0]) out.push([last[0], z[1]]); }
   else if (z[1] !== last[1]) out.push([z[0], last[1]]);
   out.push(last);
+  return orgMetroSimplifyRoute(out);
+}
+// Points de liaison du bon côté (retour de test) : une extrémité posée sur un
+// bord de bandeau alors que le tracé repart vers le côté OPPOSÉ (lien
+// déplacé, ou bandeau qui a bougé) est ramenée sur le bord qui fait face au
+// tracé — ou sur le bord haut / bas quand le tracé repart à la verticale
+// au-dessus / au-dessous du bandeau. Jamais de lien qui traverse son propre
+// bandeau pour ressortir de l'autre côté.
+function orgMetroFaceEndpoints(points, ra, rb) {
+  const out = points.map((p) => [p[0], p[1]]);
+  const fix = (i, dir, r) => {
+    const p = out[i], q = out[i + dir], n2 = out[i + 2 * dir];
+    if (!r || !q || Math.abs(p[1] - q[1]) > 0.5) return;
+    const left = r.x, right = r.x + r.w;
+    if (q[0] < left - 0.5 && p[0] > left + 0.5) p[0] = left;
+    else if (q[0] > right + 0.5 && p[0] < right - 0.5) p[0] = right;
+    else if (q[0] >= left - 0.5 && q[0] <= right + 0.5 && n2 && Math.abs(n2[0] - q[0]) < 0.5) {
+      // Le tracé repart à la verticale depuis l'aplomb du bandeau.
+      if (n2[1] < r.y) { p[0] = q[0]; p[1] = r.y; q[1] = r.y; }
+      else if (n2[1] > r.y + r.h) { p[0] = q[0]; p[1] = r.y + r.h; q[1] = r.y + r.h; }
+    }
+  };
+  if (out.length >= 2) {
+    fix(0, 1, ra);
+    fix(out.length - 1, -1, rb);
+  }
   return orgMetroSimplifyRoute(out);
 }
 // Nettoyage d'un tracé orthogonal (retour de test : lignes prolongées trop
@@ -10049,6 +10211,53 @@ function orgMetroStarPath(cx, cy, r) {
     pts.push((i ? "L " : "M ") + (cx + rad * Math.cos(a)).toFixed(2) + " " + (cy + rad * Math.sin(a)).toFixed(2));
   }
   return pts.join(" ") + " Z";
+}
+// --- Vues enregistrées (retour de test) ------------------------------------------
+// Une vue = un instantané NOMMÉ de la disposition du plan, propre au widget
+// (widget.orgMetroViews) : ordre et déplacements des lignes et des liens,
+// replis, disposition verticale / horizontale des équipes, répartition des
+// équipes empilées, correspondances affichées. Recharger une vue réapplique
+// exactement ces réglages ; les données (équipes, personnes) restent celles du
+// moment.
+const ORGMETRO_VIEW_DEFAULTS = {
+  orgMetroOrder: null, orgMetroOffsets: null, orgMetroLinkOffsets: null, orgMetroCollapsed: [],
+  orgMetroStackSplit: null, orgMetroHorizontalTeams: [], orgMetroStackedTeams: [], orgMetroShowTransverse: true,
+};
+const ORGMETRO_VIEW_MAX = 30;
+function orgMetroViewSnapshot(state) {
+  const out = {};
+  Object.keys(ORGMETRO_VIEW_DEFAULTS).forEach((k) => {
+    const v = state ? state[k] : undefined;
+    out[k] = v === undefined ? ORGMETRO_VIEW_DEFAULTS[k] : JSON.parse(JSON.stringify(v));
+  });
+  return out;
+}
+// Réglages à écrire sur le widget pour recharger une vue : tout champ absent
+// de l'instantané revient à sa valeur par défaut.
+function orgMetroViewPatch(state) {
+  return orgMetroViewSnapshot(state && typeof state === "object" ? state : {});
+}
+function normalizeOrgMetroViews(list) {
+  const seen = new Set();
+  return (Array.isArray(list) ? list : [])
+    .filter((v) => v && typeof v === "object" && String(v.name || "").trim())
+    .map((v, i) => ({
+      id: String(v.id || "view-" + i),
+      name: String(v.name).trim().slice(0, 60),
+      savedAt: typeof v.savedAt === "string" ? v.savedAt : "",
+      state: orgMetroViewPatch(v.state),
+    }))
+    .filter((v) => (seen.has(v.id) ? false : (seen.add(v.id), true)))
+    .slice(0, ORGMETRO_VIEW_MAX);
+}
+// Enregistrer sous un nom : un nom déjà pris remplace la vue du même nom.
+function orgMetroSaveView(views, name, state, now, id) {
+  const clean = String(name || "").trim().slice(0, 60);
+  const list = normalizeOrgMetroViews(views);
+  if (!clean) return list;
+  const existing = list.find((v) => v.name.toLocaleLowerCase("fr") === clean.toLocaleLowerCase("fr"));
+  const view = { id: existing ? existing.id : id, name: clean, savedAt: now, state: orgMetroViewSnapshot(state) };
+  return existing ? list.map((v) => (v.id === existing.id ? view : v)) : [...list, view].slice(-ORGMETRO_VIEW_MAX);
 }
 // === NEXORA:ORGMETRO:END ===
 
@@ -10167,20 +10376,9 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
       const hit = orgMetroTeamAnchor(layout, p.id);
       return hit ? { rect: hit.rect, keys: ["badge:" + hit.branch.key], kind: "team", color: hit.branch.color || null } : null;
     }
-    // Occurrence choisie (équipe `at`) : la station de cette ligne, ou d'une
-    // branche de rattachés qui en part ; sinon la première occurrence.
-    const all = layout.stations.filter((s) => s.name === p.id).sort((x, y) => Number(x.duplicate) - Number(y.duplicate));
-    const inTeam = (s) => {
-      if (s.branchKey === "team:" + at) return 2;
-      const b = branchByKey.get(s.branchKey);
-      const teamAnc = b ? [...b.ancestors].reverse().find((k) => k.startsWith("team:")) : null;
-      return teamAnc === "team:" + at ? 1 : 0;
-    };
-    const st = (at && [...all].sort((x, y) => inTeam(y) - inTeam(x)).find((s) => inTeam(s) > 0)) || all[0];
-    if (!st) return null;
-    const x0 = st.cx - st.half;
-    const rect = { x: x0, y: Math.min(st.cy - st.half, st.label.y), w: st.label.x + st.label.w - x0, h: Math.max(st.half * 2, st.label.h) };
-    return { rect, keys: ["station:" + st.key, "label:" + st.key], kind: "person", color: null };
+    // Occurrence choisie (équipe `at`), sinon la première occurrence.
+    const hit = orgMetroPersonAnchor(layout, p.id, at);
+    return hit ? { rect: hit.rect, keys: hit.keys, kind: "person", color: null } : null;
   };
   const hasTeam = (id) => Boolean(orgMetroTeamAnchor(layout, id));
   const hasPerson = (name) => layout.stations.some((s) => s.name === name);
@@ -10189,7 +10387,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
   const labelObstacles = [...obstacles];
   layout.branches.forEach((b) => {
     const w = b.lineW + 4;
-    orgMetroLineRects({ trunk: b.trunk, upTrunk: b.upTrunk, row: b.row, elbow: b.elbow }).forEach((r) => labelObstacles.push({ x: r.x - w / 2, y: r.y - w / 2, w: r.w + w, h: r.h + w }));
+    orgMetroLineRects({ trunk: b.trunk, upTrunk: b.upTrunk, rail: b.rail, badge: b.badge, row: b.row, elbow: b.elbow }).forEach((r) => labelObstacles.push({ x: r.x - w / 2, y: r.y - w / 2, w: r.w + w, h: r.h + w }));
     if (b.drop) labelObstacles.push({ x: b.drop.x - w / 2, y: b.drop.y0, w, h: b.drop.y1 - b.drop.y0 });
   });
   orgMetroJunctions(layout).forEach((j) => labelObstacles.push({ x: j.x - 7, y: j.y - 7, w: 14, h: 14 }));
@@ -10199,7 +10397,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     const skip = new Set([...A.keys, ...B.keys]);
     const best = orgMetroRouteRects(A.rect, B.rect, obstacles.filter((o) => !skip.has(o.key)), top);
     const key = "relation:" + r.id;
-    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : orgMetroSimplifyRoute(best.pts);
+    const pts = orgMetroFaceEndpoints(lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts, A.rect, B.rect);
     const labelAt = r.label ? orgRelationLabelPlacement(pts, orgRelationLabelWidth(r.label), ORGRELATION_LABEL_H, labelObstacles) : null;
     return {
       key, id: r.id, from: r.from, to: r.to, label: r.label, points: pts, hits: best.hits, d: orgMetroPolylineD(pts), labelAt,
@@ -10302,7 +10500,7 @@ function OrgMetroCorrespondences({ routes, relationRoutes, occurrenceLinks, dimR
           <g key={r.key} className={"lp-orgmetro-secondary-group" + cls} data-metro-drag={"link:" + r.key}>
             <title>Rattachement hiérarchique secondaire · glisser pour déplacer</title>
             <path className="lp-orgmetro-link-hit" d={r.d} />
-            <path className="lp-orgmetro-secondary" d={r.d} style={{ stroke: orgMetroColor(r.toColor, "team") }} />
+            <path className="lp-orgmetro-secondary" d={r.d} style={{ stroke: orgMetroColor(r.toColor, "team"), strokeWidth: r.lineW }} />
           </g>
         );
         return (
@@ -10390,7 +10588,9 @@ function OrgMetroLabels({ layout, dim, drag }) {
         const bd = b.badge;
         const color = orgMetroColor(b.color, b.kind);
         const isHub = b.kind === "hub";
-        const cls = "lp-orgmetro-badge is-" + bd.level + (b.independent ? " is-independent" : "") + (b.team ? " is-clickable" : "") + (b.collapsed ? " is-collapsed" : "") + (dim(b.key) ? " is-dim" : "");
+        // Pointillés : ligne transverse indépendante, jamais une équipe
+        // rattachée à un utilisateur (reliée en trait plein).
+        const cls = "lp-orgmetro-badge is-" + bd.level + (b.independent && !b.personParent ? " is-independent" : "") + (b.team ? " is-clickable" : "") + (b.collapsed ? " is-collapsed" : "") + (dim(b.key) ? " is-dim" : "");
         const blockH = bd.lines.length * bd.lineH + (bd.subtitle ? ORGMETRO_BADGE_SUB_H : 0);
         const textTop = bd.y + (bd.h - blockH) / 2 + bd.lineH * 0.74;
         const subY = textTop + (bd.lines.length - 1) * bd.lineH + ORGMETRO_BADGE_SUB_H - 1;
@@ -10561,7 +10761,7 @@ function useOrgMetroViewport(contentW, contentH) {
   return { ref, size, view, fit, recenter, reset, zoomAt, setManual };
 }
 
-function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed, horizontal, stacked, stackSplit, onChangeStackSplit }) {
+function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed, horizontal, stacked, stackSplit, onChangeStackSplit, views, onSaveView, onLoadView, onDeleteView }) {
   const roots = useMemo(() => orgChartVisibleRoots(teams, members, showUnassigned), [teams, members, showUnassigned]);
   // Ordre des lignes choisi par glisser-déposer (widget.orgMetroOrder) : le
   // plan entier est recalculé, rien n'est déplacé « à la main ».
@@ -10592,7 +10792,12 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   // Lien principal transverse + liens transverses supplémentaires de chaque
   // équipe : tous en correspondances, recalculés sur la position courante des
   // lignes (ils suivent donc chaque déplacement).
-  const links = useMemo(() => [...transverseTeamLinks(teams), ...teamExtraLinks(teams)], [teams]);
+  const links = useMemo(() => [
+    ...transverseTeamLinks(teams),
+    ...teamExtraLinks(teams),
+    // Équipes rattachées à un utilisateur : lien hiérarchique depuis sa station.
+    ...normalizeTeams(teams).filter((t) => t.parentMemberName && t.parentTeamId).map((t) => ({ fromId: t.id, person: t.parentMemberName, at: t.parentTeamId, type: "hierarchique" })),
+  ], [teams]);
   const routes = useMemo(() => orgMetroTransverseRoutes(layout, links, shownLinkOffsets), [layout, links, shownLinkOffsets]);
   // Relations propres au widget (widget.orgChartRelations).
   const relationRoutes = useMemo(() => orgMetroRelationRoutes(layout, relations, shownLinkOffsets), [layout, relations, shownLinkOffsets]);
@@ -10810,6 +11015,8 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     else openItem(item);
   };
   const stopToolbar = (e) => e.stopPropagation();
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
   const { view } = vp;
 
   return (
@@ -10878,9 +11085,39 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
           title={showTransverse ? "Masquer les correspondances et relations" : "Afficher les correspondances et relations"}
           aria-label="Correspondances transverses"
         ><Waypoints size={13} /></button>
+        {onSaveView && (
+          <button type="button" className={viewsOpen ? "active" : ""} aria-pressed={viewsOpen} aria-expanded={viewsOpen} onClick={() => setViewsOpen((v) => !v)} title="Vues enregistrées — sauvegarder / recharger une disposition" aria-label="Vues enregistrées"><Bookmark size={13} /><span>Vues</span></button>
+        )}
         <button type="button" onClick={() => orgMetroExport(svgRef.current, layout, "svg")} title="Exporter en SVG" aria-label="Exporter en SVG"><Download size={13} /><span>SVG</span></button>
         <button type="button" onClick={() => orgMetroExport(svgRef.current, layout, "png")} title="Exporter en PNG" aria-label="Exporter en PNG"><Download size={13} /><span>PNG</span></button>
       </div>
+      {viewsOpen && onSaveView && (
+        <div className="lp-orgmetro-views" onPointerDown={stopToolbar} role="dialog" aria-label="Vues enregistrées">
+          <form
+            className="lp-orgmetro-views-form"
+            onSubmit={(e) => { e.preventDefault(); if (viewName.trim()) { onSaveView(viewName); setViewName(""); } }}
+          >
+            <input type="text" value={viewName} maxLength={60} onChange={(e) => setViewName(e.target.value)} placeholder="Nom de la vue" aria-label="Nom de la vue à enregistrer" />
+            <button type="submit" className="lp-btn lp-btn-primary" disabled={!viewName.trim()}><Save size={13} /> Enregistrer</button>
+          </form>
+          <p className="lp-orgmetro-views-hint">Une vue garde la disposition actuelle : déplacements, replis, dispositions verticale / horizontale, correspondances. Un nom déjà utilisé est remplacé.</p>
+          {(views || []).length === 0 ? (
+            <p className="lp-orgmetro-views-empty">Aucune vue enregistrée.</p>
+          ) : (
+            <ul className="lp-orgmetro-views-list">
+              {views.map((v) => (
+                <li key={v.id}>
+                  <button type="button" className="lp-orgmetro-views-load" onClick={() => { onLoadView(v.id); setViewsOpen(false); }} title={"Recharger la vue « " + v.name + " »"}>
+                    <span className="lp-orgmetro-views-name">{v.name}</span>
+                    {v.savedAt && <span className="lp-orgmetro-views-date">{new Date(v.savedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</span>}
+                  </button>
+                  <button type="button" className="lp-icon-btn" onClick={() => onDeleteView(v.id)} title={"Supprimer la vue « " + v.name + " »"} aria-label={"Supprimer la vue " + v.name}><Trash2 size={13} /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="lp-orgmetro-legend" aria-hidden="true">
         <span><i className="lp-orgmetro-legend-lead" /><Star size={11} className="lp-orgmetro-legend-star" />Responsable</span>
         <span><i className="lp-orgmetro-legend-sub" />Lead / manager</span>
@@ -10981,6 +11218,30 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
     setMetroStackSplit(next);
     if (onUpdateWidget) onUpdateWidget({ orgMetroStackSplit: next });
   };
+  // Vues enregistrées (widget.orgMetroViews) : enregistrer la disposition
+  // courante sous un nom, la recharger, la supprimer.
+  const metroViews = useMemo(() => normalizeOrgMetroViews(widget?.orgMetroViews), [widget?.orgMetroViews]);
+  const saveMetroView = onUpdateWidget ? (name) => {
+    const state = {
+      orgMetroOrder: metroOrder, orgMetroOffsets: metroOffsets, orgMetroLinkOffsets: metroLinkOffsets,
+      orgMetroCollapsed: metroCollapsed, orgMetroStackSplit: metroStackSplit,
+      orgMetroHorizontalTeams: metroHorizontal, orgMetroStackedTeams: metroStacked, orgMetroShowTransverse: showTransverse,
+    };
+    onUpdateWidget({ orgMetroViews: orgMetroSaveView(metroViews, name, state, new Date().toISOString(), "view-" + Date.now().toString(36)) });
+  } : undefined;
+  const loadMetroView = onUpdateWidget ? (id) => {
+    const view = metroViews.find((v) => v.id === id);
+    if (!view) return;
+    const patch = orgMetroViewPatch(view.state);
+    setMetroOrder(patch.orgMetroOrder);
+    setMetroOffsets(patch.orgMetroOffsets);
+    setMetroLinkOffsets(patch.orgMetroLinkOffsets);
+    setMetroCollapsed(patch.orgMetroCollapsed);
+    setMetroStackSplit(patch.orgMetroStackSplit);
+    setShowTransverse(patch.orgMetroShowTransverse);
+    onUpdateWidget(patch);
+  } : undefined;
+  const deleteMetroView = onUpdateWidget ? (id) => onUpdateWidget({ orgMetroViews: metroViews.filter((v) => v.id !== id) }) : undefined;
   // « Recentrer » : disposition par défaut (ordre, déplacements et replis
   // effacés).
   const resetMetroLayout = () => {
@@ -11022,6 +11283,10 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
         stacked={metroStacked}
         stackSplit={metroStackSplit}
         onChangeStackSplit={changeMetroStackSplit}
+        views={metroViews}
+        onSaveView={saveMetroView}
+        onLoadView={loadMetroView}
+        onDeleteView={deleteMetroView}
         onResetLayout={resetMetroLayout}
       />
     );
