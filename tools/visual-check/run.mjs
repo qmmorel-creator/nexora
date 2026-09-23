@@ -1497,6 +1497,10 @@ try {
       }),
       leadStars: root.querySelectorAll(".lp-orgmetro-label .lp-orgmetro-lead-star").length,
       badgeLeads: [...root.querySelectorAll(".lp-orgmetro-badge-sub")].map((el) => el.textContent),
+      appsFirstStation: (() => {
+        const labels = [...root.querySelectorAll(".lp-orgmetro-label")].filter((el) => (el.getAttribute("data-metro-key") || "").startsWith("st:team:o-apps:"));
+        return labels.length ? labels[0].textContent : "";
+      })(),
       groups: ["lines", "branches", "correspondences", "stations", "labels"].filter((n) => root.querySelector(".lp-orgmetro-" + n)).length,
       overlaps,
       transform: g ? g.getAttribute("transform") : "",
@@ -1563,8 +1567,8 @@ try {
   await page.waitForTimeout(200);
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
   await page.waitForTimeout(200);
-  // Glisser-déposer : « Opérations » déposée à gauche de « Produit » passe
-  // en tête des lignes ; « Recentrer » rétablit l'ordre par défaut.
+  // Déplacement libre : « Opérations » posée à gauche de « Produit », sur la
+  // grille ; « Recentrer » rétablit la disposition par défaut.
   const badgeCenterX = async (name) => page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"]`).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; });
   const opsBox = await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Opérations"] .lp-orgmetro-badge-bg`).boundingBox();
   const prodBox = await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Produit"] .lp-orgmetro-badge-bg`).boundingBox();
@@ -1572,7 +1576,7 @@ try {
   await page.mouse.down();
   await page.mouse.move(opsBox.x - 60, opsBox.y + opsBox.height / 2, { steps: 4 });
   await page.mouse.move(prodBox.x - 30, prodBox.y + prodBox.height / 2, { steps: 10 });
-  orgMetro.dropMarker = await page.locator(`${host} .lp-orgmetro-drop-marker`).count();
+  orgMetro.dropMarker = await page.locator(`${host} .lp-orgmetro-grid`).count();
   await page.mouse.up();
   await page.waitForTimeout(300);
   orgMetro.dragModal = await page.locator(".lp-modal").count();
@@ -2624,17 +2628,17 @@ expect(scoped.labels.every((l) => /FOR-0129|DREAL/.test(l)), `Paramètres : des 
 expect(!orgMetro.error, `Organigramme Métro : contrôle interrompu (${orgMetro.error})`);
 if (!orgMetro.error) {
   expect(orgMetro.groups === 5, `Organigramme Métro : ${orgMetro.groups} groupe(s) SVG sémantique(s) sur 5 (lignes, branches, correspondances, stations, libellés)`);
-  expect(orgMetro.stations === 20, `Organigramme Métro : ${orgMetro.stations} station(s), 20 attendues (19 personnes + 1 correspondance multi-équipe)`);
-  expect(orgMetro.duplicates === 1, `Organigramme Métro : ${orgMetro.duplicates} station(s) de correspondance, 1 attendue`);
+  expect(orgMetro.stations === 21, `Organigramme Métro : ${orgMetro.stations} station(s), 21 attendues (19 personnes + 1 occurrence multi-équipe + la responsable d'Applications en tête de sa ligne)`);
+  expect(orgMetro.duplicates === 2, `Organigramme Métro : ${orgMetro.duplicates} occurrence(s) supplémentaire(s), 2 attendues (Sacha Morin dans Données, Nora Vidal en tête d'Applications)`);
   expect(orgMetro.junctions >= 3, `Organigramme Métro : ${orgMetro.junctions} point(s) de bifurcation, au moins 3 attendus`);
   expect(orgMetro.transverse === 1, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 1 attendue`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
-  // Responsables : 6 lignes dirigées par un membre présent sur la ligne
-  // (halo), 7 personnes dirigeant une équipe (étoile, Nora Vidal comprise
-  // hors de la ligne Applications), et Applications nomme la sienne.
-  expect(orgMetro.leadHalos === 6, `Organigramme Métro : ${orgMetro.leadHalos} halo(s) de responsable, 6 attendus`);
-  expect(orgMetro.leadStars === 7, `Organigramme Métro : ${orgMetro.leadStars} étoile(s) de responsable, 7 attendues`);
-  expect(orgMetro.badgeLeads.length === 1 && orgMetro.badgeLeads[0] === "Resp. Nora Vidal", `Organigramme Métro : rappel du responsable hors ligne ${JSON.stringify(orgMetro.badgeLeads)}, « Resp. Nora Vidal » attendu`);
+  // Responsables : toujours la première station de leur ligne — Nora Vidal
+  // dirige Applications sans en être membre, elle y figure quand même.
+  expect(orgMetro.leadHalos === 7, `Organigramme Métro : ${orgMetro.leadHalos} halo(s) de responsable, 7 attendus`);
+  expect(orgMetro.leadStars === 8, `Organigramme Métro : ${orgMetro.leadStars} étoile(s) de responsable, 8 attendues`);
+  expect(orgMetro.badgeLeads.length === 0, `Organigramme Métro : rappel « Resp. » encore dans un bandeau ${JSON.stringify(orgMetro.badgeLeads)}`);
+  expect(/^Nora Vidal/.test(orgMetro.appsFirstStation || ""), `Organigramme Métro : la première station d'Applications est « ${orgMetro.appsFirstStation} », sa responsable Nora Vidal attendue`);
   expect(orgMetro.overlaps.length === 0, `Organigramme Métro : libellés qui se chevauchent dans le rendu réel — ${orgMetro.overlaps.slice(0, 5).join(" ; ")}`);
   expect(orgMetro.fitScale > 0 && orgMetro.fitScale <= 1, `Organigramme Métro : échelle d'ajustement ${orgMetro.fitScale}`);
   expect(orgMetro.zoomedScale > orgMetro.fitScale, `Organigramme Métro : le zoom avant ne grossit pas (${orgMetro.fitScale} → ${orgMetro.zoomedScale})`);
@@ -2656,9 +2660,9 @@ if (!orgMetro.error) {
   expect(orgMetro.hierRelations === 3 && orgMetro.hierRelationLabels.length === 2, `Organigramme hiérarchique : ${orgMetro.hierRelations} relation(s), ${orgMetro.hierRelationLabels.length} légende(s) — 3 et 2 attendues`);
   expect(orgMetro.hierJunctions > 0, "Organigramme hiérarchique : aucun point blanc aux embranchements");
   expect(orgMetro.hierInactive >= 1, "Organigramme hiérarchique : l'utilisateur inactif n'est pas grisé");
-  expect(orgMetro.dropMarker === 1, `Glisser-déposer : ${orgMetro.dropMarker} repère d'insertion pendant le glisser, 1 attendu`);
+  expect(orgMetro.dropMarker === 1, `Déplacement libre : grille ${orgMetro.dropMarker === 1 ? "affichée" : "absente"} pendant le geste`);
   expect(orgMetro.dragModal === 0, "Glisser-déposer : lâcher un bandeau a ouvert la fiche équipe");
-  expect(orgMetro.afterDrag, "Glisser-déposer : « Opérations » déposée avant « Produit » n'a pas changé de place");
+  expect(orgMetro.afterDrag, "Déplacement libre : « Opérations » déposée à gauche de « Produit » n'y est pas");
   expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
