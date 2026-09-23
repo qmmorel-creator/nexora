@@ -5214,6 +5214,16 @@ function MiniGanttProgressRing({ progress }) {
 // plusieurs années sur la même paire de boutons, sans passer par les réglages.
 const MINIGANTT_ZOOM_MAX = 8;
 function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget, onUpdateTask, groupBy, metaBlocks, toolbarSlot, onOpenSettings, bubbleMode, showAllRows, widgetHeight, onOpenGanttView, pushToast, taskBaselines, onPrintWidget }) {
+  /* Ref #342 : barre ou losange, sur le Gantt comme en mode Bulles, suit le
+     jour de début/fin — jamais les horaires — et non le champ `milestone`
+     stocké tel quel (qui, lui, en tient compte depuis #338 pour la donnée).
+     Toute la suite du composant lit `tasks` : ce widget ne réécrit jamais
+     `milestone` (les glissers ne touchent qu'aux dates), le recalage est donc
+     sans risque ici. */
+  tasks = useMemo(
+    () => (tasks || []).map((t) => (t && t.milestone !== isMilestoneVisual(t) ? { ...t, milestone: isMilestoneVisual(t) } : t)),
+    [tasks]
+  );
   // Absences (#134) : l'atelier « absence » du catalogue Charge personnel,
   // reconnu par son nom — lecture seule, jamais posé depuis le Gantt.
   const absenceWorkshopId = useMemo(() => staffingAbsenceWorkshopId(ctx.workshops), [ctx.workshops]);
@@ -19372,7 +19382,10 @@ async function downloadFicheMemoPdf(task, catalogs, { asBase64 = false, asDoc = 
   doc.line(MEMO_MARGIN, y, MEMO_PAGE_W - MEMO_MARGIN, y);
   y += 7;
 
-  if (f.milestone) {
+  // Ref #342 : la capsule « Jalon » suit le jour de début/fin, pas le champ
+  // `milestone` brut (qui tient compte des horaires, #338) — sans effet ici :
+  // f.milestone === true (jalon posé explicitement) l'active toujours.
+  if (isMilestoneVisual(f)) {
     // Pas de glyphe Unicode (helvetica standard ne porte pas ◆ — octets
     // illisibles à l'impression) : le losange est dessiné, pas écrit, et la
     // largeur de la capsule se mesure sur le texte réel plutôt qu'un forfait

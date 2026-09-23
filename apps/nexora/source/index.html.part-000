@@ -2228,7 +2228,11 @@ function projectPdfData(projectId, catalogs, todayIso, { showDoneOnMetro = true 
       status: st ? { name: st.name, color: st.color || "#8593AA" } : null,
       type: ty ? { name: ty.name, color: ty.color || "#8593AA" } : null,
       criticality: cr ? { id: cr.id, name: cr.name, color: cr.color } : null,
-      milestone: getTaskType(t) === "milestone",
+      // Ref #342 : le losange de la fiche projet suit le même jour de
+      // début/fin, sans les horaires — pas le champ `milestone` brut, qui lui
+      // en tient compte (#338). `progress` ci-dessous continue de lire
+      // `getTaskType`, pour ne changer que l'affichage.
+      milestone: isMilestoneVisual(t),
       start: t.start || null,
       end: t.end || null,
       progress: getTaskType(t) !== "milestone" && Number.isFinite(t.progress) ? Math.max(0, Math.min(100, t.progress)) : null,
@@ -3261,6 +3265,21 @@ function setTaskField(setTasks, taskId, fieldKey, key) {
 // === NEXORA:TASK-KIND:START ===
 const getTaskType = (task) => task?.milestone ? "milestone" : "action";
 const taskTypeLabel = (task) => task?.milestone ? "Jalon" : "Tâche";
+// Ref #342 : le RENDU visuel d'un jalon (losange plutôt que barre — Mini-Gantt,
+// mode Bulles, exports PDF Fiche mémo/Fiche projet) suit un critère DIFFÉRENT
+// du champ `task.milestone` stocké en base. Ce dernier est dérivé, à la
+// création par l'API assistant et à l'import Google Calendar, par
+// `isZeroDurationTask` (#338) qui tient compte des horaires — pertinent pour
+// la donnée, mais qui rendait deux tâches du même jour à heures distinctes en
+// barres minuscules illisibles sur le Gantt. Le rendu, lui, ignore les
+// horaires : même jour de début et de fin suffit à afficher un losange.
+// Un jalon posé EXPLICITEMENT par la case à cocher de la fiche tâche (qui
+// force `end = start`) reste toujours un jalon à l'affichage.
+function isMilestoneVisual(task) {
+  if (!task) return false;
+  if (task.milestone === true) return true;
+  return !!task.start && !!task.end && task.start === task.end;
+}
 // === NEXORA:TASK-KIND:END ===
 
 // Un jalon est un instant, une durée nulle (#338) : même jour de début/fin
