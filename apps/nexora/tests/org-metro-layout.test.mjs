@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroEditRoute, orgMetroNearestSegment, orgMetroAddLinkSeg, normalizeOrgMetroLinkOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -110,15 +110,9 @@ test("Métro : deux sous-équipes bifurquent d'un MÊME point aligné sur le tro
   const p = branch(layout, "team:p");
   const core = branch(layout, "team:core");
   const disc = branch(layout, "team:disc");
-  // Retour de test : les sous-équipes partent de la BULLE de l'équipe
-  // parente (rail qui sort de son flanc gauche), jamais à la suite des
-  // personnes ; la ligne des membres s'arrête au dernier membre.
-  assert.ok(p.rail && p.rail.x < p.badge.x && p.rail.y0 === p.badge.y + p.badge.h / 2, "rail depuis le flanc gauche de la bulle");
-  assert.equal(p.fork.fromX, p.rail.x, "la bifurcation part du rail");
-  assert.equal(p.rail.y1, p.fork.y, "le rail descend jusqu'à la barre");
-  assert.equal(p.trunk.y1, p.stations[p.stations.length - 1].cy, "la ligne des membres s'arrête au dernier membre");
-  assert.ok(p.fork.y > p.stations[p.stations.length - 1].cy, "barre sous la dernière station");
-  assert.ok(/^M [\d.]+ [\d.]+ V [\d.]+ M [\d.]+ [\d.]+ H [\d.]+ Q .* V [\d.]+$/.test(api.orgMetroBranchPaths(p).trunk), "tracé : ligne des membres, puis rail sorti de la bulle");
+  assert.equal(p.fork.fromX, p.x, "la bifurcation part du tronc");
+  assert.equal(p.trunk.y1, p.fork.y, "le tronc descend jusqu'au point de bifurcation");
+  assert.ok(p.fork.y > p.stations[p.stations.length - 1].cy, "bifurcation sous la dernière station du tronc");
   // Les deux branches partent de la même barre, au même niveau, de part et
   // d'autre du tronc — aucune ne paraît parente de l'autre.
   assert.equal(core.drop.y0, p.fork.y);
@@ -126,7 +120,7 @@ test("Métro : deux sous-équipes bifurquent d'un MÊME point aligné sur le tro
   assert.equal(core.y, disc.y, "les deux branches commencent à la même hauteur");
   assert.ok(core.x < p.x && disc.x > p.x, "une branche de chaque côté du tronc");
   assert.equal(p.x - core.x, disc.x - p.x, "tronc exactement au milieu des lignes desservies");
-  assert.deepEqual([p.fork.minX, p.fork.maxX], [Math.min(core.x, p.rail.x), disc.x]);
+  assert.deepEqual([p.fork.minX, p.fork.maxX], [core.x, disc.x]);
   assert.ok(core.ancestors.includes("team:p") && !disc.ancestors.includes("team:core"));
 });
 
@@ -472,12 +466,8 @@ test("Métro : tracés SVG — tronc vertical, barre horizontale, coudes aux ext
   const teams = [team("p"), team("x", { parentTeamId: "p" }), team("y", { parentTeamId: "p" })];
   const { layout } = metro(teams, [member("M", { teamIds: ["p"] })]);
   const p = api.orgMetroBranchPaths(branch(layout, "team:p"));
-  assert.match(p.trunk, /^M [\d.]+ [\d.]+ V [\d.]+ M /, "ligne des membres, puis rail");
-  assert.match(p.fork, /H .* Q /, "la barre (couleur parente) tourne vers la sous-équipe");
-  // Sans membre, la ligne part directement de la bulle vers la barre.
-  const bare = api.orgMetroBranchPaths(branch(metro(teams, [member("Z", { teamIds: ["x"] })]).layout, "team:p"));
-  assert.match(bare.trunk, /^M [\d.]+ [\d.]+ V [\d.]+$/);
-  assert.match(bare.fork, /Q .* H .* Q /, "la barre tourne aux deux extrémités");
+  assert.match(p.trunk, /^M [\d.]+ [\d.]+ V [\d.]+$/);
+  assert.match(p.fork, /Q .* H .* Q /, "la barre (couleur parente) tourne aux extrémités");
   const x = api.orgMetroBranchPaths(branch(layout, "team:x"));
   assert.match(x.drop, /^M [\d.-]+ [\d.]+ V [\d.]+$/);
 });
@@ -826,7 +816,7 @@ test("Disposition horizontale : stations côte à côte sur une ligne, noms dess
   const b = branch(layout, "team:b");
   assert.equal(b.row, null);
   assert.ok(a.fork && a.fork.y > side.stations[side.stations.length - 1].cy, "la bifurcation passe sous les rattachés");
-  assert.equal(a.rail.y1, a.fork.y, "depuis la bulle, par le rail");
+  assert.equal(a.trunk.y1, a.fork.y);
   // Les autres équipes ne changent pas de forme.
   assert.equal(branch(layout, "team:v").row, null);
   assert.deepEqual(branch(layout, "team:v").stations.map((st) => st.cx - branch(layout, "team:v").x), branch(vert, "team:v").stations.map((st) => st.cx - branch(vert, "team:v").x));
@@ -851,21 +841,22 @@ test("Nœud de bifurcation déplaçable : la barre et les lignes qui en partent 
   const down = api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 0, dy: 40 } });
   const rel = (l, k) => [branch(l, k).x - branch(l, "team:p").x, branch(l, k).y - branch(l, "team:p").y];
   assert.equal(branch(down, "team:p").fork.y - branch(down, "team:p").y, p0.fork.y - p0.y + 40);
-  assert.equal(branch(down, "team:p").rail.y1, branch(down, "team:p").fork.y, "le rail descend jusqu'au nœud");
+  assert.equal(branch(down, "team:p").trunk.y1, branch(down, "team:p").fork.y, "le tronc descend jusqu'au nœud");
   ["team:c1", "team:c2"].forEach((k) => assert.deepEqual(rel(down, k), [rel(base, k)[0], rel(base, k)[1] + 40]));
   assert.deepEqual(branch(down, "team:p").stations.map((st) => st.cy - branch(down, "team:p").y), p0.stations.map((st) => st.cy - p0.y), "les stations de la ligne ne bougent pas");
   // En biais : décroché du tronc jusqu'au nœud, qui reste le départ de la barre.
   const side = api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 60, dy: 40 } });
   const ps = branch(side, "team:p");
-  assert.equal(ps.rail.x, ps.fork.fromX, "le rail suit le nœud");
-  assert.equal(ps.fork.fromX - p0.fork.fromX - (ps.x - p0.x), 60);
+  assert.ok(ps.trunk.jog, "décroché du tronc");
+  assert.equal(ps.trunk.jog.x, ps.fork.fromX);
+  assert.equal(ps.fork.fromX - ps.x, 60);
   assert.ok(api.orgMetroBranchPaths(ps).trunk.includes(" H "), "tracé orthogonal");
   const js = api.orgMetroJunctions(side).find((j) => j.key === "j:team:p");
   assert.deepEqual([js.x, js.y], [ps.fork.fromX, ps.fork.y], "le rond blanc suit le nœud");
   ["team:c1", "team:c2"].forEach((k) => assert.deepEqual(rel(side, k), [rel(base, k)[0] + 60, rel(base, k)[1] + 40]));
   // À la même hauteur : la barre s'étire jusqu'au pied du tronc.
   const flat = branch(api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 200, dy: 0 } }), "team:p");
-  assert.ok(flat.rail.x === flat.fork.fromX && flat.fork.minX <= flat.fork.fromX && flat.fork.maxX >= flat.fork.fromX);
+  assert.ok(!flat.trunk.jog && flat.fork.minX <= flat.trunk.x && flat.fork.maxX >= flat.trunk.x);
   // Jamais au-dessus de sa place d'origine.
   const up = branch(api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 0, dy: -200 } }), "team:p");
   assert.equal(up.fork.y - up.y, p0.fork.y - p0.y);
@@ -1045,12 +1036,9 @@ test("Équipe empilée : chaque trait horizontal se déplace en hauteur, la lign
   const chef = ds.stations[ds.stations.length - 1];
   assert.ok(e(tooHigh, "s1").y >= chef.label.y + chef.label.h, "jamais au travers des membres de l'équipe");
   assert.ok(ds.trunk.y1 >= chef.cy, "la ligne atteint toujours le dernier membre");
-  // Les traits partent du rail sorti de la bulle, qui s'arrête au plus bas.
+  // La ligne s'arrête au trait le plus bas.
   const up3 = api.orgMetroApplyOffsets(layout, { "elbow:team:s3": { dx: 0, dy: -40 } });
-  const d3 = branch(up3, "team:ds");
-  assert.equal(d3.rail.y1, Math.max(e(up3, "s1").y, e(up3, "s2").y, e(up3, "s3").y));
-  assert.ok(["s1", "s2", "s3"].every((id) => e(up3, id).fromX === d3.rail.x), "chaque trait part du rail");
-  assert.equal(d3.trunk.y1, d3.stations[d3.stations.length - 1].cy, "la ligne des membres s'arrête au dernier membre");
+  assert.equal(branch(up3, "team:ds").trunk.y1, Math.max(e(up3, "s1").y, e(up3, "s2").y, e(up3, "s3").y));
 });
 
 test("Vues enregistrées : instantané de la disposition, remplacement par nom, rechargement complet", () => {
@@ -1120,4 +1108,40 @@ test("Équipe rattachée à un utilisateur : sous l'équipe de l'occurrence choi
   const [ra] = api.orgMetroTransverseRoutes(layout, [{ ...links[0], at: "a" }]);
   const sa = layout.stations.find((s) => s.name === "Sacha" && s.branchKey === "team:a");
   assert.ok(Math.abs(ra.points[ra.points.length - 1][1] - sa.cy) <= sa.label.h);
+});
+
+test("Liens retouchés segment par segment : seul le segment attrapé bouge, sans crochet", () => {
+  const ortho = (pts) => pts.every((p, i) => i === 0 || p[0] === pts[i - 1][0] || p[1] === pts[i - 1][1]);
+  const noSpur = (pts) => pts.every((p, i) => i === 0 || i === pts.length - 1
+    || !((Math.abs(pts[i - 1][0] - p[0]) < 0.5 && Math.abs(p[0] - pts[i + 1][0]) < 0.5) || (Math.abs(pts[i - 1][1] - p[1]) < 0.5 && Math.abs(p[1] - pts[i + 1][1]) < 0.5)));
+  // Cas de la vidéo : bandeau A (à droite, en haut) → descente → bandeau B.
+  const base = [[650, 167], [668, 167], [668, 395], [580, 395]];
+  const plain = api.orgMetroEditRoute(base, undefined);
+  assert.deepEqual(plain.points, base);
+  // Segment vertical (au milieu) attrapé et poussé à droite de 40 : il se
+  // déplace seul, les paliers s'allongent, extrémités fixes, aucun crochet.
+  const hit = api.orgMetroNearestSegment(plain.movable, 668, 300);
+  assert.equal(hit.horizontal, false);
+  const moved = api.orgMetroEditRoute(base, api.orgMetroAddLinkSeg({}, "k", hit.seg, 40).k);
+  assert.ok(ortho(moved.points) && noSpur(moved.points), JSON.stringify(moved.points));
+  assert.deepEqual(moved.points[0], [650, 167]);
+  assert.deepEqual(moved.points[moved.points.length - 1], [580, 395]);
+  assert.ok(moved.points.some((p) => p[0] === 708), "le segment vertical est passé à x = 708");
+  assert.ok(moved.points.every((p) => p[1] >= 167 && p[1] <= 395), "rien ne dépasse au-dessus ni au-dessous");
+  // Palier horizontal du bas (celui qui touche la bulle) descendu de 60 :
+  // un court raccord le raccroche au point de liaison.
+  const low = api.orgMetroNearestSegment(plain.movable, 620, 395);
+  assert.equal(low.horizontal, true);
+  const lowered = api.orgMetroEditRoute(base, api.orgMetroAddLinkSeg({}, "k", low.seg, 60).k);
+  assert.ok(ortho(lowered.points) && noSpur(lowered.points), JSON.stringify(lowered.points));
+  assert.deepEqual(lowered.points[lowered.points.length - 1], [580, 395]);
+  assert.ok(lowered.points.some((p, i) => i > 0 && p[1] === 455 && lowered.points[i - 1][1] === 455), "palier à y = 455");
+  // Retouches cumulées, sur des segments différents.
+  let map = api.orgMetroAddLinkSeg({}, "k", hit.seg, 40);
+  map = api.orgMetroAddLinkSeg(map, "k", hit.seg, 20);
+  map = api.orgMetroAddLinkSeg(map, "k", low.seg, 60);
+  assert.deepEqual(map.k.segs, { [hit.seg]: 60, [low.seg]: 60 });
+  // Ancien décalage global : conservé tel quel, abandonné à la première retouche.
+  assert.deepEqual(api.normalizeOrgMetroLinkOffsets({ a: { dx: 9, dy: 31 }, b: { segs: { 1: 0, x: 5 } } }), { a: { dx: 0, dy: 40 } });
+  assert.deepEqual(api.orgMetroAddLinkSeg({ a: { dx: 20, dy: 0 } }, "a", 0, 20).a, { segs: { 0: 20 } });
 });
