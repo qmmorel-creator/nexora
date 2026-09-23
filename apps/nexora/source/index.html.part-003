@@ -9651,8 +9651,8 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
           <svg className="lp-orghier-overlay" aria-hidden="true">
             {relationLines.map((l) => (
               <g key={l.key}>
-                <circle className="lp-orghier-relation-end" cx={l.points[0][0]} cy={l.points[0][1]} r={3.5} />
-                <circle className="lp-orghier-relation-end" cx={l.points[l.points.length - 1][0]} cy={l.points[l.points.length - 1][1]} r={3.5} />
+                <circle className="lp-orghier-relation-end" cx={l.points[0][0]} cy={l.points[0][1]} r={3.25} />
+                <circle className="lp-orghier-relation-end" cx={l.points[l.points.length - 1][0]} cy={l.points[l.points.length - 1][1]} r={3.25} />
               </g>
             ))}
           </svg>
@@ -10334,6 +10334,8 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
     out.push({
       key, fromId: link.fromId, toId: link.toId,
       points: pts, hits: best.hits, d: orgMetroPolylineD(pts),
+      // Couleur des rivets d'accroche : celle de chaque ligne reliée.
+      fromColor: A.branch.color || null, toColor: B.branch.color || null,
     });
   });
   return out;
@@ -10733,13 +10735,13 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     if (!p) return null;
     if (p.type === "team") {
       const hit = orgMetroTeamAnchor(layout, p.id);
-      return hit ? { rect: hit.rect, keys: ["badge:" + hit.branch.key] } : null;
+      return hit ? { rect: hit.rect, keys: ["badge:" + hit.branch.key], kind: "team", color: hit.branch.color || null } : null;
     }
     const st = layout.stations.filter((s) => s.name === p.id).sort((x, y) => Number(x.duplicate) - Number(y.duplicate))[0];
     if (!st) return null;
     const x0 = st.cx - st.half;
     const rect = { x: x0, y: Math.min(st.cy - st.half, st.label.y), w: st.label.x + st.label.w - x0, h: Math.max(st.half * 2, st.label.h) };
-    return { rect, keys: ["station:" + st.key, "label:" + st.key] };
+    return { rect, keys: ["station:" + st.key, "label:" + st.key], kind: "person", color: null };
   };
   const hasTeam = (id) => Boolean(orgMetroTeamAnchor(layout, id));
   const hasPerson = (name) => layout.stations.some((s) => s.name === name);
@@ -10761,7 +10763,10 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     const key = "relation:" + r.id;
     const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts;
     const labelAt = r.label ? orgRelationLabelPlacement(pts, orgRelationLabelWidth(r.label), ORGRELATION_LABEL_H, labelObstacles) : null;
-    return { key, id: r.id, from: r.from, to: r.to, label: r.label, points: pts, hits: best.hits, d: orgMetroPolylineD(pts), labelAt };
+    return {
+      key, id: r.id, from: r.from, to: r.to, label: r.label, points: pts, hits: best.hits, d: orgMetroPolylineD(pts), labelAt,
+      fromKind: A.kind, toKind: B.kind, fromColor: A.color, toColor: B.color,
+    };
   });
 }
 // === NEXORA:ORGRELATIONS:END ===
@@ -10825,16 +10830,12 @@ function OrgMetroCorrespondences({ routes, relationRoutes, occurrenceLinks, dimR
   return (
     <g className="lp-orgmetro-correspondences">
       {relationRoutes.map((r) => {
-        const first = r.points[0];
-        const last = r.points[r.points.length - 1];
         const labelW = r.label ? orgRelationLabelWidth(r.label) : 0;
         return (
           <g key={r.key} className={"lp-orgmetro-relation-group" + (dimRelation(r) ? " is-dim" : "")} data-metro-drag={"link:" + r.key}>
             <title>{"Relation" + (r.label ? " — " + r.label : "") + " · glisser pour déplacer"}</title>
             <path className="lp-orgmetro-link-hit" d={r.d} />
             <path className="lp-orgmetro-relation" d={r.d} />
-            <circle className="lp-orgmetro-relation-end" cx={first[0]} cy={first[1]} r={3.5} />
-            <circle className="lp-orgmetro-relation-end" cx={last[0]} cy={last[1]} r={3.5} />
             {r.labelAt && (
               <>
                 <rect className="lp-orgmetro-relation-pill" x={r.labelAt.x - labelW / 2} y={r.labelAt.y - 9} width={labelW} height={18} rx={9} />
@@ -10845,20 +10846,39 @@ function OrgMetroCorrespondences({ routes, relationRoutes, occurrenceLinks, dimR
         );
       })}
       {routes.map((r) => {
-        const first = r.points[0];
-        const last = r.points[r.points.length - 1];
         const cls = dimRoute(r) ? " is-dim" : "";
         return (
           <g key={r.key} className={"lp-orgmetro-transverse-group" + cls} data-metro-drag={"link:" + r.key}>
             <title>Lien transverse · glisser pour déplacer</title>
             <path className="lp-orgmetro-link-hit" d={r.d} />
             <path className="lp-orgmetro-transverse" d={r.d} />
-            <circle className="lp-orgmetro-transverse-end" cx={first[0]} cy={first[1]} r={4} />
-            <circle className="lp-orgmetro-transverse-end" cx={last[0]} cy={last[1]} r={4} />
           </g>
         );
       })}
       {occurrenceLinks.map((l) => <path key={l.key} className="lp-orgmetro-occurrence" d={l.d} />)}
+    </g>
+  );
+}
+
+// Rivets d'accroche des correspondances et des relations (retour de test :
+// les ronds creux sous les bandeaux faisaient « pas fini »). Dessinés
+// PAR-DESSUS les bandeaux, centrés sur leur bord : un rivet plein de la
+// couleur de la ligne, cerclé de blanc, qui ancre visiblement le lien dans
+// l'équipe. Côté personne, un point plein discret de la couleur du lien.
+function OrgMetroPorts({ routes, relationRoutes, dimRoute, dimRelation }) {
+  const port = (key, p, kind, color, cls, dimmed) => (kind === "person"
+    ? <circle key={key} className={"lp-orgmetro-port is-person " + cls + (dimmed ? " is-dim" : "")} cx={p[0]} cy={p[1]} r={3.25} />
+    : <circle key={key} className={"lp-orgmetro-port is-team " + cls + (dimmed ? " is-dim" : "")} cx={p[0]} cy={p[1]} r={5} style={{ fill: orgMetroColor(color, "team") }} />);
+  return (
+    <g className="lp-orgmetro-ports" aria-hidden="true">
+      {relationRoutes.map((r) => [
+        port(r.key + ":a", r.points[0], r.fromKind, r.fromColor, "is-relation", dimRelation(r)),
+        port(r.key + ":b", r.points[r.points.length - 1], r.toKind, r.toColor, "is-relation", dimRelation(r)),
+      ])}
+      {routes.map((r) => [
+        port(r.key + ":a", r.points[0], "team", r.fromColor, "is-transverse", dimRoute(r)),
+        port(r.key + ":b", r.points[r.points.length - 1], "team", r.toColor, "is-transverse", dimRoute(r)),
+      ])}
     </g>
   );
 }
@@ -11345,6 +11365,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
           {showTransverse && <OrgMetroCorrespondences routes={routes} relationRoutes={relationRoutes} occurrenceLinks={occurrenceLinks} dimRoute={dimRoute} dimRelation={dimRelation} />}
           <OrgMetroStations layout={layout} dim={dim} focusKey={focus && focus.stationKey} />
           <OrgMetroLabels layout={layout} dim={dim} drag={drag && drag.kind === "team" ? drag : null} />
+          {showTransverse && <OrgMetroPorts routes={routes} relationRoutes={relationRoutes} dimRoute={dimRoute} dimRelation={dimRelation} />}
 
         </g>
       </svg>
