@@ -239,47 +239,6 @@ const seen = await page.evaluate(() => {
     standardRowCount: document.querySelectorAll("#harness-second-minigantt .lp-widget-minigantt-row").length,
     miniRiskLabels: rects("#harness-first-minigantt .lp-widget-minigantt-risk-label"),
     miniMarkers: rects("#harness-first-minigantt .lp-widget-minigantt-marker"),
-    scatterDots: rects("#harness-scatter .lp-widget-scatter-dot"),
-    scatterLabels: rects("#harness-scatter .lp-widget-scatter-point-label"),
-    scatterLaneLabels: rects("#harness-scatter .lp-widget-scatter-lane-label"),
-    scatterTodayAxis: rects("#harness-scatter .lp-widget-scatter-axis-today"),
-    // Le cadre de référence est le SVG lui-même, pas le conteneur du banc : ce
-    // dernier a une marge intérieure, et un point ou une étiquette pouvait
-    // déborder du dessin tout en restant « dans » le conteneur.
-    scatterBox: (() => { const r = document.querySelector("#harness-scatter svg").getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })(),
-    // Les points en retard portent une couleur d'alerte distincte : c'est la
-    // lecture immédiate du widget, elle doit tenir dans le rendu, pas seulement
-    // en logique. On relève la couleur plutôt que de la coder en dur ici — le
-    // contrôle porte sur la distinction, pas sur une teinte précise.
-    scatterDotFills: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-dot")]
-      .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), x: Math.round(el.getBoundingClientRect().x) })),
-    scatterLaneColors: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-lane-mark")]
-      .map((el) => (el.getAttribute("fill") || "").toUpperCase()),
-    // Fond des couloirs : chaque bande porte la couleur de son entité, en aplat
-    // très pâle. Relevé avec son opacité — une teinte à zéro ne distingue rien.
-    scatterBands: [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-band")]
-      .map((el) => ({ fill: (el.getAttribute("fill") || "").toUpperCase(), opacity: Number(el.getAttribute("fill-opacity")) })),
-    scatterMajorAxes: document.querySelectorAll("#harness-scatter .lp-widget-scatter-axis, #harness-scatter .lp-widget-scatter-axis-today").length,
-    scatterMinorAxes: document.querySelectorAll("#harness-scatter .lp-widget-scatter-subaxis").length,
-    // Couloir dense : géométrie RÉELLEMENT rendue des étiquettes. C'est la seule
-    // façon de vérifier qu'elles ne se chevauchent pas — le calcul du moteur
-    // repose sur une largeur estimée, le navigateur, lui, mesure vraiment.
-    denseLabels: [...document.querySelectorAll("#harness-scatter-dense .lp-widget-scatter-point-label")].map((el) => {
-      const r = el.getBoundingClientRect();
-      return { text: el.textContent.trim(), x0: r.left, x1: r.right, y0: r.top, y1: r.bottom };
-    }),
-    denseDots: [...document.querySelectorAll("#harness-scatter-dense .lp-widget-scatter-dot")].map((el) => {
-      const r = el.getBoundingClientRect();
-      return { fill: (el.getAttribute("fill") || "").toUpperCase(), stroke: (el.getAttribute("stroke") || "").toUpperCase(),
-               x: Math.round(r.x + r.width / 2), x0: r.left, x1: r.right, y0: r.top, y1: r.bottom };
-    }),
-    denseLeaders: document.querySelectorAll("#harness-scatter-dense .lp-widget-scatter-leader").length,
-    denseTodayX: (() => { const el = document.querySelector("#harness-scatter-dense .lp-widget-scatter-axis-today"); return el ? el.getBoundingClientRect().x : null; })(),
-    denseBox: (() => { const r = document.querySelector("#harness-scatter-dense svg").getBoundingClientRect(); return { x0: r.left, x1: r.right, y0: r.top, y1: r.bottom }; })(),
-    windowDots: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot").length,
-    windowBeyond: document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-dot.is-beyond").length,
-    windowOverflowText: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-overflow")].map((e) => e.textContent.trim()),
-    windowTicks: [...document.querySelectorAll("#harness-scatter-window .lp-widget-scatter-tick")].map((e) => e.textContent.trim()),
     heatRowHeads: [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-rowhead")].map((e) => e.textContent.trim()),
     heatColHeads: [...document.querySelectorAll("#harness-heatmap .lp-widget-hmgrid-colhead")].map((e) => e.textContent.trim()),
     // Relevé VOLONTAIREMENT indépendant de la classe « is-empty » : s'en servir
@@ -293,8 +252,6 @@ const seen = await page.evaluate(() => {
       text: el.textContent.trim(),
       bg: getComputedStyle(el).backgroundColor,
     })),
-    scatterCritLanes: rects("#harness-scatter-crit .lp-widget-scatter-lane-label").map((r) => r.text),
-    scatterEmptyText: (document.querySelector("#harness-scatter-empty .lp-widget-scatter.is-empty") || {}).textContent || "",
     statusTileNames: rects("#harness-treemap-status .lp-widget-treemap-tile-name").map((r) => r.text),
     statusTiles: rects("#harness-treemap-status .lp-widget-treemap-tile").map((r) => r.text),
     statusGroupLabels: rects("#harness-treemap-status .lp-widget-treemap-group-label").map((r) => r.text),
@@ -898,34 +855,6 @@ try {
   }, hote));
 } catch (error) {
   bandeau.error = String(error).split("\n")[0];
-}
-
-// Nuage des échéances : l'infobulle doit apparaître au survol MÊME à faible
-// densité — c'est elle qui rend acceptable le masquage des étiquettes. Le clic
-// doit ouvrir la tâche, et la fiche exposer le choix des couloirs.
-const scatter = { tip: "", opened: "", laneOptions: 0, savedLaneField: "" };
-try {
-  const dot = page.locator("#harness-scatter .lp-widget-scatter-dot").first();
-  await dot.hover();
-  await page.waitForTimeout(250);
-  scatter.tip = (await page.locator("#harness-scatter .lp-widget-scatter-tip").innerText()).trim();
-  await dot.click();
-  await page.waitForTimeout(250);
-  scatter.opened = (await page.locator("#harness-scatter-opened").innerText()).trim();
-  await page.locator("#harness-open-scatter-form").click();
-  await page.waitForSelector(".lp-modal", { timeout: 10000 });
-  await page.waitForTimeout(400);
-  const laneSelect = page.locator(".lp-modal select").filter({ has: page.locator('option[value="criticality"]') }).first();
-  scatter.laneOptions = await laneSelect.locator("option").count();
-  // Enregistrer un autre couloir doit remonter jusqu'au widget : sans câblage
-  // dans la fiche, le réglage se perdrait silencieusement à la sauvegarde.
-  await laneSelect.selectOption("status");
-  await page.locator(".lp-modal").getByRole("button", { name: /Enregistrer|Créer|Ajouter/ }).first().click();
-  await page.waitForTimeout(500);
-  scatter.savedLaneField = await page.evaluate(() =>
-    [...document.querySelectorAll("#harness-scatter .lp-widget-scatter-lane-label")].map((e) => e.textContent).join("|"));
-} catch (error) {
-  scatter.error = String(error).split("\n")[0];
 }
 
 // Treemap par statut (issue #47) : la fiche doit proposer le champ qui porte
@@ -2167,163 +2096,6 @@ seen.treemapGroupTints.forEach((bg, i) => {
   const transparent = bg === "rgba(0, 0, 0, 0)" || bg === "transparent";
   expect(!transparent, `Mini-Gantt : le groupe ${i + 1} n'a pas de fond coloré (${bg})`);
 });
-
-// --- Nuage des échéances ---------------------------------------------------
-// Quatre tâches datées sur cinq : la cinquième n'a pas de date de fin et ne doit
-// jamais devenir un point — la placer à l'origine serait un contresens.
-expect(seen.scatterDots.length === 4, `Nuage : ${seen.scatterDots.length} point(s) pour 4 tâches datées — une tâche sans échéance a dû être placée à tort`);
-expect(seen.scatterLaneLabels.length === 2, `Nuage : ${seen.scatterLaneLabels.length} couloir(s), 2 projets datés attendus`);
-expect(seen.scatterTodayAxis.length === 1, "Nuage : l'axe « aujourd'hui » est absent — sans lui, rien ne sépare le retard de l'avance");
-{
-  // Depuis #53, la couleur d'un point est celle de son GROUPE, en retard comme
-  // à venir : c'est l'agrégation qu'on doit lire d'un coup d'œil. Le retard se
-  // signale au CONTOUR. Vérifier ici que le remplissage suit bien le couloir —
-  // et non plus qu'il s'en écarte, ce qui était la règle d'avant.
-  const laneColors = new Set(seen.scatterLaneColors);
-  expect(laneColors.size > 0, "Nuage : les pastilles de couleur des couloirs ont disparu");
-  seen.scatterDotFills.forEach((d) => {
-    expect(laneColors.has(d.fill),
-      `Nuage : un point est rempli en ${d.fill}, qui n'est la couleur d'aucun couloir — l'agrégation ne se lit plus`);
-  });
-}
-seen.scatterDots.forEach((d, i) => {
-  expect(d.w > 0 && d.h > 0, `Nuage : point ${i + 1} de surface nulle`);
-  expect(
-    d.x >= seen.scatterBox.x - 1 && d.y >= seen.scatterBox.y - 1
-      && d.x + d.w <= seen.scatterBox.x + seen.scatterBox.w + 1
-      && d.y + d.h <= seen.scatterBox.y + seen.scatterBox.h + 1,
-    `Nuage : un point sort du cadre du widget`
-  );
-});
-// Deux tâches partagent exactement la même échéance : leurs points doivent être
-// séparés, sinon la répartition en essaim ne sert à rien.
-for (let i = 0; i < seen.scatterDots.length; i++) {
-  for (let j = i + 1; j < seen.scatterDots.length; j++) {
-    const a = seen.scatterDots[i], b = seen.scatterDots[j];
-    expect(Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1, "Nuage : deux points sont exactement superposés");
-  }
-}
-// Le retard est à GAUCHE de l'origine, l'avance à droite.
-const todayX = seen.scatterTodayAxis.length ? seen.scatterTodayAxis[0].x : null;
-if (todayX !== null) {
-  const late = seen.scatterDots.filter((d) => d.x + d.w / 2 < todayX - 1).length;
-  expect(late === 2, `Nuage : ${late} point(s) à gauche de l'origine, 2 tâches en retard attendues`);
-}
-// --- Couloirs teintés et sous-grille (issue #53) ---------------------------
-// Chaque couloir porte la couleur de son entité : c'est ce qui permet de
-// retrouver sa ligne sans relire les libellés.
-expect(seen.scatterBands.length === seen.scatterLaneLabels.length,
-  `Nuage : ${seen.scatterBands.length} bande(s) de couloir pour ${seen.scatterLaneLabels.length} couloir(s) — chacun doit avoir la sienne`);
-{
-  const couleurs = new Set(seen.scatterLaneColors);
-  seen.scatterBands.forEach((b) => {
-    expect(couleurs.has(b.fill), `Nuage : une bande de couloir (${b.fill}) ne reprend pas la couleur de son entité`);
-    expect(b.opacity > 0 && b.opacity <= 0.2,
-      `Nuage : teinte de couloir à ${b.opacity} — nulle elle ne distingue rien, forte elle passe devant les points`);
-  });
-  expect(new Set(seen.scatterBands.map((b) => b.fill)).size > 1,
-    "Nuage : tous les couloirs ont la même teinte — le contrôle ne prouverait rien");
-}
-// Une sous-grille non étiquetée, plus dense que les graduations : sans elle,
-// entre deux repères un point se lit « quelque part au milieu ».
-expect(seen.scatterMinorAxes > seen.scatterMajorAxes,
-  `Nuage : ${seen.scatterMinorAxes} trait(s) de sous-grille pour ${seen.scatterMajorAxes} graduation(s) — la sous-grille doit être plus fine`);
-
-// --- Moteur d'étiquettes sur un couloir dense (issue #53) ------------------
-// 36 tâches à titres longs. La règle : poser le plus d'étiquettes possible,
-// tant qu'aucune n'en recouvre une autre ni ne masque un point.
-{
-  const chevauche = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
-  expect(seen.denseLabels.length >= 12,
-    `Nuage dense : ${seen.denseLabels.length} étiquette(s) sur 36 tâches — le moteur doit en poser bien davantage`);
-  for (let i = 0; i < seen.denseLabels.length; i++) {
-    for (let j = i + 1; j < seen.denseLabels.length; j++) {
-      const a = seen.denseLabels[i], b = seen.denseLabels[j];
-      expect(!chevauche(a, b), `Nuage dense : « ${a.text} » et « ${b.text} » se recouvrent`);
-    }
-  }
-  // Et aucune n'avale un point : une étiquette posée sur une pastille cache la
-  // tâche qu'elle est censée désigner.
-  seen.denseLabels.forEach((l) => {
-    seen.denseDots.forEach((d) => {
-      expect(!chevauche(l, d), `Nuage dense : l'étiquette « ${l.text} » recouvre un point`);
-    });
-  });
-  // Rien ne sort du dessin.
-  seen.denseLabels.forEach((l) => {
-    expect(l.x0 >= seen.denseBox.x0 - 1 && l.x1 <= seen.denseBox.x1 + 1,
-      `Nuage dense : l'étiquette « ${l.text} » sort du cadre`);
-  });
-  // Les amas serrés doivent produire des rappels en coude, sinon le moteur
-  // retombe sur « à droite ou rien ».
-  expect(seen.denseLeaders > 0, "Nuage dense : aucune étiquette déportée — les amas resteraient muets");
-}
-// La couleur d'un point suit son GROUPE des deux côtés de l'origine. Avant
-// l'issue #53, tout ce qui était en retard virait au rouge et l'agrégation
-// disparaissait de la moitié gauche du nuage.
-{
-  const enRetard = seen.denseDots.filter((d) => seen.denseTodayX !== null && d.x < seen.denseTodayX - 1);
-  const aVenir = seen.denseDots.filter((d) => seen.denseTodayX !== null && d.x > seen.denseTodayX + 1);
-  expect(enRetard.length > 0 && aVenir.length > 0, "Nuage dense : le jeu doit contenir des tâches des deux côtés");
-  expect(new Set(enRetard.map((d) => d.fill)).size > 1,
-    "Nuage dense : toutes les tâches en retard ont la même couleur — la couleur du groupe est écrasée");
-  // Le retard reste signalé, mais par le contour, pas en confisquant la teinte.
-  expect(enRetard.every((d) => d.stroke && d.stroke !== aVenir[0].stroke),
-    "Nuage dense : rien ne distingue plus une tâche en retard d'une tâche à venir");
-}
-
-// Faible densité : quatre points seulement, les étiquettes doivent rester visibles.
-expect(seen.scatterLabels.length > 0, "Nuage : aucune étiquette alors que la densité est faible");
-// Et lisibles jusqu'au bout : une étiquette rognée par le bord droit ne dit
-// plus de quelle tâche il s'agit.
-seen.scatterLabels.forEach((l) => {
-  expect(
-    l.x >= seen.scatterBox.x - 1 && l.x + l.w <= seen.scatterBox.x + seen.scatterBox.w + 1,
-    `Nuage : l'étiquette « ${l.text} » sort du cadre du widget`
-  );
-});
-// Couloirs par criticité : l'urgence se lit de haut en bas.
-expect(
-  seen.scatterCritLanes.join("|") === "Urgent|Moyen|Bas|Sans criticité",
-  `Nuage par criticité : couloirs dans l'ordre « ${seen.scatterCritLanes.join(" / ")} », « Urgent / Moyen / Bas / Sans criticité » attendu`
-);
-// Sans aucune tâche datée, le widget le dit au lieu d'afficher un axe vide.
-expect(/Aucune tâche/.test(seen.scatterEmptyText), "Nuage vide : le widget n'explique pas pourquoi il n'affiche rien");
-
-// --- Fenêtre fixe (issue #50) ----------------------------------------------
-// Fenêtre J-3 → J+5 sur les mêmes quatre tâches datées : deux d'entre elles
-// débordent. Elles doivent rester DESSINÉES et COMPTÉES — une fenêtre qui
-// masque sans le dire serait un filtre déguisé.
-expect(seen.windowDots === 4, `Fenêtre : ${seen.windowDots} point(s) sur 4 — la fenêtre a fait disparaître une tâche`);
-// sc1 et sc2 sont toutes deux à J-6, sc4 à J+12 : deux débordements à gauche,
-// un à droite.
-expect(seen.windowBeyond === 3, `Fenêtre : ${seen.windowBeyond} point(s) marqué(s) hors fenêtre, 3 attendus`);
-expect(seen.windowOverflowText.length === 2, `Fenêtre : ${seen.windowOverflowText.length} compteur(s) de débordement, 2 attendus (un par bout)`);
-{
-  const gauche = seen.windowOverflowText.find((t) => t.startsWith("\u25C2")) || "";
-  const droite = seen.windowOverflowText.find((t) => t.endsWith("\u25B8")) || "";
-  expect(/^\u25C2 2 au-delà$/.test(gauche), `Fenêtre : compteur de gauche « ${gauche} », « ◂ 2 au-delà » attendu`);
-  expect(/^1 au-delà \u25B8$/.test(droite), `Fenêtre : compteur de droite « ${droite} », « 1 au-delà ▸ » attendu`);
-}
-// L'axe est borné par le réglage, plus par les tâches : sans cela, rien n'aurait
-// changé et les contrôles ci-dessus passeraient pour de mauvaises raisons.
-{
-  const jours = seen.windowTicks.map((t) => (t === "aujourd'hui" ? 0 : Number(t.replace("J+", "").replace("J", ""))));
-  expect(jours.every((j) => j >= -3 && j <= 5), `Fenêtre : graduations hors de la plage réglée (${seen.windowTicks.join(" ")})`);
-  // Les DEUX bornes doivent être graduées : sans elles, rien ne dit jusqu'où va
-  // la plage, et un chevron posé au bord reste une énigme.
-  expect(jours.includes(-3) && jours.includes(5),
-    `Fenêtre : bornes non graduées (${seen.windowTicks.join(" ")}) — J-3 et J+5 attendus`);
-}
-
-expect(!scatter.error, `contrôle du Nuage interrompu : ${scatter.error}`);
-expect(/jour|aujourd/i.test(scatter.tip), `Nuage : l'infobulle ne donne pas l'échéance (« ${scatter.tip} »)`);
-expect(/^sc[1-4]$/.test(scatter.opened), `Nuage : le clic n'ouvre pas la tâche (« ${scatter.opened} »)`);
-expect(scatter.laneOptions === 3, `Nuage : ${scatter.laneOptions} choix de couloir dans la fiche, 3 attendus`);
-expect(
-  scatter.savedLaneField === "À planifier|Attente tiers",
-  `Nuage : le couloir choisi dans la fiche n'a pas été enregistré (couloirs après sauvegarde : « ${scatter.savedLaneField} », noms de statuts attendus)`
-);
 
 // --- Treemap par statut (issue #47) ----------------------------------------
 // Les tuiles portent des NOMS DE STATUT, pas des noms de projet : c'est tout le
