@@ -5920,7 +5920,13 @@ function WidgetMiniGantt({ widget, tasks, ctx, staffing, onOpen, onUpdateWidget,
      `dragStateRef` est une ref : elle est déjà posée quand ce survol arrive. */
   const openTip = (t, e) => {
     if (dragStateRef.current) return;
-    setHover({ t, x: e.clientX, y: e.clientY });
+    const x = e.clientX, y = e.clientY;
+    /* Même tâche, même point : on garde l'état tel quel (#298). En mode
+       bulles, un rendu recrée les formes sous le curseur ; le navigateur
+       renvoie alors un survol sur les nouvelles, qui rouvrait l'infobulle
+       avec un NOUVEL objet — donc un nouveau rendu, sans fin (plus de
+       800 mutations du DOM par seconde tant que la souris restait posée). */
+    setHover((prev) => (prev && prev.t === t && prev.x === x && prev.y === y ? prev : { t, x, y }));
   };
   /* Posé sur chaque poignée : referme l'infobulle, et empêche la ligne de la
      rouvrir aussitôt par son propre survol. */
@@ -10707,6 +10713,27 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
   // quasi nulle, et le second séparateur devenait alors impossible à ramener
   // (les deux poignées donnaient l'impression d'être liées, #286).
   const CALENDAR_MIN_WIDTH = 180;
+  /* Widget étroit (#298) : sous cette largeur, les trois volets côte à côte
+     laisseraient au calendrier moins que son plancher — à 420 px il tombait à
+     116 px, rognant les mois et le dimanche. On les empile alors (calendrier,
+     puis liste, puis description), sans poignée de redimensionnement. La
+     largeur est lue sur la boîte de bordure : l'apparition d'une barre de
+     défilement verticale ne la change pas, donc pas d'aller-retour. */
+  const STACK_BELOW_WIDTH = 640;
+  const [stacked, setStacked] = useState(false);
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setStacked(w < STACK_BELOW_WIDTH);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const startDescResize = (e) => {
     e.preventDefault();
     const startWidth = descPaneWidth != null ? descPaneWidth : (descPaneRef.current?.getBoundingClientRect().width || 280);
@@ -10836,7 +10863,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
   }, [dated, ctx.projects]);
 
   return (
-    <div className="lp-widget-heatmap-wrap" ref={wrapRef}>
+    <div className={"lp-widget-heatmap-wrap" + (stacked ? " is-stacked" : "")} ref={wrapRef}>
       <div className="lp-widget-heatmap">
         <div className="lp-widget-heatmap-head">
           <button className="lp-icon-btn" onClick={() => setMonthOffset((m) => m - 1)} title="Mois précédent"><ChevronRight size={13} style={{ transform: "rotate(180deg)" }} /></button>
@@ -10919,7 +10946,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
       {/* Panneau de liste : toujours apparent (même sans jour sélectionné, avec un
           message d'invite), pour que sa présence soit prévisible plutôt que de
           faire réapparaître/disparaître le calendrier à chaque clic. */}
-      <div className="lp-widget-heatmap-daylist" ref={daylistRef} style={listWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${listWidth}px` }}>
+      <div className="lp-widget-heatmap-daylist" ref={daylistRef} style={stacked ? undefined : listWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${listWidth}px` }}>
         <div className="lp-widget-heatmap-daylist-head">
           <span>{selectedDay ? fmtShort(selectedDay) : "Aucun jour sélectionné"}</span>
           {selectedDay && <button className="lp-icon-btn" onClick={() => setSelectedDay(null)}><X size={12} /></button>}
@@ -10962,7 +10989,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
             <div
               className="lp-widget-hmgrid-descpane"
               ref={descPaneRef}
-              style={descPaneWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${descPaneWidth}px` }}
+              style={stacked ? undefined : descPaneWidth == null ? { flex: "1 1 0" } : { flex: `0 0 ${descPaneWidth}px` }}
             >
               <div className="lp-widget-hmgrid-tasklist-head">
                 <span>{descTask ? descTask.title || "Sans titre" : "Aucune tâche choisie"}</span>

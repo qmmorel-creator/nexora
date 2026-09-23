@@ -187,7 +187,9 @@ const seen = await page.evaluate(() => {
       peint: getComputedStyle(el).borderLeftWidth, style: getComputedStyle(el).borderLeftStyle,
     })),
     cmpRows: rects("#harness-comparison-minigantt .lp-widget-minigantt-row"),
-    cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
+    // Le groupe du MODE seulement : #165 a ajouté, avec la même classe, le
+    // groupe « Référence comparée » (Dernière revue / Plan initial) (#298).
+    cmpModeButtons: [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-cmpmode[aria-label=\"Mode d'affichage du Mini-Gantt\"] button")].map((b) => ({ text: b.textContent.trim(), active: b.classList.contains("active") })),
     standardStrips: document.querySelectorAll("#harness-first-minigantt .lp-widget-minigantt-cmpstrip, #harness-second-minigantt .lp-widget-minigantt-cmpstrip, #harness-nofields-minigantt .lp-widget-minigantt-cmpstrip").length,
     standardRows: rects("#harness-second-minigantt .lp-widget-minigantt-row"),
     // Avancement à 100 % : la poignée devient une pastille de validation.
@@ -208,6 +210,15 @@ const seen = await page.evaluate(() => {
        On mesure leurs sommets — empilées en colonne, ils diffèrent. */
     toolbarTops: [...new Set([...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-toolbar > *")].map((el) => Math.round(el.getBoundingClientRect().top)))],
     toolbarCount: document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-toolbar > *").length,
+    // Bandes de la barre, à 2 px près : un menu déroulant se pose 1 px plus
+    // bas qu'un groupe de boutons sans pour autant ouvrir une nouvelle bande.
+    ...(() => {
+      const kids = [...document.querySelectorAll("#harness-comparison-minigantt .lp-widget-minigantt-toolbar > *")];
+      const tops = kids.map((el) => Math.round(el.getBoundingClientRect().top)).sort((a, b) => a - b);
+      const bands = [];
+      tops.forEach((t) => { if (!bands.length || t - bands[bands.length - 1].top > 2) bands.push({ top: t, n: 1 }); else bands[bands.length - 1].n += 1; });
+      return { toolbarRows: bands.length, toolbarFirstRow: bands.length ? bands[0].n : 0 };
+    })(),
     toolbarAboveAxis: (() => {
       const bar = document.querySelector("#harness-comparison-minigantt .lp-widget-minigantt-toolbar");
       const axe = document.querySelector("#harness-comparison-minigantt .lp-widget-minigantt-axis");
@@ -597,61 +608,6 @@ try {
   drag.error = String(error).split("\n")[0];
 }
 
-/* Rail des vues (issue #65). Les grandes cartes rectangulaires doivent être
-   redevenues des bulles, alignées sur la ligne centrale et de hauteur
-   régulière — ce qui ne se lit que sur un rendu. */
-const rail = {};
-try {
-  await page.locator("#harness-view-rail").scrollIntoViewIfNeeded();
-  await page.waitForTimeout(250);
-  Object.assign(rail, await page.evaluate(() => {
-    const nav = document.querySelector("#harness-view-rail");
-    const btns = [...nav.querySelectorAll(".lp-view-rail-btn")];
-    const rects = btns.map((b) => b.getBoundingClientRect());
-    const cs = btns.map((b) => getComputedStyle(b));
-    const ligne = getComputedStyle(nav, "::before");
-    const badges = [...nav.querySelectorAll(".lp-view-rail-btn-count")];
-    const roundel = nav.querySelector(".lp-view-rail-folder");
-    const rRoundel = roundel ? roundel.getBoundingClientRect() : null;
-    const centre = (r) => Math.round(r.left + r.width / 2);
-    const ecarts = [];
-    for (let i = 1; i < rects.length; i++) ecarts.push(Math.round(rects[i].top - rects[i - 1].bottom));
-    return {
-      nb: btns.length,
-      // Rondes : autant de haut que de large, et un rayon en pourcentage.
-      rondes: rects.every((r) => Math.abs(r.width - r.height) <= 1) && cs.every((c) => c.borderRadius === "50%"),
-      hauteurs: [...new Set(rects.map((r) => Math.round(r.height)))],
-      // Aucune bulle ne doit provoquer de rupture de hauteur.
-      hauteurMax: Math.max(...rects.map((r) => Math.round(r.height))),
-      // Espacement régulier entre toutes les bulles.
-      ecarts: [...new Set(ecarts)],
-      // Toutes centrées sur la même verticale, roundels de dossier compris.
-      centres: [...new Set(rects.map(centre).concat(rRoundel ? [centre(rRoundel)] : []))],
-      ligneVisible: ligne.display !== "none" && parseFloat(ligne.width) > 0,
-      // Le libellé reste dans le DOM (lecteurs d'écran) mais ne prend pas de place.
-      libelleInvisible: [...nav.querySelectorAll(".lp-view-rail-label")].every((l) => l.getBoundingClientRect().width <= 2),
-      libelleDansLeDom: nav.querySelector(".lp-view-rail-label")?.textContent.trim() || "",
-      // Un badge par bulle qui en a un — jamais sur celle qui n'en a pas.
-      nbBadges: badges.length,
-      badgesLargeurs: badges.map((b) => Math.round(b.getBoundingClientRect().width)),
-      /* Lisibilité réelle : le texte du badge tient-il dans le badge ? Comparer
-         des largeurs entre elles ne conclut rien — un compteur court se loge
-         déjà dans la largeur plancher, et seul le débordement ment. */
-      badgesTronques: badges.filter((b) => b.scrollWidth > b.clientWidth + 1).length,
-      // Le badge se pose sur le bord inférieur droit, sans s'éloigner de la bulle.
-      badgeAncre: badges.every((b) => {
-        const rb = b.getBoundingClientRect();
-        const bulle = b.closest(".lp-view-rail-btn").getBoundingClientRect();
-        /* Ancré au coin inférieur droit, et pas plus large que sa bulle : un
-           compteur qui déborderait des deux côtés cesserait d'être un badge. */
-        return rb.right > bulle.right - 2 && rb.bottom > bulle.bottom - 2 && rb.width < bulle.width;
-      }),
-    };
-  }));
-} catch (error) {
-  rail.error = String(error).split("\n")[0];
-}
-
 /* Heat map mensuelle (issue #68). Le reflow est du CSS pur : il ne se vérifie
    que sur un rendu, à deux largeurs. */
 const mois = { large: null, etroit: null, passe: null };
@@ -1038,14 +994,26 @@ try {
 // présente, cochée pour cette tâche, et son habillage réglable au même endroit.
 const taskMeta = { checkbox: 0, checked: false, controls: 0, hints: [], riskButton: 0, riskRows: 0, riskSeverities: 0 };
 const taskComparison = { checkbox: 0, checkedAtOpen: null, fieldsAtOpen: -1, fieldsAfterCheck: -1, errors: [], start: "", end: "", errorsAfterCopy: -1, fieldsAfterUncheck: -1, startAfterRecheck: "" };
+/* La fiche de tâche est répartie en onglets (Général, Planning, Historique) :
+   le méta bloc, la comparaison et les risques vivent dans « Planning », la
+   rangée Projet/Statut/Type/Criticité, la description et le titre dans
+   « Général ». Chaque contrôle ouvre d'abord l'onglet qui porte ce qu'il
+   vérifie (#298). */
+const ongletFiche = async (nom) => {
+  await page.locator(".lp-modal .lp-task-tab-btn", { hasText: nom }).click();
+  await page.waitForTimeout(250);
+};
 try {
   await page.locator("#harness-open-task-modal").click();
+  await page.waitForSelector(".lp-modal .lp-task-tabs", { timeout: 10000 });
+  await ongletFiche("Planning");
   await page.waitForSelector(".lp-modal #task-meta-block", { timeout: 10000 });
   const box = page.locator(".lp-modal #task-meta-block");
   taskMeta.checkbox = await box.count();
   taskMeta.checked = await box.isChecked();
   taskMeta.controls = await page.locator(".lp-modal .lp-density-btn", { hasText: /Phase|Fenêtre de décision|Pointillés|Continue/ }).count();
   taskMeta.hints = (await page.locator(".lp-modal .lp-gantt-annot-hint").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+  await ongletFiche("Général");
   /* Criticité (issue #69) : sur la même ligne que Projet, Statut et Type, et
      porteuse d'une pastille. Les deux se vérifient au rendu et nulle part
      ailleurs — un champ déplacé dans le JSX peut très bien retomber à la ligne
@@ -1128,6 +1096,7 @@ try {
   taskMeta.mdRoundTrip = await page.locator(".lp-modal textarea").first().inputValue();
   taskMeta.mdSource = TABLEAU_MD;
 
+  await ongletFiche("Planning");
   /* Mode comparaison de la tâche. Rien de ce qui suit ne se voit d'un test
      unitaire : les fonctions pures savent valider et copier, c'est la FICHE qui
      décide d'afficher les champs, l'erreur, et de refuser l'enregistrement. */
@@ -1181,6 +1150,8 @@ try {
 const creation = { checked: null, start: "", end: "", startApresDate: "", endApresDate: "", startApresSaisie: "", enregistre: null };
 try {
   await page.locator("#harness-open-task-create").click();
+  await page.waitForSelector(".lp-modal .lp-task-tabs", { timeout: 10000 });
+  await ongletFiche("Planning");
   await page.waitForSelector(".lp-modal #task-comparison", { timeout: 10000 });
   creation.checked = await page.locator(".lp-modal #task-comparison").isChecked();
   creation.start = await page.locator(".lp-modal #task-comparison-start").inputValue();
@@ -1202,6 +1173,7 @@ try {
   await page.waitForTimeout(350);
   creation.startApresSaisie = await page.locator(".lp-modal #task-comparison-start").inputValue();
   // Enregistrer fige ce qui est à l'écran.
+  await ongletFiche("Général");
   await page.locator('.lp-modal input[placeholder="Ex. Revue DOE"]').fill("Tâche de banc");
   await page.locator(".lp-modal").getByRole("button", { name: "Enregistrer" }).click();
   await page.waitForTimeout(400);
@@ -1805,8 +1777,12 @@ expect(seen.ordreParTitre.join("|") !== seen.ordreTitres.join("|"),
 // --- Barre d'outils --------------------------------------------------------
 // Toutes les commandes d'affichage sur une seule bande, au-dessus de l'axe.
 expect(seen.toolbarCount >= 4, `Barre d'outils : ${seen.toolbarCount} commande(s), au moins 4 attendues (mode, tri, étendue, zoom)`);
-expect(Math.max(...seen.toolbarTops) - Math.min(...seen.toolbarTops) <= 2,
-  `Barre d'outils : les commandes sont empilées au lieu d'être côte à côte (sommets à ${seen.toolbarTops.join("/")} px)`);
+// La barre se replie (flex-wrap) : depuis le sélecteur de référence (#165),
+// les annotations passent à la ligne dans un widget de 700 px. Ce qui reste
+// interdit, c'est l'empilement en COLONNE : deux bandes au plus, et la
+// première porte l'essentiel des commandes (#298).
+expect(seen.toolbarRows <= 2 && seen.toolbarFirstRow >= 4,
+  `Barre d'outils : les commandes sont empilées au lieu d'être côte à côte (${seen.toolbarRows} bande(s), sommets à ${seen.toolbarTops.join("/")} px, ${seen.toolbarFirstRow} sur la première)`);
 expect(seen.toolbarAboveAxis !== null && seen.toolbarAboveAxis >= 0, `Barre d'outils : elle n'est pas au-dessus de l'axe (${seen.toolbarAboveAxis} px)`);
 
 // --- Sous-grille verticale -------------------------------------------------
@@ -2195,7 +2171,8 @@ seen.heatCells.forEach((c) => {
 });
 expect(!heatmap.error, `contrôle de la Heat map interrompu : ${heatmap.error}`);
 expect(/×/.test(heatmap.tip), `Heat map : l'infobulle ne nomme pas le croisement (« ${heatmap.tip} »)`);
-expect(heatmap.axisOptions === 6, `Heat map : ${heatmap.axisOptions} champ(s) d'axe dans la fiche, 6 attendus`);
+// Sept axes depuis l'ajout de « Équipe » (catalogue Équipes, #159).
+expect(heatmap.axisOptions === 7, `Heat map : ${heatmap.axisOptions} champ(s) d'axe dans la fiche, 7 attendus`);
 expect(heatmap.metricOptions === 4, `Heat map : ${heatmap.metricOptions} mesure(s) dans la fiche, 4 attendues`);
 expect(/Urgent|Moyen|Bas|criticité/i.test(heatmap.savedCols),
   `Heat map : l'axe des colonnes choisi dans la fiche n'a pas été enregistré (colonnes : « ${heatmap.savedCols} »)`);
@@ -2210,26 +2187,20 @@ expect(!drag.error, `contrôle du glisser d'avancement interrompu : ${drag.error
 expect(drag.after !== drag.before, "Mini-Gantt : la poignée d'avancement n'a pas bougé pendant le glisser");
 expect(drag.gap !== null && drag.gap <= 6, `Mini-Gantt : la poignée d'avancement s'arrête à ${drag.gap} px du pointeur — elle doit le suivre`);
 
-expect(!rail.error, `contrôle du rail des vues interrompu : ${rail.error}`);
-expect(rail.nb === 4, `Rail : ${rail.nb} bulles rendues, 4 attendues`);
-expect(rail.rondes, "Rail : les entrées ne sont pas des bulles rondes — les grandes cartes rectangulaires sont toujours là");
-expect((rail.hauteurs || []).length === 1, `Rail : ${(rail.hauteurs || []).length} hauteurs différentes (${(rail.hauteurs || []).join(", ")} px) — aucune bulle ne doit rompre la hauteur`);
-expect(rail.hauteurMax <= 44, `Rail : la plus haute bulle fait ${rail.hauteurMax} px — c'est encore une carte, pas une bulle`);
-expect((rail.ecarts || []).length === 1, `Rail : l'espacement vertical varie (${(rail.ecarts || []).join(", ")} px) — il doit être régulier`);
-expect((rail.centres || []).length === 1, `Rail : ${(rail.centres || []).length} axes verticaux différents — bulles et roundels doivent partager la ligne centrale`);
-expect(rail.ligneVisible, "Rail : la ligne verticale centrale a disparu");
-expect(rail.libelleInvisible, "Rail : le libellé occupe encore de la place — c'est lui qui faisait les grandes cartes");
-expect(rail.libelleDansLeDom.length > 0, "Rail : le libellé a quitté le DOM — le bouton n'aurait plus de nom accessible");
-expect(rail.nbBadges === 3, `Rail : ${rail.nbBadges} badge(s), 3 attendus — celle sans compteur ne doit pas en porter`);
-// Un, deux et trois chiffres doivent tous tenir sans être rognés.
-expect(rail.badgesTronques === 0,
-  `Rail : ${rail.badgesTronques} badge(s) tronqué(s) — un compteur à trois chiffres doit rester lisible (largeurs : ${(rail.badgesLargeurs || []).join(", ")} px)`);
-expect(rail.badgeAncre, "Rail : un badge n'est pas posé sur le bord inférieur droit de sa bulle");
+// Rail des vues (#65) : contrôles retirés avec le rail lui-même (#259,
+// suppression du bandeau latéral) — le banc montait encore son balisage sans
+// plus aucune feuille de style derrière (#298).
 
 expect(!mois.error, `contrôle de la heat map mensuelle interrompu : ${mois.error}`);
 expect(mois.large && mois.large.blocs === 3, `Heat map mensuelle : ${mois.large && mois.large.blocs} mois rendus, 3 attendus`);
-expect(mois.large && mois.large.lignes === 1, `Heat map mensuelle large : les mois occupent ${mois.large && mois.large.lignes} ligne(s), 1 attendue`);
-expect(mois.etroit && mois.etroit.lignes === 3, `Heat map mensuelle étroite : les mois occupent ${mois.etroit && mois.etroit.lignes} ligne(s), 3 attendues — ils doivent passer les uns sous les autres`);
+// Depuis #286, le widget est découpé en trois volets (calendrier | liste |
+// détail) : même large, le calendrier n'a plus qu'un volet, et ses mois
+// peuvent légitimement passer sur deux lignes. Ce qui compte : ils tiennent
+// dans ce volet (débordement et défilement contrôlés plus bas).
+expect(mois.large && mois.large.lignes >= 1 && mois.large.lignes <= 2, `Heat map mensuelle large : les mois occupent ${mois.large && mois.large.lignes} ligne(s), 1 ou 2 attendues`);
+// Étroit, les volets s'empilent (#298) : le calendrier retrouve toute la
+// largeur du widget et range deux mois par ligne, ou un seul.
+expect(mois.etroit && mois.etroit.lignes >= 2, `Heat map mensuelle étroite : les mois occupent ${mois.etroit && mois.etroit.lignes} ligne(s), au moins 2 attendues — ils doivent passer les uns sous les autres`);
 for (const [nom, m] of [["large", mois.large], ["étroite", mois.etroit]]) {
   expect(m && m.debordent === 0, `Heat map mensuelle ${nom} : ${m && m.debordent} mois débordent du cadre`);
   expect(m && m.defileH <= 0, `Heat map mensuelle ${nom} : ${m && m.defileH} px de défilement horizontal — il ne doit plus y en avoir`);
