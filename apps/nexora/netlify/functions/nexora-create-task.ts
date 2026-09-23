@@ -1,6 +1,6 @@
 import type { Config } from "@netlify/functions";
 import { appendTaskIdempotently, isAuthorized, json, KEYS, parisDate, parseArray, parseGoogleDriveAttachments, readLogicalDocument, requireConfig } from "./_shared/nexora.js";
-import { resolveTaskTimes, taskTimesProvided } from "../../lib/task-times.mjs";
+import { isZeroDurationTask, resolveTaskTimes, taskTimesProvided } from "../../lib/task-times.mjs";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INFORMATION_MILESTONE_ICON = "https://cdn.pixabay.com/photo/2016/06/15/15/02/info-1459077_1280.png";
@@ -125,7 +125,9 @@ export default async (req: Request) => {
       secondaryProjectId: null,
       statusId: status.id,
       taskTypeId: taskType.id,
-      milestone: isGmailInformation ? true : Boolean(body.milestone ?? (due && start === end)),
+      // #338 : même jour de début/fin ne suffit pas — des horaires distincts
+      // (ex. 09:00 → 11:30) décrivent une vraie durée, pas un jalon.
+      milestone: isGmailInformation ? true : Boolean(body.milestone ?? (due && isZeroDurationTask({ start, end, startTime: times.startTime, endTime: times.endTime }))),
       milestoneIcon: isGmailInformation ? INFORMATION_MILESTONE_ICON : null,
       start: start || "",
       end: end || "",

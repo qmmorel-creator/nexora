@@ -109,3 +109,34 @@ test("sélecteur de date : une saisie vide ou invalide ne casse pas le widget (r
   widget = setDate(widget, "");
   assert.equal(widget.focusDayDate, today);
 });
+
+/* Retour de test (Ref #333, réouverte) : le mode `compact` de
+   CalendarDayTimeline — ajouté pour la mini-grille du widget Calendrier —
+   supprime les hachures des heures creuses et la ligne statut/échéance sous
+   le titre de chaque tâche. Focus Journée n'a pas de grille semaine/mois à
+   alléger, donc rien ne justifie qu'il perde ce détail visuel : il doit
+   appeler CalendarDayTimeline SANS `compact`, pour un rendu identique à celui
+   du Calendrier plein écran (CalendarView, non compact) sur le même jour. */
+test("Focus Journée appelle CalendarDayTimeline sans `compact` (même esthétique que le Calendrier plein écran)", () => {
+  assert.match(
+    html,
+    /<CalendarDayTimeline dateIso=\{dateIso\} tasks=\{tasks\} ctx=\{ctx\} onOpen=\{onOpen\} fit \/>/,
+    "WidgetFocusDay doit réutiliser CalendarDayTimeline sans compact (hachures et ligne statut/échéance à conserver)"
+  );
+  assert.doesNotMatch(
+    html,
+    /<CalendarDayTimeline dateIso=\{dateIso\} tasks=\{tasks\} ctx=\{ctx\} onOpen=\{onOpen\} compact \/>/,
+    "le mode compact de CalendarDayTimeline ne doit plus être utilisé par Focus Journée"
+  );
+});
+
+/* Retour de test (Ref #333) : un widget Focus Journée bas ne doit jamais
+   cumuler un défilement vertical du corps du widget ET un défilement
+   horizontal de la frise — une seule barre de défilement à la fois, comme
+   pour le Treemap (#332). `.lp-cal-day-fit` fait de `.lp-cal-track-scroll`
+   l'unique conteneur qui défile (dans les deux sens si besoin) à la place du
+   corps du widget. */
+test("le mode `fit` de CalendarDayTimeline fait de la frise l'unique conteneur qui défile (pas de double défilement)", () => {
+  assert.match(html, /\.lp-cal-day-fit\{ height:100%; \}/);
+  assert.match(html, /\.lp-cal-day-fit \.lp-cal-track-scroll\{ flex:1 1 auto; min-height:0; overflow:auto; \}/);
+});

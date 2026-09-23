@@ -2904,6 +2904,14 @@ function GlobalStyles() {
            place en dernier recours plutôt que le pied. Les titres entiers
            (#122, .is-title-full) gardent leur règle : leur hauteur est mesurée. */
         .lp-bubble.has-desc .lp-bubble-title{ -webkit-line-clamp:1; }
+        /* Bulle trop étroite pour deux lignes (#324) : sous BUBBLE_MIN_PX, le
+           premier mot du titre ne tient déjà pas sur une ligne, et le clamp à
+           deux lignes le coupait EN PLEIN MILIEU ("Réunio" / "n…") — un
+           fragment qui se lit comme un mot inventé, pas comme une troncature.
+           Une seule ligne d'ellipsis reste un mot reconnaissable, coupé au bon
+           endroit ; la classe is-narrow est posée par le rendu (JS), qui seul
+           connaît la largeur réelle en pixels de la bulle. */
+        .lp-bubble.is-narrow .lp-bubble-title{ -webkit-line-clamp:1; }
         .lp-bubble.has-desc .lp-bubble-desc{ flex:0 1 auto; min-height:0; }
         /* Coupée au nombre de lignes choisi, avec ellipsis sur la dernière :
            une phrase tronquée sans marque se lit comme une phrase complète. */
@@ -4406,6 +4414,18 @@ function GlobalStyles() {
         .lp-cal-panel{ --cal-panel-bg:#eef3fb; --cal-panel-edge:#a9bfe6; border-top:2px solid var(--cal-panel-edge); border-bottom:2px solid var(--cal-panel-edge); background:var(--cal-panel-bg); box-shadow:inset 0 8px 12px -10px rgba(24,38,61,.28), inset 0 -8px 12px -10px rgba(24,38,61,.22); }
         .lp-cal-day{ position:relative; display:flex; flex-direction:column; gap:12px; padding:16px 20px; }
         .lp-cal-day-compact{ gap:6px; padding:10px 8px; }
+        /* Focus Journée (#333) : la frise occupe TOUT le cadre mesuré du widget
+           (comme le Treemap, #332) au lieu de laisser le corps du widget
+           grandir puis défiler verticalement PAR-DESSUS le défilement
+           horizontal déjà porté par `.lp-cal-track-scroll` — deux barres de
+           défilement en même temps, retour de test. `.lp-cal-track-scroll`
+           devient ici le seul et unique conteneur qui défile, dans les deux
+           sens à la fois si besoin ; le corps du widget (`.lp-widget-body`)
+           n'a alors plus jamais à défiler, sa propre barre reste un filet de
+           sécurité inutilisé en pratique. */
+        .lp-cal-day-fit{ height:100%; }
+        .lp-cal-day-fit .lp-cal-track-scroll{ flex:1 1 auto; min-height:0; overflow:auto; }
+        .lp-cal-day-fit .lp-cal-empty{ flex:1 1 auto; }
         .lp-cal-caret{ position:absolute; top:-9px; width:14px; height:14px; background:var(--cal-panel-bg,#eef3fb); border-left:2px solid var(--cal-panel-edge,#a9bfe6); border-top:2px solid var(--cal-panel-edge,#a9bfe6); transform:rotate(45deg); box-sizing:border-box; }
         .lp-cal-day-head{ display:flex; align-items:center; gap:10px; }
         .lp-cal-day-titles{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:3px; }
@@ -8665,7 +8685,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       const next = prev.map((t) => {
         if (!isGoogleCalendarProjectId(t.projectId, projects)) return t;
         const computed = googleCalendarComputedStatusId(t, projects, statuses, gcalLifecycleToday);
-        const computedType = (t.start && t.end && t.start === t.end) ? "milestone" : "activity";
+        const computedType = isZeroDurationTask(t) ? "milestone" : "activity";
         const typeChanged = getTaskType(t) !== computedType || !!t.milestone !== (computedType === "milestone");
         const statusChanged = computed && computed !== t.statusId;
         if (!typeChanged && !statusChanged) return t;
@@ -9542,7 +9562,7 @@ export default function LePlan({ currentUser, onSignOut }) {
             title: ev.summary || "(Sans titre)",
             start: startDay,
             end: endDay,
-            milestone: startDay === endDay,
+            milestone: isZeroDurationTask({ start: startDay, end: endDay }),
             desc: ev.description || "",
             googleEventId: ev.id,
             gcalImported: true,

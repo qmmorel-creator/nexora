@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { parseTaskTimeInput, resolveTaskTimes, taskTimesProvided } from "../lib/task-times.mjs";
+import { isZeroDurationTask, parseTaskTimeInput, resolveTaskTimes, taskTimesProvided } from "../lib/task-times.mjs";
 
 const day = { start: "2026-09-24", end: "2026-09-24" };
 const read = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
@@ -36,6 +36,23 @@ test("taskTimesProvided : une clé présente, même vide, signifie « toucher au
   assert.equal(taskTimesProvided({ startTime: "" }), true);
   assert.equal(taskTimesProvided({ endTime: null }), true);
   assert.equal(taskTimesProvided({ title: "x" }), false);
+});
+
+test("isZeroDurationTask : un jalon est une durée nulle, pas juste « même jour » (#338)", () => {
+  // Même jour, pas d'horaires -> jalon.
+  assert.equal(isZeroDurationTask({ ...day }), true);
+  // Même jour, horaires de début/fin identiques -> toujours un jalon.
+  assert.equal(isZeroDurationTask({ ...day, startTime: "09:00", endTime: "09:00" }), true);
+  // Même jour, horaires distincts -> vraie durée, plus un jalon.
+  assert.equal(isZeroDurationTask({ ...day, startTime: "09:00", endTime: "11:30" }), false);
+  // Multi-jours -> jamais un jalon, quels que soient les horaires.
+  assert.equal(isZeroDurationTask({ start: "2026-09-24", end: "2026-09-26" }), false);
+  assert.equal(
+    isZeroDurationTask({ start: "2026-09-24", end: "2026-09-26", startTime: "09:00", endTime: "09:00" }),
+    false
+  );
+  // Dates manquantes -> pas un jalon.
+  assert.equal(isZeroDurationTask({ start: "", end: "" }), false);
 });
 
 test("création et modification branchées sur la logique partagée", async () => {

@@ -7,3 +7,9 @@ export function resolveTaskTimes(input: {
   endTime?: unknown;
 }): { startTime: string; endTime: string };
 export function taskTimesProvided(input: unknown): boolean;
+export function isZeroDurationTask(input: {
+  start?: string | null;
+  end?: string | null;
+  startTime?: unknown;
+  endTime?: unknown;
+}): boolean;

@@ -50,3 +50,16 @@ export function resolveTaskTimes({ start, end, startTime, endTime }) {
 export function taskTimesProvided(input) {
   return !!input && typeof input === "object" && ("startTime" in input || "endTime" in input);
 }
+
+// Une tâche est un jalon (durée nulle) quand son jour de début et de fin sont
+// identiques ET qu'aucun horaire distinct ne l'étale dans la journée (#338) :
+// pas d'horaires renseignés du tout, ou horaires de début/fin identiques.
+// Deux horaires différents le même jour civil (ex. 09:00 → 11:30) décrivent
+// une vraie durée : ce n'est pas un jalon, même si `start === end`.
+export function isZeroDurationTask({ start, end, startTime, endTime } = {}) {
+  if (!start || !end || start !== end) return false;
+  const s = present(startTime) ? String(startTime).trim() : "";
+  const e = present(endTime) ? String(endTime).trim() : "";
+  if (!s && !e) return true;
+  return s === e;
+}
