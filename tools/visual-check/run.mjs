@@ -1492,6 +1492,24 @@ try {
   orgMetro.hoverOccurrence = await page.locator(`${host} .lp-orgmetro-occurrence`).count();
   await page.mouse.move(5, 5);
   await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro.png") });
+  // Variante ★ : responsables inscrits dans le bandeau de leur équipe.
+  const leadStations0 = await page.locator(`${host} .lp-orgmetro-station`).count();
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Responsables dans le bandeau"]`).click();
+  await page.waitForTimeout(200);
+  orgMetro.leadBadgeSubs = await page.locator(`${host} .lp-orgmetro-badge-sub`).count();
+  orgMetro.leadBadgeStationsGone = leadStations0 - await page.locator(`${host} .lp-orgmetro-station`).count();
+  orgMetro.leadBadgeOverlaps = await page.evaluate((sel) => {
+    const els = [...document.querySelectorAll(`${sel} .lp-orgmetro-badge-bg, ${sel} .lp-orgmetro-label`)].map((e) => e.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < els.length; i++) for (let j = i + 1; j < els.length; j++) {
+      const a = els[i], b = els[j];
+      if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) n++;
+    }
+    return n;
+  }, host);
+  await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro-lead-badge.png") });
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Responsables dans le bandeau"]`).click();
+  await page.waitForTimeout(200);
   // Clic sur une station → fiche utilisateur existante.
   await page.locator(`${host} .lp-orgmetro-station[aria-label^="Emma Roux"]`).first().click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
@@ -2645,6 +2663,8 @@ if (!orgMetro.error) {
   expect(orgMetro.secondary.length === 2 && orgMetro.secondary.some((c) => /226, 166, 59|e2a63b/i.test(c)) && orgMetro.secondary.some((c) => /44, 107, 224|2c6be0/i.test(c)), `Organigramme Métro : parent secondaire (Exploration → Données) et rattachement de Laboratoire à Sacha Morin (Applications) ${JSON.stringify(orgMetro.secondary)}, deux traits pleins attendus, couleurs Exploration et Applications`);
   expect(orgMetro.secondaryWhenHidden === 2, "Organigramme Métro : le parent secondaire disparaît quand on masque les correspondances");
   expect(orgMetro.occurrenceTarget && orgMetro.occurrenceTarget.nearApps, `Organigramme Métro : la relation « Astreinte » ne vise pas l'occurrence de Sacha Morin dans Applications (${JSON.stringify(orgMetro.occurrenceTarget)})`);
+  expect(orgMetro.leadBadgeSubs > 0 && orgMetro.leadBadgeStationsGone === orgMetro.leadBadgeSubs, `Organigramme Métro, variante ★ : ${orgMetro.leadBadgeSubs} responsables dans les bandeaux, ${orgMetro.leadBadgeStationsGone} stations retirées`);
+  expect(orgMetro.leadBadgeOverlaps === 0, `Organigramme Métro, variante ★ : ${orgMetro.leadBadgeOverlaps} chevauchements bandeau/libellé`);
   expect(orgMetro.cursors && orgMetro.cursors.every((c) => c === "move"), `Organigramme Métro : curseur des éléments déplaçables ${JSON.stringify(orgMetro.cursors)}, « move » attendu`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
   // Responsables : toujours la première station de leur ligne — Nora Vidal

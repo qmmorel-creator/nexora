@@ -8912,6 +8912,10 @@ function buildOrgMetroGraph(roots, teams, opts) {
   // Sous-équipes placées au-dessus du bandeau, par équipe empilée.
   const stackSplit = opts && opts.stackSplit && typeof opts.stackSplit === "object" ? opts.stackSplit : {};
   const rootLabel = (opts && opts.rootLabel) || "Organisation";
+  // Variante « responsable dans le bandeau » (bouton ★ du plan) : le
+  // responsable n'a plus de station en tête de ligne, son nom (et son titre)
+  // s'inscrit sous le nom de l'équipe, dans le bandeau.
+  const leadInBadge = Boolean(opts && opts.leadInBadge);
   // Équipes au rattachement transverse (#219) dont le partenaire est visible :
   // elles restent des lignes indépendantes, jamais raccordées à la Direction.
   const transverseIds = new Set(transverseTeamLinks(teams).map((l) => l.fromId));
@@ -9010,6 +9014,11 @@ function buildOrgMetroGraph(roots, teams, opts) {
       stations[0].role = node.team.leadTitle;
       stations[0].roleIsFallback = false;
     }
+    let badgeLead = null;
+    if (leadInBadge && stations[0] && stations[0].kind === "lead") {
+      const st = stations.shift();
+      badgeLead = { name: st.name, role: st.roleIsFallback ? "" : st.role || "", counted: !st.leadRef };
+    }
     const branch = {
       key, kind: "team", depth, color, team: node.team || null, memberName: null,
       independent, transverse: Boolean(node.team && transverseIds.has(node.team.id)),
@@ -9018,7 +9027,8 @@ function buildOrgMetroGraph(roots, teams, opts) {
       // (responsable rattaché ailleurs, ou hors de l'annuaire), le bandeau
       // le nomme : on voit toujours qui dirige la ligne.
       leadName: node.team ? node.team.leadName : "",
-      leadOnLine: Boolean(node.team && node.team.leadName),
+      leadOnLine: Boolean(node.team && node.team.leadName) && !badgeLead,
+      badgeLead,
       header: null,
       stations,
       sides,
@@ -9062,7 +9072,7 @@ function orgMetroPersonCount(branch) {
   // Ligne repliée : son effectif complet, mémorisé avant le repli (le
   // compteur des lignes parentes ne baisse jamais quand on replie).
   if (branch.collapsed && Number.isFinite(branch.personCount)) return branch.personCount;
-  let n = branch.stations.filter((st) => !st.leadRef).length;
+  let n = branch.stations.filter((st) => !st.leadRef).length + (branch.badgeLead && branch.badgeLead.counted ? 1 : 0);
   (branch.sides || []).forEach((sd) => { n += orgMetroPersonCount(sd.branch); });
   branch.children.forEach((c) => { n += orgMetroPersonCount(c); });
   return n;
@@ -9137,9 +9147,10 @@ function orgMetroMeasureBadge(branch) {
   const count = branch.kind === "team" ? String(branch.personCount || 0) : "";
   // Pastille du compteur : un rond pour un chiffre, une gélule au-delà.
   const countW = count ? Math.max(ORGMETRO_COUNT_H, count.length * ORGMETRO_COUNT_CHAR_W + 8) : 0;
-  // Le responsable a toujours sa station sous le bandeau : plus de rappel
-  // dans le bandeau lui-même.
-  const subtitle = "";
+  // Le responsable a sa station sous le bandeau, sauf dans la variante
+  // « responsable dans le bandeau » : « ★ Nom · Titre » sous le nom.
+  const bl = branch.badgeLead;
+  const subtitle = bl ? bl.name + (bl.role ? " · " + bl.role : "") : "";
   const subW = subtitle ? ORGMETRO_STAR_W + subtitle.length * ORGMETRO_BADGE_SUB_CHAR_W : 0;
   const w = Math.ceil(Math.max(textW, subW) + spec.padX * 2 + (countW ? countW + 8 : 0));
   const h = spec.h + Math.max(0, lines.length - 1) * spec.lineH + (subtitle ? ORGMETRO_BADGE_SUB_H : 0);
@@ -9432,6 +9443,7 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
     key: b.key, kind: b.kind, depth: b.depth, color: b.color, lineW: m.lineW,
     teamId: b.team ? b.team.id : null, team: b.team, memberName: b.memberName,
     leadName: b.leadName || "", leadOnLine: Boolean(b.leadOnLine), collapsed: Boolean(b.collapsed),
+    badgeLead: b.badgeLead || null,
     independent: b.independent, transverse: b.transverse, ancestors,
     personParent: b.personParent || null,
     x, y,
@@ -9611,7 +9623,17 @@ function orgMetroPersonAnchor(layout, name, at) {
     const teamAnc = b ? [...b.ancestors].reverse().find((k) => k.startsWith("team:")) : null;
     return teamAnc === "team:" + at ? 1 : 0;
   };
-  const st = (at && [...all].sort((x, y) => inTeam(y) - inTeam(x)).find((s) => inTeam(s) > 0)) || all[0];
+  const inTeamSt = at ? [...all].sort((x, y) => inTeam(y) - inTeam(x)).find((s) => inTeam(s) > 0) : null;
+  // Responsable inscrit dans le bandeau (pas de station) : le lien vers
+  // cette occurrence s'accroche au bandeau de son équipe.
+  const badgeOf = (b) => ({ rect: b.badge, station: null, branch: b, keys: ["badge:" + b.key] });
+  const led = layout.branches.filter((b) => b.badgeLead && b.badgeLead.name === name && b.badge);
+  if (!inTeamSt) {
+    const own = at ? led.find((b) => b.key === "team:" + at) : null;
+    if (own) return badgeOf(own);
+    if (!all.length && led.length) return badgeOf(led[0]);
+  }
+  const st = inTeamSt || all[0];
   if (!st) return null;
   const x0 = st.cx - st.half;
   const rect = { x: x0, y: Math.min(st.cy - st.half, st.label.y), w: st.label.x + st.label.w - x0, h: Math.max(st.half * 2, st.label.h) };
@@ -9695,7 +9717,7 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
   const target = (l) => {
     if (l.person) {
       const hit = orgMetroPersonAnchor(layout, l.person, l.at);
-      return hit ? { rect: hit.rect, keys: hit.keys, color: hit.station.inactive ? null : hit.station.color, id: "p:" + l.person, person: true } : null;
+      return hit ? { rect: hit.rect, keys: hit.keys, color: hit.station ? (hit.station.inactive ? null : hit.station.color) : hit.branch.color, id: "p:" + l.person, person: true } : null;
     }
     const hit = orgMetroTeamAnchor(layout, l.toId);
     return hit ? { rect: hit.rect, keys: ["badge:" + hit.branch.key], color: hit.branch.color, id: l.toId, branch: hit.branch } : null;
@@ -10327,6 +10349,7 @@ function orgMetroStarPath(cx, cy, r) {
 const ORGMETRO_VIEW_DEFAULTS = {
   orgMetroOrder: null, orgMetroOffsets: null, orgMetroLinkOffsets: null, orgMetroCollapsed: [],
   orgMetroStackSplit: null, orgMetroHorizontalTeams: [], orgMetroStackedTeams: [], orgMetroShowTransverse: true,
+  orgMetroLeadInBadge: false,
 };
 const ORGMETRO_VIEW_MAX = 30;
 function orgMetroViewSnapshot(state) {
@@ -10486,7 +10509,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     return hit ? { rect: hit.rect, keys: hit.keys, kind: "person", color: null } : null;
   };
   const hasTeam = (id) => Boolean(orgMetroTeamAnchor(layout, id));
-  const hasPerson = (name) => layout.stations.some((s) => s.name === name);
+  const hasPerson = (name) => layout.stations.some((s) => s.name === name) || layout.branches.some((b) => b.badgeLead && b.badgeLead.name === name);
   // La légende évite aussi les traits (troncs, raccords, coudes) et les
   // correspondances blanches, pas seulement les textes.
   const labelObstacles = [...obstacles];
@@ -10868,7 +10891,7 @@ function useOrgMetroViewport(contentW, contentH) {
   return { ref, size, view, fit, recenter, reset, zoomAt, setManual };
 }
 
-function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed, horizontal, stacked, stackSplit, onChangeStackSplit, views, onSaveView, onLoadView, onDeleteView }) {
+function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, leadInBadge, onToggleLeadInBadge, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed, horizontal, stacked, stackSplit, onChangeStackSplit, views, onSaveView, onLoadView, onDeleteView }) {
   const roots = useMemo(() => orgChartVisibleRoots(teams, members, showUnassigned), [teams, members, showUnassigned]);
   // Ordre des lignes choisi par glisser-déposer (widget.orgMetroOrder) : le
   // plan entier est recalculé, rien n'est déplacé « à la main ».
@@ -10881,7 +10904,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     const cur = stackSplit && typeof stackSplit === "object" ? stackSplit : {};
     return drag && drag.kind === "split" ? { ...cur, [drag.key.slice(5)]: drag.k } : cur;
   }, [stackSplit, splitKey]);
-  const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order, collapsed, horizontal, stacked, stackSplit: shownSplit }), [roots, teams, rootLabel, order, collapsed, horizontal, stacked, shownSplit]);
+  const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order, collapsed, horizontal, stacked, stackSplit: shownSplit, leadInBadge }), [roots, teams, rootLabel, order, collapsed, horizontal, stacked, shownSplit, leadInBadge]);
   // Disposition par défaut, puis déplacements libres sur la grille
   // (widget.orgMetroOffsets) : ligne et sous-arborescence déplacées ensemble.
   // Pendant un déplacement, le plan est recalculé EN DIRECT avec le décalage
@@ -11211,6 +11234,16 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
           title={showTransverse ? "Masquer les correspondances et relations" : "Afficher les correspondances et relations"}
           aria-label="Correspondances transverses"
         ><Waypoints size={13} /></button>
+        {onToggleLeadInBadge && (
+          <button
+            type="button"
+            className={leadInBadge ? "active" : ""}
+            aria-pressed={Boolean(leadInBadge)}
+            onClick={() => onToggleLeadInBadge(!leadInBadge)}
+            title={leadInBadge ? "Responsables en tête de ligne (station)" : "Responsables dans le bandeau de l'équipe"}
+            aria-label="Responsables dans le bandeau"
+          ><Star size={13} /></button>
+        )}
         {onSaveView && (
           <button type="button" className={viewsOpen ? "active" : ""} aria-pressed={viewsOpen} aria-expanded={viewsOpen} onClick={() => setViewsOpen((v) => !v)} title="Vues enregistrées — sauvegarder / recharger une disposition" aria-label="Vues enregistrées"><Bookmark size={13} /><span>Vues</span></button>
         )}
@@ -11305,6 +11338,14 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
     setShowTransverse(next);
     if (onUpdateWidget) onUpdateWidget({ orgMetroShowTransverse: next });
   };
+  // Variante « responsable dans le bandeau » (bouton ★) : désactivée par
+  // défaut.
+  const [leadInBadge, setLeadInBadge] = useState(widget?.orgMetroLeadInBadge === true);
+  useEffect(() => { setLeadInBadge(widget?.orgMetroLeadInBadge === true); }, [widget?.orgMetroLeadInBadge]);
+  const toggleLeadInBadge = (next) => {
+    setLeadInBadge(next);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroLeadInBadge: next });
+  };
   // Disposition des lignes du Métro choisie par glisser-déposer
   // (widget.orgMetroOrder) ; « Recentrer » la remet à zéro (null).
   const [metroOrder, setMetroOrder] = useState(widget?.orgMetroOrder || null);
@@ -11352,6 +11393,7 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
       orgMetroOrder: metroOrder, orgMetroOffsets: metroOffsets, orgMetroLinkOffsets: metroLinkOffsets,
       orgMetroCollapsed: metroCollapsed, orgMetroStackSplit: metroStackSplit,
       orgMetroHorizontalTeams: metroHorizontal, orgMetroStackedTeams: metroStacked, orgMetroShowTransverse: showTransverse,
+      orgMetroLeadInBadge: leadInBadge,
     };
     onUpdateWidget({ orgMetroViews: orgMetroSaveView(metroViews, name, state, new Date().toISOString(), "view-" + Date.now().toString(36)) });
   } : undefined;
@@ -11365,6 +11407,7 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
     setMetroCollapsed(patch.orgMetroCollapsed);
     setMetroStackSplit(patch.orgMetroStackSplit);
     setShowTransverse(patch.orgMetroShowTransverse);
+    setLeadInBadge(patch.orgMetroLeadInBadge === true);
     onUpdateWidget(patch);
   } : undefined;
   const deleteMetroView = onUpdateWidget ? (id) => onUpdateWidget({ orgMetroViews: metroViews.filter((v) => v.id !== id) }) : undefined;
@@ -11397,6 +11440,8 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
         onFilterPerson={onFilterPerson}
         showTransverse={showTransverse}
         onToggleTransverse={toggleTransverse}
+        leadInBadge={leadInBadge}
+        onToggleLeadInBadge={toggleLeadInBadge}
         relations={widget?.orgChartRelations}
         order={metroOrder}
         offsets={metroOffsets}
