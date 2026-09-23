@@ -146,7 +146,7 @@ function AnnotationsHarness() {
     { id: "o-plat", name: "Plateforme", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Zoé Faure", leadTitle: "Responsable de lot" },
     { id: "o-secu", name: "Sécurité", color: "#2C6BE0", parentTeamId: "o-plat" },
     { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Nora Vidal" },
-    { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right", extraLinkTeamIds: ["o-ops", "o-disc"] },
+    { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right", extraLinkTeamIds: ["o-ops", "o-disc"], extraLinkTypes: { "o-disc": "hierarchique" } },
     { id: "o-ops", name: "Opérations", color: "#1FA971", leadName: "Luc Perrin" },
   ]);
   const [orgMembers, setOrgMembers] = useState(() => [

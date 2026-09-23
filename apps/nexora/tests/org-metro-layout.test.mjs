@@ -931,3 +931,20 @@ test("Relation vers une personne présente à plusieurs endroits : l'occurrence 
   assert.ok(at("zz").points.length > 0, "occurrence inconnue : première occurrence, jamais d'erreur");
   assert.deepEqual(api.normalizeOrgChartRelations([{ id: "x", from: "person:A", to: "person:B", toAt: "b" }])[0].toAt, "b");
 });
+
+test("Lien secondaire hiérarchique : seconde équipe parente, sans changer la place de l'équipe", () => {
+  const teams = [
+    team("p1", { leadName: "P1", color: "#111111" }), team("p2", { leadName: "P2", color: "#E2A63B" }),
+    team("x", { parentTeamId: "p1", leadName: "X1", extraLinkTeamIds: ["p2"], extraLinkTypes: { p2: "hierarchique", zz: "hierarchique", p1: "autre" } }),
+  ];
+  const members = [member("P1", { teamIds: ["p1"] }), member("P2", { teamIds: ["p2"] }), member("X1", { teamIds: ["x"] })];
+  assert.deepEqual(api.normalizeTeams(teams).find((t) => t.id === "x").extraLinkTypes, { p2: "hierarchique" });
+  assert.deepEqual(api.teamExtraLinks(teams).map((l) => [l.fromId, l.toId, l.type]), [["x", "p2", "hierarchique"]]);
+  // Par défaut, un lien secondaire reste transverse.
+  assert.equal(api.teamExtraLinks([...teams.slice(0, 2), { ...teams[2], extraLinkTypes: {} }])[0].type, "transverse");
+  const { layout } = metro(teams, members);
+  assert.ok(branch(layout, "team:x").ancestors.includes("team:p1"), "l'équipe reste sous son parent principal");
+  const r = api.orgMetroTransverseRoutes(layout, api.teamExtraLinks(teams))[0];
+  assert.equal(r.hierarchical, true);
+  assert.equal(r.toColor, "#E2A63B", "couleur de la seconde équipe parente");
+});

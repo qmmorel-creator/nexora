@@ -1402,6 +1402,7 @@ try {
       duplicates: root.querySelectorAll(".lp-orgmetro-station.is-duplicate").length,
       junctions: root.querySelectorAll(".lp-orgmetro-junction").length,
       transverse: root.querySelectorAll(".lp-orgmetro-transverse").length,
+      secondary: [...root.querySelectorAll(".lp-orgmetro-secondary")].map((el) => el.style.stroke),
       independent: root.querySelectorAll(".lp-orgmetro-badge.is-independent").length,
       leadHalos: root.querySelectorAll(".lp-orgmetro-lead-halo").length,
       relations: root.querySelectorAll(".lp-orgmetro-relation").length,
@@ -1481,6 +1482,7 @@ try {
   await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Correspondances transverses"]`).click();
   await page.waitForTimeout(150);
   orgMetro.transverseHidden = await page.locator(`${host} .lp-orgmetro-transverse`).count();
+  orgMetro.secondaryWhenHidden = await page.locator(`${host} .lp-orgmetro-secondary`).count();
   await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Correspondances transverses"]`).click();
   await page.waitForTimeout(150);
   // Survol : les relations restent pleines, le reste s'estompe.
@@ -2541,7 +2543,9 @@ if (!orgMetro.error) {
   expect(orgMetro.stations === 21, `Organigramme Métro : ${orgMetro.stations} station(s), 21 attendues (19 personnes + 1 occurrence multi-équipe + la responsable d'Applications en tête de sa ligne)`);
   expect(orgMetro.duplicates === 2, `Organigramme Métro : ${orgMetro.duplicates} occurrence(s) supplémentaire(s), 2 attendues (Sacha Morin dans Données, Nora Vidal en tête d'Applications)`);
   expect(orgMetro.junctions >= 3, `Organigramme Métro : ${orgMetro.junctions} point(s) de bifurcation, au moins 3 attendus`);
-  expect(orgMetro.transverse === 3, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 3 attendues (lien principal de Données + 2 liens supplémentaires)`);
+  expect(orgMetro.transverse === 2, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 2 attendues (lien principal de Données + lien secondaire vers Opérations)`);
+  expect(orgMetro.secondary.length === 1 && /226, 166, 59|e2a63b/i.test(orgMetro.secondary[0]), `Organigramme Métro : parent secondaire (Exploration → Données) ${JSON.stringify(orgMetro.secondary)}, un trait plein couleur Exploration attendu`);
+  expect(orgMetro.secondaryWhenHidden === 1, "Organigramme Métro : le parent secondaire disparaît quand on masque les correspondances");
   expect(orgMetro.occurrenceTarget && orgMetro.occurrenceTarget.nearApps, `Organigramme Métro : la relation « Astreinte » ne vise pas l'occurrence de Sacha Morin dans Applications (${JSON.stringify(orgMetro.occurrenceTarget)})`);
   expect(orgMetro.cursors && orgMetro.cursors.every((c) => c === "grab"), `Organigramme Métro : curseur des éléments déplaçables ${JSON.stringify(orgMetro.cursors)}, « grab » attendu`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
