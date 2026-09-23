@@ -9617,6 +9617,33 @@ function orgMetroPersonAnchor(layout, name, at) {
   const rect = { x: x0, y: Math.min(st.cy - st.half, st.label.y), w: st.label.x + st.label.w - x0, h: Math.max(st.half * 2, st.label.h) };
   return { rect, station: st, keys: ["station:" + st.key, "label:" + st.key] };
 }
+// Pied d'une ligne : là où partent ses sous-équipes, à la suite de ses
+// membres (nœud de sa barre, sinon bas de sa ligne, sinon sous sa bulle).
+function orgMetroLineFoot(b) {
+  if (b.fork) return [b.fork.fromX, b.fork.y];
+  if (b.trunk) return [b.trunk.x, b.trunk.y1];
+  if (b.stations && b.stations.length) { const st = b.stations[b.stations.length - 1]; return [st.cx, st.cy]; }
+  return b.badge ? [b.x, b.badge.y + b.badge.h] : [b.x, b.y];
+}
+// Tracé depuis le pied d'une ligne vers le flanc d'une bulle : il descend
+// dans le prolongement de la ligne, puis rejoint la bulle à l'horizontale ;
+// si la bulle est plus haut, un détour par le bas et à côté d'elle.
+function orgMetroFootRoute(foot, rect) {
+  const [fx, fy] = foot;
+  const G = ORGMETRO_ROUTE_GUTTER;
+  const cy = rect.y + rect.h / 2;
+  if (fx > rect.x + 0.5 && fx < rect.x + rect.w - 0.5) {
+    // Bulle à l'aplomb : on y entre par le haut, ou par un flanc si elle est au-dessus.
+    if (rect.y > fy + G) return [[fx, fy], [fx, rect.y]];
+    const lx = rect.x - G;
+    return [[fx, fy], [fx, fy + G], [lx, fy + G], [lx, cy], [rect.x, cy]];
+  }
+  const dir = fx <= rect.x ? 1 : -1;
+  const edge = dir > 0 ? rect.x : rect.x + rect.w;
+  if (cy > fy + G) return [[fx, fy], [fx, cy], [edge, cy]];
+  const mx = edge - dir * G;
+  return [[fx, fy], [fx, fy + G], [mx, fy + G], [mx, cy], [edge, cy]];
+}
 // Tracé orthogonal entre deux rectangles a et b (de a vers b) : plusieurs
 // candidats, du plus direct au plus prudent ; le premier qui ne traverse
 // aucun obstacle l'emporte (sinon le moins encombré). Commun aux
@@ -9683,10 +9710,16 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
     const B = target(link);
     const skip = new Set(["badge:" + A.branch.key, ...B.keys]);
     const others = obstacles.filter((o) => !skip.has(o.key));
-    const best = orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(B.id, i));
+    // Parent secondaire (lien hiérarchique vers une équipe) : comme le
+    // rattachement principal, il part de la SUITE de la ligne parente, après
+    // son dernier membre — jamais de sa bulle.
+    const foot = link.type === "hierarchique" && !link.person && B.branch ? orgMetroLineFoot(B.branch) : null;
+    const best = foot
+      ? { pts: orgMetroFootRoute(foot, A.rect).reverse(), hits: 0 }
+      : orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(B.id, i));
     const key = link.person ? "person:" + link.fromId + ":" + link.person : "transverse:" + link.fromId + ":" + link.toId;
     const edit = orgMetroEditRoute(best.pts, lo[key]);
-    const pts = orgMetroFaceEndpoints(edit.points, A.rect, B.rect);
+    const pts = orgMetroFaceEndpoints(edit.points, A.rect, foot ? null : B.rect);
     out.push({
       movable: edit.movable,
       key, fromId: link.fromId, toId: link.toId || null, extra: Boolean(link.extra), hierarchical: link.type === "hierarchique",
@@ -10974,6 +11007,17 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     }
   };
   const onPointerMove = (e) => {
+    // Survol d'un lien (sans geste en cours) : curseur ↕ sur un segment
+    // horizontal, ↔ sur un vertical — le sens dans lequel il se déplace.
+    if (!gestureRef.current && e.target && e.target.closest) {
+      const el = e.target.closest('[data-metro-drag^="link:"]');
+      if (el) {
+        const route = [...routes, ...relationRoutes].find((r) => r.key === el.getAttribute("data-metro-drag").slice(5));
+        const lp = localPoint(e);
+        const hit = route ? orgMetroNearestSegment(route.movable, (lp.x - vp.view.tx) / vp.view.k, (lp.y - vp.view.ty) / vp.view.k) : null;
+        el.style.cursor = hit ? (hit.horizontal ? "ns-resize" : "ew-resize") : "";
+      }
+    }
     if (!pointersRef.current.has(e.pointerId)) return;
     const p = localPoint(e);
     pointersRef.current.set(e.pointerId, p);
