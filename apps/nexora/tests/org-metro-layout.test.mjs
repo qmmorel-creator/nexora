@@ -320,6 +320,20 @@ test("Métro : correspondance blanche à chaque départ de branche sur une barre
   ends.forEach((e) => assert.ok(!js.some((j) => j.x === e.x && j.y === root.fork.y), "pas de point sur un coude d'extrémité"));
 });
 
+test("Métro : chaque changement de couleur passe par une station", () => {
+  const teams = [
+    team("root", { color: "#D64545" }),
+    ...["s1", "s2", "s3"].map((id) => team(id, { parentTeamId: "root", color: "#2C6BE0" })),
+    team("solo", { parentTeamId: "s2", color: "#1FA971" }),
+  ];
+  const { layout } = metro(teams, []);
+  const js = api.orgMetroJunctions(layout);
+  layout.branches.filter((b) => b.drop).forEach((b) => {
+    const y = b.drop.y0 + (b.drop.curved ? 9 : 0);
+    assert.ok(js.some((j) => j.x === b.drop.x && j.y === y), `aucune station au changement de couleur de ${b.key}`);
+  });
+});
+
 test("Métro : un cycle de managerName (A → B → A) ne boucle jamais et ne perd personne", () => {
   const members = [member("A", { teamIds: ["t"], managerName: "B" }), member("B", { teamIds: ["t"], managerName: "A" })];
   const { layout } = metro([team("t")], members);
@@ -444,13 +458,9 @@ test("Métro : tracés SVG — tronc vertical, barre horizontale, coudes aux ext
   const { layout } = metro(teams, [member("M", { teamIds: ["p"] })]);
   const p = api.orgMetroBranchPaths(branch(layout, "team:p"));
   assert.match(p.trunk, /^M [\d.]+ [\d.]+ V [\d.]+$/);
-  assert.match(p.fork, /^M [\d.]+ [\d.]+ H [\d.]+$/, "la barre (couleur parente) reste droite");
-  // Le coude d'extrémité appartient à la branche : sa couleur change au
-  // départ de la barre, pas au milieu de la descente.
+  assert.match(p.fork, /Q .* H .* Q /, "la barre (couleur parente) tourne aux extrémités");
   const x = api.orgMetroBranchPaths(branch(layout, "team:x"));
-  assert.match(x.drop, /^M [\d.-]+ [\d.]+ Q [\d. -]+ V [\d.]+$/);
-  const fork = branch(layout, "team:p").fork;
-  assert.ok(x.drop.startsWith(`M ${fork.minX + 9} ${fork.y}`), "le coude de la branche démarre là où la barre s'arrête");
+  assert.match(x.drop, /^M [\d.-]+ [\d.]+ V [\d.]+$/);
 });
 
 test("orgMetroWrap : coupe au mot, puis au caractère pour un mot trop long, sans rien perdre", () => {

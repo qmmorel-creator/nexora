@@ -10186,15 +10186,17 @@ function orgMetroBranchPaths(branch) {
   const R = ORGMETRO_CORNER;
   const out = { trunk: null, fork: null, drop: null };
   if (branch.trunk) out.trunk = `M ${branch.trunk.x} ${branch.trunk.y0} V ${branch.trunk.y1}`;
-  // Changement de couleur (retour de test) : une ligne garde SA couleur dès
-  // qu'elle quitte la barre de sa parente. La barre (couleur parente) s'arrête
-  // donc au début du coude d'une branche d'extrémité ; le coude lui-même
-  // appartient au raccord de la branche.
+  // Changement de couleur (retour de test) : il se fait TOUJOURS sur une
+  // station (voir orgMetroJunctions). La barre, couleur parente, tourne aux
+  // extrémités ; la branche prend sa couleur à la station posée en sortie du
+  // coude.
   const f = branch.fork;
   if (f && f.maxX - f.minX > 0.5) {
-    const x0 = f.minX !== f.fromX ? f.minX + R : f.minX;
-    const x1 = f.maxX !== f.fromX ? f.maxX - R : f.maxX;
-    if (x1 > x0) out.fork = `M ${x0} ${f.y} H ${x1}`;
+    const leftIsChild = f.minX !== f.fromX;
+    const rightIsChild = f.maxX !== f.fromX;
+    let d = leftIsChild ? `M ${f.minX} ${f.y + R} Q ${f.minX} ${f.y} ${f.minX + R} ${f.y}` : `M ${f.minX} ${f.y}`;
+    d += rightIsChild ? ` H ${f.maxX - R} Q ${f.maxX} ${f.y} ${f.maxX} ${f.y + R}` : ` H ${f.maxX}`;
+    out.fork = d;
   }
   if (branch.elbow) {
     // Rattachés : départ horizontal depuis la pastille du manager, vers le
@@ -10205,12 +10207,7 @@ function orgMetroBranchPaths(branch) {
   }
   if (branch.drop) {
     const dr = branch.drop;
-    if (dr.curved) {
-      const dir = dr.x < dr.fromX ? 1 : -1; // vers le tronc parent
-      out.drop = `M ${dr.x + dir * R} ${dr.y0} Q ${dr.x} ${dr.y0} ${dr.x} ${dr.y0 + R} V ${dr.y1}`;
-    } else {
-      out.drop = `M ${dr.x} ${dr.y0} V ${dr.y1}`;
-    }
+    out.drop = `M ${dr.x} ${dr.y0 + (dr.curved ? R : 0)} V ${dr.y1}`;
   }
   return out;
 }
@@ -10354,9 +10351,10 @@ function orgMetroRelated(layout, target) {
   return { branchKeys, stationKeys, teamIds };
 }
 // Correspondances blanches aux bifurcations (retour de test) : le point de
-// départ commun d'une barre et chaque départ intermédiaire (en T) d'une
-// branche sur cette barre. Le départ des rattachés, lui, est la pastille de
-// correspondance du manager.
+// départ commun d'une barre, et une station à CHAQUE changement de couleur
+// entre une ligne et sa branche (départ en T, sortie de coude, continuation
+// droite). Le départ des rattachés, de même couleur, est la pastille du
+// manager.
 function orgMetroJunctions(layout) {
   const out = [];
   const byKey = new Map(layout.branches.map((b) => [b.key, b]));
@@ -10365,9 +10363,16 @@ function orgMetroJunctions(layout) {
     if (f && (f.childXs.length >= 2 || f.maxX - f.minX > 0.5)) {
       out.push({ key: "j:" + b.key, x: f.fromX, y: f.y, branchKey: b.key, color: b.color, lineW: b.lineW, kind: b.kind });
     }
-    if (b.drop && !b.drop.curved && b.drop.x !== b.drop.fromX) {
+    // Chaque raccord change de couleur (parente → branche) : une station à
+    // l'endroit exact du changement — en sortie de coude pour une branche
+    // d'extrémité, au départ en T sinon (confondu avec le point commun quand
+    // la branche continue tout droit sous le tronc).
+    if (b.drop) {
       const parent = byKey.get(b.ancestors[b.ancestors.length - 1]);
-      out.push({ key: "t:" + b.key, x: b.drop.x, y: b.drop.y0, branchKey: parent ? parent.key : b.key, color: parent ? parent.color : b.color, lineW: parent ? parent.lineW : b.lineW, kind: parent ? parent.kind : b.kind });
+      const y = b.drop.y0 + (b.drop.curved ? ORGMETRO_CORNER : 0);
+      const pf = parent && parent.fork;
+      const sameAsFork = !b.drop.curved && pf && b.drop.x === pf.fromX && (pf.childXs.length >= 2 || pf.maxX - pf.minX > 0.5);
+      if (!sameAsFork) out.push({ key: "t:" + b.key, x: b.drop.x, y, branchKey: parent ? parent.key : b.key, color: parent ? parent.color : b.color, lineW: parent ? parent.lineW : b.lineW, kind: parent ? parent.kind : b.kind });
     }
   });
   return out;
