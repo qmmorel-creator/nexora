@@ -2,6 +2,7 @@ import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin
 import { getFirestore } from "firebase-admin/firestore";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { parisCivilDate, reportPeriod } from "../../../lib/report-period.mjs";
+import { resolveTaskTimes } from "../../../lib/task-times.mjs";
 
 export { reportPeriod };
 
@@ -512,6 +513,12 @@ export async function mutateTaskAtomically(uid: string, mutation: TaskMutation) 
         (next.end && !/^\d{4}-\d{2}-\d{2}$/.test(String(next.end))) ||
         (next.start && next.end && String(next.start) > String(next.end))) {
       throw new Error("invalid_dates");
+    }
+    // Heures (#299) : effacer le début efface la fin ; toute modification des
+    // heures, ou des dates d'une tâche horodatée, revalide le créneau.
+    if (rawChanges.startTime === "" && !("endTime" in rawChanges)) next.endTime = "";
+    if ("startTime" in rawChanges || "endTime" in rawChanges || (("start" in rawChanges || "end" in rawChanges) && next.startTime)) {
+      Object.assign(next, resolveTaskTimes({ start: next.start, end: next.end, startTime: next.startTime, endTime: next.endTime }));
     }
     if (mutation.action === "complete") {
       next.completedAt = now;
