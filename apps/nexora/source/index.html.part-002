@@ -12554,6 +12554,26 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
       return { ...m, teamIds: memberTeamIds(m).filter((id) => id !== editingId), teamRoles: nextRoles };
     }));
   };
+  // Poste modifiable au clic sur un membre (retour de test) : même donnée que
+  // le poste de la fiche utilisateur (teamRoles[équipe], voir
+  // memberRoleInTeam), enregistrée tout de suite, comme le retrait ci-dessus.
+  // Vide = aucun poste pour cette équipe (la clé est retirée).
+  const [roleEdit, setRoleEdit] = useState(null); // { id, value } | null
+  // Échap annule : la perte de focus qui suit ne doit pas enregistrer.
+  const roleEditCancelled = useRef(false);
+  const saveMemberRole = () => {
+    if (roleEditCancelled.current) { roleEditCancelled.current = false; setRoleEdit(null); return; }
+    if (!roleEdit || !editingId || !setTeamMembers) { setRoleEdit(null); return; }
+    const poste = roleEdit.value.trim();
+    setTeamMembers((prev) => prev.map((m) => {
+      if (m.id !== roleEdit.id) return m;
+      const nextRoles = { ...(m.teamRoles || {}) };
+      if (poste) nextRoles[editingId] = poste;
+      else delete nextRoles[editingId];
+      return { ...m, teamRoles: nextRoles };
+    }));
+    setRoleEdit(null);
+  };
   // Ajout rapide, réciproque (#222) : une personne déjà dans l'annuaire est
   // simplement rattachée à cette équipe (poste mis à jour si déjà membre) ;
   // sinon elle est créée à la volée — même schéma que handleCreateAssignee
@@ -12686,13 +12706,47 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
             {teamRoster.length === 0 ? (
               <p style={{ fontSize: 11.5, color: "var(--text-600)", margin: "0 0 10px" }}>Aucun membre pour l'instant.</p>
             ) : (
-              teamRoster.map((m) => (
-                <div className="lp-manage-item" key={m.id}>
-                  <span className="lp-project-dot" style={{ background: m.color, width: 22, height: 22 }}>{m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={13} /> : <User size={12} color="#fff" />}</span>
-                  <span className="lp-manage-name">{m.name} {memberRoleInTeam(m, editingId) && <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({memberRoleInTeam(m, editingId)})</span>}</span>
-                  <button className="lp-icon-btn" onClick={() => removeFromTeam(m)} aria-label={`Retirer ${m.name} de l'équipe`} title="Retirer de l'équipe (reste dans l'annuaire)"><X size={14} /></button>
-                </div>
-              ))
+              teamRoster.map((m) => {
+                const role = memberRoleInTeam(m, editingId);
+                const editing = roleEdit && roleEdit.id === m.id;
+                return (
+                  <div className="lp-manage-item" key={m.id}>
+                    <span className="lp-project-dot" style={{ background: m.color, width: 22, height: 22 }}>{m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={13} /> : <User size={12} color="#fff" />}</span>
+                    {editing ? (
+                      <span className="lp-manage-name lp-team-role-edit">
+                        <span>{m.name}</span>
+                        <input
+                          type="text"
+                          className="lp-team-role-input"
+                          value={roleEdit.value}
+                          placeholder="Poste dans cette équipe (vide = aucun)"
+                          aria-label={`Poste de ${m.name} dans l'équipe`}
+                          autoFocus
+                          onChange={(e) => setRoleEdit({ id: m.id, value: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); saveMemberRole(); }
+                            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); roleEditCancelled.current = true; setRoleEdit(null); }
+                          }}
+                          onBlur={saveMemberRole}
+                        />
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="lp-manage-name lp-team-role-trigger"
+                        onClick={() => { if (!setTeamMembers) return; roleEditCancelled.current = false; setRoleEdit({ id: m.id, value: role }); }}
+                        title={`Modifier le poste de ${m.name} dans cette équipe`}
+                      >
+                        {m.name} {role
+                          ? <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({role})</span>
+                          : <span className="lp-team-role-placeholder">+ poste</span>}
+                        <Pencil size={11} className="lp-team-role-pencil" aria-hidden="true" />
+                      </button>
+                    )}
+                    <button className="lp-icon-btn" onClick={() => removeFromTeam(m)} aria-label={`Retirer ${m.name} de l'équipe`} title="Retirer de l'équipe (reste dans l'annuaire)"><X size={14} /></button>
+                  </div>
+                );
+              })
             )}
             <div className="lp-field" style={{ marginTop: 8 }}>
               <label>Ajouter rapidement <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(utilisateur existant, ou créé à la volée s'il n'existe pas — avec son poste dans cette équipe)</span></label>
