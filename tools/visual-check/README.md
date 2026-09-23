@@ -194,28 +194,6 @@ Fiche de tâche existante, mode comparaison :
   les dates de la tâche, et seulement au clic ;
 - désactiver masque les champs sans effacer ce qui a été saisi.
 
-Scénario « Nuage des échéances » — quatre tâches datées et une sans date de fin,
-en couloirs par projet puis par criticité :
-
-- une tâche sans échéance ne devient jamais un point ;
-- le retard est à gauche de l'axe « aujourd'hui », et signalé par une couleur qui
-  n'est celle d'aucun couloir ;
-- deux tâches de même échéance ne se superposent pas ;
-- points et étiquettes restent dans le cadre du dessin ;
-- les couloirs de criticité suivent l'urgence : Urgent, Moyen, Bas, Sans criticité ;
-- l'infobulle apparaît au survol, le clic ouvre la tâche, et le couloir choisi
-  dans la fiche du widget est bien enregistré ;
-- sans aucune tâche datée, le widget explique pourquoi il n'affiche rien ;
-- chaque couloir porte la couleur de son entité en aplat très pâle, et l'axe une
-  sous-grille non étiquetée plus fine que les graduations ;
-- un point garde la couleur de son groupe en retard comme à venir, le retard
-  étant signalé au contour ;
-- sur un couloir dense de 36 tâches à titres longs : aucune étiquette n'en
-  recouvre une autre ni ne masque un point, aucune ne sort du cadre, et les amas
-  produisent des rappels en coude plutôt que de rester muets ;
-- en fenêtre fixe, aucune tâche hors plage ne disparaît : elle est rabattue sur
-  le bord en chevron, comptée aux deux bouts, et les bornes restent graduées.
-
 Scénario « Treemap par statut » — le même widget, mais une tuile = un statut :
 
 - les tuiles portent des noms de statut, pas des noms de projet ;

@@ -414,36 +414,19 @@ const usesTaskFilterExpr = builtSource.slice(
 );
 assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvable");
 
-/* Échéances — fusion de 4 widgets en 1 avec orientation (issues #46, #160, #176).
-   Un widget se déclare à cinq endroits indépendants. Déclaré au catalogue mais
-   absent du `switch` de rendu, il s'ajoute au tableau de bord et n'affiche
-   RIEN — pas une erreur, pas un message : une tuile vide. Le contrôle visuel
-   ne le verrait pas non plus, puisqu'il monte le composant directement. */
+/* Échéances — widget supprimé (issue #318), avec la bascule Métro normal ↔
+   Échéances. Une sauvegarde qui en contient encore doit perdre ces widgets à la
+   lecture : laissés tels quels, ils deviendraient des tuiles de type inconnu,
+   vides et sans message. */
 {
-  assert.match(builtSource, /\/\/ === NEXORA:DEADLINE-SCATTER:START ===/, "Le bloc de calcul du nuage des échéances a disparu.");
-  assert.match(builtSource, /\/\/ === NEXORA:DEADLINE-SCATTER:END ===/, "La sentinelle de fin du bloc du nuage a disparu.");
-  assert.match(builtSource, /key: "echeances", label: "Échéances"/,
-    "Le widget Échéances n'est plus au catalogue des widgets.");
-  assert.match(builtSource, /<WidgetEcheances\s/,
-    "Échéances est au catalogue mais son composant d'aiguillage a disparu : la tuile serait vide, sans erreur.");
-  assert.match(builtSource, /<WidgetDeadlineScatter widget=\{widget\}/,
-    "L'orientation « nuage » n'appelle plus le rendu du nuage des échéances.");
-  assert.ok(usesTaskFilterExpr.includes('type === "echeances"'),
-    "Échéances ne passe plus par le moteur de filtres : le widget ignorerait son propre filtre.");
-  assert.match(builtSource, /if \(type === "echeances"\) return \{ w: 8, h: 6 \};/,
-    "Échéances n'a plus de taille par défaut : il naîtrait écrasé sur la grille.");
-  /* Le réglage doit être À LA FOIS proposé et enregistré : l'un sans l'autre
-     donne une liste déroulante qui s'affiche et n'est jamais retenue. */
-  assert.match(builtSource, /setScatterLaneField\(e\.target\.value\)/,
-    "Le choix des couloirs a disparu de la fiche du widget.");
-  assert.match(builtSource, /data\.scatterLaneField = scatterLaneField;/,
-    "Le couloir choisi dans la fiche n'est plus enregistré.");
-  /* La migration à la lecture évite qu'une ancienne sauvegarde (un des 4 types
-     fusionnés) devienne un widget de type inconnu, invisible sans message. */
-  assert.match(builtSource, /const ECHEANCES_LEGACY_ORIENTATION = \{/,
-    "La table de migration des anciens widgets d'échéances a disparu.");
-  assert.match(builtSource, /if \(value\.type in ECHEANCES_LEGACY_ORIENTATION\) return migrateLegacyEcheancesWidget\(value\);/,
-    "La migration automatique à la lecture des anciens widgets d'échéances a disparu.");
+  assert.doesNotMatch(builtSource, /key: "echeances"/,
+    "Le widget Échéances est revenu au catalogue alors qu'il a été supprimé.");
+  assert.match(builtSource, /const REMOVED_ECHEANCES_TYPES = new Set\(\["echeances", "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "deadlineScatter"\]\);/,
+    "La liste des anciens widgets d'échéances à retirer à la lecture a changé ou disparu.");
+  assert.match(builtSource, /value\.filter\(\(v\) => !isRemovedEcheancesWidget\(v\)\)\.map\(migrateLegacyMiniGanttData\)/,
+    "Les anciens widgets d'échéances ne sont plus retirés à la lecture d'une sauvegarde.");
+  assert.doesNotMatch(builtSource, /key: "toggleDeadlineMode"|shortcutPrefs\.toggleDeadlineMode|nexora:metro-deadline-toggle/,
+    "Le raccourci de bascule Métro normal ↔ Échéances est revenu.");
 }
 
 /* Treemap : le champ qui porte les tuiles (issue #47).
@@ -472,60 +455,6 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "La priorité du projet n'est plus lue sur le projet de la tâche.");
   assert.match(builtSource, /treemapTaskCriticality\(\{ projectPriority: project\.priority \|\| "normal", \.\.\.facts \}\)/,
     "Les faits de la tâche ne priment plus sur la priorité de l'entité de tuile.");
-}
-
-/* Nuage des échéances : fenêtre d'affichage (issue #50).
-   La fenêtre décide de la MISE EN PAGE, jamais du périmètre. Si le rabattement
-   ou le comptage se défait, elle devient un filtre silencieux : des tâches
-   disparaissent du widget sans qu'aucune erreur ne se produise. */
-{
-  assert.match(builtSource, /const SCATTER_WINDOW_MODES = \["auto", "fixed"\];/,
-    "Les modes de fenêtre du nuage ont changé ou disparu.");
-  /* Sans le rabattement, un point hors fenêtre sort du dessin : invisible,
-     mais toujours compté — le widget mentirait dans les deux sens. */
-  assert.match(builtSource, /const borne = Math\.max\(domain\.min, Math\.min\(domain\.max, days\)\);/,
-    "La position en X n'est plus bornée : un point hors fenêtre sortirait du dessin.");
-  assert.match(builtSource, /beyond: scatterClampDays\(pt\.days, domain\)\.beyond/,
-    "Les points hors fenêtre ne sont plus marqués : rien ne les distinguerait d'une tâche à cette date.");
-  assert.match(builtSource, /className="lp-widget-scatter-overflow"/,
-    "Le compteur « au-delà » a disparu : la fenêtre deviendrait un filtre silencieux.");
-  /* Le réglage doit être à la fois proposé et enregistré. */
-  assert.match(builtSource, /onClick=\{\(\) => setScatterWindowMode\("fixed"\)\}/,
-    "Le choix de la plage a disparu de la fiche du widget.");
-  assert.match(builtSource, /data\.scatterWindowMode = scatterWindowMode;/,
-    "Le mode de fenêtre choisi dans la fiche n'est plus enregistré.");
-  assert.match(builtSource, /data\.scatterWindowBefore = Number\(scatterWindowBefore\);/,
-    "Les bornes de la fenêtre ne sont plus enregistrées.");
-
-  /* Couloirs teintés et sous-grille (issue #53). Sans la teinte, on ne retrouve
-     sa ligne qu'en relisant les libellés ; sans la sous-grille, un point entre
-     deux repères se lit « quelque part au milieu ». */
-  assert.match(builtSource, /fillOpacity=\{SCATTER_LANE_TINT\}/,
-    "Les couloirs ne portent plus la couleur de leur entité.");
-  assert.match(builtSource, /className="lp-widget-scatter-subaxis"/,
-    "La sous-grille intermédiaire du nuage a disparu.");
-  assert.match(builtSource, /ticks\.minor\.map/,
-    "La sous-grille n'est plus dessinée à partir des graduations calculées.");
-
-  /* Moteur d'étiquettes (issue #53). Trois maillons qui se défont sans erreur :
-     le widget cesse de demander un placement, ou dessine le rappel autrement,
-     ou reprend la couleur d'alerte à la place de celle du groupe. */
-  assert.match(builtSource, /const labels = scatterPlaceLabels\(/,
-    "Le widget ne demande plus de placement : les étiquettes disparaîtraient.");
-  assert.match(builtSource, /className="lp-widget-scatter-leader"/,
-    "Le trait de rappel des étiquettes déportées a disparu.");
-  /* La couleur d'un point est celle de son GROUPE, en retard comme à venir : le
-     rouge d'alerte effaçait l'agrégation sur toute la moitié gauche du nuage.
-     Le retard se signale au contour. */
-  const nuage = builtSource.slice(
-    builtSource.indexOf("function WidgetDeadlineScatter"),
-    builtSource.indexOf("function WidgetProjectPulse"),
-  );
-  assert.ok(nuage.length > 0, "WidgetDeadlineScatter introuvable");
-  assert.doesNotMatch(nuage, /fill=\{pt\.days < 0 \? SCATTER_LATE_COLOR/,
-    "Le retard reprend la couleur du point : l'agrégation ne se lirait plus à gauche de l'origine.");
-  assert.match(nuage, /stroke=\{pt\.days < 0 \? SCATTER_LATE_COLOR/,
-    "Le retard n'est plus signalé au contour : rien ne le distinguerait d'une tâche à venir.");
 }
 
 /* Heat map croisée (issue #51).
@@ -559,7 +488,7 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
      la vue « Heat map » : c'est ce qui empilait les cases. */
   const grille = builtSource.slice(
     builtSource.indexOf("function WidgetHeatmapGrid"),
-    builtSource.indexOf("function WidgetDeadlineScatter"),
+    builtSource.indexOf("// === NEXORA:PROJECT-TREEMAP:START ==="),
   );
   assert.ok(grille.length > 0, "WidgetHeatmapGrid introuvable");
   assert.doesNotMatch(grille, /lp-widget-heatmap-/,

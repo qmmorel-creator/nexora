@@ -1,4 +1,4 @@
-    message: d.mode === "deadlineEnd" ? "Échéance modifiée." : "Dates modifiées.",
+    message: "Dates modifiées.",
           actionLabel: "Annuler",
           onAction: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, start: origStart, end: origEnd } : t))),
         });
@@ -628,296 +628,6 @@
   // repère de fin de projet), tous alignés sur l'axe temporel commun déjà
   // calculé pour la vue complète — de quoi lire l'état de tous les projets
   // en quelques secondes, sans le détail tâche par tâche.
-  const DeadlineRow = ({ row }) => {
-    const p = row.project;
-    const color = p.color || "var(--text-muted)";
-    const statusColorFor = (task) => ctx.statuses.find((st) => st.id === task?.statusId)?.color || color;
-    const groups = row.deadlineGroups || [];
-    const laneY = row.mainY;
-    const isCollapsed = collapsed[p.id];
-
-    if (isCollapsed) {
-      return (
-        <g>
-          {todayX !== null && (
-            <line x1={todayX} y1={0} x2={todayX} y2={56} stroke="var(--accent)" strokeWidth="1.8" strokeDasharray="4 5" opacity=".62" />
-          )}
-          <line x1={xFor(row.minDate)} y1={28} x2={xFor(row.maxDate)} y2={28} stroke={color} strokeWidth="3.2" strokeLinecap="round" opacity=".16" />
-          {groups.length > 0 && (
-            <g>
-              <line x1={xFor(row.minDate)} y1={28} x2={groups[0].x} y2={28} stroke={statusColorFor(groups[0].tasks[0])} strokeWidth="3.2" strokeLinecap="round" opacity=".95" />
-              {groups.map((g,gi)=> {
-                const next=groups[gi+1];
-                if(!next) return null;
-                return <line key={`collapsed-seg-${g.date}`} x1={g.x} y1={28} x2={next.x} y2={28} stroke={statusColorFor(g.tasks[0])} strokeWidth="3.2" strokeLinecap="round" opacity=".95"/>;
-              })}
-              <line x1={groups[groups.length-1].x} y1={28} x2={xFor(row.maxDate)} y2={28} stroke={statusColorFor(groups[groups.length-1].tasks[0])} strokeWidth="3.2" strokeLinecap="round" opacity=".95" />
-            </g>
-          )}
-          {groups.map((g) => {
-            const task = g.tasks.find((x) => isTaskLate(x, ctx)) || g.tasks[0];
-            const sc = statusColorFor(task);
-            const done = isTaskDoneGlobal(task, ctx);
-            const collapsedAtRisk = !!task && isTaskLate(task, ctx) && !done;
-            return (
-              <g key={g.date}>
-                {collapsedAtRisk && (
-                  <circle
-                    cx={g.x}
-                    cy={28}
-                    r="7"
-                    fill="none"
-                    stroke={PM_RISK_COLOR}
-                    strokeWidth="2"
-                    className="lp-pm-late-ring"
-                    pointerEvents="none"
-                  />
-                )}
-                <ProjectDeadlineStationGlyph
-                  x={g.x}
-                  y={28}
-                  project={p}
-                  task={task}
-                  ctx={ctx}
-                  color={sc}
-                  done={done}
-                  radius={6}
-                  iconSize={8}
-                />
-              </g>
-            );
-          })}
-        </g>
-      );
-    }
-
-    // Connecte deux dates successives. Toutes les branches du jour A convergent
-    // vers un nœud virtuel au milieu, puis divergent vers toutes les branches du
-    // jour B. Cela produit visuellement :
-    // 1 -> N : divergence
-    // N -> 1 : convergence
-    // N -> M : convergence puis nouvelle divergence
-    const transitionPaths = [];
-    for (let gi = 0; gi < groups.length - 1; gi++) {
-      const a = groups[gi], b = groups[gi + 1];
-      const hubX = (a.x + b.x) / 2;
-      const bend = Math.min(12, Math.max(5, (b.x - a.x) / 8));
-
-      a.offsets.forEach((off, i) => {
-        const y = laneY + off;
-        const d = Math.abs(y - laneY) < .5
-          ? `M ${a.x} ${y} L ${hubX} ${laneY}`
-          : `M ${a.x} ${y} L ${hubX - bend} ${y} Q ${hubX} ${y} ${hubX} ${y + Math.sign(laneY-y)*bend} L ${hubX} ${laneY}`;
-        transitionPaths.push(<path key={`in-${gi}-${i}`} d={d} fill="none" stroke={statusColorFor(a.tasks[Math.min(i,a.tasks.length-1)])} strokeWidth="2.2" strokeLinecap="round" opacity=".78" />);
-      });
-
-      b.offsets.forEach((off, i) => {
-        const y = laneY + off;
-        const d = Math.abs(y - laneY) < .5
-          ? `M ${hubX} ${laneY} L ${b.x} ${y}`
-          : `M ${hubX} ${laneY} L ${hubX} ${y - Math.sign(y-laneY)*bend} Q ${hubX} ${y} ${hubX + bend} ${y} L ${b.x} ${y}`;
-        transitionPaths.push(<path key={`out-${gi}-${i}`} d={d} fill="none" stroke={statusColorFor(b.tasks[Math.min(i,b.tasks.length-1)])} strokeWidth="2.2" strokeLinecap="round" opacity=".78" />);
-      });
-
-      transitionPaths.push(
-        <circle key={`hub-${gi}`} cx={hubX} cy={laneY} r="2.5" fill={color} opacity=".58" />
-      );
-    }
-
-    return (
-      <g>
-        {/* Aujourd'hui : repère temporel vertical continu dans chaque ligne.
-            Le libellé n'est affiché que sur le premier projet pour éviter la répétition. */}
-        {todayX !== null && (
-          <g pointerEvents="none">
-            <line
-              x1={todayX} y1={0} x2={todayX} y2={row.ROW_H}
-              stroke="var(--accent)"
-              strokeWidth="1.8"
-              strokeDasharray="4 5"
-              opacity=".62"
-            />
-            {rowsWithHeights[0]?.project?.id === p.id && (
-              <>
-                <rect x={todayX - 31} y={5} width="62" height="16" rx="3" fill="var(--surface)" opacity=".96" />
-                <text
-                  x={todayX} y={16}
-                  textAnchor="middle"
-                  fontFamily='"Inter", monospace'
-                  fontSize="7.5"
-                  fontWeight="800"
-                  fill="var(--accent)"
-                >
-                  AUJOURD'HUI
-                </text>
-              </>
-            )}
-          </g>
-        )}
-        {/* Ligne projet : infrastructure temporelle de référence */}
-        <line x1={xFor(row.minDate)} y1={laneY} x2={xFor(row.maxDate)} y2={laneY} stroke={color} strokeWidth="3.4" strokeLinecap="round" opacity=".16" />
-        {groups.length > 0 && (
-          <g>
-            <line x1={xFor(row.minDate)} y1={laneY} x2={groups[0].x} y2={laneY} stroke={statusColorFor(groups[0].tasks[0])} strokeWidth="3.4" strokeLinecap="round" opacity=".95"/>
-            {groups.map((g,gi)=>{
-              const next=groups[gi+1];
-              if(!next) return null;
-              return <line key={`status-main-${g.date}`} x1={g.x} y1={laneY} x2={next.x} y2={laneY} stroke={statusColorFor(g.tasks[0])} strokeWidth="3.4" strokeLinecap="round" opacity=".95"/>;
-            })}
-            <line x1={groups[groups.length-1].x} y1={laneY} x2={xFor(row.maxDate)} y2={laneY} stroke={statusColorFor(groups[groups.length-1].tasks[0])} strokeWidth="3.4" strokeLinecap="round" opacity=".95"/>
-          </g>
-        )}
-        {transitionPaths}
-
-        {groups.map((g, gi) => g.tasks.map((t, i) => {
-          const y = laneY + g.offsets[i];
-          const st = ctx.statuses.find((s) => s.id === t.statusId);
-          const done = isTaskDoneGlobal(t, ctx);
-          const atRisk = showRiskBadges && !done && isAtRisk(t);
-          const stationColor = st?.color || color; // la couleur reflète désormais le statut de la tâche
-          const placement = g.placements?.[i] || {
-            side:(i % 2 ? "below" : "above"),
-            lane:0,
-            titleW:120,
-            labelX:g.x,
-            displayTitle:String(t.title || ""),
-            titleTopRel:(i % 2 ? 28 : -56),
-          };
-          const labelAbove = placement.side === "above";
-          const titleW = Math.min(190, Math.max(64, placement.titleW || 120));
-          const textX = placement.labelX ?? g.x;
-          const titleRectY = laneY + (placement.titleTopRel ?? 0);
-          const titleTextY = titleRectY + 11;
-          const metaRectY = titleRectY + 16;
-          const metaTextY = metaRectY + 10;
-
-          return (
-            <g
-              key={t.id}
-              opacity={dimOpacity(t.id)}
-              onMouseDown={(e) => startDragTask(e, t, "deadlineEnd")}
-              onTouchStart={(e) => startDragTask(e, t, "deadlineEnd")}
-              style={{ cursor:"ew-resize" }}
-              data-pm-task-id={t.id}
-            >
-              {/* Branche de la station depuis la ligne principale */}
-              {Math.abs(g.offsets[i]) > .5 && (
-                <line x1={g.x} y1={laneY} x2={g.x} y2={y} stroke={stationColor} strokeWidth="1.6" strokeDasharray="2 3" opacity=".30" />
-              )}
-
-              {/* Connecteur d'étiquette routé sur une voie dédiée :
-                  segments orthogonaux, sans diagonales qui se croisent. */}
-              <path
-                d={(placement.connectorSegments || []).map((seg, si) =>
-                  `${si === 0 ? "M" : "L"} ${si === 0 ? seg.x1 : seg.x2} ${si === 0 ? seg.y1 : seg.y2}`
-                ).join(" ")}
-                transform={`translate(0 ${laneY})`}
-                fill="none"
-                stroke={stationColor}
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                opacity=".38"
-                pointerEvents="none"
-              />
-
-              <circle cx={g.x} cy={y} r="15" fill="transparent" />
-              {atRisk && (
-                <circle
-                  cx={g.x}
-                  cy={y}
-                  r="9.5"
-                  fill="none"
-                  stroke={PM_RISK_COLOR}
-                  strokeWidth="2"
-                  className="lp-pm-late-ring"
-                  pointerEvents="none"
-                />
-              )}
-
-              <ProjectDeadlineStationGlyph
-                x={g.x}
-                y={y}
-                project={p}
-                task={t}
-                ctx={ctx}
-                color={stationColor}
-                done={done}
-                radius={8.5}
-                iconSize={11}
-              />
-
-              {atRisk && (
-                <circle
-                  cx={g.x}
-                  cy={y}
-                  r="12"
-                  fill="none"
-                  stroke={PM_RISK_COLOR}
-                  strokeWidth="1.4"
-                  strokeDasharray="2 2"
-                  pointerEvents="none"
-                />
-              )}
-
-              {/* Étiquette sur sa propre voie : fond opaque + largeur plafonnée */}
-              <rect
-                x={textX - titleW/2 - 6}
-                y={titleRectY}
-                width={titleW + 12}
-                height="15"
-                rx="3"
-                fill="var(--surface)"
-                opacity=".985"
-              />
-              <text
-                x={textX}
-                y={titleTextY}
-                textAnchor="middle"
-                fontFamily="Inter, sans-serif"
-                fontSize="10"
-                fontWeight="700"
-                fill="var(--text-900)"
-              >
-                {placement.displayTitle || (String(t.title || "").length > 30 ? String(t.title).slice(0,29) + "…" : t.title)}
-              </text>
-
-              <rect
-                x={textX - 43}
-                y={metaRectY}
-                width="86"
-                height="13"
-                rx="3"
-                fill="var(--surface)"
-                opacity=".97"
-              />
-              <text
-                x={textX}
-                y={metaTextY}
-                textAnchor="middle"
-                fontFamily='"Inter", monospace'
-                fontSize="7.6"
-                fontWeight="700"
-                fill={stationColor}
-              >
-                {fmtShort(t.end)}
-              </text>
-
-              <title>{`${t.title} — ${fmtShort(t.end)}${st ? ` — ${st.name}` : ""} — Glisser horizontalement pour modifier l’échéance`}</title>
-            </g>
-          );
-        }))}
-
-        {groups.length > 0 && (
-          <>
-            <Station x={xFor(row.minDate)} y={laneY} color={color} r={5.5} />
-            <Terminus x={xFor(row.maxDate) + 7} y={laneY} color={color} size={.8} />
-          </>
-        )}
-      </g>
-    );
-  };
-
   const NetworkRow = ({ row }) => {
     const { project: p, pMilestones, maxDate, avgProgress } = row;
     const color = p.color || "var(--text-muted)";
@@ -1064,23 +774,8 @@
           </button>
         )}
         {!embedded && (
-          <button className={"lp-tool-btn" + (networkMode ? " active" : "")} onClick={() => setPrefs((p) => {
-              const next = !p.networkMode;
-              return { ...p, networkMode:next, deadlineMode:next ? false : !!p.deadlineMode };
-            })} title="Vue réseau : uniquement les jalons de tous les projets, sur un axe commun">
+          <button className={"lp-tool-btn" + (networkMode ? " active" : "")} onClick={() => setPrefs((p) => ({ ...p, networkMode:!p.networkMode }))} title="Vue réseau : uniquement les jalons de tous les projets, sur un axe commun">
             <Network size={14} />
-          </button>
-        )}
-        {!embedded && (
-          <button
-            className={"lp-tool-btn" + (deadlineMode ? " active" : "")}
-            onClick={() => setPrefs((p) => {
-              const next = !p.deadlineMode;
-              return { ...p, deadlineMode:next, networkMode:next ? false : !!p.networkMode };
-            })}
-            title="Échéances : représenter toutes les dates de fin comme des stations de métro"
-          >
-            <CalendarClock size={14} /> Échéances
           </button>
         )}
         {!embedded && (
@@ -1208,18 +903,6 @@
             )}
           </div>
 
-          {deadlineMode && (
-            <div style={{
-              position:"absolute", top:7, right:12, zIndex:8,
-              display:"flex", alignItems:"center", gap:6,
-              padding:"4px 7px", border:"1px solid var(--border)",
-              background:"var(--surface)", borderRadius:"var(--radius-sm)",
-              fontFamily:"var(--font-mono)", fontSize:8.5, fontWeight:800,
-              color:"var(--text-secondary)"
-            }}>
-              <CalendarClock size={11} /> MODE ÉCHÉANCES · glisser une station = modifier la fin
-            </div>
-          )}
           <div className="lp-pm-bands" style={{ left: railLeftW, width: chartWidth, height: totalChartHeight }}>
             {monthBands.map((b, i) => (
               <div key={i} className="lp-pm-band" style={{ left: b.x0, width: Math.max(0, b.x1 - b.x0), background: accent }} />
@@ -1254,7 +937,7 @@
             <defs>
               {/* placeholders — chaque flèche définit son propre dégradé/marqueur ci-dessous */}
             </defs>
-            {!deadlineMode && dated.filter((t) => t.dependsOn && t.dependsOn.length).flatMap((t) =>
+            {dated.filter((t) => t.dependsOn && t.dependsOn.length).flatMap((t) =>
               t.dependsOn.map((depId) => {
                 const depTask = dated.find((x) => x.id === depId);
                 if (!depTask || depTask.projectId === t.projectId) return null; // intra-projet déjà géré localement
@@ -1309,7 +992,7 @@
                 si l'un des deux projets n'est pas dans le périmètre actuel, la tâche est
                 déjà rendue normalement par sa propre ligne (voir isFullyShared plus haut) —
                 ce bloc ne dessine QUE le cas où les deux lignes sont bien visibles. */}
-            {!networkMode && !deadlineMode && dated.filter((t) => isFullyShared(t)).map((t) => {
+            {!networkMode && dated.filter((t) => isFullyShared(t)).map((t) => {
               const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
               const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
               if (!p1 || !p2) return null;
@@ -1622,13 +1305,13 @@
                     <path d="M0,0 L5,2.5 L0,5 Z" fill="var(--text-muted)" />
                   </marker>
                 </defs>
-                {networkMode ? <NetworkRow row={row} /> : deadlineMode ? <DeadlineRow row={row} /> : <ProjectRow row={row} />}
+                {networkMode ? <NetworkRow row={row} /> : <ProjectRow row={row} />}
               </svg>
             </div>
             {/* Espace dédié réservé au(x) tronc(s) commun(s) d'une tâche à deux projets
                 partagée avec la ligne suivante — territoire propre, jamais mélangé aux
                 branches de dépendance internes de chaque ligne. */}
-            {!deadlineMode && rowGapAfter[row.project.id] > 0 && (
+            {rowGapAfter[row.project.id] > 0 && (
               <div className="lp-pm-shared-gap" style={{ height: rowGapAfter[row.project.id] }} />
             )}
             </React.Fragment>
@@ -1640,49 +1323,47 @@
               ligne voisine. Ce calque global est rendu après toutes les lignes et avec
               un z-index supérieur : les disques restent systématiquement au-dessus des
               troncs communs, jonctions et lignes de projets. */}
-          {!deadlineMode && (
-            <svg
-              className="lp-pm-shared-animation-overlay"
-              width={Math.max(1, chartWidth)}
-              height={Math.max(1, totalChartHeight)}
-              viewBox={`0 0 ${Math.max(1, chartWidth)} ${Math.max(1, totalChartHeight)}`}
-              style={{ position: "absolute", left: LEFT_W, top: 0, width: Math.max(1, chartWidth), height: Math.max(1, totalChartHeight), pointerEvents: "none", zIndex: 10, overflow: "visible", isolation: "isolate" }}
-            >
-              {/* TOUS les disques animés sont rendus ici, après les SVG de toutes les
-                  lignes. Cela garantit qu'ils restent visuellement au-dessus des rails,
-                  y compris lorsqu'ils passent sur une ligne appartenant à un autre projet. */}
-              {trainFlows.map((flow, i) => (
-                <circle
-                  key={"train-flow-overlay-" + i + "-" + flow.id}
-                  r="4"
-                  fill="#fff"
-                  stroke="#000"
-                  strokeWidth="1.8"
-                  opacity="1"
-                >
-                  <animateMotion dur={`${flow.duration || 0.35}s`} repeatCount="indefinite" path={flow.path} />
-                </circle>
-              ))}
+          <svg
+            className="lp-pm-shared-animation-overlay"
+            width={Math.max(1, chartWidth)}
+            height={Math.max(1, totalChartHeight)}
+            viewBox={`0 0 ${Math.max(1, chartWidth)} ${Math.max(1, totalChartHeight)}`}
+            style={{ position: "absolute", left: LEFT_W, top: 0, width: Math.max(1, chartWidth), height: Math.max(1, totalChartHeight), pointerEvents: "none", zIndex: 10, overflow: "visible", isolation: "isolate" }}
+          >
+            {/* TOUS les disques animés sont rendus ici, après les SVG de toutes les
+                lignes. Cela garantit qu'ils restent visuellement au-dessus des rails,
+                y compris lorsqu'ils passent sur une ligne appartenant à un autre projet. */}
+            {trainFlows.map((flow, i) => (
+              <circle
+                key={"train-flow-overlay-" + i + "-" + flow.id}
+                r="4"
+                fill="#fff"
+                stroke="#000"
+                strokeWidth="1.8"
+                opacity="1"
+              >
+                <animateMotion dur={`${flow.duration || 0.35}s`} repeatCount="indefinite" path={flow.path} />
+              </circle>
+            ))}
 
-              {dated.filter((t) => isFullyShared(t) && !t.milestone).map((t) => {
-                const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
-                const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
-                if (!p1 || !p2) return null;
-                const x0 = xFor(t.start);
-                const x1 = Math.max(xFor(t.end), x0 + 30);
-                const y1 = rowAbsoluteMainY[t.projectId], y2 = rowAbsoluteMainY[t.secondaryProjectId];
-                const topProjectId = y1 < y2 ? t.projectId : t.secondaryProjectId;
-                const lane = sharedTaskLane[t.id] || 0;
-                const gapTop = rowGapTopAfter[topProjectId];
-                const midY = gapTop != null ? gapTop + (lane + 0.5) * SHARED_GAP_H : (y1 + y2) / 2;
-                return (
-                  <circle key={"shared-shimmer-overlay-" + t.id} r="5" fill="#fff" stroke="#000" strokeWidth="1.8" opacity="0.98">
-                    <animateMotion dur={`${Math.max(0.35, Math.abs(x1 - x0) / TRAIN_PX_PER_SECOND)}s`} repeatCount="indefinite" path={`M ${x0} ${midY} L ${x1} ${midY}`} />
-                  </circle>
-                );
-              })}
-            </svg>
-          )}
+            {dated.filter((t) => isFullyShared(t) && !t.milestone).map((t) => {
+              const p1 = ctx.projects.find((pr) => pr.id === t.projectId);
+              const p2 = ctx.projects.find((pr) => pr.id === t.secondaryProjectId);
+              if (!p1 || !p2) return null;
+              const x0 = xFor(t.start);
+              const x1 = Math.max(xFor(t.end), x0 + 30);
+              const y1 = rowAbsoluteMainY[t.projectId], y2 = rowAbsoluteMainY[t.secondaryProjectId];
+              const topProjectId = y1 < y2 ? t.projectId : t.secondaryProjectId;
+              const lane = sharedTaskLane[t.id] || 0;
+              const gapTop = rowGapTopAfter[topProjectId];
+              const midY = gapTop != null ? gapTop + (lane + 0.5) * SHARED_GAP_H : (y1 + y2) / 2;
+              return (
+                <circle key={"shared-shimmer-overlay-" + t.id} r="5" fill="#fff" stroke="#000" strokeWidth="1.8" opacity="0.98">
+                  <animateMotion dur={`${Math.max(0.35, Math.abs(x1 - x0) / TRAIN_PX_PER_SECOND)}s`} repeatCount="indefinite" path={`M ${x0} ${midY} L ${x1} ${midY}`} />
+                </circle>
+              );
+            })}
+          </svg>
 
           {rows.length === 0 && <div className="lp-empty" style={{ marginLeft: railLeftW, padding: 30 }}>Aucun projet avec des tâches datées.</div>}
         </div>
@@ -2432,7 +2113,6 @@ function defaultLayoutForType(type) {
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
   if (type === "calendar") return { w: 6, h: 8 };
-  if (type === "echeances") return { w: 8, h: 6 };
   if (type === "nextBestAction") return { w: 4, h: 6 };
   if (type === "dailyBriefing") return { w: 4, h: 7 };
   if (type === "dominoEffect") return { w: 4, h: 6 };
@@ -2476,20 +2156,13 @@ function migrateLegacyMiniGanttWidget(widget) {
   });
   return next;
 }
-// #160/#176 : « Timeline des jalons », « Timeline verticale métro » et
-// « Métro / Échéances » fusionnent avec « Nuage des échéances » dans un seul
-// widget « Échéances » à orientation choisie. Une sauvegarde ancienne migre
-// vers l'orientation la plus proche de son ancien rendu — jamais reconstruite
-// depuis zéro, jamais perdue : le widget garde son identité et son titre.
-const ECHEANCES_LEGACY_ORIENTATION = {
-  milestoneTimeline: "verticale",
-  verticalMetroTimeline: "verticale",
-  metroDeadline: "horizontale",
-  deadlineScatter: "nuage",
-};
-function migrateLegacyEcheancesWidget(widget) {
-  if (!widget || typeof widget !== "object" || !(widget.type in ECHEANCES_LEGACY_ORIENTATION)) return widget;
-  return { ...widget, type: "echeances", echeancesOrientation: ECHEANCES_LEGACY_ORIENTATION[widget.type] };
+// #318 : le widget « Échéances » est supprimé, avec les quatre anciens types
+// qu'il avait absorbés (#160/#176). Une sauvegarde qui en contient encore les
+// perd à la lecture — retirés de leur liste, plutôt que laissés en tuile de
+// type inconnu, vide et sans message.
+const REMOVED_ECHEANCES_TYPES = new Set(["echeances", "milestoneTimeline", "verticalMetroTimeline", "metroDeadline", "deadlineScatter"]);
+function isRemovedEcheancesWidget(value) {
+  return !!value && typeof value === "object" && REMOVED_ECHEANCES_TYPES.has(value.type);
 }
 // #140 : « Tâches bloquantes » migre vers Domino Effect, tri « nombre de
 // tâches bloquées » — le même critère que son propre classement d'origine.
@@ -2523,10 +2196,9 @@ function migrateLegacySingleBlockCardWidget(widget) {
   };
 }
 function migrateLegacyMiniGanttData(value) {
-  if (Array.isArray(value)) return value.map(migrateLegacyMiniGanttData);
+  if (Array.isArray(value)) return value.filter((v) => !isRemovedEcheancesWidget(v)).map(migrateLegacyMiniGanttData);
   if (!value || typeof value !== "object") return value;
   if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
-  if (value.type in ECHEANCES_LEGACY_ORIENTATION) return migrateLegacyEcheancesWidget(value);
   if (value.type === LEGACY_BLOCKERS_TYPE) return migrateLegacyBlockersWidget(value);
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
   const next = {};
@@ -3190,7 +2862,7 @@ function packWidgets(widgets) {
 // indépendant des tâches, taskDetail/customCard/projectTreemap dont un
 // compte à zéro n'est pas forcément un état "vide", les vues « complet »
 // embarquées qui gèrent déjà leur propre état vide) restent inchangés.
-const WIDGET_EMPTY_FUNNEL_TYPES = new Set(["chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth", "heatmapGrid", "echeances"]);
+const WIDGET_EMPTY_FUNNEL_TYPES = new Set(["chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth", "heatmapGrid"]);
 function WidgetEmptyFunnel({ rawCount, metaCount, dashboardCount, pageCount, onOpenMetaFilters, onOpenPageFilter, onOpenWidgetSettings }) {
   const step = (n) => `${n} tâche${n > 1 ? "s" : ""}`;
   return (
@@ -3513,10 +3185,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     let targetHPx;
     if (w.type === "taskDetail") {
       targetHPx = 510;
-    } else if (w.type === "echeances" && (w.echeancesOrientation || "horizontale") === "horizontale") {
-      const scoped = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx).filter((t) => t.end);
-      const projectCount = Math.max(1, new Set(scoped.map((t) => t.projectId).filter(Boolean)).size);
-      targetHPx = 54 + projectCount * 82 + FRAME_CHROME_PX;
     } else if (w.type === "minigantt") {
       const scopedAll = applyWidgetFilter(pageFilteredTasks, widgetFilterFor(w), ctx);
       const scoped = scopedAll.filter((t) => !t.milestone && t.start && t.end);
@@ -4163,15 +3831,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
-                )}
-                {w.type === "echeances" && !showEmptyFunnel && (
-                  <WidgetEcheances
-                    widget={w}
-                    tasks={scoped}
-                    ctx={ctx}
-                    onOpen={onOpen}
-                    onUpdateDates={(taskId, patch) => setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, ...patch } : t))}
-                  />
                 )}
                 {w.type === "nextBestAction" && (
                   <WidgetNextBestAction tasks={scoped} ctx={ctx} onOpen={onOpen} onStartTask={onStartTask} />
@@ -12856,1081 +12515,6 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   );
 }
 
-// Timeline des prochains jalons : tous les jalons à venir (toutes projets confondus
-// dans la sélection filtrée), sur un axe temporel commun avec repère "aujourd'hui" —
-// pour voir d'un coup d'œil ce qui approche.
-// Widget "Timeline des jalons" — disposition en zigzag (alternance haut/bas)
-// pour éviter que les jalons rapprochés ne se chevauchent, avec le titre et
-// la date visibles directement (plus besoin de survoler chaque repère), et
-// l'icône personnalisée du jalon si elle existe (cohérent avec les autres
-// vues déjà corrigées pour ça).
-// Widget "Timeline des jalons" — feuille de route verticale : chaque jalon
-// est une LIGNE de texte HTML normale (pas de positionnement SVG calculé à
-// partir des dates), donc structurellement impossible à faire chevaucher
-// quelle que soit la densité de dates rapprochées. Relié par un rail vertical
-// coloré, avec l'icône personnalisée du jalon si elle existe.
-
-
-// #160/#176 : point d'entrée unique du widget « Échéances » — un choix
-// d'orientation plutôt que quatre widgets séparés. Chaque orientation délègue
-// au rendu déjà existant et éprouvé (aucun n'est réécrit), migration comprise :
-// `migrateLegacyEcheancesWidget` fait déjà correspondre une ancienne sauvegarde
-// à l'orientation la plus proche avant que ce composant ne s'exécute.
-const ECHEANCES_ORIENTATIONS = ["horizontale", "verticale", "nuage"];
-function WidgetEcheances({ widget, tasks, ctx, onOpen, onUpdateDates }) {
-  const orientation = ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale";
-  if (orientation === "verticale") {
-    return <WidgetVerticalMetroTimeline tasks={tasks} ctx={ctx} onOpen={onOpen} onUpdateDates={onUpdateDates} />;
-  }
-  if (orientation === "nuage") {
-    return <WidgetDeadlineScatter widget={widget} tasks={tasks} ctx={ctx} onOpen={onOpen} />;
-  }
-  return <WidgetMetroDeadline tasks={tasks} ctx={ctx} onOpen={onOpen} />;
-}
-
-function WidgetMetroDeadline({ tasks, ctx, onOpen }) {
-  const wrapRef = useRef(null);
-  const scrollRef = useRef(null);
-  const [width, setWidth] = useState(760);
-  const [zoom, setZoom] = useState(1);
-  const [scaleMode, setScaleMode] = useState("auto");
-  const [centerTodayToken, setCenterTodayToken] = useState(0);
-  const today = iso(new Date());
-
-  useEffect(() => {
-    if (!wrapRef.current) return;
-    const apply = () => setWidth(Math.max(320, wrapRef.current.clientWidth || 760));
-    apply();
-    const ro = new ResizeObserver(apply);
-    ro.observe(wrapRef.current);
-    return () => ro.disconnect();
-  }, []);
-
-  const dated = useMemo(
-    () => tasks.filter((t) => t.end).sort((a,b) => a.end.localeCompare(b.end) || (a.title || "").localeCompare(b.title || "")),
-    [tasks]
-  );
-
-  const rows = useMemo(() => {
-    const projectIds = [...new Set(dated.map((t) => t.projectId).filter(Boolean))];
-    return projectIds
-      .map((pid) => {
-        const project = ctx.projects.find((p) => p.id === pid);
-        if (!project) return null;
-        const pTasks = dated.filter((t) => t.projectId === pid);
-        return { project, tasks:pTasks };
-      })
-      .filter(Boolean)
-      .sort((a,b) => (a.project.name || "").localeCompare(b.project.name || "", "fr"));
-  }, [dated, ctx.projects]);
-
-  // Étendue réelle des données. Elle inclut toujours aujourd'hui afin que
-  // le repère temporel reste visible.
-  const dataBounds = useMemo(() => {
-    if (!dated.length) return { min:today, max:addDays(today,30) };
-    let min = dated[0].end;
-    let max = dated[dated.length - 1].end;
-    if (today < min) min = today;
-    if (today > max) max = today;
-    if (min === max) max = addDays(max,1);
-    return { min, max };
-  }, [dated, today]);
-
-  const dataSpanDays = Math.max(1, dayIndex(dataBounds.max) - dayIndex(dataBounds.min));
-
-  const autoScale = useMemo(() => {
-    if (dataSpanDays <= 21) return "day";
-    if (dataSpanDays <= 90) return "week";
-    if (dataSpanDays <= 400) return "month";
-    if (dataSpanDays <= 900) return "quarter";
-    return "year";
-  }, [dataSpanDays]);
-  const effectiveScale = scaleMode === "auto" ? autoScale : scaleMode;
-
-  // Fenêtres temporelles de référence du widget, centrées autour d'aujourd'hui.
-  // Ces trois niveaux ne dépendent plus de l'étendue des données :
-  // - Jour    : J-10  → J+20
-  // - Semaine : J-7   → J+70  (1 semaine avant, 10 après)
-  // - Mois    : M-1   → M+6
-  // Trimestre / Année conservent une logique plus large basée sur les données.
-  const bounds = useMemo(() => {
-    const todayDate = new Date(today + "T00:00:00");
-
-    if (scaleMode === "day") {
-      return { min:addDays(today, -10), max:addDays(today, 20) };
-    }
-
-    if (scaleMode === "week") {
-      return { min:addDays(today, -7), max:addDays(today, 70) };
-    }
-
-    if (scaleMode === "month") {
-      const minD = new Date(todayDate.getFullYear(), todayDate.getMonth() - 1, todayDate.getDate());
-      const maxD = new Date(todayDate.getFullYear(), todayDate.getMonth() + 6, todayDate.getDate());
-      return { min:iso(minD), max:iso(maxD) };
-    }
-
-    if (scaleMode === "auto") return dataBounds;
-
-    const minVisibleSpan = {
-      quarter: 730,
-      year: 1825,
-    }[scaleMode] || dataSpanDays;
-
-    if (dataSpanDays >= minVisibleSpan) return dataBounds;
-
-    const dataMin = dayIndex(dataBounds.min);
-    const dataMax = dayIndex(dataBounds.max);
-    const center = Math.round((dataMin + dataMax) / 2);
-    const half = Math.floor(minVisibleSpan / 2);
-    const startIdx = center - half;
-    const endIdx = startIdx + minVisibleSpan;
-
-    const epoch = new Date("2020-01-01T00:00:00");
-    const toIsoFromIndex = (idx) => {
-      const d = new Date(epoch);
-      d.setDate(d.getDate() + idx);
-      return iso(d);
-    };
-
-    return { min:toIsoFromIndex(startIdx), max:toIsoFromIndex(endIdx) };
-  }, [today, dataBounds.min, dataBounds.max, dataSpanDays, scaleMode]);
-
-  const PAD_L = width < 520 ? 118 : 152;
-  const PAD_R = 22;
-  const basePlotW = Math.max(180, width - PAD_L - PAD_R);
-  const plotW = Math.max(basePlotW, basePlotW * zoom);
-  const canvasW = PAD_L + plotW + PAD_R;
-  const minIdx = dayIndex(bounds.min);
-  const spanDays = Math.max(1, dayIndex(bounds.max) - minIdx);
-  const xFor = (date) => PAD_L + ((dayIndex(date) - minIdx) / spanDays) * plotW;
-  const todayX = xFor(today);
-
-  const tickDates = useMemo(() => {
-    const outTicks = [];
-    const minDate = new Date(bounds.min + "T00:00:00");
-    const maxDate = new Date(bounds.max + "T00:00:00");
-    const push = (d, major=false) => {
-      const ds = iso(d);
-      if (ds >= bounds.min && ds <= bounds.max) outTicks.push({ date:ds, major });
-    };
-
-    if (effectiveScale === "day") {
-      const d = new Date(minDate);
-      while (d <= maxDate) {
-        push(d, d.getDate() === 1);
-        d.setDate(d.getDate()+1);
-      }
-    } else if (effectiveScale === "week") {
-      const d = new Date(minDate);
-      const day = (d.getDay()+6)%7;
-      d.setDate(d.getDate()-day);
-      while (d <= maxDate) {
-        push(d, d.getDate() <= 7);
-        d.setDate(d.getDate()+7);
-      }
-    } else if (effectiveScale === "month") {
-      const d = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
-      while (d <= maxDate) {
-        push(d, d.getMonth() === 0);
-        d.setMonth(d.getMonth()+1);
-      }
-    } else if (effectiveScale === "quarter") {
-      const q = Math.floor(minDate.getMonth()/3)*3;
-      const d = new Date(minDate.getFullYear(), q, 1);
-      while (d <= maxDate) {
-        push(d, d.getMonth() === 0);
-        d.setMonth(d.getMonth()+3);
-      }
-    } else {
-      const d = new Date(minDate.getFullYear(),0,1);
-      while (d <= maxDate) {
-        push(d, true);
-        d.setFullYear(d.getFullYear()+1);
-      }
-    }
-    return outTicks;
-  }, [bounds.min, bounds.max, effectiveScale]);
-
-  const formatTick = (date) => {
-    const d = new Date(date + "T00:00:00");
-    if (effectiveScale === "day") return d.toLocaleDateString("fr-FR",{day:"2-digit",month:"short"});
-    if (effectiveScale === "week") {
-      const first = new Date(d.getFullYear(),0,1);
-      const wk = Math.ceil((((d-first)/86400000)+first.getDay()+1)/7);
-      return `S${String(wk).padStart(2,"0")}`;
-    }
-    if (effectiveScale === "month") return d.toLocaleDateString("fr-FR",{month:"short",year:"2-digit"});
-    if (effectiveScale === "quarter") return `T${Math.floor(d.getMonth()/3)+1} ${String(d.getFullYear()).slice(-2)}`;
-    return String(d.getFullYear());
-  };
-
-  const monthBands = useMemo(() => {
-    if (effectiveScale !== "day" && effectiveScale !== "week") return [];
-    const bands = [];
-    let cur = new Date(bounds.min + "T00:00:00");
-    cur = new Date(cur.getFullYear(), cur.getMonth(), 1);
-    while (iso(cur) <= bounds.max) {
-      const start = iso(cur) < bounds.min ? bounds.min : iso(cur);
-      const next = new Date(cur.getFullYear(),cur.getMonth()+1,1);
-      const endD = addDays(iso(next), -1);
-      const end = endD > bounds.max ? bounds.max : endD;
-      bands.push({
-        start, end,
-        label:cur.toLocaleDateString("fr-FR",{month:"long",year:"numeric"})
-      });
-      cur = next;
-    }
-    return bands;
-  }, [bounds.min,bounds.max,effectiveScale]);
-
-  const layoutRow = (row) => {
-    const byDate = new Map();
-    row.tasks.forEach((t) => {
-      if (!byDate.has(t.end)) byDate.set(t.end, []);
-      byDate.get(t.end).push(t);
-    });
-
-    const rawGroups = [...byDate.entries()].sort((a,b) => a[0].localeCompare(b[0]));
-    const maxSameDay = Math.max(1, ...rawGroups.map(([,ts]) => ts.length));
-
-    // Les stations d'une même date restent proches, mais jamais assez pour que
-    // leurs anneaux ou icônes se touchent.
-    const stationLaneGap = 31;
-    const spread = (n) => {
-      if (n <= 1) return [0];
-      const c = (n - 1) / 2;
-      return Array.from({length:n},(_,i)=>(i-c)*stationLaneGap);
-    };
-
-    const groups = rawGroups.map(([date,ts]) => ({
-      date,
-      tasks:ts,
-      x:xFor(date),
-      offsets:spread(ts.length),
-      labels:[]
-    }));
-
-    // ---------------------------------------------------------------------
-    // Placement 2D des libellés
-    // ---------------------------------------------------------------------
-    const LABEL_H = 15;
-    const LABEL_GAP_X = 10;
-    const LABEL_GAP_Y = 5;
-    const LANE_GAP = 22;
-    const BASE_OFFSET = 25;
-    const MIN_LABEL_X = PAD_L + 70; // protège le nom du projet
-    const MAX_LABEL_X = canvasW - PAD_R - 70;
-
-    // La ligne principale est à y=0 pendant le calcul local.
-    const stationBoxes = [];
-    groups.forEach((g) => {
-      g.offsets.forEach((off) => {
-        stationBoxes.push({
-          x1:g.x-13, x2:g.x+13,
-          y1:off-13, y2:off+13
-        });
-      });
-    });
-
-    const placed = [];
-    const intersects = (a,b,padX=0,padY=0) =>
-      !(a.x2 + padX <= b.x1 || a.x1 - padX >= b.x2 ||
-        a.y2 + padY <= b.y1 || a.y1 - padY >= b.y2);
-
-    const collides = (box) => {
-      if (placed.some((p) => intersects(box,p,LABEL_GAP_X,LABEL_GAP_Y))) return true;
-      // Une étiquette ne peut pas recouvrir une station, même si elle se trouve
-      // sur une voie différente.
-      if (stationBoxes.some((s) => intersects(box,s,5,4))) return true;
-      return false;
-    };
-
-    let seq = 0;
-    let maxAbove = 0;
-    let maxBelow = 0;
-
-    groups.forEach((g) => {
-      g.tasks.forEach((t,i) => {
-        const rawTitle = t.title || "Sans titre";
-        const label = rawTitle.length > 25 ? rawTitle.slice(0,24) + "…" : rawTitle;
-        const labelW = Math.min(
-          160,
-          Math.max(58, pmMeasureText(label, "700 8.4px Inter, sans-serif") + 12)
-        );
-
-        const stationY = g.offsets[i];
-        const preferredSide = (seq++ % 2 === 0) ? "above" : "below";
-
-        // Plusieurs positions horizontales candidates. Le décalage s'amplifie
-        // seulement quand la zone est dense ; on conserve donc une lecture
-        // proche de la station en temps normal.
-        const shifts = [0, -34, 34, -68, 68, -102, 102];
-        const sides = [preferredSide, preferredSide === "above" ? "below" : "above"];
-
-        let chosen = null;
-
-        outer:
-        for (const side of sides) {
-          for (let lane=0; lane<8; lane++) {
-            const dy = BASE_OFFSET + lane * LANE_GAP;
-            const y = side === "above"
-              ? stationY - dy - LABEL_H
-              : stationY + dy;
-
-            for (const shift of shifts) {
-              const labelX = Math.max(
-                MIN_LABEL_X + labelW/2,
-                Math.min(MAX_LABEL_X - labelW/2, g.x + shift)
-              );
-              const box = {
-                x1:labelX-labelW/2,
-                x2:labelX+labelW/2,
-                y1:y,
-                y2:y+LABEL_H
-              };
-              if (!collides(box)) {
-                chosen = { side,lane,label,labelW,labelX,labelY:y,box };
-                break outer;
-              }
-            }
-          }
-        }
-
-        // Cas extrême : si 8 voies ne suffisent pas, on ajoute une voie dédiée
-        // plus loin. La hauteur du projet augmentera automatiquement.
-        if (!chosen) {
-          const side = preferredSide;
-          let lane = 8;
-          while (!chosen && lane < 20) {
-            const dy = BASE_OFFSET + lane * LANE_GAP;
-            const y = side === "above"
-              ? stationY - dy - LABEL_H
-              : stationY + dy;
-            const labelX = Math.max(
-              MIN_LABEL_X + labelW/2,
-              Math.min(MAX_LABEL_X - labelW/2, g.x)
-            );
-            const box = {
-              x1:labelX-labelW/2,
-              x2:labelX+labelW/2,
-              y1:y,
-              y2:y+LABEL_H
-            };
-            if (!collides(box)) chosen = { side,lane,label,labelW,labelX,labelY:y,box };
-            lane++;
-          }
-        }
-
-        if (!chosen) {
-          chosen = {
-            side:preferredSide,lane:20,label,labelW,labelX:g.x,
-            labelY:preferredSide==="above" ? stationY-480 : stationY+480,
-            box:{x1:g.x-labelW/2,x2:g.x+labelW/2,y1:0,y2:LABEL_H}
-          };
-          chosen.box.y1 = chosen.labelY;
-          chosen.box.y2 = chosen.labelY + LABEL_H;
-        }
-
-        placed.push(chosen.box);
-        if (chosen.side === "above") maxAbove = Math.max(maxAbove, -chosen.box.y1);
-        else maxBelow = Math.max(maxBelow, chosen.box.y2);
-
-        g.labels.push(chosen);
-      });
-    });
-
-    // Calcule l'emprise des branches multi-stations.
-    const maxStationUp = Math.max(0, ...groups.flatMap((g)=>g.offsets.map((v)=>Math.max(0,-v))));
-    const maxStationDown = Math.max(0, ...groups.flatMap((g)=>g.offsets.map((v)=>Math.max(0,v))));
-
-    // Marge stricte entre lignes projets : aucun libellé du projet courant ne
-    // peut empiéter sur la ligne suivante.
-    const topExtent = Math.max(maxAbove, maxStationUp + 15);
-    const bottomExtent = Math.max(maxBelow, maxStationDown + 15);
-    const rowH = Math.max(78, topExtent + bottomExtent + 22);
-    const cy = topExtent + 11;
-
-    return {
-      rowH,
-      cy,
-      groups,
-      labelHeight:LABEL_H
-    };
-  };
-
-  const layouts = useMemo(
-    () => rows.map((r) => ({...r,...layoutRow(r)})),
-    [rows, width, bounds.min, bounds.max, zoom]
-  );
-  const rowsHeight = Math.max(100, layouts.reduce((s,r)=>s+r.rowH,0));
-  const AXIS_H = 46;
-  const totalH = AXIS_H + rowsHeight;
-
-  // Chaque bouton d'échelle reprend explicitement la main sur le zoom.
-  // Le cadrage temporel est géré par `bounds` ci-dessus ; le zoom ci-dessous
-  // contrôle ensuite la densité / le scrolling horizontal à l'intérieur de ce cadrage.
-  const SCALE_ZOOM = {
-    day: 1.35,
-    week: 1.18,
-    month: 1.08,
-    quarter: 1.0,
-    year: 1.0,
-    auto: 1.0,
-  };
-  const zoomForScale = (mode) => SCALE_ZOOM[mode] || 1;
-  const selectScale = (mode) => {
-    setScaleMode(mode);
-    setZoom(zoomForScale(mode));
-    setCenterTodayToken((n) => n + 1);
-  };
-  const zoomOut = () => setZoom((z) => Math.max(.55, Math.round((z-.15)*100)/100));
-  const zoomIn = () => setZoom((z) => Math.min(6, Math.round((z+.15)*100)/100));
-  const resetZoom = () => setZoom(zoomForScale(scaleMode));
-
-  // Après changement d'échelle, attendre le nouveau SVG puis centrer le viewport
-  // sur la ligne Aujourd'hui. Deux frames garantissent que largeur/canvas/bounds
-  // ont bien été recalculés avant le scroll.
-  useEffect(() => {
-    if (!centerTodayToken) return;
-    const timer = setTimeout(() => {
-      requestAnimationFrame(() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, todayX - el.clientWidth / 2));
-        if (typeof el.scrollTo === "function") el.scrollTo({ left:target, behavior:"smooth" });
-        else el.scrollLeft = target;
-      });
-    }, 40);
-    return () => clearTimeout(timer);
-  }, [centerTodayToken, todayX, canvasW, scaleMode, zoom]);
-
-  if (!dated.length) {
-    return (
-      <div className="lp-widget-metro-deadline-empty" ref={wrapRef}>
-        <TrainTrack size={24}/>
-        <span>Aucune échéance dans le filtre actuel.</span>
-      </div>
-    );
-  }
-
-  let yCursor = AXIS_H;
-  const renderedRows = layouts.map((row) => {
-    const y0 = yCursor;
-    yCursor += row.rowH;
-    const cy = y0 + row.cy;
-    const color = row.project.color || "var(--line-blue)";
-    const statusColorFor = (task) => ctx.statuses.find((st) => st.id === task?.statusId)?.color || color;
-    const transitions = [];
-
-    for (let gi=0; gi<row.groups.length-1; gi++) {
-      const a=row.groups[gi], b=row.groups[gi+1];
-      const hubX=(a.x+b.x)/2;
-      a.offsets.forEach((off,i)=>{
-        transitions.push(
-          <path key={`a-${row.project.id}-${gi}-${i}`} d={`M ${a.x} ${cy+off} C ${hubX-12} ${cy+off}, ${hubX-8} ${cy}, ${hubX} ${cy}`} fill="none" stroke={statusColorFor(a.tasks[Math.min(i,a.tasks.length-1)])} strokeWidth="2" opacity=".78"/>
-        );
-      });
-      b.offsets.forEach((off,i)=>{
-        transitions.push(
-          <path key={`b-${row.project.id}-${gi}-${i}`} d={`M ${hubX} ${cy} C ${hubX+8} ${cy}, ${hubX+12} ${cy+off}, ${b.x} ${cy+off}`} fill="none" stroke={statusColorFor(b.tasks[Math.min(i,b.tasks.length-1)])} strokeWidth="2" opacity=".78"/>
-        );
-      });
-    }
-
-    return (
-      <g key={row.project.id}>
-        {y0>AXIS_H && <line x1="0" y1={y0} x2={canvasW} y2={y0} stroke="var(--border)" strokeWidth=".8" opacity=".55"/>}
-
-        <circle cx={16} cy={cy-4} r="4.5" fill={color}/>
-        <text x={27} y={cy-1} fontFamily="Inter,sans-serif" fontSize={width<520?"9":"10"} fontWeight="800" fill="var(--text-primary)">
-          {(row.project.name || "").length > (width<520?10:17) ? (row.project.name || "").slice(0,width<520?9:16)+"…" : row.project.name}
-        </text>
-
-        <line x1={PAD_L-12} y1={cy} x2={canvasW-PAD_R} y2={cy} stroke={color} strokeWidth="3" strokeLinecap="round" opacity=".14"/>
-        {row.groups.length > 0 && (
-          <g>
-            <line x1={PAD_L-12} y1={cy} x2={row.groups[0].x} y2={cy} stroke={statusColorFor(row.groups[0].tasks[0])} strokeWidth="3" strokeLinecap="round" opacity=".95"/>
-            {row.groups.map((g,gi)=>{
-              const next=row.groups[gi+1];
-              if(!next) return null;
-              return <line key={`status-widget-${row.project.id}-${gi}`} x1={g.x} y1={cy} x2={next.x} y2={cy} stroke={statusColorFor(g.tasks[0])} strokeWidth="3" strokeLinecap="round" opacity=".95"/>;
-            })}
-            <line x1={row.groups[row.groups.length-1].x} y1={cy} x2={canvasW-PAD_R} y2={cy} stroke={statusColorFor(row.groups[row.groups.length-1].tasks[0])} strokeWidth="3" strokeLinecap="round" opacity=".95"/>
-          </g>
-        )}
-        {transitions}
-
-        {row.groups.flatMap((g) => g.tasks.map((t,i) => {
-          const y=cy+g.offsets[i];
-          const done=isTaskDoneGlobal(t,ctx);
-          const st=ctx.statuses.find((s)=>s.id===t.statusId);
-          const stationColor = st?.color || color;
-          const placement = g.labels?.[i] || { side:"above", lane:0, label:t.title || "Sans titre", labelW:90, labelX:g.x };
-          const label = placement.label;
-          const labelW = placement.labelW;
-          const labelX = placement.labelX;
-          const above = placement.side === "above";
-          const labelY = y + (placement.labelY - g.offsets[i]);
-          return (
-            <g key={t.id} className="lp-widget-md-station-group" onClick={()=>onOpen(t)} style={{cursor:"pointer"}}>
-              {Math.abs(g.offsets[i])>.5 && <line x1={g.x} y1={cy} x2={g.x} y2={y} stroke={stationColor} strokeWidth="1.5" strokeDasharray="2 3" opacity=".55"/>}
-              <line
-                x1={g.x}
-                y1={y}
-                x2={labelX}
-                y2={above ? labelY+15 : labelY}
-                stroke={stationColor}
-                strokeWidth="1.25"
-                strokeDasharray="2 3"
-                opacity=".28"
-              />
-              <rect
-                x={labelX-labelW/2}
-                y={labelY}
-                width={labelW}
-                height="15"
-                rx="3"
-                fill="var(--surface)"
-                stroke="var(--border-strong)"
-                strokeWidth=".8"
-                opacity="1"
-              />
-              <text
-                x={labelX}
-                y={labelY+10.4}
-                textAnchor="middle"
-                fontFamily="Inter,sans-serif"
-                fontSize="8.4"
-                fontWeight="700"
-                fill="var(--text-primary)"
-              >
-                {label}
-              </text>
-              <ProjectDeadlineStationGlyph
-                x={g.x}
-                y={y}
-                project={row.project}
-                task={t}
-                ctx={ctx}
-                color={stationColor}
-                done={done}
-                radius={8}
-                iconSize={10}
-              />
-              <title>{`${t.title} · ${fmtShort(t.end)}${st ? " · "+st.name : ""} · ${row.project.name}`}</title>
-            </g>
-          );
-        }))}
-
-        {row.groups.length>0 && (
-          <>
-            <circle cx={PAD_L-12} cy={cy} r="4.5" fill="var(--surface)" stroke={color} strokeWidth="2"/>
-            <line x1={canvasW-PAD_R-7} y1={cy-6} x2={canvasW-PAD_R-7} y2={cy+6} stroke={color} strokeWidth="2"/>
-            <line x1={canvasW-PAD_R-2} y1={cy-6} x2={canvasW-PAD_R-2} y2={cy+6} stroke={color} strokeWidth="2"/>
-          </>
-        )}
-      </g>
-    );
-  });
-
-  return (
-    <div className="lp-widget-metro-deadline" ref={wrapRef}>
-      <div className="lp-widget-md-toolbar">
-        <div className="lp-widget-md-zoom">
-          <span>Zoom</span>
-          <button type="button" onClick={zoomOut} title="Dézoomer"><Minus size={12}/></button>
-          <button type="button" onClick={zoomIn} title="Zoomer"><Plus size={12}/></button>
-          <button
-            type="button"
-            className="lp-widget-md-zoom-value"
-            onClick={resetZoom}
-            title="Revenir au zoom recommandé pour l’échelle sélectionnée"
-          >
-            {Math.round(zoom*100)}%
-          </button>
-        </div>
-        <div className="lp-widget-md-scale">
-          {[
-            ["day","Jour"],["week","Semaine"],["month","Mois"],["quarter","Trim."],["year","Année"],["auto","Auto"]
-          ].map(([k,l]) => (
-            <button
-              key={k}
-              type="button"
-              className={scaleMode===k?"active":""}
-              onClick={()=>selectScale(k)}
-              title={`Échelle ${l} — ajuste automatiquement le zoom`}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="lp-widget-md-svgwrap" ref={scrollRef}>
-        <svg width={canvasW} height={totalH} viewBox={`0 0 ${canvasW} ${totalH}`} role="img" aria-label="Métro des échéances">
-          <rect x="0" y="0" width={canvasW} height={AXIS_H} fill="var(--surface)"/>
-          <line x1={0} y1={AXIS_H-1} x2={canvasW} y2={AXIS_H-1} stroke="var(--border)" strokeWidth="1"/>
-
-          {monthBands.map((b,idx) => {
-            const x1=xFor(b.start), x2=xFor(b.end);
-            return (
-              <g key={`month-${b.start}`}>
-                <rect x={x1} y={0} width={Math.max(1,x2-x1)} height={AXIS_H} fill={idx%2 ? "var(--surface)" : "var(--paper)"} opacity=".72"/>
-                <text x={(x1+x2)/2} y={11} textAnchor="middle" fontFamily="Inter,sans-serif" fontSize="8" fontWeight="800" fill="var(--text-muted)">{b.label}</text>
-              </g>
-            );
-          })}
-
-          {tickDates.map((tk) => {
-            const x=xFor(tk.date);
-            return (
-              <g key={tk.date}>
-                <line x1={x} y1={22} x2={x} y2={totalH} stroke="var(--border)" strokeWidth={tk.major ? "1.2" : ".8"} opacity={tk.major ? ".7" : ".38"}/>
-                <text x={x} y={35} textAnchor="middle" fontFamily='"Inter",monospace' fontSize="7.2" fontWeight={tk.major?"800":"650"} fill="var(--text-muted)">{formatTick(tk.date)}</text>
-              </g>
-            );
-          })}
-
-          {todayX >= PAD_L && todayX <= canvasW-PAD_R && (
-            <g pointerEvents="none">
-              <line x1={todayX} y1={AXIS_H} x2={todayX} y2={totalH} stroke="var(--accent)" strokeWidth="1.7" strokeDasharray="4 5" opacity=".7"/>
-              <rect x={todayX-27} y={AXIS_H+3} width="54" height="14" rx="3" fill="var(--surface)" opacity=".97"/>
-              <text x={todayX} y={AXIS_H+13} textAnchor="middle" fontFamily='"Inter",monospace' fontSize="6.8" fontWeight="800" fill="var(--accent)">AUJOURD'HUI</text>
-            </g>
-          )}
-
-          {renderedRows}
-        </svg>
-      </div>
-
-      <div className="lp-widget-md-foot">
-        <span>{dated.length} échéance{dated.length>1?"s":""}</span>
-        <span>{layouts.length} projet{layouts.length>1?"s":""}</span>
-        <span>Échelle : {effectiveScale === "day" ? "jour" : effectiveScale === "week" ? "semaine" : effectiveScale === "month" ? "mois" : effectiveScale === "quarter" ? "trimestre" : "année"}</span>
-      </div>
-    </div>
-  );
-}
-
-
-// Timeline verticale "métro" : reprend le principe de la Timeline des jalons,
-// mais ajoute toutes les tâches datées avec durée. Les jalons sont des stations
-// rondes ; les tâches à durée sont des tronçons épais de ligne de métro avec
-// roundels blancs aux extrémités. Les libellés sont décalés verticalement par
-// un algorithme anti-chevauchement et reliés à leur position temporelle réelle.
-function WidgetVerticalMetroTimeline({ tasks, ctx, onOpen, onUpdateDates }) {
-  const today = iso(new Date());
-  const todayIdx = dayIndex(today);
-  const viewportRef = useRef(null);
-  const trackRef = useRef(null);
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const [drag, setDrag] = useState(null);
-  const [preview, setPreview] = useState({});
-  const [hoveredId, setHoveredId] = useState(null);
-
-  // Le widget utilise toute sa hauteur disponible. Quand le filtre ramène les
-  // données sur une période courte, l'échelle temporelle s'étire au lieu de
-  // laisser les éléments tassés en haut avec une grande zone vide dessous.
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const update = () => {
-      const h = Math.round(el.getBoundingClientRect().height || 0);
-      setViewportHeight((prev) => Math.abs(prev - h) > 2 ? h : prev);
-    };
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const visible = useMemo(() => {
-    return tasks
-      .filter((t) => t.start && t.end && t.end >= today)
-      .filter((t) => !isTaskDoneGlobal(t, ctx) || t.milestone)
-      .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end))
-      .slice(0, 40);
-  }, [tasks, ctx, today]);
-
-  const isEmpty = visible.length === 0;
-  const firstDate = isEmpty ? today : visible.reduce((m, t) => (t.start < m ? t.start : m), visible[0].start);
-  const lastDate = isEmpty ? today : visible.reduce((m, t) => (t.end > m ? t.end : m), visible[0].end);
-  const firstIdx = dayIndex(firstDate);
-  const lastIdx = Math.max(firstIdx + 1, dayIndex(lastDate));
-  const spanDays = Math.max(1, lastIdx - firstIdx);
-  const MIN_HEIGHT = 360;
-  // Réserve une vraie zone d'en-tête à l'intérieur du graphe : les premières
-  // graduations et la première station ne viennent plus se coller sous le
-  // bandeau du widget.
-  const TOP_PAD = 72;
-  const BOTTOM_PAD = 34;
-
-  // Hauteur réellement exploitable dans le widget (on réserve le petit footer
-  // d'aide au drag). Pour une période courte, chaque jour reçoit davantage de
-  // pixels afin que la première et la dernière échéance occupent naturellement
-  // toute la hauteur. Pour une période longue, on conserve au minimum 6 px/jour
-  // et le widget devient scrollable comme auparavant.
-  const availableAxisHeight = Math.max(
-    MIN_HEIGHT,
-    viewportHeight > 0 ? viewportHeight - 42 : MIN_HEIGHT
-  );
-  const fillPxPerDay = (availableAxisHeight - TOP_PAD - BOTTOM_PAD) / spanDays;
-  const PX_PER_DAY = Math.max(6, fillPxPerDay);
-  const axisHeight = Math.max(
-    availableAxisHeight,
-    TOP_PAD + BOTTOM_PAD + spanDays * PX_PER_DAY
-  );
-  const yFor = (d) => TOP_PAD + (dayIndex(d) - firstIdx) * PX_PER_DAY;
-
-  const effectiveTask = (t) => ({ ...t, ...(preview[t.id] || {}) });
-  const milestones = visible.filter((t) => t.milestone).map(effectiveTask);
-  const durations = visible.filter((t) => !t.milestone).map(effectiveTask);
-
-  // One duration lane per selected/visible project. Stable ordering follows ctx.projects.
-  const durationProjectIds = useMemo(() => {
-    const ids = new Set(durations.map((t) => t.projectId).filter(Boolean));
-    return ctx.projects.filter((p) => ids.has(p.id)).map((p) => p.id);
-  }, [durations, ctx.projects]);
-
-  const DURATION_X_BASE = 390;
-  // Une largeur réellement réservée à chaque projet : les titres restent
-  // centrés au-dessus de leur ligne et ne peuvent plus se chevaucher.
-  const DURATION_PROJECT_GAP = 86;
-  const durationXForProject = (projectId) => {
-    const idx = Math.max(0, durationProjectIds.indexOf(projectId));
-    return DURATION_X_BASE + idx * DURATION_PROJECT_GAP;
-  };
-
-  // Persistent milestone labels: same temporal order, evenly spaced so they never
-  // collide. They stay visible at all times, unlike duration details.
-  const milestoneLabelLayout = useMemo(() => {
-    const ordered = milestones
-      .map((t) => ({ t, ideal:yFor(t.end) }))
-      .sort((a,b) => a.ideal - b.ideal);
-
-    const MIN_GAP = 42;
-    const TOP = TOP_PAD;
-    const BOTTOM = Math.max(TOP, axisHeight - BOTTOM_PAD);
-    if (!ordered.length) return {};
-
-    // First pass: forward packing.
-    const ys = [];
-    ordered.forEach((item, i) => {
-      ys[i] = i === 0 ? Math.max(TOP, item.ideal) : Math.max(item.ideal, ys[i-1] + MIN_GAP);
-    });
-
-    // If packed beyond bottom, redistribute evenly over the available height.
-    if (ys[ys.length - 1] > BOTTOM && ordered.length > 1) {
-      const step = Math.max(MIN_GAP, (BOTTOM - TOP) / (ordered.length - 1));
-      for (let i = 0; i < ordered.length; i++) ys[i] = TOP + i * step;
-    }
-
-    return Object.fromEntries(ordered.map((item, i) => [item.t.id, {
-      ideal:item.ideal,
-      y:ys[i],
-      side:i % 2 === 0 ? "left" : "right",
-    }]));
-  }, [milestones, firstIdx, PX_PER_DAY, axisHeight]);
-
-  const dateTicks = useMemo(() => {
-    if (isEmpty) return [];
-    const raw = widgetAxisTicks(firstDate,lastDate);
-    if (raw.length <= 1) return raw;
-
-    // Les graduations sont verticales : on impose un espacement visuel minimal,
-    // indépendamment du pas temporel choisi par widgetAxisTicks.
-    const MIN_TICK_GAP_PX = 28;
-    const kept = [];
-    raw.forEach((tick,idx)=>{
-      const y = TOP_PAD + (dayIndex(tick.date)-firstIdx)*PX_PER_DAY;
-      const prev = kept[kept.length-1];
-      const isFirst = idx === 0;
-      const isLast = idx === raw.length - 1;
-      if (isFirst || !prev || y - prev._y >= MIN_TICK_GAP_PX) {
-        kept.push({...tick,_y:y});
-      } else if (isLast && kept.length) {
-        // La dernière date reste visible, mais remplace la précédente si elles
-        // seraient trop proches visuellement.
-        kept[kept.length-1] = {...tick,_y:y};
-      }
-    });
-    return kept.map(({_y,...tick})=>tick);
-  }, [isEmpty, firstDate, lastDate, firstIdx, PX_PER_DAY]);
-
-  const totalHeight = Math.max(
-    axisHeight,
-    ...Object.values(milestoneLabelLayout).map((x) => x.y + 30),
-    380
-  );
-
-  const relativeDate = (start, end, milestone) => {
-    if (milestone) {
-      const n = dayIndex(end) - todayIdx;
-      if (n === 0) return "Aujourd’hui";
-      if (n === 1) return "Demain";
-      if (n > 1 && n < 7) return `J+${n}`;
-      return fmtShort(end);
-    }
-    if (start <= today && end >= today) return `En cours · jusqu’au ${fmtShort(end)}`;
-    return `${fmtShort(start)} → ${fmtShort(end)}`;
-  };
-
-  const dateFromPointer = (clientY) => {
-    const rect = trackRef.current?.getBoundingClientRect();
-    if (!rect) return today;
-    const y = clientY - rect.top;
-    const idx = firstIdx + Math.round((y - TOP_PAD) / PX_PER_DAY);
-    return addDays(firstDate, idx - firstIdx);
-  };
-
-  const beginDrag = (e, t, mode) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const task = effectiveTask(t);
-    setDrag({
-      taskId:t.id,
-      mode,
-      originalStart:task.start,
-      originalEnd:task.end,
-      pointerDate:dateFromPointer(e.clientY)
-    });
-    setPreview((p) => ({ ...p, [t.id]: { start:task.start, end:task.end } }));
-  };
-
-  useEffect(() => {
-    if (!drag) return;
-
-    const onMove = (e) => {
-      const current = dateFromPointer(e.clientY);
-      const delta = dayIndex(current) - dayIndex(drag.pointerDate);
-      let nextStart = drag.originalStart;
-      let nextEnd = drag.originalEnd;
-
-      if (drag.mode === "move") {
-        nextStart = addDays(drag.originalStart, delta);
-        nextEnd = addDays(drag.originalEnd, delta);
-      } else if (drag.mode === "start") {
-        nextStart = current <= drag.originalEnd ? current : drag.originalEnd;
-      } else if (drag.mode === "end") {
-        nextEnd = current >= drag.originalStart ? current : drag.originalStart;
-      } else if (drag.mode === "milestone") {
-        nextStart = current;
-        nextEnd = current;
-      }
-
-      setPreview((p) => ({ ...p, [drag.taskId]: { start:nextStart, end:nextEnd } }));
-    };
-
-    const onUp = () => {
-      const patch = preview[drag.taskId];
-      if (patch && onUpdateDates) onUpdateDates(drag.taskId, patch);
-      setDrag(null);
-      setPreview((p) => {
-        const n = { ...p };
-        delete n[drag.taskId];
-        return n;
-      });
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp, { once:true });
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [drag, preview, firstIdx, PX_PER_DAY, firstDate, onUpdateDates]);
-
-  if (isEmpty) {
-    return <div className="lp-widget-vmetro-empty">Aucun jalon ou événement daté à venir pour ce filtre.</div>;
-  }
-
-  const minWidth = 560 + Math.max(0, durationProjectIds.length - 1) * DURATION_PROJECT_GAP + 120;
-
-  return (
-    <div ref={viewportRef} className="lp-widget-vmetro">
-      <div
-        ref={trackRef}
-        className="lp-widget-vmetro-track"
-        style={{ height:totalHeight, minWidth }}
-      >
-        <div className="lp-widget-vmetro-column-title milestones">Jalons</div>
-        <div className="lp-widget-vmetro-column-title events">Jalons & repères</div>
-        <div className="lp-widget-vmetro-column-title durations">Durées par projet</div>
-
-        <div className="lp-widget-vmetro-axis milestones" />
-
-        {durationProjectIds.map((projectId) => {
-          const p = ctx.projects.find((x) => x.id === projectId);
-          const x = durationXForProject(projectId);
-          const color = p?.color || "var(--line-blue)";
-          return (
-            <React.Fragment key={"lane-" + projectId}>
-              <div
-                className="lp-widget-vmetro-project-lane"
-                style={{ left:x, "--vmetro-color":color }}
-              />
-              <div
-                className="lp-widget-vmetro-project-lane-label"
-                style={{ left:x, "--vmetro-color":color }}
-                title={p?.name || ""}
-              >
-                {p?.name || "Projet"}
-              </div>
-            </React.Fragment>
-          );
-        })}
-
-        {dateTicks.map((tick) => (
-          <div key={tick.date} className="lp-widget-vmetro-tick" style={{ top:yFor(tick.date) }}>
-            {tick.label}
-          </div>
-        ))}
-
-        {today >= firstDate && today <= lastDate && (
-          <>
-            <div className="lp-widget-vmetro-today-label" style={{ top:yFor(today) }}>Aujourd’hui</div>
-            <div className="lp-widget-vmetro-today-line" style={{ top:yFor(today) }} />
-          </>
-        )}
-
-        {milestones.map((t) => {
-          const proj = ctx.projects.find((p) => p.id === t.projectId);
-          const color = proj?.color || "var(--line-blue)";
-          const icon = resolveMilestoneIcon(t, ctx);
-          return (
-            <div
-              key={"station-" + t.id}
-              className={
-                "lp-widget-vmetro-milestone lp-widget-vmetro-focusable" +
-                (hoveredId && hoveredId !== t.id ? " is-dimmed" : "") +
-                (hoveredId === t.id ? " is-focused" : "")
-              }
-              style={{ top:yFor(t.end), "--vmetro-color":color, cursor:"ns-resize" }}
-              onMouseEnter={() => setHoveredId(t.id)}
-              onMouseLeave={() => setHoveredId(null)}
-              onPointerDown={(e) => beginDrag(e, t, "milestone")}
-              onDoubleClick={() => onOpen(t)}
-              title={`${t.title} · glisser pour déplacer le jalon`}
-            >
-              {icon ? <IconGlyph icon={icon} size={10} /> : <span className="lp-widget-vmetro-milestone-inner" />}
-            </div>
-          );
-        })}
-
-        {milestones.map((t) => {
-          const proj = ctx.projects.find((p) => p.id === t.projectId);
-          const st = ctx.statuses.find((s) => s.id === t.statusId);
-          const color = proj?.color || "var(--line-blue)";
-          const layout = milestoneLabelLayout[t.id];
-          if (!layout) return null;
-          const anchorX = 94;
-          const labelX = 104;
-          const dx = labelX - anchorX;
-          const dy = layout.y - layout.ideal;
-          const len = Math.sqrt(dx*dx + dy*dy);
-          const angle = Math.atan2(dy,dx) * 180 / Math.PI;
-
-          return (
-            <React.Fragment key={"milabel-" + t.id}>
-              <div
-                className={
-                  "lp-widget-vmetro-link lp-widget-vmetro-focusable" +
-                  (hoveredId && hoveredId !== t.id ? " is-dimmed" : "") +
-                  (hoveredId === t.id ? " is-focused" : "")
-                }
-                style={{
-                  left:anchorX,
-                  top:layout.ideal,
-                  width:len,
-                  transform:`rotate(${angle}deg)`,
-                  "--link-color":color
-                }}
-              />
-              <div
-                className={
-                  "lp-widget-vmetro-milestone-label lp-widget-vmetro-focusable " + layout.side +
-                  (hoveredId && hoveredId !== t.id ? " is-dimmed" : "") +
-                  (hoveredId === t.id ? " is-focused" : "")
-                }
-                style={{ top:layout.y, "--vmetro-color":color }}
-                onMouseEnter={() => setHoveredId(t.id)}
-                onMouseLeave={() => setHoveredId(null)}
-                onClick={() => onOpen(t)}
-              >
-                <div className="lp-widget-vmetro-milestone-label-title">{t.title}</div>
-                <div className="lp-widget-vmetro-milestone-label-meta">
-                  {relativeDate(t.start,t.end,true)}
-                  {proj ? ` · ${proj.name}` : ""}
-                  {st ? ` · ${st.name}` : ""}
-                </div>
-              </div>
-            </React.Fragment>
-          );
-        })}
-
-        {durations.map((t) => {
-          const proj = ctx.projects.find((p) => p.id === t.projectId);
-          const st = ctx.statuses.find((s) => s.id === t.statusId);
-          const color = proj?.color || "var(--line-blue)";
-          const x = durationXForProject(t.projectId);
-          const y1 = yFor(t.start);
-          const y2 = yFor(t.end);
-          const h = Math.max(28, y2 - y1);
-          const done = isTaskDoneGlobal(t, ctx);
-          const late = isTaskLate(t, ctx);
-          const isDragging = drag?.taskId === t.id;
-
-          return (
-            <div
-              key={"bar-" + t.id}
-              className={
-                "lp-widget-vmetro-duration lp-widget-vmetro-focusable" +
-                (done ? " done" : "") +
-                (late ? " late" : "") +
-                (isDragging ? " dragging" : "") +
-                (hoveredId && hoveredId !== t.id ? " is-dimmed" : "") +
-                (hoveredId === t.id ? " is-focused" : "")
-              }
-              style={{ left:x, top:y1, height:h, background:color, "--vmetro-color":color }}
-              onMouseEnter={() => setHoveredId(t.id)}
-              onMouseLeave={() => setHoveredId(null)}
-              onPointerDown={(e) => beginDrag(e, t, "move")}
-              onDoubleClick={() => onOpen(t)}
-              title=""
-            >
-              <span
-                className="lp-widget-vmetro-duration-handle start"
-                onPointerDown={(e) => beginDrag(e, t, "start")}
-              />
-              <span
-                className="lp-widget-vmetro-duration-handle end"
-                onPointerDown={(e) => beginDrag(e, t, "end")}
-              />
-              <div className="lp-widget-vmetro-duration-tooltip">
-                <div className="lp-widget-vmetro-tooltip-title">{t.title}</div>
-                <div className="lp-widget-vmetro-tooltip-meta">
-                  {relativeDate(t.start,t.end,false)}
-                  {proj ? ` · ${proj.name}` : ""}
-                  {st ? ` · ${st.name}` : ""}
-                  {late ? " · En retard" : ""}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="lp-widget-vmetro-drag-hint">
-        <span>Jalons : informations persistantes</span>
-        <span>Durées : détails au survol</span>
-        <span>Glisser = déplacer · extrémités = début / fin</span>
-      </div>
-    </div>
-  );
-}
-
 // Widget "Next Best Action" : détermine l'action la plus utile à réaliser
 // maintenant parmi toutes les tâches éligibles, et explique pourquoi. Le moteur
 // (getNextBestAction) est totalement séparé de ce composant, qui ne fait que
@@ -15755,7 +14339,8 @@ function WidgetEmbedRadar({ tasks, ctx, onOpen, appearance, externalToolbarSlot 
 
 // Sélecteur de type de widget, organisé par catégorie plutôt qu'en liste plate —
 // chaque type garde une icône reconnaissable pour un repérage plus rapide.
-const WIDGET_TYPE_GROUPS = ["Indicateurs", "Planning", "Intelligence", "Suivi"];
+// #317 : les widgets centrés sur les personnes ont leur propre section.
+const WIDGET_TYPE_GROUPS = ["Indicateurs", "Planning", "Ressources Humaines", "Intelligence", "Suivi"];
 const WIDGET_TYPE_META = [
   // #140 : « Chiffre clé » devient un préréglage de la Carte (un bloc
   // Agrégation seul, en emphase Grande) plutôt qu'un type séparé.
@@ -15765,16 +14350,12 @@ const WIDGET_TYPE_META = [
   { key: "taskDetail", label: "Tâche détaillée", icon: List, group: "Indicateurs" },
   { key: "minigantt", label: "Mini-Gantt", icon: GanttChartSquare, group: "Planning" },
   { key: "bubbles", label: "Bulles", icon: CircleDot, group: "Planning" },
-  { key: "staffing", label: "Charge personnel", icon: Users, group: "Planning" },
-  { key: "orgchart", label: "Organigramme", icon: Network, group: "Planning" },
-  { key: "userProfile", label: "Utilisateur", icon: User, group: "Planning" },
+  { key: "staffing", label: "Charge personnel", icon: Users, group: "Ressources Humaines" },
+  { key: "orgchart", label: "Organigramme", icon: Network, group: "Ressources Humaines" },
+  { key: "userProfile", label: "Utilisateur", icon: User, group: "Ressources Humaines" },
   // #228 : gérer utilisateurs et équipes (Réglages > Équipe) sans ouvrir les
   // Réglages — reprend TeamAndUserManagerPanel tel quel (voir WidgetTeamCatalog).
-  { key: "teamCatalog", label: "Utilisateurs & Équipes", icon: Users, group: "Planning" },
-  // #160/#176 : fusion de 4 widgets qui répondaient tous à « quand tombent les
-  // échéances ? » (Timeline des jalons, Timeline verticale métro, Métro /
-  // Échéances, Nuage des échéances) en un seul, avec un choix d'orientation.
-  { key: "echeances", label: "Échéances", icon: CalendarClock, group: "Planning" },
+  { key: "teamCatalog", label: "Utilisateurs & Équipes", icon: Users, group: "Ressources Humaines" },
   { key: "criticalPath", label: "Chemin critique", icon: GitBranch, group: "Planning" },
   // #294 : grille continue + frise horaire du jour, version dense de la vue.
   { key: "calendar", label: "Calendrier", icon: CalendarDays, group: "Planning" },
@@ -16080,16 +14661,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     widget?.budgetProjectId || ((ctx.activeProjectIds || [])[0] ? CURRENT_PROJECT_FILTER : "")
   );
   const [burnRateProjectId, setBurnRateProjectId] = useState(widget?.burnRateProjectId || ctx.projects[0]?.id || "");
-  // Nuage des échéances — un seul réglage propre : le champ qui définit les couloirs.
-  const [scatterLaneField, setScatterLaneField] = useState(
-    SCATTER_LANE_FIELDS.includes(widget?.scatterLaneField) ? widget.scatterLaneField : "project"
-  );
-  // #160 : orientation du widget Échéances — seul réglage qui lui soit propre,
-  // les trois rendus se partageant sinon les mêmes réglages que ci-dessus
-  // (couloirs, plage) ou aucun (horizontale, verticale).
-  const [echeancesOrientation, setEcheancesOrientation] = useState(
-    ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale"
-  );
   // Organigramme (plan Métro, #295) : affichage des correspondances
   // transverses (oui par défaut).
   const [orgMetroShowTransverse, setOrgMetroShowTransverse] = useState(widget?.orgMetroShowTransverse !== false);
@@ -16171,11 +14742,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [heatmapPalette, setHeatmapPalette] = useState(heatmapCfg.palette);
   const [heatmapShowValues, setHeatmapShowValues] = useState(heatmapCfg.showValues);
   const [heatmapShowDescPane, setHeatmapShowDescPane] = useState(heatmapCfg.showDescPane);
-  // Fenêtre d'affichage — la normalisation reste seul juge des bornes.
-  const scatterWin = useMemo(() => scatterNormalizeWindow(widget || {}), [widget]);
-  const [scatterWindowMode, setScatterWindowMode] = useState(scatterWin.mode);
-  const [scatterWindowBefore, setScatterWindowBefore] = useState(String(scatterWin.before));
-  const [scatterWindowAfter, setScatterWindowAfter] = useState(String(scatterWin.after));
   // Treemap projets — la configuration est relue par normalizeProjectTreemapConfig,
   // qui reste seul juge des valeurs par défaut : la fiche ne fait que l'éditer.
   const treemapCfg = useMemo(() => normalizeProjectTreemapConfig(widget || {}), [widget]);
@@ -16275,7 +14841,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "echeances" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -16357,15 +14923,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapPalette = heatmapPalette;
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
-    }
-    if (type === "echeances") {
-      data.echeancesOrientation = echeancesOrientation;
-      if (echeancesOrientation === "nuage") {
-        data.scatterLaneField = scatterLaneField;
-        data.scatterWindowMode = scatterWindowMode;
-        data.scatterWindowBefore = Number(scatterWindowBefore);
-        data.scatterWindowAfter = Number(scatterWindowAfter);
-      }
     }
     if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartParentTeamOptions.some((t) => t.id === id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
@@ -16838,22 +15395,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             </p>
           </div>
         )}
-        {type === "echeances" && (
-          <div className="lp-field">
-            <label>Orientation</label>
-            <div className="lp-density-row">
-              <button type="button" className={"lp-density-btn" + (echeancesOrientation === "horizontale" ? " active" : "")} onClick={() => setEcheancesOrientation("horizontale")}>Horizontale (métro)</button>
-              <button type="button" className={"lp-density-btn" + (echeancesOrientation === "verticale" ? " active" : "")} onClick={() => setEcheancesOrientation("verticale")}>Verticale</button>
-              <button type="button" className={"lp-density-btn" + (echeancesOrientation === "nuage" ? " active" : "")} onClick={() => setEcheancesOrientation("nuage")}>Nuage</button>
-            </div>
-            {echeancesOrientation === "horizontale" && (
-              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Une ligne de métro par projet, les échéances en stations sur un axe temporel commun.</p>
-            )}
-            {echeancesOrientation === "verticale" && (
-              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>Un rail vertical unique, jalons et tâches datées confondus, du plus proche au plus lointain.</p>
-            )}
-          </div>
-        )}
       {type === "customCard" && (
         <div className="lp-custom-card-config">
           <div className="lp-row2">
@@ -17293,58 +15834,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           Ce widget n'a pas de réglage ici — il reprend Réglages → Utilisateurs & Équipes tel quel (utilisateurs,
           équipes, dossiers d'équipes, ajout rapide de membre avec poste), avec défilement interne.
         </p>
-      )}
-      {type === "echeances" && echeancesOrientation === "nuage" && (
-        <>
-          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-            Un point = une tâche, placée selon le nombre de jours qui la sépare de son échéance : à droite ce qui vient,
-            à gauche ce qui est en retard. Les tâches sans date de fin ne sont pas placées. Le filtre général du widget
-            (plus bas) décide du périmètre.
-          </p>
-          <div className="lp-field">
-            <label>Couloirs</label>
-            <select
-              value={scatterLaneField}
-              onChange={(e) => setScatterLaneField(e.target.value)}
-            >
-              <option value="project">Projet</option>
-              <option value="status">Statut</option>
-              <option value="criticality">Criticité</option>
-            </select>
-          </div>
-          <div className="lp-field">
-            <label>Plage affichée</label>
-            <div className="lp-density-row">
-              <button type="button" className={"lp-density-btn" + (scatterWindowMode === "auto" ? " active" : "")} onClick={() => setScatterWindowMode("auto")}>Automatique</button>
-              <button type="button" className={"lp-density-btn" + (scatterWindowMode === "fixed" ? " active" : "")} onClick={() => setScatterWindowMode("fixed")}>Fenêtre fixe</button>
-            </div>
-            {scatterWindowMode === "auto" ? (
-              <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
-                L'axe s'ajuste aux tâches du filtre. Une seule échéance lointaine suffit alors à tasser tout le reste
-                autour de l'origine : passe en fenêtre fixe si ça t'arrive.
-              </p>
-            ) : (
-              <>
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <div className="lp-field" style={{ flex: 1, margin: 0 }}>
-                    <label>Jours de retard affichés</label>
-                    <input type="number" min={1} max={SCATTER_WINDOW_MAX_DAYS} value={scatterWindowBefore}
-                           onChange={(e) => setScatterWindowBefore(e.target.value)} />
-                  </div>
-                  <div className="lp-field" style={{ flex: 1, margin: 0 }}>
-                    <label>Jours à venir affichés</label>
-                    <input type="number" min={1} max={SCATTER_WINDOW_MAX_DAYS} value={scatterWindowAfter}
-                           onChange={(e) => setScatterWindowAfter(e.target.value)} />
-                  </div>
-                </div>
-                <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6, marginBottom: 0 }}>
-                  Les tâches hors fenêtre ne sont pas masquées : elles sont rabattues sur le bord, dessinées en chevron
-                  tourné vers l'extérieur, et comptées aux deux bouts de l'axe. Leur vraie échéance reste dans l'infobulle.
-                </p>
-              </>
-            )}
-          </div>
-        </>
       )}
       {type === "projectTreemap" && (
         <>
@@ -24313,13 +22802,10 @@ function WidgetFinanceProSynthese({ quotes, proBillingSchedule, proPayments }) {
   );
 }
 
-// Widget Échéances Finance PRO — décision non bloquante (2026-09-22) : le
-// widget `echeances` existant (WidgetEcheances/WidgetMetroDeadline, part-003)
-// n'a pas de notion de catégorie et ne lit QUE le tableau `tasks` de
-// l'application ; y injecter des échéances financières aurait exigé de
-// modifier le pipeline de tâches partagé par toutes les vues, pour un widget
-// qui n'a pas de concept de catégorie. Choix retenu : un widget dédié dans le
-// MÊME moteur de dashboard existant (pas un second système), qui liste les
+// Widget Échéances Finance PRO — décision non bloquante (2026-09-22) : un
+// widget dédié dans le MÊME moteur de dashboard existant (pas un second
+// système), plutôt qu'une extension du widget générique « Échéances » —
+// supprimé depuis (#318) — qui ne lisait que le tableau `tasks`. Il liste les
 // échéances dérivées du planning de facturation — jamais un second calendrier
 // séparé de l'application.
 function WidgetFinanceProEcheances({ proBillingSchedule, proMissions, projects, quoteClients }) {

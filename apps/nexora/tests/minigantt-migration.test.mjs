@@ -32,6 +32,18 @@ test("la migration couvre tableaux, pages, Aujourd’hui et objets partiels", ()
   assert.equal(api.migrateLegacyMiniGanttData(null), null);
 });
 
+test("#318 : les widgets Échéances, anciens types compris, sont retirés à la lecture", () => {
+  const value = [{ id: "d", widgets: [
+    { id: "a", type: "echeances", echeancesOrientation: "verticale" },
+    { id: "b", type: "chart" },
+    { id: "c", type: "deadlineScatter" },
+  ], pages: [{ id: "p", widgets: [{ id: "e", type: "metroDeadline" }, { id: "f", type: "milestoneTimeline" }, { id: "g", type: "verticalMetroTimeline" }, { id: "h", type: "list" }] }] }];
+  const next = api.migrateLegacyMiniGanttData(value);
+  assert.deepEqual(next[0].widgets.map((w) => w.id), ["b"]);
+  assert.deepEqual(next[0].pages[0].widgets.map((w) => w.id), ["h"]);
+  assert.equal(next[0].id, "d");
+});
+
 test("les préférences historiques gantt deviennent des préférences Mini Gantt", () => {
   const prefs = api.normalizeMiniGanttViewPrefs({ ganttGroupBy: "status", ganttCols: ["status", "progress"] });
   assert.equal(prefs.groupBy, "status");

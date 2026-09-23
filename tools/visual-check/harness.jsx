@@ -10,7 +10,6 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
   "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-  "echeances",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
   "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
   "customCard",
@@ -299,50 +298,16 @@ function AnnotationsHarness() {
     { id: "d4", name: "Budget", pages: [{ id: "p5", name: "Engagements", widgets: [] }, { id: "p6", name: "Factures", widgets: [] }] },
   ];
   const [transferDone, setTransferDone] = useState("");
-  // Nuage des échéances : des dates calculées À PARTIR D'AUJOURD'HUI, pour que
-  // les contrôles restent vrais quel que soit le jour où le banc est lancé.
-  // « sc5 » n'a pas de date de fin : elle ne doit jamais devenir un point.
-  const scatterToday = iso(new Date());
-  const scatterTasks = [
-    { id: "sc1", projectId: "p1", statusId: "s1", title: "Étude de sol", start: addDays(scatterToday, -20), end: addDays(scatterToday, -6), progress: 0, checklist: [], criticality: "urgent" },
-    { id: "sc2", projectId: "p1", statusId: "s1", title: "Permis de construire", start: addDays(scatterToday, -10), end: addDays(scatterToday, -6), progress: 0, checklist: [], criticality: "moyen" },
-    { id: "sc3", projectId: "p2", statusId: "s2", title: "Plan de communication", start: scatterToday, end: scatterToday, progress: 0, checklist: [], criticality: "bas" },
-    { id: "sc4", projectId: "p2", statusId: "s2", title: "Relance presse", start: scatterToday, end: addDays(scatterToday, 12), progress: 0, checklist: [] },
-    { id: "sc5", projectId: "p3", statusId: "s1", title: "Sans échéance", start: scatterToday, progress: 0, checklist: [] },
-  ];
+  // Dates calculées À PARTIR D'AUJOURD'HUI, pour que les contrôles restent
+  // vrais quel que soit le jour où le banc est lancé.
+  const harnessToday = iso(new Date());
   /* Heat map mensuelle (#68) : une échéance passée et une à venir, pour que la
      distinction passé / futur ait de quoi se voir. Les dates sont relatives à
      aujourd'hui, donc le contrôle reste vrai quel que soit le jour. */
   const heatmapMonthTasks = [
-    { id: "hm1", projectId: "p1", statusId: "s1", title: "Échéance passée", start: addDays(scatterToday, -20), end: addDays(scatterToday, -10), progress: 0, checklist: [] },
-    { id: "hm2", projectId: "p2", statusId: "s2", title: "Échéance à venir", start: scatterToday, end: addDays(scatterToday, 5), progress: 0, checklist: [] },
+    { id: "hm1", projectId: "p1", statusId: "s1", title: "Échéance passée", start: addDays(harnessToday, -20), end: addDays(harnessToday, -10), progress: 0, checklist: [] },
+    { id: "hm2", projectId: "p2", statusId: "s2", title: "Échéance à venir", start: harnessToday, end: addDays(harnessToday, 5), progress: 0, checklist: [] },
   ];
-  const [scatterWidget, setScatterWidget] = useState({ id: "w5", type: "echeances", echeancesOrientation: "nuage", scatterLaneField: "project" });
-  const [scatterFormOpen, setScatterFormOpen] = useState(false);
-  const [scatterOpenedTaskId, setScatterOpenedTaskId] = useState("");
-  // Couloir DENSE : c'est le cas pour lequel le moteur d'étiquettes existe
-  // (issue #53). Titres longs, amas serrés, tâches de part et d'autre de
-  // l'origine — les conditions réelles d'un tableau de bord chargé.
-  const scatterDenseTitres = [
-    "Audit SOCOTEC Machine Tournante", "Organisation Réunion sur site le 1/2 Octobre",
-    "Revue DOE", "Travaux Levée Réserves", "Point GESCO", "Réunion Sécurité Ingénierie",
-    "PCH VA - Suivi Transfert CTEX6", "Réunion expertise amiable", "Chiffrage lot 3",
-  ];
-  const scatterDenseTasks = Array.from({ length: 36 }, (_, i) => {
-    const d = ((i * 31) % 150) - 70;
-    return {
-      id: `sd${i}`, projectId: ["p1", "p2", "p3"][i % 3], statusId: i % 3 === 0 ? "s1" : "s2",
-      title: scatterDenseTitres[i % scatterDenseTitres.length],
-      start: addDays(scatterToday, d - 10), end: addDays(scatterToday, d),
-      progress: (i * 13) % 101, checklist: [], criticality: ["urgent", "moyen", "bas"][i % 3],
-    };
-  });
-  // Fenêtre fixe étroite (issue #50) : « sc1 » (J-6) et « sc4 » (J+12) sortent
-  // d'une fenêtre J-3 → J+5. Ils doivent rester dessinés, rabattus sur le bord
-  // et comptés — jamais disparaître.
-  const scatterWindowWidget = { id: "w7", type: "echeances", echeancesOrientation: "nuage", scatterLaneField: "project",
-    scatterWindowMode: "fixed", scatterWindowBefore: 3, scatterWindowAfter: 5 };
-
   // Mêmes tâches, mais une tuile = un STATUT (issue #47) : c'est le câblage du
   // champ qui porte les tuiles, pas le pavage, qui est contrôlé ici.
   const [statusTreemapWidget, setStatusTreemapWidget] = useState({
@@ -364,7 +329,7 @@ function AnnotationsHarness() {
   // Vue Métro : mêmes annotations que le Gantt, plus un encadré qui saute une
   // ligne de projet (p1 et p3) — il doit produire DEUX cadres, jamais un seul.
   const [metroPrefs, setMetroPrefs] = useState({
-    fields: ["status"], collapsed: {}, zoomKey: "auto", networkMode: false, deadlineMode: false, showRiskBadges: true,
+    fields: ["status"], collapsed: {}, zoomKey: "auto", networkMode: false, showRiskBadges: true,
     temporalBlocks: annotations.temporalBlocks,
     highlightFrames: [
       { id: "mf1", label: "Lot critique", taskIds: ["t1", "t4"], color: "#D64545", borderStyle: "dashed", padding: 4 },
@@ -574,45 +539,6 @@ function AnnotationsHarness() {
               setTransferDone(`${mode}|${target.boardId}|${target.pageId}|${data.title}|${data.treemapShowUpcoming}`);
               setTreemapFormOpen(false);
             }}
-          />
-        )}
-      </div>
-      <div>
-        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>NUAGE DES ÉCHÉANCES</h2>
-        <button type="button" id="harness-open-scatter-form" onClick={() => setScatterFormOpen(true)} style={{ marginBottom: 8 }}>
-          Ouvrir la fiche du Nuage
-        </button>
-        <span id="harness-scatter-opened" style={{ marginLeft: 8, fontFamily: "monospace", fontSize: 12 }}>{scatterOpenedTaskId}</span>
-        <div id="harness-scatter" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
-          <WidgetDeadlineScatter
-            widget={scatterWidget} tasks={scatterTasks} ctx={ctx}
-            onOpen={(t) => setScatterOpenedTaskId(t ? t.id : "")}
-          />
-        </div>
-        {/* Mêmes tâches, couloirs par criticité : « Urgent » doit se retrouver
-            en haut, avant « Moyen » puis « Bas ». */}
-        <div id="harness-scatter-crit" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
-          <WidgetDeadlineScatter widget={{ ...scatterWidget, scatterLaneField: "criticality" }} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
-        </div>
-        <div id="harness-scatter-dense" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 1000, height: 280, marginBottom: 18 }}>
-          <WidgetDeadlineScatter widget={scatterWidget} tasks={scatterDenseTasks} ctx={ctx} onOpen={noop} />
-        </div>
-        {/* Fenêtre fixe étroite : deux tâches débordent, aucune ne disparaît. */}
-        <div id="harness-scatter-window" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 200, marginBottom: 18 }}>
-          <WidgetDeadlineScatter widget={scatterWindowWidget} tasks={scatterTasks} ctx={ctx} onOpen={noop} />
-        </div>
-        {/* Aucune tâche datée : le widget doit le dire, pas afficher un axe vide. */}
-        <div id="harness-scatter-empty" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 300, height: 120, marginBottom: 18 }}>
-          <WidgetDeadlineScatter widget={scatterWidget} tasks={scatterTasks.filter((t) => !t.end)} ctx={ctx} onOpen={noop} />
-        </div>
-        {scatterFormOpen && (
-          <WidgetFormModal
-            widget={scatterWidget}
-            existingWidgets={[]}
-            ctx={ctx}
-            pageFilter={null}
-            onSave={(data) => { setScatterWidget((w) => ({ ...w, ...data })); setScatterFormOpen(false); }}
-            onClose={() => setScatterFormOpen(false)}
           />
         )}
       </div>
@@ -1073,7 +999,6 @@ if (benchApp) {
   ];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-    "echeances",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
     "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar",
     "customCard",
