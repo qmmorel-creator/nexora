@@ -1116,6 +1116,11 @@ function GlobalStyles() {
         .lp-detail-tab:hover{ color:var(--text-900); }
         .lp-detail-tab.active{ color:var(--text-900); border-bottom-color:var(--signal); }
         .lp-detail-tab-spacer{ flex:1; }
+        /* Toutes les vues cochées tiennent sur UNE ligne : au-delà de la
+           largeur, les onglets défilent horizontalement plutôt que de passer à
+           la ligne (la hauteur de la barre sert de repère aux en-têtes collants). */
+        .lp-detail-tabs-scroll{ position:relative; display:flex; align-items:center; gap:2px; min-width:0; flex:0 1 auto; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
+        .lp-detail-tabs-scroll::-webkit-scrollbar{ display:none; }
         /* Fiche projet PDF (#291) : action compacte à côté des filtres enregistrés. */
         .lp-project-pdf-btn{ margin-right:6px; white-space:nowrap; font-size:12px; }
 
@@ -9215,6 +9220,9 @@ export default function LePlan({ currentUser, onSignOut }) {
   // Vues affichées dans la barre d'onglets (réglable dans Réglages > Vues affichées)
   const [enabledViews, setEnabledViews] = useState(defaultEnabledViews);
   const [viewOrder, setViewOrder] = useState(() => ALL_VIEWS_META.filter((v) => v.key !== "dashboard").map((v) => v.key));
+  // Onglets de la barre : les vues cochées dans Réglages > Vues affichées,
+  // dans l'ordre choisi — la même liste que celle que l'on règle.
+  const tabBarViewKeys = useMemo(() => tabBarViewKeysFor(viewOrder, enabledViews), [viewOrder, enabledViews]);
   const [enabledViewsLoaded, setEnabledViewsLoaded] = useState(false);
   // Indicateur d'onglet qui glisse (Réglages > Apparence) : mesure la position du
   // bouton actif dans la barre d'onglets pour positionner un trait qui se déplace
@@ -9224,7 +9232,13 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => {
     const el = detailTabRefs.current[view];
     if (el) setTabIndicator({ left: el.offsetLeft, width: el.offsetWidth });
-  }, [view, enabledViews]);
+    // Onglets trop nombreux pour la largeur : l'onglet actif reste visible.
+    const strip = el?.parentElement;
+    if (strip && strip.scrollWidth > strip.clientWidth) {
+      const target = el.offsetLeft - (strip.clientWidth - el.offsetWidth) / 2;
+      strip.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
+    }
+  }, [view, enabledViews, viewOrder]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -10729,19 +10743,28 @@ export default function LePlan({ currentUser, onSignOut }) {
     const id = setTimeout(() => setBoardSearchApplied(boardSearch), 120);
     return () => clearTimeout(id);
   }, [boardSearch]);
+  // Projets sélectionnés dans la barre latérale (projet ou dossier), lus ici
+  // pour les vues qui en dépendent avant la déclaration d'activeProjectIds.
+  const activeProjectIdsForScope = useMemo(() => getProjectFilterIds(filters), [filters]);
   const boardTasks = useMemo(
     () => filterTasksByText(metaFilteredTasks, boardSearchApplied),
     [metaFilteredTasks, boardSearchApplied]
   );
   const boardSearchActive = !!boardSearchApplied.trim();
 
+  // Aujourd'hui suit le projet / dossier sélectionné dans la barre latérale
+  // (#304), avec le même moteur que les widgets (projet principal OU second).
+  const todayScopedTasks = useMemo(
+    () => (activeProjectIdsForScope.length ? applyWidgetFilter(boardTasks, { projectIds: activeProjectIdsForScope }, ctx) : boardTasks),
+    [boardTasks, activeProjectIdsForScope, ctx]
+  );
   const todayPresentationTasks = useMemo(() => {
     const rank = { action:0, activity:1, milestone:2 };
-    return [...boardTasks].sort((a,b) => {
+    return [...todayScopedTasks].sort((a,b) => {
       const ta = getTaskType(a), tb = getTaskType(b);
       return (rank[ta] ?? 9) - (rank[tb] ?? 9) || (a.end || "").localeCompare(b.end || "");
     });
-  }, [boardTasks]);
+  }, [todayScopedTasks]);
 
   const filteredTasks = useMemo(() => {
     const base = metaFilteredTasks.filter((t) => matchTaskFilters(t, filters, ctx));
@@ -11548,7 +11571,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     const cfg = project
       ? mergeProjectNavigationDefaults(project, folder, projectDefaultView)
       : { ...(folder?.navigationDefaults || {}), view: folder?.navigationDefaults?.view || normalizeProjectDefaultView(projectDefaultView) };
-    const targetView = cfg.view || (PROJECT_TAB_VIEW_KEYS.includes(view) ? view : "projects");
+    const targetView = cfg.view || (PROJECT_SCOPED_VIEW_KEYS.includes(view) ? view : "projects");
 
     setFilters((current)=>{
       let base=current;
@@ -12361,21 +12384,28 @@ export default function LePlan({ currentUser, onSignOut }) {
         </div>
 
         <div className="lp-content">
-          {PROJECT_TAB_VIEW_KEYS.includes(view) && (
+          {/* La barre d'onglets suit EXACTEMENT Réglages > Vues affichées : les
+              vues cochées, dans l'ordre choisi. Elle ne montrait auparavant
+              qu'une liste figée de six vues projet, ce qui rendait sans effet
+              les cases Calendrier, Semaine, Cockpit, Devis… et le réordonnancement.
+              Le tableau de bord garde son bouton central dédié. */}
+          {view !== "dashboard" && (
             <div className="lp-detail-tabbar">
-              {PROJECT_TAB_VIEW_KEYS.filter((k) => enabledViews[k] !== false).map((k) => {
-                const meta = ALL_VIEWS_META.find((v) => v.key === k);
-                return (
-                  <button key={k} ref={(el) => { detailTabRefs.current[k] = el; }} className={"lp-detail-tab" + (view === k ? " active" : "")} onClick={() => setView(k)}>
-                    <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={14} /> {meta.label}
-                  </button>
-                );
-              })}
-              {tabIndicator && (
-                <div className="lp-anim-tab-indicator" style={{ left: tabIndicator.left, width: tabIndicator.width }} />
-              )}
+              <div className="lp-detail-tabs-scroll">
+                {tabBarViewKeys.map((k) => {
+                  const meta = ALL_VIEWS_META.find((v) => v.key === k);
+                  return (
+                    <button key={k} ref={(el) => { detailTabRefs.current[k] = el; }} className={"lp-detail-tab" + (view === k ? " active" : "")} onClick={() => setView(k)}>
+                      <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={14} /> {meta.label}
+                    </button>
+                  );
+                })}
+                {tabIndicator && tabBarViewKeys.includes(view) && (
+                  <div className="lp-anim-tab-indicator" style={{ left: tabIndicator.left, width: tabIndicator.width }} />
+                )}
+              </div>
               <div className="lp-detail-tab-spacer" />
-              {activeProjectIds.length === 1 && projectById[activeProjectIds[0]] && (
+              {PROJECT_TAB_VIEW_KEYS.includes(view) && activeProjectIds.length === 1 && projectById[activeProjectIds[0]] && (
                 <span className="lp-project-pdf-btn">
                   <DropdownButton label={projectPdfBusy ? "Export…" : "Fiche projet PDF"} icon={<Download size={13} />} title="Exporter la fiche projet PDF (synthèse A4 avec vue Métro)">
                     <label className="lp-checkbox-line">
@@ -12389,6 +12419,7 @@ export default function LePlan({ currentUser, onSignOut }) {
                   </DropdownButton>
                 </span>
               )}
+              {PROJECT_TAB_VIEW_KEYS.includes(view) && (
               <DropdownButton label="Filtres enregistrés" icon={<Bookmark size={13} />} title="Vues enregistrées pour ce type d'affichage">
                 {savedViews.filter((v) => v.view === view).length === 0 && (
                   <p style={{ fontSize: 12, color: "var(--text-600)", margin: "2px 4px 8px", maxWidth: 200 }}>Aucun filtre enregistré pour cette vue.</p>
@@ -12401,6 +12432,7 @@ export default function LePlan({ currentUser, onSignOut }) {
                 <hr className="lp-divider" style={{ margin: "6px 0" }} />
                 <button type="button" className="lp-dropdown-action-row" onClick={() => setSaveViewOpen(true)}><Plus size={13} /> Enregistrer les filtres actuels</button>
               </DropdownButton>
+              )}
             </div>
           )}
           {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} taskBaselines={taskBaselines} />}
@@ -12424,9 +12456,9 @@ export default function LePlan({ currentUser, onSignOut }) {
             proObligations={proObligations} setProObligations={setProObligations}
             toolbarSlot={viewToolbarSlot}
           />}
-          {view === "cockpit" && <CockpitView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} onOpenWeek={() => setView("weekFlow")} />}
-          {view === "weekFlow" && <WeekFlowView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
-          {view === "calendar" && <CalendarView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "cockpit" && <CockpitView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} onOpenWeek={() => setView("weekFlow")} />}
+          {view === "weekFlow" && <WeekFlowView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
+          {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
           {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} financeProQuotes={quotes} financeProBillingSchedule={proBillingSchedule} financeProPayments={proPayments} financeProMissions={proMissions} financeProClients={quoteClients} dashboardName={activeDashboard?.name} dashboardProjectFilter={activeDashboard?.projectFilter || []} onUpdateDashboardProjectFilter={(ids) => setDashboardProjectFilter(activeDashboard.id, ids)} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} setTeams={setTeams} setTeamFolders={setTeamFolders} habitLog={habitLog} setHabitLog={setHabitLog} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("meta"); setSettingsOpen(true); }} onOpenHabitThemes={() => { setSettingsTab("habitThemes"); setSettingsOpen(true); }} onOpenTeamsSettings={() => { setSettingsTab("peopleTeams"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}

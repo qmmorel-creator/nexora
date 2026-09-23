@@ -637,7 +637,9 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
      En oublier une donnerait un champ qui filtre ici et pas là. */
   for (const [surface, motif] of [
     ["Tableau de bord", /view === "dashboard" && <DashboardView[^\n]*tasks=\{boardTasks\}/],
-    ["Aujourd'hui", /return \[\.\.\.boardTasks\]\.sort/],
+    // #304 : Aujourd'hui resserre d'abord la liste filtrée par le texte au
+    // projet / dossier sélectionné, puis la trie — elle part toujours de boardTasks.
+    ["Aujourd'hui", /applyWidgetFilter\(boardTasks, \{ projectIds: activeProjectIdsForScope \}, ctx\) : boardTasks\)[\s\S]{0,400}return \[\.\.\.todayScopedTasks\]\.sort/],
   ]) {
     assert.match(builtSource, motif, `La vue « ${surface} » ne consomme plus la liste filtrée par le texte.`);
   }
