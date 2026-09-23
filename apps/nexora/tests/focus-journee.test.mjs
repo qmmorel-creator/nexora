@@ -134,11 +134,41 @@ test("Focus Journée appelle CalendarDayTimeline sans `compact` (même esthétiq
    cumuler un défilement vertical du corps du widget ET un défilement
    horizontal de la frise — une seule barre de défilement à la fois, comme
    pour le Treemap (#332). `.lp-cal-day-fit` fait de `.lp-cal-track-scroll`
-   l'unique conteneur qui défile (dans les deux sens si besoin) à la place du
-   corps du widget. */
+   l'unique conteneur qui défile à la place du corps du widget. */
 test("le mode `fit` de CalendarDayTimeline fait de la frise l'unique conteneur qui défile (pas de double défilement)", () => {
-  assert.match(html, /\.lp-cal-day-fit\{ height:100%; \}/);
-  assert.match(html, /\.lp-cal-day-fit \.lp-cal-track-scroll\{ flex:1 1 auto; min-height:0; overflow:auto; \}/);
+  assert.match(html, /\.lp-cal-day-fit\{ height:100%; container-type:inline-size; \}/);
+  assert.match(html, /\.lp-cal-day-fit \.lp-cal-track-scroll\{ flex:1 1 auto; min-height:0; \}/);
+});
+
+/* Retour de test (Ref #347, 3e essai) : les deux correctifs précédents (#333,
+   #343) empêchaient bien le CORPS du widget de défiler par-dessus la frise,
+   mais .lp-cal-track-scroll restait lui-même scrollable dans les DEUX axes en
+   même temps (overflow:auto hérité + overflow-x:auto de la règle générale
+   .lp-cal-track-scroll) — deux barres visibles simultanément dès que le
+   contenu débordait dans les deux dimensions à la fois, capture jointe à
+   l'issue #347. Sur le modèle du Treemap (#332, treemapGroupRects) : la piste
+   horaire (.lp-cal-track) doit se COMPRESSER dans la largeur mesurée du
+   widget — sa largeur minimale fixe (960px en mode normal, 1280px sous
+   767px) doit être annulée en mode `fit`, exactement comme elle l'est déjà
+   pour `.lp-cal-day-compact` — pour qu'un seul axe de défilement (vertical)
+   reste nécessaire sur `.lp-cal-track-scroll`. */
+test("le mode `fit` retire la largeur minimale fixe de la frise (Ref #347) : la piste se comprime au lieu de déborder à l'horizontale", () => {
+  assert.match(
+    html,
+    /\.lp-cal-day-fit \.lp-cal-track\{ min-width:0; \}/,
+    "en mode fit, .lp-cal-track ne doit plus avoir de min-width fixe (960px), comme pour .lp-cal-day-compact"
+  );
+});
+
+test("le mode `fit` ne laisse plus qu'un seul axe de défilement actif sur .lp-cal-track-scroll : vertical (Ref #347)", () => {
+  assert.match(
+    html,
+    /\.lp-cal-day-fit \.lp-cal-track-scroll\{ overflow-x:hidden; overflow-y:auto; \}/,
+    ".lp-cal-day-fit .lp-cal-track-scroll doit fermer l'axe horizontal (overflow-x:hidden) et ne garder que l'axe vertical (overflow-y:auto), jamais les deux en même temps"
+  );
+  // La règle générale (hors mode fit) ouvre bien overflow-x:auto — elle ne
+  // doit pas s'appliquer telle quelle au mode fit, d'où l'override ci-dessus.
+  assert.match(html, /\.lp-cal-track-scroll\{ overflow-x:auto; overflow-y:hidden; \}/);
 });
 
 /* Retour de test (Ref #343) : le mode `fit` seul ne suffisait pas — le corps
