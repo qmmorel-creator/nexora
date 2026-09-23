@@ -155,7 +155,7 @@ function AnnotationsHarness() {
     { id: "om2", name: "Hugo Lemaire", teamIds: ["o-core"], teamRoles: { "o-core": "Lead produit" } },
     { id: "om3", name: "Emma Roux", teamIds: ["o-core"] },
     { id: "om4", name: "Inès Garnier", teamIds: ["o-disc"] },
-    { id: "om5", name: "Jules Brun", teamIds: ["o-disc"] },
+    { id: "om5", name: "Jules Brun", teamIds: ["o-disc"], inactive: true },
     { id: "om6", name: "Nora Vidal", teamIds: ["o-disc"], teamRoles: { "o-disc": "Chercheuse UX" } },
     { id: "om7", name: "Adam Colin", managerName: "Nora Vidal", teamIds: ["o-disc"] },
     { id: "om8", name: "Lina Masson", managerName: "Nora Vidal" },
@@ -171,7 +171,16 @@ function AnnotationsHarness() {
     { id: "om18", name: "Eva Moulin", teamIds: ["o-ops"] },
     { id: "om19", name: "Sans rattachement", teamIds: [] },
   ]);
-  const [orgWidget, setOrgWidget] = useState({ id: "w-orgmetro", type: "orgchart", orgChartView: "metro" });
+  const [orgWidget, setOrgWidget] = useState({
+    id: "w-orgmetro", type: "orgchart", orgChartView: "metro",
+    // Relations propres au widget : équipe → équipe, personne → personne,
+    // équipe → personne (sans légende).
+    orgChartRelations: [
+      { id: "r1", from: "team:o-ops", to: "team:o-prod", label: "Support" },
+      { id: "r2", from: "person:Paul Mercier", to: "person:Camille Aubert", label: "Binôme" },
+      { id: "r3", from: "team:o-data", to: "person:Hugo Lemaire" },
+    ],
+  });
   const orgCtx = { teams: orgTeams, teamMembers: orgMembers, teamFolders: [], tasks: [], workshops: [], statuses };
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, workshops: harnessWorkshops, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
