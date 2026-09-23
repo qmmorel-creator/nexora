@@ -4834,6 +4834,224 @@ function weekFlowDays(tasks, ctx, todayIso, days) {
 }
 // === NEXORA:FIXED-PAGES:END ===
 
+// === NEXORA:CALENDAR:START ===
+/* Calendrier (#294) : grille continue de semaines + frise horaire du jour.
+
+   Les heures vivent dans deux champs facultatifs de la tâche, `startTime` et
+   `endTime` (« HH:MM », heure de Paris) — les MÊMES noms que ceux qu'écrit
+   déjà l'import Google Calendar du MCP (normalizeGoogleCalendarEventDates,
+   apps/nexora-mcp/src/calendar.mts) : un événement importé arrive donc avec
+   ses heures sans aucune migration. `startTime` porte sur la date `start`,
+   `endTime` sur la date `end`. Sans heure de début, la tâche est « sur la
+   journée ».
+
+   Règles de lecture (validées sur maquette) :
+   - la GRILLE ne montre jamais une tâche terminée ;
+   - la FRISE d'un jour les montre toutes, terminées comprises ;
+   - un jour intermédiaire d'une tâche multi-jours horodatée court de 0 h à
+     24 h ; le premier jour part de `startTime`, le dernier s'arrête à
+     `endTime`. */
+const CALENDAR_TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const CALENDAR_DAY_MINUTES = 1440;
+const CALENDAR_DEFAULT_ROWS = 4;
+const CALENDAR_MIN_ROWS = 2;
+const CALENDAR_MAX_ROWS = 8;
+
+function calendarTimeToMinutes(value) {
+  const m = CALENDAR_TIME_RE.exec(String(value == null ? "" : value).trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+// 1440 s'écrit « 24:00 » : c'est la fin d'une journée pleine, jamais une
+// valeur enregistrée (le champ `endTime` plafonne à 23:59).
+function calendarMinutesToLabel(minutes) {
+  const m = Math.max(0, Math.min(CALENDAR_DAY_MINUTES, Math.round(Number(minutes) || 0)));
+  if (m === CALENDAR_DAY_MINUTES) return "24:00";
+  return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+}
+
+function calendarDurationLabel(minutes) {
+  const m = Math.max(0, Math.round(Number(minutes) || 0));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (!h) return r + " min";
+  return h + " h" + (r ? " " + String(r).padStart(2, "0") : "");
+}
+
+// Heures cohérentes avant enregistrement : une heure invalide est vidée, une
+// fin sans début n'a pas de sens, un début sans fin dure une heure, et une
+// fin qui ne suit pas le début le même jour est recalée une heure après.
+function normalizeTaskTimes({ start, end, startTime, endTime } = {}) {
+  const startDate = start || end || "";
+  if (!startDate) return { startTime: "", endTime: "" };
+  const s = calendarTimeToMinutes(startTime);
+  if (s == null) return { startTime: "", endTime: "" };
+  let e = calendarTimeToMinutes(endTime);
+  const sameDay = (end || startDate) <= startDate;
+  if (e == null || (sameDay && e <= s)) e = Math.min(s + 60, CALENDAR_DAY_MINUTES - 1);
+  return { startTime: calendarMinutesToLabel(s), endTime: calendarMinutesToLabel(e) };
+}
+
+function calendarTaskRange(task) {
+  const a = task?.start || task?.end || "";
+  const b = task?.end || task?.start || "";
+  if (!a) return null;
+  return a <= b ? { start: a, end: b } : { start: b, end: a };
+}
+
+function calendarTaskIsTimed(task) {
+  return !!calendarTaskRange(task) && calendarTimeToMinutes(task.startTime) != null;
+}
+
+// Portion horaire d'une tâche un jour donné, ou null si elle n'a pas d'heure
+// (ou n'est pas active ce jour-là).
+function calendarTaskSlice(task, dateIso) {
+  const range = calendarTaskRange(task);
+  if (!range || dateIso < range.start || dateIso > range.end) return null;
+  const s0 = calendarTimeToMinutes(task.startTime);
+  if (s0 == null) return null;
+  const e0 = calendarTimeToMinutes(task.endTime);
+  const startMin = dateIso === range.start ? s0 : 0;
+  let endMin = dateIso === range.end ? (e0 == null ? Math.min(s0 + 60, CALENDAR_DAY_MINUTES) : e0) : CALENDAR_DAY_MINUTES;
+  if (endMin <= startMin) endMin = Math.min(startMin + 15, CALENDAR_DAY_MINUTES);
+  return { startMin, endMin };
+}
+
+function calendarWeekStart(dateIso) {
+  const dow = (new Date(dateIso + "T00:00:00").getDay() + 6) % 7; // lundi = 0
+  return addDays(dateIso, -dow);
+}
+
+function calendarDayOfWeek(dateIso) {
+  return (new Date(dateIso + "T00:00:00").getDay() + 6) % 7;
+}
+
+function calendarTasksOnDate(tasks, dateIso) {
+  return (tasks || []).filter((t) => {
+    const r = calendarTaskRange(t);
+    return !!r && r.start <= dateIso && dateIso <= r.end;
+  });
+}
+
+// Ordre dans une case / une frise : la journée entière d'abord, puis par
+// heure de début, puis par titre.
+function calendarCompareTasks(a, b) {
+  const sa = calendarTimeToMinutes(a.startTime);
+  const sb = calendarTimeToMinutes(b.startTime);
+  if (sa == null && sb != null) return -1;
+  if (sa != null && sb == null) return 1;
+  if (sa != null && sb != null && sa !== sb) return sa - sb;
+  return String(a.title || "").localeCompare(String(b.title || ""), "fr");
+}
+
+function normalizeCalendarRows(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return CALENDAR_DEFAULT_ROWS;
+  return Math.max(CALENDAR_MIN_ROWS, Math.min(CALENDAR_MAX_ROWS, n));
+}
+
+function normalizeCalendarViewPrefs(prefs) {
+  const p = prefs && typeof prefs === "object" ? prefs : {};
+  return {
+    rowsPerCell: normalizeCalendarRows(p.rowsPerCell),
+    showTimes: p.showTimes !== false,
+    filter: p.filter && typeof p.filter === "object" ? p.filter : null,
+  };
+}
+
+/* Une semaine de la grille : les tâches multi-jours deviennent des bandeaux
+   rangés en pistes (première piste libre), les autres restent dans leur case.
+   `maxRows` borne ce qu'une case affiche, bandeaux compris ; le reste est
+   compté dans `hidden`. Les tâches terminées n'y figurent jamais. */
+function calendarWeekLayout(tasks, ctx, weekStartIso, maxRows) {
+  const rows = normalizeCalendarRows(maxRows);
+  const weekEnd = addDays(weekStartIso, 6);
+  const open = (tasks || []).filter((t) => !isTaskDoneGlobal(t, ctx));
+  const multi = [];
+  const single = [];
+  open.forEach((t) => {
+    const r = calendarTaskRange(t);
+    if (!r || r.end < weekStartIso || r.start > weekEnd) return;
+    if (r.start !== r.end) multi.push({ task: t, range: r });
+    else single.push(t);
+  });
+  multi.sort((a, b) => (a.range.start.localeCompare(b.range.start)) || (b.range.end.localeCompare(a.range.end)) || calendarCompareTasks(a.task, b.task));
+  const laneEnds = [];
+  const spans = multi.map(({ task, range }) => {
+    const from = range.start < weekStartIso ? weekStartIso : range.start;
+    const to = range.end > weekEnd ? weekEnd : range.end;
+    const col0 = calendarDayOfWeek(from);
+    const col1 = calendarDayOfWeek(to);
+    let lane = 0;
+    while (laneEnds[lane] !== undefined && laneEnds[lane] >= col0) lane += 1;
+    laneEnds[lane] = col1;
+    return { task, col0, col1, lane, clipStart: range.start < weekStartIso, clipEnd: range.end > weekEnd };
+  });
+  const laneCount = laneEnds.length;
+  const visibleLanes = Math.min(laneCount, rows);
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(weekStartIso, i);
+    const items = single.filter((t) => calendarTaskRange(t).start === date).sort(calendarCompareTasks);
+    const room = Math.max(0, rows - visibleLanes);
+    const shown = items.slice(0, room);
+    const hiddenSpans = spans.filter((s) => s.lane >= rows && s.col0 <= i && i <= s.col1).length;
+    const total = items.length + spans.filter((s) => s.col0 <= i && i <= s.col1).length;
+    return { date, items: shown, hidden: items.length - shown.length + hiddenSpans, total };
+  });
+  return { weekStart: weekStartIso, days, spans: spans.filter((s) => s.lane < rows), laneCount: visibleLanes };
+}
+
+/* Contenu de la frise d'un jour : TOUTES les tâches actives ce jour-là,
+   terminées comprises (c'est le seul endroit du calendrier où elles
+   apparaissent). */
+function calendarDayModel(tasks, ctx, dateIso) {
+  const all = calendarTasksOnDate(tasks, dateIso);
+  const allDay = [];
+  const timed = [];
+  all.forEach((task) => {
+    const done = isTaskDoneGlobal(task, ctx);
+    const slice = calendarTaskSlice(task, dateIso);
+    if (slice) timed.push({ task, done, ...slice });
+    else allDay.push({ task, done, range: calendarTaskRange(task) });
+  });
+  timed.sort((a, b) => (a.startMin - b.startMin) || (a.endMin - b.endMin) || calendarCompareTasks(a.task, b.task));
+  allDay.sort((a, b) => calendarCompareTasks(a.task, b.task));
+  return {
+    date: dateIso,
+    allDay,
+    timed,
+    total: all.length,
+    doneCount: all.filter((t) => isTaskDoneGlobal(t, ctx)).length,
+    plannedMinutes: timed.reduce((sum, r) => sum + (r.endMin - r.startMin), 0),
+  };
+}
+
+// Premières semaines (lundis) d'une plage continue.
+function calendarWeekStarts(firstWeekIso, count) {
+  return Array.from({ length: Math.max(0, count) }, (_, i) => addDays(firstWeekIso, i * 7));
+}
+
+const CALENDAR_MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const CALENDAR_MONTHS_SHORT = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+const CALENDAR_WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+
+function calendarMonthTitle(dateIso) {
+  const [y, m] = String(dateIso).split("-").map(Number);
+  const name = CALENDAR_MONTHS[(m || 1) - 1] || "";
+  return name.charAt(0).toUpperCase() + name.slice(1) + " " + y;
+}
+
+function calendarLongDate(dateIso) {
+  const [y, m, d] = String(dateIso).split("-").map(Number);
+  return CALENDAR_WEEKDAYS[calendarDayOfWeek(dateIso)] + " " + d + " " + CALENDAR_MONTHS[m - 1] + " " + y;
+}
+
+function calendarShortDate(dateIso) {
+  const [, m, d] = String(dateIso).split("-").map(Number);
+  return d + " " + CALENDAR_MONTHS_SHORT[m - 1];
+}
+// === NEXORA:CALENDAR:END ===
+
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 
    Entre le bloc temporel — toute la hauteur du diagramme — et le jalon — un
@@ -9334,6 +9552,22 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   const removeAttachment = (id) => setAttachments((prev) => prev.filter((a) => a.id !== id));
   const [start, setStart] = useState(base.start || iso(new Date()));
   const [end, setEnd] = useState(base.end || addDays(iso(new Date()), 5));
+  // Heures facultatives (#294) : mêmes champs que l'import Google Calendar du
+  // MCP. « Toute la journée » est un état à part entière — le déduire d'un
+  // champ vide ferait disparaître la saisie pendant qu'on tape l'heure.
+  const [allDay, setAllDay] = useState(() => calendarTimeToMinutes(base.startTime) == null);
+  const [startTime, setStartTime] = useState(() => (calendarTimeToMinutes(base.startTime) != null ? base.startTime : "09:00"));
+  const [endTime, setEndTime] = useState(() => (calendarTimeToMinutes(base.endTime) != null ? base.endTime : "10:00"));
+  const onStartTimeChange = (value) => {
+    const prevS = calendarTimeToMinutes(startTime);
+    const prevE = calendarTimeToMinutes(endTime);
+    const s = calendarTimeToMinutes(value);
+    setStartTime(value);
+    // Même journée : l'heure de fin suit, en gardant la durée.
+    if (s != null && prevS != null && prevE != null && prevE > prevS && (milestone || !end || end <= start)) {
+      setEndTime(calendarMinutesToLabel(Math.min(s + (prevE - prevS), CALENDAR_DAY_MINUTES - 1)));
+    }
+  };
   const [duration, setDuration] = useState(Math.max(0, dayIndex(base.end || addDays(iso(new Date()), 5)) - dayIndex(base.start || iso(new Date()))));
   const isGoogleCalendarTask = isGoogleCalendarProjectId(projectId, projects);
   // Méta bloc temporel porté par la tâche. Réservé aux projets calendrier :
@@ -9646,6 +9880,11 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       milestoneTypeId: milestone ? (milestoneTypeId || null) : null,
       start: finalStart,
       end: finalEnd,
+      // Une tâche qui n'a jamais eu d'heure n'en gagne pas de champ vide.
+      ...(() => {
+        const times = allDay ? { startTime: "", endTime: "" } : normalizeTaskTimes({ start: finalStart, end: finalEnd, startTime, endTime });
+        return times.startTime || base.startTime || base.endTime ? times : {};
+      })(),
       progress,
       desc,
       // Jamais effacé par un changement de type : le champ n'est qu'ATTÉNUÉ
@@ -9934,6 +10173,32 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
             <label>Icône {milestone ? "du jalon" : ""} <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }} title={`Facultatif — écrase l'icône du projet pour ${milestone ? "ce jalon précis" : "cette tâche précise"}`}>ⓘ</span></label>
             <IconEditor icon={milestoneIcon} setIcon={setMilestoneIcon} />
           </div>
+        </div>
+      )}
+      {start && (
+        <div className="lp-task-times">
+          <label className="lp-checkbox-row lp-task-times-allday">
+            <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
+            <span>Toute la journée</span>
+          </label>
+          {!allDay && (
+            <>
+              <div className="lp-field">
+                <label htmlFor="lp-task-start-time">{milestone ? "Heure" : "Heure de début"}</label>
+                <input id="lp-task-start-time" type="time" value={startTime} onChange={(e) => onStartTimeChange(e.target.value)} />
+              </div>
+              {!milestone && (
+                <div className="lp-field">
+                  <label htmlFor="lp-task-end-time">Heure de fin</label>
+                  <input id="lp-task-end-time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                </div>
+              )}
+              {!milestone && (!end || end <= start) && calendarTimeToMinutes(startTime) != null && calendarTimeToMinutes(endTime) != null && calendarTimeToMinutes(endTime) > calendarTimeToMinutes(startTime) && (
+                <span className="lp-task-times-duration">Durée : {calendarDurationLabel(calendarTimeToMinutes(endTime) - calendarTimeToMinutes(startTime))}</span>
+              )}
+            </>
+          )}
+          <span className="lp-task-times-hint">Heures facultatives. Sans heure, la tâche s'affiche dans le bandeau « Journée » de la frise du calendrier.</span>
         </div>
       )}
       {!start && (

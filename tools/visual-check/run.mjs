@@ -1562,6 +1562,10 @@ try {
   await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Hiérarchique" }).click();
   await page.waitForTimeout(300);
   orgMetro.hierarchyPanels = await page.locator(`${host} .lp-orghier-node-panel`).count();
+  // Troisième mode (#300) : la vue Orbital se rend depuis le même sélecteur.
+  await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Orbital" }).click();
+  await page.waitForTimeout(400);
+  orgMetro.orbitalShell = await page.locator(`${host} .org-orbital-shell`).count();
   await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Métro" }).click();
   await page.waitForTimeout(300);
   orgMetro.backToMetro = await page.locator(`${host} .lp-orgmetro-svg`).count();
@@ -2615,6 +2619,7 @@ if (!orgMetro.error) {
   expect(/Emma Roux/.test(orgMetro.memberModal || ""), `Organigramme Métro : le clic sur une station n'ouvre pas la fiche utilisateur (${orgMetro.memberModal})`);
   expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
+  expect(orgMetro.orbitalShell === 1, "Organigramme : la bascule vers « Orbital » n'affiche pas la vue orbitale");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
   expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);
   expect(orgMetro.narrow && orgMetro.narrow.legendHidden, "Organigramme Métro étroit : la légende reste affichée dans un widget de 380 px");

@@ -68,10 +68,9 @@ export class GoogleAuthProvider {}
 export const linkWithPopup = async () => {};
 export const signInWithPopup = async () => {};
 export const reauthenticateWithPopup = async () => {};`,
-  // jsPDF (modules Devis/Facture, fiches PDF) : le banc ne génère aucun PDF.
-  // Sans ce bouchon, ses imports CDN échouent et l'application ne démarre plus
-  // du tout dans le banc — le module n'est chargé que pour être importé.
-  "jspdf-stub.js": `export class jsPDF { constructor() { throw new Error("jsPDF indisponible dans le banc d'essai"); } }
+  // PDF des devis, factures et fiches (#289, #291) : le banc ne génère jamais
+  // de PDF, mais le module doit se résoudre hors ligne pour que la page monte.
+  "jspdf-stub.js": `export class jsPDF { constructor() { throw new Error("jsPDF indisponible dans le banc"); } }
 export default jsPDF;`,
   "jspdf-autotable-stub.js": `export default function autoTable() {}`,
 };

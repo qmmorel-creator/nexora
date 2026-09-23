@@ -157,7 +157,7 @@ function AnnotationsHarness() {
     { id: "om18", name: "Eva Moulin", teamIds: ["o-ops"] },
     { id: "om19", name: "Sans rattachement", teamIds: [] },
   ]);
-  const [orgWidget, setOrgWidget] = useState({ id: "w-orgmetro", type: "orgchart", orgChartMode: "metro" });
+  const [orgWidget, setOrgWidget] = useState({ id: "w-orgmetro", type: "orgchart", orgChartView: "metro" });
   const orgCtx = { teams: orgTeams, teamMembers: orgMembers, teamFolders: [], tasks: [], workshops: [], statuses };
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, workshops: harnessWorkshops, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
@@ -524,7 +524,7 @@ function AnnotationsHarness() {
           />
         </div>
         <div id="harness-orgmetro-narrow" style={{ width: 380, height: 560, marginBottom: 18 }}>
-          <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart", orgChartMode: "metro" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
+          <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart", orgChartView: "metro" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
         </div>
       </div>
       <div>
@@ -1076,6 +1076,9 @@ if (benchApp) {
     // isolé ne l'aurait jamais reproduit (habitLog manquait dans la signature
     // de DashboardView elle-même, pas dans le widget).
     "habitQuick", "habitHeatmap",
+    // #294 : grille continue + frise horaire — monté dans la vraie
+    // DashboardView comme les autres types qui consomment des tâches.
+    "calendar",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
