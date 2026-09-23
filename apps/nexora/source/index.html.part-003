@@ -8830,7 +8830,7 @@ const ORGMETRO_LEAD_FALLBACK_ROLE = "Responsable";
 // personne qui dirige une équipe, comme le fait leadNames côté hiérarchique.
 const ORGMETRO_LEAD_HALO = 4.5; // débord du halo au-delà de la station
 const ORGMETRO_STAR_W = 15; // étoile + espace, devant le nom
-const ORGMETRO_BADGE_SUB_H = 15; // ligne « Resp. … » d'un bandeau
+const ORGMETRO_BADGE_BAND_H = 22; // bande du responsable, en bas du bandeau
 const ORGMETRO_BADGE_SUB_CHAR_W = 6.6;
 
 // Retour à la ligne mot à mot, déterministe. Un mot composé trop long se
@@ -9153,7 +9153,7 @@ function orgMetroMeasureBadge(branch) {
   const subtitle = bl ? bl.name + (bl.role ? " · " + bl.role : "") : "";
   const subW = subtitle ? ORGMETRO_STAR_W + subtitle.length * ORGMETRO_BADGE_SUB_CHAR_W : 0;
   const w = Math.ceil(Math.max(textW, subW) + spec.padX * 2 + (countW ? countW + 8 : 0));
-  const h = spec.h + Math.max(0, lines.length - 1) * spec.lineH + (subtitle ? ORGMETRO_BADGE_SUB_H : 0);
+  const h = spec.h + Math.max(0, lines.length - 1) * spec.lineH + (subtitle ? ORGMETRO_BADGE_BAND_H : 0);
   return { lines, count, countW, subtitle, w, h, padX: spec.padX, lineH: spec.lineH, level: branch.kind === "hub" ? "hub" : branch.depth <= 1 ? "root" : "sub" };
 }
 
@@ -10721,14 +10721,21 @@ function OrgMetroLabels({ layout, dim, drag }) {
         // Pointillés : ligne transverse indépendante, jamais une équipe
         // rattachée à un utilisateur (reliée en trait plein).
         const cls = "lp-orgmetro-badge is-" + bd.level + (b.independent && !b.personParent ? " is-independent" : "") + (b.team ? " is-clickable" : "") + (b.collapsed ? " is-collapsed" : "") + (dim(b.key) ? " is-dim" : "");
-        const blockH = bd.lines.length * bd.lineH + (bd.subtitle ? ORGMETRO_BADGE_SUB_H : 0);
-        const textTop = bd.y + (bd.h - blockH) / 2 + bd.lineH * 0.74;
-        const subY = textTop + (bd.lines.length - 1) * bd.lineH + ORGMETRO_BADGE_SUB_H - 1;
+        // Variante ★ : le responsable occupe une bande en bas du bandeau,
+        // teinte plus soutenue de la couleur de l'équipe ; le nom de l'équipe
+        // et son compteur se centrent au-dessus.
+        const bandH = bd.subtitle ? ORGMETRO_BADGE_BAND_H : 0;
+        const headH = bd.h - bandH;
+        const textTop = bd.y + (headH - bd.lines.length * bd.lineH) / 2 + bd.lineH * 0.74;
+        const subY = bd.y + bd.h - bandH / 2 + 4;
+        const rx = bd.h / 2 > 16 ? 16 : bd.h / 2;
+        const bandD = bandH ? `M ${bd.x} ${bd.y + headH} H ${bd.x + bd.w} V ${bd.y + bd.h - rx} A ${rx} ${rx} 0 0 1 ${bd.x + bd.w - rx} ${bd.y + bd.h} H ${bd.x + rx} A ${rx} ${rx} 0 0 1 ${bd.x} ${bd.y + bd.h - rx} Z` : "";
         return (
           <g key={"b:" + b.key} className={cls + (drag && drag.key === b.key ? " is-dragging" : "")} data-metro-drag={"branch:" + b.key} data-metro-key={b.team ? b.key : undefined} tabIndex={b.team ? 0 : undefined} role={b.team ? "button" : undefined} aria-label={b.team ? "Équipe " + b.team.name : undefined}>
             {b.team && <title>{"Équipe " + b.team.name + " — " + bd.count + " personne" + (Number(bd.count) > 1 ? "s" : "") + (b.leadName ? " — responsable : " + b.leadName : " — aucun responsable") + (b.collapsed ? " · clic pour déplier" : " · clic pour replier") + " · double-clic pour modifier"}</title>}
-            <rect className="lp-orgmetro-badge-bg" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={bd.h / 2 > 16 ? 16 : bd.h / 2} />
-            {!isHub && <rect className="lp-orgmetro-badge-tint" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={bd.h / 2 > 16 ? 16 : bd.h / 2} style={{ fill: color, stroke: color }} />}
+            <rect className="lp-orgmetro-badge-bg" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={rx} />
+            {bandD && <path className="lp-orgmetro-badge-band" d={bandD} style={{ fill: color }} />}
+            {!isHub && <rect className="lp-orgmetro-badge-tint" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={rx} style={{ fill: color, stroke: color }} />}
             {bd.lines.map((line, i) => (
               <text key={i} className="lp-orgmetro-badge-text" x={isHub ? bd.x + bd.w / 2 : bd.x + bd.padX} y={textTop + i * bd.lineH} textAnchor={isHub ? "middle" : "start"}>{line}</text>
             ))}
@@ -10743,8 +10750,8 @@ function OrgMetroLabels({ layout, dim, drag }) {
                 {/* Chiffre centré dans sa pastille, horizontalement ET
                     verticalement (dominant-baseline), quelle que soit la
                     hauteur du bandeau. */}
-                <rect className="lp-orgmetro-badge-count-bg" x={bd.x + bd.w - bd.padX - bd.countW} y={bd.y + bd.h / 2 - ORGMETRO_COUNT_H / 2} width={bd.countW} height={ORGMETRO_COUNT_H} rx={ORGMETRO_COUNT_H / 2} style={{ fill: color }} />
-                <text className="lp-orgmetro-badge-count" x={bd.x + bd.w - bd.padX - bd.countW / 2} y={bd.y + bd.h / 2} textAnchor="middle" dominantBaseline="central" style={{ fill: b.color ? textOn(b.color) : "#ffffff" }}>{bd.count}</text>
+                <rect className="lp-orgmetro-badge-count-bg" x={bd.x + bd.w - bd.padX - bd.countW} y={bd.y + headH / 2 - ORGMETRO_COUNT_H / 2} width={bd.countW} height={ORGMETRO_COUNT_H} rx={ORGMETRO_COUNT_H / 2} style={{ fill: color }} />
+                <text className="lp-orgmetro-badge-count" x={bd.x + bd.w - bd.padX - bd.countW / 2} y={bd.y + headH / 2} textAnchor="middle" dominantBaseline="central" style={{ fill: b.color ? textOn(b.color) : "#ffffff" }}>{bd.count}</text>
               </>
             )}
           </g>
