@@ -8792,6 +8792,7 @@ const ORGMETRO_ROW_COL_GAP = 26;
 // et écart vertical entre deux sous-équipes.
 const ORGMETRO_STACK_INDENT = 40;
 const ORGMETRO_STACK_GAP = 24;
+const ORGMETRO_ENTRY_GAP = 18; // lien parent arrivant par le flanc du bandeau
 const ORGMETRO_SIDE_DROP = 16; // coude → première station rattachée // décalage d'une correspondance le long d'un bord
 const ORGMETRO_LEAD_FALLBACK_ROLE = "Responsable";
 // Repères du responsable, repris de la vue hiérarchique (étoile + cadre de la
@@ -8879,6 +8880,8 @@ function buildOrgMetroGraph(roots, teams, opts) {
   // Équipes dont les sous-équipes s'empilent à la verticale (réglage du
   // widget, par équipe) au lieu de s'étaler côte à côte.
   const stacked = new Set(Array.isArray(opts && opts.stacked) ? opts.stacked.map(String) : []);
+  // Sous-équipes placées au-dessus du bandeau, par équipe empilée.
+  const stackSplit = opts && opts.stackSplit && typeof opts.stackSplit === "object" ? opts.stackSplit : {};
   const rootLabel = (opts && opts.rootLabel) || "Organisation";
   // Équipes au rattachement transverse (#219) dont le partenaire est visible :
   // elles restent des lignes indépendantes, jamais raccordées à la Direction.
@@ -8994,7 +8997,10 @@ function buildOrgMetroGraph(roots, teams, opts) {
     };
     branch.personCount = orgMetroPersonCount(branch);
     if (node.team && horizontal.has(String(node.team.id))) branch.horizontal = true;
-    if (node.team && stacked.has(String(node.team.id))) branch.stacked = true;
+    if (node.team && stacked.has(String(node.team.id))) {
+      branch.stacked = true;
+      branch.stackSplit = Math.max(0, Math.round(Number(stackSplit[String(node.team.id)]) || 0));
+    }
     if (collapsed.has(key)) {
       branch.collapsed = true;
       branch.stations = branch.stations.filter((st) => st.kind === "lead");
@@ -9196,7 +9202,10 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
     // succession qui ferait paraître l'une parente de l'autre.
     const center = (offsets[ref[0]] + offsets[ref[ref.length - 1]]) / 2;
     childXs = offsets.map((o) => o - center);
-    const connectedXs = connected.map((i) => childXs[i]);
+    // Point d'arrivée de chaque ligne sur la barre : sa ligne, ou le flanc
+    // de son bandeau quand des sous-équipes sont réparties au-dessus.
+    const entryX = (i) => childXs[i] + (kids[i].entry ? kids[i].entry.dx : 0);
+    const connectedXs = connected.map((i) => entryX(i));
     if (connectedXs.length) {
       const minX = Math.min(0, ...connectedXs);
       const maxX = Math.max(0, ...connectedXs);
@@ -9204,7 +9213,7 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
       orgMetroContourAdd(c, minX - lineW, maxX + lineW, forkY - lineW, forkY + ORGMETRO_CORNER);
       connected.forEach((i) => {
         const kw = orgMetroLineWidth(kids[i].branch);
-        orgMetroContourAdd(c, childXs[i] - kw / 2, childXs[i] + kw / 2, forkY, childTop);
+        orgMetroContourAdd(c, entryX(i) - kw / 2, entryX(i) + kw / 2, forkY, childTop);
       });
     }
     kids.forEach((k, i) => {
@@ -9232,9 +9241,11 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
 function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, lineTop, bottom, row, kids) {
   const shift = Math.max(ORGMETRO_STACK_INDENT, ...kids.map((k) => lineW / 2 + ORGMETRO_SIBLING_GAP - Math.min(...k.contour.left)));
   const stack = [];
-  let top = Math.ceil((bottom + ORGMETRO_FORK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
-  let lastElbow = null;
-  kids.forEach((k) => {
+  // Répartition (retour de test) : les `split` premières sous-équipes se
+  // rangent AU-DESSUS du bandeau, les autres en dessous — le bandeau (et le
+  // lien qui y arrive) descend le long de la ligne.
+  const split = Math.max(0, Math.min(kids.length, Math.round(Number(branch.stackSplit) || 0)));
+  const place = (k, top) => {
     const connected = !k.branch.independent;
     const elbowY = top;
     const kTop = Math.ceil((elbowY + ORGMETRO_DROP) / ORGMETRO_BAND) * ORGMETRO_BAND;
@@ -9242,7 +9253,6 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
       const kw = orgMetroLineWidth(k.branch);
       orgMetroContourAdd(c, 0, shift + kw / 2, elbowY - kw, elbowY + ORGMETRO_CORNER);
       orgMetroContourAdd(c, shift - kw / 2, shift + kw / 2, elbowY, kTop);
-      lastElbow = elbowY;
     }
     const off = kTop / ORGMETRO_BAND;
     for (let b = 0; b < k.contour.left.length; b++) {
@@ -9253,13 +9263,55 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
       c.right[t] = c.right[t] === undefined ? R : Math.max(c.right[t], R);
     }
     stack.push({ m: k, elbowY, top: kTop, shift, connected });
-    top = Math.ceil((kTop + k.contour.left.length * ORGMETRO_BAND + ORGMETRO_STACK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
+    return Math.ceil((kTop + k.contour.left.length * ORGMETRO_BAND + ORGMETRO_STACK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
+  };
+  // Partie haute : tout ce qui est déjà mesuré (bandeau, stations,
+  // rattachés) descend de la hauteur des sous-équipes du haut.
+  let upH = 0;
+  let upTrunk = null;
+  let entry = null;
+  if (split > 0) {
+    let h = 0;
+    kids.slice(0, split).forEach((k) => {
+      // Hauteur à réserver, sans rien poser encore.
+      const kTop = Math.ceil((h + ORGMETRO_DROP) / ORGMETRO_BAND) * ORGMETRO_BAND;
+      h = Math.ceil((kTop + k.contour.left.length * ORGMETRO_BAND + ORGMETRO_STACK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
+    });
+    upH = h;
+    const pad = upH / ORGMETRO_BAND;
+    c.left = [...new Array(pad), ...c.left];
+    c.right = [...new Array(pad), ...c.right];
+    stations.forEach((m) => { m.top += upH; m.cy += upH; m.labelTop += upH; });
+    sides.forEach((sd) => { sd.stationCy += upH; sd.elbowY += upH; sd.sideTop += upH; });
+    if (row) row.y += upH;
+    lineTop += upH;
+    bottom += upH;
+    let top = 0;
+    kids.slice(0, split).forEach((k) => { top = place(k, top); });
+    const firstUp = stack.find((st) => st.connected);
+    if (firstUp) {
+      upTrunk = { y0: firstUp.elbowY, y1: upH };
+      orgMetroContourAdd(c, -lineW / 2, lineW / 2, upTrunk.y0, upTrunk.y1);
+    }
+    // Le lien parent arrive par le FLANC GAUCHE du bandeau (jamais le long
+    // de la ligne du haut, qu'il masquerait).
+    entry = { dx: -(badge.w / 2 + ORGMETRO_ENTRY_GAP), dy: upH + badge.h / 2 };
+    orgMetroContourAdd(c, entry.dx - 4, entry.dx + 4, 0, entry.dy);
+    orgMetroContourAdd(c, entry.dx - 4, -badge.w / 2, entry.dy - 4, entry.dy + 4);
+    orgMetroContourAdd(c, -badge.w / 2, badge.w / 2, upH, upH + badge.h);
+  }
+  let top = Math.ceil((bottom + ORGMETRO_FORK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
+  let lastElbow = null;
+  kids.slice(split).forEach((k) => {
+    const before = stack.length;
+    top = place(k, top);
+    if (stack[before].connected) lastElbow = stack[before].elbowY;
   });
   const lastCy = stations.length ? stations[stations.length - 1].cy : null;
   const trunkEnd = lastElbow !== null ? lastElbow : row ? row.y : lastCy;
   const trunk = trunkEnd !== null && trunkEnd > lineTop ? { y0: lineTop, y1: trunkEnd } : null;
   if (trunk) orgMetroContourAdd(c, -lineW / 2, lineW / 2, trunk.y0, trunk.y1);
-  return { branch, lineW, badge, header, stations, sides, trunk, row, fork: null, childTop: null, childXs: [], kids: [], stack, contour: orgMetroContourFill(c) };
+  return { branch, lineW, badge, badgeTop: upH, header, stations, sides, trunk, upTrunk, entry, row, fork: null, childTop: null, childXs: [], kids: [], stack, contour: orgMetroContourFill(c) };
 }
 // Disposition horizontale (réglage par équipe) : le tronc descend du bandeau
 // jusqu'à une ligne horizontale qui part vers la droite ; les stations s'y
@@ -9342,12 +9394,18 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
     independent: b.independent, transverse: b.transverse, ancestors,
     x, y,
     badge: m.badge ? {
-      x: x - m.badge.w / 2, y, w: m.badge.w, h: m.badge.h, lines: m.badge.lines, count: m.badge.count,
+      x: x - m.badge.w / 2, y: y + (m.badgeTop || 0), w: m.badge.w, h: m.badge.h, lines: m.badge.lines, count: m.badge.count,
       countW: m.badge.countW, subtitle: m.badge.subtitle, padX: m.badge.padX, lineH: m.badge.lineH, level: m.badge.level,
     } : null,
     header: m.header ? abs(m.header, true) : null,
     stations: m.stations.map((s) => abs(s, false)),
     trunk: m.trunk ? { x, y0: y + m.trunk.y0, y1: y + m.trunk.y1 } : null,
+    // Sous-équipes réparties au-dessus du bandeau : ligne du haut, et point
+    // d'arrivée du lien parent sur le flanc gauche du bandeau.
+    upTrunk: m.upTrunk ? { x, y0: y + m.upTrunk.y0, y1: y + m.upTrunk.y1 } : null,
+    entry: m.entry ? { x: x + m.entry.dx, y: y + m.entry.dy } : null,
+    stackSplit: m.branch.stacked ? Math.max(0, Math.round(Number(m.branch.stackSplit) || 0)) : 0,
+    stackable: Boolean(m.stack && m.stack.length),
     // Disposition horizontale : ligne des stations, du tronc vers la droite.
     row: m.row ? { y: y + m.row.y, x0: x, x1: x + m.row.x1 } : null,
     fork: m.fork ? { y: y + m.fork.y, minX: x + m.fork.minX, maxX: x + m.fork.maxX, fromX: x, childXs: m.fork.childXs.map((cx) => x + cx) } : null,
@@ -9357,8 +9415,9 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
     // descend déjà d'un coude de ORGMETRO_CORNER.
     elbow: parent && parent.elbow ? parent.elbow : null,
     drop: parent && !b.independent && !parent.elbow ? {
-      x, y0: parent.forkY, y1: y, fromX: parent.fromX, color: b.color,
-      curved: x !== parent.fromX && (x === parent.minX || x === parent.maxX) && parent.maxX - parent.minX > 0.5,
+      x: x + (m.entry ? m.entry.dx : 0), y0: parent.forkY, y1: y + (m.entry ? m.entry.dy : 0), fromX: parent.fromX, color: b.color,
+      toX: m.entry ? x - m.badge.w / 2 : null,
+      curved: x + (m.entry ? m.entry.dx : 0) !== parent.fromX && (x + (m.entry ? m.entry.dx : 0) === parent.minX || x + (m.entry ? m.entry.dx : 0) === parent.maxX) && parent.maxX - parent.minX > 0.5,
     } : null,
   };
   out.branches.push(placed);
@@ -9421,6 +9480,7 @@ function orgMetroBranchPaths(branch) {
   const R = ORGMETRO_CORNER;
   const out = { trunk: null, row: null, fork: null, drop: null };
   if (branch.trunk) out.trunk = orgMetroTrunkD(branch.trunk);
+  if (branch.upTrunk && branch.upTrunk.y1 > branch.upTrunk.y0) out.trunk = (out.trunk ? out.trunk + " " : "") + `M ${branch.upTrunk.x} ${branch.upTrunk.y0} V ${branch.upTrunk.y1}`;
   if (branch.row && branch.row.x1 > branch.row.x0) out.row = `M ${branch.row.x0} ${branch.row.y} H ${branch.row.x1}`;
   // Changement de couleur (retour de test) : il se fait TOUJOURS sur une
   // station (voir orgMetroJunctions). La barre, couleur parente, tourne aux
@@ -9445,7 +9505,10 @@ function orgMetroBranchPaths(branch) {
   }
   if (branch.drop) {
     const dr = branch.drop;
-    out.drop = `M ${dr.x} ${dr.y0 + (dr.curved ? R : 0)} V ${dr.y1}`;
+    // Arrivée par le flanc du bandeau : descente puis coude vers la droite.
+    out.drop = dr.toX != null && dr.toX - dr.x > R
+      ? `M ${dr.x} ${dr.y0 + (dr.curved ? R : 0)} V ${dr.y1 - R} Q ${dr.x} ${dr.y1} ${dr.x + R} ${dr.y1} H ${dr.toX}`
+      : `M ${dr.x} ${dr.y0 + (dr.curved ? R : 0)} V ${dr.y1}`;
   }
   return out;
 }
@@ -9542,9 +9605,9 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
     const others = obstacles.filter((o) => o.key !== "badge:" + A.branch.key && o.key !== "badge:" + B.branch.key);
     const best = orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(link.toId, i));
     const key = "transverse:" + link.fromId + ":" + link.toId;
-    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts;
+    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : orgMetroSimplifyRoute(best.pts);
     out.push({
-      key, fromId: link.fromId, toId: link.toId, extra: Boolean(link.extra),
+      key, fromId: link.fromId, toId: link.toId, extra: Boolean(link.extra), hierarchical: link.type === "hierarchique",
       points: pts, hits: best.hits, d: orgMetroPolylineD(pts),
       // Couleur des rivets d'accroche : celle de chaque ligne reliée.
       fromColor: A.branch.color || null, toColor: B.branch.color || null,
@@ -9733,22 +9796,45 @@ function orgMetroApplyOffsets(layout, offsets) {
       stations: b.stations.map((st) => ({ ...st, cx: X(st.cx), cy: Y(st.cy), label: { ...st.label, x: X(st.label.x), y: Y(st.label.y) } })),
       trunk: fk ? fk.trunk : b.trunk ? { x: X(b.trunk.x), y0: Y(b.trunk.y0), y1: Y(b.trunk.y1) } : null,
       row: b.row ? { y: Y(b.row.y), x0: X(b.row.x0), x1: X(b.row.x1) } : null,
+      upTrunk: b.upTrunk ? { x: X(b.upTrunk.x), y0: Y(b.upTrunk.y0), y1: Y(b.upTrunk.y1) } : null,
+      entry: b.entry ? { x: X(b.entry.x), y: Y(b.entry.y) } : null,
       fork: fk ? fk.fork : null,
       elbow: b.elbow ? (() => {
         const et = total.get(parentKey) || { dx: 0, dy: 0 };
-        return { ...b.elbow, fromX: b.elbow.vertical ? X(b.elbow.fromX) : b.elbow.fromX + et.dx, y0: b.elbow.y0 + et.dy, y: b.elbow.y + et.dy, x: X(b.elbow.x), y1: Y(b.elbow.y1) };
+        // Trait horizontal d'une sous-équipe empilée déplacé en hauteur
+        // (clé « elbow:<ligne> ») : il glisse le long de la ligne parente.
+        const eo = b.elbow.stacked && offs["elbow:" + b.key] ? offs["elbow:" + b.key].dy : 0;
+        const y1 = Y(b.elbow.y1);
+        const ey = Math.min(b.elbow.y + et.dy + eo, y1 - ORGMETRO_CORNER * 2);
+        return { ...b.elbow, fromX: b.elbow.vertical ? X(b.elbow.fromX) : b.elbow.fromX + et.dx, y0: b.elbow.y0 + et.dy, y: ey, below: b.elbow.stacked ? b.elbow.y > (parent && parent.badge ? parent.badge.y + parent.badge.h : -Infinity) : undefined, x: X(b.elbow.x), y1 };
       })() : null,
       drop: b.drop ? { ...b.drop } : null,
     };
   });
   const moved = new Map(branches.map((b) => [b.key, b]));
+  // Équipes empilées : un trait horizontal ne remonte jamais au-dessus du
+  // bandeau (côté bas) ; la ligne s'allonge ou se raccourcit jusqu'au trait
+  // le plus bas (et le plus haut, côté haut du bandeau).
+  branches.forEach((p) => {
+    const kids = branches.filter((c) => c.elbow && c.elbow.stacked && c.ancestors[c.ancestors.length - 1] === p.key);
+    if (!kids.length || !p.badge) return;
+    const low = kids.filter((c) => c.elbow.below);
+    const up = kids.filter((c) => !c.elbow.below);
+    // Côté bas : jamais au travers des membres de l'équipe (sous le dernier
+    // libellé), et la ligne atteint toujours le dernier membre.
+    const lastSt = p.stations.length ? p.stations[p.stations.length - 1] : null;
+    const floor = Math.max(p.badge.y + p.badge.h, lastSt ? lastSt.label.y + lastSt.label.h : -Infinity) + ORGMETRO_CORNER;
+    low.forEach((c) => { c.elbow = { ...c.elbow, y: Math.max(c.elbow.y, floor) }; });
+    if (low.length && p.trunk) p.trunk = { ...p.trunk, y1: Math.max(...low.map((c) => c.elbow.y), lastSt ? lastSt.cy : -Infinity) };
+    if (up.length && p.upTrunk) p.upTrunk = { ...p.upTrunk, y0: Math.min(...up.map((c) => c.elbow.y)) };
+  });
   // Barres et raccords recalculés sur les positions finales. La barre couvre
   // le nœud et toutes ses lignes (et le pied du tronc si le nœud a glissé à
   // la même hauteur).
   branches.forEach((b) => {
     if (!b.fork) return;
     const kids = branches.filter((c) => c.drop && c.ancestors[c.ancestors.length - 1] === b.key);
-    const xs = kids.map((c) => c.x);
+    const xs = kids.map((c) => (c.entry ? c.entry.x : c.x));
     const ends = [b.fork.fromX, ...xs];
     if (b.trunk && !b.trunk.jog && Math.abs(b.trunk.y1 - b.fork.y) < 0.5) ends.push(b.trunk.x);
     b.fork = { ...b.fork, childXs: xs, minX: Math.min(...ends), maxX: Math.max(...ends) };
@@ -9758,9 +9844,10 @@ function orgMetroApplyOffsets(layout, offsets) {
     const p = moved.get(b.ancestors[b.ancestors.length - 1]);
     const f = p && p.fork;
     if (!f) return;
+    const ex = b.entry ? b.entry.x : b.x;
     b.drop = {
-      ...b.drop, x: b.x, y0: f.y, y1: b.y, fromX: f.fromX,
-      curved: b.x !== f.fromX && (b.x === f.minX || b.x === f.maxX) && f.maxX - f.minX > 0.5,
+      ...b.drop, x: ex, y0: f.y, y1: b.entry ? b.entry.y : b.y, fromX: f.fromX, toX: b.entry && b.badge ? b.badge.x : null,
+      curved: ex !== f.fromX && (ex === f.minX || ex === f.maxX) && f.maxX - f.minX > 0.5,
     };
   });
   // Emprise du plan : tout est ramené dans le cadre (marge ORGMETRO_PAD).
@@ -9778,9 +9865,11 @@ function orgMetroApplyOffsets(layout, offsets) {
       b.stations.forEach((st) => { st.cx += sx; st.cy += sy; st.label.x += sx; st.label.y += sy; });
       if (b.trunk) b.trunk = { ...b.trunk, x: b.trunk.x + sx, y0: b.trunk.y0 + sy, y1: b.trunk.y1 + sy, jog: b.trunk.jog ? { x: b.trunk.jog.x + sx, y: b.trunk.jog.y + sy } : undefined };
       if (b.row) b.row = { y: b.row.y + sy, x0: b.row.x0 + sx, x1: b.row.x1 + sx };
+      if (b.upTrunk) b.upTrunk = { x: b.upTrunk.x + sx, y0: b.upTrunk.y0 + sy, y1: b.upTrunk.y1 + sy };
+      if (b.entry) b.entry = { x: b.entry.x + sx, y: b.entry.y + sy };
       if (b.fork) b.fork = { ...b.fork, y: b.fork.y + sy, fromX: b.fork.fromX + sx, minX: b.fork.minX + sx, maxX: b.fork.maxX + sx, childXs: b.fork.childXs.map((x) => x + sx) };
       if (b.elbow) b.elbow = { ...b.elbow, fromX: b.elbow.fromX + sx, y0: b.elbow.y0 + sy, y: b.elbow.y + sy, x: b.elbow.x + sx, y1: b.elbow.y1 + sy };
-      if (b.drop) b.drop = { ...b.drop, x: b.drop.x + sx, y0: b.drop.y0 + sy, y1: b.drop.y1 + sy, fromX: b.drop.fromX + sx };
+      if (b.drop) b.drop = { ...b.drop, x: b.drop.x + sx, y0: b.drop.y0 + sy, y1: b.drop.y1 + sy, fromX: b.drop.fromX + sx, toX: b.drop.toX != null ? b.drop.toX + sx : null };
     };
     branches.forEach(shiftAll);
   }
@@ -9798,6 +9887,7 @@ function orgMetroLineRects(b) {
     else seg(b.trunk.x, b.trunk.y0, b.trunk.x, b.trunk.y1);
   }
   if (b.row) seg(b.row.x0, b.row.y, b.row.x1, b.row.y);
+  if (b.upTrunk) seg(b.upTrunk.x, b.upTrunk.y0, b.upTrunk.x, b.upTrunk.y1);
   if (b.fork) seg(b.fork.minX, b.fork.y, b.fork.maxX, b.fork.y);
   if (b.elbow) { seg(b.elbow.fromX, b.elbow.y, b.elbow.x, b.elbow.y); seg(b.elbow.x, b.elbow.y, b.elbow.x, b.elbow.y1); }
   return out;
@@ -9869,6 +9959,17 @@ function orgMetroFreeOffsets(baseLayout, offsets, key, radius) {
   }
   return offs;
 }
+// Répartition d'une équipe empilée au glisser de sa ligne (retour de test) :
+// le bandeau, déplacé de `dy` le long de la ligne, laisse au-dessus de lui
+// toutes les sous-équipes dont le départ est plus haut que lui.
+function orgMetroStackSplitAt(layout, key, dy) {
+  const b = layout && layout.branches.find((x) => x.key === key);
+  if (!b || !b.badge) return 0;
+  const target = b.badge.y + b.badge.h / 2 + (Number(dy) || 0);
+  return layout.branches
+    .filter((c) => c.elbow && c.elbow.stacked && c.ancestors[c.ancestors.length - 1] === key)
+    .filter((c) => c.elbow.y < target).length;
+}
 // Liens déplaçables (retour de test) : un décalage { dx, dy } (widget.
 // orgMetroLinkOffsets, par clé de lien) déplace la partie centrale d'un tracé
 // latéralement et verticalement ; ses deux extrémités restent accrochées et
@@ -9877,20 +9978,59 @@ function orgMetroShiftRoute(points, dx, dy) {
   if (!dx && !dy) return points;
   let pts = points.map((p) => [p[0], p[1]]);
   if (pts.length === 2) {
-    const xm = (pts[0][0] + pts[1][0]) / 2;
-    pts = [pts[0], [xm, pts[0][1]], [xm, pts[1][1]], pts[1]];
+    // Tracé droit : un détour en U, qui part à un pas de chaque extrémité.
+    const [a, b] = pts;
+    const g = ORGMETRO_ROUTE_GUTTER;
+    if (Math.abs(a[1] - b[1]) < 0.5) {
+      const s = Math.sign(b[0] - a[0]) || 1;
+      pts = [a, [a[0] + s * g, a[1]], [b[0] - s * g, b[1]], b];
+    } else if (Math.abs(a[0] - b[0]) < 0.5) {
+      const s = Math.sign(b[1] - a[1]) || 1;
+      pts = [a, [a[0], a[1] + s * g], [b[0], b[1] - s * g], b];
+    } else {
+      const xm = (a[0] + b[0]) / 2;
+      pts = [a, [xm, a[1]], [xm, b[1]], b];
+    }
   }
   const first = pts[0], last = pts[pts.length - 1];
   const inner = pts.slice(1, -1).map((p) => [p[0] + dx, p[1] + dy]);
   const out = [first];
   const a = inner[0];
-  if (a[1] !== first[1]) out.push([a[0], first[1]]);
+  const firstVertical = Math.abs(pts[1][0] - first[0]) < 0.5 && Math.abs(pts[1][1] - first[1]) >= 0.5;
+  if (firstVertical) { if (a[0] !== first[0]) out.push([first[0], a[1]]); }
+  else if (a[1] !== first[1]) out.push([a[0], first[1]]);
   inner.forEach((p) => out.push(p));
   const z = inner[inner.length - 1];
-  if (z[1] !== last[1]) out.push([z[0], last[1]]);
+  const prev = pts[pts.length - 2];
+  const lastVertical = Math.abs(prev[0] - last[0]) < 0.5 && Math.abs(prev[1] - last[1]) >= 0.5;
+  if (lastVertical) { if (z[0] !== last[0]) out.push([last[0], z[1]]); }
+  else if (z[1] !== last[1]) out.push([z[0], last[1]]);
   out.push(last);
-  // Points consécutifs confondus retirés.
-  return out.filter((p, i) => i === 0 || p[0] !== out[i - 1][0] || p[1] !== out[i - 1][1]);
+  return orgMetroSimplifyRoute(out);
+}
+// Nettoyage d'un tracé orthogonal (retour de test : lignes prolongées trop
+// loin) : points confondus retirés, et tout point intermédiaire aligné avec
+// ses deux voisins supprimé — y compris un aller-retour sur une même droite
+// (un décalage dans le sens d'un segment, ou un plan qui a changé depuis le
+// déplacement du lien, ne laisse jamais de trait qui dépasse puis revient).
+function orgMetroSimplifyRoute(points) {
+  let pts = points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
+  let changed = true;
+  while (changed && pts.length > 2) {
+    changed = false;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [a, b, c] = [pts[i - 1], pts[i], pts[i + 1]];
+      const sameX = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(b[0] - c[0]) < 0.5;
+      const sameY = Math.abs(a[1] - b[1]) < 0.5 && Math.abs(b[1] - c[1]) < 0.5;
+      const same = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5;
+      if (sameX || sameY || same) {
+        pts = [...pts.slice(0, i), ...pts.slice(i + 1)];
+        changed = true;
+        break;
+      }
+    }
+  }
+  return pts;
 }
 // Étoile à cinq branches (repère du responsable), centrée en (cx, cy).
 function orgMetroStarPath(cx, cy, r) {
@@ -10041,7 +10181,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
   const labelObstacles = [...obstacles];
   layout.branches.forEach((b) => {
     const w = b.lineW + 4;
-    orgMetroLineRects({ trunk: b.trunk, row: b.row, elbow: b.elbow }).forEach((r) => labelObstacles.push({ x: r.x - w / 2, y: r.y - w / 2, w: r.w + w, h: r.h + w }));
+    orgMetroLineRects({ trunk: b.trunk, upTrunk: b.upTrunk, row: b.row, elbow: b.elbow }).forEach((r) => labelObstacles.push({ x: r.x - w / 2, y: r.y - w / 2, w: r.w + w, h: r.h + w }));
     if (b.drop) labelObstacles.push({ x: b.drop.x - w / 2, y: b.drop.y0, w, h: b.drop.y1 - b.drop.y0 });
   });
   orgMetroJunctions(layout).forEach((j) => labelObstacles.push({ x: j.x - 7, y: j.y - 7, w: 14, h: 14 }));
@@ -10051,7 +10191,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     const skip = new Set([...A.keys, ...B.keys]);
     const best = orgMetroRouteRects(A.rect, B.rect, obstacles.filter((o) => !skip.has(o.key)), top);
     const key = "relation:" + r.id;
-    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts;
+    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : orgMetroSimplifyRoute(best.pts);
     const labelAt = r.label ? orgRelationLabelPlacement(pts, orgRelationLabelWidth(r.label), ORGRELATION_LABEL_H, labelObstacles) : null;
     return {
       key, id: r.id, from: r.from, to: r.to, label: r.label, points: pts, hits: best.hits, d: orgMetroPolylineD(pts), labelAt,
@@ -10104,12 +10244,17 @@ function OrgMetroLines({ layout, dim }) {
     // Chaque trait a sa zone de prise invisible, plus large que le trait :
     // le curseur « main » apparaît sans avoir à viser au pixel près.
     const hit = (key, d, target) => <path key={"h" + key} className="lp-orgmetro-line-hit" d={d} data-metro-drag={target} />;
-    if (p.trunk) trunks.push(<path key={"t:" + b.key} className={"lp-orgmetro-line" + cls} d={p.trunk} data-metro-drag={drag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("t:" + b.key, p.trunk, drag));
+    // Équipe empilée : sa ligne verticale se glisse pour faire monter ou
+    // descendre le bandeau entre ses sous-équipes.
+    const trunkDrag = b.stackable ? "split:" + b.key : drag;
+    if (p.trunk) trunks.push(<path key={"t:" + b.key} className={"lp-orgmetro-line" + cls} d={p.trunk} data-metro-drag={trunkDrag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("t:" + b.key, p.trunk, trunkDrag));
     if (p.row) trunks.push(<path key={"r:" + b.key} className={"lp-orgmetro-line" + cls} d={p.row} data-metro-drag={drag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("r:" + b.key, p.row, drag));
     // La barre de bifurcation appartient à son nœud : l'attraper déplace le
     // nœud et les lignes qui en partent.
     if (p.fork) forks.push(<path key={"f:" + b.key} className={"lp-orgmetro-line" + cls} d={p.fork} data-metro-drag={"fork:" + b.key} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("f:" + b.key, p.fork, "fork:" + b.key));
-    if (p.drop) forks.push(<path key={"d:" + b.key} className={"lp-orgmetro-line" + cls} d={p.drop} data-metro-drag={drag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("d:" + b.key, p.drop, drag));
+    // Trait horizontal d'une sous-équipe empilée : il se glisse en hauteur.
+    const dropDrag = b.elbow && b.elbow.stacked ? "elbow:" + b.key : drag;
+    if (p.drop) forks.push(<path key={"d:" + b.key} className={"lp-orgmetro-line" + cls} d={p.drop} data-metro-drag={dropDrag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("d:" + b.key, p.drop, dropDrag));
   });
   return (
     <>
@@ -10143,6 +10288,15 @@ function OrgMetroCorrespondences({ routes, relationRoutes, occurrenceLinks, dimR
       })}
       {routes.map((r) => {
         const cls = dimRoute(r) ? " is-dim" : "";
+        // Lien secondaire hiérarchique : trait plein de la couleur de la
+        // seconde équipe parente, comme une ligne de métro.
+        if (r.hierarchical) return (
+          <g key={r.key} className={"lp-orgmetro-secondary-group" + cls} data-metro-drag={"link:" + r.key}>
+            <title>Rattachement hiérarchique secondaire · glisser pour déplacer</title>
+            <path className="lp-orgmetro-link-hit" d={r.d} />
+            <path className="lp-orgmetro-secondary" d={r.d} style={{ stroke: orgMetroColor(r.toColor, "team") }} />
+          </g>
+        );
         return (
           <g key={r.key} className={"lp-orgmetro-transverse-group" + cls} data-metro-drag={"link:" + r.key}>
             <title>Lien transverse · glisser pour déplacer</title>
@@ -10394,17 +10548,25 @@ function useOrgMetroViewport(contentW, contentH) {
   return { ref, size, view, fit, recenter, reset, zoomAt, setManual };
 }
 
-function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed, horizontal, stacked }) {
+function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed, horizontal, stacked, stackSplit, onChangeStackSplit }) {
   const roots = useMemo(() => orgChartVisibleRoots(teams, members, showUnassigned), [teams, members, showUnassigned]);
   // Ordre des lignes choisi par glisser-déposer (widget.orgMetroOrder) : le
   // plan entier est recalculé, rien n'est déplacé « à la main ».
-  const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order, collapsed, horizontal, stacked }), [roots, teams, rootLabel, order, collapsed, horizontal, stacked]);
+  // Répartition des équipes empilées (widget.orgMetroStackSplit) ; pendant
+  // le glisser d'une ligne empilée, aperçu en direct de la nouvelle
+  // répartition.
+  const [drag, setDrag] = useState(null); // { kind: "team" | "link" | "split", key, dx, dy, k? }
+  const splitKey = drag && drag.kind === "split" ? drag.key + ":" + drag.k : "";
+  const shownSplit = useMemo(() => {
+    const cur = stackSplit && typeof stackSplit === "object" ? stackSplit : {};
+    return drag && drag.kind === "split" ? { ...cur, [drag.key.slice(5)]: drag.k } : cur;
+  }, [stackSplit, splitKey]);
+  const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order, collapsed, horizontal, stacked, stackSplit: shownSplit }), [roots, teams, rootLabel, order, collapsed, horizontal, stacked, shownSplit]);
   // Disposition par défaut, puis déplacements libres sur la grille
   // (widget.orgMetroOffsets) : ligne et sous-arborescence déplacées ensemble.
   // Pendant un déplacement, le plan est recalculé EN DIRECT avec le décalage
   // en cours (par pas de grille) : la ligne entière, ses raccords et les
   // liens suivent le pointeur.
-  const [drag, setDrag] = useState(null); // { kind: "team" | "link", key, dx, dy }
   const base = useMemo(() => layoutOrgMetro(graph), [graph]);
   const addOffset = (map, key, dx, dy) => {
     const cur = normalizeOrgMetroOffsets(map);
@@ -10448,6 +10610,8 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     if (!el) return null;
     const v = el.getAttribute("data-metro-drag") || "";
     if (v.startsWith("link:")) return { kind: "link", key: v.slice(5) };
+    if (v.startsWith("elbow:")) return branchByKey.has(v.slice(6)) ? { kind: "team", key: v } : null;
+    if (v.startsWith("split:")) return onChangeStackSplit && branchByKey.has(v.slice(6)) ? { kind: "split", key: v.slice(6), layoutAtStart: layout } : null;
     // Nœud de bifurcation (ou sa barre) : il bouge avec les lignes qui en
     // partent — même mécanique de décalage que les lignes.
     if (v.startsWith("fork:")) return branchByKey.has(v.slice(5)) ? { kind: "team", key: v } : null;
@@ -10534,7 +10698,8 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
       }
       if (g.moved && g.target) {
         const next = { ...g.target, dx: orgMetroSnap(dx / g.view.k), dy: orgMetroSnap(dy / g.view.k) };
-        setDrag((prev) => (prev && prev.key === next.key && prev.dx === next.dx && prev.dy === next.dy ? prev : next));
+        if (next.kind === "split") next.k = orgMetroStackSplitAt(g.target.layoutAtStart, next.key, dy / g.view.k);
+        setDrag((prev) => (prev && prev.key === next.key && prev.dx === next.dx && prev.dy === next.dy && prev.k === next.k ? prev : next));
       }
       else if (g.moved) vp.setManual({ k: g.view.k, tx: g.view.tx + dx, ty: g.view.ty + dy });
     } else if (g.type === "pinch" && pointersRef.current.size >= 2) {
@@ -10552,7 +10717,9 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   const onPointerEnd = (e) => {
     const g0 = gestureRef.current;
     if (g0 && g0.target && g0.moved && g0.id === e.pointerId && drag && e.type !== "pointercancel" && (drag.dx || drag.dy)) {
-      if (drag.kind === "team") {
+      if (drag.kind === "split") {
+        onChangeStackSplit({ ...(stackSplit || {}), [drag.key.slice(5)]: drag.k });
+      } else if (drag.kind === "team") {
         // Au lâcher : si un texte se superpose, la ligne glisse vers la case
         // libre la plus proche (orgMetroFreeOffsets).
         onChangeOffsets(orgMetroFreeOffsets(base, addOffset(offsets, drag.key, drag.dx, drag.dy), drag.key));
@@ -10665,10 +10832,12 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
             </>
           )}
           <OrgMetroLines layout={layout} dim={dim} />
-          {showTransverse && <OrgMetroCorrespondences routes={routes} relationRoutes={relationRoutes} occurrenceLinks={occurrenceLinks} dimRoute={dimRoute} dimRelation={dimRelation} />}
+          {/* Correspondances masquables ; un parent secondaire (hiérarchique)
+              reste toujours affiché, comme les autres lignes. */}
+          <OrgMetroCorrespondences routes={showTransverse ? routes : routes.filter((r) => r.hierarchical)} relationRoutes={showTransverse ? relationRoutes : []} occurrenceLinks={occurrenceLinks} dimRoute={dimRoute} dimRelation={dimRelation} />
           <OrgMetroStations layout={layout} dim={dim} focusKey={focus && focus.stationKey} />
           <OrgMetroLabels layout={layout} dim={dim} drag={drag && drag.kind === "team" ? drag : null} />
-          {showTransverse && <OrgMetroPorts routes={routes} relationRoutes={relationRoutes} dimRoute={dimRoute} dimRelation={dimRelation} />}
+          <OrgMetroPorts routes={showTransverse ? routes : routes.filter((r) => r.hierarchical)} relationRoutes={showTransverse ? relationRoutes : []} dimRoute={dimRoute} dimRelation={dimRelation} />
 
         </g>
       </svg>
@@ -10681,7 +10850,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
           type="button"
           onClick={() => {
             vp.reset();
-            const custom = Object.keys(normalizeOrgMetroOrder(order)).length || Object.keys(normalizeOrgMetroOffsets(offsets)).length || Object.keys(normalizeOrgMetroOffsets(linkOffsets)).length || (collapsed && collapsed.length);
+            const custom = Object.keys(normalizeOrgMetroOrder(order)).length || Object.keys(normalizeOrgMetroOffsets(offsets)).length || Object.keys(normalizeOrgMetroOffsets(linkOffsets)).length || (collapsed && collapsed.length) || (stackSplit && Object.values(stackSplit).some((n) => Number(n) > 0));
             if (onResetLayout && custom) onResetLayout();
           }}
           title="Recentrer — rétablit la disposition et le cadrage par défaut"
@@ -10705,6 +10874,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         <span><i className="lp-orgmetro-legend-member" />Membre</span>
         <span><i className="lp-orgmetro-legend-dup" />Rattachement</span>
         <span><i className="lp-orgmetro-legend-transverse" />Lien transverse</span>
+        {routes.some((r) => r.hierarchical) && <span><i className="lp-orgmetro-legend-secondary" />Parent secondaire</span>}
         {relationRoutes.length > 0 && <span><i className="lp-orgmetro-legend-relation" />Relation</span>}
       </div>
     </div>
@@ -10789,6 +10959,15 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
   const metroHorizontal = useMemo(() => (Array.isArray(widget?.orgMetroHorizontalTeams) ? widget.orgMetroHorizontalTeams : []), [widget?.orgMetroHorizontalTeams]);
   // Équipes dont les sous-équipes s'empilent à la verticale.
   const metroStacked = useMemo(() => (Array.isArray(widget?.orgMetroStackedTeams) ? widget.orgMetroStackedTeams : []), [widget?.orgMetroStackedTeams]);
+  // Sous-équipes placées au-dessus du bandeau d'une équipe empilée
+  // (widget.orgMetroStackSplit, { idÉquipe: nombre }) : réglé en glissant sa
+  // ligne ; « Recentrer » le remet à zéro.
+  const [metroStackSplit, setMetroStackSplit] = useState(widget?.orgMetroStackSplit || null);
+  useEffect(() => { setMetroStackSplit(widget?.orgMetroStackSplit || null); }, [widget?.orgMetroStackSplit]);
+  const changeMetroStackSplit = (next) => {
+    setMetroStackSplit(next);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroStackSplit: next });
+  };
   // « Recentrer » : disposition par défaut (ordre, déplacements et replis
   // effacés).
   const resetMetroLayout = () => {
@@ -10796,7 +10975,8 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
     setMetroOffsets(null);
     setMetroLinkOffsets(null);
     setMetroCollapsed([]);
-    if (onUpdateWidget) onUpdateWidget({ orgMetroOrder: null, orgMetroOffsets: null, orgMetroLinkOffsets: null, orgMetroCollapsed: [] });
+    setMetroStackSplit(null);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroOrder: null, orgMetroOffsets: null, orgMetroLinkOffsets: null, orgMetroCollapsed: [], orgMetroStackSplit: null });
   };
   const rootLabel = widget?.orgChartRootLabel && String(widget.orgChartRootLabel).trim() ? String(widget.orgChartRootLabel).trim() : "Organisation";
   const onEditTeam = setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined;
@@ -10827,6 +11007,8 @@ function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setT
         onToggleCollapsed={toggleMetroCollapsed}
         horizontal={metroHorizontal}
         stacked={metroStacked}
+        stackSplit={metroStackSplit}
+        onChangeStackSplit={changeMetroStackSplit}
         onResetLayout={resetMetroLayout}
       />
     );
@@ -14686,11 +14868,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     () => normalizeTeams(ctx.teams).map((t) => ({ id: t.id, name: t.name, color: t.color })),
     [ctx.teams]
   );
-  // Seules les équipes qui ont des sous-équipes sont proposées.
-  const orgChartParentTeamOptions = useMemo(() => {
-    const parents = new Set(normalizeTeams(ctx.teams).map((t) => t.parentTeamId).filter(Boolean).map(String));
-    return orgChartTeamOptions.filter((t) => parents.has(String(t.id)));
-  }, [ctx.teams, orgChartTeamOptions]);
   const orgChartVisibleTeamIds = orgChartTeamOptions.map((t) => t.id).filter((id) => !orgChartHiddenTeamIds.includes(id));
   // Filtre par dossier d'équipes (#215) : vide = tous les dossiers (comme
   // avant ce réglage). Se combine avec orgChartHiddenTeamIds plutôt que de
@@ -14924,7 +15101,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
     }
-    if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartParentTeamOptions.some((t) => t.id === id)); }
+    if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id) && !orgMetroHorizontalTeams.includes(id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -15241,38 +15418,60 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                   <input type="checkbox" checked={orgMetroShowTransverse} onChange={() => setOrgMetroShowTransverse((v) => !v)} />
                   Afficher les correspondances transverses
                 </label>
-                {orgChartParentTeamOptions.length > 0 && (
-                  <div className="lp-field lp-orgmetro-stacked-field" style={{ marginTop: 10 }}>
-                    <label>Sous-équipes empilées à la verticale <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(les sous-équipes de ces équipes se rangent les unes sous les autres, à droite ; les autres s'étalent côte à côte)</span></label>
-                    <EntityFilterMultiSelect
-                      options={orgChartParentTeamOptions}
-                      selectedIds={orgMetroStackedTeams}
-                      onToggle={(id) => setOrgMetroStackedTeams((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
-                      onSelectAll={() => setOrgMetroStackedTeams(orgChartParentTeamOptions.map((t) => t.id))}
-                      onDeselectAll={() => setOrgMetroStackedTeams([])}
-                      placeholder="Rechercher une équipe…"
-                      emptyLabel="Toutes côte à côte"
-                      summary={orgMetroStackedTeams.length ? orgMetroStackedTeams.length + " équipe" + (orgMetroStackedTeams.length > 1 ? "s" : "") + " empilée" + (orgMetroStackedTeams.length > 1 ? "s" : "") : ""}
-                      compact
-                    />
-                  </div>
-                )}
-                {orgChartTeamOptions.length > 0 && (
-                  <div className="lp-field lp-orgmetro-horizontal-field" style={{ marginTop: 10 }}>
-                    <label>Membres alignés à l'horizontale <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(les membres directs de ces équipes se placent côte à côte sur une ligne horizontale ; sans effet sur une équipe sans membre direct)</span></label>
-                    <EntityFilterMultiSelect
-                      options={orgChartTeamOptions}
-                      selectedIds={orgMetroHorizontalTeams}
-                      onToggle={(id) => setOrgMetroHorizontalTeams((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
-                      onSelectAll={() => setOrgMetroHorizontalTeams(orgChartTeamOptions.map((t) => t.id))}
-                      onDeselectAll={() => setOrgMetroHorizontalTeams([])}
-                      placeholder="Rechercher une équipe…"
-                      emptyLabel="Toutes verticales"
-                      summary={orgMetroHorizontalTeams.length ? orgMetroHorizontalTeams.length + " équipe" + (orgMetroHorizontalTeams.length > 1 ? "s" : "") + " à l'horizontale" : ""}
-                      compact
-                    />
-                  </div>
-                )}
+                {orgChartTeamOptions.length > 0 && (() => {
+                  // Disposition par équipe (retour de test : deux réglages
+                  // « membres » / « sous-équipes » étaient incompréhensibles).
+                  // Une seule notion : HORIZONTALE = tout ce que contient
+                  // l'équipe s'étale côte à côte (membres sur une ligne,
+                  // sous-équipes côte à côte) ; VERTICALE = tout s'empile
+                  // (membres l'un sous l'autre, sous-équipes l'une sous
+                  // l'autre à droite). Une équipe cochée dans une liste est
+                  // retirée de l'autre ; aucune = disposition par défaut
+                  // (membres empilés, sous-équipes côte à côte).
+                  const toggle = (id, setMine, setOther) => {
+                    setMine((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+                    setOther((prev) => prev.filter((x) => x !== id));
+                  };
+                  const count = (n, word) => (n ? n + " équipe" + (n > 1 ? "s" : "") + " " + word : "");
+                  return (
+                    <div className="lp-field lp-orgmetro-layout-field" style={{ marginTop: 10 }}>
+                      <label>Disposition des équipes</label>
+                      <p style={{ fontSize: 12, color: "var(--text-600)", margin: "0 0 8px" }}>
+                        Par défaut, les membres d'une équipe sont l'un sous l'autre et ses sous-équipes côte à côte.
+                        <strong> Horizontale</strong> : membres ET sous-équipes côte à côte. <strong>Verticale</strong> : membres ET
+                        sous-équipes les uns sous les autres (sous-équipes rangées à droite du tronc). Pris en compte à l'enregistrement.
+                      </p>
+                      <div className="lp-orgmetro-layout-row">
+                        <span className="lp-orgmetro-layout-name">Verticale</span>
+                        <EntityFilterMultiSelect
+                          options={orgChartTeamOptions}
+                          selectedIds={orgMetroStackedTeams}
+                          onToggle={(id) => toggle(id, setOrgMetroStackedTeams, setOrgMetroHorizontalTeams)}
+                          onSelectAll={() => { setOrgMetroStackedTeams(orgChartTeamOptions.map((t) => t.id)); setOrgMetroHorizontalTeams([]); }}
+                          onDeselectAll={() => setOrgMetroStackedTeams([])}
+                          placeholder="Rechercher une équipe…"
+                          emptyLabel="Aucune équipe"
+                          summary={count(orgMetroStackedTeams.length, "à la verticale")}
+                          compact
+                        />
+                      </div>
+                      <div className="lp-orgmetro-layout-row">
+                        <span className="lp-orgmetro-layout-name">Horizontale</span>
+                        <EntityFilterMultiSelect
+                          options={orgChartTeamOptions}
+                          selectedIds={orgMetroHorizontalTeams}
+                          onToggle={(id) => toggle(id, setOrgMetroHorizontalTeams, setOrgMetroStackedTeams)}
+                          onSelectAll={() => { setOrgMetroHorizontalTeams(orgChartTeamOptions.map((t) => t.id)); setOrgMetroStackedTeams([]); }}
+                          onDeselectAll={() => setOrgMetroHorizontalTeams([])}
+                          placeholder="Rechercher une équipe…"
+                          emptyLabel="Aucune équipe"
+                          summary={count(orgMetroHorizontalTeams.length, "à l'horizontale")}
+                          compact
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             )}
             <hr className="lp-divider" style={{ margin: "10px 0" }} />

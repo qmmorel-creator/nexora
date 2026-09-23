@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroStackSplitAt, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -683,11 +683,19 @@ test("Liens déplaçables : le tracé se décale latéralement et verticalement,
   const hvh = [[0, 0], [50, 0], [50, 100], [120, 100]];
   const lateral = api.orgMetroShiftRoute(hvh, 40, 0);
   assert.deepEqual(lateral, [[0, 0], [90, 0], [90, 100], [120, 100]]);
-  const vertical = api.orgMetroShiftRoute(hvh, 0, -60);
+  // Un palier HORIZONTAL monte ou descend avec un décalage vertical.
+  const vhv = [[0, 0], [0, 50], [120, 50], [120, 100]];
+  const vertical = api.orgMetroShiftRoute(vhv, 0, -30);
   assert.ok(ortho(vertical));
   assert.deepEqual(vertical[0], [0, 0]);
   assert.deepEqual(vertical[vertical.length - 1], [120, 100]);
-  assert.ok(vertical.some((p) => p[1] === -60), "le palier horizontal est monté de 60");
+  assert.ok(vertical.some((p) => p[1] === 20), "le palier horizontal est monté de 30");
+  // Retour de test (lignes prolongées trop loin) : un décalage dans le sens
+  // d'un segment ne le prolonge jamais au-delà de ses extrémités.
+  const along = api.orgMetroShiftRoute(hvh, 0, 450);
+  assert.deepEqual(along, hvh, "aucun aller-retour sur la verticale");
+  const ys = along.map((p) => p[1]);
+  assert.ok(Math.max(...ys) <= 100 && Math.min(...ys) >= 0);
   const straight = api.orgMetroShiftRoute([[0, 10], [100, 10]], 0, 40);
   assert.ok(ortho(straight) && straight.some((p) => p[1] === 50));
   assert.equal(api.orgMetroShiftRoute(hvh, 0, 0), hvh);
@@ -930,4 +938,81 @@ test("Relation vers une personne présente à plusieurs endroits : l'occurrence 
   assert.ok(endNear(at("b"), inB), "occurrence dans l'équipe b");
   assert.ok(at("zz").points.length > 0, "occurrence inconnue : première occurrence, jamais d'erreur");
   assert.deepEqual(api.normalizeOrgChartRelations([{ id: "x", from: "person:A", to: "person:B", toAt: "b" }])[0].toAt, "b");
+});
+
+test("Lien secondaire hiérarchique : seconde équipe parente, sans changer la place de l'équipe", () => {
+  const teams = [
+    team("p1", { leadName: "P1", color: "#111111" }), team("p2", { leadName: "P2", color: "#E2A63B" }),
+    team("x", { parentTeamId: "p1", leadName: "X1", extraLinkTeamIds: ["p2"], extraLinkTypes: { p2: "hierarchique", zz: "hierarchique", p1: "autre" } }),
+  ];
+  const members = [member("P1", { teamIds: ["p1"] }), member("P2", { teamIds: ["p2"] }), member("X1", { teamIds: ["x"] })];
+  assert.deepEqual(api.normalizeTeams(teams).find((t) => t.id === "x").extraLinkTypes, { p2: "hierarchique" });
+  assert.deepEqual(api.teamExtraLinks(teams).map((l) => [l.fromId, l.toId, l.type]), [["x", "p2", "hierarchique"]]);
+  // Par défaut, un lien secondaire reste transverse.
+  assert.equal(api.teamExtraLinks([...teams.slice(0, 2), { ...teams[2], extraLinkTypes: {} }])[0].type, "transverse");
+  const { layout } = metro(teams, members);
+  assert.ok(branch(layout, "team:x").ancestors.includes("team:p1"), "l'équipe reste sous son parent principal");
+  const r = api.orgMetroTransverseRoutes(layout, api.teamExtraLinks(teams))[0];
+  assert.equal(r.hierarchical, true);
+  assert.equal(r.toColor, "#E2A63B", "couleur de la seconde équipe parente");
+});
+
+test("Équipe empilée : sous-équipes réparties au-dessus et au-dessous du bandeau, lien parent par le flanc", () => {
+  const teams = [
+    team("root", { leadName: "Dir" }), team("side", { parentTeamId: "root", leadName: "Voisin" }),
+    team("ds", { parentTeamId: "root" }),
+    ...["s1", "s2", "s3", "s4"].map((id) => team(id, { parentTeamId: "ds", leadName: "L" + id })),
+  ];
+  const members = [member("Dir", { teamIds: ["root"] }), member("Voisin", { teamIds: ["side"] }), ...["s1", "s2", "s3", "s4"].map((id) => member("L" + id, { teamIds: [id] }))];
+  const kids = (layout) => ["s1", "s2", "s3", "s4"].map((id) => branch(layout, "team:" + id));
+  const top = metro(teams, members, { stacked: ["ds"] }).layout;
+  const { layout } = metro(teams, members, { stacked: ["ds"], stackSplit: { ds: 2 } });
+  const ds = branch(layout, "team:ds");
+  const [a, b, c, d] = kids(layout);
+  // Deux au-dessus du bandeau, deux en dessous, dans l'ordre.
+  assert.ok(a.elbow.y < b.elbow.y && b.elbow.y < ds.badge.y, "s1, s2 au-dessus");
+  assert.ok(c.elbow.y > ds.badge.y + ds.badge.h && d.elbow.y > c.elbow.y, "s3, s4 en dessous");
+  assert.ok(ds.upTrunk && ds.upTrunk.y0 === a.elbow.y && ds.upTrunk.y1 === ds.badge.y, "ligne du haut jusqu'au bandeau");
+  // Le lien parent arrive par le flanc gauche du bandeau, à mi-hauteur.
+  assert.ok(ds.drop.x < ds.badge.x && ds.drop.toX === ds.badge.x && ds.drop.y1 === ds.badge.y + ds.badge.h / 2);
+  const root = branch(layout, "team:root");
+  assert.ok(root.fork.childXs.includes(ds.drop.x), "la barre du parent dessert ce point d'arrivée");
+  assert.ok(api.orgMetroBranchPaths(ds).drop.includes(" H "), "coude vers le bandeau");
+  assertNoOverlap(layout);
+  // Glisser la ligne : nombre de sous-équipes au-dessus du point visé.
+  assert.equal(api.orgMetroStackSplitAt(top, "team:ds", 0), 0);
+  const [, , c0] = kids(top);
+  const dsTop = branch(top, "team:ds");
+  assert.equal(api.orgMetroStackSplitAt(top, "team:ds", c0.elbow.y - (dsTop.badge.y + dsTop.badge.h / 2) + 1), 3);
+  assert.equal(api.orgMetroStackSplitAt(layout, "team:ds", -1000), 0);
+  // Les déplacements emportent tout, point d'arrivée compris.
+  const moved = api.orgMetroApplyOffsets(layout, { "team:ds": { dx: 40, dy: 40 } });
+  const m = branch(moved, "team:ds");
+  assert.equal(m.drop.toX, m.badge.x);
+  assert.equal(m.drop.y1, m.badge.y + m.badge.h / 2);
+  assert.ok(branch(moved, "team:root").fork.childXs.includes(m.drop.x));
+});
+
+test("Équipe empilée : chaque trait horizontal se déplace en hauteur, la ligne suit", () => {
+  const teams = [team("ds", { leadName: "Chef" }), ...["s1", "s2", "s3"].map((id) => team(id, { parentTeamId: "ds", leadName: "L" + id }))];
+  const members = [member("Chef", { teamIds: ["ds"] }), ...["s1", "s2", "s3"].map((id) => member("L" + id, { teamIds: [id] }))];
+  const { layout } = metro(teams, members, { stacked: ["ds"] });
+  const e = (l, id) => branch(l, "team:" + id).elbow;
+  // Remonter le trait de s2 : il glisse, son coude s'allonge, rien d'autre ne bouge.
+  const down = api.orgMetroApplyOffsets(layout, { "elbow:team:s2": { dx: 60, dy: -20 } });
+  assert.equal(e(down, "s2").y - e(layout, "s2").y, -20);
+  assert.equal(e(down, "s2").y1 - e(down, "s2").y, e(layout, "s2").y1 - e(layout, "s2").y + 20);
+  assert.equal(branch(down, "team:s2").x - branch(layout, "team:s2").x, 0, "déplacement vertical seulement");
+  assert.equal(e(down, "s1").y - branch(down, "team:ds").y, e(layout, "s1").y - branch(layout, "team:ds").y);
+  // Jamais sous le bandeau de la sous-équipe, jamais au-dessus du bandeau parent.
+  const tooLow = api.orgMetroApplyOffsets(layout, { "elbow:team:s2": { dx: 0, dy: 2000 } });
+  assert.ok(e(tooLow, "s2").y <= e(tooLow, "s2").y1 - 18);
+  const tooHigh = api.orgMetroApplyOffsets(layout, { "elbow:team:s1": { dx: 0, dy: -2000 } });
+  const ds = branch(tooHigh, "team:ds");
+  const chef = ds.stations[ds.stations.length - 1];
+  assert.ok(e(tooHigh, "s1").y >= chef.label.y + chef.label.h, "jamais au travers des membres de l'équipe");
+  assert.ok(ds.trunk.y1 >= chef.cy, "la ligne atteint toujours le dernier membre");
+  // La ligne s'arrête au trait le plus bas.
+  const up3 = api.orgMetroApplyOffsets(layout, { "elbow:team:s3": { dx: 0, dy: -40 } });
+  assert.equal(branch(up3, "team:ds").trunk.y1, Math.max(e(up3, "s1").y, e(up3, "s2").y, e(up3, "s3").y));
 });
