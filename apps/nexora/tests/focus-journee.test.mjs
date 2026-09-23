@@ -140,3 +140,21 @@ test("le mode `fit` de CalendarDayTimeline fait de la frise l'unique conteneur q
   assert.match(html, /\.lp-cal-day-fit\{ height:100%; \}/);
   assert.match(html, /\.lp-cal-day-fit \.lp-cal-track-scroll\{ flex:1 1 auto; min-height:0; overflow:auto; \}/);
 });
+
+/* Retour de test (Ref #343) : le mode `fit` seul ne suffisait pas — le corps
+   générique du widget (.lp-widget-body) garde par défaut son propre
+   overflow:auto vertical (prévu pour les widgets qui débordent), qui
+   s'ajoutait PAR-DESSUS le défilement déjà porté par .lp-cal-track-scroll dès
+   que le contenu total (en-tête récap + chips + frise) dépassait la hauteur
+   du widget — deux barres de défilement en même temps, capture jointe à
+   l'issue #343. Même correctif que pour le Treemap (#332,
+   .lp-widget-treemap-scroll en overflow:hidden) : le corps du widget ne défile
+   plus jamais quand il porte Focus Journée (.lp-cal-day-fit), seule
+   .lp-cal-track-scroll reste le conteneur qui défile. */
+test("le corps du widget ne défile plus jamais par-dessus Focus Journée (une seule barre de défilement à la fois, Ref #343)", () => {
+  assert.match(
+    html,
+    /\.lp-widget-body:has\(\.lp-cal-day-fit\)\{ overflow:hidden; \}/,
+    "le corps générique du widget (.lp-widget-body) doit passer en overflow:hidden quand il porte Focus Journée (.lp-cal-day-fit), comme pour le Treemap (#332)"
+  );
+});
