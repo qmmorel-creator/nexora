@@ -1476,9 +1476,26 @@ try {
       independent: root.querySelectorAll(".lp-orgmetro-badge.is-independent").length,
       leadHalos: root.querySelectorAll(".lp-orgmetro-lead-halo").length,
       relations: root.querySelectorAll(".lp-orgmetro-relation").length,
+      occurrenceTarget: (() => {
+        const g = [...root.querySelectorAll(".lp-orgmetro-relation-group")].find((el) => /Astreinte/.test(el.textContent));
+        if (!g) return null;
+        const path = g.querySelector(".lp-orgmetro-relation");
+        const len = path.getTotalLength();
+        const end = path.getPointAtLength(len), start = path.getPointAtLength(0);
+        const ctm = path.getScreenCTM();
+        const toScreen = (p) => ({ x: p.x * ctm.a + ctm.e, y: p.y * ctm.d + ctm.f });
+        const pts = [toScreen(start), toScreen(end)];
+        const occ = [...root.querySelectorAll('.lp-orgmetro-station[aria-label^="Sacha Morin"]')].map((el) => el.getBoundingClientRect());
+        const apps = root.querySelector('.lp-orgmetro-badge[aria-label="Équipe Applications"] .lp-orgmetro-badge-bg').getBoundingClientRect();
+        const near = (p, r) => Math.abs(p.y - (r.top + r.height / 2)) < 20 && Math.abs(p.x - r.left) < 260;
+        // Occurrence dans Applications : sous son bandeau (celle de Données est plus haut).
+        const appsSt = occ.find((r) => r.top > apps.bottom);
+        return { nearApps: Boolean(appsSt) && pts.some((p) => near(p, appsSt)), occurrences: occ.length };
+      })(),
+      cursors: [".lp-orgmetro-line-hit", ".lp-orgmetro-junction.is-draggable", ".lp-orgmetro-station", ".lp-orgmetro-link-hit", ".lp-orgmetro-badge"].map((sel) => { const el = root.querySelector(sel); return el ? getComputedStyle(el).cursor : "absent"; }),
       relationLabels: [...root.querySelectorAll(".lp-orgmetro-relation-label")].map((el) => el.textContent),
       inactiveStations: [...root.querySelectorAll(".lp-orgmetro-station.is-inactive")].map((el) => el.getAttribute("aria-label")),
-      horizontalRow: root.querySelectorAll('.lp-orgmetro-lines path[d^="M"][data-metro-drag="branch:team:o-ops"]').length - 1,
+      horizontalRow: root.querySelectorAll('.lp-orgmetro-lines path.lp-orgmetro-line[data-metro-drag="branch:team:o-ops"]').length - 1,
       horizontalSameY: (() => {
         const ys = ["Luc Perrin", "Eva Moulin"].map((n) => { const r = root.querySelector(`.lp-orgmetro-station[aria-label^="${n}"]`).getBoundingClientRect(); return Math.round(r.top + r.height / 2); });
         return Math.abs(ys[0] - ys[1]) <= 1;
@@ -2726,7 +2743,9 @@ if (!orgMetro.error) {
   expect(orgMetro.stations === 21, `Organigramme Métro : ${orgMetro.stations} station(s), 21 attendues (19 personnes + 1 occurrence multi-équipe + la responsable d'Applications en tête de sa ligne)`);
   expect(orgMetro.duplicates === 2, `Organigramme Métro : ${orgMetro.duplicates} occurrence(s) supplémentaire(s), 2 attendues (Sacha Morin dans Données, Nora Vidal en tête d'Applications)`);
   expect(orgMetro.junctions >= 3, `Organigramme Métro : ${orgMetro.junctions} point(s) de bifurcation, au moins 3 attendus`);
-  expect(orgMetro.transverse === 1, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 1 attendue`);
+  expect(orgMetro.transverse === 3, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 3 attendues (lien principal de Données + 2 liens supplémentaires)`);
+  expect(orgMetro.occurrenceTarget && orgMetro.occurrenceTarget.nearApps, `Organigramme Métro : la relation « Astreinte » ne vise pas l'occurrence de Sacha Morin dans Applications (${JSON.stringify(orgMetro.occurrenceTarget)})`);
+  expect(orgMetro.cursors && orgMetro.cursors.every((c) => c === "grab"), `Organigramme Métro : curseur des éléments déplaçables ${JSON.stringify(orgMetro.cursors)}, « grab » attendu`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
   // Responsables : toujours la première station de leur ligne — Nora Vidal
   // dirige Applications sans en être membre, elle y figure quand même.
@@ -2752,8 +2771,8 @@ if (!orgMetro.error) {
   expect(orgMetro.memberTeamsFiltered.length === 1 && /Plateforme/.test(orgMetro.memberTeamsFiltered[0]), `Fiche utilisateur : la recherche d'équipe ne filtre pas (${JSON.stringify(orgMetro.memberTeamsFiltered)})`);
   expect(orgMetro.memberInactiveBox === 0, "Fiche utilisateur : la case « Utilisateur inactif » doit être passée dans les paramètres du widget");
   expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le double-clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
-  expect(orgMetro.relations === 3, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 3 attendues`);
-  expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);
+  expect(orgMetro.relations === 4, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 4 attendues`);
+  expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Astreinte", "Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);
   expect(orgMetro.inactiveStations.length === 1 && /Jules Brun/.test(orgMetro.inactiveStations[0]), `Organigramme Métro : stations inactives ${JSON.stringify(orgMetro.inactiveStations)}, « Jules Brun » attendu`);
   expect(orgMetro.managerOnLine !== null && orgMetro.managerOnLine < 1, `Organigramme Métro : le manager Nora Vidal n'est pas resté sur la ligne de son équipe (écart ${orgMetro.managerOnLine}px)`);
   expect(orgMetro.countOffsets.every((d) => d <= 1.5), `Organigramme Métro : chiffre décentré dans sa pastille (${orgMetro.countOffsets.map((d) => d.toFixed(1)).join(", ")} px)`);

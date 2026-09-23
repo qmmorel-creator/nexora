@@ -31,7 +31,7 @@ const api = vm.runInThisContext(
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
-  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive,` +
+  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
   ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
@@ -882,4 +882,52 @@ test("Sous-équipes empilées : les unes sous les autres, à droite du tronc qui
     assert.equal(b.x - md.x, kids[0].x - ds.x);
   });
   assert.equal(api.orgMetroBranchPaths(branch(moved, "team:s1")).drop.startsWith(`M ${md.x} `), true);
+});
+
+test("Liens transverses supplémentaires : un lien principal, puis plusieurs autres équipes, tracés suivant les déplacements", () => {
+  const teams = [
+    team("a", { leadName: "A1" }), team("b", { leadName: "B1" }), team("c", { leadName: "C1" }),
+    team("d", { parentTeamId: "a", parentLinkType: "transverse", leadName: "D1", extraLinkTeamIds: ["b", "c", "a", "d", "zz", "b"] }),
+  ];
+  const members = ["A1", "B1", "C1", "D1"].map((n) => member(n, { teamIds: [n[0].toLowerCase()] }));
+  // Modèle : doublons, lui-même et équipes inconnues retirés ; le lien
+  // principal n'est jamais redessiné en double.
+  assert.deepEqual(api.normalizeTeams(teams).find((t) => t.id === "d").extraLinkTeamIds, ["b", "c", "a"]);
+  assert.deepEqual(api.teamExtraLinks(teams).map((l) => [l.fromId, l.toId]), [["d", "b"], ["d", "c"]]);
+  // La place de l'équipe dans l'arbre ne dépend que de son lien principal.
+  const without = metro(teams.map((t) => ({ ...t, extraLinkTeamIds: [] })), members).layout;
+  const { layout } = metro(teams, members);
+  assert.deepEqual(layout.branches.map((b) => [b.key, b.x, b.y]), without.branches.map((b) => [b.key, b.x, b.y]));
+  const links = [...api.transverseTeamLinks(teams), ...api.teamExtraLinks(teams)];
+  const routes = api.orgMetroTransverseRoutes(layout, links);
+  assert.equal(routes.length, 3, "le lien principal et les deux supplémentaires");
+  // Trois liens sur le bandeau de d : trois accroches distinctes.
+  const d = branch(layout, "team:d").badge;
+  const onD = routes.map((r) => r.points.find((p) => p[0] >= d.x - 0.5 && p[0] <= d.x + d.w + 0.5 && p[1] >= d.y - 0.5 && p[1] <= d.y + d.h + 0.5)).filter(Boolean);
+  assert.equal(new Set(onD.map((p) => p.join(","))).size, 3);
+  // Déplacer une ligne : les tracés se recalculent sur la nouvelle position.
+  const moved = api.orgMetroApplyOffsets(layout, { "team:c": { dx: 0, dy: 200 } });
+  const r2 = api.orgMetroTransverseRoutes(moved, links).find((r) => r.toId === "c");
+  const c2 = branch(moved, "team:c").badge;
+  const end = r2.points[r2.points.length - 1];
+  assert.ok(end[1] >= c2.y && end[1] <= c2.y + c2.h, "le lien suit l'équipe déplacée");
+});
+
+test("Relation vers une personne présente à plusieurs endroits : l'occurrence choisie est reliée", () => {
+  const teams = [team("a", { leadName: "Chef" }), team("b", { leadName: "Sacha" }), team("c", { leadName: "Autre" })];
+  const members = [member("Chef", { teamIds: ["a"] }), member("Sacha", { teamIds: ["a", "b"] }), member("Autre", { teamIds: ["c"] })];
+  assert.deepEqual(api.orgChartPersonOccurrenceTeams("Sacha", teams, members).map((t) => t.id), ["a", "b"]);
+  const { layout } = metro(teams, members);
+  const sacha = layout.stations.filter((s) => s.name === "Sacha");
+  assert.equal(sacha.length, 2);
+  const at = (teamId) => api.orgMetroRelationRoutes(layout, [{ id: "r", from: "person:Autre", to: "person:Sacha", toAt: teamId }])[0];
+  const endNear = (route, st) => {
+    const p = route.points[route.points.length - 1];
+    return Math.abs(p[1] - st.cy) < st.label.h + st.half && p[0] >= st.cx - st.half - 1 && p[0] <= st.label.x + st.label.w + 1;
+  };
+  const inA = sacha.find((s) => s.branchKey === "team:a"), inB = sacha.find((s) => s.branchKey === "team:b");
+  assert.ok(endNear(at("a"), inA), "occurrence dans l'équipe a");
+  assert.ok(endNear(at("b"), inB), "occurrence dans l'équipe b");
+  assert.ok(at("zz").points.length > 0, "occurrence inconnue : première occurrence, jamais d'erreur");
+  assert.deepEqual(api.normalizeOrgChartRelations([{ id: "x", from: "person:A", to: "person:B", toAt: "b" }])[0].toAt, "b");
 });

@@ -3694,12 +3694,20 @@ function normalizeTeams(list) {
       // responsable dans l'Organigramme (« Responsable de lot »…), à la place
       // de son poste. Vide = son poste dans l'équipe, sinon « Responsable ».
       leadTitle: String(t.leadTitle || "").trim().slice(0, 80),
+      // Liens transverses supplémentaires (#295, retour de test) : en plus
+      // du lien principal (parentTeamId, hiérarchique ou transverse), une
+      // équipe peut être reliée à plusieurs autres équipes. Ces liens ne
+      // changent jamais sa place dans l'arbre : ils se dessinent seulement,
+      // en correspondances — voir teamExtraLinks.
+      extraLinkTeamIds: Array.isArray(t.extraLinkTeamIds) ? [...new Set(t.extraLinkTeamIds.filter(Boolean).map(String))].filter((id) => id !== String(t.id)) : [],
     }));
   const byId = new Map(base.map((t) => [t.id, t]));
   // Une équipe parente inexistante, ou qui reboucle jusqu'à l'équipe elle-même
   // (A parent de B, B parent de A, ou une chaîne plus longue), casserait tout
   // calcul d'arbre — jamais devinée autrement, on la vide simplement.
   return base.map((t) => {
+    // Liens supplémentaires vers des équipes disparues : ignorés.
+    t = { ...t, extraLinkTeamIds: t.extraLinkTeamIds.filter((id) => byId.has(id)) };
     if (!t.parentTeamId || !byId.has(t.parentTeamId)) return { ...t, parentTeamId: "" };
     const chain = new Set([t.id]);
     let cur = byId.get(t.parentTeamId);
@@ -3901,6 +3909,26 @@ function transverseTeamLinks(teams) {
     // "right" (voir normalizeTeams, même raison : comportement de #235
     // inchangé tant que rien n'a été choisi explicitement).
     .map((t) => ({ fromId: t.id, toId: t.parentTeamId, side: t.transverseSide === "left" ? "left" : "right" }));
+}
+// Liens transverses SUPPLÉMENTAIRES (voir normalizeTeams.extraLinkTeamIds) :
+// une paire par lien, sans doublon (A→B et B→A comptent pour un), jamais le
+// lien principal déjà dessiné par transverseTeamLinks ou par la hiérarchie.
+// Purement graphique : aucune incidence sur l'arbre ni sur l'ordre des
+// racines.
+function teamExtraLinks(teams) {
+  const catalogue = normalizeTeams(teams);
+  const primary = new Set(catalogue.filter((t) => t.parentTeamId).map((t) => [t.id, t.parentTeamId].sort().join("|")));
+  const seen = new Set();
+  const out = [];
+  catalogue.forEach((t) => {
+    t.extraLinkTeamIds.forEach((id) => {
+      const k = [t.id, id].sort().join("|");
+      if (primary.has(k) || seen.has(k)) return;
+      seen.add(k);
+      out.push({ fromId: t.id, toId: id, extra: true });
+    });
+  });
+  return out;
 }
 // Réordonnance les racines de premier niveau (#235, retour de capture) : une
 // équipe reliée par un lien TRANSVERSE (voir transverseTeamLinks ci-dessus)
@@ -12541,6 +12569,10 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
   // "transverse" (voir reorderOrgHierarchyRoots, part-002).
   const [transverseSide, setTransverseSide] = useState(team?.transverseSide === "left" ? "left" : "right");
   const [folderId, setFolderId] = useState(team?.folderId || "");
+  // Liens transverses supplémentaires (en plus du lien principal) : cases à
+  // cocher avec recherche ; l'équipe elle-même et son partenaire principal
+  // ne sont pas proposés.
+  const [extraLinkTeamIds, setExtraLinkTeamIds] = useState(() => (Array.isArray(team?.extraLinkTeamIds) ? team.extraLinkTeamIds.map(String) : []));
   // Ajout rapide d'un utilisateur depuis la fiche d'une équipe (#222) : mêmes
   // deux champs que partout ailleurs dans l'app (nom + poste), le rattachement
   // reste RÉCIPROQUE parce qu'il n'existe qu'un seul modèle de rattachement
@@ -12627,7 +12659,7 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
   const parentOptions = catalogue.filter((t) => !excludedParentIds.has(t.id));
   const save = () => {
     if (!name.trim()) return;
-    onSave({ name: name.trim(), color, leadName: leadName.trim(), leadTitle: leadTitle.trim(), parentTeamId, parentLinkType, transverseSide, folderId });
+    onSave({ name: name.trim(), color, leadName: leadName.trim(), leadTitle: leadTitle.trim(), parentTeamId, parentLinkType, transverseSide, folderId, extraLinkTeamIds: extraLinkTeamIds.filter((id) => id !== parentTeamId && id !== String(team?.id || "")) });
   };
 
   const foldersModal = foldersManagerOpen && (
@@ -12697,6 +12729,23 @@ function TeamFormModal({ team, teams, teamMembers, setTeamMembers, teamFolders, 
                 ? "Cette équipe est placée juste avant son partenaire dans l'Organigramme."
                 : "Cette équipe est placée juste après son partenaire dans l'Organigramme."}
             </p>
+          </div>
+        )}
+        {normalizeTeams(teams).some((t) => t.id !== String(team?.id || "") && t.id !== parentTeamId) && (
+          <div className="lp-field lp-team-extra-links">
+            <label>
+              Autres liens transverses
+              <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}> (facultatif — en plus du lien principal ; dessinés en correspondances dans l'Organigramme, sans changer la place de l'équipe)</span>
+            </label>
+            <EntityFilterMultiSelect
+              options={sortedByName(normalizeTeams(teams).filter((t) => t.id !== String(team?.id || "") && t.id !== parentTeamId)).map((t) => ({ id: t.id, name: t.name, color: t.color }))}
+              selectedIds={extraLinkTeamIds.filter((id) => id !== parentTeamId)}
+              onToggle={(id) => setExtraLinkTeamIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+              summary={extraLinkTeamIds.filter((id) => id !== parentTeamId).length ? extraLinkTeamIds.filter((id) => id !== parentTeamId).length + " équipe" + (extraLinkTeamIds.filter((id) => id !== parentTeamId).length > 1 ? "s" : "") + " reliée" + (extraLinkTeamIds.filter((id) => id !== parentTeamId).length > 1 ? "s" : "") : "Aucun lien supplémentaire"}
+              placeholder="Rechercher une équipe…"
+              showBulkActions={false}
+              compact
+            />
           </div>
         )}
         <div className="lp-field">

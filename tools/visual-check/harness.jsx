@@ -147,7 +147,7 @@ function AnnotationsHarness() {
     { id: "o-plat", name: "Plateforme", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Zoé Faure", leadTitle: "Responsable de lot" },
     { id: "o-secu", name: "Sécurité", color: "#2C6BE0", parentTeamId: "o-plat" },
     { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Nora Vidal" },
-    { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right" },
+    { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right", extraLinkTeamIds: ["o-ops", "o-disc"] },
     { id: "o-ops", name: "Opérations", color: "#1FA971", leadName: "Luc Perrin" },
   ]);
   const [orgMembers, setOrgMembers] = useState(() => [
@@ -183,6 +183,9 @@ function AnnotationsHarness() {
       { id: "r1", from: "team:o-ops", to: "team:o-prod", label: "Support" },
       { id: "r2", from: "person:Paul Mercier", to: "person:Camille Aubert", label: "Binôme" },
       { id: "r3", from: "team:o-data", to: "person:Hugo Lemaire" },
+      // Sacha Morin apparaît dans Applications et dans Données : la relation
+      // vise son occurrence dans Applications.
+      { id: "r4", from: "person:Luc Perrin", to: "person:Sacha Morin", toAt: "o-apps", label: "Astreinte" },
     ],
   });
   const orgCtx = { teams: orgTeams, teamMembers: orgMembers, teamFolders: [], tasks: [], workshops: [], statuses };
