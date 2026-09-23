@@ -9238,193 +9238,6 @@ function orgHierLayoutSiblings(contours, gap) {
   return { offsets, mergedLeft, mergedRight };
 }
 // === NEXORA:ORGHIER-LAYOUT:END ===
-// === NEXORA:ORG-ORBITAL:START ===
-// Geometry only: the hierarchy, canonical member occurrences and transverse
-// relationships are all supplied by the existing team helpers.
-function orgOrbitalMeasure(node) {
-  const labelWidth = (s) => Math.min(260, Math.max(92, Array.from(String(s || "")).length * 7.4 + 22));
-  const children = node.children || [];
-  const teams = children.filter((c) => c.type === "team").map(orgOrbitalMeasure);
-  const people = [];
-  const visit = (person, depth, seen) => {
-    if (seen.has(person)) return;
-    const next = new Set(seen); next.add(person);
-    people.push({ node: person, depth });
-    (person.children || []).filter((c) => c.type === "person").forEach((c) => visit(c, depth + 1, next));
-  };
-  children.filter((c) => c.type === "person").forEach((p) => visit(p, 0, new Set()));
-  const lead = node.leadMember?.name || node.team?.leadName || "";
-  const roster = people.filter((p) => p.node.member?.name !== lead);
-  const teamRow = teams.length ? orgHierLayoutSiblings(teams.map((t) => ({ left: [-t.w / 2], right: [t.w / 2] })), 18) : null;
-  const teamWidth = teamRow ? teamRow.mergedRight[0] - teamRow.mergedLeft[0] : 0;
-  const memberCols = Math.max(1, Math.ceil(Math.sqrt(roster.length)));
-  const memberWidth = Math.min(185, Math.max(118, ...roster.map((p) => labelWidth(p.node.member?.name))));
-  const rosterWidth = roster.length ? memberCols * (memberWidth + 18) : 0;
-  const leadWidth = lead ? Math.max(130, labelWidth(lead)) : 0;
-  const w = Math.max(300, labelWidth(node.team?.name) + 116, teamWidth + 76, rosterWidth + leadWidth + 92);
-  const teamHeight = teams.length ? Math.max(...teams.map((t) => t.h)) + 20 : 0;
-  const rosterRows = Math.ceil(roster.length / memberCols);
-  const h = Math.max(260, 230 + teamHeight + rosterRows * 48);
-  return { node, w, h, teams, people: roster, lead, memberCols, memberWidth, teamRow };
-}
-function orgOrbitalLayout(roots, teams) {
-  const links = transverseTeamLinks(teams);
-  const transverseIds = new Set(links.map((l) => l.fromId));
-  const measured = roots.map(orgOrbitalMeasure);
-  const main = measured.filter((m) => !transverseIds.has(m.node.team?.id));
-  const transverse = measured.filter((m) => transverseIds.has(m.node.team?.id));
-  const placed = [], gap = 72;
-  const intersects = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 + gap && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + gap;
-  // Four quadrants reproduce the reference with four roots. More roots grow
-  // successive rings; collisions push individual orbits outward, never scale text.
-  main.forEach((m, i) => {
-    const slot = i % 4, layer = Math.floor(i / 4);
-    const sx = slot % 2 ? 1 : -1, sy = slot < 2 ? -1 : 1;
-    let radius = 258 + layer * 230, x, y;
-    do {
-      x = sx * (radius + m.w / 2);
-      y = sy * (radius * .59 + m.h / 2);
-      radius += 56;
-    } while (placed.some((p) => intersects({ x, y, ...m }, p)));
-    placed.push({ ...m, x, y, transverse: false });
-  });
-  const bottom = Math.max(200, ...placed.map((p) => p.y + p.h / 2)) + 150;
-  // Stable grouping by partner and requested side; links remain independent.
-  transverse.sort((a, b) => {
-    const la = links.find((l) => l.fromId === a.node.team?.id);
-    const lb = links.find((l) => l.fromId === b.node.team?.id);
-    return String(la?.toId || "").localeCompare(String(lb?.toId || "")) || (la?.side === "left" ? -1 : 1) - (lb?.side === "left" ? -1 : 1);
-  });
-  const totalTransverse = transverse.reduce((sum, m) => sum + m.w + 32, -32);
-  let tx = -totalTransverse / 2;
-  transverse.forEach((m) => { placed.push({ ...m, x: tx + m.w / 2, y: bottom + m.h / 2, transverse: true }); tx += m.w + 32; });
-  const minX = Math.min(-170, ...placed.map((p) => p.x - p.w / 2)) - 95;
-  const maxX = Math.max(170, ...placed.map((p) => p.x + p.w / 2)) + 95;
-  const minY = Math.min(-130, ...placed.map((p) => p.y - p.h / 2)) - 85;
-  const maxY = Math.max(130, ...placed.map((p) => p.y + p.h / 2)) + 125;
-  return { placed, links, width: maxX - minX, height: maxY - minY, ox: -minX, oy: -minY, transverseY: bottom - 24 };
-}
-// === NEXORA:ORG-ORBITAL:END ===
-function OrgOrbitalChart({ teams, members, showUnassigned, onEditTeam, onEditMember, rootLabel }) {
-  const viewport = useRef(null);
-  const svgRef = useRef(null);
-  const [width, setWidth] = useState(0);
-  const [scale, setScale] = useState(null);
-  const [active, setActive] = useState(null);
-  useLayoutEffect(() => {
-    const update = () => setWidth(viewport.current?.clientWidth || 0);
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    if (viewport.current) observer.observe(viewport.current);
-    return () => observer.disconnect();
-  }, []);
-  const roots = useMemo(() => {
-    const raw = buildOrgHierarchyTree(teams, members).filter((r) => showUnassigned || r.team);
-    return reorderOrgHierarchyRoots(raw, teams);
-  }, [teams, members, showUnassigned]);
-  const layout = useMemo(() => orgOrbitalLayout(roots, teams), [roots, teams]);
-  const fit = Math.min(1, Math.max(.48, width / layout.width));
-  const zoom = scale === null ? fit : scale;
-  const xy = (p) => ({ x: p.x + layout.ox, y: p.y + layout.oy });
-  const teamPositions = new Map();
-  const findTeams = (m, x, y) => {
-    if (m.node.team) teamPositions.set(m.node.team.id, { x, y, w: m.w, h: m.h });
-    if (m.teams.length) {
-      const left = m.teamRow.mergedLeft[0];
-      m.teams.forEach((c, i) => findTeams(c, x + m.teamRow.offsets[i] - left - (m.teamRow.mergedRight[0] - left) / 2, y + 18));
-    }
-  };
-  layout.placed.forEach((p) => findTeams(p, p.x, p.y));
-  const keyAction = (event, cb) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); cb(); } };
-  const renderTeam = (m, x, y, depth, key) => {
-    const { node, w, h, lead } = m;
-    const color = node.team?.color || "var(--life-blue)";
-    const focus = active && (active === node.team?.id || layout.links.some((l) => (l.fromId === active && l.toId === node.team?.id) || (l.toId === active && l.fromId === node.team?.id)));
-    const dim = active && !focus && active !== lead && !m.people.some((p) => p.node.member.name === active);
-    const teamHeight = m.teams.length ? Math.max(...m.teams.map((t) => t.h)) + 20 : 0;
-    const subY = y - h / 2 + 98 + (m.teams.length ? Math.max(...m.teams.map((t) => t.h)) / 2 : 0);
-    const rosterY = y - h / 2 + 194 + teamHeight;
-    const own = node.team;
-    const left = m.teamRow?.mergedLeft[0] || 0;
-    const rowWidth = m.teamRow ? m.teamRow.mergedRight[0] - left : 0;
-    const personPoints = new Map(m.people.map((entry, i) => [entry.node.member.name, {
-      x: x + (i % m.memberCols - (m.memberCols - 1) / 2) * (m.memberWidth + 18),
-      y: rosterY + Math.floor(i / m.memberCols) * 48,
-    }]));
-    return <g className={depth ? "org-orbital-subteam" : "org-orbital-team"} key={key} style={{ opacity: dim ? .28 : 1, transition: "opacity .15s" }}>
-      <ellipse cx={x + layout.ox} cy={y + layout.oy} rx={w / 2} ry={h / 2} fill={color} fillOpacity={depth ? .028 : .045} stroke={color} strokeOpacity={.38} strokeWidth={1.2} />
-      <g role={own && onEditTeam ? "button" : undefined} tabIndex={own && onEditTeam ? 0 : undefined} aria-label={own ? `Ouvrir l'équipe ${own.name}` : "Sans équipe"} className="org-orbital-interactive" onClick={() => own && onEditTeam?.(own)} onKeyDown={(e) => own && keyAction(e, () => onEditTeam?.(own))} onMouseEnter={() => setActive(own?.id)} onMouseLeave={() => setActive(null)} onFocus={() => setActive(own?.id)} onBlur={() => setActive(null)}>
-        <circle cx={x - w / 2 + 42 + layout.ox} cy={y - h / 2 + 38 + layout.oy} r="18" fill={color} />
-        <text x={x - w / 2 + 42 + layout.ox} y={y - h / 2 + 44 + layout.oy} textAnchor="middle" fill="white" fontSize="16">✦</text>
-        <text x={x - w / 2 + 70 + layout.ox} y={y - h / 2 + 43 + layout.oy} fill={color} fontSize={depth ? 15 : 19} fontWeight="700">{own?.name || "Sans équipe"}</text>
-      </g>
-      {m.teams.map((child, i) => {
-        const cx = x + m.teamRow.offsets[i] - left - rowWidth / 2;
-        return <g key={`sub:${i}`}>
-          <path className="org-orbital-link" d={`M ${x + layout.ox} ${y + layout.oy} Q ${(x + cx) / 2 + layout.ox} ${subY + layout.oy} ${cx + layout.ox} ${subY + layout.oy}`} fill="none" stroke={color} strokeOpacity=".5" strokeWidth="1.2" />
-          {renderTeam(child, cx, subY, depth + 1, `${key}:${i}`)}
-        </g>;
-      })}
-      {lead && <g className="org-orbital-member org-orbital-interactive" role={node.leadMember && onEditMember ? "button" : undefined} tabIndex={node.leadMember && onEditMember ? 0 : undefined} aria-label={`Responsable : ${lead}`} onClick={() => node.leadMember && onEditMember?.(node.leadMember)} onKeyDown={(e) => node.leadMember && keyAction(e, () => onEditMember?.(node.leadMember))}>
-        <circle cx={x + layout.ox} cy={rosterY - 76 + layout.oy} r="30" fill={color} />
-        <text x={x + layout.ox} y={rosterY - 78 + layout.oy} textAnchor="middle" fill="white" fontSize="14" fontWeight="700">{memberInitials(lead)}</text>
-        <text x={x + layout.ox} y={rosterY - 60 + layout.oy} textAnchor="middle" fill="white" fontSize="9">Responsable</text>
-        <text x={x + layout.ox} y={rosterY - 32 + layout.oy} textAnchor="middle" fill="var(--life-text)" fontSize="12" fontWeight="600">{lead}</text>
-      </g>}
-      {m.people.filter((p) => p.depth).map(({ node: person }) => {
-        const child = personPoints.get(person.member.name);
-        const manager = memberManagerName(person.member);
-        const parent = personPoints.get(manager) || (manager === lead ? { x, y: rosterY - 76 } : null);
-        return parent && <path key={`manager:${person.member.name}`} d={`M ${parent.x + layout.ox} ${parent.y + 8 + layout.oy} Q ${(parent.x + child.x) / 2 + layout.ox} ${(parent.y + child.y) / 2 + layout.oy} ${child.x + layout.ox} ${child.y - 9 + layout.oy}`} fill="none" stroke={color} strokeOpacity=".6" strokeWidth="1" />;
-      })}
-      {m.people.map(({ node: person, depth: personDepth }, i) => {
-        const col = i % m.memberCols, row = Math.floor(i / m.memberCols);
-        const px = x + (col - (m.memberCols - 1) / 2) * (m.memberWidth + 18);
-        const py = rosterY + row * 48;
-        return <g className="org-orbital-member org-orbital-interactive" key={`${person.member.name}:${i}`} role={onEditMember ? "button" : undefined} tabIndex={onEditMember ? 0 : undefined} aria-label={`Ouvrir ${person.member.name}${personDepth ? `, sous ${memberManagerName(person.member)}` : ""}`} onClick={() => onEditMember?.(person.member)} onKeyDown={(e) => keyAction(e, () => onEditMember?.(person.member))} onMouseEnter={() => setActive(person.member.name)} onMouseLeave={() => setActive(null)}>
-          {personDepth > 0 && <path d={`M ${px - 15 + layout.ox} ${py - 11 + layout.oy} v 16`} stroke={color} strokeWidth="1" />}
-          <circle cx={px + layout.ox} cy={py + layout.oy} r="7" fill={color} fillOpacity=".8" />
-          <text x={px + layout.ox} y={py + 23 + layout.oy} textAnchor="middle" fontSize="11" fill="var(--life-text)">{person.member.name}</text>
-        </g>;
-      })}
-    </g>;
-  };
-  const download = (kind) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const clone = svg.cloneNode(true);
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    const css = getComputedStyle(svg);
-    clone.style.background = css.getPropertyValue("--life-surface") || "#fff";
-    const source = new XMLSerializer().serializeToString(clone).replace(/var\((--[\w-]+)(?:,[^)]+)?\)/g, (_, token) => getComputedStyle(svg).getPropertyValue(token).trim() || "#fff");
-    const url = URL.createObjectURL(new Blob([source], { type: "image/svg+xml;charset=utf-8" }));
-    const save = (href, ext) => { const a = document.createElement("a"); a.href = href; a.download = `nexora-organigramme-orbital.${ext}`; a.click(); };
-    if (kind === "svg") { save(url, "svg"); setTimeout(() => URL.revokeObjectURL(url), 1000); return; }
-    const image = new Image(); image.onload = () => { const canvas = document.createElement("canvas"); canvas.width = layout.width * 2; canvas.height = layout.height * 2; const ctx = canvas.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); save(canvas.toDataURL("image/png"), "png"); URL.revokeObjectURL(url); }; image.src = url;
-  };
-  return <div className="org-orbital-shell">
-    <div className="org-orbital-controls" aria-label="Contrôles de l'organigramme orbital">
-      <button type="button" onClick={() => setScale(Math.min(2, zoom * 1.2))} aria-label="Zoom avant">+</button>
-      <button type="button" onClick={() => setScale(Math.max(.48, zoom / 1.2))} aria-label="Zoom arrière">−</button>
-      <button type="button" onClick={() => setScale(null)}>Ajuster</button>
-      <button type="button" onClick={() => { if (viewport.current) { viewport.current.scrollLeft = (layout.width * zoom - viewport.current.clientWidth) / 2; viewport.current.scrollTop = 0; } }}>Recentrer</button>
-      <button type="button" onClick={() => download("svg")}>SVG ↓</button>
-      <button type="button" onClick={() => download("png")}>PNG ↓</button>
-    </div>
-    <div className="org-orbital-viewport" ref={viewport} onPointerDown={(e) => { if (e.target !== svgRef.current && e.target.tagName !== "ellipse") return; const startX = e.clientX, startY = e.clientY, left = e.currentTarget.scrollLeft, top = e.currentTarget.scrollTop; e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.dataset.pan = JSON.stringify([startX, startY, left, top]); }} onPointerMove={(e) => { const data = e.currentTarget.dataset.pan; if (!data) return; const [sx, sy, left, top] = JSON.parse(data); e.currentTarget.scrollLeft = left + sx - e.clientX; e.currentTarget.scrollTop = top + sy - e.clientY; }} onPointerUp={(e) => { delete e.currentTarget.dataset.pan; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}>
-      <svg ref={svgRef} width={layout.width * zoom} height={layout.height * zoom} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="Organigramme orbital" style={{ minWidth: layout.width * zoom }}>
-        <rect width={layout.width} height={layout.height} fill="var(--life-surface)" />
-        {layout.placed.filter((p) => !p.transverse).map((p) => { const end = xy(p); const ex = end.x - Math.sign(p.x) * p.w / 2; return <path key={`root:${p.node.team?.id}`} className="org-orbital-link" d={`M ${layout.ox + Math.sign(p.x) * 96} ${layout.oy + Math.sign(p.y) * 35} Q ${(layout.ox + ex) / 2} ${(layout.oy + end.y) / 2} ${ex} ${end.y}`} stroke={p.node.team?.color || "var(--life-blue)"} strokeWidth="1.8" fill="none" />; })}
-        {layout.links.map((link) => { const a = teamPositions.get(link.fromId), b = teamPositions.get(link.toId); if (!a || !b) return null; return <path key={`${link.fromId}:${link.toId}`} className="org-orbital-link org-orbital-transverse" d={`M ${a.x + layout.ox} ${a.y + layout.oy - a.h / 2} Q ${(a.x + b.x) / 2 + layout.ox} ${layout.transverseY - 75 + layout.oy} ${b.x + layout.ox} ${b.y + layout.oy + b.h / 2}`} stroke="var(--life-blue)" strokeWidth="1.5" strokeDasharray="3 5" fill="none" />; })}
-        <g><circle cx={layout.ox} cy={layout.oy} r="102" fill="var(--life-surface)" stroke="#cba755" strokeWidth="1.4" /><text x={layout.ox} y={layout.oy - 29} textAnchor="middle" fontSize="30" fill="var(--life-text)">♟</text><text x={layout.ox} y={layout.oy + 7} textAnchor="middle" fontSize="18" fontWeight="700" fill="var(--life-text)">{rootLabel || "Organisation"}</text><text x={layout.ox} y={layout.oy + 34} textAnchor="middle" fontSize="11" fill="var(--life-muted)">Direction générale</text></g>
-        {layout.transverseY > 0 && layout.placed.some((p) => p.transverse) && <text x={layout.ox} y={layout.transverseY - 16 + layout.oy} textAnchor="middle" fontSize="17" fontWeight="700" fill="var(--life-text)">Équipes transverses</text>}
-        {layout.placed.map((p, i) => renderTeam(p, p.x, p.y, 0, `root:${i}`))}
-        <g className="org-orbital-legend" transform={`translate(30 ${layout.height - 85})`} fill="var(--life-secondary)" fontSize="11"><path d="M 0 0 h 35" stroke="#cba755" strokeWidth="2" /><text x="45" y="4">Lien hiérarchique principal</text><path d="M 0 25 h 35" stroke="var(--life-blue)" strokeWidth="1" /><text x="45" y="29">Rattachement de sous-équipe</text><path d="M 0 50 h 35" stroke="var(--life-blue)" strokeDasharray="3 5" /><text x="45" y="54">Lien transverse</text></g>
-      </svg>
-    </div>
-  </div>;
-}
 function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember, rootLabel }) {
   const horizontal = orientation === "horizontal";
   // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
@@ -10844,14 +10657,11 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   );
 }
 
-// Modes de rendu de l'Organigramme, tous sur les MÊMES données : l'arbre
-// hiérarchique (#167, #219), le plan Métro (#295) et la vue Orbital (#300).
-// Un seul champ, `orgChartView` (celui de #300) ; absent = hiérarchique, comme
-// avant ces modes.
+// Modes de rendu de l'Organigramme, sur les mêmes données : arbre hiérarchique
+// (#167, #219) et plan Métro (#295). Un mode supprimé retombe sur l'arbre.
 const ORGCHART_MODES = [
   { key: "hierarchy", label: "Hiérarchique" },
   { key: "metro", label: "Métro" },
-  { key: "orbital", label: "Orbital" },
 ];
 function orgChartModeOf(widget) {
   const v = widget?.orgChartView;
@@ -10907,7 +10717,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     return { activeCount: active.length, lateCount: late.length, todayShop: todayShops[0] || null };
   };
 
-  // Mode de rendu (#295, #300) : réglé dans la fiche du widget ET basculable
+  // Mode de rendu (#295) : réglé dans la fiche du widget ET basculable
   // directement dans son en-tête — le même champ `orgChartView`, enregistré
   // sur le widget quand l'hôte le permet (onUpdateWidget), sinon gardé pour
   // la session.
@@ -10945,15 +10755,6 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         showTransverse={showTransverse}
         onToggleTransverse={toggleTransverse}
       />
-    ) : mode === "orbital" ? (
-      <OrgOrbitalChart
-        teams={rawVisibleTeams}
-        members={members}
-        showUnassigned={showUnassigned}
-        onEditTeam={onEditTeam}
-        onEditMember={onEditMember}
-        rootLabel={rootLabel}
-      />
     ) : (
       <OrgHierarchyChart
         teams={rawVisibleTeams}
@@ -10979,7 +10780,7 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
               className={"lp-orgchart-mode-btn" + (mode === m.key ? " active" : "")}
               aria-pressed={mode === m.key}
               onClick={() => changeMode(m.key)}
-            >{m.key === "metro" ? <TrainTrack size={12} /> : m.key === "orbital" ? <CircleDot size={12} /> : <Network size={12} />}{m.label}</button>
+            >{m.key === "metro" ? <TrainTrack size={12} /> : <Network size={12} />}{m.label}</button>
           ))}
         </div>
         {onOpenTeamsSettings && (
@@ -15901,7 +15702,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // mode de rendu restant) : vertical (racine en haut) ou horizontal (racine
   // à gauche).
   const [orgChartOrientation, setOrgChartOrientation] = useState(widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical");
-  // Mode de rendu (#295) : arbre hiérarchique (défaut), plan Métro ou Orbital (#300), et, pour
+  // Mode de rendu (#295) : arbre hiérarchique (défaut) ou plan Métro et, pour
   // le Métro, l'affichage des correspondances transverses (oui par défaut).
   const [orgChartMode, setOrgChartMode] = useState(orgChartModeOf(widget));
   const [orgMetroShowTransverse, setOrgMetroShowTransverse] = useState(widget?.orgMetroShowTransverse !== false);
