@@ -2198,7 +2198,9 @@ expect(mois.large && mois.large.blocs === 3, `Heat map mensuelle : ${mois.large 
 // peuvent légitimement passer sur deux lignes. Ce qui compte : ils tiennent
 // dans ce volet (débordement et défilement contrôlés plus bas).
 expect(mois.large && mois.large.lignes >= 1 && mois.large.lignes <= 2, `Heat map mensuelle large : les mois occupent ${mois.large && mois.large.lignes} ligne(s), 1 ou 2 attendues`);
-expect(mois.etroit && mois.etroit.lignes === 3, `Heat map mensuelle étroite : les mois occupent ${mois.etroit && mois.etroit.lignes} ligne(s), 3 attendues — ils doivent passer les uns sous les autres`);
+// Étroit, les volets s'empilent (#298) : le calendrier retrouve toute la
+// largeur du widget et range deux mois par ligne, ou un seul.
+expect(mois.etroit && mois.etroit.lignes >= 2, `Heat map mensuelle étroite : les mois occupent ${mois.etroit && mois.etroit.lignes} ligne(s), au moins 2 attendues — ils doivent passer les uns sous les autres`);
 for (const [nom, m] of [["large", mois.large], ["étroite", mois.etroit]]) {
   expect(m && m.debordent === 0, `Heat map mensuelle ${nom} : ${m && m.debordent} mois débordent du cadre`);
   expect(m && m.defileH <= 0, `Heat map mensuelle ${nom} : ${m && m.defileH} px de défilement horizontal — il ne doit plus y en avoir`);
