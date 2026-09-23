@@ -148,6 +148,8 @@ function AnnotationsHarness() {
     { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Nora Vidal" },
     { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right", extraLinkTeamIds: ["o-ops", "o-disc"], extraLinkTypes: { "o-disc": "hierarchique" } },
     { id: "o-ops", name: "Opérations", color: "#1FA971", leadName: "Luc Perrin" },
+    // Équipe rattachée à un UTILISATEUR : Sacha Morin, occurrence Applications.
+    { id: "o-lab", name: "Laboratoire", color: "#8B5CF6", parentTeamId: "o-apps", parentMemberName: "Sacha Morin", leadName: "Ilan Roy" },
   ]);
   const [orgMembers, setOrgMembers] = useState(() => [
     { id: "om1", name: "Camille Aubert", teamIds: ["o-prod"], teamRoles: { "o-prod": "Directrice produit" } },
@@ -169,6 +171,7 @@ function AnnotationsHarness() {
     { id: "om17", name: "Luc Perrin", teamIds: ["o-ops"] },
     { id: "om18", name: "Eva Moulin", teamIds: ["o-ops"] },
     { id: "om19", name: "Sans rattachement", teamIds: [] },
+    { id: "om20", name: "Ilan Roy", teamIds: ["o-lab"] },
   ]);
   const [orgWidget, setOrgWidget] = useState({
     id: "w-orgmetro", type: "orgchart",
