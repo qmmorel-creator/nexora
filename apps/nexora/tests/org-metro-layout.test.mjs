@@ -635,6 +635,20 @@ test("Déplacement libre : une ligne déplacée sur la grille emmène sa sous-ar
   assert.deepEqual(api.normalizeOrgMetroOffsets({ "team:a": { dx: 9, dy: 31 }, bad: null, z: { dx: 0, dy: 0 } }), { "team:a": { dx: 0, dy: 40 } });
 });
 
+test("Variante ★ : le responsable s'inscrit dans le bandeau, sans station, et compte toujours dans l'effectif", () => {
+  const teams = [team("p", { leadName: "Lea", leadTitle: "Directrice" }), team("c", { parentTeamId: "p", leadName: "Hors" })];
+  const members = [member("Lea", { teamIds: ["p"] }), member("B", { teamIds: ["p"] }), member("C", { teamIds: ["c"] })];
+  const plain = metro(teams, members).layout;
+  const inBadge = metro(teams, members, { leadInBadge: true }).layout;
+  const p = branch(inBadge, "team:p"), c = branch(inBadge, "team:c");
+  assert.equal(p.badge.subtitle, "Lea · Directrice");
+  assert.equal(c.badge.subtitle, "Hors");
+  assert.ok(!inBadge.stations.some((s) => s.kind === "lead"), "plus aucune station de responsable");
+  assert.ok(p.badge.h > branch(plain, "team:p").badge.h, "le bandeau s'agrandit pour la ligne du responsable");
+  assert.equal(p.badge.count, branch(plain, "team:p").badge.count, "l'effectif ne change pas");
+  assertNoOverlap(inBadge);
+});
+
 test("Barre étirée puis ramenée : elle ne dépasse jamais le tronc et les lignes qui en partent", () => {
   const teams = [team("p"), team("c", { parentTeamId: "p" })];
   const members = [member("A", { teamIds: ["p"] }), member("B", { teamIds: ["p"] }), member("C", { teamIds: ["c"] })];
