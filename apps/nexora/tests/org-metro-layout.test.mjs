@@ -8,6 +8,17 @@ import vm from "node:vm";
 // entre les sentinelles des trois blocs qu'elle enchaîne — Équipes (modèle et
 // arbre existants), layout par contour (#243) et Métro (adaptateur + layout).
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
+test("un ancien mode Orbital enregistré revient à Hiérarchique sans toucher au mode Métro", () => {
+  const from = html.indexOf("const ORGCHART_MODES = [");
+  const to = html.indexOf("function WidgetOrgChart(", from);
+  assert.ok(from > 0 && to > from);
+  const { ORGCHART_MODES, orgChartModeOf } = vm.runInThisContext(
+    `(function () { ${html.slice(from, to)}; return { ORGCHART_MODES, orgChartModeOf }; })()`
+  );
+  assert.deepEqual(Array.from(ORGCHART_MODES, (mode) => mode.key), ["hierarchy", "metro"]);
+  assert.equal(orgChartModeOf({ orgChartView: "orbital" }), "hierarchy");
+  assert.equal(orgChartModeOf({ orgChartView: "metro" }), "metro");
+});
 function block(name) {
   const start = `// === NEXORA:${name}:START ===`;
   const end = `// === NEXORA:${name}:END ===`;
