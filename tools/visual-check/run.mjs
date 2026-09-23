@@ -1563,6 +1563,23 @@ try {
   await page.waitForTimeout(200);
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
   await page.waitForTimeout(200);
+  // Glisser-déposer : « Opérations » déposée à gauche de « Produit » passe
+  // en tête des lignes ; « Recentrer » rétablit l'ordre par défaut.
+  const badgeCenterX = async (name) => page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"]`).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; });
+  const opsBox = await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Opérations"] .lp-orgmetro-badge-bg`).boundingBox();
+  const prodBox = await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Produit"] .lp-orgmetro-badge-bg`).boundingBox();
+  await page.mouse.move(opsBox.x + 20, opsBox.y + opsBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(opsBox.x - 60, opsBox.y + opsBox.height / 2, { steps: 4 });
+  await page.mouse.move(prodBox.x - 30, prodBox.y + prodBox.height / 2, { steps: 10 });
+  orgMetro.dropMarker = await page.locator(`${host} .lp-orgmetro-drop-marker`).count();
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.dragModal = await page.locator(".lp-modal").count();
+  orgMetro.afterDrag = (await badgeCenterX("Opérations")) < (await badgeCenterX("Produit"));
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
+  await page.waitForTimeout(300);
+  orgMetro.afterReset = (await badgeCenterX("Opérations")) > (await badgeCenterX("Produit"));
   // Bascule de mode dans l'en-tête : la vue hiérarchique reste intacte.
   await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Hiérarchique" }).click();
   await page.waitForTimeout(300);
@@ -2639,6 +2656,10 @@ if (!orgMetro.error) {
   expect(orgMetro.hierRelations === 3 && orgMetro.hierRelationLabels.length === 2, `Organigramme hiérarchique : ${orgMetro.hierRelations} relation(s), ${orgMetro.hierRelationLabels.length} légende(s) — 3 et 2 attendues`);
   expect(orgMetro.hierJunctions > 0, "Organigramme hiérarchique : aucun point blanc aux embranchements");
   expect(orgMetro.hierInactive >= 1, "Organigramme hiérarchique : l'utilisateur inactif n'est pas grisé");
+  expect(orgMetro.dropMarker === 1, `Glisser-déposer : ${orgMetro.dropMarker} repère d'insertion pendant le glisser, 1 attendu`);
+  expect(orgMetro.dragModal === 0, "Glisser-déposer : lâcher un bandeau a ouvert la fiche équipe");
+  expect(orgMetro.afterDrag, "Glisser-déposer : « Opérations » déposée avant « Produit » n'a pas changé de place");
+  expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
   expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);

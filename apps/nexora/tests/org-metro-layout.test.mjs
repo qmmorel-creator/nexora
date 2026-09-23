@@ -34,7 +34,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -260,16 +260,19 @@ test("Métro : un manager reste une station de sa ligne ; seuls ses rattachés b
   assert.deepEqual(g.stations.map((s) => s.name), ["Anaïs", "Tom", "Sarah"]);
   assert.deepEqual(g.ancestors, ["team:d"]);
   assert.equal(stationsOf(layout, "Gabriel").length, 1, "le manager n'est pas dupliqué");
-  // Coude : part de la station du manager, sous son libellé, vers la droite.
+  // Pastille de correspondance pour le manager ; la branche part à
+  // l'horizontale de sa pastille, du côté OPPOSÉ à son étiquette (gauche).
+  assert.equal(gabriel.pill, true, "le manager porte la pastille de correspondance");
   assert.equal(g.drop, null);
-  assert.equal(g.elbow.fromX, d.x);
-  assert.equal(g.elbow.y0, gabriel.cy);
-  assert.ok(g.elbow.y > gabriel.label.y + gabriel.label.h, "le coude passe sous le libellé du manager");
-  assert.ok(g.x > d.x && g.y > g.elbow.y);
+  assert.equal(g.elbow.y, gabriel.cy, "départ horizontal, à la hauteur de la station");
+  assert.equal(g.elbow.fromX, d.x - gabriel.half, "départ au bord gauche de la pastille");
+  assert.ok(g.x < d.x, "branche de l'autre côté de l'étiquette");
+  assert.ok(g.y > g.elbow.y);
+  g.stations.forEach((st) => assert.ok(st.label.x + st.label.w < d.x - d.lineW / 2, "libellés des rattachés entre leur ligne et le tronc, sans le toucher"));
   assert.equal(g.color, d.color, "la branche garde la couleur de sa ligne");
   assert.ok(g.lineW < d.lineW);
   const junctions = api.orgMetroJunctions(layout);
-  assert.ok(junctions.some((j) => j.x === d.x && j.y === g.elbow.y), "correspondance blanche au départ du coude");
+  assert.ok(!junctions.some((j) => j.y === g.elbow.y), "pas de rond blanc en plus : la pastille du manager fait la correspondance");
   assertNoOverlap(layout);
   assertLinesAvoidText(layout);
 });
@@ -285,7 +288,7 @@ test("Métro : deux managers sur une même ligne — les coudes ne se croisent p
   const b1 = branch(layout, "mgr:M1");
   const b2 = branch(layout, "mgr:M2");
   assert.ok(b1.elbow.y < b2.elbow.y);
-  assert.ok(b1.x > b2.x, "la bifurcation la plus haute contourne la plus basse par la droite");
+  assert.ok(b1.x < b2.x, "la bifurcation la plus haute contourne la plus basse par la gauche");
   assertNoOverlap(layout);
   assertLinesAvoidText(layout);
 });
@@ -315,6 +318,20 @@ test("Métro : correspondance blanche à chaque départ de branche sur une barre
   assert.ok(js.some((j) => j.x === middle.x && j.y === root.fork.y), "départ en T de la branche du milieu");
   const ends = ["s1", "s3"].map((id) => branch(layout, "team:" + id));
   ends.forEach((e) => assert.ok(!js.some((j) => j.x === e.x && j.y === root.fork.y), "pas de point sur un coude d'extrémité"));
+});
+
+test("Métro : chaque changement de couleur passe par une station", () => {
+  const teams = [
+    team("root", { color: "#D64545" }),
+    ...["s1", "s2", "s3"].map((id) => team(id, { parentTeamId: "root", color: "#2C6BE0" })),
+    team("solo", { parentTeamId: "s2", color: "#1FA971" }),
+  ];
+  const { layout } = metro(teams, []);
+  const js = api.orgMetroJunctions(layout);
+  layout.branches.filter((b) => b.drop).forEach((b) => {
+    const y = b.drop.y0 + (b.drop.curved ? 9 : 0);
+    assert.ok(js.some((j) => j.x === b.drop.x && j.y === y), `aucune station au changement de couleur de ${b.key}`);
+  });
 });
 
 test("Métro : un cycle de managerName (A → B → A) ne boucle jamais et ne perd personne", () => {
@@ -359,26 +376,28 @@ test("Métro : ordre et positions déterministes — mêmes données, même plan
 });
 
 test("Métro : contour compact — une branche profonde mais étroite ne repousse pas sa voisine (#243)", () => {
-  // Équipe « a » : une longue chaîne de managers (profonde, étroite) ; équipe
-  // « b » : une simple ligne. Avec un rectangle englobant, b serait repoussée
-  // au-delà de la plus large rangée de a ; par contour, seules les hauteurs
-  // réellement partagées comptent.
+  // Équipe « b » : une simple ligne, à gauche. Équipe « a » : une longue
+  // chaîne de rattachés, qui s'étend vers la GAUCHE et loin vers le bas. Avec
+  // un rectangle englobant, a serait repoussée au-delà de b à toute hauteur ;
+  // par contour, sa chaîne se glisse sous b, là où b n'occupe plus rien.
   const chain = ["m0", "m1", "m2", "m3", "m4", "m5"];
   const members = [
+    member("Solo", { teamIds: ["b"] }),
     member("m0", { teamIds: ["a"] }),
     ...chain.slice(1).map((n, i) => member(n, { managerName: chain[i] })),
     ...["w1", "w2", "w3", "w4"].map((n) => member(n + " avec un nom assez long pour élargir", { managerName: "m5" })),
-    member("Solo", { teamIds: ["b"] }),
   ];
-  const { layout } = metro([team("a"), team("b")], members);
+  const { layout } = metro([team("b"), team("a")], members);
   const a = branch(layout, "team:a");
   const b = branch(layout, "team:b");
   const rects = api.orgMetroObstacles(layout);
-  const aRight = Math.max(...rects.filter((r) => r.owner === "team:a" || layout.branches.find((x) => x.key === r.owner)?.ancestors.includes("team:a")).map((r) => r.x + r.w));
-  const bLeft = Math.min(...rects.filter((r) => r.owner === "team:b").map((r) => r.x));
-  assert.ok(bLeft < aRight, "b s'est glissée sous le débord de a, au lieu d'être repoussée après tout son rectangle");
-  assert.ok(b.x > a.x);
+  const inA = (r) => r.owner === "team:a" || layout.branches.find((x) => x.key === r.owner)?.ancestors.includes("team:a");
+  const aLeft = Math.min(...rects.filter(inA).map((r) => r.x));
+  const bRight = Math.max(...rects.filter((r) => r.owner === "team:b").map((r) => r.x + r.w));
+  assert.ok(aLeft < bRight, "la chaîne de a s'est glissée sous b, au lieu d'être repoussée après tout son rectangle");
+  assert.ok(b.x < a.x);
   assertNoOverlap(layout);
+  assertLinesAvoidText(layout);
 });
 
 test("Métro : libellés longs — retour à la ligne, jamais de troncature, jamais de chevauchement", () => {
@@ -439,7 +458,7 @@ test("Métro : tracés SVG — tronc vertical, barre horizontale, coudes aux ext
   const { layout } = metro(teams, [member("M", { teamIds: ["p"] })]);
   const p = api.orgMetroBranchPaths(branch(layout, "team:p"));
   assert.match(p.trunk, /^M [\d.]+ [\d.]+ V [\d.]+$/);
-  assert.match(p.fork, /Q .* H .* Q /);
+  assert.match(p.fork, /Q .* H .* Q /, "la barre (couleur parente) tourne aux extrémités");
   const x = api.orgMetroBranchPaths(branch(layout, "team:x"));
   assert.match(x.drop, /^M [\d.-]+ [\d.]+ V [\d.]+$/);
 });
@@ -540,4 +559,27 @@ test("orgRelationLabelPlacement : la légende quitte le milieu du segment si un 
   const blocked = api.orgRelationLabelPlacement(pts, 40, 18, [{ x: 60, y: -10, w: 80, h: 20 }]);
   assert.ok(blocked.x + 20 <= 60 || blocked.x - 20 >= 140, `légende posée sur l'obstacle (${blocked.x})`);
   assert.equal(blocked.y, 0, "toujours sur le tracé");
+});
+
+test("Glisser-déposer : l'ordre choisi réordonne les lignes sœurs et tout le plan se recalcule", () => {
+  const teams = [team("a"), team("b"), team("c"), team("s1", { parentTeamId: "a" }), team("s2", { parentTeamId: "a" })];
+  const members = teams.map((t) => member("M " + t.id, { teamIds: [t.id] }));
+  const order = (layout, keys) => keys.map((k) => branch(layout, k)).sort((x, y) => x.x - y.x).map((x) => x.key);
+  const base = metro(teams, members).layout;
+  assert.deepEqual(order(base, ["team:a", "team:b", "team:c"]), ["team:a", "team:b", "team:c"]);
+  // « c » déposée en tête des lignes principales, « s2 » avant « s1 ».
+  let o = api.orgMetroReorder(null, "hub", ["team:a", "team:b", "team:c"], "team:c", 0);
+  o = api.orgMetroReorder(o, "team:a", ["team:s1", "team:s2"], "team:s2", 0);
+  assert.deepEqual(o, { hub: ["team:c", "team:a", "team:b"], "team:a": ["team:s2", "team:s1"] });
+  const moved = metro(teams, members, { order: o }).layout;
+  assert.deepEqual(order(moved, ["team:a", "team:b", "team:c"]), ["team:c", "team:a", "team:b"]);
+  assert.deepEqual(order(moved, ["team:s1", "team:s2"]), ["team:s2", "team:s1"]);
+  assertNoOverlap(moved);
+  assertLinesAvoidText(moved);
+  // Clés inconnues ignorées, nouvelles lignes gardées à la suite, entrée
+  // invalide = ordre par défaut.
+  const partial = metro(teams, members, { order: { hub: ["team:ghost", "team:b"] } }).layout;
+  assert.deepEqual(order(partial, ["team:a", "team:b", "team:c"]), ["team:b", "team:a", "team:c"]);
+  assert.deepEqual(api.normalizeOrgMetroOrder("n'importe quoi"), {});
+  assert.deepEqual(api.normalizeOrgMetroOrder({ hub: ["x", 3, "x"] }), { hub: ["x"] });
 });
