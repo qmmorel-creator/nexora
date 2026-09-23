@@ -1025,6 +1025,9 @@ if (benchApp) {
     // isolé ne l'aurait jamais reproduit (habitLog manquait dans la signature
     // de DashboardView elle-même, pas dans le widget).
     "habitQuick", "habitHeatmap",
+    // #294 : grille continue + frise horaire — monté dans la vraie
+    // DashboardView comme les autres types qui consomment des tâches.
+    "calendar",
   ].map((type, i) => ({ id: `banc-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }));
   benchWidgets.push(
     { id: "banc-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: seedTasks[0]?.id, layout: { x: 0, y: 96, w: 3, h: 4 } },
