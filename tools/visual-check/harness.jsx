@@ -76,6 +76,20 @@ function AnnotationsHarness() {
     start: "2026-07-15", end: "2026-07-15", progress: 0, milestone: true, assignee: "Quentin", checklist: [],
   };
   const [tasks, setTasks] = useState([...seedWithRisks, calendarTask, earlyMilestone]);
+  /* Scénario « tâches en retard » de la Heat map croisée : les tâches de
+     démonstration ont des dates FIXES, que le calendrier finit par dépasser —
+     elles deviennent toutes en retard et la case à zéro disparaît (#298). Deux
+     tâches à échéance FUTURE, calculée depuis aujourd'hui, garantissent un
+     croisement qui porte des tâches sans qu'aucune soit en retard. */
+  const lateScenarioTasks = useMemo(() => {
+    const dansJours = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return iso(d); };
+    const modele = tasks.find((t) => t.id === "t2") || tasks[0];
+    return [
+      ...tasks,
+      { ...modele, id: "hm-futur-1", title: "Livraison à venir", start: dansJours(35), end: dansJours(40), progress: 0, delayRisks: [], comparison: undefined },
+      { ...modele, id: "hm-futur-2", title: "Réception à venir", start: dansJours(38), end: dansJours(42), progress: 0, delayRisks: [], comparison: undefined },
+    ];
+  }, [tasks]);
   /* Colonne d'étiquettes calée sur son contenu (retour de test). Des titres
      COURTS dans un diagramme LARGE : c'est le cas où les 26 % figés laissaient
      cent cinquante pixels de blanc entre le dernier mot et la piste. Le projet
@@ -395,37 +409,10 @@ function AnnotationsHarness() {
         </div>
       </div>
       <div>
-        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>RAIL DES VUES</h2>
-        {/* Issue #65. Le rail réel vit dans l'application complète, que ce banc
-            ne monte pas ; ce qui a changé est ENTIÈREMENT dans la feuille de
-            style, et c'est elle qu'on éprouve ici, sur le même balisage et les
-            mêmes classes que le rendu réel. */}
-        <nav id="harness-view-rail" className="lp-view-rail" aria-label="Espaces de travail" style={{ height: 320, marginBottom: 18 }}>
-          {[
-            { key: "control", label: "Centre de pilotage", icon: "tabler:affiliate", badge: "" },
-            { key: "projects", label: "Planning Projets", icon: "tabler:route", badge: "4" },
-            { key: "automations", label: "Automatisations", icon: "tabler:automation", badge: "999+" },
-            { key: "notifications", label: "Notifications", icon: "tabler:bell", badge: "12" },
-          ].map((v) => (
-            <button key={v.key} type="button" className={"lp-view-rail-btn" + (v.key === "projects" ? " active" : "")} title={v.label}>
-              <IconGlyph icon={v.icon} size={17} />
-              <span className="lp-view-rail-label">{v.label}</span>
-              {v.badge && <span className={"lp-view-rail-btn-count" + (v.key === "notifications" ? " is-alert" : "")}>{v.badge}</span>}
-            </button>
-          ))}
-          <div className="lp-view-rail-folders" aria-label="Dossiers de projets">
-            <button type="button" className="lp-view-rail-folder" style={{ "--folder-color": "#4F6AF5" }} title="Dossier">
-              <IconGlyph icon="tabler:folder" size={14} />
-              <span className="lp-view-rail-folder-count">3</span>
-            </button>
-          </div>
-        </nav>
-      </div>
-      <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>HEAT MAP MENSUELLE</h2>
-        {/* Le MÊME widget à deux largeurs (#68) : large, les trois mois tiennent
-            sur une ligne ; étroit, ils doivent passer les uns sous les autres
-            plutôt que de déborder derrière une barre de défilement. */}
+        {/* Le MÊME widget à deux largeurs (#68) : les mois se replient dans
+            le volet calendrier (#286 : calendrier | liste | détail) plutôt que
+            de déborder derrière une barre de défilement. */}
         <div id="harness-heatmap-month-large" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 1200, height: 320, marginBottom: 14 }}>
           <WidgetHeatmapMonth tasks={heatmapMonthTasks} ctx={ctx} onOpen={noop} appearance={appearance} />
         </div>
@@ -595,7 +582,7 @@ function AnnotationsHarness() {
             sans qu'aucune soit en retard. Ces cases-là valent 0 — elles ne
             doivent pas se confondre avec les croisements sans aucune tâche. */}
         <div id="harness-heatmap-late" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--surface)", width: 760, height: 260, marginBottom: 18 }}>
-          <WidgetHeatmapGrid widget={{ ...heatmapWidget, heatmapMetric: "late", heatmapColField: "month" }} tasks={tasks} ctx={ctx} onOpen={noop} />
+          <WidgetHeatmapGrid widget={{ ...heatmapWidget, heatmapMetric: "late", heatmapColField: "month" }} tasks={lateScenarioTasks} ctx={ctx} onOpen={noop} />
         </div>
         {heatmapFormOpen && (
           <WidgetFormModal

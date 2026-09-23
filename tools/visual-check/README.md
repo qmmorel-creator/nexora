@@ -114,8 +114,9 @@ Alignement des titres de bloc :
 
 Barre d'outils et sous-grille du Mini-Gantt :
 
-- toutes les commandes d'affichage sont **alignées côte à côte** sur une bande
-  au-dessus de l'axe, et non empilées en colonne ;
+- les commandes d'affichage sont **alignées côte à côte** au-dessus de l'axe, et
+  non empilées en colonne : la barre peut se replier sur deux bandes dans un
+  widget étroit, la première portant l'essentiel des commandes ;
 - sur une échelle de neuf ans, l'axe porte des sous-graduations trimestrielles
   et le diagramme une sous-grille verticale : sans elles, neuf traits et rien
   entre eux.
@@ -231,7 +232,7 @@ avec la mesure « tâches en retard » :
 - une case à zéro porte un chiffre ET une couleur, une case sans tâche n'a ni
   l'un ni l'autre : les deux ne disent pas la même chose ;
 - la grille est complète (autant de cases que lignes × colonnes) ;
-- l'infobulle nomme le croisement, la fiche propose les six axes et les quatre
+- l'infobulle nomme le croisement, la fiche propose les sept axes et les quatre
   mesures, et l'axe choisi est bien enregistré.
 
 ## Pourquoi un dossier séparé
