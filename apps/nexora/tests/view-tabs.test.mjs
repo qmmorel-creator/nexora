@@ -11,12 +11,12 @@ const end = "// === NEXORA:VIEW-TABS:END ===";
 assert.ok(html.includes(start) && html.includes(end), "bloc VIEW-TABS introuvable");
 const code = html.slice(html.indexOf(start) + start.length, html.indexOf(end));
 
-const META = ["dashboard", "projects", "gantt", "heatmap", "timeline", "radar", "today", "cockpit", "weekFlow", "calendar", "table", "quotes"].map((key) => ({ key }));
+const META = ["dashboard", "projects", "gantt", "heatmap", "timeline", "radar", "today", "calendar", "table", "quotes"].map((key) => ({ key }));
 const tabBarViewKeysFor = vm.runInNewContext(`${code}\n;tabBarViewKeysFor`, { ALL_VIEWS_META: META });
 
 test("toutes les vues cochées apparaissent, pas seulement les vues projet", () => {
   const keys = tabBarViewKeysFor(null, {});
-  assert.ok(keys.includes("calendar") && keys.includes("weekFlow") && keys.includes("quotes") && keys.includes("today"));
+  assert.ok(keys.includes("calendar") && keys.includes("quotes") && keys.includes("today"));
   assert.equal(keys.includes("dashboard"), false, "le tableau de bord garde son bouton dédié");
 });
 
@@ -39,10 +39,10 @@ test("la barre d'onglets est branchée sur cette liste", () => {
 });
 
 test("les vues de tâches suivent le projet / dossier sélectionné", () => {
-  for (const view of ["cockpit", "weekFlow", "calendar"]) {
+  for (const view of ["calendar"]) {
     assert.match(html, new RegExp(`view === "${view}" && <[A-Za-z]+View tasks=\\{filteredTasks\\}`), view);
   }
   assert.match(html, /applyWidgetFilter\(boardTasks, \{ projectIds: activeProjectIdsForScope \}, ctx\)/, "Aujourd'hui");
-  assert.match(html, /const PROJECT_SCOPED_VIEW_KEYS = \[\.\.\.PROJECT_TAB_VIEW_KEYS, "today", "cockpit", "weekFlow", "calendar"\];/);
+  assert.match(html, /const PROJECT_SCOPED_VIEW_KEYS = \[\.\.\.PROJECT_TAB_VIEW_KEYS, "today", "calendar"\];/);
   assert.match(html, /cfg\.view \|\| \(PROJECT_SCOPED_VIEW_KEYS\.includes\(view\) \? view : "projects"\)/, "la vue en cours est conservée");
 });
