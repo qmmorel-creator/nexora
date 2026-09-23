@@ -1475,6 +1475,26 @@ try {
       transverse: root.querySelectorAll(".lp-orgmetro-transverse").length,
       independent: root.querySelectorAll(".lp-orgmetro-badge.is-independent").length,
       leadHalos: root.querySelectorAll(".lp-orgmetro-lead-halo").length,
+      relations: root.querySelectorAll(".lp-orgmetro-relation").length,
+      relationLabels: [...root.querySelectorAll(".lp-orgmetro-relation-label")].map((el) => el.textContent),
+      inactiveStations: [...root.querySelectorAll(".lp-orgmetro-station.is-inactive")].map((el) => el.getAttribute("aria-label")),
+      // Nora Vidal a des rattachés : elle reste une station de la ligne
+      // Exploration (et non l'en-tête d'une branche à part).
+      managerOnLine: (() => {
+        const st = [...root.querySelectorAll(".lp-orgmetro-station")].find((el) => (el.getAttribute("aria-label") || "").startsWith("Nora Vidal"));
+        const ines = [...root.querySelectorAll(".lp-orgmetro-station")].find((el) => (el.getAttribute("aria-label") || "").startsWith("Inès Garnier"));
+        if (!st || !ines) return null;
+        const a = st.getBoundingClientRect(), b = ines.getBoundingClientRect();
+        return Math.abs((a.left + a.width / 2) - (b.left + b.width / 2));
+      })(),
+      // Chiffres centrés dans leur pastille (écart des centres, en px écran).
+      countOffsets: [...root.querySelectorAll(".lp-orgmetro-badge")].map((g) => {
+        const bg = g.querySelector(".lp-orgmetro-badge-count-bg");
+        const tx = g.querySelector(".lp-orgmetro-badge-count");
+        if (!bg || !tx) return 0;
+        const a = bg.getBoundingClientRect(), b = tx.getBoundingClientRect();
+        return Math.max(Math.abs((a.left + a.width / 2) - (b.left + b.width / 2)), Math.abs((a.top + a.height / 2) - (b.top + b.height / 2)));
+      }),
       leadStars: root.querySelectorAll(".lp-orgmetro-label .lp-orgmetro-lead-star").length,
       badgeLeads: [...root.querySelectorAll(".lp-orgmetro-badge-sub")].map((el) => el.textContent),
       groups: ["lines", "branches", "correspondences", "stations", "labels"].filter((n) => root.querySelector(".lp-orgmetro-" + n)).length,
@@ -1534,6 +1554,16 @@ try {
   await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Hiérarchique" }).click();
   await page.waitForTimeout(300);
   orgMetro.hierarchyPanels = await page.locator(`${host} .lp-orghier-node-panel`).count();
+  Object.assign(orgMetro, await page.evaluate((sel) => {
+    const root = document.querySelector(sel);
+    return {
+      hierRelations: root.querySelectorAll(".lp-orghier-line-relation").length,
+      hierRelationLabels: [...root.querySelectorAll(".lp-orghier-relation-label")].map((el) => el.textContent),
+      hierJunctions: root.querySelectorAll(".lp-orghier-junction").length,
+      hierInactive: root.querySelectorAll(".lp-orghier-panel-row.is-inactive, .lp-orgchart-card.is-inactive").length,
+    };
+  }, host));
+  await page.locator(`${host}`).screenshot({ path: path.join(dir, "orghier.png") });
   await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Métro" }).click();
   await page.waitForTimeout(300);
   orgMetro.backToMetro = await page.locator(`${host} .lp-orgmetro-svg`).count();
@@ -2585,6 +2615,14 @@ if (!orgMetro.error) {
   expect(orgMetro.hoverOccurrence === 1, `Organigramme Métro : ${orgMetro.hoverOccurrence} liaison(s) entre les occurrences d'une personne multi-équipe au survol, 1 attendue`);
   expect(/Emma Roux/.test(orgMetro.memberModal || ""), `Organigramme Métro : le clic sur une station n'ouvre pas la fiche utilisateur (${orgMetro.memberModal})`);
   expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
+  expect(orgMetro.relations === 3, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 3 attendues`);
+  expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);
+  expect(orgMetro.inactiveStations.length === 1 && /Jules Brun/.test(orgMetro.inactiveStations[0]), `Organigramme Métro : stations inactives ${JSON.stringify(orgMetro.inactiveStations)}, « Jules Brun » attendu`);
+  expect(orgMetro.managerOnLine !== null && orgMetro.managerOnLine < 1, `Organigramme Métro : le manager Nora Vidal n'est pas resté sur la ligne de son équipe (écart ${orgMetro.managerOnLine}px)`);
+  expect(orgMetro.countOffsets.every((d) => d <= 1.5), `Organigramme Métro : chiffre décentré dans sa pastille (${orgMetro.countOffsets.map((d) => d.toFixed(1)).join(", ")} px)`);
+  expect(orgMetro.hierRelations === 3 && orgMetro.hierRelationLabels.length === 2, `Organigramme hiérarchique : ${orgMetro.hierRelations} relation(s), ${orgMetro.hierRelationLabels.length} légende(s) — 3 et 2 attendues`);
+  expect(orgMetro.hierJunctions > 0, "Organigramme hiérarchique : aucun point blanc aux embranchements");
+  expect(orgMetro.hierInactive >= 1, "Organigramme hiérarchique : l'utilisateur inactif n'est pas grisé");
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
   expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);

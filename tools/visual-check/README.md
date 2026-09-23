@@ -251,6 +251,12 @@ chaîne de managers, une personne multi-équipe, un nom long, une personne sans
   responsable présent sur sa ligne, une étoile devant le nom de chaque personne
   qui dirige une équipe (même ailleurs), et le bandeau d'une ligne dont le
   responsable n'y figure pas le nomme (« Resp. … ») ;
+- une personne qui a des rattachés reste une station de sa ligne (même axe que
+  le responsable), seuls ses rattachés bifurquent ; chaque chiffre de compteur
+  est centré dans sa pastille ;
+- relations propres au widget : trois tracés et deux légendes dans le Métro
+  comme dans la vue hiérarchique, qui porte aussi des points blancs aux
+  embranchements ; l'utilisateur inactif est grisé dans les deux vues ;
 - zoom avant, « Ajuster à l'écran », déplacement au glisser, masquage des
   correspondances, mise en évidence au survol ;
 - le clic sur une station ouvre la fiche utilisateur, celui sur un bandeau la

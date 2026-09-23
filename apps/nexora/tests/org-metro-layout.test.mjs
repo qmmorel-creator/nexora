@@ -31,9 +31,10 @@ function block(name) {
 const api = vm.runInThisContext(
   `(function () {\n` +
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
-  `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n` +
+  `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
-  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -241,7 +242,7 @@ test("orgMetroStarPath : étoile fermée à dix sommets", () => {
   assert.ok(d.endsWith("Z"));
 });
 
-test("Métro : un manager et ses subordonnés forment une branche qui part de la ligne de l'équipe", () => {
+test("Métro : un manager reste une station de sa ligne ; seuls ses rattachés bifurquent, depuis SA station", () => {
   const teams = [team("d", { leadName: "Nina" })];
   const members = [
     member("Nina", { teamIds: ["d"] }), member("Léa", { teamIds: ["d"] }), member("Gabriel", { teamIds: ["d"] }),
@@ -250,30 +251,70 @@ test("Métro : un manager et ses subordonnés forment une branche qui part de la
   const { layout } = metro(teams, members);
   const d = branch(layout, "team:d");
   const g = branch(layout, "mgr:Gabriel");
-  assert.deepEqual(d.stations.map((s) => s.name), ["Nina", "Léa"]);
+  assert.deepEqual(d.stations.map((s) => [s.name, s.kind]), [["Nina", "lead"], ["Léa", "member"], ["Gabriel", "manager"]],
+    "le manager garde sa place de station sur la ligne de son équipe");
+  const gabriel = d.stations[2];
+  assert.equal(gabriel.cx, d.x);
   assert.equal(g.kind, "person");
-  assert.equal(g.header.name, "Gabriel");
-  assert.equal(g.header.kind, "manager");
+  assert.equal(g.header, null, "la branche ne porte que les rattachés");
   assert.deepEqual(g.stations.map((s) => s.name), ["Anaïs", "Tom", "Sarah"]);
   assert.deepEqual(g.ancestors, ["team:d"]);
-  assert.equal(g.drop.y0, d.fork.y, "la branche part de la bifurcation du tronc de l'équipe");
-  assert.notEqual(g.x, d.x, "une branche unique part en coude, visible comme bifurcation");
+  assert.equal(stationsOf(layout, "Gabriel").length, 1, "le manager n'est pas dupliqué");
+  // Coude : part de la station du manager, sous son libellé, vers la droite.
+  assert.equal(g.drop, null);
+  assert.equal(g.elbow.fromX, d.x);
+  assert.equal(g.elbow.y0, gabriel.cy);
+  assert.ok(g.elbow.y > gabriel.label.y + gabriel.label.h, "le coude passe sous le libellé du manager");
+  assert.ok(g.x > d.x && g.y > g.elbow.y);
   assert.equal(g.color, d.color, "la branche garde la couleur de sa ligne");
   assert.ok(g.lineW < d.lineW);
+  const junctions = api.orgMetroJunctions(layout);
+  assert.ok(junctions.some((j) => j.x === d.x && j.y === g.elbow.y), "correspondance blanche au départ du coude");
   assertNoOverlap(layout);
+  assertLinesAvoidText(layout);
 });
 
-test("Métro : manager → manager → subordonnés, récursivement", () => {
+test("Métro : deux managers sur une même ligne — les coudes ne se croisent pas", () => {
+  const members = [
+    member("M1", { teamIds: ["t"] }), member("M2", { teamIds: ["t"] }), member("Simple", { teamIds: ["t"] }),
+    member("A", { managerName: "M1" }), member("B", { managerName: "M1" }), member("C", { managerName: "M2" }),
+  ];
+  const { layout } = metro([team("t")], members);
+  const t = branch(layout, "team:t");
+  assert.deepEqual(t.stations.map((s) => s.name), ["Simple", "M1", "M2"], "stations simples d'abord, managers ensuite");
+  const b1 = branch(layout, "mgr:M1");
+  const b2 = branch(layout, "mgr:M2");
+  assert.ok(b1.elbow.y < b2.elbow.y);
+  assert.ok(b1.x > b2.x, "la bifurcation la plus haute contourne la plus basse par la droite");
+  assertNoOverlap(layout);
+  assertLinesAvoidText(layout);
+});
+
+test("Métro : manager → manager → rattachés, récursivement", () => {
   const members = [
     member("A", { teamIds: ["t"] }), member("B", { managerName: "A" }), member("C", { managerName: "B" }),
     member("D", { managerName: "C" }), member("E", { managerName: "C" }), member("F", { managerName: "B" }),
   ];
   const { layout } = metro([team("t")], members);
+  assert.deepEqual(branch(layout, "team:t").stations.map((s) => s.name), ["A"]);
+  assert.deepEqual(branch(layout, "mgr:A").stations.map((s) => s.name), ["B"]);
+  assert.deepEqual(branch(layout, "mgr:B").stations.map((s) => s.name), ["F", "C"]);
   assert.deepEqual(branch(layout, "mgr:C").ancestors, ["team:t", "mgr:A", "mgr:B"]);
   assert.deepEqual(branch(layout, "mgr:C").stations.map((s) => s.name), ["D", "E"]);
-  assert.deepEqual(branch(layout, "mgr:B").stations.map((s) => s.name), ["F"]);
   assertNoOverlap(layout);
   assertLinesAvoidText(layout);
+});
+
+test("Métro : correspondance blanche à chaque départ de branche sur une barre (T intermédiaires)", () => {
+  const ids = ["s1", "s2", "s3"];
+  const { layout } = metro([team("root"), ...ids.map((id) => team(id, { parentTeamId: "root" }))], []);
+  const root = branch(layout, "team:root");
+  const js = api.orgMetroJunctions(layout);
+  assert.ok(js.some((j) => j.x === root.fork.fromX && j.y === root.fork.y), "point de départ commun");
+  const middle = branch(layout, "team:s2");
+  assert.ok(js.some((j) => j.x === middle.x && j.y === root.fork.y), "départ en T de la branche du milieu");
+  const ends = ["s1", "s3"].map((id) => branch(layout, "team:" + id));
+  ends.forEach((e) => assert.ok(!js.some((j) => j.x === e.x && j.y === root.fork.y), "pas de point sur un coude d'extrémité"));
 });
 
 test("Métro : un cycle de managerName (A → B → A) ne boucle jamais et ne perd personne", () => {
@@ -413,4 +454,90 @@ test("orgMetroWrap : coupe au mot, puis au caractère pour un mot trop long, san
 test("buildOrgMetroGraph : aucune racine → aucun plan", () => {
   assert.equal(api.buildOrgMetroGraph([], []), null);
   assert.deepEqual(api.layoutOrgMetro(null).branches, []);
+});
+
+// --- Relations propres au widget, statut inactif, compteur ---------------------
+
+test("Relations : normalisation — extrémités valides, jamais la même, légende bornée, identifiants uniques", () => {
+  const rels = api.normalizeOrgChartRelations([
+    { id: "r1", from: "team:a", to: "person:Alice", label: "  Pilote  " },
+    { id: "r2", from: "person:Alice", to: "person:Alice" },
+    { id: "r3", from: "", to: "team:b" },
+    { id: "r1", from: "team:a", to: "team:b" },
+    { id: "r4", from: "équipe:a", to: "team:b" },
+    { id: "r5", from: "person:Bob", to: "team:b", label: "x".repeat(200) },
+    null,
+  ]);
+  assert.deepEqual(rels.map((r) => r.id), ["r1", "r5"]);
+  assert.equal(rels[0].label, "Pilote");
+  assert.equal(rels[1].label.length, 80);
+  assert.deepEqual(api.orgRelationRefParse("person:Jean-Pierre Martin"), { type: "person", id: "Jean-Pierre Martin" });
+  assert.equal(api.normalizeOrgChartRelations(undefined).length, 0);
+});
+
+test("Relations : options de la fiche — équipes puis personnes, triées", () => {
+  const opts = api.orgChartRelationOptions([team("b", { name: "Bêta" }), team("a", { name: "Alpha" })], [member("Zoé"), member("Adam")]);
+  assert.deepEqual(opts.map((o) => o.id), ["team:a", "team:b", "person:Adam", "person:Zoé"]);
+  assert.equal(opts[0].label, "Équipe · Alpha");
+});
+
+test("Relations : une extrémité absente du rendu masque le lien sans l'effacer", () => {
+  const rels = [{ id: "r1", from: "team:a", to: "person:Alice" }, { id: "r2", from: "team:gone", to: "person:Alice" }];
+  const visible = api.orgChartVisibleRelations(rels, (id) => id === "a", (n) => n === "Alice");
+  assert.deepEqual(visible.map((r) => r.id), ["r1"]);
+});
+
+test("Relations dans le Métro : équipe → équipe, équipe → personne, personne → personne, tracés orthogonaux avec légende", () => {
+  const teams = [team("a", { name: "Alpha", leadName: "A1" }), team("b", { name: "Bêta" }), team("c", { name: "Gamma", parentTeamId: "a" })];
+  const members = [member("A1", { teamIds: ["a"] }), member("B1", { teamIds: ["b"] }), member("C1", { teamIds: ["c"] }), member("C2", { teamIds: ["c", "b"] })];
+  const { layout } = metro(teams, members);
+  const routes = api.orgMetroRelationRoutes(layout, [
+    { id: "t2t", from: "team:a", to: "team:b", label: "Pilotage" },
+    { id: "t2p", from: "team:b", to: "person:C1", label: "Appui" },
+    { id: "p2p", from: "person:A1", to: "person:C2" },
+    { id: "ghost", from: "person:Personne", to: "team:a" },
+  ]);
+  assert.deepEqual(routes.map((r) => r.id), ["t2t", "t2p", "p2p"]);
+  routes.forEach((r) => {
+    for (let i = 1; i < r.points.length; i++) {
+      const [x1, y1] = r.points[i - 1];
+      const [x2, y2] = r.points[i];
+      assert.ok(x1 === x2 || y1 === y2, `segment oblique dans ${r.id}`);
+    }
+  });
+  assert.ok(routes[0].labelAt && routes[1].labelAt);
+  assert.equal(routes[2].labelAt, null, "pas de légende : pas de pastille");
+  // Une personne multi-équipe est accrochée à sa station canonique.
+  const canonical = layout.stations.find((st) => st.name === "C2" && !st.duplicate);
+  const end = routes[2].points[routes[2].points.length - 1];
+  assert.ok(end[1] >= canonical.cy - 20 && end[1] <= canonical.cy + 20);
+});
+
+test("orgRelationLabelAnchor : milieu du plus long segment", () => {
+  assert.deepEqual(api.orgRelationLabelAnchor([[0, 0], [10, 0], [10, 100], [20, 100]]), { x: 10, y: 50 });
+});
+
+test("Utilisateur inactif : reste dans le plan, à sa place, marqué inactif", () => {
+  assert.equal(api.memberIsInactive({ inactive: true }), true);
+  assert.equal(api.memberIsInactive({ inactive: "oui" }), false);
+  assert.equal(api.memberIsInactive(null), false);
+  const { layout } = metro([team("a", { leadName: "Chef" })], [member("Chef", { teamIds: ["a"], inactive: true }), member("Bob", { teamIds: ["a"] })]);
+  const a = branch(layout, "team:a");
+  assert.deepEqual(a.stations.map((st) => [st.name, st.inactive]), [["Chef", true], ["Bob", false]]);
+  assert.equal(a.stations[0].kind, "lead", "un responsable inactif reste le responsable");
+});
+
+test("Compteur de bandeau : pastille ronde pour un chiffre, plus large au-delà", () => {
+  const small = metro([team("a")], [member("X", { teamIds: ["a"] })]).layout;
+  const big = metro([team("a")], Array.from({ length: 12 }, (_, i) => member("M" + i, { teamIds: ["a"] }))).layout;
+  assert.equal(branch(small, "team:a").badge.countW, 18);
+  assert.ok(branch(big, "team:a").badge.countW > 18);
+});
+
+test("orgRelationLabelPlacement : la légende quitte le milieu du segment si un texte l'occupe", () => {
+  const pts = [[0, 0], [200, 0]];
+  assert.deepEqual(api.orgRelationLabelPlacement(pts, 40, 18, []), { x: 100, y: 0 });
+  const blocked = api.orgRelationLabelPlacement(pts, 40, 18, [{ x: 60, y: -10, w: 80, h: 20 }]);
+  assert.ok(blocked.x + 20 <= 60 || blocked.x - 20 >= 140, `légende posée sur l'obstacle (${blocked.x})`);
+  assert.equal(blocked.y, 0, "toujours sur le tracé");
 });
