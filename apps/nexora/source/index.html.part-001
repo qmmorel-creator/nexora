@@ -10630,19 +10630,28 @@ export default function LePlan({ currentUser, onSignOut }) {
     const id = setTimeout(() => setBoardSearchApplied(boardSearch), 120);
     return () => clearTimeout(id);
   }, [boardSearch]);
+  // Projets sélectionnés dans la barre latérale (projet ou dossier), lus ici
+  // pour les vues qui en dépendent avant la déclaration d'activeProjectIds.
+  const activeProjectIdsForScope = useMemo(() => getProjectFilterIds(filters), [filters]);
   const boardTasks = useMemo(
     () => filterTasksByText(metaFilteredTasks, boardSearchApplied),
     [metaFilteredTasks, boardSearchApplied]
   );
   const boardSearchActive = !!boardSearchApplied.trim();
 
+  // Aujourd'hui suit le projet / dossier sélectionné dans la barre latérale
+  // (#304), avec le même moteur que les widgets (projet principal OU second).
+  const todayScopedTasks = useMemo(
+    () => (activeProjectIdsForScope.length ? applyWidgetFilter(boardTasks, { projectIds: activeProjectIdsForScope }, ctx) : boardTasks),
+    [boardTasks, activeProjectIdsForScope, ctx]
+  );
   const todayPresentationTasks = useMemo(() => {
     const rank = { action:0, activity:1, milestone:2 };
-    return [...boardTasks].sort((a,b) => {
+    return [...todayScopedTasks].sort((a,b) => {
       const ta = getTaskType(a), tb = getTaskType(b);
       return (rank[ta] ?? 9) - (rank[tb] ?? 9) || (a.end || "").localeCompare(b.end || "");
     });
-  }, [boardTasks]);
+  }, [todayScopedTasks]);
 
   const filteredTasks = useMemo(() => {
     const base = metaFilteredTasks.filter((t) => matchTaskFilters(t, filters, ctx));
@@ -11449,7 +11458,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     const cfg = project
       ? mergeProjectNavigationDefaults(project, folder, projectDefaultView)
       : { ...(folder?.navigationDefaults || {}), view: folder?.navigationDefaults?.view || normalizeProjectDefaultView(projectDefaultView) };
-    const targetView = cfg.view || (PROJECT_TAB_VIEW_KEYS.includes(view) ? view : "projects");
+    const targetView = cfg.view || (PROJECT_SCOPED_VIEW_KEYS.includes(view) ? view : "projects");
 
     setFilters((current)=>{
       let base=current;
@@ -12334,9 +12343,9 @@ export default function LePlan({ currentUser, onSignOut }) {
             proObligations={proObligations} setProObligations={setProObligations}
             toolbarSlot={viewToolbarSlot}
           />}
-          {view === "cockpit" && <CockpitView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} onOpenWeek={() => setView("weekFlow")} />}
-          {view === "weekFlow" && <WeekFlowView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
-          {view === "calendar" && <CalendarView tasks={metaFilteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "cockpit" && <CockpitView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} onOpenWeek={() => setView("weekFlow")} />}
+          {view === "weekFlow" && <WeekFlowView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
+          {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
           {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} financeProQuotes={quotes} financeProBillingSchedule={proBillingSchedule} financeProPayments={proPayments} financeProMissions={proMissions} financeProClients={quoteClients} dashboardName={activeDashboard?.name} dashboardProjectFilter={activeDashboard?.projectFilter || []} onUpdateDashboardProjectFilter={(ids) => setDashboardProjectFilter(activeDashboard.id, ids)} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} setTeams={setTeams} setTeamFolders={setTeamFolders} habitLog={habitLog} setHabitLog={setHabitLog} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("meta"); setSettingsOpen(true); }} onOpenHabitThemes={() => { setSettingsTab("habitThemes"); setSettingsOpen(true); }} onOpenTeamsSettings={() => { setSettingsTab("peopleTeams"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}

@@ -37,3 +37,12 @@ test("la barre d'onglets est branchée sur cette liste", () => {
   assert.match(html, /\{tabBarViewKeys\.map\(\(k\) => \{/);
   assert.doesNotMatch(html, /PROJECT_TAB_VIEW_KEYS\.filter\(\(k\) => enabledViews\[k\] !== false\)\.map/);
 });
+
+test("les vues de tâches suivent le projet / dossier sélectionné", () => {
+  for (const view of ["cockpit", "weekFlow", "calendar"]) {
+    assert.match(html, new RegExp(`view === "${view}" && <[A-Za-z]+View tasks=\\{filteredTasks\\}`), view);
+  }
+  assert.match(html, /applyWidgetFilter\(boardTasks, \{ projectIds: activeProjectIdsForScope \}, ctx\)/, "Aujourd'hui");
+  assert.match(html, /const PROJECT_SCOPED_VIEW_KEYS = \[\.\.\.PROJECT_TAB_VIEW_KEYS, "today", "cockpit", "weekFlow", "calendar"\];/);
+  assert.match(html, /cfg\.view \|\| \(PROJECT_SCOPED_VIEW_KEYS\.includes\(view\) \? view : "projects"\)/, "la vue en cours est conservée");
+});
