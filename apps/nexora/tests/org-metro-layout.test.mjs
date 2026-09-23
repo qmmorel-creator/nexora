@@ -34,7 +34,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -224,14 +224,19 @@ test("Métro : une personne qui dirige une équipe garde son étoile là où ell
   assert.equal(occurrences.find((s) => s.branchKey === "team:b").kind, "member");
 });
 
-test("Métro : un responsable qui n'est pas sur la ligne est nommé dans son bandeau", () => {
-  const teams = [team("a", { name: "Alpha", leadName: "Chef" }), team("b", { name: "Bêta" })];
+test("Métro : le responsable est TOUJOURS la première station sous le bandeau, même s'il n'est pas membre de la ligne", () => {
+  const teams = [team("a", { name: "Alpha", leadName: "Chef" }), team("b", { name: "Bêta" }), team("c", { name: "Gamma", leadName: "Absent" })];
   const { layout } = metro(teams, [member("Chef", { teamIds: ["b"] }), member("X", { teamIds: ["a"] })]);
   const a = branch(layout, "team:a");
-  assert.equal(a.leadOnLine, false);
-  assert.equal(a.badge.subtitle, "Resp. Chef");
-  assert.equal(branch(layout, "team:b").badge.subtitle, "");
-  assert.ok(a.stations.every((s) => s.kind !== "lead"));
+  assert.equal(a.badge.subtitle, "", "plus de rappel dans le bandeau : une seule règle");
+  assert.deepEqual(a.stations.map((st) => [st.name, st.kind]), [["Chef", "lead"], ["X", "member"]]);
+  assert.ok(a.stations[0].leadRef && a.stations[0].duplicate, "occurrence de plus, la station d'origine reste dans Bêta");
+  assert.equal(stationsOf(layout, "Chef").length, 2);
+  assert.equal(a.badge.count, "1", "le responsable venu d'ailleurs ne compte pas dans l'effectif");
+  // Responsable absent de l'annuaire : station quand même, sans fiche à ouvrir.
+  const c = branch(layout, "team:c");
+  assert.equal(c.stations[0].name, "Absent");
+  assert.equal(c.stations[0].member, null);
   assertNoOverlap(layout);
   assertLinesAvoidText(layout);
 });
@@ -582,4 +587,35 @@ test("Glisser-déposer : l'ordre choisi réordonne les lignes sœurs et tout le 
   assert.deepEqual(order(partial, ["team:a", "team:b", "team:c"]), ["team:b", "team:a", "team:c"]);
   assert.deepEqual(api.normalizeOrgMetroOrder("n'importe quoi"), {});
   assert.deepEqual(api.normalizeOrgMetroOrder({ hub: ["x", 3, "x"] }), { hub: ["x"] });
+});
+
+test("Déplacement libre : une ligne déplacée sur la grille emmène sa sous-arborescence, les raccords suivent", () => {
+  const teams = [team("root"), team("a", { parentTeamId: "root" }), team("b", { parentTeamId: "root" }), team("a1", { parentTeamId: "a" })];
+  const members = teams.map((t) => member("M " + t.id, { teamIds: [t.id] }));
+  const base = metro(teams, members).layout;
+  const moved = api.orgMetroApplyOffsets(base, { "team:a": { dx: 83, dy: 41 } });
+  const shift = (key) => {
+    const x0 = branch(base, key), x1 = branch(moved, key);
+    const r0 = branch(base, "team:root"), r1 = branch(moved, "team:root");
+    return [x1.x - r1.x - (x0.x - r0.x), x1.y - r1.y - (x0.y - r0.y)];
+  };
+  assert.deepEqual(shift("team:a"), [80, 40], "magnétisé sur la grille de 20 px");
+  assert.deepEqual(shift("team:a1"), [80, 40], "la sous-équipe suit sa ligne");
+  assert.deepEqual(shift("team:b"), [0, 0], "les autres lignes ne bougent pas");
+  const a = branch(moved, "team:a");
+  const root = branch(moved, "team:root");
+  assert.equal(a.drop.x, a.x);
+  assert.equal(a.drop.y1, a.y, "le raccord redescend jusqu'au bandeau déplacé");
+  assert.equal(a.drop.y0, root.fork.y);
+  assert.ok(root.fork.minX <= a.x && a.x <= root.fork.maxX, "la barre parente s'étire jusqu'à la nouvelle place");
+  a.stations.forEach((st) => assert.equal(st.cx, a.x));
+  // Jamais au-dessus de la barre dont la ligne part.
+  const up = api.orgMetroApplyOffsets(base, { "team:a": { dx: 0, dy: -400 } });
+  assert.ok(branch(up, "team:a").y > branch(up, "team:root").fork.y);
+  // Rien dans le cadre ne passe en coordonnées négatives, et sans décalage
+  // le plan est inchangé.
+  const left = api.orgMetroApplyOffsets(base, { "team:a": { dx: -2000, dy: 0 } });
+  assert.ok(Math.min(...api.orgMetroObstacles(left).map((r) => r.x)) >= 0);
+  assert.equal(api.orgMetroApplyOffsets(base, {}), base);
+  assert.deepEqual(api.normalizeOrgMetroOffsets({ "team:a": { dx: 9, dy: 31 }, bad: null, z: { dx: 0, dy: 0 } }), { "team:a": { dx: 0, dy: 40 } });
 });

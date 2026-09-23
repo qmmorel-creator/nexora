@@ -9875,6 +9875,17 @@ function buildOrgMetroGraph(roots, teams, opts) {
     if (lead) {
       stations.push(stationOf(lead, "lead", depth, key));
       people.push(...lead.children);
+    } else if (node.team && node.team.leadName) {
+      // Cohérence (retour de test) : le responsable est TOUJOURS la première
+      // station de sa ligne, sous le bandeau — même s'il n'en est pas membre
+      // (rattaché ailleurs, ou hors de l'annuaire). Il y figure comme une
+      // occurrence de plus (ses rattachés restent à sa place d'origine) et ne
+      // compte pas dans l'effectif de l'équipe.
+      const leadMember = node.leadMember || null;
+      const st = stationOf({ member: leadMember || { id: "", name: node.team.leadName }, roleTeamId: node.team.id, duplicate: true, children: [] }, "lead", depth, key);
+      st.leadRef = true;
+      if (!leadMember) st.member = null;
+      stations.push(st);
     }
     node.children.forEach((c) => {
       if (c === lead) return;
@@ -9890,7 +9901,7 @@ function buildOrgMetroGraph(roots, teams, opts) {
       // (responsable rattaché ailleurs, ou hors de l'annuaire), le bandeau
       // le nomme : on voit toujours qui dirige la ligne.
       leadName: node.team ? node.team.leadName : "",
-      leadOnLine: Boolean(lead),
+      leadOnLine: Boolean(node.team && node.team.leadName),
       header: null,
       stations,
       sides,
@@ -9913,7 +9924,7 @@ function buildOrgMetroGraph(roots, teams, opts) {
 // chaque occurrence comptée dans l'équipe où elle apparaît — comme le compteur
 // du panneau hiérarchique (orgHierPersonCount).
 function orgMetroPersonCount(branch) {
-  let n = branch.stations.length;
+  let n = branch.stations.filter((st) => !st.leadRef).length;
   (branch.sides || []).forEach((sd) => { n += orgMetroPersonCount(sd.branch); });
   branch.children.forEach((c) => { n += orgMetroPersonCount(c); });
   return n;
@@ -9987,7 +9998,9 @@ function orgMetroMeasureBadge(branch) {
   const count = branch.kind === "team" ? String(branch.personCount || 0) : "";
   // Pastille du compteur : un rond pour un chiffre, une gélule au-delà.
   const countW = count ? Math.max(ORGMETRO_COUNT_H, count.length * ORGMETRO_COUNT_CHAR_W + 8) : 0;
-  const subtitle = branch.kind === "team" && branch.leadName && !branch.leadOnLine ? "Resp. " + branch.leadName : "";
+  // Le responsable a toujours sa station sous le bandeau : plus de rappel
+  // dans le bandeau lui-même.
+  const subtitle = "";
   const subW = subtitle ? ORGMETRO_STAR_W + subtitle.length * ORGMETRO_BADGE_SUB_CHAR_W : 0;
   const w = Math.ceil(Math.max(textW, subW) + spec.padX * 2 + (countW ? countW + 8 : 0));
   const h = spec.h + Math.max(0, lines.length - 1) * spec.lineH + (subtitle ? ORGMETRO_BADGE_SUB_H : 0);
@@ -10115,7 +10128,7 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
   const abs = (s, isHeader) => ({
     key: s.station.key, name: s.station.name, member: s.station.member, kind: s.station.kind, level: s.station.level,
     duplicate: s.station.duplicate, role: s.station.role, roleIsFallback: s.station.roleIsFallback, teamId: s.station.teamId,
-    leads: s.station.leads || [], starW: s.starW, inactive: Boolean(s.station.inactive),
+    leads: s.station.leads || [], starW: s.starW, inactive: Boolean(s.station.inactive), leadRef: Boolean(s.station.leadRef),
     branchKey: b.key, header: isHeader, color: b.color,
     cx: x, cy: y + s.cy, r: s.r, stroke: s.stroke, half: s.half, pill: Boolean(s.pill),
     nameLines: s.nameLines, roleLines: s.roleLines,
@@ -10375,6 +10388,111 @@ function orgMetroJunctions(layout) {
       if (!sameAsFork) out.push({ key: "t:" + b.key, x: b.drop.x, y, branchKey: parent ? parent.key : b.key, color: parent ? parent.color : b.color, lineW: parent ? parent.lineW : b.lineW, kind: parent ? parent.kind : b.kind });
     }
   });
+  return out;
+}
+// --- Déplacement libre sur la grille (retour de test) ----------------------------
+// Le plan calculé reste la disposition PAR DÉFAUT ; chaque ligne d'équipe peut
+// ensuite être déplacée où l'on veut, par pas de ORGMETRO_GRID : le décalage
+// { dx, dy } est enregistré sur le widget (widget.orgMetroOffsets, par clé de
+// ligne) et s'applique à la ligne ET à tout ce qui en descend. Les raccords
+// suivent : la barre de la ligne parente s'étire jusqu'à la nouvelle place,
+// le raccord redescend vers le bandeau déplacé. Une ligne ne remonte jamais
+// au-dessus de la barre dont elle part (le raccord garde un sens).
+const ORGMETRO_GRID = 20;
+function orgMetroSnap(v) {
+  return Math.round(v / ORGMETRO_GRID) * ORGMETRO_GRID;
+}
+function normalizeOrgMetroOffsets(offsets) {
+  const out = {};
+  if (!offsets || typeof offsets !== "object" || Array.isArray(offsets)) return out;
+  Object.keys(offsets).forEach((k) => {
+    const o = offsets[k];
+    const dx = o && Number.isFinite(Number(o.dx)) ? orgMetroSnap(Number(o.dx)) : 0;
+    const dy = o && Number.isFinite(Number(o.dy)) ? orgMetroSnap(Number(o.dy)) : 0;
+    if (dx || dy) out[k] = { dx, dy };
+  });
+  return out;
+}
+function orgMetroApplyOffsets(layout, offsets) {
+  const offs = normalizeOrgMetroOffsets(offsets);
+  if (!layout || !Object.keys(offs).length) return layout;
+  const byKey = new Map(layout.branches.map((b) => [b.key, b]));
+  const minGap = ORGMETRO_CORNER * 2 + 4;
+  // Décalage cumulé (ancêtres compris), une ligne à la fois de haut en bas :
+  // la contrainte « jamais au-dessus de sa barre » se calcule sur la position
+  // déjà décalée de la ligne parente.
+  const total = new Map();
+  const branches = layout.branches.map((b) => {
+    const parentKey = b.ancestors[b.ancestors.length - 1];
+    const inherited = parentKey && total.has(parentKey) ? total.get(parentKey) : { dx: 0, dy: 0 };
+    const own = offs[b.key] || { dx: 0, dy: 0 };
+    let dy = inherited.dy + own.dy;
+    const parent = parentKey ? byKey.get(parentKey) : null;
+    if (b.drop && parent && parent.fork) {
+      const barY = parent.fork.y + inherited.dy;
+      if (b.y + dy < barY + minGap) dy = barY + minGap - b.y;
+    }
+    const t = { dx: inherited.dx + own.dx, dy };
+    total.set(b.key, t);
+    const X = (v) => v + t.dx, Y = (v) => v + t.dy;
+    return {
+      ...b,
+      x: X(b.x), y: Y(b.y),
+      badge: b.badge ? { ...b.badge, x: X(b.badge.x), y: Y(b.badge.y) } : null,
+      stations: b.stations.map((st) => ({ ...st, cx: X(st.cx), cy: Y(st.cy), label: { ...st.label, x: X(st.label.x), y: Y(st.label.y) } })),
+      trunk: b.trunk ? { x: X(b.trunk.x), y0: Y(b.trunk.y0), y1: Y(b.trunk.y1) } : null,
+      fork: b.fork ? { ...b.fork, y: Y(b.fork.y), fromX: X(b.fork.fromX) } : null,
+      elbow: b.elbow ? (() => {
+        const pt = total.get(parentKey) || { dx: 0, dy: 0 };
+        return { ...b.elbow, fromX: b.elbow.fromX + pt.dx, y0: b.elbow.y0 + pt.dy, y: b.elbow.y + pt.dy, x: X(b.elbow.x), y1: Y(b.elbow.y1) };
+      })() : null,
+      drop: b.drop ? { ...b.drop } : null,
+    };
+  });
+  const moved = new Map(branches.map((b) => [b.key, b]));
+  // Barres et raccords recalculés sur les positions finales.
+  branches.forEach((b) => {
+    if (!b.fork) return;
+    const kids = branches.filter((c) => c.drop && c.ancestors[c.ancestors.length - 1] === b.key);
+    const xs = kids.map((c) => c.x);
+    b.fork = { ...b.fork, childXs: xs, minX: Math.min(b.fork.fromX, ...xs), maxX: Math.max(b.fork.fromX, ...xs) };
+  });
+  branches.forEach((b) => {
+    if (!b.drop) return;
+    const p = moved.get(b.ancestors[b.ancestors.length - 1]);
+    const f = p && p.fork;
+    if (!f) return;
+    b.drop = {
+      ...b.drop, x: b.x, y0: f.y, y1: b.y, fromX: f.fromX,
+      curved: b.x !== f.fromX && (b.x === f.minX || b.x === f.maxX) && f.maxX - f.minX > 0.5,
+    };
+  });
+  // Emprise du plan : tout est ramené dans le cadre (marge ORGMETRO_PAD).
+  const out = { ...layout, branches, stations: [] };
+  branches.forEach((b) => b.stations.forEach((st) => out.stations.push(st)));
+  const rects = orgMetroObstacles(out);
+  branches.forEach((b) => {
+    if (b.fork) rects.push({ x: b.fork.minX, y: b.fork.y, w: b.fork.maxX - b.fork.minX, h: 1 });
+    if (b.trunk) rects.push({ x: b.trunk.x, y: b.trunk.y0, w: 1, h: b.trunk.y1 - b.trunk.y0 });
+    if (b.elbow) rects.push({ x: Math.min(b.elbow.x, b.elbow.fromX), y: b.elbow.y, w: Math.abs(b.elbow.x - b.elbow.fromX), h: b.elbow.y1 - b.elbow.y });
+  });
+  const minX = Math.min(...rects.map((r) => r.x)), minY = Math.min(...rects.map((r) => r.y));
+  const maxX = Math.max(...rects.map((r) => r.x + r.w)), maxY = Math.max(...rects.map((r) => r.y + r.h));
+  const sx = ORGMETRO_PAD - minX, sy = ORGMETRO_PAD - minY;
+  if (Math.abs(sx) > 0.01 || Math.abs(sy) > 0.01) {
+    const shiftAll = (b) => {
+      b.x += sx; b.y += sy;
+      if (b.badge) { b.badge.x += sx; b.badge.y += sy; }
+      b.stations.forEach((st) => { st.cx += sx; st.cy += sy; st.label.x += sx; st.label.y += sy; });
+      if (b.trunk) { b.trunk.x += sx; b.trunk.y0 += sy; b.trunk.y1 += sy; }
+      if (b.fork) b.fork = { ...b.fork, y: b.fork.y + sy, fromX: b.fork.fromX + sx, minX: b.fork.minX + sx, maxX: b.fork.maxX + sx, childXs: b.fork.childXs.map((x) => x + sx) };
+      if (b.elbow) b.elbow = { ...b.elbow, fromX: b.elbow.fromX + sx, y0: b.elbow.y0 + sy, y: b.elbow.y + sy, x: b.elbow.x + sx, y1: b.elbow.y1 + sy };
+      if (b.drop) b.drop = { ...b.drop, x: b.drop.x + sx, y0: b.drop.y0 + sy, y1: b.drop.y1 + sy, fromX: b.drop.fromX + sx };
+    };
+    branches.forEach(shiftAll);
+  }
+  out.width = Math.ceil(maxX - minX + ORGMETRO_PAD * 2);
+  out.height = Math.ceil(maxY - minY + ORGMETRO_PAD * 2);
   return out;
 }
 // Étoile à cinq branches (repère du responsable), centrée en (cx, cy).
@@ -10823,12 +10941,14 @@ function useOrgMetroViewport(contentW, contentH) {
   return { ref, size, view, fit, recenter, reset, zoomAt, setManual };
 }
 
-function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, onChangeOrder }) {
+function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, onResetLayout }) {
   const roots = useMemo(() => orgChartVisibleRoots(teams, members, showUnassigned), [teams, members, showUnassigned]);
   // Ordre des lignes choisi par glisser-déposer (widget.orgMetroOrder) : le
   // plan entier est recalculé, rien n'est déplacé « à la main ».
   const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order }), [roots, teams, rootLabel, order]);
-  const layout = useMemo(() => layoutOrgMetro(graph), [graph]);
+  // Disposition par défaut, puis déplacements libres sur la grille
+  // (widget.orgMetroOffsets) : ligne et sous-arborescence déplacées ensemble.
+  const layout = useMemo(() => orgMetroApplyOffsets(layoutOrgMetro(graph), offsets), [graph, offsets]);
   const links = useMemo(() => transverseTeamLinks(teams), [teams]);
   const routes = useMemo(() => orgMetroTransverseRoutes(layout, links), [layout, links]);
   // Relations propres au widget (widget.orgChartRelations).
@@ -10850,32 +10970,10 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   const pointersRef = useRef(new Map());
   const gestureRef = useRef(null);
   const draggedRef = useRef(false);
-  // Glisser-déposer d'un bandeau d'équipe : { key, dx, dy } en unités du plan.
+  // Déplacement d'une ligne d'équipe : { key, dx, dy } en unités du plan,
+  // déjà magnétisés sur la grille.
   const [teamDrag, setTeamDrag] = useState(null);
   const branchByKey = useMemo(() => new Map(layout.branches.map((b) => [b.key, b])), [layout]);
-  // Lignes sœurs d'une ligne d'équipe (même ligne parente), de gauche à droite.
-  const teamSiblings = (b) => {
-    const parentKey = b.ancestors[b.ancestors.length - 1];
-    if (!parentKey) return { parentKey: null, list: [] };
-    const list = layout.branches
-      .filter((x) => x.kind === "team" && x.ancestors.length === b.ancestors.length && x.ancestors[x.ancestors.length - 1] === parentKey)
-      .sort((a, c) => a.x - c.x);
-    return { parentKey, list };
-  };
-  const dropTarget = (drag) => {
-    const b = drag && branchByKey.get(drag.key);
-    if (!b) return null;
-    const { parentKey, list } = teamSiblings(b);
-    if (!parentKey || list.length < 2) return null;
-    const dropX = b.x + drag.dx;
-    const others = list.filter((x) => x.key !== b.key);
-    const index = others.filter((x) => x.x < dropX).length;
-    // Repère d'insertion : entre les deux voisines de la place visée.
-    const left = others[index - 1], right = others[index];
-    const markerX = left && right ? (left.badge.x + left.badge.w + right.badge.x) / 2
-      : left ? left.badge.x + left.badge.w + 12 : right.badge.x - 12;
-    return { parentKey, keys: list.map((x) => x.key), index, markerX, y: b.y, h: b.badge ? b.badge.h : 30 };
-  };
 
   const related = useMemo(() => {
     if (!focus) return null;
@@ -10908,6 +11006,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   const openItem = (item) => {
     if (!item) return;
     if (item.type === "team") { if (onEditTeam) onEditTeam(item.team); return; }
+    if (!item.member) return; // responsable hors de l'annuaire : aucune fiche
     if (onEditMember) onEditMember(item.member);
     else if (onFilterPerson) onFilterPerson(item.name);
   };
@@ -10925,9 +11024,9 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     if (pointersRef.current.size === 1) {
       draggedRef.current = false;
       // Sur un bandeau d'équipe, le même geste déplace la LIGNE (et non le
-      // plan) : elle change de place parmi ses sœurs au lâcher.
-      const item = onChangeOrder ? itemFromEvent(e) : null;
-      const teamKey = item && item.type === "team" && branchByKey.get(item.branchKey) && teamSiblings(branchByKey.get(item.branchKey)).list.length > 1 ? item.branchKey : null;
+      // plan) : elle se pose où l'on veut, sur la grille, au lâcher.
+      const item = onChangeOffsets ? itemFromEvent(e) : null;
+      const teamKey = item && item.type === "team" && branchByKey.has(item.branchKey) ? item.branchKey : null;
       gestureRef.current = { type: "pan", id: e.pointerId, sx: p.x, sy: p.y, view: vp.view, moved: false, teamKey };
     } else if (pointersRef.current.size === 2) {
       const [a, b] = [...pointersRef.current.values()];
@@ -10951,7 +11050,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         setFocus(null);
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* pointeur déjà relâché */ }
       }
-      if (g.moved && g.teamKey) setTeamDrag({ key: g.teamKey, dx: dx / g.view.k, dy: dy / g.view.k });
+      if (g.moved && g.teamKey) setTeamDrag({ key: g.teamKey, dx: orgMetroSnap(dx / g.view.k), dy: orgMetroSnap(dy / g.view.k) });
       else if (g.moved) vp.setManual({ k: g.view.k, tx: g.view.tx + dx, ty: g.view.ty + dy });
     } else if (g.type === "pinch" && pointersRef.current.size >= 2) {
       const [a, b] = [...pointersRef.current.values()];
@@ -10967,9 +11066,10 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   };
   const onPointerEnd = (e) => {
     const g0 = gestureRef.current;
-    if (g0 && g0.teamKey && g0.moved && g0.id === e.pointerId && teamDrag && e.type !== "pointercancel") {
-      const target = dropTarget(teamDrag);
-      if (target) onChangeOrder(orgMetroReorder(order, target.parentKey, target.keys, teamDrag.key, target.index));
+    if (g0 && g0.teamKey && g0.moved && g0.id === e.pointerId && teamDrag && e.type !== "pointercancel" && (teamDrag.dx || teamDrag.dy)) {
+      const cur = normalizeOrgMetroOffsets(offsets);
+      const prev = cur[teamDrag.key] || { dx: 0, dy: 0 };
+      onChangeOffsets(normalizeOrgMetroOffsets({ ...cur, [teamDrag.key]: { dx: prev.dx + teamDrag.dx, dy: prev.dy + teamDrag.dy } }));
     }
     if (g0 && g0.teamKey) setTeamDrag(null);
     pointersRef.current.delete(e.pointerId);
@@ -11039,14 +11139,21 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         onPointerLeave={() => setFocus(null)}
       >
         <g data-metro-viewport="1" transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
+          {teamDrag && (
+            <>
+              <defs>
+                <pattern id="lp-orgmetro-grid" width={ORGMETRO_GRID} height={ORGMETRO_GRID} patternUnits="userSpaceOnUse">
+                  <circle className="lp-orgmetro-grid-dot" cx={0} cy={0} r={1.2} />
+                </pattern>
+              </defs>
+              <rect className="lp-orgmetro-grid" x={-layout.width} y={-layout.height} width={layout.width * 3} height={layout.height * 3} fill="url(#lp-orgmetro-grid)" />
+            </>
+          )}
           <OrgMetroLines layout={layout} dim={dim} />
           {showTransverse && <OrgMetroCorrespondences routes={routes} relationRoutes={relationRoutes} occurrenceLinks={occurrenceLinks} dimRoute={dimRoute} dimRelation={dimRelation} />}
           <OrgMetroStations layout={layout} dim={dim} focusKey={focus && focus.stationKey} />
           <OrgMetroLabels layout={layout} dim={dim} drag={teamDrag} />
-          {teamDrag && (() => {
-            const t = dropTarget(teamDrag);
-            return t ? <line className="lp-orgmetro-drop-marker" x1={t.markerX} y1={t.y - 10} x2={t.markerX} y2={t.y + t.h + 10} /> : null;
-          })()}
+
         </g>
       </svg>
       <div className="lp-orgmetro-toolbar" onPointerDown={stopToolbar}>
@@ -11056,7 +11163,11 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         <button type="button" onClick={vp.fit} title="Ajuster à l'écran" aria-label="Ajuster à l'écran"><Maximize2 size={13} /></button>
         <button
           type="button"
-          onClick={() => { vp.reset(); if (onChangeOrder && Object.keys(normalizeOrgMetroOrder(order)).length) onChangeOrder(null); }}
+          onClick={() => {
+            vp.reset();
+            const custom = Object.keys(normalizeOrgMetroOrder(order)).length || Object.keys(normalizeOrgMetroOffsets(offsets)).length;
+            if (onResetLayout && custom) onResetLayout();
+          }}
           title="Recentrer — rétablit la disposition et le cadrage par défaut"
           aria-label="Recentrer et rétablir la disposition par défaut"
         ><Crosshair size={13} /></button>
@@ -11165,9 +11276,18 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
   // (widget.orgMetroOrder) ; « Recentrer » la remet à zéro (null).
   const [metroOrder, setMetroOrder] = useState(widget?.orgMetroOrder || null);
   useEffect(() => { setMetroOrder(widget?.orgMetroOrder || null); }, [widget?.orgMetroOrder]);
-  const changeMetroOrder = (next) => {
-    setMetroOrder(next);
-    if (onUpdateWidget) onUpdateWidget({ orgMetroOrder: next });
+  // Déplacements libres des lignes sur la grille (widget.orgMetroOffsets).
+  const [metroOffsets, setMetroOffsets] = useState(widget?.orgMetroOffsets || null);
+  useEffect(() => { setMetroOffsets(widget?.orgMetroOffsets || null); }, [widget?.orgMetroOffsets]);
+  const changeMetroOffsets = (next) => {
+    setMetroOffsets(next);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroOffsets: next });
+  };
+  // « Recentrer » : disposition par défaut (ordre et déplacements effacés).
+  const resetMetroLayout = () => {
+    setMetroOrder(null);
+    setMetroOffsets(null);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroOrder: null, orgMetroOffsets: null });
   };
   const rootLabel = widget?.orgChartRootLabel && String(widget.orgChartRootLabel).trim() ? String(widget.orgChartRootLabel).trim() : "Organisation";
   const onEditTeam = setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined;
@@ -11191,7 +11311,9 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         onToggleTransverse={toggleTransverse}
         relations={widget?.orgChartRelations}
         order={metroOrder}
-        onChangeOrder={changeMetroOrder}
+        offsets={metroOffsets}
+        onChangeOffsets={changeMetroOffsets}
+        onResetLayout={resetMetroLayout}
       />
     ) : (
       <OrgHierarchyChart
