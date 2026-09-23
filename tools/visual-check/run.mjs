@@ -1678,6 +1678,24 @@ try {
   // Plus de vue hiérarchique : aucune bascule de mode, le plan Métro seul.
   orgMetro.modeButtons = await page.locator(`${host} .lp-orgchart-mode-btn`).count();
   orgMetro.hierarchyPanels = await page.locator(`${host} [class*="lp-orghier"]`).count();
+  // Sous-équipes empilées (« Technique ») : Plateforme puis Applications,
+  // l'une sous l'autre, à droite du tronc, chacune par un coude.
+  const stackHost = "#harness-orgmetro-stacked";
+  await page.locator(`${stackHost} .lp-orgmetro-toolbar button[aria-label="Ajuster à l'écran"]`).click().catch(() => {});
+  await page.waitForTimeout(300);
+  orgMetro.stacked = await page.evaluate((sel) => {
+    const root = document.querySelector(sel);
+    const box = (name) => { const el = root.querySelector(`.lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`); return el ? el.getBoundingClientRect() : null; };
+    const tech = box("Technique"), plat = box("Plateforme"), apps = box("Applications");
+    if (!tech || !plat || !apps) return null;
+    return {
+      below: apps.top > plat.bottom,
+      rightOfTrunk: plat.left > tech.left + tech.width / 2 && apps.left > tech.left + tech.width / 2,
+      aligned: Math.abs(plat.left - apps.left) < 40,
+      dots: root.querySelectorAll(".lp-orgmetro-junction").length,
+    };
+  }, stackHost);
+  await page.locator(stackHost).screenshot({ path: path.join(dir, "orgmetro-stacked.png") });
   // Widget étroit : la barre d'outils tient dans le cadre.
   orgMetro.narrow = await page.evaluate(() => {
     const host = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro");
@@ -2754,6 +2772,7 @@ if (!orgMetro.error) {
   expect(orgMetro.horizontalRow === 1 && orgMetro.horizontalSameY, `Organigramme Métro : l'équipe Opérations n'est pas en disposition horizontale (${orgMetro.horizontalRow}, ${orgMetro.horizontalSameY})`);
   expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.modeButtons === 0 && orgMetro.hierarchyPanels === 0, `Organigramme : la vue hiérarchique n'a pas été retirée (${orgMetro.modeButtons} bouton(s) de mode, ${orgMetro.hierarchyPanels} élément(s) hiérarchique(s))`);
+  expect(orgMetro.stacked && orgMetro.stacked.below && orgMetro.stacked.rightOfTrunk, `Organigramme Métro : les sous-équipes de « Technique » ne sont pas empilées à droite (${JSON.stringify(orgMetro.stacked)})`);
   expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);
   expect(orgMetro.narrow && orgMetro.narrow.legendHidden, "Organigramme Métro étroit : la légende reste affichée dans un widget de 380 px");
   expect(orgMetro.narrow && !orgMetro.narrow.exportLabelHidden, "Organigramme Métro étroit : les libellés SVG/PNG ont disparu alors qu'ils tiennent à 380 px");

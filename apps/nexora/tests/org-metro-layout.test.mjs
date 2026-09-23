@@ -69,6 +69,10 @@ function lineSegments(layout) {
   layout.branches.forEach((b) => {
     if (b.trunk) segs.push({ key: "trunk:" + b.key, x1: b.trunk.x, y1: b.trunk.y0, x2: b.trunk.x, y2: b.trunk.y1 });
     if (b.row) segs.push({ key: "row:" + b.key, x1: b.row.x0, y1: b.row.y, x2: b.row.x1, y2: b.row.y });
+    if (b.elbow && b.elbow.stacked) {
+      segs.push({ key: "stackH:" + b.key, x1: b.elbow.fromX + 6, y1: b.elbow.y, x2: b.elbow.x, y2: b.elbow.y });
+      segs.push({ key: "stackV:" + b.key, x1: b.elbow.x, y1: b.elbow.y, x2: b.elbow.x, y2: b.elbow.y1 });
+    }
     if (b.elbow && b.elbow.vertical) segs.push({ key: "side:" + b.key, x1: b.elbow.x, y1: b.elbow.y + 12, x2: b.elbow.x, y2: b.elbow.y1 });
     if (b.fork) segs.push({ key: "fork:" + b.key, x1: b.fork.minX, y1: b.fork.y, x2: b.fork.maxX, y2: b.fork.y });
     if (b.drop) segs.push({ key: "drop:" + b.key, x1: b.drop.x, y1: b.drop.y0, x2: b.drop.x, y2: b.drop.y1 });
@@ -830,4 +834,52 @@ test("Nœud de bifurcation déplaçable : la barre et les lignes qui en partent 
   const fixed = api.orgMetroFreeOffsets(base, want, "fork:team:p");
   assert.ok(fixed["fork:team:p"].dy >= 0);
   assertNoOverlap(api.orgMetroApplyOffsets(base, fixed));
+});
+
+test("Sous-équipes empilées : les unes sous les autres, à droite du tronc qui descend, chacune par un coude", () => {
+  const teams = [
+    team("root", { leadName: "Dir" }),
+    team("ds", { parentTeamId: "root" }),
+    team("s1", { parentTeamId: "ds", leadName: "Carla" }), team("s2", { parentTeamId: "ds", leadName: "Mehdi" }), team("s3", { parentTeamId: "ds", leadName: "Chloé" }),
+    team("sib", { parentTeamId: "root", leadName: "Vincent" }),
+  ];
+  const members = [
+    member("Dir", { teamIds: ["root"] }), member("Carla", { teamIds: ["s1"] }), member("Maureen", { teamIds: ["s1"] }),
+    member("Mehdi", { teamIds: ["s2"] }), member("Chloé", { teamIds: ["s3"] }), member("Tiphaine", { teamIds: ["s3"] }),
+    member("Vincent", { teamIds: ["sib"] }),
+  ];
+  const flat = metro(teams, members).layout;
+  const { layout } = metro(teams, members, { stacked: ["ds"] });
+  const ds = branch(layout, "team:ds");
+  const kids = ["team:s1", "team:s2", "team:s3"].map((k) => branch(layout, k));
+  assert.equal(ds.fork, null, "plus de barre de bifurcation");
+  // Empilées dans l'ordre, sans chevauchement vertical, alignées à droite du tronc.
+  kids.forEach((k, i) => {
+    assert.ok(k.x > ds.x, "à droite du tronc");
+    assert.equal(k.x, kids[0].x, "lignes alignées sur une même verticale");
+    assert.ok(k.badge.x > ds.x + ds.lineW / 2, "le bandeau ne touche pas le tronc");
+    assert.ok(k.elbow && k.elbow.stacked && k.elbow.fromX === ds.x && k.elbow.x === k.x, "coude depuis le tronc");
+    if (i) {
+      const prevBottom = Math.max(...branch(layout, ["team:s1", "team:s2", "team:s3"][i - 1]).stations.map((st) => st.label.y + st.label.h));
+      assert.ok(k.elbow.y > prevBottom, "sous la sous-équipe précédente");
+    }
+  });
+  assert.equal(ds.trunk.y1, kids[2].elbow.y, "le tronc descend jusqu'au dernier coude");
+  // Un rond de correspondance au départ de chaque coude, sur le tronc.
+  const dots = api.orgMetroJunctions(layout).filter((j) => j.key.startsWith("s:"));
+  assert.deepEqual(dots.map((d) => [d.x, d.y]), kids.map((k) => [ds.x, k.elbow.y]));
+  // Plus étroit que côte à côte : l'espace se prend en hauteur.
+  const flatDs = [branch(flat, "team:s1"), branch(flat, "team:s3")];
+  assert.ok(kids[2].y > flatDs[1].y, "plus bas que la version côte à côte");
+  assertNoOverlap(layout);
+  assertLinesAvoidText(layout);
+  // Déplacer la ligne parente emporte l'empilement ; le coude reste accroché.
+  const moved = api.orgMetroApplyOffsets(layout, { "team:ds": { dx: 40, dy: 20 } });
+  const md = branch(moved, "team:ds");
+  ["team:s1", "team:s2", "team:s3"].forEach((k) => {
+    const b = branch(moved, k);
+    assert.equal(b.elbow.fromX, md.x);
+    assert.equal(b.x - md.x, kids[0].x - ds.x);
+  });
+  assert.equal(api.orgMetroBranchPaths(branch(moved, "team:s1")).drop.startsWith(`M ${md.x} `), true);
 });

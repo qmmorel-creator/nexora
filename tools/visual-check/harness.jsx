@@ -526,6 +526,9 @@ function AnnotationsHarness() {
         <div id="harness-orgmetro-narrow" style={{ width: 380, height: 560, marginBottom: 18 }}>
           <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
         </div>
+        <div id="harness-orgmetro-stacked" style={{ width: 1200, height: 900, marginBottom: 18 }}>
+          <WidgetOrgChart widget={{ id: "w-orgmetro-3", type: "orgchart", orgMetroStackedTeams: ["o-tech"] }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
+        </div>
       </div>
       <div>
         <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>TREEMAP PROJETS</h2>
