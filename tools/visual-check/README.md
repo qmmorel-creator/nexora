@@ -254,7 +254,9 @@ chaîne de managers, une personne multi-équipe, un nom long, une personne sans
   correspondances, mise en évidence au survol ;
 - le clic sur une station ouvre la fiche utilisateur, celui sur un bandeau la
   fiche équipe ; la bascule vers « Hiérarchique » rend toujours l'arbre existant ;
-- dans un widget de 380 px, la barre d'outils tient dans le cadre.
+- dans un widget de 380 px, la barre d'outils tient dans le cadre, la légende
+  est masquée (selon la largeur du widget, pas de l'écran) et le plan s'ouvre à
+  60 % au moins, pour rester lisible.
 
 La capture de ce scénario est écrite dans `.harness/orgmetro.png`.
 

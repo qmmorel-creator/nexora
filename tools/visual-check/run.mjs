@@ -1571,7 +1571,15 @@ try {
     const bar = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro-toolbar");
     if (!host || !bar) return null;
     const h = host.getBoundingClientRect(), b = bar.getBoundingClientRect();
-    return { inside: b.left >= h.left - 1 && b.right <= h.right + 1, scroll: host.scrollWidth - host.clientWidth };
+    const g = document.querySelector("#harness-orgmetro-narrow [data-metro-viewport]");
+    const legend = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro-legend");
+    const exportLabel = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro-toolbar button span");
+    return {
+      inside: b.left >= h.left - 1 && b.right <= h.right + 1, scroll: host.scrollWidth - host.clientWidth,
+      scale: Number((/scale\(([\d.]+)\)/.exec(g ? g.getAttribute("transform") : "") || [])[1] || 0),
+      legendHidden: !legend || getComputedStyle(legend).display === "none",
+      exportLabelHidden: !exportLabel || getComputedStyle(exportLabel).display === "none",
+    };
   });
 } catch (e) {
   orgMetro.error = String(e).split("\n")[0];
@@ -2608,6 +2616,9 @@ if (!orgMetro.error) {
   expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
+  expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);
+  expect(orgMetro.narrow && orgMetro.narrow.legendHidden, "Organigramme Métro étroit : la légende reste affichée dans un widget de 380 px");
+  expect(orgMetro.narrow && !orgMetro.narrow.exportLabelHidden, "Organigramme Métro étroit : les libellés SVG/PNG ont disparu alors qu'ils tiennent à 380 px");
   expect(orgMetro.narrow && orgMetro.narrow.inside && orgMetro.narrow.scroll <= 0, `Organigramme Métro étroit : barre d'outils hors cadre ou défilement horizontal (${JSON.stringify(orgMetro.narrow)})`);
 }
 
