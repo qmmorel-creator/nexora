@@ -1497,6 +1497,7 @@ try {
       }),
       leadStars: root.querySelectorAll(".lp-orgmetro-label .lp-orgmetro-lead-star").length,
       badgeLeads: [...root.querySelectorAll(".lp-orgmetro-badge-sub")].map((el) => el.textContent),
+      leadTitleMetro: [...root.querySelectorAll(".lp-orgmetro-label")].some((el) => /Zoé Faure/.test(el.textContent) && /Responsable de lot/.test(el.textContent)),
       appsFirstStation: (() => {
         const labels = [...root.querySelectorAll(".lp-orgmetro-label")].filter((el) => (el.getAttribute("data-metro-key") || "").startsWith("st:team:o-apps:"));
         return labels.length ? labels[0].textContent : "";
@@ -1547,7 +1548,21 @@ try {
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal .lp-icon-btn, .lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
   await page.waitForTimeout(200);
   // Clic sur un bandeau d'équipe → fiche équipe existante.
-  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Plateforme"]`).click();
+  // Clic simple sur un bandeau → la ligne se replie (seul le responsable
+  // reste) ; second clic → elle se déplie.
+  const stationsBeforeCollapse = await page.locator(`${host} .lp-orgmetro-station`).count();
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Exploration"]`).click();
+  await page.waitForTimeout(500);
+  orgMetro.collapsedBadge = await page.locator(`${host} .lp-orgmetro-badge.is-collapsed`).count();
+  orgMetro.collapsedStations = stationsBeforeCollapse - await page.locator(`${host} .lp-orgmetro-station`).count();
+  orgMetro.collapsedLeadKept = await page.locator(`${host} .lp-orgmetro-station[aria-label^="Inès Garnier"]`).count();
+  orgMetro.collapsedHidden = await page.locator(`${host} .lp-orgmetro-station[aria-label^="Adam Colin"]`).count();
+  orgMetro.collapsedModal = await page.locator(".lp-modal").count();
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Exploration"]`).click();
+  await page.waitForTimeout(500);
+  orgMetro.expandedStations = await page.locator(`${host} .lp-orgmetro-station`).count() - stationsBeforeCollapse;
+  // Double-clic sur un bandeau d'équipe → fiche équipe existante.
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Plateforme"]`).dblclick();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   orgMetro.teamModal = await page.locator(".lp-modal input").evaluateAll((els) => els.map((e) => e.value).join("|"));
   // Fiche équipe : un clic sur un membre ouvre son poste dans cette équipe ;
@@ -1567,6 +1582,18 @@ try {
   await page.waitForTimeout(200);
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
   await page.waitForTimeout(200);
+  // Attraper une STATION déplace toute sa ligne d'équipe.
+  const badgeY = async (name) => page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`).evaluate((el) => el.getBoundingClientRect().top);
+  const opsY0 = await badgeY("Opérations");
+  const eva = await page.locator(`${host} .lp-orgmetro-station[aria-label^="Eva Moulin"]`).boundingBox();
+  await page.mouse.move(eva.x + eva.width / 2, eva.y + eva.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(eva.x + eva.width / 2, eva.y + 40, { steps: 4 });
+  await page.mouse.move(eva.x + eva.width / 2, eva.y + 90, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.stationDragMoved = (await badgeY("Opérations")) - opsY0 > 30;
+  orgMetro.stationDragModal = await page.locator(".lp-modal").count();
   // Déplacement libre : « Opérations » posée à gauche de « Produit », sur la
   // grille ; « Recentrer » rétablit la disposition par défaut.
   const badgeCenterX = async (name) => page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"]`).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; });
@@ -1581,6 +1608,39 @@ try {
   await page.waitForTimeout(300);
   orgMetro.dragModal = await page.locator(".lp-modal").count();
   orgMetro.afterDrag = (await badgeCenterX("Opérations")) < (await badgeCenterX("Produit"));
+  // Aucun texte superposé après le lâcher (ajustement automatique).
+  const textOverlaps = async () => page.evaluate((sel) => {
+    const root = document.querySelector(sel);
+    const rs = [...root.querySelectorAll(".lp-orgmetro-label, .lp-orgmetro-badge")].map((el) => el.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+      const a = rs[i], b = rs[j];
+      if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) n += 1;
+    }
+    return n;
+  }, host);
+  orgMetro.overlapsAfterDrag = await textOverlaps();
+  // Le grand titre se déplace seul.
+  const hubX = async () => page.locator(`${host} .lp-orgmetro-badge.is-hub .lp-orgmetro-badge-bg`).evaluate((el) => el.getBoundingClientRect().left);
+  const hub0 = await hubX(), prod0 = await badgeCenterX("Produit");
+  const hubBox = await page.locator(`${host} .lp-orgmetro-badge.is-hub .lp-orgmetro-badge-bg`).boundingBox();
+  await page.mouse.move(hubBox.x + 20, hubBox.y + hubBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hubBox.x + 80, hubBox.y + hubBox.height / 2, { steps: 4 });
+  await page.mouse.move(hubBox.x + 180, hubBox.y + hubBox.height / 2 - 10, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.hubMovedAlone = (await hubX()) - hub0 > 60 && Math.abs((await badgeCenterX("Produit")) - prod0) < 2;
+  // Un lien se déplace (relation « Binôme »).
+  const binomeD0 = await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
+  const pill = await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation-pill").boundingBox();
+  await page.mouse.move(pill.x - 25, pill.y + pill.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(pill.x - 25, pill.y + pill.height / 2 - 30, { steps: 4 });
+  await page.mouse.move(pill.x - 25, pill.y + pill.height / 2 - 60, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.linkMoved = binomeD0 !== await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
   await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
   await page.waitForTimeout(300);
   orgMetro.afterReset = (await badgeCenterX("Opérations")) > (await badgeCenterX("Produit"));
@@ -1595,6 +1655,7 @@ try {
       hierRelationLabels: [...root.querySelectorAll(".lp-orghier-relation-label")].map((el) => el.textContent),
       hierJunctions: root.querySelectorAll(".lp-orghier-junction").length,
       hierInactive: root.querySelectorAll(".lp-orghier-panel-row.is-inactive, .lp-orgchart-card.is-inactive").length,
+      leadTitleHier: [...root.querySelectorAll(".lp-orghier-panel-row.is-lead")].some((el) => /Zoé Faure/.test(el.textContent) && /Responsable de lot/.test(el.textContent)),
     };
   }, host));
   await page.locator(`${host}`).screenshot({ path: path.join(dir, "orghier.png") });
@@ -2651,18 +2712,27 @@ if (!orgMetro.error) {
   expect(/Architecte cloud/.test(orgMetro.roleSaved || ""), `Fiche équipe : le poste saisi au clic sur le membre n'est pas enregistré (${orgMetro.roleSaved})`);
   expect(/Architecte cloud/.test(orgMetro.roleAfterEscape || "") && !/Ne pas garder/.test(orgMetro.roleAfterEscape || ""), `Fiche équipe : Échap n'annule pas la modification du poste (${orgMetro.roleAfterEscape})`);
   expect(orgMetro.modalStillOpen === 1, "Fiche équipe : Échap dans le champ du poste a fermé toute la fiche");
-  expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
+  expect(orgMetro.collapsedBadge === 1 && orgMetro.collapsedStations > 0 && orgMetro.collapsedLeadKept >= 1 && orgMetro.collapsedHidden === 0 && orgMetro.collapsedModal === 0, `Organigramme Métro : le clic simple ne replie pas la ligne en gardant le responsable (${JSON.stringify({ b: orgMetro.collapsedBadge, s: orgMetro.collapsedStations, l: orgMetro.collapsedLeadKept, h: orgMetro.collapsedHidden, m: orgMetro.collapsedModal })})`);
+  expect(orgMetro.expandedStations === 0, `Organigramme Métro : le second clic ne déplie pas la ligne (${orgMetro.expandedStations})`);
+  expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le double-clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
   expect(orgMetro.relations === 3, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 3 attendues`);
   expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);
   expect(orgMetro.inactiveStations.length === 1 && /Jules Brun/.test(orgMetro.inactiveStations[0]), `Organigramme Métro : stations inactives ${JSON.stringify(orgMetro.inactiveStations)}, « Jules Brun » attendu`);
   expect(orgMetro.managerOnLine !== null && orgMetro.managerOnLine < 1, `Organigramme Métro : le manager Nora Vidal n'est pas resté sur la ligne de son équipe (écart ${orgMetro.managerOnLine}px)`);
   expect(orgMetro.countOffsets.every((d) => d <= 1.5), `Organigramme Métro : chiffre décentré dans sa pastille (${orgMetro.countOffsets.map((d) => d.toFixed(1)).join(", ")} px)`);
   expect(orgMetro.hierRelations === 3 && orgMetro.hierRelationLabels.length === 2, `Organigramme hiérarchique : ${orgMetro.hierRelations} relation(s), ${orgMetro.hierRelationLabels.length} légende(s) — 3 et 2 attendues`);
+  expect(orgMetro.leadTitleMetro, "Titre du responsable : « Responsable de lot » absent sous Zoé Faure dans le Métro");
+  expect(orgMetro.leadTitleHier, "Titre du responsable : « Responsable de lot » absent sous Zoé Faure dans la vue hiérarchique");
   expect(orgMetro.hierJunctions > 0, "Organigramme hiérarchique : aucun point blanc aux embranchements");
   expect(orgMetro.hierInactive >= 1, "Organigramme hiérarchique : l'utilisateur inactif n'est pas grisé");
   expect(orgMetro.dropMarker === 1, `Déplacement libre : grille ${orgMetro.dropMarker === 1 ? "affichée" : "absente"} pendant le geste`);
   expect(orgMetro.dragModal === 0, "Glisser-déposer : lâcher un bandeau a ouvert la fiche équipe");
   expect(orgMetro.afterDrag, "Déplacement libre : « Opérations » déposée à gauche de « Produit » n'y est pas");
+  expect(orgMetro.overlapsAfterDrag === 0, `Déplacement libre : ${orgMetro.overlapsAfterDrag} superposition(s) de texte après le lâcher`);
+  expect(orgMetro.stationDragMoved, "Déplacement libre : attraper une station ne déplace pas sa ligne d'équipe");
+  expect(orgMetro.stationDragModal === 0, "Déplacement libre : lâcher une station a ouvert une fiche");
+  expect(orgMetro.hubMovedAlone, "Déplacement libre : le grand titre ne se déplace pas seul");
+  expect(orgMetro.linkMoved, "Déplacement libre : la relation « Binôme » ne se déplace pas");
   expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");

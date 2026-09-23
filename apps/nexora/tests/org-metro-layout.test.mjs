@@ -34,7 +34,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -618,4 +618,112 @@ test("Déplacement libre : une ligne déplacée sur la grille emmène sa sous-ar
   assert.ok(Math.min(...api.orgMetroObstacles(left).map((r) => r.x)) >= 0);
   assert.equal(api.orgMetroApplyOffsets(base, {}), base);
   assert.deepEqual(api.normalizeOrgMetroOffsets({ "team:a": { dx: 9, dy: 31 }, bad: null, z: { dx: 0, dy: 0 } }), { "team:a": { dx: 0, dy: 40 } });
+});
+
+test("Ronds de métro : aucun sans bifurcation ni changement de couleur", () => {
+  // Une sous-équipe unique, de la même couleur, en coude : pas de rond.
+  const same = metro([team("p", { color: "#2C6BE0" }), team("c", { parentTeamId: "p", color: "#2C6BE0" })], []).layout;
+  assert.equal(api.orgMetroJunctions(same).length, 0);
+  // Même forme, couleur différente : un rond au changement.
+  const diff = metro([team("p", { color: "#2C6BE0" }), team("c", { parentTeamId: "p", color: "#D64545" })], []).layout;
+  assert.equal(api.orgMetroJunctions(diff).length, 1);
+  // Deux sous-équipes de même couleur : c'est une bifurcation, point commun.
+  const bif = metro([team("p"), team("a", { parentTeamId: "p" }), team("b", { parentTeamId: "p" })], []).layout;
+  const p = branch(bif, "team:p");
+  assert.ok(api.orgMetroJunctions(bif).some((j) => j.x === p.fork.fromX && j.y === p.fork.y));
+});
+
+test("Grand titre : il se déplace seul, sa barre reste raccordée aux lignes", () => {
+  const teams = [team("a"), team("b")];
+  const base = metro(teams, [member("X", { teamIds: ["a"] })]).layout;
+  const moved = api.orgMetroApplyOffsets(base, { hub: { dx: 200, dy: -40 } });
+  const h0 = branch(base, "hub"), h1 = branch(moved, "hub");
+  const a0 = branch(base, "team:a"), a1 = branch(moved, "team:a");
+  assert.equal((h1.x - a1.x) - (h0.x - a0.x), 200, "le titre bouge, pas les lignes");
+  assert.equal(h1.fork.fromX, h1.x, "la barre part toujours du titre");
+  assert.ok(h1.fork.minX <= h1.x && h1.x <= h1.fork.maxX);
+  assert.equal(h1.trunk.y1, h1.fork.y);
+  assert.equal(a1.drop.y0, h1.fork.y);
+  // Jamais sous sa propre barre.
+  const down = api.orgMetroApplyOffsets(base, { hub: { dx: 0, dy: 400 } });
+  assert.ok(branch(down, "hub").badge.y + branch(down, "hub").badge.h < branch(down, "hub").fork.y);
+});
+
+test("Anti-superposition : une ligne posée sur une autre glisse vers la case libre la plus proche", () => {
+  const teams = [team("root"), team("a", { parentTeamId: "root" }), team("b", { parentTeamId: "root" })];
+  const members = [member("Alice Martin", { teamIds: ["a"] }), member("Bruno Petit", { teamIds: ["b"] })];
+  const base = metro(teams, members).layout;
+  const a = branch(base, "team:a"), b = branch(base, "team:b");
+  // « a » posée exactement sur « b » : conflit.
+  const want = { "team:a": { dx: api.normalizeOrgMetroOffsets({ k: { dx: b.x - a.x } }).k?.dx || 0, dy: 0 } };
+  const bad = api.orgMetroApplyOffsets(base, want);
+  const overlaps = (layout) => {
+    const r = api.orgMetroObstacles(layout).filter((o) => !o.key.startsWith("station:"));
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) {
+      const p = r[i], q = r[j];
+      if (p.x < q.x + q.w - 0.5 && q.x < p.x + p.w - 0.5 && p.y < q.y + q.h - 0.5 && q.y < p.y + p.h - 0.5) return true;
+    }
+    return false;
+  };
+  assert.ok(overlaps(bad), "le scénario doit réellement superposer les deux lignes");
+  const fixed = api.orgMetroFreeOffsets(base, want, "team:a");
+  assert.ok(!overlaps(api.orgMetroApplyOffsets(base, fixed)), "plus aucun texte superposé après ajustement");
+  assert.notDeepEqual(fixed, want);
+  // Déjà libre : rien ne change.
+  const ok = { "team:a": { dx: 0, dy: 60 } };
+  assert.deepEqual(api.orgMetroFreeOffsets(base, ok, "team:a"), ok);
+});
+
+test("Liens déplaçables : le tracé se décale latéralement et verticalement, toujours orthogonal, extrémités fixes", () => {
+  const ortho = (pts) => pts.every((p, i) => i === 0 || p[0] === pts[i - 1][0] || p[1] === pts[i - 1][1]);
+  const hvh = [[0, 0], [50, 0], [50, 100], [120, 100]];
+  const lateral = api.orgMetroShiftRoute(hvh, 40, 0);
+  assert.deepEqual(lateral, [[0, 0], [90, 0], [90, 100], [120, 100]]);
+  const vertical = api.orgMetroShiftRoute(hvh, 0, -60);
+  assert.ok(ortho(vertical));
+  assert.deepEqual(vertical[0], [0, 0]);
+  assert.deepEqual(vertical[vertical.length - 1], [120, 100]);
+  assert.ok(vertical.some((p) => p[1] === -60), "le palier horizontal est monté de 60");
+  const straight = api.orgMetroShiftRoute([[0, 10], [100, 10]], 0, 40);
+  assert.ok(ortho(straight) && straight.some((p) => p[1] === 50));
+  assert.equal(api.orgMetroShiftRoute(hvh, 0, 0), hvh);
+  // Appliqué aux relations du plan, par clé de lien.
+  const { layout } = metro([team("a"), team("b")], [member("X", { teamIds: ["a"] }), member("Y", { teamIds: ["b"] })]);
+  const plain = api.orgMetroRelationRoutes(layout, [{ id: "r", from: "person:X", to: "person:Y" }]);
+  const shifted = api.orgMetroRelationRoutes(layout, [{ id: "r", from: "person:X", to: "person:Y" }], { "relation:r": { dx: 0, dy: 40 } });
+  assert.notDeepEqual(shifted[0].points, plain[0].points);
+  assert.ok(ortho(shifted[0].points));
+});
+
+test("Titre du responsable : choisi dans la fiche équipe, il remplace son poste sous son nom", () => {
+  const teams = [team("a", { leadName: "Chef", leadTitle: "  Responsable de lot  " }), team("b", { leadName: "Autre" }), team("c", { leadName: "Ext", leadTitle: "Pilote" })];
+  const members = [member("Chef", { teamIds: ["a"], teamRoles: { a: "Ing. Méca" } }), member("Autre", { teamIds: ["b"], teamRoles: { b: "Chef de projet" } }), member("Ext", { teamIds: ["b"] })];
+  const { layout } = metro(teams, members);
+  const lead = (key) => branch(layout, key).stations[0];
+  assert.equal(lead("team:a").role, "Responsable de lot", "le titre prime sur le poste");
+  assert.equal(lead("team:a").roleIsFallback, false);
+  assert.equal(lead("team:b").role, "Chef de projet", "sans titre : son poste, comme avant");
+  assert.equal(lead("team:c").role, "Pilote", "aussi pour un responsable venu d'une autre ligne");
+  assertNoOverlap(layout);
+});
+
+test("Ligne repliée : seul le responsable reste, le compte et les autres lignes sont inchangés", () => {
+  const teams = [team("a", { leadName: "Chef" }), team("b", { parentTeamId: "a", leadName: "Sous" }), team("c", { leadName: "Voisin" })];
+  const members = [
+    member("Chef", { teamIds: ["a"] }), member("Ana", { teamIds: ["a"] }), member("Rattaché", { teamIds: ["a"], managerName: "Ana" }),
+    member("Sous", { teamIds: ["b"] }), member("Bob", { teamIds: ["b"] }),
+    member("Voisin", { teamIds: ["c"] }), member("Cléo", { teamIds: ["c"] }),
+  ];
+  const open = metro(teams, members).layout;
+  const { layout } = metro(teams, members, { collapsed: ["team:a"] });
+  const a = branch(layout, "team:a");
+  assert.equal(a.collapsed, true);
+  assert.deepEqual(a.stations.map((s) => s.name), ["Chef"], "seul le responsable reste sur la ligne");
+  assert.equal(a.badge.count, branch(open, "team:a").badge.count, "le bandeau garde l'effectif complet");
+  assert.ok(a.badge.lines.join(" ").startsWith("▸ "), "le bandeau signale la ligne repliée");
+  assert.equal(branch(layout, "team:b"), undefined, "les sous-équipes sont masquées");
+  assert.equal(stationsOf(layout, "Rattaché").length, 0, "les rattachés sont masqués");
+  assert.deepEqual(branch(layout, "team:c").stations.map((s) => s.name), branch(open, "team:c").stations.map((s) => s.name));
+  assert.equal(branch(open, "team:a").collapsed, false);
+  assertNoOverlap(layout);
 });

@@ -144,7 +144,7 @@ function AnnotationsHarness() {
     { id: "o-core", name: "Cœur produit", color: "#E2A63B", parentTeamId: "o-prod", leadName: "Hugo Lemaire" },
     { id: "o-disc", name: "Exploration", color: "#E2A63B", parentTeamId: "o-prod", leadName: "Inès Garnier" },
     { id: "o-tech", name: "Technique", color: "#2C6BE0", leadName: "Paul Mercier" },
-    { id: "o-plat", name: "Plateforme", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Zoé Faure" },
+    { id: "o-plat", name: "Plateforme", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Zoé Faure", leadTitle: "Responsable de lot" },
     { id: "o-secu", name: "Sécurité", color: "#2C6BE0", parentTeamId: "o-plat" },
     { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Nora Vidal" },
     { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right" },
