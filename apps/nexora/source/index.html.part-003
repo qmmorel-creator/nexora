@@ -9605,7 +9605,7 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
     const others = obstacles.filter((o) => o.key !== "badge:" + A.branch.key && o.key !== "badge:" + B.branch.key);
     const best = orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(link.toId, i));
     const key = "transverse:" + link.fromId + ":" + link.toId;
-    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts;
+    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : orgMetroSimplifyRoute(best.pts);
     out.push({
       key, fromId: link.fromId, toId: link.toId, extra: Boolean(link.extra), hierarchical: link.type === "hierarchique",
       points: pts, hits: best.hits, d: orgMetroPolylineD(pts),
@@ -9978,20 +9978,59 @@ function orgMetroShiftRoute(points, dx, dy) {
   if (!dx && !dy) return points;
   let pts = points.map((p) => [p[0], p[1]]);
   if (pts.length === 2) {
-    const xm = (pts[0][0] + pts[1][0]) / 2;
-    pts = [pts[0], [xm, pts[0][1]], [xm, pts[1][1]], pts[1]];
+    // Tracé droit : un détour en U, qui part à un pas de chaque extrémité.
+    const [a, b] = pts;
+    const g = ORGMETRO_ROUTE_GUTTER;
+    if (Math.abs(a[1] - b[1]) < 0.5) {
+      const s = Math.sign(b[0] - a[0]) || 1;
+      pts = [a, [a[0] + s * g, a[1]], [b[0] - s * g, b[1]], b];
+    } else if (Math.abs(a[0] - b[0]) < 0.5) {
+      const s = Math.sign(b[1] - a[1]) || 1;
+      pts = [a, [a[0], a[1] + s * g], [b[0], b[1] - s * g], b];
+    } else {
+      const xm = (a[0] + b[0]) / 2;
+      pts = [a, [xm, a[1]], [xm, b[1]], b];
+    }
   }
   const first = pts[0], last = pts[pts.length - 1];
   const inner = pts.slice(1, -1).map((p) => [p[0] + dx, p[1] + dy]);
   const out = [first];
   const a = inner[0];
-  if (a[1] !== first[1]) out.push([a[0], first[1]]);
+  const firstVertical = Math.abs(pts[1][0] - first[0]) < 0.5 && Math.abs(pts[1][1] - first[1]) >= 0.5;
+  if (firstVertical) { if (a[0] !== first[0]) out.push([first[0], a[1]]); }
+  else if (a[1] !== first[1]) out.push([a[0], first[1]]);
   inner.forEach((p) => out.push(p));
   const z = inner[inner.length - 1];
-  if (z[1] !== last[1]) out.push([z[0], last[1]]);
+  const prev = pts[pts.length - 2];
+  const lastVertical = Math.abs(prev[0] - last[0]) < 0.5 && Math.abs(prev[1] - last[1]) >= 0.5;
+  if (lastVertical) { if (z[0] !== last[0]) out.push([last[0], z[1]]); }
+  else if (z[1] !== last[1]) out.push([z[0], last[1]]);
   out.push(last);
-  // Points consécutifs confondus retirés.
-  return out.filter((p, i) => i === 0 || p[0] !== out[i - 1][0] || p[1] !== out[i - 1][1]);
+  return orgMetroSimplifyRoute(out);
+}
+// Nettoyage d'un tracé orthogonal (retour de test : lignes prolongées trop
+// loin) : points confondus retirés, et tout point intermédiaire aligné avec
+// ses deux voisins supprimé — y compris un aller-retour sur une même droite
+// (un décalage dans le sens d'un segment, ou un plan qui a changé depuis le
+// déplacement du lien, ne laisse jamais de trait qui dépasse puis revient).
+function orgMetroSimplifyRoute(points) {
+  let pts = points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
+  let changed = true;
+  while (changed && pts.length > 2) {
+    changed = false;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [a, b, c] = [pts[i - 1], pts[i], pts[i + 1]];
+      const sameX = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(b[0] - c[0]) < 0.5;
+      const sameY = Math.abs(a[1] - b[1]) < 0.5 && Math.abs(b[1] - c[1]) < 0.5;
+      const same = Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5;
+      if (sameX || sameY || same) {
+        pts = [...pts.slice(0, i), ...pts.slice(i + 1)];
+        changed = true;
+        break;
+      }
+    }
+  }
+  return pts;
 }
 // Étoile à cinq branches (repère du responsable), centrée en (cx, cy).
 function orgMetroStarPath(cx, cy, r) {
@@ -10152,7 +10191,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     const skip = new Set([...A.keys, ...B.keys]);
     const best = orgMetroRouteRects(A.rect, B.rect, obstacles.filter((o) => !skip.has(o.key)), top);
     const key = "relation:" + r.id;
-    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : best.pts;
+    const pts = lo[key] ? orgMetroShiftRoute(best.pts, lo[key].dx, lo[key].dy) : orgMetroSimplifyRoute(best.pts);
     const labelAt = r.label ? orgRelationLabelPlacement(pts, orgRelationLabelWidth(r.label), ORGRELATION_LABEL_H, labelObstacles) : null;
     return {
       key, id: r.id, from: r.from, to: r.to, label: r.label, points: pts, hits: best.hits, d: orgMetroPolylineD(pts), labelAt,

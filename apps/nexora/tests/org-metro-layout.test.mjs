@@ -683,11 +683,19 @@ test("Liens déplaçables : le tracé se décale latéralement et verticalement,
   const hvh = [[0, 0], [50, 0], [50, 100], [120, 100]];
   const lateral = api.orgMetroShiftRoute(hvh, 40, 0);
   assert.deepEqual(lateral, [[0, 0], [90, 0], [90, 100], [120, 100]]);
-  const vertical = api.orgMetroShiftRoute(hvh, 0, -60);
+  // Un palier HORIZONTAL monte ou descend avec un décalage vertical.
+  const vhv = [[0, 0], [0, 50], [120, 50], [120, 100]];
+  const vertical = api.orgMetroShiftRoute(vhv, 0, -30);
   assert.ok(ortho(vertical));
   assert.deepEqual(vertical[0], [0, 0]);
   assert.deepEqual(vertical[vertical.length - 1], [120, 100]);
-  assert.ok(vertical.some((p) => p[1] === -60), "le palier horizontal est monté de 60");
+  assert.ok(vertical.some((p) => p[1] === 20), "le palier horizontal est monté de 30");
+  // Retour de test (lignes prolongées trop loin) : un décalage dans le sens
+  // d'un segment ne le prolonge jamais au-delà de ses extrémités.
+  const along = api.orgMetroShiftRoute(hvh, 0, 450);
+  assert.deepEqual(along, hvh, "aucun aller-retour sur la verticale");
+  const ys = along.map((p) => p[1]);
+  assert.ok(Math.max(...ys) <= 100 && Math.min(...ys) >= 0);
   const straight = api.orgMetroShiftRoute([[0, 10], [100, 10]], 0, 40);
   assert.ok(ortho(straight) && straight.some((p) => p[1] === 50));
   assert.equal(api.orgMetroShiftRoute(hvh, 0, 0), hvh);
