@@ -9202,7 +9202,6 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
   let childTop = null;
   let childXs = [];
   let fork = null;
-  let railX = null;
   if (kids.length) {
     forkY = bottom + ORGMETRO_FORK_GAP;
     childTop = Math.ceil((forkY + ORGMETRO_DROP) / ORGMETRO_BAND) * ORGMETRO_BAND;
@@ -9218,20 +9217,12 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
     // de son bandeau quand des sous-équipes sont réparties au-dessus.
     const entryX = (i) => childXs[i] + (kids[i].entry ? kids[i].entry.dx : 0);
     const connectedXs = connected.map((i) => entryX(i));
-    // Rattachement depuis la bulle (retour de test) : quand l'équipe a des
-    // membres, ses sous-équipes ne partent plus du bas de la ligne, à la
-    // suite des personnes, mais d'un rail qui sort du flanc gauche de son
-    // bandeau et longe la ligne par la gauche jusqu'à la barre.
-    railX = orgMetroRailX(branch, c, badge, bottom, stations, row);
-    const fromX = railX !== null ? railX : 0;
+    // Retour de test : les sous-équipes partent de la SUITE de la ligne,
+    // après le dernier membre (jamais de la bulle).
     if (connectedXs.length) {
-      const minX = Math.min(fromX, ...connectedXs);
-      const maxX = Math.max(fromX, ...connectedXs);
-      fork = { y: forkY, minX, maxX, childXs: connectedXs, fromDx: fromX };
-      if (railX !== null) {
-        orgMetroContourAdd(c, railX - lineW / 2, -badge.w / 2, badge.h / 2 - lineW / 2, badge.h / 2 + lineW / 2);
-        orgMetroContourAdd(c, railX - lineW / 2, railX + lineW / 2, badge.h / 2, forkY);
-      }
+      const minX = Math.min(0, ...connectedXs);
+      const maxX = Math.max(0, ...connectedXs);
+      fork = { y: forkY, minX, maxX, childXs: connectedXs };
       orgMetroContourAdd(c, minX - lineW, maxX + lineW, forkY - lineW, forkY + ORGMETRO_CORNER);
       connected.forEach((i) => {
         const kw = orgMetroLineWidth(kids[i].branch);
@@ -9249,23 +9240,10 @@ function orgMetroMeasureTail(branch, c, lineW, badge, header, stations, sides, l
       }
     });
   }
-  const rail = fork && railX !== null ? { x: railX, y0: badge.h / 2, y1: forkY } : null;
-  const trunkEnd = fork && !rail ? forkY : lastCy;
+  const trunkEnd = fork ? forkY : lastCy;
   const trunk = trunkEnd !== null && trunkEnd > lineTop ? { y0: lineTop, y1: trunkEnd } : null;
   if (trunk) orgMetroContourAdd(c, -lineW / 2, lineW / 2, trunk.y0, trunk.y1);
-  return { branch, lineW, badge, header, stations, sides, trunk, rail, row, fork, childTop, childXs, kids, stack: [], contour: orgMetroContourFill(c) };
-}
-// Abscisse du rail qui relie une équipe à ses sous-équipes depuis le flanc
-// gauche de sa bulle (null = pas de rail : équipe sans membre, dont la ligne
-// part déjà de la bulle, ou ligne qui n'est pas une équipe). Le rail passe à
-// gauche de tout ce qui occupe la ligne (membres, rattachés partis à gauche).
-function orgMetroRailX(branch, c, badge, bottom, stations, row, badgeTop) {
-  if (!badge || branch.kind !== "team" || (!stations.length && !row)) return null;
-  let minLeft = -badge.w / 2;
-  const b0 = Math.floor(((badgeTop || 0) + badge.h) / ORGMETRO_BAND);
-  const b1 = Math.ceil(bottom / ORGMETRO_BAND);
-  for (let b = b0; b <= b1; b++) if (c.left[b] !== undefined) minLeft = Math.min(minLeft, c.left[b]);
-  return Math.min(-badge.w / 2 - ORGMETRO_ENTRY_GAP, minLeft - ORGMETRO_SIBLING_GAP);
+  return { branch, lineW, badge, header, stations, sides, trunk, row, fork, childTop, childXs, kids, stack: [], contour: orgMetroContourFill(c) };
 }
 // Sous-équipes empilées (réglage par équipe) : au lieu de s'étaler côte à
 // côte sous une barre, elles se rangent LES UNES SOUS LES AUTRES, à droite
@@ -9280,13 +9258,13 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
   // rangent AU-DESSUS du bandeau, les autres en dessous — le bandeau (et le
   // lien qui y arrive) descend le long de la ligne.
   const split = Math.max(0, Math.min(kids.length, Math.round(Number(branch.stackSplit) || 0)));
-  const place = (k, top, fromDx) => {
+  const place = (k, top) => {
     const connected = !k.branch.independent;
     const elbowY = top;
     const kTop = Math.ceil((elbowY + ORGMETRO_DROP) / ORGMETRO_BAND) * ORGMETRO_BAND;
     if (connected) {
       const kw = orgMetroLineWidth(k.branch);
-      orgMetroContourAdd(c, fromDx || 0, shift + kw / 2, elbowY - kw, elbowY + ORGMETRO_CORNER);
+      orgMetroContourAdd(c, 0, shift + kw / 2, elbowY - kw, elbowY + ORGMETRO_CORNER);
       orgMetroContourAdd(c, shift - kw / 2, shift + kw / 2, elbowY, kTop);
     }
     const off = kTop / ORGMETRO_BAND;
@@ -9297,7 +9275,7 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
       c.left[t] = c.left[t] === undefined ? L : Math.min(c.left[t], L);
       c.right[t] = c.right[t] === undefined ? R : Math.max(c.right[t], R);
     }
-    stack.push({ m: k, elbowY, top: kTop, shift, connected, fromDx: fromDx || 0 });
+    stack.push({ m: k, elbowY, top: kTop, shift, connected });
     return Math.ceil((kTop + k.contour.left.length * ORGMETRO_BAND + ORGMETRO_STACK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
   };
   // Partie haute : tout ce qui est déjà mesuré (bandeau, stations,
@@ -9322,7 +9300,7 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
     lineTop += upH;
     bottom += upH;
     let top = 0;
-    kids.slice(0, split).forEach((k) => { top = place(k, top, 0); });
+    kids.slice(0, split).forEach((k) => { top = place(k, top); });
     const firstUp = stack.find((st) => st.connected);
     if (firstUp) {
       upTrunk = { y0: firstUp.elbowY, y1: upH };
@@ -9335,26 +9313,18 @@ function orgMetroMeasureStack(branch, c, lineW, badge, header, stations, sides, 
     orgMetroContourAdd(c, entry.dx - 4, -badge.w / 2, entry.dy - 4, entry.dy + 4);
     orgMetroContourAdd(c, -badge.w / 2, badge.w / 2, upH, upH + badge.h);
   }
-  // Sous-équipes du bas : depuis le rail qui sort de la bulle quand l'équipe
-  // a des membres (jamais à la suite des personnes), sinon depuis la ligne.
-  const railX = orgMetroRailX(branch, c, badge, bottom, stations, row, upH);
   let top = Math.ceil((bottom + ORGMETRO_FORK_GAP) / ORGMETRO_BAND) * ORGMETRO_BAND;
   let lastElbow = null;
   kids.slice(split).forEach((k) => {
     const before = stack.length;
-    top = place(k, top, railX !== null ? railX : 0);
+    top = place(k, top);
     if (stack[before].connected) lastElbow = stack[before].elbowY;
   });
   const lastCy = stations.length ? stations[stations.length - 1].cy : null;
-  const rail = railX !== null && lastElbow !== null ? { x: railX, y0: upH + badge.h / 2, y1: lastElbow } : null;
-  if (rail) {
-    orgMetroContourAdd(c, railX - lineW / 2, -badge.w / 2, rail.y0 - lineW / 2, rail.y0 + lineW / 2);
-    orgMetroContourAdd(c, railX - lineW / 2, railX + lineW / 2, rail.y0, rail.y1);
-  }
-  const trunkEnd = lastElbow !== null && !rail ? lastElbow : row ? row.y : lastCy;
+  const trunkEnd = lastElbow !== null ? lastElbow : row ? row.y : lastCy;
   const trunk = trunkEnd !== null && trunkEnd > lineTop ? { y0: lineTop, y1: trunkEnd } : null;
   if (trunk) orgMetroContourAdd(c, -lineW / 2, lineW / 2, trunk.y0, trunk.y1);
-  return { branch, lineW, badge, badgeTop: upH, header, stations, sides, trunk, rail, upTrunk, entry, row, fork: null, childTop: null, childXs: [], kids: [], stack, contour: orgMetroContourFill(c) };
+  return { branch, lineW, badge, badgeTop: upH, header, stations, sides, trunk, upTrunk, entry, row, fork: null, childTop: null, childXs: [], kids: [], stack, contour: orgMetroContourFill(c) };
 }
 // Disposition horizontale (réglage par équipe) : le tronc descend du bandeau
 // jusqu'à une ligne horizontale qui part vers la droite ; les stations s'y
@@ -9447,14 +9417,12 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
     // Sous-équipes réparties au-dessus du bandeau : ligne du haut, et point
     // d'arrivée du lien parent sur le flanc gauche du bandeau.
     upTrunk: m.upTrunk ? { x, y0: y + m.upTrunk.y0, y1: y + m.upTrunk.y1 } : null,
-    // Rail depuis le flanc gauche de la bulle vers les sous-équipes.
-    rail: m.rail ? { x: x + m.rail.x, y0: y + m.rail.y0, y1: y + m.rail.y1 } : null,
     entry: m.entry ? { x: x + m.entry.dx, y: y + m.entry.dy } : null,
     stackSplit: m.branch.stacked ? Math.max(0, Math.round(Number(m.branch.stackSplit) || 0)) : 0,
     stackable: Boolean(m.stack && m.stack.length),
     // Disposition horizontale : ligne des stations, du tronc vers la droite.
     row: m.row ? { y: y + m.row.y, x0: x, x1: x + m.row.x1 } : null,
-    fork: m.fork ? { y: y + m.fork.y, minX: x + m.fork.minX, maxX: x + m.fork.maxX, fromX: x + (m.fork.fromDx || 0), childXs: m.fork.childXs.map((cx) => x + cx) } : null,
+    fork: m.fork ? { y: y + m.fork.y, minX: x + m.fork.minX, maxX: x + m.fork.maxX, fromX: x, childXs: m.fork.childXs.map((cx) => x + cx) } : null,
     // Raccord depuis la barre de bifurcation du parent (null = ligne
     // indépendante ou racine du plan).
     // `curved` : branche à une extrémité de la barre, où la ligne parente
@@ -9484,7 +9452,7 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
   (m.stack || []).forEach((st) => {
     const sx = x + st.shift;
     orgMetroPlace(st.m, sx, y + st.top, st.connected ? {
-      elbow: { stacked: true, fromX: x + (st.fromDx || 0), y0: y + st.elbowY, y: y + st.elbowY, x: sx, y1: y + st.top, color: b.color },
+      elbow: { stacked: true, fromX: x, y0: y + st.elbowY, y: y + st.elbowY, x: sx, y1: y + st.top, color: b.color },
     } : null, childAncestors, out);
   });
   m.kids.forEach((k, i) => {
@@ -9526,20 +9494,6 @@ function orgMetroBranchPaths(branch) {
   const R = ORGMETRO_CORNER;
   const out = { trunk: null, row: null, fork: null, drop: null };
   if (branch.trunk) out.trunk = orgMetroTrunkD(branch.trunk);
-  // Rail : sort du flanc gauche de la bulle, puis descend.
-  if (branch.rail && branch.badge) {
-    // Sort du flanc de la bulle TOURNÉ vers le rail (jamais à travers elle
-    // quand le nœud de la barre a été déplacé de l'autre côté).
-    const r = branch.rail;
-    const bd = branch.badge;
-    const right = r.x > bd.x + bd.w / 2;
-    const ex = right ? bd.x + bd.w : bd.x;
-    const s = right ? 1 : -1;
-    const d = r.y1 - r.y0 > R && Math.abs(r.x - ex) > R && (right ? r.x > ex : r.x < ex)
-      ? `M ${ex} ${r.y0} H ${r.x - s * R} Q ${r.x} ${r.y0} ${r.x} ${r.y0 + R} V ${r.y1}`
-      : `M ${ex} ${r.y0} H ${r.x} V ${r.y1}`;
-    out.trunk = (out.trunk ? out.trunk + " " : "") + d;
-  }
   if (branch.upTrunk && branch.upTrunk.y1 > branch.upTrunk.y0) out.trunk = (out.trunk ? out.trunk + " " : "") + `M ${branch.upTrunk.x} ${branch.upTrunk.y0} V ${branch.upTrunk.y1}`;
   if (branch.row && branch.row.x1 > branch.row.x0) out.row = `M ${branch.row.x0} ${branch.row.y} H ${branch.row.x1}`;
   // Changement de couleur (retour de test) : il se fait TOUJOURS sur une
@@ -9907,7 +9861,6 @@ function orgMetroApplyOffsets(layout, offsets) {
       trunk: fk ? fk.trunk : b.trunk ? { x: X(b.trunk.x), y0: Y(b.trunk.y0), y1: Y(b.trunk.y1) } : null,
       row: b.row ? { y: Y(b.row.y), x0: X(b.row.x0), x1: X(b.row.x1) } : null,
       upTrunk: b.upTrunk ? { x: X(b.upTrunk.x), y0: Y(b.upTrunk.y0), y1: Y(b.upTrunk.y1) } : null,
-      rail: b.rail ? { x: X(b.rail.x), y0: Y(b.rail.y0), y1: Y(b.rail.y1) } : null,
       entry: b.entry ? { x: X(b.entry.x), y: Y(b.entry.y) } : null,
       fork: fk ? fk.fork : null,
       elbow: b.elbow ? (() => {
@@ -9936,8 +9889,7 @@ function orgMetroApplyOffsets(layout, offsets) {
     const lastSt = p.stations.length ? p.stations[p.stations.length - 1] : null;
     const floor = Math.max(p.badge.y + p.badge.h, lastSt ? lastSt.label.y + lastSt.label.h : -Infinity) + ORGMETRO_CORNER;
     low.forEach((c) => { c.elbow = { ...c.elbow, y: Math.max(c.elbow.y, floor) }; });
-    if (low.length && p.rail) p.rail = { ...p.rail, y1: Math.max(...low.map((c) => c.elbow.y)) };
-    else if (low.length && p.trunk) p.trunk = { ...p.trunk, y1: Math.max(...low.map((c) => c.elbow.y), lastSt ? lastSt.cy : -Infinity) };
+    if (low.length && p.trunk) p.trunk = { ...p.trunk, y1: Math.max(...low.map((c) => c.elbow.y), lastSt ? lastSt.cy : -Infinity) };
     if (up.length && p.upTrunk) p.upTrunk = { ...p.upTrunk, y0: Math.min(...up.map((c) => c.elbow.y)) };
   });
   // Ligne remontée au-dessus de sa barre : point d'arrivée sur le flanc
@@ -9957,8 +9909,6 @@ function orgMetroApplyOffsets(layout, offsets) {
     // Extrémités de barre d'où un lien REMONTE : le coude tourne vers le haut.
     const upXs = kids.filter((c) => c.upEntry).map((c) => c.entry.x);
     b.fork = { ...b.fork, childXs: xs, upXs, minX: Math.min(...ends), maxX: Math.max(...ends) };
-    // Le rail suit le nœud de la barre (déplacé ou non).
-    if (b.rail) b.rail = { ...b.rail, x: b.fork.fromX, y1: b.fork.y };
   });
   branches.forEach((b) => {
     if (!b.drop) return;
@@ -9987,7 +9937,6 @@ function orgMetroApplyOffsets(layout, offsets) {
       if (b.trunk) b.trunk = { ...b.trunk, x: b.trunk.x + sx, y0: b.trunk.y0 + sy, y1: b.trunk.y1 + sy, jog: b.trunk.jog ? { x: b.trunk.jog.x + sx, y: b.trunk.jog.y + sy } : undefined };
       if (b.row) b.row = { y: b.row.y + sy, x0: b.row.x0 + sx, x1: b.row.x1 + sx };
       if (b.upTrunk) b.upTrunk = { x: b.upTrunk.x + sx, y0: b.upTrunk.y0 + sy, y1: b.upTrunk.y1 + sy };
-      if (b.rail) b.rail = { x: b.rail.x + sx, y0: b.rail.y0 + sy, y1: b.rail.y1 + sy };
       if (b.entry) b.entry = { x: b.entry.x + sx, y: b.entry.y + sy };
       if (b.fork) b.fork = { ...b.fork, y: b.fork.y + sy, fromX: b.fork.fromX + sx, minX: b.fork.minX + sx, maxX: b.fork.maxX + sx, childXs: b.fork.childXs.map((x) => x + sx), upXs: (b.fork.upXs || []).map((x) => x + sx) };
       if (b.elbow) b.elbow = { ...b.elbow, fromX: b.elbow.fromX + sx, y0: b.elbow.y0 + sy, y: b.elbow.y + sy, x: b.elbow.x + sx, y1: b.elbow.y1 + sy };
@@ -10013,11 +9962,6 @@ function orgMetroLineRects(b) {
   }
   if (b.row) seg(b.row.x0, b.row.y, b.row.x1, b.row.y);
   if (b.upTrunk) seg(b.upTrunk.x, b.upTrunk.y0, b.upTrunk.x, b.upTrunk.y1);
-  if (b.rail) {
-    const ex = !b.badge ? b.rail.x : b.rail.x > b.badge.x + b.badge.w / 2 ? b.badge.x + b.badge.w : b.badge.x;
-    seg(b.rail.x, b.rail.y0, ex, b.rail.y0);
-    seg(b.rail.x, b.rail.y0, b.rail.x, b.rail.y1);
-  }
   if (b.fork) seg(b.fork.minX, b.fork.y, b.fork.maxX, b.fork.y);
   if (b.elbow) { seg(b.elbow.fromX, b.elbow.y, b.elbow.x, b.elbow.y); seg(b.elbow.x, b.elbow.y, b.elbow.x, b.elbow.y1); }
   return out;
@@ -10058,7 +10002,7 @@ function orgMetroFreeOffsets(baseLayout, offsets, key, radius) {
     // parente, raccord de la ligne déplacée).
     const isConnector = (key === "hub" && b.key === "hub") || b.key === parentKey || b.key === forkKey;
     const isDrop = forkKids ? forkKids.has(b.key) : b.key === key;
-    const r = { ...b, fork: isConnector ? null : b.fork, rail: isConnector ? null : b.rail, trunk: b.key === forkKey ? null : b.trunk, elbow: b.key === key && b.elbow && b.elbow.stacked ? null : b.elbow };
+    const r = { ...b, fork: isConnector ? null : b.fork, trunk: b.key === forkKey ? null : b.trunk, elbow: b.key === key && b.elbow && b.elbow.stacked ? null : b.elbow };
     orgMetroLineRects(r).forEach((x) => seg(lines, x.x, x.y, x.x + x.w, x.y + x.h));
     if (b.drop && !isDrop) seg(lines, b.drop.x, b.drop.y0, b.drop.x, b.drop.y1);
   });
@@ -10479,7 +10423,7 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
   const labelObstacles = [...obstacles];
   layout.branches.forEach((b) => {
     const w = b.lineW + 4;
-    orgMetroLineRects({ trunk: b.trunk, upTrunk: b.upTrunk, rail: b.rail, badge: b.badge, row: b.row, elbow: b.elbow }).forEach((r) => labelObstacles.push({ x: r.x - w / 2, y: r.y - w / 2, w: r.w + w, h: r.h + w }));
+    orgMetroLineRects({ trunk: b.trunk, upTrunk: b.upTrunk, badge: b.badge, row: b.row, elbow: b.elbow }).forEach((r) => labelObstacles.push({ x: r.x - w / 2, y: r.y - w / 2, w: r.w + w, h: r.h + w }));
     if (b.drop) labelObstacles.push({ x: b.drop.x - w / 2, y: b.drop.y0, w, h: b.drop.y1 - b.drop.y0 });
   });
   orgMetroJunctions(layout).forEach((j) => labelObstacles.push({ x: j.x - 7, y: j.y - 7, w: 14, h: 14 }));
