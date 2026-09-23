@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroEditRoute, orgMetroNearestSegment, orgMetroAddLinkSeg, normalizeOrgMetroLinkOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroEditRoute, orgMetroNearestSegment, orgMetroAddLinkSeg, normalizeOrgMetroLinkOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroSettleOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -647,6 +647,24 @@ test("Variante ★ : le responsable s'inscrit dans le bandeau, sans station, et 
   assert.ok(p.badge.h > branch(plain, "team:p").badge.h, "le bandeau s'agrandit pour la ligne du responsable");
   assert.equal(p.badge.count, branch(plain, "team:p").badge.count, "l'effectif ne change pas");
   assertNoOverlap(inBadge);
+});
+
+test("Déplacements enregistrés : revus à l'affichage quand le plan change sous eux (variante ★)", () => {
+  const teams = [team("root"), team("a", { parentTeamId: "root", leadName: "Responsable A au nom long", leadTitle: "Directrice des opérations" }), team("b", { parentTeamId: "root", leadName: "Lb" })];
+  const members = [member("M a", { teamIds: ["a"] }), member("M b", { teamIds: ["b"] })];
+  const plain = metro(teams, members).layout;
+  const a = branch(plain, "team:a"), b = branch(plain, "team:b");
+  // Ligne b posée pile sur a : chevauchement → elle glisse à côté.
+  const onTop = { "team:b": { dx: Math.round((a.x - b.x) / 20) * 20, dy: 0 } };
+  const settled = api.orgMetroSettleOffsets(plain, onTop);
+  assert.notDeepEqual(settled, api.normalizeOrgMetroOffsets(onTop));
+  assertNoOverlap(api.orgMetroApplyOffsets(plain, settled));
+  // Déjà libres : inchangés.
+  const ok = { "team:b": { dx: 200, dy: 0 } };
+  assert.deepEqual(api.orgMetroSettleOffsets(plain, ok), api.normalizeOrgMetroOffsets(ok));
+  // Variante ★ : les mêmes déplacements, revus, ne se chevauchent jamais.
+  const inBadge = metro(teams, members, { leadInBadge: true }).layout;
+  [onTop, ok, { "team:b": { dx: -40, dy: 20 } }].forEach((o) => assertNoOverlap(api.orgMetroApplyOffsets(inBadge, api.orgMetroSettleOffsets(inBadge, o))));
 });
 
 test("Barre étirée puis ramenée : elle ne dépasse jamais le tronc et les lignes qui en partent", () => {

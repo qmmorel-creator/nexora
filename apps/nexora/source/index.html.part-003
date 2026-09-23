@@ -10128,6 +10128,28 @@ function orgMetroFreeOffsets(baseLayout, offsets, key, radius) {
   }
   return offs;
 }
+// Déplacements enregistrés revus à l'affichage (retour de test) : quand le
+// plan change sous eux (variante ★ aux bandeaux plus hauts, équipe ou membre
+// ajouté…), une ligne déplacée qui chevauche désormais un texte glisse vers
+// la case libre la plus proche, comme au lâcher. De haut en bas, en deux
+// passes au plus ; rien ne bouge si tout est déjà libre.
+function orgMetroSettleOffsets(baseLayout, offsets) {
+  let offs = normalizeOrgMetroOffsets(offsets);
+  const keys = Object.keys(offs).filter((k) => !k.startsWith("elbow:"));
+  if (!baseLayout || !keys.length) return offs;
+  const depth = new Map(baseLayout.branches.map((b) => [b.key, b.ancestors.length]));
+  const depthOf = (k) => { const d = depth.get(k.startsWith("fork:") ? k.slice(5) : k); return d === undefined ? Infinity : d; };
+  keys.sort((a, b) => depthOf(a) - depthOf(b));
+  for (let pass = 0; pass < 2; pass++) {
+    let changed = false;
+    keys.forEach((k) => {
+      const next = orgMetroFreeOffsets(baseLayout, offs, k, 10);
+      if (JSON.stringify(next) !== JSON.stringify(offs)) { offs = next; changed = true; }
+    });
+    if (!changed) break;
+  }
+  return offs;
+}
 // Répartition d'une équipe empilée au glisser de sa ligne (retour de test) :
 // le bandeau, déplacé de `dy` le long de la ligne, laisse au-dessus de lui
 // toutes les sous-équipes dont le départ est plus haut que lui.
@@ -10923,7 +10945,9 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     const prev = cur[key] || { dx: 0, dy: 0 };
     return normalizeOrgMetroOffsets({ ...cur, [key]: { dx: prev.dx + dx, dy: prev.dy + dy } });
   };
-  const shownOffsets = useMemo(() => (drag && drag.kind === "team" ? addOffset(offsets, drag.key, drag.dx, drag.dy) : offsets), [offsets, drag]);
+  // Déplacements enregistrés, sans chevauchement sur le plan courant.
+  const settledOffsets = useMemo(() => orgMetroSettleOffsets(base, offsets), [base, offsets]);
+  const shownOffsets = useMemo(() => (drag && drag.kind === "team" ? addOffset(settledOffsets, drag.key, drag.dx, drag.dy) : settledOffsets), [settledOffsets, drag]);
   // Lien : seul le segment attrapé bouge, perpendiculairement à lui-même.
   const linkDelta = (d) => (d.horizontal ? d.dy : d.dx);
   const shownLinkOffsets = useMemo(() => (drag && drag.kind === "link" && drag.seg != null ? orgMetroAddLinkSeg(linkOffsets, drag.key, drag.seg, linkDelta(drag)) : linkOffsets), [linkOffsets, drag]);
@@ -11096,7 +11120,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
       } else if (drag.kind === "team") {
         // Au lâcher : si un texte se superpose, la ligne glisse vers la case
         // libre la plus proche (orgMetroFreeOffsets).
-        onChangeOffsets(orgMetroFreeOffsets(base, addOffset(offsets, drag.key, drag.dx, drag.dy), drag.key));
+        onChangeOffsets(orgMetroFreeOffsets(base, addOffset(settledOffsets, drag.key, drag.dx, drag.dy), drag.key));
       } else if (onChangeLinkOffsets) {
         if (drag.seg != null && linkDelta(drag)) onChangeLinkOffsets(orgMetroAddLinkSeg(linkOffsets, drag.key, drag.seg, linkDelta(drag)));
       }
