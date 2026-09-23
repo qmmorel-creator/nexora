@@ -246,6 +246,10 @@ chaîne de managers, une personne multi-équipe, un nom long, une personne sans
   lignes indépendantes (transverse et « Sans équipe ») ;
 - **aucun libellé ni bandeau ne se chevauche dans le rendu réel**, texte mesuré
   par le navigateur et non par l'estimation du layout ;
+- responsables repérés comme dans la vue hiérarchique : un halo d'accent par
+  responsable présent sur sa ligne, une étoile devant le nom de chaque personne
+  qui dirige une équipe (même ailleurs), et le bandeau d'une ligne dont le
+  responsable n'y figure pas le nomme (« Resp. … ») ;
 - zoom avant, « Ajuster à l'écran », déplacement au glisser, masquage des
   correspondances, mise en évidence au survol ;
 - le clic sur une station ouvre la fiche utilisateur, celui sur un bandeau la

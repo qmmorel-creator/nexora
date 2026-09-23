@@ -9629,6 +9629,14 @@ const ORGMETRO_BADGE = {
 };
 const ORGMETRO_ROUTE_GUTTER = 13; // décalage d'une correspondance le long d'un bord
 const ORGMETRO_LEAD_FALLBACK_ROLE = "Responsable";
+// Repères du responsable, repris de la vue hiérarchique (étoile + cadre de la
+// couleur d'accent, voir .lp-orghier-panel-row.is-lead) : un halo d'accent
+// autour de sa station et une étoile devant son nom — partout où apparaît une
+// personne qui dirige une équipe, comme le fait leadNames côté hiérarchique.
+const ORGMETRO_LEAD_HALO = 4.5; // débord du halo au-delà de la station
+const ORGMETRO_STAR_W = 15; // étoile + espace, devant le nom
+const ORGMETRO_BADGE_SUB_H = 15; // ligne « Resp. … » d'un bandeau
+const ORGMETRO_BADGE_SUB_CHAR_W = 6.6;
 
 // Retour à la ligne mot à mot, déterministe. Un mot composé trop long se
 // coupe d'abord après un trait d'union ; un mot sans point de coupe plus long
@@ -9671,6 +9679,13 @@ function buildOrgMetroGraph(roots, teams, opts) {
   // Équipes au rattachement transverse (#219) dont le partenaire est visible :
   // elles restent des lignes indépendantes, jamais raccordées à la Direction.
   const transverseIds = new Set(transverseTeamLinks(teams).map((l) => l.fromId));
+  // Équipes dirigées par chaque personne (leadName), sur le catalogue visible.
+  const ledTeamsByName = new Map();
+  normalizeTeams(teams).forEach((t) => {
+    if (!t.leadName) return;
+    if (!ledTeamsByName.has(t.leadName)) ledTeamsByName.set(t.leadName, []);
+    ledTeamsByName.get(t.leadName).push(t.name);
+  });
   const NEUTRAL = null; // couleur neutre : le rendu choisit la variable de thème
 
   const stationOf = (p, kind, depth, branchKey) => {
@@ -9685,6 +9700,9 @@ function buildOrgMetroGraph(roots, teams, opts) {
       teamId: p.roleTeamId || null,
       role: role || (kind === "lead" ? ORGMETRO_LEAD_FALLBACK_ROLE : ""),
       roleIsFallback: !role && kind === "lead",
+      // Équipes que cette personne dirige : étoile sur CHACUNE de ses
+      // stations, même hors de la ligne qu'elle dirige.
+      leads: ledTeamsByName.get(p.member.name) || [],
       branchKey,
     };
   };
@@ -9738,6 +9756,11 @@ function buildOrgMetroGraph(roots, teams, opts) {
       key, kind: "team", depth, color, team: node.team || null, memberName: null,
       independent, transverse: Boolean(node.team && transverseIds.has(node.team.id)),
       label: node.team ? node.team.name : "Sans équipe",
+      // Responsable déclaré, et s'il a sa station en tête de CETTE ligne. Sinon
+      // (responsable rattaché ailleurs, ou hors de l'annuaire), le bandeau
+      // le nomme : on voit toujours qui dirige la ligne.
+      leadName: node.team ? node.team.leadName : "",
+      leadOnLine: Boolean(lead),
       header: null,
       stations,
       children: [...subTeams, ...persons],
@@ -9795,9 +9818,9 @@ function orgMetroLineWidth(branch) {
   return branch.depth <= 1 ? ORGMETRO_LINE_W.root : ORGMETRO_LINE_W.sub;
 }
 function orgMetroStationHalfWidth(station) {
-  if (station.duplicate) return ORGMETRO_DUPLICATE_HALF_W + 1.25;
+  if (station.duplicate) return ORGMETRO_DUPLICATE_HALF_W + 1.25 + (station.kind === "lead" ? ORGMETRO_LEAD_HALO : 0);
   const s = ORGMETRO_STATION[station.level] || ORGMETRO_STATION.member;
-  return s.r + s.stroke / 2;
+  return s.r + s.stroke / 2 + (station.kind === "lead" ? ORGMETRO_LEAD_HALO : 0);
 }
 // Station dans le repère de sa branche : rangée [top, top + rowH], station
 // centrée sur la ligne (x = 0), libellé à droite — nom puis poste.
@@ -9812,10 +9835,11 @@ function orgMetroMeasureStation(station, top) {
   const half = orgMetroStationHalfWidth(station);
   const cy = top + rowH / 2;
   const labelX = half + ORGMETRO_LABEL_GAP;
-  const labelW = Math.max(nameW, roleW);
+  const starW = station.leads && station.leads.length ? ORGMETRO_STAR_W : 0;
+  const labelW = Math.max(nameW + starW, roleW);
   return {
     station, top, rowH, cy, half, r: station.duplicate ? ORGMETRO_DUPLICATE_HALF_W : style.r, stroke: style.stroke,
-    nameLines, roleLines, labelX, labelTop: cy - blockH / 2, labelW, labelH: blockH,
+    nameLines, roleLines, labelX, labelTop: cy - blockH / 2, labelW, labelH: blockH, starW,
   };
 }
 function orgMetroMeasureBadge(branch) {
@@ -9824,9 +9848,11 @@ function orgMetroMeasureBadge(branch) {
   const textW = lines.reduce((m, l) => Math.max(m, l.length), 0) * spec.charW;
   const count = branch.kind === "team" ? String(branch.personCount || 0) : "";
   const countW = count ? count.length * ORGMETRO_COUNT_CHAR_W + 14 : 0;
-  const w = Math.ceil(textW + spec.padX * 2 + (countW ? countW + 8 : 0));
-  const h = spec.h + Math.max(0, lines.length - 1) * spec.lineH;
-  return { lines, count, countW, w, h, padX: spec.padX, lineH: spec.lineH, level: branch.kind === "hub" ? "hub" : branch.depth <= 1 ? "root" : "sub" };
+  const subtitle = branch.kind === "team" && branch.leadName && !branch.leadOnLine ? "Resp. " + branch.leadName : "";
+  const subW = subtitle ? ORGMETRO_STAR_W + subtitle.length * ORGMETRO_BADGE_SUB_CHAR_W : 0;
+  const w = Math.ceil(Math.max(textW, subW) + spec.padX * 2 + (countW ? countW + 8 : 0));
+  const h = spec.h + Math.max(0, lines.length - 1) * spec.lineH + (subtitle ? ORGMETRO_BADGE_SUB_H : 0);
+  return { lines, count, countW, subtitle, w, h, padX: spec.padX, lineH: spec.lineH, level: branch.kind === "hub" ? "hub" : branch.depth <= 1 ? "root" : "sub" };
 }
 
 // Mesure récursive d'une branche : tout est exprimé dans SON repère, et son
@@ -9913,6 +9939,7 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
   const abs = (s, isHeader) => ({
     key: s.station.key, name: s.station.name, member: s.station.member, kind: s.station.kind, level: s.station.level,
     duplicate: s.station.duplicate, role: s.station.role, roleIsFallback: s.station.roleIsFallback, teamId: s.station.teamId,
+    leads: s.station.leads || [], starW: s.starW,
     branchKey: b.key, header: isHeader, color: b.color,
     cx: x, cy: y + s.cy, r: s.r, stroke: s.stroke, half: s.half,
     nameLines: s.nameLines, roleLines: s.roleLines,
@@ -9921,11 +9948,12 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
   const placed = {
     key: b.key, kind: b.kind, depth: b.depth, color: b.color, lineW: m.lineW,
     teamId: b.team ? b.team.id : null, team: b.team, memberName: b.memberName,
+    leadName: b.leadName || "", leadOnLine: Boolean(b.leadOnLine),
     independent: b.independent, transverse: b.transverse, ancestors,
     x, y,
     badge: m.badge ? {
       x: x - m.badge.w / 2, y, w: m.badge.w, h: m.badge.h, lines: m.badge.lines, count: m.badge.count,
-      countW: m.badge.countW, padX: m.badge.padX, lineH: m.badge.lineH, level: m.badge.level,
+      countW: m.badge.countW, subtitle: m.badge.subtitle, padX: m.badge.padX, lineH: m.badge.lineH, level: m.badge.level,
     } : null,
     header: m.header ? abs(m.header, true) : null,
     stations: m.stations.map((s) => abs(s, false)),
@@ -10118,6 +10146,16 @@ function orgMetroRelated(layout, target) {
   branchKeys.forEach((k) => { const b = byKey.get(k); if (b && b.teamId) teamIds.add(b.teamId); });
   return { branchKeys, stationKeys, teamIds };
 }
+// Étoile à cinq branches (repère du responsable), centrée en (cx, cy).
+function orgMetroStarPath(cx, cy, r) {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 ? r * 0.45 : r;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    pts.push((i ? "L " : "M ") + (cx + rad * Math.cos(a)).toFixed(2) + " " + (cy + rad * Math.sin(a)).toFixed(2));
+  }
+  return pts.join(" ") + " Z";
+}
 // === NEXORA:ORGMETRO:END ===
 
 // Racines visibles de l'Organigramme, communes aux deux modes de rendu :
@@ -10212,7 +10250,7 @@ function OrgMetroStations({ layout, dim, focusKey }) {
       {layout.stations.map((s) => {
         const color = orgMetroColor(s.color, "team");
         const cls = "lp-orgmetro-station is-" + s.level + (s.duplicate ? " is-duplicate" : "") + (dim(s.branchKey, s.key) ? " is-dim" : "") + (focusKey === s.key ? " is-focus" : "");
-        const aria = s.name + (s.role ? " — " + s.role : "") + (s.duplicate ? " (correspondance)" : "");
+        const aria = s.name + (s.role ? " — " + s.role : "") + (s.leads.length ? " — responsable de " + s.leads.join(", ") : "") + (s.duplicate ? " (correspondance)" : "");
         return (
           <g key={s.key} className={cls} data-metro-key={s.key} tabIndex={0} role="button" aria-label={aria}>
             <title>{aria}</title>
@@ -10221,6 +10259,7 @@ function OrgMetroStations({ layout, dim, focusKey }) {
             ) : (
               <circle cx={s.cx} cy={s.cy} r={s.r} style={{ stroke: color, strokeWidth: s.stroke }} />
             )}
+            {s.kind === "lead" && <circle className="lp-orgmetro-lead-halo" cx={s.cx} cy={s.cy} r={s.half - 1} />}
             {s.level === "lead-root" && <circle className="lp-orgmetro-station-core" cx={s.cx} cy={s.cy} r={2.6} />}
             {s.level === "lead-sub" && <circle className="lp-orgmetro-station-core" cx={s.cx} cy={s.cy} r={2} style={{ fill: color }} />}
           </g>
@@ -10240,15 +10279,23 @@ function OrgMetroLabels({ layout, dim }) {
         const color = orgMetroColor(b.color, b.kind);
         const isHub = b.kind === "hub";
         const cls = "lp-orgmetro-badge is-" + bd.level + (b.independent ? " is-independent" : "") + (b.team ? " is-clickable" : "") + (dim(b.key) ? " is-dim" : "");
-        const textTop = bd.y + (bd.h - bd.lines.length * bd.lineH) / 2 + bd.lineH * 0.74;
+        const blockH = bd.lines.length * bd.lineH + (bd.subtitle ? ORGMETRO_BADGE_SUB_H : 0);
+        const textTop = bd.y + (bd.h - blockH) / 2 + bd.lineH * 0.74;
+        const subY = textTop + (bd.lines.length - 1) * bd.lineH + ORGMETRO_BADGE_SUB_H - 1;
         return (
           <g key={"b:" + b.key} className={cls} data-metro-key={b.team ? b.key : undefined} tabIndex={b.team ? 0 : undefined} role={b.team ? "button" : undefined} aria-label={b.team ? "Équipe " + b.team.name : undefined}>
-            {b.team && <title>{"Équipe " + b.team.name + " — " + bd.count + " personne" + (Number(bd.count) > 1 ? "s" : "")}</title>}
+            {b.team && <title>{"Équipe " + b.team.name + " — " + bd.count + " personne" + (Number(bd.count) > 1 ? "s" : "") + (b.leadName ? " — responsable : " + b.leadName : " — aucun responsable") + " · clic pour modifier"}</title>}
             <rect className="lp-orgmetro-badge-bg" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={bd.h / 2 > 16 ? 16 : bd.h / 2} />
             {!isHub && <rect className="lp-orgmetro-badge-tint" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={bd.h / 2 > 16 ? 16 : bd.h / 2} style={{ fill: color, stroke: color }} />}
             {bd.lines.map((line, i) => (
               <text key={i} className="lp-orgmetro-badge-text" x={isHub ? bd.x + bd.w / 2 : bd.x + bd.padX} y={textTop + i * bd.lineH} textAnchor={isHub ? "middle" : "start"}>{line}</text>
             ))}
+            {bd.subtitle && (
+              <>
+                <path className="lp-orgmetro-lead-star" d={orgMetroStarPath(bd.x + bd.padX + 5, subY - 4, 5)} />
+                <text className="lp-orgmetro-badge-sub" x={bd.x + bd.padX + ORGMETRO_STAR_W} y={subY}>{bd.subtitle}</text>
+              </>
+            )}
             {bd.count && (
               <>
                 <rect className="lp-orgmetro-badge-count-bg" x={bd.x + bd.w - bd.padX - bd.countW + 4} y={bd.y + bd.h / 2 - 9} width={bd.countW - 4} height={18} rx={9} style={{ fill: color }} />
@@ -10262,8 +10309,9 @@ function OrgMetroLabels({ layout, dim }) {
         const top = s.label.y;
         return (
           <g key={"l:" + s.key} className={"lp-orgmetro-label is-" + s.level + (dim(s.branchKey, s.key) ? " is-dim" : "")} data-metro-key={s.key}>
+            {s.starW > 0 && <path className="lp-orgmetro-lead-star" d={orgMetroStarPath(s.label.x + 5.5, top + 7.5, 5.5)} />}
             {s.nameLines.map((line, i) => (
-              <text key={"n" + i} className="lp-orgmetro-name" x={s.label.x} y={top + i * ORGMETRO_NAME_LINE_H + 11.5}>{line}</text>
+              <text key={"n" + i} className="lp-orgmetro-name" x={s.label.x + s.starW} y={top + i * ORGMETRO_NAME_LINE_H + 11.5}>{line}</text>
             ))}
             {s.roleLines.map((line, i) => (
               <text key={"r" + i} className={"lp-orgmetro-role" + (s.roleIsFallback ? " is-fallback" : "")} x={s.label.x} y={top + s.nameLines.length * ORGMETRO_NAME_LINE_H + i * ORGMETRO_ROLE_LINE_H + 10}>{line}</text>
@@ -10582,7 +10630,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         <button type="button" onClick={() => orgMetroExport(svgRef.current, layout, "png")} title="Exporter en PNG" aria-label="Exporter en PNG"><Download size={13} /><span>PNG</span></button>
       </div>
       <div className="lp-orgmetro-legend" aria-hidden="true">
-        <span><i className="lp-orgmetro-legend-lead" />Responsable</span>
+        <span><i className="lp-orgmetro-legend-lead" /><Star size={11} className="lp-orgmetro-legend-star" />Responsable</span>
         <span><i className="lp-orgmetro-legend-sub" />Lead / manager</span>
         <span><i className="lp-orgmetro-legend-member" />Membre</span>
         <span><i className="lp-orgmetro-legend-dup" />Correspondance</span>

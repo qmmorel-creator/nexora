@@ -132,7 +132,7 @@ function AnnotationsHarness() {
     { id: "o-tech", name: "Technique", color: "#2C6BE0", leadName: "Paul Mercier" },
     { id: "o-plat", name: "Plateforme", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Zoé Faure" },
     { id: "o-secu", name: "Sécurité", color: "#2C6BE0", parentTeamId: "o-plat" },
-    { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech" },
+    { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Nora Vidal" },
     { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right" },
     { id: "o-ops", name: "Opérations", color: "#1FA971", leadName: "Luc Perrin" },
   ]);

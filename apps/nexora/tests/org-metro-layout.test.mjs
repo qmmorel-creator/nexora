@@ -22,7 +22,7 @@ const api = vm.runInThisContext(
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
-  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -186,6 +186,48 @@ test("Métro : un responsable sans poste renseigné reçoit le libellé généri
   assert.equal(s.kind, "lead");
   assert.equal(s.level, "lead-root");
   assert.ok(s.roleIsFallback);
+});
+
+test("Métro : le responsable se distingue comme dans la vue hiérarchique — en tête de sa ligne, halo et étoile", () => {
+  const { layout } = metro([team("a", { name: "Produit", leadName: "Chef" })], [member("Bob", { teamIds: ["a"] }), member("Chef", { teamIds: ["a"] })]);
+  const a = branch(layout, "team:a");
+  assert.deepEqual(a.stations.map((s) => s.name), ["Chef", "Bob"], "le responsable passe en tête, quel que soit l'ordre de l'annuaire");
+  const [lead, bob] = a.stations;
+  assert.deepEqual(lead.leads, ["Produit"]);
+  assert.ok(lead.starW > 0, "étoile devant le nom du responsable");
+  assert.equal(bob.starW, 0);
+  assert.ok(lead.half > lead.r + lead.stroke / 2, "place réservée au halo d'accent");
+  assert.ok(a.leadOnLine);
+  assert.equal(a.badge.subtitle, "", "responsable visible sur la ligne : pas de rappel dans le bandeau");
+  assertNoOverlap(layout);
+});
+
+test("Métro : une personne qui dirige une équipe garde son étoile là où elle apparaît ailleurs", () => {
+  const teams = [team("a", { name: "Alpha", leadName: "Chef" }), team("b", { name: "Bêta" })];
+  const { layout } = metro(teams, [member("Chef", { teamIds: ["b", "a"] })]);
+  const occurrences = stationsOf(layout, "Chef");
+  assert.equal(occurrences.length, 2);
+  occurrences.forEach((s) => assert.deepEqual(s.leads, ["Alpha"]));
+  assert.equal(occurrences.find((s) => s.branchKey === "team:a").kind, "lead");
+  assert.equal(occurrences.find((s) => s.branchKey === "team:b").kind, "member");
+});
+
+test("Métro : un responsable qui n'est pas sur la ligne est nommé dans son bandeau", () => {
+  const teams = [team("a", { name: "Alpha", leadName: "Chef" }), team("b", { name: "Bêta" })];
+  const { layout } = metro(teams, [member("Chef", { teamIds: ["b"] }), member("X", { teamIds: ["a"] })]);
+  const a = branch(layout, "team:a");
+  assert.equal(a.leadOnLine, false);
+  assert.equal(a.badge.subtitle, "Resp. Chef");
+  assert.equal(branch(layout, "team:b").badge.subtitle, "");
+  assert.ok(a.stations.every((s) => s.kind !== "lead"));
+  assertNoOverlap(layout);
+  assertLinesAvoidText(layout);
+});
+
+test("orgMetroStarPath : étoile fermée à dix sommets", () => {
+  const d = api.orgMetroStarPath(10, 10, 5);
+  assert.equal((d.match(/[ML] /g) || []).length, 10);
+  assert.ok(d.endsWith("Z"));
 });
 
 test("Métro : un manager et ses subordonnés forment une branche qui part de la ligne de l'équipe", () => {

@@ -1502,6 +1502,9 @@ try {
       junctions: root.querySelectorAll(".lp-orgmetro-junction").length,
       transverse: root.querySelectorAll(".lp-orgmetro-transverse").length,
       independent: root.querySelectorAll(".lp-orgmetro-badge.is-independent").length,
+      leadHalos: root.querySelectorAll(".lp-orgmetro-lead-halo").length,
+      leadStars: root.querySelectorAll(".lp-orgmetro-label .lp-orgmetro-lead-star").length,
+      badgeLeads: [...root.querySelectorAll(".lp-orgmetro-badge-sub")].map((el) => el.textContent),
       groups: ["lines", "branches", "correspondences", "stations", "labels"].filter((n) => root.querySelector(".lp-orgmetro-" + n)).length,
       overlaps,
       transform: g ? g.getAttribute("transform") : "",
@@ -2587,6 +2590,12 @@ if (!orgMetro.error) {
   expect(orgMetro.junctions >= 3, `Organigramme Métro : ${orgMetro.junctions} point(s) de bifurcation, au moins 3 attendus`);
   expect(orgMetro.transverse === 1, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 1 attendue`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
+  // Responsables : 6 lignes dirigées par un membre présent sur la ligne
+  // (halo), 7 personnes dirigeant une équipe (étoile, Nora Vidal comprise
+  // hors de la ligne Applications), et Applications nomme la sienne.
+  expect(orgMetro.leadHalos === 6, `Organigramme Métro : ${orgMetro.leadHalos} halo(s) de responsable, 6 attendus`);
+  expect(orgMetro.leadStars === 7, `Organigramme Métro : ${orgMetro.leadStars} étoile(s) de responsable, 7 attendues`);
+  expect(orgMetro.badgeLeads.length === 1 && orgMetro.badgeLeads[0] === "Resp. Nora Vidal", `Organigramme Métro : rappel du responsable hors ligne ${JSON.stringify(orgMetro.badgeLeads)}, « Resp. Nora Vidal » attendu`);
   expect(orgMetro.overlaps.length === 0, `Organigramme Métro : libellés qui se chevauchent dans le rendu réel — ${orgMetro.overlaps.slice(0, 5).join(" ; ")}`);
   expect(orgMetro.fitScale > 0 && orgMetro.fitScale <= 1, `Organigramme Métro : échelle d'ajustement ${orgMetro.fitScale}`);
   expect(orgMetro.zoomedScale > orgMetro.fitScale, `Organigramme Métro : le zoom avant ne grossit pas (${orgMetro.fitScale} → ${orgMetro.zoomedScale})`);
