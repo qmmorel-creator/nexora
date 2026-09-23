@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroStackSplitAt, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -613,9 +613,20 @@ test("Déplacement libre : une ligne déplacée sur la grille emmène sa sous-ar
   assert.equal(a.drop.y0, root.fork.y);
   assert.ok(root.fork.minX <= a.x && a.x <= root.fork.maxX, "la barre parente s'étire jusqu'à la nouvelle place");
   a.stations.forEach((st) => assert.equal(st.cx, a.x));
-  // Jamais au-dessus de la barre dont la ligne part.
-  const up = api.orgMetroApplyOffsets(base, { "team:a": { dx: 0, dy: -400 } });
-  assert.ok(branch(up, "team:a").y > branch(up, "team:root").fork.y);
+  // Retour de test : une ligne peut remonter au-dessus de sa barre ; son
+  // lien remonte alors depuis la barre et entre par le flanc du bandeau.
+  const up = api.orgMetroApplyOffsets(base, { "team:a": { dx: 200, dy: -200 } });
+  const ua = branch(up, "team:a"), ur = branch(up, "team:root");
+  assert.ok(ua.badge.y + ua.badge.h < ur.fork.y, "au-dessus de la barre");
+  assert.ok(ua.drop.y1 < ua.drop.y0 && ua.drop.y0 === ur.fork.y, "le lien remonte depuis la barre");
+  assert.equal(ua.drop.toX, ua.badge.x, "il entre par le flanc gauche du bandeau");
+  assert.equal(ua.drop.y1, ua.badge.y + ua.badge.h / 2);
+  assert.ok(ur.fork.childXs.includes(ua.drop.x) && ur.fork.upXs.includes(ua.drop.x));
+  const d = api.orgMetroBranchPaths(ua).drop;
+  assert.ok(/^M [\d.]+ [\d.]+ V [\d.]+ Q .* H [\d.]+$/.test(d), "tracé orthogonal, coude arrondi : " + d);
+  // Juste sous la barre (pas la place d'un lien qui remonte) : il s'y arrête.
+  const near = api.orgMetroApplyOffsets(base, { "team:a": { dx: 0, dy: -20 } });
+  assert.ok(branch(near, "team:a").y > branch(near, "team:root").fork.y);
   // Rien dans le cadre ne passe en coordonnées négatives, et sans décalage
   // le plan est inchangé.
   const left = api.orgMetroApplyOffsets(base, { "team:a": { dx: -2000, dy: 0 } });
@@ -732,6 +743,8 @@ test("Ligne repliée : seul le responsable reste, le compte et les autres lignes
   assert.equal(a.collapsed, true);
   assert.deepEqual(a.stations.map((s) => s.name), ["Chef"], "seul le responsable reste sur la ligne");
   assert.equal(a.badge.count, branch(open, "team:a").badge.count, "le bandeau garde l'effectif complet");
+  const { layout: sub } = metro(teams, members, { collapsed: ["team:b"] });
+  assert.equal(branch(sub, "team:a").badge.count, branch(open, "team:a").badge.count, "replier une sous-équipe ne fait pas baisser le compteur de sa ligne parente");
   assert.ok(a.badge.lines.join(" ").startsWith("▸ "), "le bandeau signale la ligne repliée");
   assert.equal(branch(layout, "team:b"), undefined, "les sous-équipes sont masquées");
   assert.equal(stationsOf(layout, "Rattaché").length, 0, "les rattachés sont masqués");
@@ -1015,4 +1028,27 @@ test("Équipe empilée : chaque trait horizontal se déplace en hauteur, la lign
   // La ligne s'arrête au trait le plus bas.
   const up3 = api.orgMetroApplyOffsets(layout, { "elbow:team:s3": { dx: 0, dy: -40 } });
   assert.equal(branch(up3, "team:ds").trunk.y1, Math.max(e(up3, "s1").y, e(up3, "s2").y, e(up3, "s3").y));
+});
+
+test("Vues enregistrées : instantané de la disposition, remplacement par nom, rechargement complet", () => {
+  const state = { orgMetroOrder: { hub: ["team:b", "team:a"] }, orgMetroOffsets: { "team:a": { dx: 40, dy: 20 } }, orgMetroCollapsed: ["team:c"], orgMetroStackedTeams: ["d"], orgMetroShowTransverse: false, autre: "ignoré" };
+  const snap = api.orgMetroViewSnapshot(state);
+  assert.equal(snap.autre, undefined, "seuls les réglages de disposition sont gardés");
+  assert.deepEqual(snap.orgMetroCollapsed, ["team:c"]);
+  assert.equal(snap.orgMetroLinkOffsets, null, "valeur par défaut pour un réglage absent");
+  state.orgMetroCollapsed.push("team:x");
+  assert.deepEqual(snap.orgMetroCollapsed, ["team:c"], "copie indépendante de l'état courant");
+  let views = api.orgMetroSaveView([], "Vue projet", state, "2026-09-23T10:00:00.000Z", "v1");
+  views = api.orgMetroSaveView(views, "  ", state, "x", "v2");
+  assert.equal(views.length, 1, "un nom vide n'enregistre rien");
+  views = api.orgMetroSaveView(views, "vue PROJET", { orgMetroCollapsed: [] }, "2026-09-23T11:00:00.000Z", "v3");
+  assert.equal(views.length, 1, "même nom : la vue est remplacée");
+  assert.equal(views[0].id, "v1");
+  assert.deepEqual(views[0].state.orgMetroCollapsed, []);
+  // Recharger : tout réglage absent revient à sa valeur par défaut.
+  const patch = api.orgMetroViewPatch({ orgMetroCollapsed: ["team:a"] });
+  assert.deepEqual(patch.orgMetroCollapsed, ["team:a"]);
+  assert.equal(patch.orgMetroOffsets, null);
+  assert.equal(patch.orgMetroShowTransverse, true);
+  assert.deepEqual(api.normalizeOrgMetroViews([{ id: "a", name: "" }, null, { id: "b", name: " B ", state: {} }, { id: "b", name: "doublon" }]).map((v) => v.name), ["B"]);
 });
