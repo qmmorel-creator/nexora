@@ -8,16 +8,14 @@ import vm from "node:vm";
 // entre les sentinelles des trois blocs qu'elle enchaîne — Équipes (modèle et
 // arbre existants), layout par contour (#243) et Métro (adaptateur + layout).
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
-test("un ancien mode Orbital enregistré revient à Hiérarchique sans toucher au mode Métro", () => {
-  const from = html.indexOf("const ORGCHART_MODES = [");
-  const to = html.indexOf("function WidgetOrgChart(", from);
+test("l'Organigramme n'a plus qu'une vue : le plan Métro, quel que soit le mode enregistré", () => {
+  const from = html.indexOf("function WidgetOrgChart(");
+  const to = html.indexOf("\n}\n", from);
   assert.ok(from > 0 && to > from);
-  const { ORGCHART_MODES, orgChartModeOf } = vm.runInThisContext(
-    `(function () { ${html.slice(from, to)}; return { ORGCHART_MODES, orgChartModeOf }; })()`
-  );
-  assert.deepEqual(Array.from(ORGCHART_MODES, (mode) => mode.key), ["hierarchy", "metro"]);
-  assert.equal(orgChartModeOf({ orgChartView: "orbital" }), "hierarchy");
-  assert.equal(orgChartModeOf({ orgChartView: "metro" }), "metro");
+  const src = html.slice(from, to);
+  assert.ok(src.includes("<OrgMetroChart"), "le widget rend le plan Métro");
+  assert.ok(!/OrgHierarchyChart|orgChartView|ORGCHART_MODES/.test(src), "plus de vue hiérarchique ni de bascule de mode");
+  assert.ok(!html.includes("function OrgHierarchyChart("), "le composant hiérarchique est retiré");
 });
 function block(name) {
   const start = `// === NEXORA:${name}:START ===`;
@@ -33,7 +31,7 @@ const api = vm.runInThisContext(
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
-  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive,` +
+  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive,` +
   ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
@@ -70,6 +68,8 @@ function lineSegments(layout) {
   const segs = [];
   layout.branches.forEach((b) => {
     if (b.trunk) segs.push({ key: "trunk:" + b.key, x1: b.trunk.x, y1: b.trunk.y0, x2: b.trunk.x, y2: b.trunk.y1 });
+    if (b.row) segs.push({ key: "row:" + b.key, x1: b.row.x0, y1: b.row.y, x2: b.row.x1, y2: b.row.y });
+    if (b.elbow && b.elbow.vertical) segs.push({ key: "side:" + b.key, x1: b.elbow.x, y1: b.elbow.y + 12, x2: b.elbow.x, y2: b.elbow.y1 });
     if (b.fork) segs.push({ key: "fork:" + b.key, x1: b.fork.minX, y1: b.fork.y, x2: b.fork.maxX, y2: b.fork.y });
     if (b.drop) segs.push({ key: "drop:" + b.key, x1: b.drop.x, y1: b.drop.y0, x2: b.drop.x, y2: b.drop.y1 });
   });
@@ -200,7 +200,7 @@ test("Métro : un responsable sans poste renseigné reçoit le libellé généri
   assert.ok(s.roleIsFallback);
 });
 
-test("Métro : le responsable se distingue comme dans la vue hiérarchique — en tête de sa ligne, halo et étoile", () => {
+test("Métro : le responsable se distingue — en tête de sa ligne, halo et étoile", () => {
   const { layout } = metro([team("a", { name: "Produit", leadName: "Chef" })], [member("Bob", { teamIds: ["a"] }), member("Chef", { teamIds: ["a"] })]);
   const a = branch(layout, "team:a");
   assert.deepEqual(a.stations.map((s) => s.name), ["Chef", "Bob"], "le responsable passe en tête, quel que soit l'ordre de l'annuaire");
@@ -726,4 +726,108 @@ test("Ligne repliée : seul le responsable reste, le compte et les autres lignes
   assert.deepEqual(branch(layout, "team:c").stations.map((s) => s.name), branch(open, "team:c").stations.map((s) => s.name));
   assert.equal(branch(open, "team:a").collapsed, false);
   assertNoOverlap(layout);
+});
+
+test("Utilisateurs inactifs propres au widget : la liste du widget prime sur l'ancien drapeau de la fiche", () => {
+  const members = [member("Ana", { id: "a1" }), member("Bob", { id: "b1", inactive: true }), member("Cléo", { id: "c1" })];
+  const flags = (list) => list.map((m) => [m.name, api.memberIsInactive(m)]);
+  // Widget jamais réglé : l'ancien drapeau reste la référence, sans copie.
+  assert.equal(api.orgChartMembersWithInactive(members, undefined), members);
+  // Widget réglé : seule sa liste compte, même vide.
+  assert.deepEqual(flags(api.orgChartMembersWithInactive(members, ["a1"])), [["Ana", true], ["Bob", false], ["Cléo", false]]);
+  assert.deepEqual(flags(api.orgChartMembersWithInactive(members, [])), [["Ana", false], ["Bob", false], ["Cléo", false]]);
+  // Les fiches d'origine ne sont jamais modifiées ; une fiche inchangée est réutilisée telle quelle.
+  const out = api.orgChartMembersWithInactive(members, ["a1"]);
+  assert.equal(members[0].inactive, undefined);
+  assert.equal(out[2], members[2]);
+  // Deux widgets, deux réglages : chacun grise ses propres personnes dans le plan.
+  const teams = [team("t", { leadName: "Ana" })];
+  const withTeam = members.map((m) => ({ ...m, teamIds: ["t"] }));
+  const w1 = metro(teams, api.orgChartMembersWithInactive(withTeam, ["c1"])).layout;
+  const w2 = metro(teams, api.orgChartMembersWithInactive(withTeam, [])).layout;
+  assert.deepEqual(w1.stations.filter((s) => s.inactive).map((s) => s.name), ["Cléo"]);
+  assert.deepEqual(w2.stations.filter((s) => s.inactive).map((s) => s.name), []);
+});
+
+// --- Disposition horizontale par équipe, nœuds de bifurcation déplaçables ----
+
+test("Disposition horizontale : stations côte à côte sur une ligne, noms dessous, rattachés à la verticale", () => {
+  const teams = [team("a", { leadName: "Chef" }), team("b", { parentTeamId: "a", leadName: "Sous" }), team("v", { leadName: "Voisin" })];
+  const members = [
+    member("Chef", { teamIds: ["a"] }), member("Ana", { teamIds: ["a"] }), member("Rattachée", { teamIds: ["a"], managerName: "Ana" }),
+    member("Zoé Longuenom-Composé", { teamIds: ["a"], teamRoles: { a: "Ingénieure fiabilité des services" } }),
+    member("Sous", { teamIds: ["b"] }), member("Bob", { teamIds: ["b"] }),
+    member("Voisin", { teamIds: ["v"] }), member("Cléo", { teamIds: ["v"] }),
+  ];
+  const vert = metro(teams, members).layout;
+  const { layout } = metro(teams, members, { horizontal: ["a"] });
+  const a = branch(layout, "team:a");
+  assert.ok(a.row, "la ligne horizontale existe");
+  assert.equal(a.stations[0].name, "Chef", "le responsable reste la première station");
+  a.stations.forEach((st, i) => {
+    assert.equal(st.cy, a.row.y, "station posée sur la ligne horizontale");
+    assert.ok(st.label.y > a.row.y, "nom sous la ligne");
+    if (i) assert.ok(st.cx > a.stations[i - 1].label.x + a.stations[i - 1].label.w, "chaque station après le nom de la précédente");
+  });
+  assert.equal(a.row.x1, a.stations[a.stations.length - 1].cx, "la ligne s'arrête sur la dernière station");
+  assert.equal(a.trunk.x, a.row.x0, "la ligne horizontale part du tronc");
+  // Rattachés : descente verticale depuis la station du manager.
+  const side = branch(layout, "mgr:Ana");
+  const ana = a.stations.find((st) => st.name === "Ana");
+  assert.ok(side.elbow.vertical);
+  assert.equal(side.x, ana.cx);
+  // Sous-équipe : bifurcation sous le tout, depuis le tronc ; elle reste verticale.
+  const b = branch(layout, "team:b");
+  assert.equal(b.row, null);
+  assert.ok(a.fork && a.fork.y > side.stations[side.stations.length - 1].cy, "la bifurcation passe sous les rattachés");
+  assert.equal(a.trunk.y1, a.fork.y);
+  // Les autres équipes ne changent pas de forme.
+  assert.equal(branch(layout, "team:v").row, null);
+  assert.deepEqual(branch(layout, "team:v").stations.map((st) => st.cx - branch(layout, "team:v").x), branch(vert, "team:v").stations.map((st) => st.cx - branch(vert, "team:v").x));
+  assertNoOverlap(layout);
+  assertLinesAvoidText(layout);
+  // Déterministe, et suit les déplacements comme le reste.
+  assert.deepEqual(metro(teams, members, { horizontal: ["a"] }).layout, layout);
+  const moved = api.orgMetroApplyOffsets(layout, { "team:a": { dx: 40, dy: 20 } });
+  const ma = branch(moved, "team:a");
+  assert.equal(ma.row.x1 - ma.row.x0, a.row.x1 - a.row.x0);
+  ma.stations.forEach((st) => assert.equal(st.cy, ma.row.y));
+});
+
+test("Nœud de bifurcation déplaçable : la barre et les lignes qui en partent bougent ensemble, le tronc suit", () => {
+  const teams = [team("p", { leadName: "Chef" }), team("c1", { parentTeamId: "p" }), team("c2", { parentTeamId: "p" }), team("x", { leadName: "Ext" })];
+  const members = [member("Chef", { teamIds: ["p"] }), member("Luc", { teamIds: ["c1"] }), member("Mia", { teamIds: ["c2"] }), member("Ext", { teamIds: ["x"] })];
+  const { layout: base } = metro(teams, members);
+  const p0 = branch(base, "team:p");
+  const junction = api.orgMetroJunctions(base).find((j) => j.key === "j:team:p");
+  assert.ok(junction, "le nœud existe");
+  // Vers le bas seulement : tronc prolongé, lignes décalées d'autant.
+  const down = api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 0, dy: 40 } });
+  const rel = (l, k) => [branch(l, k).x - branch(l, "team:p").x, branch(l, k).y - branch(l, "team:p").y];
+  assert.equal(branch(down, "team:p").fork.y - branch(down, "team:p").y, p0.fork.y - p0.y + 40);
+  assert.equal(branch(down, "team:p").trunk.y1, branch(down, "team:p").fork.y, "le tronc descend jusqu'au nœud");
+  ["team:c1", "team:c2"].forEach((k) => assert.deepEqual(rel(down, k), [rel(base, k)[0], rel(base, k)[1] + 40]));
+  assert.deepEqual(branch(down, "team:p").stations.map((st) => st.cy - branch(down, "team:p").y), p0.stations.map((st) => st.cy - p0.y), "les stations de la ligne ne bougent pas");
+  // En biais : décroché du tronc jusqu'au nœud, qui reste le départ de la barre.
+  const side = api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 60, dy: 40 } });
+  const ps = branch(side, "team:p");
+  assert.ok(ps.trunk.jog, "décroché du tronc");
+  assert.equal(ps.trunk.jog.x, ps.fork.fromX);
+  assert.equal(ps.fork.fromX - ps.x, 60);
+  assert.ok(api.orgMetroBranchPaths(ps).trunk.includes(" H "), "tracé orthogonal");
+  const js = api.orgMetroJunctions(side).find((j) => j.key === "j:team:p");
+  assert.deepEqual([js.x, js.y], [ps.fork.fromX, ps.fork.y], "le rond blanc suit le nœud");
+  ["team:c1", "team:c2"].forEach((k) => assert.deepEqual(rel(side, k), [rel(base, k)[0] + 60, rel(base, k)[1] + 40]));
+  // À la même hauteur : la barre s'étire jusqu'au pied du tronc.
+  const flat = branch(api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 200, dy: 0 } }), "team:p");
+  assert.ok(!flat.trunk.jog && flat.fork.minX <= flat.trunk.x && flat.fork.maxX >= flat.trunk.x);
+  // Jamais au-dessus de sa place d'origine.
+  const up = branch(api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 0, dy: -200 } }), "team:p");
+  assert.equal(up.fork.y - up.y, p0.fork.y - p0.y);
+  // Anti-superposition : un nœud lâché sur une autre ligne glisse vers une case libre.
+  const x0 = branch(base, "team:x");
+  const want = { "fork:team:p": { dx: x0.x - p0.x, dy: 0 } };
+  const fixed = api.orgMetroFreeOffsets(base, want, "fork:team:p");
+  assert.ok(fixed["fork:team:p"].dy >= 0);
+  assertNoOverlap(api.orgMetroApplyOffsets(base, fixed));
 });

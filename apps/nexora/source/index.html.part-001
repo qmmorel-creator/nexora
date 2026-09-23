@@ -174,6 +174,8 @@ function EntityFilterMultiSelect({
   placeholder = "Rechercher…",
   emptyLabel = "Tous",
   compact = false,
+  summary: summaryOverride,
+  showBulkActions = true,
 }) {
   const [open,setOpen] = useState(false);
   const [q,setQ] = useState("");
@@ -205,9 +207,9 @@ function EntityFilterMultiSelect({
     ? normalized.filter((o) => (o.name || "").toLocaleLowerCase("fr").includes(query))
     : normalized;
 
-  const summary = selectedIds.length === 0
+  const summary = summaryOverride || (selectedIds.length === 0
     ? emptyLabel
-    : `${selectedIds.length} sélectionné${selectedIds.length > 1 ? "s" : ""}`;
+    : `${selectedIds.length} sélectionné${selectedIds.length > 1 ? "s" : ""}`);
 
   return (
     <div className={"lp-entity-filter" + (compact ? " compact" : "")} ref={ref}>
@@ -234,10 +236,12 @@ function EntityFilterMultiSelect({
             {q && <button type="button" onClick={()=>setQ("")}><X size={12}/></button>}
           </div>
 
-          <div className="lp-entity-filter-actions">
-            <button type="button" onClick={onSelectAll}>Tout sélectionner</button>
-            <button type="button" onClick={onDeselectAll}>Tout désélectionner</button>
-          </div>
+          {showBulkActions && (
+            <div className="lp-entity-filter-actions">
+              <button type="button" onClick={onSelectAll}>Tout sélectionner</button>
+              <button type="button" onClick={onDeselectAll}>Tout désélectionner</button>
+            </div>
+          )}
 
           {metaGroups && metaGroups.length > 0 && (
             <div className="lp-entity-filter-groups">
@@ -3054,98 +3058,11 @@ function GlobalStyles() {
            UNE SEULE grille CSS porte l'en-tête, les lignes et le pied : les
            colonnes s'alignent alors d'elles-mêmes, sans qu'aucun calcul de
            largeur n'ait à être tenu en trois endroits. */
-        /* Organigramme (#167) : sections d'équipe, cartes de personne, reliées
-           par un tracé SVG mesuré — voir le tronc-et-branches ci-dessous. */
-        /* Enveloppe du widget (retour de test) : réserve la ligne d'en-tête
-           portant le bouton d'accès rapide aux réglages Utilisateurs &
-           Équipes — jamais affichée sans callback (onOpenTeamsSettings). */
+        /* Organigramme : en-tête du widget (accès rapide aux réglages
+           Utilisateurs & Équipes). */
         .lp-widget-orgchart{ display:flex; flex-direction:column; gap:6px; height:100%; min-height:0; }
         .lp-widget-orgchart-head{ display:flex; align-items:center; justify-content:flex-end; flex:0 0 auto; }
         .lp-widget-orgchart-body{ flex:1; min-height:0; }
-        .lp-orgchart-avatar-xs{ width:18px; height:18px; font-size:8.5px; flex:0 0 auto; }
-        .lp-orgchart-lead-badge-inline{ color:var(--accent); flex:0 0 auto; }
-        .lp-orgchart-card{
-          position:relative; display:flex; flex-direction:column; align-items:center; gap:5px; width:104px; padding:10px 6px;
-          border:1px solid var(--border); border-radius:8px; background:var(--surface); cursor:pointer;
-          font-family:inherit; text-align:center; transition:box-shadow .12s ease, border-color .12s ease;
-        }
-        .lp-orgchart-card:hover{ box-shadow:0 0 0 2px var(--ink) inset; border-color:var(--border-strong); }
-        /* Le responsable d'une équipe qui est AUSSI un membre coché (retour de
-           test sur #167) garde juste ce repère — plus de cadre doré sur la
-           carte, désormais porté par l'en-tête de l'équipe (ci-dessus) :
-           cette carte reste une carte de contributeur ordinaire. */
-        .lp-orgchart-lead-badge{ position:absolute; top:6px; right:6px; color:var(--accent); }
-        .lp-orgchart-avatar{ width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:800; color:#fff; overflow:hidden; }
-        /* #238 : plus jamais d'ellipse — voir orgHierNodeSize côté JS
-           (ORGHIER_CARD_*_EXTRA_LINE_H), qui réserve la place nécessaire pour
-           que la carte ne chevauche jamais sa voisine une fois le texte
-           passé sur plusieurs lignes. */
-        .lp-orgchart-name{ font-size:11.5px; line-height:13px; font-weight:700; color:var(--text-900); overflow-wrap:break-word; white-space:normal; max-width:100%; }
-        /* Poste (retour de test sur #167) : un intitulé par équipe, jamais un
-           seul poste global — voir memberRoleInTeam. */
-        .lp-orgchart-role{ font-size:9.5px; line-height:11px; font-weight:600; color:var(--text-600); overflow-wrap:break-word; white-space:normal; max-width:100%; margin-top:-3px; }
-        .lp-orgchart-stats{ display:flex; flex-direction:column; gap:1px; }
-        .lp-orgchart-stat{ font-size:9.5px; font-weight:700; color:var(--text-600); }
-        .lp-orgchart-stat.is-late{ color:var(--danger); }
-
-        /* Organigramme — mode hiérarchique classique (#167, retour de test) :
-           arbre unique (racine optionnelle → équipes → personnes), disposé
-           par un calcul arithmétique de largeurs de carte fixes — jamais par
-           une mesure DOM après retour à la ligne, donc jamais de trait
-           recouvert par une carte. */
-        /* #219 fix (clignotement) : le ResizeObserver qui mesure la largeur
-           disponible doit observer un conteneur qui ne scrolle JAMAIS lui-même —
-           sinon l'apparition/disparition de la scrollbar verticale change sa
-           propre largeur observée, ce qui fait osciller fitScale en boucle
-           (scrollbar → largeur -15px → échelle plus petite → contenu tient →
-           scrollbar disparaît → largeur +15px → échelle plus grande → ça
-           déborde à nouveau → scrollbar réapparaît → etc., à l'infini). Le
-           calque qui scrolle (lp-orghier-wrap) est donc désormais à l'INTÉRIEUR
-           d'un calque stable (lp-orghier-outer) qui porte la mesure. */
-        .lp-orghier-outer{ height:100%; min-height:0; }
-        .lp-orghier-wrap{ height:100%; min-height:0; overflow:auto; }
-        .lp-orghier{ position:relative; margin:4px; }
-        .lp-orghier-lines{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
-        .lp-orghier-lines path{ fill:none; stroke:var(--border-strong); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
-        /* Rattachement transverse (#219) : trait pointillé distinct de la
-           hiérarchie (pleine), sans direction parent/enfant. */
-        /* Relations propres au widget (#295) : pointillé de la couleur
-           d'action, sous les cartes ; extrémités et légende au-dessus. */
-        .lp-orghier-lines path.lp-orghier-line-relation{ stroke:var(--life-blue, #245edb); stroke-width:2; stroke-dasharray:1 5; }
-        .lp-orghier-lines .lp-orghier-junction{ fill:var(--surface); stroke:var(--border-strong); stroke-width:1.5; }
-        .lp-orghier-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; z-index:2; }
-        .lp-orghier-relation-end{ fill:var(--life-blue, #245edb); stroke:var(--surface); stroke-width:1.5; }
-        .lp-orghier-relation-label{ position:absolute; z-index:3; transform:translate(-50%, -50%); padding:1px 9px; border:1.25px solid var(--life-blue, #245edb); border-radius:999px; background:var(--surface); color:var(--life-blue, #245edb); font-size:11px; font-weight:600; line-height:16px; white-space:nowrap; pointer-events:auto; }
-        .lp-orghier-lines path.lp-orghier-line-transverse{ stroke:var(--accent); stroke-width:1.5; stroke-dasharray:4 3; }
-        .lp-orghier-node{ position:absolute; display:flex; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); font-size:11.5px; font-weight:800; color:var(--text-900); box-sizing:border-box; }
-        .lp-orghier-node-root{ justify-content:center; background:var(--paper-soft); border-color:var(--border-strong); }
-        .lp-orghier-node-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
-        .lp-orghier-node-member{ position:absolute; }
-        /* Panneau d'équipe « fusionné » (retour de test, piste B) : bandeau
-           plein de la couleur d'équipe, membres sans subordonné listés dans
-           le corps du panneau plutôt qu'en cartes séparées (voir
-           orgHierEmbeddedRoster / orgHierLayoutChildren) — hauteur du
-           panneau et hauteur réservée par le calcul de layout doivent
-           toujours voir exactement les mêmes lignes (orgHierNodeSize). */
-        .lp-orghier-node-panel{ position:absolute; box-sizing:border-box; border-radius:10px; overflow:hidden; border:1px solid var(--border); background:var(--surface); box-shadow:0 1px 3px rgba(16,21,31,0.05); }
-        .lp-orghier-node-panel.is-unassigned{ border-style:dashed; }
-        .lp-orghier-panel-banner{ height:34px; box-sizing:border-box; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 12px; color:#fff; font-size:12px; font-weight:800; }
-        .lp-orghier-panel-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-orghier-panel-count{ flex:0 0 auto; font-size:10px; font-weight:700; background:rgba(255,255,255,0.22); border-radius:999px; padding:2px 7px; }
-        .lp-orghier-panel-body{ display:flex; flex-direction:column; gap:6px; padding:8px 10px; }
-        /* Hauteurs ci-dessous = repli MINIMAL seulement : la hauteur qui
-           compte vient de l'attribut style inline posé par renderRow
-           (orgHierRowHeight côté JS, #238), qui grandit avec le nombre de
-           lignes réellement nécessaires au nom/poste — jamais tronqués. */
-        .lp-orghier-panel-row{ display:flex; align-items:center; gap:8px; min-height:38px; box-sizing:border-box; width:100%; padding:0 4px; border:0; border-radius:6px; background:none; cursor:pointer; text-align:left; font-family:inherit; }
-        .lp-orghier-panel-row:hover{ background:var(--paper-soft); }
-        .lp-orghier-panel-row.is-lead{ min-height:46px; padding:0 8px; border:1.5px solid var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
-        /* Poste (retour de test) : une ligne de plus quand renseigné — la
-           hauteur bascule vers *_ROLE (voir ORGHIER_TEAM_ROW_H_ROLE côté JS,
-           orgHierRowHeight) pour que le calcul de layout et le rendu voient
-           toujours exactement la même hauteur. */
-        .lp-orghier-panel-row.has-role{ min-height:50px; }
-        .lp-orghier-panel-row.is-lead.has-role{ min-height:58px; }
 
         /* Fiche équipe : poste modifiable au clic sur un membre. */
         .lp-team-role-trigger{ display:flex; align-items:center; gap:4px; flex:1; min-width:0; padding:4px 6px; margin:-4px -6px; border:0; border-radius:7px; background:none; font:inherit; text-align:left; color:inherit; cursor:pointer; }
@@ -3159,11 +3076,7 @@ function GlobalStyles() {
         .lp-team-role-edit input{ flex:1; min-width:0; }
         @media (hover: none){ .lp-team-role-placeholder{ opacity:1; } .lp-team-role-pencil{ opacity:1; } }
         /* Utilisateur inactif (#295) : toujours présent, grisé — jamais par la
-           seule couleur : texte en italique et avatar désaturé. */
-        .lp-member-inactive-tag{ display:inline-block; margin-left:6px; padding:0 6px; border:1px solid var(--border-strong); border-radius:999px; font-size:10px; font-weight:600; color:var(--text-600); vertical-align:1px; }
-        .lp-orghier-panel-row.is-inactive, .lp-orgchart-card.is-inactive{ opacity:.55; }
-        .lp-orghier-panel-row.is-inactive .lp-orghier-panel-row-name, .lp-orgchart-card.is-inactive .lp-orgchart-name{ font-style:italic; color:var(--text-600); }
-        .lp-orghier-panel-row.is-inactive .lp-orgchart-avatar, .lp-orgchart-card.is-inactive .lp-orgchart-avatar{ filter:grayscale(1); }
+           seule couleur : nom en italique. */
         .lp-orgmetro-station.is-inactive{ opacity:.6; }
         .lp-orgmetro-label.is-inactive .lp-orgmetro-name{ fill:var(--text-600); font-style:italic; }
         .lp-orgmetro-label.is-inactive{ opacity:.7; }
@@ -3175,13 +3088,7 @@ function GlobalStyles() {
         .lp-orgrel-legend input{ flex:1; min-width:0; }
         .lp-orgrel-hint{ margin:0; font-size:11.5px; color:var(--text-600); }
         @media (max-width: 479px){ .lp-orgrel-ends{ grid-template-columns:1fr; } .lp-orgrel-arrow{ display:none; } }
-        /* Organigramme — bascule de mode dans l'en-tête du widget (#295). */
         .lp-widget-orgchart-head{ gap:8px; }
-        .lp-orgchart-modes{ display:inline-flex; margin-right:auto; padding:2px; gap:2px; border:1px solid var(--border); border-radius:9px; background:var(--surface); }
-        .lp-orgchart-mode-btn{ display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 10px; border:0; border-radius:7px; background:none; color:var(--text-600); font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
-        .lp-orgchart-mode-btn:hover{ color:var(--text-900); background:var(--paper-soft); }
-        .lp-orgchart-mode-btn.active{ background:var(--life-blue-soft, #eaf0ff); color:var(--life-blue, #245edb); }
-        .lp-orgchart-mode-btn:focus-visible{ outline:2px solid var(--life-blue, #245edb); outline-offset:1px; }
 
         /* Organigramme — plan « Métro » (#295). Un SVG unique, cadré par
            zoom/déplacement : la géométrie vient entièrement de layoutOrgMetro
@@ -3194,13 +3101,14 @@ function GlobalStyles() {
         .lp-orgmetro-svg text{ font-family:inherit; }
         .lp-orgmetro-line{ fill:none; stroke-linecap:round; stroke-linejoin:round; }
         .lp-orgmetro-junction{ fill:var(--surface); }
+        .lp-orgmetro-junction.is-draggable{ cursor:grab; }
         .lp-orgmetro-station{ cursor:pointer; outline:none; }
         .lp-orgmetro-station circle, .lp-orgmetro-station rect{ fill:var(--surface); }
         .lp-orgmetro-station.is-pill rect{ stroke-width:2.5; stroke-dasharray:none; }
         .lp-orgmetro-station .lp-orgmetro-station-core{ fill:var(--life-text, var(--ink)); stroke:none; }
         .lp-orgmetro-station.is-focus circle:first-of-type, .lp-orgmetro-station.is-focus rect{ filter:drop-shadow(0 0 0 transparent); }
         .lp-orgmetro-station:focus-visible circle, .lp-orgmetro-station:focus-visible rect{ stroke:var(--life-blue, #245edb) !important; }
-        /* Responsable (#295, repris de .lp-orghier-panel-row.is-lead) : halo et
+        /* Responsable (#295) : halo et
            étoile de la couleur d'accent, en plus d'une station plus grande. */
         .lp-orgmetro-lead-halo{ fill:none !important; stroke:var(--accent); stroke-width:1.75; }
         .lp-orgmetro-lead-star{ fill:var(--accent); stroke:none; }
@@ -3275,14 +3183,6 @@ function GlobalStyles() {
         @media (prefers-reduced-motion: reduce){
           .lp-orgmetro-svg [class*="lp-orgmetro"]{ transition:none; }
         }
-        .lp-orghier-panel-row-main{ flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; justify-content:center; }
-        /* #238 : plus jamais d'ellipse — le nom/poste reviennent à la ligne
-           (line-height explicite : voir ORGHIER_ROW_*_EXTRA_LINE_H côté JS,
-           qui doit refléter la même valeur pour que la hauteur réservée par
-           le layout corresponde au texte réellement rendu). */
-        .lp-orghier-panel-row-name{ font-size:12px; line-height:14px; font-weight:700; color:var(--text-900); overflow-wrap:break-word; white-space:normal; }
-        .lp-orghier-panel-row-role{ font-size:9.5px; line-height:12px; font-weight:600; color:var(--text-600); overflow-wrap:break-word; white-space:normal; }
-        .lp-orghier-panel-row-stats{ flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:1px; }
 
         /* Widget Utilisateur (#173). */
         .lp-userprofile{ display:flex; flex-direction:column; gap:16px; height:100%; min-height:0; overflow:auto; }

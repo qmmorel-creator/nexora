@@ -3770,9 +3770,28 @@ function memberRoleInTeam(member, teamId) {
 // personne quitte l'annuaire. Vide = rattachée à sa seule équipe, comme avant
 // ce champ (voir buildOrgHierarchyTree).
 // Utilisateur inactif (retour de test sur #295) : il reste dans l'annuaire et
-// dans l'Organigramme, à sa place, mais grisé. Absent = actif.
+// dans l'Organigramme, à sa place, mais grisé. Absent = actif. Le réglage est
+// propre à chaque widget Organigramme (widget.orgChartInactiveMembers, voir
+// orgChartMembersWithInactive) ; l'ancien drapeau global `inactive` de la
+// fiche ne sert plus que de valeur de départ aux widgets jamais réglés.
 function memberIsInactive(member) {
   return Boolean(member && member.inactive === true);
+}
+// Identifiant stable d'une personne pour les réglages de widget.
+function orgChartMemberKey(member) {
+  return String((member && (member.id || member.name)) || "");
+}
+// Membres vus par UN widget Organigramme : `inactive` vient de la liste du
+// widget quand elle existe (tableau, même vide), sinon de l'ancien drapeau
+// de la fiche, pour qu'un widget jamais réglé reste identique.
+function orgChartMembersWithInactive(members, inactiveKeys) {
+  const list = Array.isArray(members) ? members : [];
+  if (!Array.isArray(inactiveKeys)) return list;
+  const set = new Set(inactiveKeys.map(String));
+  return list.map((m) => {
+    const inactive = set.has(orgChartMemberKey(m));
+    return memberIsInactive(m) === inactive ? m : { ...m, inactive };
+  });
 }
 function memberManagerName(member) {
   return member && typeof member.managerName === "string" ? member.managerName.trim() : "";
@@ -11035,7 +11054,6 @@ function TeamMemberManager({ teamMembers, setTeamMembers, tasks, setTasks, teams
                 l'Organigramme (#231) — raccourci au crayon déjà présent. */}
             <span className="lp-manage-name" onDoubleClick={() => setFormTarget(u)} title="Double-clic pour modifier l'utilisateur" style={{ cursor: "pointer" }}>
               {u.name} <span style={{ color: "var(--text-600)", fontWeight: 400 }}>({count} tâche{count > 1 ? "s" : ""})</span>
-              {memberIsInactive(u) && <span className="lp-member-inactive-tag">Inactif</span>}
               {memberTeamNames.length > 0 && (
                 <span style={{ display: "block", fontSize: 10.5, color: "var(--text-600)", fontWeight: 400 }}>{memberTeamNames.join(", ")}</span>
               )}
@@ -11198,7 +11216,6 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
   const [capacityPerDay, setCapacityPerDay] = useState(normalizeMemberCapacity(member?.capacityPerDay));
   const [teamIds, setTeamIds] = useState(() => memberTeamIds(member));
   const [managerName, setManagerName] = useState(() => memberManagerName(member));
-  const [inactive, setInactive] = useState(() => memberIsInactive(member));
   // Poste par équipe (#167, retour de test) : un texte libre par équipe
   // cochée, jamais un seul poste global — la même personne peut porter un
   // intitulé différent d'une équipe à l'autre.
@@ -11216,22 +11233,20 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
     // Une équipe décochée n'a plus de poste à porter (retour de test sur #167).
     if (teamIds.includes(id)) setTeamRoles((r) => { const next = { ...r }; delete next[id]; return next; });
   };
-  // #159 (retour du 17/09) : recherche rapide dès que le catalogue s'allonge —
-  // les équipes déjà cochées restent listées à part, pour ne jamais disparaître
-  // de la vue quand la recherche filtre la liste principale.
-  const [teamSearch, setTeamSearch] = useState("");
+  // Choix des équipes (retour de test) : liste déroulante à cases à cocher
+  // avec recherche rapide (EntityFilterMultiSelect) plutôt que la longue
+  // liste dépliée ; les équipes cochées restent listées au-dessus, avec leur
+  // poste.
   const selectedTeams = teamCatalogue.filter((t) => teamIds.includes(t.id));
-  const teamSearchResults = teamCatalogue.filter((t) => {
-    if (teamIds.includes(t.id)) return false;
-    const q = teamSearch.trim().toLowerCase();
-    return !q || t.name.toLowerCase().includes(q);
-  });
+  const teamSummary = selectedTeams.length === 0
+    ? "Choisir des équipes…"
+    : selectedTeams.length + " équipe" + (selectedTeams.length > 1 ? "s" : "") + " — ajouter / retirer…";
 
   const submit = () => {
     if (!name.trim()) { setNameError(true); return; }
     const cleanRoles = {};
     teamIds.forEach((id) => { if (teamRoles[id] && teamRoles[id].trim()) cleanRoles[id] = teamRoles[id].trim(); });
-    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamIds, teamId: null, managerName: managerName.trim(), teamRoles: cleanRoles, inactive });
+    onSave({ name: name.trim(), color, avatarDataUrl: avatar || null, email: email.trim() || null, capacityPerDay: normalizeMemberCapacity(capacityPerDay), teamIds, teamId: null, managerName: managerName.trim(), teamRoles: cleanRoles });
   };
 
   return (
@@ -11277,23 +11292,22 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
             ))}
           </div>
         )}
-        {teamCatalogue.length > 5 && (
-          <input
-            type="text"
-            value={teamSearch}
-            onChange={(e) => setTeamSearch(e.target.value)}
-            placeholder="Rechercher une équipe…"
-            style={{ marginBottom: 6 }}
-          />
+        {teamCatalogue.length > 0 && (
+          <div className="lp-member-teams-select">
+            <EntityFilterMultiSelect
+              options={teamCatalogue.map((t) => ({ id: t.id, name: t.name, color: t.color }))}
+              selectedIds={teamIds}
+              onToggle={toggleTeam}
+              summary={teamSummary}
+              placeholder="Rechercher une équipe…"
+              showBulkActions={false}
+              compact
+            />
+          </div>
         )}
-        {teamSearchResults.map((t) => (
-          <label className="lp-checkbox-line" key={t.id}>
-            <input type="checkbox" checked={teamIds.includes(t.id)} onChange={() => toggleTeam(t.id)} /> {t.name}
-          </label>
-        ))}
       </div>
       <div className="lp-field">
-        <label>Responsable direct <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette personne à un·e collègue précis·e plutôt qu'à sa seule équipe, pour l'Organigramme hiérarchique)</span></label>
+        <label>Responsable direct <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(facultatif — rattache cette personne à un·e collègue précis·e plutôt qu'à sa seule équipe, pour l'Organigramme)</span></label>
         <SearchableSelect
           value={managerName}
           options={managerOptions.map((m) => ({ id: m.name, label: m.name }))}
@@ -11302,10 +11316,6 @@ function TeamMemberFormModal({ member, teams, teamMembers, onSave, onClose }) {
           emptyLabel="Aucun (rattachée à son équipe)"
         />
       </div>
-      <label className="lp-checkbox-line">
-        <input type="checkbox" checked={inactive} onChange={() => setInactive((v) => !v)} />
-        Utilisateur inactif <span style={{ fontWeight: 400, color: "var(--text-600)" }}>— reste visible dans l'Organigramme, en grisé</span>
-      </label>
     </Modal>
   );
 }
