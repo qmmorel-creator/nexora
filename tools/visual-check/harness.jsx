@@ -175,6 +175,8 @@ function AnnotationsHarness() {
     id: "w-orgmetro", type: "orgchart", orgChartView: "metro",
     // Utilisateurs inactifs propres au widget.
     orgChartInactiveMembers: ["om5"],
+    // Équipe Opérations en disposition horizontale.
+    orgMetroHorizontalTeams: ["o-ops"],
     // Relations propres au widget : équipe → équipe, personne → personne,
     // équipe → personne (sans légende).
     orgChartRelations: [

@@ -1478,6 +1478,11 @@ try {
       relations: root.querySelectorAll(".lp-orgmetro-relation").length,
       relationLabels: [...root.querySelectorAll(".lp-orgmetro-relation-label")].map((el) => el.textContent),
       inactiveStations: [...root.querySelectorAll(".lp-orgmetro-station.is-inactive")].map((el) => el.getAttribute("aria-label")),
+      horizontalRow: root.querySelectorAll('.lp-orgmetro-lines path[d^="M"][data-metro-drag="branch:team:o-ops"]').length - 1,
+      horizontalSameY: (() => {
+        const ys = ["Luc Perrin", "Eva Moulin"].map((n) => { const r = root.querySelector(`.lp-orgmetro-station[aria-label^="${n}"]`).getBoundingClientRect(); return Math.round(r.top + r.height / 2); });
+        return Math.abs(ys[0] - ys[1]) <= 1;
+      })(),
       // Nora Vidal a des rattachés : elle reste une station de la ligne
       // Exploration (et non l'en-tête d'une branche à part).
       managerOnLine: (() => {
@@ -1652,6 +1657,21 @@ try {
   await page.mouse.up();
   await page.waitForTimeout(300);
   orgMetro.linkMoved = binomeD0 !== await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
+  // Nœud de bifurcation de « Technique » attrapé et descendu : ses deux
+  // lignes (Plateforme, Applications) suivent, la ligne Technique reste.
+  const badgeTop = async (name) => (await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`).boundingBox()).y;
+  const tech0 = await badgeTop("Technique"), plat0 = await badgeTop("Plateforme"), apps0 = await badgeTop("Applications");
+  const node = await page.locator(`${host} .lp-orgmetro-junction[data-metro-drag="fork:team:o-tech"]`).boundingBox();
+  await page.mouse.move(node.x + node.width / 2, node.y + node.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(node.x + node.width / 2, node.y + 30, { steps: 4 });
+  await page.mouse.move(node.x + node.width / 2 + 40, node.y + 70, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.forkDrag = { tech: Math.round(await badgeTop("Technique") - tech0), plat: Math.round(await badgeTop("Plateforme") - plat0), apps: Math.round(await badgeTop("Applications") - apps0) };
+  orgMetro.forkJog = /H/.test(await page.locator(`${host} .lp-orgmetro-lines path[data-metro-drag="branch:team:o-tech"]`).first().getAttribute("d"));
+  orgMetro.overlapsAfterFork = await textOverlaps();
+  await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro-fork.png") });
   await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
   await page.waitForTimeout(300);
   orgMetro.afterReset = (await badgeCenterX("Opérations")) > (await badgeCenterX("Produit"));
@@ -2747,6 +2767,10 @@ if (!orgMetro.error) {
   expect(orgMetro.stationDragModal === 0, "Déplacement libre : lâcher une station a ouvert une fiche");
   expect(orgMetro.hubMovedAlone, "Déplacement libre : le grand titre ne se déplace pas seul");
   expect(orgMetro.linkMoved, "Déplacement libre : la relation « Binôme » ne se déplace pas");
+  expect(Math.abs(orgMetro.forkDrag.tech) < 2 && orgMetro.forkDrag.plat > 30 && Math.abs(orgMetro.forkDrag.plat - orgMetro.forkDrag.apps) < 2, `Organigramme Métro : le nœud de bifurcation ne déplace pas ses lignes (${JSON.stringify(orgMetro.forkDrag)})`);
+  expect(orgMetro.forkJog, "Organigramme Métro : le tronc ne rejoint pas le nœud déplacé sur le côté");
+  expect(orgMetro.overlapsAfterFork === 0, `Organigramme Métro : ${orgMetro.overlapsAfterFork} texte(s) superposé(s) après déplacement du nœud`);
+  expect(orgMetro.horizontalRow === 1 && orgMetro.horizontalSameY, `Organigramme Métro : l'équipe Opérations n'est pas en disposition horizontale (${orgMetro.horizontalRow}, ${orgMetro.horizontalSameY})`);
   expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
