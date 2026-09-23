@@ -9801,12 +9801,33 @@ function orgMetroApplyOffsets(layout, offsets) {
       fork: fk ? fk.fork : null,
       elbow: b.elbow ? (() => {
         const et = total.get(parentKey) || { dx: 0, dy: 0 };
-        return { ...b.elbow, fromX: b.elbow.vertical ? X(b.elbow.fromX) : b.elbow.fromX + et.dx, y0: b.elbow.y0 + et.dy, y: b.elbow.y + et.dy, x: X(b.elbow.x), y1: Y(b.elbow.y1) };
+        // Trait horizontal d'une sous-équipe empilée déplacé en hauteur
+        // (clé « elbow:<ligne> ») : il glisse le long de la ligne parente.
+        const eo = b.elbow.stacked && offs["elbow:" + b.key] ? offs["elbow:" + b.key].dy : 0;
+        const y1 = Y(b.elbow.y1);
+        const ey = Math.min(b.elbow.y + et.dy + eo, y1 - ORGMETRO_CORNER * 2);
+        return { ...b.elbow, fromX: b.elbow.vertical ? X(b.elbow.fromX) : b.elbow.fromX + et.dx, y0: b.elbow.y0 + et.dy, y: ey, below: b.elbow.stacked ? b.elbow.y > (parent && parent.badge ? parent.badge.y + parent.badge.h : -Infinity) : undefined, x: X(b.elbow.x), y1 };
       })() : null,
       drop: b.drop ? { ...b.drop } : null,
     };
   });
   const moved = new Map(branches.map((b) => [b.key, b]));
+  // Équipes empilées : un trait horizontal ne remonte jamais au-dessus du
+  // bandeau (côté bas) ; la ligne s'allonge ou se raccourcit jusqu'au trait
+  // le plus bas (et le plus haut, côté haut du bandeau).
+  branches.forEach((p) => {
+    const kids = branches.filter((c) => c.elbow && c.elbow.stacked && c.ancestors[c.ancestors.length - 1] === p.key);
+    if (!kids.length || !p.badge) return;
+    const low = kids.filter((c) => c.elbow.below);
+    const up = kids.filter((c) => !c.elbow.below);
+    // Côté bas : jamais au travers des membres de l'équipe (sous le dernier
+    // libellé), et la ligne atteint toujours le dernier membre.
+    const lastSt = p.stations.length ? p.stations[p.stations.length - 1] : null;
+    const floor = Math.max(p.badge.y + p.badge.h, lastSt ? lastSt.label.y + lastSt.label.h : -Infinity) + ORGMETRO_CORNER;
+    low.forEach((c) => { c.elbow = { ...c.elbow, y: Math.max(c.elbow.y, floor) }; });
+    if (low.length && p.trunk) p.trunk = { ...p.trunk, y1: Math.max(...low.map((c) => c.elbow.y), lastSt ? lastSt.cy : -Infinity) };
+    if (up.length && p.upTrunk) p.upTrunk = { ...p.upTrunk, y0: Math.min(...up.map((c) => c.elbow.y)) };
+  });
   // Barres et raccords recalculés sur les positions finales. La barre couvre
   // le nœud et toutes ses lignes (et le pied du tronc si le nœud a glissé à
   // la même hauteur).
@@ -10192,7 +10213,9 @@ function OrgMetroLines({ layout, dim }) {
     // La barre de bifurcation appartient à son nœud : l'attraper déplace le
     // nœud et les lignes qui en partent.
     if (p.fork) forks.push(<path key={"f:" + b.key} className={"lp-orgmetro-line" + cls} d={p.fork} data-metro-drag={"fork:" + b.key} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("f:" + b.key, p.fork, "fork:" + b.key));
-    if (p.drop) forks.push(<path key={"d:" + b.key} className={"lp-orgmetro-line" + cls} d={p.drop} data-metro-drag={drag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("d:" + b.key, p.drop, drag));
+    // Trait horizontal d'une sous-équipe empilée : il se glisse en hauteur.
+    const dropDrag = b.elbow && b.elbow.stacked ? "elbow:" + b.key : drag;
+    if (p.drop) forks.push(<path key={"d:" + b.key} className={"lp-orgmetro-line" + cls} d={p.drop} data-metro-drag={dropDrag} style={{ stroke: color, strokeWidth: b.lineW }} />, hit("d:" + b.key, p.drop, dropDrag));
   });
   return (
     <>
@@ -10548,6 +10571,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     if (!el) return null;
     const v = el.getAttribute("data-metro-drag") || "";
     if (v.startsWith("link:")) return { kind: "link", key: v.slice(5) };
+    if (v.startsWith("elbow:")) return branchByKey.has(v.slice(6)) ? { kind: "team", key: v } : null;
     if (v.startsWith("split:")) return onChangeStackSplit && branchByKey.has(v.slice(6)) ? { kind: "split", key: v.slice(6), layoutAtStart: layout } : null;
     // Nœud de bifurcation (ou sa barre) : il bouge avec les lignes qui en
     // partent — même mécanique de décalage que les lignes.

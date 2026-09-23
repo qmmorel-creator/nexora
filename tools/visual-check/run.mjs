@@ -1644,6 +1644,32 @@ try {
     };
   }, stackHost);
   await page.locator(stackHost).screenshot({ path: path.join(dir, "orgmetro-stacked.png") });
+  // Trait horizontal d'« Applications » remonté de 40 px : il glisse le long
+  // de la ligne, le bandeau d'Applications ne bouge pas.
+  {
+    const elbowSel = `${stackHost} .lp-orgmetro-line[data-metro-drag="elbow:team:o-apps"]`;
+    const d0 = await page.locator(elbowSel).getAttribute("d");
+    const appsY0 = (await page.locator(`${stackHost} .lp-orgmetro-badge[aria-label="Équipe Applications"] .lp-orgmetro-badge-bg`).boundingBox()).y;
+    // Point au milieu du segment horizontal, converti en coordonnées écran.
+    const [hx, hy] = await page.evaluate((sel) => {
+      const path = document.querySelector(sel);
+      const m = /^M ([\d.-]+) ([\d.-]+) H ([\d.-]+)/.exec(path.getAttribute("d"));
+      const pt = path.ownerSVGElement.createSVGPoint();
+      pt.x = (Number(m[1]) + Number(m[3])) / 2; pt.y = Number(m[2]);
+      const sp = pt.matrixTransform(path.getScreenCTM());
+      return [sp.x, sp.y];
+    }, elbowSel);
+    await page.mouse.move(hx, hy);
+    await page.mouse.down();
+    await page.mouse.move(hx, hy - 15, { steps: 3 });
+    await page.mouse.move(hx, hy - 40, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    const appsY1 = (await page.locator(`${stackHost} .lp-orgmetro-badge[aria-label="Équipe Applications"] .lp-orgmetro-badge-bg`).boundingBox()).y;
+    orgMetro.elbowMoved = { changed: d0 !== await page.locator(elbowSel).getAttribute("d"), badgeStill: Math.abs(appsY1 - appsY0) < 1 };
+    await page.locator(`${stackHost} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
+    await page.waitForTimeout(300);
+  }
   // Glisser la ligne de « Technique » vers le bas, au-delà du départ de
   // Plateforme : le bandeau descend, Plateforme passe au-dessus.
   {
@@ -2616,6 +2642,7 @@ if (!orgMetro.error) {
   expect(orgMetro.modeButtons === 0 && orgMetro.hierarchyPanels === 0, `Organigramme : la vue hiérarchique n'a pas été retirée (${orgMetro.modeButtons} bouton(s) de mode, ${orgMetro.hierarchyPanels} élément(s) hiérarchique(s))`);
   expect(JSON.stringify(orgMetro.layoutSummaries) === JSON.stringify(["3 équipes à la verticale", "Aucune équipe"]), `Disposition des équipes : listes ${JSON.stringify(orgMetro.layoutSummaries)} — une équipe cochée en verticale doit quitter l'horizontale`);
   expect(orgMetro.produitStacked && orgMetro.produitStacked.stacked && orgMetro.produitStacked.right, `Disposition des équipes : « Produit » en verticale n'empile pas ses sous-équipes après enregistrement (${JSON.stringify(orgMetro.produitStacked)})`);
+  expect(orgMetro.elbowMoved && orgMetro.elbowMoved.changed && orgMetro.elbowMoved.badgeStill, `Équipe empilée : le trait horizontal d'Applications ne se déplace pas seul en hauteur (${JSON.stringify(orgMetro.elbowMoved)})`);
   expect(orgMetro.splitHandles >= 1 && orgMetro.split && orgMetro.split.platAbove && orgMetro.split.appsBelow, `Équipe empilée : glisser la ligne de « Technique » ne répartit pas ses sous-équipes au-dessus / au-dessous (${orgMetro.splitHandles}, ${JSON.stringify(orgMetro.split)})`);
   expect(orgMetro.stacked && orgMetro.stacked.below && orgMetro.stacked.rightOfTrunk, `Organigramme Métro : les sous-équipes de « Technique » ne sont pas empilées à droite (${JSON.stringify(orgMetro.stacked)})`);
   expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);

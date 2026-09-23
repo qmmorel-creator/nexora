@@ -984,3 +984,27 @@ test("Équipe empilée : sous-équipes réparties au-dessus et au-dessous du ban
   assert.equal(m.drop.y1, m.badge.y + m.badge.h / 2);
   assert.ok(branch(moved, "team:root").fork.childXs.includes(m.drop.x));
 });
+
+test("Équipe empilée : chaque trait horizontal se déplace en hauteur, la ligne suit", () => {
+  const teams = [team("ds", { leadName: "Chef" }), ...["s1", "s2", "s3"].map((id) => team(id, { parentTeamId: "ds", leadName: "L" + id }))];
+  const members = [member("Chef", { teamIds: ["ds"] }), ...["s1", "s2", "s3"].map((id) => member("L" + id, { teamIds: [id] }))];
+  const { layout } = metro(teams, members, { stacked: ["ds"] });
+  const e = (l, id) => branch(l, "team:" + id).elbow;
+  // Remonter le trait de s2 : il glisse, son coude s'allonge, rien d'autre ne bouge.
+  const down = api.orgMetroApplyOffsets(layout, { "elbow:team:s2": { dx: 60, dy: -20 } });
+  assert.equal(e(down, "s2").y - e(layout, "s2").y, -20);
+  assert.equal(e(down, "s2").y1 - e(down, "s2").y, e(layout, "s2").y1 - e(layout, "s2").y + 20);
+  assert.equal(branch(down, "team:s2").x - branch(layout, "team:s2").x, 0, "déplacement vertical seulement");
+  assert.equal(e(down, "s1").y - branch(down, "team:ds").y, e(layout, "s1").y - branch(layout, "team:ds").y);
+  // Jamais sous le bandeau de la sous-équipe, jamais au-dessus du bandeau parent.
+  const tooLow = api.orgMetroApplyOffsets(layout, { "elbow:team:s2": { dx: 0, dy: 2000 } });
+  assert.ok(e(tooLow, "s2").y <= e(tooLow, "s2").y1 - 18);
+  const tooHigh = api.orgMetroApplyOffsets(layout, { "elbow:team:s1": { dx: 0, dy: -2000 } });
+  const ds = branch(tooHigh, "team:ds");
+  const chef = ds.stations[ds.stations.length - 1];
+  assert.ok(e(tooHigh, "s1").y >= chef.label.y + chef.label.h, "jamais au travers des membres de l'équipe");
+  assert.ok(ds.trunk.y1 >= chef.cy, "la ligne atteint toujours le dernier membre");
+  // La ligne s'arrête au trait le plus bas.
+  const up3 = api.orgMetroApplyOffsets(layout, { "elbow:team:s3": { dx: 0, dy: -40 } });
+  assert.equal(branch(up3, "team:ds").trunk.y1, Math.max(e(up3, "s1").y, e(up3, "s2").y, e(up3, "s3").y));
+});
