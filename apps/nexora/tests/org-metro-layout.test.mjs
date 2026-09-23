@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroEditRoute, orgMetroNearestSegment, orgMetroAddLinkSeg, normalizeOrgMetroLinkOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -1120,4 +1120,52 @@ test("Équipe rattachée à un utilisateur : sous l'équipe de l'occurrence choi
   const [ra] = api.orgMetroTransverseRoutes(layout, [{ ...links[0], at: "a" }]);
   const sa = layout.stations.find((s) => s.name === "Sacha" && s.branchKey === "team:a");
   assert.ok(Math.abs(ra.points[ra.points.length - 1][1] - sa.cy) <= sa.label.h);
+});
+
+test("Liens retouchés segment par segment : seul le segment attrapé bouge, sans crochet", () => {
+  const ortho = (pts) => pts.every((p, i) => i === 0 || p[0] === pts[i - 1][0] || p[1] === pts[i - 1][1]);
+  const noSpur = (pts) => pts.every((p, i) => i === 0 || i === pts.length - 1
+    || !((Math.abs(pts[i - 1][0] - p[0]) < 0.5 && Math.abs(p[0] - pts[i + 1][0]) < 0.5) || (Math.abs(pts[i - 1][1] - p[1]) < 0.5 && Math.abs(p[1] - pts[i + 1][1]) < 0.5)));
+  // Cas de la vidéo : bandeau A (à droite, en haut) → descente → bandeau B.
+  const base = [[650, 167], [668, 167], [668, 395], [580, 395]];
+  const plain = api.orgMetroEditRoute(base, undefined);
+  assert.deepEqual(plain.points, base);
+  // Segment vertical (au milieu) attrapé et poussé à droite de 40 : il se
+  // déplace seul, les paliers s'allongent, extrémités fixes, aucun crochet.
+  const hit = api.orgMetroNearestSegment(plain.movable, 668, 300);
+  assert.equal(hit.horizontal, false);
+  const moved = api.orgMetroEditRoute(base, api.orgMetroAddLinkSeg({}, "k", hit.seg, 40).k);
+  assert.ok(ortho(moved.points) && noSpur(moved.points), JSON.stringify(moved.points));
+  assert.deepEqual(moved.points[0], [650, 167]);
+  assert.deepEqual(moved.points[moved.points.length - 1], [580, 395]);
+  assert.ok(moved.points.some((p) => p[0] === 708), "le segment vertical est passé à x = 708");
+  assert.ok(moved.points.every((p) => p[1] >= 167 && p[1] <= 395), "rien ne dépasse au-dessus ni au-dessous");
+  // Palier horizontal du bas (celui qui touche la bulle) descendu de 60 :
+  // un court raccord le raccroche au point de liaison.
+  const low = api.orgMetroNearestSegment(plain.movable, 620, 395);
+  assert.equal(low.horizontal, true);
+  const lowered = api.orgMetroEditRoute(base, api.orgMetroAddLinkSeg({}, "k", low.seg, 60).k);
+  assert.ok(ortho(lowered.points) && noSpur(lowered.points), JSON.stringify(lowered.points));
+  assert.deepEqual(lowered.points[lowered.points.length - 1], [580, 395]);
+  assert.ok(lowered.points.some((p, i) => i > 0 && p[1] === 455 && lowered.points[i - 1][1] === 455), "palier à y = 455");
+  // Retouches cumulées, sur des segments différents.
+  let map = api.orgMetroAddLinkSeg({}, "k", hit.seg, 40);
+  map = api.orgMetroAddLinkSeg(map, "k", hit.seg, 20);
+  map = api.orgMetroAddLinkSeg(map, "k", low.seg, 60);
+  assert.deepEqual(map.k.segs, { [hit.seg]: 60, [low.seg]: 60 });
+  // Ancien décalage global : conservé tel quel, abandonné à la première retouche.
+  assert.deepEqual(api.normalizeOrgMetroLinkOffsets({ a: { dx: 9, dy: 31 }, b: { segs: { 1: 0, x: 5 } } }), { a: { dx: 0, dy: 40 } });
+  assert.deepEqual(api.orgMetroAddLinkSeg({ a: { dx: 20, dy: 0 } }, "a", 0, 20).a, { segs: { 0: 20 } });
+});
+
+test("Rail : il sort du flanc de la bulle tourné vers le nœud, jamais à travers la bulle", () => {
+  const teams = [team("p", { leadName: "Chef" }), team("c1", { parentTeamId: "p" }), team("c2", { parentTeamId: "p" })];
+  const members = [member("Chef", { teamIds: ["p"] }), member("Luc", { teamIds: ["c1"] }), member("Mia", { teamIds: ["c2"] })];
+  const { layout } = metro(teams, members);
+  const startX = (b) => Number(/M [\d.-]+ [\d.-]+ V [\d.-]+ M ([\d.-]+)/.exec(api.orgMetroBranchPaths(b).trunk)[1]);
+  const p = branch(layout, "team:p");
+  assert.equal(startX(p), p.badge.x, "par défaut : flanc gauche");
+  const moved = branch(api.orgMetroApplyOffsets(layout, { "fork:team:p": { dx: 300, dy: 0 } }), "team:p");
+  assert.ok(moved.rail.x > moved.badge.x + moved.badge.w);
+  assert.equal(startX(moved), moved.badge.x + moved.badge.w, "nœud à droite : flanc droit");
 });
