@@ -1647,6 +1647,29 @@ try {
   // Plus de vue hiérarchique : aucune bascule de mode, le plan Métro seul.
   orgMetro.modeButtons = await page.locator(`${host} .lp-orgchart-mode-btn`).count();
   orgMetro.hierarchyPanels = await page.locator(`${host} [class*="lp-orghier"]`).count();
+  // Vues enregistrées : replier Exploration, enregistrer « Revue », tout
+  // rétablir (Recentrer), puis recharger la vue → Exploration de nouveau
+  // repliée.
+  {
+    await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Exploration"]`).click();
+    await page.waitForTimeout(500);
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Vues enregistrées"]`).click();
+    await page.locator(`${host} .lp-orgmetro-views input`).fill("Revue");
+    await page.locator(`${host} .lp-orgmetro-views button[type="submit"]`).click();
+    await page.waitForTimeout(200);
+    orgMetro.viewsListed = await page.locator(`${host} .lp-orgmetro-views-name`).allInnerTexts();
+    await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro-views.png") });
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Vues enregistrées"]`).click();
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
+    await page.waitForTimeout(300);
+    orgMetro.viewResetCollapsed = await page.locator(`${host} .lp-orgmetro-badge.is-collapsed`).count();
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Vues enregistrées"]`).click();
+    await page.locator(`${host} .lp-orgmetro-views-load`, { hasText: "Revue" }).click();
+    await page.waitForTimeout(400);
+    orgMetro.viewReloaded = await page.locator(`${host} .lp-orgmetro-badge.is-collapsed[aria-label="Équipe Exploration"]`).count();
+    await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
+    await page.waitForTimeout(300);
+  }
   // Sous-équipes empilées (« Technique ») : Plateforme puis Applications,
   // l'une sous l'autre, à droite du tronc, chacune par un coude.
   const stackHost = "#harness-orgmetro-stacked";
@@ -2665,6 +2688,7 @@ if (!orgMetro.error) {
   expect(orgMetro.modeButtons === 0 && orgMetro.hierarchyPanels === 0, `Organigramme : la vue hiérarchique n'a pas été retirée (${orgMetro.modeButtons} bouton(s) de mode, ${orgMetro.hierarchyPanels} élément(s) hiérarchique(s))`);
   expect(JSON.stringify(orgMetro.layoutSummaries) === JSON.stringify(["3 équipes à la verticale", "Aucune équipe"]), `Disposition des équipes : listes ${JSON.stringify(orgMetro.layoutSummaries)} — une équipe cochée en verticale doit quitter l'horizontale`);
   expect(orgMetro.produitStacked && orgMetro.produitStacked.stacked && orgMetro.produitStacked.right, `Disposition des équipes : « Produit » en verticale n'empile pas ses sous-équipes après enregistrement (${JSON.stringify(orgMetro.produitStacked)})`);
+  expect(JSON.stringify(orgMetro.viewsListed) === JSON.stringify(["Revue"]) && orgMetro.viewResetCollapsed === 0 && orgMetro.viewReloaded === 1, `Vues enregistrées : enregistrer / recharger ne rétablit pas la disposition (${JSON.stringify({ l: orgMetro.viewsListed, r: orgMetro.viewResetCollapsed, v: orgMetro.viewReloaded })})`);
   expect(orgMetro.elbowMoved && orgMetro.elbowMoved.changed && orgMetro.elbowMoved.badgeStill, `Équipe empilée : le trait horizontal d'Applications ne se déplace pas seul en hauteur (${JSON.stringify(orgMetro.elbowMoved)})`);
   expect(orgMetro.splitHandles >= 1 && orgMetro.split && orgMetro.split.platAbove && orgMetro.split.appsBelow, `Équipe empilée : glisser la ligne de « Technique » ne répartit pas ses sous-équipes au-dessus / au-dessous (${orgMetro.splitHandles}, ${JSON.stringify(orgMetro.split)})`);
   expect(orgMetro.stacked && orgMetro.stacked.below && orgMetro.stacked.rightOfTrunk, `Organigramme Métro : les sous-équipes de « Technique » ne sont pas empilées à droite (${JSON.stringify(orgMetro.stacked)})`);
