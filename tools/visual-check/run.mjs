@@ -1567,6 +1567,18 @@ try {
   await page.waitForTimeout(200);
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
   await page.waitForTimeout(200);
+  // Attraper une STATION déplace toute sa ligne d'équipe.
+  const badgeY = async (name) => page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`).evaluate((el) => el.getBoundingClientRect().top);
+  const opsY0 = await badgeY("Opérations");
+  const eva = await page.locator(`${host} .lp-orgmetro-station[aria-label^="Eva Moulin"]`).boundingBox();
+  await page.mouse.move(eva.x + eva.width / 2, eva.y + eva.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(eva.x + eva.width / 2, eva.y + 40, { steps: 4 });
+  await page.mouse.move(eva.x + eva.width / 2, eva.y + 90, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.stationDragMoved = (await badgeY("Opérations")) - opsY0 > 30;
+  orgMetro.stationDragModal = await page.locator(".lp-modal").count();
   // Déplacement libre : « Opérations » posée à gauche de « Produit », sur la
   // grille ; « Recentrer » rétablit la disposition par défaut.
   const badgeCenterX = async (name) => page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"]`).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; });
@@ -1581,6 +1593,39 @@ try {
   await page.waitForTimeout(300);
   orgMetro.dragModal = await page.locator(".lp-modal").count();
   orgMetro.afterDrag = (await badgeCenterX("Opérations")) < (await badgeCenterX("Produit"));
+  // Aucun texte superposé après le lâcher (ajustement automatique).
+  const textOverlaps = async () => page.evaluate((sel) => {
+    const root = document.querySelector(sel);
+    const rs = [...root.querySelectorAll(".lp-orgmetro-label, .lp-orgmetro-badge")].map((el) => el.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+      const a = rs[i], b = rs[j];
+      if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) n += 1;
+    }
+    return n;
+  }, host);
+  orgMetro.overlapsAfterDrag = await textOverlaps();
+  // Le grand titre se déplace seul.
+  const hubX = async () => page.locator(`${host} .lp-orgmetro-badge.is-hub .lp-orgmetro-badge-bg`).evaluate((el) => el.getBoundingClientRect().left);
+  const hub0 = await hubX(), prod0 = await badgeCenterX("Produit");
+  const hubBox = await page.locator(`${host} .lp-orgmetro-badge.is-hub .lp-orgmetro-badge-bg`).boundingBox();
+  await page.mouse.move(hubBox.x + 20, hubBox.y + hubBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hubBox.x + 80, hubBox.y + hubBox.height / 2, { steps: 4 });
+  await page.mouse.move(hubBox.x + 180, hubBox.y + hubBox.height / 2 - 10, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.hubMovedAlone = (await hubX()) - hub0 > 60 && Math.abs((await badgeCenterX("Produit")) - prod0) < 2;
+  // Un lien se déplace (relation « Binôme »).
+  const binomeD0 = await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
+  const pill = await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation-pill").boundingBox();
+  await page.mouse.move(pill.x - 25, pill.y + pill.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(pill.x - 25, pill.y + pill.height / 2 - 30, { steps: 4 });
+  await page.mouse.move(pill.x - 25, pill.y + pill.height / 2 - 60, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  orgMetro.linkMoved = binomeD0 !== await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
   await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Recentrer et rétablir la disposition par défaut"]`).click();
   await page.waitForTimeout(300);
   orgMetro.afterReset = (await badgeCenterX("Opérations")) > (await badgeCenterX("Produit"));
@@ -2663,6 +2708,11 @@ if (!orgMetro.error) {
   expect(orgMetro.dropMarker === 1, `Déplacement libre : grille ${orgMetro.dropMarker === 1 ? "affichée" : "absente"} pendant le geste`);
   expect(orgMetro.dragModal === 0, "Glisser-déposer : lâcher un bandeau a ouvert la fiche équipe");
   expect(orgMetro.afterDrag, "Déplacement libre : « Opérations » déposée à gauche de « Produit » n'y est pas");
+  expect(orgMetro.overlapsAfterDrag === 0, `Déplacement libre : ${orgMetro.overlapsAfterDrag} superposition(s) de texte après le lâcher`);
+  expect(orgMetro.stationDragMoved, "Déplacement libre : attraper une station ne déplace pas sa ligne d'équipe");
+  expect(orgMetro.stationDragModal === 0, "Déplacement libre : lâcher une station a ouvert une fiche");
+  expect(orgMetro.hubMovedAlone, "Déplacement libre : le grand titre ne se déplace pas seul");
+  expect(orgMetro.linkMoved, "Déplacement libre : la relation « Binôme » ne se déplace pas");
   expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
   expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
