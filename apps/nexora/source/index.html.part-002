@@ -5765,6 +5765,39 @@ function withCreationComparison(task) {
   return seed ? { ...task, comparison: seed } : task;
 }
 
+/* Duplication d'une tâche depuis sa fiche (#334) : une copie indépendante,
+   pas un nouvel enregistrement de la même tâche. Elle recopie tous les
+   champs pertinents (projet, dates, assignation, criticité, type, tags,
+   champs personnalisés, checklist, pièces jointes…) mais repart de zéro sur
+   tout ce qui décrit un SUIVI déjà accompli sur l'original :
+   - le statut ne reprend jamais "Terminé" (ou tout autre statut du même
+     original) — il retombe sur le même statut initial cohérent qu'une
+     tâche neuve (getDefaultStatusForTask, déjà utilisé à la création) ;
+   - la progression et les cases de la checklist repartent à 0/non cochées ;
+   - la comparaison de planning (référence, historique de "figeages") ne
+     doit rien à l'original : une nouvelle tâche a sa propre planification
+     initiale, calculée normalement à l'enregistrement suivant ;
+   - l'origine (import e-mail, lien source…) n'a pas de sens pour une copie
+     qui n'a jamais reçu ce message elle-même. */
+function buildTaskDuplicate(task, statuses, projects, taskTypes) {
+  const initialStatus = getDefaultStatusForTask(statuses, projects, taskTypes, task.projectId, task.taskTypeId);
+  return {
+    ...task,
+    id: uid(),
+    title: `${task.title} (copie)`,
+    statusId: initialStatus ? initialStatus.id : task.statusId,
+    progress: 0,
+    checklist: (task.checklist || []).map((item) => ({ ...item, done: false })),
+    comparison: null,
+    source: null,
+    sourceUrl: null,
+    sourceMessageId: null,
+    sourceSender: null,
+    sourceReceivedDate: null,
+    lastInteraction: new Date().toISOString(),
+  };
+}
+
 // Comparaison EXPLOITABLE d'une tâche, ou `null`. `null` n'est jamais une
 // erreur : la ligne retombe simplement sur le rendu standard, sans changer de
 // hauteur ni disparaître.
@@ -8933,7 +8966,7 @@ function TaskWritingModeOverlay({
   );
 }
 
-function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, setTeamMembers, shortcutPrefs, onClose, onSave, onDelete, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines, milestoneTypes, activityLog }) {
+function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, tasks, teamMembers, setTeamMembers, shortcutPrefs, onClose, onSave, onDelete, onDuplicate, onMarkDone, onCycleStatus, onOpenImpactLine, isFavoriteTask, onToggleFavoriteTask, taskBaselines, milestoneTypes, activityLog }) {
   const isNew = !task.id;
   const base = isNew ? { ...defaults } : task;
   const [title, setTitle] = useState(base.title || "");
@@ -9442,6 +9475,11 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         {memoExportError && <p className="lp-gantt-annot-error" style={{ margin: "0 0 6px" }}>{memoExportError}</p>}
         <div className="lp-task-modal-actions-compact">
           {!isNew && <button className="lp-btn lp-btn-danger" onClick={() => onDelete(task)}><Trash2 size={13} style={{ marginRight: 5, verticalAlign: -2 }} />Supprimer</button>}
+          {!isNew && onDuplicate && (
+            <button className="lp-btn" onClick={() => onDuplicate(task)} title="Créer une copie de cette tâche">
+              <Copy size={13} style={{ marginRight: 5, verticalAlign: -2 }} />Dupliquer
+            </button>
+          )}
           {!isNew && (
             <button className="lp-btn" onClick={handleExportMemoPdf} disabled={memoExportBusy} title="Exporter la fiche mémo au format PDF">
               <Download size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
