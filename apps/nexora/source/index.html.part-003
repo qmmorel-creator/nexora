@@ -9008,200 +9008,17 @@ function WidgetBubbles(props) {
   return <WidgetMiniGantt {...props} bubbleMode />;
 }
 
-// Organigramme — SVG hiérarchique classique (#167 ; #219 : seul mode de rendu
-// restant, la vue « par groupe » a été retirée) : un seul arbre connecté
-// (racine optionnelle → équipes imbriquées → personnes, chacune sous son
-// équipe ou son responsable direct — voir buildOrgHierarchyTree). Layout purement arithmétique (boîtes de taille
-// FIXE, jamais de mesure DOM) : les lignes ne peuvent jamais se faire
-// recouvrir par une carte, à n'importe quelle profondeur — algorithme
-// classique de disposition d'arbre (étendue d'un sous-arbre = max entre sa
-// propre taille et la somme de celles de ses enfants), calculé dans un espace
-// « transversal / longitudinal » commun aux deux orientations : seule la
-// correspondance finale vers l'écran diffère entre vertical et horizontal.
-const ORGHIER_CARD_W = 104;
-const ORGHIER_ROOT_W = 176;
-const ORGHIER_ROOT_H = 40;
-const ORGHIER_MEMBER_H = 116;
-const ORGHIER_SIBLING_GAP = 18; // entre deux sous-arbres frères (axe transversal)
-const ORGHIER_LEVEL_GAP = 40; // entre un nœud et ses enfants (axe longitudinal)
-// Nom/poste ne sont jamais tronqués (#238) : le texte revient à la ligne
-// plutôt que de finir en ellipse (voir .lp-orgchart-name, .lp-orghier-panel-row-name
-// et .lp-orghier-panel-row-role côté CSS). Le calcul de layout ci-dessous
-// reste un pur calcul géométrique — jamais une mesure DOM après un retour à
-// la ligne, ce qui obligerait à mesurer puis re-positionner tout l'arbre en
-// deux passes. On ESTIME donc le nombre de lignes à partir de la longueur du
-// texte et d'une largeur moyenne de caractère connue pour la carte/ligne
-// concernée (leur largeur est une constante, donc le nombre de caractères
-// par ligne l'est aussi approximativement pour une police donnée),
-// plafonné à un nombre raisonnable de lignes. L'objectif n'est pas un
-// habillage pixel-perfect : juste que le texte ne soit plus jamais tronqué
-// ET que les cartes ne se chevauchent jamais.
-function orgHierEstimateLines(text, charsPerLine, maxLines) {
-  const len = String(text || "").length;
-  if (!len) return 1;
-  return Math.min(Math.max(Math.ceil(len / charsPerLine), 1), maxLines);
-}
-const ORGHIER_ROW_NAME_CHARS_PER_LINE = 20; // ligne de roster, panneau ORGHIER_TEAM_PANEL_W (220px)
-const ORGHIER_ROW_ROLE_CHARS_PER_LINE = 24;
-const ORGHIER_ROW_NAME_EXTRA_LINE_H = 14; // ~ line-height de .lp-orghier-panel-row-name
-const ORGHIER_ROW_ROLE_EXTRA_LINE_H = 12; // ~ line-height de .lp-orghier-panel-row-role
-const ORGHIER_ROW_MAX_LINES = 2;
-const ORGHIER_CARD_NAME_CHARS_PER_LINE = 13; // carte racine, ORGHIER_CARD_W (104px)
-const ORGHIER_CARD_ROLE_CHARS_PER_LINE = 15;
-const ORGHIER_CARD_NAME_EXTRA_LINE_H = 13;
-const ORGHIER_CARD_ROLE_EXTRA_LINE_H = 11;
-const ORGHIER_CARD_MAX_LINES = 2;
-// Panneau d'équipe « fusionné » (retour de test, piste B) : les membres SANS
-// subordonné rejoignent le panneau de leur équipe comme une liste, au lieu
-// d'être des cartes séparées reliées par un trait — seules les sous-équipes
-// et les personnes qui ont elles-mêmes des subordonnés restent des nœuds
-// distincts (voir orgHierLayoutChildren). Largeur fixe, hauteur variable
-// selon le nombre de lignes — jamais l'inverse.
-const ORGHIER_TEAM_PANEL_W = 220;
-const ORGHIER_TEAM_BANNER_H = 34;
-const ORGHIER_TEAM_PAD = 16; // 8px haut + 8px bas
-const ORGHIER_TEAM_LEAD_ROW_H = 46;
-const ORGHIER_TEAM_ROW_H = 38;
-// Poste (retour de test) : une ligne de plus dans la rangée quand renseigné
-// (voir memberRoleInTeam) — une hauteur dédiée, jamais mesurée, pour que
-// orgHierNodeSize et le rendu (.has-role côté CSS) restent toujours d'accord.
-const ORGHIER_TEAM_ROW_H_ROLE = 50;
-const ORGHIER_TEAM_LEAD_ROW_H_ROLE = 58;
-const ORGHIER_TEAM_ROW_GAP = 6;
-
-function orgHierNodeKey(node) {
-  if (node.type === "root") return "root";
-  if (node.type === "team") return "team:" + (node.team ? node.team.id : "none");
-  // #212 : une personne peut désormais apparaître dans plusieurs équipes —
-  // roleTeamId (distinct par instance) désambiguïse la clé React entre ces
-  // cartes dupliquées de la même personne.
-  return "person:" + (node.member.id || node.member.name) + ":" + (node.roleTeamId || "root");
-}
-// Les membres d'une équipe qui n'ont eux-mêmes aucun subordonné (retour de
-// test, piste B) : listés DANS le panneau de leur équipe plutôt qu'en cartes
-// séparées. Le responsable (node.leadMember, résolu une fois par
-// buildOrgHierarchyTree) est TOUJOURS fusionné dans ce panneau — même s'il a
-// lui-même des subordonnés (retour de test : on ne sépare jamais le
-// responsable du bandeau de son équipe, ce qui le placerait visuellement au
-// même niveau que les équipes dépendantes) — rendu en premier avec le cadre
-// couleur accent. Ses éventuels subordonnés directs sont alors rattachés au
-// nœud d'équipe lui-même (voir orgHierLayoutChildren), puisque sa propre
-// carte n'existe plus. Absent seulement s'il est introuvable dans cette
-// équipe (pas un membre direct de son roster).
-function orgHierEmbeddedRoster(node) {
-  const leadIdx = node.leadMember
-    ? node.children.findIndex((c) => c.type === "person" && c.member.name === node.leadMember.name)
-    : -1;
-  const lead = leadIdx >= 0 ? node.children[leadIdx] : null;
-  const rest = node.children.filter((c, i) => i !== leadIdx && c.type === "person" && c.children.length === 0);
-  return { lead, rest };
-}
-// Enfants réellement POSITIONNÉS dans l'arbre : pour une équipe, les membres
-// listés dans son propre panneau (orgHierEmbeddedRoster) n'ont pas de
-// position propre — les compter ici les ferait chercher une position qui
-// n'existe jamais, et les rendre deux fois (dans le panneau ET en carte). Le
-// responsable étant fusionné dans le panneau même s'il a des subordonnés
-// (voir orgHierEmbeddedRoster), ses subordonnés directs sont promus enfants
-// du nœud d'équipe — sinon ils resteraient orphelins d'une carte qui n'existe
-// plus.
-function orgHierLayoutChildren(node) {
-  if (node.type !== "team") return node.children;
-  const { lead } = orgHierEmbeddedRoster(node);
-  const out = [];
-  node.children.forEach((c) => {
-    if (lead && c === lead) { out.push(...c.children); return; }
-    if (c.type === "team" || (c.type === "person" && c.children.length > 0)) out.push(c);
-  });
-  return out;
-}
-// Poste d'une personne dans l'équipe où sa carte/ligne est rendue (retour de
-// test) : toujours celle de sa première équipe résolue (node.roleTeamId,
-// posée une fois par buildOrgHierarchyTree), jamais un poste global — voir
-// memberRoleInTeam. Vide si non renseigné.
-function orgHierMemberRole(personNode) {
-  return personNode.roleTeamId ? memberRoleInTeam(personNode.member, personNode.roleTeamId) : "";
-}
-// Hauteur d'une ligne de roster (retour de test) : bascule vers la variante
-// *_ROLE dès qu'un poste est affiché, pour rester en tous points exacte —
-// orgHierNodeSize (calcul de layout) et renderRow (classe .has-role côté
-// CSS) appellent cette MÊME fonction, jamais un second calcul.
-// Poste affiché sur une ligne de panneau : pour le responsable, le titre
-// choisi dans la fiche équipe (team.leadTitle) prime sur son poste.
-function orgHierRowRole(personNode, isLead, team) {
-  return (isLead && team && team.leadTitle) || orgHierMemberRole(personNode);
-}
-function orgHierRowHeight(personNode, isLead, team) {
-  const role = orgHierRowRole(personNode, isLead, team);
-  const hasRole = Boolean(role);
-  const base = isLead
-    ? (hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H)
-    : (hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H);
-  // Lignes SUPPLÉMENTAIRES au-delà de la première (déjà comptée dans base) :
-  // un nom/poste court (l'immense majorité des cas) n'ajoute rien — voir
-  // orgHierEstimateLines et le commentaire au-dessus des constantes ORGHIER_ROW_*.
-  const nameExtraLines = orgHierEstimateLines(personNode.member?.name, ORGHIER_ROW_NAME_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1;
-  const roleExtraLines = hasRole ? orgHierEstimateLines(role, ORGHIER_ROW_ROLE_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1 : 0;
-  return base + nameExtraLines * ORGHIER_ROW_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_ROW_ROLE_EXTRA_LINE_H;
-}
-// La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
-// jamais un second calcul ici : la boîte réservée par le calcul de layout et
-// le contenu réellement rendu doivent toujours voir la même réponse.
-function orgHierNodeSize(node) {
-  if (node.type === "person") {
-    const role = orgHierMemberRole(node);
-    const nameExtraLines = orgHierEstimateLines(node.member?.name, ORGHIER_CARD_NAME_CHARS_PER_LINE, ORGHIER_CARD_MAX_LINES) - 1;
-    const roleExtraLines = role ? orgHierEstimateLines(role, ORGHIER_CARD_ROLE_CHARS_PER_LINE, ORGHIER_CARD_MAX_LINES) - 1 : 0;
-    const h = ORGHIER_MEMBER_H + nameExtraLines * ORGHIER_CARD_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_CARD_ROLE_EXTRA_LINE_H;
-    return { w: ORGHIER_CARD_W, h };
-  }
-  if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
-  const { lead, rest } = orgHierEmbeddedRoster(node);
-  const rows = (lead ? 1 : 0) + rest.length;
-  const rowsH = (lead ? orgHierRowHeight(lead, true, node.team) : 0) + rest.reduce((sum, c) => sum + orgHierRowHeight(c, false, node.team), 0);
-  const bodyH = rows ? ORGHIER_TEAM_PAD + rowsH + Math.max(0, rows - 1) * ORGHIER_TEAM_ROW_GAP : 0;
-  return { w: ORGHIER_TEAM_PANEL_W, h: ORGHIER_TEAM_BANNER_H + bodyH };
-}
-function orgHierPersonCount(node) {
-  return node.children.reduce((sum, c) => sum + (c.type === "person" ? 1 : orgHierPersonCount(c)), 0);
-}
-
-// Ajustement automatique à la largeur du widget (#219) : en dessous de cette
-// échelle, le contenu deviendrait illisible — on s'y arrête et on laisse le
-// défilement horizontal prendre le relais plutôt que de continuer à réduire.
-const ORGHIER_MIN_FIT_SCALE = 0.42;
-// Marge du détour transverse (#229) : distance entre le trait dérouté et le
-// bord de la carte la plus proche qu'il contourne.
-const ORGHIER_TRANSVERSE_DETOUR_GAP = 14;
-
-// #229 : test d'intersection segment/rectangle (les 4 côtés du rectangle),
-// pour savoir si le tracé direct entre deux équipes liées transversalement
-// traverse une carte intermédiaire qui n'est ni l'origine ni la destination.
-function orgHierSegIntersectsRect(x1, y1, x2, y2, rect) {
-  const rx1 = rect.left, ry1 = rect.top, rx2 = rect.left + rect.w, ry2 = rect.top + rect.h;
-  // Rejet rapide par boîte englobante avant le test coûteux côté par côté.
-  if (Math.max(x1, x2) < rx1 || Math.min(x1, x2) > rx2 || Math.max(y1, y2) < ry1 || Math.min(y1, y2) > ry2) return false;
-  const cross2d = (ax, ay, bx, by) => ax * by - ay * bx;
-  const segCross = (ax, ay, bx, by, cx, cy, dx, dy) => {
-    const d1 = cross2d(dx - cx, dy - cy, ax - cx, ay - cy);
-    const d2 = cross2d(dx - cx, dy - cy, bx - cx, by - cy);
-    const d3 = cross2d(bx - ax, by - ay, cx - ax, cy - ay);
-    const d4 = cross2d(bx - ax, by - ay, dx - ax, dy - ay);
-    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
-  };
-  return segCross(x1, y1, x2, y2, rx1, ry1, rx2, ry1)
-    || segCross(x1, y1, x2, y2, rx2, ry1, rx2, ry2)
-    || segCross(x1, y1, x2, y2, rx2, ry2, rx1, ry2)
-    || segCross(x1, y1, x2, y2, rx1, ry2, rx1, ry1);
-}
+// Organigramme — placement par contour, réutilisé par la vue Métro (#295 ;
+// la vue hiérarchique a été retirée) : orgHierLayoutSiblings rapproche des
+// sous-arbres frères jusqu'à ce qu'ils se touchent réellement à une
+// hauteur donnée, jamais plus.
 // === NEXORA:ORGHIER-LAYOUT:START ===
 // #243 : placement des frères par CONTOUR (Reingold-Tilford simplifié), pas
 // par rectangle englobant. Un "contour" décrit, pour un sous-arbre déjà
 // placé (son propre centre pris comme origine 0), la position gauche/droite
-// occupée à CHAQUE profondeur relative (0 = le nœud lui-même, 1 = ses
-// enfants, 2 = ses petits-enfants...) — contrairement à subtreeCross qui ne
-// retenait qu'un seul maximum global pour tout le sous-arbre. Deux voisins
-// ne sont donc rapprochés que jusqu'à ce qu'ils se touchent réellement à un
-// niveau donné (+ ORGHIER_SIBLING_GAP), jamais moins ni plus — ce qui
+// occupée à CHAQUE tranche relative (le Métro indexe par tranche de hauteur).
+// Deux voisins ne sont rapprochés que jusqu'à ce qu'ils se touchent
+// réellement à une tranche donnée (+ gap), jamais moins ni plus — ce qui
 // referme les grands vides quand un voisin large en profondeur côtoie une
 // simple feuille.
 // Fonction pure et générique (aucune dépendance à Team/Member) : chaque
@@ -9244,428 +9061,6 @@ function orgHierLayoutSiblings(contours, gap) {
   return { offsets, mergedLeft, mergedRight };
 }
 // === NEXORA:ORGHIER-LAYOUT:END ===
-function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientation, showUnassigned, onEditTeam, onEditMember, rootLabel, relations }) {
-  const horizontal = orientation === "horizontal";
-  // Échelle de rendu (#219) : mesurée sur le conteneur, jamais sur le contenu
-  // lui-même (qui change justement de taille avec l'échelle) — un
-  // ResizeObserver sur le wrap suffit, pas besoin de réagir à la taille du
-  // canevas mis à l'échelle.
-  const wrapRef = useRef(null);
-  const [wrapWidth, setWrapWidth] = useState(0);
-  useLayoutEffect(() => {
-    const measure = () => setWrapWidth(wrapRef.current?.clientWidth || 0);
-    measure();
-    if (typeof ResizeObserver === "undefined") return undefined;
-    const ro = new ResizeObserver(measure);
-    if (wrapRef.current) ro.observe(wrapRef.current);
-    return () => ro.disconnect();
-  }, []);
-  // « Sans équipe » est toujours la seule racine dont team est null (voir
-  // buildOrgHierarchyTree) — c'est ce qui permet de la retirer sans toucher la
-  // fonction pure ni son contrat déjà testé. Les racines liées par un lien
-  // transverse sont ensuite rapprochées de leur partenaire (#235) — un simple
-  // réordonnancement des racines de premier niveau, avant le calcul de layout
-  // ci-dessous, qui ne voit donc que l'ordre déjà optimisé. Même fonction
-  // pour la vue Métro (#295) : orgChartVisibleRoots.
-  const roots = useMemo(() => orgChartVisibleRoots(teams, members, showUnassigned), [teams, members, showUnassigned]);
-  // Une racine visible unique seulement s'il y a plus d'une équipe de premier
-  // niveau (ou une « Sans équipe ») à relier — comme la vue « Par groupe »,
-  // pas de boîte « Organisation » inutile pour une seule équipe.
-  const displayRoots = roots.length > 1 ? [{ type: "root", team: null, children: roots }] : roots;
-  const leadNames = useMemo(() => new Set(normalizeTeams(teams).filter((t) => t.leadName).map((t) => t.leadName)), [teams]);
-
-  const layout = useMemo(() => {
-    const crossOf = (node) => (horizontal ? orgHierNodeSize(node).h : orgHierNodeSize(node).w);
-    const mainOf = (node) => (horizontal ? orgHierNodeSize(node).w : orgHierNodeSize(node).h);
-    // #243 : contour par profondeur relative (voir orgHierLayoutSiblings),
-    // calculé une fois par nœud (contourCache) — le décalage de chaque
-    // enfant par rapport au centre de son parent est mémorisé à part
-    // (siblingOffsetCache) pour être réutilisé tel quel par place() ci-dessous.
-    const contourCache = new Map();
-    const siblingOffsetCache = new Map();
-    const contourOf = (node) => {
-      if (contourCache.has(node)) return contourCache.get(node);
-      const kids = orgHierLayoutChildren(node);
-      const own = crossOf(node);
-      let result;
-      if (!kids.length) {
-        siblingOffsetCache.set(node, []);
-        result = { left: [-own / 2], right: [own / 2] };
-      } else {
-        const kidContours = kids.map(contourOf);
-        const { offsets, mergedLeft, mergedRight } = orgHierLayoutSiblings(kidContours, ORGHIER_SIBLING_GAP);
-        // Le nœud reste centré exactement au-dessus de ses enfants, comme
-        // avant (#235/#229 restent inchangés) : son propre centre = milieu
-        // de l'étendue totale (toutes profondeurs confondues) du groupe
-        // d'enfants déjà fusionné.
-        const groupMin = Math.min(...mergedLeft);
-        const groupMax = Math.max(...mergedRight);
-        const groupCenter = (groupMin + groupMax) / 2;
-        siblingOffsetCache.set(node, offsets.map((o) => o - groupCenter));
-        result = {
-          left: [-own / 2, ...mergedLeft.map((v) => v - groupCenter)],
-          right: [own / 2, ...mergedRight.map((v) => v - groupCenter)],
-        };
-      }
-      contourCache.set(node, result);
-      return result;
-    };
-    const positions = new Map();
-    // Retour de test (superpositions) : deux frères peuvent avoir des
-    // hauteurs propres différentes (#238, texte non tronqué — plus de
-    // membres ou un poste qui passe à la ligne rend une carte plus haute
-    // qu'une autre du même rang). Le contour (#243) ne compacte que l'axe
-    // transversal ; sur l'axe principal, si chaque frère démarre SA propre
-    // ligne d'enfants dès SA propre fin (mainEnd), la ligne d'enfants d'un
-    // frère court peut commencer avant qu'un frère plus haut ne soit
-    // terminé — et le rapprochement de #243 rend ce chevauchement visible.
-    // Fix : tous les enfants d'un même nœud démarrent leur PROPRE ligne
-    // d'enfants au même niveau, celui du frère le plus haut de leur
-    // fratrie — jamais avant que toute la ligne courante ne soit terminée.
-    const place = (node, cross, mainStart, forcedChildMainStart) => {
-      const size = orgHierNodeSize(node);
-      const mainEnd = mainStart + mainOf(node);
-      positions.set(node, { cross, mainStart, mainEnd, w: size.w, h: size.h });
-      const kids = orgHierLayoutChildren(node);
-      if (!kids.length) return;
-      contourOf(node);
-      const offsets = siblingOffsetCache.get(node);
-      const childMainStart = forcedChildMainStart !== undefined ? forcedChildMainStart : mainEnd + ORGHIER_LEVEL_GAP;
-      const sharedGrandMainStart = Math.max(...kids.map((k) => childMainStart + mainOf(k))) + ORGHIER_LEVEL_GAP;
-      kids.forEach((child, i) => place(child, cross + offsets[i], childMainStart, sharedGrandMainStart));
-    };
-    // Les racines de premier niveau (#235 : déjà réordonnées pour rapprocher
-    // les partenaires transverses) sont elles-mêmes traitées comme un groupe
-    // de frères par contour — c'est justement le cas visible du ticket #243
-    // (une équipe large à côté de racines simples sans enfants).
-    const rootContours = displayRoots.map(contourOf);
-    const { offsets: rootOffsets, mergedLeft: rootLeft, mergedRight: rootRight } = orgHierLayoutSiblings(rootContours, ORGHIER_SIBLING_GAP);
-    const canvasMin = rootLeft.length ? Math.min(...rootLeft) : 0;
-    const canvasMax = rootRight.length ? Math.max(...rootRight) : 0;
-    displayRoots.forEach((root, i) => place(root, rootOffsets[i] - canvasMin, 0));
-    const totalCross = Math.max(0, canvasMax - canvasMin);
-    let totalMain = 0;
-    positions.forEach((p) => { if (p.mainEnd > totalMain) totalMain = p.mainEnd; });
-    return { positions, totalCross, totalMain };
-  }, [displayRoots, horizontal]);
-
-  // Correspondance transversal/longitudinal → écran : un pur échange d'axes,
-  // jamais de décalage — les boîtes appliquent leur propre décalage (±w/2 ou
-  // ±h/2) séparément, ci-dessous.
-  const toScreen = (cross, main) => (horizontal ? { x: main, y: cross } : { x: cross, y: main });
-  const boxRect = (node) => {
-    const p = layout.positions.get(node);
-    return horizontal
-      ? { left: p.mainStart, top: p.cross - p.h / 2, w: p.w, h: p.h }
-      : { left: p.cross - p.w / 2, top: p.mainStart, w: p.w, h: p.h };
-  };
-
-  // Points blancs aux embranchements (retour de test sur #295, repris du
-  // Métro) : là où le trait d'un parent se divise vers deux enfants ou plus.
-  const junctions = [];
-  const lines = useMemo(() => {
-    const out = [];
-    const walk = (node) => {
-      const p = layout.positions.get(node);
-      const kids = orgHierLayoutChildren(node);
-      if (kids.length >= 2) {
-        const j = toScreen(p.cross, p.mainEnd + ORGHIER_LEVEL_GAP / 2);
-        out.junctions.push({ key: "j:" + orgHierNodeKey(node), x: j.x, y: j.y });
-      }
-      kids.forEach((child) => {
-        const c = layout.positions.get(child);
-        const busMain = p.mainEnd + ORGHIER_LEVEL_GAP / 2;
-        const a = toScreen(p.cross, p.mainEnd);
-        const bus1 = toScreen(p.cross, busMain);
-        const bus2 = toScreen(c.cross, busMain);
-        const b = toScreen(c.cross, c.mainStart);
-        out.push({ key: orgHierNodeKey(child), d: `M ${a.x} ${a.y} L ${bus1.x} ${bus1.y} L ${bus2.x} ${bus2.y} L ${b.x} ${b.y}` });
-        walk(child);
-      });
-    };
-    out.junctions = [];
-    displayRoots.forEach(walk);
-    return out;
-  }, [displayRoots, layout, horizontal]);
-  junctions.push(...lines.junctions);
-
-  const canvasW = horizontal ? layout.totalMain : layout.totalCross;
-  const canvasH = horizontal ? layout.totalCross : layout.totalMain;
-  // Échelle qui fait tenir le rendu dans la largeur du widget (#219) : jamais
-  // > 1 (on n'agrandit pas un petit organigramme), plafonnée en bas à
-  // ORGHIER_MIN_FIT_SCALE — passé ce point le défilement horizontal prend le
-  // relais plutôt que de continuer à réduire un contenu devenu illisible.
-  const fitScale = wrapWidth > 0 && canvasW > 0
-    ? Math.max(ORGHIER_MIN_FIT_SCALE, Math.min(1, wrapWidth / canvasW))
-    : 1;
-
-  const teamNodes = [];
-  const personNodes = [];
-  const collectNodes = (node) => {
-    if (node.type === "person") personNodes.push(node);
-    else teamNodes.push(node);
-    orgHierLayoutChildren(node).forEach(collectNodes);
-  };
-  displayRoots.forEach(collectNodes);
-
-  // Rattachements transverses (#219) : lien de liaison horizontal entre deux
-  // équipes, sans relation parent/enfant — dessiné à part des traits de
-  // hiérarchie ci-dessus, entre les centres des deux panneaux quand les DEUX
-  // sont visibles dans cet arbre (une équipe masquée ou hors du dossier
-  // filtré n'a simplement pas de lien tracé).
-  const teamNodeByTeamId = useMemo(() => {
-    const m = new Map();
-    teamNodes.forEach((n) => { if (n.team) m.set(n.team.id, n); });
-    return m;
-  }, [teamNodes]);
-  const transverseLines = useMemo(() => {
-    const out = [];
-    // #229 : cartes d'équipe qui pourraient bloquer le tracé direct — toutes
-    // sauf la racine « Organisation » (jamais entre deux équipes réelles).
-    const obstacles = teamNodes.filter((n) => n.type !== "root").map((n) => ({ node: n, rect: boxRect(n) }));
-    transverseTeamLinks(teams).forEach((link) => {
-      const nodeA = teamNodeByTeamId.get(link.fromId);
-      const nodeB = teamNodeByTeamId.get(link.toId);
-      if (!nodeA || !nodeB || !layout.positions.has(nodeA) || !layout.positions.has(nodeB)) return;
-      const rA = boxRect(nodeA);
-      const rB = boxRect(nodeB);
-      const ax = rA.left + rA.w / 2, ay = rA.top + rA.h / 2;
-      const bx = rB.left + rB.w / 2, by = rB.top + rB.h / 2;
-      // #229 : le tracé direct centre-à-centre peut traverser une carte
-      // intermédiaire (ex. une troisième équipe placée entre les deux
-      // équipes liées) — dans ce cas, détour rectiligne qui contourne la
-      // rangée traversée plutôt qu'un moteur de routage générique. Le
-      // détour se fait le long de l'axe « longitudinal » de l'organigramme
-      // (vertical en orientation par défaut, horizontal en orientation
-      // "horizontal") : c'est cet axe, partagé par les cartes d'une même
-      // rangée/colonne, qui permet de sortir de leur alignement.
-      const blockers = obstacles.filter(({ node, rect }) => node !== nodeA && node !== nodeB && orgHierSegIntersectsRect(ax, ay, bx, by, rect));
-      // Retour de test : jamais de trait diagonal — uniquement des segments
-      // horizontaux avec un décroché vertical (ou l'inverse en orientation
-      // "horizontal"), même quand aucune carte ne bloque le tracé direct
-      // (deux panneaux de hauteurs différentes suffisent à créer une
-      // diagonale sur un simple trait centre-à-centre).
-      if (!blockers.length) {
-        const d = horizontal
-          ? `M ${ax} ${ay} L ${ax} ${(ay + by) / 2} L ${bx} ${(ay + by) / 2} L ${bx} ${by}`
-          : `M ${ax} ${ay} L ${(ax + bx) / 2} ${ay} L ${(ax + bx) / 2} ${by} L ${bx} ${by}`;
-        out.push({ key: `transverse:${link.fromId}:${link.toId}`, d });
-        return;
-      }
-      const d = horizontal
-        ? (() => {
-            const detourX = Math.min(rA.left, rB.left, ...blockers.map((b) => b.rect.left)) - ORGHIER_TRANSVERSE_DETOUR_GAP;
-            return `M ${ax} ${ay} L ${detourX} ${ay} L ${detourX} ${by} L ${bx} ${by}`;
-          })()
-        : (() => {
-            const detourY = Math.min(rA.top, rB.top, ...blockers.map((b) => b.rect.top)) - ORGHIER_TRANSVERSE_DETOUR_GAP;
-            return `M ${ax} ${ay} L ${ax} ${detourY} L ${bx} ${detourY} L ${bx} ${by}`;
-          })();
-      out.push({ key: `transverse:${link.fromId}:${link.toId}`, d });
-    });
-    return out;
-  }, [teams, teamNodeByTeamId, layout, teamNodes, horizontal]);
-
-  // Relations propres au widget (widget.orgChartRelations) : accroche = le
-  // panneau d'une équipe, la carte d'une personne, ou sa ligne dans le
-  // panneau de son équipe (bord à bord du panneau, à la hauteur de la ligne).
-  // Le trait passe SOUS les cartes (calque des traits) : il ne masque jamais
-  // un texte ; ses extrémités et sa légende passent au-dessus.
-  const relationLines = useMemo(() => {
-    const teamRects = new Map();
-    const personRects = new Map();
-    const keepPerson = (name, rect, dup) => {
-      const cur = personRects.get(name);
-      if (!cur || (cur.dup && !dup)) personRects.set(name, { ...rect, dup });
-    };
-    teamNodes.forEach((n) => {
-      if (!n.team || n.type === "root" || !layout.positions.has(n)) return;
-      const r = boxRect(n);
-      teamRects.set(n.team.id, r);
-      const { lead, rest } = orgHierEmbeddedRoster(n);
-      let y = r.top + ORGHIER_TEAM_BANNER_H + ORGHIER_TEAM_PAD / 2;
-      [lead, ...rest].filter(Boolean).forEach((row) => {
-        const h = orgHierRowHeight(row, row === lead, n.team);
-        keepPerson(row.member.name, { left: r.left, top: y, w: r.w, h }, Boolean(row.duplicate));
-        y += h + ORGHIER_TEAM_ROW_GAP;
-      });
-    });
-    personNodes.forEach((n) => { if (layout.positions.has(n)) keepPerson(n.member.name, boxRect(n), Boolean(n.duplicate)); });
-    // Cartes et panneaux : la légende ne se pose jamais dessus.
-    const cardRects = [...teamNodes, ...personNodes].filter((n) => layout.positions.has(n)).map((n) => {
-      const r = boxRect(n);
-      return { x: r.left, y: r.top, w: r.w, h: r.h };
-    });
-    const rectOf = (ref) => {
-      const p = orgRelationRefParse(ref);
-      return p.type === "team" ? teamRects.get(p.id) : personRects.get(p.id);
-    };
-    return orgChartVisibleRelations(relations, (id) => teamRects.has(id), (name) => personRects.has(name)).map((rel) => {
-      const a = rectOf(rel.from), b = rectOf(rel.to);
-      const acx = a.left + a.w / 2, acy = a.top + a.h / 2, bcx = b.left + b.w / 2, bcy = b.top + b.h / 2;
-      const overlapX = a.left < b.left + b.w && b.left < a.left + a.w;
-      let pts;
-      if (!overlapX) {
-        const ax = acx < bcx ? a.left + a.w : a.left;
-        const bx = acx < bcx ? b.left : b.left + b.w;
-        const xm = (ax + bx) / 2;
-        pts = [[ax, acy], [xm, acy], [xm, bcy], [bx, bcy]];
-      } else {
-        const ay = acy < bcy ? a.top + a.h : a.top;
-        const by = acy < bcy ? b.top : b.top + b.h;
-        const ym = (ay + by) / 2;
-        pts = [[acx, ay], [acx, ym], [bcx, ym], [bcx, by]];
-      }
-      const labelAt = rel.label ? orgRelationLabelPlacement(pts, orgRelationLabelWidth(rel.label) + 4, ORGRELATION_LABEL_H + 2, cardRects) : null;
-      return { key: "relation:" + rel.id, label: rel.label, points: pts, d: pts.map((pt, i) => (i ? "L " : "M ") + pt[0] + " " + pt[1]).join(" "), labelAt };
-    });
-  }, [relations, teamNodes, personNodes, layout, horizontal]);
-
-  return (
-    // Fix clignotement : la mesure (ResizeObserver) porte sur ce calque
-    // stable, qui ne scrolle jamais — lp-orghier-wrap, lui, scrolle et sa
-    // largeur ne doit donc jamais servir de source de mesure (voir le
-    // commentaire CSS de .lp-orghier-outer).
-    <div className="lp-orghier-outer" ref={wrapRef}>
-    <div className="lp-orghier-wrap">
-      {/* #219 : le calque extérieur réserve l'espace RÉELLEMENT occupé une
-          fois réduit (canvas * fitScale) — sans lui, le wrap continuerait de
-          scroller sur la taille naturelle du contenu, invisible sous la
-          transformation CSS qui ne change que l'apparence, pas la boîte. */}
-      <div style={{ width: canvasW * fitScale, height: canvasH * fitScale }}>
-        <div className="lp-orghier" style={{ width: canvasW, height: canvasH, transform: `scale(${fitScale})`, transformOrigin: "top left" }}>
-          <svg className="lp-orghier-lines" aria-hidden="true">
-            {lines.map((l) => <path key={l.key} d={l.d} />)}
-            {transverseLines.map((l) => <path key={l.key} className="lp-orghier-line-transverse" d={l.d} />)}
-            {relationLines.map((l) => <path key={l.key} className="lp-orghier-line-relation" d={l.d} />)}
-            {junctions.map((j) => <circle key={j.key} className="lp-orghier-junction" cx={j.x} cy={j.y} r={3.5} />)}
-          </svg>
-        {teamNodes.map((node) => {
-          const r = boxRect(node);
-          const isRoot = node.type === "root";
-          if (isRoot) {
-            return (
-              <div
-                key={orgHierNodeKey(node)}
-                className="lp-orghier-node lp-orghier-node-root"
-                style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
-              >
-                <Network size={13} /><span className="lp-orghier-node-title">{rootLabel || "Organisation"}</span>
-              </div>
-            );
-          }
-          // Piste B (retour de test) : les membres sans subordonné rejoignent
-          // le panneau de leur équipe (orgHierEmbeddedRoster) — bandeau plein
-          // de la couleur d'équipe, responsable en tête avec le cadre couleur
-          // accent et l'étoile, les autres membres à la suite.
-          const { lead, rest } = orgHierEmbeddedRoster(node);
-          const renderRow = (child, isLeadRow) => {
-            const m = child.member;
-            const stats = statsFor(m);
-            const role = orgHierRowRole(child, isLeadRow, node.team);
-            return (
-              <button
-                type="button"
-                key={orgHierNodeKey(child)}
-                className={"lp-orghier-panel-row" + (isLeadRow ? " is-lead" : "") + (role ? " has-role" : "") + (memberIsInactive(m) ? " is-inactive" : "")}
-                // Hauteur explicite = EXACTEMENT celle réservée par le calcul de
-                // layout (orgHierRowHeight, voir #238) : les classes CSS ci-dessus
-                // ne donnent plus qu'une hauteur MINIMALE de repli, jamais la
-                // valeur qui compte quand le nom/poste passe sur plusieurs lignes.
-                style={{ height: orgHierRowHeight(child, isLeadRow, node.team) }}
-                onClick={() => onFilterPerson && onFilterPerson(m.name)}
-                onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
-                title={(isLeadRow ? "Responsable — " : "") + (memberIsInactive(m) ? "Inactif — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
-              >
-                {isLeadRow && <Star size={10} className="lp-orgchart-lead-badge-inline" aria-label="Responsable" />}
-                <span className="lp-orgchart-avatar lp-orgchart-avatar-xs" style={{ background: m.color || staffingMemberColor(m.name) }}>
-                  {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={11} /> : memberInitials(m.name)}
-                </span>
-                <span className="lp-orghier-panel-row-main">
-                  <span className="lp-orghier-panel-row-name">{m.name}</span>
-                  {role && <span className="lp-orghier-panel-row-role">{role}</span>}
-                </span>
-                <span className="lp-orghier-panel-row-stats">
-                  <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
-                  {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
-                </span>
-              </button>
-            );
-          };
-          return (
-            <div
-              key={orgHierNodeKey(node)}
-              className={"lp-orghier-node-panel" + (node.team ? "" : " is-unassigned")}
-              style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
-            >
-              <div
-                className="lp-orghier-panel-banner"
-                style={{ background: node.team ? node.team.color : "var(--text-muted)", cursor: node.team && onEditTeam ? "pointer" : undefined }}
-                // Double-clic pour éditer l'équipe (#231) : seulement sur une
-                // vraie équipe (node.team truthy) — « Sans équipe »/« Organisation »
-                // ne sont pas éditables.
-                onDoubleClick={node.team && onEditTeam ? () => onEditTeam(node.team) : undefined}
-                title={node.team && onEditTeam ? "Double-clic pour modifier l'équipe" : undefined}
-              >
-                <span className="lp-orghier-panel-name">{node.team ? node.team.name : "Sans équipe"}</span>
-                <span className="lp-orghier-panel-count">{orgHierPersonCount(node)}</span>
-              </div>
-              {(lead || rest.length > 0) && (
-                <div className="lp-orghier-panel-body">
-                  {lead && renderRow(lead, true)}
-                  {rest.map((child) => renderRow(child, false))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {personNodes.map((node) => {
-          const m = node.member;
-          const r = boxRect(node);
-          const stats = statsFor(m);
-          const isLead = leadNames.has(m.name);
-          return (
-            <button
-              type="button"
-              key={orgHierNodeKey(node)}
-              className={"lp-orgchart-card lp-orghier-node-member" + (isLead ? " is-lead" : "") + (memberIsInactive(m) ? " is-inactive" : "")}
-              style={{ left: r.left, top: r.top, width: r.w }}
-              onClick={() => onFilterPerson && onFilterPerson(m.name)}
-              onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
-              title={(isLead ? "Responsable — " : "") + (memberIsInactive(m) ? "Inactif — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
-            >
-              {isLead && <Star size={11} className="lp-orgchart-lead-badge" aria-label="Responsable" />}
-              <span className="lp-orgchart-avatar" style={{ background: m.color || staffingMemberColor(m.name) }}>
-                {m.avatarDataUrl ? <IconGlyph icon={m.avatarDataUrl} size={16} /> : memberInitials(m.name)}
-              </span>
-              <span className="lp-orgchart-name">{m.name}</span>
-              {node.roleTeamId && memberRoleInTeam(m, node.roleTeamId) && <span className="lp-orgchart-role">{memberRoleInTeam(m, node.roleTeamId)}</span>}
-              <span className="lp-orgchart-stats">
-                <span className="lp-orgchart-stat">{stats.activeCount} active{stats.activeCount > 1 ? "s" : ""}</span>
-                {stats.lateCount > 0 && <span className="lp-orgchart-stat is-late">{stats.lateCount} en retard</span>}
-              </span>
-            </button>
-          );
-        })}
-        {relationLines.length > 0 && (
-          <svg className="lp-orghier-overlay" aria-hidden="true">
-            {relationLines.map((l) => (
-              <g key={l.key}>
-                <circle className="lp-orghier-relation-end" cx={l.points[0][0]} cy={l.points[0][1]} r={3.25} />
-                <circle className="lp-orghier-relation-end" cx={l.points[l.points.length - 1][0]} cy={l.points[l.points.length - 1][1]} r={3.25} />
-              </g>
-            ))}
-          </svg>
-        )}
-        {relationLines.filter((l) => l.labelAt).map((l) => (
-          <span key={"label:" + l.key} className="lp-orghier-relation-label" style={{ left: l.labelAt.x, top: l.labelAt.y }} title={"Relation — " + l.label}>{l.label}</span>
-        ))}
-        </div>
-      </div>
-    </div>
-    </div>
-  );
-}
 
 // === NEXORA:ORGMETRO:START ===
 // Organigramme — mode « Métro » (#295). Une REPRÉSENTATION de plus des données
@@ -10936,7 +10331,7 @@ const ORGMETRO_MAX_ZOOM = 3;
 const ORGMETRO_FIT_MARGIN = 16;
 // À l'ouverture, le plan n'est jamais réduit sous ce zoom : dans un widget
 // étroit, il vaut mieux un plan lisible cadré en haut, que l'on parcourt au
-// doigt, qu'un plan entier illisible (même esprit que ORGHIER_MIN_FIT_SCALE).
+// doigt, qu'un plan entier illisible.
 // « Ajuster à l'écran » reste disponible pour voir le plan entier.
 const ORGMETRO_MIN_OPEN_ZOOM = 0.6;
 const orgMetroColor = (color, kind) => color || (kind === "hub" ? ORGMETRO_HUB_LINE : ORGMETRO_NEUTRAL_LINE);
@@ -11558,19 +10953,8 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   );
 }
 
-// Modes de rendu de l'Organigramme, sur les mêmes données : arbre hiérarchique
-// (#167, #219) et plan Métro (#295). Un mode supprimé retombe sur l'arbre.
-const ORGCHART_MODES = [
-  { key: "hierarchy", label: "Hiérarchique" },
-  { key: "metro", label: "Métro" },
-];
-function orgChartModeOf(widget) {
-  const v = widget?.orgChartView;
-  return ORGCHART_MODES.some((m) => m.key === v) ? v : "hierarchy";
-}
 
-function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, setTasks, pushToast, onUpdateWidget }) {
-  const today = useMemo(() => iso(new Date()), []);
+function WidgetOrgChart({ widget, ctx, onFilterPerson, onOpenTeamsSettings, setTeams, setTeamMembers, setTeamFolders, setTasks, pushToast, onUpdateWidget }) {
   // Modale d'édition d'équipe au double-clic sur une carte (#231) — même
   // TeamFormModal que le crayon de Réglages > Équipe (TeamCatalogManager),
   // rien de dupliqué. null = fermée.
@@ -11601,36 +10985,15 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     return list;
   }, [ctx.teams, hiddenTeamIds, folderId]);
   // Utilisateurs inactifs propres à CE widget (widget.orgChartInactiveMembers)
-  // : grisés dans les deux vues, à leur place.
+  // : grisés, à leur place.
   const inactiveKeys = widget?.orgChartInactiveMembers;
   const members = useMemo(() => orgChartMembersWithInactive(ctx.teamMembers || [], inactiveKeys), [ctx.teamMembers, inactiveKeys]);
-  const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
 
   // Réglage « Afficher les ressources sans équipe » (retour de test) : true
   // par défaut — widgets déjà en place, sans ce champ, gardent leur affichage
   // actuel.
   const showUnassigned = widget?.orgChartShowUnassigned !== false;
 
-  const statsFor = (member) => {
-    const name = member.name;
-    const active = (ctx.tasks || []).filter((t) => t.assignee === name && !t.milestone && !isTaskDoneGlobal(t, ctx));
-    const late = active.filter((t) => t.end && t.end < today);
-    const todayShops = (cellsByMember.get(staffingCellId(name, today)) || [])
-      .map((id) => workshopFor(ctx.workshops, id))
-      .filter(Boolean);
-    return { activeCount: active.length, lateCount: late.length, todayShop: todayShops[0] || null };
-  };
-
-  // Mode de rendu (#295) : réglé dans la fiche du widget ET basculable
-  // directement dans son en-tête — le même champ `orgChartView`, enregistré
-  // sur le widget quand l'hôte le permet (onUpdateWidget), sinon gardé pour
-  // la session.
-  const [mode, setMode] = useState(orgChartModeOf(widget));
-  useEffect(() => { setMode(orgChartModeOf(widget)); }, [widget?.orgChartView]);
-  const changeMode = (next) => {
-    setMode(next);
-    if (onUpdateWidget) onUpdateWidget({ orgChartView: next });
-  };
   // Correspondances transverses de la vue Métro : affichées par défaut.
   const [showTransverse, setShowTransverse] = useState(widget?.orgMetroShowTransverse !== false);
   useEffect(() => { setShowTransverse(widget?.orgMetroShowTransverse !== false); }, [widget?.orgMetroShowTransverse]);
@@ -11679,12 +11042,11 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
   const onEditTeam = setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined;
   const onEditMember = setTeamMembers ? (member) => setEditMemberName(member.name) : undefined;
 
-  // Moteurs de rendu : arbre SVG hiérarchique classique (#219, racine →
-  // équipes → personnes) ou plan Métro (#295) — mêmes données, mêmes
-  // réglages génériques (équipes affichées, dossier, sans équipe, racine).
+  // Rendu : le plan Métro (#295), seule vue de l'Organigramme depuis le
+  // retrait de la vue hiérarchique.
   const content = !members.length
     ? <div className="lp-empty">Aucun utilisateur : ajoute des personnes dans Réglages › Utilisateurs.</div>
-    : mode === "metro" ? (
+    : (
       <OrgMetroChart
         teams={rawVisibleTeams}
         members={members}
@@ -11706,35 +11068,11 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         horizontal={metroHorizontal}
         onResetLayout={resetMetroLayout}
       />
-    ) : (
-      <OrgHierarchyChart
-        teams={rawVisibleTeams}
-        members={members}
-        statsFor={statsFor}
-        onFilterPerson={onFilterPerson}
-        orientation={widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical"}
-        showUnassigned={showUnassigned}
-        onEditTeam={onEditTeam}
-        onEditMember={onEditMember}
-        rootLabel={rootLabel}
-        relations={widget?.orgChartRelations}
-      />
     );
 
   return (
     <div className="lp-widget-orgchart">
       <div className="lp-widget-orgchart-head">
-        <div className="lp-orgchart-modes" role="group" aria-label="Mode de l'organigramme">
-          {ORGCHART_MODES.map((m) => (
-            <button
-              key={m.key}
-              type="button"
-              className={"lp-orgchart-mode-btn" + (mode === m.key ? " active" : "")}
-              aria-pressed={mode === m.key}
-              onClick={() => changeMode(m.key)}
-            >{m.key === "metro" ? <TrainTrack size={12} /> : <Network size={12} />}{m.label}</button>
-          ))}
-        </div>
         {onOpenTeamsSettings && (
           <button type="button" className="lp-icon-btn" onClick={onOpenTeamsSettings} title="Réglages → Utilisateurs & Équipes" aria-label="Réglages des utilisateurs et équipes">
             <Settings size={13} />
@@ -16650,13 +15988,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [echeancesOrientation, setEcheancesOrientation] = useState(
     ECHEANCES_ORIENTATIONS.includes(widget?.echeancesOrientation) ? widget.echeancesOrientation : "horizontale"
   );
-  // Orientation de l'arbre hiérarchique (#167, retour de test ; #219 : seul
-  // mode de rendu restant) : vertical (racine en haut) ou horizontal (racine
-  // à gauche).
-  const [orgChartOrientation, setOrgChartOrientation] = useState(widget?.orgChartOrientation === "horizontal" ? "horizontal" : "vertical");
-  // Mode de rendu (#295) : arbre hiérarchique (défaut) ou plan Métro et, pour
-  // le Métro, l'affichage des correspondances transverses (oui par défaut).
-  const [orgChartMode, setOrgChartMode] = useState(orgChartModeOf(widget));
+  // Organigramme (plan Métro, #295) : affichage des correspondances
+  // transverses (oui par défaut).
   const [orgMetroShowTransverse, setOrgMetroShowTransverse] = useState(widget?.orgMetroShowTransverse !== false);
   // Équipes du Métro en disposition horizontale (stations côte à côte) ;
   // les autres restent verticales, comme avant ce réglage.
@@ -16924,7 +16257,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartView = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); }
+    if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -17224,24 +16557,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         )}
         {type === "orgchart" && (
           <div className="lp-field">
-            {/* #219 : le mode « Par groupe » a été retiré ; #295 : deux rendus des
-                MÊMES données — l'arbre SVG hiérarchique, ajusté à la largeur du
-                widget, et le plan Métro. */}
+            {/* #295 : plan Métro, seule vue de l'Organigramme (la vue
+                hiérarchique a été retirée). */}
             <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 0, marginBottom: 10 }}>
               Équipes imbriquées (réglable dans Réglages › Équipes) et personnes sous leur équipe ou leur responsable
               direct (réglable dans la fiche de la personne).
             </p>
-            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--text-900)", display: "block", marginBottom: 4 }}>Mode</label>
-            <div className="lp-density-row">
-              {ORGCHART_MODES.map((m) => (
-                <button key={m.key} type="button" className={"lp-density-btn" + (orgChartMode === m.key ? " active" : "")} onClick={() => setOrgChartMode(m.key)}>{m.label}</button>
-              ))}
-            </div>
-            {orgChartMode === "metro" ? (
+            {(
               <>
                 <p style={{ fontSize: 12, color: "var(--text-600)", margin: "8px 0 0" }}>
                   Une équipe = une ligne, une sous-équipe = une bifurcation, une personne = une station ; une personne avec
-                  des subordonnés ouvre sa propre branche. Clic sur une ligne ou une station pour ouvrir sa fiche.
+                  des subordonnés ouvre sa propre branche. Clic sur une station pour ouvrir sa fiche ; clic sur une équipe pour
+                  replier sa ligne, double-clic pour ouvrir sa fiche.
                 </p>
                 <label className="lp-checkbox-line" style={{ marginTop: 8 }}>
                   <input type="checkbox" checked={orgMetroShowTransverse} onChange={() => setOrgMetroShowTransverse((v) => !v)} />
@@ -17263,14 +16590,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                     />
                   </div>
                 )}
-              </>
-            ) : orgChartMode === "hierarchy" && (
-              <>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "var(--text-900)", display: "block", margin: "10px 0 4px" }}>Orientation</label>
-                <div className="lp-density-row">
-                  <button type="button" className={"lp-density-btn" + (orgChartOrientation === "vertical" ? " active" : "")} onClick={() => setOrgChartOrientation("vertical")}>Verticale</button>
-                  <button type="button" className={"lp-density-btn" + (orgChartOrientation === "horizontal" ? " active" : "")} onClick={() => setOrgChartOrientation("horizontal")}>Horizontale</button>
-                </div>
               </>
             )}
             <hr className="lp-divider" style={{ margin: "10px 0" }} />
@@ -17325,7 +16644,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             </div>
             <hr className="lp-divider" style={{ margin: "12px 0 10px" }} />
             <div className="lp-field lp-orgrel-field">
-              <label>Relations <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(propres à ce widget — entre deux équipes, une équipe et une personne, ou deux personnes ; affichées dans les vues Hiérarchique et Métro)</span></label>
+              <label>Relations <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(propres à ce widget — entre deux équipes, une équipe et une personne, ou deux personnes ; affichées sur le plan Métro)</span></label>
               {orgChartRelations.length === 0 && <p style={{ fontSize: 12, color: "var(--text-600)", margin: "0 0 8px" }}>Aucune relation pour l'instant.</p>}
               {orgChartRelations.map((r) => {
                 const incomplete = !r.from || !r.to;

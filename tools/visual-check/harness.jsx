@@ -172,7 +172,7 @@ function AnnotationsHarness() {
     { id: "om19", name: "Sans rattachement", teamIds: [] },
   ]);
   const [orgWidget, setOrgWidget] = useState({
-    id: "w-orgmetro", type: "orgchart", orgChartView: "metro",
+    id: "w-orgmetro", type: "orgchart",
     // Utilisateurs inactifs propres au widget.
     orgChartInactiveMembers: ["om5"],
     // Équipe Opérations en disposition horizontale.
@@ -524,7 +524,7 @@ function AnnotationsHarness() {
           />
         </div>
         <div id="harness-orgmetro-narrow" style={{ width: 380, height: 560, marginBottom: 18 }}>
-          <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart", orgChartView: "metro" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
+          <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
         </div>
       </div>
       <div>

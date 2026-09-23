@@ -8,16 +8,14 @@ import vm from "node:vm";
 // entre les sentinelles des trois blocs qu'elle enchaîne — Équipes (modèle et
 // arbre existants), layout par contour (#243) et Métro (adaptateur + layout).
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
-test("un ancien mode Orbital enregistré revient à Hiérarchique sans toucher au mode Métro", () => {
-  const from = html.indexOf("const ORGCHART_MODES = [");
-  const to = html.indexOf("function WidgetOrgChart(", from);
+test("l'Organigramme n'a plus qu'une vue : le plan Métro, quel que soit le mode enregistré", () => {
+  const from = html.indexOf("function WidgetOrgChart(");
+  const to = html.indexOf("\n}\n", from);
   assert.ok(from > 0 && to > from);
-  const { ORGCHART_MODES, orgChartModeOf } = vm.runInThisContext(
-    `(function () { ${html.slice(from, to)}; return { ORGCHART_MODES, orgChartModeOf }; })()`
-  );
-  assert.deepEqual(Array.from(ORGCHART_MODES, (mode) => mode.key), ["hierarchy", "metro"]);
-  assert.equal(orgChartModeOf({ orgChartView: "orbital" }), "hierarchy");
-  assert.equal(orgChartModeOf({ orgChartView: "metro" }), "metro");
+  const src = html.slice(from, to);
+  assert.ok(src.includes("<OrgMetroChart"), "le widget rend le plan Métro");
+  assert.ok(!/OrgHierarchyChart|orgChartView|ORGCHART_MODES/.test(src), "plus de vue hiérarchique ni de bascule de mode");
+  assert.ok(!html.includes("function OrgHierarchyChart("), "le composant hiérarchique est retiré");
 });
 function block(name) {
   const start = `// === NEXORA:${name}:START ===`;
@@ -202,7 +200,7 @@ test("Métro : un responsable sans poste renseigné reçoit le libellé généri
   assert.ok(s.roleIsFallback);
 });
 
-test("Métro : le responsable se distingue comme dans la vue hiérarchique — en tête de sa ligne, halo et étoile", () => {
+test("Métro : le responsable se distingue — en tête de sa ligne, halo et étoile", () => {
   const { layout } = metro([team("a", { name: "Produit", leadName: "Chef" })], [member("Bob", { teamIds: ["a"] }), member("Chef", { teamIds: ["a"] })]);
   const a = branch(layout, "team:a");
   assert.deepEqual(a.stations.map((s) => s.name), ["Chef", "Bob"], "le responsable passe en tête, quel que soit l'ordre de l'annuaire");
