@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroStackSplitAt, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -947,4 +947,40 @@ test("Lien secondaire hiérarchique : seconde équipe parente, sans changer la p
   const r = api.orgMetroTransverseRoutes(layout, api.teamExtraLinks(teams))[0];
   assert.equal(r.hierarchical, true);
   assert.equal(r.toColor, "#E2A63B", "couleur de la seconde équipe parente");
+});
+
+test("Équipe empilée : sous-équipes réparties au-dessus et au-dessous du bandeau, lien parent par le flanc", () => {
+  const teams = [
+    team("root", { leadName: "Dir" }), team("side", { parentTeamId: "root", leadName: "Voisin" }),
+    team("ds", { parentTeamId: "root" }),
+    ...["s1", "s2", "s3", "s4"].map((id) => team(id, { parentTeamId: "ds", leadName: "L" + id })),
+  ];
+  const members = [member("Dir", { teamIds: ["root"] }), member("Voisin", { teamIds: ["side"] }), ...["s1", "s2", "s3", "s4"].map((id) => member("L" + id, { teamIds: [id] }))];
+  const kids = (layout) => ["s1", "s2", "s3", "s4"].map((id) => branch(layout, "team:" + id));
+  const top = metro(teams, members, { stacked: ["ds"] }).layout;
+  const { layout } = metro(teams, members, { stacked: ["ds"], stackSplit: { ds: 2 } });
+  const ds = branch(layout, "team:ds");
+  const [a, b, c, d] = kids(layout);
+  // Deux au-dessus du bandeau, deux en dessous, dans l'ordre.
+  assert.ok(a.elbow.y < b.elbow.y && b.elbow.y < ds.badge.y, "s1, s2 au-dessus");
+  assert.ok(c.elbow.y > ds.badge.y + ds.badge.h && d.elbow.y > c.elbow.y, "s3, s4 en dessous");
+  assert.ok(ds.upTrunk && ds.upTrunk.y0 === a.elbow.y && ds.upTrunk.y1 === ds.badge.y, "ligne du haut jusqu'au bandeau");
+  // Le lien parent arrive par le flanc gauche du bandeau, à mi-hauteur.
+  assert.ok(ds.drop.x < ds.badge.x && ds.drop.toX === ds.badge.x && ds.drop.y1 === ds.badge.y + ds.badge.h / 2);
+  const root = branch(layout, "team:root");
+  assert.ok(root.fork.childXs.includes(ds.drop.x), "la barre du parent dessert ce point d'arrivée");
+  assert.ok(api.orgMetroBranchPaths(ds).drop.includes(" H "), "coude vers le bandeau");
+  assertNoOverlap(layout);
+  // Glisser la ligne : nombre de sous-équipes au-dessus du point visé.
+  assert.equal(api.orgMetroStackSplitAt(top, "team:ds", 0), 0);
+  const [, , c0] = kids(top);
+  const dsTop = branch(top, "team:ds");
+  assert.equal(api.orgMetroStackSplitAt(top, "team:ds", c0.elbow.y - (dsTop.badge.y + dsTop.badge.h / 2) + 1), 3);
+  assert.equal(api.orgMetroStackSplitAt(layout, "team:ds", -1000), 0);
+  // Les déplacements emportent tout, point d'arrivée compris.
+  const moved = api.orgMetroApplyOffsets(layout, { "team:ds": { dx: 40, dy: 40 } });
+  const m = branch(moved, "team:ds");
+  assert.equal(m.drop.toX, m.badge.x);
+  assert.equal(m.drop.y1, m.badge.y + m.badge.h / 2);
+  assert.ok(branch(moved, "team:root").fork.childXs.includes(m.drop.x));
 });
