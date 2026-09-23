@@ -74,8 +74,8 @@ function CountUp({ value, animate, duration = 800 }) {
   }, [value, animate]);
   return display;
 }
-function ProgressBar({ value, color, gradient, trackColor, animate }) {
-  const fill = gradient && gradient.enabled ? `linear-gradient(90deg, ${gradient.from}, ${gradient.to})` : color;
+function ProgressBar({ value, color, trackColor, animate }) {
+  const fill = color;
   // Anime le remplissage de 0 jusqu'à la valeur réelle, une seule fois au montage
   // (jamais ensuite, pour ne pas rejouer l'animation à chaque mise à jour en
   // direct de la progression — ex. glisser-déposer). Optionnel (Réglages > Apparence).
@@ -93,17 +93,14 @@ function ProgressBar({ value, color, gradient, trackColor, animate }) {
   }, [value, animate]);
   return <div className="lp-progress-track" style={trackColor ? { background: trackColor } : undefined}><div className={"lp-progress-fill" + (animate ? " lp-anim-bar-fill" : "")} style={{ width: `${displayValue}%`, background: fill }} /></div>;
 }
-function sliderGradientBg(value, gradient, statusColor) {
+function sliderGradientBg(value, statusColor) {
   const v = Math.max(0, Math.min(100, value));
-  if (statusColor) {
-    // Mode "avancement selon le statut" : couleur du statut sur fond blanc cassé
-    return `linear-gradient(90deg, ${statusColor} 0%, ${statusColor} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
-  }
-  const from = gradient && gradient.enabled ? gradient.from : "#C7CED9";
-  const to = gradient && gradient.enabled ? gradient.to : "#C7CED9";
-  return `linear-gradient(90deg, ${from} 0%, ${to} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
+  // Avancement coloré selon le statut de la tâche (fixe, #325) — sans statut
+  // reconnu, couleur neutre plutôt qu'un dégradé personnalisable.
+  const color = statusColor || "#C7CED9";
+  return `linear-gradient(90deg, ${color} 0%, ${color} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
 }
-function FieldValue({ fieldKey, task, ctx, gradient, progressByStatus, onProgressChange }) {
+function FieldValue({ fieldKey, task, ctx, onProgressChange }) {
   if (fieldKey === "checklist") {
     const list = task.checklist || [];
     if (!list.length) return null;
@@ -141,16 +138,18 @@ function FieldValue({ fieldKey, task, ctx, gradient, progressByStatus, onProgres
   }
   if (fieldKey === "milestone") return task.milestone ? <span className="lp-chip">◆ Jalon</span> : null;
   if (fieldKey === "progress") {
-    const statusColor = progressByStatus ? ctx.statuses.find((s) => s.id === task.statusId)?.color : null;
+    // Avancement coloré selon le statut de la tâche : comportement désormais
+    // fixe (#325), plus de réglage pour en changer.
+    const statusColor = ctx.statuses.find((s) => s.id === task.statusId)?.color;
     if (onProgressChange) {
       return (
         <span className="lp-row-progress lp-row-progress-slider" onClick={(e) => e.stopPropagation()}>
-          <input type="range" min="0" max="100" value={task.progress} onChange={(e) => onProgressChange(task.id, Number(e.target.value))} className="lp-gradient-slider" draggable={false} onMouseDown={(e) => e.stopPropagation()} style={{ background: sliderGradientBg(task.progress, gradient, statusColor) }} />
+          <input type="range" min="0" max="100" value={task.progress} onChange={(e) => onProgressChange(task.id, Number(e.target.value))} className="lp-gradient-slider" draggable={false} onMouseDown={(e) => e.stopPropagation()} style={{ background: sliderGradientBg(task.progress, statusColor) }} />
           <span>{task.progress}%</span>
         </span>
       );
     }
-    return <span className="lp-row-progress"><ProgressBar value={task.progress} color={statusColor || "var(--text-muted)"} gradient={statusColor ? null : gradient} trackColor={statusColor ? "#EAEDF3" : undefined} /><span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{task.progress}%</span></span>;
+    return <span className="lp-row-progress"><ProgressBar value={task.progress} color={statusColor || "var(--text-muted)"} trackColor={statusColor ? "#EAEDF3" : undefined} /><span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{task.progress}%</span></span>;
   }
   if (fieldKey === "start") return <span className="lp-chip lp-mono">Début {fmtShort(task.start)}</span>;
   if (fieldKey === "end") return <span className="lp-chip lp-mono">Fin {fmtShort(task.end)}</span>;
@@ -1275,7 +1274,6 @@ function GlobalStyles() {
         .lp-group-toggle{ background:none; border:none; cursor:pointer; color:var(--text-600); display:flex; padding:0; flex:0 0 auto; }
         .lp-group-toggle:hover{ color:var(--text-900); }
         .lp-gantt-bar-fill{ position:absolute; left:0; top:0; bottom:0; opacity:0.92; overflow:hidden; }
-        .lp-gantt-bar-texture{ position:absolute; inset:0; background-image:repeating-linear-gradient(45deg, rgba(255,255,255,0.16) 0 5px, transparent 5px 10px); pointer-events:none; }
         .lp-gantt-bar-label{ position:relative; z-index:1; font-size:11px; font-weight:600; color:#fff; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .lp-gantt-handle{ position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; z-index:2; }
         .lp-gantt-handle.left{ left:0; } .lp-gantt-handle.right{ right:0; }
@@ -2303,7 +2301,11 @@ function GlobalStyles() {
         .lp-widget-treemap-legend-item.is-active{ border-color:var(--text-900); color:var(--text-900); }
         .lp-widget-treemap-legend-item.is-empty{ opacity:.45; cursor:default; }
         .lp-widget-treemap-legend-mark{ width:9px; height:9px; border-radius:3px; flex:0 0 auto; }
-        .lp-widget-treemap-scroll{ flex:1 1 auto; min-height:0; overflow:auto; }
+        /* #332 : le layout (pavés + tuiles de groupe) est recalculé pour
+           toujours tenir dans l'espace mesuré — jamais de scrollbar ici, y
+           compris en cas d'arrondi ; overflow:hidden est le filet de
+           sécurité, pas le mécanisme d'adaptation. */
+        .lp-widget-treemap-scroll{ flex:1 1 auto; min-height:0; overflow:hidden; }
         .lp-widget-treemap-canvas{ position:relative; width:100%; }
         .lp-widget-treemap-group-label{ position:absolute; display:flex; align-items:center; gap:5px; font-family:var(--font-mono); font-size:9.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--text-600); }
         .lp-widget-treemap-group-label::after{ content:""; flex:1; height:1px; background:var(--border); }
@@ -8815,7 +8817,7 @@ export default function LePlan({ currentUser, onSignOut }) {
 
   const [view, setView] = useState("projects");
   const [filters, setFilters] = useState(defaultFilters());
-  const [appearance, setAppearance] = useState({ gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, sharedTrunkStyle: "gradient", ...FROZEN_APPEARANCE });
+  const [appearance, setAppearance] = useState({ radiusStyle: "sharp", ganttShowSubtasks: false, sharedTrunkStyle: "gradient", ...FROZEN_APPEARANCE });
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
 
   useEffect(() => {
@@ -8826,7 +8828,12 @@ export default function LePlan({ currentUser, onSignOut }) {
           const res = await storageGetWithTimeout("nexora:appearance", 10000);
           if (res && res.value && !cancelled) {
             const parsed = JSON.parse(res.value);
-            setAppearance((a) => ({ ...a, ...parsed, gradient: { ...a.gradient, ...(parsed.gradient || {}) }, ...FROZEN_APPEARANCE }));
+            // Réglages retirés (#325) : un ancien enregistrement peut encore les
+            // porter, on ne les fait pas revivre dans l'état en mémoire.
+            delete parsed.gradient; delete parsed.barBg; delete parsed.ganttBg;
+            delete parsed.progressColorByStatus; delete parsed.progressTexture;
+            delete parsed.heatmapMinColor; delete parsed.heatmapMaxColor;
+            setAppearance((a) => ({ ...a, ...parsed, ...FROZEN_APPEARANCE }));
           }
         }
       } catch (e) { /* aucune préférence enregistrée pour l'instant */ }
@@ -12058,8 +12065,8 @@ export default function LePlan({ currentUser, onSignOut }) {
             </div>
           )}
           {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} taskBaselines={taskBaselines} />}
-          {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
-          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
+          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} financeProQuotes={quotes} financeProBillingSchedule={proBillingSchedule} financeProPayments={proPayments} financeProMissions={proMissions} financeProClients={quoteClients} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} setTeams={setTeams} setTeamFolders={setTeamFolders} habitLog={habitLog} setHabitLog={setHabitLog} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("meta"); setSettingsOpen(true); }} onOpenHabitThemes={() => { setSettingsTab("habitThemes"); setSettingsOpen(true); }} onOpenTeamsSettings={() => { setSettingsTab("peopleTeams"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} taskBaselines={taskBaselines} />}
@@ -12088,7 +12095,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       </main>
 
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} setTeamMembers={setTeamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
+        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} setTeamMembers={setTeamMembers} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal
