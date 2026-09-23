@@ -937,6 +937,8 @@ function GlobalStyles() {
            un seul niveau d'espace au-dessus/en dessous. */
         .lp-side-label{ font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.8px; color:var(--brume); margin:5px 6px 2px; }
         .lp-side-label-toggle{ display:flex; align-items:center; gap:4px; cursor:pointer; user-select:none; }
+        .lp-side-empty{ margin:2px 12px 8px 16px; font-size:12px; line-height:1.45; color:var(--text-600); }
+        .lp-favorite-item .lp-project-dot{ color:var(--text-600); }
         .lp-side-label-toggle:hover{ color:var(--text-primary); }
         /* Lignes projet/dossier resserrées (densité "poste de contrôle") : le
            gain vient du padding et de la marge, jamais de la taille du texte —
@@ -11664,6 +11666,31 @@ export default function LePlan({ currentUser, onSignOut }) {
   };
   const activeProjectIds = getProjectFilterIds(filters);
   const activeTitle = activeProjectIds.length === 1 ? projectById[activeProjectIds[0]]?.name : "Tous les projets";
+  /* Favoris résolus une seule fois, pour le menu « Accès rapide » ET la section
+     Favoris du bandeau latéral : même libellé, même icône, même action. Un
+     favori dont la cible n'existe plus (projet supprimé…) est simplement omis. */
+  const resolvedFavorites = favorites.map((f) => {
+    const key = f.type + ":" + f.id;
+    if (f.type === "project") {
+      const p = projects.find((x) => x.id === f.id);
+      return p && { key, type: f.type, id: f.id, label: p.name, icon: <IconGlyph icon={p.icon} size={14} />, active: activeProjectIds.length === 1 && activeProjectIds[0] === p.id, open: () => selectProjectAndNavigate(p.id) };
+    }
+    if (f.type === "view") {
+      const v = savedViews.find((x) => x.id === f.id);
+      return v && { key, type: f.type, id: f.id, label: v.name, icon: v.icon ? <IconGlyph icon={v.icon} size={14} /> : <Star size={13} />, active: activeSavedViewId === v.id, open: () => applySavedView(v) };
+    }
+    if (f.type === "dashboard") {
+      const d = dashboards.find((x) => x.id === f.id);
+      return d && { key, type: f.type, id: f.id, label: d.name, icon: d.icon ? <IconGlyph icon={d.icon} size={14} /> : <LayoutDashboard size={13} />, active: view === "dashboard" && activeDashboardId === d.id, open: () => { setView("dashboard"); setActiveDashboardId(d.id); } };
+    }
+    if (f.type === "task") {
+      const t = tasks.find((x) => x.id === f.id);
+      return t && { key, type: f.type, id: f.id, label: t.title || "Tâche", icon: t.milestone
+        ? <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={14} />
+        : (t.milestoneIcon ? <IconGlyph icon={t.milestoneIcon} size={14} /> : <List size={13} />), active: false, open: () => openEditTask(t) };
+    }
+    return null;
+  }).filter(Boolean);
   // Export « Fiche projet PDF » (#291) : strictement en lecture seule et local
   // au navigateur — lit les catalogues courants (toutes les tâches du projet,
   // indépendamment des filtres d'affichage), n'écrit rien dans Firestore, ne
@@ -12139,6 +12166,28 @@ export default function LePlan({ currentUser, onSignOut }) {
         )}
 
 
+        {/* Favoris (retour de Quentin) : à la suite, en bas du bandeau latéral —
+            projets, tableaux de bord, vues enregistrées et tâches marqués d'une
+            étoile, dans l'ordre où ils ont été ajoutés. */}
+        <button type="button" aria-expanded={sidebarOpen.favorites !== false} className="lp-side-label lp-side-label-toggle" onClick={() => setSidebarOpen((s) => ({ ...s, favorites: s.favorites === false }))}>
+          Favoris {sidebarOpen.favorites !== false ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </button>
+        {sidebarOpen.favorites !== false && (
+          resolvedFavorites.length === 0 ? (
+            <p className="lp-side-empty">Clic droit sur un projet ou un tableau de bord, ou l'étoile d'une tâche : « Ajouter aux favoris ».</p>
+          ) : resolvedFavorites.map((f) => (
+            <div
+              key={f.key}
+              className={"lp-project-item lp-favorite-item" + (f.active ? " active" : "")}
+              onClick={f.open}
+            >
+              <div className="lp-project-dot lp-dashboard-transparent-icon" style={{ background: "transparent" }}>{f.icon}</div>
+              <button type="button" className="lp-project-name" aria-pressed={f.active} onClick={(e) => { e.stopPropagation(); f.open(); }}>{f.label}</button>
+              <button className="lp-icon-btn lp-project-row-action" style={{ marginLeft: "auto", color: "#a9b4c9" }} onClick={(e) => { e.stopPropagation(); toggleFavorite(f.type, f.id); }} title="Retirer des favoris" aria-label={`Retirer « ${f.label} » des favoris`}><X size={12} /></button>
+            </div>
+          ))
+        )}
+
         <div className="lp-sidebar-footer">
           {/* Même langage que la rangée de création en haut : trois icônes
               accolées, pas trois liens texte pleine largeur. */}
@@ -12219,51 +12268,14 @@ export default function LePlan({ currentUser, onSignOut }) {
                 </button>
               );
             })}
-            {favorites.length > 0 && (
+            {resolvedFavorites.length > 0 && (
               <>
                 <div className="lp-dropdown-group-label">Favoris</div>
-                {favorites.map((f) => {
-                  if (f.type === "project") {
-                    const p = projects.find((x) => x.id === f.id);
-                    if (!p) return null;
-                    return (
-                      <button key={f.type + f.id} type="button" className="lp-quick-access-item" onClick={() => selectProjectAndNavigate(p.id)}>
-                        <IconGlyph icon={p.icon} size={14} /> {p.name}
-                      </button>
-                    );
-                  }
-                  if (f.type === "view") {
-                    const v = savedViews.find((x) => x.id === f.id);
-                    if (!v) return null;
-                    return (
-                      <button key={f.type + f.id} type="button" className="lp-quick-access-item" onClick={() => applySavedView(v)}>
-                        {v.icon ? <IconGlyph icon={v.icon} size={14} /> : <Star size={13} />} {v.name}
-                      </button>
-                    );
-                  }
-                  if (f.type === "dashboard") {
-                    const d = dashboards.find((x) => x.id === f.id);
-                    if (!d) return null;
-                    return (
-                      <button key={f.type + f.id} type="button" className="lp-quick-access-item" onClick={() => { setView("dashboard"); setActiveDashboardId(d.id); }}>
-                        {d.icon ? <IconGlyph icon={d.icon} size={14} /> : <LayoutDashboard size={13} />} {d.name}
-                      </button>
-                    );
-                  }
-                  if (f.type === "task") {
-                    const t = tasks.find((x) => x.id === f.id);
-                    if (!t) return null;
-                    return (
-                      <button key={f.type + f.id} type="button" className="lp-quick-access-item" onClick={() => openEditTask(t)}>
-                        {t.milestone
-                          ? <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={14} />
-                          : (t.milestoneIcon ? <IconGlyph icon={t.milestoneIcon} size={14} /> : <List size={13} />)}
-                        {t.title || "Tâche"}
-                      </button>
-                    );
-                  }
-                  return null;
-                })}
+                {resolvedFavorites.map((f) => (
+                  <button key={f.key} type="button" className="lp-quick-access-item" onClick={f.open}>
+                    {f.icon} {f.label}
+                  </button>
+                ))}
               </>
             )}
           </DropdownButton>
