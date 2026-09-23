@@ -635,6 +635,18 @@ test("Déplacement libre : une ligne déplacée sur la grille emmène sa sous-ar
   assert.deepEqual(api.normalizeOrgMetroOffsets({ "team:a": { dx: 9, dy: 31 }, bad: null, z: { dx: 0, dy: 0 } }), { "team:a": { dx: 0, dy: 40 } });
 });
 
+test("Barre étirée puis ramenée : elle ne dépasse jamais le tronc et les lignes qui en partent", () => {
+  const teams = [team("p"), team("c", { parentTeamId: "p" })];
+  const members = [member("A", { teamIds: ["p"] }), member("B", { teamIds: ["p"] }), member("C", { teamIds: ["c"] })];
+  const base = metro(teams, members).layout;
+  // Nœud de la barre tiré sur la droite (même hauteur), puis la ligne ramenée.
+  const back = api.orgMetroApplyOffsets(base, { "fork:team:p": { dx: 280, dy: 0 }, "team:c": { dx: -280, dy: 0 } });
+  const p = branch(back, "team:p"), c = branch(back, "team:c");
+  const span = [p.trunk.x, c.x];
+  assert.equal(p.fork.minX, Math.min(...span));
+  assert.equal(p.fork.maxX, Math.max(...span), "la largeur de la barre suit le retour");
+});
+
 test("Ronds de métro : aucun sans bifurcation ni changement de couleur", () => {
   // Une sous-équipe unique, de la même couleur, en coude : pas de rond.
   const same = metro([team("p", { color: "#2C6BE0" }), team("c", { parentTeamId: "p", color: "#2C6BE0" })], []).layout;
