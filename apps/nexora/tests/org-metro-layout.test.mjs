@@ -613,9 +613,20 @@ test("Déplacement libre : une ligne déplacée sur la grille emmène sa sous-ar
   assert.equal(a.drop.y0, root.fork.y);
   assert.ok(root.fork.minX <= a.x && a.x <= root.fork.maxX, "la barre parente s'étire jusqu'à la nouvelle place");
   a.stations.forEach((st) => assert.equal(st.cx, a.x));
-  // Jamais au-dessus de la barre dont la ligne part.
-  const up = api.orgMetroApplyOffsets(base, { "team:a": { dx: 0, dy: -400 } });
-  assert.ok(branch(up, "team:a").y > branch(up, "team:root").fork.y);
+  // Retour de test : une ligne peut remonter au-dessus de sa barre ; son
+  // lien remonte alors depuis la barre et entre par le flanc du bandeau.
+  const up = api.orgMetroApplyOffsets(base, { "team:a": { dx: 200, dy: -200 } });
+  const ua = branch(up, "team:a"), ur = branch(up, "team:root");
+  assert.ok(ua.badge.y + ua.badge.h < ur.fork.y, "au-dessus de la barre");
+  assert.ok(ua.drop.y1 < ua.drop.y0 && ua.drop.y0 === ur.fork.y, "le lien remonte depuis la barre");
+  assert.equal(ua.drop.toX, ua.badge.x, "il entre par le flanc gauche du bandeau");
+  assert.equal(ua.drop.y1, ua.badge.y + ua.badge.h / 2);
+  assert.ok(ur.fork.childXs.includes(ua.drop.x) && ur.fork.upXs.includes(ua.drop.x));
+  const d = api.orgMetroBranchPaths(ua).drop;
+  assert.ok(/^M [\d.]+ [\d.]+ V [\d.]+ Q .* H [\d.]+$/.test(d), "tracé orthogonal, coude arrondi : " + d);
+  // Juste sous la barre (pas la place d'un lien qui remonte) : il s'y arrête.
+  const near = api.orgMetroApplyOffsets(base, { "team:a": { dx: 0, dy: -20 } });
+  assert.ok(branch(near, "team:a").y > branch(near, "team:root").fork.y);
   // Rien dans le cadre ne passe en coordonnées négatives, et sans décalage
   // le plan est inchangé.
   const left = api.orgMetroApplyOffsets(base, { "team:a": { dx: -2000, dy: 0 } });

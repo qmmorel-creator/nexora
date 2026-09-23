@@ -1605,6 +1605,27 @@ try {
   await page.mouse.up();
   await page.waitForTimeout(300);
   orgMetro.linkMoved = binomeD0 !== await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
+  // « Cœur produit » remontée au-dessus de la barre de Produit : le lien
+  // remonte depuis la barre et entre par le flanc du bandeau.
+  {
+    const cp = await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Cœur produit"] .lp-orgmetro-badge-bg`).boundingBox();
+    await page.mouse.move(cp.x + 20, cp.y + cp.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(cp.x + 20, cp.y - 20, { steps: 4 });
+    await page.mouse.move(cp.x - 80, cp.y - 140, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    orgMetro.upMove = await page.evaluate((sel) => {
+      const root = document.querySelector(sel);
+      const badge = root.querySelector('.lp-orgmetro-badge[aria-label="Équipe Cœur produit"] .lp-orgmetro-badge-bg').getBoundingClientRect();
+      const drop = root.querySelector('.lp-orgmetro-branches path.lp-orgmetro-line[data-metro-drag="branch:team:o-core"]');
+      const bar = root.querySelector('.lp-orgmetro-branches path.lp-orgmetro-line[data-metro-drag="fork:team:o-prod"]');
+      const barY = bar ? bar.getBoundingClientRect().top : null;
+      return { above: barY !== null && badge.bottom < barY, sideEntry: Boolean(drop) && / H /.test(drop.getAttribute("d")) && / Q /.test(drop.getAttribute("d")) };
+    }, host);
+    orgMetro.overlapsAfterUp = await textOverlaps();
+    await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro-up.png") });
+  }
   // Nœud de bifurcation de « Technique » attrapé et descendu : ses deux
   // lignes (Plateforme, Applications) suivent, la ligne Technique reste.
   const badgeTop = async (name) => (await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`).boundingBox()).y;
@@ -2634,6 +2655,8 @@ if (!orgMetro.error) {
   expect(orgMetro.stationDragModal === 0, "Déplacement libre : lâcher une station a ouvert une fiche");
   expect(orgMetro.hubMovedAlone, "Déplacement libre : le grand titre ne se déplace pas seul");
   expect(orgMetro.linkMoved, "Déplacement libre : la relation « Binôme » ne se déplace pas");
+  expect(orgMetro.upMove && orgMetro.upMove.above && orgMetro.upMove.sideEntry, `Déplacement libre : « Cœur produit » ne remonte pas au-dessus de sa barre avec un lien par le flanc (${JSON.stringify(orgMetro.upMove)})`);
+  expect(orgMetro.overlapsAfterUp === 0, `Déplacement libre : ${orgMetro.overlapsAfterUp} superposition(s) de texte après la remontée`);
   expect(Math.abs(orgMetro.forkDrag.tech) < 2 && orgMetro.forkDrag.plat > 30 && Math.abs(orgMetro.forkDrag.plat - orgMetro.forkDrag.apps) < 2, `Organigramme Métro : le nœud de bifurcation ne déplace pas ses lignes (${JSON.stringify(orgMetro.forkDrag)})`);
   expect(orgMetro.forkJog, "Organigramme Métro : le tronc ne rejoint pas le nœud déplacé sur le côté");
   expect(orgMetro.overlapsAfterFork === 0, `Organigramme Métro : ${orgMetro.overlapsAfterFork} texte(s) superposé(s) après déplacement du nœud`);
