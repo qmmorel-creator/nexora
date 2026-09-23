@@ -1548,7 +1548,21 @@ try {
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal .lp-icon-btn, .lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
   await page.waitForTimeout(200);
   // Clic sur un bandeau d'équipe → fiche équipe existante.
-  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Plateforme"]`).click();
+  // Clic simple sur un bandeau → la ligne se replie (seul le responsable
+  // reste) ; second clic → elle se déplie.
+  const stationsBeforeCollapse = await page.locator(`${host} .lp-orgmetro-station`).count();
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Exploration"]`).click();
+  await page.waitForTimeout(500);
+  orgMetro.collapsedBadge = await page.locator(`${host} .lp-orgmetro-badge.is-collapsed`).count();
+  orgMetro.collapsedStations = stationsBeforeCollapse - await page.locator(`${host} .lp-orgmetro-station`).count();
+  orgMetro.collapsedLeadKept = await page.locator(`${host} .lp-orgmetro-station[aria-label^="Inès Garnier"]`).count();
+  orgMetro.collapsedHidden = await page.locator(`${host} .lp-orgmetro-station[aria-label^="Adam Colin"]`).count();
+  orgMetro.collapsedModal = await page.locator(".lp-modal").count();
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Exploration"]`).click();
+  await page.waitForTimeout(500);
+  orgMetro.expandedStations = await page.locator(`${host} .lp-orgmetro-station`).count() - stationsBeforeCollapse;
+  // Double-clic sur un bandeau d'équipe → fiche équipe existante.
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Plateforme"]`).dblclick();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   orgMetro.teamModal = await page.locator(".lp-modal input").evaluateAll((els) => els.map((e) => e.value).join("|"));
   // Fiche équipe : un clic sur un membre ouvre son poste dans cette équipe ;
@@ -2698,7 +2712,9 @@ if (!orgMetro.error) {
   expect(/Architecte cloud/.test(orgMetro.roleSaved || ""), `Fiche équipe : le poste saisi au clic sur le membre n'est pas enregistré (${orgMetro.roleSaved})`);
   expect(/Architecte cloud/.test(orgMetro.roleAfterEscape || "") && !/Ne pas garder/.test(orgMetro.roleAfterEscape || ""), `Fiche équipe : Échap n'annule pas la modification du poste (${orgMetro.roleAfterEscape})`);
   expect(orgMetro.modalStillOpen === 1, "Fiche équipe : Échap dans le champ du poste a fermé toute la fiche");
-  expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
+  expect(orgMetro.collapsedBadge === 1 && orgMetro.collapsedStations > 0 && orgMetro.collapsedLeadKept >= 1 && orgMetro.collapsedHidden === 0 && orgMetro.collapsedModal === 0, `Organigramme Métro : le clic simple ne replie pas la ligne en gardant le responsable (${JSON.stringify({ b: orgMetro.collapsedBadge, s: orgMetro.collapsedStations, l: orgMetro.collapsedLeadKept, h: orgMetro.collapsedHidden, m: orgMetro.collapsedModal })})`);
+  expect(orgMetro.expandedStations === 0, `Organigramme Métro : le second clic ne déplie pas la ligne (${orgMetro.expandedStations})`);
+  expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le double-clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
   expect(orgMetro.relations === 3, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 3 attendues`);
   expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);
   expect(orgMetro.inactiveStations.length === 1 && /Jules Brun/.test(orgMetro.inactiveStations[0]), `Organigramme Métro : stations inactives ${JSON.stringify(orgMetro.inactiveStations)}, « Jules Brun » attendu`);

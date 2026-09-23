@@ -9805,6 +9805,9 @@ function buildOrgMetroGraph(roots, teams, opts) {
   const list = Array.isArray(roots) ? roots : [];
   if (!list.length) return null;
   const order = normalizeOrgMetroOrder(opts && opts.order);
+  // Lignes repliées (retour de test : clic simple sur le bandeau) — seule la
+  // station du responsable reste visible, l'effectif complet reste affiché.
+  const collapsed = new Set(Array.isArray(opts && opts.collapsed) ? opts.collapsed : []);
   const rootLabel = (opts && opts.rootLabel) || "Organisation";
   // Équipes au rattachement transverse (#219) dont le partenaire est visible :
   // elles restent des lignes indépendantes, jamais raccordées à la Direction.
@@ -9919,6 +9922,12 @@ function buildOrgMetroGraph(roots, teams, opts) {
       children: orgMetroApplyOrder(order, key, subTeams),
     };
     branch.personCount = orgMetroPersonCount(branch);
+    if (collapsed.has(key)) {
+      branch.collapsed = true;
+      branch.stations = branch.stations.filter((st) => st.kind === "lead");
+      branch.sides = [];
+      branch.children = [];
+    }
     return branch;
   };
 
@@ -10004,7 +10013,8 @@ function orgMetroMeasureStation(station, top) {
 }
 function orgMetroMeasureBadge(branch) {
   const spec = branch.kind === "hub" ? ORGMETRO_BADGE.hub : branch.depth <= 1 ? ORGMETRO_BADGE.root : ORGMETRO_BADGE.sub;
-  const lines = orgMetroWrap(branch.label, ORGMETRO_BADGE_CHARS);
+  // Ligne repliée : « ▸ » devant le nom, pour la distinguer sans couleur.
+  const lines = orgMetroWrap((branch.collapsed ? "▸ " : "") + branch.label, ORGMETRO_BADGE_CHARS);
   const textW = lines.reduce((m, l) => Math.max(m, l.length), 0) * spec.charW;
   const count = branch.kind === "team" ? String(branch.personCount || 0) : "";
   // Pastille du compteur : un rond pour un chiffre, une gélule au-delà.
@@ -10148,7 +10158,7 @@ function orgMetroPlace(m, x, y, parent, ancestors, out) {
   const placed = {
     key: b.key, kind: b.kind, depth: b.depth, color: b.color, lineW: m.lineW,
     teamId: b.team ? b.team.id : null, team: b.team, memberName: b.memberName,
-    leadName: b.leadName || "", leadOnLine: Boolean(b.leadOnLine),
+    leadName: b.leadName || "", leadOnLine: Boolean(b.leadOnLine), collapsed: Boolean(b.collapsed),
     independent: b.independent, transverse: b.transverse, ancestors,
     x, y,
     badge: m.badge ? {
@@ -10901,13 +10911,13 @@ function OrgMetroLabels({ layout, dim, drag }) {
         const bd = b.badge;
         const color = orgMetroColor(b.color, b.kind);
         const isHub = b.kind === "hub";
-        const cls = "lp-orgmetro-badge is-" + bd.level + (b.independent ? " is-independent" : "") + (b.team ? " is-clickable" : "") + (dim(b.key) ? " is-dim" : "");
+        const cls = "lp-orgmetro-badge is-" + bd.level + (b.independent ? " is-independent" : "") + (b.team ? " is-clickable" : "") + (b.collapsed ? " is-collapsed" : "") + (dim(b.key) ? " is-dim" : "");
         const blockH = bd.lines.length * bd.lineH + (bd.subtitle ? ORGMETRO_BADGE_SUB_H : 0);
         const textTop = bd.y + (bd.h - blockH) / 2 + bd.lineH * 0.74;
         const subY = textTop + (bd.lines.length - 1) * bd.lineH + ORGMETRO_BADGE_SUB_H - 1;
         return (
           <g key={"b:" + b.key} className={cls + (drag && drag.key === b.key ? " is-dragging" : "")} data-metro-drag={"branch:" + b.key} data-metro-key={b.team ? b.key : undefined} tabIndex={b.team ? 0 : undefined} role={b.team ? "button" : undefined} aria-label={b.team ? "Équipe " + b.team.name : undefined}>
-            {b.team && <title>{"Équipe " + b.team.name + " — " + bd.count + " personne" + (Number(bd.count) > 1 ? "s" : "") + (b.leadName ? " — responsable : " + b.leadName : " — aucun responsable") + " · clic pour modifier"}</title>}
+            {b.team && <title>{"Équipe " + b.team.name + " — " + bd.count + " personne" + (Number(bd.count) > 1 ? "s" : "") + (b.leadName ? " — responsable : " + b.leadName : " — aucun responsable") + (b.collapsed ? " · clic pour déplier" : " · clic pour replier") + " · double-clic pour modifier"}</title>}
             <rect className="lp-orgmetro-badge-bg" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={bd.h / 2 > 16 ? 16 : bd.h / 2} />
             {!isHub && <rect className="lp-orgmetro-badge-tint" x={bd.x} y={bd.y} width={bd.w} height={bd.h} rx={bd.h / 2 > 16 ? 16 : bd.h / 2} style={{ fill: color, stroke: color }} />}
             {bd.lines.map((line, i) => (
@@ -11067,11 +11077,11 @@ function useOrgMetroViewport(contentW, contentH) {
   return { ref, size, view, fit, recenter, reset, zoomAt, setManual };
 }
 
-function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout }) {
+function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, onEditMember, onFilterPerson, showTransverse, onToggleTransverse, relations, order, offsets, onChangeOffsets, linkOffsets, onChangeLinkOffsets, onResetLayout, collapsed, onToggleCollapsed }) {
   const roots = useMemo(() => orgChartVisibleRoots(teams, members, showUnassigned), [teams, members, showUnassigned]);
   // Ordre des lignes choisi par glisser-déposer (widget.orgMetroOrder) : le
   // plan entier est recalculé, rien n'est déplacé « à la main ».
-  const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order }), [roots, teams, rootLabel, order]);
+  const graph = useMemo(() => buildOrgMetroGraph(roots, teams, { rootLabel, order, collapsed }), [roots, teams, rootLabel, order, collapsed]);
   // Disposition par défaut, puis déplacements libres sur la grille
   // (widget.orgMetroOffsets) : ligne et sous-arborescence déplacées ensemble.
   // Pendant un déplacement, le plan est recalculé EN DIRECT avec le décalage
@@ -11264,12 +11274,37 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     const key = item ? item.branchKey || item.stationKey : null;
     setFocus((prev) => ((prev ? prev.branchKey || prev.stationKey : null) === key ? prev : item));
   };
+  // Bandeau d'équipe : clic simple = replier / déplier la ligne (seul le
+  // responsable reste) ; double-clic = fiche équipe, comme dans la vue
+  // hiérarchique. Le clic simple attend un instant pour ne pas replier la
+  // ligne quand c'est un double-clic qui arrive. Clavier : Entrée ouvre la
+  // fiche, Espace replie / déplie.
+  const clickTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(clickTimerRef.current), []);
+  const onSvgClick = (e) => {
+    const item = itemFromEvent(e);
+    if (!item) return;
+    if (item.type === "team" && onToggleCollapsed) {
+      clearTimeout(clickTimerRef.current);
+      const key = item.branchKey;
+      clickTimerRef.current = setTimeout(() => onToggleCollapsed(key), 240);
+      return;
+    }
+    openItem(item);
+  };
+  const onSvgDoubleClick = (e) => {
+    const item = itemFromEvent(e);
+    if (!item || item.type !== "team") return;
+    clearTimeout(clickTimerRef.current);
+    openItem(item);
+  };
   const onKeyDown = (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
     const item = itemFromEvent(e);
     if (!item) return;
     e.preventDefault();
-    openItem(item);
+    if (e.key === " " && item.type === "team" && onToggleCollapsed) onToggleCollapsed(item.branchKey);
+    else openItem(item);
   };
   const stopToolbar = (e) => e.stopPropagation();
   const { view } = vp;
@@ -11289,7 +11324,8 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         className={"lp-orgmetro-svg" + (related ? " is-focusing" : "")}
         role="img"
         aria-label={"Plan métro de l'organisation — " + layout.stations.length + " stations"}
-        onClick={(e) => openItem(itemFromEvent(e))}
+        onClick={onSvgClick}
+        onDoubleClick={onSvgDoubleClick}
         onKeyDown={onKeyDown}
         onPointerOver={onPointerOver}
         onPointerLeave={() => setFocus(null)}
@@ -11321,7 +11357,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
           type="button"
           onClick={() => {
             vp.reset();
-            const custom = Object.keys(normalizeOrgMetroOrder(order)).length || Object.keys(normalizeOrgMetroOffsets(offsets)).length || Object.keys(normalizeOrgMetroOffsets(linkOffsets)).length;
+            const custom = Object.keys(normalizeOrgMetroOrder(order)).length || Object.keys(normalizeOrgMetroOffsets(offsets)).length || Object.keys(normalizeOrgMetroOffsets(linkOffsets)).length || (collapsed && collapsed.length);
             if (onResetLayout && custom) onResetLayout();
           }}
           title="Recentrer — rétablit la disposition et le cadrage par défaut"
@@ -11446,12 +11482,22 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     setMetroLinkOffsets(next);
     if (onUpdateWidget) onUpdateWidget({ orgMetroLinkOffsets: next });
   };
-  // « Recentrer » : disposition par défaut (ordre et déplacements effacés).
+  // Lignes repliées (clic simple sur un bandeau) : widget.orgMetroCollapsed.
+  const [metroCollapsed, setMetroCollapsed] = useState(Array.isArray(widget?.orgMetroCollapsed) ? widget.orgMetroCollapsed : []);
+  useEffect(() => { setMetroCollapsed(Array.isArray(widget?.orgMetroCollapsed) ? widget.orgMetroCollapsed : []); }, [widget?.orgMetroCollapsed]);
+  const toggleMetroCollapsed = (key) => {
+    const next = metroCollapsed.includes(key) ? metroCollapsed.filter((k) => k !== key) : [...metroCollapsed, key];
+    setMetroCollapsed(next);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroCollapsed: next });
+  };
+  // « Recentrer » : disposition par défaut (ordre, déplacements et replis
+  // effacés).
   const resetMetroLayout = () => {
     setMetroOrder(null);
     setMetroOffsets(null);
     setMetroLinkOffsets(null);
-    if (onUpdateWidget) onUpdateWidget({ orgMetroOrder: null, orgMetroOffsets: null, orgMetroLinkOffsets: null });
+    setMetroCollapsed([]);
+    if (onUpdateWidget) onUpdateWidget({ orgMetroOrder: null, orgMetroOffsets: null, orgMetroLinkOffsets: null, orgMetroCollapsed: [] });
   };
   const rootLabel = widget?.orgChartRootLabel && String(widget.orgChartRootLabel).trim() ? String(widget.orgChartRootLabel).trim() : "Organisation";
   const onEditTeam = setTeams && setTeamMembers && setTeamFolders ? (team) => setEditTeamId(team.id) : undefined;
@@ -11479,6 +11525,8 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
         onChangeOffsets={changeMetroOffsets}
         linkOffsets={metroLinkOffsets}
         onChangeLinkOffsets={changeMetroLinkOffsets}
+        collapsed={metroCollapsed}
+        onToggleCollapsed={toggleMetroCollapsed}
         onResetLayout={resetMetroLayout}
       />
     ) : (

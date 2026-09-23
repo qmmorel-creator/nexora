@@ -706,3 +706,24 @@ test("Titre du responsable : choisi dans la fiche équipe, il remplace son poste
   assert.equal(lead("team:c").role, "Pilote", "aussi pour un responsable venu d'une autre ligne");
   assertNoOverlap(layout);
 });
+
+test("Ligne repliée : seul le responsable reste, le compte et les autres lignes sont inchangés", () => {
+  const teams = [team("a", { leadName: "Chef" }), team("b", { parentTeamId: "a", leadName: "Sous" }), team("c", { leadName: "Voisin" })];
+  const members = [
+    member("Chef", { teamIds: ["a"] }), member("Ana", { teamIds: ["a"] }), member("Rattaché", { teamIds: ["a"], managerName: "Ana" }),
+    member("Sous", { teamIds: ["b"] }), member("Bob", { teamIds: ["b"] }),
+    member("Voisin", { teamIds: ["c"] }), member("Cléo", { teamIds: ["c"] }),
+  ];
+  const open = metro(teams, members).layout;
+  const { layout } = metro(teams, members, { collapsed: ["team:a"] });
+  const a = branch(layout, "team:a");
+  assert.equal(a.collapsed, true);
+  assert.deepEqual(a.stations.map((s) => s.name), ["Chef"], "seul le responsable reste sur la ligne");
+  assert.equal(a.badge.count, branch(open, "team:a").badge.count, "le bandeau garde l'effectif complet");
+  assert.ok(a.badge.lines.join(" ").startsWith("▸ "), "le bandeau signale la ligne repliée");
+  assert.equal(branch(layout, "team:b"), undefined, "les sous-équipes sont masquées");
+  assert.equal(stationsOf(layout, "Rattaché").length, 0, "les rattachés sont masqués");
+  assert.deepEqual(branch(layout, "team:c").stations.map((s) => s.name), branch(open, "team:c").stations.map((s) => s.name));
+  assert.equal(branch(open, "team:a").collapsed, false);
+  assertNoOverlap(layout);
+});
