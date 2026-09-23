@@ -10,6 +10,7 @@ import {
   readLogicalDocument,
   requireConfig
 } from "./_shared/nexora.js";
+import { parseTaskTimeInput } from "../../lib/task-times.mjs";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ACTIONS = new Set(["update", "complete", "archive"]);
@@ -80,7 +81,7 @@ export default async (req: Request) => {
     const rawChanges = body.changes == null ? {} : body.changes;
     if (!rawChanges || typeof rawChanges !== "object" || Array.isArray(rawChanges)) return json({ ok: false, error: "invalid_changes" }, 400);
     const input = rawChanges as Record<string, unknown>;
-    const allowed = new Set(["title", "description", "desc", "start", "end", "statusId", "sourceThreadId", "sourceUrl", "sourceSender", "addAttachments"]);
+    const allowed = new Set(["title", "description", "desc", "start", "end", "startTime", "endTime", "statusId", "sourceThreadId", "sourceUrl", "sourceSender", "addAttachments"]);
     const unexpected = Object.keys(input).filter(key => !allowed.has(key));
     if (unexpected.length) return json({ ok: false, error: "unsupported_changes", fields: unexpected }, 400);
 
@@ -99,6 +100,10 @@ export default async (req: Request) => {
     if (changes.start && changes.end && String(changes.start) > String(changes.end)) {
       return json({ ok: false, error: "invalid_dates" }, 400);
     }
+    // Heures (#299) : forme contrôlée ici, cohérence avec les dates de la tâche
+    // vérifiée au moment de l'écriture (mutateTaskAtomically). Vide = effacer.
+    if ("startTime" in input) changes.startTime = parseTaskTimeInput(input.startTime, "start_time");
+    if ("endTime" in input) changes.endTime = parseTaskTimeInput(input.endTime, "end_time");
     if ("statusId" in input) {
       const statusId = optionalText(input.statusId, 200);
       const statuses = parseArray(await readLogicalDocument(config.uid, KEYS.statuses));

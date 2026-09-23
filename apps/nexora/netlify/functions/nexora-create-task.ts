@@ -1,5 +1,6 @@
 import type { Config } from "@netlify/functions";
 import { appendTaskIdempotently, isAuthorized, json, KEYS, parisDate, parseArray, parseGoogleDriveAttachments, readLogicalDocument, requireConfig } from "./_shared/nexora.js";
+import { resolveTaskTimes, taskTimesProvided } from "../../lib/task-times.mjs";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INFORMATION_MILESTONE_ICON = "https://cdn.pixabay.com/photo/2016/06/15/15/02/info-1459077_1280.png";
@@ -89,6 +90,15 @@ export default async (req: Request) => {
     if ((start && !DATE.test(start)) || (end && !DATE.test(end)) || (start && end && start > end)) {
       return json({ ok: false, error: "invalid_dates" }, 400);
     }
+    // Heures facultatives (#299), lues par la vue Calendrier : HH:MM, Europe/Paris.
+    let times = { startTime: "", endTime: "" };
+    if (taskTimesProvided(body)) {
+      try {
+        times = resolveTaskTimes({ start, end, startTime: body.startTime, endTime: body.endTime });
+      } catch (error) {
+        return json({ ok: false, error: error instanceof Error ? error.message : "invalid_times" }, 400);
+      }
+    }
     const rawChecklist = body.checklist == null ? [] : body.checklist;
     if (!Array.isArray(rawChecklist) || rawChecklist.length > 100) return json({ ok: false, error: "invalid_checklist" }, 400);
     const checklist = rawChecklist.map((item, index) => {
@@ -119,6 +129,7 @@ export default async (req: Request) => {
       milestoneIcon: isGmailInformation ? INFORMATION_MILESTONE_ICON : null,
       start: start || "",
       end: end || "",
+      ...(times.startTime ? times : {}),
       progress: 0,
       desc: description,
       assignee: text(body.assignee, 200),
