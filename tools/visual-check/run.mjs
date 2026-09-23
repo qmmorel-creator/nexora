@@ -2645,7 +2645,7 @@ if (!orgMetro.error) {
   expect(orgMetro.secondary.length === 2 && orgMetro.secondary.some((c) => /226, 166, 59|e2a63b/i.test(c)) && orgMetro.secondary.some((c) => /44, 107, 224|2c6be0/i.test(c)), `Organigramme Métro : parent secondaire (Exploration → Données) et rattachement de Laboratoire à Sacha Morin (Applications) ${JSON.stringify(orgMetro.secondary)}, deux traits pleins attendus, couleurs Exploration et Applications`);
   expect(orgMetro.secondaryWhenHidden === 2, "Organigramme Métro : le parent secondaire disparaît quand on masque les correspondances");
   expect(orgMetro.occurrenceTarget && orgMetro.occurrenceTarget.nearApps, `Organigramme Métro : la relation « Astreinte » ne vise pas l'occurrence de Sacha Morin dans Applications (${JSON.stringify(orgMetro.occurrenceTarget)})`);
-  expect(orgMetro.cursors && orgMetro.cursors.every((c) => c === "grab"), `Organigramme Métro : curseur des éléments déplaçables ${JSON.stringify(orgMetro.cursors)}, « grab » attendu`);
+  expect(orgMetro.cursors && orgMetro.cursors.every((c) => c === "move"), `Organigramme Métro : curseur des éléments déplaçables ${JSON.stringify(orgMetro.cursors)}, « move » attendu`);
   expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
   // Responsables : toujours la première station de leur ligne — Nora Vidal
   // dirige Applications sans en être membre, elle y figure quand même.

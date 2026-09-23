@@ -1145,3 +1145,24 @@ test("Liens retouchés segment par segment : seul le segment attrapé bouge, san
   assert.deepEqual(api.normalizeOrgMetroLinkOffsets({ a: { dx: 9, dy: 31 }, b: { segs: { 1: 0, x: 5 } } }), { a: { dx: 0, dy: 40 } });
   assert.deepEqual(api.orgMetroAddLinkSeg({ a: { dx: 20, dy: 0 } }, "a", 0, 20).a, { segs: { 0: 20 } });
 });
+
+test("Parent secondaire : le lien part de la suite de la ligne parente, après son dernier membre", () => {
+  const teams = [
+    team("p1", { leadName: "P1" }), team("p2", { leadName: "P2", color: "#E2A63B" }),
+    team("x", { parentTeamId: "p1", leadName: "X1", extraLinkTeamIds: ["p2"], extraLinkTypes: { p2: "hierarchique" } }),
+  ];
+  const members = [member("P1", { teamIds: ["p1"] }), member("P2", { teamIds: ["p2"] }), member("Q2", { teamIds: ["p2"] }), member("X1", { teamIds: ["x"] })];
+  const { layout } = metro(teams, members);
+  const [r] = api.orgMetroTransverseRoutes(layout, api.teamExtraLinks(teams));
+  const p2 = branch(layout, "team:p2");
+  const x = branch(layout, "team:x");
+  const last = p2.stations[p2.stations.length - 1];
+  const end = r.points[r.points.length - 1];
+  assert.equal(last.name, "Q2");
+  assert.deepEqual(end, [p2.x, last.cy], "le lien part du bas de la ligne, au dernier membre");
+  assert.ok(r.points[r.points.length - 2][0] === p2.x && r.points[r.points.length - 2][1] !== last.cy, "il descend dans le prolongement de la ligne");
+  const start = r.points[0];
+  assert.ok((start[0] === x.badge.x || start[0] === x.badge.x + x.badge.w || start[1] === x.badge.y), "il arrive sur la bulle de la sous-équipe");
+  // Aucun point sur la bulle de la ligne parente.
+  assert.ok(r.points.every((p) => !(p[0] >= p2.badge.x && p[0] <= p2.badge.x + p2.badge.w && p[1] >= p2.badge.y && p[1] <= p2.badge.y + p2.badge.h)));
+});
