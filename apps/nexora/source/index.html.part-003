@@ -2113,6 +2113,7 @@ function defaultLayoutForType(type) {
   if (type === "criticalPath") return { w: 4, h: 5 };
   if (type === "heatmapMonth") return { w: 9, h: 6 };
   if (type === "calendar") return { w: 6, h: 8 };
+  if (type === "focusDay") return { w: 4, h: 6 };
   if (type === "nextBestAction") return { w: 4, h: 6 };
   if (type === "dailyBriefing") return { w: 4, h: 7 };
   if (type === "dominoEffect") return { w: 4, h: 6 };
@@ -2124,7 +2125,7 @@ function defaultLayoutForType(type) {
   if (type === "heatmapGrid") return { w: 9, h: 7 };
   if (type === "habitQuick") return { w: 5, h: 8 };
   if (type === "habitHeatmap") return { w: 9, h: 7 };
-  if (type === "embedMetro" || type === "embedTimeline" || type === "embedRadar") return { w: 8, h: 9 };
+  if (type === "embedMetro" || type === "embedRadar") return { w: 8, h: 9 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
@@ -3660,7 +3661,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedTimeline" || w.type === "embedRadar"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3817,6 +3818,16 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "calendar" && (
                   <WidgetCalendar tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
+                {w.type === "focusDay" && (
+                  <WidgetFocusDay
+                    widget={w}
+                    tasks={scoped}
+                    ctx={ctx}
+                    onOpen={onOpen}
+                    onUpdateWidget={(patch)=>updateWidget(w.id,patch)}
+                    externalToolbarSlot={headerToolbarSlot}
+                  />
+                )}
                 {w.type === "heatmapMonth" && !showEmptyFunnel && (
                   <WidgetHeatmapMonth widget={w}
                     tasks={scoped}
@@ -3846,9 +3857,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedMetro" && (
                   <WidgetEmbedMetro widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} expenses={expenses} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} metaBlocks={scopedMetaBlocks} />
-                )}
-                {w.type === "embedTimeline" && (
-                  <WidgetEmbedTimeline tasks={scoped} ctx={ctx} onOpen={onOpen} setTasks={setTasks} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "embedRadar" && (
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
@@ -10773,7 +10781,12 @@ function useOrgMetroViewport(contentW, contentH) {
     return orgMetroClampZoom(Math.min(1, (size.w - ORGMETRO_FIT_MARGIN * 2) / contentW, (size.h - ORGMETRO_FIT_MARGIN * 2) / contentH));
   }, [size.w, size.h, contentW, contentH]);
   const openZoom = useCallback(() => Math.max(fitZoom(), Math.min(1, ORGMETRO_MIN_OPEN_ZOOM)), [fitZoom]);
-  useEffect(() => {
+  // Cadrage initial en useLayoutEffect (#330) : calculé et posé AVANT la
+  // première peinture, dans le même passage synchrone que la mesure du
+  // conteneur ci-dessus — sinon le plan s'affiche un instant non cadré
+  // (échelle 1, coin haut-gauche) puis « saute » à sa position définitive,
+  // ce qui se voit comme une animation de tracé au chargement.
+  useLayoutEffect(() => {
     if (!touchedRef.current && size.w && size.h) setView(place(openZoom()));
   }, [size.w, size.h, contentW, contentH, place, openZoom]);
   // Ajuster : le plan entier, quitte à passer sous le zoom d'ouverture.
@@ -12307,6 +12320,20 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
 
   const tasksForDay = (day) => tasksByDay[day] || [];
 
+  // Sélection d'un jour, factorisée pour être partagée entre le clic direct sur
+  // une case du calendrier et le bouton « Aujourd'hui » (#323) : même
+  // comportement dans les deux cas (case cochée/décochée, description auto si
+  // une seule tâche ce jour-là).
+  const selectDay = (day) => {
+    const dayTasks = tasksForDay(day);
+    setSelectedDay((d) => (d === day ? null : (dayTasks.length ? day : null)));
+    setDescTaskId(dayTasks.length === 1 ? dayTasks[0].id : null);
+  };
+  const goToToday = () => {
+    setMonthOffset(0);
+    selectDay(today);
+  };
+
   // Couleur(s) d'une case : la ou les couleurs des projets ayant une tâche qui se
   // termine ce jour-là. Un seul projet → aplat. Plusieurs projets → la case est
   // divisée en quartiers égaux (un par projet, dans l'ordre d'apparition) via un
@@ -12351,6 +12378,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
           <span className="lp-widget-heatmap-title">{rangeLabel}</span>
           <button className="lp-icon-btn" onClick={() => setMonthOffset((m) => m + 1)} title="Mois suivant"><ChevronRight size={13} /></button>
           {monthOffset !== 0 && <button className="lp-icon-btn" onClick={() => setMonthOffset(0)} title="Revenir au mois en cours"><RefreshCw size={11} /></button>}
+          <button type="button" className="lp-tool-btn lp-widget-heatmap-today-btn" onClick={goToToday} title="Aller à aujourd'hui et sélectionner le jour">Aujourd'hui</button>
         </div>
         {legendProjects.length > 0 && (
           <div className="lp-widget-heatmap-legend">
@@ -12392,14 +12420,7 @@ function WidgetHeatmapMonth({ widget, tasks, ctx, onOpen, onUpdateTask, appearan
                       onMouseEnter={(e) => dayTasks.length && setHoverDay({ day, tasks: dayTasks, x: e.clientX, y: e.clientY })}
                       onMouseMove={(e) => dayTasks.length && setHoverDay({ day, tasks: dayTasks, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setHoverDay(null)}
-                      onClick={() => {
-                        setSelectedDay((d) => (d === day ? null : (dayTasks.length ? day : null)));
-                        // #216 : simple clic → si le jour ne porte qu'une seule
-                        // tâche, sa description s'affiche directement dans le
-                        // volet 3 (pas besoin de re-cliquer dans la liste) ;
-                        // plusieurs tâches → la liste tranche, comme avant.
-                        setDescTaskId(dayTasks.length === 1 ? dayTasks[0].id : null);
-                      }}
+                      onClick={() => selectDay(day)}
                       onDoubleClick={() => { if (dayTasks.length === 1) onOpen(dayTasks[0]); }}
                     >
                       {/* Sur une case lavée, le blanc devient illisible : le
@@ -14470,8 +14491,10 @@ function WidgetProjectTreemap({ widget, tasks, ctx, expenses, onOpenProject, onE
       headerRect,
       tiles: squarifyTreemap(asItems(group.rows), bodyRect),
     }));
-    const bottom = rects.length ? rects[rects.length - 1].bodyRect.y + rects[rects.length - 1].bodyRect.h : H;
-    return { height: Math.max(H, bottom), blocks };
+    // #332 : treemapGroupRects garantit désormais que tout tient dans H — la
+    // hauteur du canevas reste donc H, jamais un débordement qui déclencherait
+    // une barre de défilement.
+    return { height: H, blocks };
   }, [box, visibleRows, groups, cfg.groupBy]);
 
   const statusOfId = (id) => (ctx.statuses || []).find((s) => s.id === id);
@@ -14809,25 +14832,6 @@ function ganttAnnotationsOf(widget) {
   return stored && typeof stored === "object" ? stored : {};
 }
 
-function WidgetEmbedTimeline({ tasks, ctx, onOpen, setTasks, externalToolbarSlot }) {
-  const [listPrefs, setListPrefsState] = useState({ visibleFields: ["project", "status"], sortBy: "none" });
-  const setListPrefs = (patch) => setListPrefsState((p) => ({ ...p, ...(typeof patch === "function" ? patch(p) : patch) }));
-  return (
-    <EmbeddedViewShell externalToolbarSlot={externalToolbarSlot}>
-      {({ toolbarSlot, prefs, setPrefs }) => (
-        <TimelineView
-          tasks={tasks} ctx={ctx} onOpen={onOpen} prefs={prefs} setPrefs={setPrefs}
-          gradient={{}} progressColorByStatus={{}} setTasks={setTasks || (() => {})}
-          onAdd={() => {}} onDelete={() => {}} onMarkDone={() => {}} onCycleStatus={() => {}} onBulkDelete={() => {}}
-          listPrefs={listPrefs} setListPrefs={setListPrefs}
-          toolbarSlot={toolbarSlot}
-          embedded
-        />
-      )}
-    </EmbeddedViewShell>
-  );
-}
-
 function WidgetEmbedRadar({ tasks, ctx, onOpen, appearance, externalToolbarSlot }) {
   return (
     <EmbeddedViewShell externalToolbarSlot={externalToolbarSlot}>
@@ -14860,6 +14864,9 @@ const WIDGET_TYPE_META = [
   { key: "criticalPath", label: "Chemin critique", icon: GitBranch, group: "Planning" },
   // #294 : grille continue + frise horaire du jour, version dense de la vue.
   { key: "calendar", label: "Calendrier", icon: CalendarDays, group: "Planning" },
+  // #333 : mono-jour, sans grille au-dessus — même frise que le zoom jour du
+  // Calendrier (CalendarDayTimeline), avec sa propre date affichée.
+  { key: "focusDay", label: "Focus Journée", icon: Target, group: "Planning" },
   { key: "nextBestAction", label: "Next Best Action", icon: Zap, group: "Intelligence" },
   { key: "dailyBriefing", label: "Daily Briefing", icon: Sunrise, group: "Intelligence" },
   { key: "heatmapMonth", label: "Heat map mensuelle", icon: Grid3x3, group: "Suivi" },
@@ -14875,7 +14882,6 @@ const WIDGET_TYPE_META = [
   { key: "habitQuick", label: "Quick Habit", icon: CheckCircle2, group: "Suivi" },
   { key: "habitHeatmap", label: "Heatmap habitudes", icon: Grid3x3, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
-  { key: "embedTimeline", label: "Timeline + Liste (complet)", icon: Waypoints, group: "Planning" },
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
   // Finance PRO (#267, lot #275) : widgets dans le moteur de dashboard
   // existant — aucun second système de tableau de bord créé.
@@ -15337,7 +15343,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedTimeline" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -16714,7 +16720,7 @@ function LandingPage({ onGetStarted, onLogin }) {
           <span className="lp-landing-eyebrow">Gestion de projet</span>
           <h1 className="lp-landing-title">Vos projets, tracés<br />comme un plan de métro.</h1>
           <p className="lp-landing-sub">
-            Liste, Gantt, Radar annuel, Tableur, Planning en ligne de métro — neuf vues sur les
+            Gantt, Radar annuel, Tableur, Planning en ligne de métro — sept vues sur les
             mêmes données, pour trouver enfin celle qui vous parle vraiment.
           </p>
           <div className="lp-landing-cta-row">
@@ -16750,18 +16756,16 @@ function ReadmeModal({ onClose }) {
     <Modal title="Guide de démarrage" onClose={onClose} wide>
       <div className="lp-readme">
         <p className="lp-readme-intro">
-          Nexora affiche les mêmes projets et tâches sous <strong>neuf angles différents</strong> —
+          Nexora affiche les mêmes projets et tâches sous <strong>sept angles différents</strong> —
           l'idée est de piocher la vue qui correspond à ce que vous voulez comprendre à l'instant T,
           pas d'en choisir une seule pour toujours.
         </p>
 
         <h3>Les vues disponibles</h3>
         <div className="lp-readme-grid">
-          <div><strong>📋 Liste</strong> — grille classique, groupement, sous-tâches.</div>
           <div><strong>📊 Gantt</strong> — zoom du jour à 5 ans, dépendances entre tâches.</div>
           <div><strong>🔥 Heat map</strong> — densité de charge sur l'année, par semaine.</div>
           <div><strong>📅 Calendrier</strong> — vue semaine/mois classique.</div>
-          <div><strong>🛤️ Timeline + Liste</strong> — frise chronologique en bulles.</div>
           <div><strong>🎯 Radar</strong> — calendrier circulaire de toute l'année.</div>
           <div><strong>☀️ Aujourd'hui</strong> — tableau de bord du jour.</div>
           <div><strong>🚇 Planning Projets</strong> — chaque projet en ligne de métro.</div>
@@ -17521,186 +17525,9 @@ function SyncedCalendarsSettingsPane({ settings, setSettings, projects, tasks, o
   );
 }
 
-function NotificationsView({ notifications, setNotifications, toolbarSlot }) {
-  const unreadCount = notifications.filter((n) => !n.read).length;
-  const markRead = (id) => setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-  const markAllRead = () => setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  const [confirmClearAll, setConfirmClearAll] = useState(false);
-
-  return (
-    <div className="lp-notifications-wrap">
-      <ViewToolbarPortal slot={toolbarSlot}>
-        {unreadCount > 0 && <button className="lp-btn" onClick={markAllRead}><Check size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Tout marquer comme lu</button>}
-        {notifications.length > 0 && <button className="lp-btn" onClick={() => setConfirmClearAll(true)}><Trash2 size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Tout effacer</button>}
-      </ViewToolbarPortal>
-      {confirmClearAll && (
-        <ConfirmModal
-          title="Effacer les notifications"
-          message="Effacer toutes les notifications ? Cette action est irréversible."
-          danger
-          confirmLabel="Tout effacer"
-          onConfirm={() => { setNotifications([]); setConfirmClearAll(false); }}
-          onClose={() => setConfirmClearAll(false)}
-        />
-      )}
-
-      {notifications.length === 0 ? (
-        <div className="lp-empty" style={{ padding: 30 }}>Aucune notification pour l'instant. Les automatisations avec une action « Créer une notification » apparaîtront ici.</div>
-      ) : (
-        <div className="lp-notifications-list">
-          {notifications.map((n) => (
-            <div key={n.id} className={"lp-notification-row" + (n.read ? "" : " unread")} onClick={() => markRead(n.id)}>
-              {!n.read && <span className="lp-notification-dot" />}
-              <div className="lp-notification-main">
-                <div className="lp-notification-message">{n.message}</div>
-                <div className="lp-notification-time">{new Date(n.createdAt).toLocaleString("fr-FR")}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-
-
-
 /* Pages fixes, sans widget (#193 suite) : priorisées plutôt qu'exhaustives —
    la logique (quelles tâches, dans quel ordre) vit dans NEXORA:FIXED-PAGES
    (part-002), ces deux composants n'en affichent que le résultat. */
-
-function FixedPageRow({ task, onOpen, showLate }) {
-  return (
-    <button type="button" className="lp-fixedpage-row" onClick={() => onOpen(task)}>
-      <span className="lp-fixedpage-row-dot" style={{ background: task.projectColor }} aria-hidden="true" />
-      {task.isMeeting && <span className="lp-fixedpage-row-meeting">Réunion</span>}
-      <span className="lp-fixedpage-row-title">{task.title || "(sans titre)"}</span>
-      {task.projectName && <span className="lp-fixedpage-row-project">{task.projectName}</span>}
-      {showLate && (
-        <span className="lp-fixedpage-row-late">{task._late === 1 ? "1 j de retard" : `${task._late} j de retard`}</span>
-      )}
-    </button>
-  );
-}
-
-function CockpitView({ tasks, ctx, onOpen, toolbarSlot, onOpenWeek }) {
-  const todayIso = iso(new Date());
-  const tomorrowIso = addDays(todayIso, 1);
-  const todayLabel = new Date(todayIso + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
-
-  const late = useMemo(() => overdueTasksSorted(tasks, ctx).map((t) => ({ ...t, _late: daysLate(t, todayIso) })), [tasks, ctx, todayIso]);
-  const todayItems = useMemo(() => tasksForDate(tasks, ctx, todayIso), [tasks, ctx, todayIso]);
-  const tomorrowItems = useMemo(() => tasksForDate(tasks, ctx, tomorrowIso), [tasks, ctx, tomorrowIso]);
-  const calm = late.length === 0 && todayItems.length === 0;
-
-  return (
-    <div className="lp-fixedpage-wrap">
-      <ViewToolbarPortal slot={toolbarSlot}>
-        <button className="lp-btn" onClick={onOpenWeek}>Voir la semaine <ChevronRight size={13} style={{ marginLeft: 2, verticalAlign: -2 }} /></button>
-      </ViewToolbarPortal>
-
-      <div className="lp-fixedpage-head">
-        <div className="lp-fixedpage-title">Cockpit du jour</div>
-        <div className="lp-fixedpage-sub">{todayLabel}</div>
-      </div>
-
-      {calm ? (
-        <div className="lp-empty" style={{ padding: 30 }}>Rien en retard, rien de prévu aujourd'hui. Jour calme.</div>
-      ) : (
-        <>
-          {late.length > 0 && (
-            <div className="lp-fixedpage-section">
-              <div className="lp-fixedpage-section-title lp-fixedpage-section-title-danger">En retard <span>{late.length}</span></div>
-              <div className="lp-fixedpage-rows">
-                {late.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} showLate />)}
-              </div>
-            </div>
-          )}
-          <div className="lp-fixedpage-section">
-            <div className="lp-fixedpage-section-title">Aujourd'hui <span>{todayItems.length}</span></div>
-            {todayItems.length === 0 ? (
-              <div className="lp-fixedpage-section-empty">Rien de prévu aujourd'hui.</div>
-            ) : (
-              <div className="lp-fixedpage-rows">
-                {todayItems.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} />)}
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      <div className="lp-fixedpage-section lp-fixedpage-section-muted">
-        <div className="lp-fixedpage-section-title">Demain, en un coup d'œil <span>{tomorrowItems.length}</span></div>
-        {tomorrowItems.length === 0 ? (
-          <div className="lp-fixedpage-section-empty">Rien de prévu demain.</div>
-        ) : (
-          <div className="lp-fixedpage-rows">
-            {tomorrowItems.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} />)}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* Semaine — fusion de « Radar de la semaine » et « Alertes » (retenue :
-   option C, flux chronologique). Les Alertes en tête partagent EXACTEMENT la
-   même définition du retard que le Cockpit (overdueTasksSorted) : pas de
-   deuxième notion de « en retard » qui pourrait diverger. */
-function WeekFlowView({ tasks, ctx, onOpen, toolbarSlot }) {
-  const todayIso = iso(new Date());
-  const late = useMemo(() => overdueTasksSorted(tasks, ctx).map((t) => ({ ...t, _late: daysLate(t, todayIso) })), [tasks, ctx, todayIso]);
-  const days = useMemo(() => weekFlowDays(tasks, ctx, todayIso, 7), [tasks, ctx, todayIso]);
-  const ALERTS_CAP = 6;
-  const shownAlerts = late.slice(0, ALERTS_CAP);
-  const hiddenAlerts = late.length - shownAlerts.length;
-
-  return (
-    <div className="lp-fixedpage-wrap">
-      <ViewToolbarPortal slot={toolbarSlot} />
-      <div className="lp-fixedpage-head">
-        <div className="lp-fixedpage-title">Semaine</div>
-        <div className="lp-fixedpage-sub">Alertes, puis les 7 prochains jours</div>
-      </div>
-
-      <div className="lp-fixedpage-section">
-        <div className="lp-fixedpage-section-title lp-fixedpage-section-title-danger">Alertes <span>{late.length}</span></div>
-        {late.length === 0 ? (
-          <div className="lp-fixedpage-section-empty">Aucune tâche en retard, tous projets confondus.</div>
-        ) : (
-          <>
-            <div className="lp-fixedpage-rows">
-              {shownAlerts.map((t) => <FixedPageRow key={t.id} task={t} onOpen={onOpen} showLate />)}
-            </div>
-            {hiddenAlerts > 0 && <div className="lp-fixedpage-section-more">+ {hiddenAlerts} autre{hiddenAlerts > 1 ? "s" : ""} en retard</div>}
-          </>
-        )}
-      </div>
-
-      <div className="lp-fixedpage-weekflow">
-        {days.map((d, i) => {
-          const dt = new Date(d.date + "T00:00:00");
-          const label = i === 0 ? "Aujourd'hui" : dt.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
-          return (
-            <div className="lp-fixedpage-weekflow-day" key={d.date}>
-              <div className="lp-fixedpage-weekflow-day-label">{label}</div>
-              {d.items.length === 0 ? (
-                <div className="lp-fixedpage-section-empty">Rien de prévu.</div>
-              ) : (
-                <div className="lp-fixedpage-rows">
-                  {d.items.map((t) => <FixedPageRow key={t.id + "-" + d.date} task={t} onOpen={onOpen} />)}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 
 /* Calendrier (#294) — vue et widget.
 
@@ -18245,6 +18072,49 @@ function CalendarView({ tasks, ctx, onOpen, onAdd, prefs, setPrefs, toolbarSlot 
 // compacte, dans la hauteur de son cadre.
 function WidgetCalendar({ tasks, ctx, onOpen }) {
   return <CalendarBoard tasks={tasks} ctx={ctx} onOpen={onOpen} compact />;
+}
+
+/* Focus Journée (#333) : le panneau détaillé d'UN SEUL jour, sans la grille
+   semaine/mois du Calendrier au-dessus. Il réutilise CalendarDayTimeline TEL
+   QUEL — en-tête récap, chips « Journée » et frise horaire — pour que le
+   Calendrier et Focus Journée ne portent jamais deux rendus du même panneau.
+   Seule différence : la date vient de la CONFIGURATION DE CE WIDGET
+   (widget.focusDayDate), pas d'une case cliquée dans une grille — exactement
+   comme staffingOffset pour Charge personnel. Le bouton « Aujourd'hui » et le
+   sélecteur de date sont posés dans l'en-tête du widget (barre d'outils
+   fournie par WidgetFrame), à côté des icônes d'action déjà existantes. */
+function WidgetFocusDay({ widget, tasks, ctx, onOpen, onUpdateWidget, externalToolbarSlot }) {
+  const todayIso = iso(new Date());
+  const dateIso = normalizeFocusDayDate(widget.focusDayDate);
+  const setDate = (next) => onUpdateWidget({ focusDayDate: normalizeFocusDayDate(next) });
+  return (
+    <>
+      <ViewToolbarPortal slot={externalToolbarSlot}>
+        <button
+          type="button"
+          className="lp-tool-btn"
+          disabled={dateIso === todayIso}
+          onClick={() => setDate(todayIso)}
+        >
+          Aujourd'hui
+        </button>
+        <button type="button" className="lp-icon-btn" aria-label="Jour précédent" onClick={() => setDate(addDays(dateIso, -1))}>
+          <ChevronLeft size={14} />
+        </button>
+        <input
+          type="date"
+          className="lp-focusday-date-input"
+          value={dateIso}
+          onChange={(e) => e.target.value && setDate(e.target.value)}
+          aria-label="Choisir un jour"
+        />
+        <button type="button" className="lp-icon-btn" aria-label="Jour suivant" onClick={() => setDate(addDays(dateIso, 1))}>
+          <ChevronRight size={14} />
+        </button>
+      </ViewToolbarPortal>
+      <CalendarDayTimeline dateIso={dateIso} tasks={tasks} ctx={ctx} onOpen={onOpen} compact />
+    </>
+  );
 }
 // ============================================================================
 // Module Devis — Quentin Morel Engineering (auto-entrepreneur, prestations

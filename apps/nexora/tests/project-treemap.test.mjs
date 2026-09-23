@@ -271,9 +271,12 @@ test("les groupes se partagent la hauteur au prorata de leur poids", () => {
   assert.equal(laid[0].headerRect.y, 0);
   assert.equal(laid[0].bodyRect.y, 20);
   assert.ok(laid[1].headerRect.y >= laid[0].bodyRect.y + laid[0].bodyRect.h, "les groupes ne se recouvrent pas");
-  // Hauteur insuffisante : chaque groupe garde sa hauteur minimale utile.
+  // Hauteur insuffisante pour respecter le plancher de chaque groupe : tout
+  // est compressé proportionnellement plutôt que de déborder (#332), le
+  // widget Treemap ne devant jamais avoir besoin de défiler.
   const tight = T.treemapGroupRects(groups, { x: 0, y: 0, w: 500, h: 30 }, { headerH: 20, gap: 8, minBodyH: 40 });
-  tight.forEach((g) => assert.ok(g.bodyRect.h >= 40));
+  const last = tight[tight.length - 1];
+  assert.ok(last.bodyRect.y + last.bodyRect.h <= 30 + 0.01, "le dernier groupe s'arrête dans le cadre, sans déborder");
 });
 
 test("la densité d'une tuile décide du nombre de champs, jamais l'inverse", () => {
