@@ -2201,10 +2201,15 @@ function SettingsModal({
             {activeTab === "project" && (
               <>
                 {/* Repliée par défaut à l'ouverture (#326) : la liste peut être
-                    longue une fois groupée par dossier, et cet onglet ouvre
-                    aussi sur les sous-sections ci-dessous. */}
+                    longue une fois groupée par dossier. La gestion des dossiers
+                    de projets (et le réglage d'ouverture par défaut associé)
+                    est une section à part, au même niveau — pas nichée dans
+                    celle-ci (retour de test Ref #326). */}
                 <SettingsFoldSection title="Projets">
                   <ProjectManager embedded hideTitle projects={projects} setProjects={setProjects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} tasks={tasks} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} projectDefaultView={projectDefaultView} onDeleteProject={onDeleteProject} onBulkDelete={onBulkDelete} palette={palette} pushToast={pushToast} />
+                </SettingsFoldSection>
+                <SettingsFoldSection title="Dossiers de projets">
+                  <ProjectFoldersManager projects={projects} projectFolders={projectFolders} setProjectFolders={setProjectFolders} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} projectDefaultView={projectDefaultView} pushToast={pushToast} />
                 </SettingsFoldSection>
                 <SettingsFoldSection title="Valeurs par défaut des tâches">
                   <TaskDefaultsManager embedded hideTitle value={taskDefaults} onChange={setTaskDefaults} projects={projects} statuses={statuses} taskTypes={taskTypes} teamMembers={teamMembers} />
@@ -10368,7 +10373,6 @@ function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, s
 
 function ProjectManager({ projects, setProjects, projectFolders, setProjectFolders, tasks, statuses, taskTypes, teamMembers, projectDefaultView, onDeleteProject, onBulkDelete, palette, onClose, embedded, hideTitle, pushToast }) {
   const [formTarget, setFormTarget] = useState(null); // null | "new" | projet à modifier
-  const [folderNavTarget, setFolderNavTarget] = useState(null);
 
   const handleSave = (data) => {
     if (formTarget === "new") setProjects((prev) => [...prev, { id: uid(), ...data }]);
@@ -10427,19 +10431,53 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
       {unsortedProjects.map((p) => renderProjectRow(p, projectFolders.length > 0 ? 1 : 0))}
       <hr className="lp-divider" />
       <button className="lp-btn lp-btn-primary" onClick={() => setFormTarget("new")}><Plus size={13} style={{ marginRight: 4, verticalAlign: -2 }} />Nouveau projet</button>
-      <hr className="lp-divider" />
-      <SettingsFoldSection title="Dossiers de projets">
-        <SimpleFolderManager
-          embedded
-          hideTitle
-          title="Dossiers de projets"
-          folders={projectFolders}
-          setFolders={setProjectFolders}
-          countInFolder={(id) => projects.filter((p) => p.folderId === id).length}
-          pushToast={pushToast}
-          itemLabel="dossier"
+      {formTarget && (
+        <ProjectFormModal
+          project={formTarget === "new" ? null : formTarget}
+          projects={projects}
+          projectFolders={projectFolders}
+          statuses={statuses}
+          taskTypes={taskTypes}
+          tasks={tasks}
+          teamMembers={teamMembers}
+          inheritedFolder={formTarget === "new" ? null : projectFolders.find((f)=>f.id===formTarget.folderId)}
+          projectDefaultView={projectDefaultView}
+          defaultColor={palette[projects.length % palette.length]}
+          onSave={handleSave}
+          onClose={() => setFormTarget(null)}
         />
-      </SettingsFoldSection>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      {embedded ? <div className="lp-settings-pane">{body}</div> : <Modal title="Gérer les projets" onClose={onClose} wide>{body}</Modal>}
+    </>
+  );
+}
+
+// Dossiers de projets (#326) : la gestion des dossiers (créer/renommer/
+// supprimer/réordonner) et le réglage « ouverture par défaut » associé
+// vivent désormais dans leur propre section repliable, au même niveau que
+// « Projets » dans l'onglet Réglages > Projet — plus imbriqués dans son
+// repli (retour de test : on ne devrait pas avoir à ouvrir « Projets » pour
+// gérer les dossiers).
+function ProjectFoldersManager({ projects, projectFolders, setProjectFolders, statuses, taskTypes, tasks, teamMembers, projectDefaultView, pushToast }) {
+  const [folderNavTarget, setFolderNavTarget] = useState(null);
+
+  return (
+    <div className="lp-settings-pane">
+      <SimpleFolderManager
+        embedded
+        hideTitle
+        title="Dossiers de projets"
+        folders={projectFolders}
+        setFolders={setProjectFolders}
+        countInFolder={(id) => projects.filter((p) => p.folderId === id).length}
+        pushToast={pushToast}
+        itemLabel="dossier"
+      />
       {projectFolders.length > 0 && (
         <>
           <hr className="lp-divider" />
@@ -10468,28 +10506,6 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           })}
         </>
       )}
-      {formTarget && (
-        <ProjectFormModal
-          project={formTarget === "new" ? null : formTarget}
-          projects={projects}
-          projectFolders={projectFolders}
-          statuses={statuses}
-          taskTypes={taskTypes}
-          tasks={tasks}
-          teamMembers={teamMembers}
-          inheritedFolder={formTarget === "new" ? null : projectFolders.find((f)=>f.id===formTarget.folderId)}
-          projectDefaultView={projectDefaultView}
-          defaultColor={palette[projects.length % palette.length]}
-          onSave={handleSave}
-          onClose={() => setFormTarget(null)}
-        />
-      )}
-    </>
-  );
-
-  return (
-    <>
-      {embedded ? <div className="lp-settings-pane">{body}</div> : <Modal title="Gérer les projets" onClose={onClose} wide>{body}</Modal>}
       {folderNavTarget && (
         <ProjectFolderNavigationModal
           folder={folderNavTarget}
@@ -10505,7 +10521,7 @@ function ProjectManager({ projects, setProjects, projectFolders, setProjectFolde
           onClose={()=>setFolderNavTarget(null)}
         />
       )}
-    </>
+    </div>
   );
 }
 
