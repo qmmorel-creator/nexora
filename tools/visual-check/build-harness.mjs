@@ -68,6 +68,12 @@ export class GoogleAuthProvider {}
 export const linkWithPopup = async () => {};
 export const signInWithPopup = async () => {};
 export const reauthenticateWithPopup = async () => {};`,
+  // jsPDF (modules Devis/Facture, fiches PDF) : le banc ne génère aucun PDF.
+  // Sans ce bouchon, ses imports CDN échouent et l'application ne démarre plus
+  // du tout dans le banc — le module n'est chargé que pour être importé.
+  "jspdf-stub.js": `export class jsPDF { constructor() { throw new Error("jsPDF indisponible dans le banc d'essai"); } }
+export default jsPDF;`,
+  "jspdf-autotable-stub.js": `export default function autoTable() {}`,
 };
 
 const IMPORT_MAP = {
@@ -78,6 +84,8 @@ const IMPORT_MAP = {
   "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0": "./vendor/lucide.js",
   "https://esm.sh/@tabler/icons-react@3.46.0?deps=react@18.2.0": "./vendor/tabler.js",
   "https://esm.sh/papaparse@5.4.1": "./vendor/papaparse.js",
+  "https://esm.sh/jspdf@2.5.2": "./vendor/jspdf-stub.js",
+  "https://esm.sh/jspdf-autotable@3.8.4": "./vendor/jspdf-autotable-stub.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js": "./vendor/firebase-stub.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js": "./vendor/firebase-stub.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js": "./vendor/firebase-stub.js",

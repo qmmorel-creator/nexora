@@ -121,6 +121,44 @@ function AnnotationsHarness() {
       { member: seedTeamMembers[2 % seedTeamMembers.length].name, date: jour(18), workshops: [absence] },
     ];
   });
+  /* Organigramme « Métro » (#295) : jeu d'équipes et de personnes FICTIF,
+     propre au banc — lignes racines, sous-équipes sur trois niveaux, une
+     équipe transverse, une chaîne de managers, une personne multi-équipe, un
+     nom long et une personne sans équipe. */
+  const [orgTeams, setOrgTeams] = useState(() => [
+    { id: "o-prod", name: "Produit", color: "#E2A63B", leadName: "Camille Aubert" },
+    { id: "o-core", name: "Cœur produit", color: "#E2A63B", parentTeamId: "o-prod", leadName: "Hugo Lemaire" },
+    { id: "o-disc", name: "Exploration", color: "#E2A63B", parentTeamId: "o-prod", leadName: "Inès Garnier" },
+    { id: "o-tech", name: "Technique", color: "#2C6BE0", leadName: "Paul Mercier" },
+    { id: "o-plat", name: "Plateforme", color: "#2C6BE0", parentTeamId: "o-tech", leadName: "Zoé Faure" },
+    { id: "o-secu", name: "Sécurité", color: "#2C6BE0", parentTeamId: "o-plat" },
+    { id: "o-apps", name: "Applications", color: "#2C6BE0", parentTeamId: "o-tech" },
+    { id: "o-data", name: "Données", color: "#D64545", parentTeamId: "o-tech", parentLinkType: "transverse", transverseSide: "right" },
+    { id: "o-ops", name: "Opérations", color: "#1FA971", leadName: "Luc Perrin" },
+  ]);
+  const [orgMembers, setOrgMembers] = useState(() => [
+    { id: "om1", name: "Camille Aubert", teamIds: ["o-prod"], teamRoles: { "o-prod": "Directrice produit" } },
+    { id: "om2", name: "Hugo Lemaire", teamIds: ["o-core"], teamRoles: { "o-core": "Lead produit" } },
+    { id: "om3", name: "Emma Roux", teamIds: ["o-core"] },
+    { id: "om4", name: "Inès Garnier", teamIds: ["o-disc"] },
+    { id: "om5", name: "Jules Brun", teamIds: ["o-disc"] },
+    { id: "om6", name: "Nora Vidal", teamIds: ["o-disc"], teamRoles: { "o-disc": "Chercheuse UX" } },
+    { id: "om7", name: "Adam Colin", managerName: "Nora Vidal", teamIds: ["o-disc"] },
+    { id: "om8", name: "Lina Masson", managerName: "Nora Vidal" },
+    { id: "om9", name: "Rayan Noël", managerName: "Adam Colin" },
+    { id: "om10", name: "Paul Mercier", teamIds: ["o-tech"], teamRoles: { "o-tech": "Directeur technique" } },
+    { id: "om11", name: "Zoé Faure", teamIds: ["o-plat"] },
+    { id: "om12", name: "Marie-Charlotte de La Rochefoucauld-Montmorency", teamIds: ["o-plat"], teamRoles: { "o-plat": "Ingénieure fiabilité et observabilité des services" } },
+    { id: "om13", name: "Théo Lambert", teamIds: ["o-secu"] },
+    { id: "om14", name: "Sacha Morin", teamIds: ["o-apps", "o-data"] },
+    { id: "om15", name: "Léna Robin", teamIds: ["o-apps"] },
+    { id: "om16", name: "Yanis Petit", teamIds: ["o-data"] },
+    { id: "om17", name: "Luc Perrin", teamIds: ["o-ops"] },
+    { id: "om18", name: "Eva Moulin", teamIds: ["o-ops"] },
+    { id: "om19", name: "Sans rattachement", teamIds: [] },
+  ]);
+  const [orgWidget, setOrgWidget] = useState({ id: "w-orgmetro", type: "orgchart", orgChartMode: "metro" });
+  const orgCtx = { teams: orgTeams, teamMembers: orgMembers, teamFolders: [], tasks: [], workshops: [], statuses };
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, workshops: harnessWorkshops, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
@@ -474,6 +512,19 @@ function AnnotationsHarness() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      <div>
+        <h2 style={{ fontSize: 13, margin: "0 0 6px", fontFamily: "monospace" }}>ORGANIGRAMME MÉTRO (#295)</h2>
+        <div id="harness-orgmetro" style={{ width: 1200, height: 720, marginBottom: 18 }}>
+          <WidgetOrgChart
+            widget={orgWidget} ctx={orgCtx} staffing={[]} onFilterPerson={noop}
+            setTeams={setOrgTeams} setTeamMembers={setOrgMembers} setTeamFolders={noop} setTasks={noop} pushToast={noop}
+            onUpdateWidget={(patch) => setOrgWidget((w) => ({ ...w, ...patch }))}
+          />
+        </div>
+        <div id="harness-orgmetro-narrow" style={{ width: 380, height: 560, marginBottom: 18 }}>
+          <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart", orgChartMode: "metro" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
         </div>
       </div>
       <div>

@@ -1476,6 +1476,103 @@ try {
   parite.error = String(error).split("\n")[0];
 }
 
+// Organigramme « Métro » (#295) : plan rendu, aucun libellé ne se chevauche
+// dans le rendu RÉEL (texte mesuré par le navigateur, pas l'estimation du
+// layout), bifurcation alignée, correspondances basculables, zoom, clic qui
+// ouvre les fiches existantes, bascule de mode, et barre d'outils tenue dans
+// un widget étroit.
+const orgMetro = { error: null };
+try {
+  const host = "#harness-orgmetro";
+  await page.locator(host).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400);
+  Object.assign(orgMetro, await page.evaluate((sel) => {
+    const root = document.querySelector(sel);
+    const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+    const texts = [...root.querySelectorAll(".lp-orgmetro-label, .lp-orgmetro-badge")].map((el) => ({ key: el.getAttribute("data-metro-key") || el.textContent, ...box(el) }));
+    const overlaps = [];
+    for (let i = 0; i < texts.length; i++) for (let j = i + 1; j < texts.length; j++) {
+      const a = texts[i], b = texts[j];
+      if (a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1) overlaps.push(a.key + " × " + b.key);
+    }
+    const g = root.querySelector("[data-metro-viewport]");
+    return {
+      stations: root.querySelectorAll(".lp-orgmetro-station").length,
+      duplicates: root.querySelectorAll(".lp-orgmetro-station.is-duplicate").length,
+      junctions: root.querySelectorAll(".lp-orgmetro-junction").length,
+      transverse: root.querySelectorAll(".lp-orgmetro-transverse").length,
+      independent: root.querySelectorAll(".lp-orgmetro-badge.is-independent").length,
+      groups: ["lines", "branches", "correspondences", "stations", "labels"].filter((n) => root.querySelector(".lp-orgmetro-" + n)).length,
+      overlaps,
+      transform: g ? g.getAttribute("transform") : "",
+    };
+  }, host));
+  const scaleOf = (t) => Number((/scale\(([\d.]+)\)/.exec(t || "") || [])[1] || 0);
+  orgMetro.fitScale = scaleOf(orgMetro.transform);
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Zoom avant"]`).click();
+  await page.waitForTimeout(150);
+  orgMetro.zoomedScale = scaleOf(await page.locator(`${host} [data-metro-viewport]`).getAttribute("transform"));
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Ajuster à l'écran"]`).click();
+  await page.waitForTimeout(150);
+  orgMetro.refitScale = scaleOf(await page.locator(`${host} [data-metro-viewport]`).getAttribute("transform"));
+  // Déplacement à la souris : la translation change, l'échelle non.
+  const svgBox = await page.locator(`${host} .lp-orgmetro`).boundingBox();
+  const before = await page.locator(`${host} [data-metro-viewport]`).getAttribute("transform");
+  await page.mouse.move(svgBox.x + 30, svgBox.y + svgBox.height - 60);
+  await page.mouse.down();
+  await page.mouse.move(svgBox.x + 130, svgBox.y + svgBox.height - 20, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  orgMetro.panned = before !== await page.locator(`${host} [data-metro-viewport]`).getAttribute("transform");
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Ajuster à l'écran"]`).click();
+  await page.waitForTimeout(150);
+  // Bascule des correspondances.
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Correspondances transverses"]`).click();
+  await page.waitForTimeout(150);
+  orgMetro.transverseHidden = await page.locator(`${host} .lp-orgmetro-transverse`).count();
+  await page.locator(`${host} .lp-orgmetro-toolbar button[aria-label="Correspondances transverses"]`).click();
+  await page.waitForTimeout(150);
+  // Survol : les relations restent pleines, le reste s'estompe.
+  await page.locator(`${host} .lp-orgmetro-station[aria-label^="Sacha Morin"]`).first().hover();
+  await page.waitForTimeout(200);
+  orgMetro.hoverDimmed = await page.locator(`${host} .lp-orgmetro-svg.is-focusing .is-dim`).count();
+  orgMetro.hoverOccurrence = await page.locator(`${host} .lp-orgmetro-occurrence`).count();
+  await page.mouse.move(5, 5);
+  await page.locator(`${host}`).screenshot({ path: path.join(dir, "orgmetro.png") });
+  // Clic sur une station → fiche utilisateur existante.
+  await page.locator(`${host} .lp-orgmetro-station[aria-label^="Emma Roux"]`).first().click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  orgMetro.memberModal = await page.locator(".lp-modal input").evaluateAll((els) => els.map((e) => e.value).join("|"));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal .lp-icon-btn, .lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
+  await page.waitForTimeout(200);
+  // Clic sur un bandeau d'équipe → fiche équipe existante.
+  await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Plateforme"]`).click();
+  await page.waitForSelector(".lp-modal", { timeout: 10000 });
+  orgMetro.teamModal = await page.locator(".lp-modal input").evaluateAll((els) => els.map((e) => e.value).join("|"));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
+  await page.waitForTimeout(200);
+  // Bascule de mode dans l'en-tête : la vue hiérarchique reste intacte.
+  await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Hiérarchique" }).click();
+  await page.waitForTimeout(300);
+  orgMetro.hierarchyPanels = await page.locator(`${host} .lp-orghier-node-panel`).count();
+  await page.locator(`${host} .lp-orgchart-mode-btn`, { hasText: "Métro" }).click();
+  await page.waitForTimeout(300);
+  orgMetro.backToMetro = await page.locator(`${host} .lp-orgmetro-svg`).count();
+  // Widget étroit : la barre d'outils tient dans le cadre.
+  orgMetro.narrow = await page.evaluate(() => {
+    const host = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro");
+    const bar = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro-toolbar");
+    if (!host || !bar) return null;
+    const h = host.getBoundingClientRect(), b = bar.getBoundingClientRect();
+    return { inside: b.left >= h.left - 1 && b.right <= h.right + 1, scroll: host.scrollWidth - host.clientWidth };
+  });
+} catch (e) {
+  orgMetro.error = String(e).split("\n")[0];
+}
 await browser.close();
 server.close();
 
@@ -2481,6 +2578,29 @@ if (!bulles.error) {
 expect(!scoped.error, `contrôle de la portée des listes déroulantes interrompu : ${scoped.error}`);
 expect(scoped.labels.length === 2, `Paramètres : ${scoped.labels.length} tâche(s) proposée(s), 2 attendues (seul le projet filtré)`);
 expect(scoped.labels.every((l) => /FOR-0129|DREAL/.test(l)), `Paramètres : des tâches hors filtre sont proposées (${scoped.labels.join(", ")})`);
+
+expect(!orgMetro.error, `Organigramme Métro : contrôle interrompu (${orgMetro.error})`);
+if (!orgMetro.error) {
+  expect(orgMetro.groups === 5, `Organigramme Métro : ${orgMetro.groups} groupe(s) SVG sémantique(s) sur 5 (lignes, branches, correspondances, stations, libellés)`);
+  expect(orgMetro.stations === 20, `Organigramme Métro : ${orgMetro.stations} station(s), 20 attendues (19 personnes + 1 correspondance multi-équipe)`);
+  expect(orgMetro.duplicates === 1, `Organigramme Métro : ${orgMetro.duplicates} station(s) de correspondance, 1 attendue`);
+  expect(orgMetro.junctions >= 3, `Organigramme Métro : ${orgMetro.junctions} point(s) de bifurcation, au moins 3 attendus`);
+  expect(orgMetro.transverse === 1, `Organigramme Métro : ${orgMetro.transverse} correspondance(s) transverse(s), 1 attendue`);
+  expect(orgMetro.independent >= 2, `Organigramme Métro : ${orgMetro.independent} ligne(s) indépendante(s), 2 attendues (transverse + sans équipe)`);
+  expect(orgMetro.overlaps.length === 0, `Organigramme Métro : libellés qui se chevauchent dans le rendu réel — ${orgMetro.overlaps.slice(0, 5).join(" ; ")}`);
+  expect(orgMetro.fitScale > 0 && orgMetro.fitScale <= 1, `Organigramme Métro : échelle d'ajustement ${orgMetro.fitScale}`);
+  expect(orgMetro.zoomedScale > orgMetro.fitScale, `Organigramme Métro : le zoom avant ne grossit pas (${orgMetro.fitScale} → ${orgMetro.zoomedScale})`);
+  expect(Math.abs(orgMetro.refitScale - orgMetro.fitScale) < 0.001, `Organigramme Métro : « Ajuster » ne revient pas à l'échelle d'origine (${orgMetro.refitScale})`);
+  expect(orgMetro.panned, "Organigramme Métro : glisser le plan ne le déplace pas");
+  expect(orgMetro.transverseHidden === 0, "Organigramme Métro : les correspondances restent visibles une fois masquées");
+  expect(orgMetro.hoverDimmed > 0, "Organigramme Métro : le survol ne met pas les relations en évidence");
+  expect(orgMetro.hoverOccurrence === 1, `Organigramme Métro : ${orgMetro.hoverOccurrence} liaison(s) entre les occurrences d'une personne multi-équipe au survol, 1 attendue`);
+  expect(/Emma Roux/.test(orgMetro.memberModal || ""), `Organigramme Métro : le clic sur une station n'ouvre pas la fiche utilisateur (${orgMetro.memberModal})`);
+  expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
+  expect(orgMetro.hierarchyPanels > 0, "Organigramme : la bascule vers « Hiérarchique » n'affiche plus l'arbre existant");
+  expect(orgMetro.backToMetro === 1, "Organigramme : la bascule retour vers « Métro » échoue");
+  expect(orgMetro.narrow && orgMetro.narrow.inside && orgMetro.narrow.scroll <= 0, `Organigramme Métro étroit : barre d'outils hors cadre ou défilement horizontal (${JSON.stringify(orgMetro.narrow)})`);
+}
 
 console.log(`Capture : ${shot}`);
 if (failures.length) {
