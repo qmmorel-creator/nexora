@@ -694,3 +694,15 @@ test("Liens déplaçables : le tracé se décale latéralement et verticalement,
   assert.notDeepEqual(shifted[0].points, plain[0].points);
   assert.ok(ortho(shifted[0].points));
 });
+
+test("Titre du responsable : choisi dans la fiche équipe, il remplace son poste sous son nom", () => {
+  const teams = [team("a", { leadName: "Chef", leadTitle: "  Responsable de lot  " }), team("b", { leadName: "Autre" }), team("c", { leadName: "Ext", leadTitle: "Pilote" })];
+  const members = [member("Chef", { teamIds: ["a"], teamRoles: { a: "Ing. Méca" } }), member("Autre", { teamIds: ["b"], teamRoles: { b: "Chef de projet" } }), member("Ext", { teamIds: ["b"] })];
+  const { layout } = metro(teams, members);
+  const lead = (key) => branch(layout, key).stations[0];
+  assert.equal(lead("team:a").role, "Responsable de lot", "le titre prime sur le poste");
+  assert.equal(lead("team:a").roleIsFallback, false);
+  assert.equal(lead("team:b").role, "Chef de projet", "sans titre : son poste, comme avant");
+  assert.equal(lead("team:c").role, "Pilote", "aussi pour un responsable venu d'une autre ligne");
+  assertNoOverlap(layout);
+});

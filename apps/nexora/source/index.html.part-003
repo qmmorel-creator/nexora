@@ -9125,8 +9125,14 @@ function orgHierMemberRole(personNode) {
 // *_ROLE dès qu'un poste est affiché, pour rester en tous points exacte —
 // orgHierNodeSize (calcul de layout) et renderRow (classe .has-role côté
 // CSS) appellent cette MÊME fonction, jamais un second calcul.
-function orgHierRowHeight(personNode, isLead) {
-  const hasRole = Boolean(orgHierMemberRole(personNode));
+// Poste affiché sur une ligne de panneau : pour le responsable, le titre
+// choisi dans la fiche équipe (team.leadTitle) prime sur son poste.
+function orgHierRowRole(personNode, isLead, team) {
+  return (isLead && team && team.leadTitle) || orgHierMemberRole(personNode);
+}
+function orgHierRowHeight(personNode, isLead, team) {
+  const role = orgHierRowRole(personNode, isLead, team);
+  const hasRole = Boolean(role);
   const base = isLead
     ? (hasRole ? ORGHIER_TEAM_LEAD_ROW_H_ROLE : ORGHIER_TEAM_LEAD_ROW_H)
     : (hasRole ? ORGHIER_TEAM_ROW_H_ROLE : ORGHIER_TEAM_ROW_H);
@@ -9134,7 +9140,7 @@ function orgHierRowHeight(personNode, isLead) {
   // un nom/poste court (l'immense majorité des cas) n'ajoute rien — voir
   // orgHierEstimateLines et le commentaire au-dessus des constantes ORGHIER_ROW_*.
   const nameExtraLines = orgHierEstimateLines(personNode.member?.name, ORGHIER_ROW_NAME_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1;
-  const roleExtraLines = hasRole ? orgHierEstimateLines(orgHierMemberRole(personNode), ORGHIER_ROW_ROLE_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1 : 0;
+  const roleExtraLines = hasRole ? orgHierEstimateLines(role, ORGHIER_ROW_ROLE_CHARS_PER_LINE, ORGHIER_ROW_MAX_LINES) - 1 : 0;
   return base + nameExtraLines * ORGHIER_ROW_NAME_EXTRA_LINE_H + roleExtraLines * ORGHIER_ROW_ROLE_EXTRA_LINE_H;
 }
 // La taille lit node.leadMember (posé une fois par buildOrgHierarchyTree) —
@@ -9151,7 +9157,7 @@ function orgHierNodeSize(node) {
   if (node.type === "root") return { w: ORGHIER_ROOT_W, h: ORGHIER_ROOT_H };
   const { lead, rest } = orgHierEmbeddedRoster(node);
   const rows = (lead ? 1 : 0) + rest.length;
-  const rowsH = (lead ? orgHierRowHeight(lead, true) : 0) + rest.reduce((sum, c) => sum + orgHierRowHeight(c, false), 0);
+  const rowsH = (lead ? orgHierRowHeight(lead, true, node.team) : 0) + rest.reduce((sum, c) => sum + orgHierRowHeight(c, false, node.team), 0);
   const bodyH = rows ? ORGHIER_TEAM_PAD + rowsH + Math.max(0, rows - 1) * ORGHIER_TEAM_ROW_GAP : 0;
   return { w: ORGHIER_TEAM_PANEL_W, h: ORGHIER_TEAM_BANNER_H + bodyH };
 }
@@ -9479,7 +9485,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
       const { lead, rest } = orgHierEmbeddedRoster(n);
       let y = r.top + ORGHIER_TEAM_BANNER_H + ORGHIER_TEAM_PAD / 2;
       [lead, ...rest].filter(Boolean).forEach((row) => {
-        const h = orgHierRowHeight(row, row === lead);
+        const h = orgHierRowHeight(row, row === lead, n.team);
         keepPerson(row.member.name, { left: r.left, top: y, w: r.w, h }, Boolean(row.duplicate));
         y += h + ORGHIER_TEAM_ROW_GAP;
       });
@@ -9556,7 +9562,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
           const renderRow = (child, isLeadRow) => {
             const m = child.member;
             const stats = statsFor(m);
-            const role = orgHierMemberRole(child);
+            const role = orgHierRowRole(child, isLeadRow, node.team);
             return (
               <button
                 type="button"
@@ -9566,7 +9572,7 @@ function OrgHierarchyChart({ teams, members, statsFor, onFilterPerson, orientati
                 // layout (orgHierRowHeight, voir #238) : les classes CSS ci-dessus
                 // ne donnent plus qu'une hauteur MINIMALE de repli, jamais la
                 // valeur qui compte quand le nom/poste passe sur plusieurs lignes.
-                style={{ height: orgHierRowHeight(child, isLeadRow) }}
+                style={{ height: orgHierRowHeight(child, isLeadRow, node.team) }}
                 onClick={() => onFilterPerson && onFilterPerson(m.name)}
                 onDoubleClick={onEditMember ? (e) => { e.stopPropagation(); onEditMember(m); } : undefined}
                 title={(isLeadRow ? "Responsable — " : "") + (memberIsInactive(m) ? "Inactif — " : "") + "Filtrer la page sur " + m.name + (onEditMember ? " · double-clic pour modifier" : "")}
@@ -9893,6 +9899,11 @@ function buildOrgMetroGraph(roots, teams, opts) {
       else people.push(c);
     });
     fillStations(people, key, depth, color, stations, sides);
+    // Titre du responsable choisi dans la fiche équipe : prime sur son poste.
+    if (node.team && node.team.leadTitle && stations[0] && stations[0].kind === "lead") {
+      stations[0].role = node.team.leadTitle;
+      stations[0].roleIsFallback = false;
+    }
     const branch = {
       key, kind: "team", depth, color, team: node.team || null, memberName: null,
       independent, transverse: Boolean(node.team && transverseIds.has(node.team.id)),

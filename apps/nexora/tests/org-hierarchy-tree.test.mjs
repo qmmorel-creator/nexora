@@ -279,3 +279,10 @@ test("buildOrgHierarchyTree : roleTeamId suit la première équipe résolue, mê
   assert.equal(yannNode.roleTeamId, "b");
   assert.equal(memberRoleInTeam(yannNode.member, yannNode.roleTeamId), "Contributeur");
 });
+
+test("normalizeTeams : leadTitle (#295) — texte libre borné, vide par défaut", () => {
+  const [a, b] = normalizeTeams([team("a", { leadTitle: "  Responsable de lot " }), team("b")]);
+  assert.equal(a.leadTitle, "Responsable de lot");
+  assert.equal(b.leadTitle, "");
+  assert.equal(normalizeTeams([team("c", { leadTitle: "x".repeat(200) })])[0].leadTitle.length, 80);
+});

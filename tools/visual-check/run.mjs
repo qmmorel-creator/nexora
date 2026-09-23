@@ -1497,6 +1497,7 @@ try {
       }),
       leadStars: root.querySelectorAll(".lp-orgmetro-label .lp-orgmetro-lead-star").length,
       badgeLeads: [...root.querySelectorAll(".lp-orgmetro-badge-sub")].map((el) => el.textContent),
+      leadTitleMetro: [...root.querySelectorAll(".lp-orgmetro-label")].some((el) => /Zoé Faure/.test(el.textContent) && /Responsable de lot/.test(el.textContent)),
       appsFirstStation: (() => {
         const labels = [...root.querySelectorAll(".lp-orgmetro-label")].filter((el) => (el.getAttribute("data-metro-key") || "").startsWith("st:team:o-apps:"));
         return labels.length ? labels[0].textContent : "";
@@ -1640,6 +1641,7 @@ try {
       hierRelationLabels: [...root.querySelectorAll(".lp-orghier-relation-label")].map((el) => el.textContent),
       hierJunctions: root.querySelectorAll(".lp-orghier-junction").length,
       hierInactive: root.querySelectorAll(".lp-orghier-panel-row.is-inactive, .lp-orgchart-card.is-inactive").length,
+      leadTitleHier: [...root.querySelectorAll(".lp-orghier-panel-row.is-lead")].some((el) => /Zoé Faure/.test(el.textContent) && /Responsable de lot/.test(el.textContent)),
     };
   }, host));
   await page.locator(`${host}`).screenshot({ path: path.join(dir, "orghier.png") });
@@ -2703,6 +2705,8 @@ if (!orgMetro.error) {
   expect(orgMetro.managerOnLine !== null && orgMetro.managerOnLine < 1, `Organigramme Métro : le manager Nora Vidal n'est pas resté sur la ligne de son équipe (écart ${orgMetro.managerOnLine}px)`);
   expect(orgMetro.countOffsets.every((d) => d <= 1.5), `Organigramme Métro : chiffre décentré dans sa pastille (${orgMetro.countOffsets.map((d) => d.toFixed(1)).join(", ")} px)`);
   expect(orgMetro.hierRelations === 3 && orgMetro.hierRelationLabels.length === 2, `Organigramme hiérarchique : ${orgMetro.hierRelations} relation(s), ${orgMetro.hierRelationLabels.length} légende(s) — 3 et 2 attendues`);
+  expect(orgMetro.leadTitleMetro, "Titre du responsable : « Responsable de lot » absent sous Zoé Faure dans le Métro");
+  expect(orgMetro.leadTitleHier, "Titre du responsable : « Responsable de lot » absent sous Zoé Faure dans la vue hiérarchique");
   expect(orgMetro.hierJunctions > 0, "Organigramme hiérarchique : aucun point blanc aux embranchements");
   expect(orgMetro.hierInactive >= 1, "Organigramme hiérarchique : l'utilisateur inactif n'est pas grisé");
   expect(orgMetro.dropMarker === 1, `Déplacement libre : grille ${orgMetro.dropMarker === 1 ? "affichée" : "absente"} pendant le geste`);
