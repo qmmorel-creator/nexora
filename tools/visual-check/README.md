@@ -235,6 +235,35 @@ avec la mesure « tâches en retard » :
 - l'infobulle nomme le croisement, la fiche propose les sept axes et les quatre
   mesures, et l'axe choisi est bien enregistré.
 
+Scénario « Organigramme Métro » (#295) — équipes et personnes fictives : trois
+lignes racines, sous-équipes sur trois niveaux, une équipe transverse, une
+chaîne de managers, une personne multi-équipe, un nom long, une personne sans
+équipe :
+
+- cinq groupes SVG sémantiques (lignes, branches, correspondances, stations,
+  libellés), une station par occurrence de personne et une seule station de
+  correspondance pour la personne multi-équipe ;
+- au moins trois points de bifurcation, une correspondance transverse, deux
+  lignes indépendantes (transverse et « Sans équipe ») ;
+- **aucun libellé ni bandeau ne se chevauche dans le rendu réel**, texte mesuré
+  par le navigateur et non par l'estimation du layout ;
+- responsables repérés comme dans la vue hiérarchique : un halo d'accent par
+  responsable présent sur sa ligne, une étoile devant le nom de chaque personne
+  qui dirige une équipe (même ailleurs), et le bandeau d'une ligne dont le
+  responsable n'y figure pas le nomme (« Resp. … ») ;
+- zoom avant, « Ajuster à l'écran », déplacement au glisser, masquage des
+  correspondances, mise en évidence au survol ;
+- le clic sur une station ouvre la fiche utilisateur, celui sur un bandeau la
+  fiche équipe ; la bascule vers « Hiérarchique » rend toujours l'arbre existant ;
+- dans un widget de 380 px, la barre d'outils tient dans le cadre, la légende
+  est masquée (selon la largeur du widget, pas de l'écran) et le plan s'ouvre à
+  60 % au moins, pour rester lisible.
+
+La capture de ce scénario est écrite dans `.harness/orgmetro.png`.
+
+jsPDF (modules Devis/Facture, fiches PDF) est bouchonné comme Firebase : le banc
+ne génère aucun PDF, mais sans ce bouchon l'application ne démarrait plus.
+
 ## Pourquoi un dossier séparé
 
 `apps/nexora` est construit par Netlify à chaque publication. Y ajouter React,
