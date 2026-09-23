@@ -14686,11 +14686,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     () => normalizeTeams(ctx.teams).map((t) => ({ id: t.id, name: t.name, color: t.color })),
     [ctx.teams]
   );
-  // Seules les équipes qui ont des sous-équipes sont proposées.
-  const orgChartParentTeamOptions = useMemo(() => {
-    const parents = new Set(normalizeTeams(ctx.teams).map((t) => t.parentTeamId).filter(Boolean).map(String));
-    return orgChartTeamOptions.filter((t) => parents.has(String(t.id)));
-  }, [ctx.teams, orgChartTeamOptions]);
   const orgChartVisibleTeamIds = orgChartTeamOptions.map((t) => t.id).filter((id) => !orgChartHiddenTeamIds.includes(id));
   // Filtre par dossier d'équipes (#215) : vide = tous les dossiers (comme
   // avant ce réglage). Se combine avec orgChartHiddenTeamIds plutôt que de
@@ -14924,7 +14919,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.heatmapShowValues = heatmapShowValues;
       data.heatmapShowDescPane = heatmapShowDescPane;
     }
-    if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartParentTeamOptions.some((t) => t.id === id)); }
+    if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id) && !orgMetroHorizontalTeams.includes(id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -15241,38 +15236,60 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                   <input type="checkbox" checked={orgMetroShowTransverse} onChange={() => setOrgMetroShowTransverse((v) => !v)} />
                   Afficher les correspondances transverses
                 </label>
-                {orgChartParentTeamOptions.length > 0 && (
-                  <div className="lp-field lp-orgmetro-stacked-field" style={{ marginTop: 10 }}>
-                    <label>Sous-équipes empilées à la verticale <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(les sous-équipes de ces équipes se rangent les unes sous les autres, à droite ; les autres s'étalent côte à côte)</span></label>
-                    <EntityFilterMultiSelect
-                      options={orgChartParentTeamOptions}
-                      selectedIds={orgMetroStackedTeams}
-                      onToggle={(id) => setOrgMetroStackedTeams((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
-                      onSelectAll={() => setOrgMetroStackedTeams(orgChartParentTeamOptions.map((t) => t.id))}
-                      onDeselectAll={() => setOrgMetroStackedTeams([])}
-                      placeholder="Rechercher une équipe…"
-                      emptyLabel="Toutes côte à côte"
-                      summary={orgMetroStackedTeams.length ? orgMetroStackedTeams.length + " équipe" + (orgMetroStackedTeams.length > 1 ? "s" : "") + " empilée" + (orgMetroStackedTeams.length > 1 ? "s" : "") : ""}
-                      compact
-                    />
-                  </div>
-                )}
-                {orgChartTeamOptions.length > 0 && (
-                  <div className="lp-field lp-orgmetro-horizontal-field" style={{ marginTop: 10 }}>
-                    <label>Membres alignés à l'horizontale <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(les membres directs de ces équipes se placent côte à côte sur une ligne horizontale ; sans effet sur une équipe sans membre direct)</span></label>
-                    <EntityFilterMultiSelect
-                      options={orgChartTeamOptions}
-                      selectedIds={orgMetroHorizontalTeams}
-                      onToggle={(id) => setOrgMetroHorizontalTeams((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
-                      onSelectAll={() => setOrgMetroHorizontalTeams(orgChartTeamOptions.map((t) => t.id))}
-                      onDeselectAll={() => setOrgMetroHorizontalTeams([])}
-                      placeholder="Rechercher une équipe…"
-                      emptyLabel="Toutes verticales"
-                      summary={orgMetroHorizontalTeams.length ? orgMetroHorizontalTeams.length + " équipe" + (orgMetroHorizontalTeams.length > 1 ? "s" : "") + " à l'horizontale" : ""}
-                      compact
-                    />
-                  </div>
-                )}
+                {orgChartTeamOptions.length > 0 && (() => {
+                  // Disposition par équipe (retour de test : deux réglages
+                  // « membres » / « sous-équipes » étaient incompréhensibles).
+                  // Une seule notion : HORIZONTALE = tout ce que contient
+                  // l'équipe s'étale côte à côte (membres sur une ligne,
+                  // sous-équipes côte à côte) ; VERTICALE = tout s'empile
+                  // (membres l'un sous l'autre, sous-équipes l'une sous
+                  // l'autre à droite). Une équipe cochée dans une liste est
+                  // retirée de l'autre ; aucune = disposition par défaut
+                  // (membres empilés, sous-équipes côte à côte).
+                  const toggle = (id, setMine, setOther) => {
+                    setMine((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+                    setOther((prev) => prev.filter((x) => x !== id));
+                  };
+                  const count = (n, word) => (n ? n + " équipe" + (n > 1 ? "s" : "") + " " + word : "");
+                  return (
+                    <div className="lp-field lp-orgmetro-layout-field" style={{ marginTop: 10 }}>
+                      <label>Disposition des équipes</label>
+                      <p style={{ fontSize: 12, color: "var(--text-600)", margin: "0 0 8px" }}>
+                        Par défaut, les membres d'une équipe sont l'un sous l'autre et ses sous-équipes côte à côte.
+                        <strong> Horizontale</strong> : membres ET sous-équipes côte à côte. <strong>Verticale</strong> : membres ET
+                        sous-équipes les uns sous les autres (sous-équipes rangées à droite du tronc). Pris en compte à l'enregistrement.
+                      </p>
+                      <div className="lp-orgmetro-layout-row">
+                        <span className="lp-orgmetro-layout-name">Verticale</span>
+                        <EntityFilterMultiSelect
+                          options={orgChartTeamOptions}
+                          selectedIds={orgMetroStackedTeams}
+                          onToggle={(id) => toggle(id, setOrgMetroStackedTeams, setOrgMetroHorizontalTeams)}
+                          onSelectAll={() => { setOrgMetroStackedTeams(orgChartTeamOptions.map((t) => t.id)); setOrgMetroHorizontalTeams([]); }}
+                          onDeselectAll={() => setOrgMetroStackedTeams([])}
+                          placeholder="Rechercher une équipe…"
+                          emptyLabel="Aucune équipe"
+                          summary={count(orgMetroStackedTeams.length, "à la verticale")}
+                          compact
+                        />
+                      </div>
+                      <div className="lp-orgmetro-layout-row">
+                        <span className="lp-orgmetro-layout-name">Horizontale</span>
+                        <EntityFilterMultiSelect
+                          options={orgChartTeamOptions}
+                          selectedIds={orgMetroHorizontalTeams}
+                          onToggle={(id) => toggle(id, setOrgMetroHorizontalTeams, setOrgMetroStackedTeams)}
+                          onSelectAll={() => { setOrgMetroHorizontalTeams(orgChartTeamOptions.map((t) => t.id)); setOrgMetroStackedTeams([]); }}
+                          onDeselectAll={() => setOrgMetroHorizontalTeams([])}
+                          placeholder="Rechercher une équipe…"
+                          emptyLabel="Aucune équipe"
+                          summary={count(orgMetroHorizontalTeams.length, "à l'horizontale")}
+                          compact
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             )}
             <hr className="lp-divider" style={{ margin: "10px 0" }} />

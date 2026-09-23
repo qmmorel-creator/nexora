@@ -188,6 +188,9 @@ function AnnotationsHarness() {
     ],
   });
   const orgCtx = { teams: orgTeams, teamMembers: orgMembers, teamFolders: [], tasks: [], workshops: [], statuses };
+  // Fiche du 3e widget Organigramme : réglage « Disposition des équipes ».
+  const [stackWidget, setStackWidget] = useState({ id: "w-orgmetro-3", type: "orgchart", title: "Organigramme", orgMetroStackedTeams: ["o-tech"], orgMetroHorizontalTeams: [] });
+  const [stackFormOpen, setStackFormOpen] = useState(false);
   const ctx = { projects, statuses, taskTypes: seedTaskTypes, milestoneTypes: harnessMilestoneTypes, workshops: harnessWorkshops, tasks, teamMembers: seedTeamMembers, projectFolders: [], expenses: [], myName: null };
   const appearance = { gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, accentColor: "#FF7A3D", density: "comfortable", milestoneStyle: "flag", radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, viewIcons: {} };
   const annotations = {
@@ -495,7 +498,20 @@ function AnnotationsHarness() {
           <WidgetOrgChart widget={{ id: "w-orgmetro-2", type: "orgchart" }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
         </div>
         <div id="harness-orgmetro-stacked" style={{ width: 1200, height: 900, marginBottom: 18 }}>
-          <WidgetOrgChart widget={{ id: "w-orgmetro-3", type: "orgchart", orgMetroStackedTeams: ["o-tech"] }} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
+          <WidgetOrgChart widget={stackWidget} ctx={orgCtx} staffing={[]} onFilterPerson={noop} />
+        </div>
+        <button type="button" id="harness-open-orgchart-form" onClick={() => setStackFormOpen(true)} style={{ marginBottom: 8 }}>Ouvrir la fiche de l'Organigramme</button>
+        <div>
+          {stackFormOpen && (
+            <WidgetFormModal
+              widget={stackWidget}
+              existingWidgets={[]}
+              ctx={{ ...ctx, ...orgCtx }}
+              pageFilter={null}
+              onSave={(data) => { setStackWidget((w) => ({ ...w, ...data })); setStackFormOpen(false); }}
+              onClose={() => setStackFormOpen(false)}
+            />
+          )}
         </div>
       </div>
       <div>

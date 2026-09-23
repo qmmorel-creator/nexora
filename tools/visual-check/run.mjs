@@ -1642,6 +1642,32 @@ try {
     };
   }, stackHost);
   await page.locator(stackHost).screenshot({ path: path.join(dir, "orgmetro-stacked.png") });
+  // Fiche du widget : « Disposition des équipes ». Exploration passe à
+  // l'horizontale puis en verticale : elle quitte alors la liste horizontale
+  // (une équipe n'a qu'une disposition). Produit en verticale : ses
+  // sous-équipes s'empilent après enregistrement.
+  await page.locator("#harness-open-orgchart-form").click();
+  await page.waitForSelector(".lp-modal .lp-orgmetro-layout-field", { timeout: 10000 });
+  const layoutRow = (name) => page.locator(".lp-modal .lp-orgmetro-layout-row", { hasText: name });
+  const pick = async (rowName, team) => {
+    await layoutRow(rowName).locator(".lp-entity-filter-trigger").click();
+    await layoutRow(rowName).locator(".lp-entity-filter-search input").fill(team);
+    await layoutRow(rowName).locator(".lp-entity-filter-option", { hasText: team }).first().locator("input").click();
+    await layoutRow(rowName).locator(".lp-entity-filter-trigger").click();
+  };
+  await pick("Horizontale", "Exploration");
+  await pick("Verticale", "Exploration");
+  await pick("Verticale", "Produit");
+  orgMetro.layoutSummaries = await page.locator(".lp-modal .lp-orgmetro-layout-row .lp-entity-filter-trigger").allInnerTexts();
+  await page.locator(".lp-modal").first().screenshot({ path: path.join(dir, "orgchart-layout-settings.png") });
+  await page.locator(".lp-modal .lp-btn-primary").last().click();
+  await page.waitForTimeout(400);
+  orgMetro.produitStacked = await page.evaluate((sel) => {
+    const root = document.querySelector(sel);
+    const box = (name) => root.querySelector(`.lp-orgmetro-badge[aria-label="Équipe ${name}"] .lp-orgmetro-badge-bg`)?.getBoundingClientRect();
+    const core = box("Cœur produit"), expl = box("Exploration"), prod = box("Produit");
+    return core && expl && prod ? { stacked: expl.top > core.bottom, right: core.left > prod.left + prod.width / 2 - 1 } : null;
+  }, stackHost);
   // Widget étroit : la barre d'outils tient dans le cadre.
   orgMetro.narrow = await page.evaluate(() => {
     const host = document.querySelector("#harness-orgmetro-narrow .lp-orgmetro");
@@ -2563,6 +2589,8 @@ if (!orgMetro.error) {
   expect(orgMetro.horizontalRow === 1 && orgMetro.horizontalSameY, `Organigramme Métro : l'équipe Opérations n'est pas en disposition horizontale (${orgMetro.horizontalRow}, ${orgMetro.horizontalSameY})`);
   expect(orgMetro.afterReset, "Recentrer : l'ordre par défaut des lignes n'est pas rétabli");
   expect(orgMetro.modeButtons === 0 && orgMetro.hierarchyPanels === 0, `Organigramme : la vue hiérarchique n'a pas été retirée (${orgMetro.modeButtons} bouton(s) de mode, ${orgMetro.hierarchyPanels} élément(s) hiérarchique(s))`);
+  expect(JSON.stringify(orgMetro.layoutSummaries) === JSON.stringify(["3 équipes à la verticale", "Aucune équipe"]), `Disposition des équipes : listes ${JSON.stringify(orgMetro.layoutSummaries)} — une équipe cochée en verticale doit quitter l'horizontale`);
+  expect(orgMetro.produitStacked && orgMetro.produitStacked.stacked && orgMetro.produitStacked.right, `Disposition des équipes : « Produit » en verticale n'empile pas ses sous-équipes après enregistrement (${JSON.stringify(orgMetro.produitStacked)})`);
   expect(orgMetro.stacked && orgMetro.stacked.below && orgMetro.stacked.rightOfTrunk, `Organigramme Métro : les sous-équipes de « Technique » ne sont pas empilées à droite (${JSON.stringify(orgMetro.stacked)})`);
   expect(orgMetro.narrow && orgMetro.narrow.scale >= 0.6, `Organigramme Métro étroit : zoom d'ouverture ${orgMetro.narrow && orgMetro.narrow.scale}, au moins 0,6 attendu pour rester lisible`);
   expect(orgMetro.narrow && orgMetro.narrow.legendHidden, "Organigramme Métro étroit : la légende reste affichée dans un widget de 380 px");
