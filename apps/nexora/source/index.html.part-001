@@ -74,8 +74,8 @@ function CountUp({ value, animate, duration = 800 }) {
   }, [value, animate]);
   return display;
 }
-function ProgressBar({ value, color, gradient, trackColor, animate }) {
-  const fill = gradient && gradient.enabled ? `linear-gradient(90deg, ${gradient.from}, ${gradient.to})` : color;
+function ProgressBar({ value, color, trackColor, animate }) {
+  const fill = color;
   // Anime le remplissage de 0 jusqu'à la valeur réelle, une seule fois au montage
   // (jamais ensuite, pour ne pas rejouer l'animation à chaque mise à jour en
   // direct de la progression — ex. glisser-déposer). Optionnel (Réglages > Apparence).
@@ -93,17 +93,14 @@ function ProgressBar({ value, color, gradient, trackColor, animate }) {
   }, [value, animate]);
   return <div className="lp-progress-track" style={trackColor ? { background: trackColor } : undefined}><div className={"lp-progress-fill" + (animate ? " lp-anim-bar-fill" : "")} style={{ width: `${displayValue}%`, background: fill }} /></div>;
 }
-function sliderGradientBg(value, gradient, statusColor) {
+function sliderGradientBg(value, statusColor) {
   const v = Math.max(0, Math.min(100, value));
-  if (statusColor) {
-    // Mode "avancement selon le statut" : couleur du statut sur fond blanc cassé
-    return `linear-gradient(90deg, ${statusColor} 0%, ${statusColor} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
-  }
-  const from = gradient && gradient.enabled ? gradient.from : "#C7CED9";
-  const to = gradient && gradient.enabled ? gradient.to : "#C7CED9";
-  return `linear-gradient(90deg, ${from} 0%, ${to} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
+  // Avancement coloré selon le statut de la tâche (fixe, #325) — sans statut
+  // reconnu, couleur neutre plutôt qu'un dégradé personnalisable.
+  const color = statusColor || "#C7CED9";
+  return `linear-gradient(90deg, ${color} 0%, ${color} ${v}%, #EAEDF3 ${v}%, #EAEDF3 100%)`;
 }
-function FieldValue({ fieldKey, task, ctx, gradient, progressByStatus, onProgressChange }) {
+function FieldValue({ fieldKey, task, ctx, onProgressChange }) {
   if (fieldKey === "checklist") {
     const list = task.checklist || [];
     if (!list.length) return null;
@@ -141,16 +138,18 @@ function FieldValue({ fieldKey, task, ctx, gradient, progressByStatus, onProgres
   }
   if (fieldKey === "milestone") return task.milestone ? <span className="lp-chip">◆ Jalon</span> : null;
   if (fieldKey === "progress") {
-    const statusColor = progressByStatus ? ctx.statuses.find((s) => s.id === task.statusId)?.color : null;
+    // Avancement coloré selon le statut de la tâche : comportement désormais
+    // fixe (#325), plus de réglage pour en changer.
+    const statusColor = ctx.statuses.find((s) => s.id === task.statusId)?.color;
     if (onProgressChange) {
       return (
         <span className="lp-row-progress lp-row-progress-slider" onClick={(e) => e.stopPropagation()}>
-          <input type="range" min="0" max="100" value={task.progress} onChange={(e) => onProgressChange(task.id, Number(e.target.value))} className="lp-gradient-slider" draggable={false} onMouseDown={(e) => e.stopPropagation()} style={{ background: sliderGradientBg(task.progress, gradient, statusColor) }} />
+          <input type="range" min="0" max="100" value={task.progress} onChange={(e) => onProgressChange(task.id, Number(e.target.value))} className="lp-gradient-slider" draggable={false} onMouseDown={(e) => e.stopPropagation()} style={{ background: sliderGradientBg(task.progress, statusColor) }} />
           <span>{task.progress}%</span>
         </span>
       );
     }
-    return <span className="lp-row-progress"><ProgressBar value={task.progress} color={statusColor || "var(--text-muted)"} gradient={statusColor ? null : gradient} trackColor={statusColor ? "#EAEDF3" : undefined} /><span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{task.progress}%</span></span>;
+    return <span className="lp-row-progress"><ProgressBar value={task.progress} color={statusColor || "var(--text-muted)"} trackColor={statusColor ? "#EAEDF3" : undefined} /><span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{task.progress}%</span></span>;
   }
   if (fieldKey === "start") return <span className="lp-chip lp-mono">Début {fmtShort(task.start)}</span>;
   if (fieldKey === "end") return <span className="lp-chip lp-mono">Fin {fmtShort(task.end)}</span>;
@@ -1275,7 +1274,6 @@ function GlobalStyles() {
         .lp-group-toggle{ background:none; border:none; cursor:pointer; color:var(--text-600); display:flex; padding:0; flex:0 0 auto; }
         .lp-group-toggle:hover{ color:var(--text-900); }
         .lp-gantt-bar-fill{ position:absolute; left:0; top:0; bottom:0; opacity:0.92; overflow:hidden; }
-        .lp-gantt-bar-texture{ position:absolute; inset:0; background-image:repeating-linear-gradient(45deg, rgba(255,255,255,0.16) 0 5px, transparent 5px 10px); pointer-events:none; }
         .lp-gantt-bar-label{ position:relative; z-index:1; font-size:11px; font-weight:600; color:#fff; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .lp-gantt-handle{ position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; z-index:2; }
         .lp-gantt-handle.left{ left:0; } .lp-gantt-handle.right{ right:0; }
@@ -1338,39 +1336,6 @@ function GlobalStyles() {
         .lp-heatmap-wrap{ padding:16px 20px; display:flex; flex-direction:column; height:calc(100vh - 70px); overflow-y:auto; }
         .lp-heatmap-top{ flex:0 0 auto; }
         .lp-heatmap-bottom{ flex:1 1 auto; min-height:0; margin-top:16px; }
-        /* ---- Vue Timeline ---- */
-        .lp-tl-wrap{ padding:4px 0; }
-        .lp-tl-scroll{ overflow-x:hidden; overflow-y:hidden; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); padding:0 20px; }
-        .lp-tl-canvas{ position:relative; }
-        .lp-tl-axis{ position:relative; height:3px; background:var(--border); border-radius:3px; }
-        .lp-tl-tick{ position:absolute; top:0; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; }
-        .lp-tl-tick-mark{ width:1.5px; height:12px; background:var(--text-600); opacity:0.5; }
-        .lp-tl-guides{ position:absolute; left:0; right:0; z-index:0; pointer-events:none; }
-        .lp-tl-guide{ position:absolute; top:0; bottom:0; width:1px; background:var(--border); opacity:0.6; }
-        .lp-tl-tick-label{ font-family:var(--font-mono); font-size:9.5px; font-weight:700; color:var(--text-600); white-space:nowrap; margin-top:3px; }
-        .lp-tl-top-header{ position:relative; height:22px; padding:0 20px; margin-bottom:6px; }
-        .lp-tl-top-seg{ position:absolute; top:0; transform:translateX(-50%); font-family:var(--font-mono); font-size:10.5px; font-weight:700; color:var(--text-900); background:var(--paper-soft); padding:2px 9px; border-radius:4px; white-space:nowrap; }
-        .lp-tl-today-wrap{ position:absolute; top:-8px; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; z-index:3; }
-        .lp-tl-today-badge{ width:18px; height:18px; border-radius:50%; background:var(--signal); display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(10,15,25,0.2); border:2px solid #fff; }
-        .lp-tl-today-line{ width:2px; height:10px; background:var(--signal); border-radius:2px; }
-        .lp-tl-connector{ position:absolute; width:2px; transform:translateX(-50%); opacity:0.5; }
-        .lp-tl-dot{ position:absolute; top:50%; width:13px; height:13px; border-radius:50%; transform:translate(-50%,-50%); border:2px solid #fff; box-shadow:0 0 0 1px rgba(10,15,25,0.12); z-index:2; }
-        .lp-tl-dep-link{ position:absolute; top:50%; height:2.5px; transform:translateY(-50%); background:repeating-linear-gradient(90deg, var(--accent) 0 5px, transparent 5px 9px); opacity:0.85; z-index:1; pointer-events:none; box-shadow:0 0 0 1.5px rgba(255,255,255,0.7); }
-        .lp-tl-bubble{ position:absolute; background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius-sm); padding:7px 10px; box-shadow:0 4px 14px rgba(10,15,25,0.06); cursor:pointer; z-index:1; transition:border-color .15s,transform .15s; height:76px; box-sizing:border-box; overflow:hidden; display:flex; flex-direction:column; gap:4px; }
-        .lp-tl-bubble-progress-fill{ position:absolute; left:0; top:0; bottom:0; opacity:0.16; z-index:0; pointer-events:none; transition:width .05s; }
-        .lp-tl-bubble-progress-track{ position:absolute; left:0; right:0; bottom:0; height:9px; z-index:2; cursor:ew-resize; }
-        .lp-tl-bubble-progress-track:hover{ background:rgba(10,15,25,0.05); }
-        .lp-tl-bubble-head, .lp-tl-bubble-meta{ position:relative; z-index:1; }
-        .lp-tl-bubble:hover{ border-color:var(--border-strong); transform:translateY(-2px); }
-        .lp-tl-bubble-head{ display:flex; align-items:flex-start; gap:6px; flex:1 1 auto; min-height:0; }
-        .lp-tl-bubble-date{ display:inline-block; font-family:var(--font-mono); font-size:9px; font-weight:700; color:#fff; padding:2px 6px; border-radius:4px; flex:0 0 auto; margin-top:1px; }
-        .lp-tl-bubble-title{ font-size:12px; font-weight:700; color:var(--text-900); line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; flex:1 1 auto; min-height:0; }
-        .lp-tl-bubble-meta{ display:flex; flex-wrap:wrap; gap:4px; flex:0 0 auto; max-height:20px; overflow:hidden; }
-        .lp-tl-list{ margin-top:18px; }
-        .lp-tl-list-row{ display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:var(--radius-sm); cursor:pointer; }
-        .lp-tl-list-row:hover{ background:var(--paper-soft); }
-        .lp-tl-list-title{ flex:1; font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-tl-list-date{ font-family:var(--font-mono); font-size:11px; color:var(--text-600); font-weight:600; white-space:nowrap; }
         /* ---- Vue Radar ---- */
         .lp-radar-wrap{ padding:4px 0; }
         .lp-radar-body{ display:flex; gap:10px; align-items:flex-start; }
@@ -1457,6 +1422,8 @@ function GlobalStyles() {
         .lp-widget-head{ display:flex; align-items:center; gap:6px; cursor:grab; flex:0 0 auto; padding:8px 12px; border-bottom:1px solid var(--border); position:relative; z-index:2; background:var(--surface); }
         .lp-widget-head-toolbar{ display:flex; align-items:center; gap:5px; flex:1 1 auto; min-width:20px; overflow-x:auto; overflow-y:hidden; cursor:default; scrollbar-width:none; }
         .lp-widget-head-toolbar::-webkit-scrollbar{ display:none; }
+        /* Focus Journée (#333) : sélecteur de date compact dans l'en-tête du widget. */
+        .lp-focusday-date-input{ height:24px; padding:0 4px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text-900); font-size:11px; font-family:inherit; box-sizing:border-box; max-width:120px; }
         .lp-widget-head:active{ cursor:grabbing; }
         .lp-widget-title{ flex:1; font-family:var(--font-mono); font-size:12px; font-weight:600; color:var(--text-600); text-transform:uppercase; letter-spacing:.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .lp-widget-body{ flex:1; min-height:0; overflow:auto; padding:12px; position:relative; z-index:0; isolation:isolate; }
@@ -2303,7 +2270,11 @@ function GlobalStyles() {
         .lp-widget-treemap-legend-item.is-active{ border-color:var(--text-900); color:var(--text-900); }
         .lp-widget-treemap-legend-item.is-empty{ opacity:.45; cursor:default; }
         .lp-widget-treemap-legend-mark{ width:9px; height:9px; border-radius:3px; flex:0 0 auto; }
-        .lp-widget-treemap-scroll{ flex:1 1 auto; min-height:0; overflow:auto; }
+        /* #332 : le layout (pavés + tuiles de groupe) est recalculé pour
+           toujours tenir dans l'espace mesuré — jamais de scrollbar ici, y
+           compris en cas d'arrondi ; overflow:hidden est le filet de
+           sécurité, pas le mécanisme d'adaptation. */
+        .lp-widget-treemap-scroll{ flex:1 1 auto; min-height:0; overflow:hidden; }
         .lp-widget-treemap-canvas{ position:relative; width:100%; }
         .lp-widget-treemap-group-label{ position:absolute; display:flex; align-items:center; gap:5px; font-family:var(--font-mono); font-size:9.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--text-600); }
         .lp-widget-treemap-group-label::after{ content:""; flex:1; height:1px; background:var(--border); }
@@ -2902,7 +2873,12 @@ function GlobalStyles() {
         .lp-bubble-title{
           font-size:11px; font-weight:700; line-height:1.22; color:var(--text-900);
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
-          overflow:hidden; min-width:0; flex:1 1 auto;
+          overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 auto;
+          /* Un mot isolé plus large que la bulle (référence sans espace, URL…)
+             ne doit jamais dépasser du cadre avant que l'ellipsis n'intervienne
+             (#324) : sans ce retour à la ligne forcé, la dernière ligne visible
+             se coupait au milieu du mot, sans aucun signe de troncature. */
+          overflow-wrap:anywhere; word-break:break-word;
         }
         /* Titres entiers (#122) : le rognage a deux lignes saute, et la bulle
            recoit en hauteur exactement ce que le rendu a MESURE — la meme
@@ -2980,6 +2956,7 @@ function GlobalStyles() {
         .lp-bubble-milestone-title{
           font-size:9.5px; font-weight:700; color:var(--text-900); line-height:1.15; text-align:center;
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+          text-overflow:ellipsis; overflow-wrap:anywhere; word-break:break-word;
         }
         .lp-bubble-milestone-date{ font-family:var(--font-mono); font-size:8.5px; font-weight:700; color:var(--text-muted); }
         /* Champs SOUS la bulle, alignés sur son bord gauche. Ils sont dans la
@@ -4327,6 +4304,10 @@ function GlobalStyles() {
         .lp-emoji-btn{ width:30px; height:30px; border-radius:7px; border:1px solid var(--border); background:var(--surface); cursor:pointer; font-size:15px; }
         .lp-emoji-btn.active{ border-color:var(--accent); background:#FFF6E6; }
         .lp-manage-item{ display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--border); min-width:0; }
+        /* En-tête de groupe (dossier) dans une liste de projets groupée
+           (#326) : même rangée que les projets qu'elle chapeaute, mais sans
+           bordure ni action — un simple repère visuel, pas un élément géré. */
+        .lp-manage-item.lp-manage-group-title{ border-bottom:none; padding-bottom:2px; font-weight:700; font-size:12.5px; color:var(--text-600); }
         .lp-manage-item > .lp-manage-name{ overflow:hidden; }
         .lp-manage-item .lp-icon-btn{ position:relative; }
         /* Templates de tâche (#183) : mêmes rangées .lp-manage-item que les
@@ -4350,31 +4331,6 @@ function GlobalStyles() {
 
 
 
-
-        .lp-fixedpage-wrap{ padding:4px 0 30px; max-width:760px; margin:0 auto; display:flex; flex-direction:column; gap:22px; }
-        .lp-fixedpage-head{ display:flex; flex-direction:column; gap:2px; }
-        .lp-fixedpage-title{ font-size:20px; font-weight:800; color:var(--text-900); }
-        .lp-fixedpage-sub{ font-size:12.5px; color:var(--text-600); text-transform:capitalize; }
-        .lp-fixedpage-section{ display:flex; flex-direction:column; gap:8px; }
-        .lp-fixedpage-section-muted{ opacity:0.85; }
-        .lp-fixedpage-section-title{ display:flex; align-items:center; gap:7px; font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-600); }
-        .lp-fixedpage-section-title span{ background:var(--paper-soft); color:var(--text-600); font-size:10.5px; font-weight:800; border-radius:999px; padding:1px 7px; }
-        .lp-fixedpage-section-title-danger{ color:var(--danger-text); }
-        .lp-fixedpage-section-title-danger span{ background:color-mix(in srgb, var(--danger) 14%, transparent); color:var(--danger-text); }
-        .lp-fixedpage-section-empty{ font-size:12px; color:var(--text-muted); padding:6px 2px; }
-        .lp-fixedpage-section-more{ font-size:11.5px; font-weight:600; color:var(--text-600); padding:2px 2px 0; }
-        .lp-fixedpage-rows{ display:flex; flex-direction:column; gap:5px; }
-        .lp-fixedpage-row{ display:flex; align-items:center; gap:9px; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:9px 12px; cursor:pointer; text-align:left; font:inherit; width:100%; box-sizing:border-box; }
-        .lp-fixedpage-row:hover{ background:var(--paper-soft); border-color:var(--border-strong); }
-        .lp-fixedpage-row-dot{ flex:0 0 auto; width:9px; height:9px; border-radius:50%; }
-        .lp-fixedpage-row-title{ flex:1; min-width:0; font-size:13px; font-weight:650; color:var(--text-900); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-fixedpage-row-project{ flex:0 0 auto; font-size:11px; font-weight:600; color:var(--text-600); max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .lp-fixedpage-row-meeting{ flex:0 0 auto; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:0.02em; color:var(--text-600); background:var(--paper-soft); border-radius:6px; padding:2px 6px; }
-        .lp-fixedpage-row-late{ flex:0 0 auto; font-size:10.5px; font-weight:800; color:var(--danger-text); background:color-mix(in srgb, var(--danger) 12%, transparent); border-radius:999px; padding:2px 8px; }
-        .lp-fixedpage-weekflow{ display:flex; flex-direction:column; gap:18px; }
-        .lp-fixedpage-weekflow-day{ display:flex; flex-direction:column; gap:8px; padding-top:14px; border-top:1px solid var(--border); }
-        .lp-fixedpage-weekflow-day:first-child{ border-top:none; padding-top:0; }
-        .lp-fixedpage-weekflow-day-label{ font-size:13px; font-weight:800; color:var(--text-900); text-transform:capitalize; }
 
         /* Calendrier (#294) : grille continue + frise horaire du jour. Tokens
            life-* de la couche visuelle commune ; les couleurs des tâches
@@ -4534,16 +4490,6 @@ function GlobalStyles() {
         .lp-task-times-allday span{ font-size:13px; font-weight:500; text-transform:none; }
         .lp-task-times-duration{ align-self:center; font-size:12px; color:var(--text-600); }
         .lp-task-times-hint{ flex-basis:100%; font-size:12px; color:var(--text-600); }
-        .lp-notifications-wrap{ padding:2px 0; }
-        .lp-notifications-list{ display:flex; flex-direction:column; gap:5px; }
-        .lp-notification-row{ display:flex; align-items:flex-start; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; cursor:pointer; }
-        .lp-notification-row.unread{ background:#F0F7FF; border-color:#BFDBFE; }
-        .lp-notification-row:hover{ background:var(--paper-soft); }
-        .lp-notification-row.unread:hover{ background:#E0EFFF; }
-        .lp-notification-dot{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--signal); margin-top:5px; }
-        .lp-notification-main{ flex:1; min-width:0; }
-        .lp-notification-message{ font-size:13px; color:var(--text-900); font-weight:600; }
-        .lp-notification-time{ font-size:11px; color:var(--text-600); margin-top:3px; }
         .lp-manage-item:last-child{ border-bottom:none; }
         .lp-manage-name{
           flex:1;
@@ -4616,7 +4562,6 @@ function GlobalStyles() {
         .lp-settings-fold-body{ padding-top:2px; }
         .lp-big-section-head{ display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; padding:6px 2px; }
         .lp-big-section-head:hover h3{ text-decoration:underline; }
-        .lp-tl-inner-toolbar{ padding-top: 2px; }
         .lp-upload-row{ display:flex; align-items:center; gap:10px; }
         .lp-upload-btn{ display:flex; align-items:center; gap:6px; border:1px dashed var(--border); background:var(--paper); padding:7px 11px; border-radius:8px; font-size:12px; cursor:pointer; }
         .lp-icon-preview{ width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
@@ -7179,7 +7124,6 @@ export default function LePlan({ currentUser, onSignOut }) {
   const [gcalSyncState, setGcalSyncState] = useState({ eventsByTaskId: {} });
   const [metaFilters, setMetaFilters] = useState(defaultMetaFilters());
   const [metaTemporalBlocks, setMetaTemporalBlocks] = useState([]);
-  const [notifications, setNotifications] = useState([]);
   const [syncedCalendarSettings, setSyncedCalendarSettings] = useState({
     zone: "A",
     department: "69",
@@ -7227,7 +7171,6 @@ export default function LePlan({ currentUser, onSignOut }) {
   }, []);
 
   const [favorites, setFavorites] = useState([]); // [{ type: "project"|"view"|"dashboard"|"task", id }]
-  const unreadNotificationsCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
   // Module Devis (Quentin Morel Engineering) : calculs partagés dans
   // NEXORA:QUOTES (part-000). quoteClients est un mini-registre réutilisable
   // d'un devis à l'autre ; quoteSettings est un objet-carte comme
@@ -7363,7 +7306,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:teamMembers", "nexora:momentumSnapshots", "nexora:activityLog",
     "nexora:taskBaselines", "nexora:taskArchive",
     "nexora:metaTemporalBlocks",
-    "nexora:notifications", "nexora:favorites",
+    "nexora:favorites",
     // Ajoutées après le 409 observé en posant un filtre de criticité sur un
     // Mini-Gantt. Ce sont des listes d'objets identifiables comme les autres,
     // mais elles manquaient ici : un conflit les BLOQUAIT au lieu de les
@@ -7951,7 +7894,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     ["gcalSyncState", "nexora:gcalSyncState", setGcalSyncState],
     ["metaFilters", "nexora:metaFilters", setMetaFilters],
     ["metaTemporalBlocks", "nexora:metaTemporalBlocks", setMetaTemporalBlocks],
-    ["notifications", "nexora:notifications", setNotifications],
     ["syncedCalendarSettings", "nexora:syncedCalendarSettings", setSyncedCalendarSettings],
     ["startupPref", "nexora:startupPref", setStartupPref],
     ["projectDefaultView", "nexora:projectDefaultView", setProjectDefaultView],
@@ -8029,7 +7971,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     "nexora:gcalSyncState": gcalSyncState,
     "nexora:metaFilters": metaFilters,
     "nexora:metaTemporalBlocks": metaTemporalBlocks,
-    "nexora:notifications": notifications,
     "nexora:syncedCalendarSettings": syncedCalendarSettings,
     "nexora:startupPref": startupPref,
     "nexora:projectDefaultView": projectDefaultView,
@@ -8749,7 +8690,6 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:metaFilters", metaFilters); }, [metaFilters, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:metaTemporalBlocks", metaTemporalBlocks); }, [metaTemporalBlocks, dataLoaded]);
   // Journal d'exécution plafonné pour ne pas grossir indéfiniment (même logique que activityLog).
-  useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:notifications", notifications); }, [notifications, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:syncedCalendarSettings", syncedCalendarSettings); }, [syncedCalendarSettings, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:startupPref", startupPref); }, [startupPref, dataLoaded]);
   useEffect(() => { if (dataLoaded && !syncBlocked) persistKey("nexora:projectDefaultView", projectDefaultView); }, [projectDefaultView, dataLoaded]);
@@ -8821,7 +8761,7 @@ export default function LePlan({ currentUser, onSignOut }) {
 
   const [view, setView] = useState("projects");
   const [filters, setFilters] = useState(defaultFilters());
-  const [appearance, setAppearance] = useState({ gradient: { enabled: true, from: "#FF7A3D", to: "#1FA971" }, ganttBg: "#EAEDF3", barBg: "#C7CED9", progressColorByStatus: false, radiusStyle: "sharp", progressTexture: false, ganttShowSubtasks: false, sharedTrunkStyle: "gradient", ...FROZEN_APPEARANCE });
+  const [appearance, setAppearance] = useState({ radiusStyle: "sharp", ganttShowSubtasks: false, sharedTrunkStyle: "gradient", ...FROZEN_APPEARANCE });
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
 
   useEffect(() => {
@@ -8832,7 +8772,12 @@ export default function LePlan({ currentUser, onSignOut }) {
           const res = await storageGetWithTimeout("nexora:appearance", 10000);
           if (res && res.value && !cancelled) {
             const parsed = JSON.parse(res.value);
-            setAppearance((a) => ({ ...a, ...parsed, gradient: { ...a.gradient, ...(parsed.gradient || {}) }, ...FROZEN_APPEARANCE }));
+            // Réglages retirés (#325) : un ancien enregistrement peut encore les
+            // porter, on ne les fait pas revivre dans l'état en mémoire.
+            delete parsed.gradient; delete parsed.barBg; delete parsed.ganttBg;
+            delete parsed.progressColorByStatus; delete parsed.progressTexture;
+            delete parsed.heatmapMinColor; delete parsed.heatmapMaxColor;
+            setAppearance((a) => ({ ...a, ...parsed, ...FROZEN_APPEARANCE }));
           }
         }
       } catch (e) { /* aucune préférence enregistrée pour l'instant */ }
@@ -9292,9 +9237,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   useEffect(() => { if (savedViewsLoaded && !syncBlocked) persistKey("nexora:views", savedViews); }, [savedViews, savedViewsLoaded]);
 
   const [viewPrefs, setViewPrefs] = useState({
-    list: { groupBy: "status", visibleFields: ["project", "status", "start", "end", "progress"] },
     gantt: normalizeMiniGanttViewPrefs({ groupBy: "project" }),
-    timeline: { minDate: null, maxDate: null, zoom: "month", cardFields: ["project", "status"] },
     radar: { year: new Date().getFullYear(), colorBy: "project" },
     projects: { fields: ["status"], collapsed: {}, zoomKey:"auto", networkMode:false, showRiskBadges:true },
     table: { cols: ["project", "status", "start", "end", "progress", "assignee"] },
@@ -9310,9 +9253,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           if (res && res.value && !cancelled) {
             const parsed = JSON.parse(res.value);
             setViewPrefs((v) => ({
-              list: { ...v.list, ...parsed.list },
               gantt: normalizeMiniGanttViewPrefs({ ...v.gantt, ...parsed.gantt }),
-              timeline: { ...v.timeline, ...parsed.timeline },
               radar: { ...v.radar, ...parsed.radar },
               projects: { ...v.projects, ...parsed.projects },
               table: { ...v.table, ...parsed.table },
@@ -9641,9 +9582,7 @@ export default function LePlan({ currentUser, onSignOut }) {
     }
   };
 
-  const setListPrefs = (patch) => setViewPrefs((v) => ({ ...v, list: { ...v.list, ...(typeof patch === "function" ? patch(v.list) : patch) } }));
   const setGanttPrefs = (patch) => setViewPrefs((v) => ({ ...v, gantt: normalizeMiniGanttViewPrefs({ ...v.gantt, ...(typeof patch === "function" ? patch(v.gantt) : patch) }) }));
-  const setTimelinePrefs = (patch) => setViewPrefs((v) => ({ ...v, timeline: { ...v.timeline, ...(typeof patch === "function" ? patch(v.timeline) : patch) } }));
   const setRadarPrefs = (patch) => setViewPrefs((v) => ({ ...v, radar: { ...v.radar, ...(typeof patch === "function" ? patch(v.radar) : patch) } }));
   const setProjectsPrefs = (patch) => setViewPrefs((v) => ({ ...v, projects: { ...v.projects, ...(typeof patch === "function" ? patch(v.projects) : patch) } }));
   const setTablePrefs = (patch) => setViewPrefs((v) => ({ ...v, table: { ...v.table, ...(typeof patch === "function" ? patch(v.table) : patch) } }));
@@ -10582,6 +10521,19 @@ export default function LePlan({ currentUser, onSignOut }) {
     setTaskModal(null);
   };
 
+  // Dupliquer depuis la fiche (#334) : la création est optimiste comme le reste
+  // de l'app (setTasks local, pas d'attente réseau) — la fiche d'origine se
+  // ferme et celle de la copie s'ouvre dans le même geste, sans écran vide
+  // entre les deux (voir `key` posée sur <TaskModal> plus bas, qui force le
+  // remontage de la fiche pour ne jamais laisser voir les champs de l'ancienne
+  // tâche pendant qu'on affiche déjà l'identifiant de la nouvelle).
+  const duplicateTaskFromModal = (task) => {
+    const copy = buildTaskDuplicate(task, statuses, projects, taskTypes);
+    setTasks((prev) => [...prev, copy]);
+    setTaskModalDefaults(null);
+    setTaskModal(copy);
+  };
+
   const normalizeProjectName = (value) => String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -11140,7 +11092,6 @@ export default function LePlan({ currentUser, onSignOut }) {
     setViewPrefs((prev)=>{
       if (targetView==="projects") return {...prev,projects:{...prev.projects,zoomKey:zoom}};
       if (targetView==="gantt") return {...prev,gantt:{...prev.gantt,zoomKey:zoom}};
-      if (targetView==="timeline") return {...prev,timeline:{...prev.timeline,zoom}};
       return prev;
     });
   };
@@ -11148,7 +11099,7 @@ export default function LePlan({ currentUser, onSignOut }) {
   // Détermine automatiquement le niveau temporel le plus lisible pour le ou
   // les projets que l'utilisateur vient de sélectionner.
   const autoTemporalZoomForProjects = (targetView, projectIds=[]) => {
-    if (targetView === "projects" || targetView === "timeline") return "auto";
+    if (targetView === "projects") return "auto";
 
     const scoped = tasks.filter((t)=>
       projectIds.includes(t.projectId) &&
@@ -11838,9 +11789,6 @@ export default function LePlan({ currentUser, onSignOut }) {
                 >
                   <IconGlyph icon={appearance.viewIcons?.[meta.key] || meta.iconKey} size={14} />
                   {meta.label}
-                  {key === "notifications" && unreadNotificationsCount > 0 && (
-                    <span className="lp-filter-badge" style={{ background: "var(--danger)", color: "#fff" }}>{unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}</span>
-                  )}
                 </button>
               );
             })}
@@ -12015,7 +11963,7 @@ export default function LePlan({ currentUser, onSignOut }) {
           {/* La barre d'onglets suit EXACTEMENT Réglages > Vues affichées : les
               vues cochées, dans l'ordre choisi. Elle ne montrait auparavant
               qu'une liste figée de six vues projet, ce qui rendait sans effet
-              les cases Calendrier, Semaine, Cockpit, Devis… et le réordonnancement.
+              les cases Calendrier, Devis… et le réordonnancement.
               Le tableau de bord garde son bouton central dédié. */}
           {view !== "dashboard" && (
             <div className="lp-detail-tabbar">
@@ -12064,12 +12012,10 @@ export default function LePlan({ currentUser, onSignOut }) {
             </div>
           )}
           {view === "gantt" && <MiniGanttView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} setTasks={setTasks} prefs={viewPrefs.gantt} setPrefs={setGanttPrefs} metaBlocks={allMetaTemporalBlocks} toolbarSlot={viewToolbarSlot} pushToast={pushToast} taskBaselines={taskBaselines} />}
-          {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} />}
-          {view === "timeline" && <TimelineView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.timeline} setPrefs={setTimelinePrefs} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} setTasks={setTasks} onAdd={openNewTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onBulkDelete={requestBulkDelete} onFreezeReference={requestFreezeReference} listPrefs={viewPrefs.list} setListPrefs={setListPrefs} toolbarSlot={viewToolbarSlot} />}
+          {view === "heatmap" && <HeatmapView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
           {view === "radar" && <RadarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} appearance={appearance} prefs={viewPrefs.radar} setPrefs={setRadarPrefs} toolbarSlot={viewToolbarSlot} />}
           {view === "today" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={null} boardId={TODAY_BOARD_ID} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={todayPresentationTasks} ctx={ctx} widgets={todayActivePage?.widgets || []} setWidgets={setActiveTodayWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} financeProQuotes={quotes} financeProBillingSchedule={proBillingSchedule} financeProPayments={proPayments} financeProMissions={proMissions} financeProClients={quoteClients} dashboardName="Aujourd'hui" appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={todayPages} activePageId={todayActivePageId} onSwitchPage={switchTodayPage} onAddPage={addTodayPage} onRenamePage={renameTodayPage} onDeletePage={deleteTodayPage} onDuplicatePage={duplicateTodayPage} onUpdatePageFilter={updateTodayPageFilter} onUpdatePageMeta={updateTodayPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} setTeams={setTeams} setTeamFolders={setTeamFolders} habitLog={habitLog} setHabitLog={setHabitLog} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("meta"); setSettingsOpen(true); }} onOpenHabitThemes={() => { setSettingsTab("habitThemes"); setSettingsOpen(true); }} onOpenTeamsSettings={() => { setSettingsTab("peopleTeams"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
           {view === "table" && <TableView tasks={filteredTasks} ctx={ctx} setTasks={setTasks} onOpen={openEditTask} onAdd={openNewTask} onDelete={requestDeleteTask} onBulkDelete={requestBulkDelete} toolbarSlot={viewToolbarSlot} prefs={viewPrefs.table} setPrefs={setTablePrefs} taskBaselines={taskBaselines} />}
-          {view === "notifications" && <NotificationsView notifications={notifications} setNotifications={setNotifications} toolbarSlot={viewToolbarSlot} />}
           {view === "quotes" && <QuotesView quotes={quotes} clients={quoteClients} settings={quoteSettings} setSettings={setQuoteSettings} catalog={quoteCatalog} skills={quoteSkills} onSaveCatalogEntry={saveCatalogEntry} onDeleteCatalogEntry={deleteCatalogEntry} onSaveSkill={saveSkill} onDeleteSkill={deleteSkill} onSaveQuote={saveQuote} onDuplicateQuote={duplicateQuote} onDeleteQuote={deleteQuote} onSetStatus={setQuoteStatus} onAddClient={addQuoteClient} onSaveClient={saveQuoteClient} onDeleteClient={deleteQuoteClient} onFacturer={facturerQuote} toolbarSlot={viewToolbarSlot} />}
           {view === "invoices" && <InvoicesView invoices={invoices} quotes={quotes} clients={quoteClients} settings={quoteSettings} setSettings={setQuoteSettings} catalog={quoteCatalog} skills={quoteSkills} onSaveCatalogEntry={saveCatalogEntry} onDeleteCatalogEntry={deleteCatalogEntry} onSaveSkill={saveSkill} onDeleteSkill={deleteSkill} onSaveInvoice={saveInvoice} onDuplicateInvoice={duplicateInvoice} onSetStatus={setInvoiceStatus} onCreateCreditNote={createCreditNote} onAddClient={addQuoteClient} autoOpenId={pendingOpenInvoiceId} onAutoOpened={() => setPendingOpenInvoiceId(null)} toolbarSlot={viewToolbarSlot} />}
           {view === "financePro" && <FinanceProView
@@ -12084,8 +12030,6 @@ export default function LePlan({ currentUser, onSignOut }) {
             proObligations={proObligations} setProObligations={setProObligations}
             toolbarSlot={viewToolbarSlot}
           />}
-          {view === "cockpit" && <CockpitView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} onOpenWeek={() => setView("weekFlow")} />}
-          {view === "weekFlow" && <WeekFlowView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} />}
           {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
@@ -12094,7 +12038,7 @@ export default function LePlan({ currentUser, onSignOut }) {
       </main>
 
       {taskModal !== null && (
-        <TaskModal task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} setTeamMembers={setTeamMembers} gradient={appearance.gradient} progressColorByStatus={appearance.progressColorByStatus} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
+        <TaskModal key={taskModal?.id || "new"} task={taskModal} defaults={taskModalDefaults} projects={projects} dashboards={dashboards || []} statuses={statuses} taskTypes={taskTypes} tasks={tasks} teamMembers={teamMembers} setTeamMembers={setTeamMembers} shortcutPrefs={shortcutPrefs} onClose={() => setTaskModal(null)} onSave={saveTask} onDelete={requestDeleteTask} onDuplicate={duplicateTaskFromModal} onMarkDone={markTaskDone} onCycleStatus={cycleStatus} onOpenImpactLine={setImpactLineTaskId} isFavoriteTask={!!taskModal?.id && isFavorite("task",taskModal.id)} onToggleFavoriteTask={(id)=>toggleFavorite("task",id)} onOpenRelatedTask={(t) => { setTaskModalDefaults(null); setTaskModal(t); }} taskBaselines={taskBaselines} milestoneTypes={milestoneTypes} activityLog={activityLog} />
       )}
       {impactLineTaskId && (
         <ImpactLineModal

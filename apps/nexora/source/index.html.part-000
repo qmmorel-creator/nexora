@@ -775,7 +775,9 @@ import {
   // payée (Banknote), créer un avoir (FileMinus).
   Receipt, Banknote, FileMinus,
   // Calendrier (#294) : icône du widget.
-  CalendarDays
+  CalendarDays,
+  // Focus Journée (#333) : icône du widget.
+  Target
 } from 'https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
@@ -2681,7 +2683,17 @@ const sortedByName = (list) => [...list].sort(byName);
 // ces helpers reconstituent la hiérarchie à la volée plutôt que de dupliquer
 // la structure ailleurs (#217).
 // ----------------------------------------------------------------------------
-const folderChildren = (folders, parentId) => sortedByName(folders.filter((f) => (f.parentId || null) === (parentId || null)));
+// Un dossier réordonné manuellement (#326) porte un champ `order` explicite ;
+// les dossiers qui n'en ont pas (jamais déplacés) restent triés par nom entre
+// eux, et passent après ceux qui ont un ordre explicite.
+const folderChildren = (folders, parentId) => {
+  const siblings = folders.filter((f) => (f.parentId || null) === (parentId || null));
+  return [...siblings].sort((a, b) => {
+    const oa = Number.isFinite(a.order) ? a.order : Infinity;
+    const ob = Number.isFinite(b.order) ? b.order : Infinity;
+    return oa !== ob ? oa - ob : byName(a, b);
+  });
+};
 // Tous les descendants (sous-dossiers, petits-sous-dossiers…) d'un dossier, id inclus.
 const folderSubtreeIds = (folders, id) => {
   const ids = [id];
@@ -3100,22 +3112,14 @@ const ALL_VIEWS_META = [
   // classique. Son unique rendu est désormais le Mini Gantt.
   { key: "gantt", label: "Gantt", iconKey: "tabler:chart-gantt" },
   { key: "heatmap", label: "Heat map", iconKey: "tabler:flame" },
-  { key: "timeline", label: "Timeline + Liste", iconKey: "tabler:timeline" },
   { key: "radar", label: "Radar", iconKey: "tabler:radar" },
   { key: "today", label: "Aujourd'hui", iconKey: "tabler:sun" },
-  // Pages fixes, sans widget (#193 suite) : Cockpit du jour reprend l'esprit
-  // d'« Aujourd'hui » mais priorisé plutôt qu'exhaustif ; Semaine fusionne le
-  // radar de la semaine et les alertes en une seule page (retenue : option C,
-  // flux chronologique).
-  { key: "cockpit", label: "Cockpit", iconKey: "tabler:gauge" },
-  { key: "weekFlow", label: "Semaine", iconKey: "tabler:calendar-week" },
   // Calendrier (#294) : grille continue de semaines, frise horaire du jour au
-  // clic. Destination de haut niveau, comme Semaine.
+  // clic. Destination de haut niveau.
   { key: "calendar", label: "Calendrier", iconKey: "tabler:calendar-month" },
   { key: "table", label: "Tableur", iconKey: "tabler:table" },
-  { key: "notifications", label: "Notifications", iconKey: "tabler:bell" },
-  // Module Devis (Quentin Morel Engineering) : destination de haut niveau,
-  // comme Notifications — pas de contexte projet nécessaire pour l'ouvrir.
+  // Module Devis (Quentin Morel Engineering) : destination de haut niveau —
+  // pas de contexte projet nécessaire pour l'ouvrir.
   { key: "quotes", label: "Devis", iconKey: "tabler:file-invoice" },
   // Module Facture — construit sur le modèle du module Devis (#devis-v2
   // suite), même statut de destination de haut niveau.
@@ -3126,22 +3130,21 @@ const ALL_VIEWS_META = [
   { key: "financePro", label: "Finance PRO", iconKey: "tabler:wallet" },
 ];
 // Vues de détail — apparaissent en onglets horizontaux, jamais en accès rapide.
-const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "timeline", "radar", "table"];
+const PROJECT_TAB_VIEW_KEYS = ["projects", "gantt", "heatmap", "radar", "table"];
 // Vues de tâches qui suivent le projet / dossier sélectionné dans la barre
-// latérale (#304) : les vues projet, plus Aujourd'hui, Cockpit, Semaine et
-// Calendrier. Sélectionner un projet depuis l'une d'elles la conserve quand
-// aucune vue par défaut n'est imposée.
-const PROJECT_SCOPED_VIEW_KEYS = [...PROJECT_TAB_VIEW_KEYS, "today", "cockpit", "weekFlow", "calendar"];
+// latérale (#304) : les vues projet, plus Aujourd'hui et Calendrier.
+// Sélectionner un projet depuis l'une d'elles la conserve quand aucune vue
+// par défaut n'est imposée.
+const PROJECT_SCOPED_VIEW_KEYS = [...PROJECT_TAB_VIEW_KEYS, "today", "calendar"];
 
 // Destinations de haut niveau proposées par le menu « Accès rapide » de la
 // barre du haut — pas de contexte projet nécessaire pour les ouvrir.
-const QUICK_ACCESS_VIEW_KEYS = ["projects", "today", "cockpit", "weekFlow", "calendar", "dashboard", "notifications", "quotes", "invoices", "financePro"];
+const QUICK_ACCESS_VIEW_KEYS = ["projects", "today", "calendar", "dashboard", "quotes", "invoices", "financePro"];
 
 const PROJECT_DEFAULT_VIEW_OPTIONS = [
   { key:"projects", label:"Métro" },
   { key:"gantt", label:"Gantt" },
   { key:"heatmap", label:"Heat map" },
-  { key:"timeline", label:"Timeline + Liste" },
   { key:"radar", label:"Radar" },
   { key:"table", label:"Tableur" },
   // #137 : ouvre la vue Tableau de bord au lieu d'une vue de tâches — utile
@@ -3158,9 +3161,6 @@ const projectNavigationZoomOptions = (viewKey) => {
   if (viewKey === "gantt") return [
     { key:"day", label:"Jour" }, { key:"week", label:"Semaine" }, { key:"month", label:"Mois" },
     { key:"quarter", label:"Trimestre" }, { key:"year", label:"Année" }, { key:"5years", label:"5 ans" }
-  ];
-  if (viewKey === "timeline") return [
-    { key:"day", label:"Jour" }, { key:"week", label:"Semaine" }, { key:"month", label:"Mois" }, { key:"auto", label:"Auto" }
   ];
   return [];
 };

@@ -144,11 +144,14 @@ assert.match(builtSource, /lp-pm-risk is-/);
   assert.match(builtSource, /ADVANCED_FILTER_FIELDS = \[[^\]]*"criticality"/, "criticality absent des filtres avancés");
   assert.match(builtSource, /WIDGET_GROUPBY_FIELDS = \[[^\]]*"criticality"/, "criticality absent du groupement");
   assert.match(builtSource, /MINIGANTT_ROW_FIELD_OPTIONS = \[[^\]]*"criticality"/, "criticality absent des champs de ligne du Mini-Gantt");
-  // Deux capsules distinctes, l'une en lecture (FieldValue) et l'autre éditable
-  // (InlineEditableField) : chercher le motif une seule fois laisserait passer la
-  // suppression de l'une des deux. Garde éprouvé en supprimant chacune.
+  // Une seule capsule reste depuis la suppression de la vue Timeline + Liste
+  // (#328) : celle en lecture (FieldValue), partagée par le Mini-Gantt et son
+  // survol. La capsule éditable vivait dans InlineEditableField, propre à
+  // ListView (elle-même seulement accessible depuis Timeline + Liste) —
+  // supprimée avec elle. L'édition de la criticité reste possible via la
+  // fiche tâche complète (CriticalitySelect dans TaskModal, hors de ce motif).
   const capsules = [...builtSource.matchAll(/fieldKey === "criticality"/g)].length;
-  assert.equal(capsules, 2, `capsules de criticité : ${capsules} trouvée(s), 2 attendues (lecture et édition)`);
+  assert.equal(capsules, 1, `capsules de criticité : ${capsules} trouvée(s), 1 attendue (lecture, FieldValue)`);
 
   // 2 bis. Cinq listes énumèrent les champs À LA MAIN, sans passer par FIELD_DEFS.
   //    Le premier lot les avait manquées : le champ apparaissait dans les filtres
