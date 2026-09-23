@@ -11450,7 +11450,10 @@ function WidgetOrgChart({ widget, ctx, staffing, onFilterPerson, onOpenTeamsSett
     if (hiddenTeamIds && hiddenTeamIds.length) list = list.filter((t) => !hiddenTeamIds.includes(String(t?.id)));
     return list;
   }, [ctx.teams, hiddenTeamIds, folderId]);
-  const members = ctx.teamMembers || [];
+  // Utilisateurs inactifs propres à CE widget (widget.orgChartInactiveMembers)
+  // : grisés dans les deux vues, à leur place.
+  const inactiveKeys = widget?.orgChartInactiveMembers;
+  const members = useMemo(() => orgChartMembersWithInactive(ctx.teamMembers || [], inactiveKeys), [ctx.teamMembers, inactiveKeys]);
   const cellsByMember = useMemo(() => staffingByCell(staffing), [staffing]);
 
   // Réglage « Afficher les ressources sans équipe » (retour de test) : true
@@ -16541,6 +16544,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [orgChartRootLabel, setOrgChartRootLabel] = useState(
     typeof widget?.orgChartRootLabel === "string" ? widget.orgChartRootLabel : ""
   );
+  // Utilisateurs inactifs propres à ce widget (retour de test) : cases à
+  // cocher avec recherche rapide. Un widget jamais réglé part de l'ancien
+  // drapeau de la fiche utilisateur (voir orgChartMembersWithInactive).
+  const orgChartMemberOptions = useMemo(
+    () => sortedByName(ctx.teamMembers || []).map((m) => ({ id: orgChartMemberKey(m), name: m.name, color: m.color || null })),
+    [ctx.teamMembers]
+  );
+  const [orgChartInactiveMembers, setOrgChartInactiveMembers] = useState(() => (
+    Array.isArray(widget?.orgChartInactiveMembers)
+      ? widget.orgChartInactiveMembers.map(String)
+      : (ctx.teamMembers || []).filter(memberIsInactive).map(orgChartMemberKey)
+  ));
   // Vue de la Heatmap habitudes (retour de test) : déplacée ici depuis le
   // corps du widget, qui n'a plus que la case et sa légende à afficher.
   const [habitHeatmapView, setHabitHeatmapView] = useState(HABIT_HEATMAP_VIEWS.includes(widget?.habitHeatmapView) ? widget.habitHeatmapView : "month");
@@ -16753,7 +16768,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         data.scatterWindowAfter = Number(scatterWindowAfter);
       }
     }
-    if (type === "orgchart") { data.orgChartView = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); }
+    if (type === "orgchart") { data.orgChartView = orgChartMode; data.orgChartOrientation = orgChartOrientation; data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
@@ -17113,6 +17128,22 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                   onSelectAll={() => setOrgChartHiddenTeamIds([])}
                   onDeselectAll={() => setOrgChartHiddenTeamIds(orgChartTeamOptions.map((t) => t.id))}
                   emptyLabel="Aucune équipe affichée"
+                />
+              </div>
+            )}
+            {orgChartMemberOptions.length > 0 && (
+              <div className="lp-field lp-orgchart-inactive-field" style={{ marginTop: 10 }}>
+                <label>Désigner les utilisateurs inactifs <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(propres à ce widget — ils restent à leur place, grisés)</span></label>
+                <EntityFilterMultiSelect
+                  options={orgChartMemberOptions}
+                  selectedIds={orgChartInactiveMembers}
+                  onToggle={(id) => setOrgChartInactiveMembers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+                  onSelectAll={() => setOrgChartInactiveMembers(orgChartMemberOptions.map((o) => o.id))}
+                  onDeselectAll={() => setOrgChartInactiveMembers([])}
+                  placeholder="Rechercher un utilisateur…"
+                  compact
+                  emptyLabel="Aucun utilisateur inactif"
+                  summary={orgChartInactiveMembers.length ? orgChartInactiveMembers.length + " utilisateur" + (orgChartInactiveMembers.length > 1 ? "s" : "") + " inactif" + (orgChartInactiveMembers.length > 1 ? "s" : "") : ""}
                 />
               </div>
             )}

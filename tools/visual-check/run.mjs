@@ -1543,6 +1543,17 @@ try {
   await page.locator(`${host} .lp-orgmetro-station[aria-label^="Emma Roux"]`).first().click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   orgMetro.memberModal = await page.locator(".lp-modal input").evaluateAll((els) => els.map((e) => e.value).join("|"));
+  // Fiche utilisateur : équipes dans une liste déroulante à cases à cocher
+  // avec recherche (fermée par défaut), plus de case « Utilisateur inactif ».
+  orgMetro.memberTeamsClosed = await page.locator(".lp-modal .lp-member-teams-select .lp-entity-filter-panel").count();
+  orgMetro.memberTeamsLooseBoxes = await page.locator(".lp-modal .lp-field > .lp-checkbox-line input[type=checkbox]").count();
+  orgMetro.memberInactiveBox = await page.locator(".lp-modal", { hasText: "Utilisateur inactif" }).count();
+  await page.locator(".lp-modal .lp-member-teams-select .lp-entity-filter-trigger").click();
+  await page.locator(".lp-modal .lp-member-teams-select .lp-entity-filter-search input").fill("plate");
+  orgMetro.memberTeamsFiltered = await page.locator(".lp-modal .lp-member-teams-select .lp-entity-filter-option").allInnerTexts();
+  orgMetro.memberTeamsBulk = await page.locator(".lp-modal .lp-member-teams-select .lp-entity-filter-actions").count();
+  await page.locator(".lp-modal").first().screenshot({ path: path.join(dir, "member-teams.png") });
+  await page.locator(".lp-modal .lp-member-teams-select .lp-entity-filter-trigger").click();
   await page.keyboard.press("Escape");
   await page.waitForTimeout(200);
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal .lp-icon-btn, .lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
@@ -2714,6 +2725,9 @@ if (!orgMetro.error) {
   expect(orgMetro.modalStillOpen === 1, "Fiche équipe : Échap dans le champ du poste a fermé toute la fiche");
   expect(orgMetro.collapsedBadge === 1 && orgMetro.collapsedStations > 0 && orgMetro.collapsedLeadKept >= 1 && orgMetro.collapsedHidden === 0 && orgMetro.collapsedModal === 0, `Organigramme Métro : le clic simple ne replie pas la ligne en gardant le responsable (${JSON.stringify({ b: orgMetro.collapsedBadge, s: orgMetro.collapsedStations, l: orgMetro.collapsedLeadKept, h: orgMetro.collapsedHidden, m: orgMetro.collapsedModal })})`);
   expect(orgMetro.expandedStations === 0, `Organigramme Métro : le second clic ne déplie pas la ligne (${orgMetro.expandedStations})`);
+  expect(orgMetro.memberTeamsClosed === 0 && orgMetro.memberTeamsLooseBoxes === 0 && orgMetro.memberTeamsBulk === 0, `Fiche utilisateur : les équipes doivent être dans une liste déroulante fermée par défaut (${JSON.stringify({ c: orgMetro.memberTeamsClosed, l: orgMetro.memberTeamsLooseBoxes, b: orgMetro.memberTeamsBulk })})`);
+  expect(orgMetro.memberTeamsFiltered.length === 1 && /Plateforme/.test(orgMetro.memberTeamsFiltered[0]), `Fiche utilisateur : la recherche d'équipe ne filtre pas (${JSON.stringify(orgMetro.memberTeamsFiltered)})`);
+  expect(orgMetro.memberInactiveBox === 0, "Fiche utilisateur : la case « Utilisateur inactif » doit être passée dans les paramètres du widget");
   expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le double-clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
   expect(orgMetro.relations === 3, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 3 attendues`);
   expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);

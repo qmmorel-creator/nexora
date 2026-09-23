@@ -33,7 +33,7 @@ const api = vm.runInThisContext(
   `const STAFFING_COLOR_CHOICES = ["#64748B"];\n` +
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
-  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive,` +
+  ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive,` +
   ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
@@ -726,4 +726,25 @@ test("Ligne repliée : seul le responsable reste, le compte et les autres lignes
   assert.deepEqual(branch(layout, "team:c").stations.map((s) => s.name), branch(open, "team:c").stations.map((s) => s.name));
   assert.equal(branch(open, "team:a").collapsed, false);
   assertNoOverlap(layout);
+});
+
+test("Utilisateurs inactifs propres au widget : la liste du widget prime sur l'ancien drapeau de la fiche", () => {
+  const members = [member("Ana", { id: "a1" }), member("Bob", { id: "b1", inactive: true }), member("Cléo", { id: "c1" })];
+  const flags = (list) => list.map((m) => [m.name, api.memberIsInactive(m)]);
+  // Widget jamais réglé : l'ancien drapeau reste la référence, sans copie.
+  assert.equal(api.orgChartMembersWithInactive(members, undefined), members);
+  // Widget réglé : seule sa liste compte, même vide.
+  assert.deepEqual(flags(api.orgChartMembersWithInactive(members, ["a1"])), [["Ana", true], ["Bob", false], ["Cléo", false]]);
+  assert.deepEqual(flags(api.orgChartMembersWithInactive(members, [])), [["Ana", false], ["Bob", false], ["Cléo", false]]);
+  // Les fiches d'origine ne sont jamais modifiées ; une fiche inchangée est réutilisée telle quelle.
+  const out = api.orgChartMembersWithInactive(members, ["a1"]);
+  assert.equal(members[0].inactive, undefined);
+  assert.equal(out[2], members[2]);
+  // Deux widgets, deux réglages : chacun grise ses propres personnes dans le plan.
+  const teams = [team("t", { leadName: "Ana" })];
+  const withTeam = members.map((m) => ({ ...m, teamIds: ["t"] }));
+  const w1 = metro(teams, api.orgChartMembersWithInactive(withTeam, ["c1"])).layout;
+  const w2 = metro(teams, api.orgChartMembersWithInactive(withTeam, [])).layout;
+  assert.deepEqual(w1.stations.filter((s) => s.inactive).map((s) => s.name), ["Cléo"]);
+  assert.deepEqual(w2.stations.filter((s) => s.inactive).map((s) => s.name), []);
 });

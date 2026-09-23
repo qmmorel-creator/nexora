@@ -256,7 +256,9 @@ chaîne de managers, une personne multi-équipe, un nom long, une personne sans
   est centré dans sa pastille ;
 - relations propres au widget : trois tracés et deux légendes dans le Métro
   comme dans la vue hiérarchique, qui porte aussi des points blancs aux
-  embranchements ; l'utilisateur inactif est grisé dans les deux vues ;
+  embranchements ; l'utilisateur désigné inactif dans les paramètres du widget
+  est grisé dans les deux vues ; la fiche utilisateur choisit ses équipes dans
+  une liste déroulante à cases à cocher avec recherche ;
 - zoom avant, « Ajuster à l'écran », déplacement au glisser, masquage des
   correspondances, mise en évidence au survol ;
 - le clic sur une station ouvre la fiche utilisateur ; le clic simple sur un
