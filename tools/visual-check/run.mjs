@@ -1546,6 +1546,19 @@ try {
   await page.locator(`${host} .lp-orgmetro-badge[aria-label="Équipe Plateforme"]`).click();
   await page.waitForSelector(".lp-modal", { timeout: 10000 });
   orgMetro.teamModal = await page.locator(".lp-modal input").evaluateAll((els) => els.map((e) => e.value).join("|"));
+  // Fiche équipe : un clic sur un membre ouvre son poste dans cette équipe ;
+  // Entrée enregistre, Échap annule sans fermer la fiche.
+  await page.locator(".lp-modal .lp-team-role-trigger", { hasText: "Zoé Faure" }).first().click();
+  await page.locator(".lp-modal .lp-team-role-edit input").fill("Architecte cloud");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(250);
+  orgMetro.roleSaved = await page.locator(".lp-modal .lp-team-role-trigger", { hasText: "Zoé Faure" }).first().innerText();
+  await page.locator(".lp-modal .lp-team-role-trigger", { hasText: "Zoé Faure" }).first().click();
+  await page.locator(".lp-modal .lp-team-role-edit input").fill("Ne pas garder");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(250);
+  orgMetro.roleAfterEscape = await page.locator(".lp-modal .lp-team-role-trigger", { hasText: "Zoé Faure" }).first().innerText();
+  orgMetro.modalStillOpen = await page.locator(".lp-modal").count();
   await page.keyboard.press("Escape");
   await page.waitForTimeout(200);
   if (await page.locator(".lp-modal").count()) await page.locator(".lp-modal button", { hasText: /Annuler|Fermer/ }).first().click().catch(() => {});
@@ -2614,6 +2627,9 @@ if (!orgMetro.error) {
   expect(orgMetro.hoverDimmed > 0, "Organigramme Métro : le survol ne met pas les relations en évidence");
   expect(orgMetro.hoverOccurrence === 1, `Organigramme Métro : ${orgMetro.hoverOccurrence} liaison(s) entre les occurrences d'une personne multi-équipe au survol, 1 attendue`);
   expect(/Emma Roux/.test(orgMetro.memberModal || ""), `Organigramme Métro : le clic sur une station n'ouvre pas la fiche utilisateur (${orgMetro.memberModal})`);
+  expect(/Architecte cloud/.test(orgMetro.roleSaved || ""), `Fiche équipe : le poste saisi au clic sur le membre n'est pas enregistré (${orgMetro.roleSaved})`);
+  expect(/Architecte cloud/.test(orgMetro.roleAfterEscape || "") && !/Ne pas garder/.test(orgMetro.roleAfterEscape || ""), `Fiche équipe : Échap n'annule pas la modification du poste (${orgMetro.roleAfterEscape})`);
+  expect(orgMetro.modalStillOpen === 1, "Fiche équipe : Échap dans le champ du poste a fermé toute la fiche");
   expect(/Plateforme/.test(orgMetro.teamModal || ""), `Organigramme Métro : le clic sur un bandeau n'ouvre pas la fiche équipe (${orgMetro.teamModal})`);
   expect(orgMetro.relations === 3, `Organigramme Métro : ${orgMetro.relations} relation(s) du widget, 3 attendues`);
   expect(JSON.stringify([...orgMetro.relationLabels].sort()) === JSON.stringify(["Binôme", "Support"]), `Organigramme Métro : légendes de relation ${JSON.stringify(orgMetro.relationLabels)}`);
