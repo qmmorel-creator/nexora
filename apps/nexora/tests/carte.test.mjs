@@ -23,7 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
-    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteDueAltitude, carteDueGround, carteInitials, carteAvatarAnchor, carteHazard,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
   };\n})`
@@ -159,9 +159,9 @@ test("modèles valides pour chaque thème, état et palier", () => {
   const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
   for (const th of C.CARTE_THEMES) {
     for (let st = 0; st <= 5; st++) for (const pr of ["high", "normal", "low"]) C.carteHubModel(th.id, st, "#123456", pr).forEach(check);
-    n.tasks.forEach((t) => [0, 1, 2].forEach((d) => C.carteTaskModel({ ...t, recurring: true, checklistTotal: 3, checklistDone: 1, stale: true, overdue: true }, th.id, { detail: d, secondaryColor: "#00ff00" }).forEach(check)));
+    n.tasks.forEach((t) => [0, 1, 2].forEach((d) => C.carteTaskModel({ ...t, checklistTotal: 3, checklistDone: 1, stale: true, overdue: true }, th.id, { detail: d, secondaryColor: "#00ff00" }).forEach(check)));
     C.carteDecorModel({ q: 1, r: 2, kind: "land" }, th.pal, th.id).forEach(check);
-    assert.equal(C.carteLegend(th.id).lines.length, 11);
+    assert.equal(C.carteLegend(th.id).lines.length, 10);
   }
   function check(p) {
     assert.ok(["box", "cyl", "hex", "cone", "pyr", "ball", "dome"].includes(p.g), p.g);
@@ -243,30 +243,44 @@ test("#395 : l'amplitude de construction est forte dans tous les thèmes", () =>
   });
 });
 
-test("#383 : l'altitude du sol suit la date de fin ; la mer pour le retard, l'imminent et le terminé", () => {
-  const t = (o) => ({ state: "todo", end: 100, dueIn: 30, overdue: false, ...o });
-  assert.equal(C.carteDueAltitude(t({ overdue: true, dueIn: -3 })), 0);
-  assert.equal(C.carteDueAltitude(t({ dueIn: 5 })), 0);
-  assert.equal(C.carteDueAltitude(t({ state: "done", dueIn: 60 })), 0);
-  assert.equal(C.carteDueAltitude(t({ end: null, dueIn: null })), 0.5);
-  const a14 = C.carteDueAltitude(t({ dueIn: 14 })), a30 = C.carteDueAltitude(t({ dueIn: 30 })), a60 = C.carteDueAltitude(t({ dueIn: 60 }));
-  assert.ok(a14 > 0 && a14 < a30 && a30 < a60 && a60 < 1, `${a14} < ${a30} < ${a60}`);
-  assert.equal(C.carteDueAltitude(t({ dueIn: 400 })), 1);
-  assert.ok(C.carteDueGround(1) - C.carteDueGround(0) <= 1.2, "sans exagération");
-});
-
-test("#383 : la case d'une tâche prend l'altitude de sa date de fin ; le bâtiment ne porte plus de socle", () => {
+test("#407 : le sol garde le relief du thème, quelle que soit l'échéance ; le bâtiment ne porte plus de socle", () => {
   const ctx = { projects: [{ id: "p", name: "P" }], statuses, taskTypes, projectFolders: [] };
-  const n = C.carteNormalize(ctx, [
+  const mk = (tasks) => { const n = C.carteNormalize(ctx, tasks, { now: NOW }); return { n, L: C.carteBuild({ projects: n.projects, tasks: n.tasks }) }; };
+  const empty = mk([]).L;
+  const { n, L } = mk([
     { id: "late", projectId: "p", statusId: "s1", start: "2026-09-01", end: "2026-09-10" },
     { id: "far", projectId: "p", statusId: "s1", start: "2026-09-20", end: "2026-12-20" },
     { id: "nod", projectId: "p", statusId: "s1" },
-  ], { now: NOW });
-  const L = C.carteBuild({ projects: n.projects, tasks: n.tasks });
-  const h = (id) => L.tiles[L.pois.find((p) => p.taskId === id).key].h;
-  assert.ok(h("late") < h("nod") && h("nod") < h("far"), `${h("late")} < ${h("nod")} < ${h("far")}`);
+  ]);
+  ["late", "far", "nod"].forEach((id) => {
+    const k = L.pois.find((p) => p.taskId === id).key;
+    assert.equal(L.tiles[k].h, empty.tiles[k].h, `${id} : même hauteur qu'une case vide`);
+    assert.equal(L.tiles[k].kind, empty.tiles[k].kind, `${id} : même nature de case`);
+  });
   const model = C.carteTaskModel({ ...n.tasks[0], state: "done" }, "ville", { detail: 0 });
   assert.equal(model.filter((p) => p.g === "hex" && p.s[1] > 0.1).length, 0, "aucun socle d'avancement");
+});
+
+test("#408 : le thème Volcan porte des coulées de lave, où l'on ne bâtit pas", () => {
+  const ctx = { projects: [{ id: "p", name: "P", folderId: "f" }], projectFolders: [{ id: "f", name: "F" }], statuses, taskTypes };
+  const tasks = Array.from({ length: 20 }, (_, i) => ({ id: "t" + i, projectId: "p", statusId: "s1" }));
+  const n = C.carteNormalize(ctx, tasks, { now: NOW });
+  const L = C.carteBuild({ projects: n.projects, tasks: n.tasks, themeOverrides: { f: "volcan" } });
+  const lava = Object.keys(L.tiles).filter((k) => L.tiles[k].lava && !L.tiles[k].road);
+  assert.ok(lava.length >= 4, `${lava.length} cases de lave`);
+  assert.ok(lava.every((k) => L.tiles[k].theme === "volcan"), "lave propre au Volcan");
+  assert.ok(!L.pois.some((p) => L.tiles[p.key].lava), "aucune tâche sur la lave");
+  const other = C.carteBuild({ projects: n.projects, tasks: n.tasks, themeOverrides: { f: "montagne" } });
+  assert.equal(Object.keys(other.tiles).filter((k) => other.tiles[k].lava).length, 0, "pas de lave ailleurs");
+});
+
+test("#409 : la récurrence n'est plus dessinée", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1", recurrence: { unit: "week", every: 1 } }], { now: NOW }).tasks[0];
+  const plain = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
+  C.CARTE_THEMES.forEach((th) => {
+    assert.deepEqual(C.carteTaskModel(base, th.id, { detail: 2 }), C.carteTaskModel(plain, th.id, { detail: 2 }), th.id);
+    assert.ok(!C.carteLegend(th.id).lines.some((it) => /Récurrente/.test(it[0])), `${th.id} : pas de ligne Récurrente`);
+  });
 });
 
 test("#379 : dalle claire et, pour une tâche à faire, jalon au fanion de son statut", () => {

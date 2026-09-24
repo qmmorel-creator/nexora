@@ -314,3 +314,18 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
   dessous. Une tâche terminée ou « info » ne porte aucun aléa.
 - En qualité basse ou avec « réduire les animations », le feu reste visible mais figé, sans
   braises.
+
+## Éclairs, relief, lave et récurrence (#406 à #409)
+
+- **En retard et urgente** (#406) : le tourbillon est retiré. Un nuage noir se forme très haut
+  dans le ciel, et trois gros éclairs en zigzag, entourés d'un halo, tombent jusqu'au pied de la
+  tâche sous une pluie dense. Chaque éclat dessine un tracé nouveau. Si les animations sont
+  réduites, les éclairs restent allumés et immobiles.
+- **Plus d'altitude selon l'échéance** (#407) : le sol garde le relief de son thème (terrasses,
+  dunes, cratère…) quelle que soit la date de fin. Le retard reste lisible par l'orage et
+  l'imminence par la lanterne.
+- **Lave du Volcan** (#408) : deux coulées incandescentes descendent du cratère et des poches
+  affleurent autour du sommet. La lave luit et pulse doucement. Aucune tâche ni aucun décor ne
+  s'y pose.
+- **Récurrence** (#409) : le mécanisme qui tournait (moulin, roue, éolienne) et la ligne
+  « Récurrente » de la légende sont retirés. La récurrence reste visible dans la fiche.
