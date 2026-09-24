@@ -5635,6 +5635,20 @@ function carteThemeOverrides(folders, prefThemes) {
   return out;
 }
 
+// Projets écartés par les filtres (#374) : ils ont des tâches, mais aucune
+// n'est affichée. Un projet vide n'est pas grisé : aucun filtre ne l'écarte.
+function carteDimmedProjects(tasks, visible) {
+  const total = {}, shown = {};
+  (tasks || []).forEach((t) => {
+    const k = t.projectId == null ? "__terre-inconnue__" : t.projectId;
+    total[k] = (total[k] || 0) + 1;
+    if (visible && visible.has(t.id)) shown[k] = (shown[k] || 0) + 1;
+  });
+  return new Set(Object.keys(total).filter((k) => !shown[k]));
+}
+const CARTE_DIM_TOP = "#b9bec5";
+function carteDimParts(parts) { return parts.map((p) => Object.assign({}, p, { c: carteMix(p.c, "#aeb3ba", 0.72), m: p.m === "g" ? "l" : p.m })); }
+
 // Légende contextuelle d'un thème (libellés affichés dans l'interface).
 function carteLegend(themeId) {
   const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
@@ -5650,7 +5664,8 @@ function carteMatches(task, f) {
   if (f.states && f.states.length && f.states.indexOf(task.state) === -1) return false;
   if (f.crit && f.crit !== "all" && task.criticality !== f.crit) return false;
   if (f.late && !task.overdue) return false;
-  if (!f.history && task.oldDone) return false;
+  // Les terminées sont visibles par défaut (#372) ; les masquer est un choix.
+  if (f.hideOldDone && task.oldDone) return false;
   return true;
 }
 const CARTE_STATE_KEYS = ["todo", "waiting", "doing", "done", "info"];
@@ -5666,7 +5681,7 @@ function normalizeCarteViewPrefs(p) {
     states: states.length ? states : CARTE_STATE_KEYS.slice(),
     crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
     late: !!v.late,
-    history: !!v.history,
+    hideOldDone: !!v.hideOldDone,
     quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     folderThemes,
     // Filtre général de Nexora (#364), même format que les widgets.

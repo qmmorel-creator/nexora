@@ -1874,6 +1874,7 @@ try {
   carte.panel = await cp.evaluate(() => ({
     projects: document.querySelectorAll(".lp-carte-panel-proj").length,
     tasks: document.querySelectorAll(".lp-carte-panel-tasks button").length,
+    done: [...document.querySelectorAll(".lp-carte-panel-tasks button")].filter((b) => /Terminée/.test(b.textContent)).length,
     kicker: (document.querySelector(".lp-carte-panel-kicker") || {}).textContent || "",
   }));
   // #366 : aucun identifiant d'icône technique dans les étiquettes.
@@ -1882,6 +1883,13 @@ try {
   carte.iconLeak = await cp.evaluate(() => [...document.querySelectorAll(".lp-carte-labels, .lp-carte-ribbon, .lp-carte-panel")].some((e) => /iconify:|tabler:/.test(e.textContent)));
   await cp.click('button:has-text("Recentrer")');
   await cp.waitForTimeout(1500);
+  // #374 : avec « Urgentes », les territoires sans tâche urgente sont grisés.
+  await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "urgent");
+  await cp.waitForTimeout(800);
+  carte.dim = await cp.evaluate(() => ({ dim: document.querySelectorAll(".lp-carte-badge.is-dim").length, all: document.querySelectorAll(".lp-carte-badge").length }));
+  await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "all");
+  await cp.waitForTimeout(800);
+  carte.dimAfter = await cp.$$eval(".lp-carte-badge.is-dim", (b) => b.length);
   // #364 : le moteur de filtre général s'ouvre depuis la carte.
   await cp.click('.lp-carte-toolbar button:has-text("Filtres")');
   await cp.waitForTimeout(500);
@@ -1908,6 +1916,17 @@ try {
   carte.detailSections = await cp.$$eval(".lp-carte-detail .lp-carte-section-title", (e) => e.map((x) => x.textContent));
   carte.tasksAfter = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
   await cp.screenshot({ path: path.join(dir, "carte.png") });
+  // #371 : l'avancement réglé dans le volet est enregistré par Nexora.
+  const progressOf = async (id) => cp.evaluate(async (tid) => { const all = JSON.parse((await window.storage.get("nexora:tasks")).value); const t = all.find((x) => x.id === tid); return t ? (t.progress || 0) : null; }, id);
+  carte.progressBefore = await progressOf(carte.selected);
+  const slider = await cp.$(".lp-carte-progress-edit input[type=range]");
+  carte.slider = !!slider;
+  if (slider) {
+    await slider.focus();
+    for (let i = 0; i < 4; i++) { await cp.keyboard.press(carte.progressBefore >= 80 ? "ArrowLeft" : "ArrowRight"); await cp.waitForTimeout(120); }
+    await cp.waitForTimeout(2500);
+    carte.progressAfter = await progressOf(carte.selected);
+  }
   // Filtre : masquer les tâches terminées.
   const chip = await cp.$('.lp-carte-fchip:text("Terminées")');
   if (chip) { await chip.click(); await cp.waitForTimeout(300); carte.chipPressed = await chip.getAttribute("aria-pressed"); }
@@ -2901,12 +2920,15 @@ if (!carte.error) {
   expect(carte.selected && carte.selected === carte.near, `Carte : Entrée ne sélectionne pas la tâche proche (${carte.selected} / ${carte.near})`);
   expect(carte.detailTitle && carte.detailTitle.indexOf(carte.nearTitle) !== -1, `Carte : la fiche de détail ne montre pas la tâche proche (« ${carte.detailTitle} » / « ${carte.nearTitle} »)`);
   expect(carte.detailSections.includes("Description") && carte.detailSections.includes("Champs"), `Carte : le volet de détail n'affiche pas la description et les champs (${JSON.stringify(carte.detailSections)})`);
+  expect(carte.slider && carte.progressAfter !== null && Math.abs(carte.progressAfter - carte.progressBefore) === 20, `Carte : régler l'avancement dans le volet n'est pas enregistré (${carte.progressBefore} → ${carte.progressAfter})`);
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
   expect(carte.chipPressed === "false", "Carte : le filtre « Terminées » ne se désactive pas");
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
   expect(carte.panel.projects >= 2 && carte.panel.tasks >= 1 && /Chantiers/.test(carte.panel.kicker), `Carte : le panneau ne liste pas la région Chantiers et ses tâches (${JSON.stringify(carte.panel)})`);
+  expect(carte.panel.done >= 1, `Carte : les tâches terminées n'apparaissent pas, alors que le filtre « Terminées » de la carte est actif (${JSON.stringify(carte.panel)})`);
+  expect(carte.dim.dim >= 1 && carte.dim.dim < carte.dim.all && carte.dimAfter === 0, `Carte : grisage des territoires écartés par les filtres incorrect (${JSON.stringify(carte.dim)}, après retour : ${carte.dimAfter})`);
   expect(!carte.iconLeak, "Carte : un identifiant d'icône (iconify:, tabler:) s'affiche en texte");
   expect(carte.filterModal, "Carte : le bouton « Filtres » n'ouvre pas le moteur de filtre général");
   expect(carte.mobile.panelHidden, "Carte mobile : le panneau de droite devrait rester replié par défaut");

@@ -23,7 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
-    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift, carteDimmedProjects,
   };\n})`
 )();
 
@@ -170,9 +170,11 @@ test("la construction d'une tâche en cours suit les paliers de progress", () =>
 
 test("filtres de la vue et préférences normalisées", () => {
   const t = { state: "done", criticality: "urgent", overdue: false, oldDone: true };
-  assert.equal(C.carteMatches(t, { states: ["done"], history: false }), false, "terminée depuis plus de 30 jours masquée par défaut");
-  assert.equal(C.carteMatches(t, { states: ["done"], history: true, crit: "urgent" }), true);
-  assert.equal(C.carteMatches(t, { states: ["todo"], history: true }), false);
+  assert.equal(C.carteMatches(t, { states: ["done"] }), true, "#372 : terminée visible par défaut, même ancienne");
+  assert.equal(C.carteMatches(t, { states: ["done"], hideOldDone: true }), false, "masquée seulement sur demande");
+  assert.equal(C.carteMatches(t, { states: ["done"], crit: "urgent" }), true);
+  assert.equal(C.carteMatches(t, { states: ["todo"] }), false);
+  assert.equal(C.normalizeCarteViewPrefs({}).hideOldDone, false);
   const p = C.normalizeCarteViewPrefs({ states: ["x"], crit: "nope", quality: "ultra", folderThemes: { f1: "volcan", f2: "inconnu" } });
   assert.deepEqual(p.states, ["todo", "waiting", "doing", "done", "info"]);
   assert.equal(p.crit, "all"); assert.equal(p.quality, "auto");
@@ -217,4 +219,12 @@ test("#364 et #365 : préférences du filtre général et du panneau", () => {
   assert.equal(C.normalizeCarteViewPrefs({ filter: [1] }).filter, null);
   assert.equal(C.normalizeCarteViewPrefs({}).panel, true);
   assert.equal(C.normalizeCarteViewPrefs({ panel: false }).panel, false);
+});
+
+test("#374 : grisés = projets avec des tâches mais aucune affichée ; un projet vide ne l'est pas", () => {
+  const tasks = [{ id: "a", projectId: "p1" }, { id: "b", projectId: "p1" }, { id: "c", projectId: "p2" }, { id: "d", projectId: null }];
+  const dim = C.carteDimmedProjects(tasks, new Set(["a"]));
+  assert.deepEqual([...dim].sort(), ["__terre-inconnue__", "p2"]);
+  assert.equal(dim.has("p3"), false);
+  assert.equal(C.carteDimmedProjects(tasks, new Set(["a", "c", "d"])).size, 0);
 });

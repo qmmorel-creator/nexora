@@ -4529,6 +4529,8 @@ function GlobalStyles() {
         .lp-carte-badge-core{ width:36px; height:36px; border-radius:50%; background:#fff; border:3px solid var(--c); display:grid; place-items:center; font-size:16px; font-weight:700; color:#18263d; box-sizing:border-box; }
         .lp-carte-badge small{ max-width:58px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10.5px; font-weight:650; color:#18263d; background:rgba(255,255,255,.88); border-radius:5px; padding:0 4px; }
         .lp-carte-badge.is-here .lp-carte-badge-core{ box-shadow:0 0 0 3px #245edb; }
+        .lp-carte-badge.is-dim, .lp-carte-label--project.is-dim{ opacity:.5; filter:grayscale(1); }
+        .lp-carte-panel-proj.is-dim{ opacity:.55; filter:grayscale(1); }
         .lp-carte-hud{ position:absolute; left:10px; top:84px; display:flex; flex-direction:column; align-items:flex-start; gap:6px; max-width:min(360px, calc(100% - 20px)); }
         .lp-carte-pill{ background:rgba(255,255,255,.95); border:1px solid rgba(24,38,61,.12); border-radius:999px; padding:5px 11px; font-size:12.5px; font-weight:600; color:#18263d; box-shadow:0 2px 8px rgba(24,38,61,.12); font-variant-numeric:tabular-nums; }
         .lp-carte-legend{ background:rgba(255,255,255,.96); border:1px solid rgba(24,38,61,.12); border-radius:12px; box-shadow:0 2px 8px rgba(24,38,61,.12); font-size:12px; color:#18263d; }
@@ -4590,6 +4592,20 @@ function GlobalStyles() {
         .lp-carte-world{ margin:0 0 12px; font-size:12px; color:var(--text-600); background:var(--bg); border-radius:8px; padding:8px 10px; }
         .lp-carte-actions{ display:flex; gap:8px; flex-wrap:wrap; }
         .lp-carte-actions-top{ margin-bottom:10px; }
+        .lp-carte-sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+        .lp-carte-title-input{ width:100%; box-sizing:border-box; font:inherit; font-size:17px; font-weight:650; color:var(--text-primary); border:1px solid transparent; border-radius:8px; padding:4px 6px; margin:2px 0 8px -6px; background:transparent; }
+        .lp-carte-title-input:hover{ border-color:var(--border); }
+        .lp-carte-title-input:focus{ outline:none; border-color:var(--accent); background:var(--surface); }
+        .lp-carte-input{ font:inherit; font-size:13px; color:var(--text-primary); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); padding:3px 6px; min-height:28px; max-width:100%; }
+        .lp-carte-input:focus{ outline:2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-color:var(--accent); }
+        .lp-carte-desc-input{ width:100%; box-sizing:border-box; font:inherit; font-size:13px; line-height:1.5; color:var(--text-primary); border:1px solid var(--border); border-radius:8px; padding:7px 9px; resize:vertical; background:var(--surface); }
+        .lp-carte-desc-input:focus{ outline:none; border-color:var(--accent); }
+        .lp-carte-progress-edit{ display:flex; flex-direction:column; gap:4px; background:var(--bg); border-radius:10px; padding:8px 10px; margin-bottom:4px; }
+        .lp-carte-progress-edit label{ font-size:12.5px; color:var(--text-600); }
+        .lp-carte-progress-edit label b{ color:var(--text-primary); font-variant-numeric:tabular-nums; }
+        .lp-carte-progress-edit input[type="range"]{ width:100%; accent-color:#e2a31b; min-height:28px; }
+        .lp-carte-progress-edit small{ font-size:11.5px; }
+        .lp-carte-btn-done{ border-color:#1FA971; color:#127a4f; }
         .lp-carte-section-title{ font-size:11px; font-weight:650; letter-spacing:.06em; text-transform:uppercase; color:var(--text-600); margin:14px 0 6px; }
         .lp-carte-checklist, .lp-carte-attachments{ list-style:none; margin:0 0 4px; padding:0; display:flex; flex-direction:column; gap:4px; font-size:13px; }
         .lp-carte-checklist li{ display:grid; grid-template-columns:16px 1fr; gap:6px; }
@@ -10685,6 +10701,13 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
   }, [todayScopedTasks]);
 
+  // Vue Carte (#372) : mêmes filtres de page, sauf « Montrer les tâches
+  // terminées » : dans la carte, c'est son propre filtre « Terminées » qui
+  // décide. Calculé seulement quand la carte est ouverte.
+  const carteTasksWithDone = useMemo(
+    () => (view === "carte" ? metaFilteredTasks.filter((t) => matchTaskFilters(t, { ...filters, showDone: true }, ctx)) : null),
+    [view, metaFilteredTasks, filters, ctx]
+  );
   const filteredTasks = useMemo(() => {
     const base = metaFilteredTasks.filter((t) => matchTaskFilters(t, filters, ctx));
     if (taskSort.field === "none") return base;
@@ -10964,6 +10987,36 @@ export default function LePlan({ currentUser, onSignOut }) {
       }
       return updated;
     });
+  };
+  // Vue Carte (#371) : modification explicite d'un champ depuis le volet de
+  // droite. Mêmes garde-fous que la fiche : une tâche Google Calendar se
+  // modifie dans Google Calendar, un type à statut imposé garde son statut,
+  // et le passage à « Terminé » suit markTaskDone (récurrence comprise).
+  const updateTaskFromCarte = (taskId, patch) => {
+    const target = tasks.find((t) => t.id === taskId);
+    if (!target || !patch || typeof patch !== "object") return;
+    if (isGoogleCalendarProjectId(target.projectId, projects)) {
+      pushToast({ message: "Une tâche Google Calendar se modifie dans Google Calendar." });
+      return;
+    }
+    const next = { ...patch };
+    if ("statusId" in next) {
+      if (restrictedStatusForType(taskTypes, statuses, target.taskTypeId)) delete next.statusId;
+      else {
+        const st = statuses.find((s) => s.id === next.statusId);
+        if (st && /termin/i.test(st.name || "") && !isTaskDoneGlobal(target, ctx)) {
+          delete next.statusId;
+          if (Object.keys(next).length) setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...next } : t)));
+          markTaskDone(taskId);
+          return;
+        }
+      }
+    }
+    if ("progress" in next) next.progress = Math.max(0, Math.min(100, Math.round(Number(next.progress) || 0)));
+    if (next.start && (next.end || target.end) && (next.end || target.end) < next.start) next.end = next.start;
+    if (next.end && (next.start || target.start) && next.end < (next.start || target.start)) next.start = next.end;
+    if (!Object.keys(next).length) return;
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...next } : t)));
   };
   const cycleStatus = (taskId) => {
     setTasks((prev) => prev.map((t) => {
@@ -12393,7 +12446,7 @@ export default function LePlan({ currentUser, onSignOut }) {
             toolbarSlot={viewToolbarSlot}
           />}
           {view === "calendar" && <CalendarView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} onAdd={openNewTask} prefs={viewPrefs.calendar} setPrefs={setCalendarPrefs} toolbarSlot={viewToolbarSlot} />}
-          {view === "carte" && <CarteView tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.carte} setPrefs={setCartePrefs} setProjectFolders={setProjectFolders} toolbarSlot={viewToolbarSlot} />}
+          {view === "carte" && <CarteView tasks={filteredTasks} tasksWithDone={carteTasksWithDone} ctx={ctx} onOpen={openEditTask} prefs={viewPrefs.carte} setPrefs={setCartePrefs} setProjectFolders={setProjectFolders} onUpdateTask={updateTaskFromCarte} onToggleDone={markTaskDone} toolbarSlot={viewToolbarSlot} />}
 
           {view === "projects" && <ProjectMetroView metaTemporalBlocks={allMetaTemporalBlocks} tasks={filteredTasks} ctx={ctx} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} appearance={appearance} prefs={viewPrefs.projects} setPrefs={setProjectsPrefs} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} expenses={expenses} isHomepage={activeProjectIds.length === 0} onSelectProject={selectProjectAndNavigate} selectedProjectIds={activeProjectIds} onToggleProject={toggleProjectInFilter} />}
           {view === "dashboard" && <DashboardView onOpenProject={selectProjectAndNavigate} onEditProject={setQuickEditProject} metaTemporalBlocks={allMetaTemporalBlocks} dashboardId={activeDashboard?.id || null} boardId={activeDashboard?.id || null} tasksBeforeSearch={metaFilteredTasks} transferBoards={widgetTransferBoards} onTransferWidget={transferWidget} tasks={boardTasks} ctx={ctx} widgets={activePage?.widgets || []} setWidgets={setActiveDashboardWidgets} onOpen={openEditTask} toolbarSlot={viewToolbarSlot} tabsSlot={dashboardTabsSlot} expenses={expenses} expenseCategories={expenseCategories} financeProQuotes={quotes} financeProBillingSchedule={proBillingSchedule} financeProPayments={proPayments} financeProMissions={proMissions} financeProClients={quoteClients} dashboardName={activeDashboard?.name} dashboardProjectFilter={activeDashboard?.projectFilter || []} onUpdateDashboardProjectFilter={(ids) => setDashboardProjectFilter(activeDashboard.id, ids)} appearance={appearance} onViewDay={() => setView("today")} activityLog={activityLog} myName={myName} pages={pages} activePageId={activePageId} onSwitchPage={switchDashboardPage} onAddPage={addDashboardPage} onRenamePage={renameDashboardPage} onDeletePage={deleteDashboardPage} onDuplicatePage={duplicateDashboardPage} onUpdatePageFilter={updateDashboardPageFilter} onUpdatePageMeta={updateDashboardPageMeta} taskBaselines={taskBaselines} setTasks={setTasks} setTaskArchive={setTaskArchive} pushToast={pushToast} shortcutPrefs={shortcutPrefs} staffing={staffing} setStaffing={setStaffing} setWorkshops={setWorkshops} setTeamMembers={setTeamMembers} setTeams={setTeams} setTeamFolders={setTeamFolders} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} onOpenGanttView={(filter) => { setGanttPrefs({ filter }); setView("gantt"); }} onOpenMetaFilters={() => { setSettingsTab("meta"); setSettingsOpen(true); }} onOpenHabitThemes={() => { setSettingsTab("habitThemes"); setSettingsOpen(true); }} onOpenTeamsSettings={() => { setSettingsTab("peopleTeams"); setSettingsOpen(true); }} onMarkDone={markTaskDone} onStartTask={startTask} />}
