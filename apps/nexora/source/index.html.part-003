@@ -9741,8 +9741,9 @@ function orgMetroTransverseRoutes(layout, links, linkOffsets) {
       : orgMetroRouteRects(A.rect, B.rect, others, top, slot(link.fromId, i), slot(B.id, i));
     const key = link.person ? "person:" + link.fromId + ":" + link.person : "transverse:" + link.fromId + ":" + link.toId;
     const edit = orgMetroEditRoute(best.pts, lo[key]);
-    const pts = orgMetroFaceEndpoints(edit.points, A.rect, foot ? null : B.rect);
+    const pts = orgMetroFinishRoute(edit.points, A.rect, foot ? null : B.rect, lo[key]);
     out.push({
+      fromRect: A.rect, toRect: foot ? null : B.rect,
       movable: edit.movable,
       key, fromId: link.fromId, toId: link.toId || null, extra: Boolean(link.extra), hierarchical: link.type === "hierarchique",
       points: pts, hits: best.hits, d: orgMetroPolylineD(pts),
@@ -10282,15 +10283,19 @@ function normalizeOrgMetroLinkOffsets(map) {
   Object.keys(map).forEach((k) => {
     const e = map[k];
     if (!e || typeof e !== "object") return;
+    // Points de connexion déplacés : { side, t } par extrémité (from / to).
+    const ports = {};
+    ["from", "to"].forEach((end) => { const pin = orgMetroNormalizePort(e[end]); if (pin) ports[end] = pin; });
     if (e.segs && typeof e.segs === "object") {
       const segs = {};
       Object.keys(e.segs).forEach((j) => { const d = orgMetroSnap(Number(e.segs[j]) || 0); if (Number.isInteger(Number(j)) && Number(j) >= 0 && d) segs[j] = d; });
-      if (Object.keys(segs).length) out[k] = { segs };
+      if (Object.keys(segs).length || Object.keys(ports).length) out[k] = { ...(Object.keys(segs).length ? { segs } : {}), ...ports };
       return;
     }
     const dx = Number.isFinite(Number(e.dx)) ? orgMetroSnap(Number(e.dx)) : 0;
     const dy = Number.isFinite(Number(e.dy)) ? orgMetroSnap(Number(e.dy)) : 0;
-    if (dx || dy) out[k] = { dx, dy };
+    if (dx || dy) out[k] = { dx, dy, ...ports };
+    else if (Object.keys(ports).length) out[k] = ports;
   });
   return out;
 }
@@ -10299,7 +10304,130 @@ function normalizeOrgMetroLinkOffsets(map) {
 function orgMetroAddLinkSeg(map, key, seg, delta) {
   const cur = normalizeOrgMetroLinkOffsets(map);
   const prev = cur[key] && cur[key].segs ? cur[key].segs : {};
-  return normalizeOrgMetroLinkOffsets({ ...cur, [key]: { segs: { ...prev, [seg]: (Number(prev[seg]) || 0) + delta } } });
+  return normalizeOrgMetroLinkOffsets({ ...cur, [key]: { ...(cur[key] || {}), dx: 0, dy: 0, segs: { ...prev, [seg]: (Number(prev[seg]) || 0) + delta } } });
+}
+// Glisser libre d'un trait (retour de test : « bouger en X et en Y
+// n'importe quel lien ») : le trait attrapé se décale perpendiculairement à
+// lui-même, et ses deux voisins (perpendiculaires) du déplacement dans son
+// sens — le trait entier suit le pointeur, le tracé reste orthogonal.
+function orgMetroMoveLinkSeg(map, key, movable, seg, dx, dy) {
+  const m = movable || [];
+  if (seg == null || seg < 0 || seg >= m.length - 1) return normalizeOrgMetroLinkOffsets(map);
+  const horizontal = Math.abs(m[seg][1] - m[seg + 1][1]) < 0.5;
+  let out = map;
+  const across = horizontal ? dy : dx, along = horizontal ? dx : dy;
+  if (across) out = orgMetroAddLinkSeg(out, key, seg, across);
+  if (along) [seg - 1, seg + 1].forEach((j) => { if (j >= 0 && j < m.length - 1) out = orgMetroAddLinkSeg(out, key, j, along); });
+  return normalizeOrgMetroLinkOffsets(out);
+}
+// --- Points de connexion déplaçables (retour de test) -----------------------
+// Une extrémité de lien peut glisser le long du bord de son bandeau, ou
+// passer sur un autre bord : { side: "left"|"right"|"top"|"bottom", t } avec
+// t ∈ [0, 1] le long de la partie droite du bord (hors arrondis).
+const ORGMETRO_PORT_SIDES = ["left", "right", "top", "bottom"];
+function orgMetroNormalizePort(pin) {
+  if (!pin || typeof pin !== "object" || !ORGMETRO_PORT_SIDES.includes(pin.side)) return null;
+  const t = Number(pin.t);
+  return { side: pin.side, t: Number.isFinite(t) ? Math.round(Math.max(0, Math.min(1, t)) * 100) / 100 : 0.5 };
+}
+// Partie droite de chaque bord : les coins arrondis du bandeau en sont exclus.
+function orgMetroPortInset(rect) {
+  return Math.min(16, rect.h / 2);
+}
+function orgMetroPortPoint(rect, pin) {
+  const p = orgMetroNormalizePort(pin);
+  if (!rect || !p) return null;
+  const r = orgMetroPortInset(rect);
+  if (p.side === "left" || p.side === "right") {
+    const y = rect.y + r + (rect.h - 2 * r) * p.t;
+    return [p.side === "left" ? rect.x : rect.x + rect.w, y];
+  }
+  const x = rect.x + r + (rect.w - 2 * r) * p.t;
+  return [x, p.side === "top" ? rect.y : rect.y + rect.h];
+}
+// Point de connexion visé par le pointeur : le bord se choisit selon la
+// direction du pointeur depuis le centre du bandeau (au-dessous → bord bas,
+// à droite → bord droit…), la position le long de ce bord suit le pointeur.
+function orgMetroPortAt(rect, x, y) {
+  const r = orgMetroPortInset(rect);
+  const frac = (v, a, len) => (len > 0.5 ? Math.max(0, Math.min(1, (v - a) / len)) : 0.5);
+  const ux = (x - (rect.x + rect.w / 2)) / Math.max(1, rect.w / 2);
+  const uy = (y - (rect.y + rect.h / 2)) / Math.max(1, rect.h / 2);
+  if (Math.abs(ux) > Math.abs(uy)) return orgMetroNormalizePort({ side: ux < 0 ? "left" : "right", t: frac(y, rect.y + r, rect.h - 2 * r) });
+  return orgMetroNormalizePort({ side: uy < 0 ? "top" : "bottom", t: frac(x, rect.x + r, rect.w - 2 * r) });
+}
+// Extrémité épinglée : le tracé part du point choisi, perpendiculairement au
+// bord (court raccord), puis rejoint le reste du tracé à angle droit.
+function orgMetroPinEndpoint(points, rect, pin, atEnd) {
+  const P = orgMetroPortPoint(rect, pin);
+  if (!P || !points || points.length < 2) return points;
+  const pts = atEnd ? [...points].reverse() : points.map((p) => p);
+  const n = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] }[pin.side];
+  const G = ORGMETRO_ROUTE_GUTTER;
+  const S = [P[0] + n[0] * G, P[1] + n[1] * G];
+  // Premier point du reste du tracé au-delà du raccord d'origine.
+  const rest = pts.slice(pts.length > 2 ? 2 : 1);
+  const next = rest[0];
+  const out = [P, S];
+  if (Math.abs(S[0] - next[0]) > 0.5 && Math.abs(S[1] - next[1]) > 0.5) out.push(n[0] ? [S[0], next[1]] : [next[0], S[1]]);
+  const res = orgMetroSimplifyRoute([...out, ...rest]);
+  return atEnd ? res.reverse() : res;
+}
+// Traits faiblement décalés (retour de test) : un petit crochet (moins de
+// ORGMETRO_JOG px) entre deux traits parallèles est supprimé en alignant l'un
+// sur l'autre — de préférence le trait qui ne touche pas une extrémité ;
+// sinon l'extrémité glisse le long de son bord (si elle n'est pas épinglée
+// et reste sur la partie droite du bord).
+const ORGMETRO_JOG = 12;
+function orgMetroStraightenRoute(points, ra, rb, pinA, pinB) {
+  let pts = orgMetroSimplifyRoute((points || []).map((p) => [p[0], p[1]]));
+  const onFace = (rect, p, axis, v) => {
+    if (!rect) return false;
+    const r = orgMetroPortInset(rect);
+    return axis === 1 ? v >= rect.y + r - 0.5 && v <= rect.y + rect.h - r + 0.5 && (Math.abs(p[0] - rect.x) < 0.5 || Math.abs(p[0] - rect.x - rect.w) < 0.5)
+      : v >= rect.x + r - 0.5 && v <= rect.x + rect.w - r + 0.5 && (Math.abs(p[1] - rect.y) < 0.5 || Math.abs(p[1] - rect.y - rect.h) < 0.5);
+  };
+  for (let guard = 0; guard < 20; guard++) {
+    const n = pts.length;
+    let done = true;
+    for (let i = 1; i + 2 < n; i++) {
+      const a = pts[i - 1], b = pts[i], c = pts[i + 1], d = pts[i + 2];
+      const jogH = Math.abs(b[1] - c[1]) < 0.5 && Math.abs(b[0] - c[0]) > 0.5 && Math.abs(b[0] - c[0]) < ORGMETRO_JOG;
+      const jogV = Math.abs(b[0] - c[0]) < 0.5 && Math.abs(b[1] - c[1]) > 0.5 && Math.abs(b[1] - c[1]) < ORGMETRO_JOG;
+      if (!jogH && !jogV) continue;
+      // Axe du décalage à supprimer : x pour un crochet horizontal, y sinon.
+      const axis = jogH ? 0 : 1;
+      const parallel = (p, q) => Math.abs(p[axis] - q[axis]) < 0.5;
+      if (!parallel(a, b) || !parallel(c, d)) continue;
+      if (i + 2 < n - 1) { c[axis] = b[axis]; d[axis] = b[axis]; }
+      else if (i - 1 > 0) { a[axis] = c[axis]; b[axis] = c[axis]; }
+      else if (!pinA && onFace(ra, a, axis, c[axis])) { a[axis] = c[axis]; b[axis] = c[axis]; }
+      else if (!pinB && onFace(rb, d, axis, b[axis])) { c[axis] = b[axis]; d[axis] = b[axis]; }
+      else continue;
+      pts = orgMetroSimplifyRoute(pts);
+      done = false;
+      break;
+    }
+    if (done) break;
+  }
+  return pts;
+}
+// Finition commune d'un tracé : extrémités du bon côté, points de connexion
+// épinglés, puis traits faiblement décalés alignés.
+function orgMetroFinishRoute(points, ra, rb, entry) {
+  let pts = orgMetroFaceEndpoints(points, ra, rb);
+  const pinA = entry && ra ? orgMetroNormalizePort(entry.from) : null;
+  const pinB = entry && rb ? orgMetroNormalizePort(entry.to) : null;
+  if (pinA) pts = orgMetroPinEndpoint(pts, ra, pinA, false);
+  if (pinB) pts = orgMetroPinEndpoint(pts, rb, pinB, true);
+  return orgMetroStraightenRoute(pts, ra, rb, pinA, pinB);
+}
+// Point de connexion déplacé : enregistré sur le lien (from / to).
+function orgMetroSetLinkPort(map, key, end, pin) {
+  const cur = normalizeOrgMetroLinkOffsets(map);
+  const p = orgMetroNormalizePort(pin);
+  if (!p || (end !== "from" && end !== "to")) return cur;
+  return normalizeOrgMetroLinkOffsets({ ...cur, [key]: { ...(cur[key] || {}), [end]: p } });
 }
 // Points de liaison du bon côté (retour de test) : une extrémité posée sur un
 // bord de bandeau alors que le tracé repart vers le côté OPPOSÉ (lien
@@ -10548,12 +10676,12 @@ function orgMetroRelationRoutes(layout, relations, linkOffsets) {
     const best = orgMetroRouteRects(A.rect, B.rect, obstacles.filter((o) => !skip.has(o.key)), top);
     const key = "relation:" + r.id;
     const edit = orgMetroEditRoute(best.pts, lo[key]);
-    const pts = orgMetroFaceEndpoints(edit.points, A.rect, B.rect);
+    const pts = orgMetroFinishRoute(edit.points, A.rect, B.rect, lo[key]);
     const labelAt = r.label ? orgRelationLabelPlacement(pts, orgRelationLabelWidth(r.label), ORGRELATION_LABEL_H, labelObstacles) : null;
     return {
       movable: edit.movable,
       key, id: r.id, from: r.from, to: r.to, label: r.label, points: pts, hits: best.hits, d: orgMetroPolylineD(pts), labelAt,
-      fromKind: A.kind, toKind: B.kind, fromColor: A.color, toColor: B.color,
+      fromKind: A.kind, toKind: B.kind, fromColor: A.color, toColor: B.color, fromRect: A.rect, toRect: B.rect,
     };
   });
 }
@@ -10673,19 +10801,28 @@ function OrgMetroCorrespondences({ routes, relationRoutes, occurrenceLinks, dimR
 // PAR-DESSUS les bandeaux, centrés sur leur bord : un rivet plein de la
 // couleur de la ligne, cerclé de blanc, qui ancre visiblement le lien dans
 // l'équipe. Côté personne, un point plein discret de la couleur du lien.
-function OrgMetroPorts({ routes, relationRoutes, dimRoute, dimRelation }) {
-  const port = (key, p, kind, color, cls, dimmed) => (kind === "person"
-    ? <circle key={key} className={"lp-orgmetro-port is-person " + cls + (dimmed ? " is-dim" : "")} cx={p[0]} cy={p[1]} r={3.25} />
-    : <circle key={key} className={"lp-orgmetro-port is-team " + cls + (dimmed ? " is-dim" : "")} cx={p[0]} cy={p[1]} r={5} style={{ fill: orgMetroColor(color, "team") }} />);
+// Points de connexion : chacun s'attrape (data-metro-drag « port:<bout>:<lien> »)
+// et glisse le long des bords de son bandeau.
+function OrgMetroPorts({ routes, relationRoutes, dimRoute, dimRelation, editable }) {
+  const port = (key, p, kind, color, cls, dimmed, drag) => {
+    const common = { key, "data-metro-drag": editable && drag ? drag : undefined };
+    const c = cls + (dimmed ? " is-dim" : "") + (editable && drag ? " is-draggable" : "");
+    return kind === "person"
+      ? <circle {...common} className={"lp-orgmetro-port is-person " + c} cx={p[0]} cy={p[1]} r={3.25} />
+      : <circle {...common} className={"lp-orgmetro-port is-team " + c} cx={p[0]} cy={p[1]} r={5} style={{ fill: orgMetroColor(color, "team") }} />;
+  };
+  const drags = (r) => [r.fromRect ? "port:from:" + r.key : null, r.toRect && !r.toPerson ? "port:to:" + r.key : null];
   return (
     <g className="lp-orgmetro-ports" aria-hidden="true">
       {relationRoutes.map((r) => [
-        port(r.key + ":a", r.points[0], r.fromKind, r.fromColor, "is-relation", dimRelation(r)),
-        port(r.key + ":b", r.points[r.points.length - 1], r.toKind, r.toColor, "is-relation", dimRelation(r)),
+        // Accroche sur une personne : sa station reste cliquable, seul un
+        // point posé sur un bandeau d'équipe se déplace.
+        port(r.key + ":a", r.points[0], r.fromKind, r.fromColor, "is-relation", dimRelation(r), r.fromKind === "team" ? drags(r)[0] : null),
+        port(r.key + ":b", r.points[r.points.length - 1], r.toKind, r.toColor, "is-relation", dimRelation(r), r.toKind === "team" ? drags(r)[1] : null),
       ])}
       {routes.map((r) => [
-        port(r.key + ":a", r.points[0], "team", r.fromColor, "is-transverse", dimRoute(r)),
-        port(r.key + ":b", r.points[r.points.length - 1], "team", r.toColor, "is-transverse", dimRoute(r)),
+        port(r.key + ":a", r.points[0], "team", r.fromColor, "is-transverse", dimRoute(r), drags(r)[0]),
+        port(r.key + ":b", r.points[r.points.length - 1], "team", r.toColor, "is-transverse", dimRoute(r), drags(r)[1]),
       ])}
     </g>
   );
@@ -10949,8 +11086,10 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   const settledOffsets = useMemo(() => orgMetroSettleOffsets(base, offsets), [base, offsets]);
   const shownOffsets = useMemo(() => (drag && drag.kind === "team" ? addOffset(settledOffsets, drag.key, drag.dx, drag.dy) : settledOffsets), [settledOffsets, drag]);
   // Lien : seul le segment attrapé bouge, perpendiculairement à lui-même.
-  const linkDelta = (d) => (d.horizontal ? d.dy : d.dx);
-  const shownLinkOffsets = useMemo(() => (drag && drag.kind === "link" && drag.seg != null ? orgMetroAddLinkSeg(linkOffsets, drag.key, drag.seg, linkDelta(drag)) : linkOffsets), [linkOffsets, drag]);
+  // Lien : le trait attrapé suit le pointeur en X et en Y (ses voisins
+  // s'allongent) ; point de connexion : il glisse le long des bords.
+  const linkEdit = (map, d) => (d.kind === "port" ? orgMetroSetLinkPort(map, d.key, d.end, d.pin) : orgMetroMoveLinkSeg(map, d.key, d.movable, d.seg, d.dx, d.dy));
+  const shownLinkOffsets = useMemo(() => (drag && ((drag.kind === "link" && drag.seg != null) || (drag.kind === "port" && drag.pin)) ? linkEdit(linkOffsets, drag) : linkOffsets), [linkOffsets, drag]);
   const layout = useMemo(() => orgMetroApplyOffsets(base, shownOffsets), [base, shownOffsets]);
   // Lien principal transverse + liens transverses supplémentaires de chaque
   // équipe : tous en correspondances, recalculés sur la position courante des
@@ -10991,6 +11130,13 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
     if (!el) return null;
     const v = el.getAttribute("data-metro-drag") || "";
     if (v.startsWith("link:")) return { kind: "link", key: v.slice(5) };
+    if (v.startsWith("port:")) {
+      const end = v.slice(5, v.indexOf(":", 5));
+      const key = v.slice(v.indexOf(":", 5) + 1);
+      const route = [...routes, ...relationRoutes].find((r) => r.key === key);
+      const rect = route ? (end === "from" ? route.fromRect : route.toRect) : null;
+      return rect && onChangeLinkOffsets ? { kind: "port", key, end, rect } : null;
+    }
     if (v.startsWith("elbow:")) return branchByKey.has(v.slice(6)) ? { kind: "team", key: v } : null;
     if (v.startsWith("split:")) return onChangeStackSplit && branchByKey.has(v.slice(6)) ? { kind: "split", key: v.slice(6), layoutAtStart: layout } : null;
     // Nœud de bifurcation (ou sa barre) : il bouge avec les lignes qui en
@@ -11058,7 +11204,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         // Segment attrapé : le plus proche du pointeur, dans le repère du plan.
         const route = [...routes, ...relationRoutes].find((r) => r.key === target.key);
         const hit = route ? orgMetroNearestSegment(route.movable, (p.x - vp.view.tx) / vp.view.k, (p.y - vp.view.ty) / vp.view.k) : null;
-        target = hit ? { ...target, seg: hit.seg, horizontal: hit.horizontal } : null;
+        target = hit ? { ...target, seg: hit.seg, horizontal: hit.horizontal, movable: route.movable } : null;
       }
       gestureRef.current = { type: "pan", id: e.pointerId, sx: p.x, sy: p.y, view: vp.view, moved: false, target };
     } else if (pointersRef.current.size === 2) {
@@ -11077,7 +11223,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         const route = [...routes, ...relationRoutes].find((r) => r.key === el.getAttribute("data-metro-drag").slice(5));
         const lp = localPoint(e);
         const hit = route ? orgMetroNearestSegment(route.movable, (lp.x - vp.view.tx) / vp.view.k, (lp.y - vp.view.ty) / vp.view.k) : null;
-        el.style.cursor = hit ? (hit.horizontal ? "ns-resize" : "ew-resize") : "";
+        el.style.cursor = hit ? "move" : "";
       }
     }
     if (!pointersRef.current.has(e.pointerId)) return;
@@ -11097,7 +11243,9 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
       if (g.moved && g.target) {
         const next = { ...g.target, dx: orgMetroSnap(dx / g.view.k), dy: orgMetroSnap(dy / g.view.k) };
         if (next.kind === "split") next.k = orgMetroStackSplitAt(g.target.layoutAtStart, next.key, dy / g.view.k);
-        setDrag((prev) => (prev && prev.key === next.key && prev.dx === next.dx && prev.dy === next.dy && prev.k === next.k ? prev : next));
+        if (next.kind === "port") next.pin = orgMetroPortAt(g.target.rect, (p.x - g.view.tx) / g.view.k, (p.y - g.view.ty) / g.view.k);
+        const samePin = (a, b) => (!a && !b) || (a && b && a.side === b.side && a.t === b.t);
+        setDrag((prev) => (prev && prev.key === next.key && prev.dx === next.dx && prev.dy === next.dy && prev.k === next.k && samePin(prev.pin, next.pin) ? prev : next));
       }
       else if (g.moved) vp.setManual({ k: g.view.k, tx: g.view.tx + dx, ty: g.view.ty + dy });
     } else if (g.type === "pinch" && pointersRef.current.size >= 2) {
@@ -11114,7 +11262,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
   };
   const onPointerEnd = (e) => {
     const g0 = gestureRef.current;
-    if (g0 && g0.target && g0.moved && g0.id === e.pointerId && drag && e.type !== "pointercancel" && (drag.dx || drag.dy)) {
+    if (g0 && g0.target && g0.moved && g0.id === e.pointerId && drag && e.type !== "pointercancel" && (drag.dx || drag.dy || drag.pin)) {
       if (drag.kind === "split") {
         onChangeStackSplit({ ...(stackSplit || {}), [drag.key.slice(5)]: drag.k });
       } else if (drag.kind === "team") {
@@ -11122,7 +11270,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
         // libre la plus proche (orgMetroFreeOffsets).
         onChangeOffsets(orgMetroFreeOffsets(base, addOffset(settledOffsets, drag.key, drag.dx, drag.dy), drag.key));
       } else if (onChangeLinkOffsets) {
-        if (drag.seg != null && linkDelta(drag)) onChangeLinkOffsets(orgMetroAddLinkSeg(linkOffsets, drag.key, drag.seg, linkDelta(drag)));
+        if ((drag.kind === "link" && drag.seg != null) || (drag.kind === "port" && drag.pin)) onChangeLinkOffsets(linkEdit(linkOffsets, drag));
       }
     }
     if (g0 && g0.target) setDrag(null);
@@ -11237,7 +11385,7 @@ function OrgMetroChart({ teams, members, showUnassigned, rootLabel, onEditTeam, 
           <OrgMetroCorrespondences routes={showTransverse ? routes : routes.filter((r) => r.hierarchical)} relationRoutes={showTransverse ? relationRoutes : []} occurrenceLinks={occurrenceLinks} dimRoute={dimRoute} dimRelation={dimRelation} />
           <OrgMetroStations layout={layout} dim={dim} focusKey={focus && focus.stationKey} />
           <OrgMetroLabels layout={layout} dim={dim} drag={drag && drag.kind === "team" ? drag : null} />
-          <OrgMetroPorts routes={showTransverse ? routes : routes.filter((r) => r.hierarchical)} relationRoutes={showTransverse ? relationRoutes : []} dimRoute={dimRoute} dimRelation={dimRelation} />
+          <OrgMetroPorts routes={showTransverse ? routes : routes.filter((r) => r.hierarchical)} relationRoutes={showTransverse ? relationRoutes : []} dimRoute={dimRoute} dimRelation={dimRelation} editable={Boolean(onChangeLinkOffsets)} />
 
         </g>
       </svg>

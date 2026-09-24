@@ -32,7 +32,7 @@ const api = vm.runInThisContext(
   `${block("TEAMS")}\n${block("ORGHIER-LAYOUT")}\n${block("ORGMETRO")}\n${block("ORGRELATIONS")}\n` +
   `;return { buildOrgHierarchyTree, reorderOrgHierarchyRoots, transverseTeamLinks, buildOrgMetroGraph, layoutOrgMetro,` +
   ` orgMetroBranchPaths, orgMetroObstacles, orgMetroStarPath, orgMetroJunctions, memberIsInactive, orgChartMembersWithInactive, teamExtraLinks, normalizeTeams, orgChartPersonOccurrenceTeams,` +
-  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroEditRoute, orgMetroNearestSegment, orgMetroAddLinkSeg, normalizeOrgMetroLinkOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroSettleOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
+  ` normalizeOrgChartRelations, orgChartRelationOptions, orgChartVisibleRelations, orgMetroRelationRoutes, orgRelationLabelAnchor, orgRelationRefParse, orgRelationLabelPlacement, normalizeOrgMetroOrder, orgMetroReorder, orgMetroApplyOffsets, orgMetroFaceEndpoints, orgMetroEditRoute, orgMetroNearestSegment, orgMetroAddLinkSeg, orgMetroMoveLinkSeg, orgMetroStraightenRoute, orgMetroPortAt, orgMetroPortPoint, orgMetroPinEndpoint, orgMetroSetLinkPort, orgMetroFinishRoute, normalizeOrgMetroLinkOffsets, orgMetroStackSplitAt, orgMetroViewSnapshot, orgMetroViewPatch, normalizeOrgMetroViews, orgMetroSaveView, normalizeOrgMetroOffsets, orgMetroFreeOffsets, orgMetroSettleOffsets, orgMetroShiftRoute, orgMetroTransverseRoutes, orgMetroOccurrences, orgMetroRelated, orgMetroWrap,` +
   ` ORGMETRO_NAME_CHARS, ORGMETRO_SIBLING_GAP };\n})`
 )();
 
@@ -665,6 +665,37 @@ test("Déplacements enregistrés : revus à l'affichage quand le plan change sou
   // Variante ★ : les mêmes déplacements, revus, ne se chevauchent jamais.
   const inBadge = metro(teams, members, { leadInBadge: true }).layout;
   [onTop, ok, { "team:b": { dx: -40, dy: 20 } }].forEach((o) => assertNoOverlap(api.orgMetroApplyOffsets(inBadge, api.orgMetroSettleOffsets(inBadge, o))));
+});
+
+test("Liens : petits crochets alignés, points de connexion déplaçables, traits déplacés en X et en Y", () => {
+  const ra = { x: 0, y: 0, w: 120, h: 30 }, rb = { x: 300, y: 200, w: 120, h: 30 };
+  // Crochet de 2 px entre deux traits horizontaux : aligné.
+  const z = api.orgMetroStraightenRoute([[120, 15], [133, 15], [133, 17], [250, 17], [250, 200]], ra, rb);
+  assert.deepEqual(z, [[120, 15], [250, 15], [250, 200]]);
+  // Crochet vertical de 10 px entre deux verticales, loin des extrémités.
+  const v = api.orgMetroStraightenRoute([[60, 30], [60, 80], [70, 80], [70, 150], [360, 150], [360, 200]], ra, rb);
+  assert.ok(v.every((p, i) => !i || p[0] === v[i - 1][0] || p[1] === v[i - 1][1]), "orthogonal");
+  assert.equal(v.length, 4, "le crochet disparaît : " + JSON.stringify(v));
+  // Un vrai décalage (au-delà du seuil) est conservé.
+  const keep = [[120, 15], [140, 15], [140, 55], [250, 55], [250, 200]];
+  assert.deepEqual(api.orgMetroStraightenRoute(keep, ra, rb), keep);
+  // Point de connexion : le plus proche du pointeur, sur la partie droite du bord.
+  assert.deepEqual(api.orgMetroPortAt(ra, 60, -5), { side: "top", t: 0.5 });
+  assert.equal(api.orgMetroPortAt(ra, 130, 15).side, "right");
+  assert.deepEqual(api.orgMetroPortPoint(ra, { side: "bottom", t: 0 }), [15, 30]);
+  // Extrémité épinglée : le tracé part du point choisi, à angle droit.
+  const pinned = api.orgMetroPinEndpoint([[120, 15], [250, 15], [250, 200]], ra, { side: "bottom", t: 1 }, false);
+  assert.deepEqual(pinned[0], [105, 30]);
+  assert.ok(pinned.every((p, i) => !i || p[0] === pinned[i - 1][0] || p[1] === pinned[i - 1][1]), "orthogonal : " + JSON.stringify(pinned));
+  const withPort = api.orgMetroSetLinkPort({ l: { segs: { 1: 20 } } }, "l", "to", { side: "left", t: 0.5 });
+  assert.deepEqual(withPort, { l: { segs: { 1: 20 }, to: { side: "left", t: 0.5 } } });
+  assert.deepEqual(api.normalizeOrgMetroLinkOffsets(withPort), withPort, "le point de connexion est conservé");
+  const fin = api.orgMetroFinishRoute([[120, 15], [250, 15], [250, 200]], ra, rb, withPort.l);
+  assert.deepEqual(fin[fin.length - 1], [300, 215], "arrivée sur le point choisi");
+  // Trait déplacé en X et en Y : décalage perpendiculaire + voisins.
+  const movable = [[133, 15], [250, 15], [250, 187]];
+  assert.deepEqual(api.orgMetroMoveLinkSeg({}, "l", movable, 1, 40, 20), { l: { segs: { 0: 20, 1: 40 } } });
+  assert.deepEqual(api.orgMetroMoveLinkSeg({}, "l", movable, 0, 20, 40), { l: { segs: { 0: 40, 1: 20 } } });
 });
 
 test("Barre étirée puis ramenée : elle ne dépasse jamais le tronc et les lignes qui en partent", () => {
