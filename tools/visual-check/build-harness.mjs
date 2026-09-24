@@ -20,6 +20,8 @@ const ENTRIES = [
   { name: "lucide.js", contents: `export * from "lucide-react";` },
   { name: "tabler.js", contents: `export * from "@tabler/icons-react";` },
   { name: "papaparse.js", contents: `export { default } from "papaparse";` },
+  // Vue Carte (#361) : three.js est importé à la demande par l'application.
+  { name: "three.js", contents: `export * from "three";` },
 ];
 
 // Façades servies telles quelles : elles ne font que ré-exporter le bundle
@@ -83,6 +85,7 @@ const IMPORT_MAP = {
   "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0": "./vendor/lucide.js",
   "https://esm.sh/@tabler/icons-react@3.46.0?deps=react@18.2.0": "./vendor/tabler.js",
   "https://esm.sh/papaparse@5.4.1": "./vendor/papaparse.js",
+  "https://esm.sh/three@0.158.0": "./vendor/three.js",
   "https://esm.sh/jspdf@2.5.2": "./vendor/jspdf-stub.js",
   "https://esm.sh/jspdf-autotable@3.8.4": "./vendor/jspdf-autotable-stub.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js": "./vendor/firebase-stub.js",

@@ -1,6 +1,6 @@
 # Carte d'exploration : thèmes et progressions
 
-> **Note d'hypothèses, à valider par Quentin.** Ref #361. Complète
+> **Livré dans la vue Carte** (Ref #361). Décisions du 24 septembre 2026 intégrées. Complète
 > [`CARTE_ANALOGIES.md`](CARTE_ANALOGIES.md), qui fixe les canaux visuels champ par champ.
 
 ## Ce qui change avec le thème, et ce qui ne change pas
@@ -22,22 +22,24 @@ n'ait jamais à réapprendre la carte en passant d'un territoire à l'autre.
 
 ## Deux progressions liées au thème
 
-**Progression du territoire.** Elle suit la part de tâches terminées du projet, en 5 paliers :
+**Progression du territoire.** Elle suit la part de tâches terminées du projet, en 6 paliers
+(décision du 24 septembre 2026) :
 
 | Palier | Part de tâches terminées |
 |---|---|
-| 1 | moins de 25 % |
-| 2 | de 25 à 49 % |
-| 3 | de 50 à 74 % |
-| 4 | de 75 à 99 % |
+| 0 | de 0 à 19 % |
+| 1 | de 20 à 39 % |
+| 2 | de 40 à 59 % |
+| 3 | de 60 à 79 % |
+| 4 | de 80 à 99 % |
 | 5 | 100 %, projet achevé |
 
 Chaque thème raconte cette montée à sa manière : un terrain vague devient une métropole, un
 point d'eau devient une cité-oasis, un camp de base devient un sommet conquis.
 
-**Progression d'une tâche en cours.** Elle suit `progress` (0 à 100 %), en 4 étapes visibles
-(0-24, 25-49, 50-74, 75-99). À 100 % sans statut « Terminé », l'objet est complet mais reste
-sous échafaudage ou en attente de réception : c'est le statut qui achève, jamais le
+**Progression d'une tâche en cours.** Elle suit `progress` avec les mêmes paliers : 0, 20, 40,
+60, 80 et 100 %. L'objet se construit par étapes visibles. À 100 % sans statut « Terminé »,
+l'objet est complet mais reste sous échafaudage : c'est le statut qui achève, jamais le
 pourcentage seul.
 
 ## Catalogue des thèmes
@@ -49,7 +51,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Pavés, places, alignements d'arbres, canal |
-| Progression du territoire | Terrain vague → village → bourg → ville → **métropole** avec parc et tours |
+| Progression du territoire | Terrain vague → maison → village → bourg → ville → **métropole** avec parc et tours |
 | À faire | Parcelle jalonnée, piquets et cordeau |
 | En attente | Chantier bâché, camion arrêté devant une barrière |
 | En cours (avancement) | Immeuble sous grue : fondations → 1er étage → 2e étage → toiture |
@@ -66,7 +68,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Champs en damier, haies, chemins de terre, étang |
-| Progression du territoire | Friche → ferme isolée → hameau → domaine → **grand domaine** avec marché et moulin |
+| Progression du territoire | Friche → ferme isolée → hameau → domaine → domaine et moulin → **grand domaine** avec marché |
 | À faire | Champ labouré, sillons vides |
 | En attente | Charrette dételée au bord du champ |
 | En cours (avancement) | Culture qui pousse : pousses → épis verts → épis dorés → moisson en cours |
@@ -83,7 +85,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Futaie dense, clairières, ruisseau, champignons |
-| Progression du territoire | Clairière → camp de bûcherons → village forestier → cité des cimes sur passerelles → **arbre-monde** |
+| Progression du territoire | Clairière → camp de bûcherons → hameau forestier → village forestier → cité des cimes sur passerelles → **arbre-monde** |
 | À faire | Arbre marqué d'une croix peinte |
 | En attente | Grumes empilées en attente de charroi |
 | En cours (avancement) | Cabane dans l'arbre : plateforme → murs → toit → échelle |
@@ -100,7 +102,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Dunes, plateaux ocre, cactus, palmiers autour de l'eau |
-| Progression du territoire | Point d'eau → campement → oasis → cité caravanière → **cité-jardin** irriguée par des canaux |
+| Progression du territoire | Point d'eau → campement → oasis → caravansérail → cité caravanière → **cité-jardin** irriguée par des canaux |
 | À faire | Piquets plantés dans le sable, ballots posés |
 | En attente | Caravane à l'arrêt, dromadaires couchés |
 | En cours (avancement) | Puits en creusement : margelle → treuil → eau visible → bassin qui se remplit |
@@ -117,7 +119,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Côte découpée, falaises, plages, récifs, large bleu profond |
-| Progression du territoire | Crique → port de pêche → port marchand → grand port → **cité portuaire** et sa flotte |
+| Progression du territoire | Crique → cabane de pêcheur → port de pêche → port marchand → grand port → **cité portuaire** et sa flotte |
 | À faire | Bouée de mouillage libre |
 | En attente | Navire au mouillage, voiles ferlées |
 | En cours (avancement) | Navire en cale sèche : quille → coque → mâts → voiles |
@@ -134,7 +136,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Eau calme au centre du territoire, rives en pente douce, roseaux, îlots |
-| Progression du territoire | Rive sauvage → cabane de pêcheur → village sur pilotis → station lacustre → **cité lacustre** d'îlots reliés |
+| Progression du territoire | Rive sauvage → cabane de pêcheur → ponton → village sur pilotis → station lacustre → **cité lacustre** d'îlots reliés |
 | À faire | Pieux plantés dans l'eau |
 | En attente | Barque amarrée, rames rentrées |
 | En cours (avancement) | Ponton qui avance vers le large : pilotis → plancher → garde-corps → abri |
@@ -151,14 +153,14 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Alpages en terrasses, sapins, torrents, rochers |
-| Progression du territoire | Alpage → bergerie → village d'alpage → station avec téléphérique → **bourg de montagne** |
+| Progression du territoire | Alpage → bergerie → hameau → village d'alpage → station avec téléphérique → **bourg de montagne** |
 | À faire | Cairn |
 | En attente | Chalet sous la neige, volets fermés |
 | En cours (avancement) | Chalet en construction : soubassement de pierre → charpente → toit → cheminée |
 | Terminé | Chalet avec fumée à la cheminée |
 | Information | Panneau jaune de randonnée |
 | Tâche · réunion · planning · jalon | Chalet · salle commune du refuge · clocher · croix du col |
-| Récurrence | Cabine de téléphérique qui fait l'aller-retour |
+| Récurrence | Éolienne du refuge |
 | Sous-tâches | Tas de bois contre le mur (à couper ; rangé) |
 | Friche | Éboulis |
 | Costume | Veste en laine et bâton |
@@ -168,7 +170,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Glaciers, crêtes, parois, neige éternelle ; le relief monte vers le centre |
-| Progression du territoire | Moraine → camp de base → camps d'altitude → refuge au col → **sommet conquis**, drapeau du projet |
+| Progression du territoire | Moraine → camp de base → camp 1 → camp 2 → refuge au col → **sommet conquis**, drapeau du projet |
 | À faire | Voie tracée au pied de la paroi, cordes lovées |
 | En attente | Tente fermée, attente d'une fenêtre météo |
 | En cours (avancement) | Cordée sur la voie : l'altitude de la cordée suit le pourcentage |
@@ -185,7 +187,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Banquise, fjords, icebergs, toundra rase |
-| Progression du territoire | Banquise vierge → abri de trappeur → village d'igloos → base polaire → **station sous aurores boréales** |
+| Progression du territoire | Banquise vierge → abri de trappeur → campement → village d'igloos → base polaire → **station sous aurores boréales** |
 | À faire | Traîneau chargé |
 | En attente | Traîneau à l'arrêt, chiens couchés |
 | En cours (avancement) | Igloo monté en spirale : 1er rang → 2e rang → 3e rang → voûte |
@@ -202,7 +204,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | | |
 |---|---|
 | Paysage | Falaises rouges en strates, rivière au fond, arches, plateaux |
-| Progression du territoire | Gorge → campement → village troglodyte → pont suspendu et mine → **cité troglodyte illuminée** |
+| Progression du territoire | Gorge → campement → premières grottes → village troglodyte → pont suspendu et mine → **cité troglodyte illuminée** |
 | À faire | Corde fixée au bord de la falaise |
 | En attente | Nacelle arrêtée à mi-hauteur |
 | En cours (avancement) | Pont suspendu : câbles → planches jusqu'à la moitié → planches jusqu'à l'autre rive → rambardes |
@@ -214,15 +216,85 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | Friche | Sable rouge et toiles d'araignée |
 | Costume | Casque à lampe |
 
+### Marais
+
+| | |
+|---|---|
+| Paysage | Eaux dormantes, îlots de terre, saules, roseaux, passerelles de planches |
+| Progression du territoire | Vasière → hutte de chasseur → passerelles → hameau sur buttes → village de bateliers → **bourg des canaux** |
+| À faire | Piquets plantés dans la vase |
+| En attente | Barque plate échouée |
+| En cours (avancement) | Passerelle de planches posée tronçon après tronçon |
+| Terminé | Hutte sur butte, lanterne allumée |
+| Information | Écriteau sur pieu |
+| Tâche · réunion · planning · jalon | Hutte sur butte · cercle de barques · échelle de crue graduée · grand saule |
+| Récurrence | Lucioles qui s'allument par vagues |
+| Sous-tâches | Nasses (à poser ; relevées) |
+| Friche | Lentilles d'eau et brume verte |
+| Costume | Cuissardes et chapeau de pluie |
+
+### Jungle
+
+| | |
+|---|---|
+| Paysage | Canopée épaisse, lianes, cascades, fleurs géantes, rivière brune |
+| Progression du territoire | Sous-bois → abri de feuilles → camp d'exploration → village sur pilotis → temple dégagé → **cité-temple** en terrasses |
+| À faire | Sentier à ouvrir, machette plantée |
+| En attente | Pirogue tirée sur la berge |
+| En cours (avancement) | Temple dégagé de la végétation : ruine couverte → premières marches → étages → sommet |
+| Terminé | Temple restauré, torches allumées |
+| Information | Totem sculpté |
+| Tâche · réunion · planning · jalon | Case sur pilotis · grande case commune · calendrier de pierre · pyramide à degrés |
+| Récurrence | Cascade dont le débit pulse |
+| Sous-tâches | Paniers de fruits (vides ; pleins) |
+| Friche | Lianes qui recouvrent l'objet |
+| Costume | Chapeau d'explorateur |
+
+### Volcan
+
+| | |
+|---|---|
+| Paysage | Roche noire, coulées refroidies, fumerolles, terre rouge fertile au pied ; le relief monte vers un cratère |
+| Progression du territoire | Champ de lave → abri d'observation → sentier balisé → observatoire → village de basalte → **cité géothermique** |
+| À faire | Balise plantée dans la cendre |
+| En attente | Fumerolle qui gronde, accès fermé par une chaîne |
+| En cours (avancement) | Forge alimentée par la lave : enclume → foyer → cheminée → forge rougeoyante |
+| Terminé | Maison de basalte aux fenêtres orangées |
+| Information | Panneau d'alerte triangulaire |
+| Tâche · réunion · planning · jalon | Maison de basalte · amphithéâtre du cratère · sismographe · colonne de basalte |
+| Récurrence | Geyser qui jaillit par intervalles |
+| Sous-tâches | Blocs de basalte (bruts ; taillés) |
+| Friche | Cendre qui recouvre l'objet |
+| Costume | Combinaison ignifugée |
+
+### Île tropicale
+
+| | |
+|---|---|
+| Paysage | Lagon turquoise, sable blanc, cocotiers, récif corallien |
+| Progression du territoire | Banc de sable → paillote → ponton → village de pêcheurs → port de plaisance → **île-resort** |
+| À faire | Bouée corail au-dessus du récif |
+| En attente | Pirogue à balancier amarrée |
+| En cours (avancement) | Bungalow sur l'eau : pilotis → plancher → murs de bambou → toit de palmes |
+| Terminé | Bungalow éclairé, hamac tendu |
+| Information | Coquillage géant posé sur un poteau |
+| Tâche · réunion · planning · jalon | Bungalow · paillote-bar · cadran solaire de corail · phare rayé |
+| Récurrence | Vagues qui roulent sur le récif |
+| Sous-tâches | Noix de coco (sur l'arbre ; récoltées) |
+| Friche | Sable et algues échouées |
+| Costume | Chemise à fleurs |
+
 ## Attribution d'un thème à un projet
 
-1. **Choix de l'utilisateur.** Dans les réglages de la vue, chaque projet reçoit le thème voulu.
-   Ce choix est une **préférence de vue**, comme le zoom du Gantt. Il n'ajoute aucun champ au
-   projet et ne touche pas au contrat lu par le MCP.
-2. **Par défaut, un thème par dossier.** Tous les projets d'un dossier partagent le thème de
+Décision du 24 septembre 2026 : **un thème par dossier**.
+
+1. **Par défaut, un thème par dossier.** Tous les projets d'un dossier partagent le thème de
    leur région, ce qui garde une géographie cohérente. Le thème est tiré de l'identifiant du
    dossier, donc stable. Deux régions voisines reçoivent si possible des thèmes différents.
-3. **Projets « À trier »** : îlots du thème Mer, cohérents avec leur isolement au large.
+2. **Choix de l'utilisateur.** Dans les réglages de la vue, chaque dossier peut recevoir le thème
+   voulu. Ce choix est une **préférence de vue**, comme le zoom du Gantt. Il n'ajoute aucun champ
+   aux données et ne touche pas au contrat lu par le MCP.
+3. **Projets « À trier »** : îlots du thème Île tropicale, cohérents avec leur isolement au large.
 
 Une suggestion par mots du nom du projet (« quai » → Mer, « chalet » → Montagne) est possible,
 mais je ne la propose pas par défaut : un thème deviné sur le titre peut sembler arbitraire.
@@ -234,10 +306,9 @@ mais je ne la propose pas par défaut : un thème deviné sur le titre peut semb
   - Haute montagne : les tuiles montent en gradins vers un sommet central ;
   - Canyon : une gorge traverse le territoire ;
   - Mer : la moitié du territoire est sous l'eau, côté large.
-- Les **lisières** assurent la transition entre deux thèmes voisins : dunes qui deviennent
-  faubourgs, alpage qui descend vers les champs, banquise qui fond en mer.
-- Les thèmes aquatiques (Mer, Lac, Grand Nord) sont placés de préférence en bordure de carte ou
-  contre l'eau qui sépare les dossiers.
+- Les **lisières** : entre deux projets d'un même dossier, la terre du thème ; entre deux
+  dossiers, un bras de mer peu profond, que l'arpenteur traverse à gué. Les régions sont
+  entourées d'une mer semée d'îlots boisés.
 
 ## Performances
 
@@ -249,13 +320,9 @@ mais je ne la propose pas par défaut : un thème deviné sur le titre peut semb
 - En vue éloignée, seul le centre de chaque territoire est dessiné en détail, avec son palier
   de progression.
 
-## Points à trancher
+## Décisions prises
 
-1. **Les 10 thèmes** te conviennent-ils ? Faut-il en retirer, ou en ajouter (marais, jungle,
-   volcan, île tropicale, steppe…) ?
-2. **Attribution** : un thème par dossier par défaut, modifiable par projet. D'accord ?
-3. **Paliers de territoire** : 25 / 50 / 75 / 100 % des tâches terminées, ou des seuils en
-   nombre de tâches (par exemple 5, 15, 40, 100) pour que les petits projets ne se remplissent
-   pas trop vite ?
-4. **Progression d'une tâche en cours** : 4 étapes visibles suffisent-elles, ou faut-il une
-   montée continue (par exemple, la cordée qui grimpe exactement au pourcentage) ?
+1. **14 thèmes** : les 10 d'origine, plus marais, jungle, volcan et île tropicale.
+2. **Un thème par dossier**, modifiable dossier par dossier dans les réglages de la vue.
+3. **Paliers du territoire** : 0, 20, 40, 60, 80 et 100 % de tâches terminées.
+4. **Progression d'une tâche en cours** : mêmes paliers, appliqués à `progress`.

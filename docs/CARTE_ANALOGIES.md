@@ -1,10 +1,10 @@
 # Carte d'exploration : une analogie par champ de tâche
 
-> **Note d'hypothèses, à valider par Quentin.** Ref #361. Cette version remplace la note
-> « Rucher ». L'apiculture n'était qu'un exemple : le monde s'appuie maintenant sur tout le
-> vocabulaire d'un paysage habité (relief, bâtiments, végétation, météo, routes, habitants).
-> Chaque correspondance repose sur un champ **réel** de Nexora, relevé dans
-> `apps/nexora/source/index.html.part-*`.
+> **Livré dans la vue Carte** (Ref #361). Code : blocs `NEXORA:CARTE` (logique pure, testée par
+> `apps/nexora/tests/carte.test.mjs`) et `NEXORA:CARTE-ENGINE` (rendu three.js), composant
+> `CarteView`. Chaque correspondance repose sur un champ **réel** de Nexora. Les écarts avec la
+> première version de cette note sont listés en fin de document ; la lecture des dates dans le
+> temps (curseur, période, disposition par échéance) est suivie dans #362.
 
 ## Règle de construction : un champ, un canal visuel
 
@@ -28,7 +28,7 @@ Pour que la carte se lise sans légende après quelques minutes, chaque champ ut
 
 **Thèmes.** Les objets cités dans cette note (beffroi, atelier, échafaudage…) sont ceux du
 thème **Ville**. Chaque projet reçoit un thème (ville, campagne, forêt, désert, mer, lac,
-montagne, haute montagne, Grand Nord, canyon) qui garde le même sens des indices mais change
+montagne, haute montagne, Grand Nord, canyon, marais, jungle, volcan, île tropicale) qui garde le même sens des indices mais change
 les objets et la façon de progresser : voir [`CARTE_THEMES.md`](CARTE_THEMES.md).
 
 Principes inchangés :
@@ -50,7 +50,7 @@ Principes inchangés :
 | `color` | Couleur des bannières, des toits et des bornes de frontière | Ocre neutre |
 | `priority` `high` | Le beffroi devient une **citadelle** sur une colline | Traité comme `normal` |
 | `priority` `low` | Le beffroi est un simple **hameau** (maison et puits) | — |
-| Tâches terminées / total | Le territoire **s'urbanise** : plus il y a de tâches terminées, plus de maisons entourent le beffroi (1 à 4 couronnes) | Territoire vierge |
+| Tâches terminées / total | Le territoire **s'urbanise** : plus il y a de tâches terminées, le centre passe par 6 paliers (0, 20, 40, 60, 80, 100 %), propres au thème | Territoire vierge |
 
 ## 2. Dossiers → géographie
 
@@ -110,7 +110,7 @@ La criticité est aussi écrite dans l'étiquette : la couleur n'est jamais le s
 | En retard (`isTaskLate`) | **Petit nuage d'orage** au-dessus de la tuile ; l'étiquette indique « En retard de N j » |
 | Échéance dans les 7 jours | **Lanterne** allumée devant la porte |
 | `start` future, tâche à faire | **Brume** sur la tuile : la tâche est à l'horizon |
-| Durée `end - start` | **Emprise au sol** : moins de 3 jours, un petit bâtiment ; jusqu'à 3 semaines, un bâtiment moyen ; au-delà, un grand bâtiment qui déborde sur une tuile voisine libre |
+| Durée `end - start` | **Taille de l'objet** : moins de 3 jours, petit ; jusqu'à 3 semaines, moyen ; au-delà, grand |
 | `startTime` / `endTime` | **Cadran solaire** devant la porte (tâche à heure fixe) |
 | Dates manquantes | Ni nuage, ni lanterne, ni brume ; taille moyenne ; « Sans échéance » dans le panneau |
 
@@ -200,10 +200,16 @@ Le moteur des maquettes ne change pas :
   (vérifié) ;
 - une tâche garde sa tuile, sauf si une nouvelle route passe exactement dessus.
 
-## Points à trancher
+## Écarts entre la note et la version livrée
 
-1. **Thèmes** : voir les points à trancher de [`CARTE_THEMES.md`](CARTE_THEMES.md).
-2. **Friche après 30 jours sans interaction** : bon seuil ?
-3. **Habitants par responsable** : utile, ou trop chargé ?
-4. **Routes de dépendances** : seulement à la sélection (par défaut), ou toutes visibles ?
-5. **Carnet de relevés** : gardé le temps de la session ou mémorisé sur l'appareil ?
+- **Durée** : un grand chantier est agrandi sur sa tuile, il ne déborde pas sur la voisine.
+- **Friche** : 30 jours sans interaction (`lastInteraction`), comme proposé.
+- **Habitants** : affichés en vue proche seulement (niveau de détail 2), avec la couleur du
+  membre de l'équipe, ou une couleur stable tirée du nom.
+- **Routes de dépendances** : affichées à la sélection seulement, avec une charrette animée et
+  une barrière rouge si la tâche précédente n'est pas terminée.
+- **Carnet de relevés** : compté pour la session (tâches approchées, territoires visités), jamais
+  enregistré.
+- **Emplacements mémorisés** : clé `nexora:carte:layout` du `localStorage` de l'appareil, jamais
+  synchronisée.
+- **Dates dans le temps** : pas encore de curseur ni de filtre de période, voir #362.

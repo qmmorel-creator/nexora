@@ -4838,6 +4838,804 @@ function normalizeFocusDayDate(value) {
 }
 // === NEXORA:CALENDAR:END ===
 
+// === NEXORA:CARTE:START ===
+// Carte d'exploration (#361) : logique pure, sans DOM ni three.js, testée par
+// tests/carte.test.mjs. Correspondance documentée dans docs/CARTE_ANALOGIES.md
+// et docs/CARTE_THEMES.md. La carte est une LECTURE des données : rien ici
+// n'écrit une tâche.
+//
+// Hexagones « pointe en haut », coordonnées axiales (q, r). Un territoire est
+// un hexagone de rayon 4 : centre (le cœur du projet), anneaux 1 à 3 (les
+// tâches), anneau 4 (la lisière). Les territoires pavent le plan sans trou
+// avec les vecteurs (2R+1, -R) et (R, R+1).
+const CARTE_R = 4;
+const CARTE_INNER = 3;
+const CARTE_AX = [2 * CARTE_R + 1, -CARTE_R];
+const CARTE_BX = [CARTE_R, CARTE_R + 1];
+const CARTE_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+const CARTE_SQ3 = Math.sqrt(3);
+const CARTE_UNSORTED_FOLDER = "folder-a-trier";
+const CARTE_DAY = 864e5;
+
+// FNV-1a 32 bits + mélange final : même résultat dans tous les navigateurs.
+function carteHash(str) {
+  let h = 0x811c9dc5;
+  const s = String(str);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+function carteRand(str) { return carteHash(str) / 4294967296; }
+function carteKey(q, r) { return q + "," + r; }
+function carteDist(aq, ar, bq, br) {
+  const dq = aq - bq, dr = ar - br;
+  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+}
+function carteMacroCenter(i, j) { return [CARTE_AX[0] * i + CARTE_BX[0] * j, CARTE_AX[1] * i + CARTE_BX[1] * j]; }
+function carteToWorld(q, r) { return { x: CARTE_SQ3 * (q + r / 2), z: 1.5 * r }; }
+function carteHexRound(q, r) {
+  const s = -q - r;
+  let rq = Math.round(q), rr = Math.round(r); const rs = Math.round(s);
+  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
+  if (dq > dr && dq > ds) rq = -rr - rs; else if (dr > ds) rr = -rq - rs;
+  return [rq, rr];
+}
+function carteFromWorld(x, z) { const r = z / 1.5; return carteHexRound(x / CARTE_SQ3 - r / 2, r); }
+function carteHexLine(aq, ar, bq, br) {
+  const n = carteDist(aq, ar, bq, br);
+  const out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = n === 0 ? 0 : i / n;
+    out.push(carteHexRound(aq + (bq - aq) * t + 1e-6, ar + (br - ar) * t + 1e-6));
+  }
+  return out;
+}
+function carteSpiral(count) {
+  const out = [[0, 0]];
+  for (let k = 1; out.length < count; k++) {
+    let q = CARTE_DIRS[4][0] * k, r = CARTE_DIRS[4][1] * k;
+    for (let s = 0; s < 6; s++) for (let n = 0; n < k; n++) { out.push([q, r]); q += CARTE_DIRS[s][0]; r += CARTE_DIRS[s][1]; }
+  }
+  return out;
+}
+function carteRingTiles(cq, cr, radius) {
+  const out = [];
+  for (let q = -radius; q <= radius; q++) {
+    for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) out.push([cq + q, cr + r, carteDist(0, 0, q, r), q, r]);
+  }
+  return out;
+}
+
+// Paliers décidés le 24/09/2026 : 0-19, 20-39, 40-59, 60-79, 80-99, 100 %.
+function carteStage(pct) {
+  const p = Number(pct);
+  if (!Number.isFinite(p) || p <= 0) return 0;
+  if (p >= 100) return 5;
+  return Math.min(4, Math.floor(p / 20));
+}
+
+function carteNorm(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim(); }
+
+// ---------- Thèmes ----------
+// Chaque thème garde le SENS des indices universels (criticité, retard,
+// échéance, brume, responsable) et change les objets. `relief` façonne le
+// territoire ; `pal` porte les couleurs ; les libellés `lg` alimentent la
+// légende contextuelle.
+const CARTE_THEMES = [
+  { id: "ville", label: "Ville", relief: "flat",
+    pal: { top: "#b9c2a8", alt: "#c9cdbf", side: "#8a8577", water: "#5fa8c9", wild: "#9fc07a", decor: "#6fa05a", wall: "#e9dcc6", roof: "#b5523b", accent: "#6d7a8c", wood: "#8a6a4a", stone: "#b4b0a6", friche: "#7f9a4a", tarp: "#5b7fa6" },
+    hub: ["Terrain vague", "Maison", "Village", "Bourg", "Ville", "Métropole"],
+    lg: { todo: "Parcelle jalonnée", waiting: "Chantier bâché", doing: "Immeuble sous grue", done: "Immeuble éclairé", info: "Colonne d'affichage", task: "Atelier", meeting: "Halle couverte", planning: "Tour de l'horloge", milestone: "Statue", rec: "Tramway", friche: "Herbe entre les pavés" } },
+  { id: "campagne", label: "Campagne", relief: "flat",
+    pal: { top: "#a8cf62", alt: "#c3d77a", side: "#8f6a40", water: "#5fb3cf", wild: "#b5d36e", decor: "#5f9e45", wall: "#efe2c2", roof: "#a8483a", accent: "#d9b23a", wood: "#8a5f35", stone: "#bdb3a0", friche: "#7a6b3a", tarp: "#8a6a3a" },
+    hub: ["Friche", "Ferme isolée", "Hameau", "Domaine", "Domaine et moulin", "Grand domaine"],
+    lg: { todo: "Champ labouré", waiting: "Charrette dételée", doing: "Culture qui pousse", done: "Meules et grange pleine", info: "Panneau de bois", task: "Grange", meeting: "Place de foire", planning: "Cadran solaire", milestone: "Château d'eau", rec: "Moulin à vent", friche: "Ronces" } },
+  { id: "foret", label: "Forêt", relief: "flat",
+    pal: { top: "#6fae55", alt: "#5f9e4a", side: "#6e4d30", water: "#4fa7b5", wild: "#6fae55", decor: "#2f7a3a", wall: "#b88a5a", roof: "#6b4a2e", accent: "#e0b44a", wood: "#7a5230", stone: "#a9a397", friche: "#3f6f3a", tarp: "#6b4a2e" },
+    hub: ["Clairière", "Camp de bûcherons", "Hameau forestier", "Village forestier", "Cité des cimes", "Arbre-monde"],
+    lg: { todo: "Arbre marqué", waiting: "Grumes empilées", doing: "Cabane dans l'arbre", done: "Cabane à la lanterne", info: "Panneau sur tronc", task: "Cabane", meeting: "Cercle autour du feu", planning: "Cadran sur souche", milestone: "Arbre géant", rec: "Roue de la scierie", friche: "Mousse et lierre" } },
+  { id: "desert", label: "Désert", relief: "dunes",
+    pal: { top: "#ecc98a", alt: "#e2b877", side: "#b98b52", water: "#48b4c4", wild: "#e6c283", decor: "#6f9a3a", wall: "#d9a66b", roof: "#c98a50", accent: "#2f8f8a", wood: "#8a5f35", stone: "#caa77a", friche: "#e8d3a2", tarp: "#b7553a" },
+    hub: ["Point d'eau", "Campement", "Oasis", "Caravansérail", "Cité caravanière", "Cité-jardin"],
+    lg: { todo: "Piquets dans le sable", waiting: "Caravane à l'arrêt", doing: "Puits qui se remplit", done: "Maison de terre et palmier", info: "Stèle", task: "Maison de terre", meeting: "Grande tente", planning: "Gnomon", milestone: "Obélisque", rec: "Noria", friche: "Sable qui ensevelit" } },
+  { id: "mer", label: "Mer", relief: "coast",
+    pal: { top: "#9fcf6a", alt: "#eadba8", side: "#9a7a55", water: "#2f8fc4", wild: "#b3d67a", decor: "#4d9a55", wall: "#f2efe6", roof: "#2f6fa8", accent: "#e8c14a", wood: "#8a6a45", stone: "#b9b4aa", friche: "#8a5a3a", tarp: "#3a6a8a" },
+    hub: ["Crique", "Cabane de pêcheur", "Port de pêche", "Port marchand", "Grand port", "Cité portuaire"],
+    lg: { todo: "Bouée de mouillage", waiting: "Navire au mouillage", doing: "Navire en cale sèche", done: "Navire à quai, voiles hissées", info: "Balise", task: "Navire", meeting: "Taverne du port", planning: "Capitainerie", milestone: "Phare", rec: "Cloche de bouée", friche: "Rouille et algues" } },
+  { id: "lac", label: "Lac", relief: "lake",
+    pal: { top: "#95cf6a", alt: "#a8d67e", side: "#7a6040", water: "#4fb6d8", wild: "#a2d275", decor: "#4f9a50", wall: "#c9a877", roof: "#6d8a4a", accent: "#e8b64a", wood: "#8a6440", stone: "#b1ada2", friche: "#5f8a3a", tarp: "#5d7a4a" },
+    hub: ["Rive sauvage", "Cabane de pêcheur", "Ponton", "Village sur pilotis", "Station lacustre", "Cité lacustre"],
+    lg: { todo: "Pieux dans l'eau", waiting: "Barque amarrée", doing: "Ponton qui avance", done: "Cabane sur pilotis", info: "Panneau de ponton", task: "Cabane sur pilotis", meeting: "Kiosque sur l'eau", planning: "Capitainerie", milestone: "Tour de guet", rec: "Roue à aubes", friche: "Roseaux envahissants" } },
+  { id: "montagne", label: "Montagne", relief: "terraces",
+    pal: { top: "#9cc86a", alt: "#b6d38a", side: "#7d7466", water: "#5ab3d6", wild: "#a7cc7a", decor: "#2f6f45", wall: "#c8a87a", roof: "#6a4a36", accent: "#e0c04a", wood: "#7a5232", stone: "#a8a49b", friche: "#9a948a", tarp: "#6a5a4a" },
+    hub: ["Alpage", "Bergerie", "Hameau", "Village d'alpage", "Station", "Bourg de montagne"],
+    lg: { todo: "Cairn", waiting: "Chalet sous la neige", doing: "Chalet en construction", done: "Chalet et fumée", info: "Panneau de randonnée", task: "Chalet", meeting: "Salle du refuge", planning: "Clocher", milestone: "Croix du col", rec: "Éolienne du refuge", friche: "Éboulis" } },
+  { id: "hautemontagne", label: "Haute montagne", relief: "peak",
+    pal: { top: "#e8eef2", alt: "#cfd8de", side: "#8b8f96", water: "#7cc4e0", wild: "#b9c4c9", decor: "#7d8791", wall: "#d9412f", roof: "#f2b233", accent: "#2f6fbf", wood: "#7a5232", stone: "#9ba1a8", friche: "#ffffff", tarp: "#c9d3da" },
+    hub: ["Moraine", "Camp de base", "Camp 1", "Camp 2", "Refuge au col", "Sommet conquis"],
+    lg: { todo: "Voie tracée", waiting: "Tente fermée", doing: "Cordée qui monte", done: "Tente et fanion", info: "Plaque au rocher", task: "Tente d'altitude", meeting: "Tente-mess", planning: "Station météo", milestone: "Sommet au drapeau", rec: "Drapeaux de prière", friche: "Congère" } },
+  { id: "grandnord", label: "Grand Nord", relief: "flat",
+    pal: { top: "#eef5f8", alt: "#dbe9f0", side: "#9fb7c4", water: "#3f8fb8", wild: "#d7e6ea", decor: "#4f7a6a", wall: "#f7fbfd", roof: "#c64a3a", accent: "#4fd1a8", wood: "#7a5a3a", stone: "#a9b6bd", friche: "#cfe6f2", tarp: "#8fb0c2" },
+    hub: ["Banquise vierge", "Abri de trappeur", "Campement", "Village d'igloos", "Base polaire", "Station sous aurores"],
+    lg: { todo: "Traîneau chargé", waiting: "Traîneau à l'arrêt", doing: "Igloo en spirale", done: "Igloo éclairé", info: "Inukshuk", task: "Igloo", meeting: "Maison commune", planning: "Station météo", milestone: "Tour radar", rec: "Éolienne", friche: "Givre" } },
+  { id: "canyon", label: "Canyon", relief: "gorge",
+    pal: { top: "#d98a5a", alt: "#c97a4a", side: "#9a4f2e", water: "#3fa6b0", wild: "#d9995f", decor: "#6f8a3a", wall: "#b85e3a", roof: "#7a3a22", accent: "#f2c14a", wood: "#7a5232", stone: "#b0613e", friche: "#e0a070", tarp: "#8a4a2e" },
+    hub: ["Gorge", "Campement", "Premières grottes", "Village troglodyte", "Pont et mine", "Cité troglodyte"],
+    lg: { todo: "Corde à la falaise", waiting: "Nacelle arrêtée", doing: "Pont suspendu", done: "Maison troglodyte", info: "Pétroglyphe", task: "Maison troglodyte", meeting: "Amphithéâtre", planning: "Gnomon", milestone: "Arche", rec: "Roue de la mine", friche: "Sable rouge" } },
+  { id: "marais", label: "Marais", relief: "marsh",
+    pal: { top: "#8faa5a", alt: "#7f9a52", side: "#5f5a3a", water: "#5f9a8a", wild: "#8aa55a", decor: "#4f7a3a", wall: "#a88a5a", roof: "#5f6a3a", accent: "#e0e06a", wood: "#6f5530", stone: "#8f8a78", friche: "#7fb04a", tarp: "#5f6a4a" },
+    hub: ["Vasière", "Hutte de chasseur", "Passerelles", "Hameau sur buttes", "Village de bateliers", "Bourg des canaux"],
+    lg: { todo: "Piquets dans la vase", waiting: "Barque échouée", doing: "Passerelle en pose", done: "Hutte sur butte", info: "Écriteau sur pieu", task: "Hutte", meeting: "Cercle de barques", planning: "Échelle de crue", milestone: "Grand saule", rec: "Lucioles", friche: "Lentilles d'eau" } },
+  { id: "jungle", label: "Jungle", relief: "flat",
+    pal: { top: "#4fa85a", alt: "#3f9a4f", side: "#6a4a2a", water: "#6a9a6a", wild: "#58b060", decor: "#1f7a3a", wall: "#a9a07a", roof: "#c9a24a", accent: "#e8453a", wood: "#7a5230", stone: "#9a9a7a", friche: "#2f8a3a", tarp: "#7a6a3a" },
+    hub: ["Sous-bois", "Abri de feuilles", "Camp d'exploration", "Village sur pilotis", "Temple dégagé", "Cité-temple"],
+    lg: { todo: "Sentier à ouvrir", waiting: "Pirogue sur la berge", doing: "Temple dégagé", done: "Temple aux torches", info: "Totem", task: "Case sur pilotis", meeting: "Case commune", planning: "Calendrier de pierre", milestone: "Pyramide à degrés", rec: "Cascade", friche: "Lianes" } },
+  { id: "volcan", label: "Volcan", relief: "crater",
+    pal: { top: "#5a5550", alt: "#6a605a", side: "#3a3532", water: "#3f7f9a", wild: "#7a6a5a", decor: "#5f7a3a", wall: "#3f3a38", roof: "#2a2626", accent: "#ff7a2a", wood: "#5a4030", stone: "#4a4542", friche: "#9a9590", tarp: "#6a5a50" },
+    hub: ["Champ de lave", "Abri d'observation", "Sentier balisé", "Observatoire", "Village de basalte", "Cité géothermique"],
+    lg: { todo: "Balise dans la cendre", waiting: "Accès fermé", doing: "Forge qui s'allume", done: "Maison de basalte", info: "Panneau d'alerte", task: "Maison de basalte", meeting: "Amphithéâtre du cratère", planning: "Sismographe", milestone: "Colonne de basalte", rec: "Geyser", friche: "Cendre" } },
+  { id: "ile", label: "Île tropicale", relief: "island",
+    pal: { top: "#7fcf6a", alt: "#f3e2b0", side: "#c9a878", water: "#2fb8c9", wild: "#f0dca8", decor: "#2f9a55", wall: "#e8d2a0", roof: "#b8913f", accent: "#ff7a5a", wood: "#8a6440", stone: "#d9cbb0", friche: "#e6d9b0", tarp: "#8a7a4a" },
+    hub: ["Banc de sable", "Paillote", "Ponton", "Village de pêcheurs", "Port de plaisance", "Île-resort"],
+    lg: { todo: "Bouée corail", waiting: "Pirogue amarrée", doing: "Bungalow sur l'eau", done: "Bungalow et hamac", info: "Coquillage sur poteau", task: "Bungalow", meeting: "Paillote-bar", planning: "Cadran de corail", milestone: "Phare rayé", rec: "Vagues sur le récif", friche: "Algues échouées" } },
+];
+const CARTE_THEME_BY_ID = Object.fromEntries(CARTE_THEMES.map((t) => [t.id, t]));
+const CARTE_THEME_ISOLATED = "ile";
+
+// ---------- Normalisation des données Nexora ----------
+function carteDayNumber(isoDate) {
+  if (!isoDate || typeof isoDate !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return null;
+  return Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / CARTE_DAY);
+}
+function carteTodayNumber(now) {
+  const d = now ? new Date(now) : new Date();
+  return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / CARTE_DAY);
+}
+// Famille d'état, testée dans l'ordre documenté (docs/CARTE_ANALOGIES.md).
+function carteStateOf(task, statusById, typeById) {
+  const st = statusById[task.statusId];
+  const ty = typeById[task.taskTypeId];
+  const name = carteNorm(st && st.name);
+  if (/termin/.test(name)) return "done";
+  if ((ty && carteNorm(ty.name) === "information") || /information/.test(name)) return "info";
+  if (/en\s*cours/.test(name)) return "doing";
+  if (/attente/.test(name)) return "waiting";
+  return "todo";
+}
+function carteKindOf(task, typeById) {
+  if (task.milestone) return "milestone";
+  const n = carteNorm(typeById[task.taskTypeId] && typeById[task.taskTypeId].name);
+  if (n === "reunion" || n === "reunions") return "meeting";
+  if (n === "planning") return "planning";
+  return "task";
+}
+function carteCriticality(task, statusById) {
+  if (task.criticality === "urgent" || task.criticality === "moyen" || task.criticality === "bas") return task.criticality;
+  const st = statusById[task.statusId];
+  return st && /urgent/i.test(st.name || "") ? "urgent" : null;
+}
+function carteParseTime(v) {
+  if (v == null || v === "") return null;
+  const t = typeof v === "number" ? v : Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+// Entrée : ctx Nexora ({projects, projectFolders, statuses, taskTypes,
+// teamMembers}) + tâches. Sortie normalisée, sans référence au modèle brut.
+function carteNormalize(ctx, tasks, opts) {
+  const o = opts || {};
+  const nowMs = o.now != null ? o.now : Date.now();
+  const today = carteTodayNumber(nowMs);
+  const statusById = {}; (ctx.statuses || []).forEach((s) => { statusById[s.id] = s; });
+  const typeById = {}; (ctx.taskTypes || []).forEach((t) => { typeById[t.id] = t; });
+  const folderById = {}; (ctx.projectFolders || []).forEach((f) => { folderById[f.id] = f; });
+  const memberColor = {}; (ctx.teamMembers || []).forEach((m) => { if (m && m.name) memberColor[m.name] = m.color || null; });
+  const projects = (ctx.projects || []).filter((p) => p && p.id != null).map((p, index) => {
+    const folder = p.folderId && folderById[p.folderId];
+    const isolated = !p.folderId || p.folderId === CARTE_UNSORTED_FOLDER || !folder;
+    return {
+      id: p.id, name: p.name || "Projet sans nom", icon: p.icon || "", color: p.color || "#C08A3E",
+      priority: p.priority === "high" || p.priority === "low" ? p.priority : "normal",
+      folderId: p.folderId || null, folderName: folder ? folder.name || "" : "",
+      group: isolated ? null : p.folderId, order: index,
+      fromCalendar: !!(p.gcalSource || p.gcalCalendarId || p.syncedCalendarSource),
+    };
+  });
+  const projectIds = new Set(projects.map((p) => p.id));
+  const out = (tasks || []).filter((t) => t && t.id != null).map((t) => {
+    const state = carteStateOf(t, statusById, typeById);
+    const start = carteDayNumber(t.start), end = carteDayNumber(t.end);
+    const last = carteParseTime(t.lastInteraction);
+    const completed = carteParseTime(t.completedAt);
+    const checklist = Array.isArray(t.checklist) ? t.checklist : [];
+    const st = statusById[t.statusId];
+    const ty = typeById[t.taskTypeId];
+    return {
+      id: t.id, title: t.title || "Tâche sans titre",
+      projectId: projectIds.has(t.projectId) ? t.projectId : null,
+      state, kind: carteKindOf(t, typeById), milestone: !!t.milestone,
+      statusName: st ? st.name : "Sans statut", statusColor: st && st.color ? st.color : "#94A3B8",
+      typeName: ty ? ty.name : "Sans type", typeColor: ty && ty.color ? ty.color : "#94A3B8",
+      criticality: carteCriticality(t, statusById),
+      start, end, startIso: t.start || null, endIso: t.end || null,
+      startTime: t.startTime || null, endTime: t.endTime || null,
+      duration: start != null && end != null ? Math.max(0, end - start) + 1 : null,
+      overdue: end != null && end < today && state !== "done" && state !== "info",
+      soon: end != null && end >= today && end - today <= 7 && state !== "done" && state !== "info",
+      future: state === "todo" && start != null && start > today,
+      lateDays: end != null && end < today ? today - end : 0,
+      dueIn: end != null ? end - today : null,
+      progress: Math.max(0, Math.min(100, Number(t.progress) || 0)),
+      assignee: t.assignee || null, assigneeColor: t.assignee ? memberColor[t.assignee] || null : null,
+      checklistTotal: checklist.length, checklistDone: checklist.filter((c) => c && c.done).length,
+      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.filter((x) => x != null) : [],
+      secondaryProjectId: t.secondaryProjectId && projectIds.has(t.secondaryProjectId) ? t.secondaryProjectId : null,
+      recurring: !!(t.recurrence && t.recurrence.unit),
+      attachments: Array.isArray(t.attachments) ? t.attachments.length : 0,
+      hasReport: !!(t.meetingReport && String(t.meetingReport).trim()),
+      fromEmail: !!t.sourceMessageId,
+      stale: state !== "done" && state !== "info" && last != null && nowMs - last > 30 * CARTE_DAY,
+      recentDone: state === "done" && completed != null && nowMs - completed <= 7 * CARTE_DAY,
+      oldDone: state === "done" && completed != null && nowMs - completed > 30 * CARTE_DAY,
+      desc: typeof t.desc === "string" ? t.desc : "",
+    };
+  });
+  return { projects, tasks: out, today };
+}
+
+// ---------- Disposition ----------
+function carteByOrder(a, b) {
+  if (a.order !== b.order) return a.order < b.order ? -1 : 1;
+  return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
+}
+
+function cartePlaceProjects(projects, memory) {
+  const sorted = projects.slice().sort(carteByOrder);
+  const slots = carteSpiral(Math.max(19, sorted.length * 4 + 7));
+  const index = {};
+  slots.forEach((s, n) => { index[carteKey(s[0], s[1])] = n; });
+  const used = {}, at = {}, groupOf = {};
+  sorted.forEach((p) => { groupOf[p.id] = p.group || null; });
+  // 1. Emplacements mémorisés : une mise à jour ne redistribue pas la carte.
+  sorted.forEach((p) => {
+    const m = memory && memory.projects && memory.projects[p.id];
+    if (m && !used[m] && index[m] !== undefined) { used[m] = p.id; at[p.id] = m.split(",").map(Number); }
+  });
+  const otherGroupNear = (s, g) => CARTE_DIRS.some((d) => { const o = used[carteKey(s[0] + d[0], s[1] + d[1])]; return o && (groupOf[o] !== g || g == null); });
+  // 2. Nouveaux projets dans l'ordre de la liste : un ajout ne déplace aucun ancien.
+  sorted.forEach((p) => {
+    if (at[p.id]) return;
+    const g = groupOf[p.id];
+    const mates = g ? sorted.filter((o) => at[o.id] && groupOf[o.id] === g) : [];
+    let best = null, bestScore = Infinity;
+    slots.forEach((s, n) => {
+      if (used[carteKey(s[0], s[1])]) return;
+      let score;
+      if (mates.length) {
+        let d = Infinity;
+        mates.forEach((o) => { d = Math.min(d, carteDist(s[0], s[1], at[o.id][0], at[o.id][1])); });
+        score = d * 1000 + n;
+      } else score = n + (otherGroupNear(s, g) ? 100000 : 0);
+      if (score < bestScore) { bestScore = score; best = s; }
+    });
+    used[carteKey(best[0], best[1])] = p.id;
+    at[p.id] = best;
+  });
+  return { at, used, sorted };
+}
+
+// Un thème par dossier (décision du 24/09/2026) ; deux régions voisines
+// reçoivent si possible des thèmes différents ; les projets isolés (« À
+// trier », sans dossier) sont des îles.
+function carteAssignThemes(sorted, at, overrides) {
+  const ov = overrides || {};
+  const groupThemes = {};
+  const groupSlots = {};
+  sorted.forEach((p) => { if (p.group) (groupSlots[p.group] = groupSlots[p.group] || []).push(at[p.id]); });
+  const groups = [];
+  sorted.forEach((p) => { if (p.group && groups.indexOf(p.group) === -1) groups.push(p.group); });
+  const ids = CARTE_THEMES.map((t) => t.id).filter((id) => id !== CARTE_THEME_ISOLATED);
+  const neighbors = (g) => {
+    const out = new Set();
+    const mine = new Set(groupSlots[g].map((s) => carteKey(s[0], s[1])));
+    sorted.forEach((p) => {
+      if (!p.group || p.group === g) return;
+      const s = at[p.id];
+      if (CARTE_DIRS.some((d) => mine.has(carteKey(s[0] + d[0], s[1] + d[1])))) out.add(p.group);
+    });
+    return out;
+  };
+  groups.forEach((g) => {
+    if (ov[g] && CARTE_THEME_BY_ID[ov[g]]) { groupThemes[g] = ov[g]; return; }
+    const taken = new Set([...neighbors(g)].map((n) => groupThemes[n]).filter(Boolean));
+    const start = carteHash("theme:" + g) % ids.length;
+    let pick = ids[start];
+    for (let i = 0; i < ids.length; i++) { const c = ids[(start + i) % ids.length]; if (!taken.has(c)) { pick = c; break; } }
+    groupThemes[g] = pick;
+  });
+  const byProject = {};
+  sorted.forEach((p) => { byProject[p.id] = p.group ? groupThemes[p.group] : (ov[CARTE_UNSORTED_FOLDER] && CARTE_THEME_BY_ID[ov[CARTE_UNSORTED_FOLDER]] ? ov[CARTE_UNSORTED_FOLDER] : CARTE_THEME_ISOLATED); });
+  return { byProject, byGroup: groupThemes };
+}
+
+// Relief d'une tuile de territoire selon le thème. Renvoie { h, water }.
+function carteRelief(theme, ring, lq, lr, tileKey) {
+  const n = carteRand("h:" + tileKey);
+  switch (theme.relief) {
+    case "terraces": return { h: 0.35 + (CARTE_INNER + 1 - ring) * 0.2 + n * 0.08, water: false };
+    case "peak": return { h: 0.3 + (CARTE_INNER + 1 - ring) * 0.42 + n * 0.1, water: false };
+    case "crater": return ring === 0 ? { h: 1.25, water: false } : { h: 0.35 + (CARTE_INNER + 1 - ring) * 0.22 + n * 0.1, water: false };
+    case "lake": return ring === 1 ? { h: 0.12, water: true } : { h: 0.4 + n * 0.15, water: false };
+    case "coast": return lr + lq * 0.5 > 0.8 ? { h: 0.12, water: true } : { h: 0.42 + n * 0.15, water: false };
+    case "island": return ring === 3 ? { h: 0.12, water: true } : { h: 0.38 + (3 - ring) * 0.05 + n * 0.1, water: false };
+    case "gorge": return Math.abs(lr) === 0 && ring > 0 ? { h: 0.14, water: true } : { h: 0.95 + n * 0.25, water: false };
+    case "marsh": return ring > 0 && n < 0.38 ? { h: 0.13, water: true } : { h: 0.3 + n * 0.1, water: false };
+    case "dunes": return { h: 0.38 + Math.abs(Math.sin((lq * 1.3 + lr * 0.7))) * 0.22 + n * 0.05, water: false };
+    default: return { h: 0.42 + n * 0.18, water: false };
+  }
+}
+
+// Construit la carte complète. `input` = sortie de carteNormalize (+ memory,
+// themeOverrides). Mêmes entrées => même sortie, octet pour octet.
+function carteBuild(input) {
+  const projects = input.projects || [];
+  const tasks = input.tasks || [];
+  const memory = input.memory || {};
+  // Terre inconnue : territoire des tâches sans projet (signalé comme tel).
+  const orphans = tasks.filter((t) => t.projectId == null);
+  const allProjects = orphans.length
+    ? projects.concat([{ id: "__terre-inconnue__", name: "Terre inconnue", icon: "", color: "#8A8F98", priority: "normal", folderId: null, folderName: "", group: null, order: 1e9, unknown: true }])
+    : projects;
+  const projectById = {};
+  allProjects.forEach((p) => { projectById[p.id] = p; });
+  const placed = cartePlaceProjects(allProjects, memory);
+  const themes = carteAssignThemes(placed.sorted, placed.at, input.themeOverrides);
+  const tiles = {};
+  const territories = [];
+  const setTile = (q, r, t) => { tiles[carteKey(q, r)] = Object.assign({ q, r }, t); };
+
+  placed.sorted.forEach((p) => {
+    const slot = placed.at[p.id];
+    const c = carteMacroCenter(slot[0], slot[1]);
+    const theme = CARTE_THEME_BY_ID[themes.byProject[p.id]];
+    const terr = { projectId: p.id, slot, q: c[0], r: c[1], theme: theme.id, tiles: [] };
+    carteRingTiles(c[0], c[1], CARTE_R).forEach((t) => {
+      const k = carteKey(t[0], t[1]);
+      if (t[2] === 0) {
+        const rel = carteRelief(theme, 0, 0, 0, k);
+        setTile(t[0], t[1], { kind: "hub", projectId: p.id, theme: theme.id, ring: 0, h: Math.max(0.55, rel.h + 0.1) });
+      } else if (t[2] <= CARTE_INNER) {
+        const rel = carteRelief(theme, t[2], t[3], t[4], k);
+        setTile(t[0], t[1], { kind: rel.water ? "water" : "land", projectId: p.id, theme: theme.id, ring: t[2], h: rel.h, inner: true });
+        terr.tiles.push(k);
+      } else {
+        setTile(t[0], t[1], { kind: "edge", projectId: p.id, theme: theme.id, ring: 4, h: 0.3 + carteRand("h:" + k) * 0.15 });
+      }
+    });
+    territories.push(terr);
+  });
+
+  // Lisières : deux dossiers différents => mer ; même dossier => terre du thème.
+  Object.keys(tiles).forEach((k) => {
+    const t = tiles[k];
+    if (t.kind !== "edge") return;
+    let foreign = false, mate = false;
+    CARTE_DIRS.forEach((d) => {
+      const n = tiles[carteKey(t.q + d[0], t.r + d[1])];
+      if (!n || n.projectId === t.projectId) return;
+      const g1 = projectById[t.projectId].group, g2 = projectById[n.projectId].group;
+      if (g1 && g1 === g2) mate = true; else foreign = true;
+    });
+    if (foreign || (!mate && carteRand("w:" + k) < 0.55)) { t.kind = "sea"; t.h = 0.1; } else t.kind = "wild";
+  });
+
+  // Mer autour des territoires, avec quelques îlots boisés.
+  const bySlot = {};
+  territories.forEach((t) => { bySlot[carteKey(t.slot[0], t.slot[1])] = true; });
+  const around = {};
+  territories.forEach((tr) => CARTE_DIRS.forEach((d) => {
+    const s = [tr.slot[0] + d[0], tr.slot[1] + d[1]];
+    const sk = carteKey(s[0], s[1]);
+    if (!bySlot[sk]) around[sk] = s;
+  }));
+  Object.keys(around).sort().forEach((sk) => {
+    const s = around[sk];
+    const c = carteMacroCenter(s[0], s[1]);
+    carteRingTiles(c[0], c[1], CARTE_R).forEach((t) => {
+      const k = carteKey(t[0], t[1]);
+      if (tiles[k]) return;
+      const islet = t[2] <= 1 && carteRand("islet:" + sk) < 0.35;
+      setTile(t[0], t[1], islet ? { kind: "islet", projectId: null, h: 0.32 + carteRand("h:" + k) * 0.2 } : { kind: "sea", projectId: null, h: 0.1 });
+    });
+  });
+
+  // Routes : uniquement entre cœurs d'un même dossier (arbre couvrant minimal).
+  const routes = [];
+  const groups = {};
+  placed.sorted.forEach((p) => { if (p.group) (groups[p.group] = groups[p.group] || []).push(p.id); });
+  Object.keys(groups).sort().forEach((g) => {
+    const ids = groups[g];
+    const inTree = [ids[0]];
+    const rest = ids.slice(1);
+    while (rest.length) {
+      let best = null;
+      inTree.forEach((a) => rest.forEach((b) => {
+        const sa = placed.at[a], sb = placed.at[b];
+        const d = carteDist(sa[0], sa[1], sb[0], sb[1]);
+        if (!best || d < best.d || (d === best.d && String(a) + String(b) < String(best.a) + String(best.b))) best = { a, b, d };
+      }));
+      inTree.push(best.b);
+      rest.splice(rest.indexOf(best.b), 1);
+      const ca = carteMacroCenter(placed.at[best.a][0], placed.at[best.a][1]);
+      const cb = carteMacroCenter(placed.at[best.b][0], placed.at[best.b][1]);
+      const line = carteHexLine(ca[0], ca[1], cb[0], cb[1]);
+      line.forEach((h) => {
+        const t = tiles[carteKey(h[0], h[1])];
+        if (!t || t.kind === "hub") return;
+        t.road = g;
+        if (t.kind === "water" || t.kind === "sea") t.bridge = true;
+      });
+      routes.push({ group: g, from: best.a, to: best.b, tiles: line.map((h) => carteKey(h[0], h[1])) });
+    }
+  });
+
+  // Tâches : mémoire d'abord (deux passes), puis hachage de rendez-vous.
+  const pois = [];
+  const taskTile = {};
+  const occupancy = {};
+  const byProject = {};
+  tasks.slice().sort((a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0)).forEach((t) => {
+    const pid = t.projectId == null ? "__terre-inconnue__" : t.projectId;
+    (byProject[pid] = byProject[pid] || []).push(t);
+  });
+  territories.forEach((terr) => {
+    const list = byProject[terr.projectId] || [];
+    const free = terr.tiles.filter((k) => !tiles[k].road);
+    const cand = free.length ? free : terr.tiles.slice();
+    const candSet = new Set(cand);
+    const chosen = {};
+    list.forEach((t) => {
+      const m = memory.tasks && memory.tasks[t.id];
+      if (m && candSet.has(m) && !occupancy[m]) { chosen[t.id] = m; occupancy[m] = 1; }
+    });
+    list.forEach((t) => {
+      if (chosen[t.id]) return;
+      const ranked = cand.slice().sort((a, b) => carteHash(t.id + "@" + b) - carteHash(t.id + "@" + a) || (a < b ? -1 : 1));
+      let pick = ranked.find((k) => !occupancy[k]);
+      if (!pick) {
+        // Territoire plein : regroupement sur la tuile la moins chargée.
+        let min = Infinity;
+        ranked.forEach((k) => { if (occupancy[k] < min) { min = occupancy[k]; pick = k; } });
+      }
+      chosen[t.id] = pick;
+      occupancy[pick] = (occupancy[pick] || 0) + 1;
+    });
+    const stackIndex = {};
+    list.forEach((t) => {
+      const k = chosen[t.id];
+      const s = stackIndex[k] || 0;
+      stackIndex[k] = s + 1;
+      taskTile[t.id] = k;
+      const tile = tiles[k];
+      pois.push({ taskId: t.id, projectId: terr.projectId, key: k, q: tile.q, r: tile.r, stack: s });
+    });
+  });
+
+  const memOut = { projects: {}, tasks: taskTile };
+  Object.keys(placed.at).forEach((id) => { memOut.projects[id] = carteKey(placed.at[id][0], placed.at[id][1]); });
+  return { tiles, territories, pois, routes, occupancy, themes: themes.byProject, groupThemes: themes.byGroup, memory: memOut, projectById };
+}
+
+// Statistiques et palier d'un territoire.
+function carteTerritoryStats(tasks) {
+  const s = { todo: 0, doing: 0, waiting: 0, done: 0, info: 0, total: 0, overdue: 0, counted: 0 };
+  tasks.forEach((t) => {
+    s[t.state]++;
+    s.total++;
+    if (t.overdue) s.overdue++;
+    if (t.state !== "info") s.counted++;
+  });
+  // Les informations ne sont ni à faire ni faites : elles ne comptent pas.
+  s.pct = s.counted ? Math.round((s.done / s.counted) * 100) : 0;
+  s.stage = s.counted ? carteStage(s.done === s.counted ? 100 : (s.done / s.counted) * 100) : 0;
+  return s;
+}
+
+// Couleur stable d'une personne sans couleur d'équipe.
+const CARTE_PEOPLE_COLORS = ["#E4572E", "#17BEBB", "#FFC914", "#2E86AB", "#A23B72", "#76B041", "#F18F01", "#6C4AB6"];
+function cartePersonColor(name, color) {
+  if (color) return color;
+  if (!name) return null;
+  return CARTE_PEOPLE_COLORS[carteHash("p:" + name) % CARTE_PEOPLE_COLORS.length];
+}
+
+// ---------- Modèles procéduraux ----------
+// Un modèle est une liste de pièces { g, c, p:[x,y,z], s:[sx,sy,sz], r, m }.
+// g : "box" | "cyl" | "hex" | "cone" | "pyr" | "ball" | "dome"
+// (géométries unitaires : base à y = 0, hauteur 1, rayon 0.5).
+// m : "l" (mat éclairée), "g" (lumineuse), "t" (translucide), "s" (tourne).
+function cP(g, c, x, y, z, sx, sy, sz, r, m) { return { g, c, p: [x, y, z], s: [sx, sy, sz], r: r || 0, m: m || "l" }; }
+const CARTE_GLOW = "#FFE38A";
+
+function carteHouse(wall, roof, w, h, d, roofH) {
+  return [cP("box", wall, 0, 0, 0, w, h, d), cP("pyr", roof, 0, h, 0, w * 1.18, roofH || h * 0.7, d * 1.18, Math.PI / 4), cP("box", CARTE_GLOW, 0, h * 0.35, d / 2 + 0.005, w * 0.28, h * 0.3, 0.02, 0, "g")];
+}
+function carteTree(trunk, leaves, kind, sc) {
+  const s = sc || 1;
+  if (kind === "palm") return [cP("cyl", trunk, 0, 0, 0, 0.07 * s, 0.9 * s, 0.07 * s, 0.2), cP("cone", leaves, 0, 0.85 * s, 0, 0.7 * s, 0.14 * s, 0.7 * s)];
+  if (kind === "cactus") return [cP("cyl", leaves, 0, 0, 0, 0.14 * s, 0.6 * s, 0.14 * s), cP("cyl", leaves, 0.12 * s, 0.22 * s, 0, 0.08 * s, 0.25 * s, 0.08 * s)];
+  if (kind === "round") return [cP("cyl", trunk, 0, 0, 0, 0.08 * s, 0.3 * s, 0.08 * s), cP("ball", leaves, 0, 0.28 * s, 0, 0.55 * s, 0.5 * s, 0.55 * s)];
+  if (kind === "reed") return [cP("cyl", leaves, 0, 0, 0, 0.04, 0.4 * s, 0.04), cP("cyl", leaves, 0.08, 0, 0.05, 0.04, 0.32 * s, 0.04), cP("cyl", "#8a6a3a", 0.03, 0.35 * s, 0.02, 0.06, 0.1, 0.06)];
+  return [cP("cyl", trunk, 0, 0, 0, 0.08 * s, 0.2 * s, 0.08 * s), cP("cone", leaves, 0, 0.15 * s, 0, 0.55 * s, 0.85 * s, 0.55 * s)];
+}
+function carteRock(c, s) { return [cP("ball", c, 0, 0, 0, 0.4 * s, 0.28 * s, 0.34 * s, 0.6)]; }
+function carteStakes(c) { return [cP("cyl", c, -0.22, 0, -0.18, 0.04, 0.3, 0.04), cP("cyl", c, 0.22, 0, -0.18, 0.04, 0.3, 0.04), cP("cyl", c, -0.22, 0, 0.2, 0.04, 0.3, 0.04), cP("cyl", c, 0.22, 0, 0.2, 0.04, 0.3, 0.04), cP("box", "#f2efe6", 0, 0.24, -0.18, 0.44, 0.015, 0.015), cP("box", "#f2efe6", 0, 0.24, 0.2, 0.44, 0.015, 0.015)]; }
+function carteSign(post, board) { return [cP("cyl", post, 0, 0, 0, 0.05, 0.55, 0.05), cP("box", board, 0, 0.42, 0, 0.42, 0.26, 0.04)]; }
+function carteTent(c, s) { const k = s || 1; return [cP("cone", c, 0, 0, 0, 0.62 * k, 0.55 * k, 0.62 * k), cP("box", "#3a2e22", 0, 0, 0.27 * k, 0.12 * k, 0.22 * k, 0.04)]; }
+function carteDome(c, s) { const k = s || 1; return [cP("dome", c, 0, 0, 0, 0.66 * k, 0.4 * k, 0.66 * k), cP("box", CARTE_GLOW, 0, 0, 0.3 * k, 0.14 * k, 0.16 * k, 0.04, 0, "g")]; }
+function carteTower(wall, roof, h, w) { return [cP("box", wall, 0, 0, 0, w || 0.34, h, w || 0.34), cP("pyr", roof, 0, h, 0, (w || 0.34) * 1.3, 0.3, (w || 0.34) * 1.3, Math.PI / 4), cP("cyl", "#fff6d8", 0, h * 0.72, (w || 0.34) / 2 + 0.01, 0.2, 0.02, 0.2, 0, "g")]; }
+function carteHall(post, roof) { return [cP("cyl", post, -0.28, 0, -0.22, 0.06, 0.4, 0.06), cP("cyl", post, 0.28, 0, -0.22, 0.06, 0.4, 0.06), cP("cyl", post, -0.28, 0, 0.22, 0.06, 0.4, 0.06), cP("cyl", post, 0.28, 0, 0.22, 0.06, 0.4, 0.06), cP("pyr", roof, 0, 0.4, 0, 0.9, 0.3, 0.75, Math.PI / 4), cP("box", "#8a6a45", 0, 0, 0, 0.4, 0.12, 0.12)]; }
+function carteObelisk(c, h) { return [cP("box", c, 0, 0, 0, 0.36, 0.1, 0.36), cP("box", c, 0, 0.1, 0, 0.18, h || 1, 0.18), cP("pyr", c, 0, 0.1 + (h || 1), 0, 0.24, 0.18, 0.24, Math.PI / 4)]; }
+function carteLighthouse(a, b) { return [cP("cyl", a, 0, 0, 0, 0.34, 0.35, 0.34), cP("cyl", b, 0, 0.35, 0, 0.28, 0.35, 0.28), cP("cyl", a, 0, 0.7, 0, 0.24, 0.3, 0.24), cP("cyl", CARTE_GLOW, 0, 1.0, 0, 0.2, 0.16, 0.2, 0, "g"), cP("cone", "#3a3a3a", 0, 1.16, 0, 0.28, 0.18, 0.28)]; }
+function carteShip(hull, sail, sails) {
+  const out = [cP("box", hull, 0, 0.05, 0, 0.36, 0.2, 0.9), cP("pyr", hull, 0, 0.05, 0.5, 0.36, 0.2, 0.2, Math.PI / 4)];
+  if (sails !== 0) out.push(cP("cyl", "#6a4a2e", 0, 0.25, 0, 0.04, 0.8, 0.04));
+  if (sails === 2) out.push(cP("box", sail, 0, 0.45, 0.02, 0.5, 0.5, 0.02));
+  return out;
+}
+function carteStilts(c, h) { const y = -(h || 0.3); return [cP("cyl", c, -0.26, y, -0.22, 0.05, -y, 0.05), cP("cyl", c, 0.26, y, -0.22, 0.05, -y, 0.05), cP("cyl", c, -0.26, y, 0.22, 0.05, -y, 0.05), cP("cyl", c, 0.26, y, 0.22, 0.05, -y, 0.05), cP("box", c, 0, -0.02, 0, 0.7, 0.04, 0.6)]; }
+function carteTemple(c, steps) { const out = []; for (let i = 0; i < steps; i++) out.push(cP("box", c, 0, i * 0.2, 0, 0.8 - i * 0.18, 0.2, 0.8 - i * 0.18)); return out; }
+function carteTroglo(rock, door) { return [cP("box", rock, 0, 0, 0, 0.8, 0.7, 0.55), cP("box", "#3a2418", 0, 0, 0.28, 0.16, 0.26, 0.02), cP("box", CARTE_GLOW, -0.22, 0.35, 0.28, 0.12, 0.1, 0.02, 0, "g"), cP("box", CARTE_GLOW, 0.22, 0.35, 0.28, 0.12, 0.1, 0.02, 0, "g")]; }
+function carteCairn(c) { return [cP("ball", c, 0, 0, 0, 0.34, 0.16, 0.3), cP("ball", c, 0, 0.12, 0, 0.26, 0.14, 0.24), cP("ball", c, 0, 0.23, 0, 0.18, 0.12, 0.16)]; }
+function carteFlag(pole, cloth, h) { return [cP("cyl", pole, 0, 0, 0, 0.035, h || 0.9, 0.035), cP("box", cloth, 0, (h || 0.9) - 0.2, 0.13, 0.02, 0.18, 0.26)]; }
+function carteBuoy(a, b) { return [cP("cyl", a, 0, 0, 0, 0.26, 0.18, 0.26), cP("cone", b, 0, 0.18, 0, 0.18, 0.3, 0.18)]; }
+function carteWell(stone, water) { return [cP("cyl", stone, 0, 0, 0, 0.5, 0.22, 0.5), cP("cyl", water, 0, 0.2, 0, 0.38, 0.02, 0.38)]; }
+function carteField(soil, crop, grow) {
+  const out = [cP("box", soil, 0, 0, 0, 0.9, 0.04, 0.8)];
+  for (let i = 0; i < 4; i++) out.push(grow > 0 ? cP("box", crop, -0.3 + i * 0.2, 0.04, 0, 0.1, 0.05 + grow * 0.35, 0.7) : cP("box", "#6a4a2a", -0.3 + i * 0.2, 0.04, 0, 0.06, 0.03, 0.7));
+  return out;
+}
+function carteWagon(wood, load) { return [cP("box", wood, 0, 0.12, 0, 0.36, 0.18, 0.56), cP("cyl", "#3a2a1a", -0.2, 0, -0.18, 0.2, 0.05, 0.2, 0), cP("cyl", "#3a2a1a", 0.2, 0, 0.18, 0.2, 0.05, 0.2), cP("box", load, 0, 0.3, 0, 0.3, 0.16, 0.48)]; }
+function carteSled(wood, load) { return [cP("box", wood, 0, 0.05, 0, 0.34, 0.06, 0.7), cP("box", load, 0, 0.11, 0, 0.3, 0.18, 0.5)]; }
+function carteBoat(c) { return [cP("box", c, 0, 0.02, 0, 0.3, 0.12, 0.66), cP("pyr", c, 0, 0.02, 0.36, 0.3, 0.12, 0.14, Math.PI / 4)]; }
+
+// Silhouette complète d'une tâche selon le type, dans un thème.
+function carteSilhouette(themeId, kind, pal) {
+  const w = pal.wall, rf = pal.roof, st = pal.stone, wd = pal.wood, ac = pal.accent;
+  const M = {
+    ville: { task: () => carteHouse(w, rf, 0.5, 0.55, 0.5), meeting: () => carteHall(st, rf), planning: () => carteTower(w, rf, 1.0), milestone: () => [cP("box", st, 0, 0, 0, 0.44, 0.3, 0.44), cP("cyl", "#7f8f86", 0, 0.3, 0, 0.18, 0.5, 0.18), cP("ball", "#7f8f86", 0, 0.78, 0, 0.2, 0.2, 0.2)] },
+    campagne: { task: () => carteHouse("#b0493a", "#6a4a2e", 0.62, 0.42, 0.5, 0.35), meeting: () => carteHall(wd, "#c9a24a"), planning: () => [cP("cyl", st, 0, 0, 0, 0.5, 0.12, 0.5), cP("pyr", "#6a4a2e", 0, 0.12, 0, 0.08, 0.4, 0.3)], milestone: () => [cP("cyl", st, 0, 0, 0, 0.14, 0.9, 0.14), cP("cyl", "#dfe6ea", 0, 0.9, 0, 0.5, 0.3, 0.5)] },
+    foret: { task: () => carteTree(wd, pal.decor, "pine", 1.3).concat([cP("box", w, 0, 0.55, 0.12, 0.42, 0.3, 0.34), cP("pyr", rf, 0, 0.85, 0.12, 0.5, 0.22, 0.42, Math.PI / 4)]), meeting: () => [cP("cyl", "#e0602a", 0, 0, 0, 0.14, 0.14, 0.14, 0, "g"), cP("cyl", wd, -0.3, 0, 0, 0.16, 0.12, 0.16), cP("cyl", wd, 0.3, 0, 0, 0.16, 0.12, 0.16), cP("cyl", wd, 0, 0, 0.3, 0.16, 0.12, 0.16), cP("cyl", wd, 0, 0, -0.3, 0.16, 0.12, 0.16)], planning: () => [cP("cyl", wd, 0, 0, 0, 0.44, 0.2, 0.44), cP("pyr", st, 0, 0.2, 0, 0.06, 0.3, 0.24)], milestone: () => carteTree(wd, pal.decor, "round", 2.2) },
+    desert: { task: () => [cP("box", w, 0, 0, 0, 0.56, 0.4, 0.5), cP("box", w, 0, 0.4, 0, 0.6, 0.05, 0.54), cP("box", CARTE_GLOW, 0, 0.14, 0.255, 0.12, 0.14, 0.02, 0, "g")], meeting: () => carteTent("#b7553a", 1.4), planning: () => [cP("cyl", st, 0, 0, 0, 0.5, 0.08, 0.5), cP("pyr", st, 0, 0.08, 0, 0.1, 0.55, 0.1)], milestone: () => carteObelisk(st, 1.4) },
+    mer: { task: () => carteShip("#8a5a35", "#f2efe6", 2), meeting: () => carteHouse("#e8e2d0", "#2f6fa8", 0.62, 0.36, 0.48), planning: () => carteTower("#f2efe6", "#2f6fa8", 0.8), milestone: () => carteLighthouse("#f2efe6", "#d9412f") },
+    lac: { task: () => carteStilts(wd, 0.2).concat(carteHouse(w, rf, 0.46, 0.34, 0.4)), meeting: () => carteStilts(wd, 0.2).concat(carteHall(wd, rf)), planning: () => carteTower(w, rf, 0.8, 0.3), milestone: () => [cP("cyl", wd, -0.18, 0, -0.18, 0.06, 1, 0.06), cP("cyl", wd, 0.18, 0, 0.18, 0.06, 1, 0.06), cP("cyl", wd, -0.18, 0, 0.18, 0.06, 1, 0.06), cP("cyl", wd, 0.18, 0, -0.18, 0.06, 1, 0.06), cP("box", w, 0, 1, 0, 0.5, 0.26, 0.5), cP("pyr", rf, 0, 1.26, 0, 0.6, 0.26, 0.6, Math.PI / 4)] },
+    montagne: { task: () => [cP("box", st, 0, 0, 0, 0.56, 0.2, 0.5)].concat(carteHouse(w, rf, 0.56, 0.28, 0.5, 0.34).map((p) => Object.assign({}, p, { p: [p.p[0], p.p[1] + 0.2, p.p[2]] }))), meeting: () => carteHouse(w, rf, 0.72, 0.4, 0.5, 0.3), planning: () => carteTower(st, rf, 1.0, 0.3), milestone: () => [cP("box", wd, 0, 0, 0, 0.07, 0.9, 0.07), cP("box", wd, 0, 0.6, 0, 0.4, 0.07, 0.07)] },
+    hautemontagne: { task: () => carteTent(w, 0.9), meeting: () => carteTent(ac, 1.35), planning: () => [cP("cyl", "#b0b6bd", 0, 0, 0, 0.05, 0.9, 0.05), cP("box", "#f2f2f2", 0, 0.7, 0, 0.3, 0.16, 0.16), cP("cone", ac, 0.2, 0.86, 0, 0.1, 0.14, 0.1)], milestone: () => [cP("cone", "#9ba1a8", 0, 0, 0, 0.8, 1.2, 0.8), cP("cone", "#ffffff", 0, 0.72, 0, 0.34, 0.48, 0.34)].concat(carteFlag("#6a4a2e", w, 0.5).map((p) => Object.assign({}, p, { p: [p.p[0], p.p[1] + 1.1, p.p[2]] }))) },
+    grandnord: { task: () => carteDome(w, 1), meeting: () => carteDome(w, 1.4), planning: () => [cP("cyl", "#9aa6ad", 0, 0, 0, 0.05, 0.8, 0.05), cP("box", "#e8eef2", 0, 0.62, 0, 0.26, 0.14, 0.14)], milestone: () => [cP("cyl", "#b8c2c8", 0, 0, 0, 0.1, 1.3, 0.1), cP("dome", "#e8eef2", 0, 1.3, 0, 0.5, 0.2, 0.5, 0.4)] },
+    canyon: { task: () => carteTroglo(st, wd), meeting: () => [cP("cyl", st, 0, 0, 0, 0.9, 0.1, 0.9), cP("cyl", st, 0, 0.1, 0, 0.66, 0.1, 0.66), cP("cyl", "#d9995f", 0, 0.2, 0, 0.4, 0.02, 0.4)], planning: () => [cP("cyl", st, 0, 0, 0, 0.5, 0.08, 0.5), cP("pyr", st, 0, 0.08, 0, 0.1, 0.55, 0.1)], milestone: () => [cP("box", st, -0.3, 0, 0, 0.2, 0.8, 0.26), cP("box", st, 0.3, 0, 0, 0.2, 0.8, 0.26), cP("box", st, 0, 0.8, 0, 0.8, 0.2, 0.26)] },
+    marais: { task: () => [cP("ball", "#6f7a3a", 0, -0.08, 0, 0.8, 0.22, 0.8)].concat(carteHouse(w, rf, 0.42, 0.3, 0.38, 0.3)), meeting: () => [0, 1, 2, 3].map((i) => Object.assign(carteBoat(wd)[0], { p: [Math.cos(i * 1.57) * 0.3, 0.02, Math.sin(i * 1.57) * 0.3], r: i * 1.57 })), planning: () => [cP("box", wd, 0, 0, 0, 0.08, 0.9, 0.08), cP("box", "#f2efe6", 0.05, 0.1, 0, 0.02, 0.7, 0.1)], milestone: () => [cP("cyl", wd, 0, 0, 0, 0.14, 0.6, 0.14), cP("ball", "#8fae5a", 0, 0.5, 0, 1.1, 0.7, 1.1)] },
+    jungle: { task: () => carteStilts(wd, 0.2).concat([cP("box", w, 0, 0, 0, 0.46, 0.3, 0.4), cP("cone", rf, 0, 0.3, 0, 0.7, 0.34, 0.7)]), meeting: () => [cP("box", w, 0, 0, 0, 0.66, 0.34, 0.5), cP("cone", rf, 0, 0.34, 0, 0.95, 0.4, 0.95)], planning: () => [cP("cyl", st, 0, 0, 0, 0.6, 0.1, 0.6), cP("cyl", "#b0a88a", 0, 0.1, 0, 0.44, 0.05, 0.44)], milestone: () => carteTemple(st, 5) },
+    volcan: { task: () => [cP("hex", w, 0, 0, 0, 0.5, 0.5, 0.5), cP("hex", rf, 0, 0.5, 0, 0.56, 0.06, 0.56), cP("box", "#ff9a3a", 0, 0.18, 0.24, 0.14, 0.14, 0.02, 0, "g")], meeting: () => [cP("cyl", st, 0, 0, 0, 0.9, 0.1, 0.9), cP("cyl", "#ff7a2a", 0, 0.1, 0, 0.3, 0.02, 0.3, 0, "g")], planning: () => [cP("box", st, 0, 0, 0, 0.4, 0.3, 0.3), cP("cyl", "#e8e0d0", 0.08, 0.3, 0, 0.1, 0.1, 0.1)], milestone: () => [0, 1, 2, 3, 4, 5, 6].map((i) => cP("hex", st, Math.cos(i) * (i ? 0.22 : 0), 0, Math.sin(i) * (i ? 0.22 : 0), 0.22, 0.6 + (i % 3) * 0.3, 0.22)) },
+    ile: { task: () => carteStilts(wd, 0.2).concat([cP("box", w, 0, 0, 0, 0.46, 0.3, 0.4), cP("pyr", rf, 0, 0.3, 0, 0.62, 0.3, 0.56, Math.PI / 4)]), meeting: () => carteHall(wd, rf), planning: () => [cP("cyl", "#f2c4b0", 0, 0, 0, 0.5, 0.08, 0.5), cP("pyr", "#f2c4b0", 0, 0.08, 0, 0.08, 0.4, 0.24)], milestone: () => carteLighthouse("#ffffff", "#d9412f") },
+  };
+  const th = M[themeId] || M.ville;
+  return (th[kind] || th.task)();
+}
+
+// Objets de stade propres au thème (à faire, attente, information, sous-tâche).
+function carteStageProp(themeId, which, pal, arg) {
+  const wd = pal.wood, st = pal.stone;
+  const P = {
+    ville: { todo: () => carteStakes(wd), waiting: () => carteWagon("#5b6b7a", "#8fa0b0"), info: () => [cP("cyl", "#3f5f4a", 0, 0, 0, 0.26, 0.7, 0.26), cP("cyl", "#f2e6c8", 0, 0.18, 0, 0.28, 0.36, 0.28), cP("cone", "#3f5f4a", 0, 0.7, 0, 0.32, 0.12, 0.32)], sub: (d) => [cP("box", d ? "#c95a3a" : "#b9b0a0", 0, 0, 0, 0.18, d ? 0.2 : 0.08, 0.18)] },
+    campagne: { todo: () => carteField("#8a5f35", "#d9b23a", 0), waiting: () => carteWagon(wd, "#d9c27a"), info: () => carteSign(wd, "#d9b98a"), sub: (d) => [cP(d ? "cyl" : "box", d ? "#e0c060" : "#8fae4a", 0, 0, 0, 0.18, d ? 0.16 : 0.06, 0.18, d ? 1.57 : 0)] },
+    foret: { todo: () => carteTree(wd, pal.decor, "pine", 0.9).concat([cP("box", "#d9412f", 0, 0.12, 0.06, 0.08, 0.08, 0.02)]), waiting: () => [cP("cyl", wd, 0, 0.08, 0, 0.16, 0.7, 0.16, 1.57), cP("cyl", wd, 0.18, 0.08, 0, 0.16, 0.7, 0.16, 1.57), cP("cyl", wd, 0.09, 0.22, 0, 0.16, 0.7, 0.16, 1.57)], info: () => [cP("cyl", wd, 0, 0, 0, 0.18, 0.7, 0.18), cP("box", "#d9b98a", 0, 0.4, 0.1, 0.3, 0.18, 0.02)], sub: (d) => [cP("box", wd, 0, 0, 0, 0.2, d ? 0.18 : 0.08, 0.14)] },
+    desert: { todo: () => carteStakes(wd).concat([cP("box", "#caa06a", 0, 0, 0, 0.2, 0.14, 0.14)]), waiting: () => [cP("box", "#c9a06a", 0, 0.1, 0, 0.2, 0.2, 0.46), cP("ball", "#c9a06a", 0, 0.28, 0.2, 0.14, 0.14, 0.14), cP("ball", "#c9a06a", 0, 0.2, -0.08, 0.2, 0.16, 0.22)], info: () => [cP("box", st, 0, 0, 0, 0.3, 0.5, 0.1)], sub: (d) => [cP("ball", d ? "#b86a3a" : "#e0c89a", 0, 0, 0, 0.14, 0.22, 0.14)] },
+    mer: { todo: () => carteBuoy("#d9412f", "#f2efe6"), waiting: () => carteShip("#6a4a2e", "#f2efe6", 1), info: () => carteBuoy("#2a2a2a", "#e8c14a"), sub: (d) => [cP("box", d ? "#8a5a35" : "#c9b08a", 0, 0, 0, 0.18, 0.16, 0.18)] },
+    lac: { todo: () => [cP("cyl", wd, -0.2, -0.15, -0.1, 0.05, 0.4, 0.05), cP("cyl", wd, 0.15, -0.15, 0.1, 0.05, 0.36, 0.05), cP("cyl", wd, 0, -0.15, -0.25, 0.05, 0.42, 0.05)], waiting: () => carteBoat(wd), info: () => carteSign(wd, "#d9c29a"), sub: (d) => [cP("cyl", d ? "#6a5a3a" : "#b9a88a", 0, 0, 0, 0.14, 0.14, 0.14)] },
+    montagne: { todo: () => carteCairn(st), waiting: () => carteHouse("#ffffff", "#ffffff", 0.5, 0.3, 0.44, 0.3), info: () => carteSign(wd, "#f2c43a"), sub: (d) => [cP("box", wd, 0, 0, 0, 0.24, d ? 0.18 : 0.06, 0.12)] },
+    hautemontagne: { todo: () => [cP("cyl", "#e0602a", 0, 0, 0, 0.26, 0.05, 0.26), cP("cyl", "#2f6fbf", 0.05, 0.05, 0, 0.2, 0.05, 0.2)], waiting: () => carteTent("#9aa6b0", 0.9), info: () => [cP("box", "#c9ccd0", 0, 0, 0, 0.3, 0.22, 0.06)], sub: (d) => [cP("cyl", d ? "#e0602a" : "#c9ccd0", 0, 0, 0, 0.06, 0.24, 0.06)] },
+    grandnord: { todo: () => carteSled("#8a5a35", "#6a8a9a"), waiting: () => carteSled("#8a5a35", "#6a8a9a").concat([cP("ball", "#d9d2c6", 0.3, 0, 0.3, 0.2, 0.14, 0.28), cP("ball", "#6a5a4a", -0.3, 0, 0.3, 0.2, 0.14, 0.28)]), info: () => [cP("box", st, 0, 0, 0, 0.14, 0.3, 0.14), cP("box", st, 0, 0.3, 0, 0.44, 0.1, 0.12), cP("box", st, 0, 0.4, 0, 0.14, 0.14, 0.14)], sub: (d) => [cP("cyl", d ? "#2f6f9a" : "#cfe0e8", 0, 0, 0, 0.18, 0.02, 0.18)] },
+    canyon: { todo: () => [cP("cyl", wd, 0, 0, 0, 0.05, 0.4, 0.05), cP("cyl", "#e0c890", 0, 0, 0, 0.2, 0.06, 0.2)], waiting: () => [cP("box", wd, 0, 0.3, 0, 0.36, 0.26, 0.3), cP("cyl", "#3a2a1a", 0, 0.56, 0, 0.02, 0.6, 0.02)], info: () => [cP("box", "#8a3a22", 0, 0, 0, 0.44, 0.34, 0.08)], sub: (d) => [cP("box", "#5a5a5a", 0, 0, 0, 0.18, 0.12, 0.26), cP("box", d ? "#c9a24a" : "#5a5a5a", 0, 0.12, 0, 0.14, d ? 0.08 : 0.01, 0.22)] },
+    marais: { todo: () => [cP("cyl", wd, -0.2, -0.1, 0, 0.05, 0.36, 0.05), cP("cyl", wd, 0.2, -0.1, 0, 0.05, 0.36, 0.05)], waiting: () => carteBoat("#6a5a3a"), info: () => carteSign(wd, "#c9b98a"), sub: (d) => [cP("cyl", d ? "#4f4a2a" : "#a89a6a", 0, 0, 0, 0.14, 0.14, 0.14)] },
+    jungle: { todo: () => [cP("box", "#9aa0a6", 0, 0.1, 0, 0.04, 0.36, 0.14, 0.4), cP("cyl", "#6a4a2e", 0, 0, 0, 0.05, 0.12, 0.05)], waiting: () => carteBoat("#7a5230"), info: () => [cP("cyl", "#8a5a30", 0, 0, 0, 0.2, 0.8, 0.2), cP("box", "#e8453a", 0, 0.5, 0.1, 0.24, 0.1, 0.02)], sub: (d) => [cP("cyl", "#a88a5a", 0, 0, 0, 0.2, 0.12, 0.2), cP("ball", d ? "#f2a33a" : "#a88a5a", 0, 0.1, 0, 0.16, d ? 0.1 : 0.01, 0.16)] },
+    volcan: { todo: () => [cP("cyl", "#e0602a", 0, 0, 0, 0.05, 0.4, 0.05), cP("box", "#f2efe6", 0, 0.32, 0.06, 0.02, 0.1, 0.14)], waiting: () => [cP("cyl", "#3a3532", -0.2, 0, 0, 0.05, 0.3, 0.05), cP("cyl", "#3a3532", 0.2, 0, 0, 0.05, 0.3, 0.05), cP("box", "#c9c2b8", 0, 0.24, 0, 0.4, 0.02, 0.02), cP("ball", "#cfc9c2", 0, 0, -0.2, 0.3, 0.5, 0.3, 0, "t")], info: () => [cP("cyl", "#6a6a6a", 0, 0, 0, 0.04, 0.4, 0.04), cP("cone", "#f2c43a", 0, 0.34, 0, 0.36, 0.3, 0.06)], sub: (d) => [cP("hex", d ? "#5a5550" : "#3a3532", 0, 0, 0, 0.18, d ? 0.16 : 0.1, 0.18)] },
+    ile: { todo: () => carteBuoy("#ff7a5a", "#f2efe6"), waiting: () => carteBoat("#b8913f").concat([cP("box", "#8a6440", 0.26, 0.06, 0, 0.04, 0.04, 0.5)]), info: () => [cP("cyl", "#8a6440", 0, 0, 0, 0.05, 0.4, 0.05), cP("cone", "#f2c4b0", 0, 0.38, 0, 0.26, 0.2, 0.2, 1)], sub: (d) => [cP("ball", "#6a4a2a", 0, 0, 0, 0.14, 0.14, 0.14)].concat(d ? [] : [cP("cyl", "#8a6440", 0, 0.12, 0, 0.03, 0.2, 0.03)]) },
+  };
+  const th = P[themeId] || P.ville;
+  return th[which] ? th[which](arg) : [];
+}
+
+// Mécanisme de récurrence : une pièce « s » tourne, tout le reste est fixe.
+function carteRecurrenceProp(themeId, pal) {
+  const blades = (c) => [cP("box", c, 0, 0, 0, 0.9, 0.08, 0.03, 0, "s"), cP("box", c, 0, 0, 0, 0.08, 0.9, 0.03, 0, "s")];
+  const on = (parts, dy, dz) => parts.map((p) => Object.assign({}, p, { p: [p.p[0], p.p[1] + (dy || 0), p.p[2] + (dz || 0)] }));
+  switch (themeId) {
+    case "campagne": return [cP("cyl", "#e8dcc0", 0, 0, 0, 0.26, 0.6, 0.26)].concat(on(blades("#f2efe6"), 0.62, 0.16));
+    case "grandnord": return [cP("cyl", "#dfe6ea", 0, 0, 0, 0.05, 0.8, 0.05)].concat(on(blades("#ffffff"), 0.82, 0.06));
+    case "desert": case "lac": case "foret": case "canyon": return [cP("box", pal.wood, 0, 0, 0, 0.08, 0.34, 0.5)].concat(on([cP("cyl", pal.wood, 0, 0, 0, 0.5, 0.06, 0.5, 0, "s")], 0.34, 0));
+    default: return [cP("cyl", "#b0b6bd", 0, 0, 0, 0.04, 0.6, 0.04)].concat(on(blades(pal.accent), 0.62, 0.05));
+  }
+}
+
+// Cœur du projet : un bâtiment du thème, entouré de 0 à 5 habitations selon le
+// palier ; au palier 5, une couronne (drapeau du projet).
+function carteHubModel(themeId, stage, color, priority) {
+  const theme = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
+  const pal = theme.pal;
+  const scale = priority === "high" ? 1.25 : priority === "low" ? 0.85 : 1;
+  const base = priority === "high" ? [cP("hex", pal.stone, 0, 0, 0, 1.1, 0.25, 1.1)] : [];
+  const y0 = priority === "high" ? 0.25 : 0;
+  const lift = (parts, dx, dz, s, dy) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] * s + dx, p.p[1] * s + (dy || 0), p.p[2] * s + dz], s: [p.s[0] * s, p.s[1] * s, p.s[2] * s] }));
+  const main = themeId === "hautemontagne" ? [cP("cone", "#9ba1a8", 0, 0, 0, 1.2, 0.6 + stage * 0.2, 1.2), cP("cone", "#ffffff", 0, 0.36 + stage * 0.12, 0, 0.5, 0.24 + stage * 0.08, 0.5)] : carteTower(pal.wall, color, 0.9 + stage * 0.08, 0.42);
+  let out = base.concat(lift(main, 0, 0, scale, y0));
+  const small = carteSilhouette(themeId, "task", pal);
+  for (let i = 0; i < stage; i++) {
+    const a = i * (Math.PI * 2 / 5) + 0.5;
+    out = out.concat(lift(small, Math.cos(a) * 0.62, Math.sin(a) * 0.62, 0.42, y0));
+  }
+  const top = themeId === "hautemontagne" ? 0.6 + stage * 0.2 + 0.2 : (0.9 + stage * 0.08) * scale + 0.3 + y0;
+  out = out.concat(lift(carteFlag("#5a4030", color, 0.7), 0.3, 0, 1, stage === 5 ? top - 0.3 : 0.1 + y0));
+  if (stage === 5) out.push(cP("ball", CARTE_GLOW, 0, top + 0.5, 0, 0.18, 0.18, 0.18, 0, "g"));
+  return out;
+}
+
+// Décor d'une tuile libre.
+function carteDecorModel(tile, pal, themeId) {
+  const k = tile.q + "," + tile.r;
+  const r1 = carteRand("d1" + k), r2 = carteRand("d2" + k);
+  const out = [];
+  const place = (parts, dx, dz) => parts.forEach((p) => out.push(Object.assign({}, p, { p: [p.p[0] + dx, p.p[1], p.p[2] + dz] })));
+  if (tile.kind === "sea" || tile.kind === "hub") return out;
+  if (tile.kind === "water") { if (r1 < 0.35 && (themeId === "lac" || themeId === "marais")) place(carteTree(pal.wood, "#6f9a4a", "reed", 1), (r2 - 0.5) * 0.8, 0); return out; }
+  const kinds = {
+    ville: ["round", 0.3], campagne: ["round", 0.25], foret: ["pine", 0.95], desert: ["cactus", 0.25], mer: ["round", 0.3], lac: ["round", 0.35],
+    montagne: ["pine", 0.6], hautemontagne: ["rock", 0.45], grandnord: ["rock", 0.2], canyon: ["rock", 0.35], marais: ["reed", 0.6], jungle: ["round", 0.95], volcan: ["rock", 0.4], ile: ["palm", 0.5],
+  };
+  const spec = tile.kind === "islet" ? ["pine", 0.8] : kinds[themeId] || ["round", 0.3];
+  const n = r1 < spec[1] ? (spec[1] > 0.9 ? 2 + Math.floor(r2 * 2) : 1) : 0;
+  for (let i = 0; i < n; i++) {
+    const dx = (carteRand("x" + i + k) - 0.5) * 1.1, dz = (carteRand("z" + i + k) - 0.5) * 1.1, s = 0.75 + carteRand("s" + i + k) * 0.5;
+    if (spec[0] === "rock") place(carteRock(pal.stone, s), dx, dz);
+    else place(carteTree(pal.wood, carteMix(pal.decor, "#ffffff", carteRand("c" + i + k) * 0.15), spec[0], s), dx, dz);
+  }
+  if (themeId === "ville" && tile.kind === "land" && r2 < 0.25) place([cP("box", "#8a8a80", 0, 0, 0, 0.7, 0.02, 0.18)], 0, 0);
+  return out;
+}
+function carteMix(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = (s) => Math.round(((pa >> s) & 255) * (1 - t) + ((pb >> s) & 255) * t);
+  return "#" + ((1 << 24) + (ch(16) << 16) + (ch(8) << 8) + ch(0)).toString(16).slice(1);
+}
+
+// Modèle complet d'une tâche : silhouette au stade du statut + indices.
+// `detail` : 2 (proche, tout), 1 (moyen), 0 (grands volumes : silhouette seule).
+function carteTaskModel(task, themeId, opts) {
+  const o = opts || {};
+  const detail = o.detail == null ? 2 : o.detail;
+  const theme = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
+  const pal = theme.pal;
+  const size = task.duration == null ? 1 : task.duration < 3 ? 0.78 : task.duration > 21 ? 1.22 : 1;
+  const sc = (parts, k) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] * k, p.p[1] * k, p.p[2] * k], s: [p.s[0] * k, p.s[1] * k, p.s[2] * k] }));
+  const at = (parts, dx, dy, dz) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] + dx, p.p[1] + dy, p.p[2] + dz] }));
+  let parts = [];
+  const sil = carteSilhouette(themeId, task.kind, pal);
+  const topOf = (list) => list.reduce((m, p) => Math.max(m, p.p[1] + (p.m === "s" ? 0.5 : p.s[1])), 0);
+  if (task.state === "info") {
+    parts = carteStageProp(themeId, "info", pal);
+  } else if (task.state === "todo") {
+    // Empreinte au sol de la silhouette + repère du thème.
+    parts = sil.filter((p) => p.p[1] < 0.05 && p.g !== "cyl").map((p) => Object.assign({}, p, { s: [p.s[0], 0.03, p.s[2]], c: carteMix(p.c, "#ffffff", 0.45), m: "l" })).concat(at(carteStageProp(themeId, "todo", pal), 0.05, 0, 0.05));
+  } else if (task.state === "done") {
+    parts = sil;
+  } else {
+    // En cours ou en attente : construction partielle au palier de progress.
+    const step = carteStage(task.progress);
+    const frac = task.state === "waiting" ? Math.max(0.35, step / 5) : Math.max(0.12, step / 5);
+    const H = topOf(sil) || 0.5;
+    const cut = H * frac;
+    parts = sil.filter((p) => p.p[1] < cut).map((p) => {
+      const top = p.p[1] + p.s[1];
+      const q = Object.assign({}, p, { m: p.m === "g" ? "l" : p.m, c: p.m === "g" ? "#5a5a5a" : p.c });
+      if (top > cut && p.m !== "s") q.s = [p.s[0], Math.max(0.02, cut - p.p[1]), p.s[2]];
+      return q;
+    });
+    if (task.state === "doing") {
+      const h = Math.max(0.3, cut + 0.15);
+      [[-0.34, -0.3], [0.34, -0.3], [-0.34, 0.3], [0.34, 0.3]].forEach((c) => parts.push(cP("cyl", "#c9a060", c[0], 0, c[1], 0.035, h, 0.035)));
+      parts.push(cP("box", "#c9a060", 0, h * 0.6, 0.3, 0.72, 0.03, 0.03));
+      if (themeId === "hautemontagne") parts.push(cP("ball", "#e0602a", 0.36, cut, 0.2, 0.1, 0.16, 0.1), cP("ball", "#2f6fbf", 0.36, Math.max(0, cut - 0.2), 0.3, 0.1, 0.16, 0.1));
+    } else {
+      parts.push(cP("box", pal.tarp, 0, 0, 0, 0.66, Math.max(0.2, cut * 0.9), 0.56));
+      parts = parts.concat(at(carteStageProp(themeId, "waiting", pal), 0.52, 0, 0.28));
+    }
+  }
+  parts = sc(parts, size);
+  const H = topOf(parts);
+  if (task.state === "done" && task.recentDone && detail > 0) {
+    [-0.24, 0, 0.24].forEach((x, i) => parts.push(cP("ball", ["#ff5a5a", "#ffd23f", "#4fb0ff"][i], x, H + 0.04, 0.3, 0.07, 0.07, 0.07, 0, "g")));
+  }
+  // Indices universels.
+  if ((task.criticality === "urgent" || task.criticality === "moyen") && task.state !== "done" && task.state !== "info") {
+    const col = task.criticality === "urgent" ? "#DC2626" : "#D97706";
+    parts.push(cP("cyl", "#5a4030", 0.4, 0, -0.34, 0.035, 1.0, 0.035));
+    if (task.criticality === "urgent") parts.push(cP("cone", "#ff6a2a", 0.4, 1.0, -0.34, 0.16, 0.26, 0.16, 0, "g"), cP("ball", col, 0.4, 0.96, -0.34, 0.1, 0.08, 0.1, 0, "g"));
+    else parts.push(cP("box", col, 0.4, 0.78, -0.22, 0.02, 0.18, 0.24));
+  }
+  if (task.overdue) {
+    const y = Math.max(H, 0.8) + 0.45;
+    parts.push(cP("ball", "#4a5060", -0.12, y, 0, 0.36, 0.2, 0.3), cP("ball", "#3f4552", 0.14, y + 0.04, 0.05, 0.3, 0.22, 0.28), cP("pyr", "#ffd23f", 0.02, y - 0.3, 0, 0.06, 0.26, 0.02, 0.3, "g"));
+  } else if (task.soon) {
+    parts.push(cP("cyl", "#3a3a3a", -0.36, 0, 0.36, 0.03, 0.46, 0.03), cP("box", "#ffcf5a", -0.36, 0.46, 0.36, 0.1, 0.12, 0.1, 0, "g"));
+  }
+  if (task.future) parts.push(cP("cyl", "#ffffff", 0, 0.02, 0, 1.5, 0.45, 1.5, 0, "t"));
+  if (detail >= 2) {
+    const pc = cartePersonColor(task.assignee, task.assigneeColor);
+    if (pc) parts.push(cP("cyl", pc, -0.42, 0, -0.12, 0.12, 0.26, 0.12), cP("ball", "#f1c9a5", -0.42, 0.26, -0.12, 0.1, 0.1, 0.1));
+    const n = Math.min(6, task.checklistTotal);
+    const doneN = Math.min(n, task.checklistDone);
+    for (let i = 0; i < n; i++) {
+      const a = Math.PI * 0.15 + i * 0.42;
+      parts = parts.concat(at(carteStageProp(themeId, "sub", pal, i < doneN), Math.cos(a) * 0.62, 0, Math.sin(a) * 0.62));
+    }
+    if (task.recurring) parts = parts.concat(at(carteRecurrenceProp(themeId, pal), 0.46, 0, 0.42));
+    if (task.attachments) parts.push(cP("box", "#8a5a2e", 0.2, 0, 0.5, 0.2, 0.13, 0.13), cP("box", "#d9b23a", 0.2, 0.13, 0.5, 0.21, 0.02, 0.14));
+    if (task.hasReport) parts.push(cP("cyl", "#f2e6c8", -0.18, 0.02, 0.5, 0.06, 0.26, 0.06, 1.57));
+    if (task.fromEmail) parts.push(cP("cyl", "#5a4030", -0.5, 0, 0.3, 0.03, 0.3, 0.03), cP("box", "#2f6fa8", -0.5, 0.3, 0.3, 0.14, 0.1, 0.1));
+    if (task.stale) {
+      for (let i = 0; i < 5; i++) {
+        const a = i * 1.25 + 0.3;
+        parts.push(cP("cone", pal.friche, Math.cos(a) * 0.4, 0, Math.sin(a) * 0.4, 0.16, 0.34 + (i % 2) * 0.14, 0.16));
+      }
+    }
+    if (task.startTime) parts.push(cP("cyl", pal.stone, 0.12, 0, -0.5, 0.2, 0.05, 0.2), cP("pyr", "#3a3a3a", 0.12, 0.05, -0.5, 0.03, 0.14, 0.08));
+  }
+  if (detail >= 1 && task.secondaryProjectId && o.secondaryColor) parts.push(cP("cyl", "#5a4030", -0.34, 0, -0.4, 0.03, 0.8, 0.03), cP("box", o.secondaryColor, -0.34, 0.62, -0.28, 0.02, 0.16, 0.24));
+  return parts;
+}
+
+// Légende contextuelle d'un thème (libellés affichés dans l'interface).
+function carteLegend(themeId) {
+  const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
+  return { id: t.id, label: t.label, hub: t.hub.slice(), lines: [
+    ["À faire", t.lg.todo], ["En attente", t.lg.waiting], ["En cours", t.lg.doing], ["Terminée", t.lg.done], ["Information", t.lg.info],
+    ["Tâche", t.lg.task], ["Réunion", t.lg.meeting], ["Planning", t.lg.planning], ["Jalon", t.lg.milestone], ["Récurrente", t.lg.rec], ["Oubliée (30 j)", t.lg.friche],
+  ] };
+}
+
+// Filtre de la vue (familles d'état, criticité, retard, recherche).
+function carteMatches(task, f) {
+  if (!f) return true;
+  if (f.states && f.states.length && f.states.indexOf(task.state) === -1) return false;
+  if (f.crit && f.crit !== "all" && task.criticality !== f.crit) return false;
+  if (f.late && !task.overdue) return false;
+  if (!f.history && task.oldDone) return false;
+  return true;
+}
+const CARTE_STATE_KEYS = ["todo", "waiting", "doing", "done", "info"];
+const CARTE_STATE_LABELS = { todo: "À faire", waiting: "En attente", doing: "En cours", done: "Terminées", info: "Infos" };
+const CARTE_QUALITIES = ["auto", "high", "medium", "low"];
+// Préférences de la vue (synchronisées avec les autres préférences de vues).
+function normalizeCarteViewPrefs(p) {
+  const v = p && typeof p === "object" ? p : {};
+  const states = Array.isArray(v.states) ? v.states.filter((s) => CARTE_STATE_KEYS.indexOf(s) !== -1) : CARTE_STATE_KEYS.slice();
+  const folderThemes = {};
+  if (v.folderThemes && typeof v.folderThemes === "object") Object.keys(v.folderThemes).forEach((k) => { if (CARTE_THEME_BY_ID[v.folderThemes[k]]) folderThemes[k] = v.folderThemes[k]; });
+  return {
+    states: states.length ? states : CARTE_STATE_KEYS.slice(),
+    crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
+    late: !!v.late,
+    history: !!v.history,
+    quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    folderThemes,
+  };
+}
+// === NEXORA:CARTE:END ===
+
+
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 
    Entre le bloc temporel — toute la hauteur du diagramme — et le jalon — un
