@@ -253,3 +253,64 @@ Un projet qui a des tâches mais dont aucune ne ressort des filtres (page, carte
 général) est grisé : sol, décor, cœur du projet, étiquette, pastille du ruban et ligne du
 panneau. Une région dont tous les projets sont écartés paraît donc grisée en entier. Un projet
 sans tâche n'est pas grisé. Les territoires ne bougent pas.
+
+## Feu des tâches critiques (#375) et construction continue (#376)
+
+- **Criticité urgente** : un brasier (pied, vasque, braises) porte trois flammes rouge, orange
+  et jaune qui vacillent. L'anneau rouge clignotant au sol reste. Flammes fixes en qualité basse
+  ou si les animations sont réduites.
+- **Construction continue** : le chantier et son socle montent de façon continue avec
+  l'avancement (0,24 unité par tranche de 20 %, soit 1,2 unité à 100 %), et chaque cran du
+  curseur du volet se voit en direct. Une tâche « À faire » dont l'avancement dépasse 0 %
+  s'affiche en chantier ; son statut ne change pas. Les paliers restent la mesure affichée dans
+  le volet et la progression des territoires.
+
+## Lisibilité (#377, #378, #379)
+
+- **Nom du dossier au sol** : chaque région porte le nom de son dossier en grandes lettres,
+  écrit au sol à son pied, comme une légende de carte. Il pivote avec la caméra et grise quand
+  toute la région est écartée par les filtres. Pas de légende pour les projets sans dossier ou
+  « À trier ».
+- **Étiquettes** : le nom du palier du thème (« Crique », « Point d'eau »…) n'apparaît plus
+  dans les étiquettes, le ruban ni le panneau : seulement le nom, l'avancement et les retards.
+  Le thème reste dans la légende contextuelle.
+- **Tâches au sol** : une dalle claire bordée de la couleur du statut marque l'emplacement de
+  chaque tâche restée au sol ; une tâche à faire porte en plus un jalon au fanion de la couleur
+  de son statut ; empreinte et repères du thème plus contrastés.
+
+## Taille de la construction = pourcentage (#380)
+
+- La hauteur construite d'une tâche est exactement le pourcentage d'avancement de sa hauteur
+  finale (à 50 %, la moitié). Les bâtiments sont agrandis en hauteur (hauteur finale visée
+  ~1,6 avant l'échelle de la carte) pour que l'écart se voie de loin. Le socle d'avancement a été retiré (#383) : seul le bâtiment monte.
+  L'étiquette de la tâche affiche son pourcentage.
+- La vue se décale pour que la tâche sélectionnée ne passe ni sous le volet (ordinateur) ni
+  sous la fiche (téléphone) ; sur téléphone, la barre d'outils tient sur une ligne défilante.
+
+## Météo, responsables et relief (#381, #382, #383)
+
+- **Orages** : une tâche en retard porte un petit nuage d'orage, avec éclairs et pluie qui tombe
+  sur elle. En retard **et** urgente : un énorme orage (nuage bien plus large, pluie dense) et un
+  tourbillon qui tourne sous le nuage. Le feu des tâches critiques (#375) est retiré ; une tâche
+  urgente garde son anneau rouge clignotant et un fanion rouge plus haut. En qualité basse ou
+  avec « réduire les animations », les nuages restent immobiles et sans pluie.
+- **Responsable** : chaque tâche porte un petit badge rond, dans la couleur du membre définie
+  dans Réglages, avec ses initiales (« Maïa Sonnier » → MS). Pas de photo. Au survol de la
+  souris, une bulle affiche « Responsable : Nom ».
+- **Relief** : l'altitude du **sol** d'une tâche dépend de sa date de fin, la hauteur du
+  **bâtiment** dépend de son avancement.
+  - En retard, échéance sous 7 jours ou tâche terminée : niveau de la mer.
+  - Au-delà, le sol monte progressivement (plus vite les premières semaines, racine carrée)
+    jusqu'à son maximum à 90 jours, sans exagération.
+  - Sans date de fin : altitude moyenne.
+  Une case d'eau qui porte une tâche plus haute que le niveau de la mer devient une terre.
+
+## Incendie des tâches urgentes (#385)
+
+- Une tâche ouverte de criticité **urgente** brûle : plusieurs foyers de flammes (rouge, orange,
+  jaune) au pied et sur la construction, des braises et une colonne de fumée noire, en plus de
+  l'anneau rouge clignotant.
+- En retard **et** urgente, l'énorme orage avec tourbillon prend le dessus : pas d'incendie
+  dessous. Une tâche terminée ou « info » ne porte aucun aléa.
+- En qualité basse ou avec « réduire les animations », le feu reste visible mais figé, sans
+  braises.

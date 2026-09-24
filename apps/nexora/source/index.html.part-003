@@ -18865,9 +18865,32 @@ function createCarteEngine(THREE, container, opts) {
   const tileGeo = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0);
   const capGeo = new THREE.CylinderGeometry(0.985, 0.985, 0.14, 6).translate(0, 0.07, 0);
   const ringGeo = new THREE.RingGeometry(0.78, 0.96, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  const planeGeo = new THREE.PlaneGeometry(1, 1);
   // Liseré néon des tuiles (#387, Néon-Grille).
   const neonRingGeo = new THREE.RingGeometry(0.9, 0.975, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
-  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, neonRingGeo]);
+  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, neonRingGeo]);
+  // Nom d'un dossier écrit au sol (#377) : une texture de texte par région.
+  function regionTexture(text, dim) {
+    const c = document.createElement("canvas");
+    const g = c.getContext("2d");
+    const font = "800 96px Inter, -apple-system, 'Segoe UI', sans-serif";
+    let w = 600;
+    if (g) { g.font = font; w = Math.ceil(g.measureText(text).width + text.length * 10 + 60); }
+    c.width = Math.min(4096, Math.max(256, w)); c.height = 150;
+    if (g) {
+      g.font = font; g.textAlign = "center"; g.textBaseline = "middle";
+      if ("letterSpacing" in g) g.letterSpacing = "10px";
+      g.lineJoin = "round"; g.lineWidth = 14;
+      g.strokeStyle = dim ? "rgba(90,96,104,.55)" : "rgba(24,38,61,.62)";
+      g.strokeText(text, c.width / 2, 78);
+      g.fillStyle = dim ? "#cfd3d8" : "#fffaf0";
+      g.fillText(text, c.width / 2, 78);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return { texture: t, aspect: c.width / c.height };
+  }
 
   const mats = [];
   const mat = (m) => { mats.push(m); return m; };
@@ -18879,6 +18902,12 @@ function createCarteEngine(THREE, container, opts) {
     water: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.86, flatShading: true })),
     ring: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide })),
     alarm: mat(new THREE.MeshBasicMaterial({ color: "#ff1f1f", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })),
+    cloud: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    bolt: mat(new THREE.MeshBasicMaterial({ color: "#fff3a0" })),
+    rain: mat(new THREE.MeshBasicMaterial({ color: "#5d97d6", transparent: true, opacity: 0.9, depthWrite: false })),
+    flame: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.93, depthWrite: false })),
+    smoke: mat(new THREE.MeshLambertMaterial({ color: "#3b3b3f", transparent: true, opacity: 0.45, depthWrite: false, flatShading: true })),
+    tornado: mat(new THREE.MeshLambertMaterial({ color: "#8f98a6", transparent: true, opacity: 0.5, depthWrite: false, flatShading: true })),
   };
 
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
@@ -19056,6 +19085,7 @@ function createCarteEngine(THREE, container, opts) {
       const c = g.children.pop();
       if (c.isInstancedMesh) c.dispose();
       if (c.userData.ownGeo) c.geometry.dispose();
+      if (c.userData.ownTex && c.material && c.material.map) c.material.map.dispose();
       if (c.userData.ownMat) c.material.dispose();
     }
   }
@@ -19177,6 +19207,32 @@ function createCarteEngine(THREE, container, opts) {
     S.pickMeshes = [capM, waterM];
     buildStyleEnv(keys);
 
+    // Légendes au sol des régions (#377), au pied de chaque dossier.
+    S.regionLabels = [];
+    const regions = {};
+    L.territories.forEach((tr) => {
+      const p = L.projectById[tr.projectId];
+      if (!p || !p.group || !p.folderName) return;
+      const w = carteToWorld(tr.q, tr.r);
+      const g = regions[p.group] || (regions[p.group] = { name: p.folderName, xmin: Infinity, xmax: -Infinity, zmax: -Infinity, n: 0, dim: 0 });
+      g.xmin = Math.min(g.xmin, w.x); g.xmax = Math.max(g.xmax, w.x); g.zmax = Math.max(g.zmax, w.z); g.n++;
+      if (S.dimmed && S.dimmed.has(tr.projectId)) g.dim++;
+    });
+    Object.keys(regions).sort().forEach((gid) => {
+      const g = regions[gid];
+      const tx = regionTexture(g.name.toUpperCase(), g.dim === g.n);
+      // Plus la région compte de projets, plus son nom est grand.
+      const h = 2 + 0.5 * Math.sqrt(g.n - 1), w = Math.min(h * tx.aspect, Math.max(14, g.xmax - g.xmin + 14));
+      const mesh = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tx.texture, transparent: true, depthWrite: false }));
+      mesh.userData.ownMat = mesh.userData.ownTex = true;
+      mesh.scale.set(w, w / tx.aspect, 1);
+      mesh.position.set((g.xmin + g.xmax) / 2, 0.66, g.zmax + 6.2);
+      mesh.rotation.set(-Math.PI / 2, 0, S.yaw);
+      mesh.renderOrder = 3;
+      world.add(mesh);
+      S.regionLabels.push(mesh);
+    });
+
     const batch = makeBatcher();
     const poiKeys = new Set(L.pois.map((p) => p.key));
     // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
@@ -19207,6 +19263,9 @@ function createCarteEngine(THREE, container, opts) {
     // Tâches.
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
+    const storms = [];
+    const fires = [];
+    const avatars = [];
     const dones = [];
     const vis = S.visible;
     L.pois.forEach((p) => {
@@ -19228,7 +19287,19 @@ function createCarteEngine(THREE, container, opts) {
       placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
       let top = 0; parts.forEach((pp) => { if (pp.m !== "t") top = Math.max(top, pp.p[1] + pp.s[1]); });
       S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 3) + 0.1 };
-      if (t.criticality === "urgent" && t.state !== "done" && t.state !== "info") urgent.push({ x, y, z, top: y + Math.min(top, 3), k });
+      const urgentOpen = t.criticality === "urgent" && t.state !== "done" && t.state !== "info";
+      if (urgentOpen) urgent.push({ x, y, z, k });
+      // Orage (#381) : petit si en retard, énorme avec tornade si en plus
+      // urgente. Incendie (#385) : urgente sans retard.
+      const hz = carteHazard(t);
+      if (hz === "storm" || hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 3), big: hz === "tempest", ph: carteRand("storm" + t.id) });
+      else if (hz === "fire") fires.push({ x, y, z, k, h: Math.max(0.3, Math.min(top, 3)), ph: carteRand("fire" + t.id) * 6.283 });
+      // Avatar (#382) : badge d'initiales au-dessus de la silhouette.
+      if (t.assignee && detail >= 2) {
+        const a = carteAvatarAnchor(t);
+        const cr = Math.cos(ry), sr = Math.sin(ry);
+        avatars.push({ name: t.assignee, color: cartePersonColor(t.assignee, t.assigneeColor), x: x + (a[0] * cr + a[2] * sr) * k, y: y + a[1] * k, z: z + (-a[0] * sr + a[2] * cr) * k, k });
+      }
       if (t.state === "done") dones.push(x, y + Math.min(top, 3) + 1.05, z);
       (S.poisByKey[p.key] = S.poisByKey[p.key] || []).push(t.id);
     });
@@ -19244,13 +19315,14 @@ function createCarteEngine(THREE, container, opts) {
     // Tâches urgentes (#367) : anneau au sol et fanal rouge qui clignotent.
     if (urgent.length) {
       const ring = new THREE.InstancedMesh(ringGeo, MAT.alarm, urgent.length);
-      const beacon = new THREE.InstancedMesh(G.ball, MAT.alarm, urgent.length);
       urgent.forEach((u, i) => {
         ring.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.y + 0.03, u.z), tmpQ.identity(), tmpS.set(u.k * 0.85, 1, u.k * 0.85)));
-        beacon.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.top + 0.35, u.z), tmpQ.identity(), tmpS.set(0.3, 0.3, 0.3)));
       });
-      [ring, beacon].forEach((m) => { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.frustumCulled = false; world.add(m); });
+      ring.instanceMatrix.needsUpdate = true; ring.computeBoundingSphere(); ring.frustumCulled = false; world.add(ring);
     }
+    buildStorms(storms);
+    buildFires(fires);
+    buildAvatars(avatars);
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
     drawSelection();
@@ -19356,6 +19428,8 @@ function createCarteEngine(THREE, container, opts) {
     const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
     camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
     camera.lookAt(S.target);
+    // Les noms de dossiers pivotent avec la caméra pour rester lisibles.
+    (S.regionLabels || []).forEach((m) => { m.rotation.z = S.yaw; });
     scene.fog.near = S.dist * 0.8 + 25;
     scene.fog.far = (S.dist * 2.2 + 70) * styleEnv().fogK;
     if (sun.castShadow) { sun.position.set(S.target.x + 30, 50, S.target.z + 20); sun.target.position.copy(S.target); }
@@ -19429,6 +19503,16 @@ function createCarteEngine(THREE, container, opts) {
       return;
     }
     if (e.pointerType === "mouse" && S.layout) {
+      // Survol d'un avatar (#382) : bulle avec le nom du responsable.
+      const rect = canvas.getBoundingClientRect();
+      ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      ray.setFromCamera(ndc, camera);
+      const av = (S.avatarSprites || []).length ? ray.intersectObjects(S.avatarSprites, false)[0] : null;
+      if (av) {
+        tip.textContent = "Responsable : " + av.object.userData.name;
+        tip.style.transform = "translate(" + Math.round(e.clientX - rect.left + 14) + "px," + Math.round(e.clientY - rect.top + 12) + "px)";
+        tip.hidden = false;
+      } else tip.hidden = true;
       const h = pick(e.clientX, e.clientY);
       const id = h ? taskAt(h.key, h.point) : null;
       const hp = h && !id ? hubAt(h.key) : null;
@@ -19454,6 +19538,9 @@ function createCarteEngine(THREE, container, opts) {
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onCancel);
+  const hideTip = () => { tip.hidden = true; };
+  canvas.addEventListener("pointerleave", hideTip);
+  canvas.addEventListener("wheel", hideTip, { passive: true });
 
   function walkTo(x, z) { S.walkTo = { x, z }; S.follow = true; }
   function walkToTask(id) {
@@ -19506,9 +19593,186 @@ function createCarteEngine(THREE, container, opts) {
     if (terr !== S.territory) { S.territory = terr; o.onTerritoryEnter && o.onTerritoryEnter(terr); }
   }
 
+  // ---------- Orages des tâches en retard (#381) ----------
+  // Petit orage : 4 boules de nuage, 1 éclair, 14 gouttes. Énorme orage
+  // (en retard ET urgente) : nuage 2,4 fois plus grand, 2 éclairs, 44
+  // gouttes et une tornade de 10 anneaux qui tourbillonne.
+  const CLOUD_SMALL = [[-0.34, 0, 0, 0.72], [0.3, 0.06, 0.08, 0.66], [0, 0.2, -0.08, 0.82], [0.06, -0.04, 0.26, 0.56]];
+  const CLOUD_BIG = CLOUD_SMALL.concat([[-0.62, 0.1, -0.3, 0.7], [0.62, 0.1, -0.22, 0.74], [0, 0.34, 0.3, 0.76]]);
+  const TORNADO_RINGS = 10;
+  function buildStorms(list) {
+    S.storms = null;
+    if (!list.length) return;
+    const low = S.effQuality === "low";
+    const big = list.filter((s) => s.big).slice(0, 80), small = list.filter((s) => !s.big).slice(0, 400);
+    const all = big.concat(small);
+    const nClouds = big.length * CLOUD_BIG.length + small.length * CLOUD_SMALL.length;
+    const clouds = new THREE.InstancedMesh(G.ball, MAT.cloud, nClouds);
+    let ci = 0;
+    all.forEach((s) => {
+      const f = s.big ? 2.4 : 1;
+      s.cloudY = s.top + (s.big ? 2.3 : 0.95);
+      s.ground = s.y + 0.05;
+      (s.big ? CLOUD_BIG : CLOUD_SMALL).forEach((c) => {
+        clouds.setMatrixAt(ci, tmpM.compose(tmpP.set(s.x + c[0] * f, s.cloudY + c[1] * f - c[3] * f * 0.5, s.z + c[2] * f), tmpQ.identity(), tmpS.set(c[3] * f, c[3] * f * 0.72, c[3] * f)));
+        clouds.setColorAt(ci, tmpC.set(s.big ? "#343a46" : "#5a6272"));
+        ci++;
+      });
+    });
+    clouds.instanceMatrix.needsUpdate = true; if (clouds.instanceColor) clouds.instanceColor.needsUpdate = true;
+    clouds.frustumCulled = false; world.add(clouds);
+    const boltsPer = (s) => (s.big ? 2 : 1);
+    const bolts = new THREE.InstancedMesh(G.pyr, MAT.bolt, all.reduce((n, s) => n + boltsPer(s), 0));
+    bolts.frustumCulled = false; world.add(bolts);
+    const dropsPer = (s) => (low ? 0 : s.big ? 44 : 14);
+    const nDrops = all.reduce((n, s) => n + dropsPer(s), 0);
+    const rain = nDrops ? new THREE.InstancedMesh(G.box, MAT.rain, nDrops) : null;
+    if (rain) { rain.frustumCulled = false; world.add(rain); }
+    const tornado = big.length ? new THREE.InstancedMesh(G.cyl, MAT.tornado, big.length * TORNADO_RINGS) : null;
+    if (tornado) { tornado.frustumCulled = false; world.add(tornado); }
+    S.storms = { list: all, clouds, bolts, rain, tornado, dropsPer, boltsPer };
+    placeStorms(0);
+  }
+  function placeStorms(t) {
+    const W = S.storms;
+    if (!W) return;
+    const still = reduced || S.effQuality === "low";
+    let bi = 0, di = 0, ti = 0;
+    W.list.forEach((s) => {
+      const f = s.big ? 2.4 : 1;
+      // Éclairs : brefs flashs, décalés d'un orage à l'autre.
+      for (let j = 0; j < W.boltsPer(s); j++) {
+        const cyc = (t * (s.big ? 1.3 : 0.8) + s.ph + j * 0.37) % 1;
+        const on = still || cyc < 0.06 || (cyc > 0.1 && cyc < 0.13);
+        const bx = s.x + (j ? 0.5 : -0.2) * f, bz = s.z + (j ? -0.2 : 0.15) * f;
+        tmpQ.setFromEuler(tmpE.set(0.25 * (j ? -1 : 1), s.ph * 6, Math.PI));
+        const len = (s.cloudY - s.ground) * (s.big ? 0.8 : 0.7);
+        W.bolts.setMatrixAt(bi++, tmpM.compose(tmpP.set(bx, s.cloudY - 0.15 * f, bz), tmpQ, on ? tmpS.set(0.14 * f, len, 0.05 * f) : tmpS.set(0.0001, 0.0001, 0.0001)));
+      }
+      // Pluie : gouttes qui tombent du nuage jusqu'au sol, en boucle.
+      const n = W.dropsPer(s);
+      const fall = Math.max(0.3, s.cloudY - s.ground);
+      for (let j = 0; j < n; j++) {
+        const a = carteRand("r" + j) * 6.283, r = Math.sqrt(carteRand("rr" + j)) * 0.62 * f;
+        const yv = s.cloudY - 0.1 - ((t * (s.big ? 5.2 : 3.6) + carteRand("rp" + j) * fall + s.ph * fall) % fall);
+        W.rain.setMatrixAt(di++, tmpM.compose(tmpP.set(s.x + Math.cos(a) * r, yv, s.z + Math.sin(a) * r), tmpQ.setFromAxisAngle(UP, 0), tmpS.set(0.04, s.big ? 0.42 : 0.3, 0.04)));
+      }
+      // Tornade : entonnoir d'anneaux qui tournoie et se balance.
+      if (s.big && W.tornado) {
+        for (let j = 0; j < TORNADO_RINGS; j++) {
+          const u = j / (TORNADO_RINGS - 1);
+          const yv = s.ground + u * (s.cloudY - s.ground - 0.2);
+          const rad = 0.12 + u * u * 1.15;
+          const sway = still ? 0 : Math.sin(t * 2.2 + s.ph * 6 + u * 3) * 0.28 * u;
+          tmpQ.setFromAxisAngle(UP, still ? 0 : t * 5 + j);
+          W.tornado.setMatrixAt(ti++, tmpM.compose(tmpP.set(s.x + 0.9 + sway, yv, s.z + 0.5 + sway * 0.5), tmpQ, tmpS.set(rad, 0.16, rad)));
+        }
+      }
+    });
+    W.bolts.instanceMatrix.needsUpdate = true;
+    if (W.rain) W.rain.instanceMatrix.needsUpdate = true;
+    if (W.tornado) W.tornado.instanceMatrix.needsUpdate = true;
+  }
+
+  // ---------- Incendie des tâches urgentes (#385) ----------
+  // Des foyers enveloppent la construction : quatre au pied, deux sur le
+  // bâtiment, un au sommet. Chaque foyer = trois flammes (rouge, orange,
+  // jaune) qui vacillent. Au-dessus, une colonne de fumée noire monte en
+  // boucle et des braises jaillissent.
+  const FIRE_FLAMES = [{ c: "#e0301a", r: 0.3, h: 0.78 }, { c: "#ff8616", r: 0.21, h: 0.6 }, { c: "#ffd94a", r: 0.11, h: 0.4 }];
+  // [dx, hauteur relative au bâtiment, dz, taille]
+  const FIRE_SPOTS = [[0.5, 0, 0.1, 1], [-0.42, 0, 0.3, 0.9], [0.05, 0, -0.5, 0.95], [-0.2, 0, -0.1, 1.1], [0.22, 0.45, 0.18, 0.85], [-0.2, 0.7, -0.12, 0.8], [0.02, 1, 0.02, 1.25]];
+  const FIRE_SMOKE = 7, FIRE_EMBERS = 8;
+  function buildFires(list) {
+    S.fires = null;
+    const all = list.slice(0, 150);
+    if (!all.length) return;
+    const flames = new THREE.InstancedMesh(G.cone, MAT.flame, all.length * FIRE_SPOTS.length * FIRE_FLAMES.length);
+    let fi = 0;
+    all.forEach(() => FIRE_SPOTS.forEach(() => FIRE_FLAMES.forEach((f) => flames.setColorAt(fi++, tmpC.set(f.c)))));
+    if (flames.instanceColor) flames.instanceColor.needsUpdate = true;
+    flames.frustumCulled = false; world.add(flames);
+    const smoke = new THREE.InstancedMesh(G.ball, MAT.smoke, all.length * FIRE_SMOKE);
+    smoke.frustumCulled = false; world.add(smoke);
+    const embers = S.effQuality === "low" ? null : new THREE.InstancedMesh(G.box, MAT.bolt, all.length * FIRE_EMBERS);
+    if (embers) { embers.frustumCulled = false; world.add(embers); }
+    S.fires = { list: all, flames, smoke, embers };
+    placeFires(0);
+  }
+  function placeFires(t) {
+    const F = S.fires;
+    if (!F) return;
+    const still = reduced || S.effQuality === "low";
+    let fi = 0, si = 0, ei = 0;
+    F.list.forEach((u) => {
+      const k = u.k;
+      FIRE_SPOTS.forEach((sp, j) => {
+        const flick = still ? 1 : 0.8 + 0.3 * Math.sin(t * 11 + u.ph + j * 1.7) + 0.12 * Math.sin(t * 23 + j);
+        const bx = u.x + sp[0] * k, by = u.y + sp[1] * u.h, bz = u.z + sp[2] * k;
+        FIRE_FLAMES.forEach((f, m) => {
+          const sway = still ? 0 : Math.sin(t * 7 + u.ph + j + m) * 0.05;
+          const hh = f.h * sp[3] * k * (m ? flick : 0.9 + 0.1 * flick);
+          tmpQ.setFromEuler(tmpE.set(sway, 0, sway * 0.6));
+          F.flames.setMatrixAt(fi++, tmpM.compose(tmpP.set(bx, by, bz), tmpQ, tmpS.set(f.r * sp[3] * k, hh, f.r * sp[3] * k)));
+        });
+      });
+      const top = u.y + u.h + 0.9 * k;
+      for (let j = 0; j < FIRE_SMOKE; j++) {
+        const c = still ? j / FIRE_SMOKE : (t * 0.35 + j / FIRE_SMOKE + u.ph) % 1;
+        const r = (0.26 + c * 0.55) * k;
+        const drift = c * 0.45 * k;
+        F.smoke.setMatrixAt(si++, tmpM.compose(tmpP.set(u.x + drift * 0.8 + Math.sin(j * 2.1 + u.ph) * 0.12, top + c * 2.2 * k, u.z + drift * 0.3), tmpQ.identity(), tmpS.set(r, r * 0.85, r)));
+      }
+      if (F.embers) {
+        for (let j = 0; j < FIRE_EMBERS; j++) {
+          const c = still ? 0.5 : (t * 0.9 + carteRand("em" + j) + u.ph) % 1;
+          const a = carteRand("ea" + j) * 6.283;
+          const rr = (0.2 + c * 0.6) * k;
+          F.embers.setMatrixAt(ei++, tmpM.compose(tmpP.set(u.x + Math.cos(a) * rr, u.y + u.h * 0.5 + c * 2.4 * k, u.z + Math.sin(a) * rr), tmpQ.identity(), tmpS.setScalar(0.07 * k * (1 - c * 0.6))));
+        }
+      }
+    });
+    F.flames.instanceMatrix.needsUpdate = true;
+    F.smoke.instanceMatrix.needsUpdate = true;
+    if (F.embers) F.embers.instanceMatrix.needsUpdate = true;
+  }
+
+  // ---------- Avatars des responsables (#382) ----------
+  const avatarCache = {};
+  function avatarMaterial(name, color) {
+    const key = name + "|" + color;
+    if (avatarCache[key]) return avatarCache[key];
+    const c = document.createElement("canvas");
+    c.width = c.height = 96;
+    const g = c.getContext("2d");
+    if (g) {
+      g.fillStyle = color; g.beginPath(); g.arc(48, 48, 42, 0, Math.PI * 2); g.fill();
+      g.lineWidth = 6; g.strokeStyle = "#ffffff"; g.stroke();
+      g.fillStyle = "#ffffff"; g.font = "800 38px Inter, -apple-system, 'Segoe UI', sans-serif";
+      g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(carteInitials(name), 48, 51);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    avatarCache[key] = m;
+    return m;
+  }
+  function buildAvatars(list) {
+    S.avatarSprites = [];
+    list.slice(0, 800).forEach((a) => {
+      const sp = new THREE.Sprite(avatarMaterial(a.name, a.color));
+      sp.position.set(a.x, a.y + 0.2, a.z);
+      sp.scale.set(0.72, 0.72, 1);
+      sp.userData.name = a.name;
+      world.add(sp);
+      S.avatarSprites.push(sp);
+    });
+  }
+
   function animate() {
     if (reduced) { MAT.alarm.opacity = 0.85; return; }
     const t = S.time;
+    if (S.effQuality !== "low") { placeStorms(t); placeFires(t); }
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
     S.spin.forEach((sp) => {
       tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");
@@ -19530,6 +19794,11 @@ function createCarteEngine(THREE, container, opts) {
   }
 
   // ---------- Étiquettes HTML sans chevauchement ----------
+  const tip = document.createElement("div");
+  tip.className = "lp-carte-tip";
+  tip.hidden = true;
+  tip.setAttribute("role", "tooltip");
+  container.appendChild(tip);
   const labels = document.createElement("div");
   labels.className = "lp-carte-labels";
   labels.setAttribute("aria-hidden", "true");
@@ -19576,14 +19845,14 @@ function createCarteEngine(THREE, container, opts) {
       if (c.kind === "project") {
         const p = S.layout.projectById[c.pid];
         const s = S.stats[c.pid] || { todo: 0, doing: 0, done: 0, pct: 0, stage: 0, overdue: 0 };
-        const th = carteLook(S.style, S.layout.themes[c.pid]);
         const emoji = carteEmojiIcon(p.icon);
         html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(emoji ? emoji + " " : "") + esc(p.name) + "</span>";
-        if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + esc(th.hub[s.stage]) + " · " + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
+        if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
       } else {
         const t = S.data.taskById[c.tid];
         const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
-        html = '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
+        const building = t.state === "doing" || t.state === "waiting" || (t.state === "todo" && t.progress > 0);
+        html = '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (building ? ' <b class="lp-carte-pct">' + t.progress + " %</b>" : "") + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
       }
       if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; }
       l.classList.toggle("is-selected", c.tid != null && c.tid === S.selected);
@@ -19664,6 +19933,15 @@ function createCarteEngine(THREE, container, opts) {
     S.dist = Math.min(150, Math.max(32, maxd * 2.3 + 18));
   }
   function setQuality(q) { S.quality = q; if (S.layout) { resolveQuality(); build(); } o.onQuality && o.onQuality(S.effQuality); }
+  // Décalage de la vue (en pixels) : la tâche reste visible à côté du volet
+  // (ordinateur) ou au-dessus de la fiche (téléphone).
+  S.viewOffset = [0, 0];
+  function applyViewOffset() {
+    const w = container.clientWidth || 300, h = container.clientHeight || 300;
+    if (S.viewOffset[0] || S.viewOffset[1]) camera.setViewOffset(w, h, S.viewOffset[0], S.viewOffset[1], w, h);
+    else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+  }
   function setStyle(id) {
     const next = CARTE_STYLE_BY_ID[id] ? id : CARTE_STYLE_DEFAULT;
     if (next === S.style) return;
@@ -19676,7 +19954,7 @@ function createCarteEngine(THREE, container, opts) {
     const w = container.clientWidth || 300, h = container.clientHeight || 300;
     renderer.setSize(w, h);
     camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    applyViewOffset();
   }
   const ro = new ResizeObserver(resize);
   ro.observe(container);
@@ -19704,6 +19982,7 @@ function createCarteEngine(THREE, container, opts) {
   return {
     setData, select, focusProject, walkToTask, recenter, overview, setQuality, setStyle, zoomBy,
     rotate: (d) => { S.yaw += d; },
+    setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
     nearTask: () => S.near,
     selected: () => S.selected,
@@ -19722,8 +20001,10 @@ function createCarteEngine(THREE, container, opts) {
       toonGrad.dispose();
       Object.keys(styleTex).forEach((k) => styleTex[k].dispose());
       renderer.dispose();
+      Object.keys(avatarCache).forEach((k) => { avatarCache[k].map.dispose(); avatarCache[k].dispose(); });
       canvas.remove();
       labels.remove();
+      tip.remove();
     },
   };
 }
@@ -19854,7 +20135,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, onOpen, onGo, 
             <input id={"lp-carte-prog-" + task.id} type="range" min={0} max={100} step={5} value={prog}
               onChange={(e) => { const v = Number(e.target.value); progRef.current = v; setProg(v); if (onPreview) onPreview({ id: task.id, progress: v }); }}
               onPointerUp={commitProg} onKeyUp={commitProg} onBlur={commitProg} />
-            {task.state === "todo" && <small className="lp-carte-muted">La construction monte sur la carte quand la tâche est en cours ou en attente.</small>}
+            {task.state === "todo" && prog === 0 && <small className="lp-carte-muted">Augmente l'avancement : la tâche passe en chantier sur la carte et monte au fil du curseur.</small>}
           </div>
         )}
 
@@ -19969,13 +20250,12 @@ function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, style
         {members.map((tr) => {
           const p = layout.projectById[tr.projectId];
           const st = stats[tr.projectId] || { pct: 0, stage: 0, overdue: 0, total: 0 };
-          const th = carteLook(styleId, tr.theme);
           const isHere = tr.projectId === territory;
           return (
             <div key={tr.projectId} className={"lp-carte-panel-proj" + (isHere ? " is-here" : "") + (dimmed && dimmed.has(tr.projectId) ? " is-dim" : "")} title={dimmed && dimmed.has(tr.projectId) ? "Aucune tâche de ce projet ne ressort des filtres" : undefined}>
               <button type="button" className="lp-carte-panel-proj-head" onClick={() => onFocus(tr.projectId)}>
                 <span className="lp-carte-panel-icon" style={{ borderColor: p.color }}>{p.icon ? <IconGlyph icon={p.icon} size={14} /> : (p.name || "?").slice(0, 1)}</span>
-                <span className="lp-carte-panel-name">{p.name}<small>{th.hub[st.stage]} · {st.pct} %{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
+                <span className="lp-carte-panel-name">{p.name}<small>{st.pct} % terminé{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
                 <span className="lp-carte-bar"><span style={{ width: st.pct + "%" }} /></span>
               </button>
               {isHere && (
@@ -20054,10 +20334,9 @@ function CarteFallback({ reason, norm, layout, styleId, onOpen, onRetry }) {
         const p = layout.projectById[tr.projectId];
         const list = byProject[tr.projectId] || [];
         const st = carteTerritoryStats(list);
-        const th = carteLook(styleId, tr.theme);
         return (
           <details key={tr.projectId} className="lp-carte-fallback-proj">
-            <summary><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}<span className="lp-carte-muted"> · {th.label} · {th.hub[st.stage]} · {st.pct} %</span></summary>
+            <summary><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}<span className="lp-carte-muted"> · {st.pct} % terminé</span></summary>
             <ul>{list.map((t) => <li key={t.id}><button type="button" className="lp-carte-link-inline" onClick={() => onOpen(t.id)}>{t.title}</button> <span className="lp-carte-muted">{t.statusName}{t.overdue ? " · en retard" : ""}</span></li>)}</ul>
           </details>
         );
@@ -20080,6 +20359,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const [query, setQuery] = useState("");
   const [themesOpen, setThemesOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Suggestions en position fixe : la barre défile horizontalement sur mobile.
+  const searchRef = useRef(null);
   // Aperçu en direct de l'avancement (#371) : la construction suit le curseur
   // avant même l'enregistrement.
   const [preview, setPreview] = useState(null);
@@ -20190,6 +20471,24 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed });
   }, [status, normView, layout, stats, visible, dimmed]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+  // La vue se décale pour que la tâche ne passe pas sous le volet ou la fiche.
+  useEffect(() => {
+    const e = engineRef.current, stage = stageRef.current;
+    if (status !== "ready" || !e || !stage) return undefined;
+    const update = () => {
+      const side = stage.querySelector(".lp-carte-detail, .lp-carte-panel");
+      if (!side) { e.setViewOffset(0, 0); return; }
+      const sr = stage.getBoundingClientRect(), r = side.getBoundingClientRect();
+      if (r.width >= sr.width * 0.8) e.setViewOffset(0, Math.min(r.height, sr.height * 0.6) / 2);
+      else e.setViewOffset(r.width / 2, 0);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(stage);
+    const side = stage.querySelector(".lp-carte-detail, .lp-carte-panel");
+    if (side) ro.observe(side);
+    return () => ro.disconnect();
+  });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setStyle(cfg.style); }, [status, cfg.style]);
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
@@ -20239,12 +20538,12 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     <section className="lp-carte-view" aria-label="Carte">
       <ViewToolbarPortal slot={toolbarSlot} />
       <div className="lp-carte-toolbar">
-          <div className="lp-carte-search">
+          <div className="lp-carte-search" ref={searchRef}>
             <Search size={14} />
             <input type="search" value={query} placeholder="Aller au projet…" aria-label="Rechercher un projet sur la carte" onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) focus(suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
             {suggestions.length > 0 && (
-              <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés">
+              <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés" style={searchRef.current ? (() => { const r = searchRef.current.getBoundingClientRect(); return { position: "fixed", left: Math.max(8, Math.min(r.left, window.innerWidth - 248)), top: r.bottom + 4 }; })() : undefined}>
                 {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}</button></li>)}
               </ul>
             )}
@@ -20304,7 +20603,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     const s = stats[tr.projectId];
                     return (
                       <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "") + (dimmed.has(tr.projectId) ? " is-dim" : "")} style={{ "--p": s.pct, "--c": p.color }}
-                        onClick={() => focus(tr.projectId)} title={p.name + " — " + carteLook(cfg.style, tr.theme).label + ", " + carteLook(cfg.style, tr.theme).hub[s.stage] + ", " + s.pct + " %"} aria-label={p.name + ", " + s.pct + " % terminé"}>
+                        onClick={() => focus(tr.projectId)} title={p.name + " — " + s.pct + " % terminé"} aria-label={p.name + ", " + s.pct + " % terminé"}>
                         <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon ? <IconGlyph icon={p.icon} size={18} /> : (p.name || "?").slice(0, 1)}</span></span>
                         <small>{p.name}</small>
                       </button>
@@ -20320,8 +20619,9 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
                   {legend && terrStats && (
                     <details className="lp-carte-legend">
-                      <summary><span className="lp-carte-dot" style={{ background: layout.projectById[territory].color }} />{layout.projectById[territory].name} · {legend.label} · {legend.hub[terrStats.stage]} ({terrStats.pct} %)</summary>
+                      <summary><span className="lp-carte-dot" style={{ background: layout.projectById[territory].color }} />{layout.projectById[territory].name} · {terrStats.pct} %</summary>
                       <ul>
+                        <li><b>Thème</b><span>{legend.label} · {legend.hub[terrStats.stage]}</span></li>
                         {legend.lines.map((l) => <li key={l[0]}><b>{l[0]}</b><span>{l[1]}</span></li>)}
                         {legend.signals.map((l) => <li key={"s-" + l[0]}><b>{l[0]}</b><span>{l[1]}</span></li>)}
                       </ul>
