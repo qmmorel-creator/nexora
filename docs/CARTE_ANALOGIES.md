@@ -282,7 +282,7 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
 
 - La hauteur construite d'une tâche est exactement le pourcentage d'avancement de sa hauteur
   finale (à 50 %, la moitié). Les bâtiments sont agrandis en hauteur (hauteur finale visée
-  ~1,6 avant l'échelle de la carte) pour que l'écart se voie de loin, Le socle d'avancement a été retiré (#383) : seul le bâtiment monte.
+  ~1,6 avant l'échelle de la carte) pour que l'écart se voie de loin. Le socle d'avancement a été retiré (#383) : seul le bâtiment monte.
   L'étiquette de la tâche affiche son pourcentage.
 - La vue se décale pour que la tâche sélectionnée ne passe ni sous le volet (ordinateur) ni
   sous la fiche (téléphone) ; sur téléphone, la barre d'outils tient sur une ligne défilante.
