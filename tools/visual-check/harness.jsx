@@ -1114,7 +1114,60 @@ if (benchApp) {
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
     mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra]));
-  } else if (benchParams.get("carte") === "volume") {
+  } else if (benchParams.get("cosmos") === "demo") {
+    // Vue Cosmos (#402) : données d'EXEMPLE — dossiers, un sous-dossier (amas),
+    // un dossier vide, un projet vide, « À trier » et une tâche sans projet.
+    const folders = [
+      { id: "banc-cf1", name: "Vallabrègues", color: "#2F7FD8", mapTheme: "campagne" },
+      { id: "banc-cf1b", name: "Lot aval", color: "#2F7FD8", parentId: "banc-cf1" },
+      { id: "banc-cf2", name: "Avignon Nord", color: "#8B5CF6" },
+      { id: "banc-cf3", name: "Perso", color: "#E0902F" },
+      { id: "banc-cf4", name: "Archives", color: "#7A8699", mapTheme: "grandnord" },
+      { id: "banc-cf5", name: "Nouveaux chantiers", color: "#94A3B8" },
+    ];
+    const projects = [
+      { id: "banc-cp1", name: "Passe amont", color: "#1F9D8F", folderId: "banc-cf1" },
+      { id: "banc-cp2", name: "Machine", color: "#2F5FB3", folderId: "banc-cf1" },
+      { id: "banc-cp3", name: "Canal", color: "#D99A2B", folderId: "banc-cf1b" },
+      { id: "banc-cp4", name: "Digue", color: "#6D5BD0", folderId: "banc-cf2" },
+      { id: "banc-cp5", name: "Écluse", color: "#B05BB8", folderId: "banc-cf2" },
+      { id: "banc-cp6", name: "Maison", color: "#E0782F", folderId: "banc-cf3" },
+      { id: "banc-cp7", name: "Jardin", color: "#3AA35A", folderId: "banc-cf3" },
+      { id: "banc-cp8", name: "Références", color: "#8391A6", folderId: "banc-cf4" },
+      { id: "banc-cp9", name: "Veille", color: "#94A3B8", folderId: "folder-a-trier" },
+      { id: "banc-cp10", name: "Projet à lancer", color: "#0EA5E9", folderId: "banc-cf2" },
+    ];
+    const st = (n) => (seedStatuses.find((s) => new RegExp(n, "i").test(s.name)) || seedStatuses[0]).id;
+    const d = (n) => addDaysIso(iso(new Date()), n);
+    const T = (id, title, projectId, status, extra = {}) => ({ id, title, projectId, statusId: st(status), taskTypeId: "tt1", start: d(-7), end: d(5), progress: 0, assignee: "", checklist: [], ...extra });
+    const tasks = [
+      T("banc-ct1", "Vérifier les vannes", "banc-cp1", "cours", { progress: 50, criticality: "moyen", assignee: seedTeamMembers[0]?.name || "", desc: "Contrôler le bon fonctionnement des vannes de la passe amont et relever les mesures de débit.", checklist: [{ id: "k1", text: "Relever la pression amont", done: true }, { id: "k2", text: "Tester l'ouverture", done: true }, { id: "k3", text: "Vérifier l'étanchéité", done: false }, { id: "k4", text: "Consigner les mesures", done: false }] }),
+      T("banc-ct2", "Relever la pression", "banc-cp1", "termin", { progress: 100, end: d(-3) }),
+      T("banc-ct3", "Tester l'ouverture", "banc-cp1", "termin", { progress: 100, end: d(-2) }),
+      T("banc-ct4", "Consigner les mesures", "banc-cp1", "planifier", { end: d(9) }),
+      T("banc-ct5", "Nettoyer la grille", "banc-cp1", "planifier", { end: d(14) }),
+      T("banc-ct6", "Devis vérins", "banc-cp1", "attente", { progress: 20 }),
+      T("banc-ct7", "Remplacer le capteur", "banc-cp1", "planifier", { end: d(-4), criticality: "urgent" }),
+      T("banc-ct8", "Rapport d'intervention", "banc-cp1", "information"),
+      ...["Graissage turbine", "Alignement arbre", "Contrôle alternateur", "Relevé vibrations", "Pièces de rechange", "Essai à vide"].map((t, i) => T("banc-cm" + i, t, "banc-cp2", ["cours", "planifier", "termin", "cours", "attente", "planifier"][i], { progress: i * 15 })),
+      ...["Curage", "Berges", "Signalétique", "Pont levant"].map((t, i) => T("banc-cc" + i, t, "banc-cp3", ["planifier", "cours", "termin", "attente"][i], i === 0 ? { end: d(-6) } : {})),
+      ...Array.from({ length: 5 }, (_, i) => T("banc-cd" + i, "Digue · étape " + (i + 1), "banc-cp4", ["planifier", "cours", "termin", "planifier", "attente"][i])),
+      ...Array.from({ length: 4 }, (_, i) => T("banc-ce" + i, "Écluse · étape " + (i + 1), "banc-cp5", ["planifier", "cours", "termin", "termin"][i])),
+      ...Array.from({ length: 3 }, (_, i) => T("banc-cma" + i, "Maison · " + ["Peinture", "Toiture", "Devis cuisine"][i], "banc-cp6", ["planifier", "cours", "termin"][i])),
+      ...Array.from({ length: 5 }, (_, i) => T("banc-cj" + i, "Jardin · " + ["Taille", "Semis", "Arrosage", "Clôture", "Compost"][i], "banc-cp7", ["planifier", "planifier", "termin", "cours", "termin"][i])),
+      ...Array.from({ length: 6 }, (_, i) => T("banc-cr" + i, "Référence " + (i + 1), "banc-cp8", "termin", { progress: 100 })),
+      ...Array.from({ length: 3 }, (_, i) => T("banc-ci" + i, "Idée " + (i + 1), "banc-cp9", "planifier")),
+      T("banc-corphan", "Note sans projet", null, "planifier"),
+    ];
+    mem.set("nexora:projectFolders", JSON.stringify(folders));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify(tasks));
+    mem.set("nexora:favorites", JSON.stringify([{ type: "project", id: "banc-cp1" }, { type: "task", id: "banc-ct7" }]));
+  } else if (benchParams.get("cosmos") === "empty") {
+    mem.set("nexora:projectFolders", JSON.stringify([]));
+    mem.set("nexora:projects", JSON.stringify([]));
+    mem.set("nexora:tasks", JSON.stringify([]));
+  } else if (benchParams.get("carte") === "volume" || benchParams.get("cosmos") === "volume") {
     const folders = Array.from({ length: 12 }, (_, i) => ({ id: `banc-vf${i}`, name: `Dossier ${i + 1}`, color: "#94A3B8" }));
     const projects = Array.from({ length: 300 }, (_, i) => ({ id: `banc-vp${i}`, name: `Projet ${i + 1}`, icon: "", color: ["#E07A3F", "#245EDB", "#2A9D8F", "#8B5CF6", "#E0A21A"][i % 5], folderId: folders[i % 12].id }));
     const tasks = [];

@@ -6642,13 +6642,30 @@ function cosmosBuild(ctx, norm, opts) {
     maxRadius = Math.max(maxRadius, g.radius);
   });
 
-  // Galaxies sur la spirale ; l'écart suit la plus grande galaxie.
-  const spacing = Math.ceil(maxRadius * 2.35 + 16);
+  // Galaxies sur la spirale, écart réglé sur la taille médiane ; une galaxie
+  // qui en chevauche une autre de place inférieure est repoussée vers
+  // l'extérieur. Calcul déterministe : même univers, mêmes positions.
+  const radii = galaxies.map((g) => g.radius).sort((a, b) => a - b);
+  const median = radii.length ? radii[Math.floor(radii.length / 2)] : 12;
+  const spacing = Math.ceil(median * 2 + 12);
   const gSlots = cosmosAssign(galaxies.map((g) => g.id), memory.g, "g", COSMOS_RINGS.galaxy);
   galaxies.forEach((g) => {
     memory.g[g.id] = gSlots[g.id];
     g.slot = gSlots[g.id];
-    g.pos = cosmosSpiralPoint(g.slot, spacing);
+  });
+  const bySlot = galaxies.slice().sort((a, b) => a.slot - b.slot);
+  bySlot.forEach((g, i) => {
+    const base = cosmosSpiralPoint(g.slot, spacing);
+    const len = Math.hypot(base.x, base.z);
+    const dir = len ? { x: base.x / len, z: base.z / len } : { x: 1, z: 0 };
+    let r = len;
+    for (let guard = 0; guard < 400; guard++) {
+      const px = dir.x * r, pz = dir.z * r;
+      const clash = bySlot.slice(0, i).some((o) => Math.hypot(o.pos.x - px, o.pos.z - pz) < o.radius + g.radius + 8);
+      if (!clash) break;
+      r += 4;
+    }
+    g.pos = { x: dir.x * r, z: dir.z * r };
   });
 
   // Planètes et satellites en coordonnées du monde.
@@ -6717,7 +6734,11 @@ function cosmosFrame(model, level, id) {
     const p = model.planets[id];
     return { x: p.world.x, y: p.radius * 0.2, z: p.world.z, dist: Math.max(10, p.reach * 3.1) };
   }
-  return { x: 0, y: 0, z: 0, dist: Math.max(70, model.extent * 1.9) };
+  // Univers : la boîte englobante des galaxies, pas l'origine.
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  model.galaxies.forEach((g) => { x0 = Math.min(x0, g.pos.x - g.radius); x1 = Math.max(x1, g.pos.x + g.radius); z0 = Math.min(z0, g.pos.z - g.radius); z1 = Math.max(z1, g.pos.z + g.radius); });
+  if (!model.galaxies.length) return { x: 0, y: 0, z: 0, dist: 70 };
+  return { x: (x0 + x1) / 2, y: 0, z: (z0 + z1) / 2, dist: Math.max(40, Math.max(x1 - x0, (z1 - z0) * 1.25) * 0.95) };
 }
 
 // Échelle de détail d'après la distance de la caméra à l'objet suivi :

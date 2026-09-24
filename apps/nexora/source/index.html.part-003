@@ -20111,12 +20111,15 @@ function fmtCarteStamp(v) {
 // Volet de détail (#361, enrichi à la demande de Quentin) : tous les champs
 // de la tâche et sa description complète, en lecture seule. Les modifications
 // passent toujours par « Ouvrir la fiche ».
-function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen, onGo, onWalk, onClose, onUpdate, onPreview, onToggleDone }) {
+// Réutilisé par la vue Cosmos (#402) : `worldText` remplace la ligne propre à
+// la carte, `walkLabel` le libellé « Y aller », et `lockReason` rend le volet
+// en lecture seule en expliquant pourquoi.
+function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen, onGo, onWalk, onClose, onUpdate, onPreview, onToggleDone, worldText, walkLabel, lockReason }) {
   const r = raw || {};
   // Édition directe (#371) : chaque champ s'enregistre à la validation
   // (sortie du champ, Entrée, lâcher du curseur) par les mécanismes Nexora.
   const gcal = isGoogleCalendarProjectId(r.projectId, ctx.projects || []);
-  const editable = !!onUpdate && !gcal;
+  const editable = !!onUpdate && !gcal && !lockReason;
   const statusLocked = !!restrictedStatusForType(ctx.taskTypes || [], ctx.statuses || [], r.taskTypeId);
   const statusOptions = getStatusesForTask(ctx.statuses || [], ctx.projects || [], ctx.taskTypes || [], r.projectId, r.taskTypeId, r.statusId);
   const [title, setTitle] = useState(r.title || "");
@@ -20132,7 +20135,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen,
   const members = (ctx.teamMembers || []).map((m) => m.name).filter(Boolean);
   if (r.assignee && members.indexOf(r.assignee) === -1) members.push(r.assignee);
   const p = layout.projectById[task.projectId || "__terre-inconnue__"] || {};
-  const th = carteLook(styleId, layout.themes[p.id], (lieux || {})[p.id]);
+  const th = worldText == null ? carteLook(styleId, layout.themes[p.id], (lieux || {})[p.id]) : null;
   const crit = CRITICALITIES.find((c) => c.id === task.criticality);
   const deps = task.dependsOn.map((id) => norm.taskById[id]).filter(Boolean);
   const dependents = norm.tasks.filter((o) => o.dependsOn.indexOf(task.id) !== -1);
@@ -20157,6 +20160,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen,
         ) : null}
         <h3 className={"lp-carte-detail-title" + (editable ? " lp-carte-sr" : "")}>{task.milestone && <span className="lp-carte-ms" title="Jalon">◆ </span>}{task.title}</h3>
         {gcal && <p className="lp-carte-muted" style={{ margin: "0 0 8px", fontSize: 12 }}>Tâche issue de Google Calendar : elle se modifie dans Google Calendar.</p>}
+        {!gcal && lockReason && <p className="lp-carte-muted" style={{ margin: "0 0 8px", fontSize: 12 }}>{lockReason}</p>}
         <div className="lp-carte-chips">
           <span className="lp-carte-chip"><i style={{ background: task.statusColor }} />{task.statusName}</span>
           <span className="lp-carte-chip"><i style={{ background: task.typeColor }} />{task.typeName}</span>
@@ -20169,7 +20173,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen,
               {task.state === "done" ? "Rouvrir" : <><Check size={14} /> Marquer terminée</>}
             </button>
           )}
-          <button type="button" className="lp-btn" onClick={() => onWalk(task.id)}>Y aller</button>
+          <button type="button" className="lp-btn" onClick={() => onWalk(task.id)}>{walkLabel || "Y aller"}</button>
         </div>
 
         {editable && (
@@ -20178,7 +20182,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen,
             <input id={"lp-carte-prog-" + task.id} type="range" min={0} max={100} step={5} value={prog}
               onChange={(e) => { const v = Number(e.target.value); progRef.current = v; setProg(v); if (onPreview) onPreview({ id: task.id, progress: v }); }}
               onPointerUp={commitProg} onKeyUp={commitProg} onBlur={commitProg} />
-            {task.state === "todo" && prog === 0 && <small className="lp-carte-muted">Augmente l'avancement : la tâche passe en chantier sur la carte et monte au fil du curseur.</small>}
+            {worldText == null && task.state === "todo" && prog === 0 && <small className="lp-carte-muted">Augmente l'avancement : la tâche passe en chantier sur la carte et monte au fil du curseur.</small>}
           </div>
         )}
 
@@ -20263,7 +20267,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen,
           </>
         )}
 
-        <p className="lp-carte-world">Sur la carte ({th.label}) : {th.lg[CARTE_WORLD_TEXT[task.state]]}{task.state === "doing" || task.state === "waiting" ? ", palier " + carteStage(task.progress) + " sur 5" : ""}.</p>
+        <p className="lp-carte-world">{worldText != null ? worldText : <>Sur la carte ({th.label}) : {th.lg[CARTE_WORLD_TEXT[task.state]]}{task.state === "doing" || task.state === "waiting" ? ", palier " + carteStage(task.progress) + " sur 5" : ""}.</>}</p>
       </div>
     </aside>
   );
@@ -20734,6 +20738,1505 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => setFiltersOpen(false)}>Terminé</button>
         </>}>
           <p className="lp-carte-muted" style={{ marginTop: 0 }}>Le même filtre que partout ailleurs dans Nexora. Les tâches écartées disparaissent de la carte ; les territoires ne bougent pas.</p>
+          <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+// === NEXORA:COSMOS-ENGINE:START ===
+// Moteur 3D de la vue Cosmos (#402), direction « Diorama céleste » validée :
+// ciel ivoire et bleu pâle, mer de nuages, galaxies en disques de verre,
+// planètes stylisées, satellites-cubes. three.js est chargé à la demande
+// (loadCarteThree, partagé avec la Carte) et passé en paramètre.
+// Le moteur ne modifie jamais une tâche : il signale seulement ce que
+// l'utilisateur vise (onSelect, onLevel). Les orbites animées sont un effet
+// visuel, coupé par « réduire les animations » et en qualité basse.
+const COSMOS_PLANET_PALETTES = {
+  earth: [[-1, "#2f7fc4"], [0, "#4aa3dd"], [0.035, "#e6d49a"], [0.07, "#78bd5c"], [0.14, "#3f8f4c"], [0.2, "#9c9282"], [0.26, "#f2f0ea"]],
+  desert: [[-1, "#3a8fc0"], [0, "#5fb3d6"], [0.03, "#f0cf86"], [0.08, "#e3a94f"], [0.15, "#c98336"], [0.22, "#a86a33"]],
+  city: [[-1, "#1f3f86"], [0, "#2c58a8"], [0.03, "#8fa4be"], [0.1, "#b9c6d6"], [0.18, "#e4e9f0"]],
+  ocean: [[-1, "#1d6fb8"], [0, "#3b9ad6"], [0.06, "#7cc7e8"], [0.1, "#f1e4b3"], [0.14, "#6fbf73"], [0.22, "#4c9a55"]],
+  ice: [[-1, "#4f8fc4"], [0, "#8cc4e6"], [0.03, "#dfeef7"], [0.1, "#f7fbff"], [0.2, "#c9d6e3"]],
+  volcano: [[-1, "#3d6fa6"], [0, "#5d93c2"], [0.03, "#9a8a7a"], [0.1, "#6d5f55"], [0.17, "#4a3f3a"], [0.23, "#e2683c"]],
+};
+const COSMOS_DECOR = { earth: "tree", ocean: "tree", desert: "rock", volcano: "rock", city: "block", ice: "rock" };
+
+function createCosmosEngine(THREE, container, opts) {
+  const o = opts || {};
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  const canvas = renderer.domElement;
+  canvas.className = "lp-cosmos-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  container.appendChild(canvas);
+
+  const scene = new THREE.Scene();
+  const FOG = new THREE.Color("#f1ece2");
+  scene.fog = new THREE.Fog(FOG, 60, 400);
+  scene.add(new THREE.HemisphereLight("#fff7e8", "#a9bcd4", 1.3));
+  const sun = new THREE.DirectionalLight("#fff0d4", 1.75);
+  sun.position.set(-30, 50, 25);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 4000);
+  const envGroup = new THREE.Group(), galaxyGroup = new THREE.Group(), detailGroup = new THREE.Group(), fxGroup = new THREE.Group();
+  scene.add(envGroup, galaxyGroup, detailGroup, fxGroup);
+
+  const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const S = {
+    model: null, norm: null, visible: null, dimmed: new Set(), level: "universe", galaxyId: null, planetId: null,
+    selected: null, hovered: null, quality: o.quality || "auto", effQuality: "high", animate: o.animate !== false,
+    yaw: 0.35, pitch: 0.72, dist: 120, target: new THREE.Vector3(), goal: null, goalDist: null,
+    time: 0, raf: 0, disposed: false, dirty: true, preview: null,
+  };
+
+  // ---------- Ressources partagées ----------
+  const disposables = [];
+  const keep = (x) => { disposables.push(x); return x; };
+  function radialTexture(stops, size) {
+    const c = document.createElement("canvas");
+    c.width = c.height = size || 128;
+    const g = c.getContext("2d");
+    if (g) {
+      const gr = g.createRadialGradient(c.width / 2, c.height / 2, 0, c.width / 2, c.height / 2, c.width / 2);
+      stops.forEach((s) => gr.addColorStop(s[0], s[1]));
+      g.fillStyle = gr; g.fillRect(0, 0, c.width, c.height);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return keep(t);
+  }
+  const texCloud = radialTexture([[0, "rgba(255,255,255,.95)"], [0.35, "rgba(255,255,255,.7)"], [1, "rgba(255,255,255,0)"]], 128);
+  const texWarm = radialTexture([[0, "rgba(255,236,170,1)"], [0.35, "rgba(255,226,150,.55)"], [1, "rgba(255,220,150,0)"]], 128);
+  const texBlue = radialTexture([[0, "rgba(120,170,255,.95)"], [0.35, "rgba(150,190,255,.45)"], [1, "rgba(120,170,255,0)"]], 128);
+  const texWhite = radialTexture([[0, "rgba(255,255,255,.9)"], [0.35, "rgba(255,255,255,.35)"], [1, "rgba(255,255,255,0)"]], 128);
+  const texDot = radialTexture([[0, "rgba(255,255,255,1)"], [0.4, "rgba(255,255,255,.9)"], [1, "rgba(255,255,255,0)"]], 32);
+  const geoDisc = keep(new THREE.CircleGeometry(1, 96).rotateX(-Math.PI / 2));
+  const geoSphereLow = keep(new THREE.IcosahedronGeometry(1, 2));
+  const geoCore = keep(new THREE.SphereGeometry(1, 24, 16));
+  const geoCube = keep(new THREE.BoxGeometry(1, 1, 1));
+  const geoWing = keep(new THREE.BoxGeometry(2.6, 0.06, 0.55));
+  const geoAlert = keep(new THREE.TorusGeometry(0.9, 0.09, 6, 28).rotateX(Math.PI / 2));
+  const geoRock = keep(new THREE.DodecahedronGeometry(1, 0));
+  const ribbonGeo = (r, w, start, len) => keep(new THREE.RingGeometry(r - w / 2, r + w / 2, 96, 1, start || 0, len == null ? Math.PI * 2 : len).rotateX(-Math.PI / 2));
+  const mats = [];
+  const mat = (m) => { mats.push(m); return m; };
+  const matBasic = (color, opacity, extra) => mat(new THREE.MeshBasicMaterial(Object.assign({ color, transparent: opacity < 1, opacity, depthWrite: opacity >= 1, side: THREE.DoubleSide }, extra || {})));
+  const matLambert = mat(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+  const matInst = mat(new THREE.MeshLambertMaterial({ flatShading: true }));
+  const matCore = mat(new THREE.MeshBasicMaterial({ color: "#ffe39a" }));
+  const matRock = mat(new THREE.MeshLambertMaterial({ color: "#bba88f", flatShading: true }));
+  const matWing = mat(new THREE.MeshLambertMaterial({ color: "#4f7fd6" }));
+  const matAlert = mat(new THREE.MeshBasicMaterial({ color: "#dc2626" }));
+  const decorMats = {
+    tree: mat(new THREE.MeshLambertMaterial({ color: "#2f7a3e", flatShading: true })),
+    block: mat(new THREE.MeshLambertMaterial({ color: "#f4f1ea" })),
+    rock: mat(new THREE.MeshLambertMaterial({ color: "#b87a3c", flatShading: true })),
+  };
+  const spriteMat = (map, opacity, color) => mat(new THREE.SpriteMaterial({ map, transparent: true, opacity: opacity == null ? 1 : opacity, depthWrite: false, color: color || "#ffffff" }));
+
+  // ---------- Bruit et planètes procédurales ----------
+  function vhash(x, y, z, seed) { let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 2147483647) + Math.imul(seed, 144665); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+  function noise3(x, y, z, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const sm = (t) => t * t * (3 - 2 * t);
+    const u = sm(x - xi), v = sm(y - yi), w = sm(z - zi);
+    let r = 0;
+    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) for (let dz = 0; dz < 2; dz++)
+      r += vhash(xi + dx, yi + dy, zi + dz, seed) * (dx ? u : 1 - u) * (dy ? v : 1 - v) * (dz ? w : 1 - w);
+    return r;
+  }
+  const fbm = (x, y, z, s) => 0.55 * noise3(x, y, z, s) + 0.3 * noise3(x * 2.1, y * 2.1, z * 2.1, s + 7) + 0.15 * noise3(x * 4.3, y * 4.3, z * 4.3, s + 13);
+  const tmpC = new THREE.Color(), tintC = new THREE.Color();
+  const planetCache = {};
+  // Planète « diorama » : icosaèdre en relief, couleurs par sommet teintées
+  // par la couleur du projet, décor instancié (arbres, immeubles, rochers).
+  function planetMesh(p, detail, decor) {
+    const key = p.id + "|" + p.kind + "|" + detail + "|" + (decor ? 1 : 0) + "|" + p.color;
+    if (planetCache[key]) return planetCache[key];
+    const seed = carteHash("seed:" + p.id) % 9973;
+    const geo = new THREE.IcosahedronGeometry(1, detail);
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const heights = new Float32Array(pos.count);
+    const pal = COSMOS_PLANET_PALETTES[p.kind] || COSMOS_PLANET_PALETTES.earth;
+    tintC.set(p.color || "#94A3B8");
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).normalize();
+      const h = (fbm(v.x * 1.7 + 3, v.y * 1.7, v.z * 1.7, seed) - 0.5) * (p.kind === "city" ? 0.5 : 0.8);
+      heights[i] = h;
+      v.multiplyScalar(h > 0 ? 1 + h * 0.22 : 1);
+      pos.setXYZ(i, v.x, v.y, v.z);
+      let c = pal[0][1];
+      for (let k = 0; k < pal.length; k++) if (h >= pal[k][0]) c = pal[k][1];
+      tmpC.set(c).lerp(tintC, 0.18);
+      colors[i * 3] = tmpC.r; colors[i * 3 + 1] = tmpC.g; colors[i * 3 + 2] = tmpC.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    const group = new THREE.Group();
+    const mesh = new THREE.Mesh(geo, matLambert);
+    mesh.userData.pickPlanet = p.id;
+    group.add(mesh);
+    const owned = [geo];
+    if (decor) {
+      const kind = COSMOS_DECOR[p.kind] || "tree";
+      const land = [];
+      for (let i = 0; i < pos.count; i++) if (heights[i] > 0.06) land.push(i);
+      const count = Math.min(kind === "block" ? 70 : 64, land.length);
+      if (count) {
+        const dg = kind === "tree" ? new THREE.ConeGeometry(0.024, 0.055, 5) : kind === "block" ? new THREE.BoxGeometry(0.06, 0.1, 0.06) : new THREE.DodecahedronGeometry(0.035, 0);
+        owned.push(dg);
+        const inst = new THREE.InstancedMesh(dg, decorMats[kind], count);
+        const up = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m4 = new THREE.Matrix4(), n = new THREE.Vector3(), sc = new THREE.Vector3();
+        let r = carteHash("decor:" + p.id);
+        const rnd = () => { r = (Math.imul(r ^ (r >>> 15), 0x2c1b3c6d) + 0x297a2d39) >>> 0; return r / 4294967296; };
+        for (let k = 0; k < count; k++) {
+          const i = land[Math.floor(rnd() * land.length)];
+          v.fromBufferAttribute(pos, i);
+          n.copy(v).normalize();
+          q.setFromUnitVectors(up, n);
+          const s = 0.7 + rnd() * 0.8, hh = kind === "block" ? s * (0.6 + rnd() * 1.6) : s;
+          sc.set(s, hh, s);
+          m4.compose(v.clone().add(n.clone().multiplyScalar(0.04 * hh)), q, sc);
+          inst.setMatrixAt(k, m4);
+        }
+        inst.userData.pickPlanet = p.id;
+        group.add(inst);
+      }
+    }
+    group.userData.owned = owned;
+    planetCache[key] = group;
+    return group;
+  }
+
+  // ---------- Qualité ----------
+  function resolveQuality() {
+    const tasks = S.norm ? S.norm.tasks.length : 0;
+    const projects = S.model ? Object.keys(S.model.planets).length : 0;
+    S.effQuality = cosmosResolveQuality(S.quality, tasks, projects);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, { high: 2, medium: 1.5, low: 1 }[S.effQuality]));
+    o.onQuality && o.onQuality(S.effQuality);
+  }
+  const animOn = () => S.animate && !reduced && S.effQuality !== "low";
+
+  // ---------- Décor : nuages et rochers ----------
+  function rng(seed) { let s = carteHash(String(seed)) || 1; return () => { s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x297a2d39) >>> 0; return s / 4294967296; }; }
+  function buildEnvironment() {
+    clearGroup(envGroup);
+    const ext = Math.max(80, S.model.extent);
+    const q = S.effQuality;
+    const nClouds = { high: 110, medium: 60, low: 18 }[q];
+    const r = rng("nuages");
+    const cm = [spriteMat(texCloud, 0.8), spriteMat(texWarm, 0.7), spriteMat(texCloud, 0.35, "#b9c9dd")];
+    for (let i = 0; i < nClouds; i++) {
+      const sp = new THREE.Sprite(cm[r() > 0.4 ? 0 : 1]);
+      const sc = (12 + r() * 26) * Math.max(1, ext / 120);
+      const x = (r() - 0.5) * ext * 3, z = (r() - 0.5) * ext * 3, y = -16 - r() * 6;
+      sp.scale.set(sc * 1.8, sc, 1);
+      sp.position.set(x, y, z);
+      envGroup.add(sp);
+      if (q !== "low") { const sh = new THREE.Sprite(cm[2]); sh.scale.set(sc * 1.9, sc * 0.9, 1); sh.position.set(x, y - 2.2, z + 0.5); sh.renderOrder = -1; envGroup.add(sh); }
+    }
+    const nRocks = { high: 60, medium: 30, low: 0 }[q];
+    if (nRocks) {
+      const inst = new THREE.InstancedMesh(geoRock, matRock, nRocks);
+      const m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), e = new THREE.Euler();
+      for (let i = 0; i < nRocks; i++) {
+        const s = 0.25 + r() * r() * 2.2;
+        e.set(r() * 6, r() * 6, r() * 6); qq.setFromEuler(e);
+        // Loin des galaxies : les rochers flottent entre elles, jamais dessus.
+        let x = 0, z = 0;
+        for (let t = 0; t < 6; t++) {
+          x = (r() - 0.5) * ext * 2.4; z = (r() - 0.5) * ext * 2.4;
+          if (!S.model.galaxies.some((g) => Math.hypot(g.pos.x - x, g.pos.z - z) < g.radius + 3)) break;
+        }
+        m4.compose(new THREE.Vector3(x, (r() - 0.5) * 12 - 2, z), qq, new THREE.Vector3(s * (0.8 + r() * 0.6), s * (0.55 + r() * 0.4), s * (0.8 + r() * 0.5)));
+        inst.setMatrixAt(i, m4);
+      }
+      envGroup.add(inst);
+    }
+  }
+  function clearGroup(g) {
+    while (g.children.length) {
+      const c = g.children.pop();
+      if (c.userData && c.userData.cached) continue;
+      c.traverse && c.traverse((x) => { if (x.userData && x.userData.ownGeo && x.geometry) x.geometry.dispose(); });
+    }
+  }
+
+  // ---------- Galaxies (toujours visibles) ----------
+  const pick = { galaxies: [], planets: [], satMesh: null, satIds: [] };
+  function buildGalaxies() {
+    clearGroup(galaxyGroup);
+    pick.galaxies = [];
+    const M = S.model;
+    const discMat = matBasic("#fbfdff", 0.34, { depthWrite: false });
+    const rimMat = matBasic("#ffffff", 0.95, { depthWrite: false });
+    const haloMat = matBasic("#c9dbf5", 0.35, { depthWrite: false });
+    const orbitMat = mat(new THREE.LineBasicMaterial({ color: "#8aa6cc", transparent: true, opacity: 0.7 }));
+    const orbitPts = [];
+    M.galaxies.forEach((g) => {
+      const disc = new THREE.Mesh(geoDisc, discMat);
+      disc.scale.set(g.radius, 1, g.radius);
+      disc.position.set(g.pos.x, 0, g.pos.z);
+      disc.userData.pickGalaxy = g.id;
+      disc.renderOrder = -2;
+      galaxyGroup.add(disc);
+      pick.galaxies.push(disc);
+      const rim = new THREE.Mesh(ribbonGeo(g.radius, Math.max(0.22, g.radius * 0.014)), rimMat);
+      rim.userData.ownGeo = true;
+      rim.position.copy(disc.position).setY(0.02);
+      galaxyGroup.add(rim);
+      // Bord de verre : un halo bleuté juste au-delà du disque.
+      const halo = new THREE.Mesh(ribbonGeo(g.radius + g.radius * 0.035, g.radius * 0.05), haloMat);
+      halo.userData.ownGeo = true;
+      halo.position.copy(disc.position).setY(0.01);
+      galaxyGroup.add(halo);
+      g.orbits.forEach((ob) => {
+        const seg = 96;
+        for (let i = 0; i < seg; i++) {
+          const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+          orbitPts.push(g.pos.x + ob.x + Math.cos(a0) * ob.r, 0.03, g.pos.z + ob.z + Math.sin(a0) * ob.r, g.pos.x + ob.x + Math.cos(a1) * ob.r, 0.03, g.pos.z + ob.z + Math.sin(a1) * ob.r);
+        }
+      });
+      g.amas.forEach((a) => {
+        const am = new THREE.Mesh(geoDisc, discMat);
+        am.scale.set(a.radius, 1, a.radius);
+        am.position.set(g.pos.x + a.center.x, 0.01, g.pos.z + a.center.z);
+        am.renderOrder = -1;
+        galaxyGroup.add(am);
+      });
+      const coreR = Math.max(0.9, g.radius * 0.07);
+      const core = new THREE.Mesh(geoCore, matCore);
+      core.scale.setScalar(coreR);
+      core.position.set(g.pos.x, coreR, g.pos.z);
+      galaxyGroup.add(core);
+      const glow = new THREE.Sprite(spriteMat(texWarm, 1));
+      glow.scale.set(coreR * 7, coreR * 7, 1);
+      glow.position.copy(core.position);
+      galaxyGroup.add(glow);
+    });
+    if (orbitPts.length) {
+      const lg = new THREE.BufferGeometry();
+      lg.setAttribute("position", new THREE.Float32BufferAttribute(orbitPts, 3));
+      const lines = new THREE.LineSegments(lg, orbitMat);
+      lines.userData.ownGeo = true;
+      galaxyGroup.add(lines);
+    }
+    // Poussière d'étoiles sur les disques.
+    const dust = [], r = rng("poussiere");
+    M.galaxies.forEach((g) => {
+      const n = Math.min(400, Math.round(g.radius * g.radius * 0.35));
+      for (let i = 0; i < n; i++) { const a = r() * Math.PI * 2, d = Math.sqrt(r()) * g.radius * 0.96; dust.push(g.pos.x + Math.cos(a) * d, 0.08 + r() * 0.35, g.pos.z + Math.sin(a) * d); }
+    });
+    if (dust.length) {
+      const dg = new THREE.BufferGeometry();
+      dg.setAttribute("position", new THREE.Float32BufferAttribute(dust, 3));
+      const pts = new THREE.Points(dg, mat(new THREE.PointsMaterial({ map: texDot, size: 0.45, color: "#fff6dc", transparent: true, depthWrite: false })));
+      pts.userData.ownGeo = true;
+      galaxyGroup.add(pts);
+    }
+  }
+
+  // ---------- Planètes, satellites, sélection (selon l'échelle) ----------
+  let farPlanets = null, dustPts = null;
+  const detailed = {};
+  function planetY(p) { return p.radius * 0.95; }
+  function detailedSet() {
+    const M = S.model, all = Object.keys(M.planets);
+    const out = new Set();
+    if (all.length <= 40 && S.effQuality !== "low") all.forEach((id) => out.add(id));
+    else if (S.galaxyId) M.galaxyById[S.galaxyId].projectIds.forEach((id) => out.add(id));
+    if (S.planetId) out.add(S.planetId);
+    return out;
+  }
+  function buildPlanets() {
+    clearGroup(detailGroup);
+    Object.keys(detailed).forEach((k) => delete detailed[k]);
+    pick.planets = [];
+    const M = S.model, set = detailedSet();
+    const ids = Object.keys(M.planets);
+    // Planètes lointaines : une seule instance par planète, teintée.
+    if (farPlanets) { farPlanets.dispose && farPlanets.dispose(); }
+    farPlanets = new THREE.InstancedMesh(geoSphereLow, matInst, Math.max(1, ids.length));
+    farPlanets.userData.ids = ids;
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pv = new THREE.Vector3();
+    ids.forEach((id, i) => {
+      const p = M.planets[id];
+      const hide = set.has(id);
+      sc.setScalar(hide ? 0.0001 : p.radius);
+      pv.set(p.world.x, planetY(p), p.world.z);
+      m4.compose(pv, q, sc);
+      farPlanets.setMatrixAt(i, m4);
+      tmpC.set(p.color || "#94A3B8").lerp(new THREE.Color("#ffffff"), S.dimmed.has(id) ? 0.6 : 0.15);
+      farPlanets.setColorAt(i, tmpC);
+    });
+    farPlanets.instanceMatrix.needsUpdate = true;
+    if (farPlanets.instanceColor) farPlanets.instanceColor.needsUpdate = true;
+    farPlanets.userData.cachedFar = true;
+    detailGroup.add(farPlanets);
+    pick.planets.push(farPlanets);
+    const q2 = S.effQuality;
+    set.forEach((id) => {
+      const p = M.planets[id];
+      const focus = id === S.planetId;
+      const detail = focus ? { high: 5, medium: 4, low: 3 }[q2] : { high: 3, medium: 2, low: 2 }[q2];
+      const grp = planetMesh(p, detail, q2 !== "low");
+      const holder = new THREE.Group();
+      holder.add(grp);
+      grp.userData.cached = true;
+      holder.scale.setScalar(p.radius);
+      holder.position.set(p.world.x, planetY(p), p.world.z);
+      holder.rotation.y = carteRand("rot:" + id) * Math.PI * 2;
+      detailGroup.add(holder);
+      grp.children.forEach((c) => pick.planets.push(c));
+      detailed[id] = holder;
+      // Anneau d'avancement du projet (arc = % terminé), dans sa couleur.
+      const pct = (p.stats.pct || 0) / 100;
+      const track = new THREE.Mesh(ribbonGeo(p.radius * 1.42, p.radius * 0.12), matBasic("#ffffff", 0.55, { depthWrite: false }));
+      track.userData.ownGeo = true;
+      track.position.set(p.world.x, 0.06, p.world.z);
+      detailGroup.add(track);
+      if (pct > 0) {
+        const arc = new THREE.Mesh(ribbonGeo(p.radius * 1.42, p.radius * 0.12, Math.PI / 2, Math.PI * 2 * pct), matBasic(p.color || "#245EDB", 0.95, { depthWrite: false }));
+        arc.userData.ownGeo = true;
+        arc.position.set(p.world.x, 0.08, p.world.z);
+        detailGroup.add(arc);
+      }
+    });
+    buildSatellites();
+    buildDust();
+    buildSelection();
+  }
+
+  // Satellites : ceux de la galaxie courante (échelle galaxie ou planète).
+  // Une seule géométrie instanciée pour les cubes, une pour les panneaux,
+  // une pour les anneaux de retard.
+  let satCubes = null, satWings = null, satAlerts = null;
+  const satList = [];
+  function satVisible(t) { return !S.visible || S.visible.has(t.id); }
+  function buildSatellites() {
+    [satCubes, satWings, satAlerts].forEach((m) => { if (m) { fxGroup.remove(m); m.dispose(); } });
+    satCubes = satWings = satAlerts = null;
+    satList.length = 0;
+    pick.satMesh = null;
+    if (S.level === "universe" || !S.galaxyId) return;
+    const M = S.model, g = M.galaxyById[S.galaxyId];
+    if (!g) return;
+    g.projectIds.forEach((pid) => {
+      const p = M.planets[pid];
+      const tasks = p.taskIds.map((id) => S.norm.taskById[id]).filter((t) => t && satVisible(t));
+      const grouped = pid === S.planetId && cosmosDetailLevel("planet", tasks.length) === "grouped-done";
+      tasks.forEach((t) => {
+        if (grouped && t.state === "done" && !(S.selected && S.selected.id === t.id)) return;
+        satList.push({ t, p, s: M.satellites[t.id], focus: pid === S.planetId });
+      });
+    });
+    const n = Math.max(1, satList.length);
+    satCubes = new THREE.InstancedMesh(geoCube, matInst, n);
+    satWings = new THREE.InstancedMesh(geoWing, matWing, n);
+    satAlerts = new THREE.InstancedMesh(geoAlert, matAlert, n);
+    satList.forEach((it, i) => {
+      tmpC.set(it.t.statusColor || "#94A3B8");
+      satCubes.setColorAt(i, tmpC);
+      tmpC.set(it.t.state === "done" ? "#c9d2de" : "#4f7fd6");
+      satWings.setColorAt(i, tmpC);
+    });
+    satCubes.count = satWings.count = satAlerts.count = satList.length;
+    [satCubes, satWings, satAlerts].forEach((m) => { if (m.instanceColor) m.instanceColor.needsUpdate = true; fxGroup.add(m); });
+    pick.satMesh = satCubes;
+    pick.satIds = satList.map((it) => it.t.id);
+    placeSatellites();
+  }
+  const satPos = {};
+  const m4s = new THREE.Matrix4(), qs = new THREE.Quaternion(), es = new THREE.Euler(), vs = new THREE.Vector3(), ss = new THREE.Vector3();
+  function satWorld(it, out) {
+    const p = it.p, s = it.s;
+    const speed = animOn() ? 0.05 / Math.max(1, s.orbit * 0.35) : 0;
+    const a = s.angle + S.time * speed;
+    const tilt = 0.12 + carteRand("tilt:" + p.id) * 0.1;
+    out.set(p.world.x + Math.cos(a) * s.orbit, planetY(p) + Math.sin(a) * s.orbit * tilt, p.world.z + Math.sin(a) * s.orbit);
+    return a;
+  }
+  function placeSatellites() {
+    if (!satCubes) return;
+    let alerts = 0;
+    satList.forEach((it, i) => {
+      const a = satWorld(it, vs);
+      satPos[it.t.id] = satPos[it.t.id] || new THREE.Vector3();
+      satPos[it.t.id].copy(vs);
+      const sel = S.selected && S.selected.kind === "task" && S.selected.id === it.t.id;
+      const size = (it.focus ? 0.34 : 0.2) * Math.max(1, it.p.radius * 0.55) * (sel ? 1.3 : 1);
+      es.set(0.5 + a, a, 0.3); qs.setFromEuler(es);
+      ss.setScalar(size);
+      m4s.compose(vs, qs, ss);
+      satCubes.setMatrixAt(i, m4s);
+      // Panneaux solaires : déployés selon l'avancement de la tâche.
+      const prog = S.preview && S.preview.id === it.t.id ? S.preview.progress : it.t.progress;
+      ss.set(size * (0.35 + 0.65 * prog / 100), size, size);
+      m4s.compose(vs, qs, ss);
+      satWings.setMatrixAt(i, m4s);
+      if (it.t.overdue && it.focus) {
+        ss.setScalar(size * 1.25);
+        m4s.compose(vs, qs.identity(), ss);
+        satAlerts.setMatrixAt(alerts++, m4s);
+      }
+    });
+    satAlerts.count = alerts;
+    satCubes.instanceMatrix.needsUpdate = true;
+    satWings.instanceMatrix.needsUpdate = true;
+    satAlerts.instanceMatrix.needsUpdate = true;
+    satCubes.computeBoundingSphere && satCubes.computeBoundingSphere();
+  }
+  // Tâches vues de loin : des points colorés par statut, sans libellé.
+  function buildDust() {
+    if (dustPts) { fxGroup.remove(dustPts); dustPts.geometry.dispose(); dustPts = null; }
+    const M = S.model, pos = [], col = [];
+    Object.keys(M.planets).forEach((pid) => {
+      const p = M.planets[pid];
+      if (S.level !== "universe" && p.galaxyId === S.galaxyId) return;
+      p.taskIds.forEach((tid) => {
+        const t = S.norm.taskById[tid];
+        if (!t || !satVisible(t)) return;
+        const s = M.satellites[tid];
+        pos.push(p.world.x + Math.cos(s.angle) * s.orbit, planetY(p) + Math.sin(s.angle) * s.orbit * 0.15, p.world.z + Math.sin(s.angle) * s.orbit);
+        tmpC.set(t.statusColor || "#94A3B8");
+        col.push(tmpC.r, tmpC.g, tmpC.b);
+      });
+    });
+    if (!pos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    dustPts = new THREE.Points(g, dustMat);
+    fxGroup.add(dustPts);
+  }
+  const dustMat = mat(new THREE.PointsMaterial({ size: 0.55, map: texDot, vertexColors: true, transparent: true, depthWrite: false }));
+
+  // Marques de sélection : halo et anneaux tournés vers la caméra.
+  const selFx = new THREE.Group();
+  scene.add(selFx);
+  const selGlow = new THREE.Sprite(spriteMat(texBlue, 0.9));
+  const selRing1 = new THREE.Mesh(keep(new THREE.RingGeometry(0.75, 0.86, 64)), matBasic("#245edb", 0.9, { depthWrite: false }));
+  const selRing2 = new THREE.Mesh(keep(new THREE.RingGeometry(1.05, 1.1, 64)), matBasic("#ffffff", 0.95, { depthWrite: false }));
+  const selGround = new THREE.Mesh(keep(new THREE.RingGeometry(0.97, 1, 128).rotateX(-Math.PI / 2)), matBasic("#245edb", 0.85, { depthWrite: false }));
+  const selGroundHalo = new THREE.Mesh(keep(new THREE.RingGeometry(1, 1.07, 128).rotateX(-Math.PI / 2)), matBasic("#9dbcff", 0.3, { depthWrite: false }));
+  const planetGlow = new THREE.Sprite(spriteMat(texWhite, 0.7));
+  selFx.add(selGlow, selRing1, selRing2, selGround, selGroundHalo, planetGlow);
+  function buildSelection() {
+    selFx.children.forEach((c) => { c.visible = false; });
+    const M = S.model;
+    if (!M) return;
+    const sel = S.selected;
+    // Galaxie ciblée (univers) ou galaxie courante : liseré bleu au sol.
+    const gid = sel && sel.kind === "galaxy" ? sel.id : S.level === "universe" ? null : S.galaxyId;
+    const g = gid && M.galaxyById[gid];
+    if (g && S.level === "universe") {
+      selGround.visible = selGroundHalo.visible = true;
+      selGround.scale.setScalar(g.radius + 0.6); selGround.position.set(g.pos.x, 0.05, g.pos.z);
+      selGroundHalo.scale.setScalar(g.radius + 0.6); selGroundHalo.position.copy(selGround.position);
+    }
+    if (sel && sel.kind === "planet" && M.planets[sel.id]) {
+      const p = M.planets[sel.id];
+      selGround.visible = selGroundHalo.visible = true;
+      selGround.scale.setScalar(p.reach + 0.4); selGround.position.set(p.world.x, 0.1, p.world.z);
+      selGroundHalo.scale.setScalar(p.reach + 0.4); selGroundHalo.position.copy(selGround.position);
+    }
+    if (S.planetId && M.planets[S.planetId]) {
+      const p = M.planets[S.planetId];
+      planetGlow.visible = true;
+      planetGlow.scale.setScalar(p.radius * 3.6);
+      planetGlow.position.set(p.world.x, planetY(p), p.world.z - p.radius * 0.3);
+    }
+    if (sel && sel.kind === "task" && satPos[sel.id]) selGlow.visible = selRing1.visible = selRing2.visible = true;
+    S.dirty = true;
+  }
+  function updateSelectionFx() {
+    const sel = S.selected;
+    if (!(sel && sel.kind === "task" && satPos[sel.id])) { selGlow.visible = selRing1.visible = selRing2.visible = false; return; }
+    const it = satList.find((x) => x.t.id === sel.id);
+    const size = it ? (it.focus ? 0.34 : 0.2) * Math.max(1, it.p.radius * 0.55) * 1.3 : 0.5;
+    const pos = satPos[sel.id];
+    selGlow.visible = selRing1.visible = selRing2.visible = true;
+    selGlow.position.copy(pos); selGlow.scale.setScalar(size * 7);
+    [selRing1, selRing2].forEach((r) => { r.position.copy(pos); r.scale.setScalar(size * 1.9); r.lookAt(camera.position); });
+  }
+
+  // ---------- Caméra ----------
+  function frameFor(level, id) { return cosmosFrame(S.model, level, id); }
+  function goTo(fr, instant) {
+    S.goal = new THREE.Vector3(fr.x, fr.y, fr.z);
+    S.goalDist = fr.dist;
+    if (instant || reduced) { S.target.copy(S.goal); S.dist = S.goalDist; S.goal = null; S.goalDist = null; }
+    S.dirty = true;
+  }
+  function limits() {
+    const fr = frameFor(S.level, S.level === "galaxy" ? S.galaxyId : S.planetId);
+    return { min: fr.dist * 0.35, max: fr.dist * 2.1, base: fr.dist };
+  }
+  function updateCamera(dt) {
+    if (S.goal) {
+      const k = 1 - Math.pow(0.0015, dt);
+      S.target.lerp(S.goal, k);
+      S.dist += (S.goalDist - S.dist) * k;
+      if (S.target.distanceTo(S.goal) < 0.02 && Math.abs(S.dist - S.goalDist) < 0.02) { S.target.copy(S.goal); S.dist = S.goalDist; S.goal = null; S.goalDist = null; }
+      S.dirty = true;
+    }
+    const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+    camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
+    camera.lookAt(S.target);
+    camera.far = Math.max(400, S.dist * 8);
+    camera.near = Math.max(0.05, S.dist * 0.01);
+    camera.updateProjectionMatrix();
+    scene.fog.near = S.dist * 1.3;
+    scene.fog.far = S.dist * 3.4 + 60;
+  }
+
+  // ---------- Navigation entre échelles ----------
+  function emitLevel() { o.onLevel && o.onLevel({ level: S.level, galaxyId: S.galaxyId, planetId: S.planetId }); }
+  function setLevel(level, galaxyId, planetId, keepSel) {
+    const changedGalaxy = galaxyId !== S.galaxyId, changedPlanet = planetId !== S.planetId;
+    S.level = level; S.galaxyId = galaxyId || null; S.planetId = planetId || null;
+    if (!keepSel) setSelected(null);
+    if (changedGalaxy || changedPlanet || !farPlanets) buildPlanets(); else buildSelection();
+    goTo(frameFor(level, level === "galaxy" ? galaxyId : planetId));
+    emitLevel();
+  }
+  function setSelected(sel, silent) {
+    const same = (S.selected && sel && S.selected.kind === sel.kind && S.selected.id === sel.id) || (!S.selected && !sel);
+    S.selected = sel;
+    if (!same) {
+      if (satCubes) placeSatellites();
+      buildSelection();
+      if (!silent) o.onSelect && o.onSelect(sel);
+    }
+  }
+  function enterGalaxy(gid) { if (S.model.galaxyById[gid]) setLevel("galaxy", gid, null); }
+  function enterPlanet(pid) { const p = S.model.planets[pid]; if (p) setLevel("planet", p.galaxyId, pid); }
+  function universe() { const g = S.galaxyId; setLevel("universe", null, null); if (g) setSelected({ kind: "galaxy", id: g }); }
+  // Échap : d'abord fermer la tâche ouverte, puis remonter d'une échelle.
+  function up() {
+    if (S.selected && S.selected.kind === "task") { setSelected(null); return; }
+    levelUp();
+  }
+  function levelUp() {
+    if (S.level === "planet") { const pid = S.planetId; setLevel("galaxy", S.galaxyId, null); setSelected({ kind: "planet", id: pid }); }
+    else if (S.level === "galaxy") universe();
+  }
+  // Rejoindre un objet trouvé par la recherche ou dans un panneau.
+  function reveal(kind, id) {
+    const path = cosmosPathOf(S.model, kind, id);
+    if (!path) return false;
+    if (kind === "galaxy") {
+      if (S.level !== "universe") setLevel("universe", null, null);
+      setSelected({ kind: "galaxy", id });
+      const fr = frameFor("galaxy", id);
+      goTo({ x: fr.x, y: fr.y, z: fr.z, dist: fr.dist * 1.6 });
+      return true;
+    }
+    if (kind === "planet") { enterPlanet(id); return true; }
+    if (path.planetId !== S.planetId) setLevel("planet", path.galaxyId, path.planetId, false);
+    // Une tâche masquée par les filtres n'a pas de satellite : rien à viser.
+    if (!satList.some((it) => it.t.id === id)) { setSelected(null); return false; }
+    setSelected({ kind: "task", id });
+    return true;
+  }
+  // Clic : sélectionner ; clic sur l'objet déjà sélectionné : y entrer.
+  function activate(hit) {
+    if (!hit) { if (S.selected && S.selected.kind !== "task") setSelected(null); return; }
+    const cur = S.selected;
+    const again = cur && cur.kind === hit.kind && cur.id === hit.id;
+    if (hit.kind === "galaxy") {
+      if (S.level === "universe") {
+        if (again) { enterGalaxy(hit.id); return; }
+        setSelected(hit);
+        // La galaxie choisie vient au centre ; le zoom ne change pas.
+        const g = S.model.galaxyById[hit.id];
+        goTo({ x: g.pos.x, y: 0, z: g.pos.z, dist: Math.min(S.dist, Math.max(frameFor("galaxy", hit.id).dist * 2.2, frameFor("universe").dist * 0.8)) });
+      }
+      else if (hit.id !== S.galaxyId) { setLevel("universe", null, null); setSelected(hit); }
+      return;
+    }
+    if (hit.kind === "planet") {
+      const p = S.model.planets[hit.id];
+      if (S.level === "universe") { if (cur && cur.kind === "galaxy" && cur.id === p.galaxyId) enterGalaxy(p.galaxyId); else setSelected({ kind: "galaxy", id: p.galaxyId }); return; }
+      if (S.level === "planet" && hit.id === S.planetId) return;
+      if (again || S.level === "planet") enterPlanet(hit.id); else setSelected(hit);
+      return;
+    }
+    if (hit.kind === "task") {
+      const s = S.model.satellites[hit.id];
+      if (S.level !== "planet" || s.planetId !== S.planetId) { enterPlanet(s.planetId); setSelected(hit); return; }
+      setSelected(hit);
+    }
+  }
+
+  // ---------- Entrées souris, molette, clavier ----------
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function hitAt(cx, cy) {
+    if (!S.model) return null;
+    const rect = canvas.getBoundingClientRect();
+    ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    if (pick.satMesh && satList.length) {
+      // Les satellites sont petits : on les vise avec une tolérance à l'écran.
+      let best = null, bd = 18;
+      const W = rect.width, H = rect.height;
+      satList.forEach((it) => {
+        const p = satPos[it.t.id]; if (!p) return;
+        pv.copy(p).project(camera);
+        if (pv.z > 1) return;
+        const d = Math.hypot((pv.x + 1) / 2 * W - (cx - rect.left), (1 - pv.y) / 2 * H - (cy - rect.top));
+        if (d < bd) { bd = d; best = it.t.id; }
+      });
+      if (best) return { kind: "task", id: best };
+    }
+    const ph = ray.intersectObjects(pick.planets, false)[0];
+    if (ph) {
+      const id = ph.object.userData.ids ? ph.object.userData.ids[ph.instanceId] : ph.object.userData.pickPlanet;
+      if (id) return { kind: "planet", id };
+    }
+    const gh = ray.intersectObjects(pick.galaxies, false)[0];
+    if (gh) return { kind: "galaxy", id: gh.object.userData.pickGalaxy };
+    return null;
+  }
+  const pv = new THREE.Vector3();
+  function zoomBy(f, cx, cy) {
+    const L = limits();
+    const next = S.dist * f;
+    S.goal = null; S.goalDist = null;
+    // Molette vers l'avant au plus près : on plonge dans l'objet visé.
+    if (f < 1 && next < L.min) {
+      const h = cx != null ? hitAt(cx, cy) : null;
+      if (S.level === "universe") {
+        const gid = (h && (h.kind === "galaxy" ? h.id : h.kind === "planet" ? S.model.planets[h.id].galaxyId : null)) || (S.selected && S.selected.kind === "galaxy" ? S.selected.id : nearestGalaxy());
+        if (gid) { enterGalaxy(gid); return; }
+      } else if (S.level === "galaxy") {
+        const pid = (h && h.kind === "planet" ? h.id : null) || (S.selected && S.selected.kind === "planet" ? S.selected.id : nearestPlanet());
+        if (pid) { enterPlanet(pid); return; }
+      }
+      S.dist = L.min; S.dirty = true; return;
+    }
+    // Molette vers l'arrière au plus loin : on remonte d'une échelle.
+    if (f > 1 && next > L.max && S.level !== "universe") { levelUp(); return; }
+    S.dist = Math.max(L.min, Math.min(S.level === "universe" ? L.max * 1.4 : L.max, next));
+    S.dirty = true;
+  }
+  function nearestGalaxy() {
+    let best = null, bd = Infinity;
+    S.model.galaxies.forEach((g) => { const d = Math.hypot(g.pos.x - S.target.x, g.pos.z - S.target.z); if (d < bd) { bd = d; best = g.id; } });
+    return best;
+  }
+  function nearestPlanet() {
+    const g = S.model.galaxyById[S.galaxyId]; if (!g) return null;
+    let best = null, bd = Infinity;
+    g.projectIds.forEach((pid) => { const p = S.model.planets[pid]; const d = Math.hypot(p.world.x - S.target.x, p.world.z - S.target.z); if (d < bd) { bd = d; best = pid; } });
+    return best;
+  }
+  const keyTarget = o.keyTarget || container;
+  function onKey(e) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (/INPUT|TEXTAREA|SELECT/.test(tag) || (e.target && e.target.isContentEditable)) return;
+    const k = String(e.key || "").toLowerCase();
+    let done = true;
+    if (k === "escape") up();
+    else if (k === "+" || k === "=") zoomBy(0.8);
+    else if (k === "-") zoomBy(1.25);
+    else if (k === "arrowleft" || k === "q" || k === "a") S.yaw += 0.12;
+    else if (k === "arrowright" || k === "d") S.yaw -= 0.12;
+    else if (k === "arrowup" || k === "z" || k === "w") S.pitch = Math.min(1.35, S.pitch + 0.06);
+    else if (k === "arrowdown" || k === "s") S.pitch = Math.max(0.3, S.pitch - 0.06);
+    else if (k === "enter") { const s = S.selected; if (s && s.kind === "galaxy") enterGalaxy(s.id); else if (s && s.kind === "planet") enterPlanet(s.id); else done = false; }
+    else if (k === "c") recenter();
+    else done = false;
+    if (done) { e.preventDefault(); S.dirty = true; }
+  }
+  keyTarget.addEventListener("keydown", onKey);
+  const onWheel = (e) => { e.preventDefault(); zoomBy(e.deltaY > 0 ? 1.12 : 0.89, e.clientX, e.clientY); };
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  const pointers = {};
+  let drag = null, pinch = null;
+  const onDown = (e) => {
+    if (keyTarget.focus) keyTarget.focus({ preventScroll: true });
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointeur déjà relâché */ }
+    const ids = Object.keys(pointers);
+    if (ids.length === 2) { const a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist }; drag = null; }
+    else drag = { sx: e.clientX, sy: e.clientY, yaw: S.yaw, pitch: S.pitch, tx: S.target.x, tz: S.target.z, pan: e.button === 2 || e.shiftKey, moved: false };
+  };
+  const onMove = (e) => {
+    if (pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    const ids = Object.keys(pointers);
+    if (pinch && ids.length === 2) {
+      const a = pointers[ids[0]], b = pointers[ids[1]];
+      const L = limits();
+      S.dist = Math.max(L.min, Math.min(L.max, pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y))));
+      S.dirty = true;
+      return;
+    }
+    if (drag) {
+      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (Math.hypot(dx, dy) > 6) drag.moved = true;
+      if (drag.moved) {
+        S.goal = null; S.goalDist = null;
+        if (drag.pan) {
+          const k = S.dist / Math.max(300, canvas.clientHeight) * 1.2;
+          const cs = Math.cos(S.yaw), sn = Math.sin(S.yaw);
+          S.target.x = drag.tx - (dx * cs + dy * sn) * k;
+          S.target.z = drag.tz - (-dx * sn + dy * cs) * k;
+        } else {
+          S.yaw = drag.yaw - dx * 0.006;
+          S.pitch = Math.max(0.3, Math.min(1.35, drag.pitch + dy * 0.004));
+        }
+        S.dirty = true;
+      }
+      return;
+    }
+    if (e.pointerType === "mouse") S.hoverAt = { x: e.clientX, y: e.clientY };
+  };
+  const onUp = (e) => {
+    delete pointers[e.pointerId];
+    if (pinch && Object.keys(pointers).length < 2) { pinch = null; return; }
+    if (drag && !drag.moved) activate(hitAt(e.clientX, e.clientY));
+    drag = null;
+  };
+  const onDbl = (e) => {
+    const h = hitAt(e.clientX, e.clientY);
+    if (!h) return;
+    if (h.kind === "galaxy") enterGalaxy(h.id);
+    else if (h.kind === "planet") enterPlanet(h.id);
+  };
+  const onLeave = () => { S.hoverAt = null; if (S.hovered) { S.hovered = null; canvas.style.cursor = ""; S.dirty = true; } };
+  const noMenu = (e) => e.preventDefault();
+  canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onUp);
+  canvas.addEventListener("dblclick", onDbl);
+  canvas.addEventListener("pointerleave", onLeave);
+  canvas.addEventListener("contextmenu", noMenu);
+  function updateHover() {
+    if (!S.hoverAt || drag) return;
+    const h = hitAt(S.hoverAt.x, S.hoverAt.y);
+    S.hoverAt = null;
+    const key = h ? h.kind + ":" + h.id : null;
+    if (key !== (S.hovered ? S.hovered.kind + ":" + S.hovered.id : null)) { S.hovered = h; S.dirty = true; }
+    canvas.style.cursor = h ? "pointer" : "";
+  }
+
+  // ---------- Libellés (DOM) sans chevauchement ----------
+  const labels = document.createElement("div");
+  labels.className = "lp-cosmos-labels";
+  container.appendChild(labels);
+  const pool = {};
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const plural = (n, w) => n + " " + w + (n > 1 ? "s" : "");
+  const onLabelClick = (e) => {
+    const b = e.target.closest && e.target.closest("[data-cosmos-kind]");
+    if (!b) return;
+    e.preventDefault();
+    const hit = { kind: b.getAttribute("data-cosmos-kind"), id: b.getAttribute("data-cosmos-id") };
+    if (e.type === "dblclick") { if (hit.kind === "galaxy") enterGalaxy(hit.id); else if (hit.kind === "planet") enterPlanet(hit.id); return; }
+    activate(hit);
+  };
+  labels.addEventListener("click", onLabelClick);
+  labels.addEventListener("dblclick", onLabelClick);
+  function labelCandidates() {
+    const M = S.model, out = [], sel = S.selected, hov = S.hovered;
+    const isSel = (k, id) => !!(sel && sel.kind === k && sel.id === id);
+    const isHov = (k, id) => !!(hov && hov.kind === k && hov.id === id);
+    M.galaxies.forEach((g) => {
+      if (S.level !== "universe" && g.id === S.galaxyId) return;
+      out.push({ key: "g:" + g.id, kind: "galaxy", id: g.id, pos: new THREE.Vector3(g.pos.x, g.radius * 0.35, g.pos.z - g.radius * 0.8), prio: isSel("galaxy", g.id) ? 5000 : 1000 + g.stats.total, sides: ["top", "bottom", "left", "right"], off: 6 });
+    });
+    const planetIds = [];
+    if (S.level === "universe") {
+      const gsel = sel && sel.kind === "galaxy" ? M.galaxyById[sel.id] : null;
+      if (gsel && gsel.projectIds.length <= 16) planetIds.push(...gsel.projectIds);
+    } else if (S.galaxyId) planetIds.push(...M.galaxyById[S.galaxyId].projectIds);
+    planetIds.forEach((pid) => {
+      const p = M.planets[pid];
+      const focus = pid === S.planetId;
+      out.push({ key: "p:" + pid, kind: "planet", id: pid, pos: new THREE.Vector3(p.world.x, planetY(p) - p.radius * (focus ? 1.15 : 1.2), p.world.z + (focus ? p.radius * 0.6 : 0)), prio: focus ? 4500 : isSel("planet", pid) ? 4000 : isHov("planet", pid) ? 3500 : 800 + p.taskIds.length, sides: ["bottom", "left", "right", "top"], off: 8 });
+    });
+    if (S.level === "galaxy" && S.galaxyId) {
+      M.galaxyById[S.galaxyId].amas.forEach((a) => {
+        const g = M.galaxyById[S.galaxyId];
+        out.push({ key: "a:" + a.id, kind: "amas", id: g.id, name: a.name, pos: new THREE.Vector3(g.pos.x + a.center.x, 0, g.pos.z + a.center.z - a.radius), prio: 700, sides: ["top", "bottom"], off: 4 });
+      });
+    }
+    if (S.level === "planet" && S.planetId) {
+      const p = M.planets[S.planetId];
+      const tasks = satList.filter((it) => it.focus).map((it) => it.t);
+      const ordered = cosmosLabelOrder(tasks, sel && sel.kind === "task" ? sel.id : null);
+      const budget = { high: 40, medium: 28, low: 18 }[S.effQuality];
+      ordered.forEach((t, i) => {
+        const hovered = isHov("task", t.id), selected = isSel("task", t.id);
+        if (i >= budget && !hovered && !selected) return;
+        const sp = satPos[t.id]; if (!sp) return;
+        const side = sp.z > p.world.z ? ["bottom", "right", "left", "top"] : ["top", "right", "left", "bottom"];
+        out.push({ key: "t:" + t.id, kind: "task", id: t.id, pos: sp, prio: selected ? 9000 : hovered ? 8000 : 3000 - i, sides: selected ? ["top", "bottom", "right", "left"] : side, off: selected ? 22 : 12 });
+      });
+      const hiddenDone = p.taskIds.filter((id) => { const t = S.norm.taskById[id]; return t && t.state === "done" && satVisible(t) && !satList.some((it) => it.t.id === id); }).length;
+      if (hiddenDone) out.push({ key: "d:" + p.id, kind: "group", id: p.id, n: hiddenDone, pos: new THREE.Vector3(p.world.x + p.reach, planetY(p), p.world.z), prio: 2000, sides: ["right", "top", "bottom"], off: 10 });
+    }
+    return out;
+  }
+  function labelHtml(c) {
+    const M = S.model;
+    if (c.kind === "galaxy") {
+      const g = M.galaxyById[c.id];
+      const late = g.stats.overdue ? ' · <b class="is-late">' + g.stats.overdue + " en retard</b>" : "";
+      return '<span class="lp-cosmos-gico" aria-hidden="true"></span><span class="lp-cosmos-gtext"><small>' + (g.unsorted ? "SANS DOSSIER" : "DOSSIER") + "</small><b>" + esc(g.name) + "</b><em>" + (g.projectIds.length ? plural(g.projectIds.length, "projet") + " · " + plural(g.stats.total, "tâche") : "Aucun projet") + late + "</em></span>";
+    }
+    if (c.kind === "planet") {
+      const p = M.planets[c.id];
+      const late = p.stats.overdue ? ' · <b class="is-late">' + p.stats.overdue + " en retard</b>" : "";
+      return '<b><i style="background:' + esc(p.color) + '"></i>' + esc(p.name) + "</b><em>" + (p.taskIds.length ? plural(p.taskIds.length, "tâche") + " · " + p.stats.pct + " %" : "Aucune tâche") + late + (p.amasName && c.id !== S.planetId ? " · " + esc(p.amasName) : "") + "</em>";
+    }
+    if (c.kind === "amas") return esc(c.name) + " <small>· amas</small>";
+    if (c.kind === "group") return '<i style="background:#22B07D"></i>' + plural(c.n, "terminée") + " · regroupées";
+    const t = S.norm.taskById[c.id];
+    const prog = S.preview && S.preview.id === t.id ? S.preview.progress : t.progress;
+    return '<i style="background:' + esc(t.statusColor) + '"></i>' + esc(t.title) + ((t.state === "doing" || t.state === "waiting") && prog ? ' <b class="lp-cosmos-pct">' + prog + " %</b>" : "") + (t.overdue ? ' <b class="is-late">· retard ' + t.lateDays + " j</b>" : "");
+  }
+  function labelAria(c) {
+    const M = S.model;
+    if (c.kind === "galaxy") return "Dossier " + M.galaxyById[c.id].name;
+    if (c.kind === "planet") return "Projet " + M.planets[c.id].name;
+    if (c.kind === "task") { const t = S.norm.taskById[c.id]; return "Tâche " + t.title + ", " + t.statusName + (t.overdue ? ", en retard" : ""); }
+    return "";
+  }
+  function updateLabels() {
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    if (!S.obstacleAt || S.time - S.obstacleAt > 0.25) {
+      S.obstacleAt = S.time;
+      const cr = canvas.getBoundingClientRect();
+      S.obstacles = (o.obstacles ? o.obstacles() : []).filter((r) => r && r.width && r.height).map((r) => ({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height }));
+    }
+    const placed = (S.obstacles || []).slice();
+    const seen = {};
+    const cand = labelCandidates().sort((a, b) => b.prio - a.prio);
+    cand.forEach((c) => {
+      pv.copy(c.pos).project(camera);
+      if (pv.z > 1 || Math.abs(pv.x) > 1.2 || Math.abs(pv.y) > 1.2) return;
+      const sx = (pv.x + 1) / 2 * W, sy = (1 - pv.y) / 2 * H;
+      let l = pool[c.key];
+      if (!l) {
+        l = document.createElement(c.kind === "amas" || c.kind === "group" ? "div" : "button");
+        if (l.tagName === "BUTTON") { l.type = "button"; l.setAttribute("data-cosmos-kind", c.kind); l.setAttribute("data-cosmos-id", c.id); }
+        l.className = "lp-cosmos-label lp-cosmos-label--" + c.kind;
+        labels.appendChild(l);
+        pool[c.key] = l;
+      }
+      const html = labelHtml(c);
+      if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; if (l.tagName === "BUTTON") l.setAttribute("aria-label", labelAria(c)); }
+      const selected = !!(S.selected && S.selected.kind === c.kind && S.selected.id === c.id) || (c.kind === "planet" && c.id === S.planetId);
+      if (l._sel !== selected) { l.classList.toggle("is-selected", selected); l._sel = selected; l._w = l.offsetWidth; l._h = l.offsetHeight; }
+      l.classList.toggle("is-dim", (c.kind === "planet" && S.dimmed.has(c.id)) || (c.kind === "galaxy" && S.level === "universe" && !!S.selected && S.selected.kind === "galaxy" && S.selected.id !== c.id));
+      let box = null;
+      for (let si = 0; si < c.sides.length && !box; si++) {
+        for (let k = 0; k < 3 && !box; k++) {
+          const off = c.off + k * (l._h + 4), side = c.sides[si];
+          let x = sx - l._w / 2, y = sy - l._h - off;
+          if (side === "bottom") y = sy + off;
+          else if (side === "right") { x = sx + c.off + k * 16; y = sy - l._h / 2 + (k ? (k % 2 ? 1 : -1) * k * 12 : 0); }
+          else if (side === "left") { x = sx - l._w - c.off - k * 16; y = sy - l._h / 2; }
+          const b = { x, y, w: l._w, h: l._h };
+          if (x < 4 || y < 4 || x + b.w > W - 4 || y + b.h > H - 4) continue;
+          let clash = false;
+          for (let i = 0; i < placed.length && !clash; i++) {
+            const q = placed[i];
+            clash = b.x < q.x + q.w + 5 && b.x + b.w + 5 > q.x && b.y < q.y + q.h + 3 && b.y + b.h + 3 > q.y;
+          }
+          if (!clash) box = b;
+        }
+      }
+      if (!box) return;
+      placed.push(box);
+      seen[c.key] = true;
+      l.style.transform = "translate(" + Math.round(box.x) + "px," + Math.round(box.y) + "px)";
+      l.style.visibility = "visible";
+      l.tabIndex = 0;
+    });
+    Object.keys(pool).forEach((k) => { if (!seen[k]) { pool[k].style.visibility = "hidden"; pool[k].tabIndex = -1; } });
+    if (Object.keys(pool).length > 500) Object.keys(pool).forEach((k) => { if (!seen[k]) { pool[k].remove(); delete pool[k]; } });
+  }
+
+  // ---------- Données ----------
+  function setData(d) {
+    const modelChanged = d.model !== S.model;
+    const prevExtent = S.model ? S.model.extent : null;
+    S.model = d.model; S.norm = d.norm; S.visible = d.visible || null; S.dimmed = d.dimmed || new Set();
+    S.preview = d.preview || null;
+    if (!S.model) return;
+    if (S.galaxyId && !S.model.galaxyById[S.galaxyId]) { S.level = "universe"; S.galaxyId = null; S.planetId = null; }
+    if (S.planetId && !S.model.planets[S.planetId]) { S.level = S.galaxyId ? "galaxy" : "universe"; S.planetId = null; }
+    if (S.selected) {
+      const k = S.selected.kind, id = S.selected.id;
+      const ok = k === "galaxy" ? S.model.galaxyById[id] : k === "planet" ? S.model.planets[id] : S.model.satellites[id] && (!S.visible || S.visible.has(id));
+      if (!ok) { S.selected = null; o.onSelect && o.onSelect(null); }
+    }
+    if (modelChanged) {
+      resolveQuality();
+      if (prevExtent == null || Math.abs(prevExtent - S.model.extent) > 1) buildEnvironment();
+      buildGalaxies();
+      if (prevExtent == null) goTo(frameFor(S.level, S.level === "galaxy" ? S.galaxyId : S.planetId), true);
+    }
+    buildPlanets();
+    S.dirty = true;
+  }
+  function setPreview(p) { S.preview = p; if (satCubes) placeSatellites(); S.dirty = true; }
+  function recenter() { S.yaw = 0.35; S.pitch = S.level === "planet" ? 0.42 : S.level === "galaxy" ? 0.6 : 0.72; goTo(frameFor(S.level, S.level === "galaxy" ? S.galaxyId : S.planetId)); }
+  function setQuality(q) { S.quality = q; if (S.model) { resolveQuality(); buildEnvironment(); buildPlanets(); } }
+  function setAnimate(on) { S.animate = on !== false; S.dirty = true; }
+  S.viewOffset = [0, 0];
+  function applyViewOffset() {
+    const w = container.clientWidth || 300, h = container.clientHeight || 300;
+    if (S.viewOffset[0] || S.viewOffset[1]) camera.setViewOffset(w, h, S.viewOffset[0], S.viewOffset[1], w, h);
+    else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+    S.dirty = true;
+  }
+  function resize() {
+    const w = container.clientWidth || 300, h = container.clientHeight || 300;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    applyViewOffset();
+  }
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
+  resize();
+
+  let last = performance.now();
+  function frame(now) {
+    if (S.disposed) return;
+    S.raf = requestAnimationFrame(frame);
+    if (document.hidden) { last = now; return; }
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (!S.model) return;
+    const anim = animOn() && satList.length > 0;
+    if (anim) { S.time += dt; placeSatellites(); S.dirty = true; }
+    updateHover();
+    if (!S.dirty && !S.goal) return;
+    S.dirty = false;
+    updateCamera(dt);
+    updateSelectionFx();
+    renderer.render(scene, camera);
+    updateLabels();
+  }
+  S.raf = requestAnimationFrame(frame);
+
+  return {
+    setData, setPreview, setQuality, setAnimate, recenter, zoomBy: (f) => zoomBy(f),
+    universe, enterGalaxy, enterPlanet, up, levelUp, reveal,
+    select: (sel) => setSelected(sel),
+    rotate: (d) => { S.yaw += d; S.dirty = true; },
+    yaw: () => S.yaw,
+    setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
+    state: () => ({ level: S.level, galaxyId: S.galaxyId, planetId: S.planetId, selected: S.selected, quality: S.effQuality, dist: S.dist }),
+    dispose() {
+      S.disposed = true;
+      cancelAnimationFrame(S.raf);
+      ro.disconnect();
+      keyTarget.removeEventListener("keydown", onKey);
+      canvas.removeEventListener("wheel", onWheel);
+      labels.removeEventListener("click", onLabelClick);
+      labels.removeEventListener("dblclick", onLabelClick);
+      [envGroup, galaxyGroup, detailGroup, fxGroup].forEach(clearGroup);
+      [satCubes, satWings, satAlerts, farPlanets].forEach((m) => m && m.dispose && m.dispose());
+      if (dustPts) dustPts.geometry.dispose();
+      Object.keys(planetCache).forEach((k) => (planetCache[k].userData.owned || []).forEach((g) => g.dispose()));
+      disposables.forEach((x) => x.dispose());
+      mats.forEach((m) => m.dispose());
+      renderer.dispose();
+      canvas.remove();
+      labels.remove();
+    },
+  };
+}
+// === NEXORA:COSMOS-ENGINE:END ===
+
+// Vue Cosmos (#402) : exploration des dossiers (galaxies), projets (planètes)
+// et tâches (satellites) sur trois échelles. Même règle que la Carte :
+// explorer ne modifie rien ; seules les actions explicites du volet de tâche
+// (CarteTaskDetail, réutilisé tel quel) passent par les mécanismes Nexora.
+const COSMOS_MEMORY_KEY = "nexora:cosmos:layout";
+function readCosmosMemory() {
+  try { const raw = window.localStorage && window.localStorage.getItem(COSMOS_MEMORY_KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+}
+function writeCosmosMemory(mem) {
+  try { window.localStorage && window.localStorage.setItem(COSMOS_MEMORY_KEY, JSON.stringify(mem)); } catch (e) { /* stockage indisponible : l'univers reste déterministe */ }
+}
+const COSMOS_LEVELS = [["universe", "Univers"], ["galaxy", "Galaxie"], ["planet", "Planète"]];
+const cosmosPlural = (n, w) => n + " " + w + (n > 1 ? "s" : "");
+
+// Répartition des tâches par famille d'état (mêmes libellés que la Carte).
+function CosmosStateBar({ stats }) {
+  const keys = CARTE_STATE_KEYS.filter((k) => stats[k]);
+  const colors = { todo: "#64748B", waiting: "#8B5CF6", doing: "#0EA5E9", done: "#22B07D", info: "#94A3B8" };
+  if (!stats.total) return <p className="lp-carte-muted lp-cosmos-small">Aucune tâche.</p>;
+  return (
+    <>
+      <div className="lp-cosmos-stack" role="img" aria-label={keys.map((k) => stats[k] + " " + CARTE_STATE_LABELS[k].toLowerCase()).join(", ")}>
+        {keys.map((k) => <i key={k} style={{ flex: stats[k], background: colors[k] }} />)}
+      </div>
+      <p className="lp-cosmos-small lp-carte-muted">{keys.map((k) => stats[k] + " " + CARTE_STATE_LABELS[k].toLowerCase()).join(" · ")}</p>
+    </>
+  );
+}
+
+// Panneau de synthèse (droite) : dossier, projet ou univers selon la cible.
+function CosmosSummary({ model, norm, visible, target, level, onReveal, onEnter, onSelectTask, onClose }) {
+  const g = target.kind === "galaxy" ? model.galaxyById[target.id] : null;
+  const p = target.kind === "planet" ? model.planets[target.id] : null;
+  const planetRow = (pid) => {
+    const q = model.planets[pid];
+    return (
+      <li key={pid}>
+        <button type="button" className="lp-cosmos-row" onClick={() => onReveal("planet", pid)}>
+          <span className="lp-cosmos-orb" style={{ "--c": q.color }} />
+          <span className="lp-cosmos-row-main"><b>{q.name}</b><small>{q.taskIds.length ? cosmosPlural(q.taskIds.length, "tâche") + " · " + q.stats.pct + " %" : "Aucune tâche"}{q.stats.overdue ? <em> · {q.stats.overdue} en retard</em> : null}</small></span>
+          <span className="lp-carte-bar"><span style={{ width: q.stats.pct + "%", background: q.color }} /></span>
+        </button>
+      </li>
+    );
+  };
+  let body;
+  if (g) {
+    body = (
+      <>
+        <div className="lp-cosmos-kicker"><Folder size={13} /> {g.unsorted ? "Projets sans dossier" : level === "universe" ? "Dossier sélectionné" : "Galaxie"}</div>
+        <h3 className="lp-cosmos-title">{g.name}</h3>
+        <div className="lp-cosmos-kpis">
+          <div><b>{g.stats.projects}</b><span>projet{g.stats.projects > 1 ? "s" : ""}</span></div>
+          <div><b>{g.stats.total}</b><span>tâche{g.stats.total > 1 ? "s" : ""}</span></div>
+          <div className={g.stats.overdue ? "is-late" : ""}><b>{g.stats.overdue}</b><span>en retard</span></div>
+        </div>
+        <div className="lp-carte-section-title">Répartition des tâches</div>
+        <CosmosStateBar stats={g.stats} />
+        {g.projectIds.length === 0 && <p className="lp-carte-muted lp-cosmos-small">Ce dossier ne contient encore aucun projet : sa galaxie reste vide.</p>}
+        {g.direct.length > 0 && <ul className="lp-cosmos-list">{g.direct.slice(0, 60).map(planetRow)}</ul>}
+        {g.amas.map((a) => (
+          <div key={a.id}>
+            <div className="lp-carte-section-title">Amas · {a.name}</div>
+            {a.projectIds.length ? <ul className="lp-cosmos-list">{a.projectIds.slice(0, 40).map(planetRow)}</ul> : <p className="lp-carte-muted lp-cosmos-small">Sous-dossier vide.</p>}
+          </div>
+        ))}
+        {g.projectIds.length > 100 && <p className="lp-carte-muted lp-cosmos-small">Liste abrégée : utilisez « Aller à… » pour rejoindre un projet.</p>}
+        {level === "universe" && <div className="lp-cosmos-cta"><button type="button" className="lp-btn lp-btn-primary" onClick={() => onEnter("galaxy", g.id)}><Orbit size={14} /> Entrer dans la galaxie</button></div>}
+      </>
+    );
+  } else if (p) {
+    const tasks = cosmosLabelOrder(p.taskIds.map((id) => norm.taskById[id]).filter(Boolean), null);
+    const g2 = model.galaxyById[p.galaxyId];
+    body = (
+      <>
+        <div className="lp-cosmos-kicker"><span className="lp-carte-dot" style={{ background: p.color }} />{p.orphan ? "Tâches sans projet" : "Projet"} · {g2.name}{p.amasName ? " · " + p.amasName : ""}</div>
+        <h3 className="lp-cosmos-title">{p.name}</h3>
+        <div className="lp-cosmos-kpis">
+          <div><b>{p.taskIds.length}</b><span>tâche{p.taskIds.length > 1 ? "s" : ""}</span></div>
+          <div><b>{p.stats.pct} %</b><span>terminé</span></div>
+          <div className={p.stats.overdue ? "is-late" : ""}><b>{p.stats.overdue}</b><span>en retard</span></div>
+        </div>
+        <CosmosStateBar stats={p.stats} />
+        <ul className="lp-cosmos-list">
+          {tasks.slice(0, 150).map((t) => (
+            <li key={t.id}>
+              <button type="button" className={"lp-cosmos-row" + (visible && !visible.has(t.id) ? " is-dim" : "")} disabled={!!visible && !visible.has(t.id)} title={visible && !visible.has(t.id) ? "Masquée par les filtres" : undefined} onClick={() => onSelectTask(t.id)}>
+                <span className="lp-carte-state" style={{ background: t.statusColor }} />
+                <span className="lp-cosmos-row-main"><span className="lp-cosmos-ellipsis">{t.milestone ? "◆ " : ""}{t.title}</span><small className={t.overdue ? "is-late" : ""}>{t.state === "done" ? "Terminée" : carteDueText(t)}</small></span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {tasks.length > 150 && <p className="lp-carte-muted lp-cosmos-small">… et {tasks.length - 150} autres.</p>}
+        {level !== "planet" && <div className="lp-cosmos-cta"><button type="button" className="lp-btn lp-btn-primary" onClick={() => onEnter("planet", p.id)}><Crosshair size={14} /> Aller sur la planète</button></div>}
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <div className="lp-cosmos-kicker"><Layers size={13} /> Univers</div>
+        <h3 className="lp-cosmos-title">{cosmosPlural(model.galaxies.length, "galaxie")}</h3>
+        <ul className="lp-cosmos-list">
+          {model.galaxies.map((x) => (
+            <li key={x.id}>
+              <button type="button" className="lp-cosmos-row" onClick={() => onReveal("galaxy", x.id)}>
+                <span className="lp-cosmos-orb is-sun" />
+                <span className="lp-cosmos-row-main"><b>{x.name}</b><small>{x.projectIds.length ? cosmosPlural(x.projectIds.length, "projet") + " · " + cosmosPlural(x.stats.total, "tâche") : "Aucun projet"}</small></span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  }
+  return (
+    <aside className="lp-cosmos-panel" aria-label="Synthèse">
+      <button type="button" className="lp-icon-btn lp-cosmos-panel-close" aria-label="Masquer la synthèse" onClick={onClose}><X size={16} /></button>
+      <div className="lp-cosmos-panel-body">{body}</div>
+      <p className="lp-cosmos-hint"><CircleDot size={13} /> Clic : sélectionner · re-clic ou double-clic : entrer · molette : zoomer · Échap : remonter</p>
+    </aside>
+  );
+}
+
+// Tiroir du rail : Dossiers (index complet), Favoris Nexora, Récents (cette visite).
+function CosmosDrawer({ mode, model, favorites, recents, onReveal, onClose }) {
+  let items = [];
+  if (mode === "folders") {
+    model.galaxies.forEach((g) => {
+      items.push({ key: "g" + g.id, kind: "galaxy", id: g.id, label: g.name, sub: g.projectIds.length ? cosmosPlural(g.projectIds.length, "projet") : "Aucun projet", color: g.color, depth: 0 });
+      g.direct.forEach((pid) => items.push({ key: "p" + pid, kind: "planet", id: pid, label: model.planets[pid].name, sub: cosmosPlural(model.planets[pid].taskIds.length, "tâche"), color: model.planets[pid].color, depth: 1 }));
+      g.amas.forEach((a) => {
+        items.push({ key: "a" + a.id, kind: "galaxy", id: g.id, label: a.name, sub: "Amas", color: a.color, depth: 1 });
+        a.projectIds.forEach((pid) => items.push({ key: "p" + pid, kind: "planet", id: pid, label: model.planets[pid].name, sub: cosmosPlural(model.planets[pid].taskIds.length, "tâche"), color: model.planets[pid].color, depth: 2 }));
+      });
+    });
+  } else if (mode === "favorites") {
+    items = (favorites || []).map((f) => {
+      if (f.type === "project" && model.planets[f.id]) return { key: "p" + f.id, kind: "planet", id: f.id, label: model.planets[f.id].name, sub: "Projet", color: model.planets[f.id].color, depth: 0 };
+      if (f.type === "task" && model.satellites[f.id]) return { key: "t" + f.id, kind: "task", id: f.id, label: f.label, sub: "Tâche", color: f.color, depth: 0 };
+      return null;
+    }).filter(Boolean);
+  } else items = recents;
+  const title = { folders: "Dossiers", favorites: "Favoris", recents: "Récents" }[mode];
+  return (
+    <div className="lp-cosmos-drawer" role="dialog" aria-label={title}>
+      <div className="lp-cosmos-drawer-head"><strong>{title}</strong><button type="button" className="lp-icon-btn" aria-label="Fermer" onClick={onClose}><X size={15} /></button></div>
+      {items.length === 0 && <p className="lp-carte-muted lp-cosmos-small" style={{ padding: "0 12px" }}>{mode === "favorites" ? "Aucun projet ni tâche en favori. Ajoutez-en depuis la barre latérale ou une fiche." : "Rien pour l'instant : les objets visités pendant cette exploration s'affichent ici."}</p>}
+      <ul className="lp-cosmos-list">
+        {items.slice(0, 400).map((it) => (
+          <li key={it.key}>
+            <button type="button" className="lp-cosmos-row" style={{ paddingLeft: 10 + it.depth * 14 }} onClick={() => onReveal(it.kind, it.id)}>
+              <span className={"lp-cosmos-orb" + (it.kind === "galaxy" && it.depth === 0 ? " is-sun" : "")} style={{ "--c": it.color }} />
+              <span className="lp-cosmos-row-main"><span className="lp-cosmos-ellipsis">{it.label}</span><small>{it.sub}</small></span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function CosmosFallback({ reason, model, norm, onOpen, onRetry }) {
+  return (
+    <div className="lp-carte-fallback lp-cosmos-fallback">
+      <p className="lp-carte-fallback-lead"><AlertTriangle size={16} /> {reason === "nowebgl"
+        ? "L'univers 3D n'est pas disponible sur cet appareil (WebGL désactivé ou non pris en charge). Voici les mêmes dossiers, projets et tâches sous forme de liste."
+        : "L'univers 3D n'a pas pu être chargé (connexion interrompue ?). Voici les mêmes dossiers, projets et tâches sous forme de liste."}
+        {onRetry && <button type="button" className="lp-btn" onClick={onRetry}><RefreshCw size={13} /> Réessayer</button>}
+      </p>
+      {model.galaxies.map((g) => (
+        <details key={g.id} className="lp-carte-fallback-proj" open={model.galaxies.length <= 3}>
+          <summary><Folder size={13} /> {g.name}<span className="lp-carte-muted"> · {g.projectIds.length ? cosmosPlural(g.projectIds.length, "projet") : "aucun projet"}</span></summary>
+          {g.projectIds.map((pid) => {
+            const p = model.planets[pid];
+            return (
+              <details key={pid} className="lp-cosmos-fallback-planet">
+                <summary><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}<span className="lp-carte-muted"> · {p.stats.pct} % terminé{p.amasName ? " · " + p.amasName : ""}</span></summary>
+                <ul>{p.taskIds.map((id) => norm.taskById[id]).filter(Boolean).map((t) => <li key={t.id}><button type="button" className="lp-carte-link-inline" onClick={() => onOpen(t.id)}>{t.title}</button> <span className="lp-carte-muted">{t.statusName}{t.overdue ? " · en retard" : ""}</span></li>)}</ul>
+              </details>
+            );
+          })}
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function CosmosView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpdateTask, onToggleDone, favorites, toolbarSlot }) {
+  const cfg = normalizeCosmosViewPrefs(prefs);
+  const stageRef = useRef(null);
+  const glRef = useRef(null);
+  const engineRef = useRef(null);
+  const searchRef = useRef(null);
+  const [status, setStatus] = useState("loading");
+  const [attempt, setAttempt] = useState(0);
+  const [nav, setNav] = useState({ level: "universe", galaxyId: null, planetId: null });
+  const [selected, setSelected] = useState(null);
+  const [quality, setQualityLabel] = useState("");
+  const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [drawer, setDrawer] = useState(null);
+  const [recents, setRecents] = useState([]);
+  const [preview, setPreview] = useState(null);
+  const [yaw, setYaw] = useState(0.35);
+  const [narrow] = useState(() => !!(window.matchMedia && window.matchMedia("(max-width: 767px)").matches));
+  const [panelMobile, setPanelMobile] = useState(false);
+  const panelOn = narrow ? panelMobile : cfg.panel;
+  const setPanelOn = (on) => (narrow ? setPanelMobile(on) : setPrefs({ panel: on }));
+
+  // Toutes les tâches servent à la disposition (un filtre ne déplace rien) ;
+  // les filtres décident seulement de ce qui est dessiné.
+  const allTasks = ctx.tasks || tasks || [];
+  const norm = useMemo(() => {
+    const n = carteNormalize(ctx, allTasks);
+    n.taskById = {};
+    n.tasks.forEach((t) => { n.taskById[t.id] = t; });
+    return n;
+  }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers]);
+  const themeOverrides = carteThemeOverrides(ctx.projectFolders, {});
+  const model = useMemo(() => cosmosBuild(ctx, norm, { memory: readCosmosMemory(), themeOverrides }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [norm, ctx.projectFolders, JSON.stringify(themeOverrides)]);
+  useEffect(() => { writeCosmosMemory(model.memory); }, [model]);
+  const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
+  const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
+  const visible = useMemo(() => {
+    const pageScope = tasksWithDone || tasks || [];
+    const scoped = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
+    const scope = new Set(scoped.map((t) => t.id));
+    const set = new Set();
+    norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [norm, tasks, tasksWithDone, cfg.states.join(","), cfg.crit, cfg.late, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  const dimmed = useMemo(() => {
+    const d = carteDimmedProjects(norm.tasks, visible);
+    if (d.has("__terre-inconnue__")) { d.delete("__terre-inconnue__"); d.add(COSMOS_ORPHAN_PROJECT); }
+    return d;
+  }, [norm, visible]);
+
+  // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const fit = () => {
+      const top = el.getBoundingClientRect().top;
+      const bar = document.querySelector(".lp-mobile-tabbar");
+      const barH = bar && bar.getBoundingClientRect().height && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().height : 0;
+      el.style.height = Math.max(380, window.innerHeight - Math.max(0, top) - barH - 12) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+
+  const remember = useCallback((kind, id) => {
+    setRecents((prev) => {
+      const key = kind + ":" + id;
+      const label = kind === "galaxy" ? (model.galaxyById[id] || {}).name : kind === "planet" ? (model.planets[id] || {}).name : (norm.taskById[id] || {}).title;
+      const color = kind === "galaxy" ? (model.galaxyById[id] || {}).color : kind === "planet" ? (model.planets[id] || {}).color : (norm.taskById[id] || {}).statusColor;
+      if (!label) return prev;
+      return [{ key, kind, id, label, sub: { galaxy: "Dossier", planet: "Projet", task: "Tâche" }[kind], color, depth: 0 }, ...prev.filter((r) => r.key !== key)].slice(0, 15);
+    });
+  }, [model, norm]);
+
+  useEffect(() => {
+    if (!carteWebglAvailable()) { setStatus("nowebgl"); return undefined; }
+    let cancelled = false;
+    setStatus("loading");
+    loadCarteThree().then((THREE) => {
+      if (cancelled || !glRef.current) return;
+      try {
+        engineRef.current = createCosmosEngine(THREE, glRef.current, {
+          keyTarget: stageRef.current,
+          quality: cfg.quality,
+          animate: cfg.animate,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-cosmos-hud > *, .lp-cosmos-rail, .lp-cosmos-drawer, .lp-cosmos-panel, .lp-carte-detail, .lp-cosmos-legend, .lp-cosmos-ctrls, .lp-cosmos-compass, .lp-cosmos-panel-toggle, .lp-cosmos-quality, .lp-cosmos-recenter")].map((e) => e.getBoundingClientRect()) : []),
+          onSelect: (sel) => setSelected(sel),
+          onLevel: (n) => setNav(n),
+          onQuality: (q) => setQualityLabel(q),
+        });
+        setStatus("ready");
+      } catch (e) {
+        console.error("[Nexora Cosmos]", e);
+        setStatus("nowebgl");
+      }
+    }).catch((e) => { console.error("[Nexora Cosmos] three.js", e); if (!cancelled) setStatus("error"); });
+    return () => { cancelled = true; if (engineRef.current) { engineRef.current.dispose(); engineRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
+  useEffect(() => {
+    if (status === "ready" && engineRef.current) engineRef.current.setData({ model, norm, visible, dimmed });
+  }, [status, model, norm, visible, dimmed]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPreview(preview); }, [status, preview]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAnimate(cfg.animate); }, [status, cfg.animate]);
+  useEffect(() => { if (selected) remember(selected.kind, selected.id); }, [selected, remember]);
+  useEffect(() => { if (nav.planetId) remember("planet", nav.planetId); else if (nav.galaxyId) remember("galaxy", nav.galaxyId); }, [nav, remember]);
+  // Boussole : suit l'orientation de la caméra (lecture seule, 4 fois par seconde).
+  useEffect(() => {
+    if (status !== "ready") return undefined;
+    const id = setInterval(() => { const e = engineRef.current; if (e && e.yaw) setYaw(e.yaw()); }, 250);
+    return () => clearInterval(id);
+  }, [status]);
+  // La scène se décale pour que l'objet visé ne passe pas sous le panneau.
+  useEffect(() => {
+    const e = engineRef.current, stage = stageRef.current;
+    if (status !== "ready" || !e || !stage) return undefined;
+    const update = () => {
+      const side = stage.querySelector(".lp-carte-detail, .lp-cosmos-panel");
+      if (!side) { e.setViewOffset(0, 0); return; }
+      const sr = stage.getBoundingClientRect(), r = side.getBoundingClientRect();
+      if (r.width >= sr.width * 0.8) e.setViewOffset(0, Math.min(r.height, sr.height * 0.6) / 2);
+      else e.setViewOffset(r.width / 2, 0);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(stage);
+    const side = stage.querySelector(".lp-carte-detail, .lp-cosmos-panel");
+    if (side) ro.observe(side);
+    return () => ro.disconnect();
+  });
+
+  const engine = () => engineRef.current;
+  const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
+  const reveal = (kind, id) => { const e = engine(); if (e) e.reveal(kind, id); setQuery(""); setDrawer(null); if (stageRef.current) stageRef.current.focus({ preventScroll: true }); };
+  const enter = (kind, id) => { const e = engine(); if (!e) return; if (kind === "galaxy") e.enterGalaxy(id); else e.enterPlanet(id); };
+  const toggleState = (k) => setPrefs((v) => { const cur = normalizeCosmosViewPrefs(v).states; const next = cur.indexOf(k) === -1 ? cur.concat([k]) : cur.filter((x) => x !== k); return { states: next.length ? next : cur }; });
+  const suggestions = useMemo(() => cosmosSearch(model, norm, query, 10), [model, norm, query]);
+  const favItems = useMemo(() => (favorites || []).map((f) => (f.type === "task" && norm.taskById[f.id] ? { ...f, label: norm.taskById[f.id].title, color: norm.taskById[f.id].statusColor } : f)), [favorites, norm]);
+
+  const empty = model.galaxies.length === 0;
+  const selTask = selected && selected.kind === "task" ? norm.taskById[selected.id] : null;
+  const selRaw = selTask ? allTasks.find((t) => t.id === selTask.id) : null;
+  // Tâche d'un calendrier public synchronisé : reconstruite à chaque
+  // synchronisation, une modification locale serait perdue.
+  const lockReason = selRaw && selRaw.syncedCalendarImported ? "Tâche issue d'un calendrier synchronisé : elle est reconstruite à chaque synchronisation et ne se modifie pas ici." : null;
+  const projectIndex = useMemo(() => {
+    const out = {};
+    Object.keys(model.planets).forEach((pid) => { const p = model.planets[pid]; out[pid === COSMOS_ORPHAN_PROJECT ? "__terre-inconnue__" : pid] = { id: pid, name: p.name, color: p.color, folderName: (model.galaxyById[p.galaxyId] || {}).name }; });
+    return { projectById: out, themes: {} };
+  }, [model]);
+  const summaryTarget = selected && selected.kind !== "task" ? selected
+    : nav.level === "planet" ? { kind: "planet", id: nav.planetId }
+    : nav.level === "galaxy" ? { kind: "galaxy", id: nav.galaxyId } : { kind: "universe" };
+  const g = nav.galaxyId && model.galaxyById[nav.galaxyId];
+  const pNav = nav.planetId && model.planets[nav.planetId];
+  const legendStatuses = useMemo(() => {
+    const seen = new Set(), out = [];
+    norm.tasks.forEach((t) => { if (!seen.has(t.statusName)) { seen.add(t.statusName); out.push([t.statusName, t.statusColor]); } });
+    return out.slice(0, 7);
+  }, [norm]);
+
+  return (
+    <section className="lp-carte-view lp-cosmos-view" aria-label="Cosmos">
+      <ViewToolbarPortal slot={toolbarSlot} />
+      <div className="lp-carte-toolbar">
+        <div className="lp-carte-search lp-cosmos-search" ref={searchRef}>
+          <Search size={14} />
+          <input type="search" value={query} placeholder="Aller à…" aria-label="Rechercher un dossier, un projet ou une tâche dans Cosmos" onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) reveal(suggestions[0].kind, suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
+          {suggestions.length > 0 && (
+            <ul className="lp-carte-sugg lp-cosmos-sugg" role="listbox" aria-label="Résultats" style={searchRef.current ? (() => { const r = searchRef.current.getBoundingClientRect(); return { position: "fixed", left: Math.max(8, Math.min(r.left, window.innerWidth - 328)), top: r.bottom + 4 }; })() : undefined}>
+              {suggestions.map((s) => (
+                <li key={s.kind + s.id + s.label}><button type="button" onClick={() => reveal(s.kind, s.id)}>
+                  <span className={"lp-cosmos-orb" + (s.kind === "galaxy" ? " is-sun" : s.kind === "task" ? " is-sat" : "")} style={{ "--c": s.color }} />
+                  <span className="lp-cosmos-row-main"><span className="lp-cosmos-ellipsis">{s.label}</span><small>{s.sub}</small></span>
+                </button></li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="lp-carte-filter" role="group" aria-label="Afficher les tâches">
+          {CARTE_STATE_KEYS.map((k) => <button key={k} type="button" className="lp-carte-fchip" aria-pressed={cfg.states.indexOf(k) !== -1} onClick={() => toggleState(k)}>{CARTE_STATE_LABELS[k]}</button>)}
+          <button type="button" className="lp-carte-fchip is-late" aria-pressed={cfg.late} onClick={() => setPrefs({ late: !cfg.late })}>En retard</button>
+        </div>
+        <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
+        <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
+          <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
+        </select>
+        <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Qualité graphique, animation et historique">
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.animate} onChange={(e) => setPrefs({ animate: e.target.checked })} /> Orbites animées (effet visuel seulement)</label>
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
+            {COSMOS_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
+          </div>
+        </DropdownButton>
+        <button type="button" className="lp-btn" onClick={() => { const e = engine(); if (e) e.universe(); }} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
+        <button type="button" className="lp-btn lp-btn-primary" onClick={() => { const e = engine(); if (e) e.recenter(); }} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
+      </div>
+
+      <div ref={stageRef} className={"lp-cosmos-stage" + (selTask || (panelOn && status === "ready") ? " has-panel" : "")} tabIndex={0}
+        data-cosmos-status={status} data-cosmos-level={nav.level} data-cosmos-galaxy={nav.galaxyId || ""} data-cosmos-planet={nav.planetId || ""}
+        data-cosmos-selected={selected ? selected.kind + ":" + selected.id : ""} data-cosmos-quality={quality}
+        aria-label="Univers Cosmos. Cliquer pour sélectionner, re-cliquer ou double-cliquer pour entrer, molette pour zoomer, Échap pour remonter, flèches pour pivoter, C pour recentrer.">
+        {empty ? (
+          <div className="lp-empty lp-carte-empty">
+            <strong>L'univers est vide.</strong>
+            <span>Créez un dossier ou un projet : chaque dossier deviendra une galaxie, chaque projet une planète et chaque tâche un satellite.</span>
+          </div>
+        ) : (status === "nowebgl" || status === "error") ? (
+          <CosmosFallback reason={status} model={model} norm={norm} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
+        ) : (
+          <>
+            <div ref={glRef} className="lp-cosmos-gl" />
+            {status === "loading" && <div className="lp-carte-loading lp-cosmos-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Chargement de l'univers 3D…</div>}
+            {status === "ready" && (
+              <>
+                <nav className="lp-cosmos-rail" aria-label="Explorer">
+                  {[["explore", "Explorer", <Orbit size={19} key="i" />], ["folders", "Dossiers", <Folder size={19} key="i" />], ["favorites", "Favoris", <Star size={19} key="i" />], ["recents", "Récents", <History size={19} key="i" />]].map(([k, label, icon]) => (
+                    <button key={k} type="button" className={(k === "explore" ? !drawer : drawer === k) ? "is-on" : ""} aria-pressed={k === "explore" ? !drawer : drawer === k} onClick={() => setDrawer(k === "explore" || drawer === k ? null : k)}>{icon}<span>{label}</span></button>
+                  ))}
+                </nav>
+                {drawer && <CosmosDrawer mode={drawer} model={model} favorites={favItems} recents={recents} onReveal={reveal} onClose={() => setDrawer(null)} />}
+                <div className="lp-cosmos-hud">
+                  <nav className="lp-cosmos-crumbs" aria-label="Fil d'Ariane">
+                    {nav.level !== "universe" && <button type="button" className="lp-cosmos-back" onClick={() => engine() && engine().levelUp()} aria-label="Remonter d'une échelle"><ChevronLeft size={15} /></button>}
+                    <button type="button" onClick={() => engine() && engine().universe()} aria-current={nav.level === "universe" ? "page" : undefined}><Layers size={13} /> Univers</button>
+                    {g && <><ChevronRight size={13} aria-hidden="true" /><button type="button" onClick={() => engine() && engine().enterGalaxy(g.id)} aria-current={nav.level === "galaxy" ? "page" : undefined}>{g.name}</button></>}
+                    {pNav && <><ChevronRight size={13} aria-hidden="true" /><button type="button" aria-current="page" onClick={() => engine() && engine().enterPlanet(pNav.id)}>{pNav.name}</button></>}
+                  </nav>
+                  <div className="lp-cosmos-scale" role="group" aria-label="Échelle">
+                    {COSMOS_LEVELS.map(([k, label]) => {
+                      const target = k === "galaxy" ? (nav.galaxyId || (selected && selected.kind === "galaxy" ? selected.id : null)) : k === "planet" ? (nav.planetId || (selected && selected.kind === "planet" ? selected.id : null)) : "u";
+                      const icon = k === "universe" ? <Layers size={14} /> : k === "galaxy" ? <Orbit size={14} /> : <Crosshair size={14} />;
+                      return <button key={k} type="button" aria-pressed={nav.level === k} disabled={!target} title={!target ? "Sélectionnez d'abord " + (k === "galaxy" ? "un dossier" : "un projet") : undefined}
+                        onClick={() => { const e = engine(); if (!e) return; if (k === "universe") e.universe(); else if (k === "galaxy") e.enterGalaxy(target); else e.enterPlanet(target); }}>{icon}{label}</button>;
+                    })}
+                  </div>
+                </div>
+                <div className="lp-cosmos-compass" aria-hidden="true">
+                  <div className="lp-cosmos-rose"><span className="is-n">N</span><span className="is-s">S</span><span className="is-o">O</span><span className="is-e">E</span><i style={{ transform: "translate(-50%,-50%) rotate(" + Math.round(-yaw * 57.3) + "deg)" }} /></div>
+                </div>
+                <button type="button" className="lp-btn lp-cosmos-recenter" onClick={() => engine() && engine().recenter()}><Crosshair size={14} /> Recentrer</button>
+                <div className="lp-cosmos-ctrls" role="group" aria-label="Zoom">
+                  <button type="button" className="lp-icon-btn" aria-label="Recentrer" onClick={() => engine().recenter()}><Target size={16} /></button>
+                  <button type="button" className="lp-icon-btn" aria-label="Zoomer" onClick={() => engine().zoomBy(0.8)}><Plus size={16} /></button>
+                  <button type="button" className="lp-icon-btn" aria-label="Dézoomer" onClick={() => engine().zoomBy(1.25)}><Minus size={16} /></button>
+                </div>
+                <div className="lp-cosmos-legend" aria-label="Légende">
+                  <span><i className="is-sun" />Dossier = galaxie</span>
+                  <span><i className="is-planet" />Projet = planète</span>
+                  {legendStatuses.map(([name, color]) => <span key={name}><i className="is-cube" style={{ background: color }} />{name}</span>)}
+                  <span><i className="is-late" />En retard</span>
+                </div>
+                {quality && <span className="lp-cosmos-quality">Qualité {({ high: "haute", medium: "moyenne", low: "basse" })[quality]}{cfg.quality === "auto" ? " (auto)" : ""}</span>}
+              </>
+            )}
+            {status === "ready" && !selTask && panelOn && (
+              <CosmosSummary model={model} norm={norm} visible={visible} target={summaryTarget} level={nav.level}
+                onReveal={reveal} onEnter={enter} onSelectTask={(id) => reveal("task", id)} onClose={() => setPanelOn(false)} />
+            )}
+            {status === "ready" && !selTask && !panelOn && (
+              <button type="button" className="lp-cosmos-panel-toggle" onClick={() => setPanelOn(true)}>Synthèse</button>
+            )}
+            {selTask && (
+              <CarteTaskDetail task={preview && preview.id === selTask.id ? { ...selTask, progress: preview.progress } : selTask} raw={selRaw} norm={norm} layout={projectIndex} ctx={ctx} onOpen={openFiche}
+                onGo={(id) => reveal("task", id)} onWalk={(id) => reveal("task", id)} walkLabel="Centrer"
+                worldText={"Dans Cosmos : satellite de « " + ((model.planets[model.satellites[selTask.id] ? model.satellites[selTask.id].planetId : ""] || {}).name || "") + " ». Sa couleur suit le statut ; ses panneaux se déploient avec l'avancement."}
+                lockReason={lockReason}
+                onUpdate={onUpdateTask && !lockReason ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={lockReason ? null : onToggleDone}
+                onClose={() => engine() && engine().select(null)} />
+            )}
+          </>
+        )}
+      </div>
+      {filtersOpen && (
+        <Modal title="Filtrer Cosmos" onClose={() => setFiltersOpen(false)} wide footer={<>
+          <button type="button" className="lp-btn" onClick={() => setPrefs({ filter: null })} disabled={!filterCount}>Tout afficher</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => setFiltersOpen(false)}>Terminé</button>
+        </>}>
+          <p className="lp-carte-muted" style={{ marginTop: 0 }}>Le même filtre que partout ailleurs dans Nexora. Les tâches écartées disparaissent de l'univers ; les galaxies et les planètes ne bougent pas.</p>
           <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
         </Modal>
       )}
