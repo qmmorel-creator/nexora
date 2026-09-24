@@ -282,7 +282,25 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
 
 - La hauteur construite d'une tâche est exactement le pourcentage d'avancement de sa hauteur
   finale (à 50 %, la moitié). Les bâtiments sont agrandis en hauteur (hauteur finale visée
-  ~1,6 avant l'échelle de la carte) pour que l'écart se voie de loin, et le socle continue de
-  monter avec l'avancement. L'étiquette de la tâche affiche son pourcentage.
+  ~1,6 avant l'échelle de la carte) pour que l'écart se voie de loin, Le socle d'avancement a été retiré (#383) : seul le bâtiment monte.
+  L'étiquette de la tâche affiche son pourcentage.
 - La vue se décale pour que la tâche sélectionnée ne passe ni sous le volet (ordinateur) ni
   sous la fiche (téléphone) ; sur téléphone, la barre d'outils tient sur une ligne défilante.
+
+## Météo, responsables et relief (#381, #382, #383)
+
+- **Orages** : une tâche en retard porte un petit nuage d'orage, avec éclairs et pluie qui tombe
+  sur elle. En retard **et** urgente : un énorme orage (nuage bien plus large, pluie dense) et un
+  tourbillon qui tourne sous le nuage. Le feu des tâches critiques (#375) est retiré ; une tâche
+  urgente garde son anneau rouge clignotant et un fanion rouge plus haut. En qualité basse ou
+  avec « réduire les animations », les nuages restent immobiles et sans pluie.
+- **Responsable** : chaque tâche porte un petit badge rond, dans la couleur du membre définie
+  dans Réglages, avec ses initiales (« Maïa Sonnier » → MS). Pas de photo. Au survol de la
+  souris, une bulle affiche « Responsable : Nom ».
+- **Relief** : l'altitude du **sol** d'une tâche dépend de sa date de fin, la hauteur du
+  **bâtiment** dépend de son avancement.
+  - En retard, échéance sous 7 jours ou tâche terminée : niveau de la mer.
+  - Au-delà, le sol monte progressivement (plus vite les premières semaines, racine carrée)
+    jusqu'à son maximum à 90 jours, sans exagération.
+  - Sans date de fin : altitude moyenne.
+  Une case d'eau qui porte une tâche plus haute que le niveau de la mer devient une terre.

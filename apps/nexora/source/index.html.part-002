@@ -5325,6 +5325,27 @@ function carteBuild(input) {
     });
   });
 
+  // Altitude du sol (#383) : chaque case qui porte des tâches prend la hauteur
+  // de la date de fin la plus proche ; une case d'eau reste d'eau au niveau de
+  // la mer, et devient terre si elle doit monter. Les autres cases du
+  // territoire sont bornées pour ne pas écraser la lecture des dates.
+  const taskById = {};
+  tasks.forEach((t) => { taskById[t.id] = t; });
+  const tileAlt = {};
+  pois.forEach((p) => {
+    const t = taskById[p.taskId];
+    const a = t ? carteDueAltitude(t) : 0.5;
+    tileAlt[p.key] = tileAlt[p.key] == null ? a : Math.min(tileAlt[p.key], a);
+  });
+  Object.keys(tiles).forEach((k) => {
+    const t = tiles[k];
+    if (tileAlt[k] != null) {
+      t.h = carteDueGround(tileAlt[k]);
+      t.due = tileAlt[k];
+      if (t.kind === "water" && tileAlt[k] > 0) t.kind = "land";
+    } else if (t.inner && t.kind === "land") t.h = Math.min(t.h, 0.62);
+  });
+
   const memOut = { projects: {}, tasks: taskTile };
   Object.keys(placed.at).forEach((id) => { memOut.projects[id] = carteKey(placed.at[id][0], placed.at[id][1]); });
   return { tiles, territories, pois, routes, occupancy, themes: themes.byProject, groupThemes: themes.byGroup, memory: memOut, projectById };
@@ -5564,43 +5585,34 @@ function carteTaskModel(task, themeId, opts) {
     }
   }
   parts = sc(parts, size);
-  // Altitude (#369) : la tâche repose sur un socle qui s'élève avec son palier
-  // (0 à 5) ; une tâche terminée culmine, une tâche à faire reste au ras du sol.
-  const lift = carteTaskLift(task);
-  if (lift > 0 && o.plinth !== false) {
-    parts = at(parts, 0, lift, 0);
-    parts.unshift(cP("hex", carteMix(pal.stone, "#ffffff", 0.12), 0, 0, 0, 1.05, lift, 1.05), cP("hex", pal.top, 0, lift - 0.04, 0, 1.12, 0.05, 1.12));
-  }
-  // #379 : une dalle claire marque l'emplacement d'une tâche restée au sol.
-  if (!(lift > 0 && o.plinth !== false)) parts.unshift(cP("hex", "#fff8e8", 0, 0, 0, 1.28, 0.04, 1.28), cP("hex", task.statusColor || "#94A3B8", 0, 0, 0, 1.36, 0.025, 1.36));
+  // #383 : plus de socle d'avancement. L'altitude du SOL dépend de la date de
+  // fin (carteDueAltitude, appliquée à la case par carteBuild) ; la hauteur du
+  // BÂTIMENT dépend seule de l'avancement.
+  // #379 : une dalle claire bordée de la couleur du statut marque la tâche.
+  parts.unshift(cP("hex", "#fff8e8", 0, 0, 0, 1.28, 0.04, 1.28), cP("hex", task.statusColor || "#94A3B8", 0, 0, 0, 1.36, 0.025, 1.36));
   const H = topOf(parts);
   if (task.state === "done" && task.recentDone && detail > 0) {
     [-0.24, 0, 0.24].forEach((x, i) => parts.push(cP("ball", ["#ff5a5a", "#ffd23f", "#4fb0ff"][i], x, H + 0.04, 0.3, 0.07, 0.07, 0.07, 0, "g")));
   }
   // Indices universels.
   if ((task.criticality === "urgent" || task.criticality === "moyen") && task.state !== "done" && task.state !== "info") {
+    // Fanion rouge (urgente) ou orange (moyenne) ; le feu est retiré (#381).
     const col = task.criticality === "urgent" ? "#DC2626" : "#D97706";
-    if (task.criticality === "urgent") {
-      // Brasier (#375) : les flammes animées sont posées par le moteur sur
-      // CARTE_FIRE_ANCHOR ; ici, le pied, la vasque et les braises.
-      parts.push(cP("cyl", "#4a3526", CARTE_FIRE_ANCHOR[0], 0, CARTE_FIRE_ANCHOR[2], 0.07, CARTE_FIRE_ANCHOR[1] - 0.1, 0.07));
-      parts.push(cP("cyl", "#3a2e28", CARTE_FIRE_ANCHOR[0], CARTE_FIRE_ANCHOR[1] - 0.12, CARTE_FIRE_ANCHOR[2], 0.34, 0.12, 0.34));
-      parts.push(cP("ball", "#ff5a1f", CARTE_FIRE_ANCHOR[0], CARTE_FIRE_ANCHOR[1] - 0.04, CARTE_FIRE_ANCHOR[2], 0.24, 0.08, 0.24, 0, "g"));
-    } else {
-      parts.push(cP("cyl", "#5a4030", 0.4, 0, -0.34, 0.035, 1.0, 0.035));
-      parts.push(cP("box", col, 0.4, 0.78, -0.22, 0.02, 0.18, 0.24));
-    }
+    const tall = task.criticality === "urgent" ? 1.25 : 1.0;
+    parts.push(cP("cyl", "#5a4030", 0.4, 0, -0.34, 0.035, tall, 0.035));
+    parts.push(cP("box", col, 0.4, tall - 0.24, -0.2, 0.02, task.criticality === "urgent" ? 0.26 : 0.18, task.criticality === "urgent" ? 0.34 : 0.24));
   }
-  if (task.overdue) {
-    const y = Math.max(H, 0.8) + 0.45;
-    parts.push(cP("ball", "#4a5060", -0.12, y, 0, 0.36, 0.2, 0.3), cP("ball", "#3f4552", 0.14, y + 0.04, 0.05, 0.3, 0.22, 0.28), cP("pyr", "#ffd23f", 0.02, y - 0.3, 0, 0.06, 0.26, 0.02, 0.3, "g"));
-  } else if (task.soon) {
+  // En retard : l'orage (nuage, éclairs, pluie ; tornade si urgente) est
+  // dessiné et animé par le moteur (#381).
+  if (!task.overdue && task.soon) {
     parts.push(cP("cyl", "#3a3a3a", -0.36, 0, 0.36, 0.03, 0.46, 0.03), cP("box", "#ffcf5a", -0.36, 0.46, 0.36, 0.1, 0.12, 0.1, 0, "g"));
   }
   if (task.future) parts.push(cP("cyl", "#ffffff", 0, 0.02, 0, 1.5, 0.45, 1.5, 0, "t"));
   if (detail >= 2) {
+    // Avatar du responsable (#382) : silhouette à sa couleur ; le moteur pose
+    // au-dessus un badge d'initiales (CARTE_AVATAR_ANCHOR).
     const pc = cartePersonColor(task.assignee, task.assigneeColor);
-    if (pc) parts.push(cP("cyl", pc, -0.42, 0, -0.12, 0.12, 0.26, 0.12), cP("ball", "#f1c9a5", -0.42, 0.26, -0.12, 0.1, 0.1, 0.1));
+    if (pc) parts.push(cP("cyl", pc, CARTE_AVATAR_ANCHOR[0], 0, CARTE_AVATAR_ANCHOR[2], 0.17, 0.34, 0.17), cP("ball", "#f1c9a5", CARTE_AVATAR_ANCHOR[0], 0.33, CARTE_AVATAR_ANCHOR[2], 0.14, 0.14, 0.14));
     const n = Math.min(6, task.checklistTotal);
     const doneN = Math.min(n, task.checklistDone);
     for (let i = 0; i < n; i++) {
@@ -5641,16 +5653,36 @@ function carteTaskLevel(task) {
   if (task.state === "info") return 0;
   return Math.max(0, Math.min(100, Number(task.progress) || 0)) / 20;
 }
-// Point d'ancrage des flammes d'une tâche urgente, en coordonnées locales
-// du modèle (avant l'échelle appliquée par le moteur).
-const CARTE_FIRE_ANCHOR = [0.4, 0.62, -0.34];
 function carteTaskSize(task) { return task.duration == null ? 1 : task.duration < 3 ? 0.78 : task.duration > 21 ? 1.22 : 1; }
-function carteFireAnchor(task) {
+// Avatar du responsable (#382) : pied de la silhouette, et badge d'initiales
+// au-dessus de la tête (coordonnées locales, avant l'échelle du moteur).
+const CARTE_AVATAR_ANCHOR = [-0.44, 0.78, -0.12];
+function carteAvatarAnchor(task) {
   const k = carteTaskSize(task);
-  return [CARTE_FIRE_ANCHOR[0] * k, CARTE_FIRE_ANCHOR[1] * k + carteTaskLift(task), CARTE_FIRE_ANCHOR[2] * k];
+  return [CARTE_AVATAR_ANCHOR[0] * k, CARTE_AVATAR_ANCHOR[1] * k, CARTE_AVATAR_ANCHOR[2] * k];
 }
-const CARTE_LIFT_STEP = 0.24;
-function carteTaskLift(task) { return carteTaskLevel(task) * CARTE_LIFT_STEP; }
+function carteInitials(name) {
+  const words = String(name || "").trim().split(/[\s\-_.]+/).filter(Boolean);
+  if (!words.length) return "?";
+  const first = (w) => (Array.from(w)[0] || "").toUpperCase();
+  return words.length === 1 ? first(words[0]) : first(words[0]) + first(words[words.length - 1]);
+}
+
+// Altitude du SOL selon la date de fin (#383), de 0 (niveau de la mer) à 1 :
+// terminée, en retard ou échéance sous 7 jours → 0 ; sans date → 0,5 ;
+// ensuite montée plus rapide sur les premières semaines, maximum à 90 jours.
+const CARTE_DUE_SOON = 7;
+const CARTE_DUE_FAR = 90;
+function carteDueAltitude(task) {
+  if (task.state === "done") return 0;
+  if (task.end == null || task.dueIn == null) return 0.5;
+  if (task.overdue || task.dueIn <= CARTE_DUE_SOON) return 0;
+  return Math.sqrt(Math.min(1, (task.dueIn - CARTE_DUE_SOON) / (CARTE_DUE_FAR - CARTE_DUE_SOON)));
+}
+// Hauteur de la case : du niveau de la mer à ~1,1 au-dessus (sans excès).
+const CARTE_SEA_GROUND = 0.2;
+const CARTE_DUE_RISE = 1.1;
+function carteDueGround(altitude) { return CARTE_SEA_GROUND + Math.max(0, Math.min(1, altitude)) * CARTE_DUE_RISE; }
 
 // Icône utilisable dans une étiquette 3D : un emoji seulement. Les icônes
 // « tabler: », « iconify: » et les images passent par IconGlyph dans React.
