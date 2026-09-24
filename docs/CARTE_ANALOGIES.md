@@ -26,6 +26,11 @@ Pour que la carte se lise sans légende après quelques minutes, chaque champ ut
 | Routes, ponts, convois | Liens (`dependsOn`, `secondaryProjectId`, dossiers) |
 | Objets posés au sol | Pièces jointes, compte rendu, origine |
 
+**Thèmes.** Les objets cités dans cette note (beffroi, atelier, échafaudage…) sont ceux du
+thème **Ville**. Chaque projet reçoit un thème (ville, campagne, forêt, désert, mer, lac,
+montagne, haute montagne, Grand Nord, canyon) qui garde le même sens des indices mais change
+les objets et la façon de progresser : voir [`CARTE_THEMES.md`](CARTE_THEMES.md).
+
 Principes inchangés :
 
 - la carte est une **lecture** des données. Se déplacer, visiter ou explorer ne modifie jamais
@@ -197,10 +202,7 @@ Le moteur des maquettes ne change pas :
 
 ## Points à trancher
 
-1. **Univers** : ce paysage de bâtisseurs te convient-il ? Deux variantes gardent les mêmes
-   canaux :
-   - **archipel maritime** : projets en îles, tâches en navires ou en ports ;
-   - **jardin potager** : projets en parcelles, tâches en cultures de la graine à la récolte.
+1. **Thèmes** : voir les points à trancher de [`CARTE_THEMES.md`](CARTE_THEMES.md).
 2. **Friche après 30 jours sans interaction** : bon seuil ?
 3. **Habitants par responsable** : utile, ou trop chargé ?
 4. **Routes de dépendances** : seulement à la sélection (par défaut), ou toutes visibles ?
