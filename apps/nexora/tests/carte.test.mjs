@@ -26,6 +26,7 @@ const C = vm.runInThisContext(
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteDueAltitude, carteDueGround, carteInitials, carteAvatarAnchor, carteHazard,
     CARTE_STYLES, CARTE_STYLE_BY_ID, carteLook, carteStyleTileColors, carteNeonColor,
     CARTE_DND_LIEUX, CARTE_DND_BY_ID, CARTE_DND_FROM_THEME, carteDndLieux, normalizeCarteLieux,
+    carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
   };\n})`
 )();
 
@@ -436,4 +437,49 @@ test("#398 : le bonhomme du responsable est dessiné à tous les niveaux de dét
     assert.ok(Math.max(...parts.filter((p) => p.m !== "h").map((p) => (p.p[0] < -0.3 ? p.p[1] + p.s[1] : 0))) >= 0.85, `${st.id}, détail ${detail} : bonhomme trop petit`);
   }));
   assert.ok(!C.carteTaskModel({ ...base, assignee: null, assigneeColor: null }, "ville", { detail: 2 }).some((p) => p.c === "#123456"), "pas de bonhomme sans responsable");
+});
+
+test("#392 : une pastille par dossier, avancement cumulé, projets sans dossier en dernier", () => {
+  const ctx = {
+    projectFolders: [{ id: "f1", name: "Chantiers", color: "#112233" }, { id: "f2", name: "Perso" }],
+    projects: [{ id: "a", folderId: "f1", color: "#aa0000" }, { id: "b", folderId: "f1" }, { id: "c" }, { id: "d", folderId: "f2", color: "#00aa00" }],
+    statuses, taskTypes,
+  };
+  const norm = C.carteNormalize(ctx, [
+    { id: "1", projectId: "a", statusId: "s5" }, { id: "2", projectId: "a", statusId: "s3" },
+    { id: "3", projectId: "b", statusId: "s5" }, { id: "4", projectId: "c", statusId: "s3" }, { id: "5", projectId: "d", statusId: "s1" },
+  ], { now: NOW });
+  const layout = C.carteBuild({ projects: norm.projects, tasks: norm.tasks });
+  const by = {};
+  norm.tasks.forEach((t) => { (by[t.projectId] = by[t.projectId] || []).push(t); });
+  const stats = {};
+  layout.territories.forEach((tr) => { stats[tr.projectId] = C.carteTerritoryStats(by[tr.projectId] || []); });
+  const groups = C.carteFolderGroups(layout, stats, ctx.projectFolders);
+  assert.deepEqual(groups.map((g) => g.name), ["Chantiers", "Perso", "Sans dossier"]);
+  const f1 = groups[0];
+  assert.deepEqual(f1.projects.slice().sort(), ["a", "b"]);
+  assert.equal(f1.pct, 67, "2 terminées sur 3");
+  assert.equal(f1.color, "#112233", "couleur du dossier");
+  assert.equal(groups[1].color, "#00aa00", "à défaut, couleur du premier projet");
+  assert.equal(groups[2].id, C.CARTE_NO_FOLDER);
+});
+
+test("#400 : « Masquer les terminées depuis 30 jours » vaut aussi sans date de complétion", () => {
+  const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [
+    { id: "old", projectId: "p", statusId: "s5", end: "2026-07-01" },
+    { id: "recent", projectId: "p", statusId: "s5", end: "2026-09-20" },
+    { id: "stamped", projectId: "p", statusId: "s5", end: "2026-07-01", completedAt: "2026-09-20T10:00:00" },
+  ], { now: NOW }).tasks;
+  const by = Object.fromEntries(n.map((t) => [t.id, t]));
+  assert.equal(by.old.oldDone, true);
+  assert.equal(by.recent.oldDone, false);
+  assert.equal(by.stamped.oldDone, false, "la date de complétion prime");
+  assert.equal(C.carteMatches(by.old, { hideOldDone: true }), false);
+});
+
+test("#400 : les filtres propres à la vue se comptent et se remettent à zéro", () => {
+  const cfg = C.normalizeCarteViewPrefs({ states: ["todo"], crit: "urgent", late: true });
+  assert.equal(C.carteViewFilterCount(cfg), 3);
+  assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...cfg, ...C.carteViewFilterReset() })), 0);
+  assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({})), 0);
 });

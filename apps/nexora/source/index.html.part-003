@@ -18885,27 +18885,99 @@ function createCarteEngine(THREE, container, opts) {
     return new THREE.ShapeGeometry(sh).rotateX(-Math.PI / 2);
   })();
   const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, neonRingGeo, dndBaseGeo, dndCapGeo, borderGeo, dndBorderGeo]);
-  // Nom d'un dossier écrit au sol (#377) : une texture de texte par région.
-  function regionTexture(text, dim) {
+  // Nom d'un dossier écrit au sol (#377, #393), à la manière d'une carte
+  // ancienne : capitales espacées, posées lettre à lettre le long de l'axe de
+  // l'île (courbe v = a·u² + b·u + c dans le repère de la région). La texture
+  // couvre la bande de la courbe ; `ppu` = pixels par unité du monde.
+  const REGION_INK = {
+    classique: { fill: "#fffaf0", stroke: "rgba(24,38,61,.78)" },
+    estampe: { fill: "#1d1a17", stroke: "rgba(246,239,222,.9)" },
+    neon: { fill: "#bff8ff", stroke: "rgba(5,20,40,.85)", glow: "#05d9e8" },
+    dnd: { fill: "#f3e2b3", stroke: "rgba(43,28,16,.85)" },
+  };
+  function regionTexture(text, curve, style) {
+    const ink = REGION_INK[style] || REGION_INK.classique;
+    const F = 96;
+    const font = "700 italic " + F + "px 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif";
     const c = document.createElement("canvas");
     const g = c.getContext("2d");
-    const font = "800 96px Inter, -apple-system, 'Segoe UI', sans-serif";
-    let w = 600;
-    if (g) { g.font = font; w = Math.ceil(g.measureText(text).width + text.length * 10 + 60); }
-    c.width = Math.min(4096, Math.max(256, w)); c.height = 150;
+    const chars = Array.from(text), gap = F * 0.34;
+    let widths = chars.map(() => F * 0.7);
+    if (g) { g.font = font; widths = chars.map((ch) => g.measureText(ch).width); }
+    const natural = widths.reduce((m, w) => m + w, 0) + gap * Math.max(0, chars.length - 1);
+    // Hauteur des lettres dans le monde : le nom occupe ~75 % de l'île.
+    const hW = Math.max(0.9, Math.min(3.2, curve.vlen * 0.42 + 0.6, (curve.ulen * 0.75 * F) / natural));
+    let ppu = F / hW;
+    const span = (natural / F) * hW;
+    const u0 = curve.umid - span / 2, u1 = curve.umid + span / 2;
+    const vAt = (u) => curve.a * u * u + curve.b * u + curve.c;
+    let vmin = Infinity, vmax = -Infinity;
+    for (let i = 0; i <= 24; i++) { const v = vAt(u0 + (span * i) / 24); vmin = Math.min(vmin, v); vmax = Math.max(vmax, v); }
+    const pad = hW * 0.9;
+    const U0 = u0 - pad, V0 = vmin - pad, UW = span + 2 * pad, VH = vmax - vmin + 2 * pad;
+    const k = Math.min(1, 4096 / (UW * ppu), 2048 / (VH * ppu));
+    ppu *= k;
+    c.width = Math.max(64, Math.ceil(UW * ppu)); c.height = Math.max(32, Math.ceil(VH * ppu));
     if (g) {
-      g.font = font; g.textAlign = "center"; g.textBaseline = "middle";
-      if ("letterSpacing" in g) g.letterSpacing = "10px";
-      g.lineJoin = "round"; g.lineWidth = 14;
-      g.strokeStyle = dim ? "rgba(90,96,104,.55)" : "rgba(24,38,61,.62)";
-      g.strokeText(text, c.width / 2, 78);
-      g.fillStyle = dim ? "#cfd3d8" : "#fffaf0";
-      g.fillText(text, c.width / 2, 78);
+      const fs = F * k;
+      g.font = "700 italic " + fs + "px 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif";
+      g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
+      // Abscisse curviligne : les lettres gardent leur espacement dans les
+      // virages.
+      const N = 200, cum = [0];
+      for (let i = 1; i <= N; i++) { const ua = u0 + (span * (i - 1)) / N, ub = u0 + (span * i) / N; cum.push(cum[i - 1] + Math.hypot(ub - ua, vAt(ub) - vAt(ua))); }
+      const scale = cum[N] / span;
+      let at = 0;
+      chars.forEach((ch, i) => {
+        const wW = (widths[i] / F) * hW;
+        const target = (at + wW / 2) * scale;
+        let j = 1; while (j < N && cum[j] < target) j++;
+        const u = u0 + (span * (j - 1 + (target - cum[j - 1]) / Math.max(1e-6, cum[j] - cum[j - 1]))) / N;
+        const v = vAt(u), ang = Math.atan(2 * curve.a * u + curve.b);
+        at += wW + (gap / F) * hW;
+        if (ch === " ") return;
+        g.save();
+        g.translate((u - U0) * ppu, (v - V0) * ppu);
+        g.rotate(ang);
+        if (ink.glow) { g.shadowColor = ink.glow; g.shadowBlur = fs * 0.35; }
+        g.lineWidth = fs * 0.12; g.strokeStyle = ink.stroke; g.strokeText(ch, 0, 0);
+        g.shadowBlur = 0;
+        g.fillStyle = ink.fill; g.fillText(ch, 0, 0);
+        g.restore();
+      });
     }
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 4;
-    return { texture: t, aspect: c.width / c.height };
+    t.anisotropy = 8;
+    return { texture: t, w: UW, h: VH, cu: U0 + UW / 2, cv: V0 + VH / 2 };
+  }
+  // Axe d'une île (#393) : analyse en composantes principales des cases, puis
+  // courbe du second degré ajustée, à courbure bornée pour rester lisible.
+  function regionCurve(pts) {
+    const n = pts.length;
+    let mx = 0, mz = 0;
+    pts.forEach((p) => { mx += p[0]; mz += p[1]; });
+    mx /= n; mz /= n;
+    let sxx = 0, szz = 0, sxz = 0;
+    pts.forEach((p) => { const dx = p[0] - mx, dz = p[1] - mz; sxx += dx * dx; szz += dz * dz; sxz += dx * dz; });
+    const theta = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+    const ux = Math.cos(theta), uz = Math.sin(theta);
+    const uv = pts.map((p) => { const dx = p[0] - mx, dz = p[1] - mz; return [dx * ux + dz * uz, -dx * uz + dz * ux]; });
+    let umin = Infinity, umax = -Infinity, vmin = Infinity, vmax = -Infinity;
+    uv.forEach((q) => { umin = Math.min(umin, q[0]); umax = Math.max(umax, q[0]); vmin = Math.min(vmin, q[1]); vmax = Math.max(vmax, q[1]); });
+    // Moindres carrés v = a·u² + b·u + c (équations normales 3 × 3).
+    const m = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], r = [0, 0, 0];
+    uv.forEach((q) => { const f = [q[0] * q[0], q[0], 1]; for (let i = 0; i < 3; i++) { r[i] += f[i] * q[1]; for (let j = 0; j < 3; j++) m[i][j] += f[i] * f[j]; } });
+    let sol = [0, 0, 0];
+    const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+    const D = det(m);
+    if (Math.abs(D) > 1e-6) sol = [0, 1, 2].map((i) => det(m.map((row, ri) => row.map((x, ci) => (ci === i ? r[ri] : x)))) / D);
+    const ulen = Math.max(4, umax - umin), vlen = Math.max(2, vmax - vmin), half = ulen / 2;
+    const amax = (0.18 * ulen) / (half * half);
+    const a = Math.max(-amax, Math.min(amax, sol[0] || 0));
+    const b = Math.max(-0.35, Math.min(0.35, sol[1] || 0));
+    const c = Math.max(vmin + 0.5, Math.min(vmax - 0.5, sol[2] || 0));
+    return { cx: mx, cz: mz, theta, a, b, c, umid: (umin + umax) / 2, ulen, vlen };
   }
 
   const mats = [];
@@ -19266,30 +19338,39 @@ function createCarteEngine(THREE, container, opts) {
     S.pickMeshes = caps.concat([waterM]);
     buildStyleEnv(keys);
 
-    // Légendes au sol des régions (#377), au pied de chaque dossier.
+    // Noms des dossiers au sol (#377, #393) : le long de l'île, au-dessus de
+    // ses dalles. Une seconde passe, très pâle et sans test de profondeur,
+    // garde le nom devinable derrière les bâtiments. Une région entièrement
+    // écartée par les filtres n'affiche pas son nom.
     S.regionLabels = [];
     const regions = {};
-    L.territories.forEach((tr) => {
-      const p = L.projectById[tr.projectId];
-      if (!p || !p.group || !p.folderName) return;
-      const w = carteToWorld(tr.q, tr.r);
-      const g = regions[p.group] || (regions[p.group] = { name: p.folderName, xmin: Infinity, xmax: -Infinity, zmax: -Infinity, n: 0, dim: 0 });
-      g.xmin = Math.min(g.xmin, w.x); g.xmax = Math.max(g.xmax, w.x); g.zmax = Math.max(g.zmax, w.z); g.n++;
-      if (S.dimmed && S.dimmed.has(tr.projectId)) g.dim++;
+    keys.forEach((k) => {
+      const t = L.tiles[k];
+      const p = t.projectId && L.projectById[t.projectId];
+      if (!p || !p.group || !p.folderName || t.kind === "sea") return;
+      const w = carteToWorld(t.q, t.r);
+      const g = regions[p.group] || (regions[p.group] = { name: p.folderName, pts: [], top: 0, projects: new Set() });
+      g.pts.push([w.x, w.z]); g.top = Math.max(g.top, t.h); g.projects.add(t.projectId);
     });
     Object.keys(regions).sort().forEach((gid) => {
       const g = regions[gid];
-      const tx = regionTexture(g.name.toUpperCase(), g.dim === g.n);
-      // Plus la région compte de projets, plus son nom est grand.
-      const h = 2 + 0.5 * Math.sqrt(g.n - 1), w = Math.min(h * tx.aspect, Math.max(14, g.xmax - g.xmin + 14));
-      const mesh = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tx.texture, transparent: true, depthWrite: false }));
-      mesh.userData.ownMat = mesh.userData.ownTex = true;
-      mesh.scale.set(w, w / tx.aspect, 1);
-      mesh.position.set((g.xmin + g.xmax) / 2, 0.66, g.zmax + 6.2);
-      mesh.rotation.set(-Math.PI / 2, 0, S.yaw);
-      mesh.renderOrder = 3;
-      world.add(mesh);
-      S.regionLabels.push(mesh);
+      if (S.dimmed && [...g.projects].every((pid) => S.dimmed.has(pid))) return;
+      const cv = regionCurve(g.pts);
+      const tx = regionTexture(g.name.toUpperCase(), cv, S.style);
+      const ux = Math.cos(cv.theta), uz = Math.sin(cv.theta);
+      const px = cv.cx + ux * tx.cu - uz * tx.cv, pz = cv.cz + uz * tx.cu + ux * tx.cv;
+      [{ depthTest: true, opacity: 0.96, order: 3 }, { depthTest: false, opacity: 0.22, order: 4 }].forEach((pass, i) => {
+        const mesh = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tx.texture, transparent: true, depthWrite: false, depthTest: pass.depthTest, opacity: pass.opacity }));
+        mesh.userData.ownMat = true;
+        if (i === 0) mesh.userData.ownTex = true;
+        mesh.scale.set(tx.w, tx.h, 1);
+        mesh.position.set(px, g.top + 0.3, pz);
+        mesh.userData.theta = cv.theta;
+        mesh.rotation.set(-Math.PI / 2, 0, -cv.theta);
+        mesh.renderOrder = pass.order;
+        world.add(mesh);
+        S.regionLabels.push(mesh);
+      });
     });
 
     const batch = makeBatcher();
@@ -19505,8 +19586,13 @@ function createCarteEngine(THREE, container, opts) {
     const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
     camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
     camera.lookAt(S.target);
-    // Les noms de dossiers pivotent avec la caméra pour rester lisibles.
-    (S.regionLabels || []).forEach((m) => { m.rotation.z = S.yaw; });
+    // Les noms de dossiers se retournent quand la caméra passe de l'autre
+    // côté de l'île : ils se lisent toujours de gauche à droite.
+    (S.regionLabels || []).forEach((m) => {
+      const th = m.userData.theta;
+      const flip = Math.cos(th) * Math.cos(S.yaw) - Math.sin(th) * Math.sin(S.yaw) < 0;
+      m.rotation.z = -th + (flip ? Math.PI : 0);
+    });
     scene.fog.near = S.dist * 0.8 + 25;
     scene.fog.far = (S.dist * 2.2 + 70) * styleEnv().fogK;
     if (sun.castShadow) { sun.position.set(S.target.x + 30, 50, S.target.z + 20); sun.target.position.copy(S.target); }
@@ -19557,6 +19643,29 @@ function createCarteEngine(THREE, container, opts) {
     return best;
   }
   const hubAt = (k) => { const t = S.layout.tiles[k]; return t && t.kind === "hub" ? t.projectId : null; };
+  // Totem sous le pointeur (#399) : le segment vertical du cœur de projet,
+  // projeté à l'écran. Les dalles seules ne suffisent pas : le haut du totem
+  // passe devant d'autres cases.
+  const segA = new THREE.Vector3(), segB = new THREE.Vector3();
+  function totemAt(cx, cy) {
+    if (!S.layout) return null;
+    const rect = canvas.getBoundingClientRect();
+    const px = cx - rect.left, py = cy - rect.top, W = rect.width, H = rect.height;
+    let best = null, bd = Infinity;
+    S.layout.territories.forEach((tr) => {
+      if (!tr.anchor || !tr.world) return;
+      segA.copy(tr.world).project(camera); segB.copy(tr.anchor).project(camera);
+      if (segA.z > 1 || segB.z > 1) return;
+      const ax = (segA.x + 1) / 2 * W, ay = (1 - segA.y) / 2 * H, bx = (segB.x + 1) / 2 * W, by = (1 - segB.y) / 2 * H;
+      const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
+      const u = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2));
+      const d = Math.hypot(px - (ax + vx * u), py - (ay + vy * u));
+      // Tolérance proportionnelle à la taille apparente du totem.
+      const tol = Math.max(14, Math.min(60, Math.sqrt(l2) * 0.35));
+      if (d < tol && d < bd) { bd = d; best = tr.projectId; }
+    });
+    return best;
+  }
   // Glisser la vue (#396) : clic molette ou clic droit enfoncé, Maj + clic
   // gauche, ou clic gauche en mode « main ». La caméra quitte l'arpenteur, qui
   // ne bouge pas ; le recentrage ou un pas de l'arpenteur la lui rendent.
@@ -19612,8 +19721,9 @@ function createCarteEngine(THREE, container, opts) {
         tip.hidden = false;
       } else tip.hidden = true;
       const h = pick(e.clientX, e.clientY);
-      const id = h ? taskAt(h.key, h.point) : null;
-      const hp = h && !id ? hubAt(h.key) : null;
+      const totem = totemAt(e.clientX, e.clientY);
+      const id = h && !totem ? taskAt(h.key, h.point) : null;
+      const hp = totem || (h && !id ? hubAt(h.key) : null);
       const hv = id ? "t:" + id : hp ? "p:" + hp : null;
       if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv && !S.panMode ? "pointer" : "grab"; }
     }
@@ -19624,7 +19734,11 @@ function createCarteEngine(THREE, container, opts) {
     if (drag && drag.pan) canvas.style.cursor = S.panMode ? "grab" : S.hovered ? "pointer" : "grab";
     if (drag && !drag.moved && !(drag.pan && e.button !== 0) && S.layout) {
       const h = pick(e.clientX, e.clientY);
-      if (h) {
+      const totem = totemAt(e.clientX, e.clientY);
+      // Un clic (ou un toucher) sur un totem épingle le nom du projet.
+      S.pinnedHub = totem || (h ? hubAt(h.key) : null);
+      if (totem) { if (o.onTerritory) o.onTerritory(totem); focusProject(totem); }
+      else if (h) {
         const id = taskAt(h.key, h.point), hp = hubAt(h.key);
         if (id) { walkToTask(id); select(id); }
         else { if (hp && o.onTerritory) o.onTerritory(hp); walkTo(h.point.x, h.point.z); }
@@ -19641,7 +19755,7 @@ function createCarteEngine(THREE, container, opts) {
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onCancel);
-  const hideTip = () => { tip.hidden = true; };
+  const hideTip = () => { tip.hidden = true; if (S.hovered && S.hovered.startsWith("p:")) S.hovered = null; };
   canvas.addEventListener("pointerleave", hideTip);
   canvas.addEventListener("wheel", hideTip, { passive: true });
 
@@ -19918,9 +20032,14 @@ function createCarteEngine(THREE, container, opts) {
     const W = canvas.clientWidth, H = canvas.clientHeight;
     const far = S.dist > 48;
     const cand = [];
+    // Noms des projets (#399) : seulement au survol du totem, ou après un
+    // clic dessus (écran tactile) ; rien de permanent qui surcharge la carte.
+    const shown = {};
+    if (S.hovered && S.hovered.startsWith("p:")) shown[S.hovered.slice(2)] = 3000;
+    if (S.pinnedHub && !shown[S.pinnedHub]) shown[S.pinnedHub] = 2500;
     S.layout.territories.forEach((tr) => {
-      if (!tr.anchor) return;
-      cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, prio: (S.territory === tr.projectId ? 2000 : 500) + ((S.stats[tr.projectId] || {}).total || 0) });
+      if (!tr.anchor || !shown[tr.projectId]) return;
+      cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, prio: shown[tr.projectId] });
     });
     if (!far) {
       const ids = {};
@@ -19955,7 +20074,7 @@ function createCarteEngine(THREE, container, opts) {
         const s = S.stats[c.pid] || { todo: 0, doing: 0, done: 0, pct: 0, stage: 0, overdue: 0 };
         const emoji = carteEmojiIcon(p.icon);
         html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(emoji ? emoji + " " : "") + esc(p.name) + "</span>";
-        if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
+        html += '<span class="lp-carte-meta">' + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
       } else {
         const t = S.data.taskById[c.tid];
         const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
@@ -20568,7 +20687,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           keyTarget: stageRef.current,
           quality: cfg.quality,
           style: cfg.style,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-ribbon-more, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelected(id),
           onNear: (id) => {
             setNear(id);
@@ -20647,17 +20766,31 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   };
   const joyEnd = () => { joyState.current = null; if (joyRef.current) joyRef.current.firstChild.style.transform = ""; if (engineRef.current) engineRef.current.setJoystick(0, 0); };
 
-  // Au-delà de 24 territoires, le ruban ne montre que la région courante
-  // (même dossier) : 300 pastilles alignées ne se lisent plus.
-  const RIBBON_MAX = 24;
-  const ribbon = useMemo(() => {
-    const all = layout.territories;
-    if (all.length <= RIBBON_MAX) return { list: all, more: 0 };
-    const here = territory && layout.projectById[territory];
-    const group = here && here.group;
-    const list = (group ? all.filter((t) => layout.projectById[t.projectId].group === group) : all).slice(0, RIBBON_MAX);
-    return { list, more: all.length - list.length };
-  }, [layout, territory]);
+  // Ruban par dossier (#392) : le survol ou le clic d'une pastille déroule les
+  // projets du dossier. Un clic épingle le menu (écran tactile, clavier).
+  const folderGroups = useMemo(() => carteFolderGroups(layout, stats, ctx.projectFolders), [layout, stats, ctx.projectFolders]);
+  const [folderPop, setFolderPop] = useState(null);
+  const popTimer = useRef(null);
+  const openFolder = (g, el, pinned) => {
+    clearTimeout(popTimer.current);
+    const r = el.getBoundingClientRect();
+    setFolderPop({ id: g.id, pinned: !!pinned, left: Math.max(8, Math.min(r.left + r.width / 2 - 140, window.innerWidth - 296)), top: r.bottom + 6 });
+  };
+  const closeFolderSoon = () => { clearTimeout(popTimer.current); popTimer.current = setTimeout(() => setFolderPop((f) => (f && f.pinned ? f : null)), 220); };
+  useEffect(() => () => clearTimeout(popTimer.current), []);
+  useEffect(() => {
+    if (!folderPop || !folderPop.pinned) return undefined;
+    const away = (e) => { if (!e.target.closest || !e.target.closest(".lp-carte-folder-pop, .lp-carte-badge")) setFolderPop(null); };
+    const esc = (e) => { if (e.key === "Escape") setFolderPop(null); };
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", esc); };
+  }, [folderPop]);
+  const hereGroup = territory && layout.projectById[territory] ? layout.projectById[territory].group || CARTE_NO_FOLDER : null;
+  const popGroup = folderPop && folderGroups.find((g) => g.id === folderPop.id);
+  // Filtres propres à la vue (#400) : toujours signalés, remis à zéro d'un clic.
+  const viewFilterCount = carteViewFilterCount(cfg) + filterCount;
+  const shownCount = visible.size, totalCount = norm.tasks.length;
   const empty = norm.projects.length === 0 && norm.tasks.length === 0;
   const selTask = selected && normView.taskById[selected];
   const nearTask = near && norm.taskById[near];
@@ -20713,7 +20846,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
       </div>
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0} data-carte-style={cfg.style}
-        data-carte-status={status} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
+        data-carte-status={status} data-carte-dimmed={dimmed.size} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
         {empty ? (
           <div className="lp-empty lp-carte-empty">
@@ -20728,26 +20861,48 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             {status === "loading" && <div className="lp-carte-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Chargement de la carte 3D…</div>}
             {status === "ready" && (
               <>
-                <nav className="lp-carte-ribbon" aria-label="Territoires">
-                  {ribbon.list.map((tr) => {
-                    const p = layout.projectById[tr.projectId];
-                    const s = stats[tr.projectId];
+                <nav className="lp-carte-ribbon" aria-label="Dossiers">
+                  {folderGroups.map((g) => {
+                    const dim = g.projects.every((pid) => dimmed.has(pid));
+                    const open = folderPop && folderPop.id === g.id;
                     return (
-                      <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "") + (dimmed.has(tr.projectId) ? " is-dim" : "")} style={{ "--p": s.pct, "--c": p.color }}
-                        onClick={() => focus(tr.projectId)} title={p.name + " — " + s.pct + " % terminé"} aria-label={p.name + ", " + s.pct + " % terminé"}>
-                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon ? <IconGlyph icon={p.icon} size={18} /> : (p.name || "?").slice(0, 1)}</span></span>
-                        <small>{p.name}</small>
+                      <button key={g.id} type="button" className={"lp-carte-badge" + (hereGroup === g.id ? " is-here" : "") + (dim ? " is-dim" : "") + (open ? " is-open" : "")} style={{ "--p": g.pct, "--c": g.color }}
+                        aria-haspopup="true" aria-expanded={!!open} data-folder={g.id}
+                        onMouseEnter={(e) => { if (!folderPop || !folderPop.pinned) openFolder(g, e.currentTarget, false); }} onMouseLeave={closeFolderSoon}
+                        onClick={(e) => { if (open && folderPop.pinned) setFolderPop(null); else openFolder(g, e.currentTarget, true); }}
+                        title={g.name + " — " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + " · " + g.pct + " % terminé"} aria-label={g.name + ", " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + ", " + g.pct + " % terminé"}>
+                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{g.icon ? <IconGlyph icon={g.icon} size={18} /> : <Folder size={17} color={g.color} />}<i className="lp-carte-badge-count">{g.projects.length}</i></span></span>
+                        <small>{g.name}</small>
                       </button>
                     );
                   })}
-                  {ribbon.more > 0 && (
-                    <button type="button" className="lp-carte-ribbon-more" onClick={() => { const i = document.querySelector(".lp-carte-search input"); if (i) i.focus(); }}>
-                      +{ribbon.more} territoires · rechercher
-                    </button>
-                  )}
                 </nav>
+                {popGroup && (
+                  <div className="lp-carte-folder-pop" role="menu" aria-label={"Projets du dossier " + popGroup.name} style={{ left: folderPop.left, top: folderPop.top }}
+                    onMouseEnter={() => clearTimeout(popTimer.current)} onMouseLeave={closeFolderSoon}>
+                    <div className="lp-carte-folder-pop-head"><Folder size={13} color={popGroup.color} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span></div>
+                    {popGroup.projects.map((pid) => {
+                      const p = layout.projectById[pid];
+                      const s = stats[pid] || { pct: 0, overdue: 0 };
+                      return (
+                        <button key={pid} type="button" role="menuitem" className={"lp-carte-folder-proj" + (territory === pid ? " is-here" : "") + (dimmed.has(pid) ? " is-dim" : "")}
+                          onClick={() => { setFolderPop(null); focus(pid); }} title={dimmed.has(pid) ? "Aucune tâche de ce projet ne ressort des filtres" : undefined}>
+                          <span className="lp-carte-panel-icon" style={{ borderColor: p.color }}>{p.icon ? <IconGlyph icon={p.icon} size={13} /> : (p.name || "?").slice(0, 1)}</span>
+                          <span className="lp-carte-folder-name">{p.name}<small>{s.pct} %{s.overdue ? " · " : ""}{s.overdue ? <b>{s.overdue} en retard</b> : null}</small></span>
+                          <span className="lp-carte-bar"><span style={{ width: s.pct + "%" }} /></span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="lp-carte-hud" aria-live="polite">
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
+                  {shownCount < totalCount && (
+                    <span className="lp-carte-pill lp-carte-filtered" title="Filtres de la page, filtre général et filtres de la carte combinés">
+                      {shownCount} / {totalCount} tâches affichées
+                      {viewFilterCount > 0 && <button type="button" onClick={() => setPrefs(carteViewFilterReset())}>Tout afficher</button>}
+                    </span>
+                  )}
                   {legend && terrStats && (
                     <details className="lp-carte-legend">
                       <summary><span className="lp-carte-dot" style={{ background: layout.projectById[territory].color }} />{layout.projectById[territory].name} · {terrStats.pct} %</summary>

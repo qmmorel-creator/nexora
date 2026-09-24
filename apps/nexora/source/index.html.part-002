@@ -5084,7 +5084,9 @@ function carteNormalize(ctx, tasks, opts) {
       fromEmail: !!t.sourceMessageId,
       stale: state !== "done" && state !== "info" && last != null && nowMs - last > 30 * CARTE_DAY,
       recentDone: state === "done" && completed != null && nowMs - completed <= 7 * CARTE_DAY,
-      oldDone: state === "done" && completed != null && nowMs - completed > 30 * CARTE_DAY,
+      // #400 : une tâche terminée sans date de complétion enregistrée se date
+      // par sa fin prévue, sinon par sa dernière interaction.
+      oldDone: state === "done" && (completed != null ? nowMs - completed > 30 * CARTE_DAY : end != null ? today - end > 30 : last != null && nowMs - last > 30 * CARTE_DAY),
       desc: typeof t.desc === "string" ? t.desc : "",
     };
   });
@@ -6410,6 +6412,43 @@ function carteMatches(task, f) {
   // Les terminées sont visibles par défaut (#372) ; les masquer est un choix.
   if (f.hideOldDone && task.oldDone) return false;
   return true;
+}
+// Filtres propres à la vue (#400) : combien sont posés, et leur remise à zéro.
+function carteViewFilterCount(cfg) {
+  let n = 0;
+  if (cfg.states && cfg.states.length < CARTE_STATE_KEYS.length) n++;
+  if (cfg.crit && cfg.crit !== "all") n++;
+  if (cfg.late) n++;
+  return n;
+}
+function carteViewFilterReset() { return { states: CARTE_STATE_KEYS.slice(), crit: "all", late: false, filter: null }; }
+
+// Ruban (#392) : une pastille par dossier (les projets sans dossier sont
+// regroupés en dernier), avancement cumulé des projets du dossier.
+const CARTE_NO_FOLDER = "__sans-dossier__";
+function carteFolderGroups(layout, stats, folders) {
+  const byId = {};
+  (folders || []).forEach((f) => { if (f && f.id != null) byId[f.id] = f; });
+  const out = [], idx = {};
+  (layout.territories || []).forEach((tr) => {
+    const p = layout.projectById[tr.projectId];
+    if (!p) return;
+    const gid = p.group || CARTE_NO_FOLDER;
+    let g = idx[gid];
+    if (!g) {
+      const f = p.group ? byId[p.group] : null;
+      g = idx[gid] = { id: gid, name: p.group ? p.folderName || (f && f.name) || "Dossier" : "Sans dossier", color: (f && f.color) || null, icon: (f && f.icon) || "", projects: [], done: 0, counted: 0, overdue: 0, total: 0 };
+      out.push(g);
+    }
+    g.projects.push(tr.projectId);
+    const st = (stats || {})[tr.projectId] || {};
+    g.done += st.done || 0; g.counted += st.counted || 0; g.overdue += st.overdue || 0; g.total += st.total || 0;
+  });
+  out.forEach((g) => {
+    g.pct = g.counted ? Math.round((g.done / g.counted) * 100) : 0;
+    if (!g.color) g.color = layout.projectById[g.projects[0]].color;
+  });
+  return out.filter((g) => g.id !== CARTE_NO_FOLDER).concat(out.filter((g) => g.id === CARTE_NO_FOLDER));
 }
 const CARTE_STATE_KEYS = ["todo", "waiting", "doing", "done", "info"];
 const CARTE_STATE_LABELS = { todo: "À faire", waiting: "En attente", doing: "En cours", done: "Terminées", info: "Infos" };
