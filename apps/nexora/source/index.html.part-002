@@ -4432,6 +4432,50 @@ function habitPixelWirePath(rowY, pixelX, pixelBottom, radius) {
   return `M 0 ${rowY} H ${pixelX - r} Q ${pixelX} ${rowY} ${pixelX} ${rowY - r} V ${pixelBottom}`;
 }
 
+/* Glisser-peindre (Heatmap habitudes, #353) : pose (on) ou efface (off) UNE
+   habitude sur une série de jours d'un seul geste. Mêmes règles que les
+   bascules unitaires : thème « choix unique » → les habitudes sœurs du même
+   jour sont retirées quand on pose ; habitude chiffrée → posée à son maximum.
+   Journal renormalisé une seule fois pour tout le trait. */
+function paintHabitLogEntries(log, themes, habitId, dates, on) {
+  const found = habitById(themes, habitId);
+  const known = normalizeHabitThemes(themes).flatMap((t) => t.habits.map((h) => h.id));
+  let next = normalizeHabitLog(log, known);
+  if (!found) return next;
+  const days = [...new Set((Array.isArray(dates) ? dates : []).filter((d) => HABIT_LOG_ISO_RE.test(String(d))))];
+  if (!days.length) return next;
+  const daySet = new Set(days);
+  const ids = new Set(days.map((d) => habitLogCellId(habitId, d)));
+  next = next.filter((e) => !ids.has(e.id));
+  if (on) {
+    if (found.theme.selectionMode === "single") {
+      const siblings = new Set(found.theme.habits.map((h) => h.id));
+      next = next.filter((e) => !(daySet.has(e.date) && siblings.has(e.habitId)));
+    }
+    days.forEach((date) => {
+      const entry = { id: habitLogCellId(habitId, date), habitId, date };
+      if (found.habit.kind === "numeric") entry.value = found.habit.max;
+      next.push(entry);
+    });
+  }
+  return normalizeHabitLog(next, known);
+}
+
+/* « Carré journalier » (#353) : côté du carré qui contient le motif d'un
+   jour — une rangée par thème, une case par habitude —, complété de cases
+   vides pour former un carré parfait (le plus grand du nombre de thèmes et
+   de la plus longue rangée). */
+function habitPixelSquareSize(themes) {
+  const list = Array.isArray(themes) ? themes : [];
+  const longest = list.reduce((m, t) => Math.max(m, Array.isArray(t.habits) ? t.habits.length : 0), 0);
+  return Math.max(list.length, longest, 1);
+}
+
+// Valeur chiffrée affichée à la française (1,5 et non 1.5).
+function habitValueLabel(value) {
+  return Number.isFinite(value) ? String(Math.round(value * 1e6) / 1e6).replace(".", ",") : "–";
+}
+
 function habitThemeUsage(log, themes, themeId) {
   const theme = habitThemeById(themes, themeId);
   if (!theme) return 0;
@@ -12341,6 +12385,33 @@ function TeamAndUserManagerPanel({ teamMembers, setTeamMembers, tasks, setTasks,
 // chacune avec sa propre couleur (widget Heatmap), et le Thème porte son mode
 // de coche (widget Quick Habit) : choix unique (radio) ou multi-sélection.
 // ============================================================================
+/* Pas du « + » (#353) : saisie décimale libre — virgule ou point, et les
+   états intermédiaires (« 0 », « 0, ») restent affichés pendant la frappe au
+   lieu de revenir à l'ancienne valeur. Seul un nombre strictement positif est
+   enregistré ; en quittant le champ, il réaffiche la valeur enregistrée. */
+function HabitStepInput({ value, onCommit }) {
+  const shown = (v) => String(v ?? 1).replace(".", ",");
+  const [draft, setDraft] = useState(null);
+  const parse = (raw) => Number(String(raw).trim().replace(",", "."));
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft ?? shown(value)}
+      aria-label="Pas du bouton +"
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (!/^[0-9]*[.,]?[0-9]*$/.test(raw)) return;
+        setDraft(raw);
+        const num = parse(raw);
+        if (raw !== "" && Number.isFinite(num) && num > 0) onCommit(num);
+      }}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+    />
+  );
+}
+
 function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog, pushToast, onClose, embedded }) {
   const catalogue = normalizeHabitThemes(habitThemes);
   const [editingId, setEditingId] = useState(null);
@@ -12516,7 +12587,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
                       <div className="lp-habit-kindpop-range">
                         <label>Min <input type="number" value={habit.min} onChange={(e) => setHabitRange(theme, habit, "min", e.target.value)} /></label>
                         <label>Max <input type="number" value={habit.max} onChange={(e) => setHabitRange(theme, habit, "max", e.target.value)} /></label>
-                        <label title="Valeur ajoutée à chaque clic sur « + » (et retirée par « − »)">Pas <input type="number" min="0" step="any" value={habit.step ?? 1} onChange={(e) => setHabitRange(theme, habit, "step", e.target.value)} /></label>
+                        <label title="Valeur ajoutée à chaque clic sur « + » (et retirée par « − »)">Pas <HabitStepInput value={habit.step} onCommit={(num) => setHabitRange(theme, habit, "step", num)} /></label>
                       </div>
                     )}
                   </div>

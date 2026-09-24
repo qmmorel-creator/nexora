@@ -25,7 +25,7 @@ const H = vm.runInThisContext(
     habitLogHabitIdsForDate, habitLogValueForDate, toggleHabitLogEntry, setHabitLogValue, habitThemeUsage,
     habitCellColors, habitCellBackground, habitValueIntensity, habitIntensityColor,
     habitMonthDays, habitYearWeeks,
-    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitDayStates, habitPixelWirePath,
+    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitValueLabel, paintHabitLogEntries, habitPixelSquareSize, habitDayStates, habitPixelWirePath,
   };\n})`
 )();
 
@@ -330,4 +330,36 @@ test("Pas du « + » : réglable par habitude chiffrée (1 par défaut), borné,
   assert.equal(H.habitNumericStep(q, 2.5, -1), "0");
   assert.equal(H.habitNumericStep(q, 2, -1), "", "sous min : l'entrée est effacée");
   assert.equal(H.habitNumericStep({ min: 0, max: 1, step: 0.1 }, 0.2, 1), "0.3");
+});
+
+test("Valeurs chiffrées affichées à la française", () => {
+  assert.equal(H.habitValueLabel(1.5), "1,5");
+  assert.equal(H.habitValueLabel(0.1 + 0.2), "0,3");
+  assert.equal(H.habitValueLabel(3), "3");
+  assert.equal(H.habitValueLabel(null), "–");
+});
+
+test("Glisser-peindre : pose ou efface une habitude sur plusieurs jours, mêmes règles que les bascules", () => {
+  const themes = [
+    theme("m", { selectionMode: "multi", habits: [habit("a"), habit("q", { kind: "numeric", min: 0, max: 3 })] }),
+    theme("r", { selectionMode: "single", habits: [habit("bureau"), habit("tele")] }),
+  ];
+  const days = ["2026-09-01", "2026-09-02", "2026-09-03"];
+  let log = H.paintHabitLogEntries([], themes, "a", [...days, "2026-09-02", "pas une date"], true);
+  assert.deepEqual(log.map((e) => e.date), days, "un seul passage par jour, dates invalides ignorées");
+  log = H.paintHabitLogEntries(log, themes, "a", ["2026-09-02"], false);
+  assert.deepEqual(log.map((e) => e.date), ["2026-09-01", "2026-09-03"]);
+  const q = H.paintHabitLogEntries([], themes, "q", ["2026-09-01"], true);
+  assert.equal(q[0].value, 3, "habitude chiffrée peinte à son maximum");
+  // Choix unique : peindre « tele » retire « bureau » ces jours-là seulement.
+  const radio = H.paintHabitLogEntries([{ habitId: "bureau", date: "2026-09-01" }, { habitId: "bureau", date: "2026-09-05" }], themes, "tele", ["2026-09-01"], true);
+  assert.deepEqual(radio.map((e) => e.habitId + "@" + e.date).sort(), ["bureau@2026-09-05", "tele@2026-09-01"]);
+  assert.deepEqual(H.paintHabitLogEntries([{ habitId: "a", date: "2026-09-01" }], themes, "inconnue", days, true).length, 1);
+});
+
+test("Carré journalier : côté = max(nombre de thèmes, plus longue rangée)", () => {
+  const t = (n) => ({ habits: Array.from({ length: n }, (_, i) => ({ id: "h" + i })) });
+  assert.equal(H.habitPixelSquareSize([t(4), t(4), t(6), t(3), t(4), t(3), t(5)]), 7, "7 thèmes, rangée max 6");
+  assert.equal(H.habitPixelSquareSize([t(2), t(9)]), 9);
+  assert.equal(H.habitPixelSquareSize([]), 1);
 });
