@@ -18976,6 +18976,7 @@ function createCarteEngine(THREE, container, opts) {
     rain: mat(new THREE.MeshBasicMaterial({ color: "#5d97d6", transparent: true, opacity: 0.9, depthWrite: false })),
     flame: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.93, depthWrite: false })),
     smoke: mat(new THREE.MeshLambertMaterial({ color: "#3b3b3f", transparent: true, opacity: 0.45, depthWrite: false, flatShading: true })),
+    clock: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
     boltHalo: mat(new THREE.MeshBasicMaterial({ color: "#bfe2ff", transparent: true, opacity: 0.35, depthWrite: false })),
     border: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
     // Lave du thème Volcan (#408) : lumineuse, elle pulse doucement.
@@ -19182,6 +19183,7 @@ function createCarteEngine(THREE, container, opts) {
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
     const storms = [];
+    const clocks = [];
     const fires = [];
     const avatars = [];
     const dones = [];
@@ -19207,10 +19209,11 @@ function createCarteEngine(THREE, container, opts) {
       S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 7) + 0.1 };
       const urgentOpen = t.criticality === "urgent" && t.state !== "done" && t.state !== "info";
       if (urgentOpen) urgent.push({ x, y, z, k });
-      // Orage (#381) : petit si en retard, gros éclairs (#406) si en plus
-      // urgente. Incendie (#385) : urgente sans retard.
+      // En retard : horloge qui fait tic-tac (#414) ; en plus urgente : gros
+      // éclairs venus du ciel (#406). Incendie (#385) : urgente sans retard.
       const hz = carteHazard(t);
-      if (hz === "storm" || hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 7), big: hz === "tempest", ph: carteRand("storm" + t.id) });
+      if (hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 7), big: true, ph: carteRand("storm" + t.id) });
+      else if (hz === "clock") clocks.push({ x, y, z, k, top: y + Math.min(top, 7), ph: carteRand("clock" + t.id) });
       else if (hz === "fire") fires.push({ x, y, z, k, h: Math.max(0.3, Math.min(top, 7)), ph: carteRand("fire" + t.id) * 6.283 });
       // Avatar (#382, #398) : badge d'initiales au-dessus du bonhomme, à tous
       // les niveaux de détail et sur les cases partagées.
@@ -19279,6 +19282,7 @@ function createCarteEngine(THREE, container, opts) {
       world.add(bm);
     }
     buildStorms(storms);
+    buildClocks(clocks);
     buildFires(fires);
     buildAvatars(avatars);
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
@@ -19613,46 +19617,39 @@ function createCarteEngine(THREE, container, opts) {
     if (terr !== S.territory) { S.territory = terr; o.onTerritoryEnter && o.onTerritoryEnter(terr); }
   }
 
-  // ---------- Orages des tâches en retard (#381) ----------
-  // Petit orage : 4 boules de nuage, 1 éclair, 14 gouttes. En retard ET
-  // urgente (#406) : un nuage noir très haut dans le ciel, d'où tombent trois
-  // gros éclairs en zigzag jusqu'à la tâche, avec un halo et une pluie dense.
-  const CLOUD_SMALL = [[-0.34, 0, 0, 0.72], [0.3, 0.06, 0.08, 0.66], [0, 0.2, -0.08, 0.82], [0.06, -0.04, 0.26, 0.56]];
-  const CLOUD_BIG = CLOUD_SMALL.concat([[-0.62, 0.1, -0.3, 0.7], [0.62, 0.1, -0.22, 0.74], [0, 0.34, 0.3, 0.76]]);
-  const BIG_BOLTS = 3, BOLT_SEGS = 8, BIG_CLOUD_RISE = 7;
+  // ---------- Gros éclairs des tâches en retard ET urgentes (#406) ----------
+  // Un nuage noir très haut dans le ciel, d'où tombent trois gros éclairs en
+  // zigzag jusqu'à la tâche, avec un halo et une pluie dense.
+  const CLOUD_BIG = [[-0.34, 0, 0, 0.72], [0.3, 0.06, 0.08, 0.66], [0, 0.2, -0.08, 0.82], [0.06, -0.04, 0.26, 0.56], [-0.62, 0.1, -0.3, 0.7], [0.62, 0.1, -0.22, 0.74], [0, 0.34, 0.3, 0.76]];
+  const BIG_BOLTS = 3, BOLT_SEGS = 8, BIG_CLOUD_RISE = 7, CLOUD_F = 2.4;
   const boltA = new THREE.Vector3(), boltB = new THREE.Vector3(), boltD = new THREE.Vector3();
   function buildStorms(list) {
     S.storms = null;
     if (!list.length) return;
     const low = S.effQuality === "low";
-    const big = list.filter((s) => s.big).slice(0, 80), small = list.filter((s) => !s.big).slice(0, 400);
-    const all = big.concat(small);
-    const nClouds = big.length * CLOUD_BIG.length + small.length * CLOUD_SMALL.length;
-    const clouds = new THREE.InstancedMesh(G.ball, MAT.cloud, nClouds);
+    const all = list.slice(0, 80);
+    const clouds = new THREE.InstancedMesh(G.ball, MAT.cloud, all.length * CLOUD_BIG.length);
     let ci = 0;
     all.forEach((s) => {
-      const f = s.big ? 2.4 : 1;
-      s.cloudY = s.top + (s.big ? BIG_CLOUD_RISE : 0.95);
+      const f = CLOUD_F;
+      s.cloudY = s.top + BIG_CLOUD_RISE;
       s.ground = s.y + 0.05;
-      (s.big ? CLOUD_BIG : CLOUD_SMALL).forEach((c) => {
+      CLOUD_BIG.forEach((c) => {
         clouds.setMatrixAt(ci, tmpM.compose(tmpP.set(s.x + c[0] * f, s.cloudY + c[1] * f - c[3] * f * 0.5, s.z + c[2] * f), tmpQ.identity(), tmpS.set(c[3] * f, c[3] * f * 0.72, c[3] * f)));
-        clouds.setColorAt(ci, tmpC.set(s.big ? "#262a33" : "#5a6272"));
+        clouds.setColorAt(ci, tmpC.set("#262a33"));
         ci++;
       });
     });
     clouds.instanceMatrix.needsUpdate = true; if (clouds.instanceColor) clouds.instanceColor.needsUpdate = true;
     clouds.frustumCulled = false; world.add(clouds);
-    const bolts = small.length ? new THREE.InstancedMesh(G.pyr, MAT.bolt, small.length) : null;
-    if (bolts) { bolts.frustumCulled = false; world.add(bolts); }
-    const nSeg = big.length * BIG_BOLTS * BOLT_SEGS;
-    const bigBolts = nSeg ? new THREE.InstancedMesh(G.box, MAT.bolt, nSeg) : null;
-    const halo = nSeg ? new THREE.InstancedMesh(G.box, MAT.boltHalo, nSeg) : null;
-    [bigBolts, halo].forEach((m) => { if (m) { m.frustumCulled = false; world.add(m); } });
-    const dropsPer = (s) => (low ? (s.big ? 24 : 6) : s.big ? 60 : 14);
-    const nDrops = all.reduce((n, s) => n + dropsPer(s), 0);
-    const rain = nDrops ? new THREE.InstancedMesh(G.box, MAT.rain, nDrops) : null;
-    if (rain) { rain.frustumCulled = false; world.add(rain); }
-    S.storms = { list: all, clouds, bolts, bigBolts, halo, rain, dropsPer };
+    const nSeg = all.length * BIG_BOLTS * BOLT_SEGS;
+    const bigBolts = new THREE.InstancedMesh(G.box, MAT.bolt, nSeg);
+    const halo = new THREE.InstancedMesh(G.box, MAT.boltHalo, nSeg);
+    [bigBolts, halo].forEach((m) => { m.frustumCulled = false; world.add(m); });
+    const drops = low ? 24 : 60;
+    const rain = new THREE.InstancedMesh(G.box, MAT.rain, all.length * drops);
+    rain.frustumCulled = false; world.add(rain);
+    S.storms = { list: all, clouds, bigBolts, halo, rain, drops };
     placeStorms(0);
   }
   // Animation continue (#397) : l'orage et le feu bougent toujours, même en
@@ -19664,65 +19661,120 @@ function createCarteEngine(THREE, container, opts) {
     const W = S.storms;
     if (!W) return;
     const t = calm ? t0 * 0.3 : t0;
-    let bi = 0, si = 0, di = 0;
+    let si = 0, di = 0;
     W.list.forEach((s) => {
-      const f = s.big ? 2.4 : 1;
-      if (!s.big) {
-        // Petit orage : un éclair court, qui clignote sous le nuage.
-        const cyc = (t * 0.9 + s.ph) % 1;
-        const on = calm || cyc < 0.1 || (cyc > 0.16 && cyc < 0.24) || (cyc > 0.55 && cyc < 0.6);
-        tmpQ.setFromEuler(tmpE.set(0.25, s.ph * 6, Math.PI));
-        const len = (s.cloudY - s.ground) * 0.7;
-        W.bolts.setMatrixAt(bi++, on ? tmpM.compose(tmpP.set(s.x - 0.2, s.cloudY - 0.15, s.z + 0.15), tmpQ, tmpS.set(0.14, len, 0.05)) : hidden());
-      } else {
-        // Gros éclairs (#406) : du nuage jusqu'au pied de la tâche, en zigzag.
-        // Chaque éclat redessine un tracé nouveau ; figé si animations réduites.
-        for (let j = 0; j < BIG_BOLTS; j++) {
-          const cycT = t * 0.75 + s.ph + j * 0.31;
-          const cyc = cycT % 1;
-          const on = calm || cyc < 0.09 || (cyc > 0.14 && cyc < 0.2);
-          const seed = "bolt" + j + ":" + (calm ? 0 : Math.floor(cycT)) + ":" + s.ph;
-          const a0 = j * 2.094 + s.ph * 6.283;
-          const sx = s.x + Math.cos(a0) * 0.9 * f, sz = s.z + Math.sin(a0) * 0.9 * f;
-          const ex = s.x + Math.cos(a0) * 0.25, ez = s.z + Math.sin(a0) * 0.25;
-          const top = s.cloudY - 0.3, fall = top - s.ground;
-          const point = (i, out) => {
-            const u = i / BOLT_SEGS;
-            const amp = i === 0 || i === BOLT_SEGS ? 0 : 0.55 * Math.sin(Math.PI * u) + 0.12;
-            return out.set(
-              sx + (ex - sx) * u + (carteRand(seed + "x" + i) - 0.5) * 2 * amp,
-              top - fall * u,
-              sz + (ez - sz) * u + (carteRand(seed + "z" + i) - 0.5) * 2 * amp,
-            );
-          };
-          point(0, boltA);
-          for (let i = 1; i <= BOLT_SEGS; i++) {
-            point(i, boltB);
-            if (on) {
-              boltD.subVectors(boltB, boltA);
-              const len = boltD.length();
-              tmpQ.setFromUnitVectors(UP, boltD.normalize());
-              W.bigBolts.setMatrixAt(si, tmpM.compose(boltA, tmpQ, tmpS.set(0.2, len, 0.2)));
-              W.halo.setMatrixAt(si, tmpM.compose(boltA, tmpQ, tmpS.set(0.62, len, 0.62)));
-            } else {
-              W.bigBolts.setMatrixAt(si, hidden());
-              W.halo.setMatrixAt(si, hidden());
-            }
-            si++;
-            boltA.copy(boltB);
+      const f = CLOUD_F;
+      // Chaque éclat redessine un tracé nouveau ; figé si animations réduites.
+      for (let j = 0; j < BIG_BOLTS; j++) {
+        const cycT = t * 0.75 + s.ph + j * 0.31;
+        const cyc = cycT % 1;
+        const on = calm || cyc < 0.09 || (cyc > 0.14 && cyc < 0.2);
+        const seed = "bolt" + j + ":" + (calm ? 0 : Math.floor(cycT)) + ":" + s.ph;
+        const a0 = j * 2.094 + s.ph * 6.283;
+        const sx = s.x + Math.cos(a0) * 0.9 * f, sz = s.z + Math.sin(a0) * 0.9 * f;
+        const ex = s.x + Math.cos(a0) * 0.25, ez = s.z + Math.sin(a0) * 0.25;
+        const top = s.cloudY - 0.3, fall = top - s.ground;
+        const point = (i, out) => {
+          const u = i / BOLT_SEGS;
+          const amp = i === 0 || i === BOLT_SEGS ? 0 : 0.55 * Math.sin(Math.PI * u) + 0.12;
+          return out.set(
+            sx + (ex - sx) * u + (carteRand(seed + "x" + i) - 0.5) * 2 * amp,
+            top - fall * u,
+            sz + (ez - sz) * u + (carteRand(seed + "z" + i) - 0.5) * 2 * amp,
+          );
+        };
+        point(0, boltA);
+        for (let i = 1; i <= BOLT_SEGS; i++) {
+          point(i, boltB);
+          if (on) {
+            boltD.subVectors(boltB, boltA);
+            const len = boltD.length();
+            tmpQ.setFromUnitVectors(UP, boltD.normalize());
+            W.bigBolts.setMatrixAt(si, tmpM.compose(boltA, tmpQ, tmpS.set(0.2, len, 0.2)));
+            W.halo.setMatrixAt(si, tmpM.compose(boltA, tmpQ, tmpS.set(0.62, len, 0.62)));
+          } else {
+            W.bigBolts.setMatrixAt(si, hidden());
+            W.halo.setMatrixAt(si, hidden());
           }
+          si++;
+          boltA.copy(boltB);
         }
       }
       // Pluie : gouttes qui tombent du nuage jusqu'au sol, en boucle.
-      const n = W.dropsPer(s);
       const fall = Math.max(0.3, s.cloudY - s.ground);
-      for (let j = 0; j < n; j++) {
+      for (let j = 0; j < W.drops; j++) {
         const a = carteRand("r" + j) * 6.283, r = Math.sqrt(carteRand("rr" + j)) * 0.62 * f;
-        const yv = s.cloudY - 0.1 - ((t * (s.big ? 7.5 : 3.6) + carteRand("rp" + j) * fall + s.ph * fall) % fall);
-        W.rain.setMatrixAt(di++, tmpM.compose(tmpP.set(s.x + Math.cos(a) * r, yv, s.z + Math.sin(a) * r), tmpQ.setFromAxisAngle(UP, 0), tmpS.set(0.04, s.big ? 0.5 : 0.3, 0.04)));
+        const yv = s.cloudY - 0.1 - ((t * 7.5 + carteRand("rp" + j) * fall + s.ph * fall) % fall);
+        W.rain.setMatrixAt(di++, tmpM.compose(tmpP.set(s.x + Math.cos(a) * r, yv, s.z + Math.sin(a) * r), tmpQ.setFromAxisAngle(UP, 0), tmpS.set(0.04, 0.5, 0.04)));
       }
     });
-    [W.bolts, W.bigBolts, W.halo, W.rain].forEach((m) => { if (m) m.instanceMatrix.needsUpdate = true; });
+    [W.bigBolts, W.halo, W.rain].forEach((m) => { m.instanceMatrix.needsUpdate = true; });
+  }
+
+  // ---------- Horloge des tâches en retard (#414) ----------
+  // Un réveil rouge flotte au-dessus de la tâche, toujours tourné vers la
+  // caméra : cadran blanc, quatre repères, petite aiguille et trotteuse qui
+  // avance d'un cran chaque seconde. À chaque tic, le réveil bascule
+  // légèrement d'un côté puis de l'autre. Figé si animations réduites.
+  const CLOCK_R = 0.42, CLOCK_RISE = 0.9;
+  const clockYaw = new THREE.Quaternion(), clockTilt = new THREE.Quaternion(), clockPart = new THREE.Quaternion();
+  const clockFace = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+  const clockFwd = new THREE.Vector3(), clockRight = new THREE.Vector3(), clockC = new THREE.Vector3(), clockV = new THREE.Vector3();
+  function buildClocks(list) {
+    S.clocks = null;
+    if (!list.length) return;
+    const all = list.slice(0, 400);
+    const discs = new THREE.InstancedMesh(G.cyl, MAT.clock, all.length * 2);
+    const sticks = new THREE.InstancedMesh(G.box, MAT.clock, all.length * 6);
+    const knobs = new THREE.InstancedMesh(G.ball, MAT.clock, all.length * 4);
+    // Couleurs fixes : boîtier, cadran ; 4 repères, petite aiguille, trotteuse ; 2 cloches, 2 pieds.
+    all.forEach((s, i) => {
+      discs.setColorAt(i * 2, tmpC.set("#d6332a")); discs.setColorAt(i * 2 + 1, tmpC.set("#fbf7ee"));
+      for (let j = 0; j < 6; j++) sticks.setColorAt(i * 6 + j, tmpC.set(j < 5 ? "#2b2b2b" : "#d6332a"));
+      for (let j = 0; j < 4; j++) knobs.setColorAt(i * 4 + j, tmpC.set(j < 2 ? "#e0b44a" : "#2b2b2b"));
+    });
+    [discs, sticks, knobs].forEach((m) => { if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; world.add(m); });
+    S.clocks = { list: all, discs, sticks, knobs };
+    placeClocks(0);
+  }
+  function placeClocks(t0) {
+    const W = S.clocks;
+    if (!W) return;
+    const t = calm ? 0 : t0;
+    W.list.forEach((s, i) => {
+      const k = s.k || 1, R = CLOCK_R * k;
+      // Face tournée vers la caméra (rotation autour de la verticale).
+      const yaw = Math.atan2(camera.position.x - s.x, camera.position.z - s.z);
+      const sec = Math.floor(t + s.ph * 60);
+      const frac = t + s.ph * 60 - sec;
+      // Tic-tac : bascule de ±5° qui s'amortit juste après chaque seconde.
+      const rock = calm ? 0 : (sec % 2 ? 1 : -1) * 0.09 * Math.exp(-frac * 9);
+      clockYaw.setFromAxisAngle(UP, yaw);
+      clockTilt.setFromAxisAngle(clockV.set(0, 0, 1), rock);
+      clockYaw.multiply(clockTilt);
+      clockFwd.set(0, 0, 1).applyQuaternion(clockYaw);
+      clockRight.set(1, 0, 0).applyQuaternion(clockYaw);
+      clockC.set(s.x, s.top + CLOCK_RISE * k + R, s.z);
+      const at = (dx, dy, dz) => tmpP.copy(clockC).addScaledVector(clockRight, dx).addScaledVector(clockV.set(0, 1, 0).applyQuaternion(clockYaw), dy).addScaledVector(clockFwd, dz);
+      // Boîtier puis cadran : deux disques, le cadran un peu devant.
+      clockPart.copy(clockYaw).multiply(clockFace);
+      W.discs.setMatrixAt(i * 2, tmpM.compose(at(0, 0, -0.1 * k), clockPart, tmpS.set(R * 2, 0.2 * k, R * 2)));
+      W.discs.setMatrixAt(i * 2 + 1, tmpM.compose(at(0, 0, 0.1 * k), clockPart, tmpS.set(R * 1.64, 0.02 * k, R * 1.64)));
+      // Repères, aiguilles : boîtes tournées dans le plan du cadran.
+      const stick = (j, angle, from, len, w) => {
+        clockPart.copy(clockYaw).multiply(clockTilt.setFromAxisAngle(clockV.set(0, 0, 1), -angle));
+        const dx = Math.sin(angle) * from, dy = Math.cos(angle) * from;
+        W.sticks.setMatrixAt(i * 6 + j, tmpM.compose(at(dx, dy, 0.13 * k), clockPart, tmpS.set(w, len, 0.02 * k)));
+      };
+      for (let j = 0; j < 4; j++) stick(j, j * Math.PI / 2, R * 0.62, R * 0.18, 0.05 * k);
+      stick(4, s.ph * 6.283, 0, R * 0.45, 0.07 * k);
+      stick(5, (sec % 60) * (Math.PI / 30), 0, R * 0.72, 0.035 * k);
+      // Cloches en haut, pieds en bas.
+      const knob = (j, dx, dy, d) => W.knobs.setMatrixAt(i * 4 + j, tmpM.compose(at(dx, dy - d / 2, 0), clockYaw, tmpS.set(d, d, d)));
+      knob(0, -R * 0.62, R * 0.86, R * 0.55); knob(1, R * 0.62, R * 0.86, R * 0.55);
+      knob(2, -R * 0.55, -R * 0.95, R * 0.25); knob(3, R * 0.55, -R * 0.95, R * 0.25);
+    });
+    [W.discs, W.sticks, W.knobs].forEach((m) => { m.instanceMatrix.needsUpdate = true; });
   }
 
   // ---------- Incendie des tâches urgentes (#385) ----------
@@ -19823,7 +19875,7 @@ function createCarteEngine(THREE, container, opts) {
 
   function animate() {
     const t = S.time;
-    placeStorms(t); placeFires(t);
+    placeStorms(t); placeFires(t); placeClocks(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
     MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow);

@@ -302,10 +302,10 @@ test("#382 : initiales et avatar du responsable", () => {
   assert.ok(!C.carteTaskModel({ ...base, overdue: true, criticality: "urgent" }, "ville", { detail: 0 }).some((p) => p.c === "#ff5a1f"), "pas de brasier dans le modèle");
 });
 
-test("#381/#385 : incendie si urgente, orage si en retard, énorme orage si les deux", () => {
+test("#385/#406/#414 : incendie si urgente, horloge si en retard, gros éclairs si les deux", () => {
   const t = (o) => ({ state: "doing", criticality: "moyen", overdue: false, ...o });
   assert.equal(C.carteHazard(t({ criticality: "urgent" })), "fire");
-  assert.equal(C.carteHazard(t({ overdue: true })), "storm");
+  assert.equal(C.carteHazard(t({ overdue: true })), "clock");
   assert.equal(C.carteHazard(t({ overdue: true, criticality: "urgent" })), "tempest");
   assert.equal(C.carteHazard(t({})), null);
   assert.equal(C.carteHazard(t({ state: "done", criticality: "urgent" })), null);

@@ -315,8 +315,11 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
 - En qualité basse ou avec « réduire les animations », le feu reste visible mais figé, sans
   braises.
 
-## Éclairs, relief, lave et récurrence (#406 à #409)
+## Horloge, éclairs, relief, lave et récurrence (#406 à #409, #414)
 
+- **En retard** (#414) : le petit nuage est remplacé par un réveil rouge qui flotte au-dessus
+  de la tâche, face à la caméra. Sa trotteuse avance d'un cran par seconde et il bascule à
+  chaque tic ; figé si les animations sont réduites.
 - **En retard et urgente** (#406) : le tourbillon est retiré. Un nuage noir se forme très haut
   dans le ciel, et trois gros éclairs en zigzag, entourés d'un halo, tombent jusqu'au pied de la
   tâche sous une pluie dense. Chaque éclat dessine un tracé nouveau. Si les animations sont
