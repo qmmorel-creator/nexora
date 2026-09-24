@@ -1862,6 +1862,15 @@ try {
   await cp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
   await cp.waitForTimeout(1500);
   carte.badges = await cp.$$eval(".lp-carte-badge", (b) => b.length);
+  // #392 : une pastille par dossier ; le survol déroule ses projets.
+  await cp.hover(".lp-carte-badge");
+  await cp.waitForTimeout(300);
+  carte.folderPop = await cp.evaluate(() => ({ open: !!document.querySelector(".lp-carte-folder-pop"), projects: document.querySelectorAll(".lp-carte-folder-proj").length, total: [...document.querySelectorAll(".lp-carte-badge-count")].reduce((n, e) => n + Number(e.textContent || 0), 0) }));
+  await cp.mouse.move(700, 600);
+  await cp.waitForTimeout(500);
+  carte.folderPopClosed = await cp.$$eval(".lp-carte-folder-pop", (e) => e.length);
+  // #399 : aucun nom de projet affiché sans survol du totem.
+  carte.projectLabels = await cp.$$eval(".lp-carte-label--project", (l) => l.filter((x) => x.style.visibility === "visible").length);
   carte.canvas = await cp.$$eval(".lp-carte-gl canvas", (c) => c.length);
   carte.tasksBefore = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
   // Recherche : le territoire « Passerelle quai Nord » est atteint.
@@ -1886,10 +1895,25 @@ try {
   // #374 : avec « Urgentes », les territoires sans tâche urgente sont grisés.
   await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "urgent");
   await cp.waitForTimeout(800);
-  carte.dim = await cp.evaluate(() => ({ dim: document.querySelectorAll(".lp-carte-badge.is-dim").length, all: document.querySelectorAll(".lp-carte-badge").length }));
+  carte.dim = await cp.evaluate(() => ({ dim: Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed), all: 7, pill: !!document.querySelector(".lp-carte-filtered button") }));
+  // #401 : la carte simplifiée (menu « Affichage ») retire les projets écartés.
+  // #400 : plus aucune puce de filtre rapide dans la barre.
+  carte.chips = await cp.$$eval(".lp-carte-toolbar .lp-carte-fchip, .lp-carte-filter", (e) => e.length);
+  const terrOf = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteTerritories));
+  const toggleSimplify = async () => {
+    await cp.click('.lp-carte-toolbar button:has-text("Affichage")');
+    await cp.click('label:has-text("Masquer les dossiers et projets écartés") input');
+    await cp.click('.lp-carte-toolbar button:has-text("Affichage")');
+    await cp.waitForTimeout(1200);
+  };
+  carte.simplify = { before: await terrOf() };
+  await toggleSimplify();
+  carte.simplify.on = await terrOf();
+  await toggleSimplify();
+  carte.simplify.off = await terrOf();
   await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "all");
   await cp.waitForTimeout(800);
-  carte.dimAfter = await cp.$$eval(".lp-carte-badge.is-dim", (b) => b.length);
+  carte.dimAfter = await cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed));
   // #364 : le moteur de filtre général s'ouvre depuis la carte.
   await cp.click('.lp-carte-toolbar button:has-text("Filtres")');
   await cp.waitForTimeout(500);
@@ -1927,9 +1951,6 @@ try {
     await cp.waitForTimeout(2500);
     carte.progressAfter = await progressOf(carte.selected);
   }
-  // Filtre : masquer les tâches terminées.
-  const chip = await cp.$('.lp-carte-fchip:text("Terminées")');
-  if (chip) { await chip.click(); await cp.waitForTimeout(300); carte.chipPressed = await chip.getAttribute("aria-pressed"); }
   // « Ouvrir la fiche » ouvre la fiche Nexora habituelle.
   await cp.click(".lp-carte-detail .lp-btn-primary");
   await cp.waitForTimeout(800);
@@ -1970,31 +1991,6 @@ try {
   carte.volumeOverlaps = await vp.evaluate(labelOverlaps);
   await vp.screenshot({ path: path.join(dir, "carte-volume.png") });
   await vp.close();
-
-  // Styles de la carte (#387) : Archipel d'encre, Néon-Grille et Donjons & Dragons (#390), de près puis
-  // en vue d'ensemble ; le choix se fait dans « Affichage ».
-  carte.styles = {};
-  for (const style of ["estampe", "neon", "dnd"]) {
-    const sp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-    sp.on("pageerror", (e) => pageErrors.push("Carte " + style + " : " + e.message));
-    await sp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
-    await openCarte(sp, "demo", "&style=" + style);
-    await sp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
-    await sp.waitForTimeout(1800);
-    const r = { attr: await sp.getAttribute(".lp-carte-stage", "data-carte-style"), canvas: await sp.$$eval(".lp-carte-gl canvas", (c) => c.length) };
-    await sp.screenshot({ path: path.join(dir, `carte-${style}.png`) });
-    await sp.click('.lp-carte-toolbar button:has-text("Vue d\'ensemble")');
-    await sp.waitForTimeout(2500);
-    r.overlaps = await sp.evaluate(labelOverlaps);
-    await sp.screenshot({ path: path.join(dir, `carte-${style}-ensemble.png`) });
-    // Retour au style Classique depuis le menu « Affichage ».
-    await sp.click('.lp-carte-toolbar button:has-text("Affichage")');
-    await sp.click('.lp-carte-style-opt.is-classique');
-    await sp.waitForTimeout(800);
-    r.back = await sp.getAttribute(".lp-carte-stage", "data-carte-style");
-    carte.styles[style] = r;
-    await sp.close();
-  }
 
   // Sans WebGL : liste de repli, fiches accessibles.
   const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -3109,7 +3105,11 @@ if (!orgMetro.error) {
 expect(!carte.error, `Carte : scénario en échec (${carte.error})`);
 if (!carte.error) {
   expect(carte.canvas === 1, `Carte : ${carte.canvas} canevas 3D (1 attendu)`);
-  expect(carte.badges === 7, `Carte : ${carte.badges} territoires dans le ruban (7 projets attendus)`);
+  expect(carte.badges >= 1 && carte.badges < 7, `Carte : ${carte.badges} pastilles dans le ruban (une par dossier attendue, moins que les 7 projets)`);
+  expect(carte.folderPop && carte.folderPop.open && carte.folderPop.projects >= 1 && carte.folderPop.total === 7, `Carte : le survol d'une pastille de dossier ne déroule pas ses projets (${JSON.stringify(carte.folderPop)})`);
+  expect(carte.folderPopClosed === 0, "Carte : le menu du dossier reste ouvert après le survol");
+  expect(carte.simplify && carte.simplify.on >= 1 && carte.simplify.on < carte.simplify.before && carte.simplify.off === carte.simplify.before, `Carte : la carte simplifiée ne retire pas les projets écartés (${JSON.stringify(carte.simplify)})`);
+  expect(carte.projectLabels === 0, `Carte : ${carte.projectLabels} nom(s) de projet affiché(s) sans survol du totem`);
   expect(carte.suggestions.some((t) => /Passerelle/.test(t)), `Carte : la recherche « Passerelle » ne propose pas le projet (${JSON.stringify(carte.suggestions)})`);
   expect(carte.territory === "banc-p4", `Carte : la recherche ne mène pas au territoire « Passerelle quai Nord » (${carte.territory})`);
   expect(carte.panelPick && carte.panelSelected.indexOf(carte.panelPick.replace(/^◆ /, "")) !== -1, `Carte : choisir « ${carte.panelPick} » dans le panneau n'ouvre pas son détail (« ${carte.panelSelected} »)`);
@@ -3120,12 +3120,12 @@ if (!carte.error) {
   expect(carte.slider && carte.progressAfter !== null && Math.abs(carte.progressAfter - carte.progressBefore) === 20, `Carte : régler l'avancement dans le volet n'est pas enregistré (${carte.progressBefore} → ${carte.progressAfter})`);
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
-  expect(carte.chipPressed === "false", "Carte : le filtre « Terminées » ne se désactive pas");
+  expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
   expect(carte.panel.projects >= 2 && carte.panel.tasks >= 1 && /Chantiers/.test(carte.panel.kicker), `Carte : le panneau ne liste pas la région Chantiers et ses tâches (${JSON.stringify(carte.panel)})`);
-  expect(carte.panel.done >= 1, `Carte : les tâches terminées n'apparaissent pas, alors que le filtre « Terminées » de la carte est actif (${JSON.stringify(carte.panel)})`);
-  expect(carte.dim.dim >= 1 && carte.dim.dim < carte.dim.all && carte.dimAfter === 0, `Carte : grisage des territoires écartés par les filtres incorrect (${JSON.stringify(carte.dim)}, après retour : ${carte.dimAfter})`);
+  expect(carte.panel.done >= 1, `Carte : les tâches terminées n'apparaissent pas, alors qu'elles sont visibles par défaut (${JSON.stringify(carte.panel)})`);
+  expect(carte.dim.dim >= 1 && carte.dim.dim < carte.dim.all && carte.dim.pill && carte.dimAfter === 0, `Carte : grisage des territoires écartés par les filtres incorrect (${JSON.stringify(carte.dim)}, après retour : ${carte.dimAfter})`);
   expect(!carte.iconLeak, "Carte : un identifiant d'icône (iconify:, tabler:) s'affiche en texte");
   expect(carte.filterModal, "Carte : le bouton « Filtres » n'ouvre pas le moteur de filtre général");
   expect(carte.mobile.panelHidden, "Carte mobile : le panneau de droite devrait rester replié par défaut");
@@ -3133,12 +3133,6 @@ if (!carte.error) {
   expect(/basse/.test(carte.volumeQuality), `Carte volume : qualité « ${carte.volumeQuality} », basse attendue pour 12 000 tâches`);
   expect(carte.volumeMs < 60000, `Carte volume : ${carte.volumeMs} ms avant l'affichage (60 s maximum sur rendu logiciel)`);
   expect(carte.volumeOverlaps.n === 0, `Carte volume : ${carte.volumeOverlaps.n} libellé(s) superposé(s)`);
-  ["estampe", "neon", "dnd"].forEach((st) => {
-    const r = carte.styles && carte.styles[st];
-    expect(r && r.attr === st && r.canvas === 1, `Carte style ${st} : non appliqué (${JSON.stringify(r)})`);
-    expect(r && r.overlaps.n === 0, `Carte style ${st} : ${r && r.overlaps.n} libellé(s) superposé(s)`);
-    expect(r && r.back === "classique", `Carte style ${st} : le menu Affichage ne ramène pas au style Classique (${r && r.back})`);
-  });
   expect(carte.fallbackProjects === 7, `Carte sans WebGL : ${carte.fallbackProjects} territoire(s) listé(s), 7 attendus`);
   expect(carte.fallbackModal >= 1, "Carte sans WebGL : la liste de repli n'ouvre pas la fiche");
 }

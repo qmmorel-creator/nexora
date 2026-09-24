@@ -210,11 +210,13 @@ test("ordre des libellés : sélection, retard, urgence, puis échéance", () =>
 
 test("préférences et qualité automatique", () => {
   const d = C.normalizeCosmosViewPrefs(null);
-  assert.deepEqual(d.states, ["todo", "waiting", "doing", "done", "info"]);
   assert.equal(d.animate, true);
   assert.equal(d.quality, "auto");
-  const v = C.normalizeCosmosViewPrefs({ states: ["nope"], crit: "x", quality: "ultra", animate: false, filter: [] });
-  assert.equal(v.states.length, 5);
+  assert.equal(d.crit, "all");
+  // Comme la Carte (#400) : plus de puces d'état ; d'anciennes valeurs sont ignorées.
+  const v = C.normalizeCosmosViewPrefs({ states: ["todo"], late: true, crit: "x", quality: "ultra", animate: false, filter: [] });
+  assert.equal(v.states, undefined);
+  assert.equal(v.late, undefined);
   assert.equal(v.crit, "all");
   assert.equal(v.quality, "auto");
   assert.equal(v.animate, false);

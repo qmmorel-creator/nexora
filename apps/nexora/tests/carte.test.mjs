@@ -24,8 +24,8 @@ const C = vm.runInThisContext(
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteDueAltitude, carteDueGround, carteInitials, carteAvatarAnchor, carteHazard,
-    CARTE_STYLES, CARTE_STYLE_BY_ID, carteLook, carteStyleTileColors, carteNeonColor,
-    CARTE_DND_LIEUX, CARTE_DND_BY_ID, CARTE_DND_FROM_THEME, carteDndLieux, normalizeCarteLieux,
+    carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
+    carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
   };\n})`
 )();
 
@@ -178,13 +178,13 @@ test("#376 : la construction d'une tâche en cours monte de façon continue avec
 
 test("filtres de la vue et préférences normalisées", () => {
   const t = { state: "done", criticality: "urgent", overdue: false, oldDone: true };
-  assert.equal(C.carteMatches(t, { states: ["done"] }), true, "#372 : terminée visible par défaut, même ancienne");
-  assert.equal(C.carteMatches(t, { states: ["done"], hideOldDone: true }), false, "masquée seulement sur demande");
-  assert.equal(C.carteMatches(t, { states: ["done"], crit: "urgent" }), true);
-  assert.equal(C.carteMatches(t, { states: ["todo"] }), false);
+  assert.equal(C.carteMatches(t, {}), true, "#372 : terminée visible par défaut, même ancienne");
+  assert.equal(C.carteMatches(t, { hideOldDone: true }), false, "masquée seulement sur demande");
+  assert.equal(C.carteMatches(t, { crit: "urgent" }), true);
+  assert.equal(C.carteMatches(t, { crit: "moyen" }), false);
+  assert.equal(C.carteMatches(t, { states: ["todo"], late: true }), true, "#400 : les puces d'état et « En retard » n'existent plus");
   assert.equal(C.normalizeCarteViewPrefs({}).hideOldDone, false);
-  const p = C.normalizeCarteViewPrefs({ states: ["x"], crit: "nope", quality: "ultra", folderThemes: { f1: "volcan", f2: "inconnu" } });
-  assert.deepEqual(p.states, ["todo", "waiting", "doing", "done", "info"]);
+  const p = C.normalizeCarteViewPrefs({ crit: "nope", quality: "ultra", folderThemes: { f1: "volcan", f2: "inconnu" } });
   assert.equal(p.crit, "all"); assert.equal(p.quality, "auto");
   assert.deepEqual(p.folderThemes, { f1: "volcan" });
 });
@@ -229,7 +229,18 @@ test("#380 : la hauteur construite est proportionnelle au pourcentage d'avanceme
   const built = (pr) => C.carteTaskModel({ ...base, progress: pr }, "ville", { detail: 0, plinth: false }).filter((p) => p.c !== "#c9a060").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
   const full = C.carteTaskModel({ ...base, state: "done" }, "ville", { detail: 0, plinth: false }).reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
   [25, 50, 75].forEach((pr) => assert.ok(Math.abs(built(pr) / full - pr / 100) < 0.06, `${pr} % : ${(built(pr) / full * 100).toFixed(0)} % de la hauteur finale`));
-  assert.ok(full >= 1.4, `bâtiment terminé agrandi (${full.toFixed(2)})`);
+  assert.ok(full >= 3, `bâtiment terminé nettement agrandi (${full.toFixed(2)})`);
+});
+
+test("#395 : l'amplitude de construction est forte dans tous les thèmes", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
+  const top = (parts) => parts.filter((p) => p.m !== "t" && p.m !== "h").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  C.CARTE_THEMES.forEach((th) => {
+    const full = top(C.carteTaskModel({ ...base, state: "done" }, th.id, { detail: 0 }));
+    const quarter = top(C.carteTaskModel({ ...base, progress: 25 }, th.id, { detail: 0 }).filter((p) => p.c !== "#c9a060"));
+    assert.ok(full >= 3, `${th.id} : terminé à ${full.toFixed(2)}`);
+    assert.ok(full - quarter >= 2, `${th.id} : écart 25 % → 100 % de ${(full - quarter).toFixed(2)}`);
+  });
 });
 
 test("#383 : l'altitude du sol suit la date de fin ; la mer pour le retard, l'imminent et le terminé", () => {
@@ -287,131 +298,85 @@ test("#381/#385 : incendie si urgente, orage si en retard, énorme orage si les 
   assert.equal(C.carteHazard(t({ state: "info", criticality: "urgent" })), null);
 });
 
-// Styles de carte (#387) : Archipel d'encre et Néon-Grille, distincts du thème
-// de dossier « cyberpunk » (#384) qui reste intact.
-test("styles de carte : Classique par défaut, deux styles, thèmes inchangés", () => {
-  assert.deepEqual(C.CARTE_STYLES.map((s) => s.id), ["classique", "estampe", "neon", "dnd"]);
-  assert.equal(C.normalizeCarteViewPrefs({}).style, "classique");
-  assert.equal(C.normalizeCarteViewPrefs({ style: "estampe" }).style, "estampe");
-  assert.equal(C.normalizeCarteViewPrefs({ style: "cyberpunk" }).style, "classique", "un thème n'est pas un style");
-  C.CARTE_STYLES.forEach((s) => assert.ok(!C.CARTE_THEME_BY_ID[s.id], "aucun identifiant partagé avec un thème : " + s.id));
-  assert.ok(C.CARTE_THEME_BY_ID.cyberpunk, "le thème Cyberpunk de dossier reste disponible");
-  assert.equal(C.CARTE_THEMES.length, 15);
+// Un seul style de carte, Classique (#404).
+test("#404 : un seul style, Classique ; d'anciennes préférences de style sont ignorées", () => {
+  const p = C.normalizeCarteViewPrefs({ style: "dnd", folderLieux: { f1: "cite" }, states: ["todo"], late: true });
+  ["style", "folderLieux", "states", "late"].forEach((k) => assert.ok(!(k in p), k + " n'est plus une préférence"));
+  assert.equal(C.carteLook("ville").label, "Ville");
+  assert.equal(C.carteLook("inconnu").label, C.CARTE_THEMES[0].label);
+  const base = { id: "x", state: "doing", kind: "task", progress: 40, duration: 5, criticality: null, overdue: false, soon: false, future: false, assignee: null, checklistTotal: 0, checklistDone: 0, recurring: false, attachments: 0, hasReport: false, fromEmail: false, stale: false, startTime: null, secondaryProjectId: null };
+  assert.deepEqual(C.carteTaskModel(base, "ville", { style: "dnd", lieu: "arene" }), C.carteTaskModel(base, "ville", {}), "un ancien style ne change rien au modèle");
 });
 
-test("styles de carte : la disposition ne bouge pas, seul l'habillage change", () => {
-  const w = world(12, 200);
-  const L = build(w);
-  const look = C.carteLook("estampe", "ville");
-  assert.equal(look.label, "Archipel d'encre");
-  assert.equal(look.hub.length, 6);
-  assert.equal(C.carteLook("classique", "ville").label, "Ville");
-  assert.equal(C.carteLook("neon", "mer").hub[5], "Mégatour");
-  const leg = C.carteLegend("ville", "neon");
-  assert.equal(leg.lines.length, 11);
-  assert.equal(leg.signals.length, 4);
-  assert.match(leg.lines.find(([k]) => k === "Jalon")[1], /Flèche/);
-  assert.match(C.carteLegend("ville").signals[0][1], /Incendie/, "légende classique : incendie des urgentes (#385)");
-  // Les tuiles de mer passent sous la nappe du style ; la terre garde ses couleurs.
-  Object.values(L.tiles).slice(0, 400).forEach((t) => {
-    ["estampe", "neon"].forEach((st) => {
-      const c = C.carteStyleTileColors(st, t, "#336699");
-      assert.match(c.top, /^#[0-9a-f]{6}$/i); assert.match(c.side, /^#[0-9a-f]{6}$/i);
-      assert.equal(!!c.sea, t.kind === "sea");
-    });
-    assert.equal(C.carteStyleTileColors("classique", t), null);
-  });
-  assert.equal(C.carteNeonColor("f1"), C.carteNeonColor("f1"), "néon stable par dossier");
+test("#395 : colonne de totem aux couleurs du projet, hauteur demandée", () => {
+  const c = C.carteTotemColumn(3.2, "#e07a3f", "#9a9488");
+  assert.equal(c.h, 3.2);
+  assert.ok(Math.abs(Math.max(...c.parts.map((p) => p.p[1] + p.s[1])) - 3.2) < 1e-9, "sommet de la colonne à la hauteur demandée");
+  assert.ok(c.parts.some((p) => p.c === "#e07a3f"), "cerclée de la couleur du projet");
+  assert.deepEqual(C.carteTotemColumn(-1, "#e07a3f"), { parts: [], h: 0 }, "pas de colonne si le cœur est déjà assez haut");
+  assert.ok(C.CARTE_TOTEM_MARGIN >= 1, "le totem dépasse nettement la plus haute tâche");
 });
 
-test("styles de carte : chaque état, type et indice a un modèle valide", () => {
-  const geos = new Set(["box", "cyl", "hex", "cone", "pyr", "ball", "dome"]);
-  const valid = (parts, label) => {
-    assert.ok(parts.length > 0, label);
-    parts.forEach((p) => {
-      assert.ok(geos.has(p.g), label + " : géométrie " + p.g);
-      assert.ok(["l", "g", "t", "s", "h"].includes(p.m), label + " : matériau " + p.m);
-      assert.match(p.c, /^#[0-9a-f]{6}$/i, label + " : couleur " + p.c);
-      p.p.concat(p.s, [p.r]).forEach((v) => assert.ok(Number.isFinite(v), label + " : nombre"));
-    });
+test("#398 : le bonhomme du responsable, à tous les niveaux de détail, masquable dans les options", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes, teamMembers: [{ name: "Léo", color: "#123456" }] }, [{ id: "x", projectId: "p", statusId: "s3", assignee: "Léo" }], { now: NOW }).tasks[0];
+  C.CARTE_THEMES.forEach((th) => [0, 1, 2].forEach((detail) => {
+    const parts = C.carteTaskModel(base, th.id, { detail });
+    assert.ok(parts.some((p) => p.c === "#123456"), `${th.id}, détail ${detail} : pas de bonhomme`);
+    assert.ok(Math.max(...parts.map((p) => (p.p[0] < -0.3 ? p.p[1] + p.s[1] : 0))) >= 0.85, `${th.id}, détail ${detail} : bonhomme trop petit`);
+    assert.ok(!C.carteTaskModel(base, th.id, { detail, people: false }).some((p) => p.c === "#123456"), `${th.id} : bonhomme masqué sur demande`);
+  }));
+  assert.ok(!C.carteTaskModel({ ...base, assignee: null, assigneeColor: null }, "ville", { detail: 2 }).some((p) => p.c === "#123456"), "pas de bonhomme sans responsable");
+  assert.equal(C.normalizeCarteViewPrefs({}).people, true);
+  assert.equal(C.normalizeCarteViewPrefs({ people: false }).people, false);
+});
+
+test("#392 : une pastille par dossier, avancement cumulé, projets sans dossier en dernier", () => {
+  const ctx = {
+    projectFolders: [{ id: "f1", name: "Chantiers", color: "#112233" }, { id: "f2", name: "Perso" }],
+    projects: [{ id: "a", folderId: "f1", color: "#aa0000" }, { id: "b", folderId: "f1" }, { id: "c" }, { id: "d", folderId: "f2", color: "#00aa00" }],
+    statuses, taskTypes,
   };
-  const base = { id: "x", state: "todo", kind: "task", progress: 0, duration: 5, criticality: null, overdue: false, soon: false, future: false, assignee: null, checklistTotal: 0, checklistDone: 0, recurring: false, attachments: 0, hasReport: false, fromEmail: false, stale: false, startTime: null, secondaryProjectId: null };
-  ["estampe", "neon"].forEach((st) => {
-    ["todo", "waiting", "doing", "done", "info"].forEach((state) => ["task", "meeting", "planning", "milestone"].forEach((kind) => [0, 40, 100].forEach((progress) => {
-      valid(C.carteTaskModel({ ...base, state, kind, progress }, "ville", { style: st }), `${st} ${state} ${kind} ${progress}`);
-    })));
-    const full = { ...base, state: "doing", progress: 60, criticality: "urgent", overdue: true, future: true, assignee: "Léo", checklistTotal: 3, checklistDone: 1, recurring: true, attachments: 2, hasReport: true, fromEmail: true, stale: true, startTime: "09:00", secondaryProjectId: "p2", recentDone: true };
-    const rich = C.carteTaskModel(full, "ville", { style: st, secondaryColor: "#2a9d8f" });
-    valid(rich, st + " tous indices");
-    assert.ok(rich.length > C.carteTaskModel({ ...base, state: "doing", progress: 60 }, "ville", { style: st }).length, st + " : les indices ajoutent des pièces");
-    assert.ok(C.carteTaskModel({ ...base, state: "done" }, "ville", { style: st, detail: 0 }).length > 0);
-    for (let stage = 0; stage <= 5; stage++) valid(C.carteHubModel("ville", stage, "#e07a3f", stage === 5 ? "high" : "normal", st), `${st} cœur ${stage}`);
-    const L = build(world(8, 60));
-    Object.values(L.tiles).slice(0, 300).forEach((t) => C.carteDecorModel(t, C.CARTE_THEMES[0].pal, "ville", st).forEach((p) => assert.ok(geos.has(p.g))));
-  });
-  // Archipel : la pagode gagne un toit par palier d'avancement.
-  const roofs = (progress) => C.carteTaskModel({ ...base, state: "doing", progress }, "ville", { style: "estampe", plinth: false }).filter((p) => p.g === "pyr").length;
-  assert.deepEqual([0, 20, 40, 60, 80].map(roofs), [1, 2, 3, 4, 5]);
-  // Classique inchangé quand aucun style n'est demandé.
-  assert.deepEqual(C.carteTaskModel({ ...base, state: "done" }, "ville", {}), C.carteTaskModel({ ...base, state: "done" }, "ville", { style: "classique" }));
+  const norm = C.carteNormalize(ctx, [
+    { id: "1", projectId: "a", statusId: "s5" }, { id: "2", projectId: "a", statusId: "s3" },
+    { id: "3", projectId: "b", statusId: "s5" }, { id: "4", projectId: "c", statusId: "s3" }, { id: "5", projectId: "d", statusId: "s1" },
+  ], { now: NOW });
+  const layout = C.carteBuild({ projects: norm.projects, tasks: norm.tasks });
+  const by = {};
+  norm.tasks.forEach((t) => { (by[t.projectId] = by[t.projectId] || []).push(t); });
+  const stats = {};
+  layout.territories.forEach((tr) => { stats[tr.projectId] = C.carteTerritoryStats(by[tr.projectId] || []); });
+  const groups = C.carteFolderGroups(layout, stats, ctx.projectFolders);
+  assert.deepEqual(groups.map((g) => g.name), ["Chantiers", "Perso", "Sans dossier"]);
+  const f1 = groups[0];
+  assert.deepEqual(f1.projects.slice().sort(), ["a", "b"]);
+  assert.equal(f1.pct, 67, "2 terminées sur 3");
+  assert.equal(f1.color, "#112233", "couleur du dossier");
+  assert.equal(groups[1].color, "#00aa00", "à défaut, couleur du premier projet");
+  assert.equal(groups[2].id, C.CARTE_NO_FOLDER);
 });
 
-// Style Donjons & Dragons (#390) : un lieu par dossier, dalles carrées.
-test("style D&D : cinq lieux, un par dossier, réglables", () => {
-  assert.deepEqual(C.CARTE_DND_LIEUX.map((l) => l.id), ["donjon", "arene", "cite", "foret", "forge"]);
-  C.CARTE_DND_LIEUX.forEach((l) => { assert.equal(l.hub.length, 6, l.id); assert.ok(l.lg.todo && l.lg.done, l.id); });
-  C.CARTE_THEMES.forEach((t) => assert.ok(C.CARTE_DND_BY_ID[C.CARTE_DND_FROM_THEME[t.id]], "lieu automatique pour " + t.id));
-  const L = build(world(12, 200));
-  const auto = C.carteDndLieux(L);
-  L.territories.forEach((tr) => {
-    assert.ok(C.CARTE_DND_BY_ID[auto[tr.projectId]], tr.projectId);
-    const g = L.projectById[tr.projectId].group;
-    L.territories.filter((o) => L.projectById[o.projectId].group === g).forEach((o) => assert.equal(auto[o.projectId], auto[tr.projectId], "un seul lieu par dossier"));
-  });
-  const first = L.territories[0], key = L.projectById[first.projectId].group || "folder-a-trier";
-  const forced = C.carteDndLieux(L, { [key]: "arene" });
-  assert.equal(forced[first.projectId], "arene");
-  assert.deepEqual(C.normalizeCarteLieux({ a: "forge", b: "atlantide", c: 3 }), { a: "forge" });
-  assert.deepEqual(C.normalizeCarteViewPrefs({ style: "dnd", folderLieux: { f1: "cite", f2: "?" } }).folderLieux, { f1: "cite" });
-  assert.equal(C.normalizeCarteViewPrefs({ style: "dnd" }).style, "dnd");
-  // Libellés et légende suivent le lieu.
-  assert.match(C.carteLook("dnd", "ville", "forge").label, /Forge naine/);
-  assert.match(C.carteLook("dnd", "ville").label, /Cité/, "sans réglage, le thème Ville donne la cité");
-  const leg = C.carteLegend("ville", "dnd", "donjon");
-  assert.equal(leg.lines.length, 11); assert.equal(leg.signals.length, 4);
-  // Tuiles : gouffre pour la mer, lieu transmis au moteur.
-  Object.values(L.tiles).slice(0, 400).forEach((t) => {
-    const c = C.carteStyleTileColors("dnd", t, "#336699", "foret");
-    assert.match(c.top, /^#[0-9a-f]{6}$/i); assert.match(c.side, /^#[0-9a-f]{6}$/i);
-    assert.equal(!!c.sea, t.kind === "sea");
-    if (!c.water) assert.equal(c.lieu, "foret");
-  });
+test("#400 : « Masquer les terminées depuis 30 jours » vaut aussi sans date de complétion", () => {
+  const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [
+    { id: "old", projectId: "p", statusId: "s5", end: "2026-07-01" },
+    { id: "recent", projectId: "p", statusId: "s5", end: "2026-09-20" },
+    { id: "stamped", projectId: "p", statusId: "s5", end: "2026-07-01", completedAt: "2026-09-20T10:00:00" },
+  ], { now: NOW }).tasks;
+  const by = Object.fromEntries(n.map((t) => [t.id, t]));
+  assert.equal(by.old.oldDone, true);
+  assert.equal(by.recent.oldDone, false);
+  assert.equal(by.stamped.oldDone, false, "la date de complétion prime");
+  assert.equal(C.carteMatches(by.old, { hideOldDone: true }), false);
 });
 
-test("style D&D : chaque lieu, état et indice a un modèle valide", () => {
-  const geos = new Set(["box", "cyl", "hex", "cone", "pyr", "ball", "dome"]);
-  const valid = (parts, label) => {
-    assert.ok(parts.length > 0, label);
-    parts.forEach((p) => {
-      assert.ok(geos.has(p.g), label + " : géométrie " + p.g);
-      assert.ok(["l", "g", "t", "s", "h"].includes(p.m), label + " : matériau " + p.m);
-      assert.match(p.c, /^#[0-9a-f]{6}$/i, label + " : couleur " + p.c);
-      p.p.concat(p.s, [p.r]).forEach((v) => assert.ok(Number.isFinite(v), label + " : nombre"));
-    });
-  };
-  const base = { id: "x", state: "todo", kind: "task", progress: 0, duration: 5, criticality: null, overdue: false, soon: false, future: false, assignee: null, checklistTotal: 0, checklistDone: 0, recurring: false, attachments: 0, hasReport: false, fromEmail: false, stale: false, startTime: null, secondaryProjectId: null };
-  const full = { ...base, state: "doing", progress: 60, criticality: "urgent", overdue: true, soon: true, future: true, assignee: "Léo", checklistTotal: 3, checklistDone: 1, recurring: true, attachments: 2, hasReport: true, fromEmail: true, stale: true, startTime: "09:00", secondaryProjectId: "p2" };
-  const L = build(world(8, 60));
-  C.CARTE_DND_LIEUX.forEach(({ id: lieu }) => {
-    ["todo", "waiting", "doing", "done", "info"].forEach((state) => ["task", "meeting", "planning", "milestone"].forEach((kind) => [0, 40, 100].forEach((progress) => {
-      valid(C.carteTaskModel({ ...base, state, kind, progress }, "ville", { style: "dnd", lieu }), `${lieu} ${state} ${kind} ${progress}`);
-    })));
-    const rich = C.carteTaskModel(full, "ville", { style: "dnd", lieu, secondaryColor: "#2a9d8f" });
-    valid(rich, lieu + " tous indices");
-    assert.ok(rich.length > C.carteTaskModel({ ...base, state: "doing", progress: 60 }, "ville", { style: "dnd", lieu }).length, lieu + " : les indices ajoutent des pièces");
-    for (let stage = 0; stage <= 5; stage++) valid(C.carteHubModel("ville", stage, "#e07a3f", "normal", "dnd", lieu), `${lieu} cœur ${stage}`);
-    Object.values(L.tiles).slice(0, 300).forEach((t) => C.carteDecorModel(t, C.CARTE_THEMES[0].pal, "ville", "dnd", lieu).forEach((p) => { assert.ok(geos.has(p.g)); assert.match(p.c, /^#[0-9a-f]{6}$/i); }));
-  });
-  // Le modèle est stable (pas d'aléa hors hachage).
-  assert.deepEqual(C.carteTaskModel(full, "ville", { style: "dnd", lieu: "arene" }), C.carteTaskModel(full, "ville", { style: "dnd", lieu: "arene" }));
+test("#400 : les filtres propres à la vue se comptent et se remettent à zéro", () => {
+  const cfg = C.normalizeCarteViewPrefs({ states: ["todo"], crit: "urgent", late: true });
+  assert.equal(C.carteViewFilterCount(cfg), 1, "seule la criticité reste un filtre propre à la vue");
+  assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...cfg, ...C.carteViewFilterReset() })), 0);
+  assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({})), 0);
+});
+
+test("#401 : la carte simplifiée est une préférence de la vue, désactivée par défaut", () => {
+  assert.equal(C.normalizeCarteViewPrefs({}).simplify, false);
+  assert.equal(C.normalizeCarteViewPrefs({ simplify: true }).simplify, true);
+  assert.equal(C.normalizeCarteViewPrefs(C.carteViewFilterReset()).simplify, false, "« Tout afficher » ne force pas le mode");
 });
