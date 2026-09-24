@@ -332,7 +332,9 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
   s'y pose.
 - **Récurrence** (#409) : le mécanisme qui tournait (moulin, roue, éolienne) et la ligne
   « Récurrente » de la légende sont retirés. La récurrence reste visible dans la fiche.
-- **Jalon** (#416) : dans tous les thèmes, un même pylône clair à la pointe lumineuse, d'où
-  monte un faisceau de lumière dorée jusqu'au ciel. Le faisceau respire lentement et brille
-  davantage quand le jalon est terminé. Il remplace les silhouettes propres à chaque thème
-  (phare, obélisque, arche…).
+- **Jalon** (#416, remplacé par #419) : le faisceau de lumière prenait trop de place en
+  hauteur. Un jalon est désormais une **borne milliaire**, la même dans tous les thèmes : socle,
+  fût de pierre clair, tête arrondie à la couleur du **type de jalon** de Nexora, surmontée
+  d'une pierre qui rappelle son symbole (losange, disque, carré, triangle, étoile…). Une fois
+  le jalon terminé, une couronne de laurier dorée entoure la tête et la pierre s'illumine. La
+  borne reste basse (environ un tiers d'un bâtiment achevé).

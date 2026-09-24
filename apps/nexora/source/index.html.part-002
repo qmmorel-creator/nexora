@@ -5038,6 +5038,10 @@ function carteNormalize(ctx, tasks, opts) {
   const typeById = {}; (ctx.taskTypes || []).forEach((t) => { typeById[t.id] = t; });
   const folderById = {}; (ctx.projectFolders || []).forEach((f) => { folderById[f.id] = f; });
   const memberColor = {}; (ctx.teamMembers || []).forEach((m) => { if (m && m.name) memberColor[m.name] = m.color || null; });
+  // Types de jalons (#419) : un identifiant inconnu retombe sur le premier
+  // type du catalogue, comme dans le reste de Nexora.
+  const mTypes = (ctx.milestoneTypes || []).filter((m) => m && m.id);
+  const mTypeOf = (id) => mTypes.find((m) => m.id === id) || mTypes[0] || null;
   const projects = (ctx.projects || []).filter((p) => p && p.id != null).map((p, index) => {
     const folder = p.folderId && folderById[p.folderId];
     const isolated = !p.folderId || p.folderId === CARTE_UNSORTED_FOLDER || !folder;
@@ -5062,6 +5066,8 @@ function carteNormalize(ctx, tasks, opts) {
       id: t.id, title: t.title || "Tâche sans titre",
       projectId: projectIds.has(t.projectId) ? t.projectId : null,
       state, kind: carteKindOf(t, typeById), milestone: !!t.milestone,
+      milestoneColor: t.milestone ? (mTypeOf(t.milestoneTypeId) || {}).color || CARTE_MILESTONE_COLOR : null,
+      milestoneSymbol: t.milestone ? (mTypeOf(t.milestoneTypeId) || {}).symbol || "diamond" : null,
       statusName: st ? st.name : "Sans statut", statusColor: st && st.color ? st.color : "#94A3B8",
       typeName: ty ? ty.name : "Sans type", typeColor: ty && ty.color ? ty.color : "#94A3B8",
       criticality: carteCriticality(t, statusById),
@@ -5418,8 +5424,6 @@ function carteSled(wood, load) { return [cP("box", wood, 0, 0.05, 0, 0.34, 0.06,
 function carteBoat(c) { return [cP("box", c, 0, 0.02, 0, 0.3, 0.12, 0.66), cP("pyr", c, 0, 0.02, 0.36, 0.3, 0.12, 0.14, Math.PI / 4)]; }
 
 // Silhouette complète d'une tâche selon le type, dans un thème.
-// Couleur du faisceau des jalons (#416).
-const CARTE_BEAM = "#ffd86b";
 function carteSilhouette(themeId, kind, pal) {
   const w = pal.wall, rf = pal.roof, st = pal.stone, wd = pal.wood, ac = pal.accent;
   const M = {
@@ -5443,9 +5447,6 @@ function carteSilhouette(themeId, kind, pal) {
     volcan: { task: () => [cP("hex", w, 0, 0, 0, 0.5, 0.5, 0.5), cP("hex", rf, 0, 0.5, 0, 0.56, 0.06, 0.56), cP("box", "#ff9a3a", 0, 0.18, 0.24, 0.14, 0.14, 0.02, 0, "g")], meeting: () => [cP("cyl", st, 0, 0, 0, 0.9, 0.1, 0.9), cP("cyl", "#ff7a2a", 0, 0.1, 0, 0.3, 0.02, 0.3, 0, "g")], planning: () => [cP("box", st, 0, 0, 0, 0.4, 0.3, 0.3), cP("cyl", "#e8e0d0", 0.08, 0.3, 0, 0.1, 0.1, 0.1)] },
     ile: { task: () => carteStilts(wd, 0.2).concat([cP("box", w, 0, 0, 0, 0.46, 0.3, 0.4), cP("pyr", rf, 0, 0.3, 0, 0.62, 0.3, 0.56, Math.PI / 4)]), meeting: () => carteHall(wd, rf), planning: () => [cP("cyl", "#f2c4b0", 0, 0, 0, 0.5, 0.08, 0.5), cP("pyr", "#f2c4b0", 0, 0.08, 0, 0.08, 0.4, 0.24)] },
   };
-  // Jalon (#416) : un même pylône dans tous les thèmes ; le moteur fait
-  // monter au-dessus un faisceau de lumière jusqu'au ciel.
-  if (kind === "milestone") return [cP("hex", st, 0, 0, 0, 0.62, 0.14, 0.62), cP("box", carteMix(st, "#ffffff", 0.25), 0, 0.14, 0, 0.24, 0.8, 0.24), cP("pyr", CARTE_BEAM, 0, 0.94, 0, 0.3, 0.22, 0.3, Math.PI / 4, "g")];
   const th = M[themeId] || M.ville;
   return (th[kind] || th.task)();
 }
@@ -5556,7 +5557,10 @@ function carteTaskModel(task, themeId, opts) {
   let parts = [];
   const sil = carteSilhouette(themeId, task.kind, pal);
   const topOf = (list) => list.reduce((m, p) => Math.max(m, p.p[1] + (p.m === "s" ? 0.5 : p.s[1])), 0);
-  if (task.state === "info") {
+  if (task.kind === "milestone" && task.state !== "info") {
+    // Jalon (#419) : une borne milliaire, la même dans tous les thèmes.
+    parts = carteMilestoneStone(task);
+  } else if (task.state === "info") {
     parts = carteStageProp(themeId, "info", pal);
   } else if (task.state === "todo" && !(task.progress > 0)) {
     // Empreinte au sol de la silhouette + repère du thème. Une tâche « À
@@ -5643,6 +5647,41 @@ function carteTaskModel(task, themeId, opts) {
   return parts;
 }
 
+// Borne milliaire des jalons (#419) : socle, fût de pierre clair et tête
+// arrondie à la couleur du type de jalon, surmontée d'une pierre qui rappelle
+// son symbole (losange, disque, carré, triangle, étoile…). Basse (~1,5) : elle
+// ne rivalise pas avec les bâtiments. Terminé : couronne de laurier dorée
+// autour de la tête et pierre lumineuse.
+const CARTE_MILESTONE_COLOR = "#4F6AF5";
+const CARTE_MILESTONE_SCALE = 1.35;
+const CARTE_MILESTONE_GEMS = {
+  diamond: ["pyr", 0.8], "diamond-ring": ["pyr", 0.8], star4: ["pyr", 0.8], star5: ["cone", 0],
+  circle: ["ball", 0], ring: ["ball", 0], half: ["ball", 0],
+  square: ["box", 0], "square-ring": ["box", 0],
+  triangle: ["cone", 0], "triangle-down": ["cone", 0],
+  pentagon: ["hex", 0], hexagon: ["hex", 0], octagon: ["hex", 0],
+};
+function carteMilestoneStone(task) {
+  const col = task.milestoneColor || CARTE_MILESTONE_COLOR;
+  const done = task.state === "done";
+  const gem = CARTE_MILESTONE_GEMS[task.milestoneSymbol] || CARTE_MILESTONE_GEMS.diamond;
+  const parts = [
+    cP("box", "#9d968a", 0, 0, 0, 0.56, 0.12, 0.4),
+    cP("box", "#ece6da", 0, 0.12, 0, 0.38, 0.56, 0.26),
+    cP("ball", col, 0, 0.5, 0, 0.38, 0.42, 0.26),
+    cP("box", carteMix(col, "#000000", 0.25), 0, 0.3, 0.131, 0.2, 0.05, 0.01),
+    cP(gem[0], done ? "#ffe38a" : carteMix(col, "#ffffff", 0.35), 0, 0.9, 0, 0.18, 0.18, 0.18, gem[1], done ? "g" : undefined),
+  ];
+  if (done) {
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      parts.push(cP("ball", i % 2 ? "#e0b44a" : "#7fa650", Math.cos(a) * 0.26, 0.66, Math.sin(a) * 0.19, 0.1, 0.07, 0.1));
+    }
+  }
+  const K = CARTE_MILESTONE_SCALE;
+  return parts.map((p) => Object.assign({}, p, { p: [p.p[0] * K, p.p[1] * K, p.p[2] * K], s: [p.s[0] * K, p.s[1] * K, p.s[2] * K] }));
+}
+
 // Palier d'altitude d'une tâche : terminée = 5, en cours ou en attente = palier
 // de progress, à faire et information = 0.
 // Bâtiments agrandis en hauteur (#380, #395) : la hauteur finale visée est
@@ -5707,7 +5746,7 @@ function carteInitials(name) {
 // dossier. La carte n'a plus qu'un style, Classique (#404).
 const CARTE_CLASSIC_SIGNALS = [
   ["Urgente", "Incendie et anneau rouge (moyenne : fanion orange)"], ["En retard", "Horloge qui fait tic-tac · urgente en retard : gros éclairs venus du ciel"],
-  ["À venir", "Brume · responsable : bonhomme à sa couleur, badge à ses initiales"], ["Dépendance", "Route de convoi à la sélection"], ["Jalon", "Faisceau de lumière vers le ciel"],
+  ["À venir", "Brume · responsable : bonhomme à sa couleur, badge à ses initiales"], ["Dépendance", "Route de convoi à la sélection"], ["Jalon", "Borne milliaire à la couleur du type · terminé : couronne de laurier"],
 ];
 function carteLook(themeId) {
   const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
@@ -5751,7 +5790,7 @@ function carteLegend(themeId) {
   const t = carteLook(themeId);
   return { id: t.id, label: t.label, hub: t.hub.slice(), signals: t.sig.map((l) => l.slice()), lines: [
     ["À faire", t.lg.todo], ["En attente", t.lg.waiting], ["En cours", t.lg.doing], ["Terminée", t.lg.done], ["Information", t.lg.info],
-    ["Tâche", t.lg.task], ["Réunion", t.lg.meeting], ["Planning", t.lg.planning], ["Jalon", "Faisceau de lumière"], ["Oubliée (30 j)", t.lg.friche],
+    ["Tâche", t.lg.task], ["Réunion", t.lg.meeting], ["Planning", t.lg.planning], ["Jalon", "Borne milliaire à la couleur du type"], ["Oubliée (30 j)", t.lg.friche],
   ] };
 }
 

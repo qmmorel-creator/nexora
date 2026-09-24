@@ -395,14 +395,24 @@ test("#401 : la carte simplifiée est une préférence de la vue, désactivée p
   assert.equal(C.normalizeCarteViewPrefs(C.carteViewFilterReset()).simplify, false, "« Tout afficher » ne force pas le mode");
 });
 
-test("#416 : le jalon est le même pylône dans tous les thèmes, et la légende annonce le faisceau", () => {
-  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s5", taskTypeId: "tt3", milestone: true }], { now: NOW }).tasks[0];
-  assert.equal(base.kind, "milestone");
-  const shape = (th) => C.carteTaskModel(base, th, { detail: 0 }).map((p) => p.g + (p.m === "g" ? "*" : "")).join(",");
-  const ref = shape("ville");
+test("#419 : le jalon est une borne milliaire, la même dans tous les thèmes, à la couleur de son type", () => {
+  const milestoneTypes = [{ id: "std", name: "Jalon", symbol: "diamond", color: "#4F6AF5" }, { id: "liv", name: "Livraison", symbol: "triangle", color: "#22B07D" }];
+  const mk = (o) => C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes, milestoneTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt3", milestone: true, ...o }], { now: NOW }).tasks[0];
+  const liv = mk({ milestoneTypeId: "liv" });
+  assert.equal(liv.kind, "milestone");
+  assert.equal(liv.milestoneColor, "#22B07D");
+  assert.equal(liv.milestoneSymbol, "triangle");
+  assert.equal(mk({ milestoneTypeId: "inconnu" }).milestoneColor, "#4F6AF5", "type inconnu : premier du catalogue");
+  const shape = (t, th) => C.carteTaskModel(t, th, { detail: 0 }).map((p) => p.g + ":" + p.c).join(",");
   C.CARTE_THEMES.forEach((th) => {
-    assert.equal(shape(th.id), ref, `${th.id} : même silhouette`);
-    assert.deepEqual(C.carteLegend(th.id).lines.find((l) => l[0] === "Jalon"), ["Jalon", "Faisceau de lumière"]);
+    assert.equal(shape(liv, th.id), shape(liv, "ville"), `${th.id} : même borne`);
+    assert.deepEqual(C.carteLegend(th.id).lines.find((l) => l[0] === "Jalon"), ["Jalon", "Borne milliaire à la couleur du type"]);
   });
-  assert.ok(C.carteTaskModel(base, "ville", { detail: 0 }).some((p) => p.m === "g"), "sommet lumineux");
+  const open = C.carteTaskModel(liv, "ville", { detail: 0 });
+  assert.ok(open.some((p) => p.c === "#22B07D"), "tête à la couleur du type");
+  const top = (parts) => parts.reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  assert.ok(top(open) < 1.6, `borne basse : ${top(open).toFixed(2)}`);
+  const done = C.carteTaskModel({ ...liv, state: "done" }, "ville", { detail: 0 });
+  assert.ok(done.length >= open.length + 10, "couronne de laurier une fois terminé");
+  assert.ok(done.some((p) => p.m === "g"), "pierre lumineuse une fois terminé");
 });
