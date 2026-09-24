@@ -1623,6 +1623,25 @@ try {
   await page.mouse.up();
   await page.waitForTimeout(300);
   orgMetro.linkMoved = binomeD0 !== await page.locator(`${host} .lp-orgmetro-relation-group`, { hasText: "Binôme" }).locator(".lp-orgmetro-relation").getAttribute("d");
+  // Point de connexion d'un lien : il s'attrape et glisse le long du bandeau.
+  {
+    const port = page.locator(`${host} .lp-orgmetro-port.is-draggable`).first();
+    orgMetro.portDraggable = await port.count();
+    if (orgMetro.portDraggable) {
+      const pb = await port.boundingBox();
+      const cx = pb.x + pb.width / 2, cy = pb.y + pb.height / 2;
+      // Point effectivement sous le pointeur (deux liens peuvent partager un point).
+      const key = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el ? el.getAttribute("data-metro-drag") : null; }, [cx, cy]);
+      await page.mouse.move(cx, cy);
+      await page.mouse.down();
+      await page.mouse.move(cx, cy + 20, { steps: 3 });
+      await page.mouse.move(cx - 10, cy + 45, { steps: 4 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      const after = await page.locator(`${host} .lp-orgmetro-port[data-metro-drag="${key}"]`).boundingBox();
+      orgMetro.portMoved = Boolean(after) && Math.hypot(after.x + after.width / 2 - cx, after.y + after.height / 2 - cy) > 5;
+    }
+  }
   // « Cœur produit » remontée au-dessus de la barre de Produit : le lien
   // remonte depuis la barre et entre par le flanc du bandeau.
   {
@@ -2705,6 +2724,7 @@ if (!orgMetro.error) {
   expect(orgMetro.stationDragModal === 0, "Déplacement libre : lâcher une station a ouvert une fiche");
   expect(orgMetro.hubMovedAlone, "Déplacement libre : le grand titre ne se déplace pas seul");
   expect(orgMetro.linkMoved, "Déplacement libre : la relation « Binôme » ne se déplace pas");
+  expect(orgMetro.portDraggable > 0 && orgMetro.portMoved, `Organigramme Métro : point de connexion déplaçable (${orgMetro.portDraggable}), déplacé : ${orgMetro.portMoved}`);
   expect(orgMetro.upMove && orgMetro.upMove.above && orgMetro.upMove.sideEntry, `Déplacement libre : « Cœur produit » ne remonte pas au-dessus de sa barre avec un lien par le flanc (${JSON.stringify(orgMetro.upMove)})`);
   expect(orgMetro.overlapsAfterUp === 0, `Déplacement libre : ${orgMetro.overlapsAfterUp} superposition(s) de texte après la remontée`);
   expect(Math.abs(orgMetro.forkDrag.tech) < 2 && orgMetro.forkDrag.plat > 30 && Math.abs(orgMetro.forkDrag.plat - orgMetro.forkDrag.apps) < 2, `Organigramme Métro : le nœud de bifurcation ne déplace pas ses lignes (${JSON.stringify(orgMetro.forkDrag)})`);
