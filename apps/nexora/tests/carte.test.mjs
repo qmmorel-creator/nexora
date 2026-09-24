@@ -229,7 +229,18 @@ test("#380 : la hauteur construite est proportionnelle au pourcentage d'avanceme
   const built = (pr) => C.carteTaskModel({ ...base, progress: pr }, "ville", { detail: 0, plinth: false }).filter((p) => p.c !== "#c9a060").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
   const full = C.carteTaskModel({ ...base, state: "done" }, "ville", { detail: 0, plinth: false }).reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
   [25, 50, 75].forEach((pr) => assert.ok(Math.abs(built(pr) / full - pr / 100) < 0.06, `${pr} % : ${(built(pr) / full * 100).toFixed(0)} % de la hauteur finale`));
-  assert.ok(full >= 1.4, `bâtiment terminé agrandi (${full.toFixed(2)})`);
+  assert.ok(full >= 3, `bâtiment terminé nettement agrandi (${full.toFixed(2)})`);
+});
+
+test("#395 : l'amplitude de construction est forte dans tous les thèmes", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
+  const top = (parts) => parts.filter((p) => p.m !== "t" && p.m !== "h").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  C.CARTE_THEMES.forEach((th) => {
+    const full = top(C.carteTaskModel({ ...base, state: "done" }, th.id, { detail: 0 }));
+    const quarter = top(C.carteTaskModel({ ...base, progress: 25 }, th.id, { detail: 0 }).filter((p) => p.c !== "#c9a060"));
+    assert.ok(full >= 3, `${th.id} : terminé à ${full.toFixed(2)}`);
+    assert.ok(full - quarter >= 2, `${th.id} : écart 25 % → 100 % de ${(full - quarter).toFixed(2)}`);
+  });
 });
 
 test("#383 : l'altitude du sol suit la date de fin ; la mer pour le retard, l'imminent et le terminé", () => {
