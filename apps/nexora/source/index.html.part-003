@@ -19545,14 +19545,42 @@ function fmtCarteDate(isoDate) {
 }
 const CARTE_WORLD_TEXT = { todo: "todo", waiting: "waiting", doing: "doing", done: "done", info: "info" };
 
-function CarteTaskDetail({ task, norm, layout, onOpen, onGo, onWalk, onClose }) {
+function carteRecurrenceText(r) {
+  if (!r || !r.unit) return "";
+  const n = Math.max(1, Number(r.interval) || 1);
+  const unit = { day: ["jour", "jours"], week: ["semaine", "semaines"], month: ["mois", "mois"] }[r.unit] || [r.unit, r.unit];
+  return n === 1 ? "Chaque " + unit[0] : "Tous les " + n + " " + unit[1];
+}
+function carteFieldValue(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "boolean") return v ? "Oui" : "Non";
+  if (Array.isArray(v)) return v.map(carteFieldValue).filter(Boolean).join(", ");
+  if (typeof v === "object") return v.label || v.name || v.value || "";
+  return String(v);
+}
+function fmtCarteStamp(v) {
+  const t = carteParseTime(v);
+  return t == null ? "" : new Date(t).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Volet de détail (#361, enrichi à la demande de Quentin) : tous les champs
+// de la tâche et sa description complète, en lecture seule. Les modifications
+// passent toujours par « Ouvrir la fiche ».
+function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, onClose }) {
+  const r = raw || {};
   const p = layout.projectById[task.projectId || "__terre-inconnue__"] || {};
   const th = CARTE_THEME_BY_ID[layout.themes[p.id]] || CARTE_THEMES[0];
   const crit = CRITICALITIES.find((c) => c.id === task.criticality);
   const deps = task.dependsOn.map((id) => norm.taskById[id]).filter(Boolean);
   const dependents = norm.tasks.filter((o) => o.dependsOn.indexOf(task.id) !== -1);
   const sec = task.secondaryProjectId && layout.projectById[task.secondaryProjectId];
-  const late = task.overdue;
+  const checklist = Array.isArray(r.checklist) ? r.checklist : [];
+  const attachments = Array.isArray(r.attachments) ? r.attachments : [];
+  const custom = r.customFields && typeof r.customFields === "object" ? Object.keys(r.customFields).map((k) => [k, carteFieldValue(r.customFields[k])]).filter((e) => e[1]) : [];
+  const msType = r.milestoneTypeId && (ctx.milestoneTypes || []).find((m) => m.id === r.milestoneTypeId);
+  const desc = typeof r.desc === "string" ? r.desc.trim() : "";
+  const report = typeof r.meetingReport === "string" ? r.meetingReport.trim() : "";
+  const safeUrl = (u) => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);
   return (
     <aside className="lp-carte-detail" aria-label="Détail de la tâche">
       <div className="lp-carte-detail-head">
@@ -19566,27 +19594,71 @@ function CarteTaskDetail({ task, norm, layout, onOpen, onGo, onWalk, onClose }) 
           <span className="lp-carte-chip"><i style={{ background: task.typeColor }} />{task.typeName}</span>
           {crit && <span className="lp-carte-chip lp-carte-chip-crit" style={{ "--c": crit.color }}>Criticité {crit.name.toLowerCase()}</span>}
         </div>
-        <dl className="lp-carte-grid">
-          <dt>Dates</dt><dd>{task.startIso ? fmtCarteDate(task.startIso) + " → " + fmtCarteDate(task.endIso) : "Non renseignées"}{task.startTime ? " · " + task.startTime + (task.endTime ? "–" + task.endTime : "") : ""}</dd>
-          <dt>Échéance</dt><dd className={late ? "is-late" : ""}>{carteDueText(task)}</dd>
-          <dt>Avancement</dt><dd><span className="lp-carte-bar"><span style={{ width: task.progress + "%" }} /></span>{task.progress} %</dd>
-          <dt>Responsable</dt><dd>{task.assignee ? <><span className="lp-carte-dot lp-carte-dot-round" style={{ background: cartePersonColor(task.assignee, task.assigneeColor) }} />{task.assignee}</> : "Non attribuée"}</dd>
-          {task.checklistTotal > 0 && <><dt>Sous-tâches</dt><dd>{task.checklistDone} / {task.checklistTotal} faites</dd></>}
-          {sec && <><dt>Partagée avec</dt><dd><span className="lp-carte-dot" style={{ background: sec.color }} />{sec.name}</dd></>}
-          {(task.attachments > 0 || task.hasReport || task.recurring || task.fromEmail) && <><dt>Aussi</dt><dd>{[task.recurring && "récurrente", task.attachments > 0 && task.attachments + " pièce" + (task.attachments > 1 ? "s" : "") + " jointe" + (task.attachments > 1 ? "s" : ""), task.hasReport && "compte rendu", task.fromEmail && "issue d'un e-mail"].filter(Boolean).join(" · ")}</dd></>}
-        </dl>
-        {task.desc && <p className="lp-carte-desc">{task.desc.length > 280 ? task.desc.slice(0, 279) + "…" : task.desc}</p>}
-        {(deps.length > 0 || dependents.length > 0) && (
-          <div className="lp-carte-links">
-            {deps.map((o) => <button key={"d" + o.id} type="button" className="lp-carte-link" onClick={() => onGo(o.id)}><span className="lp-carte-link-tag is-in">Attend</span>{o.title}</button>)}
-            {dependents.map((o) => <button key={"b" + o.id} type="button" className="lp-carte-link" onClick={() => onGo(o.id)}><span className="lp-carte-link-tag is-out">Bloque</span>{o.title}</button>)}
-          </div>
-        )}
-        <p className="lp-carte-world">Sur la carte ({th.label}) : {th.lg[CARTE_WORLD_TEXT[task.state]]}{task.state === "doing" || task.state === "waiting" ? ", palier " + carteStage(task.progress) + " sur 5" : ""}.</p>
-        <div className="lp-carte-actions">
+        <div className="lp-carte-actions lp-carte-actions-top">
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => onOpen(task.id)}><ExternalLink size={14} /> Ouvrir la fiche</button>
           <button type="button" className="lp-btn" onClick={() => onWalk(task.id)}>Y aller</button>
         </div>
+
+        <div className="lp-carte-section-title">Description</div>
+        {desc ? <p className="lp-carte-desc">{desc}</p> : <p className="lp-carte-muted lp-carte-desc">Aucune description.</p>}
+
+        <div className="lp-carte-section-title">Champs</div>
+        <dl className="lp-carte-grid">
+          <dt>Début</dt><dd>{task.startIso ? fmtCarteDate(task.startIso) + (task.startTime ? " · " + task.startTime : "") : "—"}</dd>
+          <dt>Fin</dt><dd>{task.endIso ? fmtCarteDate(task.endIso) + (task.endTime ? " · " + task.endTime : "") : "—"}</dd>
+          <dt>Échéance</dt><dd className={task.overdue ? "is-late" : ""}>{carteDueText(task)}</dd>
+          <dt>Avancement</dt><dd><span className="lp-carte-bar"><span style={{ width: task.progress + "%" }} /></span>{task.progress} %</dd>
+          <dt>Responsable</dt><dd>{task.assignee ? <><span className="lp-carte-dot lp-carte-dot-round" style={{ background: cartePersonColor(task.assignee, task.assigneeColor) }} />{task.assignee}</> : "Non attribuée"}</dd>
+          {task.milestone && <><dt>Jalon</dt><dd>{msType ? msType.name : "Oui"}</dd></>}
+          {r.recurrence && r.recurrence.unit && <><dt>Récurrence</dt><dd>{carteRecurrenceText(r.recurrence)}</dd></>}
+          {sec && <><dt>Partagée avec</dt><dd><span className="lp-carte-dot" style={{ background: sec.color }} />{sec.name}</dd></>}
+          {r.completedAt && task.state === "done" && <><dt>Terminée le</dt><dd>{fmtCarteStamp(r.completedAt)}</dd></>}
+          {r.lastInteraction && <><dt>Dernière activité</dt><dd>{fmtCarteStamp(r.lastInteraction)}{task.stale ? " · oubliée" : ""}</dd></>}
+          {(r.source || r.sourceSender || r.sourceUrl) && <><dt>Origine</dt><dd>{[r.source, r.sourceSender].filter(Boolean).join(" · ")}{safeUrl(r.sourceUrl) ? <> {" "}<a href={safeUrl(r.sourceUrl)} target="_blank" rel="noreferrer">lien</a></> : null}</dd></>}
+          {custom.map(([k, v]) => <React.Fragment key={"cf-" + k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>)}
+        </dl>
+
+        {checklist.length > 0 && (
+          <>
+            <div className="lp-carte-section-title">Sous-tâches · {task.checklistDone} / {task.checklistTotal}</div>
+            <ul className="lp-carte-checklist">
+              {checklist.map((c, i) => (
+                <li key={c.id || i} className={c.done ? "is-done" : ""}>
+                  <span aria-hidden="true">{c.done ? "✓" : "○"}</span>
+                  <span>{c.text || "Sans intitulé"}{c.end ? <small> · {fmtCarteDate(c.end)}</small> : null}{c.assignee ? <small> · {c.assignee}</small> : null}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {(deps.length > 0 || dependents.length > 0) && (
+          <>
+            <div className="lp-carte-section-title">Dépendances</div>
+            <div className="lp-carte-links">
+              {deps.map((o) => <button key={"d" + o.id} type="button" className="lp-carte-link" onClick={() => onGo(o.id)}><span className="lp-carte-link-tag is-in">Attend</span>{o.title}</button>)}
+              {dependents.map((o) => <button key={"b" + o.id} type="button" className="lp-carte-link" onClick={() => onGo(o.id)}><span className="lp-carte-link-tag is-out">Bloque</span>{o.title}</button>)}
+            </div>
+          </>
+        )}
+
+        {attachments.length > 0 && (
+          <>
+            <div className="lp-carte-section-title">Pièces jointes · {attachments.length}</div>
+            <ul className="lp-carte-attachments">
+              {attachments.map((a, i) => <li key={a.id || i}>{safeUrl(a.url) ? <a href={safeUrl(a.url)} target="_blank" rel="noreferrer">{a.name || "Pièce jointe"}</a> : (a.name || "Pièce jointe")}</li>)}
+            </ul>
+          </>
+        )}
+
+        {report && (
+          <>
+            <div className="lp-carte-section-title">Compte rendu</div>
+            <p className="lp-carte-desc">{report}</p>
+          </>
+        )}
+
+        <p className="lp-carte-world">Sur la carte ({th.label}) : {th.lg[CARTE_WORLD_TEXT[task.state]]}{task.state === "doing" || task.state === "waiting" ? ", palier " + carteStage(task.progress) + " sur 5" : ""}.</p>
       </div>
     </aside>
   );
@@ -19986,7 +20058,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
               <button type="button" className="lp-carte-panel-toggle" onClick={() => setPanelOn(true)}>Liste du territoire</button>
             )}
             {selTask && (
-              <CarteTaskDetail task={selTask} norm={norm} layout={layout} onOpen={openFiche} onGo={go}
+              <CarteTaskDetail task={selTask} raw={allTasks.find((t) => t.id === selTask.id)} norm={norm} layout={layout} ctx={ctx} onOpen={openFiche} onGo={go}
                 onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
             )}
           </>

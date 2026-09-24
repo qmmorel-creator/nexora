@@ -1905,6 +1905,7 @@ try {
   await cp.waitForSelector(".lp-carte-detail", { timeout: 5000 }).catch(() => {});
   carte.selected = await cp.getAttribute(".lp-carte-stage", "data-carte-selected");
   carte.detailTitle = await cp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
+  carte.detailSections = await cp.$$eval(".lp-carte-detail .lp-carte-section-title", (e) => e.map((x) => x.textContent));
   carte.tasksAfter = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
   await cp.screenshot({ path: path.join(dir, "carte.png") });
   // Filtre : masquer les tâches terminées.
@@ -2899,6 +2900,7 @@ if (!carte.error) {
   expect(!!carte.near, "Carte : l'arpenteur n'est pas arrivé près de la tâche choisie");
   expect(carte.selected && carte.selected === carte.near, `Carte : Entrée ne sélectionne pas la tâche proche (${carte.selected} / ${carte.near})`);
   expect(carte.detailTitle && carte.detailTitle.indexOf(carte.nearTitle) !== -1, `Carte : la fiche de détail ne montre pas la tâche proche (« ${carte.detailTitle} » / « ${carte.nearTitle} »)`);
+  expect(carte.detailSections.includes("Description") && carte.detailSections.includes("Champs"), `Carte : le volet de détail n'affiche pas la description et les champs (${JSON.stringify(carte.detailSections)})`);
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
   expect(carte.chipPressed === "false", "Carte : le filtre « Terminées » ne se désactive pas");
