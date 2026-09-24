@@ -304,3 +304,13 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
     jusqu'à son maximum à 90 jours, sans exagération.
   - Sans date de fin : altitude moyenne.
   Une case d'eau qui porte une tâche plus haute que le niveau de la mer devient une terre.
+
+## Incendie des tâches urgentes (#385)
+
+- Une tâche ouverte de criticité **urgente** brûle : plusieurs foyers de flammes (rouge, orange,
+  jaune) au pied et sur la construction, des braises et une colonne de fumée noire, en plus de
+  l'anneau rouge clignotant.
+- En retard **et** urgente, l'énorme orage avec tourbillon prend le dessus : pas d'incendie
+  dessous. Une tâche terminée ou « info » ne porte aucun aléa.
+- En qualité basse ou avec « réduire les animations », le feu reste visible mais figé, sans
+  braises.

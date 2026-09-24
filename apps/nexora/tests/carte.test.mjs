@@ -23,7 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
-    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteDueAltitude, carteDueGround, carteInitials, carteAvatarAnchor,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteDueAltitude, carteDueGround, carteInitials, carteAvatarAnchor, carteHazard,
   };\n})`
 )();
 
@@ -265,5 +265,15 @@ test("#382 : initiales et avatar du responsable", () => {
   const parts = C.carteTaskModel(base, "ville", { detail: 2 });
   assert.ok(parts.some((p) => p.g === "cyl" && p.c === "#123456"), "silhouette à la couleur de l'utilisateur");
   assert.ok(C.carteAvatarAnchor(base)[1] > 0.5, "badge au-dessus de la tête");
-  assert.ok(!C.carteTaskModel({ ...base, overdue: true, criticality: "urgent" }, "ville", { detail: 0 }).some((p) => p.c === "#ff5a1f"), "le feu est retiré");
+  assert.ok(!C.carteTaskModel({ ...base, overdue: true, criticality: "urgent" }, "ville", { detail: 0 }).some((p) => p.c === "#ff5a1f"), "pas de brasier dans le modèle");
+});
+
+test("#381/#385 : incendie si urgente, orage si en retard, énorme orage si les deux", () => {
+  const t = (o) => ({ state: "doing", criticality: "moyen", overdue: false, ...o });
+  assert.equal(C.carteHazard(t({ criticality: "urgent" })), "fire");
+  assert.equal(C.carteHazard(t({ overdue: true })), "storm");
+  assert.equal(C.carteHazard(t({ overdue: true, criticality: "urgent" })), "tempest");
+  assert.equal(C.carteHazard(t({})), null);
+  assert.equal(C.carteHazard(t({ state: "done", criticality: "urgent" })), null);
+  assert.equal(C.carteHazard(t({ state: "info", criticality: "urgent" })), null);
 });

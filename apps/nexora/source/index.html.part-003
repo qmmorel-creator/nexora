@@ -18902,6 +18902,8 @@ function createCarteEngine(THREE, container, opts) {
     cloud: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
     bolt: mat(new THREE.MeshBasicMaterial({ color: "#fff3a0" })),
     rain: mat(new THREE.MeshBasicMaterial({ color: "#5d97d6", transparent: true, opacity: 0.9, depthWrite: false })),
+    flame: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.93, depthWrite: false })),
+    smoke: mat(new THREE.MeshLambertMaterial({ color: "#3b3b3f", transparent: true, opacity: 0.45, depthWrite: false, flatShading: true })),
     tornado: mat(new THREE.MeshLambertMaterial({ color: "#8f98a6", transparent: true, opacity: 0.5, depthWrite: false, flatShading: true })),
   };
 
@@ -19094,6 +19096,7 @@ function createCarteEngine(THREE, container, opts) {
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
     const storms = [];
+    const fires = [];
     const avatars = [];
     const dones = [];
     const vis = S.visible;
@@ -19117,8 +19120,11 @@ function createCarteEngine(THREE, container, opts) {
       S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 3) + 0.1 };
       const urgentOpen = t.criticality === "urgent" && t.state !== "done" && t.state !== "info";
       if (urgentOpen) urgent.push({ x, y, z, k });
-      // Orage (#381) : petit si en retard, énorme avec tornade si en plus urgente.
-      if (t.overdue) storms.push({ x, y, z, top: y + Math.min(top, 3), big: urgentOpen, ph: carteRand("storm" + t.id) });
+      // Orage (#381) : petit si en retard, énorme avec tornade si en plus
+      // urgente. Incendie (#385) : urgente sans retard.
+      const hz = carteHazard(t);
+      if (hz === "storm" || hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 3), big: hz === "tempest", ph: carteRand("storm" + t.id) });
+      else if (hz === "fire") fires.push({ x, y, z, k, h: Math.max(0.3, Math.min(top, 3)), ph: carteRand("fire" + t.id) * 6.283 });
       // Avatar (#382) : badge d'initiales au-dessus de la silhouette.
       if (t.assignee && detail >= 2) {
         const a = carteAvatarAnchor(t);
@@ -19146,6 +19152,7 @@ function createCarteEngine(THREE, container, opts) {
       ring.instanceMatrix.needsUpdate = true; ring.computeBoundingSphere(); ring.frustumCulled = false; world.add(ring);
     }
     buildStorms(storms);
+    buildFires(fires);
     buildAvatars(avatars);
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
@@ -19498,6 +19505,69 @@ function createCarteEngine(THREE, container, opts) {
     if (W.tornado) W.tornado.instanceMatrix.needsUpdate = true;
   }
 
+  // ---------- Incendie des tâches urgentes (#385) ----------
+  // Des foyers enveloppent la construction : quatre au pied, deux sur le
+  // bâtiment, un au sommet. Chaque foyer = trois flammes (rouge, orange,
+  // jaune) qui vacillent. Au-dessus, une colonne de fumée noire monte en
+  // boucle et des braises jaillissent.
+  const FIRE_FLAMES = [{ c: "#e0301a", r: 0.3, h: 0.78 }, { c: "#ff8616", r: 0.21, h: 0.6 }, { c: "#ffd94a", r: 0.11, h: 0.4 }];
+  // [dx, hauteur relative au bâtiment, dz, taille]
+  const FIRE_SPOTS = [[0.5, 0, 0.1, 1], [-0.42, 0, 0.3, 0.9], [0.05, 0, -0.5, 0.95], [-0.2, 0, -0.1, 1.1], [0.22, 0.45, 0.18, 0.85], [-0.2, 0.7, -0.12, 0.8], [0.02, 1, 0.02, 1.25]];
+  const FIRE_SMOKE = 7, FIRE_EMBERS = 8;
+  function buildFires(list) {
+    S.fires = null;
+    const all = list.slice(0, 150);
+    if (!all.length) return;
+    const flames = new THREE.InstancedMesh(G.cone, MAT.flame, all.length * FIRE_SPOTS.length * FIRE_FLAMES.length);
+    let fi = 0;
+    all.forEach(() => FIRE_SPOTS.forEach(() => FIRE_FLAMES.forEach((f) => flames.setColorAt(fi++, tmpC.set(f.c)))));
+    if (flames.instanceColor) flames.instanceColor.needsUpdate = true;
+    flames.frustumCulled = false; world.add(flames);
+    const smoke = new THREE.InstancedMesh(G.ball, MAT.smoke, all.length * FIRE_SMOKE);
+    smoke.frustumCulled = false; world.add(smoke);
+    const embers = S.effQuality === "low" ? null : new THREE.InstancedMesh(G.box, MAT.bolt, all.length * FIRE_EMBERS);
+    if (embers) { embers.frustumCulled = false; world.add(embers); }
+    S.fires = { list: all, flames, smoke, embers };
+    placeFires(0);
+  }
+  function placeFires(t) {
+    const F = S.fires;
+    if (!F) return;
+    const still = reduced || S.effQuality === "low";
+    let fi = 0, si = 0, ei = 0;
+    F.list.forEach((u) => {
+      const k = u.k;
+      FIRE_SPOTS.forEach((sp, j) => {
+        const flick = still ? 1 : 0.8 + 0.3 * Math.sin(t * 11 + u.ph + j * 1.7) + 0.12 * Math.sin(t * 23 + j);
+        const bx = u.x + sp[0] * k, by = u.y + sp[1] * u.h, bz = u.z + sp[2] * k;
+        FIRE_FLAMES.forEach((f, m) => {
+          const sway = still ? 0 : Math.sin(t * 7 + u.ph + j + m) * 0.05;
+          const hh = f.h * sp[3] * k * (m ? flick : 0.9 + 0.1 * flick);
+          tmpQ.setFromEuler(tmpE.set(sway, 0, sway * 0.6));
+          F.flames.setMatrixAt(fi++, tmpM.compose(tmpP.set(bx, by, bz), tmpQ, tmpS.set(f.r * sp[3] * k, hh, f.r * sp[3] * k)));
+        });
+      });
+      const top = u.y + u.h + 0.9 * k;
+      for (let j = 0; j < FIRE_SMOKE; j++) {
+        const c = still ? j / FIRE_SMOKE : (t * 0.35 + j / FIRE_SMOKE + u.ph) % 1;
+        const r = (0.26 + c * 0.55) * k;
+        const drift = c * 0.45 * k;
+        F.smoke.setMatrixAt(si++, tmpM.compose(tmpP.set(u.x + drift * 0.8 + Math.sin(j * 2.1 + u.ph) * 0.12, top + c * 2.2 * k, u.z + drift * 0.3), tmpQ.identity(), tmpS.set(r, r * 0.85, r)));
+      }
+      if (F.embers) {
+        for (let j = 0; j < FIRE_EMBERS; j++) {
+          const c = still ? 0.5 : (t * 0.9 + carteRand("em" + j) + u.ph) % 1;
+          const a = carteRand("ea" + j) * 6.283;
+          const rr = (0.2 + c * 0.6) * k;
+          F.embers.setMatrixAt(ei++, tmpM.compose(tmpP.set(u.x + Math.cos(a) * rr, u.y + u.h * 0.5 + c * 2.4 * k, u.z + Math.sin(a) * rr), tmpQ.identity(), tmpS.setScalar(0.07 * k * (1 - c * 0.6))));
+        }
+      }
+    });
+    F.flames.instanceMatrix.needsUpdate = true;
+    F.smoke.instanceMatrix.needsUpdate = true;
+    if (F.embers) F.embers.instanceMatrix.needsUpdate = true;
+  }
+
   // ---------- Avatars des responsables (#382) ----------
   const avatarCache = {};
   function avatarMaterial(name, color) {
@@ -19533,7 +19603,7 @@ function createCarteEngine(THREE, container, opts) {
   function animate() {
     if (reduced) { MAT.alarm.opacity = 0.85; return; }
     const t = S.time;
-    if (S.effQuality !== "low") placeStorms(t);
+    if (S.effQuality !== "low") { placeStorms(t); placeFires(t); }
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
     S.spin.forEach((sp) => {
       tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");
@@ -20351,8 +20421,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                       <ul>
                         <li><b>Thème</b><span>{legend.label} · {legend.hub[terrStats.stage]}</span></li>
                         {legend.lines.map((l) => <li key={l[0]}><b>{l[0]}</b><span>{l[1]}</span></li>)}
-                        <li><b>Urgente</b><span>Brasier en feu et anneau rouge (moyenne : fanion orange)</span></li>
-                        <li><b>En retard</b><span>Nuage d'orage · échéance sous 7 j : lanterne</span></li>
+                        <li><b>Urgente</b><span>Incendie et anneau rouge (moyenne : fanion orange)</span></li>
+                        <li><b>En retard</b><span>Petit orage · urgente en retard : énorme orage et tourbillon</span></li>
                         <li><b>À venir</b><span>Brume · responsable : habitant coloré</span></li>
                         <li><b>Dépendance</b><span>Route de convoi à la sélection</span></li>
                       </ul>
