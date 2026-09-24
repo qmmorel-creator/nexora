@@ -347,15 +347,21 @@ Elles tournent en continu, lisent une donnée de Nexora et se coupent ensemble d
 | Animation | Ce qu'elle dit |
 |---|---|
 | Convois entre tâches dépendantes (#425) | Une charrette circule du prédécesseur vers la tâche ; arrêtée devant une barrière rouge si le prédécesseur n'est pas terminé. |
-| Météo par dossier (#426) | Au-dessus de la région : soleil (< 10 % de retard), nuages (< 30 %), pluie au-delà. Discrète de près. |
-| Tournée du jour (#427) | Bouton : la caméra passe d'une tâche à l'autre (retards et urgentes, puis échéances de la semaine). |
 | Barque (#428) | L'arpenteur rame sur l'eau hors des ponts. |
 | Ouvriers (#429) | Marteau qui frappe : tâche en cours. Assis, le pied qui tapote : en attente. |
 | Pigeon voyageur (#430) | Tâche en attente ; il vole de plus en plus lentement à mesure que l'attente dure. |
 | Lanterne (#431) | Échéance sous 7 jours ; elle pulse de plus en plus vite à l'approche de la date. |
-| Éolienne (#432) | Au sommet du totem : sa vitesse suit les tâches terminées sur 14 jours ; à l'arrêt, le projet stagne. |
 | Drapeau (#433) | Hissé sur son mât à la hauteur du pourcentage d'avancement du projet. |
-| Pile de dossiers (#434) | Au-dessus d'un responsable qui a plus de 5 tâches ouvertes à échéance sous 7 jours. |
-| Fil d'Ariane (#435) | Points lumineux qui relient les 8 prochaines échéances, dans l'ordre. |
 | Jour et nuit (#436) | Lumière à l'heure réelle ; le soir, les bâtiments des échéances du jour s'allument. |
 | Anneau des jalons (#437) | Au sol autour de la borne : part allumée = avancement ; complet et vert quand le jalon est terminé. |
+
+La météo par dossier (#426), la tournée du jour (#427), l'éolienne (#432) et la pile de
+dossiers (#434) ont été retirées après essai.
+
+## Mode Fil d'Ariane (#435)
+
+Bouton *Fil d'Ariane* de la barre : la carte ne garde que les 8 prochaines échéances
+ouvertes (parmi les tâches retenues par les filtres), la caméra les cadre, chacune porte
+son numéro d'ordre et un chemin de points lumineux les relie dans l'ordre. La pastille
+« Fil d'Ariane » en bas de la vue permet d'en sortir. Le mode ne dépend pas des animations
+d'ambiance.

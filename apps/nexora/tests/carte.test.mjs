@@ -25,7 +25,7 @@ const C = vm.runInThisContext(
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
-    carteLanternRate, cartePigeonSpeed, carteWindmillSpeed, carteWeather, carteOverloaded, carteAriadne, carteTourList, carteDaylight, carteMilestoneProgress,
+    carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
   };\n})`
 )();
@@ -418,7 +418,7 @@ test("#419 : le jalon est une borne milliaire, la même dans tous les thèmes, �
   assert.ok(done.some((p) => p.m === "g"), "pierre lumineuse une fois terminé");
 });
 
-test("#430/#432 : jours d'inactivité, jours depuis la complétion et rythme sur 14 jours", () => {
+test("#430 : jours d'inactivité et vitesse du pigeon", () => {
   const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [
     { id: "a", projectId: "p", statusId: "s2", lastInteraction: "2026-09-10T10:00:00" },
     { id: "b", projectId: "p", statusId: "s5", completedAt: "2026-09-20T10:00:00" },
@@ -426,13 +426,9 @@ test("#430/#432 : jours d'inactivité, jours depuis la complétion et rythme sur
   ], { now: NOW }).tasks;
   const by = Object.fromEntries(n.map((t) => [t.id, t]));
   assert.equal(by.a.idleDays, 14);
-  assert.equal(by.b.doneDaysAgo, 4);
-  assert.equal(by.a.doneDaysAgo, null);
-  assert.equal(C.carteTerritoryStats(n).velocity, 1, "seule la tâche terminée il y a 4 jours compte");
+  assert.equal(by.c.idleDays, null, "sans interaction connue");
   assert.ok(C.cartePigeonSpeed(0) > C.cartePigeonSpeed(7) && C.cartePigeonSpeed(7) > C.cartePigeonSpeed(60));
   assert.ok(C.cartePigeonSpeed(1000) >= 0.15, "le pigeon ne s'arrête jamais");
-  assert.equal(C.carteWindmillSpeed(0), 0, "à l'arrêt sans tâche terminée");
-  assert.ok(C.carteWindmillSpeed(2) < C.carteWindmillSpeed(8));
 });
 
 test("#431 : la lanterne pulse de plus en plus vite quand l'échéance approche", () => {
@@ -442,21 +438,7 @@ test("#431 : la lanterne pulse de plus en plus vite quand l'échéance approche"
   assert.equal(C.carteLanternRate({ soon: false, overdue: false, dueIn: 20 }), null);
 });
 
-test("#426 : météo d'une région selon la part de tâches en retard", () => {
-  const mk = (late, open) => Array.from({ length: open }, (_, i) => ({ state: "doing", overdue: i < late }));
-  assert.equal(C.carteWeather(mk(0, 10)).kind, "sun");
-  assert.equal(C.carteWeather(mk(2, 10)).kind, "cloud");
-  assert.equal(C.carteWeather(mk(4, 10)).kind, "rain");
-  assert.equal(C.carteWeather([{ state: "done", overdue: false }]).kind, "sun", "les terminées ne comptent pas");
-});
-
-test("#434 : responsables surchargés (plus de 5 tâches ouvertes sous 7 jours)", () => {
-  const mk = (who, n, o) => Array.from({ length: n }, () => ({ assignee: who, state: "doing", dueIn: 2, ...o }));
-  const heavy = C.carteOverloaded(mk("Léo", 6).concat(mk("Ana", 5), mk("Max", 9, { dueIn: 30 }), mk("Zoé", 9, { state: "done" })));
-  assert.deepEqual([...heavy], ["Léo"]);
-});
-
-test("#435/#427 : fil d'Ariane et tournée du jour", () => {
+test("#435 : fil d'Ariane, les prochaines échéances dans l'ordre", () => {
   const tasks = [
     { id: "a", state: "doing", end: 12, dueIn: 2, overdue: false },
     { id: "b", state: "todo", end: 10, dueIn: 0, overdue: false },
@@ -466,7 +448,9 @@ test("#435/#427 : fil d'Ariane et tournée du jour", () => {
     { id: "f", state: "todo", end: 40, dueIn: 30, overdue: false },
   ];
   assert.deepEqual(C.carteAriadne(tasks, 3).map((t) => t.id), ["b", "a", "e"]);
-  assert.deepEqual(C.carteTourList(tasks).map((t) => t.id), ["d", "e", "b", "a"], "retard et urgentes d'abord, puis la semaine");
+  assert.deepEqual(C.carteAriadne(tasks).map((t) => t.id), ["b", "a", "e", "f"], "ni terminées ni retards");
+  assert.equal(C.CARTE_ARIADNE_MAX, 8);
+  assert.equal(C.carteAriadne(Array.from({ length: 20 }, (_, i) => ({ id: "t" + i, state: "todo", end: i, dueIn: i }))).length, 8);
 });
 
 test("#436 : jour et nuit à l'heure réelle, la nuit reste lisible", () => {
@@ -487,4 +471,9 @@ test("#437 : avancement d'un jalon pour l'anneau de progression", () => {
 test("#425 à #436 : les animations d'ambiance sont une préférence active par défaut", () => {
   assert.equal(C.normalizeCarteViewPrefs({}).ambient, true);
   assert.equal(C.normalizeCarteViewPrefs({ ambient: false }).ambient, false);
+});
+
+test("#435 : le mode Fil d'Ariane est une préférence inactive par défaut", () => {
+  assert.equal(C.normalizeCarteViewPrefs({}).ariadne, false);
+  assert.equal(C.normalizeCarteViewPrefs({ ariadne: true }).ariadne, true);
 });

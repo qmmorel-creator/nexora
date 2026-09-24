@@ -18992,9 +18992,6 @@ function createCarteEngine(THREE, container, opts) {
     border: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
     // Lave du thème Volcan (#408) : lumineuse, elle pulse doucement.
     lava: mat(new THREE.MeshBasicMaterial({ color: "#ffffff" })),
-    // Nuages de la météo par dossier (#426) : leur opacité suit le zoom.
-    sky: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.8, depthWrite: false, flatShading: true })),
-    skyRain: mat(new THREE.MeshBasicMaterial({ color: "#6f9fd6", transparent: true, opacity: 0.7, depthWrite: false })),
     route: mat(new THREE.LineDashedMaterial({ color: "#8a5a35", dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.55 })),
   };
 
@@ -19304,6 +19301,7 @@ function createCarteEngine(THREE, container, opts) {
     buildFires(fires);
     buildAvatars(avatars);
     buildAmbient({ tasks: amb, hubs, summit, regions, avatars });
+    buildTrail();
     buildMilestoneRings(amb);
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
@@ -19935,7 +19933,7 @@ function createCarteEngine(THREE, container, opts) {
     S.amb = null;
     S.daylightWindows = null;
     if (!S.ambient || !S.data) return;
-    const A = { workers: [], pigeons: [], lanterns: [], mills: [], flags: [], stacks: [], convoys: [], weather: [], trail: null, windows: [] };
+    const A = { workers: [], pigeons: [], lanterns: [], flags: [], convoys: [], windows: [] };
     const low = S.effQuality === "low";
     const taskList = src.tasks;
     const byId = {};
@@ -19959,19 +19957,13 @@ function createCarteEngine(THREE, container, opts) {
       // Fenêtres allumées le soir (#436) : échéance aujourd'hui, tâche ouverte.
       if (e.t.dueIn === 0 && e.t.state !== "done" && e.t.state !== "info" && e.t.state !== "todo") A.windows.push({ x: e.x, y: e.y + (e.top - e.y) * 0.5, z: e.z, k: e.k });
     });
-    // Éoliennes (#432) et drapeaux (#433) : un par totem.
+    // Drapeaux (#433) : un par totem.
     src.hubs.forEach((h) => {
       if (h.x == null) return;
-      const st = S.stats[h.tr.projectId] || { pct: 0, velocity: 0 };
+      const st = S.stats[h.tr.projectId] || { pct: 0 };
       const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
-      A.mills.push({ x: h.x, y: src.summit + 0.05, z: h.z, speed: dim ? 0 : carteWindmillSpeed(st.velocity), ph: carteRand("ml" + h.tr.projectId) * 6.283 });
       A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283 });
     });
-    // Charge des responsables (#434) : pile de dossiers au-dessus du badge.
-    if (S.people) {
-      const heavy = carteOverloaded(S.data.tasks.filter((t) => S.poi[t.id]));
-      src.avatars.forEach((a) => { if (heavy.has(a.name) && A.stacks.length < 300) A.stacks.push({ x: a.x, y: a.y + 0.62, z: a.z, k: Math.max(0.7, a.k), ph: carteRand("st" + a.x + a.z) * 6.283 }); });
-    }
     // Convois permanents (#425) : une charrette par dépendance affichée.
     taskList.forEach((e) => {
       (e.t.dependsOn || []).forEach((d) => {
@@ -19998,36 +19990,6 @@ function createCarteEngine(THREE, container, opts) {
         bars.instanceMatrix.needsUpdate = true;
       }
     }
-    // Météo par dossier (#426) : au-dessus de chaque région.
-    Object.keys(src.regions || {}).forEach((gid) => {
-      const g = src.regions[gid];
-      const tasks = S.data.tasks.filter((t) => S.poi[t.id] && g.projects.has(t.projectId));
-      const wth = carteWeather(tasks);
-      let cx = 0, cz = 0, rad = 0;
-      g.pts.forEach((pt) => { cx += pt[0]; cz += pt[1]; });
-      cx /= g.pts.length; cz /= g.pts.length;
-      g.pts.forEach((pt) => { rad = Math.max(rad, Math.hypot(pt[0] - cx, pt[1] - cz)); });
-      const n = wth.kind === "sun" ? 2 : wth.kind === "cloud" ? 4 : 6;
-      A.weather.push({ gid, cx, cz, rad: Math.max(3, rad * 0.55), y: src.summit + 5.5, kind: wth.kind, n, ph: carteRand("wx" + gid) * 6.283 });
-    });
-    const nClouds = A.weather.reduce((m, w) => m + w.n, 0);
-    if (nClouds) {
-      A.cloudMesh = ambMesh(G.ball, MAT.sky, nClouds * 3, (i) => { let j = Math.floor(i / 3); for (const w of A.weather) { if (j < w.n) return w.kind === "sun" ? "#ffffff" : w.kind === "cloud" ? "#c3c9d2" : "#6b7280"; j -= w.n; } return "#ffffff"; });
-      const suns = A.weather.filter((w) => w.kind === "sun").length;
-      if (suns) A.sunMesh = ambMesh(G.ball, MAT.g, suns, () => "#ffd35a");
-      const rainy = A.weather.filter((w) => w.kind === "rain");
-      if (rainy.length && !low) A.rainMesh = ambMesh(G.box, MAT.skyRain, rainy.length * 50);
-    }
-    // Fil d'Ariane (#435) : les prochaines échéances affichées, dans l'ordre.
-    const next = carteAriadne(S.data.tasks.filter((t) => S.poi[t.id]), 8);
-    // Deux échéances sur la même case ne font qu'un point du chemin.
-    const pts = [];
-    next.forEach((t) => { const q = S.poi[t.id], v = new THREE.Vector3(q.x, q.y + 0.45, q.z); if (!pts.length || pts[pts.length - 1].distanceTo(v) > 0.3) pts.push(v); });
-    if (pts.length >= 2) {
-      const curve = new THREE.CatmullRomCurve3(pts);
-      const n = Math.min(90, 14 * (pts.length - 1));
-      A.trail = { curve, n, mesh: ambMesh(G.ball, MAT.g, n, () => "#ffe38a") };
-    }
     if (A.workers.length) {
       const n = A.workers.length;
       A.wCyl = ambMesh(G.cyl, MAT.l, n * 2, (i) => (i % 2 ? WORKER_C.helmet : WORKER_C.vest));
@@ -20039,19 +20001,12 @@ function createCarteEngine(THREE, container, opts) {
       A.pWing = ambMesh(G.box, MAT.l, A.pigeons.length * 2, () => "#9aa3b2");
     }
     if (A.lanterns.length) A.lMesh = ambMesh(G.ball, MAT.g, A.lanterns.length, () => "#ffcf5a");
-    if (A.mills.length) {
-      A.mMast = ambMesh(G.cyl, MAT.l, A.mills.length, () => "#e8e2d6");
-      A.mBlade = ambMesh(G.box, MAT.l, A.mills.length * 3, () => "#fbf7ee");
-      A.mills.forEach((m, i) => A.mMast.setMatrixAt(i, tmpM.compose(tmpP.set(m.x, m.y, m.z), tmpQ.identity(), tmpS.set(0.1, 1.1, 0.1))));
-      A.mMast.instanceMatrix.needsUpdate = true;
-    }
     if (A.flags.length) {
       A.fMast = ambMesh(G.cyl, MAT.l, A.flags.length, () => "#5a4030");
       A.fCloth = ambMesh(G.box, MAT.l, A.flags.length, (i) => A.flags[i].color);
       A.flags.forEach((f, i) => A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, Math.max(0.5, f.top - f.base + 0.2), 0.06))));
       A.fMast.instanceMatrix.needsUpdate = true;
     }
-    if (A.stacks.length) A.sMesh = ambMesh(G.box, MAT.l, A.stacks.length * 3, (i) => ["#f4efe3", "#e8dcc0", "#fbf7ee"][i % 3]);
     if (A.windows.length) {
       A.winMesh = ambMesh(G.box, MAT.g, A.windows.length, () => "#ffd27a");
       A.windows.forEach((wn, i) => A.winMesh.setMatrixAt(i, tmpM.compose(tmpP.set(wn.x, wn.y, wn.z), tmpQ.identity(), tmpS.set(0.62 * wn.k, 0.34 * wn.k, 0.62 * wn.k))));
@@ -20115,18 +20070,6 @@ function createCarteEngine(THREE, container, opts) {
       });
       A.lMesh.instanceMatrix.needsUpdate = true; if (A.lMesh.instanceColor) A.lMesh.instanceColor.needsUpdate = true;
     }
-    // Éoliennes : vitesse = rythme du projet sur 14 jours.
-    if (A.mBlade) {
-      A.mills.forEach((m, i) => {
-        const a = t * m.speed + m.ph;
-        for (let b = 0; b < 3; b++) {
-          const ang = a + (b * 2 * Math.PI) / 3;
-          baseOf(tmpM, m.x, m.y + 1.1, m.z + 0.08, 0, 1);
-          putPart(A.mBlade, i * 3 + b, tmpM, 0, 0, 0, 0, 0, -ang, 0.12, 0.84, 0.03);
-        }
-      });
-      A.mBlade.instanceMatrix.needsUpdate = true;
-    }
     // Drapeaux : hissés au pourcentage d'avancement, flottant au vent.
     if (A.fCloth) {
       A.flags.forEach((f, i) => {
@@ -20137,15 +20080,6 @@ function createCarteEngine(THREE, container, opts) {
       });
       A.fCloth.instanceMatrix.needsUpdate = true;
     }
-    // Piles de dossiers des personnes surchargées : elles vacillent.
-    if (A.sMesh) {
-      A.stacks.forEach((s2, i) => {
-        const sway = Math.sin(t * 3 + s2.ph) * 0.12;
-        baseOf(tmpM, s2.x, s2.y, s2.z, 0, s2.k);
-        for (let j = 0; j < 3; j++) putPart(A.sMesh, i * 3 + j, tmpM, Math.sin(sway) * j * 0.08, j * 0.07, 0, 0, j * 0.3, sway * (j + 1) * 0.6, 0.34, 0.06, 0.26);
-      });
-      A.sMesh.instanceMatrix.needsUpdate = true;
-    }
     // Convois : la charrette avance ; bloquée, elle attend devant la barrière.
     if (A.carts) {
       A.convoys.forEach((cv, i) => {
@@ -20155,39 +20089,32 @@ function createCarteEngine(THREE, container, opts) {
       });
       A.carts.instanceMatrix.needsUpdate = true;
     }
-    // Météo : nuages qui dérivent, pluie, soleil ; discrets de près.
-    if (A.cloudMesh) {
-      MAT.sky.opacity = Math.max(0.12, Math.min(0.5, (S.dist - 12) / 45));
-      MAT.skyRain.opacity = MAT.sky.opacity * 0.8;
-      let ci = 0, si = 0, ri = 0;
-      A.weather.forEach((w) => {
-        for (let j = 0; j < w.n; j++) {
-          const a = w.ph + (j / w.n) * 6.283 + t * 0.04;
-          const cx = w.cx + Math.cos(a) * w.rad * (0.35 + 0.65 * ((j % 2) ? 0.6 : 1)), cz = w.cz + Math.sin(a) * w.rad * 0.7;
-          const f = w.kind === "rain" ? 1.5 : 1.2;
-          for (let b = 0; b < 3; b++) A.cloudMesh.setMatrixAt(ci++, tmpM.compose(tmpP.set(cx + (b - 1) * 0.9 * f, w.y + (b === 1 ? 0.35 : 0), cz), tmpQ.identity(), tmpS.set(1.4 * f, 0.8 * f, 1.1 * f)));
-          if (w.kind === "rain" && A.rainMesh) for (let d = 0; d < 8 && ri < A.rainMesh.count; d++) {
-            const fall = 5, yv = w.y - ((t * 4 + carteRand("wr" + j + d) * fall) % fall);
-            A.rainMesh.setMatrixAt(ri++, tmpM.compose(tmpP.set(cx + (carteRand("wx" + d) - 0.5) * 3, yv, cz + (carteRand("wz" + d) - 0.5) * 2), tmpQ.identity(), tmpS.set(0.05, 0.45, 0.05)));
-          }
-        }
-        if (w.kind === "sun" && A.sunMesh) A.sunMesh.setMatrixAt(si++, tmpM.compose(tmpP.set(w.cx + w.rad * 0.6, w.y + 1.6, w.cz - w.rad * 0.4), tmpQ.identity(), tmpS.setScalar(1.3 + 0.08 * Math.sin(t * 1.5))));
-      });
-      A.cloudMesh.instanceMatrix.needsUpdate = true;
-      if (A.sunMesh) A.sunMesh.instanceMatrix.needsUpdate = true;
-      if (A.rainMesh) A.rainMesh.instanceMatrix.needsUpdate = true;
+  }
+  // Mode Fil d'Ariane (#435) : un chemin de points lumineux relie les
+  // prochaines échéances, dans l'ordre. Indépendant des animations persistantes.
+  function buildTrail() {
+    S.trail = null;
+    if (!S.trailIds || !S.data) return;
+    // Deux échéances sur la même case ne font qu'un point du chemin.
+    const pts = [];
+    S.trailIds.forEach((id) => { const q = S.poi[id]; if (!q) return; const v = new THREE.Vector3(q.x, q.y + 0.45, q.z); if (!pts.length || pts[pts.length - 1].distanceTo(v) > 0.3) pts.push(v); });
+    if (pts.length < 2) return;
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const n = Math.min(120, 16 * (pts.length - 1));
+    S.trail = { curve, n, mesh: ambMesh(G.ball, MAT.g, n, () => "#ffd23f") };
+    placeTrail(S.time);
+  }
+  function placeTrail(t0) {
+    const T = S.trail;
+    if (!T) return;
+    const t = reduced ? t0 * 0.3 : t0;
+    for (let i = 0; i < T.n; i++) {
+      const u = ((i / T.n + t * 0.035) % 1 + 1) % 1;
+      const p = T.curve.getPoint(u);
+      const pulse = 0.11 + 0.04 * Math.sin(t * 3 + i);
+      T.mesh.setMatrixAt(i, tmpM.compose(p, tmpQ.identity(), tmpS.setScalar(pulse)));
     }
-    // Fil d'Ariane : des points lumineux défilent d'échéance en échéance.
-    if (A.trail) {
-      const T = A.trail;
-      for (let i = 0; i < T.n; i++) {
-        const u = ((i / T.n + t * 0.035) % 1 + 1) % 1;
-        const p = T.curve.getPoint(u);
-        const pulse = 0.09 + 0.04 * Math.sin(t * 3 + i);
-        T.mesh.setMatrixAt(i, tmpM.compose(p, tmpQ.identity(), tmpS.setScalar(pulse)));
-      }
-      T.mesh.instanceMatrix.needsUpdate = true;
-    }
+    T.mesh.instanceMatrix.needsUpdate = true;
   }
   // Jour et nuit à l'heure réelle (#436) ; les fenêtres des échéances du jour
   // ne s'allument que le soir.
@@ -20231,7 +20158,7 @@ function createCarteEngine(THREE, container, opts) {
 
   function animate() {
     const t = S.time;
-    placeStorms(t); placeFires(t); placeClocks(t); placeAmbient(t);
+    placeStorms(t); placeFires(t); placeClocks(t); placeAmbient(t); placeTrail(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
     MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow);
@@ -20286,8 +20213,14 @@ function createCarteEngine(THREE, container, opts) {
       if (!tr.anchor || !shown[tr.projectId]) return;
       cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, base: tr.world, prio: shown[tr.projectId], meta: !!detailed[tr.projectId] });
     });
+    // Mode Fil d'Ariane (#435) : les étapes restent nommées et numérotées,
+    // même de loin.
+    const step = {};
+    if (S.trailIds) S.trailIds.forEach((id, i) => { step[id] = i + 1; });
+    if (far && S.trailIds) S.trailIds.forEach((id, i) => { const p = S.poi[id]; if (p) cand.push({ id: "t:" + id, kind: "task", tid: id, pos: projV.clone().set(p.x, p.top, p.z), prio: 600 - i }); });
     if (!far) {
       const ids = {};
+      if (S.trailIds) S.trailIds.forEach((id, i) => { ids[id] = 600 - i; });
       if (S.selected) { ids[S.selected] = 900; const st = S.data.taskById[S.selected]; if (st) st.dependsOn.forEach((d) => { ids[d] = 700; }); }
       if (S.near) ids[S.near] = 800;
       if (S.hovered && S.hovered.startsWith("t:")) ids[S.hovered.slice(2)] = 850;
@@ -20334,7 +20267,7 @@ function createCarteEngine(THREE, container, opts) {
         const t = S.data.taskById[c.tid];
         const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
         const building = t.state === "doing" || t.state === "waiting" || (t.state === "todo" && t.progress > 0);
-        html = '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (building ? ' <b class="lp-carte-pct">' + t.progress + " %</b>" : "") + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
+        html = (step[c.tid] ? '<b class="lp-carte-step">' + step[c.tid] + "</b>" : "") + '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (building ? ' <b class="lp-carte-pct">' + t.progress + " %</b>" : "") + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
       }
       if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; }
       l.classList.toggle("is-selected", c.tid != null && c.tid === S.selected);
@@ -20376,6 +20309,7 @@ function createCarteEngine(THREE, container, opts) {
   }
   function setData(d) {
     S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null; S.dimmed = d.dimmed || null;
+    S.trailIds = d.trail || null;
     resolveQuality();
     build();
     // Carte resserrée (#401) : l'arpenteur resté hors des terres rejoint le
@@ -20423,6 +20357,17 @@ function createCarteEngine(THREE, container, opts) {
     S.focusGoal = new THREE.Vector3(cx, 0, cz);
     S.dist = Math.min(150, Math.max(32, maxd * 2.3 + 18));
   }
+  // Cadre la caméra sur un ensemble de tâches (mode Fil d'Ariane, #435).
+  function frameTasks(ids) {
+    const ps = (ids || []).map((id) => S.poi[id]).filter(Boolean);
+    if (!ps.length) return false;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    ps.forEach((p) => { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); });
+    S.follow = false; S.walkTo = null;
+    S.focusGoal = new THREE.Vector3((x0 + x1) / 2, 0, (z0 + z1) / 2);
+    S.dist = Math.min(150, Math.max(18, Math.hypot(x1 - x0, z1 - z0) * 1.15 + 14));
+    return true;
+  }
   function setQuality(q) { S.quality = q; if (S.layout) { resolveQuality(); build(); } o.onQuality && o.onQuality(S.effQuality); }
   // Décalage de la vue (en pixels) : la tâche reste visible à côté du volet
   // (ordinateur) ou au-dessus de la fiche (téléphone).
@@ -20445,17 +20390,6 @@ function createCarteEngine(THREE, container, opts) {
     S.ambient = !!on;
     if (S.layout) build();
     applyDaylight(true);
-  }
-  // Tournée du jour (#427) : la caméra vole jusqu'à la tâche, sans déplacer
-  // l'arpenteur, et la sélectionne.
-  function tourTo(id) {
-    const p = S.poi[id];
-    if (!p) return false;
-    S.follow = false;
-    S.focusGoal = new THREE.Vector3(p.x, p.y + 0.4, p.z);
-    S.dist = Math.min(Math.max(S.dist, 12), 16);
-    select(id);
-    return true;
   }
   function resize() {
     const w = container.clientWidth || 300, h = container.clientHeight || 300;
@@ -20493,7 +20427,7 @@ function createCarteEngine(THREE, container, opts) {
   S.raf = requestAnimationFrame(frame);
 
   return {
-    setData, select, focusProject, walkToTask, recenter, overview, setQuality, setPeople, setAmbient, tourTo, zoomBy,
+    setData, select, focusProject, walkToTask, recenter, overview, frameTasks, setQuality, setPeople, setAmbient, zoomBy,
     rotate: (d) => { S.yaw += d; },
     setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
@@ -20933,7 +20867,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   // Calendrier, appliqué par-dessus les filtres de la page.
   const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
   const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
-  const visible = useMemo(() => {
+  const visibleBase = useMemo(() => {
     const pageScope = tasksWithDone || tasks || [];
     const scoped = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
     const scope = new Set(scoped.map((t) => t.id));
@@ -20942,6 +20876,11 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  // Mode fil d'Ariane (#435) : seules les prochaines échéances (parmi les
+  // tâches retenues par les filtres) restent affichées, dans l'ordre, reliées
+  // par le fil lumineux ; les autres projets sont grisés.
+  const trailIds = useMemo(() => (cfg.ariadne ? carteAriadne(norm.tasks.filter((t) => visibleBase.has(t.id)), CARTE_ARIADNE_MAX).map((t) => t.id) : null), [cfg.ariadne, norm, visibleBase]);
+  const visible = useMemo(() => (trailIds ? new Set(trailIds) : visibleBase), [trailIds, visibleBase]);
 
   // Carte simplifiée (#401) : quand un filtre écarte des tâches, seuls les
   // projets qui en gardent au moins une sont cartographiés, sur une carte
@@ -21012,7 +20951,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           quality: cfg.quality,
           people: cfg.people,
           ambient: cfg.ambient,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-tour, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelected(id),
           onNear: (id) => {
             setNear(id);
@@ -21043,8 +20982,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return { ...norm, taskById, tasks: norm.tasks.map((x) => (x.id === t.id ? t : x)) };
   }, [norm, preview]);
   useEffect(() => {
-    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed });
-  }, [status, normView, layout, stats, visible, dimmed]);
+    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed, trail: trailIds });
+  }, [status, normView, layout, stats, visible, dimmed, trailIds]);
+  // En entrant dans le mode fil d'Ariane, la caméra cadre le parcours.
+  useEffect(() => { if (status === "ready" && engineRef.current && trailIds && trailIds.length) engineRef.current.frameTasks(trailIds); }, [status, cfg.ariadne]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
   // La vue se décale pour que la tâche ne passe pas sous le volet ou la fiche.
   useEffect(() => {
@@ -21066,22 +21007,6 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
-  // Tournée du jour (#427) : la caméra vole de tâche en tâche, urgentes et en
-  // retard d'abord, puis les échéances de la semaine (tâches affichées).
-  const [tour, setTour] = useState(null);
-  const startTour = () => {
-    const ids = carteTourList(norm.tasks.filter((t) => visible.has(t.id))).map((t) => t.id);
-    if (!ids.length) { setTour({ ids: [], i: 0 }); return; }
-    setTour({ ids, i: 0 });
-    if (engineRef.current) engineRef.current.tourTo(ids[0]);
-  };
-  const tourStep = (d) => setTour((tr) => {
-    if (!tr || !tr.ids.length) return tr;
-    const i = (tr.i + d + tr.ids.length) % tr.ids.length;
-    if (engineRef.current) engineRef.current.tourTo(tr.ids[i]);
-    return { ...tr, i };
-  });
-  const stopTour = () => { setTour(null); if (engineRef.current) { engineRef.current.select(null); engineRef.current.recenter(); } };
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
   const go = (id) => { const e = engineRef.current; if (!e) return; e.walkToTask(id); e.select(id); };
@@ -21159,7 +21084,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           </select>
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
-            <label className="lp-checkbox-line" title="Convois, météo, ouvriers, pigeons, lanternes, éoliennes, drapeaux, fil d'Ariane, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
+            <label className="lp-checkbox-line" title="Convois, ouvriers, pigeons, lanternes, drapeaux, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
@@ -21170,8 +21095,9 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
           </DropdownButton>
           <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
-          <button type="button" className="lp-btn" onClick={startTour} disabled={status !== "ready"} title="La caméra passe de tâche en tâche : urgentes et en retard, puis échéances de la semaine"><Footprints size={13} /> Tournée du jour</button>
-          <button type="button" className="lp-btn lp-btn-primary" onClick={() => { setTour(null); if (engineRef.current) engineRef.current.recenter(); }} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
+          <button type="button" className={"lp-btn" + (cfg.ariadne ? " lp-btn-primary" : "")} aria-pressed={cfg.ariadne} onClick={() => setPrefs({ ariadne: !cfg.ariadne })} disabled={status !== "ready"}
+            title="Mode fil d'Ariane : seules les prochaines échéances restent affichées, dans l'ordre, reliées par un fil lumineux"><Footprints size={13} /> Fil d'Ariane</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
       </div>
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
@@ -21226,7 +21152,13 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                 )}
                 <div className="lp-carte-hud" aria-live="polite">
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
-                  {shownCount < totalCount && (
+                  {cfg.ariadne && (
+                    <span className="lp-carte-pill lp-carte-filtered" data-carte-ariadne={trailIds ? trailIds.length : 0} title="Les prochaines échéances parmi les tâches retenues par les filtres, dans l'ordre">
+                      {trailIds && trailIds.length ? "Fil d'Ariane : " + trailIds.length + " prochaine" + (trailIds.length > 1 ? "s" : "") + " échéance" + (trailIds.length > 1 ? "s" : "") : "Fil d'Ariane : aucune échéance à venir"}
+                      <button type="button" onClick={() => setPrefs({ ariadne: false })}>Quitter</button>
+                    </span>
+                  )}
+                  {shownCount < totalCount && !cfg.ariadne && (
                     <span className="lp-carte-pill lp-carte-filtered" title="Filtres de la page, filtre général et filtres de la carte combinés">
                       {shownCount} / {totalCount} tâches affichées
                       {viewFilterCount > 0 && <button type="button" onClick={() => setPrefs(carteViewFilterReset())}>Tout afficher</button>}
@@ -21243,20 +21175,6 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     </details>
                   )}
                 </div>
-                {tour && (
-                  <div className="lp-carte-tour" role="group" aria-label="Tournée du jour">
-                    <Footprints size={14} />
-                    {tour.ids.length ? (
-                      <>
-                        <span className="lp-carte-tour-count">{tour.i + 1} / {tour.ids.length}</span>
-                        <span className="lp-carte-tour-title">{(norm.taskById[tour.ids[tour.i]] || {}).title || ""}</span>
-                        <button type="button" className="lp-icon-btn" aria-label="Tâche précédente" onClick={() => tourStep(-1)}><ChevronLeft size={15} /></button>
-                        <button type="button" className="lp-icon-btn" aria-label="Tâche suivante" onClick={() => tourStep(1)}><ChevronRight size={15} /></button>
-                      </>
-                    ) : <span className="lp-carte-tour-title">Rien d'urgent, de retard ni d'échéance cette semaine.</span>}
-                    <button type="button" className="lp-icon-btn" aria-label="Arrêter la tournée" onClick={stopTour}><X size={15} /></button>
-                  </div>
-                )}
                 {nearTask && !selTask && (
                   <div className="lp-carte-near">
                     <span className="lp-carte-state" style={{ background: nearTask.statusColor }} />
