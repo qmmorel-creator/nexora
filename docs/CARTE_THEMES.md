@@ -15,9 +15,9 @@ n'ait jamais à réapprendre la carte en passant d'un territoire à l'autre.
 | Nuage d'orage : en retard | Centre du territoire et ses 5 paliers de progression |
 | Lanterne : échéance sous 7 jours | Les 5 stades d'une tâche (à faire → terminé) |
 | Brume : début futur | L'avancement d'une tâche en cours (0 à 100 %) |
-| Emprise au sol : durée | La silhouette selon le type (tâche, réunion, planning, jalon) |
+| Emprise au sol : durée | La silhouette selon le type (tâche, réunion, planning) ; le jalon est un faisceau de lumière commun à tous les thèmes (#416) |
 | Couleur de tenue d'un habitant : responsable | Le costume de cet habitant |
-| Route de convoi : dépendance | Le mécanisme qui tourne : récurrence |
+| Route de convoi : dépendance | (récurrence : plus dessinée depuis #409) |
 | Étiquette avec couleur réelle du statut | L'aspect de la friche (tâche oubliée) |
 
 ## Deux progressions liées au thème
@@ -58,8 +58,7 @@ pourcentage seul.
 | En cours (avancement) | Module sous structure légère, hauteur selon `progress` |
 | Terminé | Module actif, signal lumineux |
 | Information | Borne d'information |
-| Tâche · réunion · planning · jalon | Module · station de réunion · tour de synchronisation · balise majeure |
-| Récurrence | Petite antenne rotative |
+| Tâche · réunion · planning | Module · station de réunion · tour de synchronisation |
 | Sous-tâches | Mini-modules gris ou ambre |
 | Friche | Câbles hors service |
 | Costume | Personnage actuel, sans ajout de modèle |
@@ -79,8 +78,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Immeuble sous grue : fondations → 1er étage → 2e étage → toiture |
 | Terminé | Immeuble aux fenêtres éclairées |
 | Information | Colonne d'affichage |
-| Tâche · réunion · planning · jalon | Atelier · halle couverte · tour de l'horloge · statue sur socle |
-| Récurrence | Tramway qui fait le tour du pâté de maisons |
+| Tâche · réunion · planning | Atelier · halle couverte · tour de l'horloge |
 | Sous-tâches | Échoppes accolées (à faire : étal vide ; faite : étal garni) |
 | Friche | Herbe entre les pavés, affiches déchirées |
 | Costume | Bleu de travail et casque |
@@ -96,8 +94,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Culture qui pousse : pousses → épis verts → épis dorés → moisson en cours |
 | Terminé | Meules de foin et grange pleine |
 | Information | Panneau de bois au croisement |
-| Tâche · réunion · planning · jalon | Grange · place de foire · cadran solaire · château d'eau |
-| Récurrence | Moulin à vent |
+| Tâche · réunion · planning | Grange · place de foire · cadran solaire |
 | Sous-tâches | Bottes de foin (à faire : herbe sur pied ; faite : botte roulée) |
 | Friche | Ronces et coquelicots envahissants |
 | Costume | Salopette et chapeau de paille |
@@ -113,8 +110,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Cabane dans l'arbre : plateforme → murs → toit → échelle |
 | Terminé | Cabane éclairée par une lanterne suspendue |
 | Information | Panneau gravé sur un tronc |
-| Tâche · réunion · planning · jalon | Cabane · cercle de souches autour d'un feu · cadran sur souche · arbre géant |
-| Récurrence | Roue à eau de la scierie |
+| Tâche · réunion · planning | Cabane · cercle de souches autour d'un feu · cadran sur souche |
 | Sous-tâches | Stères de bois (à faire : tronc ; faite : stère rangé) |
 | Friche | Mousse et lierre |
 | Costume | Chemise à carreaux |
@@ -130,8 +126,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Puits en creusement : margelle → treuil → eau visible → bassin qui se remplit |
 | Terminé | Maison de terre crue avec palmier et bassin |
 | Information | Stèle de pierre |
-| Tâche · réunion · planning · jalon | Maison de terre crue · grande tente de réception · gnomon · obélisque |
-| Récurrence | Noria (roue élévatrice d'eau) |
+| Tâche · réunion · planning | Maison de terre crue · grande tente de réception · gnomon |
 | Sous-tâches | Jarres (vides à faire ; pleines faites) |
 | Friche | Sable qui ensevelit la base |
 | Costume | Chèche et tunique |
@@ -147,8 +142,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Navire en cale sèche : quille → coque → mâts → voiles |
 | Terminé | Navire à quai, voiles hissées, pavillon du projet |
 | Information | Balise |
-| Tâche · réunion · planning · jalon | Navire · taverne du port · capitainerie et horloge des marées · phare |
-| Récurrence | Cloche de bouée qui oscille avec la houle |
+| Tâche · réunion · planning | Navire · taverne du port · capitainerie et horloge des marées |
 | Sous-tâches | Caisses sur le quai (à charger ; chargées) |
 | Friche | Rouille et algues |
 | Costume | Ciré jaune |
@@ -164,8 +158,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Ponton qui avance vers le large : pilotis → plancher → garde-corps → abri |
 | Terminé | Cabane sur pilotis éclairée, barque à côté |
 | Information | Panneau au bout du ponton |
-| Tâche · réunion · planning · jalon | Cabane sur pilotis · kiosque sur l'eau · capitainerie · tour de guet |
-| Récurrence | Roue à aubes |
+| Tâche · réunion · planning | Cabane sur pilotis · kiosque sur l'eau · capitainerie |
 | Sous-tâches | Nasses (à poser ; relevées) |
 | Friche | Roseaux envahissants, nénuphars |
 | Costume | Cuissardes |
@@ -181,8 +174,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Chalet en construction : soubassement de pierre → charpente → toit → cheminée |
 | Terminé | Chalet avec fumée à la cheminée |
 | Information | Panneau jaune de randonnée |
-| Tâche · réunion · planning · jalon | Chalet · salle commune du refuge · clocher · croix du col |
-| Récurrence | Éolienne du refuge |
+| Tâche · réunion · planning | Chalet · salle commune du refuge · clocher |
 | Sous-tâches | Tas de bois contre le mur (à couper ; rangé) |
 | Friche | Éboulis |
 | Costume | Veste en laine et bâton |
@@ -198,8 +190,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Cordée sur la voie : l'altitude de la cordée suit le pourcentage |
 | Terminé | Tente d'altitude plantée, fanion sur le rocher |
 | Information | Plaque scellée au rocher |
-| Tâche · réunion · planning · jalon | Tente d'altitude · tente-mess du camp de base · station météo · sommet secondaire au drapeau |
-| Récurrence | Drapeaux de prière qui flottent |
+| Tâche · réunion · planning | Tente d'altitude · tente-mess du camp de base · station météo |
 | Sous-tâches | Relais de corde (à poser ; posés) |
 | Friche | Congère qui recouvre l'objet |
 | Costume | Doudoune et casque |
@@ -215,8 +206,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Igloo monté en spirale : 1er rang → 2e rang → 3e rang → voûte |
 | Terminé | Igloo éclairé de l'intérieur |
 | Information | Petit inukshuk |
-| Tâche · réunion · planning · jalon | Igloo · grande maison commune · station météo · tour radar |
-| Récurrence | Éolienne de la base |
+| Tâche · réunion · planning | Igloo · grande maison commune · station météo |
 | Sous-tâches | Trous de pêche dans la glace (à forer ; forés) |
 | Friche | Givre et glace |
 | Costume | Parka à capuche fourrée |
@@ -232,8 +222,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Pont suspendu : câbles → planches jusqu'à la moitié → planches jusqu'à l'autre rive → rambardes |
 | Terminé | Maison troglodyte aux fenêtres éclairées |
 | Information | Pétroglyphe |
-| Tâche · réunion · planning · jalon | Maison troglodyte · amphithéâtre de pierre · gnomon · arche naturelle |
-| Récurrence | Roue de la mine |
+| Tâche · réunion · planning | Maison troglodyte · amphithéâtre de pierre · gnomon |
 | Sous-tâches | Wagonnets (vides ; chargés) |
 | Friche | Sable rouge et toiles d'araignée |
 | Costume | Casque à lampe |
@@ -249,8 +238,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Passerelle de planches posée tronçon après tronçon |
 | Terminé | Hutte sur butte, lanterne allumée |
 | Information | Écriteau sur pieu |
-| Tâche · réunion · planning · jalon | Hutte sur butte · cercle de barques · échelle de crue graduée · grand saule |
-| Récurrence | Lucioles qui s'allument par vagues |
+| Tâche · réunion · planning | Hutte sur butte · cercle de barques · échelle de crue graduée |
 | Sous-tâches | Nasses (à poser ; relevées) |
 | Friche | Lentilles d'eau et brume verte |
 | Costume | Cuissardes et chapeau de pluie |
@@ -266,8 +254,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Temple dégagé de la végétation : ruine couverte → premières marches → étages → sommet |
 | Terminé | Temple restauré, torches allumées |
 | Information | Totem sculpté |
-| Tâche · réunion · planning · jalon | Case sur pilotis · grande case commune · calendrier de pierre · pyramide à degrés |
-| Récurrence | Cascade dont le débit pulse |
+| Tâche · réunion · planning | Case sur pilotis · grande case commune · calendrier de pierre |
 | Sous-tâches | Paniers de fruits (vides ; pleins) |
 | Friche | Lianes qui recouvrent l'objet |
 | Costume | Chapeau d'explorateur |
@@ -276,15 +263,14 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 
 | | |
 |---|---|
-| Paysage | Roche noire, coulées refroidies, fumerolles, terre rouge fertile au pied ; le relief monte vers un cratère |
+| Paysage | Roche noire, fumerolles, terre rouge fertile au pied ; le relief monte vers un cratère, d'où descendent deux coulées de lave incandescente (#408) |
 | Progression du territoire | Champ de lave → abri d'observation → sentier balisé → observatoire → village de basalte → **cité géothermique** |
 | À faire | Balise plantée dans la cendre |
 | En attente | Fumerolle qui gronde, accès fermé par une chaîne |
 | En cours (avancement) | Forge alimentée par la lave : enclume → foyer → cheminée → forge rougeoyante |
 | Terminé | Maison de basalte aux fenêtres orangées |
 | Information | Panneau d'alerte triangulaire |
-| Tâche · réunion · planning · jalon | Maison de basalte · amphithéâtre du cratère · sismographe · colonne de basalte |
-| Récurrence | Geyser qui jaillit par intervalles |
+| Tâche · réunion · planning | Maison de basalte · amphithéâtre du cratère · sismographe |
 | Sous-tâches | Blocs de basalte (bruts ; taillés) |
 | Friche | Cendre qui recouvre l'objet |
 | Costume | Combinaison ignifugée |
@@ -300,8 +286,7 @@ Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facil
 | En cours (avancement) | Bungalow sur l'eau : pilotis → plancher → murs de bambou → toit de palmes |
 | Terminé | Bungalow éclairé, hamac tendu |
 | Information | Coquillage géant posé sur un poteau |
-| Tâche · réunion · planning · jalon | Bungalow · paillote-bar · cadran solaire de corail · phare rayé |
-| Récurrence | Vagues qui roulent sur le récif |
+| Tâche · réunion · planning | Bungalow · paillote-bar · cadran solaire de corail |
 | Sous-tâches | Noix de coco (sur l'arbre ; récoltées) |
 | Friche | Sable et algues échouées |
 | Costume | Chemise à fleurs |
