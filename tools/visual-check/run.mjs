@@ -802,6 +802,24 @@ try {
   transfert.error = String(error).split("\n")[0];
 }
 
+/* Widget « Carte (complet) » (#418) : la vraie vue Carte monte dans la
+   DashboardView du banc ; posé petit (3 × 4), il invite à l'agrandir. */
+const carteWidget = {};
+try {
+  const w = page.locator(".lp-widget-embed-carte").first();
+  await w.scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => [...document.querySelectorAll(".lp-widget-embed-carte .lp-carte-stage")].some((e) => e.dataset.carteStatus === "ready"), null, { timeout: 60000 });
+  await page.waitForTimeout(800);
+  Object.assign(carteWidget, await page.evaluate(() => ({
+    widgets: document.querySelectorAll(".lp-widget-embed-carte").length,
+    canvas: document.querySelectorAll(".lp-widget-embed-carte .lp-carte-gl canvas").length,
+    hint: document.querySelectorAll(".lp-widget-embed-carte .lp-carte-small-hint").length,
+    toolbar: document.querySelectorAll(".lp-widget-embed-carte .lp-carte-toolbar").length,
+  })));
+} catch (error) {
+  carteWidget.error = String(error).split("\n")[0];
+}
+
 /* Bandeau de paramètres du widget (issue #56). Le contrôle porte sur ce qui
    défile SOUS le bandeau, pas sur le bandeau lui-même : la panne réelle était
    un axe collant calé sur une barre d'onglets absente, qui laissait une bande
@@ -3134,6 +3152,8 @@ if (!carte.error) {
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
   expect(carte.stayOnProjectClick && carte.stayOnProjectClick.carte && carte.stayOnProjectClick.dimmed >= 1, `Carte : un clic sur un projet ou un dossier de la barre latérale quitte la Carte (${JSON.stringify(carte.stayOnProjectClick)})`);
+  expect(!carteWidget.error && carteWidget.canvas >= 1 && carteWidget.toolbar >= 1, `Widget Carte (complet) : la carte ne monte pas dans le tableau de bord (${JSON.stringify(carteWidget)})`);
+  expect(carteWidget.hint >= 1, `Widget Carte (complet) : pas d'invitation à agrandir un widget de 3 × 4 (${JSON.stringify(carteWidget)})`);
   expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);

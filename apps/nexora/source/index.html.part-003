@@ -2127,6 +2127,8 @@ function defaultLayoutForType(type) {
   if (type === "habitHeatmap") return { w: 9, h: 7 };
   if (type === "habitPixel") return { w: 12, h: 11 };
   if (type === "embedMetro" || type === "embedRadar") return { w: 8, h: 9 };
+  // Carte (complet) (#418) : assez grande pour explorer (~500 × 400 px au moins).
+  if (type === "embedCarte") return { w: 12, h: 12 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
@@ -2923,7 +2925,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask, onUpdateTaskFromCarte, setProjectFolders }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3864,6 +3866,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedRadar" && (
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                {w.type === "embedCarte" && (
+                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCarte} onToggleDone={onMarkDone} setProjectFolders={setProjectFolders} />
                 )}
                 {w.type === "teamCatalog" && (
                   <WidgetTeamCatalog ctx={ctx} setTeams={setTeams} setTeamMembers={setTeamMembers} setTeamFolders={setTeamFolders} setTasks={setTasks} pushToast={pushToast} />
@@ -15699,6 +15704,7 @@ const WIDGET_TYPE_META = [
   { key: "habitPixel", label: "Pixel des habitudes", icon: LayoutDashboard, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
+  { key: "embedCarte", label: "Carte (complet)", icon: MapIcon, group: "Planning" },
   // Finance PRO (#267, lot #275) : widgets dans le moteur de dashboard
   // existant — aucun second système de tableau de bord créé.
   { key: "financeProSynthese", label: "Finance PRO — Synthèse", icon: Wallet, group: "Suivi" },
@@ -16159,7 +16165,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "embedCarte" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -20095,12 +20101,17 @@ function createCarteEngine(THREE, container, opts) {
   const ro = new ResizeObserver(resize);
   ro.observe(container);
   resize();
+  // Hors de l'écran (widget d'un tableau de bord qu'on a fait défiler, #418),
+  // la carte ne se redessine plus : aucune animation ne tourne pour rien.
+  S.onScreen = true;
+  const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries) => { entries.forEach((e) => { S.onScreen = e.isIntersecting; }); }) : null;
+  if (io) io.observe(container);
 
   let last = performance.now(), fpsT = 0, fpsN = 0;
   function frame(now) {
     if (S.disposed) return;
     S.raf = requestAnimationFrame(frame);
-    if (document.hidden) { last = now; return; }
+    if (document.hidden || !S.onScreen) { last = now; return; }
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     S.time += dt;
     S.lastDt = dt;
@@ -20127,6 +20138,7 @@ function createCarteEngine(THREE, container, opts) {
       S.disposed = true;
       cancelAnimationFrame(S.raf);
       ro.disconnect();
+      if (io) io.disconnect();
       keyTarget.removeEventListener("keydown", kd);
       keyTarget.removeEventListener("keyup", ku);
       keyTarget.removeEventListener("blur", blur, true);
@@ -20152,6 +20164,31 @@ function carteWebglAvailable() {
   } catch (e) { return false; }
 }
 // === NEXORA:CARTE-ENGINE:END ===
+
+// Widget « Carte (complet) » (#418) : la vue Carte intégrale dans un tableau
+// de bord. Ses réglages (Affichage, filtres, thèmes, panneau) vivent dans la
+// configuration DU widget : ils survivent au rechargement et suivent le widget
+// quand on le duplique. En dessous de ~500 × 400 px, un bandeau invite à
+// agrandir le widget.
+const CARTE_WIDGET_MIN_W = 500;
+const CARTE_WIDGET_MIN_H = 400;
+function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone, setProjectFolders }) {
+  // Le panneau du territoire est replié par défaut : la place est comptée.
+  const stored = widget && widget.cartePrefs && typeof widget.cartePrefs === "object" ? widget.cartePrefs : { panel: false };
+  const [local, setLocal] = useState(stored);
+  useEffect(() => { setLocal(stored); }, [JSON.stringify(stored)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setPrefs = (patch) => {
+    const next = { ...local, ...(typeof patch === "function" ? patch(local) : patch) };
+    setLocal(next);
+    if (onUpdateWidget) onUpdateWidget({ cartePrefs: next });
+  };
+  return (
+    <div className="lp-widget-embed lp-widget-embed-carte">
+      <CarteView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs}
+        setProjectFolders={setProjectFolders} onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} embedded />
+    </div>
+  );
+}
 
 // Vue Carte (#361) : exploration 3D des projets et des tâches. Lecture seule :
 // la seule action qui peut mener à une modification est « Ouvrir la fiche »,
@@ -20485,7 +20522,7 @@ function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
   );
 }
 
-function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot }) {
+function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot, embedded }) {
   const cfg = normalizeCarteViewPrefs(prefs);
   const stageRef = useRef(null);
   const glRef = useRef(null);
@@ -20574,9 +20611,16 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return out;
   }, [norm, layout]);
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  // Intégrée dans un widget (#418), la carte suit le cadre du widget (CSS).
+  const [small, setSmall] = useState(false);
   useLayoutEffect(() => {
     const el = stageRef.current;
     if (!el) return undefined;
+    if (embedded) {
+      const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); setSmall(r.width < CARTE_WIDGET_MIN_W || r.height < CARTE_WIDGET_MIN_H); });
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
     const fit = () => {
       const top = el.getBoundingClientRect().top;
       // Sur mobile, la barre de navigation basse recouvre le bas de l'écran.
@@ -20601,7 +20645,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           keyTarget: stageRef.current,
           quality: cfg.quality,
           people: cfg.people,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelected(id),
           onNear: (id) => {
             setNear(id);
@@ -20712,7 +20756,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const terrStats = territory && stats[territory];
 
   return (
-    <section className="lp-carte-view" aria-label="Carte">
+    <section className={"lp-carte-view" + (embedded ? " is-embedded" : "")} aria-label="Carte">
       <ViewToolbarPortal slot={toolbarSlot} />
       <div className="lp-carte-toolbar">
           <div className="lp-carte-search" ref={searchRef}>
@@ -20747,6 +20791,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
         data-carte-status={status} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
+        {embedded && small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour explorer la carte confortablement.</div>}
         {empty ? (
           <div className="lp-empty lp-carte-empty">
             <strong>Aucun projet à cartographier.</strong>
