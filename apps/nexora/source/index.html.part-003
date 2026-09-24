@@ -18876,6 +18876,7 @@ function createCarteEngine(THREE, container, opts) {
     water: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.86, flatShading: true })),
     ring: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide })),
     alarm: mat(new THREE.MeshBasicMaterial({ color: "#ff1f1f", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })),
+    flame: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.92, depthWrite: false })),
   };
 
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
@@ -19039,6 +19040,7 @@ function createCarteEngine(THREE, container, opts) {
     // Tâches.
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
+    S.fires = null;
     const dones = [];
     const vis = S.visible;
     L.pois.forEach((p) => {
@@ -19059,7 +19061,12 @@ function createCarteEngine(THREE, container, opts) {
       placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
       let top = 0; parts.forEach((pp) => { if (pp.m !== "t") top = Math.max(top, pp.p[1] + pp.s[1]); });
       S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 3) + 0.1 };
-      if (t.criticality === "urgent" && t.state !== "done" && t.state !== "info") urgent.push({ x, y, z, top: y + Math.min(top, 3), k });
+      if (t.criticality === "urgent" && t.state !== "done" && t.state !== "info") {
+        // Feu du brasier (#375) : ancrage local du modèle, mis à l'échelle et tourné.
+        const a = carteFireAnchor(t);
+        const cr = Math.cos(ry), sr = Math.sin(ry);
+        urgent.push({ x, y, z, k, fx: x + (a[0] * cr + a[2] * sr) * k, fy: y + a[1] * k, fz: z + (-a[0] * sr + a[2] * cr) * k, ph: carteRand("fire" + t.id) * 6.28 });
+      }
       if (t.state === "done") dones.push(x, y + Math.min(top, 3) + 1.05, z);
       (S.poisByKey[p.key] = S.poisByKey[p.key] || []).push(t.id);
     });
@@ -19075,12 +19082,18 @@ function createCarteEngine(THREE, container, opts) {
     // Tâches urgentes (#367) : anneau au sol et fanal rouge qui clignotent.
     if (urgent.length) {
       const ring = new THREE.InstancedMesh(ringGeo, MAT.alarm, urgent.length);
-      const beacon = new THREE.InstancedMesh(G.ball, MAT.alarm, urgent.length);
       urgent.forEach((u, i) => {
         ring.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.y + 0.03, u.z), tmpQ.identity(), tmpS.set(u.k * 0.85, 1, u.k * 0.85)));
-        beacon.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.top + 0.35, u.z), tmpQ.identity(), tmpS.set(0.3, 0.3, 0.3)));
       });
-      [ring, beacon].forEach((m) => { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.frustumCulled = false; world.add(m); });
+      ring.instanceMatrix.needsUpdate = true; ring.computeBoundingSphere(); ring.frustumCulled = false; world.add(ring);
+      // Trois flammes par feu (rouge, orange, jaune), qui vacillent.
+      const flames = new THREE.InstancedMesh(G.cone, MAT.flame, urgent.length * 3);
+      flames.frustumCulled = false;
+      urgent.forEach((u, i) => CARTE_FLAMES.forEach((f, j) => flames.setColorAt(i * 3 + j, tmpC.set(f.c))));
+      if (flames.instanceColor) flames.instanceColor.needsUpdate = true;
+      world.add(flames);
+      S.fires = { mesh: flames, list: urgent };
+      placeFlames(0);
     }
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
@@ -19337,9 +19350,24 @@ function createCarteEngine(THREE, container, opts) {
     if (terr !== S.territory) { S.territory = terr; o.onTerritoryEnter && o.onTerritoryEnter(terr); }
   }
 
+  // Flammes (#375) : hauteur et balancement qui varient à chaque image.
+  const CARTE_FLAMES = [{ c: "#e8341c", r: 0.26, h: 0.62 }, { c: "#ff8c1a", r: 0.18, h: 0.48 }, { c: "#ffd84a", r: 0.1, h: 0.32 }];
+  function placeFlames(t) {
+    const F = S.fires;
+    if (!F) return;
+    const still = reduced || S.effQuality === "low";
+    F.list.forEach((u, i) => CARTE_FLAMES.forEach((f, j) => {
+      const w = still ? 1 : 0.72 + 0.28 * Math.abs(Math.sin(t * (8 + j * 2.3) + u.ph + j)) + 0.1 * Math.sin(t * 21 + u.ph * 2);
+      const sway = still ? 0 : Math.sin(t * 5.5 + u.ph + j) * 0.035 * u.k;
+      tmpQ.setFromAxisAngle(UP, u.ph + j);
+      F.mesh.setMatrixAt(i * 3 + j, tmpM.compose(tmpP.set(u.fx + sway, u.fy, u.fz - sway * 0.6), tmpQ, tmpS.set(f.r * u.k, f.h * u.k * w, f.r * u.k)));
+    }));
+    F.mesh.instanceMatrix.needsUpdate = true;
+  }
   function animate() {
     if (reduced) { MAT.alarm.opacity = 0.85; return; }
     const t = S.time;
+    if (S.effQuality !== "low") placeFlames(t);
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
     S.spin.forEach((sp) => {
       tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");
@@ -19665,7 +19693,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, o
             <input id={"lp-carte-prog-" + task.id} type="range" min={0} max={100} step={5} value={prog}
               onChange={(e) => { const v = Number(e.target.value); progRef.current = v; setProg(v); if (onPreview) onPreview({ id: task.id, progress: v }); }}
               onPointerUp={commitProg} onKeyUp={commitProg} onBlur={commitProg} />
-            {task.state === "todo" && <small className="lp-carte-muted">La construction monte sur la carte quand la tâche est en cours ou en attente.</small>}
+            {task.state === "todo" && prog === 0 && <small className="lp-carte-muted">Augmente l'avancement : la tâche passe en chantier sur la carte et monte au fil du curseur.</small>}
           </div>
         )}
 

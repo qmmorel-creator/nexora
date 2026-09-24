@@ -253,3 +253,14 @@ Un projet qui a des tâches mais dont aucune ne ressort des filtres (page, carte
 général) est grisé : sol, décor, cœur du projet, étiquette, pastille du ruban et ligne du
 panneau. Une région dont tous les projets sont écartés paraît donc grisée en entier. Un projet
 sans tâche n'est pas grisé. Les territoires ne bougent pas.
+
+## Feu des tâches critiques (#375) et construction continue (#376)
+
+- **Criticité urgente** : un brasier (pied, vasque, braises) porte trois flammes rouge, orange
+  et jaune qui vacillent. L'anneau rouge clignotant au sol reste. Flammes fixes en qualité basse
+  ou si les animations sont réduites.
+- **Construction continue** : le chantier et son socle montent de façon continue avec
+  l'avancement (0,24 unité par tranche de 20 %, soit 1,2 unité à 100 %), et chaque cran du
+  curseur du volet se voit en direct. Une tâche « À faire » dont l'avancement dépasse 0 %
+  s'affiche en chantier ; son statut ne change pas. Les paliers restent la mesure affichée dans
+  le volet et la progression des territoires.

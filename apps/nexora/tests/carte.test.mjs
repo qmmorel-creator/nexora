@@ -23,7 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
-    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift, carteDimmedProjects,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift, carteDimmedProjects, carteFireAnchor,
   };\n})`
 )();
 
@@ -161,11 +161,10 @@ test("modèles valides pour chaque thème, état et palier", () => {
   }
 });
 
-test("la construction d'une tâche en cours suit les paliers de progress", () => {
+test("#376 : la construction d'une tâche en cours monte de façon continue avec l'avancement", () => {
   const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
-  const height = (pr) => C.carteTaskModel({ ...base, progress: pr }, "ville", { detail: 0 }).filter((p) => p.c !== "#c9a060").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
-  assert.ok(height(10) < height(50) && height(50) < height(90), `${height(10)} < ${height(50)} < ${height(90)}`);
-  assert.equal(height(20), height(39), "même palier, même hauteur");
+  const height = (pr) => C.carteTaskModel({ ...base, progress: pr }, "ville", { detail: 0, plinth: false }).filter((p) => p.c !== "#c9a060").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  assert.ok(height(20) < height(25) && height(25) < height(50) && height(50) < height(90), `${height(20)} < ${height(25)} < ${height(50)} < ${height(90)}`);
 });
 
 test("filtres de la vue et préférences normalisées", () => {
@@ -200,17 +199,29 @@ test("#368 : le thème enregistré sur le dossier prime sur la préférence de v
   assert.deepEqual(o, { f1: "volcan", f3: "lac" });
 });
 
-test("#369 : l'altitude suit le palier ; une tâche terminée culmine", () => {
+test("#369 et #376 : l'altitude suit l'avancement en continu ; une tâche terminée culmine", () => {
   const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
   const lv = (t) => C.carteTaskLevel(t);
-  assert.deepEqual([0, 25, 45, 65, 85, 100].map((pr) => lv({ ...base, progress: pr })), [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual([0, 25, 45, 65, 85, 100].map((pr) => lv({ ...base, progress: pr })), [0, 1.25, 2.25, 3.25, 4.25, 5]);
   assert.equal(lv({ ...base, state: "done", progress: 0 }), 5);
-  assert.equal(lv({ ...base, state: "todo", progress: 90 }), 0);
+  assert.equal(lv({ ...base, state: "todo", progress: 40 }), 2, "une tâche à faire entamée monte aussi");
+  assert.equal(lv({ ...base, state: "info", progress: 90 }), 0);
   const top = (t) => C.carteTaskModel(t, "desert", { detail: 0 }).reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
-  assert.ok(top({ ...base, state: "done" }) - top({ ...base, state: "todo" }) > 1, "au moins une unité d'écart entre à faire et terminée");
+  assert.ok(top({ ...base, state: "done" }) - top({ ...base, state: "todo", progress: 0 }) > 1, "au moins une unité d'écart entre à faire et terminée");
+  assert.ok(top({ ...base, progress: 30 }) > top({ ...base, progress: 25 }), "cinq points de plus se voient");
+  const todoStarted = C.carteTaskModel({ ...base, state: "todo", progress: 40 }, "ville", { detail: 0 });
+  assert.ok(todoStarted.some((p) => p.c === "#c9a060"), "une tâche à faire entamée est dessinée en chantier");
   const hub0 = C.carteHubModel("ville", 0, "#123456", "normal").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
   const hub5 = C.carteHubModel("ville", 5, "#123456", "normal").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
   assert.ok(hub5 - hub0 > 1, `cœur de projet : ${hub0} → ${hub5}`);
+});
+
+test("#375 : une tâche urgente porte un brasier, ancré sur son socle", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "u", projectId: "p", statusId: "s3", taskTypeId: "tt1", criticality: "urgent", progress: 60 }], { now: NOW }).tasks[0];
+  const parts = C.carteTaskModel(base, "ville", { detail: 0 });
+  assert.ok(parts.some((p) => p.c === "#ff5a1f" && p.m === "g"), "braises lumineuses dans la vasque");
+  const a = C.carteFireAnchor(base);
+  assert.ok(Math.abs(a[1] - (0.62 + C.carteTaskLift(base))) < 1e-9, "le feu suit l'altitude de la tâche");
 });
 
 test("#364 et #365 : préférences du filtre général et du panneau", () => {
