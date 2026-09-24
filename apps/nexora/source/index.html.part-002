@@ -5089,10 +5089,8 @@ function carteNormalize(ctx, tasks, opts) {
       fromEmail: !!t.sourceMessageId,
       stale: state !== "done" && state !== "info" && last != null && nowMs - last > 30 * CARTE_DAY,
       recentDone: state === "done" && completed != null && nowMs - completed <= 7 * CARTE_DAY,
-      // Animations persistantes (#430, #432) : jours sans interaction, jours
-      // depuis la complétion (null si inconnus).
+      // Pigeon voyageur (#430) : jours sans interaction (null si inconnu).
       idleDays: last != null ? Math.max(0, Math.floor((nowMs - last) / CARTE_DAY)) : null,
-      doneDaysAgo: state === "done" && completed != null ? Math.max(0, Math.floor((nowMs - completed) / CARTE_DAY)) : null,
       // #400 : une tâche terminée sans date de complétion enregistrée se date
       // par sa fin prévue, sinon par sa dernière interaction.
       oldDone: state === "done" && (completed != null ? nowMs - completed > 30 * CARTE_DAY : end != null ? today - end > 30 : last != null && nowMs - last > 30 * CARTE_DAY),
@@ -5356,13 +5354,11 @@ function carteBuild(input) {
 
 // Statistiques et palier d'un territoire.
 function carteTerritoryStats(tasks) {
-  const s = { todo: 0, doing: 0, waiting: 0, done: 0, info: 0, total: 0, overdue: 0, counted: 0, velocity: 0 };
+  const s = { todo: 0, doing: 0, waiting: 0, done: 0, info: 0, total: 0, overdue: 0, counted: 0 };
   tasks.forEach((t) => {
     s[t.state]++;
     s.total++;
     if (t.overdue) s.overdue++;
-    // Rythme du projet (#432) : tâches terminées sur les 14 derniers jours.
-    if (t.doneDaysAgo != null && t.doneDaysAgo <= 14) s.velocity++;
     if (t.state !== "info") s.counted++;
   });
   // Les informations ne sont ni à faire ni faites : elles ne comptent pas.
@@ -5390,45 +5386,12 @@ function carteMilestoneProgress(task) {
 function cartePigeonSpeed(idleDays) {
   return Math.max(0.15, 1 / (1 + Math.max(0, Number(idleDays) || 0) / 7));
 }
-// Éolienne du rythme (#432) : radians par seconde selon les tâches terminées
-// sur 14 jours ; à l'arrêt si rien n'a été terminé.
-function carteWindmillSpeed(velocity) {
-  const v = Math.max(0, Number(velocity) || 0);
-  return v ? Math.min(6, 0.8 + v * 0.45) : 0;
-}
-// Météo d'une région (#426) : part de tâches en retard parmi ses tâches
-// ouvertes. Soleil sous 10 %, nuages sous 30 %, pluie au-delà.
-function carteWeather(tasks) {
-  let open = 0, late = 0;
-  (tasks || []).forEach((t) => { if (t.state === "done" || t.state === "info") return; open++; if (t.overdue) late++; });
-  const ratio = open ? late / open : 0;
-  return { kind: ratio < 0.1 ? "sun" : ratio < 0.3 ? "cloud" : "rain", ratio, open, late };
-}
-// Charge des responsables (#434) : plus de `limit` tâches ouvertes à échéance
-// sous 7 jours (retards compris).
-const CARTE_OVERLOAD = 5;
-function carteOverloaded(tasks, limit) {
-  const max = limit == null ? CARTE_OVERLOAD : limit, n = {};
-  (tasks || []).forEach((t) => {
-    if (!t.assignee || t.state === "done" || t.state === "info" || t.dueIn == null || t.dueIn > 7) return;
-    n[t.assignee] = (n[t.assignee] || 0) + 1;
-  });
-  return new Set(Object.keys(n).filter((k) => n[k] > max));
-}
 // Fil d'Ariane (#435) : les prochaines échéances ouvertes, dans l'ordre.
+// Le mode « Fil d'Ariane » de la vue n'affiche que ces tâches.
+const CARTE_ARIADNE_MAX = 8;
 function carteAriadne(tasks, max) {
   return (tasks || []).filter((t) => t.state !== "done" && t.state !== "info" && t.dueIn != null && t.dueIn >= 0)
-    .sort((a, b) => a.end - b.end || (String(a.id) < String(b.id) ? -1 : 1)).slice(0, max || 8);
-}
-// Tournée du jour (#427) : urgentes et en retard d'abord (échéance la plus
-// ancienne en tête), puis les échéances des 7 prochains jours.
-function carteTourList(tasks) {
-  const open = (tasks || []).filter((t) => t.state !== "done" && t.state !== "info");
-  const byEnd = (a, b) => (a.end == null ? 1e9 : a.end) - (b.end == null ? 1e9 : b.end) || (String(a.id) < String(b.id) ? -1 : 1);
-  const hot = open.filter((t) => t.overdue || t.criticality === "urgent").sort(byEnd);
-  const seen = new Set(hot.map((t) => t.id));
-  const week = open.filter((t) => !seen.has(t.id) && t.dueIn != null && t.dueIn >= 0 && t.dueIn <= 7).sort(byEnd);
-  return hot.concat(week);
+    .sort((a, b) => a.end - b.end || (String(a.id) < String(b.id) ? -1 : 1)).slice(0, max || CARTE_ARIADNE_MAX);
 }
 // Jour et nuit à l'heure réelle (#436) : lumière selon l'heure (0-24). La nuit
 // reste lisible : jamais sous ~45 % de la lumière du jour.
@@ -5940,8 +5903,10 @@ function normalizeCarteViewPrefs(p) {
     simplify: !!v.simplify,
     // Bonshommes des responsables (#398) : affichés par défaut.
     people: v.people !== false,
-    // Animations persistantes (#425 à #436) : actives par défaut.
+    // Animations persistantes (#425 à #437) : actives par défaut.
     ambient: v.ambient !== false,
+    // Mode Fil d'Ariane (#435) : seules les prochaines échéances restent en vue.
+    ariadne: !!v.ariadne,
   };
 }
 // === NEXORA:CARTE:END ===

@@ -1942,16 +1942,19 @@ try {
   // #401 : la carte simplifiée (menu « Affichage ») retire les projets écartés.
   // #400 : plus aucune puce de filtre rapide dans la barre.
   carte.chips = await cp.$$eval(".lp-carte-toolbar .lp-carte-fchip, .lp-carte-filter", (e) => e.length);
-  // #427 : la tournée du jour passe de tâche en tâche.
-  await cp.click('.lp-carte-toolbar button:has-text("Tournée du jour")');
+  // #435 : le mode Fil d'Ariane ne garde que les prochaines échéances, dans
+  // l'ordre, et se quitte depuis sa pastille.
+  const shownNow = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteShown));
+  const shownBefore = await shownNow();
+  await cp.click('.lp-carte-toolbar button:has-text("Fil d\'Ariane")');
   await cp.waitForTimeout(1200);
-  carte.tour = await cp.evaluate(() => ({ bar: !!document.querySelector(".lp-carte-tour"), count: (document.querySelector(".lp-carte-tour-count") || {}).textContent || "", selected: document.querySelector(".lp-carte-stage").dataset.carteSelected }));
-  await cp.click('.lp-carte-tour [aria-label="Tâche suivante"]').catch(() => {});
+  carte.ariadne = await cp.evaluate(() => { const pill = document.querySelector("[data-carte-ariadne]"); return { pill: !!pill, n: pill ? Number(pill.dataset.carteAriadne) : -1, steps: document.querySelectorAll(".lp-carte-step").length }; });
+  carte.ariadne.before = shownBefore;
+  carte.ariadne.shown = await shownNow();
+  await cp.click('[data-carte-ariadne] button').catch(() => {});
   await cp.waitForTimeout(800);
-  carte.tour.next = (await cp.$eval(".lp-carte-tour-count", (e) => e.textContent).catch(() => ""));
-  await cp.click('.lp-carte-tour [aria-label="Arrêter la tournée"]').catch(() => {});
-  await cp.waitForTimeout(800);
-  carte.tour.closed = await cp.$$eval(".lp-carte-tour", (e) => e.length);
+  carte.ariadne.after = await shownNow();
+  carte.ariadne.closed = await cp.$$eval("[data-carte-ariadne]", (e) => e.length);
   const terrOf = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteTerritories));
   const toggleSimplify = async () => {
     await cp.click('.lp-carte-toolbar button:has-text("Affichage")');
@@ -3194,7 +3197,7 @@ if (!carte.error) {
   expect(!cosmosWidget.error && cosmosWidget.canvas >= 1 && cosmosWidget.toolbar >= 1 && cosmosWidget.rail >= 1 && cosmosWidget.crumbs >= 1, `Widget Cosmos (complet) : l'univers ne monte pas dans le tableau de bord (${JSON.stringify(cosmosWidget)})`);
   expect(cosmosWidget.hint >= 1, `Widget Cosmos (complet) : pas d'invitation à agrandir un widget de 3 × 4 (${JSON.stringify(cosmosWidget)})`);
   expect(cosmosWidget.largeHint && cosmosWidget.largeHint.length >= 1 && cosmosWidget.largeHint.every((n) => n === 0), `Widget Cosmos (complet) : un widget de 12 × 14 ne doit pas inviter à l'agrandir (${JSON.stringify(cosmosWidget)})`);
-  expect(carte.tour && carte.tour.bar && /^1 \/ \d+$/.test(carte.tour.count) && carte.tour.selected && /^2 \//.test(carte.tour.next) && carte.tour.closed === 0, `Carte : la tournée du jour ne fonctionne pas (${JSON.stringify(carte.tour)})`);
+  expect(carte.ariadne && carte.ariadne.pill && carte.ariadne.n >= 1 && carte.ariadne.n <= 8 && carte.ariadne.shown === carte.ariadne.n && carte.ariadne.steps >= 1 && carte.ariadne.closed === 0 && carte.ariadne.after === carte.ariadne.before, `Carte : le mode Fil d'Ariane ne fonctionne pas (${JSON.stringify(carte.ariadne)})`);
   expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
