@@ -6456,7 +6456,9 @@ const COSMOS_KIND_FROM_THEME = {
   montagne: "ice", hautemontagne: "ice", grandnord: "ice", volcan: "volcano",
 };
 
-function cosmosRingCount(k, spec) { return spec[0] + spec[1] * k; }
+// Une spécification d'anneaux est soit [base, pas] (base + pas × k places),
+// soit une fonction k → nombre de places.
+function cosmosRingCount(k, spec) { return typeof spec === "function" ? spec(k) : spec[0] + spec[1] * k; }
 // Place n° slot → anneau, rang dans l'anneau, taille de l'anneau.
 function cosmosSlotRing(slot, spec) {
   let k = 0, s = slot;
@@ -6507,6 +6509,25 @@ function cosmosSpiralPoint(slot, spacing) {
 }
 function cosmosPlanetRadius(n) { return Math.min(3.2, 1.15 + 0.42 * Math.log2(1 + n)); }
 function cosmosSatelliteOrbit(planetRadius, ring) { return planetRadius * 1.85 + 0.95 + ring * 1.05; }
+// Encombrement d'une planète avec ses satellites.
+function cosmosPlanetReach(n) {
+  const r = cosmosPlanetRadius(n);
+  if (!n) return r * 1.6;
+  const rings = cosmosSlotRing(Math.max(0, n - 1), COSMOS_RINGS.satellite).ring + 1;
+  return cosmosSatelliteOrbit(r, rings - 1) + 0.6;
+}
+// Orbites d'un système (galaxie ou amas) réglées sur l'encombrement de ses
+// plus grosses planètes, arrondi par paliers (puissances de 2 du nombre de
+// tâches) : le placement ne change que si un projet franchit un palier.
+function cosmosOrbitPlan(taskCounts, orbit0, gap0) {
+  const max = taskCounts.reduce((m, n) => Math.max(m, n), 0);
+  const bucket = max <= 4 ? 4 : Math.pow(2, Math.ceil(Math.log2(max)));
+  const reach = cosmosPlanetReach(Math.min(bucket, 64));
+  const step = Math.max(gap0, reach * 2 + 1.5);
+  const first = Math.max(orbit0, reach * 1.2 + 3);
+  const count = (k) => Math.max(3, Math.floor((Math.PI * 2 * (first + k * step)) / step));
+  return { first, step, count };
+}
 
 // Arbre des dossiers : racine de chaque dossier (galaxie) et sous-dossier de
 // premier niveau (amas). Un parent introuvable ou une boucle font du dossier
@@ -6593,13 +6614,15 @@ function cosmosBuild(ctx, norm, opts) {
   galaxies.forEach((g) => {
     const orbits = [];
     // Planètes directes autour du cœur.
-    const pSlots = cosmosAssign(g.direct, memory.p, "p:" + g.id, COSMOS_RINGS.planet);
-    let outer = COSMOS_PLANET_ORBIT0 * 0.6;
+    const countOf = (pid) => (tasksByProject[pid] || []).length;
+    const plan = cosmosOrbitPlan(g.direct.map(countOf), COSMOS_PLANET_ORBIT0, COSMOS_PLANET_GAP);
+    const pSlots = cosmosAssign(g.direct, memory.p, "p:" + g.id, plan.count);
+    let outer = plan.first * 0.6;
     const rings = {};
     g.direct.forEach((pid) => {
-      const info = cosmosSlotRing(pSlots[pid], COSMOS_RINGS.planet);
+      const info = cosmosSlotRing(pSlots[pid], plan.count);
       memory.p[pid] = pSlots[pid];
-      const r = COSMOS_PLANET_ORBIT0 + info.ring * COSMOS_PLANET_GAP;
+      const r = plan.first + info.ring * plan.step;
       rings[info.ring] = r;
       outer = Math.max(outer, r);
       const a = cosmosSlotAngle(info, g.id);
@@ -6612,18 +6635,19 @@ function cosmosBuild(ctx, norm, opts) {
     let amasOuter = outer;
     g.amas.forEach((a) => {
       memory.a[a.id] = aSlots[a.id];
-      const pSl = cosmosAssign(a.projectIds, memory.p, "p:" + a.id, COSMOS_RINGS.amasPlanet);
+      const aPlan = cosmosOrbitPlan(a.projectIds.map(countOf), COSMOS_AMAS_PLANET_ORBIT0, COSMOS_AMAS_PLANET_GAP);
+      const pSl = cosmosAssign(a.projectIds, memory.p, "p:" + a.id, aPlan.count);
       let inner = 1.6;
       const aRings = {};
       a.projectIds.forEach((pid) => {
         memory.p[pid] = pSl[pid];
-        const info = cosmosSlotRing(pSl[pid], COSMOS_RINGS.amasPlanet);
-        const r = COSMOS_AMAS_PLANET_ORBIT0 + info.ring * COSMOS_AMAS_PLANET_GAP;
+        const info = cosmosSlotRing(pSl[pid], aPlan.count);
+        const r = aPlan.first + info.ring * aPlan.step;
         aRings[info.ring] = r;
         inner = Math.max(inner, r);
         planets[pid] = { id: pid, galaxyId: g.id, amasId: a.id, orbitRadius: r, angle: cosmosSlotAngle(info, a.id), ring: info.ring, slot: pSl[pid] };
       });
-      a.radius = inner + 1.8;
+      a.radius = inner + (a.projectIds.length ? cosmosPlanetReach(a.projectIds.reduce((m, pid) => Math.max(m, countOf(pid)), 0)) : 1.8);
       a.rings = Object.keys(aRings).map((k) => aRings[k]);
     });
     const amasSize = g.amas.reduce((m, a) => Math.max(m, a.radius), 0);
@@ -6636,7 +6660,7 @@ function cosmosBuild(ctx, norm, opts) {
       a.rings.forEach((rr) => orbits.push({ x: a.center.x, z: a.center.z, r: rr, kind: "amas" }));
       a.projectIds.forEach((pid) => { planets[pid].orbitCenter = { x: a.center.x, z: a.center.z }; });
     });
-    g.radius = Math.max(outer, amasOuter) + 4.5;
+    g.radius = Math.max(outer + (g.direct.length ? cosmosPlanetReach(g.direct.reduce((m, pid) => Math.max(m, countOf(pid)), 0)) : 0), amasOuter) + 3.5;
     g.orbits = orbits;
     g.projectIds = g.direct.concat(...g.amas.map((a) => a.projectIds));
     maxRadius = Math.max(maxRadius, g.radius);

@@ -108,7 +108,7 @@ test("les positions sont déterministes et ne dépendent pas de l'ordre des donn
 test("avec la mémoire, ajouter un projet ou une tâche ne déplace rien d'existant", () => {
   const first = build(tasksFor()).model;
   const more = tasksFor();
-  for (let i = 0; i < 25; i++) more.push({ id: `new-${i}`, title: `Nouvelle ${i}`, projectId: "p-passe", statusId: "s1" });
+  more.push({ id: "new-0", title: "Nouvelle", projectId: "p-passe", statusId: "s1" });
   const ctx2 = { ...ctx, projects: [...projects, { id: "p-new", name: "Nouveau", folderId: "f-val" }], projectFolders: [...folders, { id: "f-new", name: "Nouveau dossier" }] };
   const second = build(more, first.memory, ctx2).model;
   for (const id of Object.keys(first.planets)) assert.deepEqual(second.planets[id].local, first.planets[id].local, id);
@@ -119,6 +119,32 @@ test("avec la mémoire, ajouter un projet ou une tâche ne déplace rien d'exist
   for (const g of first.galaxies) assert.equal(second.galaxyById[g.id].slot, g.slot);
   assert.ok(second.planets["p-new"]);
   assert.ok(second.galaxyById["f-new"]);
+});
+
+test("un projet qui franchit un palier de taille élargit les orbites sans changer places ni angles", () => {
+  const first = build(tasksFor()).model;
+  const more = tasksFor();
+  for (let i = 0; i < 25; i++) more.push({ id: `new-${i}`, title: `Nouvelle ${i}`, projectId: "p-passe", statusId: "s1" });
+  const second = build(more, first.memory).model;
+  for (const id of Object.keys(first.planets)) {
+    assert.equal(second.planets[id].slot, first.planets[id].slot, id);
+    assert.equal(second.planets[id].angle, first.planets[id].angle, id);
+  }
+  for (const id of Object.keys(first.satellites)) assert.equal(second.satellites[id].slot, first.satellites[id].slot, id);
+  assert.ok(second.planets["p-mach"].orbitRadius >= first.planets["p-mach"].orbitRadius);
+});
+
+test("les planètes d'un système ne se chevauchent pas, satellites compris", () => {
+  const vf = [{ id: "vf", name: "Gros dossier" }];
+  const vp = Array.from({ length: 25 }, (_, i) => ({ id: `vp${i}`, name: `Projet ${i}`, folderId: "vf" }));
+  const vt = Array.from({ length: 1000 }, (_, i) => ({ id: `vt${i}`, title: `T${i}`, projectId: vp[i % 25].id, statusId: statuses[i % 5].id }));
+  const c = { projects: vp, projectFolders: vf, statuses, taskTypes: [], teamMembers: [] };
+  const { model } = build(vt, undefined, c);
+  const ps = Object.values(model.planets);
+  for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
+    const d = Math.hypot(ps[i].world.x - ps[j].world.x, ps[i].world.z - ps[j].world.z);
+    assert.ok(d >= ps[i].reach + ps[j].reach - 0.01, `${ps[i].name} / ${ps[j].name} : ${d.toFixed(1)}`);
+  }
 });
 
 test("attribution des places : unique, stable, et la mémoire est purgée des disparus", () => {

@@ -1136,6 +1136,7 @@ if (benchApp) {
       { id: "banc-cp8", name: "Références", color: "#8391A6", folderId: "banc-cf4" },
       { id: "banc-cp9", name: "Veille", color: "#94A3B8", folderId: "folder-a-trier" },
       { id: "banc-cp10", name: "Projet à lancer", color: "#0EA5E9", folderId: "banc-cf2" },
+      { id: "banc-cp11", name: "Jours fériés", color: "#64748B", folderId: "folder-a-trier", syncedCalendarSource: true, syncedCalendarId: "fr-feries" },
     ];
     const st = (n) => (seedStatuses.find((s) => new RegExp(n, "i").test(s.name)) || seedStatuses[0]).id;
     const d = (n) => addDaysIso(iso(new Date()), n);
@@ -1158,6 +1159,7 @@ if (benchApp) {
       ...Array.from({ length: 6 }, (_, i) => T("banc-cr" + i, "Référence " + (i + 1), "banc-cp8", "termin", { progress: 100 })),
       ...Array.from({ length: 3 }, (_, i) => T("banc-ci" + i, "Idée " + (i + 1), "banc-cp9", "planifier")),
       T("banc-corphan", "Note sans projet", null, "planifier"),
+      T("banc-csync", "Toussaint", "banc-cp11", "planifier", { milestone: true, start: d(20), end: d(20), syncedCalendarImported: true, syncedCalendarId: "fr-feries", syncedCalendarKey: "toussaint" }),
     ];
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
