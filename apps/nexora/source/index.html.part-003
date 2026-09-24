@@ -3870,7 +3870,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "embedCarte" && (
-                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCarte} onToggleDone={onMarkDone} setProjectFolders={setProjectFolders} />
+                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} setProjectFolders={setProjectFolders} />
                 )}
                 {w.type === "embedCosmos" && (
                   <WidgetEmbedCosmos widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} favorites={favorites} />
@@ -20545,6 +20545,10 @@ function fmtCarteStamp(v) {
   return t == null ? "" : new Date(t).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// Explication du volet en lecture seule pour une tâche de calendrier public
+// synchronisé (Carte et Cosmos, #402).
+const CARTE_SYNCED_LOCK_REASON = "Tâche issue d'un calendrier synchronisé : elle est reconstruite à chaque synchronisation et ne se modifie pas ici.";
+
 // Volet de détail (#361, enrichi à la demande de Quentin) : tous les champs
 // de la tâche et sa description complète, en lecture seule. Les modifications
 // passent toujours par « Ouvrir la fiche ».
@@ -21065,6 +21069,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const shownCount = visible.size, totalCount = norm.tasks.length;
   const empty = norm.projects.length === 0 && norm.tasks.length === 0;
   const selTask = selected && normView.taskById[selected];
+  const selRaw = selTask ? allTasks.find((t) => t.id === selTask.id) : null;
+  // Tâche d'un calendrier public synchronisé : reconstruite à chaque
+  // synchronisation, une modification locale serait perdue (#402).
+  const lockReason = selRaw && selRaw.syncedCalendarImported ? CARTE_SYNCED_LOCK_REASON : null;
   const nearTask = near && norm.taskById[near];
   const terrTheme = territory && layout.themes[territory];
   const legend = terrTheme ? carteLegend(terrTheme) : null;
@@ -21215,8 +21223,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               <button type="button" className="lp-carte-panel-toggle" onClick={() => setPanelOn(true)}>Liste du territoire</button>
             )}
             {selTask && (
-              <CarteTaskDetail task={selTask} raw={allTasks.find((t) => t.id === selTask.id)} norm={norm} layout={layout} ctx={ctx} onOpen={openFiche} onGo={go}
-                onUpdate={onUpdateTask ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={onToggleDone}
+              <CarteTaskDetail task={selTask} raw={selRaw} norm={norm} layout={layout} ctx={ctx} onOpen={openFiche} onGo={go} lockReason={lockReason}
+                onUpdate={onUpdateTask && !lockReason ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={lockReason ? null : onToggleDone}
                 onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
             )}
           </>
@@ -22845,7 +22853,7 @@ function CosmosView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpda
   const selRaw = selTask ? allTasks.find((t) => t.id === selTask.id) : null;
   // Tâche d'un calendrier public synchronisé : reconstruite à chaque
   // synchronisation, une modification locale serait perdue.
-  const lockReason = selRaw && selRaw.syncedCalendarImported ? "Tâche issue d'un calendrier synchronisé : elle est reconstruite à chaque synchronisation et ne se modifie pas ici." : null;
+  const lockReason = selRaw && selRaw.syncedCalendarImported ? CARTE_SYNCED_LOCK_REASON : null;
   const projectIndex = useMemo(() => {
     const out = {};
     Object.keys(model.planets).forEach((pid) => { const p = model.planets[pid]; out[pid === COSMOS_ORPHAN_PROJECT ? "__terre-inconnue__" : pid] = { id: pid, name: p.name, color: p.color, folderName: (model.galaxyById[p.galaxyId] || {}).name }; });
