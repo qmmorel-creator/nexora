@@ -1883,6 +1883,13 @@ try {
   carte.iconLeak = await cp.evaluate(() => [...document.querySelectorAll(".lp-carte-labels, .lp-carte-ribbon, .lp-carte-panel")].some((e) => /iconify:|tabler:/.test(e.textContent)));
   await cp.click('button:has-text("Recentrer")');
   await cp.waitForTimeout(1500);
+  // #374 : avec « Urgentes », les territoires sans tâche urgente sont grisés.
+  await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "urgent");
+  await cp.waitForTimeout(800);
+  carte.dim = await cp.evaluate(() => ({ dim: document.querySelectorAll(".lp-carte-badge.is-dim").length, all: document.querySelectorAll(".lp-carte-badge").length }));
+  await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "all");
+  await cp.waitForTimeout(800);
+  carte.dimAfter = await cp.$$eval(".lp-carte-badge.is-dim", (b) => b.length);
   // #364 : le moteur de filtre général s'ouvre depuis la carte.
   await cp.click('.lp-carte-toolbar button:has-text("Filtres")');
   await cp.waitForTimeout(500);
@@ -2921,6 +2928,7 @@ if (!carte.error) {
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
   expect(carte.panel.projects >= 2 && carte.panel.tasks >= 1 && /Chantiers/.test(carte.panel.kicker), `Carte : le panneau ne liste pas la région Chantiers et ses tâches (${JSON.stringify(carte.panel)})`);
   expect(carte.panel.done >= 1, `Carte : les tâches terminées n'apparaissent pas, alors que le filtre « Terminées » de la carte est actif (${JSON.stringify(carte.panel)})`);
+  expect(carte.dim.dim >= 1 && carte.dim.dim < carte.dim.all && carte.dimAfter === 0, `Carte : grisage des territoires écartés par les filtres incorrect (${JSON.stringify(carte.dim)}, après retour : ${carte.dimAfter})`);
   expect(!carte.iconLeak, "Carte : un identifiant d'icône (iconify:, tabler:) s'affiche en texte");
   expect(carte.filterModal, "Carte : le bouton « Filtres » n'ouvre pas le moteur de filtre général");
   expect(carte.mobile.panelHidden, "Carte mobile : le panneau de droite devrait rester replié par défaut");

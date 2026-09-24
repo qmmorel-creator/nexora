@@ -246,3 +246,10 @@ Le moteur des maquettes ne change pas :
   terminées » de l'en-tête est désactivé ; les autres filtres de la page s'appliquent. Les
   tâches terminées depuis plus de 30 jours restent visibles, sauf si l'option « Masquer les
   tâches terminées depuis plus de 30 jours » est cochée.
+
+## Territoires écartés par les filtres (#374)
+
+Un projet qui a des tâches mais dont aucune ne ressort des filtres (page, carte, filtre
+général) est grisé : sol, décor, cœur du projet, étiquette, pastille du ruban et ligne du
+panneau. Une région dont tous les projets sont écartés paraît donc grisée en entier. Un projet
+sans tâche n'est pas grisé. Les territoires ne bougent pas.

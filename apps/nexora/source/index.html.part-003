@@ -18967,7 +18967,9 @@ function createCarteEngine(THREE, container, opts) {
       const p = S.layout.projectById[t.projectId];
       top = carteMix(pal.top, (p && p.color) || pal.top, 0.35);
     }
-    return { top: carteMix(top, v < 0.5 ? "#000000" : "#ffffff", Math.abs(v - 0.5) * 0.12), side: pal.side };
+    const col = { top: carteMix(top, v < 0.5 ? "#000000" : "#ffffff", Math.abs(v - 0.5) * 0.12), side: pal.side };
+    if (S.dimmed && t.projectId && S.dimmed.has(t.projectId)) { col.top = carteMix(col.top, CARTE_DIM_TOP, 0.75); col.side = carteMix(col.side, "#8e949c", 0.6); }
+    return col;
   }
 
   // ---------- Construction ----------
@@ -19019,7 +19021,8 @@ function createCarteEngine(THREE, container, opts) {
       }
       if (carteRand("share" + k) > decorShare) return;
       const w = carteToWorld(t.q, t.r);
-      placeModel(batch, carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret"), w.x, t.h + 0.12, w.z, 0);
+      const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
+      placeModel(batch, S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor, w.x, t.h + 0.12, w.z, 0);
     });
     // Cœurs de projets.
     L.territories.forEach((tr) => {
@@ -19028,7 +19031,7 @@ function createCarteEngine(THREE, container, opts) {
       const tile = L.tiles[carteKey(tr.q, tr.r)];
       const w = carteToWorld(tr.q, tr.r);
       const model = carteHubModel(tr.theme, st.stage, p.color, p.priority).map((m) => Object.assign({}, m, { p: [m.p[0] * 1.3, m.p[1] * 1.3, m.p[2] * 1.3], s: [m.s[0] * 1.3, m.s[1] * 1.3, m.s[2] * 1.3] }));
-      placeModel(batch, model, w.x, tile.h + 0.12, w.z, 0, 0);
+      placeModel(batch, S.dimmed && S.dimmed.has(tr.projectId) ? carteDimParts(model) : model, w.x, tile.h + 0.12, w.z, 0, 0);
       let top = 0; model.forEach((m) => { top = Math.max(top, m.p[1] + m.s[1]); });
       tr.anchor = new THREE.Vector3(w.x, tile.h + 0.12 + top + 0.35, w.z);
       tr.world = new THREE.Vector3(w.x, tile.h + 0.12, w.z);
@@ -19408,6 +19411,7 @@ function createCarteEngine(THREE, container, opts) {
       }
       if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; }
       l.classList.toggle("is-selected", c.tid != null && c.tid === S.selected);
+      l.classList.toggle("is-dim", c.pid != null && !!S.dimmed && S.dimmed.has(c.pid));
       l.classList.toggle("is-near", c.tid != null && c.tid === S.near);
       const box = { x: sx - l._w / 2, y: sy - l._h - 4, w: l._w, h: l._h };
       if (box.x < 2 || box.y < 2 || box.x + box.w > W - 2 || box.y + box.h > H - 2) return;
@@ -19436,7 +19440,7 @@ function createCarteEngine(THREE, container, opts) {
     sun.castShadow = S.effQuality === "high";
   }
   function setData(d) {
-    S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null;
+    S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null; S.dimmed = d.dimmed || null;
     resolveQuality();
     build();
     if (!S.placedKeeper && S.layout.territories.length) {
@@ -19754,7 +19758,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, o
 
 // Panneau de droite (#365) : les projets de la région (dossier) où se trouve
 // l'arpenteur ; le projet courant déplie ses tâches.
-function CarteSidePanel({ layout, norm, stats, visible, territory, onFocus, onGo, onClose }) {
+function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, onFocus, onGo, onClose }) {
   const here = territory && layout.projectById[territory];
   const group = here ? here.group : null;
   const members = here ? layout.territories.filter((t) => (group ? layout.projectById[t.projectId].group === group : t.projectId === territory)) : [];
@@ -19779,7 +19783,7 @@ function CarteSidePanel({ layout, norm, stats, visible, territory, onFocus, onGo
           const th = CARTE_THEME_BY_ID[tr.theme];
           const isHere = tr.projectId === territory;
           return (
-            <div key={tr.projectId} className={"lp-carte-panel-proj" + (isHere ? " is-here" : "")}>
+            <div key={tr.projectId} className={"lp-carte-panel-proj" + (isHere ? " is-here" : "") + (dimmed && dimmed.has(tr.projectId) ? " is-dim" : "")} title={dimmed && dimmed.has(tr.projectId) ? "Aucune tâche de ce projet ne ressort des filtres" : undefined}>
               <button type="button" className="lp-carte-panel-proj-head" onClick={() => onFocus(tr.projectId)}>
                 <span className="lp-carte-panel-icon" style={{ borderColor: p.color }}>{p.icon ? <IconGlyph icon={p.icon} size={14} /> : (p.name || "?").slice(0, 1)}</span>
                 <span className="lp-carte-panel-name">{p.name}<small>{th.hub[st.stage]} · {st.pct} %{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
@@ -19984,6 +19988,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attempt]);
 
+  const dimmed = useMemo(() => carteDimmedProjects(norm.tasks, visible), [norm, visible]);
   const normView = useMemo(() => {
     if (!preview || !norm.taskById[preview.id]) return norm;
     const t = { ...norm.taskById[preview.id], progress: preview.progress };
@@ -19991,8 +19996,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return { ...norm, taskById, tasks: norm.tasks.map((x) => (x.id === t.id ? t : x)) };
   }, [norm, preview]);
   useEffect(() => {
-    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible });
-  }, [status, normView, layout, stats, visible]);
+    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed });
+  }, [status, normView, layout, stats, visible, dimmed]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
@@ -20096,7 +20101,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     const p = layout.projectById[tr.projectId];
                     const s = stats[tr.projectId];
                     return (
-                      <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "")} style={{ "--p": s.pct, "--c": p.color }}
+                      <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "") + (dimmed.has(tr.projectId) ? " is-dim" : "")} style={{ "--p": s.pct, "--c": p.color }}
                         onClick={() => focus(tr.projectId)} title={p.name + " — " + CARTE_THEME_BY_ID[tr.theme].label + ", " + CARTE_THEME_BY_ID[tr.theme].hub[s.stage] + ", " + s.pct + " %"} aria-label={p.name + ", " + s.pct + " % terminé"}>
                         <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon ? <IconGlyph icon={p.icon} size={18} /> : (p.name || "?").slice(0, 1)}</span></span>
                         <small>{p.name}</small>
@@ -20149,7 +20154,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               </>
             )}
             {status === "ready" && !selTask && panelOn && (
-              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} territory={territory}
+              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} dimmed={dimmed} territory={territory}
                 onFocus={focus} onGo={go} onClose={() => setPanelOn(false)} />
             )}
             {status === "ready" && !selTask && !panelOn && (

@@ -23,7 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
-    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift, carteDimmedProjects,
   };\n})`
 )();
 
@@ -219,4 +219,12 @@ test("#364 et #365 : préférences du filtre général et du panneau", () => {
   assert.equal(C.normalizeCarteViewPrefs({ filter: [1] }).filter, null);
   assert.equal(C.normalizeCarteViewPrefs({}).panel, true);
   assert.equal(C.normalizeCarteViewPrefs({ panel: false }).panel, false);
+});
+
+test("#374 : grisés = projets avec des tâches mais aucune affichée ; un projet vide ne l'est pas", () => {
+  const tasks = [{ id: "a", projectId: "p1" }, { id: "b", projectId: "p1" }, { id: "c", projectId: "p2" }, { id: "d", projectId: null }];
+  const dim = C.carteDimmedProjects(tasks, new Set(["a"]));
+  assert.deepEqual([...dim].sort(), ["__terre-inconnue__", "p2"]);
+  assert.equal(dim.has("p3"), false);
+  assert.equal(C.carteDimmedProjects(tasks, new Set(["a", "c", "d"])).size, 0);
 });
