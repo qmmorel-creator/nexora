@@ -1869,7 +1869,8 @@ try {
   await cp.mouse.move(700, 600);
   await cp.waitForTimeout(500);
   carte.folderPopClosed = await cp.$$eval(".lp-carte-folder-pop", (e) => e.length);
-  // #399 : aucun nom de projet affiché sans survol du totem.
+  // #410 : de près, le nom des totems proches réapparaît (au moins celui du
+  // territoire de l'arpenteur).
   carte.projectLabels = await cp.$$eval(".lp-carte-label--project", (l) => l.filter((x) => x.style.visibility === "visible").length);
   carte.canvas = await cp.$$eval(".lp-carte-gl canvas", (c) => c.length);
   carte.tasksBefore = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
@@ -1889,6 +1890,8 @@ try {
   // #366 : aucun identifiant d'icône technique dans les étiquettes.
   await cp.click('button:has-text("Vue d\'ensemble")');
   await cp.waitForTimeout(2000);
+  // #410 : en vue d'ensemble, seul le territoire courant garde son nom.
+  carte.projectLabelsFar = await cp.$$eval(".lp-carte-label--project", (l) => l.filter((x) => x.style.visibility === "visible").length);
   carte.iconLeak = await cp.evaluate(() => [...document.querySelectorAll(".lp-carte-labels, .lp-carte-ribbon, .lp-carte-panel")].some((e) => /iconify:|tabler:/.test(e.textContent)));
   await cp.click('button:has-text("Recentrer")');
   await cp.waitForTimeout(1500);
@@ -1955,6 +1958,15 @@ try {
   await cp.click(".lp-carte-detail .lp-btn-primary");
   await cp.waitForTimeout(800);
   carte.modalTitle = await cp.evaluate((t) => [...document.querySelectorAll(".lp-modal input, .lp-modal textarea")].some((i) => i.value === t), carte.detailTitle);
+  // #412 : depuis la Carte, un clic sur un dossier ou un projet de la barre
+  // latérale garde la Carte (sa vue par défaut ne s'applique pas) ; le filtre
+  // de projets, lui, s'applique : les autres territoires sont grisés.
+  await cp.keyboard.press("Escape");
+  await cp.waitForTimeout(400);
+  await closeGuide(cp);
+  await cp.click(".lp-sidebar .lp-project-name").catch(() => {});
+  await cp.waitForTimeout(1200);
+  carte.stayOnProjectClick = await cp.evaluate(() => { const st = document.querySelector(".lp-carte-stage"); return { carte: !!document.querySelector(".lp-carte-view"), dimmed: st ? Number(st.dataset.carteDimmed) : -1 }; });
   await cp.close();
 
   // Mobile : manette, fiche en tiroir, aucun défilement horizontal.
@@ -2937,7 +2949,8 @@ if (!carte.error) {
   expect(carte.folderPop && carte.folderPop.open && carte.folderPop.projects >= 1 && carte.folderPop.total === 7, `Carte : le survol d'une pastille de dossier ne déroule pas ses projets (${JSON.stringify(carte.folderPop)})`);
   expect(carte.folderPopClosed === 0, "Carte : le menu du dossier reste ouvert après le survol");
   expect(carte.simplify && carte.simplify.on >= 1 && carte.simplify.on < carte.simplify.before && carte.simplify.off === carte.simplify.before, `Carte : la carte simplifiée ne retire pas les projets écartés (${JSON.stringify(carte.simplify)})`);
-  expect(carte.projectLabels === 0, `Carte : ${carte.projectLabels} nom(s) de projet affiché(s) sans survol du totem`);
+  expect(carte.projectLabels >= 1, "Carte : aucun nom de totem près de l'arpenteur (#410)");
+  expect(carte.projectLabelsFar <= 1, `Carte : ${carte.projectLabelsFar} noms de totems en vue d'ensemble, 1 au plus attendu (#410)`);
   expect(carte.suggestions.some((t) => /Passerelle/.test(t)), `Carte : la recherche « Passerelle » ne propose pas le projet (${JSON.stringify(carte.suggestions)})`);
   expect(carte.territory === "banc-p4", `Carte : la recherche ne mène pas au territoire « Passerelle quai Nord » (${carte.territory})`);
   expect(carte.panelPick && carte.panelSelected.indexOf(carte.panelPick.replace(/^◆ /, "")) !== -1, `Carte : choisir « ${carte.panelPick} » dans le panneau n'ouvre pas son détail (« ${carte.panelSelected} »)`);
@@ -2948,6 +2961,7 @@ if (!carte.error) {
   expect(carte.slider && carte.progressAfter !== null && Math.abs(carte.progressAfter - carte.progressBefore) === 20, `Carte : régler l'avancement dans le volet n'est pas enregistré (${carte.progressBefore} → ${carte.progressAfter})`);
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
+  expect(carte.stayOnProjectClick && carte.stayOnProjectClick.carte && carte.stayOnProjectClick.dimmed >= 1, `Carte : un clic sur un projet ou un dossier de la barre latérale quitte la Carte (${JSON.stringify(carte.stayOnProjectClick)})`);
   expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
