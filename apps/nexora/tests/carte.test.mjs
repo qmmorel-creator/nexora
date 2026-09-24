@@ -207,7 +207,8 @@ test("#369 et #376 : l'altitude suit l'avancement en continu ; une tâche termin
   assert.equal(lv({ ...base, state: "todo", progress: 40 }), 2, "une tâche à faire entamée monte aussi");
   assert.equal(lv({ ...base, state: "info", progress: 90 }), 0);
   const top = (t) => C.carteTaskModel(t, "desert", { detail: 0 }).reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
-  assert.ok(top({ ...base, state: "done" }) - top({ ...base, state: "todo", progress: 0 }) > 1, "au moins une unité d'écart entre à faire et terminée");
+  assert.ok(C.carteTaskLift({ ...base, state: "done" }) - C.carteTaskLift({ ...base, state: "todo", progress: 0 }) > 1, "au moins une unité d'altitude entre à faire et terminée");
+  assert.ok(top({ ...base, state: "done" }) > top({ ...base, state: "todo", progress: 0 }), "une tâche terminée culmine au-dessus du jalon d'une tâche à faire");
   assert.ok(top({ ...base, progress: 30 }) > top({ ...base, progress: 25 }), "cinq points de plus se voient");
   const todoStarted = C.carteTaskModel({ ...base, state: "todo", progress: 40 }, "ville", { detail: 0 });
   assert.ok(todoStarted.some((p) => p.c === "#c9a060"), "une tâche à faire entamée est dessinée en chantier");
@@ -238,4 +239,13 @@ test("#374 : grisés = projets avec des tâches mais aucune affichée ; un proje
   assert.deepEqual([...dim].sort(), ["__terre-inconnue__", "p2"]);
   assert.equal(dim.has("p3"), false);
   assert.equal(C.carteDimmedProjects(tasks, new Set(["a", "c", "d"])).size, 0);
+});
+
+test("#379 : une tâche au sol a une dalle et, si elle est à faire, un jalon au fanion de son statut", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s1", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
+  const parts = C.carteTaskModel(base, "ville", { detail: 0 });
+  assert.ok(parts.some((p) => p.g === "hex" && p.c === "#fff8e8"), "dalle claire");
+  assert.ok(parts.some((p) => p.g === "box" && p.c === base.statusColor), "fanion à la couleur du statut");
+  const lifted = C.carteTaskModel({ ...base, state: "done" }, "ville", { detail: 0 });
+  assert.equal(lifted.some((p) => p.c === "#fff8e8"), false, "pas de dalle sous une tâche surélevée");
 });

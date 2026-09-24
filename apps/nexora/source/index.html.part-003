@@ -18864,7 +18864,30 @@ function createCarteEngine(THREE, container, opts) {
   const tileGeo = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0);
   const capGeo = new THREE.CylinderGeometry(0.985, 0.985, 0.14, 6).translate(0, 0.07, 0);
   const ringGeo = new THREE.RingGeometry(0.78, 0.96, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
-  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo]);
+  const planeGeo = new THREE.PlaneGeometry(1, 1);
+  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo]);
+  // Nom d'un dossier écrit au sol (#377) : une texture de texte par région.
+  function regionTexture(text, dim) {
+    const c = document.createElement("canvas");
+    const g = c.getContext("2d");
+    const font = "800 96px Inter, -apple-system, 'Segoe UI', sans-serif";
+    let w = 600;
+    if (g) { g.font = font; w = Math.ceil(g.measureText(text).width + text.length * 10 + 60); }
+    c.width = Math.min(4096, Math.max(256, w)); c.height = 150;
+    if (g) {
+      g.font = font; g.textAlign = "center"; g.textBaseline = "middle";
+      if ("letterSpacing" in g) g.letterSpacing = "10px";
+      g.lineJoin = "round"; g.lineWidth = 14;
+      g.strokeStyle = dim ? "rgba(90,96,104,.55)" : "rgba(24,38,61,.62)";
+      g.strokeText(text, c.width / 2, 78);
+      g.fillStyle = dim ? "#cfd3d8" : "#fffaf0";
+      g.fillText(text, c.width / 2, 78);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return { texture: t, aspect: c.width / c.height };
+  }
 
   const mats = [];
   const mat = (m) => { mats.push(m); return m; };
@@ -18904,6 +18927,7 @@ function createCarteEngine(THREE, container, opts) {
       const c = g.children.pop();
       if (c.isInstancedMesh) c.dispose();
       if (c.userData.ownGeo) c.geometry.dispose();
+      if (c.userData.ownTex && c.material && c.material.map) c.material.map.dispose();
       if (c.userData.ownMat) c.material.dispose();
     }
   }
@@ -19009,6 +19033,32 @@ function createCarteEngine(THREE, container, opts) {
     });
     [baseM, capM, waterM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
     S.pickMeshes = [capM, waterM];
+
+    // Légendes au sol des régions (#377), au pied de chaque dossier.
+    S.regionLabels = [];
+    const regions = {};
+    L.territories.forEach((tr) => {
+      const p = L.projectById[tr.projectId];
+      if (!p || !p.group || !p.folderName) return;
+      const w = carteToWorld(tr.q, tr.r);
+      const g = regions[p.group] || (regions[p.group] = { name: p.folderName, xmin: Infinity, xmax: -Infinity, zmax: -Infinity, n: 0, dim: 0 });
+      g.xmin = Math.min(g.xmin, w.x); g.xmax = Math.max(g.xmax, w.x); g.zmax = Math.max(g.zmax, w.z); g.n++;
+      if (S.dimmed && S.dimmed.has(tr.projectId)) g.dim++;
+    });
+    Object.keys(regions).sort().forEach((gid) => {
+      const g = regions[gid];
+      const tx = regionTexture(g.name.toUpperCase(), g.dim === g.n);
+      // Plus la région compte de projets, plus son nom est grand.
+      const h = 2 + 0.5 * Math.sqrt(g.n - 1), w = Math.min(h * tx.aspect, Math.max(14, g.xmax - g.xmin + 14));
+      const mesh = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tx.texture, transparent: true, depthWrite: false }));
+      mesh.userData.ownMat = mesh.userData.ownTex = true;
+      mesh.scale.set(w, w / tx.aspect, 1);
+      mesh.position.set((g.xmin + g.xmax) / 2, 0.66, g.zmax + 6.2);
+      mesh.rotation.set(-Math.PI / 2, 0, S.yaw);
+      mesh.renderOrder = 3;
+      world.add(mesh);
+      S.regionLabels.push(mesh);
+    });
 
     const batch = makeBatcher();
     const poiKeys = new Set(L.pois.map((p) => p.key));
@@ -19200,6 +19250,8 @@ function createCarteEngine(THREE, container, opts) {
     const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
     camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
     camera.lookAt(S.target);
+    // Les noms de dossiers pivotent avec la caméra pour rester lisibles.
+    (S.regionLabels || []).forEach((m) => { m.rotation.z = S.yaw; });
     scene.fog.near = S.dist * 0.8 + 25;
     scene.fog.far = S.dist * 2.2 + 70;
     if (S.effQuality === "high") { sun.position.set(S.target.x + 30, 50, S.target.z + 20); sun.target.position.copy(S.target); }
@@ -19428,10 +19480,9 @@ function createCarteEngine(THREE, container, opts) {
       if (c.kind === "project") {
         const p = S.layout.projectById[c.pid];
         const s = S.stats[c.pid] || { todo: 0, doing: 0, done: 0, pct: 0, stage: 0, overdue: 0 };
-        const th = theme(S.layout.themes[c.pid]);
         const emoji = carteEmojiIcon(p.icon);
         html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(emoji ? emoji + " " : "") + esc(p.name) + "</span>";
-        if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + esc(th.hub[s.stage]) + " · " + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
+        if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
       } else {
         const t = S.data.taskById[c.tid];
         const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
@@ -19808,13 +19859,12 @@ function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, onFoc
         {members.map((tr) => {
           const p = layout.projectById[tr.projectId];
           const st = stats[tr.projectId] || { pct: 0, stage: 0, overdue: 0, total: 0 };
-          const th = CARTE_THEME_BY_ID[tr.theme];
           const isHere = tr.projectId === territory;
           return (
             <div key={tr.projectId} className={"lp-carte-panel-proj" + (isHere ? " is-here" : "") + (dimmed && dimmed.has(tr.projectId) ? " is-dim" : "")} title={dimmed && dimmed.has(tr.projectId) ? "Aucune tâche de ce projet ne ressort des filtres" : undefined}>
               <button type="button" className="lp-carte-panel-proj-head" onClick={() => onFocus(tr.projectId)}>
                 <span className="lp-carte-panel-icon" style={{ borderColor: p.color }}>{p.icon ? <IconGlyph icon={p.icon} size={14} /> : (p.name || "?").slice(0, 1)}</span>
-                <span className="lp-carte-panel-name">{p.name}<small>{th.hub[st.stage]} · {st.pct} %{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
+                <span className="lp-carte-panel-name">{p.name}<small>{st.pct} % terminé{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
                 <span className="lp-carte-bar"><span style={{ width: st.pct + "%" }} /></span>
               </button>
               {isHere && (
@@ -19892,10 +19942,9 @@ function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
         const p = layout.projectById[tr.projectId];
         const list = byProject[tr.projectId] || [];
         const st = carteTerritoryStats(list);
-        const th = CARTE_THEME_BY_ID[tr.theme];
         return (
           <details key={tr.projectId} className="lp-carte-fallback-proj">
-            <summary><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}<span className="lp-carte-muted"> · {th.label} · {th.hub[st.stage]} · {st.pct} %</span></summary>
+            <summary><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}<span className="lp-carte-muted"> · {st.pct} % terminé</span></summary>
             <ul>{list.map((t) => <li key={t.id}><button type="button" className="lp-carte-link-inline" onClick={() => onOpen(t.id)}>{t.title}</button> <span className="lp-carte-muted">{t.statusName}{t.overdue ? " · en retard" : ""}</span></li>)}</ul>
           </details>
         );
@@ -20130,7 +20179,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     const s = stats[tr.projectId];
                     return (
                       <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "") + (dimmed.has(tr.projectId) ? " is-dim" : "")} style={{ "--p": s.pct, "--c": p.color }}
-                        onClick={() => focus(tr.projectId)} title={p.name + " — " + CARTE_THEME_BY_ID[tr.theme].label + ", " + CARTE_THEME_BY_ID[tr.theme].hub[s.stage] + ", " + s.pct + " %"} aria-label={p.name + ", " + s.pct + " % terminé"}>
+                        onClick={() => focus(tr.projectId)} title={p.name + " — " + s.pct + " % terminé"} aria-label={p.name + ", " + s.pct + " % terminé"}>
                         <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon ? <IconGlyph icon={p.icon} size={18} /> : (p.name || "?").slice(0, 1)}</span></span>
                         <small>{p.name}</small>
                       </button>
@@ -20146,10 +20195,11 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
                   {legend && terrStats && (
                     <details className="lp-carte-legend">
-                      <summary><span className="lp-carte-dot" style={{ background: layout.projectById[territory].color }} />{layout.projectById[territory].name} · {legend.label} · {legend.hub[terrStats.stage]} ({terrStats.pct} %)</summary>
+                      <summary><span className="lp-carte-dot" style={{ background: layout.projectById[territory].color }} />{layout.projectById[territory].name} · {terrStats.pct} %</summary>
                       <ul>
+                        <li><b>Thème</b><span>{legend.label} · {legend.hub[terrStats.stage]}</span></li>
                         {legend.lines.map((l) => <li key={l[0]}><b>{l[0]}</b><span>{l[1]}</span></li>)}
-                        <li><b>Urgente</b><span>Feu rouge (moyenne : fanion orange)</span></li>
+                        <li><b>Urgente</b><span>Brasier en feu et anneau rouge (moyenne : fanion orange)</span></li>
                         <li><b>En retard</b><span>Nuage d'orage · échéance sous 7 j : lanterne</span></li>
                         <li><b>À venir</b><span>Brume · responsable : habitant coloré</span></li>
                         <li><b>Dépendance</b><span>Route de convoi à la sélection</span></li>

@@ -264,3 +264,16 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
   curseur du volet se voit en direct. Une tâche « À faire » dont l'avancement dépasse 0 %
   s'affiche en chantier ; son statut ne change pas. Les paliers restent la mesure affichée dans
   le volet et la progression des territoires.
+
+## Lisibilité (#377, #378, #379)
+
+- **Nom du dossier au sol** : chaque région porte le nom de son dossier en grandes lettres,
+  écrit au sol à son pied, comme une légende de carte. Il pivote avec la caméra et grise quand
+  toute la région est écartée par les filtres. Pas de légende pour les projets sans dossier ou
+  « À trier ».
+- **Étiquettes** : le nom du palier du thème (« Crique », « Point d'eau »…) n'apparaît plus
+  dans les étiquettes, le ruban ni le panneau : seulement le nom, l'avancement et les retards.
+  Le thème reste dans la légende contextuelle.
+- **Tâches au sol** : une dalle claire bordée de la couleur du statut marque l'emplacement de
+  chaque tâche restée au sol ; une tâche à faire porte en plus un jalon au fanion de la couleur
+  de son statut ; empreinte et repères du thème plus contrastés.
