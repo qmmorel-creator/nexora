@@ -126,7 +126,7 @@ test("un thème par dossier, régions voisines différentes, isolés en île, pr
   assert.equal(cyber.themes.p1, L.themes.p1, "les autres dossiers gardent leur thème automatique");
   assert.deepEqual(cyber.territories.map((t) => [t.projectId, t.q, t.r]), L.territories.map((t) => [t.projectId, t.q, t.r]), "le thème ne déplace aucun projet");
   assert.equal(C.carteThemeOverrides([{ id: "f0", mapTheme: "cyberpunk" }], {}).f0, "cyberpunk");
-  assert.match(C.carteLegend("cyberpunk").lines.find(([label]) => label === "Jalon")[1], /Balise/);
+  assert.match(C.carteLegend("cyberpunk").lines.find(([label]) => label === "Tâche")[1], /Module/);
 });
 
 test("routes seulement entre projets d'un même dossier ; tâches dans leur territoire", () => {
@@ -393,4 +393,16 @@ test("#401 : la carte simplifiée est une préférence de la vue, désactivée p
   assert.equal(C.normalizeCarteViewPrefs({}).simplify, false);
   assert.equal(C.normalizeCarteViewPrefs({ simplify: true }).simplify, true);
   assert.equal(C.normalizeCarteViewPrefs(C.carteViewFilterReset()).simplify, false, "« Tout afficher » ne force pas le mode");
+});
+
+test("#416 : le jalon est le même pylône dans tous les thèmes, et la légende annonce le faisceau", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s5", taskTypeId: "tt3", milestone: true }], { now: NOW }).tasks[0];
+  assert.equal(base.kind, "milestone");
+  const shape = (th) => C.carteTaskModel(base, th, { detail: 0 }).map((p) => p.g + (p.m === "g" ? "*" : "")).join(",");
+  const ref = shape("ville");
+  C.CARTE_THEMES.forEach((th) => {
+    assert.equal(shape(th.id), ref, `${th.id} : même silhouette`);
+    assert.deepEqual(C.carteLegend(th.id).lines.find((l) => l[0] === "Jalon"), ["Jalon", "Faisceau de lumière"]);
+  });
+  assert.ok(C.carteTaskModel(base, "ville", { detail: 0 }).some((p) => p.m === "g"), "sommet lumineux");
 });

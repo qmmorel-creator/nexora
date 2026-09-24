@@ -315,7 +315,7 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
 - En qualité basse ou avec « réduire les animations », le feu reste visible mais figé, sans
   braises.
 
-## Horloge, éclairs, relief, lave et récurrence (#406 à #409, #414)
+## Horloge, éclairs, relief, lave, récurrence et jalon (#406 à #409, #414, #416)
 
 - **En retard** (#414) : le petit nuage est remplacé par un réveil rouge qui flotte au-dessus
   de la tâche, face à la caméra. Sa trotteuse avance d'un cran par seconde et il bascule à
@@ -332,3 +332,7 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
   s'y pose.
 - **Récurrence** (#409) : le mécanisme qui tournait (moulin, roue, éolienne) et la ligne
   « Récurrente » de la légende sont retirés. La récurrence reste visible dans la fiche.
+- **Jalon** (#416) : dans tous les thèmes, un même pylône clair à la pointe lumineuse, d'où
+  monte un faisceau de lumière dorée jusqu'au ciel. Le faisceau respire lentement et brille
+  davantage quand le jalon est terminé. Il remplace les silhouettes propres à chaque thème
+  (phare, obélisque, arche…).
