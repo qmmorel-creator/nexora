@@ -6272,6 +6272,57 @@ function cosmosResolveQuality(pref, taskCount, projectCount) {
   if (taskCount > 800 || projectCount > 60) return "medium";
   return "high";
 }
+
+// ---------- Retouches #421 ----------
+// Marques d'une tâche : urgente (criticité) et en retard (échéance passée).
+// Une tâche terminée ou d'information n'est ni l'une ni l'autre.
+function cosmosTaskFlags(t) {
+  const open = t && t.state !== "done" && t.state !== "info";
+  return { urgent: !!(open && t.criticality === "urgent"), late: !!(open && t.overdue), lateDays: open && t.overdue ? t.lateDays || 0 : 0 };
+}
+function cosmosUrgencyCounts(tasks) {
+  const out = { urgent: 0, late: 0 };
+  (tasks || []).forEach((t) => { const f = cosmosTaskFlags(t); if (f.urgent) out.urgent++; if (f.late) out.late++; });
+  return out;
+}
+// Soleil-tableau de bord : un arc par famille d'état (part des tâches du
+// dossier), dans l'ordre terminées → en cours → en attente → à faire → infos,
+// plus un arc extérieur pour la part des retards.
+const COSMOS_STATE_COLORS = { done: "#22B07D", doing: "#0EA5E9", waiting: "#8B5CF6", todo: "#64748B", info: "#94A3B8" };
+function cosmosSunSegments(stats, gap) {
+  const order = ["done", "doing", "waiting", "todo", "info"];
+  const total = order.reduce((n, k) => n + (stats && stats[k] ? stats[k] : 0), 0);
+  if (!total) return { segments: [], late: 0, total: 0 };
+  const g = gap == null ? 0.05 : gap;
+  const used = order.filter((k) => stats[k] > 0);
+  const free = Math.PI * 2 - g * used.length;
+  let a = Math.PI / 2;
+  const segments = used.map((k) => { const len = (stats[k] / total) * free; const seg = { key: k, color: COSMOS_STATE_COLORS[k], start: a, len }; a += len + g; return seg; });
+  const counted = stats.counted || total;
+  return { segments, late: counted ? Math.min(1, (stats.overdue || 0) / counted) : 0, total };
+}
+// Libellés progressifs : le détail suit la taille à l'écran de l'objet (en
+// pixels). 0 = rien, 1 = nom, 2 = nom et compteurs, 3 = carte complète.
+// Une marge de ±12 % autour de chaque seuil évite le clignotement ; les
+// urgences et les retards gagnent un palier plus tôt (seuils abaissés).
+const COSMOS_LABEL_THRESHOLDS = {
+  galaxy: [0, 55, 150],
+  planet: [6, 16, 16],
+  task: [3.5, 7, 7],
+};
+function cosmosLabelTier(kind, px, prevTier, flagged) {
+  const th = (COSMOS_LABEL_THRESHOLDS[kind] || COSMOS_LABEL_THRESHOLDS.task).map((v) => (flagged ? v * 0.62 : v));
+  const prev = prevTier == null ? -1 : prevTier;
+  let tier = 0;
+  for (let i = 0; i < th.length; i++) {
+    const k = i + 1;
+    const need = prev >= k ? th[i] * 0.88 : th[i] * 1.12;
+    if (px >= need) tier = k;
+  }
+  if (kind === "galaxy") tier = Math.max(1, tier);
+  if (kind !== "galaxy") tier = Math.min(tier, 2);
+  return tier;
+}
 // === NEXORA:COSMOS:END ===
 
 
