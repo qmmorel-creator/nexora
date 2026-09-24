@@ -14,4 +14,4 @@ Trois directions visuelles proposées avant développement. **Données fictives 
 - `node build.mjs a b c` produit `out/rucher-*.html` ; three.js 0.158.0 est chargé depuis jsDelivr
   (installer `three@0.158.0` dans ce dossier pour la version locale de test).
 
-Ces fichiers ne sont pas servis par Netlify. Correspondance données → monde : `../RUCHER_GAMIFICATION.md`.
+Ces fichiers ne sont pas servis par Netlify. Correspondance données → monde : `../CARTE_ANALOGIES.md`.
