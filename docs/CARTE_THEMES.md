@@ -44,6 +44,10 @@ pourcentage seul.
 
 ## Catalogue des thèmes
 
+> Les **styles de rendu** (Classique, Archipel d'encre, Néon-Grille) redessinent toute la carte
+> et sont décrits dans [`CARTE_STYLES.md`](CARTE_STYLES.md). Ils ne remplacent pas les thèmes par
+> dossier ci-dessous, qui gardent le relief et reprennent leur apparence en style Classique.
+
 ### Cyberpunk
 
 | | |

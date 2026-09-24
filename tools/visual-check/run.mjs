@@ -1850,8 +1850,8 @@ try {
       await pg.waitForTimeout(300);
     }
   };
-  const openCarte = async (pg, scen) => {
-    await pg.goto(`http://127.0.0.1:${port}/index.html?app=1&view=carte&carte=${scen}`, { waitUntil: "load", timeout: 90000 });
+  const openCarte = async (pg, scen, extra = "") => {
+    await pg.goto(`http://127.0.0.1:${port}/index.html?app=1&view=carte&carte=${scen}${extra}`, { waitUntil: "load", timeout: 90000 });
     await pg.waitForSelector(".lp-carte-stage", { timeout: 90000 });
     await closeGuide(pg);
   };
@@ -1970,6 +1970,31 @@ try {
   carte.volumeOverlaps = await vp.evaluate(labelOverlaps);
   await vp.screenshot({ path: path.join(dir, "carte-volume.png") });
   await vp.close();
+
+  // Styles de la carte (#387) : Archipel d'encre et Néon-Grille, de près puis
+  // en vue d'ensemble ; le choix se fait dans « Affichage ».
+  carte.styles = {};
+  for (const style of ["estampe", "neon"]) {
+    const sp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    sp.on("pageerror", (e) => pageErrors.push("Carte " + style + " : " + e.message));
+    await sp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+    await openCarte(sp, "demo", "&style=" + style);
+    await sp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
+    await sp.waitForTimeout(1800);
+    const r = { attr: await sp.getAttribute(".lp-carte-stage", "data-carte-style"), canvas: await sp.$$eval(".lp-carte-gl canvas", (c) => c.length) };
+    await sp.screenshot({ path: path.join(dir, `carte-${style}.png`) });
+    await sp.click('.lp-carte-toolbar button:has-text("Vue d\'ensemble")');
+    await sp.waitForTimeout(2500);
+    r.overlaps = await sp.evaluate(labelOverlaps);
+    await sp.screenshot({ path: path.join(dir, `carte-${style}-ensemble.png`) });
+    // Retour au style Classique depuis le menu « Affichage ».
+    await sp.click('.lp-carte-toolbar button:has-text("Affichage")');
+    await sp.click('.lp-carte-style-opt.is-classique');
+    await sp.waitForTimeout(800);
+    r.back = await sp.getAttribute(".lp-carte-stage", "data-carte-style");
+    carte.styles[style] = r;
+    await sp.close();
+  }
 
   // Sans WebGL : liste de repli, fiches accessibles.
   const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -2936,6 +2961,12 @@ if (!carte.error) {
   expect(/basse/.test(carte.volumeQuality), `Carte volume : qualité « ${carte.volumeQuality} », basse attendue pour 12 000 tâches`);
   expect(carte.volumeMs < 60000, `Carte volume : ${carte.volumeMs} ms avant l'affichage (60 s maximum sur rendu logiciel)`);
   expect(carte.volumeOverlaps.n === 0, `Carte volume : ${carte.volumeOverlaps.n} libellé(s) superposé(s)`);
+  ["estampe", "neon"].forEach((st) => {
+    const r = carte.styles && carte.styles[st];
+    expect(r && r.attr === st && r.canvas === 1, `Carte style ${st} : non appliqué (${JSON.stringify(r)})`);
+    expect(r && r.overlaps.n === 0, `Carte style ${st} : ${r && r.overlaps.n} libellé(s) superposé(s)`);
+    expect(r && r.back === "classique", `Carte style ${st} : le menu Affichage ne ramène pas au style Classique (${r && r.back})`);
+  });
   expect(carte.fallbackProjects === 7, `Carte sans WebGL : ${carte.fallbackProjects} territoire(s) listé(s), 7 attendus`);
   expect(carte.fallbackModal >= 1, "Carte sans WebGL : la liste de repli n'ouvre pas la fiche");
 }

@@ -5476,7 +5476,8 @@ function carteRecurrenceProp(themeId, pal) {
 
 // Cœur du projet : un bâtiment du thème, entouré de 0 à 5 habitations selon le
 // palier ; au palier 5, une couronne (drapeau du projet).
-function carteHubModel(themeId, stage, color, priority) {
+function carteHubModel(themeId, stage, color, priority, styleId) {
+  if (carteStyleOf(styleId)) return carteStyleHubModel(styleId, stage, color, priority);
   const theme = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
   const pal = theme.pal;
   const scale = priority === "high" ? 1.25 : priority === "low" ? 0.85 : 1;
@@ -5500,7 +5501,8 @@ function carteHubModel(themeId, stage, color, priority) {
 }
 
 // Décor d'une tuile libre.
-function carteDecorModel(tile, pal, themeId) {
+function carteDecorModel(tile, pal, themeId, styleId) {
+  if (carteStyleOf(styleId)) return carteStyleDecorModel(tile, styleId);
   const k = tile.q + "," + tile.r;
   const r1 = carteRand("d1" + k), r2 = carteRand("d2" + k);
   const out = [];
@@ -5533,6 +5535,7 @@ function carteMix(a, b, t) {
 // `detail` : 2 (proche, tout), 1 (moyen), 0 (grands volumes : silhouette seule).
 function carteTaskModel(task, themeId, opts) {
   const o = opts || {};
+  if (carteStyleOf(o.style)) return carteStyleTaskModel(task, o.style, o);
   const detail = o.detail == null ? 2 : o.detail;
   const theme = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
   const pal = theme.pal;
@@ -5633,6 +5636,380 @@ function carteTaskLevel(task) {
 const CARTE_LIFT_STEP = 0.24;
 function carteTaskLift(task) { return carteTaskLevel(task) * CARTE_LIFT_STEP; }
 
+// ---------- Styles de carte (#387) ----------
+// Un style redessine toute la vue : sol, mer, objets et lumière. Il ne touche
+// ni aux données, ni à la disposition, ni aux thèmes par dossier : ceux-ci
+// décident toujours du relief et redeviennent visibles en style Classique.
+// Les styles sont distincts du thème de dossier « Cyberpunk » (#384) : un
+// thème habille une région, un style habille toute la carte.
+const CARTE_STYLE_DEFAULT = "classique";
+const CARTE_CLASSIC_SIGNALS = [
+  ["Urgente", "Feu rouge (moyenne : fanion orange)"], ["En retard", "Nuage d'orage · échéance sous 7 j : lanterne"],
+  ["À venir", "Brume · responsable : habitant coloré"], ["Dépendance", "Route de convoi à la sélection"],
+];
+const CARTE_STYLES = [
+  { id: "classique", label: "Classique", hint: "Les thèmes de chaque dossier (ville, forêt, mer…)." },
+  { id: "estampe", label: "Archipel d'encre", hint: "Estampe japonaise : îles cernées d'encre, pagodes, mer de vagues.",
+    hub: ["Rocher nu", "Ermitage", "Jardin sec", "Temple", "Monastère", "Château blanc"],
+    lg: { todo: "Sable ratissé autour d'une pierre", waiting: "Fondation et barrière de bambou fermée", doing: "Pagode en bois brut, un toit par palier, sous échafaudage", done: "Pagode vermillon à cinq toits", info: "Planche d'ema",
+      task: "Pagode", meeting: "Maison de thé", planning: "Clocher (bonshō)", milestone: "Torii vermillon", rec: "Moulinet de papier", friche: "Mousse et feuilles d'érable" },
+    sig: [["Urgente", "Lanterne de papier rouge (moyenne : bannière orange)"], ["En retard", "Nuage d'encre et pluie · échéance sous 7 j : lanterne de pierre"],
+      ["À venir", "Bande de brume · responsable : personnage en kimono coloré"], ["Dépendance", "Route de convoi à la sélection"]] },
+  { id: "neon", label: "Néon-Grille", hint: "Mégapole de nuit sous la pluie : tours néon, districts lumineux.",
+    hub: ["Terrain vague", "Squat de conteneurs", "Marché noir", "Complexe", "Arcologie", "Mégatour"],
+    lg: { todo: "Plan holographique en fil de fer", waiting: "Tour verrouillée, barrière rouge", doing: "Impression 3D : la partie pleine monte avec l'avancement", done: "Tour pleine, étages allumés", info: "Panneau holographique",
+      task: "Tour", meeting: "Dôme de verre", planning: "Antenne radar", milestone: "Flèche et faisceau vers le ciel", rec: "Radar qui tourne", friche: "Enseigne éteinte et rouille" },
+    sig: [["Urgente", "Gyrophare rouge (moyenne : balise ambre)"], ["En retard", "Glitch rouge autour de la tour · échéance sous 7 j : anneau cyan au sol"],
+      ["À venir", "Smog violet · responsable : drone à sa couleur"], ["Dépendance", "Route de convoi à la sélection"]] },
+];
+const CARTE_STYLE_BY_ID = Object.fromEntries(CARTE_STYLES.map((s) => [s.id, s]));
+function carteStyleOf(id) { return id && id !== CARTE_STYLE_DEFAULT && CARTE_STYLE_BY_ID[id] ? CARTE_STYLE_BY_ID[id] : null; }
+// Habillage lu dans l'interface (nom, paliers, légende) : le style prime sur
+// le thème du dossier.
+function carteLook(styleId, themeId) {
+  const s = carteStyleOf(styleId);
+  if (s) return { id: s.id, label: s.label, hub: s.hub, lg: s.lg, sig: s.sig };
+  const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
+  return { id: t.id, label: t.label, hub: t.hub, lg: t.lg, sig: CARTE_CLASSIC_SIGNALS };
+}
+
+// Palettes des styles.
+const CARTE_EST = { ink: "#1d1a17", ver: "#cf3b2a", raw: "#c2a47a", roof: "#3e4652", rawRoof: "#77705f", stone: "#a7a398", sand: "#e6d8b2", sandLine: "#cdbb8e", moss: "#7f9a55", pine: "#2f5a3a", sakura: "#efb3c0", gold: "#d2a93e", plaster: "#f4efe3", thatch: "#9a7a4e", bamboo: "#b9b56a", wood: "#5a4030", indigo: "#27466e", cliff: "#a4804f" };
+const CARTE_NEO = { dark: "#15122a", dark2: "#221d3a", steel: "#3a3550", mag: "#ff2a6d", cyan: "#05d9e8", amber: "#ffb000", vio: "#8a3cff", red: "#ff2040", dim: "#5a1030" };
+const CARTE_NEON_COLORS = ["#ff2a6d", "#05d9e8", "#ffb000", "#8a3cff", "#39ff88", "#ff6a00"];
+// Néon d'un district : stable par dossier ; les projets isolés sont gris-violet.
+function carteNeonColor(group) { return group ? CARTE_NEON_COLORS[carteHash("neon:" + group) % CARTE_NEON_COLORS.length] : "#8a7fb8"; }
+
+// Couleurs d'une tuile dans un style (null en style Classique). `sea` : la
+// tuile est recouverte par la mer du style (vagues ou grille).
+function carteStyleTileColors(styleId, t, projectColor) {
+  const v = carteRand("v:" + t.q + "," + t.r);
+  if (styleId === "estampe") {
+    if (t.kind === "sea") return { top: CARTE_EST.indigo, side: "#1f3a5c", water: true, sea: true };
+    if (t.kind === "water") return { top: "#2f5583", side: "#1f3a5c", water: true };
+    if (t.kind === "islet") return { top: "#89a35f", side: CARTE_EST.cliff };
+    let top = t.kind === "edge" || t.kind === "wild" ? "#93ac66" : ["#7f9a55", "#89a35f", "#76914f", "#839d59"][Math.floor(v * 4)];
+    if (t.road) top = "#cdbf9c";
+    if (t.kind === "hub") top = carteMix("#e3d5b0", projectColor || "#e3d5b0", 0.22);
+    return { top, side: CARTE_EST.cliff };
+  }
+  if (styleId === "neon") {
+    if (t.kind === "sea") return { top: "#07060d", side: "#07060d", water: true, sea: true };
+    if (t.kind === "water") return { top: "#0b1d3f", side: "#050812", water: true };
+    if (t.kind === "islet") return { top: "#1a1630", side: "#0b0a16" };
+    let top = t.kind === "edge" || t.kind === "wild" ? "#100d20" : ["#15122a", "#181430", "#130f26"][Math.floor(v * 3)];
+    if (t.road) top = "#262045";
+    if (t.kind === "hub") top = carteMix("#1d1838", projectColor || "#1d1838", 0.3);
+    return { top, side: "#0b0a16" };
+  }
+  return null;
+}
+
+// --- Pièces de l'Archipel d'encre ---
+function carteERoof(c, w, y, h) { return cP("pyr", c, 0, y, 0, w * 1.5, h, w * 1.5, Math.PI / 4); }
+function carteEScaffold(w, h) {
+  const s = w / 2, out = [];
+  [[-s, -s], [s, -s], [-s, s], [s, s]].forEach((c) => out.push(cP("cyl", CARTE_EST.bamboo, c[0], 0, c[1], 0.03, h, 0.03)));
+  for (let y = 0.22; y < h; y += 0.24) { out.push(cP("box", CARTE_EST.bamboo, 0, y, s, w, 0.02, 0.02), cP("box", CARTE_EST.bamboo, s, y, 0, 0.02, 0.02, w)); }
+  return out;
+}
+// Pagode : un toit par étage ; bois brut en chantier, vermillon une fois terminée.
+function carteEPagoda(floors, done, scaffold) {
+  const P = CARTE_EST;
+  const out = [cP("box", P.stone, 0, 0, 0, 0.6, 0.07, 0.6)];
+  let y = 0.07;
+  for (let k = 0; k < floors; k++) {
+    const bw = 0.36 - k * 0.04;
+    out.push(cP("box", done ? P.ver : P.raw, 0, y, 0, bw, 0.13, bw)); y += 0.13;
+    out.push(carteERoof(done ? P.roof : P.rawRoof, bw + 0.2, y, 0.07)); y += 0.045;
+  }
+  if (done) {
+    out.push(cP("cyl", P.gold, 0, y, 0, 0.03, 0.3, 0.03));
+    for (let i = 0; i < 3; i++) out.push(cP("cyl", P.gold, 0, y + 0.07 + i * 0.06, 0, 0.08, 0.018, 0.08));
+    out.push(cP("box", CARTE_GLOW, 0, 0.1, 0.182, 0.1, 0.07, 0.02, 0, "g"));
+  }
+  if (scaffold) return out.concat(carteEScaffold(0.5, y + 0.1));
+  return out;
+}
+function carteEFence() {
+  const B = CARTE_EST.bamboo;
+  return [cP("cyl", B, -0.3, 0, 0.42, 0.04, 0.36, 0.04), cP("cyl", B, 0.3, 0, 0.42, 0.04, 0.36, 0.04),
+    cP("box", B, 0, 0.1, 0.42, 0.62, 0.025, 0.025), cP("box", B, 0, 0.22, 0.42, 0.62, 0.025, 0.025), cP("box", B, 0, 0.32, 0.42, 0.62, 0.025, 0.025),
+    cP("box", "#8a6a3a", 0, 0.06, 0.44, 0.02, 0.3, 0.02)];
+}
+function carteESand() {
+  const P = CARTE_EST;
+  return [cP("cyl", P.sandLine, 0, 0, 0, 1.0, 0.03, 1.0), cP("cyl", P.sand, 0, 0.004, 0, 0.84, 0.03, 0.84), cP("cyl", P.sandLine, 0, 0.008, 0, 0.66, 0.03, 0.66),
+    cP("cyl", P.sand, 0, 0.012, 0, 0.5, 0.03, 0.5), cP("ball", P.stone, 0, 0.02, 0, 0.24, 0.18, 0.2, 0.5)];
+}
+function carteETeaHouse(painted) {
+  const P = CARTE_EST, post = painted ? P.wood : P.raw;
+  return [cP("box", P.wood, 0, 0.04, 0, 0.66, 0.06, 0.56), [-0.29, 0.29].map((x) => [-0.24, 0.24].map((z) => cP("cyl", post, x, 0, z, 0.04, 0.4, 0.04))), cP("box", "#c9c07a", 0, 0.1, 0, 0.56, 0.02, 0.46),
+    cP("pyr", painted ? P.thatch : "#b8a888", 0, 0.4, 0, 1.2, 0.26, 1.05, Math.PI / 4)].flat(2)
+    .concat(painted ? [cP("box", CARTE_GLOW, 0, 0.14, 0, 0.18, 0.12, 0.18, 0, "g")] : []);
+}
+function carteEBell(painted) {
+  const P = CARTE_EST, post = painted ? P.ver : P.raw;
+  return [[-0.24, 0.24].map((x) => [-0.24, 0.24].map((z) => cP("cyl", post, x, 0, z, 0.045, 0.56, 0.045))), carteERoof(P.roof, 0.6, 0.56, 0.18), cP("cyl", "#6f5a2a", 0, 0.28, 0, 0.18, 0.22, 0.18)].flat(2);
+}
+function carteETorii(painted) {
+  const P = CARTE_EST, c = painted ? P.ver : P.raw;
+  return [cP("cyl", c, -0.32, 0, 0, 0.1, 1.0, 0.1), cP("cyl", c, 0.32, 0, 0, 0.1, 1.0, 0.1), cP("box", P.ink, 0, 1.0, 0, 0.98, 0.07, 0.12),
+    cP("box", c, 0, 0.93, 0, 0.86, 0.06, 0.1), cP("box", c, 0, 0.76, 0, 0.76, 0.05, 0.06), cP("box", c, 0, 0.8, 0, 0.05, 0.14, 0.05)];
+}
+function carteEEma() {
+  const P = CARTE_EST;
+  const out = [cP("cyl", P.wood, -0.28, 0, 0, 0.04, 0.55, 0.04), cP("cyl", P.wood, 0.28, 0, 0, 0.04, 0.55, 0.04), cP("box", P.wood, 0, 0.5, 0, 0.62, 0.03, 0.04),
+    carteERoof(P.roof, 0.45, 0.53, 0.08), cP("box", "#8a6a45", 0, 0.1, 0, 0.52, 0.26, 0.03)];
+  for (let i = 0; i < 6; i++) out.push(cP("box", "#f0e4c4", -0.18 + (i % 3) * 0.18, 0.14 + Math.floor(i / 3) * 0.1, 0.02, 0.07, 0.06, 0.012));
+  return out;
+}
+function carteEPine(s) { const k = s || 1; return [cP("cyl", CARTE_EST.wood, 0, 0, 0, 0.07 * k, 0.45 * k, 0.07 * k, 0.1), cP("ball", CARTE_EST.pine, 0.02 * k, 0.36 * k, 0, 0.46 * k, 0.2 * k, 0.4 * k), cP("ball", CARTE_EST.pine, 0.15 * k, 0.24 * k, 0.05 * k, 0.32 * k, 0.15 * k, 0.28 * k), cP("ball", CARTE_EST.pine, -0.12 * k, 0.2 * k, -0.04 * k, 0.3 * k, 0.14 * k, 0.26 * k)]; }
+function carteESakura(s) { const k = s || 1; return [cP("cyl", "#4a3428", 0, 0, 0, 0.07 * k, 0.42 * k, 0.07 * k), cP("ball", CARTE_EST.sakura, 0, 0.3 * k, 0, 0.5 * k, 0.42 * k, 0.5 * k), cP("ball", "#f5c6cf", 0.16 * k, 0.26 * k, 0.06 * k, 0.32 * k, 0.28 * k, 0.32 * k)]; }
+function carteEToro(lit) {
+  const P = CARTE_EST;
+  return [cP("cyl", P.stone, 0, 0, 0, 0.18, 0.05, 0.18), cP("cyl", P.stone, 0, 0.05, 0, 0.06, 0.2, 0.06),
+    cP("box", lit ? "#ffd98a" : "#cfc7b4", 0, 0.25, 0, 0.13, 0.1, 0.13, 0, lit ? "g" : "l"), cP("pyr", P.stone, 0, 0.35, 0, 0.26, 0.08, 0.26, Math.PI / 4)];
+}
+function carteEHut() { return [cP("box", CARTE_EST.plaster, 0, 0, 0, 0.6, 0.32, 0.46), cP("pyr", CARTE_EST.thatch, 0, 0.32, 0, 1.05, 0.28, 0.9, Math.PI / 4)]; }
+function carteETemple() {
+  const P = CARTE_EST;
+  return [cP("box", P.stone, 0, 0, 0, 1.3, 0.12, 0.95), cP("box", P.plaster, 0, 0.12, 0, 1.0, 0.42, 0.7),
+    [-0.5, 0.5].map((x) => [-0.35, 0.35].map((z) => cP("cyl", P.ver, x, 0.12, z, 0.07, 0.42, 0.07))), cP("pyr", P.roof, 0, 0.54, 0, 1.95, 0.3, 1.5, Math.PI / 4), cP("pyr", P.roof, 0, 0.8, 0, 0.9, 0.18, 0.65, Math.PI / 4)].flat(2);
+}
+function carteEsign(c) { return [cP("cyl", CARTE_EST.wood, 0, 0, 0, 0.03, 0.9, 0.03), cP("box", c, 0.07, 0.28, 0, 0.13, 0.58, 0.02), cP("box", CARTE_EST.wood, 0.07, 0.87, 0, 0.16, 0.02, 0.02)]; }
+
+// --- Pièces de Néon-Grille ---
+// Arêtes d'une boîte en tubes lumineux : l'effet « fil de fer ».
+function carteNWire(w, h, d, y0, c) {
+  const t = 0.03, out = [];
+  [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => out.push(cP("box", c, sx * w / 2, y0, sz * d / 2, t, h, t, 0, "g"))));
+  [y0, y0 + h - t].forEach((y) => [-1, 1].forEach((s) => { out.push(cP("box", c, 0, y, s * d / 2, w, t, t, 0, "g"), cP("box", c, s * w / 2, y, 0, t, t, d, 0, "g")); }));
+  return out;
+}
+// Tour : fût sombre, un bandeau par étage, allumé ou éteint.
+function carteNTower(w, h, band, lit, from) {
+  const f = from || 0, N = CARTE_NEO;
+  const out = [cP("box", N.dark, 0, f, 0, w, Math.max(0.02, h - f), w)];
+  for (let y = f + 0.14; y < h - 0.05; y += 0.18) out.push(cP("box", lit ? band : N.steel, 0, y, 0, w + 0.03, 0.035, w + 0.03, 0, lit ? "g" : "l"));
+  return out;
+}
+function carteNHexRing(r, c, y) {
+  const out = [];
+  // Milieux des côtés à 0°, 60°… : même orientation que les tuiles (pointe en haut).
+  for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; out.push(cP("box", c, Math.cos(a) * r * 0.866, y || 0, Math.sin(a) * r * 0.866, 0.04, 0.03, r * 1.02, -a, "g")); }
+  return out;
+}
+function carteNBarrier(w) {
+  const s = w / 2 + 0.12, R = CARTE_NEO.red, out = [];
+  [0.16, 0.3].forEach((y) => { out.push(cP("box", R, 0, y, s, s * 2, 0.035, 0.035, 0, "g"), cP("box", R, 0, y, -s, s * 2, 0.035, 0.035, 0, "g"), cP("box", R, s, y, 0, 0.035, 0.035, s * 2, 0, "g"), cP("box", R, -s, y, 0, 0.035, 0.035, s * 2, 0, "g")); });
+  return out;
+}
+// Cadre carré lumineux posé à la hauteur y (balayage, découpe).
+function carteNFrame(size, y, c) {
+  const e = size / 2;
+  return [cP("box", c, 0, y, e, size, 0.03, 0.04, 0, "g"), cP("box", c, 0, y, -e, size, 0.03, 0.04, 0, "g"), cP("box", c, e, y, 0, 0.04, 0.03, size, 0, "g"), cP("box", c, -e, y, 0, 0.04, 0.03, size, 0, "g")];
+}
+function carteNMast(c, h) { return [cP("cyl", CARTE_NEO.steel, 0, 0, 0, 0.04, h, 0.04), cP("ball", c, 0, h, 0, 0.13, 0.13, 0.13, 0, "g")]; }
+
+// Base d'une tâche dans un style : l'objet au stade de son statut.
+function carteStyleBase(task, styleId, band, lite) {
+  const step = carteStage(task.progress);
+  if (styleId === "estampe") {
+    if (task.state === "info") return carteEEma();
+    if (task.kind === "task") {
+      if (task.state === "todo") return carteESand();
+      if (task.state === "waiting") return carteEPagoda(1, false, false).concat(carteEFence());
+      if (task.state === "doing") return carteEPagoda(Math.min(5, 1 + step), false, true);
+      return carteEPagoda(5, true, false);
+    }
+    const painted = task.state === "done";
+    let out = task.kind === "meeting" ? carteETeaHouse(painted) : task.kind === "planning" ? carteEBell(painted) : carteETorii(painted);
+    if (task.state === "todo") out = [cP("cyl", CARTE_EST.sandLine, 0, 0, 0, 1.0, 0.03, 1.0)].concat(out);
+    if (task.state === "waiting") out = out.concat(carteEFence());
+    if (task.state === "doing") out = out.concat(carteEScaffold(0.62, 0.35 + step * 0.16));
+    return out;
+  }
+  // Néon-Grille.
+  const N = CARTE_NEO, H = 1.3, w = task.duration == null ? 0.56 : task.duration < 3 ? 0.46 : task.duration > 21 ? 0.66 : 0.56;
+  if (task.state === "info") return [cP("cyl", N.steel, 0, 0, 0, 0.05, 0.8, 0.05), cP("box", N.mag, 0, 0.72, 0, 0.56, 0.34, 0.03, 0.4, "g"), cP("box", N.mag, 0, 0.7, 0, 0.62, 0.4, 0.02, 0.4, "t")];
+  if (task.kind === "task") {
+    // Grands volumes (`lite`) : l'hologramme seul, sans ses douze arêtes.
+    if (task.state === "todo") return (lite ? [] : carteNWire(w, H, w, 0, N.cyan)).concat([cP("box", N.cyan, 0, 0, 0, w, H, w, 0, "t"), cP("cyl", N.steel, 0, 0, 0, 0.3, 0.05, 0.3)]);
+    if (task.state === "waiting") return carteNTower(w, 0.45, band, false).concat(carteNWire(w, H - 0.45, w, 0.45, N.dim), carteNBarrier(w));
+    if (task.state === "doing") {
+      const h = Math.max(0.2, H * Math.max(0.12, step / 5));
+      // Plateau d'impression : un cadre lumineux à la découpe, pas une dalle pleine.
+      return carteNTower(w, h, band, true).concat(carteNWire(w, H - h, w, h, N.mag), carteNFrame(w + 0.16, h, N.mag));
+    }
+    return carteNTower(w, H, band, true).concat([cP("cyl", N.steel, w * 0.25, H, w * 0.2, 0.03, 0.4, 0.03), cP("ball", N.red, w * 0.25, H + 0.4, w * 0.2, 0.07, 0.07, 0.07, 0, "g")]);
+  }
+  const lit = task.state === "done";
+  let out;
+  if (task.kind === "meeting") out = [cP("dome", lit ? N.cyan : N.steel, 0, 0, 0, 1.0, 0.55, 1.0, 0, lit ? "t" : "l")].concat(carteNHexRing(0.56, lit ? N.cyan : "#2a2645", 0.01));
+  else if (task.kind === "planning") out = [cP("cyl", N.dark, 0, 0, 0, 0.12, 1.2, 0.12), cP("box", lit ? N.amber : N.steel, 0, 1.2, 0, 0.8, 0.08, 0.06, 0, "s"), cP("ball", lit ? N.amber : N.steel, 0, 1.05, 0, 0.14, 0.14, 0.14, 0, lit ? "g" : "l")];
+  else out = [cP("pyr", N.dark, 0, 0, 0, 0.62, 1.9, 0.62, Math.PI / 4)].concat(lit ? [cP("cyl", N.mag, 0, 1.9, 0, 0.06, 5, 0.06, 0, "g"), cP("ball", N.mag, 0, 1.85, 0, 0.22, 0.22, 0.22, 0, "g")] : [cP("ball", N.steel, 0, 1.85, 0, 0.16, 0.16, 0.16)]);
+  if (task.state === "todo") out = carteNHexRing(0.6, "#243a5a", 0.01).concat(out);
+  if (task.state === "waiting") out = out.concat(carteNBarrier(0.8));
+  if (task.state === "doing") [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => out.push(cP("box", N.mag, sx * 0.42, 0, sz * 0.42, 0.03, 0.3 + step * 0.22, 0.03, 0, "g"))));
+  return out;
+}
+
+// Indices universels dans un style : même sens, autre objet.
+const CARTE_STYLE_KIT = {
+  estampe: {
+    plinth: [CARTE_EST.stone, CARTE_EST.moss],
+    urgent: () => [cP("cyl", CARTE_EST.wood, 0.4, 0, -0.34, 0.035, 0.95, 0.035), cP("box", CARTE_EST.wood, 0.32, 0.93, -0.34, 0.18, 0.02, 0.02), cP("ball", "#e8412c", 0.24, 0.62, -0.34, 0.2, 0.26, 0.2, 0, "g"), cP("cyl", CARTE_EST.ink, 0.24, 0.86, -0.34, 0.12, 0.03, 0.12)],
+    moyen: () => carteEsign("#f08a24").map((p) => Object.assign({}, p, { p: [p.p[0] + 0.4, p.p[1], p.p[2] - 0.34] })),
+    overdue: (y) => [cP("ball", "#5d5852", -0.1, y, 0, 0.36, 0.14, 0.28), cP("ball", "#4f4a45", 0.14, y + 0.03, 0.05, 0.3, 0.16, 0.24)].concat([-0.2, -0.05, 0.1, 0.24].map((x, i) => cP("box", "#5a6270", x, y - 0.42 - (i % 2) * 0.08, 0.02, 0.018, 0.3, 0.018, 0))),
+    soon: () => carteEToro(true).map((p) => Object.assign({}, p, { p: [p.p[0] - 0.4, p.p[1], p.p[2] + 0.36] })),
+    future: () => [cP("cyl", "#ffffff", 0, 0.25, 0, 1.6, 0.14, 1.0, 0, "t"), cP("cyl", "#ffffff", 0.1, 0.62, 0.05, 1.3, 0.12, 0.8, 0, "t")],
+    person: (c) => [cP("cone", c, -0.42, 0, -0.12, 0.2, 0.3, 0.2), cP("ball", "#f1c9a5", -0.42, 0.27, -0.12, 0.1, 0.1, 0.1), cP("cone", "#c9a86a", -0.42, 0.34, -0.12, 0.22, 0.06, 0.22)],
+    sub: (d) => [cP("cyl", "#6a4a3a", 0, 0, 0, 0.14, 0.07, 0.14)].concat(d ? [cP("ball", CARTE_EST.pine, 0, 0.06, 0, 0.18, 0.12, 0.16)] : []),
+    rec: () => [cP("cyl", CARTE_EST.wood, 0, 0, 0, 0.035, 0.6, 0.035), cP("box", CARTE_EST.ver, 0, 0.62, 0.03, 0.5, 0.08, 0.02, 0, "s"), cP("box", "#f2efe6", 0, 0.62, 0.03, 0.08, 0.5, 0.02, 0, "s")],
+    attach: () => [cP("box", CARTE_EST.indigo, 0.2, 0, 0.5, 0.2, 0.12, 0.14), cP("ball", CARTE_EST.indigo, 0.2, 0.1, 0.5, 0.08, 0.06, 0.08)],
+    report: () => [cP("cyl", "#f2e6c8", -0.18, 0.02, 0.5, 0.07, 0.28, 0.07, 1.57), cP("cyl", CARTE_EST.wood, -0.18, 0.02, 0.5, 0.08, 0.02, 0.08, 1.57)],
+    mail: () => [cP("cyl", CARTE_EST.wood, -0.5, 0, 0.3, 0.03, 0.3, 0.03), cP("box", CARTE_EST.indigo, -0.5, 0.3, 0.3, 0.14, 0.1, 0.1)],
+    stale: () => { const out = []; for (let i = 0; i < 6; i++) { const a = i * 1.05 + 0.3; out.push(i % 2 ? cP("box", i % 3 ? "#c8412c" : "#e07a2a", Math.cos(a) * 0.42, 0.01, Math.sin(a) * 0.42, 0.09, 0.012, 0.07, a) : cP("ball", "#5f7f3a", Math.cos(a) * 0.4, 0, Math.sin(a) * 0.4, 0.22, 0.08, 0.2)); } return out; },
+    clock: () => [cP("cyl", CARTE_EST.stone, 0.12, 0, -0.5, 0.2, 0.05, 0.2), cP("pyr", CARTE_EST.ink, 0.12, 0.05, -0.5, 0.03, 0.14, 0.08)],
+    confetti: (H) => [-0.24, 0, 0.24].map((x, i) => cP("ball", ["#f5b8c4", "#fbd3da", "#efa0b0"][i], x, H + 0.04, 0.3, 0.08, 0.05, 0.08, 0, "g")),
+    secondary: (c) => carteEsign(c).map((p) => Object.assign({}, p, { p: [p.p[0] - 0.34, p.p[1], p.p[2] - 0.4] })),
+  },
+  neon: {
+    plinth: ["#1a1630", "#2a2450"],
+    urgent: () => carteNMast(CARTE_NEO.red, 1.0).map((p) => Object.assign({}, p, { p: [p.p[0] + 0.4, p.p[1], p.p[2] - 0.34] })),
+    moyen: () => carteNMast(CARTE_NEO.amber, 0.85).map((p) => Object.assign({}, p, { p: [p.p[0] + 0.4, p.p[1], p.p[2] - 0.34] })),
+    overdue: (y) => [cP("box", "#4a0818", 0, 0.02, 0, 0.8, Math.max(0.5, y - 0.4) * 0.6, 0.8, 0, "t")].concat(carteNFrame(0.9, y * 0.55, CARTE_NEO.red), [ cP("box", CARTE_NEO.red, 0.3, y * 0.3, 0.44, 0.22, 0.05, 0.02, 0, "g"), cP("box", CARTE_NEO.red, -0.2, y * 0.75, 0.44, 0.16, 0.05, 0.02, 0, "g")]),
+    soon: () => carteNHexRing(0.72, CARTE_NEO.cyan, 0.02),
+    future: () => [cP("cyl", CARTE_NEO.vio, 0, 0.02, 0, 1.5, 0.5, 1.5, 0, "t")],
+    person: (c, H) => [cP("box", "#2a2a3a", -0.42, H + 0.45, -0.12, 0.22, 0.06, 0.22), cP("box", "#9aa0b8", -0.42, H + 0.51, -0.12, 0.36, 0.02, 0.04, 0, "s"), cP("ball", c, -0.42, H + 0.36, -0.12, 0.1, 0.1, 0.1, 0, "g")],
+    sub: (d) => [cP("box", CARTE_NEO.dark2, 0, 0, 0, 0.16, 0.12, 0.16)].concat(d ? [cP("box", CARTE_NEO.cyan, 0, 0.12, 0, 0.12, 0.02, 0.12, 0, "g")] : []),
+    rec: () => [cP("cyl", CARTE_NEO.steel, 0, 0, 0, 0.04, 0.55, 0.04), cP("box", CARTE_NEO.cyan, 0, 0.58, 0.03, 0.46, 0.06, 0.02, 0, "s")],
+    attach: () => [cP("box", "#3d6bff", 0.2, 0, 0.5, 0.16, 0.16, 0.16, 0.4, "g")],
+    report: () => [cP("box", CARTE_NEO.cyan, -0.18, 0.02, 0.5, 0.2, 0.02, 0.14, 0, "g")],
+    mail: () => carteNMast("#3d6bff", 0.34).map((p) => Object.assign({}, p, { p: [p.p[0] - 0.5, p.p[1], p.p[2] + 0.3] })),
+    stale: () => [cP("box", "#5a4a55", 0, 0.5, 0.4, 0.34, 0.1, 0.03), cP("box", "#7a4a2a", -0.3, 0, 0.3, 0.3, 0.03, 0.3), cP("box", "#7a4a2a", 0.3, 0, -0.35, 0.22, 0.03, 0.2)],
+    clock: () => [cP("box", CARTE_NEO.amber, 0.12, 0, -0.5, 0.18, 0.1, 0.04, 0, "g")],
+    confetti: (H) => [-0.24, 0, 0.24].map((x, i) => cP("ball", [CARTE_NEO.mag, CARTE_NEO.cyan, CARTE_NEO.amber][i], x, H + 0.04, 0.3, 0.07, 0.07, 0.07, 0, "g")),
+    secondary: (c) => [cP("cyl", CARTE_NEO.steel, -0.34, 0, -0.4, 0.03, 0.8, 0.03), cP("box", c, -0.34, 0.62, -0.28, 0.02, 0.16, 0.24, 0, "g")],
+  },
+};
+
+// Modèle complet d'une tâche dans un style : même structure que
+// carteTaskModel (taille selon la durée, socle d'altitude, indices).
+function carteStyleTaskModel(task, styleId, o) {
+  const K = CARTE_STYLE_KIT[styleId];
+  const detail = o.detail == null ? 2 : o.detail;
+  const size = task.duration == null ? 1 : task.duration < 3 ? 0.78 : task.duration > 21 ? 1.22 : 1;
+  const at = (parts, dx, dy, dz) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] + dx, p.p[1] + dy, p.p[2] + dz] }));
+  const topOf = (list) => list.reduce((m, p) => Math.max(m, p.p[1] + (p.m === "s" ? 0.3 : p.s[1])), 0);
+  const band = o.bandColor || CARTE_NEO.cyan;
+  let parts = carteStyleBase(task, styleId, band, detail === 0);
+  // En Néon-Grille, la taille suit déjà la durée par l'emprise de la tour.
+  if (styleId !== "neon") parts = parts.map((p) => Object.assign({}, p, { p: [p.p[0] * size, p.p[1] * size, p.p[2] * size], s: [p.s[0] * size, p.s[1] * size, p.s[2] * size] }));
+  const lift = carteTaskLift(task);
+  if (lift > 0 && o.plinth !== false) {
+    parts = at(parts, 0, lift, 0);
+    parts.unshift(cP("hex", K.plinth[0], 0, 0, 0, 1.05, lift, 1.05), cP("hex", K.plinth[1], 0, lift - 0.04, 0, 1.12, 0.05, 1.12));
+  }
+  const H = topOf(parts.filter((p) => !(p.m === "g" && p.s[1] > 3)));
+  if (task.state === "done" && task.recentDone && detail > 0) parts = parts.concat(K.confetti(H));
+  if ((task.criticality === "urgent" || task.criticality === "moyen") && task.state !== "done" && task.state !== "info") parts = parts.concat(task.criticality === "urgent" ? K.urgent() : K.moyen());
+  if (task.overdue) parts = parts.concat(K.overdue(Math.max(H, 0.8) + 0.45));
+  else if (task.soon) parts = parts.concat(K.soon());
+  if (task.future) parts = parts.concat(K.future());
+  if (detail >= 2) {
+    const pc = cartePersonColor(task.assignee, task.assigneeColor);
+    if (pc) parts = parts.concat(K.person(pc, H));
+    const n = Math.min(6, task.checklistTotal), doneN = Math.min(n, task.checklistDone);
+    for (let i = 0; i < n; i++) { const a = Math.PI * 0.15 + i * 0.42; parts = parts.concat(at(K.sub(i < doneN), Math.cos(a) * 0.62, 0, Math.sin(a) * 0.62)); }
+    if (task.recurring) parts = parts.concat(at(K.rec(), 0.46, 0, 0.42));
+    if (task.attachments) parts = parts.concat(K.attach());
+    if (task.hasReport) parts = parts.concat(K.report());
+    if (task.fromEmail) parts = parts.concat(K.mail());
+    if (task.stale) parts = parts.concat(K.stale());
+    if (task.startTime) parts = parts.concat(K.clock());
+  }
+  if (detail >= 1 && task.secondaryProjectId && o.secondaryColor) parts = parts.concat(K.secondary(o.secondaryColor));
+  return parts;
+}
+
+// Cœur de projet dans un style : six paliers, du rocher nu au château blanc,
+// du terrain vague à la mégatour.
+function carteStyleHubModel(styleId, stage, color, priority) {
+  const scale = priority === "high" ? 1.25 : priority === "low" ? 0.85 : 1;
+  const rise = stage * 0.18 + (priority === "high" ? 0.25 : 0);
+  const at = (parts, dx, dz, s, dy) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] * s + dx, p.p[1] * s + (dy || 0), p.p[2] * s + dz], s: [p.s[0] * s, p.s[1] * s, p.s[2] * s] }));
+  let out = [], top = 1;
+  if (styleId === "estampe") {
+    const P = CARTE_EST;
+    if (rise > 0) out.push(cP("hex", P.stone, 0, 0, 0, 1.1, rise, 1.1));
+    let m;
+    if (stage === 0) m = [cP("ball", P.stone, -0.2, 0, 0.1, 0.56, 0.4, 0.5, 0.4), cP("ball", "#8f8b80", 0.34, 0, -0.2, 0.36, 0.24, 0.32), cP("ball", P.stone, 0.1, 0, 0.42, 0.24, 0.14, 0.22)].concat(at(carteEPine(0.8), -0.55, -0.45, 1));
+    else if (stage === 1) m = carteEHut().concat(at(carteEPine(1), 0.6, -0.4, 1));
+    else if (stage === 2) m = at(carteESand(), 0.3, 0.3, 1).concat(at(carteEHut(), -0.45, -0.3, 0.9), at(carteEPine(1), 0.6, -0.55, 1));
+    else if (stage === 3) m = carteETemple().concat(at(carteEToro(true), 0.72, 0.62, 1), at(carteEPine(1.1), -0.8, 0.55, 1));
+    else if (stage === 4) m = at(carteETemple(), -0.25, -0.2, 0.85).concat(at(carteEPagoda(3, true, false), 0.66, 0.36, 0.95), at(carteESakura(1), -0.72, 0.62, 1), at(carteEToro(true), 0.7, -0.6, 1));
+    else {
+      m = [cP("pyr", P.stone, 0, 0, 0, 1.6, 0.5, 1.6, Math.PI / 4)];
+      let y = 0.46;
+      [[0.84, 0.3], [0.66, 0.28], [0.5, 0.26], [0.36, 0.24]].forEach(([w, h]) => { m.push(cP("box", P.plaster, 0, y, 0, w, h, w * 0.8)); y += h; m.push(carteERoof(P.roof, w + 0.08, y, 0.14)); y += 0.08; });
+      m.push(cP("cone", P.gold, 0.12, y, 0, 0.06, 0.12, 0.06), cP("cone", P.gold, -0.12, y, 0, 0.06, 0.12, 0.06));
+      m = m.concat(at(carteESakura(1), -0.85, 0.6, 1), at(carteESakura(0.9), 0.85, 0.62, 1), at(carteESakura(0.8), 0.7, -0.78, 1));
+    }
+    out = out.concat(at(m, 0, 0, scale, rise));
+    out.forEach((p) => { top = Math.max(top, p.p[1] + p.s[1]); });
+    out = out.concat(at(carteEsign(color), -0.2, 0.75, 1, rise));
+    return out;
+  }
+  // Néon-Grille : bandeaux lumineux à la couleur du projet.
+  const N = CARTE_NEO, band = carteMix(color || N.cyan, "#ffffff", 0.2);
+  if (rise > 0) out.push(cP("hex", "#1a1630", 0, 0, 0, 1.1, rise, 1.1));
+  let m;
+  if (stage === 0) m = [cP("box", "#2a2638", -0.3, 0, 0.2, 0.4, 0.14, 0.3, 0.4), cP("box", "#2a2638", 0.35, 0, -0.1, 0.3, 0.22, 0.26, 1.1), cP("box", "#f5d300", -0.5, 0.1, 0.62, 0.3, 0.12, 0.05), cP("box", "#111111", -0.2, 0.1, 0.62, 0.3, 0.12, 0.05),
+    cP("cyl", "#3a3a48", 0.5, 0, 0.45, 0.24, 0.3, 0.24), cP("cone", "#ff8a2a", 0.5, 0.3, 0.45, 0.18, 0.2, 0.18, 0, "g")];
+  else if (stage === 1) m = [cP("box", "#3a4a6a", -0.4, 0, 0, 0.9, 0.4, 0.42, 0.2), cP("box", "#6a3a3a", -0.38, 0.4, 0.04, 0.9, 0.4, 0.42, 0.25), cP("box", "#3a5a4a", 0.45, 0, -0.25, 0.9, 0.4, 0.42, 1.2), cP("box", N.cyan, -0.4, 0.85, 0.26, 0.46, 0.14, 0.02, 0.2, "g")];
+  else if (stage === 2) {
+    m = carteNTower(0.46, 1.4, band, true);
+    [N.mag, N.cyan, N.amber, N.vio, N.mag].forEach((c, i) => { const a = i * Math.PI * 2 / 5 + 0.3, x = Math.cos(a) * 0.82, z = Math.sin(a) * 0.82; m.push(cP("box", "#221d38", x, 0, z, 0.3, 0.3, 0.26), cP("cyl", N.steel, x, 0.3, z, 0.02, 0.3, 0.02), cP("cone", c, x, 0.58, z, 0.5, 0.12, 0.5, 0, "g")); });
+  } else if (stage === 3) m = at(carteNTower(0.52, 2.3, band, true), -0.45, -0.3, 1).concat(at(carteNTower(0.48, 3.0, band, true), 0.5, -0.3, 1), at(carteNTower(0.5, 1.8, band, true), 0.05, 0.5, 1));
+  else if (stage === 4) m = carteNTower(1.3, 1.6, band, true).concat(carteNTower(0.95, 3.2, band, true, 1.6), carteNTower(0.62, 4.6, band, true, 3.2), [cP("box", N.cyan, 0.42, 2.4, 0, 0.06, 0.06, 1.3, 0, "g")]);
+  else m = carteNTower(1.2, 2.6, band, true).concat(carteNTower(0.92, 5.4, band, true, 2.6), carteNTower(0.6, 7.0, band, true, 5.4), carteNHexRing(1.1, N.cyan, 6.0), [cP("cyl", band, 0, 7.0, 0, 0.1, 14, 0.1, 0, "g")]);
+  out = out.concat(at(m, 0, 0, scale, rise));
+  out.forEach((p) => { if (p.s[1] < 8) top = Math.max(top, p.p[1] + p.s[1]); });
+  out.push(cP("cyl", N.steel, 0.62, rise, 0.55, 0.04, 0.9, 0.04), cP("box", band, 0.62, rise + 0.55, 0.55, 0.36, 0.3, 0.02, 0, "g"));
+  return out;
+}
+
+// Décor d'une tuile libre dans un style.
+function carteStyleDecorModel(tile, styleId) {
+  const k = tile.q + "," + tile.r;
+  const r1 = carteRand("d1" + k), r2 = carteRand("d2" + k);
+  const out = [];
+  const place = (parts, dx, dz) => parts.forEach((p) => out.push(Object.assign({}, p, { p: [p.p[0] + dx, p.p[1], p.p[2] + dz] })));
+  if (tile.kind === "sea" || tile.kind === "hub" || tile.kind === "water") return out;
+  const dx = (r2 - 0.5) * 0.9, dz = (carteRand("d3" + k) - 0.5) * 0.9;
+  if (styleId === "estampe") {
+    const dens = tile.kind === "islet" ? 0.8 : 0.55;
+    if (r1 >= dens) return out;
+    const pick = r1 / dens, s = 0.75 + r2 * 0.5;
+    if (tile.kind === "islet" || pick < 0.45) place(carteEPine(s), dx, dz);
+    else if (pick < 0.65) place(carteESakura(s * 0.9), dx, dz);
+    else if (pick < 0.85) place([cP("ball", CARTE_EST.stone, 0, 0, 0, 0.36 * s, 0.24 * s, 0.3 * s, r2 * 3), cP("ball", "#8f8b80", 0.22, 0, 0.14, 0.2, 0.14, 0.18)], dx, dz);
+    else for (let i = 0; i < 5; i++) place([cP("cyl", "#6f9a45", 0, 0, 0, 0.04, 0.5 + carteRand("b" + i + k) * 0.4, 0.04)], dx + (carteRand("bx" + i + k) - 0.5) * 0.3, dz + (carteRand("bz" + i + k) - 0.5) * 0.3);
+    return out;
+  }
+  if (styleId === "neon") {
+    if (r1 >= 0.32) return out;
+    const pick = r1 / 0.32, N = CARTE_NEO;
+    if (pick < 0.4) place([cP("box", "#221d38", 0, 0, 0, 0.3, 0.22, 0.3), cP("cyl", "#3a3550", 0, 0.22, 0, 0.16, 0.06, 0.16)], dx, dz);
+    else if (pick < 0.75) place([cP("box", "#1a1830", 0, 0, 0, 0.22, 0.42, 0.16, r2), cP("box", [N.cyan, N.mag, N.amber][Math.floor(r2 * 3)], 0, 0.16, 0.085, 0.18, 0.2, 0.01, r2, "g")], dx, dz);
+    else place([cP("cyl", N.steel, 0, 0, 0, 0.04, 0.9, 0.04), cP("box", [N.mag, N.cyan, N.vio][Math.floor(r2 * 3)], 0.12, 0.6, 0, 0.02, 0.28, 0.2, 0, "g")], dx, dz);
+    return out;
+  }
+  return out;
+}
+
 // Icône utilisable dans une étiquette 3D : un emoji seulement. Les icônes
 // « tabler: », « iconify: » et les images passent par IconGlyph dans React.
 function carteEmojiIcon(icon) {
@@ -5666,9 +6043,9 @@ const CARTE_DIM_TOP = "#b9bec5";
 function carteDimParts(parts) { return parts.map((p) => Object.assign({}, p, { c: carteMix(p.c, "#aeb3ba", 0.72), m: p.m === "g" ? "l" : p.m })); }
 
 // Légende contextuelle d'un thème (libellés affichés dans l'interface).
-function carteLegend(themeId) {
-  const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
-  return { id: t.id, label: t.label, hub: t.hub.slice(), lines: [
+function carteLegend(themeId, styleId) {
+  const t = carteLook(styleId, themeId);
+  return { id: t.id, label: t.label, hub: t.hub.slice(), signals: t.sig.map((l) => l.slice()), lines: [
     ["À faire", t.lg.todo], ["En attente", t.lg.waiting], ["En cours", t.lg.doing], ["Terminée", t.lg.done], ["Information", t.lg.info],
     ["Tâche", t.lg.task], ["Réunion", t.lg.meeting], ["Planning", t.lg.planning], ["Jalon", t.lg.milestone], ["Récurrente", t.lg.rec], ["Oubliée (30 j)", t.lg.friche],
   ] };
@@ -5699,6 +6076,8 @@ function normalizeCarteViewPrefs(p) {
     late: !!v.late,
     hideOldDone: !!v.hideOldDone,
     quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    // Style de la carte (#387) : Classique par défaut.
+    style: CARTE_STYLE_BY_ID[v.style] ? v.style : CARTE_STYLE_DEFAULT,
     folderThemes,
     // Filtre général de Nexora (#364), même format que les widgets.
     filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
