@@ -5862,6 +5862,420 @@ function normalizeCarteViewPrefs(p) {
 }
 // === NEXORA:CARTE:END ===
 
+// === NEXORA:COSMOS:START ===
+// Vue Cosmos (#402) : univers 3D clair. Logique pure, sans DOM ni three.js,
+// testée par tests/cosmos.test.mjs. Dossier racine → galaxie, projet →
+// planète, tâche → satellite. Elle lit la normalisation de la Carte
+// (carteNormalize) : mêmes familles d'état, mêmes retards, mêmes couleurs de
+// statut. Rien ici n'écrit une tâche.
+//
+// Stabilité : chaque objet occupe une PLACE numérotée, choisie à partir de son
+// identifiant puis mémorisée (localStorage, comme la Carte). Une place prise
+// n'est jamais reprise : ajouter un projet ou une tâche ne déplace pas les
+// autres, et un rechargement redonne exactement la même scène.
+const COSMOS_UNSORTED = "folder-a-trier";
+const COSMOS_ORPHAN_PROJECT = "__cosmos-sans-projet__";
+const COSMOS_UNSORTED_GALAXY = "__cosmos-a-trier__";
+// Places concentriques : l'anneau k offre base + step × k places.
+const COSMOS_RINGS = {
+  galaxy: [8, 8],      // galaxies de l'univers (spirale)
+  planet: [3, 3],      // planètes autour du cœur d'une galaxie
+  amas: [4, 4],        // amas (sous-dossiers) sur l'anneau extérieur
+  amasPlanet: [3, 3],  // planètes autour du centre d'un amas
+  satellite: [10, 6],  // satellites autour d'une planète
+};
+const COSMOS_PLANET_ORBIT0 = 8;
+const COSMOS_PLANET_GAP = 6;
+const COSMOS_AMAS_PLANET_ORBIT0 = 3.4;
+const COSMOS_AMAS_PLANET_GAP = 2.8;
+const COSMOS_KINDS = ["earth", "desert", "city", "ocean", "ice", "volcano"];
+// Thème de dossier de la Carte → style de planète.
+const COSMOS_KIND_FROM_THEME = {
+  ville: "city", cyberpunk: "city", campagne: "earth", foret: "earth", marais: "earth", jungle: "earth",
+  desert: "desert", canyon: "desert", mer: "ocean", lac: "ocean", ile: "ocean",
+  montagne: "ice", hautemontagne: "ice", grandnord: "ice", volcan: "volcano",
+};
+
+// Une spécification d'anneaux est soit [base, pas] (base + pas × k places),
+// soit une fonction k → nombre de places.
+function cosmosRingCount(k, spec) { return typeof spec === "function" ? spec(k) : spec[0] + spec[1] * k; }
+// Place n° slot → anneau, rang dans l'anneau, taille de l'anneau.
+function cosmosSlotRing(slot, spec) {
+  let k = 0, s = slot;
+  while (s >= cosmosRingCount(k, spec)) { s -= cosmosRingCount(k, spec); k++; }
+  return { ring: k, index: s, count: cosmosRingCount(k, spec) };
+}
+// Nombre de places des anneaux complets nécessaires pour n objets.
+function cosmosCapacity(n, spec) {
+  let total = 0, k = 0;
+  do { total += cosmosRingCount(k, spec); k++; } while (total < n);
+  return total;
+}
+// Attribution stable des places : la mémoire d'abord, puis chaque nouvel
+// identifiant part de la place que désigne son hachage et prend la première
+// libre (sondage linéaire), dans l'ordre de hachage.
+function cosmosAssign(ids, memory, salt, spec) {
+  const mem = memory && typeof memory === "object" ? memory : {};
+  const out = {};
+  const used = new Set();
+  ids.forEach((id) => {
+    const m = mem[id];
+    if (Number.isInteger(m) && m >= 0 && !used.has(m)) { out[id] = m; used.add(m); }
+  });
+  const fresh = ids.filter((id) => out[id] == null)
+    .sort((a, b) => (carteHash(salt + ":" + a) - carteHash(salt + ":" + b)) || (String(a) < String(b) ? -1 : 1));
+  let maxUsed = -1;
+  used.forEach((s) => { if (s > maxUsed) maxUsed = s; });
+  let total = cosmosCapacity(Math.max(ids.length, maxUsed + 1), spec);
+  while (total - used.size < fresh.length) total = cosmosCapacity(total + 1, spec);
+  fresh.forEach((id) => {
+    let s = carteHash(salt + "@" + id) % total;
+    while (used.has(s)) s = (s + 1) % total;
+    out[id] = s; used.add(s);
+  });
+  return out;
+}
+// Angle d'une place : répartition régulière dans l'anneau, décalée d'une
+// phase propre à l'anneau pour que les anneaux ne s'alignent pas.
+function cosmosSlotAngle(slotInfo, salt) {
+  return (slotInfo.index / slotInfo.count) * Math.PI * 2 + carteRand(salt + "#ring" + slotInfo.ring) * Math.PI * 2;
+}
+// Spirale « tournesol » : des galaxies régulièrement espacées.
+function cosmosSpiralPoint(slot, spacing) {
+  if (slot === 0) return { x: 0, z: 0 };
+  const r = spacing * Math.sqrt(slot) * 0.92;
+  const a = slot * 2.399963229728653;
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r };
+}
+function cosmosPlanetRadius(n) { return Math.min(3.2, 1.15 + 0.42 * Math.log2(1 + n)); }
+function cosmosSatelliteOrbit(planetRadius, ring) { return planetRadius * 1.85 + 0.95 + ring * 1.05; }
+// Encombrement d'une planète avec ses satellites.
+function cosmosPlanetReach(n) {
+  const r = cosmosPlanetRadius(n);
+  if (!n) return r * 1.6;
+  const rings = cosmosSlotRing(Math.max(0, n - 1), COSMOS_RINGS.satellite).ring + 1;
+  return cosmosSatelliteOrbit(r, rings - 1) + 0.6;
+}
+// Orbites d'un système (galaxie ou amas) réglées sur l'encombrement de ses
+// plus grosses planètes, arrondi par paliers (puissances de 2 du nombre de
+// tâches) : le placement ne change que si un projet franchit un palier.
+function cosmosOrbitPlan(taskCounts, orbit0, gap0) {
+  const max = taskCounts.reduce((m, n) => Math.max(m, n), 0);
+  const bucket = max <= 4 ? 4 : Math.pow(2, Math.ceil(Math.log2(max)));
+  const reach = cosmosPlanetReach(Math.min(bucket, 64));
+  const step = Math.max(gap0, reach * 2 + 1.5);
+  const first = Math.max(orbit0, reach * 1.2 + 3);
+  const count = (k) => Math.max(3, Math.floor((Math.PI * 2 * (first + k * step)) / step));
+  return { first, step, count };
+}
+
+// Arbre des dossiers : racine de chaque dossier (galaxie) et sous-dossier de
+// premier niveau (amas). Un parent introuvable ou une boucle font du dossier
+// une racine.
+function cosmosFolderRoots(folders) {
+  const byId = {};
+  (folders || []).forEach((f) => { if (f && f.id != null) byId[f.id] = f; });
+  const root = {}, amas = {};
+  Object.keys(byId).forEach((id) => {
+    let cur = byId[id], prev = null;
+    const seen = new Set();
+    while (cur && cur.parentId && byId[cur.parentId] && !seen.has(cur.id)) { seen.add(cur.id); prev = cur; cur = byId[cur.parentId]; }
+    root[id] = cur.id;
+    amas[id] = prev ? prev.id : null;
+  });
+  return { byId, root, amas };
+}
+
+// Ordre des dossiers : champ `order` explicite d'abord, puis le nom.
+function cosmosFolderOrder(a, b) {
+  const oa = Number.isFinite(a.order) ? a.order : Infinity;
+  const ob = Number.isFinite(b.order) ? b.order : Infinity;
+  if (oa !== ob) return oa - ob;
+  return String(a.name || "").localeCompare(String(b.name || ""), "fr");
+}
+
+// Construction de l'univers. Entrées : ctx Nexora (projectFolders), la sortie
+// de carteNormalize et la mémoire des places. Toutes les tâches servent à la
+// disposition : un filtre ne déplace rien.
+function cosmosBuild(ctx, norm, opts) {
+  const o = opts || {};
+  const memIn = o.memory && typeof o.memory === "object" ? o.memory : {};
+  const memory = { v: 1, g: { ...(memIn.g || {}) }, p: { ...(memIn.p || {}) }, a: { ...(memIn.a || {}) }, s: { ...(memIn.s || {}) } };
+  const themeOverrides = o.themeOverrides || {};
+  const folders = (ctx.projectFolders || []).filter((f) => f && f.id != null && f.id !== COSMOS_UNSORTED);
+  const tree = cosmosFolderRoots(folders);
+  const tasksByProject = {};
+  (norm.tasks || []).forEach((t) => {
+    const k = t.projectId == null ? COSMOS_ORPHAN_PROJECT : t.projectId;
+    (tasksByProject[k] = tasksByProject[k] || []).push(t);
+  });
+
+  // Galaxies : chaque dossier racine (même vide), puis « À trier ».
+  const roots = folders.filter((f) => tree.root[f.id] === f.id).sort(cosmosFolderOrder);
+  const galaxies = roots.map((f) => ({ id: f.id, folderId: f.id, name: f.name || "Dossier sans nom", color: f.color || "#245EDB", unsorted: false, direct: [], amas: [] }));
+  const galaxyById = {};
+  galaxies.forEach((g) => { galaxyById[g.id] = g; });
+  const unsorted = { id: COSMOS_UNSORTED_GALAXY, folderId: COSMOS_UNSORTED, name: "À trier", color: "#94A3B8", unsorted: true, direct: [], amas: [] };
+  const amasById = {};
+  const projects = (norm.projects || []).slice();
+  if (tasksByProject[COSMOS_ORPHAN_PROJECT]) {
+    projects.push({ id: COSMOS_ORPHAN_PROJECT, name: "Sans projet", icon: "", color: "#94A3B8", folderId: null, folderName: "", group: null, order: Infinity, orphan: true });
+  }
+  projects.forEach((p) => {
+    const fid = p.folderId && tree.byId[p.folderId] ? p.folderId : null;
+    const g = fid ? galaxyById[tree.root[fid]] : unsorted;
+    const amasFolder = fid ? tree.amas[fid] : null;
+    if (!amasFolder) { g.direct.push(p.id); return; }
+    let a = amasById[amasFolder];
+    if (!a) {
+      const f = tree.byId[amasFolder];
+      a = amasById[amasFolder] = { id: "amas:" + amasFolder, folderId: amasFolder, galaxyId: g.id, name: f.name || "Sous-dossier", color: f.color || g.color, projectIds: [] };
+      g.amas.push(a);
+    }
+    a.projectIds.push(p.id);
+  });
+  // Sous-dossiers vides : un amas sans planète reste visible.
+  folders.forEach((f) => {
+    if (tree.amas[f.id] === f.id && !amasById[f.id]) {
+      const g = galaxyById[tree.root[f.id]];
+      if (!g) return;
+      const a = amasById[f.id] = { id: "amas:" + f.id, folderId: f.id, galaxyId: g.id, name: f.name || "Sous-dossier", color: f.color || g.color, projectIds: [] };
+      g.amas.push(a);
+    }
+  });
+  if (unsorted.direct.length || unsorted.amas.length) galaxies.push(unsorted);
+
+  const projectById = {};
+  projects.forEach((p) => { projectById[p.id] = p; });
+  const planets = {};
+  const satellites = {};
+  let maxRadius = 12;
+
+  galaxies.forEach((g) => {
+    const orbits = [];
+    // Planètes directes autour du cœur.
+    const countOf = (pid) => (tasksByProject[pid] || []).length;
+    const plan = cosmosOrbitPlan(g.direct.map(countOf), COSMOS_PLANET_ORBIT0, COSMOS_PLANET_GAP);
+    const pSlots = cosmosAssign(g.direct, memory.p, "p:" + g.id, plan.count);
+    let outer = plan.first * 0.6;
+    const rings = {};
+    g.direct.forEach((pid) => {
+      const info = cosmosSlotRing(pSlots[pid], plan.count);
+      memory.p[pid] = pSlots[pid];
+      const r = plan.first + info.ring * plan.step;
+      rings[info.ring] = r;
+      outer = Math.max(outer, r);
+      const a = cosmosSlotAngle(info, g.id);
+      planets[pid] = { id: pid, galaxyId: g.id, amasId: null, orbitCenter: { x: 0, z: 0 }, orbitRadius: r, angle: a, ring: info.ring, slot: pSlots[pid] };
+    });
+    Object.keys(rings).forEach((k) => orbits.push({ x: 0, z: 0, r: rings[k], kind: "planet" }));
+    // Amas sur un anneau au-delà des planètes directes.
+    const aIds = g.amas.map((a) => a.id);
+    const aSlots = cosmosAssign(aIds, memory.a, "a:" + g.id, COSMOS_RINGS.amas);
+    let amasOuter = outer;
+    g.amas.forEach((a) => {
+      memory.a[a.id] = aSlots[a.id];
+      const aPlan = cosmosOrbitPlan(a.projectIds.map(countOf), COSMOS_AMAS_PLANET_ORBIT0, COSMOS_AMAS_PLANET_GAP);
+      const pSl = cosmosAssign(a.projectIds, memory.p, "p:" + a.id, aPlan.count);
+      let inner = 1.6;
+      const aRings = {};
+      a.projectIds.forEach((pid) => {
+        memory.p[pid] = pSl[pid];
+        const info = cosmosSlotRing(pSl[pid], aPlan.count);
+        const r = aPlan.first + info.ring * aPlan.step;
+        aRings[info.ring] = r;
+        inner = Math.max(inner, r);
+        planets[pid] = { id: pid, galaxyId: g.id, amasId: a.id, orbitRadius: r, angle: cosmosSlotAngle(info, a.id), ring: info.ring, slot: pSl[pid] };
+      });
+      a.radius = inner + (a.projectIds.length ? cosmosPlanetReach(a.projectIds.reduce((m, pid) => Math.max(m, countOf(pid)), 0)) : 1.8);
+      a.rings = Object.keys(aRings).map((k) => aRings[k]);
+    });
+    const amasSize = g.amas.reduce((m, a) => Math.max(m, a.radius), 0);
+    g.amas.forEach((a) => {
+      const info = cosmosSlotRing(aSlots[a.id], COSMOS_RINGS.amas);
+      const r = outer + amasSize + 3 + info.ring * (amasSize * 2 + 2);
+      amasOuter = Math.max(amasOuter, r + a.radius);
+      const ang = cosmosSlotAngle(info, "amas:" + g.id);
+      a.center = { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
+      a.rings.forEach((rr) => orbits.push({ x: a.center.x, z: a.center.z, r: rr, kind: "amas" }));
+      a.projectIds.forEach((pid) => { planets[pid].orbitCenter = { x: a.center.x, z: a.center.z }; });
+    });
+    g.radius = Math.max(outer + (g.direct.length ? cosmosPlanetReach(g.direct.reduce((m, pid) => Math.max(m, countOf(pid)), 0)) : 0), amasOuter) + 3.5;
+    g.orbits = orbits;
+    g.projectIds = g.direct.concat(...g.amas.map((a) => a.projectIds));
+    maxRadius = Math.max(maxRadius, g.radius);
+  });
+
+  // Galaxies sur la spirale, écart réglé sur la taille médiane ; une galaxie
+  // qui en chevauche une autre de place inférieure est repoussée vers
+  // l'extérieur. Calcul déterministe : même univers, mêmes positions.
+  const radii = galaxies.map((g) => g.radius).sort((a, b) => a - b);
+  const median = radii.length ? radii[Math.floor(radii.length / 2)] : 12;
+  const spacing = Math.ceil(median * 2 + 12);
+  const gSlots = cosmosAssign(galaxies.map((g) => g.id), memory.g, "g", COSMOS_RINGS.galaxy);
+  galaxies.forEach((g) => {
+    memory.g[g.id] = gSlots[g.id];
+    g.slot = gSlots[g.id];
+  });
+  const bySlot = galaxies.slice().sort((a, b) => a.slot - b.slot);
+  bySlot.forEach((g, i) => {
+    const base = cosmosSpiralPoint(g.slot, spacing);
+    const len = Math.hypot(base.x, base.z);
+    const dir = len ? { x: base.x / len, z: base.z / len } : { x: 1, z: 0 };
+    let r = len;
+    for (let guard = 0; guard < 400; guard++) {
+      const px = dir.x * r, pz = dir.z * r;
+      const clash = bySlot.slice(0, i).some((o) => Math.hypot(o.pos.x - px, o.pos.z - pz) < o.radius + g.radius + 8);
+      if (!clash) break;
+      r += 4;
+    }
+    g.pos = { x: dir.x * r, z: dir.z * r };
+  });
+
+  // Planètes et satellites en coordonnées du monde.
+  galaxies.forEach((g) => {
+    const fKind = !g.unsorted && themeOverrides[g.folderId] ? COSMOS_KIND_FROM_THEME[themeOverrides[g.folderId]] : null;
+    g.projectIds.forEach((pid) => {
+      const pl = planets[pid];
+      const p = projectById[pid];
+      const list = tasksByProject[pid] || [];
+      pl.name = p.name; pl.color = p.color; pl.icon = p.icon || ""; pl.orphan = !!p.orphan;
+      pl.folderName = p.folderName || "";
+      pl.amasName = pl.amasId ? (g.amas.find((a) => a.id === pl.amasId) || {}).name || "" : "";
+      pl.local = { x: pl.orbitCenter.x + Math.cos(pl.angle) * pl.orbitRadius, z: pl.orbitCenter.z + Math.sin(pl.angle) * pl.orbitRadius };
+      pl.world = { x: g.pos.x + pl.local.x, z: g.pos.z + pl.local.z };
+      pl.radius = cosmosPlanetRadius(list.length);
+      const ownKind = themeOverrides[p.folderId] ? COSMOS_KIND_FROM_THEME[themeOverrides[p.folderId]] : null;
+      pl.kind = ownKind || fKind || COSMOS_KINDS[carteHash("k:" + pid) % COSMOS_KINDS.length];
+      pl.stats = carteTerritoryStats(list);
+      const ids = list.map((t) => t.id);
+      const sSlots = cosmosAssign(ids, memory.s, "s:" + pid, COSMOS_RINGS.satellite);
+      let rings = 0;
+      list.forEach((t) => {
+        memory.s[t.id] = sSlots[t.id];
+        const info = cosmosSlotRing(sSlots[t.id], COSMOS_RINGS.satellite);
+        rings = Math.max(rings, info.ring + 1);
+        satellites[t.id] = { id: t.id, planetId: pid, galaxyId: g.id, ring: info.ring, angle: cosmosSlotAngle(info, pid), orbit: cosmosSatelliteOrbit(pl.radius, info.ring), slot: sSlots[t.id] };
+      });
+      pl.taskIds = ids;
+      pl.satRings = rings;
+      pl.reach = rings ? cosmosSatelliteOrbit(pl.radius, rings - 1) + 0.6 : pl.radius * 1.6;
+    });
+    const all = [];
+    g.projectIds.forEach((pid) => { (tasksByProject[pid] || []).forEach((t) => all.push(t)); });
+    g.stats = carteTerritoryStats(all);
+    g.stats.projects = g.projectIds.length;
+  });
+  // Mémoire purgée des objets disparus : elle ne grossit pas indéfiniment.
+  const keep = (m, ids) => { const out = {}; ids.forEach((id) => { if (m[id] != null) out[id] = m[id]; }); return out; };
+  memory.g = keep(memory.g, galaxies.map((g) => g.id));
+  memory.p = keep(memory.p, Object.keys(planets));
+  memory.a = keep(memory.a, galaxies.reduce((acc, g) => acc.concat(g.amas.map((a) => a.id)), []));
+  memory.s = keep(memory.s, Object.keys(satellites));
+
+  let ext = 0;
+  galaxies.forEach((g) => { ext = Math.max(ext, Math.hypot(g.pos.x, g.pos.z) + g.radius); });
+  const galaxyIndex = {};
+  galaxies.forEach((g) => { galaxyIndex[g.id] = g; });
+  return { galaxies, galaxyById: galaxyIndex, planets, satellites, spacing, extent: ext, memory };
+}
+
+// Où se trouve un objet : galaxie, planète, tâche.
+function cosmosPathOf(model, kind, id) {
+  if (kind === "galaxy") return model.galaxyById[id] ? { galaxyId: id, planetId: null, taskId: null } : null;
+  if (kind === "planet") { const p = model.planets[id]; return p ? { galaxyId: p.galaxyId, planetId: id, taskId: null } : null; }
+  if (kind === "task") { const s = model.satellites[id]; return s ? { galaxyId: s.galaxyId, planetId: s.planetId, taskId: id } : null; }
+  return null;
+}
+
+// Cadrage de la caméra pour chaque échelle : point visé et distance.
+function cosmosFrame(model, level, id) {
+  if (level === "galaxy" && model.galaxyById[id]) {
+    const g = model.galaxyById[id];
+    return { x: g.pos.x, y: 0, z: g.pos.z, dist: Math.max(26, g.radius * 2.55) };
+  }
+  if (level === "planet" && model.planets[id]) {
+    const p = model.planets[id];
+    return { x: p.world.x, y: p.radius * 0.2, z: p.world.z, dist: Math.max(10, p.reach * 3.1) };
+  }
+  // Univers : la boîte englobante des galaxies, pas l'origine.
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  model.galaxies.forEach((g) => { x0 = Math.min(x0, g.pos.x - g.radius); x1 = Math.max(x1, g.pos.x + g.radius); z0 = Math.min(z0, g.pos.z - g.radius); z1 = Math.max(z1, g.pos.z + g.radius); });
+  if (!model.galaxies.length) return { x: 0, y: 0, z: 0, dist: 70 };
+  return { x: (x0 + x1) / 2, y: 0, z: (z0 + z1) / 2, dist: Math.max(40, Math.max(x1 - x0, (z1 - z0) * 1.25) * 0.95) };
+}
+
+// Échelle de détail d'après la distance de la caméra à l'objet suivi :
+// de loin, les tâches se regroupent (points, compteur) ; de près, chaque
+// satellite est accessible et nommé.
+function cosmosDetailLevel(level, taskCount) {
+  if (level === "planet") return taskCount > 160 ? "grouped-done" : "full";
+  if (level === "galaxy") return "counts";
+  return "dust";
+}
+// Libellés de satellites affichés à l'échelle planète : la sélection, puis
+// les retards, l'urgence, l'échéance la plus proche. Le reste reste
+// accessible au survol et dans la liste.
+function cosmosLabelOrder(tasks, selectedId) {
+  const rank = (t) => (t.id === selectedId ? -1e9 : 0) + (t.overdue ? -1e6 : 0) + (t.criticality === "urgent" ? -1e5 : 0) + (t.state === "done" ? 1e7 : 0) + (t.dueIn == null ? 1e5 : t.dueIn);
+  return tasks.slice().sort((a, b) => (rank(a) - rank(b)) || (String(a.id) < String(b.id) ? -1 : 1));
+}
+
+// Recherche « Aller à… » : dossiers, sous-dossiers, projets et tâches.
+function cosmosSearch(model, norm, query, limit) {
+  const q = carteNorm(query);
+  if (!q) return [];
+  const out = [];
+  const score = (name) => { const n = carteNorm(name); const i = n.indexOf(q); return i === -1 ? -1 : (i === 0 ? 0 : 1); };
+  model.galaxies.forEach((g) => {
+    const s = score(g.name);
+    if (s !== -1) out.push({ kind: "galaxy", id: g.id, label: g.name, sub: "Dossier · " + g.stats.projects + " projet" + (g.stats.projects > 1 ? "s" : ""), color: g.color, rank: s });
+    g.amas.forEach((a) => { const sa = score(a.name); if (sa !== -1) out.push({ kind: "galaxy", id: g.id, label: a.name, sub: "Sous-dossier de " + g.name, color: a.color, rank: sa + 0.5 }); });
+  });
+  Object.keys(model.planets).forEach((pid) => {
+    const p = model.planets[pid];
+    const s = score(p.name);
+    if (s !== -1) out.push({ kind: "planet", id: pid, label: p.name, sub: "Projet · " + (model.galaxyById[p.galaxyId] || {}).name, color: p.color, rank: 2 + s });
+  });
+  (norm.tasks || []).forEach((t) => {
+    const s = score(t.title);
+    if (s !== -1 && model.satellites[t.id]) {
+      const p = model.planets[model.satellites[t.id].planetId];
+      out.push({ kind: "task", id: t.id, label: t.title, sub: "Tâche · " + (p ? p.name : ""), color: t.statusColor, rank: 4 + s + (t.state === "done" ? 1 : 0) });
+    }
+  });
+  out.sort((a, b) => (a.rank - b.rank) || a.label.localeCompare(b.label, "fr"));
+  return out.slice(0, limit || 12);
+}
+
+// Familles d'état de la Carte (carteStateOf), pour la répartition affichée.
+const COSMOS_STATE_KEYS = ["todo", "waiting", "doing", "done", "info"];
+const COSMOS_STATE_LABELS = { todo: "À faire", waiting: "En attente", doing: "En cours", done: "Terminées", info: "Infos" };
+// Préférences de la vue (synchronisées avec les autres préférences de vues).
+// Comme la Carte (#400), pas de puces de filtre rapide : le filtre général de
+// Nexora et la criticité suffisent.
+const COSMOS_QUALITIES = ["auto", "high", "medium", "low"];
+function normalizeCosmosViewPrefs(p) {
+  const v = p && typeof p === "object" ? p : {};
+  return {
+    crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
+    hideOldDone: !!v.hideOldDone,
+    quality: COSMOS_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    // Orbites animées : purement visuel, coupé aussi par « réduire les animations ».
+    animate: v.animate !== false,
+    filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
+    panel: v.panel !== false,
+  };
+}
+// Qualité effective selon le volume (même logique que la Carte).
+function cosmosResolveQuality(pref, taskCount, projectCount) {
+  if (pref && pref !== "auto") return pref;
+  if (taskCount > 3000 || projectCount > 150) return "low";
+  if (taskCount > 800 || projectCount > 60) return "medium";
+  return "high";
+}
+// === NEXORA:COSMOS:END ===
+
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----
 

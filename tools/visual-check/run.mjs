@@ -2020,6 +2020,178 @@ try {
 } catch (e) {
   carte.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ") + " — état : " + JSON.stringify({ territory: carte.territory, near: carte.near, selected: carte.selected, panel: carte.panel });
 }
+
+// --- Vue Cosmos (#402) -------------------------------------------------------
+// Trois échelles (univers, galaxie, planète), recherche, sélection et
+// modification explicite d'une tâche (satellite et compteurs à jour),
+// exploration sans écriture, libellés sans chevauchement, univers vide, gros
+// volume, écran étroit, repli sans WebGL et tâche de calendrier synchronisé.
+const cosmos = {};
+try {
+  const cosmosOverlaps = () => {
+    const boxes = [...document.querySelectorAll(".lp-cosmos-label")].filter((l) => l.style.visibility === "visible").map((l) => l.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      if (a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) n++;
+    }
+    return { n, count: boxes.length };
+  };
+  const offline = (pg) => pg.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  const closeGuide = async (pg) => {
+    for (let i = 0; i < 3; i++) {
+      const c = await pg.$('.lp-modal [aria-label="Fermer"]');
+      if (!c) break;
+      await c.click().catch(() => {});
+      await pg.waitForTimeout(300);
+    }
+  };
+  const openCosmos = async (pg, scen) => {
+    await pg.goto(`http://127.0.0.1:${port}/index.html?app=1&view=cosmos&cosmos=${scen}`, { waitUntil: "load", timeout: 90000 });
+    await pg.waitForSelector(".lp-cosmos-view", { timeout: 90000 });
+    await closeGuide(pg);
+  };
+  const attr = (pg, name) => pg.getAttribute(".lp-cosmos-stage", "data-cosmos-" + name);
+  const until = (pg, name, value) => pg.waitForFunction(([n, v]) => { const s = document.querySelector(".lp-cosmos-stage"); return s && s.getAttribute("data-cosmos-" + n) === v; }, [name, value], { timeout: 15000 });
+  const tasksNow = (pg) => pg.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
+  const qp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  qp.on("pageerror", (e) => pageErrors.push("Cosmos : " + e.message));
+  await offline(qp);
+  await openCosmos(qp, "demo");
+  await qp.waitForSelector('.lp-cosmos-stage[data-cosmos-status="ready"]', { timeout: 60000 });
+  await qp.waitForTimeout(2500);
+  cosmos.canvas = await qp.$$eval(".lp-cosmos-gl canvas", (c) => c.length);
+  cosmos.tab = await qp.$$eval(".lp-detail-tab", (b) => b.some((x) => /Cosmos/.test(x.textContent) && x.classList.contains("active")));
+  cosmos.tasksBefore = await tasksNow(qp);
+  // Univers : une galaxie par dossier racine, vide comprise, plus « À trier ».
+  cosmos.galaxyLabels = await qp.$$eval('.lp-cosmos-label--galaxy', (l) => l.filter((x) => x.style.visibility === "visible").map((x) => x.querySelector("b").textContent));
+  cosmos.overlapsUniverse = await qp.evaluate(cosmosOverlaps);
+  await qp.screenshot({ path: path.join(dir, "cosmos-univers.png") });
+  // Clic : sélection ; re-clic : entrée dans la galaxie.
+  await qp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
+  await until(qp, "selected", "galaxy:banc-cf1");
+  cosmos.summaryTitle = await qp.$eval(".lp-cosmos-panel .lp-cosmos-title", (e) => e.textContent).catch(() => "");
+  await qp.waitForTimeout(1500);
+  await qp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
+  await until(qp, "level", "galaxy");
+  await qp.waitForTimeout(2500);
+  cosmos.planetLabels = await qp.$$eval('.lp-cosmos-label--planet', (l) => l.filter((x) => x.style.visibility === "visible").length);
+  cosmos.amas = await qp.$$eval('.lp-cosmos-label--amas', (l) => l.filter((x) => x.style.visibility === "visible").map((x) => x.textContent));
+  cosmos.overlapsGalaxy = await qp.evaluate(cosmosOverlaps);
+  await qp.screenshot({ path: path.join(dir, "cosmos-galaxie.png") });
+  // Planète : double-clic sur le projet.
+  await qp.dblclick('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]');
+  await until(qp, "planet", "banc-cp1");
+  await qp.waitForTimeout(2500);
+  cosmos.taskLabels = await qp.$$eval('.lp-cosmos-label--task', (l) => l.filter((x) => x.style.visibility === "visible").length);
+  cosmos.overlapsPlanet = await qp.evaluate(cosmosOverlaps);
+  await qp.click('.lp-cosmos-label--task[data-cosmos-id="banc-ct1"]');
+  await until(qp, "selected", "task:banc-ct1");
+  await qp.waitForSelector(".lp-carte-detail", { timeout: 5000 });
+  cosmos.detailTitle = await qp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
+  await qp.waitForTimeout(2500);
+  await qp.screenshot({ path: path.join(dir, "cosmos-planete.png") });
+  // Explorer (clics, orbites animées, zoom) n'a rien écrit.
+  await qp.mouse.move(500, 500); await qp.mouse.wheel(0, 200); await qp.waitForTimeout(800);
+  cosmos.tasksAfterExplore = await tasksNow(qp);
+  // Échap : fermer la tâche, puis remonter les échelles.
+  await qp.focus(".lp-cosmos-stage");
+  await qp.keyboard.press("Escape"); await qp.waitForTimeout(400);
+  cosmos.escSelected = await attr(qp, "selected");
+  await qp.keyboard.press("Escape"); await qp.waitForTimeout(400);
+  cosmos.escLevel1 = await attr(qp, "level");
+  await qp.keyboard.press("Escape"); await qp.waitForTimeout(400);
+  cosmos.escLevel2 = await attr(qp, "level");
+  // Recherche : une tâche mène à sa planète et ouvre son volet.
+  await qp.fill(".lp-cosmos-search input", "vannes");
+  cosmos.suggestions = await qp.$$eval(".lp-cosmos-sugg button", (b) => b.map((x) => x.textContent));
+  await qp.press(".lp-cosmos-search input", "Enter");
+  await until(qp, "selected", "task:banc-ct1");
+  cosmos.searchLevel = await attr(qp, "level");
+  await qp.waitForTimeout(1500);
+  // Modification explicite : statut « Terminé » dans le volet.
+  cosmos.planetBefore = await qp.$eval('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"] em', (e) => e.textContent).catch(() => "");
+  const doneId = await qp.$eval("#lp-carte-st-banc-ct1", (sel) => [...sel.options].find((o) => /termin/i.test(o.textContent)).value);
+  await qp.selectOption("#lp-carte-st-banc-ct1", doneId);
+  await qp.waitForTimeout(2500);
+  cosmos.statusAfter = await qp.evaluate(async () => JSON.parse((await window.storage.get("nexora:tasks")).value).find((t) => t.id === "banc-ct1").statusId);
+  cosmos.doneId = doneId;
+  cosmos.planetAfter = await qp.$eval('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"] em', (e) => e.textContent).catch(() => "");
+  cosmos.satColor = await qp.$eval('.lp-cosmos-label--task[data-cosmos-id="banc-ct1"] i', (e) => getComputedStyle(e).backgroundColor).catch(() => "");
+  // Tâche de calendrier synchronisé : volet en lecture seule.
+  await qp.fill(".lp-cosmos-search input", "Toussaint");
+  await qp.press(".lp-cosmos-search input", "Enter");
+  await until(qp, "selected", "task:banc-csync");
+  await qp.waitForTimeout(800);
+  cosmos.syncLock = await qp.evaluate(() => ({ text: /calendrier synchronisé/.test((document.querySelector(".lp-carte-detail") || {}).textContent || ""), selects: document.querySelectorAll(".lp-carte-detail select").length }));
+  await qp.close();
+
+  // Univers vide.
+  const ep = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  ep.on("pageerror", (e) => pageErrors.push("Cosmos vide : " + e.message));
+  await offline(ep);
+  await openCosmos(ep, "empty");
+  await ep.waitForSelector(".lp-cosmos-stage .lp-carte-empty", { timeout: 30000 });
+  cosmos.empty = await ep.$eval(".lp-cosmos-stage .lp-carte-empty", (e) => e.textContent);
+  await ep.close();
+
+  // Écran étroit : panneau replié, commandes accessibles, sans défilement horizontal.
+  const mp = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  mp.on("pageerror", (e) => pageErrors.push("Cosmos mobile : " + e.message));
+  await offline(mp);
+  await openCosmos(mp, "demo");
+  const drawerClose = await mp.$(".lp-sidebar-mobile-close");
+  if (drawerClose && await drawerClose.isVisible()) { await drawerClose.click(); await mp.waitForTimeout(400); }
+  await mp.waitForSelector('.lp-cosmos-stage[data-cosmos-status="ready"]', { timeout: 60000 });
+  await mp.waitForTimeout(2000);
+  cosmos.mobile = await mp.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth - window.innerWidth,
+    panelHidden: !document.querySelector(".lp-cosmos-panel") && !!document.querySelector(".lp-cosmos-panel-toggle"),
+    rail: !!document.querySelector(".lp-cosmos-rail"),
+    crumbs: !!document.querySelector(".lp-cosmos-crumbs"),
+  }));
+  await mp.screenshot({ path: path.join(dir, "cosmos-mobile.png") });
+  await mp.close();
+
+  // Gros volume : 300 projets, 12 000 tâches.
+  const vp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  vp.on("pageerror", (e) => pageErrors.push("Cosmos volume : " + e.message));
+  await offline(vp);
+  const t0 = Date.now();
+  await openCosmos(vp, "volume");
+  await vp.waitForSelector('.lp-cosmos-stage[data-cosmos-status="ready"]', { timeout: 120000 });
+  await vp.waitForSelector(".lp-cosmos-quality", { timeout: 120000 });
+  cosmos.volumeMs = Date.now() - t0;
+  cosmos.volumeQuality = await vp.$eval(".lp-cosmos-quality", (e) => e.textContent);
+  await vp.waitForTimeout(2500);
+  cosmos.volumeOverlaps = await vp.evaluate(cosmosOverlaps);
+  await vp.screenshot({ path: path.join(dir, "cosmos-volume.png") });
+  await vp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-vf0"]');
+  await vp.waitForTimeout(800);
+  await vp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-vf0"]');
+  await until(vp, "level", "galaxy");
+  await vp.waitForTimeout(2500);
+  cosmos.volumeGalaxyOverlaps = await vp.evaluate(cosmosOverlaps);
+  await vp.screenshot({ path: path.join(dir, "cosmos-volume-galaxie.png") });
+  await vp.close();
+
+  // Sans WebGL : liste de repli, fiches accessibles.
+  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  fp.on("pageerror", (e) => pageErrors.push("Cosmos sans WebGL : " + e.message));
+  await fp.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
+  await offline(fp);
+  await openCosmos(fp, "demo");
+  await fp.waitForSelector(".lp-cosmos-fallback", { timeout: 30000 });
+  cosmos.fallbackGalaxies = await fp.$$eval(".lp-cosmos-fallback > .lp-carte-fallback-proj", (d) => d.length);
+  await fp.click(".lp-cosmos-fallback > .lp-carte-fallback-proj > summary");
+  await fp.click(".lp-cosmos-fallback-planet summary");
+  await fp.click(".lp-cosmos-fallback-planet .lp-carte-link-inline");
+  await fp.waitForTimeout(600);
+  cosmos.fallbackModal = await fp.$$eval(".lp-modal", (m) => m.length);
+  await fp.close();
+} catch (e) {
+  cosmos.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
+}
 await browser.close();
 server.close();
 
@@ -2977,6 +3149,32 @@ if (!carte.error) {
   expect(carte.volumeOverlaps.n === 0, `Carte volume : ${carte.volumeOverlaps.n} libellé(s) superposé(s)`);
   expect(carte.fallbackProjects === 7, `Carte sans WebGL : ${carte.fallbackProjects} territoire(s) listé(s), 7 attendus`);
   expect(carte.fallbackModal >= 1, "Carte sans WebGL : la liste de repli n'ouvre pas la fiche");
+}
+
+
+expect(!cosmos.error, `Cosmos : scénario en échec (${cosmos.error})`);
+if (!cosmos.error) {
+  expect(cosmos.canvas === 1 && cosmos.tab, `Cosmos : vue non montée ou onglet inactif (${cosmos.canvas} canvas)`);
+  ["Vallabrègues", "Avignon Nord", "Perso", "Archives", "Nouveaux chantiers", "À trier"].forEach((n) => expect(cosmos.galaxyLabels.includes(n), `Cosmos univers : galaxie « ${n} » absente (${cosmos.galaxyLabels.join(", ")})`));
+  expect(cosmos.overlapsUniverse.n === 0 && cosmos.overlapsGalaxy.n === 0 && cosmos.overlapsPlanet.n === 0, `Cosmos : libellés superposés (univers ${cosmos.overlapsUniverse.n}, galaxie ${cosmos.overlapsGalaxy.n}, planète ${cosmos.overlapsPlanet.n})`);
+  expect(cosmos.summaryTitle === "Vallabrègues", `Cosmos : la synthèse du dossier sélectionné affiche « ${cosmos.summaryTitle} »`);
+  expect(cosmos.planetLabels >= 3 && cosmos.amas.some((a) => /Lot aval/.test(a)), `Cosmos galaxie : ${cosmos.planetLabels} planète(s) nommée(s), amas ${JSON.stringify(cosmos.amas)}`);
+  expect(cosmos.taskLabels >= 6, `Cosmos planète : ${cosmos.taskLabels} satellite(s) nommé(s), 6 au moins attendus`);
+  expect(cosmos.detailTitle === "Vérifier les vannes", `Cosmos : le satellite ouvre « ${cosmos.detailTitle} »`);
+  expect(cosmos.tasksAfterExplore === cosmos.tasksBefore, "Cosmos : explorer la scène a modifié des tâches");
+  expect(cosmos.escSelected === "" && cosmos.escLevel1 === "galaxy" && cosmos.escLevel2 === "universe", `Cosmos : Échap ne remonte pas (${cosmos.escSelected} / ${cosmos.escLevel1} / ${cosmos.escLevel2})`);
+  expect(cosmos.suggestions.some((x) => /Vérifier les vannes/.test(x)) && cosmos.searchLevel === "planet", `Cosmos recherche : ${JSON.stringify(cosmos.suggestions)} → ${cosmos.searchLevel}`);
+  expect(cosmos.statusAfter === cosmos.doneId, `Cosmos : le statut choisi n'est pas enregistré (${cosmos.statusAfter})`);
+  expect(cosmos.planetBefore !== cosmos.planetAfter && /43 %/.test(cosmos.planetAfter), `Cosmos : compteur de la planète non mis à jour (« ${cosmos.planetBefore} » → « ${cosmos.planetAfter} »)`);
+  expect(/rgb\(34, 176, 125\)/.test(cosmos.satColor), `Cosmos : le satellite ne prend pas la couleur du statut Terminé (${cosmos.satColor})`);
+  expect(cosmos.syncLock.text && cosmos.syncLock.selects === 0, `Cosmos : tâche de calendrier synchronisé modifiable (${JSON.stringify(cosmos.syncLock)})`);
+  expect(/univers est vide/i.test(cosmos.empty), `Cosmos vide : message absent (${cosmos.empty})`);
+  expect(cosmos.mobile.scroll <= 0 && cosmos.mobile.panelHidden && cosmos.mobile.rail && cosmos.mobile.crumbs, `Cosmos mobile : ${JSON.stringify(cosmos.mobile)}`);
+  expect(/basse/.test(cosmos.volumeQuality), `Cosmos volume : qualité « ${cosmos.volumeQuality} », basse attendue pour 12 000 tâches`);
+  expect(cosmos.volumeMs < 60000, `Cosmos volume : ${cosmos.volumeMs} ms avant l'affichage (60 s maximum sur rendu logiciel)`);
+  expect(cosmos.volumeOverlaps.n === 0 && cosmos.volumeGalaxyOverlaps.n === 0, `Cosmos volume : libellés superposés (${cosmos.volumeOverlaps.n} / ${cosmos.volumeGalaxyOverlaps.n})`);
+  expect(cosmos.fallbackGalaxies === 6, `Cosmos sans WebGL : ${cosmos.fallbackGalaxies} galaxie(s) listée(s), 6 attendues`);
+  expect(cosmos.fallbackModal >= 1, "Cosmos sans WebGL : la liste de repli n'ouvre pas la fiche");
 }
 
 console.log(`Capture : ${shot}`);
