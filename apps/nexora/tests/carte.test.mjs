@@ -483,3 +483,9 @@ test("#400 : les filtres propres à la vue se comptent et se remettent à zéro"
   assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...cfg, ...C.carteViewFilterReset() })), 0);
   assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({})), 0);
 });
+
+test("#401 : la carte simplifiée est une préférence de la vue, désactivée par défaut", () => {
+  assert.equal(C.normalizeCarteViewPrefs({}).simplify, false);
+  assert.equal(C.normalizeCarteViewPrefs({ simplify: true }).simplify, true);
+  assert.equal(C.normalizeCarteViewPrefs(C.carteViewFilterReset()).simplify, false, "« Tout afficher » ne force pas le mode");
+});

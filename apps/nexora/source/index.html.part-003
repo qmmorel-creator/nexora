@@ -18906,7 +18906,7 @@ function createCarteEngine(THREE, container, opts) {
     if (g) { g.font = font; widths = chars.map((ch) => g.measureText(ch).width); }
     const natural = widths.reduce((m, w) => m + w, 0) + gap * Math.max(0, chars.length - 1);
     // Hauteur des lettres dans le monde : le nom occupe ~75 % de l'île.
-    const hW = Math.max(0.9, Math.min(3.2, curve.vlen * 0.42 + 0.6, (curve.ulen * 0.75 * F) / natural));
+    const hW = Math.max(0.9, Math.min(2.4, curve.vlen * 0.36 + 0.5, (curve.ulen * 0.7 * F) / natural));
     let ppu = F / hW;
     const span = (natural / F) * hW;
     const u0 = curve.umid - span / 2, u1 = curve.umid + span / 2;
@@ -19366,6 +19366,7 @@ function createCarteEngine(THREE, container, opts) {
         mesh.scale.set(tx.w, tx.h, 1);
         mesh.position.set(px, g.top + 0.3, pz);
         mesh.userData.theta = cv.theta;
+        mesh.userData.alpha = pass.opacity;
         mesh.rotation.set(-Math.PI / 2, 0, -cv.theta);
         mesh.renderOrder = pass.order;
         world.add(mesh);
@@ -19470,7 +19471,8 @@ function createCarteEngine(THREE, container, opts) {
       const bm = new THREE.InstancedMesh(dnd ? dndBorderGeo : borderGeo, MAT.border, bKeys.length);
       bKeys.forEach((k, i) => {
         const tile = L.tiles[k], w = carteToWorld(tile.q, tile.r);
-        bm.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, (capTop[k] != null ? capTop[k] : tile.h + 0.12) + 0.006, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        // Au-dessus de la dalle claire de la tâche (#379), qui la masquerait.
+        bm.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, (capTop[k] != null ? capTop[k] : tile.h + 0.12) + 0.05, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
         const c = S.dimmed && tile.projectId && S.dimmed.has(tile.projectId) ? carteMix(borders[k].color, CARTE_DIM_TOP, 0.7) : borders[k].color;
         bm.setColorAt(i, tmpC.set(c || "#94A3B8"));
       });
@@ -19592,6 +19594,9 @@ function createCarteEngine(THREE, container, opts) {
       const th = m.userData.theta;
       const flip = Math.cos(th) * Math.cos(S.yaw) - Math.sin(th) * Math.sin(S.yaw) < 0;
       m.rotation.z = -th + (flip ? Math.PI : 0);
+      // De près, le nom s'efface : il sert à s'orienter de loin.
+      m.material.opacity = m.userData.alpha * Math.max(0, Math.min(1, (S.dist - 17) / 15));
+      m.visible = m.material.opacity > 0.01;
     });
     scene.fog.near = S.dist * 0.8 + 25;
     scene.fog.far = (S.dist * 2.2 + 70) * styleEnv().fogK;
@@ -20117,6 +20122,9 @@ function createCarteEngine(THREE, container, opts) {
     S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null; S.dimmed = d.dimmed || null; S.lieux = d.lieux || {};
     resolveQuality();
     build();
+    // Carte resserrée (#401) : l'arpenteur resté hors des terres rejoint le
+    // premier territoire.
+    if (S.placedKeeper && groundAt(keeper.position.x, keeper.position.z) == null) S.placedKeeper = false;
     if (!S.placedKeeper && S.layout.territories.length) {
       const first = S.layout.territories.find((t) => !S.layout.projectById[t.projectId].unknown) || S.layout.territories[0];
       const w = carteToWorld(first.q + 1, first.r);
@@ -20629,22 +20637,6 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     n.tasks.forEach((t) => { n.taskById[t.id] = t; });
     return n;
   }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers]);
-  const themeOverrides = carteThemeOverrides(ctx.projectFolders, cfg.folderThemes);
-  const layout = useMemo(() => carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(), themeOverrides }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [norm, JSON.stringify(themeOverrides)]);
-  useEffect(() => { writeCarteMemory(layout.memory); }, [layout]);
-  // Style Donjons & Dragons (#390) : un lieu par dossier (réglable).
-  const lieux = useMemo(() => carteDndLieux(layout, cfg.folderLieux),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layout, JSON.stringify(cfg.folderLieux)]);
-  const stats = useMemo(() => {
-    const by = {};
-    norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (by[k] = by[k] || []).push(t); });
-    const out = {};
-    layout.territories.forEach((tr) => { out[tr.projectId] = carteTerritoryStats(by[tr.projectId] || []); });
-    return out;
-  }, [norm, layout]);
   // Filtre général de Nexora (#364) : le même moteur que les widgets et le
   // Calendrier, appliqué par-dessus les filtres de la page.
   const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
@@ -20659,6 +20651,43 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [norm, tasks, tasksWithDone, cfg.states.join(","), cfg.crit, cfg.late, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
 
+  // Carte simplifiée (#401) : quand un filtre écarte des tâches, seuls les
+  // projets qui en gardent au moins une sont cartographiés, sur une carte
+  // resserrée. La disposition mémorisée de la carte complète n'est ni lue ni
+  // réécrite : elle revient à l'identique quand l'option est levée.
+  const keepKey = useMemo(() => {
+    if (!cfg.simplify || visible.size >= norm.tasks.length) return "";
+    const keep = new Set();
+    norm.tasks.forEach((t) => { if (visible.has(t.id)) keep.add(t.projectId == null ? "__terre-inconnue__" : t.projectId); });
+    return [...keep].sort().join("|") || "∅";
+  }, [cfg.simplify, visible, norm]);
+  const themeOverrides = carteThemeOverrides(ctx.projectFolders, cfg.folderThemes);
+  const layout = useMemo(() => {
+    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(), themeOverrides });
+    const keep = new Set(keepKey.split("|"));
+    const mem = readCarteMemory();
+    const l = carteBuild({
+      projects: norm.projects.filter((p) => keep.has(p.id)),
+      tasks: norm.tasks.filter((t) => keep.has(t.projectId == null ? "__terre-inconnue__" : t.projectId)),
+      memory: { tasks: mem.tasks || {} }, themeOverrides,
+    });
+    l.simplified = true;
+    return l;
+  },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [norm, keepKey, JSON.stringify(themeOverrides)]);
+  useEffect(() => { if (!layout.simplified) writeCarteMemory(layout.memory); }, [layout]);
+  // Style Donjons & Dragons (#390) : un lieu par dossier (réglable).
+  const lieux = useMemo(() => carteDndLieux(layout, cfg.folderLieux),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout, JSON.stringify(cfg.folderLieux)]);
+  const stats = useMemo(() => {
+    const by = {};
+    norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (by[k] = by[k] || []).push(t); });
+    const out = {};
+    layout.territories.forEach((tr) => { out[tr.projectId] = carteTerritoryStats(by[tr.projectId] || []); });
+    return out;
+  }, [norm, layout]);
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -20817,6 +20846,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               <button key={k} type="button" className="lp-carte-fchip" aria-pressed={cfg.states.indexOf(k) !== -1} onClick={() => toggleState(k)}>{CARTE_STATE_LABELS[k]}</button>
             ))}
             <button type="button" className="lp-carte-fchip is-late" aria-pressed={cfg.late} onClick={() => setPrefs({ late: !cfg.late })}>En retard</button>
+            <button type="button" className="lp-carte-fchip" aria-pressed={cfg.simplify} onClick={() => setPrefs({ simplify: !cfg.simplify })}
+              title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste">Masquer les écartés</button>
           </div>
           <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
           <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
@@ -20846,7 +20877,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
       </div>
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0} data-carte-style={cfg.style}
-        data-carte-status={status} data-carte-dimmed={dimmed.size} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
+        data-carte-status={status} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
         {empty ? (
           <div className="lp-empty lp-carte-empty">

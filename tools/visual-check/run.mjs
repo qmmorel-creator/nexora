@@ -1896,6 +1896,15 @@ try {
   await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "urgent");
   await cp.waitForTimeout(800);
   carte.dim = await cp.evaluate(() => ({ dim: Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed), all: 7, pill: !!document.querySelector(".lp-carte-filtered button") }));
+  // #401 : « Masquer les écartés » retire de la carte les projets écartés.
+  const terrOf = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteTerritories));
+  carte.simplify = { before: await terrOf() };
+  await cp.click('.lp-carte-fchip:text("Masquer les écartés")');
+  await cp.waitForTimeout(1200);
+  carte.simplify.on = await terrOf();
+  await cp.click('.lp-carte-fchip:text("Masquer les écartés")');
+  await cp.waitForTimeout(1200);
+  carte.simplify.off = await terrOf();
   await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "all");
   await cp.waitForTimeout(800);
   carte.dimAfter = await cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed));
@@ -2949,6 +2958,7 @@ if (!carte.error) {
   expect(carte.badges >= 1 && carte.badges < 7, `Carte : ${carte.badges} pastilles dans le ruban (une par dossier attendue, moins que les 7 projets)`);
   expect(carte.folderPop && carte.folderPop.open && carte.folderPop.projects >= 1 && carte.folderPop.total === 7, `Carte : le survol d'une pastille de dossier ne déroule pas ses projets (${JSON.stringify(carte.folderPop)})`);
   expect(carte.folderPopClosed === 0, "Carte : le menu du dossier reste ouvert après le survol");
+  expect(carte.simplify && carte.simplify.on >= 1 && carte.simplify.on < carte.simplify.before && carte.simplify.off === carte.simplify.before, `Carte : la carte simplifiée ne retire pas les projets écartés (${JSON.stringify(carte.simplify)})`);
   expect(carte.projectLabels === 0, `Carte : ${carte.projectLabels} nom(s) de projet affiché(s) sans survol du totem`);
   expect(carte.suggestions.some((t) => /Passerelle/.test(t)), `Carte : la recherche « Passerelle » ne propose pas le projet (${JSON.stringify(carte.suggestions)})`);
   expect(carte.territory === "banc-p4", `Carte : la recherche ne mène pas au territoire « Passerelle quai Nord » (${carte.territory})`);
