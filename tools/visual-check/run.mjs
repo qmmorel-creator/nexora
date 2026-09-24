@@ -2047,7 +2047,7 @@ try {
 const cosmos = {};
 try {
   const cosmosOverlaps = () => {
-    const boxes = [...document.querySelectorAll(".lp-cosmos-label")].filter((l) => l.style.visibility === "visible").map((l) => l.getBoundingClientRect());
+    const boxes = [...document.querySelectorAll(".lp-cosmos-label")].filter((l) => l.classList.contains("is-on")).map((l) => l.getBoundingClientRect());
     let n = 0;
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i], b = boxes[j];
@@ -2082,7 +2082,7 @@ try {
   cosmos.tab = await qp.$$eval(".lp-detail-tab", (b) => b.some((x) => /Cosmos/.test(x.textContent) && x.classList.contains("active")));
   cosmos.tasksBefore = await tasksNow(qp);
   // Univers : une galaxie par dossier racine, vide comprise, plus « À trier ».
-  cosmos.galaxyLabels = await qp.$$eval('.lp-cosmos-label--galaxy', (l) => l.filter((x) => x.style.visibility === "visible").map((x) => x.querySelector("b").textContent));
+  cosmos.galaxyLabels = await qp.$$eval('.lp-cosmos-label--galaxy', (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.querySelector("b").textContent));
   cosmos.overlapsUniverse = await qp.evaluate(cosmosOverlaps);
   await qp.screenshot({ path: path.join(dir, "cosmos-univers.png") });
   // Clic : sélection ; re-clic : entrée dans la galaxie.
@@ -2093,16 +2093,21 @@ try {
   await qp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
   await until(qp, "level", "galaxy");
   await qp.waitForTimeout(2500);
-  cosmos.planetLabels = await qp.$$eval('.lp-cosmos-label--planet', (l) => l.filter((x) => x.style.visibility === "visible").length);
-  cosmos.amas = await qp.$$eval('.lp-cosmos-label--amas', (l) => l.filter((x) => x.style.visibility === "visible").map((x) => x.textContent));
+  cosmos.planetLabels = await qp.$$eval('.lp-cosmos-label--planet', (l) => l.filter((x) => x.classList.contains("is-on")).length);
+  cosmos.amas = await qp.$$eval('.lp-cosmos-label--amas', (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.textContent));
   cosmos.overlapsGalaxy = await qp.evaluate(cosmosOverlaps);
+  // #421 : le soleil-tableau de bord affiche l'avancement du dossier.
+  cosmos.sunLabel = await qp.$$eval(".lp-cosmos-label--sun", (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.textContent));
   await qp.screenshot({ path: path.join(dir, "cosmos-galaxie.png") });
   // Planète : double-clic sur le projet.
   await qp.dblclick('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]');
   await until(qp, "planet", "banc-cp1");
   await qp.waitForTimeout(2500);
-  cosmos.taskLabels = await qp.$$eval('.lp-cosmos-label--task', (l) => l.filter((x) => x.style.visibility === "visible").length);
+  cosmos.taskLabels = await qp.$$eval('.lp-cosmos-label--task', (l) => l.filter((x) => x.classList.contains("is-on")).length);
   cosmos.overlapsPlanet = await qp.evaluate(cosmosOverlaps);
+  // #421 : tâche urgente et en retard (variante E) et compteurs de la planète.
+  cosmos.flagged = await qp.$eval('.lp-cosmos-label--task[data-cosmos-id="banc-ct7"]', (e) => ({ on: e.classList.contains("is-on"), urgent: e.classList.contains("is-urgent"), late: e.classList.contains("is-late"), text: e.textContent })).catch(() => null);
+  cosmos.planetChips = await qp.$eval('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]', (e) => e.textContent).catch(() => "");
   await qp.click('.lp-cosmos-label--task[data-cosmos-id="banc-ct1"]');
   await until(qp, "selected", "task:banc-ct1");
   await qp.waitForSelector(".lp-carte-detail", { timeout: 5000 });
@@ -3180,6 +3185,9 @@ if (!cosmos.error) {
   expect(cosmos.summaryTitle === "Vallabrègues", `Cosmos : la synthèse du dossier sélectionné affiche « ${cosmos.summaryTitle} »`);
   expect(cosmos.planetLabels >= 3 && cosmos.amas.some((a) => /Lot aval/.test(a)), `Cosmos galaxie : ${cosmos.planetLabels} planète(s) nommée(s), amas ${JSON.stringify(cosmos.amas)}`);
   expect(cosmos.taskLabels >= 6, `Cosmos planète : ${cosmos.taskLabels} satellite(s) nommé(s), 6 au moins attendus`);
+  expect(cosmos.sunLabel.some((x) => /%/.test(x) && /tâches/.test(x)), `Cosmos #421 : chiffre du soleil absent (${JSON.stringify(cosmos.sunLabel)})`);
+  expect(cosmos.flagged && cosmos.flagged.on && cosmos.flagged.urgent && cosmos.flagged.late && /Urgent/.test(cosmos.flagged.text) && /Retard \d+ j/.test(cosmos.flagged.text), `Cosmos #421 : tâche urgente et en retard mal signalée (${JSON.stringify(cosmos.flagged)})`);
+  expect(/1 urgente/.test(cosmos.planetChips) && /en retard/.test(cosmos.planetChips), `Cosmos #421 : compteurs d'urgences et de retards absents de la planète (« ${cosmos.planetChips} »)`);
   expect(cosmos.detailTitle === "Vérifier les vannes", `Cosmos : le satellite ouvre « ${cosmos.detailTitle} »`);
   expect(cosmos.tasksAfterExplore === cosmos.tasksBefore, "Cosmos : explorer la scène a modifié des tâches");
   expect(cosmos.escSelected === "" && cosmos.escLevel1 === "galaxy" && cosmos.escLevel2 === "universe", `Cosmos : Échap ne remonte pas (${cosmos.escSelected} / ${cosmos.escLevel1} / ${cosmos.escLevel2})`);
