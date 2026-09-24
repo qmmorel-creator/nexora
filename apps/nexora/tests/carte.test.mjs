@@ -83,11 +83,11 @@ test("familles d'état, type, criticité et indices de dates tirés des vrais ch
   assert.equal(by.h.projectId, null, "projet inconnu : tâche orpheline");
 });
 
-test("mêmes données, même carte ; 14 thèmes disponibles", () => {
+test("mêmes données, même carte ; 15 thèmes disponibles", () => {
   const w = world(20, 300);
   assert.equal(JSON.stringify(build(w)), JSON.stringify(build(w)));
-  assert.equal(C.CARTE_THEMES.length, 14);
-  ["ville", "desert", "mer", "lac", "montagne", "hautemontagne", "marais", "jungle", "volcan", "ile"].forEach((id) => assert.ok(C.CARTE_THEME_BY_ID[id], id));
+  assert.equal(C.CARTE_THEMES.length, 15);
+  ["cyberpunk", "ville", "desert", "mer", "lac", "montagne", "hautemontagne", "marais", "jungle", "volcan", "ile"].forEach((id) => assert.ok(C.CARTE_THEME_BY_ID[id], id));
 });
 
 test("ajouter un projet et des tâches ne déplace aucun territoire existant", () => {
@@ -118,6 +118,13 @@ test("un thème par dossier, régions voisines différentes, isolés en île, pr
   });
   const L2 = build(w, null, { f0: "volcan" });
   assert.equal(L2.themes.p0, "volcan");
+  const cyber = build(w, null, { f0: "cyberpunk" });
+  assert.equal(cyber.themes.p0, "cyberpunk");
+  assert.equal(cyber.themes.p6, "cyberpunk", "tous les projets du dossier gardent le même thème");
+  assert.equal(cyber.themes.p1, L.themes.p1, "les autres dossiers gardent leur thème automatique");
+  assert.deepEqual(cyber.territories.map((t) => [t.projectId, t.q, t.r]), L.territories.map((t) => [t.projectId, t.q, t.r]), "le thème ne déplace aucun projet");
+  assert.equal(C.carteThemeOverrides([{ id: "f0", mapTheme: "cyberpunk" }], {}).f0, "cyberpunk");
+  assert.match(C.carteLegend("cyberpunk").lines.find(([label]) => label === "Jalon")[1], /Balise/);
 });
 
 test("routes seulement entre projets d'un même dossier ; tâches dans leur territoire", () => {

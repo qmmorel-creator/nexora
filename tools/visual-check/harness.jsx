@@ -1094,7 +1094,7 @@ if (benchApp) {
   const benchParams = new URLSearchParams(location.search);
   if (benchParams.get("view")) mem.set("nexora:startupPref", JSON.stringify({ mode: "view", value: benchParams.get("view") }));
   if (benchParams.get("carte") === "demo") {
-    const folders = [{ id: "banc-f1", name: "Chantiers", color: "#E07A3F" }, { id: "banc-f2", name: "Ingénierie", color: "#245EDB" }, { id: "banc-f3", name: "Perso", color: "#2A9D8F" }];
+    const folders = [{ id: "banc-f1", name: "Chantiers", color: "#E07A3F", mapTheme: "cyberpunk" }, { id: "banc-f2", name: "Ingénierie", color: "#245EDB" }, { id: "banc-f3", name: "Perso", color: "#2A9D8F" }];
     const projects = [
       ...seedProjects.map((p, i) => ({ ...p, folderId: folders[i % 2].id, priority: i === 0 ? "high" : "normal" })),
       { id: "banc-p4", name: "Passerelle quai Nord", icon: "🌉", color: "#B45309", folderId: "banc-f1" },
