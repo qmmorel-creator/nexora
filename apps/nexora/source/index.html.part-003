@@ -18878,6 +18878,23 @@ function createCarteEngine(THREE, container, opts) {
     alarm: mat(new THREE.MeshBasicMaterial({ color: "#ff1f1f", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })),
   };
 
+  // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
+  // un nuage de points toujours tourné vers la caméra.
+  const checkTex = (() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d");
+    if (g) {
+      g.fillStyle = "#1FA971"; g.beginPath(); g.arc(32, 32, 29, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#ffffff"; g.lineWidth = 3; g.stroke();
+      g.lineWidth = 8; g.lineCap = "round"; g.lineJoin = "round";
+      g.beginPath(); g.moveTo(18, 33); g.lineTo(28, 43); g.lineTo(46, 22); g.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  MAT.check = mat(new THREE.PointsMaterial({ map: checkTex, size: 1.25, sizeAttenuation: true, transparent: true, alphaTest: 0.2, depthWrite: false }));
   const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpC = new THREE.Color(), UP = new THREE.Vector3(0, 1, 0);
   const tmpE = new THREE.Euler();
 
@@ -19019,6 +19036,7 @@ function createCarteEngine(THREE, container, opts) {
     // Tâches.
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
+    const dones = [];
     const vis = S.visible;
     L.pois.forEach((p) => {
       const t = S.data.taskById[p.taskId];
@@ -19039,9 +19057,18 @@ function createCarteEngine(THREE, container, opts) {
       let top = 0; parts.forEach((pp) => { if (pp.m !== "t") top = Math.max(top, pp.p[1] + pp.s[1]); });
       S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 3) + 0.1 };
       if (t.criticality === "urgent" && t.state !== "done" && t.state !== "info") urgent.push({ x, y, z, top: y + Math.min(top, 3), k });
+      if (t.state === "done") dones.push(x, y + Math.min(top, 3) + 1.05, z);
       (S.poisByKey[p.key] = S.poisByKey[p.key] || []).push(t.id);
     });
     S.spin = batch.flush(world, shadows);
+    if (dones.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(dones, 3));
+      const pts = new THREE.Points(geo, MAT.check);
+      pts.userData.ownGeo = true;
+      pts.frustumCulled = false;
+      world.add(pts);
+    }
     // Tâches urgentes (#367) : anneau au sol et fanal rouge qui clignotent.
     if (urgent.length) {
       const ring = new THREE.InstancedMesh(ringGeo, MAT.alarm, urgent.length);
@@ -19500,6 +19527,7 @@ function createCarteEngine(THREE, container, opts) {
       clearGroup(world); clearGroup(overlay);
       geos.forEach((g) => g.dispose());
       mats.forEach((m) => m.dispose());
+      checkTex.dispose();
       renderer.dispose();
       canvas.remove();
       labels.remove();
@@ -19532,7 +19560,7 @@ function writeCarteMemory(mem) {
 }
 function carteDueText(t) {
   if (t.end == null) return "Sans échéance";
-  if (t.state === "done") return "Échéance passée le " + fmtCarteDate(t.endIso);
+  if (t.state === "done") return "Terminée · échéance le " + fmtCarteDate(t.endIso);
   if (t.dueIn < 0) return "En retard de " + (-t.dueIn) + " j";
   if (t.dueIn === 0) return "Échéance aujourd'hui";
   return "Échéance dans " + t.dueIn + " j";
@@ -19566,8 +19594,26 @@ function fmtCarteStamp(v) {
 // Volet de détail (#361, enrichi à la demande de Quentin) : tous les champs
 // de la tâche et sa description complète, en lecture seule. Les modifications
 // passent toujours par « Ouvrir la fiche ».
-function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, onClose }) {
+function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, onClose, onUpdate, onPreview, onToggleDone }) {
   const r = raw || {};
+  // Édition directe (#371) : chaque champ s'enregistre à la validation
+  // (sortie du champ, Entrée, lâcher du curseur) par les mécanismes Nexora.
+  const gcal = isGoogleCalendarProjectId(r.projectId, ctx.projects || []);
+  const editable = !!onUpdate && !gcal;
+  const statusLocked = !!restrictedStatusForType(ctx.taskTypes || [], ctx.statuses || [], r.taskTypeId);
+  const statusOptions = getStatusesForTask(ctx.statuses || [], ctx.projects || [], ctx.taskTypes || [], r.projectId, r.taskTypeId, r.statusId);
+  const [title, setTitle] = useState(r.title || "");
+  const [descDraft, setDescDraft] = useState(typeof r.desc === "string" ? r.desc : "");
+  const [prog, setProg] = useState(task.progress);
+  const progRef = useRef(task.progress);
+  useEffect(() => { setTitle(r.title || ""); }, [task.id, r.title]);
+  useEffect(() => { setDescDraft(typeof r.desc === "string" ? r.desc : ""); }, [task.id, r.desc]);
+  useEffect(() => { setProg(r.progress || 0); progRef.current = r.progress || 0; }, [task.id, r.progress]);
+  const commitTitle = () => { const v = title.trim(); if (v && v !== r.title) onUpdate({ title: v }); else setTitle(r.title || ""); };
+  const commitDesc = () => { if (descDraft !== (r.desc || "")) onUpdate({ desc: descDraft }); };
+  const commitProg = () => { const v = progRef.current; if (v !== (r.progress || 0)) onUpdate({ progress: v }); if (onPreview) onPreview(null); };
+  const members = (ctx.teamMembers || []).map((m) => m.name).filter(Boolean);
+  if (r.assignee && members.indexOf(r.assignee) === -1) members.push(r.assignee);
   const p = layout.projectById[task.projectId || "__terre-inconnue__"] || {};
   const th = CARTE_THEME_BY_ID[layout.themes[p.id]] || CARTE_THEMES[0];
   const crit = CRITICALITIES.find((c) => c.id === task.criticality);
@@ -19588,7 +19634,12 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, o
         <button type="button" className="lp-icon-btn" aria-label="Fermer le détail" onClick={onClose}><X size={16} /></button>
       </div>
       <div className="lp-carte-detail-body">
-        <h3 className="lp-carte-detail-title">{task.milestone && <span className="lp-carte-ms" title="Jalon">◆ </span>}{task.title}</h3>
+        {editable ? (
+          <input className="lp-carte-title-input" aria-label="Titre de la tâche" value={title} onChange={(e) => setTitle(e.target.value)}
+            onBlur={commitTitle} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setTitle(r.title || ""); e.currentTarget.blur(); } }} />
+        ) : null}
+        <h3 className={"lp-carte-detail-title" + (editable ? " lp-carte-sr" : "")}>{task.milestone && <span className="lp-carte-ms" title="Jalon">◆ </span>}{task.title}</h3>
+        {gcal && <p className="lp-carte-muted" style={{ margin: "0 0 8px", fontSize: 12 }}>Tâche issue de Google Calendar : elle se modifie dans Google Calendar.</p>}
         <div className="lp-carte-chips">
           <span className="lp-carte-chip"><i style={{ background: task.statusColor }} />{task.statusName}</span>
           <span className="lp-carte-chip"><i style={{ background: task.typeColor }} />{task.typeName}</span>
@@ -19596,19 +19647,56 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, o
         </div>
         <div className="lp-carte-actions lp-carte-actions-top">
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => onOpen(task.id)}><ExternalLink size={14} /> Ouvrir la fiche</button>
+          {editable && onToggleDone && task.state !== "info" && (
+            <button type="button" className={"lp-btn" + (task.state === "done" ? "" : " lp-carte-btn-done")} onClick={() => onToggleDone(task.id)}>
+              {task.state === "done" ? "Rouvrir" : <><Check size={14} /> Marquer terminée</>}
+            </button>
+          )}
           <button type="button" className="lp-btn" onClick={() => onWalk(task.id)}>Y aller</button>
         </div>
 
+        {editable && (
+          <div className="lp-carte-progress-edit">
+            <label htmlFor={"lp-carte-prog-" + task.id}>Avancement <b>{prog} %</b> <span className="lp-carte-muted">· palier {carteStage(prog)} sur 5</span></label>
+            <input id={"lp-carte-prog-" + task.id} type="range" min={0} max={100} step={5} value={prog}
+              onChange={(e) => { const v = Number(e.target.value); progRef.current = v; setProg(v); if (onPreview) onPreview({ id: task.id, progress: v }); }}
+              onPointerUp={commitProg} onKeyUp={commitProg} onBlur={commitProg} />
+            {task.state === "todo" && <small className="lp-carte-muted">La construction monte sur la carte quand la tâche est en cours ou en attente.</small>}
+          </div>
+        )}
+
         <div className="lp-carte-section-title">Description</div>
-        {desc ? <p className="lp-carte-desc">{desc}</p> : <p className="lp-carte-muted lp-carte-desc">Aucune description.</p>}
+        {editable ? (
+          <textarea className="lp-carte-desc-input" aria-label="Description" rows={Math.min(10, Math.max(3, (descDraft.match(/\n/g) || []).length + 2))}
+            value={descDraft} placeholder="Ajouter une description…" onChange={(e) => setDescDraft(e.target.value)} onBlur={commitDesc} />
+        ) : desc ? <p className="lp-carte-desc">{desc}</p> : <p className="lp-carte-muted lp-carte-desc">Aucune description.</p>}
 
         <div className="lp-carte-section-title">Champs</div>
         <dl className="lp-carte-grid">
-          <dt>Début</dt><dd>{task.startIso ? fmtCarteDate(task.startIso) + (task.startTime ? " · " + task.startTime : "") : "—"}</dd>
-          <dt>Fin</dt><dd>{task.endIso ? fmtCarteDate(task.endIso) + (task.endTime ? " · " + task.endTime : "") : "—"}</dd>
+          {editable && (
+            <>
+              <dt><label htmlFor={"lp-carte-st-" + task.id}>Statut</label></dt>
+              <dd><select id={"lp-carte-st-" + task.id} className="lp-carte-input" value={r.statusId || ""} disabled={statusLocked} title={statusLocked ? "Statut imposé par le type de tâche" : undefined} onChange={(e) => onUpdate({ statusId: e.target.value })}>
+                {statusOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+              </select></dd>
+              <dt><label htmlFor={"lp-carte-cr-" + task.id}>Criticité</label></dt>
+              <dd><select id={"lp-carte-cr-" + task.id} className="lp-carte-input" value={r.criticality || ""} onChange={(e) => onUpdate({ criticality: e.target.value || null })}>
+                <option value="">Aucune</option>{CRITICALITIES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select></dd>
+            </>
+          )}
+          <dt>{editable ? <label htmlFor={"lp-carte-ds-" + task.id}>Début</label> : "Début"}</dt>
+          <dd>{editable ? <input id={"lp-carte-ds-" + task.id} type="date" className="lp-carte-input" value={r.start || ""} onChange={(e) => e.target.value && onUpdate({ start: e.target.value })} /> : (task.startIso ? fmtCarteDate(task.startIso) : "—")}{task.startTime ? " · " + task.startTime : ""}</dd>
+          <dt>{editable ? <label htmlFor={"lp-carte-de-" + task.id}>Fin</label> : "Fin"}</dt>
+          <dd>{editable ? <input id={"lp-carte-de-" + task.id} type="date" className="lp-carte-input" value={r.end || ""} onChange={(e) => e.target.value && onUpdate({ end: e.target.value })} /> : (task.endIso ? fmtCarteDate(task.endIso) : "—")}{task.endTime ? " · " + task.endTime : ""}</dd>
           <dt>Échéance</dt><dd className={task.overdue ? "is-late" : ""}>{carteDueText(task)}</dd>
-          <dt>Avancement</dt><dd><span className="lp-carte-bar"><span style={{ width: task.progress + "%" }} /></span>{task.progress} %</dd>
-          <dt>Responsable</dt><dd>{task.assignee ? <><span className="lp-carte-dot lp-carte-dot-round" style={{ background: cartePersonColor(task.assignee, task.assigneeColor) }} />{task.assignee}</> : "Non attribuée"}</dd>
+          {!editable && <><dt>Avancement</dt><dd><span className="lp-carte-bar"><span style={{ width: task.progress + "%" }} /></span>{task.progress} %</dd></>}
+          <dt>{editable ? <label htmlFor={"lp-carte-as-" + task.id}>Responsable</label> : "Responsable"}</dt>
+          <dd>{editable ? (
+            <select id={"lp-carte-as-" + task.id} className="lp-carte-input" value={r.assignee || ""} onChange={(e) => onUpdate({ assignee: e.target.value })}>
+              <option value="">Non attribuée</option>{members.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : task.assignee ? <><span className="lp-carte-dot lp-carte-dot-round" style={{ background: cartePersonColor(task.assignee, task.assigneeColor) }} />{task.assignee}</> : "Non attribuée"}</dd>
           {task.milestone && <><dt>Jalon</dt><dd>{msType ? msType.name : "Oui"}</dd></>}
           {r.recurrence && r.recurrence.unit && <><dt>Récurrence</dt><dd>{carteRecurrenceText(r.recurrence)}</dd></>}
           {sec && <><dt>Partagée avec</dt><dd><span className="lp-carte-dot" style={{ background: sec.color }} />{sec.name}</dd></>}
@@ -19784,7 +19872,7 @@ function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
   );
 }
 
-function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, toolbarSlot }) {
+function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot }) {
   const cfg = normalizeCarteViewPrefs(prefs);
   const stageRef = useRef(null);
   const glRef = useRef(null);
@@ -19798,6 +19886,9 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
   const [query, setQuery] = useState("");
   const [themesOpen, setThemesOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Aperçu en direct de l'avancement (#371) : la construction suit le curseur
+  // avant même l'enregistrement.
+  const [preview, setPreview] = useState(null);
   // Sur petit écran, la liste reste repliée tant qu'on ne l'ouvre pas.
   const [narrow] = useState(() => !!(window.matchMedia && window.matchMedia("(max-width: 767px)").matches));
   const [panelMobile, setPanelMobile] = useState(false);
@@ -19834,13 +19925,14 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
   const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
   const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
   const visible = useMemo(() => {
-    const scoped = generalFilter ? applyWidgetFilter(tasks || [], generalFilter, ctx) : (tasks || []);
+    const pageScope = tasksWithDone || tasks || [];
+    const scoped = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
     const scope = new Set(scoped.map((t) => t.id));
     const set = new Set();
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, cfg.states.join(","), cfg.crit, cfg.late, cfg.history, JSON.stringify(cfg.filter), ctx]);
+  }, [norm, tasks, tasksWithDone, cfg.states.join(","), cfg.crit, cfg.late, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
 
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
@@ -19892,9 +19984,15 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attempt]);
 
+  const normView = useMemo(() => {
+    if (!preview || !norm.taskById[preview.id]) return norm;
+    const t = { ...norm.taskById[preview.id], progress: preview.progress };
+    const taskById = { ...norm.taskById, [t.id]: t };
+    return { ...norm, taskById, tasks: norm.tasks.map((x) => (x.id === t.id ? t : x)) };
+  }, [norm, preview]);
   useEffect(() => {
-    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: norm, layout, stats, visible });
-  }, [status, norm, layout, stats, visible]);
+    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible });
+  }, [status, normView, layout, stats, visible]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
@@ -19934,7 +20032,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
     return { list, more: all.length - list.length };
   }, [layout, territory]);
   const empty = norm.projects.length === 0 && norm.tasks.length === 0;
-  const selTask = selected && norm.taskById[selected];
+  const selTask = selected && normView.taskById[selected];
   const nearTask = near && norm.taskById[near];
   const terrTheme = territory && layout.themes[territory];
   const legend = terrTheme ? carteLegend(terrTheme) : null;
@@ -19965,7 +20063,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
             <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
           </select>
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Qualité graphique, historique et thèmes">
-            <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.history} onChange={(e) => setPrefs({ history: e.target.checked })} /> Tâches terminées depuis plus de 30 jours</label>
+            <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
               {CARTE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
@@ -20059,6 +20157,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, too
             )}
             {selTask && (
               <CarteTaskDetail task={selTask} raw={allTasks.find((t) => t.id === selTask.id)} norm={norm} layout={layout} ctx={ctx} onOpen={openFiche} onGo={go}
+                onUpdate={onUpdateTask ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={onToggleDone}
                 onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
             )}
           </>

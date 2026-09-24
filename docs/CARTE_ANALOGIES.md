@@ -232,3 +232,17 @@ Le moteur des maquettes ne change pas :
 - **Altitude** (#369) : chaque tâche repose sur un socle de 0,24 unité par palier (0 à 5) ;
   une tâche terminée culmine, une tâche à faire reste au sol. Le cœur du projet s'élève aussi
   avec le palier du territoire.
+
+## Modification depuis le volet (#371) et tâches terminées (#372)
+
+- **Le volet de droite est modifiable** : titre, statut, criticité, dates, responsable,
+  description, et un curseur d'avancement. Pendant le glissement du curseur, la construction
+  évolue en direct sur la carte ; la valeur est enregistrée au lâcher. Chaque modification est
+  un geste explicite et passe par les mécanismes de Nexora (`setTasks`) ; « Terminé » passe par
+  `markTaskDone`, récurrence comprise. Une tâche Google Calendar et un type à statut imposé
+  gardent leurs règles habituelles. Se déplacer sur la carte ne modifie toujours rien.
+- **Tâches terminées** : une coche verte flotte au-dessus de chacune. Dans la carte, le filtre
+  « Terminées » décide seul de leur affichage, même si le bouton « Montrer les tâches
+  terminées » de l'en-tête est désactivé ; les autres filtres de la page s'appliquent. Les
+  tâches terminées depuis plus de 30 jours restent visibles, sauf si l'option « Masquer les
+  tâches terminées depuis plus de 30 jours » est cochée.

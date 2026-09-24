@@ -170,9 +170,11 @@ test("la construction d'une tâche en cours suit les paliers de progress", () =>
 
 test("filtres de la vue et préférences normalisées", () => {
   const t = { state: "done", criticality: "urgent", overdue: false, oldDone: true };
-  assert.equal(C.carteMatches(t, { states: ["done"], history: false }), false, "terminée depuis plus de 30 jours masquée par défaut");
-  assert.equal(C.carteMatches(t, { states: ["done"], history: true, crit: "urgent" }), true);
-  assert.equal(C.carteMatches(t, { states: ["todo"], history: true }), false);
+  assert.equal(C.carteMatches(t, { states: ["done"] }), true, "#372 : terminée visible par défaut, même ancienne");
+  assert.equal(C.carteMatches(t, { states: ["done"], hideOldDone: true }), false, "masquée seulement sur demande");
+  assert.equal(C.carteMatches(t, { states: ["done"], crit: "urgent" }), true);
+  assert.equal(C.carteMatches(t, { states: ["todo"] }), false);
+  assert.equal(C.normalizeCarteViewPrefs({}).hideOldDone, false);
   const p = C.normalizeCarteViewPrefs({ states: ["x"], crit: "nope", quality: "ultra", folderThemes: { f1: "volcan", f2: "inconnu" } });
   assert.deepEqual(p.states, ["todo", "waiting", "doing", "done", "info"]);
   assert.equal(p.crit, "all"); assert.equal(p.quality, "auto");
