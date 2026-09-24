@@ -213,3 +213,22 @@ Le moteur des maquettes ne change pas :
 - **Emplacements mémorisés** : clé `nexora:carte:layout` du `localStorage` de l'appareil, jamais
   synchronisée.
 - **Dates dans le temps** : pas encore de curseur ni de filtre de période, voir #362.
+
+## Évolutions après les premiers tests (#364 à #369)
+
+- **Filtre général** (#364) : le bouton « Filtres » de la carte ouvre le moteur de filtre de
+  Nexora (celui des widgets et du Calendrier). Les tâches écartées disparaissent ; les
+  territoires restent en place.
+- **Panneau de droite** (#365) : en entrant dans une région (dossier), la liste de ses projets
+  avec leur palier ; le projet où se trouve l'arpenteur déplie ses tâches, en retard d'abord.
+  Un clic conduit à la tâche et ouvre son détail. Replié par défaut sur mobile.
+- **Icônes** (#366) : les étiquettes 3D n'affichent que les emoji ; ruban et panneau passent
+  par l'affichage d'icônes de Nexora (`tabler:`, `iconify:`, images).
+- **Criticité urgente** (#367) : anneau au sol et fanal rouges qui clignotent ; fixes si les
+  animations sont réduites.
+- **Thème par dossier** (#368) : réglable dans *Réglages › Dossiers de projets › Réglages du
+  dossier*. Enregistré sur le dossier (`mapTheme`), donc synchronisé entre appareils ; la carte
+  écrit au même endroit.
+- **Altitude** (#369) : chaque tâche repose sur un socle de 0,24 unité par palier (0 à 5) ;
+  une tâche terminée culmine, une tâche à faire reste au sol. Le cœur du projet s'élève aussi
+  avec le palier du territoire.

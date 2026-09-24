@@ -18875,6 +18875,7 @@ function createCarteEngine(THREE, container, opts) {
     s: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
     water: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.86, flatShading: true })),
     ring: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide })),
+    alarm: mat(new THREE.MeshBasicMaterial({ color: "#ff1f1f", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })),
   };
 
   const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpC = new THREE.Color(), UP = new THREE.Vector3(0, 1, 0);
@@ -19017,6 +19018,7 @@ function createCarteEngine(THREE, container, opts) {
     });
     // Tâches.
     S.poi = {}; S.poisByKey = {};
+    const urgent = [];
     const vis = S.visible;
     L.pois.forEach((p) => {
       const t = S.data.taskById[p.taskId];
@@ -19035,10 +19037,21 @@ function createCarteEngine(THREE, container, opts) {
       const ry = (carteRand("ry" + t.id) - 0.5) * 0.8;
       placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
       let top = 0; parts.forEach((pp) => { if (pp.m !== "t") top = Math.max(top, pp.p[1] + pp.s[1]); });
-      S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 1.6) + 0.1 };
+      S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 3) + 0.1 };
+      if (t.criticality === "urgent" && t.state !== "done" && t.state !== "info") urgent.push({ x, y, z, top: y + Math.min(top, 3), k });
       (S.poisByKey[p.key] = S.poisByKey[p.key] || []).push(t.id);
     });
     S.spin = batch.flush(world, shadows);
+    // Tâches urgentes (#367) : anneau au sol et fanal rouge qui clignotent.
+    if (urgent.length) {
+      const ring = new THREE.InstancedMesh(ringGeo, MAT.alarm, urgent.length);
+      const beacon = new THREE.InstancedMesh(G.ball, MAT.alarm, urgent.length);
+      urgent.forEach((u, i) => {
+        ring.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.y + 0.03, u.z), tmpQ.identity(), tmpS.set(u.k * 0.85, 1, u.k * 0.85)));
+        beacon.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.top + 0.35, u.z), tmpQ.identity(), tmpS.set(0.3, 0.3, 0.3)));
+      });
+      [ring, beacon].forEach((m) => { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.frustumCulled = false; world.add(m); });
+    }
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
     drawSelection();
@@ -19295,8 +19308,9 @@ function createCarteEngine(THREE, container, opts) {
   }
 
   function animate() {
-    if (reduced) return;
+    if (reduced) { MAT.alarm.opacity = 0.85; return; }
     const t = S.time;
+    MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
     S.spin.forEach((sp) => {
       tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");
       tmpQ.setFromEuler(tmpE);
@@ -19357,7 +19371,8 @@ function createCarteEngine(THREE, container, opts) {
         const p = S.layout.projectById[c.pid];
         const s = S.stats[c.pid] || { todo: 0, doing: 0, done: 0, pct: 0, stage: 0, overdue: 0 };
         const th = theme(S.layout.themes[c.pid]);
-        html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(p.icon && !/^(tabler:|https?:|data:)/.test(p.icon) ? p.icon + " " : "") + esc(p.name) + "</span>";
+        const emoji = carteEmojiIcon(p.icon);
+        html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(emoji ? emoji + " " : "") + esc(p.name) + "</span>";
         if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + esc(th.hub[s.stage]) + " · " + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
       } else {
         const t = S.data.taskById[c.tid];
@@ -19577,14 +19592,74 @@ function CarteTaskDetail({ task, norm, layout, onOpen, onGo, onWalk, onClose }) 
   );
 }
 
-function CarteThemeSettings({ ctx, layout, prefs, setPrefs, onClose }) {
+// Panneau de droite (#365) : les projets de la région (dossier) où se trouve
+// l'arpenteur ; le projet courant déplie ses tâches.
+function CarteSidePanel({ layout, norm, stats, visible, territory, onFocus, onGo, onClose }) {
+  const here = territory && layout.projectById[territory];
+  const group = here ? here.group : null;
+  const members = here ? layout.territories.filter((t) => (group ? layout.projectById[t.projectId].group === group : t.projectId === territory)) : [];
+  const theme = here ? CARTE_THEME_BY_ID[layout.themes[here.id]] : null;
+  const tasksOf = (pid) => norm.tasks.filter((t) => (t.projectId || "__terre-inconnue__") === pid && visible.has(t.id))
+    .sort((a, b) => (b.overdue - a.overdue) || ((a.state === "done") - (b.state === "done")) || ((a.end == null ? 1e9 : a.end) - (b.end == null ? 1e9 : b.end)));
+  const current = here ? tasksOf(here.id) : [];
+  return (
+    <aside className="lp-carte-panel" aria-label="Contenu du territoire">
+      <div className="lp-carte-panel-head">
+        <div>
+          <div className="lp-carte-panel-kicker">{here ? (group ? "Région · " + (here.folderName || "Dossier") : "Territoire isolé") + (theme ? " · " + theme.label : "") : "Exploration"}</div>
+          <strong>{here ? members.length + " projet" + (members.length > 1 ? "s" : "") : "Aucun territoire"}</strong>
+        </div>
+        <button type="button" className="lp-icon-btn" aria-label="Masquer la liste" onClick={onClose}><X size={16} /></button>
+      </div>
+      {!here && <p className="lp-carte-muted lp-carte-panel-empty">Marchez sur un territoire, ou choisissez-le dans le ruban, pour lister ses projets et ses tâches.</p>}
+      <div className="lp-carte-panel-body">
+        {members.map((tr) => {
+          const p = layout.projectById[tr.projectId];
+          const st = stats[tr.projectId] || { pct: 0, stage: 0, overdue: 0, total: 0 };
+          const th = CARTE_THEME_BY_ID[tr.theme];
+          const isHere = tr.projectId === territory;
+          return (
+            <div key={tr.projectId} className={"lp-carte-panel-proj" + (isHere ? " is-here" : "")}>
+              <button type="button" className="lp-carte-panel-proj-head" onClick={() => onFocus(tr.projectId)}>
+                <span className="lp-carte-panel-icon" style={{ borderColor: p.color }}>{p.icon ? <IconGlyph icon={p.icon} size={14} /> : (p.name || "?").slice(0, 1)}</span>
+                <span className="lp-carte-panel-name">{p.name}<small>{th.hub[st.stage]} · {st.pct} %{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
+                <span className="lp-carte-bar"><span style={{ width: st.pct + "%" }} /></span>
+              </button>
+              {isHere && (
+                <ul className="lp-carte-panel-tasks">
+                  {current.length === 0 && <li className="lp-carte-muted">Aucune tâche affichée (filtres).</li>}
+                  {current.slice(0, 200).map((t) => (
+                    <li key={t.id}>
+                      <button type="button" onClick={() => onGo(t.id)} className={t.criticality === "urgent" && t.state !== "done" ? "is-urgent" : ""}>
+                        <span className="lp-carte-state" style={{ background: t.statusColor }} />
+                        <span className="lp-carte-panel-task">{t.milestone ? "◆ " : ""}{t.title}</span>
+                        <small className={t.overdue ? "is-late" : ""}>{t.state === "done" ? "Terminée" : carteDueText(t)}</small>
+                      </button>
+                    </li>
+                  ))}
+                  {current.length > 200 && <li className="lp-carte-muted">… et {current.length - 200} autres</li>}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function CarteThemeSettings({ ctx, layout, prefs, setPrefs, setProjectFolders, onClose }) {
   const used = new Set((ctx.projects || []).map((p) => (p.folderId && p.folderId !== CARTE_UNSORTED_FOLDER ? p.folderId : null)).filter(Boolean));
   const folders = (ctx.projectFolders || []).filter((f) => used.has(f.id));
-  const setTheme = (fid, value) => setPrefs((v) => {
-    const next = { ...(v.folderThemes || {}) };
-    if (value) next[fid] = value; else delete next[fid];
-    return { folderThemes: next };
-  });
+  const themeOf = (fid) => { const f = (ctx.projectFolders || []).find((x) => x.id === fid); return (f && f.mapTheme) || prefs.folderThemes[fid] || ""; };
+  // Le thème vit sur le dossier (#368), comme dans ses réglages ; l'ancienne
+  // préférence de vue est effacée pour ne garder qu'une source.
+  const setTheme = (fid, value) => {
+    if (setProjectFolders && (ctx.projectFolders || []).some((f) => f.id === fid)) {
+      setProjectFolders((prev) => prev.map((f) => { if (f.id !== fid) return f; const n = { ...f }; if (value) n.mapTheme = value; else delete n.mapTheme; return n; }));
+    }
+    setPrefs((v) => { const next = { ...(v.folderThemes || {}) }; delete next[fid]; if (value && !(ctx.projectFolders || []).some((f) => f.id === fid)) next[fid] = value; return { folderThemes: next }; });
+  };
   return (
     <Modal title="Thèmes de la carte" onClose={onClose} footer={<button type="button" className="lp-btn lp-btn-primary" onClick={onClose}>Fermer</button>}>
       <p className="lp-carte-muted" style={{ marginTop: 0 }}>Chaque dossier forme une région d'un seul thème. Ce réglage ne concerne que l'affichage de la carte et ne modifie aucun projet.</p>
@@ -19593,7 +19668,7 @@ function CarteThemeSettings({ ctx, layout, prefs, setPrefs, onClose }) {
         {folders.map((f) => (
           <label key={f.id} className="lp-carte-theme-row">
             <span>{f.name}</span>
-            <select value={prefs.folderThemes[f.id] || ""} onChange={(e) => setTheme(f.id, e.target.value)}>
+            <select value={themeOf(f.id)} onChange={(e) => setTheme(f.id, e.target.value)}>
               <option value="">Automatique ({(CARTE_THEME_BY_ID[layout && layout.groupThemes[f.id]] || {}).label || "—"})</option>
               {CARTE_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
@@ -19601,7 +19676,7 @@ function CarteThemeSettings({ ctx, layout, prefs, setPrefs, onClose }) {
         ))}
         <label className="lp-carte-theme-row">
           <span>À trier et projets sans dossier</span>
-          <select value={prefs.folderThemes[CARTE_UNSORTED_FOLDER] || ""} onChange={(e) => setTheme(CARTE_UNSORTED_FOLDER, e.target.value)}>
+          <select value={themeOf(CARTE_UNSORTED_FOLDER)} onChange={(e) => setTheme(CARTE_UNSORTED_FOLDER, e.target.value)}>
             <option value="">Automatique (Île tropicale)</option>
             {CARTE_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
@@ -19637,7 +19712,7 @@ function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
   );
 }
 
-function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
+function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, setProjectFolders, toolbarSlot }) {
   const cfg = normalizeCarteViewPrefs(prefs);
   const stageRef = useRef(null);
   const glRef = useRef(null);
@@ -19650,6 +19725,12 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
   const [quality, setQualityLabel] = useState("");
   const [query, setQuery] = useState("");
   const [themesOpen, setThemesOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  // Sur petit écran, la liste reste repliée tant qu'on ne l'ouvre pas.
+  const [narrow] = useState(() => !!(window.matchMedia && window.matchMedia("(max-width: 767px)").matches));
+  const [panelMobile, setPanelMobile] = useState(false);
+  const panelOn = narrow ? panelMobile : cfg.panel;
+  const setPanelOn = (on) => (narrow ? setPanelMobile(on) : setPrefs({ panel: on }));
   const [log, setLog] = useState({ tasks: 0, territories: 0 });
   const logRef = useRef({ tasks: new Set(), territories: new Set() });
   const [coarse] = useState(() => !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches));
@@ -19664,9 +19745,10 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
     n.tasks.forEach((t) => { n.taskById[t.id] = t; });
     return n;
   }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers]);
-  const layout = useMemo(() => carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(), themeOverrides: cfg.folderThemes }),
+  const themeOverrides = carteThemeOverrides(ctx.projectFolders, cfg.folderThemes);
+  const layout = useMemo(() => carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(), themeOverrides }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [norm, JSON.stringify(cfg.folderThemes)]);
+    [norm, JSON.stringify(themeOverrides)]);
   useEffect(() => { writeCarteMemory(layout.memory); }, [layout]);
   const stats = useMemo(() => {
     const by = {};
@@ -19675,13 +19757,18 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
     layout.territories.forEach((tr) => { out[tr.projectId] = carteTerritoryStats(by[tr.projectId] || []); });
     return out;
   }, [norm, layout]);
+  // Filtre général de Nexora (#364) : le même moteur que les widgets et le
+  // Calendrier, appliqué par-dessus les filtres de la page.
+  const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
+  const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
   const visible = useMemo(() => {
-    const scope = new Set((tasks || []).map((t) => t.id));
+    const scoped = generalFilter ? applyWidgetFilter(tasks || [], generalFilter, ctx) : (tasks || []);
+    const scope = new Set(scoped.map((t) => t.id));
     const set = new Set();
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, cfg.states.join(","), cfg.crit, cfg.late, cfg.history]);
+  }, [norm, tasks, cfg.states.join(","), cfg.crit, cfg.late, cfg.history, JSON.stringify(cfg.filter), ctx]);
 
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
@@ -19710,7 +19797,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
         engineRef.current = createCarteEngine(THREE, glRef.current, {
           keyTarget: stageRef.current,
           quality: cfg.quality,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-ribbon-more, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-ribbon-more, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelected(id),
           onNear: (id) => {
             setNear(id);
@@ -19801,6 +19888,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
             ))}
             <button type="button" className="lp-carte-fchip is-late" aria-pressed={cfg.late} onClick={() => setPrefs({ late: !cfg.late })}>En retard</button>
           </div>
+          <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
           <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
             <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
           </select>
@@ -19817,7 +19905,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
       </div>
 
-      <div ref={stageRef} className={"lp-carte-stage" + (selTask ? " has-detail" : "")} tabIndex={0}
+      <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
         data-carte-status={status} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer.">
         {empty ? (
@@ -19840,7 +19928,7 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
                     return (
                       <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "")} style={{ "--p": s.pct, "--c": p.color }}
                         onClick={() => focus(tr.projectId)} title={p.name + " — " + CARTE_THEME_BY_ID[tr.theme].label + ", " + CARTE_THEME_BY_ID[tr.theme].hub[s.stage] + ", " + s.pct + " %"} aria-label={p.name + ", " + s.pct + " % terminé"}>
-                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon && !/^(tabler:|https?:|data:)/.test(p.icon) ? p.icon : (p.name || "?").slice(0, 1)}</span></span>
+                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon ? <IconGlyph icon={p.icon} size={18} /> : (p.name || "?").slice(0, 1)}</span></span>
                         <small>{p.name}</small>
                       </button>
                     );
@@ -19890,6 +19978,13 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
                 {quality && <span className="lp-carte-quality-tag">Qualité {({ high: "haute", medium: "moyenne", low: "basse" })[quality]}{cfg.quality === "auto" ? " (auto)" : ""}</span>}
               </>
             )}
+            {status === "ready" && !selTask && panelOn && (
+              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} territory={territory}
+                onFocus={focus} onGo={go} onClose={() => setPanelOn(false)} />
+            )}
+            {status === "ready" && !selTask && !panelOn && (
+              <button type="button" className="lp-carte-panel-toggle" onClick={() => setPanelOn(true)}>Liste du territoire</button>
+            )}
             {selTask && (
               <CarteTaskDetail task={selTask} norm={norm} layout={layout} onOpen={openFiche} onGo={go}
                 onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
@@ -19897,7 +19992,16 @@ function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
           </>
         )}
       </div>
-      {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} onClose={() => setThemesOpen(false)} />}
+      {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} setProjectFolders={setProjectFolders} onClose={() => setThemesOpen(false)} />}
+      {filtersOpen && (
+        <Modal title="Filtrer la carte" onClose={() => setFiltersOpen(false)} wide footer={<>
+          <button type="button" className="lp-btn" onClick={() => setPrefs({ filter: null })} disabled={!filterCount}>Tout afficher</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => setFiltersOpen(false)}>Terminé</button>
+        </>}>
+          <p className="lp-carte-muted" style={{ marginTop: 0 }}>Le même filtre que partout ailleurs dans Nexora. Les tâches écartées disparaissent de la carte ; les territoires ne bougent pas.</p>
+          <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
+        </Modal>
+      )}
     </section>
   );
 }

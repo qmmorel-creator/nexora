@@ -1870,21 +1870,39 @@ try {
   await cp.press(".lp-carte-search input", "Enter");
   await cp.waitForTimeout(1500);
   carte.territory = await cp.getAttribute(".lp-carte-stage", "data-carte-territory");
-  // Marche au clavier jusqu'à une tâche proche.
-  await cp.focus(".lp-carte-stage");
-  const moves = ["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowDown", "ArrowRight", "ArrowRight", "ArrowUp", "ArrowUp", "ArrowUp", "ArrowLeft", "ArrowLeft", "ArrowLeft"];
-  carte.near = "";
-  for (let i = 0; i < moves.length * 2 && !carte.near; i++) {
-    await cp.keyboard.down(moves[i % moves.length]);
-    await cp.waitForTimeout(260 + (i % 3) * 80);
-    await cp.keyboard.up(moves[i % moves.length]);
-    await cp.waitForTimeout(250);
-    carte.near = await cp.getAttribute(".lp-carte-stage", "data-carte-near");
-  }
+  // #365 : le panneau liste les projets de la région et les tâches du projet.
+  carte.panel = await cp.evaluate(() => ({
+    projects: document.querySelectorAll(".lp-carte-panel-proj").length,
+    tasks: document.querySelectorAll(".lp-carte-panel-tasks button").length,
+    kicker: (document.querySelector(".lp-carte-panel-kicker") || {}).textContent || "",
+  }));
+  // #366 : aucun identifiant d'icône technique dans les étiquettes.
+  await cp.click('button:has-text("Vue d\'ensemble")');
+  await cp.waitForTimeout(2000);
+  carte.iconLeak = await cp.evaluate(() => [...document.querySelectorAll(".lp-carte-labels, .lp-carte-ribbon, .lp-carte-panel")].some((e) => /iconify:|tabler:/.test(e.textContent)));
+  await cp.click('button:has-text("Recentrer")');
+  await cp.waitForTimeout(1500);
+  // #364 : le moteur de filtre général s'ouvre depuis la carte.
+  await cp.click('.lp-carte-toolbar button:has-text("Filtres")');
+  await cp.waitForTimeout(500);
+  carte.filterModal = await cp.evaluate(() => [...document.querySelectorAll(".lp-modal")].some((m) => /Filtrer la carte/.test(m.textContent)));
+  await cp.keyboard.press("Escape");
+  await cp.waitForTimeout(400);
+  // Parcours déterministe : une tâche choisie dans le panneau (#365) y conduit
+  // l'arpenteur et ouvre son détail ; détail fermé, Entrée rouvre la tâche
+  // proche au clavier.
+  carte.panelPick = await cp.$eval(".lp-carte-panel-tasks button .lp-carte-panel-task", (e) => e.textContent).catch(() => "");
+  await cp.click(".lp-carte-panel-tasks button");
+  await cp.waitForFunction(() => document.querySelector(".lp-carte-stage").dataset.carteNear, null, { timeout: 15000 }).catch(() => {});
+  carte.panelSelected = await cp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
+  await cp.click('.lp-carte-detail [aria-label="Fermer le détail"]');
+  await cp.waitForTimeout(400);
+  carte.near = await cp.getAttribute(".lp-carte-stage", "data-carte-near");
   carte.nearTitle = carte.near ? await cp.$eval(".lp-carte-near-title", (e) => e.textContent).catch(() => "") : "";
   carte.overlapsNear = await cp.evaluate(labelOverlaps);
+  await cp.focus(".lp-carte-stage");
   await cp.keyboard.press("Enter");
-  await cp.waitForTimeout(700);
+  await cp.waitForSelector(".lp-carte-detail", { timeout: 5000 }).catch(() => {});
   carte.selected = await cp.getAttribute(".lp-carte-stage", "data-carte-selected");
   carte.detailTitle = await cp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
   carte.tasksAfter = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
@@ -1911,6 +1929,7 @@ try {
     joystick: !!document.querySelector(".lp-carte-joy"),
     action: !!document.querySelector(".lp-carte-act"),
     scroll: document.documentElement.scrollWidth - window.innerWidth,
+    panelHidden: !document.querySelector(".lp-carte-panel") && !!document.querySelector(".lp-carte-panel-toggle"),
     stageWidth: document.querySelector(".lp-carte-stage").getBoundingClientRect().width,
   }));
   await mp.screenshot({ path: path.join(dir, "carte-mobile.png") });
@@ -1946,7 +1965,7 @@ try {
   carte.fallbackModal = await fp.$$eval(".lp-modal", (m) => m.length);
   await fp.close();
 } catch (e) {
-  carte.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
+  carte.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ") + " — état : " + JSON.stringify({ territory: carte.territory, near: carte.near, selected: carte.selected, panel: carte.panel });
 }
 await browser.close();
 server.close();
@@ -2876,7 +2895,8 @@ if (!carte.error) {
   expect(carte.badges === 7, `Carte : ${carte.badges} territoires dans le ruban (7 projets attendus)`);
   expect(carte.suggestions.some((t) => /Passerelle/.test(t)), `Carte : la recherche « Passerelle » ne propose pas le projet (${JSON.stringify(carte.suggestions)})`);
   expect(carte.territory === "banc-p4", `Carte : la recherche ne mène pas au territoire « Passerelle quai Nord » (${carte.territory})`);
-  expect(!!carte.near, "Carte : aucune tâche proche atteinte au clavier");
+  expect(carte.panelPick && carte.panelSelected.indexOf(carte.panelPick.replace(/^◆ /, "")) !== -1, `Carte : choisir « ${carte.panelPick} » dans le panneau n'ouvre pas son détail (« ${carte.panelSelected} »)`);
+  expect(!!carte.near, "Carte : l'arpenteur n'est pas arrivé près de la tâche choisie");
   expect(carte.selected && carte.selected === carte.near, `Carte : Entrée ne sélectionne pas la tâche proche (${carte.selected} / ${carte.near})`);
   expect(carte.detailTitle && carte.detailTitle.indexOf(carte.nearTitle) !== -1, `Carte : la fiche de détail ne montre pas la tâche proche (« ${carte.detailTitle} » / « ${carte.nearTitle} »)`);
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
@@ -2884,6 +2904,10 @@ if (!carte.error) {
   expect(carte.chipPressed === "false", "Carte : le filtre « Terminées » ne se désactive pas");
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
+  expect(carte.panel.projects >= 2 && carte.panel.tasks >= 1 && /Chantiers/.test(carte.panel.kicker), `Carte : le panneau ne liste pas la région Chantiers et ses tâches (${JSON.stringify(carte.panel)})`);
+  expect(!carte.iconLeak, "Carte : un identifiant d'icône (iconify:, tabler:) s'affiche en texte");
+  expect(carte.filterModal, "Carte : le bouton « Filtres » n'ouvre pas le moteur de filtre général");
+  expect(carte.mobile.panelHidden, "Carte mobile : le panneau de droite devrait rester replié par défaut");
   expect(carte.mobile.scroll <= 0, `Carte mobile : défilement horizontal de ${carte.mobile.scroll}px`);
   expect(/basse/.test(carte.volumeQuality), `Carte volume : qualité « ${carte.volumeQuality} », basse attendue pour 12 000 tâches`);
   expect(carte.volumeMs < 60000, `Carte volume : ${carte.volumeMs} ms avant l'affichage (60 s maximum sur rendu logiciel)`);

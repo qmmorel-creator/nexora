@@ -23,6 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteTaskLift,
   };\n})`
 )();
 
@@ -185,4 +186,35 @@ test("grand volume : 300 projets et 12 000 tâches disposés en moins de 3 s", (
   const ms = Date.now() - t0;
   assert.equal(L.pois.length, 12000);
   assert.ok(ms < 3000, `${ms} ms`);
+});
+
+test("#366 : seules les icônes emoji passent dans les étiquettes 3D", () => {
+  assert.equal(C.carteEmojiIcon("🏗️"), "🏗️");
+  ["iconify:thesvg-color/gmail", "tabler:map-2", "https://x.y/i.png", "data:image/png;base64,AA", "abc", "", null].forEach((i) => assert.equal(C.carteEmojiIcon(i), "", String(i)));
+});
+
+test("#368 : le thème enregistré sur le dossier prime sur la préférence de vue", () => {
+  const o = C.carteThemeOverrides([{ id: "f1", mapTheme: "volcan" }, { id: "f2", mapTheme: "inconnu" }, { id: "f3" }], { f1: "mer", f3: "lac", f9: "nope" });
+  assert.deepEqual(o, { f1: "volcan", f3: "lac" });
+});
+
+test("#369 : l'altitude suit le palier ; une tâche terminée culmine", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
+  const lv = (t) => C.carteTaskLevel(t);
+  assert.deepEqual([0, 25, 45, 65, 85, 100].map((pr) => lv({ ...base, progress: pr })), [0, 1, 2, 3, 4, 5]);
+  assert.equal(lv({ ...base, state: "done", progress: 0 }), 5);
+  assert.equal(lv({ ...base, state: "todo", progress: 90 }), 0);
+  const top = (t) => C.carteTaskModel(t, "desert", { detail: 0 }).reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  assert.ok(top({ ...base, state: "done" }) - top({ ...base, state: "todo" }) > 1, "au moins une unité d'écart entre à faire et terminée");
+  const hub0 = C.carteHubModel("ville", 0, "#123456", "normal").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  const hub5 = C.carteHubModel("ville", 5, "#123456", "normal").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  assert.ok(hub5 - hub0 > 1, `cœur de projet : ${hub0} → ${hub5}`);
+});
+
+test("#364 et #365 : préférences du filtre général et du panneau", () => {
+  const f = { statusIds: ["s1"], excludeDone: true };
+  assert.deepEqual(C.normalizeCarteViewPrefs({ filter: f }).filter, f);
+  assert.equal(C.normalizeCarteViewPrefs({ filter: [1] }).filter, null);
+  assert.equal(C.normalizeCarteViewPrefs({}).panel, true);
+  assert.equal(C.normalizeCarteViewPrefs({ panel: false }).panel, false);
 });
