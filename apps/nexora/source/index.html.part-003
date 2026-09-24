@@ -18811,6 +18811,9 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
 }
 
 // === NEXORA:CARTE-ENGINE:START ===
+// Au-delà de cette distance de caméra, seuls les totems survolés ou le
+// territoire courant gardent leur nom (#410).
+const CARTE_TOTEM_LABEL_FAR = 60;
 // Ordre de préséance de la bordure d'une case partagée (#394) : en retard
 // d'abord, puis en cours, en attente, à faire, information, terminée.
 const CARTE_BORDER_RANK = { doing: 1, waiting: 2, todo: 3, info: 4, done: 5 };
@@ -19821,14 +19824,25 @@ function createCarteEngine(THREE, container, opts) {
     const W = canvas.clientWidth, H = canvas.clientHeight;
     const far = S.dist > 48;
     const cand = [];
-    // Noms des projets (#399) : seulement au survol du totem, ou après un
-    // clic dessus (écran tactile) ; rien de permanent qui surcharge la carte.
-    const shown = {};
-    if (S.hovered && S.hovered.startsWith("p:")) shown[S.hovered.slice(2)] = 3000;
-    if (S.pinnedHub && !shown[S.pinnedHub]) shown[S.pinnedHub] = 2500;
+    // Noms des projets (#399, #410) : le totem survolé (ou touché) et celui
+    // du territoire de l'arpenteur, puis les totems proches du centre de la
+    // vue, dans un rayon qui suit le zoom (plus on s'approche, plus il se
+    // resserre ; en vue très lointaine, les noms de dossiers au sol suffisent).
+    // Les projets écartés par les filtres restent muets.
+    const shown = {}, detailed = {};
+    if (S.hovered && S.hovered.startsWith("p:")) { shown[S.hovered.slice(2)] = 3000; detailed[S.hovered.slice(2)] = true; }
+    if (S.pinnedHub && !shown[S.pinnedHub]) { shown[S.pinnedHub] = 2500; detailed[S.pinnedHub] = true; }
+    if (S.territory && !shown[S.territory]) { shown[S.territory] = 2000; detailed[S.territory] = true; }
+    const reach = S.dist > CARTE_TOTEM_LABEL_FAR ? 0 : Math.max(10, Math.min(40, S.dist * 0.9));
+    S.layout.territories.forEach((tr) => {
+      if (!tr.anchor || shown[tr.projectId] || !reach) return;
+      if (S.dimmed && S.dimmed.has(tr.projectId)) return;
+      const d = Math.hypot(tr.anchor.x - S.target.x, tr.anchor.z - S.target.z);
+      if (d <= reach) shown[tr.projectId] = 1000 - d;
+    });
     S.layout.territories.forEach((tr) => {
       if (!tr.anchor || !shown[tr.projectId]) return;
-      cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, prio: shown[tr.projectId] });
+      cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, base: tr.world, prio: shown[tr.projectId], meta: !!detailed[tr.projectId] });
     });
     if (!far) {
       const ids = {};
@@ -19853,8 +19867,18 @@ function createCarteEngine(THREE, container, opts) {
     const placed = (S.obstacles || []).slice();
     cand.forEach((c) => {
       projV.copy(c.pos).project(camera);
-      if (projV.z > 1 || Math.abs(projV.x) > 1.1 || Math.abs(projV.y) > 1.1) return;
-      const sx = (projV.x + 1) / 2 * W, sy = (1 - projV.y) / 2 * H;
+      let sx = (projV.x + 1) / 2 * W, sy = (1 - projV.y) / 2 * H;
+      let clampTop = false, floor = sy + 40;
+      // Un nom de totem peut glisser jusqu'au-dessus du pied du totem.
+      if (c.kind === "project" && c.base) { tmpP.copy(c.base).project(camera); if (tmpP.z <= 1) floor = Math.max(floor, (1 - tmpP.y) / 2 * H - 10); }
+      if (projV.z > 1 || Math.abs(projV.x) > 1.1 || Math.abs(projV.y) > 1.1) {
+        // Totem trop haut pour l'écran (vue rapprochée, #410) : si son pied
+        // est visible, le nom se cale en haut de la vue, à son aplomb.
+        if (c.kind !== "project" || !c.base) return;
+        projV.copy(c.base).project(camera);
+        if (projV.z > 1 || Math.abs(projV.x) > 1 || Math.abs(projV.y) > 1) return;
+        sx = (projV.x + 1) / 2 * W; floor = (1 - projV.y) / 2 * H - 10; sy = 0; clampTop = true;
+      }
       let l = pool[c.id];
       if (!l) { l = document.createElement("div"); l.className = "lp-carte-label lp-carte-label--" + c.kind; labels.appendChild(l); pool[c.id] = l; }
       let html;
@@ -19863,7 +19887,7 @@ function createCarteEngine(THREE, container, opts) {
         const s = S.stats[c.pid] || { todo: 0, doing: 0, done: 0, pct: 0, stage: 0, overdue: 0 };
         const emoji = carteEmojiIcon(p.icon);
         html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(emoji ? emoji + " " : "") + esc(p.name) + "</span>";
-        html += '<span class="lp-carte-meta">' + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
+        if (c.meta) html += '<span class="lp-carte-meta">' + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
       } else {
         const t = S.data.taskById[c.tid];
         const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
@@ -19874,12 +19898,19 @@ function createCarteEngine(THREE, container, opts) {
       l.classList.toggle("is-selected", c.tid != null && c.tid === S.selected);
       l.classList.toggle("is-dim", c.pid != null && !!S.dimmed && S.dimmed.has(c.pid));
       l.classList.toggle("is-near", c.tid != null && c.tid === S.near);
-      const box = { x: sx - l._w / 2, y: sy - l._h - 4, w: l._w, h: l._h };
+      const box = { x: sx - l._w / 2, y: clampTop ? 6 : sy - l._h - 4, w: l._w, h: l._h };
+      if (c.kind === "project" && box.y < 6) box.y = 6;
       if (box.x < 2 || box.y < 2 || box.x + box.w > W - 2 || box.y + box.h > H - 2) return;
-      for (let i = 0; i < placed.length; i++) {
-        const q2 = placed[i];
-        if (box.x < q2.x + q2.w + 4 && box.x + box.w + 4 > q2.x && box.y < q2.y + q2.h + 2 && box.y + box.h + 2 > q2.y) return;
+      const hit = () => placed.find((q2) => box.x < q2.x + q2.w + 4 && box.x + box.w + 4 > q2.x && box.y < q2.y + q2.h + 2 && box.y + box.h + 2 > q2.y);
+      // Un nom de totem gêné (ruban, pastilles, autre nom) glisse vers le bas
+      // le long du totem plutôt que de disparaître (#410).
+      let blocker = hit();
+      for (let n = 0; blocker && c.kind === "project" && n < 8; n++) {
+        box.y = blocker.y + blocker.h + 6;
+        if (box.y + box.h > Math.min(H - 2, floor)) break;
+        blocker = hit();
       }
+      if (blocker) return;
       placed.push(box);
       seen[c.id] = true;
       l.style.transform = "translate(" + Math.round(box.x) + "px," + Math.round(box.y) + "px)";
@@ -20605,7 +20636,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
             <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
           </select>
-          <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Responsables, carte simplifiée, qualité graphique et thèmes">
+          <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
