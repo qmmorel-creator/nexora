@@ -1969,6 +1969,35 @@ try {
   carte.stayOnProjectClick = await cp.evaluate(() => { const st = document.querySelector(".lp-carte-stage"); return { carte: !!document.querySelector(".lp-carte-view"), dimmed: st ? Number(st.dataset.carteDimmed) : -1 }; });
   await cp.close();
 
+  // Tâche d'un calendrier public synchronisé : volet en lecture seule, rien
+  // n'est enregistré (elle serait reconstruite à la synchronisation suivante).
+  const sp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  sp.on("pageerror", (e) => pageErrors.push("Carte synchronisée : " + e.message));
+  await sp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  await openCarte(sp, "sync");
+  await sp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
+  await sp.waitForTimeout(1500);
+  const syncTask = () => sp.evaluate(async () => JSON.stringify(JSON.parse((await window.storage.get("nexora:tasks")).value).find((t) => t.id === "banc-tsync") || null));
+  const syncBefore = await syncTask();
+  await sp.fill(".lp-carte-search input", "Jours fériés");
+  await sp.press(".lp-carte-search input", "Enter");
+  await sp.waitForTimeout(1500);
+  await sp.click('.lp-carte-panel-tasks button:has-text("Toussaint")').catch(() => {});
+  await sp.waitForSelector(".lp-carte-detail", { timeout: 15000 }).catch(() => {});
+  await sp.waitForTimeout(800);
+  carte.syncLock = await sp.evaluate(() => {
+    const d = document.querySelector(".lp-carte-detail");
+    return {
+      title: ((d && d.querySelector(".lp-carte-detail-title")) || {}).textContent || "",
+      text: /calendrier synchronisé/.test((d || {}).textContent || ""),
+      selects: document.querySelectorAll(".lp-carte-detail select").length,
+      sliders: document.querySelectorAll(".lp-carte-detail input[type=range]").length,
+      doneBtn: !!document.querySelector(".lp-carte-detail .lp-carte-btn-done"),
+    };
+  });
+  carte.syncUnchanged = syncBefore !== "null" && syncBefore === await syncTask();
+  await sp.close();
+
   // Mobile : manette, fiche en tiroir, aucun défilement horizontal.
   const mp = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   mp.on("pageerror", (e) => pageErrors.push("Carte mobile : " + e.message));
@@ -3134,6 +3163,8 @@ if (!carte.error) {
   expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
   expect(carte.stayOnProjectClick && carte.stayOnProjectClick.carte && carte.stayOnProjectClick.dimmed >= 1, `Carte : un clic sur un projet ou un dossier de la barre latérale quitte la Carte (${JSON.stringify(carte.stayOnProjectClick)})`);
+  expect(carte.syncLock && /Toussaint/.test(carte.syncLock.title) && carte.syncLock.text && !carte.syncLock.selects && !carte.syncLock.sliders && !carte.syncLock.doneBtn, `Carte : tâche de calendrier synchronisé modifiable (${JSON.stringify(carte.syncLock)})`);
+  expect(carte.syncUnchanged, "Carte : ouvrir une tâche de calendrier synchronisé l'a modifiée");
   expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);

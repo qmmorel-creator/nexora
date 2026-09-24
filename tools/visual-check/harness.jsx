@@ -1090,10 +1090,11 @@ if (benchApp) {
   }));
   // Vue Carte (#361) : `?app=1&view=carte` ouvre directement une vue ;
   // `carte=demo` range les projets dans des dossiers (régions à thème) et
-  // `carte=volume` charge 300 projets et 12 000 tâches pour éprouver le rendu.
+  // `carte=volume` charge 300 projets et 12 000 tâches pour éprouver le rendu ;
+  // `carte=sync` reprend la démo avec un calendrier public synchronisé.
   const benchParams = new URLSearchParams(location.search);
   if (benchParams.get("view")) mem.set("nexora:startupPref", JSON.stringify({ mode: "view", value: benchParams.get("view") }));
-  if (benchParams.get("carte") === "demo") {
+  if (benchParams.get("carte") === "demo" || benchParams.get("carte") === "sync") {
     const folders = [{ id: "banc-f1", name: "Chantiers", color: "#E07A3F", mapTheme: "cyberpunk" }, { id: "banc-f2", name: "Ingénierie", color: "#245EDB" }, { id: "banc-f3", name: "Perso", color: "#2A9D8F" }];
     const projects = [
       ...seedProjects.map((p, i) => ({ ...p, folderId: folders[i % 2].id, priority: i === 0 ? "high" : "normal" })),
@@ -1109,6 +1110,10 @@ if (benchApp) {
         extra.push({ id: `banc-c${j}-${i}`, title: `${p.name} · étape ${i + 1}`, projectId: p.id, statusId: st.id, taskTypeId: ["tt1", "tt2", "tt3", "tt1"][i % 4], criticality: [null, "bas", "moyen", "urgent"][i % 4], milestone: i === 8, start: addDaysIso(iso(new Date()), i * 4 - 14), end: addDaysIso(iso(new Date()), i * 4 - 8), progress: (i * 23) % 101, assignee: seedTeamMembers[i % seedTeamMembers.length].name, checklist: i % 3 ? [] : [{ id: "k1", text: "a", done: true }, { id: "k2", text: "b", done: false }], dependsOn: i > 0 && i % 2 === 0 ? [`banc-c${j}-${i - 1}`] : [], recurrence: i === 5 ? { unit: "week", interval: 1 } : null, attachments: i === 2 ? [{ id: "a1", name: "plan.pdf" }] : [] });
       }
     });
+    if (benchParams.get("carte") === "sync") {
+      projects.push({ id: "banc-psync", name: "Jours fériés", color: "#64748B", folderId: "folder-a-trier", syncedCalendarSource: true, syncedCalendarId: "fr-feries" });
+      extra.push({ id: "banc-tsync", title: "Toussaint", projectId: "banc-psync", statusId: seedStatuses[0].id, taskTypeId: "tt1", milestone: true, start: addDaysIso(iso(new Date()), 20), end: addDaysIso(iso(new Date()), 20), progress: 0, assignee: "", checklist: [], syncedCalendarImported: true, syncedCalendarId: "fr-feries", syncedCalendarKey: "toussaint" });
+    }
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
     mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra]));
