@@ -18859,6 +18859,8 @@ function createCarteEngine(THREE, container, opts) {
     keys: {}, joy: { x: 0, y: 0 }, walkTo: null, quality: o.quality || "auto", effQuality: "high", detail: 2,
     time: 0, raf: 0, disposed: false, spin: [], walkPhase: 0, territory: null, placedKeeper: false,
     people: o.people !== false,
+    // Animations persistantes (#425 à #436), désactivables dans « Affichage ».
+    ambient: o.ambient !== false,
   };
 
   // ---------- Géométries unitaires (base à y = 0, hauteur 1) ----------
@@ -18990,6 +18992,10 @@ function createCarteEngine(THREE, container, opts) {
     border: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
     // Lave du thème Volcan (#408) : lumineuse, elle pulse doucement.
     lava: mat(new THREE.MeshBasicMaterial({ color: "#ffffff" })),
+    // Nuages de la météo par dossier (#426) : leur opacité suit le zoom.
+    sky: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.8, depthWrite: false, flatShading: true })),
+    skyRain: mat(new THREE.MeshBasicMaterial({ color: "#6f9fd6", transparent: true, opacity: 0.7, depthWrite: false })),
+    route: mat(new THREE.LineDashedMaterial({ color: "#8a5a35", dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.55 })),
   };
 
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
@@ -19197,6 +19203,7 @@ function createCarteEngine(THREE, container, opts) {
     const avatars = [];
     const dones = [];
     const borders = {};
+    const amb = [];
     const vis = S.visible;
     L.pois.forEach((p) => {
       const t = S.data.taskById[p.taskId];
@@ -19232,6 +19239,7 @@ function createCarteEngine(THREE, container, opts) {
         avatars.push({ name: t.assignee, color: cartePersonColor(t.assignee, t.assigneeColor), x: x + (a[0] * cr + a[2] * sr) * k, y: y + a[1] * k, z: z + (-a[0] * sr + a[2] * cr) * k, k });
       }
       if (t.state === "done") dones.push(x, y + Math.min(top, 7) + 1.05, z);
+      amb.push({ t, x, y, z, k, ry, top: y + Math.min(top, 7) });
       // Une case partagée prend la couleur de sa tâche la plus pressante.
       const rank = t.overdue ? 0 : CARTE_BORDER_RANK[t.state] != null ? CARTE_BORDER_RANK[t.state] : 5;
       if (!borders[p.key] || rank < borders[p.key].rank) borders[p.key] = { rank, color: t.statusColor };
@@ -19258,6 +19266,7 @@ function createCarteEngine(THREE, container, opts) {
       placeModel(batch, S.dimmed && S.dimmed.has(h.tr.projectId) ? carteDimParts(parts) : parts, w.x, h.base, w.z, 0, 0);
       h.tr.anchor = new THREE.Vector3(w.x, summit + 0.35, w.z);
       h.tr.world = new THREE.Vector3(w.x, h.base, w.z);
+      h.x = w.x; h.z = w.z;
     });
     S.spin = batch.flush(world, shadows);
     if (dones.length) {
@@ -19294,6 +19303,8 @@ function createCarteEngine(THREE, container, opts) {
     buildClocks(clocks);
     buildFires(fires);
     buildAvatars(avatars);
+    buildAmbient({ tasks: amb, hubs, summit, regions, avatars });
+    buildMilestoneRings(amb);
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
     drawSelection();
@@ -19379,7 +19390,18 @@ function createCarteEngine(THREE, container, opts) {
     const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.3, 12), new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.18, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.01; keeper.add(shadow);
     geos.push(shadow.geometry); mats.push(shadow.material);
-    keeper.userData = { body, l1, l2 };
+    // Barque (#428) : cachée à terre, elle porte l'arpenteur sur l'eau.
+    const boat = new THREE.Group();
+    const wood = m("#8a5a35"), woodDark = m("#5f3c22");
+    const part = (mt, x, y, z, sx, sy, sz) => { const me = new THREE.Mesh(G.box, mt); me.position.set(x, y, z); me.scale.set(sx, sy, sz); me.castShadow = true; boat.add(me); };
+    part(woodDark, 0, -0.06, 0, 0.5, 0.08, 1.05);
+    part(wood, -0.26, -0.04, 0, 0.06, 0.2, 1.0); part(wood, 0.26, -0.04, 0, 0.06, 0.2, 1.0);
+    part(wood, 0, -0.04, 0.5, 0.5, 0.2, 0.06); part(wood, 0, -0.04, -0.5, 0.5, 0.16, 0.06);
+    const bow = new THREE.Mesh(G.pyr, wood); bow.position.set(0, -0.06, 0.62); bow.rotation.set(Math.PI / 2, Math.PI / 4, 0); bow.scale.set(0.5, 0.26, 0.2); boat.add(bow);
+    const oar = new THREE.Mesh(G.box, woodDark); oar.position.set(0.34, 0.1, 0); oar.rotation.z = -0.9; oar.scale.set(0.04, 0.8, 0.06); boat.add(oar);
+    boat.visible = false;
+    keeper.add(boat);
+    keeper.userData = { body, l1, l2, boat, oar };
     scene.add(keeper);
   })();
 
@@ -19607,8 +19629,16 @@ function createCarteEngine(THREE, container, opts) {
       S.walkPhase += dt * 12;
     }
     const gy = groundAt(keeper.position.x, keeper.position.z);
-    if (gy != null) keeper.position.y += (gy - keeper.position.y) * Math.min(1, dt * 14);
-    const u = keeper.userData, moving = len > 0 && !reduced;
+    const u = keeper.userData;
+    // Sur l'eau (hors pont), l'arpenteur rame dans sa barque (#428).
+    const kh = carteFromWorld(keeper.position.x, keeper.position.z);
+    const kt = S.layout.tiles[carteKey(kh[0], kh[1])];
+    const afloat = !!(kt && (kt.kind === "sea" || kt.kind === "water") && !kt.bridge);
+    u.boat.visible = afloat;
+    const bob = afloat ? Math.sin(S.time * (reduced ? 1.2 : 2.6)) * 0.035 + 0.06 : 0;
+    if (afloat) { u.boat.rotation.z = Math.sin(S.time * (reduced ? 0.9 : 1.9)) * 0.06; u.oar.rotation.x = len > 0 && !reduced ? Math.sin(S.walkPhase * 0.5) * 0.5 : 0; }
+    if (gy != null) keeper.position.y += (gy + bob - keeper.position.y) * Math.min(1, dt * 14);
+    const moving = len > 0 && !reduced && !afloat;
     u.l1.position.z = moving ? Math.sin(S.walkPhase) * 0.06 : 0;
     u.l2.position.z = moving ? -Math.sin(S.walkPhase) * 0.06 : 0;
     u.body.position.y = 0.16 + (moving ? Math.abs(Math.sin(S.walkPhase)) * 0.03 : 0);
@@ -19882,9 +19912,326 @@ function createCarteEngine(THREE, container, opts) {
     });
   }
 
+  // ---------- Animations persistantes (#425 à #436) ----------
+  // Toutes lisent une donnée de Nexora et tournent en continu ; chacune est un
+  // maillage instancié plafonné. Animations réduites : mouvement ralenti.
+  const ambM = new THREE.Matrix4(), ambL = new THREE.Matrix4(), ambQ = new THREE.Quaternion(), ambE = new THREE.Euler(), ambP = new THREE.Vector3(), ambS = new THREE.Vector3();
+  // Pose une pièce dans le repère d'un objet (position, cap, échelle).
+  function putPart(mesh, i, base, lx, ly, lz, rx, ry2, rz, sx, sy, sz) {
+    ambQ.setFromEuler(ambE.set(rx || 0, ry2 || 0, rz || 0));
+    ambL.compose(ambP.set(lx, ly, lz), ambQ, ambS.set(sx, sy, sz));
+    mesh.setMatrixAt(i, ambM.multiplyMatrices(base, ambL));
+  }
+  const baseOf = (m, x, y, z, yaw, k) => m.compose(tmpP.set(x, y, z), tmpQ.setFromAxisAngle(UP, yaw || 0), tmpS.set(k, k, k));
+  const ambMesh = (geo, material, n, colors) => {
+    const m = new THREE.InstancedMesh(geo, material, Math.max(1, n));
+    m.count = n; m.frustumCulled = false;
+    if (colors) { for (let i = 0; i < n; i++) m.setColorAt(i, tmpC.set(colors(i))); if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+    world.add(m);
+    return m;
+  };
+  const WORKER_C = { vest: "#f08a24", skin: "#f1c9a5", helmet: "#ffd23f", wood: "#6b4a2e", iron: "#5d6470", crate: "#a8743f" };
+  function buildAmbient(src) {
+    S.amb = null;
+    S.daylightWindows = null;
+    if (!S.ambient || !S.data) return;
+    const A = { workers: [], pigeons: [], lanterns: [], mills: [], flags: [], stacks: [], convoys: [], weather: [], trail: null, windows: [] };
+    const low = S.effQuality === "low";
+    const taskList = src.tasks;
+    const byId = {};
+    taskList.forEach((e) => { byId[e.t.id] = e; });
+    // Ouvriers (#429) et pigeons (#430) : tâches en cours / en attente.
+    taskList.forEach((e) => {
+      const st = e.t.state;
+      if ((st === "doing" || st === "waiting") && A.workers.length < (low ? 120 : 300)) {
+        const c = Math.cos(e.ry), sn = Math.sin(e.ry), lx = 0.62, lz = 0.2;
+        A.workers.push({ x: e.x + (lx * c + lz * sn) * e.k, y: e.y, z: e.z + (-lx * sn + lz * c) * e.k, k: e.k, yaw: Math.atan2(-(lx * c + lz * sn), -(-lx * sn + lz * c)), waiting: st === "waiting", ph: carteRand("w" + e.t.id) * 6.283 });
+      }
+      if (st === "waiting" && A.pigeons.length < (low ? 60 : 150)) {
+        const ang = carteRand("pg" + e.t.id) * 6.283;
+        A.pigeons.push({ x: e.x, y: e.top + 0.6, z: e.z, dx: Math.cos(ang), dz: Math.sin(ang), speed: cartePigeonSpeed(e.t.idleDays), ph: carteRand("pp" + e.t.id) * 6.283, k: Math.max(0.8, e.k) });
+      }
+      const rate = carteLanternRate(e.t);
+      if (rate != null && A.lanterns.length < 400) {
+        const sz = carteTaskSize(e.t), c = Math.cos(e.ry), sn = Math.sin(e.ry), lx = -0.36 * sz, lz = 0.36 * sz;
+        A.lanterns.push({ x: e.x + (lx * c + lz * sn) * e.k, y: e.y + 0.52 * sz * e.k, z: e.z + (-lx * sn + lz * c) * e.k, k: e.k, rate, ph: carteRand("ln" + e.t.id) });
+      }
+      // Fenêtres allumées le soir (#436) : échéance aujourd'hui, tâche ouverte.
+      if (e.t.dueIn === 0 && e.t.state !== "done" && e.t.state !== "info" && e.t.state !== "todo") A.windows.push({ x: e.x, y: e.y + (e.top - e.y) * 0.5, z: e.z, k: e.k });
+    });
+    // Éoliennes (#432) et drapeaux (#433) : un par totem.
+    src.hubs.forEach((h) => {
+      if (h.x == null) return;
+      const st = S.stats[h.tr.projectId] || { pct: 0, velocity: 0 };
+      const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
+      A.mills.push({ x: h.x, y: src.summit + 0.05, z: h.z, speed: dim ? 0 : carteWindmillSpeed(st.velocity), ph: carteRand("ml" + h.tr.projectId) * 6.283 });
+      A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283 });
+    });
+    // Charge des responsables (#434) : pile de dossiers au-dessus du badge.
+    if (S.people) {
+      const heavy = carteOverloaded(S.data.tasks.filter((t) => S.poi[t.id]));
+      src.avatars.forEach((a) => { if (heavy.has(a.name) && A.stacks.length < 300) A.stacks.push({ x: a.x, y: a.y + 0.62, z: a.z, k: Math.max(0.7, a.k), ph: carteRand("st" + a.x + a.z) * 6.283 }); });
+    }
+    // Convois permanents (#425) : une charrette par dépendance affichée.
+    taskList.forEach((e) => {
+      (e.t.dependsOn || []).forEach((d) => {
+        const pr = byId[d];
+        if (!pr || A.convoys.length >= (low ? 80 : 200)) return;
+        const a = new THREE.Vector3(pr.x, pr.y + 0.15, pr.z), b = new THREE.Vector3(e.x, e.y + 0.15, e.z);
+        const mid = a.clone().lerp(b, 0.5); mid.y += 0.6 + a.distanceTo(b) * 0.12;
+        const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+        A.convoys.push({ curve, blocked: pr.t.state !== "done", ph: carteRand("cv" + d + e.t.id) });
+      });
+    });
+    if (A.convoys.length) {
+      const pts = [];
+      A.convoys.forEach((cv) => { const q = cv.curve.getPoints(24); for (let i = 1; i < q.length; i++) pts.push(q[i - 1], q[i]); });
+      const line = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), MAT.route);
+      line.computeLineDistances(); line.userData.ownGeo = true; line.frustumCulled = false;
+      world.add(line);
+      A.carts = ambMesh(G.box, MAT.l, A.convoys.length, (i) => (A.convoys[i].blocked ? "#b0493a" : "#8a5a35"));
+      const nb = A.convoys.filter((c) => c.blocked).length;
+      if (nb) {
+        const bars = ambMesh(G.box, MAT.g, nb, () => "#DC2626");
+        let bi = 0;
+        A.convoys.forEach((cv) => { if (!cv.blocked) return; const p = cv.curve.getPoint(0.86); bars.setMatrixAt(bi++, tmpM.compose(tmpP.copy(p), tmpQ.identity(), tmpS.set(0.5, 0.06, 0.06))); });
+        bars.instanceMatrix.needsUpdate = true;
+      }
+    }
+    // Météo par dossier (#426) : au-dessus de chaque région.
+    Object.keys(src.regions || {}).forEach((gid) => {
+      const g = src.regions[gid];
+      const tasks = S.data.tasks.filter((t) => S.poi[t.id] && g.projects.has(t.projectId));
+      const wth = carteWeather(tasks);
+      let cx = 0, cz = 0, rad = 0;
+      g.pts.forEach((pt) => { cx += pt[0]; cz += pt[1]; });
+      cx /= g.pts.length; cz /= g.pts.length;
+      g.pts.forEach((pt) => { rad = Math.max(rad, Math.hypot(pt[0] - cx, pt[1] - cz)); });
+      const n = wth.kind === "sun" ? 2 : wth.kind === "cloud" ? 4 : 6;
+      A.weather.push({ gid, cx, cz, rad: Math.max(3, rad * 0.55), y: src.summit + 5.5, kind: wth.kind, n, ph: carteRand("wx" + gid) * 6.283 });
+    });
+    const nClouds = A.weather.reduce((m, w) => m + w.n, 0);
+    if (nClouds) {
+      A.cloudMesh = ambMesh(G.ball, MAT.sky, nClouds * 3, (i) => { let j = Math.floor(i / 3); for (const w of A.weather) { if (j < w.n) return w.kind === "sun" ? "#ffffff" : w.kind === "cloud" ? "#c3c9d2" : "#6b7280"; j -= w.n; } return "#ffffff"; });
+      const suns = A.weather.filter((w) => w.kind === "sun").length;
+      if (suns) A.sunMesh = ambMesh(G.ball, MAT.g, suns, () => "#ffd35a");
+      const rainy = A.weather.filter((w) => w.kind === "rain");
+      if (rainy.length && !low) A.rainMesh = ambMesh(G.box, MAT.skyRain, rainy.length * 50);
+    }
+    // Fil d'Ariane (#435) : les prochaines échéances affichées, dans l'ordre.
+    const next = carteAriadne(S.data.tasks.filter((t) => S.poi[t.id]), 8);
+    // Deux échéances sur la même case ne font qu'un point du chemin.
+    const pts = [];
+    next.forEach((t) => { const q = S.poi[t.id], v = new THREE.Vector3(q.x, q.y + 0.45, q.z); if (!pts.length || pts[pts.length - 1].distanceTo(v) > 0.3) pts.push(v); });
+    if (pts.length >= 2) {
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const n = Math.min(90, 14 * (pts.length - 1));
+      A.trail = { curve, n, mesh: ambMesh(G.ball, MAT.g, n, () => "#ffe38a") };
+    }
+    if (A.workers.length) {
+      const n = A.workers.length;
+      A.wCyl = ambMesh(G.cyl, MAT.l, n * 2, (i) => (i % 2 ? WORKER_C.helmet : WORKER_C.vest));
+      A.wBall = ambMesh(G.ball, MAT.l, n, () => WORKER_C.skin);
+      A.wBox = ambMesh(G.box, MAT.l, n * 3, (i) => { const w = A.workers[Math.floor(i / 3)], j = i % 3; return w.waiting ? (j === 0 ? WORKER_C.crate : "#3a3a3a") : j === 0 ? WORKER_C.wood : WORKER_C.iron; });
+    }
+    if (A.pigeons.length) {
+      A.pBody = ambMesh(G.ball, MAT.l, A.pigeons.length, () => "#e8e8ee");
+      A.pWing = ambMesh(G.box, MAT.l, A.pigeons.length * 2, () => "#9aa3b2");
+    }
+    if (A.lanterns.length) A.lMesh = ambMesh(G.ball, MAT.g, A.lanterns.length, () => "#ffcf5a");
+    if (A.mills.length) {
+      A.mMast = ambMesh(G.cyl, MAT.l, A.mills.length, () => "#e8e2d6");
+      A.mBlade = ambMesh(G.box, MAT.l, A.mills.length * 3, () => "#fbf7ee");
+      A.mills.forEach((m, i) => A.mMast.setMatrixAt(i, tmpM.compose(tmpP.set(m.x, m.y, m.z), tmpQ.identity(), tmpS.set(0.1, 1.1, 0.1))));
+      A.mMast.instanceMatrix.needsUpdate = true;
+    }
+    if (A.flags.length) {
+      A.fMast = ambMesh(G.cyl, MAT.l, A.flags.length, () => "#5a4030");
+      A.fCloth = ambMesh(G.box, MAT.l, A.flags.length, (i) => A.flags[i].color);
+      A.flags.forEach((f, i) => A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, Math.max(0.5, f.top - f.base + 0.2), 0.06))));
+      A.fMast.instanceMatrix.needsUpdate = true;
+    }
+    if (A.stacks.length) A.sMesh = ambMesh(G.box, MAT.l, A.stacks.length * 3, (i) => ["#f4efe3", "#e8dcc0", "#fbf7ee"][i % 3]);
+    if (A.windows.length) {
+      A.winMesh = ambMesh(G.box, MAT.g, A.windows.length, () => "#ffd27a");
+      A.windows.forEach((wn, i) => A.winMesh.setMatrixAt(i, tmpM.compose(tmpP.set(wn.x, wn.y, wn.z), tmpQ.identity(), tmpS.set(0.62 * wn.k, 0.34 * wn.k, 0.62 * wn.k))));
+      A.winMesh.instanceMatrix.needsUpdate = true;
+      S.daylightWindows = A.winMesh;
+    }
+    S.amb = A;
+    placeAmbient(S.time);
+  }
+  function placeAmbient(t0) {
+    const A = S.amb;
+    if (!A) return;
+    const t = reduced ? t0 * 0.3 : t0;
+    // Ouvriers : marteau qui frappe (en cours), pied qui tapote (en attente).
+    if (A.wCyl) {
+      A.workers.forEach((w, i) => {
+        baseOf(tmpM, w.x, w.y, w.z, w.yaw, w.k);
+        if (w.waiting) {
+          putPart(A.wBox, i * 3, tmpM, 0, 0, 0, 0, 0, 0, 0.3, 0.22, 0.3);
+          putPart(A.wCyl, i * 2, tmpM, 0, 0.22, 0, 0, 0, 0, 0.22, 0.3, 0.2);
+          putPart(A.wBall, i, tmpM, 0, 0.52, 0, 0, 0, 0, 0.2, 0.2, 0.2);
+          putPart(A.wCyl, i * 2 + 1, tmpM, 0, 0.68, 0, 0, 0, 0, 0.22, 0.06, 0.22);
+          const tap = Math.max(0, Math.sin(t * 7 + w.ph)) * 0.06;
+          putPart(A.wBox, i * 3 + 1, tmpM, 0.06, 0.02 + tap, 0.2, 0, 0, 0, 0.08, 0.05, 0.16);
+          putPart(A.wBox, i * 3 + 2, tmpM, -0.06, 0.02, 0.2, 0, 0, 0, 0.08, 0.05, 0.16);
+        } else {
+          putPart(A.wCyl, i * 2, tmpM, 0, 0, 0, 0, 0, 0, 0.24, 0.42, 0.2);
+          putPart(A.wBall, i, tmpM, 0, 0.4, 0, 0, 0, 0, 0.2, 0.2, 0.2);
+          putPart(A.wCyl, i * 2 + 1, tmpM, 0, 0.56, 0, 0, 0, 0, 0.22, 0.06, 0.22);
+          const swing = -0.4 - 1.1 * Math.pow(0.5 + 0.5 * Math.sin(t * 5 + w.ph), 3);
+          const c = Math.cos(swing), sn = Math.sin(swing), L = 0.34;
+          putPart(A.wBox, i * 3, tmpM, 0.14, 0.34, 0, swing, 0, 0, 0.03, L, 0.03);
+          putPart(A.wBox, i * 3 + 1, tmpM, 0.14, 0.34 + L * c, L * sn, swing, 0, 0, 0.12, 0.07, 0.07);
+          putPart(A.wBox, i * 3 + 2, tmpM, 0, -1, 0, 0, 0, 0, 0.001, 0.001, 0.001);
+        }
+      });
+      [A.wCyl, A.wBall, A.wBox].forEach((m) => { m.instanceMatrix.needsUpdate = true; });
+    }
+    // Pigeons : allers-retours vers le large, plus lents quand l'attente dure.
+    if (A.pBody) {
+      A.pigeons.forEach((p, i) => {
+        const ph = t * 0.55 * p.speed + p.ph;
+        const u = 0.5 - 0.5 * Math.cos(ph), dir = Math.sin(ph) >= 0 ? 1 : -1;
+        const x = p.x + p.dx * u * 6, z = p.z + p.dz * u * 6, y = p.y + Math.sin(u * Math.PI) * 1.2;
+        const yaw = Math.atan2(p.dx * dir, p.dz * dir);
+        baseOf(tmpM, x, y, z, yaw, p.k);
+        putPart(A.pBody, i, tmpM, 0, 0, 0, 0, 0, 0, 0.18, 0.14, 0.3);
+        const flap = Math.sin(t * 14 * Math.max(0.4, p.speed) + p.ph) * 0.7;
+        putPart(A.pWing, i * 2, tmpM, 0.14, 0.08, 0, 0, 0, flap, 0.26, 0.02, 0.12);
+        putPart(A.pWing, i * 2 + 1, tmpM, -0.14, 0.08, 0, 0, 0, -flap, 0.26, 0.02, 0.12);
+      });
+      A.pBody.instanceMatrix.needsUpdate = true; A.pWing.instanceMatrix.needsUpdate = true;
+    }
+    // Lanternes : pulsation de plus en plus rapide à l'approche de l'échéance.
+    if (A.lMesh) {
+      A.lanterns.forEach((l, i) => {
+        const pulse = 0.5 + 0.5 * Math.sin((t * l.rate + l.ph) * 6.283);
+        const sz = (0.16 + 0.05 * pulse) * l.k;
+        A.lMesh.setMatrixAt(i, tmpM.compose(tmpP.set(l.x, l.y, l.z), tmpQ.identity(), tmpS.set(sz, sz * 1.2, sz)));
+        A.lMesh.setColorAt(i, tmpC.set("#7a4a10").lerp(tmpC2.set("#fff1a8"), 0.25 + 0.75 * pulse));
+      });
+      A.lMesh.instanceMatrix.needsUpdate = true; if (A.lMesh.instanceColor) A.lMesh.instanceColor.needsUpdate = true;
+    }
+    // Éoliennes : vitesse = rythme du projet sur 14 jours.
+    if (A.mBlade) {
+      A.mills.forEach((m, i) => {
+        const a = t * m.speed + m.ph;
+        for (let b = 0; b < 3; b++) {
+          const ang = a + (b * 2 * Math.PI) / 3;
+          baseOf(tmpM, m.x, m.y + 1.1, m.z + 0.08, 0, 1);
+          putPart(A.mBlade, i * 3 + b, tmpM, 0, 0, 0, 0, 0, -ang, 0.12, 0.84, 0.03);
+        }
+      });
+      A.mBlade.instanceMatrix.needsUpdate = true;
+    }
+    // Drapeaux : hissés au pourcentage d'avancement, flottant au vent.
+    if (A.fCloth) {
+      A.flags.forEach((f, i) => {
+        const y = f.base + 0.1 + f.pct * Math.max(0.2, f.top - f.base - 0.5);
+        const wave = Math.sin(t * 2.2 + f.ph) * 0.35;
+        baseOf(tmpM, f.x, y, f.z, wave, 1);
+        putPart(A.fCloth, i, tmpM, 0.34, 0, 0, 0, 0, 0, 0.64 * (0.9 + 0.1 * Math.cos(t * 3 + f.ph)), 0.38, 0.03);
+      });
+      A.fCloth.instanceMatrix.needsUpdate = true;
+    }
+    // Piles de dossiers des personnes surchargées : elles vacillent.
+    if (A.sMesh) {
+      A.stacks.forEach((s2, i) => {
+        const sway = Math.sin(t * 3 + s2.ph) * 0.12;
+        baseOf(tmpM, s2.x, s2.y, s2.z, 0, s2.k);
+        for (let j = 0; j < 3; j++) putPart(A.sMesh, i * 3 + j, tmpM, Math.sin(sway) * j * 0.08, j * 0.07, 0, 0, j * 0.3, sway * (j + 1) * 0.6, 0.34, 0.06, 0.26);
+      });
+      A.sMesh.instanceMatrix.needsUpdate = true;
+    }
+    // Convois : la charrette avance ; bloquée, elle attend devant la barrière.
+    if (A.carts) {
+      A.convoys.forEach((cv, i) => {
+        const u = cv.blocked ? Math.min(0.8, (t * 0.18 + cv.ph) % 1) : (t * 0.18 + cv.ph) % 1;
+        const p = cv.curve.getPoint(u);
+        A.carts.setMatrixAt(i, tmpM.compose(p, tmpQ.identity(), tmpS.set(0.22, 0.16, 0.3)));
+      });
+      A.carts.instanceMatrix.needsUpdate = true;
+    }
+    // Météo : nuages qui dérivent, pluie, soleil ; discrets de près.
+    if (A.cloudMesh) {
+      MAT.sky.opacity = Math.max(0.12, Math.min(0.5, (S.dist - 12) / 45));
+      MAT.skyRain.opacity = MAT.sky.opacity * 0.8;
+      let ci = 0, si = 0, ri = 0;
+      A.weather.forEach((w) => {
+        for (let j = 0; j < w.n; j++) {
+          const a = w.ph + (j / w.n) * 6.283 + t * 0.04;
+          const cx = w.cx + Math.cos(a) * w.rad * (0.35 + 0.65 * ((j % 2) ? 0.6 : 1)), cz = w.cz + Math.sin(a) * w.rad * 0.7;
+          const f = w.kind === "rain" ? 1.5 : 1.2;
+          for (let b = 0; b < 3; b++) A.cloudMesh.setMatrixAt(ci++, tmpM.compose(tmpP.set(cx + (b - 1) * 0.9 * f, w.y + (b === 1 ? 0.35 : 0), cz), tmpQ.identity(), tmpS.set(1.4 * f, 0.8 * f, 1.1 * f)));
+          if (w.kind === "rain" && A.rainMesh) for (let d = 0; d < 8 && ri < A.rainMesh.count; d++) {
+            const fall = 5, yv = w.y - ((t * 4 + carteRand("wr" + j + d) * fall) % fall);
+            A.rainMesh.setMatrixAt(ri++, tmpM.compose(tmpP.set(cx + (carteRand("wx" + d) - 0.5) * 3, yv, cz + (carteRand("wz" + d) - 0.5) * 2), tmpQ.identity(), tmpS.set(0.05, 0.45, 0.05)));
+          }
+        }
+        if (w.kind === "sun" && A.sunMesh) A.sunMesh.setMatrixAt(si++, tmpM.compose(tmpP.set(w.cx + w.rad * 0.6, w.y + 1.6, w.cz - w.rad * 0.4), tmpQ.identity(), tmpS.setScalar(1.3 + 0.08 * Math.sin(t * 1.5))));
+      });
+      A.cloudMesh.instanceMatrix.needsUpdate = true;
+      if (A.sunMesh) A.sunMesh.instanceMatrix.needsUpdate = true;
+      if (A.rainMesh) A.rainMesh.instanceMatrix.needsUpdate = true;
+    }
+    // Fil d'Ariane : des points lumineux défilent d'échéance en échéance.
+    if (A.trail) {
+      const T = A.trail;
+      for (let i = 0; i < T.n; i++) {
+        const u = ((i / T.n + t * 0.035) % 1 + 1) % 1;
+        const p = T.curve.getPoint(u);
+        const pulse = 0.09 + 0.04 * Math.sin(t * 3 + i);
+        T.mesh.setMatrixAt(i, tmpM.compose(p, tmpQ.identity(), tmpS.setScalar(pulse)));
+      }
+      T.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+  // Jour et nuit à l'heure réelle (#436) ; les fenêtres des échéances du jour
+  // ne s'allument que le soir.
+  function applyDaylight(force) {
+    S.lightAt = S.time;
+    const d = S.ambient ? carteDaylight(new Date().getHours() + new Date().getMinutes() / 60) : carteDaylight(12);
+    if (!force && S.lightKey === d.sky + d.k) { if (S.daylightWindows) S.daylightWindows.visible = d.evening; return; }
+    S.lightKey = d.sky + d.k;
+    renderer.setClearColor(d.sky);
+    scene.fog.color.set(d.sky);
+    hemi.intensity = d.hemi;
+    sun.intensity = d.sunI; sun.color.set(d.sun);
+    if (S.daylightWindows) S.daylightWindows.visible = d.evening;
+  }
+  const tmpC2 = new THREE.Color();
+
+  // Anneau de progression des jalons (#437) : couronne de segments posée au
+  // sol autour de la borne ; la part allumée suit l'avancement, l'anneau est
+  // complet et vert quand le jalon est terminé. Toujours affiché.
+  const MS_SEGS = 28;
+  function buildMilestoneRings(list) {
+    const ms = list.filter((e) => e.t.kind === "milestone" && e.t.state !== "info").slice(0, 400);
+    if (!ms.length) return;
+    const ring = new THREE.InstancedMesh(G.box, MAT.g, ms.length * MS_SEGS);
+    ring.frustumCulled = false;
+    ms.forEach((e, i) => {
+      const done = e.t.state === "done";
+      const lit = done ? MS_SEGS : Math.round((carteMilestoneProgress(e.t) / 100) * MS_SEGS);
+      const R = Math.min(0.86, 0.62 * e.k), w = (2 * Math.PI * R) / MS_SEGS * 0.72;
+      for (let j = 0; j < MS_SEGS; j++) {
+        // Départ à midi, sens horaire vu du dessus.
+        const a = (j + 0.5) / MS_SEGS * Math.PI * 2;
+        tmpQ.setFromAxisAngle(UP, -a);
+        ring.setMatrixAt(i * MS_SEGS + j, tmpM.compose(tmpP.set(e.x + Math.sin(a) * R, e.y + 0.07, e.z - Math.cos(a) * R), tmpQ, tmpS.set(w, 0.035, 0.16 * Math.min(1, e.k))));
+        ring.setColorAt(i * MS_SEGS + j, tmpC.set(j < lit ? (done ? "#1FA971" : "#ffb020") : "#3b3f46"));
+      }
+    });
+    ring.instanceMatrix.needsUpdate = true; if (ring.instanceColor) ring.instanceColor.needsUpdate = true;
+    world.add(ring);
+  }
+
   function animate() {
     const t = S.time;
-    placeStorms(t); placeFires(t); placeClocks(t);
+    placeStorms(t); placeFires(t); placeClocks(t); placeAmbient(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
     MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow);
@@ -20092,6 +20439,24 @@ function createCarteEngine(THREE, container, opts) {
     S.people = !!on;
     if (S.layout) build();
   }
+  // Animations persistantes (#425 à #436), désactivables dans « Affichage ».
+  function setAmbient(on) {
+    if (S.ambient === !!on) return;
+    S.ambient = !!on;
+    if (S.layout) build();
+    applyDaylight(true);
+  }
+  // Tournée du jour (#427) : la caméra vole jusqu'à la tâche, sans déplacer
+  // l'arpenteur, et la sélectionne.
+  function tourTo(id) {
+    const p = S.poi[id];
+    if (!p) return false;
+    S.follow = false;
+    S.focusGoal = new THREE.Vector3(p.x, p.y + 0.4, p.z);
+    S.dist = Math.min(Math.max(S.dist, 12), 16);
+    select(id);
+    return true;
+  }
   function resize() {
     const w = container.clientWidth || 300, h = container.clientHeight || 300;
     renderer.setSize(w, h);
@@ -20118,6 +20483,7 @@ function createCarteEngine(THREE, container, opts) {
     if (!S.layout) return;
     step(dt);
     updateCamera(dt);
+    if (!S.lightAt || S.time - S.lightAt > 30) applyDaylight();
     animate();
     renderer.render(scene, camera);
     updateLabels();
@@ -20127,7 +20493,7 @@ function createCarteEngine(THREE, container, opts) {
   S.raf = requestAnimationFrame(frame);
 
   return {
-    setData, select, focusProject, walkToTask, recenter, overview, setQuality, setPeople, zoomBy,
+    setData, select, focusProject, walkToTask, recenter, overview, setQuality, setPeople, setAmbient, tourTo, zoomBy,
     rotate: (d) => { S.yaw += d; },
     setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
@@ -20645,7 +21011,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           keyTarget: stageRef.current,
           quality: cfg.quality,
           people: cfg.people,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          ambient: cfg.ambient,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-tour, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelected(id),
           onNear: (id) => {
             setNear(id);
@@ -20698,6 +21065,23 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return () => ro.disconnect();
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
+  // Tournée du jour (#427) : la caméra vole de tâche en tâche, urgentes et en
+  // retard d'abord, puis les échéances de la semaine (tâches affichées).
+  const [tour, setTour] = useState(null);
+  const startTour = () => {
+    const ids = carteTourList(norm.tasks.filter((t) => visible.has(t.id))).map((t) => t.id);
+    if (!ids.length) { setTour({ ids: [], i: 0 }); return; }
+    setTour({ ids, i: 0 });
+    if (engineRef.current) engineRef.current.tourTo(ids[0]);
+  };
+  const tourStep = (d) => setTour((tr) => {
+    if (!tr || !tr.ids.length) return tr;
+    const i = (tr.i + d + tr.ids.length) % tr.ids.length;
+    if (engineRef.current) engineRef.current.tourTo(tr.ids[i]);
+    return { ...tr, i };
+  });
+  const stopTour = () => { setTour(null); if (engineRef.current) { engineRef.current.select(null); engineRef.current.recenter(); } };
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
   const go = (id) => { const e = engineRef.current; if (!e) return; e.walkToTask(id); e.select(id); };
@@ -20775,6 +21159,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           </select>
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
+            <label className="lp-checkbox-line" title="Convois, météo, ouvriers, pigeons, lanternes, éoliennes, drapeaux, fil d'Ariane, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
@@ -20785,7 +21170,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
           </DropdownButton>
           <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
-          <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
+          <button type="button" className="lp-btn" onClick={startTour} disabled={status !== "ready"} title="La caméra passe de tâche en tâche : urgentes et en retard, puis échéances de la semaine"><Footprints size={13} /> Tournée du jour</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => { setTour(null); if (engineRef.current) engineRef.current.recenter(); }} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
       </div>
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
@@ -20857,6 +21243,20 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     </details>
                   )}
                 </div>
+                {tour && (
+                  <div className="lp-carte-tour" role="group" aria-label="Tournée du jour">
+                    <Footprints size={14} />
+                    {tour.ids.length ? (
+                      <>
+                        <span className="lp-carte-tour-count">{tour.i + 1} / {tour.ids.length}</span>
+                        <span className="lp-carte-tour-title">{(norm.taskById[tour.ids[tour.i]] || {}).title || ""}</span>
+                        <button type="button" className="lp-icon-btn" aria-label="Tâche précédente" onClick={() => tourStep(-1)}><ChevronLeft size={15} /></button>
+                        <button type="button" className="lp-icon-btn" aria-label="Tâche suivante" onClick={() => tourStep(1)}><ChevronRight size={15} /></button>
+                      </>
+                    ) : <span className="lp-carte-tour-title">Rien d'urgent, de retard ni d'échéance cette semaine.</span>}
+                    <button type="button" className="lp-icon-btn" aria-label="Arrêter la tournée" onClick={stopTour}><X size={15} /></button>
+                  </div>
+                )}
                 {nearTask && !selTask && (
                   <div className="lp-carte-near">
                     <span className="lp-carte-state" style={{ background: nearTask.statusColor }} />
