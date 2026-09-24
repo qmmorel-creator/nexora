@@ -11,7 +11,7 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
 const EMPTY_DASHBOARD_WIDGETS = [
   "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
   "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
-  "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte",
+  "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte", "embedCosmos",
   "customCard",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
   // Ceux-là ne se montent qu'avec une cible désignée : c'est justement le cas
@@ -20,6 +20,8 @@ const EMPTY_DASHBOARD_WIDGETS = [
     { id: "vide-taskDetail", type: "taskDetail", title: "taskDetail", taskDetailTaskId: "t1", layout: { x: 0, y: 40, w: 3, h: 4 } },
     { id: "vide-countdown-task", type: "customCard", title: "countdown", cardBlocks: [{ id: "cdb1", kind: "daysRemaining", countdownMode: "task", countdownTaskId: "t1" }], layout: { x: 3, y: 40, w: 3, h: 4 } },
     { id: "vide-countdown-filtre", type: "customCard", title: "countdown filtre", cardBlocks: [{ id: "cdb2", kind: "daysRemaining", countdownMode: "filter" }], layout: { x: 6, y: 40, w: 3, h: 4 } },
+    // #439 : Cosmos (complet) à sa taille d'exploration, sans bandeau.
+    { id: "vide-cosmos-large", type: "embedCosmos", title: "Cosmos (complet)", layout: { x: 0, y: 48, w: 12, h: 14 } },
   ]);
 
 function AnnotationsHarness() {
@@ -1019,7 +1021,7 @@ if (benchApp) {
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
     "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
-    "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte",
+    "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte", "embedCosmos",
     "customCard",
     // #193 : monter la VRAIE DashboardView avec ces deux types placés est ce
     // qui a attrapé le `ReferenceError: habitLog is not defined` — un widget
