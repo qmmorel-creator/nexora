@@ -44,6 +44,29 @@ pourcentage seul.
 
 ## Catalogue des thèmes
 
+> Les **styles de rendu** (Classique, Archipel d'encre, Néon-Grille) redessinent toute la carte
+> et sont décrits dans [`CARTE_STYLES.md`](CARTE_STYLES.md). Ils ne remplacent pas les thèmes par
+> dossier ci-dessous, qui gardent le relief et reprennent leur apparence en style Classique.
+
+### Cyberpunk
+
+| | |
+|---|---|
+| Paysage | Hexagones ardoise, voies gris bleuté, quelques bornes cyan ; relief plat pour circuler librement |
+| Progression du territoire | Emplacement → relais → station → nœud → centre de données → réseau central |
+| À faire | Emplacement balisé par une petite borne |
+| En attente | Terminal en veille |
+| En cours (avancement) | Module sous structure légère, hauteur selon `progress` |
+| Terminé | Module actif, signal lumineux |
+| Information | Borne d'information |
+| Tâche · réunion · planning · jalon | Module · station de réunion · tour de synchronisation · balise majeure |
+| Récurrence | Petite antenne rotative |
+| Sous-tâches | Mini-modules gris ou ambre |
+| Friche | Câbles hors service |
+| Costume | Personnage actuel, sans ajout de modèle |
+
+Cette option se choisit dans les réglages du dossier ou ceux de la Carte. Elle conserve la grille, la disposition stable, les commandes, la légende et les indices universels. Elle n'entre pas dans l'attribution automatique des thèmes aux dossiers existants.
+
 Chaque fiche utilise les mêmes lignes, dans le même ordre, pour comparer facilement.
 
 ### Ville
@@ -322,7 +345,7 @@ mais je ne la propose pas par défaut : un thème deviné sur le titre peut semb
 
 ## Décisions prises
 
-1. **14 thèmes** : les 10 d'origine, plus marais, jungle, volcan et île tropicale.
+1. **15 thèmes** : les 14 d'origine, plus Cyberpunk sélectionnable explicitement.
 2. **Un thème par dossier**, modifiable dossier par dossier dans les réglages de la vue.
 3. **Paliers du territoire** : 0, 20, 40, 60, 80 et 100 % de tâches terminées.
 4. **Progression d'une tâche en cours** : mêmes paliers, appliqués à `progress`.
