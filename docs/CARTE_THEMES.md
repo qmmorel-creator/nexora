@@ -15,7 +15,7 @@ n'ait jamais à réapprendre la carte en passant d'un territoire à l'autre.
 | Nuage d'orage : en retard | Centre du territoire et ses 5 paliers de progression |
 | Lanterne : échéance sous 7 jours | Les 5 stades d'une tâche (à faire → terminé) |
 | Brume : début futur | L'avancement d'une tâche en cours (0 à 100 %) |
-| Emprise au sol : durée | La silhouette selon le type (tâche, réunion, planning) ; le jalon est un faisceau de lumière commun à tous les thèmes (#416) |
+| Emprise au sol : durée | La silhouette selon le type (tâche, réunion, planning) ; le jalon est une borne milliaire commune à tous les thèmes, à la couleur de son type (#419) |
 | Couleur de tenue d'un habitant : responsable | Le costume de cet habitant |
 | Route de convoi : dépendance | (récurrence : plus dessinée depuis #409) |
 | Étiquette avec couleur réelle du statut | L'aspect de la friche (tâche oubliée) |
