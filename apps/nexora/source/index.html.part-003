@@ -13439,6 +13439,55 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
     return next;
   });
   const rootRef = useRef(null);
+  /* Glisser-peindre (#353) : en mode « Peindre », la légende choisit le
+     pinceau (une habitude du thème affiché) et un glisser sur les jours pose
+     — ou efface, si le premier jour touché l'avait déjà — cette habitude sur
+     chaque jour traversé (paintHabitLogEntries). Jamais les jours futurs. */
+  const [paintMode, setPaintMode] = useState(false);
+  const [brushId, setBrushId] = useState(null);
+  const strokeRef = useRef(null);
+  const brush = theme ? (theme.habits.find((h) => h.id === brushId) || theme.habits[0] || null) : null;
+  const paintTodayIso = iso(new Date());
+  const endStroke = () => {
+    const st = strokeRef.current;
+    if (!st) return;
+    window.removeEventListener("pointermove", st.move);
+    window.removeEventListener("pointerup", st.up);
+    window.removeEventListener("pointercancel", st.up);
+    strokeRef.current = null;
+  };
+  useEffect(() => endStroke, []);
+  const paintDates = (dates, on, habitId) => {
+    if (setHabitLog) setHabitLog((prev) => paintHabitLogEntries(prev, ctx.habitThemes, habitId, dates, on));
+  };
+  const onPaintPointerDown = (e) => {
+    if (!paintMode || !brush || !setHabitLog) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    const cell = e.target && e.target.closest ? e.target.closest("[data-hdate]") : null;
+    if (!cell) return;
+    const date = cell.getAttribute("data-hdate");
+    if (!date || date > paintTodayIso) return;
+    e.preventDefault();
+    endStroke();
+    const has = normalizeHabitLog(habitLog).some((x) => x.habitId === brush.id && x.date === date);
+    const stroke = { on: !has, habitId: brush.id, dates: new Set([date]) };
+    stroke.move = (ev) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const c = el && el.closest ? el.closest("[data-hdate]") : null;
+      if (!c || !rootRef.current || !rootRef.current.contains(c)) return;
+      const d = c.getAttribute("data-hdate");
+      if (!d || d > paintTodayIso || stroke.dates.has(d)) return;
+      stroke.dates.add(d);
+      paintDates([d], stroke.on, stroke.habitId);
+    };
+    stroke.up = () => endStroke();
+    strokeRef.current = stroke;
+    window.addEventListener("pointermove", stroke.move);
+    window.addEventListener("pointerup", stroke.up);
+    window.addEventListener("pointercancel", stroke.up);
+    paintDates([date], stroke.on, stroke.habitId);
+  };
+  const paintAttr = (date, paintable) => (paintMode && paintable && date <= paintTodayIso ? date : undefined);
   // Espace réellement disponible pour la grille annuelle (#224) : mesuré sur
   // le conteneur `.lp-widget-habit-heatmap-year` lui-même (pas le widget
   // entier, qui inclut aussi l'en-tête et la légende) — largeur ET hauteur,
@@ -13514,8 +13563,19 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
   }
 
   return (
-    <div className="lp-widget-habit-heatmap" ref={rootRef}>
+    <div className={"lp-widget-habit-heatmap" + (paintMode ? " is-painting" : "")} ref={rootRef} onPointerDown={onPaintPointerDown}>
       <div className="lp-widget-habit-heatmap-head">
+        {setHabitLog && theme && theme.habits.length > 0 && (
+          <button
+            type="button"
+            className={"lp-tool-btn lp-widget-habit-heatmap-paint-btn" + (paintMode ? " active" : "")}
+            aria-pressed={paintMode}
+            onClick={() => setPaintMode((m) => !m)}
+            title={paintMode ? "Quitter le mode peinture" : "Peindre : choisir une habitude dans la légende, puis glisser sur les jours"}
+          >
+            <Pencil size={12} /> {paintMode ? "Peindre : " + (brush ? brush.name : "") : "Peindre"}
+          </button>
+        )}
         <button
           type="button"
           className={"lp-icon-btn" + (themeMenuOpen ? " active" : "")}
@@ -13563,6 +13623,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
                 className={"lp-widget-habit-heatmap-cell" + (!day.inMonth ? " out" : "") + (day.isToday ? " today" : "") + (day.isFuture ? " future" : "") + (day.date === selectedDate ? " selected" : "")}
                 style={{ background: habitEmptyCellBg(day) }}
                 title={day.date}
+                data-hdate={paintAttr(day.date, !day.isFuture)}
                 onDoubleClick={() => openDay(day.date)}
               >
                 <span className="lp-widget-habit-heatmap-daynum">{day.day}</span>
@@ -13587,6 +13648,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
                     className={"lp-widget-habit-heatmap-cell" + (!day.inMonth ? " out" : "") + (day.isToday ? " today" : "") + (day.isFuture ? " future" : "")}
                     style={{ background: habitEmptyCellBg(day) }}
                     title={day.date}
+                    data-hdate={paintAttr(day.date, !day.isFuture)}
                     onDoubleClick={() => openDay(day.date)}
                   >
                     <span className="lp-widget-habit-heatmap-daynum">{day.day}</span>
@@ -13629,6 +13691,7 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
                       background: day.inYear ? habitEmptyCellBg(day) : "transparent",
                     }}
                     title={day.inYear ? day.date : undefined}
+                    data-hdate={paintAttr(day.date, day.inYear)}
                     onDoubleClick={day.inYear ? () => openDay(day.date) : undefined}
                   />
                 )))}
@@ -13642,6 +13705,23 @@ function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget
         <div className="lp-widget-habit-heatmap-legend">
           {theme.habits.map((h) => {
             const hidden = hiddenHabitIds.has(h.id);
+            // Mode peinture : la légende choisit le pinceau.
+            if (paintMode) {
+              const active = brush && brush.id === h.id;
+              return (
+                <button
+                  type="button"
+                  key={h.id}
+                  className={"lp-widget-habit-heatmap-legend-item is-brush" + (active ? " is-active" : "")}
+                  aria-pressed={Boolean(active)}
+                  onClick={() => setBrushId(h.id)}
+                  title={`Peindre avec ${h.name}`}
+                >
+                  <span className="lp-widget-habit-heatmap-legend-dot" style={{ background: h.color }} />
+                  {h.name}
+                </button>
+              );
+            }
             return (
               <button
                 type="button"

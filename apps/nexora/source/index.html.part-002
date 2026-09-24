@@ -4432,6 +4432,35 @@ function habitPixelWirePath(rowY, pixelX, pixelBottom, radius) {
   return `M 0 ${rowY} H ${pixelX - r} Q ${pixelX} ${rowY} ${pixelX} ${rowY - r} V ${pixelBottom}`;
 }
 
+/* Glisser-peindre (Heatmap habitudes, #353) : pose (on) ou efface (off) UNE
+   habitude sur une série de jours d'un seul geste. Mêmes règles que les
+   bascules unitaires : thème « choix unique » → les habitudes sœurs du même
+   jour sont retirées quand on pose ; habitude chiffrée → posée à son maximum.
+   Journal renormalisé une seule fois pour tout le trait. */
+function paintHabitLogEntries(log, themes, habitId, dates, on) {
+  const found = habitById(themes, habitId);
+  const known = normalizeHabitThemes(themes).flatMap((t) => t.habits.map((h) => h.id));
+  let next = normalizeHabitLog(log, known);
+  if (!found) return next;
+  const days = [...new Set((Array.isArray(dates) ? dates : []).filter((d) => HABIT_LOG_ISO_RE.test(String(d))))];
+  if (!days.length) return next;
+  const daySet = new Set(days);
+  const ids = new Set(days.map((d) => habitLogCellId(habitId, d)));
+  next = next.filter((e) => !ids.has(e.id));
+  if (on) {
+    if (found.theme.selectionMode === "single") {
+      const siblings = new Set(found.theme.habits.map((h) => h.id));
+      next = next.filter((e) => !(daySet.has(e.date) && siblings.has(e.habitId)));
+    }
+    days.forEach((date) => {
+      const entry = { id: habitLogCellId(habitId, date), habitId, date };
+      if (found.habit.kind === "numeric") entry.value = found.habit.max;
+      next.push(entry);
+    });
+  }
+  return normalizeHabitLog(next, known);
+}
+
 // Valeur chiffrée affichée à la française (1,5 et non 1.5).
 function habitValueLabel(value) {
   return Number.isFinite(value) ? String(Math.round(value * 1e6) / 1e6).replace(".", ",") : "–";
