@@ -13116,6 +13116,12 @@ function hpxDayLabel(date, todayIso) {
 function hpxLongDate(date) {
   return new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 }
+// Sous-titre d'un jour : date longue quand le titre est relatif (Hier,
+// Aujourd'hui, Demain) ; sinon le titre porte déjà le jour de la semaine.
+function hpxSubDate(date, todayIso) {
+  const rel = [addDays(todayIso, -1), todayIso, addDays(todayIso, 1)].includes(date);
+  return new Date(date + "T00:00:00").toLocaleDateString("fr-FR", rel ? { weekday: "long", day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" });
+}
 function hpxWeekStart(date) {
   const d = new Date(date + "T00:00:00");
   return addDays(date, -((d.getDay() + 6) % 7));
@@ -13149,15 +13155,22 @@ function HabitPixel({ habit, st, size, future, focused, onClick, onHover, label 
   );
 }
 
-function HabitPixelMosaic({ themes, day, date, todayIso, size = 8 }) {
-  return (
-    <span className="lp-hpx-mosaic" role="img" aria-label={`${day.done} habitudes validées sur ${day.total}`}>
-      {themes.map((t) => (
-        <span key={t.id} className="lp-hpx-mosaic-row">
-          {t.habits.map((h) => <HabitPixel key={h.id} habit={h} st={day.habits[h.id]} size={size} future={date > todayIso} />)}
-        </span>
-      ))}
+// Motif d'un jour en « carré journalier » (#353) : rangées complétées de
+// cases grises vides, puis rangées vides, jusqu'au carré parfait.
+function HabitPixelMosaic({ themes, day, date, todayIso, size = 8, gap = 2 }) {
+  const n = habitPixelSquareSize(themes);
+  const filler = (key) => <span key={key} className="lp-hpx-px is-filler" style={{ width: size, height: size }} aria-hidden="true" />;
+  const rows = themes.map((t) => (
+    <span key={t.id} className="lp-hpx-mosaic-row" style={{ gap }}>
+      {t.habits.map((h) => <HabitPixel key={h.id} habit={h} st={day.habits[h.id]} size={size} future={date > todayIso} />)}
+      {Array.from({ length: n - t.habits.length }, (_, i) => filler("f" + i))}
     </span>
+  ));
+  for (let r = themes.length; r < n; r++) {
+    rows.push(<span key={"r" + r} className="lp-hpx-mosaic-row" style={{ gap }}>{Array.from({ length: n }, (_, i) => filler("f" + i))}</span>);
+  }
+  return (
+    <span className="lp-hpx-mosaic" style={{ gap }} role="img" aria-label={`${day.done} habitudes validées sur ${day.total}`}>{rows}</span>
   );
 }
 
@@ -13165,7 +13178,7 @@ function HabitPixelSide({ themes, date, day, todayIso, onSelect, collapsed }) {
   return (
     <section className="lp-hpx-side" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
       <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
-        <span className="lp-hpx-side-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxLongDate(date)}</span></span>
+        <span className="lp-hpx-side-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxSubDate(date, todayIso)}</span></span>
         <HabitPixelMosaic themes={themes} day={day} date={date} todayIso={todayIso} size={8} />
         <span className="lp-hpx-count"><b>{day.done}</b> / {day.total}</span>
       </button>
@@ -13188,11 +13201,76 @@ function HabitPixelSide({ themes, date, day, todayIso, onSelect, collapsed }) {
   );
 }
 
+const HPX_VIEWS = [["day", "Jour"], ["week", "Semaine"], ["month", "Mois"]];
+function hpxAddMonths(date, n) {
+  const d = new Date(date + "T00:00:00");
+  return iso(new Date(d.getFullYear(), d.getMonth() + n, 1));
+}
+
+/* Vue « Semaine » (#353) : les sept carrés journaliers côte à côte, en
+   grand ; un clic ouvre le jour en vue Jour. */
+function HabitPixelWeekView({ themes, week, stateOf, todayIso, onOpenDay }) {
+  const n = habitPixelSquareSize(themes);
+  const size = Math.max(8, Math.min(22, Math.floor(150 / n) - 2));
+  return (
+    <div className="lp-hpx-weekview">
+      {week.map((d) => {
+        const k = stateOf(d);
+        const pct = k.total ? Math.round((k.done / k.total) * 100) : 0;
+        return (
+          <button key={d} type="button" className={"lp-hpx-weekview-day" + (d === todayIso ? " is-today" : "") + (d > todayIso ? " is-future" : "")} onClick={() => onOpenDay(d)} aria-label={`${hpxLongDate(d)} : ${k.done} sur ${k.total} — ouvrir le jour`}>
+            <span className="lp-hpx-weekview-head">
+              <b>{new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long" })}</b>
+              <span>{new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+            </span>
+            <HabitPixelMosaic themes={themes} day={k} date={d} todayIso={todayIso} size={size} gap={3} />
+            <span className="lp-hpx-count"><b>{k.done}</b> / {k.total}</span>
+            <span className="lp-hpx-weekview-bar" aria-hidden="true"><span style={{ width: pct + "%" }} /></span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Vue « Mois » (#353) : calendrier du mois, un carré journalier par jour
+   (semaines du lundi au dimanche ; jours hors du mois estompés). */
+function HabitPixelMonthView({ themes, anchor, stateOf, todayIso, onOpenDay }) {
+  const n = habitPixelSquareSize(themes);
+  const size = Math.max(3, Math.min(8, Math.floor(64 / n) - 1));
+  const first = anchor.slice(0, 7) + "-01";
+  const start = hpxWeekStart(first);
+  const nextMonth = hpxAddMonths(first, 1);
+  const days = [];
+  for (let d = start; d < nextMonth || days.length % 7; d = addDays(d, 1)) days.push(d);
+  const month = first.slice(0, 7);
+  return (
+    <div className="lp-hpx-monthview">
+      {["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."].map((l) => <span key={l} className="lp-hpx-monthview-dow">{l}</span>)}
+      {days.map((d) => {
+        const k = stateOf(d);
+        const out = d.slice(0, 7) !== month;
+        return (
+          <button key={d} type="button" className={"lp-hpx-monthview-day" + (out ? " is-out" : "") + (d === todayIso ? " is-today" : "")} onClick={() => onOpenDay(d)} aria-label={`${hpxLongDate(d)} : ${k.done} sur ${k.total} — ouvrir le jour`}>
+            <span className="lp-hpx-monthview-num">{Number(d.slice(8, 10))}</span>
+            <HabitPixelMosaic themes={themes} day={k} date={d} todayIso={todayIso} size={size} gap={1} />
+            <span className="lp-hpx-muted">{k.done} / {k.total}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function WidgetHabitPixel({ widget, ctx, habitLog, setHabitLog, habitSkips, setHabitSkips, externalToolbarSlot, onOpenHabitThemes, onUpdateWidget }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes).filter((t) => t.habits.length > 0), [ctx.habitThemes]);
   const todayIso = iso(new Date());
   const [date, setDate] = useState(todayIso);
   const [hover, setHover] = useState(null);
+  // Vue Jour / Semaine / Mois (#353), mémorisée sur le widget.
+  const [view, setViewState] = useState(() => (HPX_VIEWS.some(([k]) => k === (widget && widget.habitPixelView)) ? widget.habitPixelView : "day"));
+  const setView = (v) => { setViewState(v); if (onUpdateWidget) onUpdateWidget({ habitPixelView: v }); };
+  const openDay = (d) => { setDate(d); setView("day"); };
   // Thèmes repliés (retour de test, #353) : mémorisés sur le widget
   // (widget.habitPixelCollapsed, identifiants de thèmes). Replié, un thème
   // garde son en-tête, son compteur et sa rangée de pixels (toujours
@@ -13259,16 +13337,34 @@ function WidgetHabitPixel({ widget, ctx, habitLog, setHabitLog, habitSkips, setH
 
   const toolbar = (
     <ViewToolbarPortal slot={externalToolbarSlot}>
-      <span className="lp-hpx-nav" role="group" aria-label="Jour affiché">
-        <button type="button" className="lp-icon-btn" aria-label="Jour précédent" onClick={() => setDate(prev)}><ChevronLeft size={14} /></button>
-        <button type="button" className="lp-hpx-nav-side" onClick={() => setDate(prev)}>{hpxDayLabel(prev, todayIso)}</button>
-        <label className="lp-hpx-nav-current">
-          {hpxDayLabel(date, todayIso)} · {hpxLongDate(date)}
-          <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Choisir un jour" />
-        </label>
-        <button type="button" className="lp-hpx-nav-side" onClick={() => setDate(next)}>{hpxDayLabel(next, todayIso)}</button>
-        <button type="button" className="lp-icon-btn" aria-label="Jour suivant" onClick={() => setDate(next)}><ChevronRight size={14} /></button>
+      <span className="lp-density-row lp-hpx-views" role="group" aria-label="Vue">
+        {HPX_VIEWS.map(([k, label]) => (
+          <button key={k} type="button" className={"lp-density-btn" + (view === k ? " active" : "")} aria-pressed={view === k} onClick={() => setView(k)}>{label}</button>
+        ))}
       </span>
+      {view === "day" ? (
+        <span className="lp-hpx-nav" role="group" aria-label="Jour affiché">
+          <button type="button" className="lp-icon-btn" aria-label="Jour précédent" onClick={() => setDate(prev)}><ChevronLeft size={14} /></button>
+          <button type="button" className="lp-hpx-nav-side" onClick={() => setDate(prev)}>{hpxDayLabel(prev, todayIso)}</button>
+          <label className="lp-hpx-nav-current">
+            {hpxDayLabel(date, todayIso)} · {hpxSubDate(date, todayIso)}
+            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Choisir un jour" />
+          </label>
+          <button type="button" className="lp-hpx-nav-side" onClick={() => setDate(next)}>{hpxDayLabel(next, todayIso)}</button>
+          <button type="button" className="lp-icon-btn" aria-label="Jour suivant" onClick={() => setDate(next)}><ChevronRight size={14} /></button>
+        </span>
+      ) : (
+        <span className="lp-hpx-nav" role="group" aria-label={view === "week" ? "Semaine affichée" : "Mois affiché"}>
+          <button type="button" className="lp-icon-btn" aria-label={view === "week" ? "Semaine précédente" : "Mois précédent"} onClick={() => setDate(view === "week" ? addDays(date, -7) : hpxAddMonths(date, -1))}><ChevronLeft size={14} /></button>
+          <label className="lp-hpx-nav-current">
+            {view === "week"
+              ? "Semaine du " + new Date(week[0] + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long" })
+              : (() => { const t = new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); })()}
+            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Choisir une date" />
+          </label>
+          <button type="button" className="lp-icon-btn" aria-label={view === "week" ? "Semaine suivante" : "Mois suivant"} onClick={() => setDate(view === "week" ? addDays(date, 7) : hpxAddMonths(date, 1))}><ChevronRight size={14} /></button>
+        </span>
+      )}
       <button type="button" className="lp-tool-btn" disabled={date === todayIso} onClick={() => setDate(todayIso)}>Aujourd'hui</button>
       {/* Accès rapide, comme Quick Habit : Réglages → Thèmes d'habitudes
           (créer un thème, ajouter / renommer une habitude). Libellé explicite :
@@ -13278,7 +13374,7 @@ function WidgetHabitPixel({ widget, ctx, habitLog, setHabitLog, habitSkips, setH
           <Settings size={13} /> Thèmes & habitudes
         </button>
       )}
-      {themes.length > 1 && (
+      {view === "day" && themes.length > 1 && (
         <button type="button" className="lp-tool-btn" onClick={() => saveCollapsed(allCollapsed ? [] : themes.map((t) => t.id))} aria-label={allCollapsed ? "Déplier tous les thèmes" : "Replier tous les thèmes"}>
           {allCollapsed ? <ChevronsDown size={13} /> : <ChevronsUp size={13} />} {allCollapsed ? "Tout déplier" : "Tout replier"}
         </button>
@@ -13298,6 +13394,17 @@ function WidgetHabitPixel({ widget, ctx, habitLog, setHabitLog, habitSkips, setH
     );
   }
 
+  if (view === "week" || view === "month") {
+    return (
+      <div className="lp-hpx">
+        {toolbar}
+        {view === "week"
+          ? <HabitPixelWeekView themes={themes} week={week} stateOf={stateOf} todayIso={todayIso} onOpenDay={openDay} />
+          : <HabitPixelMonthView themes={themes} anchor={date} stateOf={stateOf} todayIso={todayIso} onOpenDay={openDay} />}
+      </div>
+    );
+  }
+
   return (
     <div className="lp-hpx" onKeyDown={onKeyDown}>
       {toolbar}
@@ -13305,7 +13412,7 @@ function WidgetHabitPixel({ widget, ctx, habitLog, setHabitLog, habitSkips, setH
         <HabitPixelSide themes={themes} date={prev} day={stateOf(prev)} todayIso={todayIso} onSelect={setDate} collapsed={collapsed} />
         <section className="lp-hpx-main" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
           <div className="lp-hpx-main-head">
-            <div className="lp-hpx-main-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxLongDate(date)}</span></div>
+            <div className="lp-hpx-main-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxSubDate(date, todayIso)}</span></div>
             <div className="lp-hpx-summary">
               <HabitPixelMosaic themes={themes} day={day} date={date} todayIso={todayIso} size={9} />
               <span className="lp-hpx-summary-text"><b>Le pixel du jour</b><span>1 habitude = 1 pixel · non applicables exclues</span></span>

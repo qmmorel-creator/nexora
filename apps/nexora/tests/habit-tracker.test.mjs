@@ -25,7 +25,7 @@ const H = vm.runInThisContext(
     habitLogHabitIdsForDate, habitLogValueForDate, toggleHabitLogEntry, setHabitLogValue, habitThemeUsage,
     habitCellColors, habitCellBackground, habitValueIntensity, habitIntensityColor,
     habitMonthDays, habitYearWeeks,
-    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitValueLabel, paintHabitLogEntries, habitDayStates, habitPixelWirePath,
+    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitValueLabel, paintHabitLogEntries, habitPixelSquareSize, habitDayStates, habitPixelWirePath,
   };\n})`
 )();
 
@@ -355,4 +355,11 @@ test("Glisser-peindre : pose ou efface une habitude sur plusieurs jours, mêmes 
   const radio = H.paintHabitLogEntries([{ habitId: "bureau", date: "2026-09-01" }, { habitId: "bureau", date: "2026-09-05" }], themes, "tele", ["2026-09-01"], true);
   assert.deepEqual(radio.map((e) => e.habitId + "@" + e.date).sort(), ["bureau@2026-09-05", "tele@2026-09-01"]);
   assert.deepEqual(H.paintHabitLogEntries([{ habitId: "a", date: "2026-09-01" }], themes, "inconnue", days, true).length, 1);
+});
+
+test("Carré journalier : côté = max(nombre de thèmes, plus longue rangée)", () => {
+  const t = (n) => ({ habits: Array.from({ length: n }, (_, i) => ({ id: "h" + i })) });
+  assert.equal(H.habitPixelSquareSize([t(4), t(4), t(6), t(3), t(4), t(3), t(5)]), 7, "7 thèmes, rangée max 6");
+  assert.equal(H.habitPixelSquareSize([t(2), t(9)]), 9);
+  assert.equal(H.habitPixelSquareSize([]), 1);
 });
