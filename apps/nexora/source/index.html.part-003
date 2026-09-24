@@ -2127,6 +2127,8 @@ function defaultLayoutForType(type) {
   if (type === "habitHeatmap") return { w: 9, h: 7 };
   if (type === "habitPixel") return { w: 12, h: 11 };
   if (type === "embedMetro" || type === "embedRadar") return { w: 8, h: 9 };
+  // Carte (complet) (#418) : assez grande pour explorer (~500 × 400 px au moins).
+  if (type === "embedCarte") return { w: 12, h: 12 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
@@ -2923,7 +2925,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask, onUpdateTaskFromCarte, setProjectFolders }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3864,6 +3866,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedRadar" && (
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
+                )}
+                {w.type === "embedCarte" && (
+                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCarte} onToggleDone={onMarkDone} setProjectFolders={setProjectFolders} />
                 )}
                 {w.type === "teamCatalog" && (
                   <WidgetTeamCatalog ctx={ctx} setTeams={setTeams} setTeamMembers={setTeamMembers} setTeamFolders={setTeamFolders} setTasks={setTasks} pushToast={pushToast} />
@@ -15699,6 +15704,7 @@ const WIDGET_TYPE_META = [
   { key: "habitPixel", label: "Pixel des habitudes", icon: LayoutDashboard, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
+  { key: "embedCarte", label: "Carte (complet)", icon: MapIcon, group: "Planning" },
   // Finance PRO (#267, lot #275) : widgets dans le moteur de dashboard
   // existant — aucun second système de tableau de bord créé.
   { key: "financeProSynthese", label: "Finance PRO — Synthèse", icon: Wallet, group: "Suivi" },
@@ -16159,7 +16165,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "embedCarte" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -18853,6 +18859,8 @@ function createCarteEngine(THREE, container, opts) {
     keys: {}, joy: { x: 0, y: 0 }, walkTo: null, quality: o.quality || "auto", effQuality: "high", detail: 2,
     time: 0, raf: 0, disposed: false, spin: [], walkPhase: 0, territory: null, placedKeeper: false,
     people: o.people !== false,
+    // Animations persistantes (#425 à #436), désactivables dans « Affichage ».
+    ambient: o.ambient !== false,
   };
 
   // ---------- Géométries unitaires (base à y = 0, hauteur 1) ----------
@@ -18984,6 +18992,10 @@ function createCarteEngine(THREE, container, opts) {
     border: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
     // Lave du thème Volcan (#408) : lumineuse, elle pulse doucement.
     lava: mat(new THREE.MeshBasicMaterial({ color: "#ffffff" })),
+    // Nuages de la météo par dossier (#426) : leur opacité suit le zoom.
+    sky: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.8, depthWrite: false, flatShading: true })),
+    skyRain: mat(new THREE.MeshBasicMaterial({ color: "#6f9fd6", transparent: true, opacity: 0.7, depthWrite: false })),
+    route: mat(new THREE.LineDashedMaterial({ color: "#8a5a35", dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.55 })),
   };
 
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
@@ -19191,6 +19203,7 @@ function createCarteEngine(THREE, container, opts) {
     const avatars = [];
     const dones = [];
     const borders = {};
+    const amb = [];
     const vis = S.visible;
     L.pois.forEach((p) => {
       const t = S.data.taskById[p.taskId];
@@ -19226,6 +19239,7 @@ function createCarteEngine(THREE, container, opts) {
         avatars.push({ name: t.assignee, color: cartePersonColor(t.assignee, t.assigneeColor), x: x + (a[0] * cr + a[2] * sr) * k, y: y + a[1] * k, z: z + (-a[0] * sr + a[2] * cr) * k, k });
       }
       if (t.state === "done") dones.push(x, y + Math.min(top, 7) + 1.05, z);
+      amb.push({ t, x, y, z, k, ry, top: y + Math.min(top, 7) });
       // Une case partagée prend la couleur de sa tâche la plus pressante.
       const rank = t.overdue ? 0 : CARTE_BORDER_RANK[t.state] != null ? CARTE_BORDER_RANK[t.state] : 5;
       if (!borders[p.key] || rank < borders[p.key].rank) borders[p.key] = { rank, color: t.statusColor };
@@ -19252,6 +19266,7 @@ function createCarteEngine(THREE, container, opts) {
       placeModel(batch, S.dimmed && S.dimmed.has(h.tr.projectId) ? carteDimParts(parts) : parts, w.x, h.base, w.z, 0, 0);
       h.tr.anchor = new THREE.Vector3(w.x, summit + 0.35, w.z);
       h.tr.world = new THREE.Vector3(w.x, h.base, w.z);
+      h.x = w.x; h.z = w.z;
     });
     S.spin = batch.flush(world, shadows);
     if (dones.length) {
@@ -19288,6 +19303,8 @@ function createCarteEngine(THREE, container, opts) {
     buildClocks(clocks);
     buildFires(fires);
     buildAvatars(avatars);
+    buildAmbient({ tasks: amb, hubs, summit, regions, avatars });
+    buildMilestoneRings(amb);
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
     drawSelection();
@@ -19373,7 +19390,18 @@ function createCarteEngine(THREE, container, opts) {
     const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.3, 12), new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.18, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.01; keeper.add(shadow);
     geos.push(shadow.geometry); mats.push(shadow.material);
-    keeper.userData = { body, l1, l2 };
+    // Barque (#428) : cachée à terre, elle porte l'arpenteur sur l'eau.
+    const boat = new THREE.Group();
+    const wood = m("#8a5a35"), woodDark = m("#5f3c22");
+    const part = (mt, x, y, z, sx, sy, sz) => { const me = new THREE.Mesh(G.box, mt); me.position.set(x, y, z); me.scale.set(sx, sy, sz); me.castShadow = true; boat.add(me); };
+    part(woodDark, 0, -0.06, 0, 0.5, 0.08, 1.05);
+    part(wood, -0.26, -0.04, 0, 0.06, 0.2, 1.0); part(wood, 0.26, -0.04, 0, 0.06, 0.2, 1.0);
+    part(wood, 0, -0.04, 0.5, 0.5, 0.2, 0.06); part(wood, 0, -0.04, -0.5, 0.5, 0.16, 0.06);
+    const bow = new THREE.Mesh(G.pyr, wood); bow.position.set(0, -0.06, 0.62); bow.rotation.set(Math.PI / 2, Math.PI / 4, 0); bow.scale.set(0.5, 0.26, 0.2); boat.add(bow);
+    const oar = new THREE.Mesh(G.box, woodDark); oar.position.set(0.34, 0.1, 0); oar.rotation.z = -0.9; oar.scale.set(0.04, 0.8, 0.06); boat.add(oar);
+    boat.visible = false;
+    keeper.add(boat);
+    keeper.userData = { body, l1, l2, boat, oar };
     scene.add(keeper);
   })();
 
@@ -19601,8 +19629,16 @@ function createCarteEngine(THREE, container, opts) {
       S.walkPhase += dt * 12;
     }
     const gy = groundAt(keeper.position.x, keeper.position.z);
-    if (gy != null) keeper.position.y += (gy - keeper.position.y) * Math.min(1, dt * 14);
-    const u = keeper.userData, moving = len > 0 && !reduced;
+    const u = keeper.userData;
+    // Sur l'eau (hors pont), l'arpenteur rame dans sa barque (#428).
+    const kh = carteFromWorld(keeper.position.x, keeper.position.z);
+    const kt = S.layout.tiles[carteKey(kh[0], kh[1])];
+    const afloat = !!(kt && (kt.kind === "sea" || kt.kind === "water") && !kt.bridge);
+    u.boat.visible = afloat;
+    const bob = afloat ? Math.sin(S.time * (reduced ? 1.2 : 2.6)) * 0.035 + 0.06 : 0;
+    if (afloat) { u.boat.rotation.z = Math.sin(S.time * (reduced ? 0.9 : 1.9)) * 0.06; u.oar.rotation.x = len > 0 && !reduced ? Math.sin(S.walkPhase * 0.5) * 0.5 : 0; }
+    if (gy != null) keeper.position.y += (gy + bob - keeper.position.y) * Math.min(1, dt * 14);
+    const moving = len > 0 && !reduced && !afloat;
     u.l1.position.z = moving ? Math.sin(S.walkPhase) * 0.06 : 0;
     u.l2.position.z = moving ? -Math.sin(S.walkPhase) * 0.06 : 0;
     u.body.position.y = 0.16 + (moving ? Math.abs(Math.sin(S.walkPhase)) * 0.03 : 0);
@@ -19876,9 +19912,326 @@ function createCarteEngine(THREE, container, opts) {
     });
   }
 
+  // ---------- Animations persistantes (#425 à #436) ----------
+  // Toutes lisent une donnée de Nexora et tournent en continu ; chacune est un
+  // maillage instancié plafonné. Animations réduites : mouvement ralenti.
+  const ambM = new THREE.Matrix4(), ambL = new THREE.Matrix4(), ambQ = new THREE.Quaternion(), ambE = new THREE.Euler(), ambP = new THREE.Vector3(), ambS = new THREE.Vector3();
+  // Pose une pièce dans le repère d'un objet (position, cap, échelle).
+  function putPart(mesh, i, base, lx, ly, lz, rx, ry2, rz, sx, sy, sz) {
+    ambQ.setFromEuler(ambE.set(rx || 0, ry2 || 0, rz || 0));
+    ambL.compose(ambP.set(lx, ly, lz), ambQ, ambS.set(sx, sy, sz));
+    mesh.setMatrixAt(i, ambM.multiplyMatrices(base, ambL));
+  }
+  const baseOf = (m, x, y, z, yaw, k) => m.compose(tmpP.set(x, y, z), tmpQ.setFromAxisAngle(UP, yaw || 0), tmpS.set(k, k, k));
+  const ambMesh = (geo, material, n, colors) => {
+    const m = new THREE.InstancedMesh(geo, material, Math.max(1, n));
+    m.count = n; m.frustumCulled = false;
+    if (colors) { for (let i = 0; i < n; i++) m.setColorAt(i, tmpC.set(colors(i))); if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+    world.add(m);
+    return m;
+  };
+  const WORKER_C = { vest: "#f08a24", skin: "#f1c9a5", helmet: "#ffd23f", wood: "#6b4a2e", iron: "#5d6470", crate: "#a8743f" };
+  function buildAmbient(src) {
+    S.amb = null;
+    S.daylightWindows = null;
+    if (!S.ambient || !S.data) return;
+    const A = { workers: [], pigeons: [], lanterns: [], mills: [], flags: [], stacks: [], convoys: [], weather: [], trail: null, windows: [] };
+    const low = S.effQuality === "low";
+    const taskList = src.tasks;
+    const byId = {};
+    taskList.forEach((e) => { byId[e.t.id] = e; });
+    // Ouvriers (#429) et pigeons (#430) : tâches en cours / en attente.
+    taskList.forEach((e) => {
+      const st = e.t.state;
+      if ((st === "doing" || st === "waiting") && A.workers.length < (low ? 120 : 300)) {
+        const c = Math.cos(e.ry), sn = Math.sin(e.ry), lx = 0.62, lz = 0.2;
+        A.workers.push({ x: e.x + (lx * c + lz * sn) * e.k, y: e.y, z: e.z + (-lx * sn + lz * c) * e.k, k: e.k, yaw: Math.atan2(-(lx * c + lz * sn), -(-lx * sn + lz * c)), waiting: st === "waiting", ph: carteRand("w" + e.t.id) * 6.283 });
+      }
+      if (st === "waiting" && A.pigeons.length < (low ? 60 : 150)) {
+        const ang = carteRand("pg" + e.t.id) * 6.283;
+        A.pigeons.push({ x: e.x, y: e.top + 0.6, z: e.z, dx: Math.cos(ang), dz: Math.sin(ang), speed: cartePigeonSpeed(e.t.idleDays), ph: carteRand("pp" + e.t.id) * 6.283, k: Math.max(0.8, e.k) });
+      }
+      const rate = carteLanternRate(e.t);
+      if (rate != null && A.lanterns.length < 400) {
+        const sz = carteTaskSize(e.t), c = Math.cos(e.ry), sn = Math.sin(e.ry), lx = -0.36 * sz, lz = 0.36 * sz;
+        A.lanterns.push({ x: e.x + (lx * c + lz * sn) * e.k, y: e.y + 0.52 * sz * e.k, z: e.z + (-lx * sn + lz * c) * e.k, k: e.k, rate, ph: carteRand("ln" + e.t.id) });
+      }
+      // Fenêtres allumées le soir (#436) : échéance aujourd'hui, tâche ouverte.
+      if (e.t.dueIn === 0 && e.t.state !== "done" && e.t.state !== "info" && e.t.state !== "todo") A.windows.push({ x: e.x, y: e.y + (e.top - e.y) * 0.5, z: e.z, k: e.k });
+    });
+    // Éoliennes (#432) et drapeaux (#433) : un par totem.
+    src.hubs.forEach((h) => {
+      if (h.x == null) return;
+      const st = S.stats[h.tr.projectId] || { pct: 0, velocity: 0 };
+      const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
+      A.mills.push({ x: h.x, y: src.summit + 0.05, z: h.z, speed: dim ? 0 : carteWindmillSpeed(st.velocity), ph: carteRand("ml" + h.tr.projectId) * 6.283 });
+      A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283 });
+    });
+    // Charge des responsables (#434) : pile de dossiers au-dessus du badge.
+    if (S.people) {
+      const heavy = carteOverloaded(S.data.tasks.filter((t) => S.poi[t.id]));
+      src.avatars.forEach((a) => { if (heavy.has(a.name) && A.stacks.length < 300) A.stacks.push({ x: a.x, y: a.y + 0.62, z: a.z, k: Math.max(0.7, a.k), ph: carteRand("st" + a.x + a.z) * 6.283 }); });
+    }
+    // Convois permanents (#425) : une charrette par dépendance affichée.
+    taskList.forEach((e) => {
+      (e.t.dependsOn || []).forEach((d) => {
+        const pr = byId[d];
+        if (!pr || A.convoys.length >= (low ? 80 : 200)) return;
+        const a = new THREE.Vector3(pr.x, pr.y + 0.15, pr.z), b = new THREE.Vector3(e.x, e.y + 0.15, e.z);
+        const mid = a.clone().lerp(b, 0.5); mid.y += 0.6 + a.distanceTo(b) * 0.12;
+        const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+        A.convoys.push({ curve, blocked: pr.t.state !== "done", ph: carteRand("cv" + d + e.t.id) });
+      });
+    });
+    if (A.convoys.length) {
+      const pts = [];
+      A.convoys.forEach((cv) => { const q = cv.curve.getPoints(24); for (let i = 1; i < q.length; i++) pts.push(q[i - 1], q[i]); });
+      const line = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), MAT.route);
+      line.computeLineDistances(); line.userData.ownGeo = true; line.frustumCulled = false;
+      world.add(line);
+      A.carts = ambMesh(G.box, MAT.l, A.convoys.length, (i) => (A.convoys[i].blocked ? "#b0493a" : "#8a5a35"));
+      const nb = A.convoys.filter((c) => c.blocked).length;
+      if (nb) {
+        const bars = ambMesh(G.box, MAT.g, nb, () => "#DC2626");
+        let bi = 0;
+        A.convoys.forEach((cv) => { if (!cv.blocked) return; const p = cv.curve.getPoint(0.86); bars.setMatrixAt(bi++, tmpM.compose(tmpP.copy(p), tmpQ.identity(), tmpS.set(0.5, 0.06, 0.06))); });
+        bars.instanceMatrix.needsUpdate = true;
+      }
+    }
+    // Météo par dossier (#426) : au-dessus de chaque région.
+    Object.keys(src.regions || {}).forEach((gid) => {
+      const g = src.regions[gid];
+      const tasks = S.data.tasks.filter((t) => S.poi[t.id] && g.projects.has(t.projectId));
+      const wth = carteWeather(tasks);
+      let cx = 0, cz = 0, rad = 0;
+      g.pts.forEach((pt) => { cx += pt[0]; cz += pt[1]; });
+      cx /= g.pts.length; cz /= g.pts.length;
+      g.pts.forEach((pt) => { rad = Math.max(rad, Math.hypot(pt[0] - cx, pt[1] - cz)); });
+      const n = wth.kind === "sun" ? 2 : wth.kind === "cloud" ? 4 : 6;
+      A.weather.push({ gid, cx, cz, rad: Math.max(3, rad * 0.55), y: src.summit + 5.5, kind: wth.kind, n, ph: carteRand("wx" + gid) * 6.283 });
+    });
+    const nClouds = A.weather.reduce((m, w) => m + w.n, 0);
+    if (nClouds) {
+      A.cloudMesh = ambMesh(G.ball, MAT.sky, nClouds * 3, (i) => { let j = Math.floor(i / 3); for (const w of A.weather) { if (j < w.n) return w.kind === "sun" ? "#ffffff" : w.kind === "cloud" ? "#c3c9d2" : "#6b7280"; j -= w.n; } return "#ffffff"; });
+      const suns = A.weather.filter((w) => w.kind === "sun").length;
+      if (suns) A.sunMesh = ambMesh(G.ball, MAT.g, suns, () => "#ffd35a");
+      const rainy = A.weather.filter((w) => w.kind === "rain");
+      if (rainy.length && !low) A.rainMesh = ambMesh(G.box, MAT.skyRain, rainy.length * 50);
+    }
+    // Fil d'Ariane (#435) : les prochaines échéances affichées, dans l'ordre.
+    const next = carteAriadne(S.data.tasks.filter((t) => S.poi[t.id]), 8);
+    // Deux échéances sur la même case ne font qu'un point du chemin.
+    const pts = [];
+    next.forEach((t) => { const q = S.poi[t.id], v = new THREE.Vector3(q.x, q.y + 0.45, q.z); if (!pts.length || pts[pts.length - 1].distanceTo(v) > 0.3) pts.push(v); });
+    if (pts.length >= 2) {
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const n = Math.min(90, 14 * (pts.length - 1));
+      A.trail = { curve, n, mesh: ambMesh(G.ball, MAT.g, n, () => "#ffe38a") };
+    }
+    if (A.workers.length) {
+      const n = A.workers.length;
+      A.wCyl = ambMesh(G.cyl, MAT.l, n * 2, (i) => (i % 2 ? WORKER_C.helmet : WORKER_C.vest));
+      A.wBall = ambMesh(G.ball, MAT.l, n, () => WORKER_C.skin);
+      A.wBox = ambMesh(G.box, MAT.l, n * 3, (i) => { const w = A.workers[Math.floor(i / 3)], j = i % 3; return w.waiting ? (j === 0 ? WORKER_C.crate : "#3a3a3a") : j === 0 ? WORKER_C.wood : WORKER_C.iron; });
+    }
+    if (A.pigeons.length) {
+      A.pBody = ambMesh(G.ball, MAT.l, A.pigeons.length, () => "#e8e8ee");
+      A.pWing = ambMesh(G.box, MAT.l, A.pigeons.length * 2, () => "#9aa3b2");
+    }
+    if (A.lanterns.length) A.lMesh = ambMesh(G.ball, MAT.g, A.lanterns.length, () => "#ffcf5a");
+    if (A.mills.length) {
+      A.mMast = ambMesh(G.cyl, MAT.l, A.mills.length, () => "#e8e2d6");
+      A.mBlade = ambMesh(G.box, MAT.l, A.mills.length * 3, () => "#fbf7ee");
+      A.mills.forEach((m, i) => A.mMast.setMatrixAt(i, tmpM.compose(tmpP.set(m.x, m.y, m.z), tmpQ.identity(), tmpS.set(0.1, 1.1, 0.1))));
+      A.mMast.instanceMatrix.needsUpdate = true;
+    }
+    if (A.flags.length) {
+      A.fMast = ambMesh(G.cyl, MAT.l, A.flags.length, () => "#5a4030");
+      A.fCloth = ambMesh(G.box, MAT.l, A.flags.length, (i) => A.flags[i].color);
+      A.flags.forEach((f, i) => A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, Math.max(0.5, f.top - f.base + 0.2), 0.06))));
+      A.fMast.instanceMatrix.needsUpdate = true;
+    }
+    if (A.stacks.length) A.sMesh = ambMesh(G.box, MAT.l, A.stacks.length * 3, (i) => ["#f4efe3", "#e8dcc0", "#fbf7ee"][i % 3]);
+    if (A.windows.length) {
+      A.winMesh = ambMesh(G.box, MAT.g, A.windows.length, () => "#ffd27a");
+      A.windows.forEach((wn, i) => A.winMesh.setMatrixAt(i, tmpM.compose(tmpP.set(wn.x, wn.y, wn.z), tmpQ.identity(), tmpS.set(0.62 * wn.k, 0.34 * wn.k, 0.62 * wn.k))));
+      A.winMesh.instanceMatrix.needsUpdate = true;
+      S.daylightWindows = A.winMesh;
+    }
+    S.amb = A;
+    placeAmbient(S.time);
+  }
+  function placeAmbient(t0) {
+    const A = S.amb;
+    if (!A) return;
+    const t = reduced ? t0 * 0.3 : t0;
+    // Ouvriers : marteau qui frappe (en cours), pied qui tapote (en attente).
+    if (A.wCyl) {
+      A.workers.forEach((w, i) => {
+        baseOf(tmpM, w.x, w.y, w.z, w.yaw, w.k);
+        if (w.waiting) {
+          putPart(A.wBox, i * 3, tmpM, 0, 0, 0, 0, 0, 0, 0.3, 0.22, 0.3);
+          putPart(A.wCyl, i * 2, tmpM, 0, 0.22, 0, 0, 0, 0, 0.22, 0.3, 0.2);
+          putPart(A.wBall, i, tmpM, 0, 0.52, 0, 0, 0, 0, 0.2, 0.2, 0.2);
+          putPart(A.wCyl, i * 2 + 1, tmpM, 0, 0.68, 0, 0, 0, 0, 0.22, 0.06, 0.22);
+          const tap = Math.max(0, Math.sin(t * 7 + w.ph)) * 0.06;
+          putPart(A.wBox, i * 3 + 1, tmpM, 0.06, 0.02 + tap, 0.2, 0, 0, 0, 0.08, 0.05, 0.16);
+          putPart(A.wBox, i * 3 + 2, tmpM, -0.06, 0.02, 0.2, 0, 0, 0, 0.08, 0.05, 0.16);
+        } else {
+          putPart(A.wCyl, i * 2, tmpM, 0, 0, 0, 0, 0, 0, 0.24, 0.42, 0.2);
+          putPart(A.wBall, i, tmpM, 0, 0.4, 0, 0, 0, 0, 0.2, 0.2, 0.2);
+          putPart(A.wCyl, i * 2 + 1, tmpM, 0, 0.56, 0, 0, 0, 0, 0.22, 0.06, 0.22);
+          const swing = -0.4 - 1.1 * Math.pow(0.5 + 0.5 * Math.sin(t * 5 + w.ph), 3);
+          const c = Math.cos(swing), sn = Math.sin(swing), L = 0.34;
+          putPart(A.wBox, i * 3, tmpM, 0.14, 0.34, 0, swing, 0, 0, 0.03, L, 0.03);
+          putPart(A.wBox, i * 3 + 1, tmpM, 0.14, 0.34 + L * c, L * sn, swing, 0, 0, 0.12, 0.07, 0.07);
+          putPart(A.wBox, i * 3 + 2, tmpM, 0, -1, 0, 0, 0, 0, 0.001, 0.001, 0.001);
+        }
+      });
+      [A.wCyl, A.wBall, A.wBox].forEach((m) => { m.instanceMatrix.needsUpdate = true; });
+    }
+    // Pigeons : allers-retours vers le large, plus lents quand l'attente dure.
+    if (A.pBody) {
+      A.pigeons.forEach((p, i) => {
+        const ph = t * 0.55 * p.speed + p.ph;
+        const u = 0.5 - 0.5 * Math.cos(ph), dir = Math.sin(ph) >= 0 ? 1 : -1;
+        const x = p.x + p.dx * u * 6, z = p.z + p.dz * u * 6, y = p.y + Math.sin(u * Math.PI) * 1.2;
+        const yaw = Math.atan2(p.dx * dir, p.dz * dir);
+        baseOf(tmpM, x, y, z, yaw, p.k);
+        putPart(A.pBody, i, tmpM, 0, 0, 0, 0, 0, 0, 0.18, 0.14, 0.3);
+        const flap = Math.sin(t * 14 * Math.max(0.4, p.speed) + p.ph) * 0.7;
+        putPart(A.pWing, i * 2, tmpM, 0.14, 0.08, 0, 0, 0, flap, 0.26, 0.02, 0.12);
+        putPart(A.pWing, i * 2 + 1, tmpM, -0.14, 0.08, 0, 0, 0, -flap, 0.26, 0.02, 0.12);
+      });
+      A.pBody.instanceMatrix.needsUpdate = true; A.pWing.instanceMatrix.needsUpdate = true;
+    }
+    // Lanternes : pulsation de plus en plus rapide à l'approche de l'échéance.
+    if (A.lMesh) {
+      A.lanterns.forEach((l, i) => {
+        const pulse = 0.5 + 0.5 * Math.sin((t * l.rate + l.ph) * 6.283);
+        const sz = (0.16 + 0.05 * pulse) * l.k;
+        A.lMesh.setMatrixAt(i, tmpM.compose(tmpP.set(l.x, l.y, l.z), tmpQ.identity(), tmpS.set(sz, sz * 1.2, sz)));
+        A.lMesh.setColorAt(i, tmpC.set("#7a4a10").lerp(tmpC2.set("#fff1a8"), 0.25 + 0.75 * pulse));
+      });
+      A.lMesh.instanceMatrix.needsUpdate = true; if (A.lMesh.instanceColor) A.lMesh.instanceColor.needsUpdate = true;
+    }
+    // Éoliennes : vitesse = rythme du projet sur 14 jours.
+    if (A.mBlade) {
+      A.mills.forEach((m, i) => {
+        const a = t * m.speed + m.ph;
+        for (let b = 0; b < 3; b++) {
+          const ang = a + (b * 2 * Math.PI) / 3;
+          baseOf(tmpM, m.x, m.y + 1.1, m.z + 0.08, 0, 1);
+          putPart(A.mBlade, i * 3 + b, tmpM, 0, 0, 0, 0, 0, -ang, 0.12, 0.84, 0.03);
+        }
+      });
+      A.mBlade.instanceMatrix.needsUpdate = true;
+    }
+    // Drapeaux : hissés au pourcentage d'avancement, flottant au vent.
+    if (A.fCloth) {
+      A.flags.forEach((f, i) => {
+        const y = f.base + 0.1 + f.pct * Math.max(0.2, f.top - f.base - 0.5);
+        const wave = Math.sin(t * 2.2 + f.ph) * 0.35;
+        baseOf(tmpM, f.x, y, f.z, wave, 1);
+        putPart(A.fCloth, i, tmpM, 0.34, 0, 0, 0, 0, 0, 0.64 * (0.9 + 0.1 * Math.cos(t * 3 + f.ph)), 0.38, 0.03);
+      });
+      A.fCloth.instanceMatrix.needsUpdate = true;
+    }
+    // Piles de dossiers des personnes surchargées : elles vacillent.
+    if (A.sMesh) {
+      A.stacks.forEach((s2, i) => {
+        const sway = Math.sin(t * 3 + s2.ph) * 0.12;
+        baseOf(tmpM, s2.x, s2.y, s2.z, 0, s2.k);
+        for (let j = 0; j < 3; j++) putPart(A.sMesh, i * 3 + j, tmpM, Math.sin(sway) * j * 0.08, j * 0.07, 0, 0, j * 0.3, sway * (j + 1) * 0.6, 0.34, 0.06, 0.26);
+      });
+      A.sMesh.instanceMatrix.needsUpdate = true;
+    }
+    // Convois : la charrette avance ; bloquée, elle attend devant la barrière.
+    if (A.carts) {
+      A.convoys.forEach((cv, i) => {
+        const u = cv.blocked ? Math.min(0.8, (t * 0.18 + cv.ph) % 1) : (t * 0.18 + cv.ph) % 1;
+        const p = cv.curve.getPoint(u);
+        A.carts.setMatrixAt(i, tmpM.compose(p, tmpQ.identity(), tmpS.set(0.22, 0.16, 0.3)));
+      });
+      A.carts.instanceMatrix.needsUpdate = true;
+    }
+    // Météo : nuages qui dérivent, pluie, soleil ; discrets de près.
+    if (A.cloudMesh) {
+      MAT.sky.opacity = Math.max(0.12, Math.min(0.5, (S.dist - 12) / 45));
+      MAT.skyRain.opacity = MAT.sky.opacity * 0.8;
+      let ci = 0, si = 0, ri = 0;
+      A.weather.forEach((w) => {
+        for (let j = 0; j < w.n; j++) {
+          const a = w.ph + (j / w.n) * 6.283 + t * 0.04;
+          const cx = w.cx + Math.cos(a) * w.rad * (0.35 + 0.65 * ((j % 2) ? 0.6 : 1)), cz = w.cz + Math.sin(a) * w.rad * 0.7;
+          const f = w.kind === "rain" ? 1.5 : 1.2;
+          for (let b = 0; b < 3; b++) A.cloudMesh.setMatrixAt(ci++, tmpM.compose(tmpP.set(cx + (b - 1) * 0.9 * f, w.y + (b === 1 ? 0.35 : 0), cz), tmpQ.identity(), tmpS.set(1.4 * f, 0.8 * f, 1.1 * f)));
+          if (w.kind === "rain" && A.rainMesh) for (let d = 0; d < 8 && ri < A.rainMesh.count; d++) {
+            const fall = 5, yv = w.y - ((t * 4 + carteRand("wr" + j + d) * fall) % fall);
+            A.rainMesh.setMatrixAt(ri++, tmpM.compose(tmpP.set(cx + (carteRand("wx" + d) - 0.5) * 3, yv, cz + (carteRand("wz" + d) - 0.5) * 2), tmpQ.identity(), tmpS.set(0.05, 0.45, 0.05)));
+          }
+        }
+        if (w.kind === "sun" && A.sunMesh) A.sunMesh.setMatrixAt(si++, tmpM.compose(tmpP.set(w.cx + w.rad * 0.6, w.y + 1.6, w.cz - w.rad * 0.4), tmpQ.identity(), tmpS.setScalar(1.3 + 0.08 * Math.sin(t * 1.5))));
+      });
+      A.cloudMesh.instanceMatrix.needsUpdate = true;
+      if (A.sunMesh) A.sunMesh.instanceMatrix.needsUpdate = true;
+      if (A.rainMesh) A.rainMesh.instanceMatrix.needsUpdate = true;
+    }
+    // Fil d'Ariane : des points lumineux défilent d'échéance en échéance.
+    if (A.trail) {
+      const T = A.trail;
+      for (let i = 0; i < T.n; i++) {
+        const u = ((i / T.n + t * 0.035) % 1 + 1) % 1;
+        const p = T.curve.getPoint(u);
+        const pulse = 0.09 + 0.04 * Math.sin(t * 3 + i);
+        T.mesh.setMatrixAt(i, tmpM.compose(p, tmpQ.identity(), tmpS.setScalar(pulse)));
+      }
+      T.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+  // Jour et nuit à l'heure réelle (#436) ; les fenêtres des échéances du jour
+  // ne s'allument que le soir.
+  function applyDaylight(force) {
+    S.lightAt = S.time;
+    const d = S.ambient ? carteDaylight(new Date().getHours() + new Date().getMinutes() / 60) : carteDaylight(12);
+    if (!force && S.lightKey === d.sky + d.k) { if (S.daylightWindows) S.daylightWindows.visible = d.evening; return; }
+    S.lightKey = d.sky + d.k;
+    renderer.setClearColor(d.sky);
+    scene.fog.color.set(d.sky);
+    hemi.intensity = d.hemi;
+    sun.intensity = d.sunI; sun.color.set(d.sun);
+    if (S.daylightWindows) S.daylightWindows.visible = d.evening;
+  }
+  const tmpC2 = new THREE.Color();
+
+  // Anneau de progression des jalons (#437) : couronne de segments posée au
+  // sol autour de la borne ; la part allumée suit l'avancement, l'anneau est
+  // complet et vert quand le jalon est terminé. Toujours affiché.
+  const MS_SEGS = 28;
+  function buildMilestoneRings(list) {
+    const ms = list.filter((e) => e.t.kind === "milestone" && e.t.state !== "info").slice(0, 400);
+    if (!ms.length) return;
+    const ring = new THREE.InstancedMesh(G.box, MAT.g, ms.length * MS_SEGS);
+    ring.frustumCulled = false;
+    ms.forEach((e, i) => {
+      const done = e.t.state === "done";
+      const lit = done ? MS_SEGS : Math.round((carteMilestoneProgress(e.t) / 100) * MS_SEGS);
+      const R = Math.min(0.86, 0.62 * e.k), w = (2 * Math.PI * R) / MS_SEGS * 0.72;
+      for (let j = 0; j < MS_SEGS; j++) {
+        // Départ à midi, sens horaire vu du dessus.
+        const a = (j + 0.5) / MS_SEGS * Math.PI * 2;
+        tmpQ.setFromAxisAngle(UP, -a);
+        ring.setMatrixAt(i * MS_SEGS + j, tmpM.compose(tmpP.set(e.x + Math.sin(a) * R, e.y + 0.07, e.z - Math.cos(a) * R), tmpQ, tmpS.set(w, 0.035, 0.16 * Math.min(1, e.k))));
+        ring.setColorAt(i * MS_SEGS + j, tmpC.set(j < lit ? (done ? "#1FA971" : "#ffb020") : "#3b3f46"));
+      }
+    });
+    ring.instanceMatrix.needsUpdate = true; if (ring.instanceColor) ring.instanceColor.needsUpdate = true;
+    world.add(ring);
+  }
+
   function animate() {
     const t = S.time;
-    placeStorms(t); placeFires(t); placeClocks(t);
+    placeStorms(t); placeFires(t); placeClocks(t); placeAmbient(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
     MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow);
@@ -20086,6 +20439,24 @@ function createCarteEngine(THREE, container, opts) {
     S.people = !!on;
     if (S.layout) build();
   }
+  // Animations persistantes (#425 à #436), désactivables dans « Affichage ».
+  function setAmbient(on) {
+    if (S.ambient === !!on) return;
+    S.ambient = !!on;
+    if (S.layout) build();
+    applyDaylight(true);
+  }
+  // Tournée du jour (#427) : la caméra vole jusqu'à la tâche, sans déplacer
+  // l'arpenteur, et la sélectionne.
+  function tourTo(id) {
+    const p = S.poi[id];
+    if (!p) return false;
+    S.follow = false;
+    S.focusGoal = new THREE.Vector3(p.x, p.y + 0.4, p.z);
+    S.dist = Math.min(Math.max(S.dist, 12), 16);
+    select(id);
+    return true;
+  }
   function resize() {
     const w = container.clientWidth || 300, h = container.clientHeight || 300;
     renderer.setSize(w, h);
@@ -20095,18 +20466,24 @@ function createCarteEngine(THREE, container, opts) {
   const ro = new ResizeObserver(resize);
   ro.observe(container);
   resize();
+  // Hors de l'écran (widget d'un tableau de bord qu'on a fait défiler, #418),
+  // la carte ne se redessine plus : aucune animation ne tourne pour rien.
+  S.onScreen = true;
+  const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries) => { entries.forEach((e) => { S.onScreen = e.isIntersecting; }); }) : null;
+  if (io) io.observe(container);
 
   let last = performance.now(), fpsT = 0, fpsN = 0;
   function frame(now) {
     if (S.disposed) return;
     S.raf = requestAnimationFrame(frame);
-    if (document.hidden) { last = now; return; }
+    if (document.hidden || !S.onScreen) { last = now; return; }
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     S.time += dt;
     S.lastDt = dt;
     if (!S.layout) return;
     step(dt);
     updateCamera(dt);
+    if (!S.lightAt || S.time - S.lightAt > 30) applyDaylight();
     animate();
     renderer.render(scene, camera);
     updateLabels();
@@ -20116,7 +20493,7 @@ function createCarteEngine(THREE, container, opts) {
   S.raf = requestAnimationFrame(frame);
 
   return {
-    setData, select, focusProject, walkToTask, recenter, overview, setQuality, setPeople, zoomBy,
+    setData, select, focusProject, walkToTask, recenter, overview, setQuality, setPeople, setAmbient, tourTo, zoomBy,
     rotate: (d) => { S.yaw += d; },
     setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
@@ -20127,6 +20504,7 @@ function createCarteEngine(THREE, container, opts) {
       S.disposed = true;
       cancelAnimationFrame(S.raf);
       ro.disconnect();
+      if (io) io.disconnect();
       keyTarget.removeEventListener("keydown", kd);
       keyTarget.removeEventListener("keyup", ku);
       keyTarget.removeEventListener("blur", blur, true);
@@ -20152,6 +20530,31 @@ function carteWebglAvailable() {
   } catch (e) { return false; }
 }
 // === NEXORA:CARTE-ENGINE:END ===
+
+// Widget « Carte (complet) » (#418) : la vue Carte intégrale dans un tableau
+// de bord. Ses réglages (Affichage, filtres, thèmes, panneau) vivent dans la
+// configuration DU widget : ils survivent au rechargement et suivent le widget
+// quand on le duplique. En dessous de ~500 × 400 px, un bandeau invite à
+// agrandir le widget.
+const CARTE_WIDGET_MIN_W = 500;
+const CARTE_WIDGET_MIN_H = 400;
+function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone, setProjectFolders }) {
+  // Le panneau du territoire est replié par défaut : la place est comptée.
+  const stored = widget && widget.cartePrefs && typeof widget.cartePrefs === "object" ? widget.cartePrefs : { panel: false };
+  const [local, setLocal] = useState(stored);
+  useEffect(() => { setLocal(stored); }, [JSON.stringify(stored)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setPrefs = (patch) => {
+    const next = { ...local, ...(typeof patch === "function" ? patch(local) : patch) };
+    setLocal(next);
+    if (onUpdateWidget) onUpdateWidget({ cartePrefs: next });
+  };
+  return (
+    <div className="lp-widget-embed lp-widget-embed-carte">
+      <CarteView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs}
+        setProjectFolders={setProjectFolders} onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} embedded />
+    </div>
+  );
+}
 
 // Vue Carte (#361) : exploration 3D des projets et des tâches. Lecture seule :
 // la seule action qui peut mener à une modification est « Ouvrir la fiche »,
@@ -20489,7 +20892,7 @@ function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
   );
 }
 
-function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot }) {
+function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot, embedded }) {
   const cfg = normalizeCarteViewPrefs(prefs);
   const stageRef = useRef(null);
   const glRef = useRef(null);
@@ -20578,9 +20981,16 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return out;
   }, [norm, layout]);
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  // Intégrée dans un widget (#418), la carte suit le cadre du widget (CSS).
+  const [small, setSmall] = useState(false);
   useLayoutEffect(() => {
     const el = stageRef.current;
     if (!el) return undefined;
+    if (embedded) {
+      const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); setSmall(r.width < CARTE_WIDGET_MIN_W || r.height < CARTE_WIDGET_MIN_H); });
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
     const fit = () => {
       const top = el.getBoundingClientRect().top;
       // Sur mobile, la barre de navigation basse recouvre le bas de l'écran.
@@ -20605,7 +21015,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           keyTarget: stageRef.current,
           quality: cfg.quality,
           people: cfg.people,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          ambient: cfg.ambient,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-tour, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelected(id),
           onNear: (id) => {
             setNear(id);
@@ -20658,6 +21069,23 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return () => ro.disconnect();
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
+  // Tournée du jour (#427) : la caméra vole de tâche en tâche, urgentes et en
+  // retard d'abord, puis les échéances de la semaine (tâches affichées).
+  const [tour, setTour] = useState(null);
+  const startTour = () => {
+    const ids = carteTourList(norm.tasks.filter((t) => visible.has(t.id))).map((t) => t.id);
+    if (!ids.length) { setTour({ ids: [], i: 0 }); return; }
+    setTour({ ids, i: 0 });
+    if (engineRef.current) engineRef.current.tourTo(ids[0]);
+  };
+  const tourStep = (d) => setTour((tr) => {
+    if (!tr || !tr.ids.length) return tr;
+    const i = (tr.i + d + tr.ids.length) % tr.ids.length;
+    if (engineRef.current) engineRef.current.tourTo(tr.ids[i]);
+    return { ...tr, i };
+  });
+  const stopTour = () => { setTour(null); if (engineRef.current) { engineRef.current.select(null); engineRef.current.recenter(); } };
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
   const go = (id) => { const e = engineRef.current; if (!e) return; e.walkToTask(id); e.select(id); };
@@ -20720,7 +21148,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const terrStats = territory && stats[territory];
 
   return (
-    <section className="lp-carte-view" aria-label="Carte">
+    <section className={"lp-carte-view" + (embedded ? " is-embedded" : "")} aria-label="Carte">
       <ViewToolbarPortal slot={toolbarSlot} />
       <div className="lp-carte-toolbar">
           <div className="lp-carte-search" ref={searchRef}>
@@ -20739,6 +21167,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           </select>
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
+            <label className="lp-checkbox-line" title="Convois, météo, ouvriers, pigeons, lanternes, éoliennes, drapeaux, fil d'Ariane, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
@@ -20749,12 +21178,14 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
           </DropdownButton>
           <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
-          <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
+          <button type="button" className="lp-btn" onClick={startTour} disabled={status !== "ready"} title="La caméra passe de tâche en tâche : urgentes et en retard, puis échéances de la semaine"><Footprints size={13} /> Tournée du jour</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => { setTour(null); if (engineRef.current) engineRef.current.recenter(); }} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
       </div>
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
         data-carte-status={status} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
+        {embedded && small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour explorer la carte confortablement.</div>}
         {empty ? (
           <div className="lp-empty lp-carte-empty">
             <strong>Aucun projet à cartographier.</strong>
@@ -20820,6 +21251,20 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     </details>
                   )}
                 </div>
+                {tour && (
+                  <div className="lp-carte-tour" role="group" aria-label="Tournée du jour">
+                    <Footprints size={14} />
+                    {tour.ids.length ? (
+                      <>
+                        <span className="lp-carte-tour-count">{tour.i + 1} / {tour.ids.length}</span>
+                        <span className="lp-carte-tour-title">{(norm.taskById[tour.ids[tour.i]] || {}).title || ""}</span>
+                        <button type="button" className="lp-icon-btn" aria-label="Tâche précédente" onClick={() => tourStep(-1)}><ChevronLeft size={15} /></button>
+                        <button type="button" className="lp-icon-btn" aria-label="Tâche suivante" onClick={() => tourStep(1)}><ChevronRight size={15} /></button>
+                      </>
+                    ) : <span className="lp-carte-tour-title">Rien d'urgent, de retard ni d'échéance cette semaine.</span>}
+                    <button type="button" className="lp-icon-btn" aria-label="Arrêter la tournée" onClick={stopTour}><X size={15} /></button>
+                  </div>
+                )}
                 {nearTask && !selTask && (
                   <div className="lp-carte-near">
                     <span className="lp-carte-state" style={{ background: nearTask.statusColor }} />
@@ -20943,6 +21388,30 @@ function createCosmosEngine(THREE, container, opts) {
   const texBlue = radialTexture([[0, "rgba(120,170,255,.95)"], [0.35, "rgba(150,190,255,.45)"], [1, "rgba(120,170,255,0)"]], 128);
   const texWhite = radialTexture([[0, "rgba(255,255,255,.9)"], [0.35, "rgba(255,255,255,.35)"], [1, "rgba(255,255,255,0)"]], 128);
   const texDot = radialTexture([[0, "rgba(255,255,255,1)"], [0.4, "rgba(255,255,255,.9)"], [1, "rgba(255,255,255,0)"]], 32);
+  // Soleil-tableau de bord (#421) : disque clair au centre et orangé au bord,
+  // couronne de rayons fins, halo et flaque de lumière sur le disque.
+  const texSunDisc = radialTexture([[0, "#fffdf2"], [0.45, "#fff0a8"], [0.78, "#ffc94a"], [0.93, "#ffa531"], [0.985, "rgba(255,150,40,.9)"], [1, "rgba(255,150,40,0)"]], 256);
+  const texSunHalo = radialTexture([[0, "rgba(255,222,140,.85)"], [0.35, "rgba(255,215,130,.35)"], [1, "rgba(255,215,140,0)"]], 128);
+  const texSunPool = radialTexture([[0, "rgba(255,214,120,.75)"], [0.35, "rgba(255,220,150,.3)"], [1, "rgba(255,214,120,0)"]], 128);
+  const texCorona = (() => {
+    const c = document.createElement("canvas"); c.width = c.height = 512;
+    const g = c.getContext("2d");
+    if (g) {
+      let seed = carteHash("couronne");
+      const rnd = () => { seed = (Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) + 0x297a2d39) >>> 0; return seed / 4294967296; };
+      for (let i = 0; i < 90; i++) {
+        const a = (i / 90) * Math.PI * 2 + rnd() * 0.05, len = 256 * (0.55 + rnd() * 0.45);
+        const gr = g.createLinearGradient(256, 256, 256 + Math.cos(a) * len, 256 + Math.sin(a) * len);
+        gr.addColorStop(0, "rgba(255,214,110,0)"); gr.addColorStop(0.28, "rgba(255,205,90,.55)"); gr.addColorStop(1, "rgba(255,190,80,0)");
+        g.strokeStyle = gr; g.lineWidth = 1.2 + rnd() * 3;
+        g.beginPath(); g.moveTo(256 + Math.cos(a) * 56, 256 + Math.sin(a) * 56); g.lineTo(256 + Math.cos(a) * len, 256 + Math.sin(a) * len); g.stroke();
+      }
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return keep(t);
+  })();
+  // Tâches (#421, variante E) : aura orange des urgentes, fumée des retards.
+  const texAura = radialTexture([[0, "rgba(255,150,30,1)"], [0.35, "rgba(255,170,60,.45)"], [1, "rgba(255,150,30,0)"]], 128);
+  const texSmoke = radialTexture([[0, "rgba(120,120,130,.55)"], [0.35, "rgba(140,140,150,.3)"], [1, "rgba(120,120,130,0)"]], 64);
   const geoDisc = keep(new THREE.CircleGeometry(1, 96).rotateX(-Math.PI / 2));
   const geoSphereLow = keep(new THREE.IcosahedronGeometry(1, 2));
   const geoCore = keep(new THREE.SphereGeometry(1, 24, 16));
@@ -21101,6 +21570,49 @@ function createCosmosEngine(THREE, container, opts) {
   }
 
   // ---------- Galaxies (toujours visibles) ----------
+  // Soleil-tableau de bord (#421) : le soleil du dossier porte, dans un anneau,
+  // la répartition de ses tâches par état et, à l'extérieur, la part des retards.
+  // Matériaux partagés par tous les soleils : rien ne s'accumule quand
+  // l'univers est reconstruit après une modification.
+  const sunGeoPool = keep(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2));
+  const sunMatPool = mat(new THREE.MeshBasicMaterial({ map: texSunPool, transparent: true, depthWrite: false }));
+  const sunMatHalo = spriteMat(texSunHalo, 0.5), sunMatDisc = spriteMat(texSunDisc, 1);
+  const coronaMats = [spriteMat(texCorona, 0.85), spriteMat(texCorona, 0.55)];
+  coronaMats[0].rotation = 0.3; coronaMats[1].rotation = 1.1;
+  const arcMats = {};
+  const arcMat = (color) => arcMats[color] || (arcMats[color] = mat(new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.25 })));
+  const sunMatLate = matBasic("#dc2626", 1);
+  function buildSun(g) {
+    const sun = new THREE.Group();
+    sun.userData.sun = g.id;
+    const rc = Math.max(1, g.radius * 0.075);
+    const at = new THREE.Vector3(g.pos.x, rc * 1.1, g.pos.z);
+    const pool = new THREE.Mesh(sunGeoPool, sunMatPool);
+    pool.scale.set(rc * 11, 1, rc * 11);
+    pool.position.set(g.pos.x, 0.04, g.pos.z);
+    sun.add(pool);
+    const sp = (m, s) => { const x = new THREE.Sprite(m); x.scale.set(s, s, 1); x.position.copy(at); sun.add(x); return x; };
+    sp(sunMatHalo, rc * 7.5);
+    sp(coronaMats[0], rc * 4.4);
+    sp(coronaMats[1], rc * 3.6);
+    sp(sunMatDisc, rc * 1.8);
+    const seg = cosmosSunSegments(g.stats);
+    seg.segments.forEach((s) => {
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(rc * 2.1, rc * 0.14, 8, Math.max(8, Math.round(64 * s.len / Math.PI)), s.len), arcMat(s.color));
+      arc.userData.ownGeo = true;
+      arc.position.set(g.pos.x, rc * 0.45, g.pos.z);
+      arc.rotation.set(-Math.PI / 2, 0, s.start);
+      sun.add(arc);
+    });
+    if (seg.late > 0) {
+      const late = new THREE.Mesh(new THREE.TorusGeometry(rc * 2.55, rc * 0.06, 6, 64, Math.PI * 2 * seg.late), sunMatLate);
+      late.userData.ownGeo = true;
+      late.position.set(g.pos.x, rc * 0.45, g.pos.z);
+      late.rotation.set(-Math.PI / 2, 0, Math.PI / 2 - Math.PI * 2 * seg.late);
+      sun.add(late);
+    }
+    return sun;
+  }
   const pick = { galaxies: [], planets: [], satMesh: null, satIds: [] };
   function buildGalaxies() {
     clearGroup(galaxyGroup);
@@ -21142,17 +21654,7 @@ function createCosmosEngine(THREE, container, opts) {
         am.renderOrder = -1;
         galaxyGroup.add(am);
       });
-      const coreR = Math.max(0.9, g.radius * 0.07);
-      const core = new THREE.Mesh(geoCore, matCore);
-      core.scale.setScalar(coreR);
-      core.position.set(g.pos.x, coreR, g.pos.z);
-      core.userData.core = g.id;
-      galaxyGroup.add(core);
-      const glow = new THREE.Sprite(spriteMat(texWarm, 1));
-      glow.scale.set(coreR * 7, coreR * 7, 1);
-      glow.position.copy(core.position);
-      glow.userData.coreGlow = g.id;
-      galaxyGroup.add(glow);
+      galaxyGroup.add(buildSun(g));
     });
     if (orbitPts.length) {
       const lg = new THREE.BufferGeometry();
@@ -21254,6 +21756,7 @@ function createCosmosEngine(THREE, container, opts) {
   const satList = [];
   function satVisible(t) { return !S.visible || S.visible.has(t.id); }
   function buildSatellites() {
+    clearAlertFx();
     [satCubes, satWings, satAlerts].forEach((m) => { if (m) { fxGroup.remove(m); m.dispose(); } });
     satCubes = satWings = satAlerts = null;
     satList.length = 0;
@@ -21267,7 +21770,7 @@ function createCosmosEngine(THREE, container, opts) {
       const grouped = pid === S.planetId && cosmosDetailLevel("planet", tasks.length) === "grouped-done";
       tasks.forEach((t) => {
         if (grouped && t.state === "done" && !(S.selected && S.selected.id === t.id)) return;
-        satList.push({ t, p, s: M.satellites[t.id], focus: pid === S.planetId });
+        satList.push({ t, p, s: M.satellites[t.id], focus: pid === S.planetId, f: cosmosTaskFlags(t) });
       });
     });
     const n = Math.max(1, satList.length);
@@ -21276,6 +21779,8 @@ function createCosmosEngine(THREE, container, opts) {
     satAlerts = new THREE.InstancedMesh(geoAlert, matAlert, n);
     satList.forEach((it, i) => {
       tmpC.set(it.t.statusColor || "#94A3B8");
+      // Une tâche en retard se ternit (variante E, #421).
+      if (it.f.late) tmpC.lerp(greyC, 0.45);
       satCubes.setColorAt(i, tmpC);
       tmpC.set(it.t.state === "done" ? "#c9d2de" : "#4f7fd6");
       satWings.setColorAt(i, tmpC);
@@ -21284,16 +21789,101 @@ function createCosmosEngine(THREE, container, opts) {
     [satCubes, satWings, satAlerts].forEach((m) => { if (m.instanceColor) m.instanceColor.needsUpdate = true; fxGroup.add(m); });
     pick.satMesh = satCubes;
     pick.satIds = satList.map((it) => it.t.id);
+    buildAlertFx();
     placeSatellites();
+  }
+  // Signalétique des urgences et des retards (#421, variante E).
+  // Urgente : aura orange (toute la galaxie courante) ; sur la planète
+  // visitée, double anneau pulsant et étincelles. En retard : orbite basse en
+  // pointillés rouges et fumée, sur la planète visitée.
+  const greyC = new THREE.Color("#9aa0a8");
+  const alertFx = new THREE.Group();
+  scene.add(alertFx);
+  const auraMat = spriteMat(texAura, 0.8), smokeMat = spriteMat(texSmoke, 0.55);
+  const ringGeoA = keep(new THREE.TorusGeometry(1, 0.06, 8, 48)), ringGeoB = keep(new THREE.TorusGeometry(1.42, 0.05, 8, 48));
+  const ringMatA = mat(new THREE.MeshBasicMaterial({ color: "#f59f00" })), ringMatB = mat(new THREE.MeshBasicMaterial({ color: "#ff6b35" }));
+  const lowOrbitMat = mat(new THREE.LineDashedMaterial({ color: "#c92a2a", dashSize: 0.28, gapSize: 0.2, transparent: true, opacity: 0.85 }));
+  const sparkMat = mat(new THREE.PointsMaterial({ map: texDot, size: 0.16, color: "#ff8c1a", transparent: true, depthWrite: false }));
+  const fx = { auras: [], rings: [], smokes: [], sparks: null, sparkBase: [] };
+  function clearAlertFx() {
+    while (alertFx.children.length) { const c = alertFx.children.pop(); if (c.userData.ownGeo && c.geometry) c.geometry.dispose(); }
+    fx.auras = []; fx.rings = []; fx.smokes = []; fx.sparks = null; fx.sparkBase = [];
+  }
+  function buildAlertFx() {
+    clearAlertFx();
+    const rich = S.effQuality !== "low";
+    const lowRadii = {};
+    satList.forEach((it) => {
+      if (it.f.urgent) {
+        const a = new THREE.Sprite(auraMat); a.userData.id = it.t.id; alertFx.add(a); fx.auras.push(a);
+        if (it.focus && rich) {
+          const r1 = new THREE.Mesh(ringGeoA, ringMatA), r2 = new THREE.Mesh(ringGeoB, ringMatB);
+          r1.userData.id = r2.userData.id = it.t.id;
+          alertFx.add(r1, r2); fx.rings.push(r1, r2);
+          for (let k = 0; k < 14; k++) fx.sparkBase.push({ id: it.t.id, a: carteRand(it.t.id + "s" + k) * Math.PI * 2, d: 0.9 + carteRand(it.t.id + "d" + k) * 0.9, y: carteRand(it.t.id + "y" + k) - 0.3 });
+        }
+      }
+      if (it.f.late && it.focus) {
+        lowRadii[lowOrbit(it).toFixed(2)] = it.p;
+        if (rich) for (let k = 1; k <= 4; k++) { const sm = new THREE.Sprite(smokeMat); sm.userData = { id: it.t.id, k }; alertFx.add(sm); fx.smokes.push(sm); }
+      }
+    });
+    Object.keys(lowRadii).forEach((rs) => {
+      const p = lowRadii[rs], r = Number(rs), pts = [];
+      const tilt = 0.12 + carteRand("tilt:" + p.id) * 0.1;
+      for (let i = 0; i <= 128; i++) { const a = (i / 128) * Math.PI * 2; pts.push(new THREE.Vector3(p.world.x + Math.cos(a) * r, planetY(p) + Math.sin(a) * r * tilt, p.world.z + Math.sin(a) * r)); }
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lowOrbitMat);
+      line.computeLineDistances();
+      line.userData.ownGeo = true;
+      alertFx.add(line);
+    });
+    if (fx.sparkBase.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(fx.sparkBase.length * 3), 3));
+      fx.sparks = new THREE.Points(g, sparkMat);
+      fx.sparks.userData.ownGeo = true;
+      alertFx.add(fx.sparks);
+    }
+  }
+  // Orbite basse d'une tâche en retard : elle « décroche » vers la planète.
+  function lowOrbit(it) { return Math.max(it.p.radius * 1.45, it.s.orbit - Math.max(0.9, it.p.radius * 0.45)); }
+  function satSize(it) { const sel = S.selected && S.selected.kind === "task" && S.selected.id === it.t.id; return (it.focus ? 0.34 : 0.2) * Math.max(1, it.p.radius * 0.55) * (sel ? 1.3 : 1); }
+  function placeAlertFx() {
+    if (!alertFx.children.length) return;
+    const pulse = animOn() ? 1 + 0.12 * Math.sin(S.time * 4) : 1;
+    const byId = {};
+    satList.forEach((it) => { byId[it.t.id] = it; });
+    fx.auras.forEach((a) => { const it = byId[a.userData.id], p = satPos[a.userData.id]; if (!it || !p) return; a.position.copy(p); a.scale.setScalar(satSize(it) * 6 * pulse); });
+    fx.rings.forEach((r, i) => { const it = byId[r.userData.id], p = satPos[r.userData.id]; if (!it || !p) return; r.position.copy(p); r.scale.setScalar(satSize(it) * 1.25 * (i % 2 ? 2 - pulse : pulse)); r.lookAt(camera.position); });
+    fx.smokes.forEach((sm) => {
+      const it = byId[sm.userData.id]; if (!it) return;
+      const k = sm.userData.k, a = satAngle(it) - k * 0.11, r = lowOrbit(it), tilt = 0.12 + carteRand("tilt:" + it.p.id) * 0.1;
+      sm.position.set(it.p.world.x + Math.cos(a) * r, planetY(it.p) + Math.sin(a) * r * tilt + k * 0.07, it.p.world.z + Math.sin(a) * r);
+      sm.scale.setScalar(satSize(it) * (1.1 + k * 0.4));
+    });
+    if (fx.sparks) {
+      const arr = fx.sparks.geometry.attributes.position.array;
+      fx.sparkBase.forEach((b, i) => {
+        const it = byId[b.id], p = satPos[b.id]; if (!it || !p) return;
+        const s = satSize(it), a = b.a + (animOn() ? S.time * 0.8 : 0);
+        arr[i * 3] = p.x + Math.cos(a) * b.d * s * 2.2; arr[i * 3 + 1] = p.y + b.y * s * 2.4; arr[i * 3 + 2] = p.z + Math.sin(a) * b.d * s * 2.2;
+      });
+      fx.sparks.geometry.attributes.position.needsUpdate = true;
+      fx.sparks.geometry.computeBoundingSphere();
+    }
   }
   const satPos = {};
   const m4s = new THREE.Matrix4(), qs = new THREE.Quaternion(), es = new THREE.Euler(), vs = new THREE.Vector3(), ss = new THREE.Vector3();
+  function satAngle(it) {
+    const speed = animOn() ? 0.05 / Math.max(1, it.s.orbit * 0.35) : 0;
+    return it.s.angle + S.time * speed;
+  }
   function satWorld(it, out) {
-    const p = it.p, s = it.s;
-    const speed = animOn() ? 0.05 / Math.max(1, s.orbit * 0.35) : 0;
-    const a = s.angle + S.time * speed;
+    const p = it.p;
+    const a = satAngle(it);
+    const r = it.f.late && it.focus ? lowOrbit(it) : it.s.orbit;
     const tilt = 0.12 + carteRand("tilt:" + p.id) * 0.1;
-    out.set(p.world.x + Math.cos(a) * s.orbit, planetY(p) + Math.sin(a) * s.orbit * tilt, p.world.z + Math.sin(a) * s.orbit);
+    out.set(p.world.x + Math.cos(a) * r, planetY(p) + Math.sin(a) * r * tilt, p.world.z + Math.sin(a) * r);
     return a;
   }
   function placeSatellites() {
@@ -21314,13 +21904,9 @@ function createCosmosEngine(THREE, container, opts) {
       ss.set(size * (0.35 + 0.65 * prog / 100), size, size);
       m4s.compose(vs, qs, ss);
       satWings.setMatrixAt(i, m4s);
-      if (it.t.overdue && it.focus) {
-        ss.setScalar(size * 1.25);
-        m4s.compose(vs, qs.identity(), ss);
-        satAlerts.setMatrixAt(alerts++, m4s);
-      }
     });
     satAlerts.count = alerts;
+    placeAlertFx();
     satCubes.instanceMatrix.needsUpdate = true;
     satWings.instanceMatrix.needsUpdate = true;
     satAlerts.instanceMatrix.needsUpdate = true;
@@ -21366,8 +21952,7 @@ function createCosmosEngine(THREE, container, opts) {
     // Sur une planète, le soleil de sa galaxie peut passer devant elle : son
     // halo s'efface pour ne pas la voiler.
     galaxyGroup.children.forEach((c) => {
-      if (c.userData.coreGlow) c.material.opacity = S.level === "planet" && c.userData.coreGlow === S.galaxyId ? 0.12 : 1;
-      if (c.userData.core) c.visible = !(S.level === "planet" && c.userData.core === S.galaxyId);
+      if (c.userData.sun) c.visible = !(S.level === "planet" && c.userData.sun === S.galaxyId);
     });
     const M = S.model;
     if (!M) return;
@@ -21691,66 +22276,112 @@ function createCosmosEngine(THREE, container, opts) {
   };
   labels.addEventListener("click", onLabelClick);
   labels.addEventListener("dblclick", onLabelClick);
-  function labelCandidates() {
+  // Libellés progressifs (#421) : chaque étiquette reçoit un palier selon la
+  // taille à l'écran de l'objet qu'elle nomme (cosmosLabelTier) ; sélection,
+  // survol et planète visitée montrent toujours le détail complet.
+  const tanHalf = () => Math.tan((camera.fov * Math.PI) / 360);
+  function pxSize(x, y, z, radius, H) {
+    const d = Math.max(0.01, Math.hypot(camera.position.x - x, camera.position.y - y, camera.position.z - z));
+    return (radius / d) * (H / 2) / tanHalf();
+  }
+  const urgencyCache = new Map();
+  function urgencyOf(pid) {
+    let c = urgencyCache.get(pid);
+    if (!c) { const p = S.model.planets[pid]; c = cosmosUrgencyCounts(p.taskIds.map((id) => S.norm.taskById[id]).filter((t) => t && satVisible(t))); urgencyCache.set(pid, c); }
+    return c;
+  }
+  function labelCandidates(H) {
     const M = S.model, out = [], sel = S.selected, hov = S.hovered;
     const isSel = (k, id) => !!(sel && sel.kind === k && sel.id === id);
     const isHov = (k, id) => !!(hov && hov.kind === k && hov.id === id);
+    const prevTier = (key) => (pool[key] ? pool[key]._tier : null);
+    const sunLabel = (g, prio) => {
+      const rc = Math.max(1, g.radius * 0.075);
+      out.push({ key: "s:" + g.id, kind: "sun", id: g.id, tier: 1, pos: new THREE.Vector3(g.pos.x, rc * 3.2, g.pos.z), prio, sides: ["top", "bottom"], off: 2 });
+    };
     M.galaxies.forEach((g) => {
       if (S.level !== "universe" && g.id === S.galaxyId) return;
-      out.push({ key: "g:" + g.id, kind: "galaxy", id: g.id, pos: new THREE.Vector3(g.pos.x, g.radius * 0.35, g.pos.z - g.radius * 0.8), prio: isSel("galaxy", g.id) ? 5000 : 1000 + g.stats.total, sides: ["top", "bottom", "left", "right"], off: 6 });
+      const key = "g:" + g.id, px = pxSize(g.pos.x, 0, g.pos.z, g.radius, H);
+      const force = isSel("galaxy", g.id) || isHov("galaxy", g.id);
+      const tier = force ? 3 : cosmosLabelTier("galaxy", px, prevTier(key), false);
+      out.push({ key, kind: "galaxy", id: g.id, tier, pos: new THREE.Vector3(g.pos.x, g.radius * 0.35, g.pos.z - g.radius * 0.8), prio: force ? 5000 : 1000 + tier * 300 + Math.min(200, px), sides: ["top", "bottom", "left", "right"], off: 6 });
+      // Chiffre du soleil-tableau de bord, quand la galaxie est assez grande.
+      if (px >= 150 && S.level === "universe") sunLabel(g, 900);
     });
-    const planetIds = [];
-    if (S.level === "universe") {
-      const gsel = sel && sel.kind === "galaxy" ? M.galaxyById[sel.id] : null;
-      if (gsel && gsel.projectIds.length <= 16) planetIds.push(...gsel.projectIds);
-    } else if (S.galaxyId) planetIds.push(...M.galaxyById[S.galaxyId].projectIds);
-    planetIds.forEach((pid) => {
+    if (S.level === "galaxy" && S.galaxyId) sunLabel(M.galaxyById[S.galaxyId], 4200);
+    Object.keys(M.planets).forEach((pid) => {
       const p = M.planets[pid];
       const focus = pid === S.planetId;
-      out.push({ key: "p:" + pid, kind: "planet", id: pid, pos: new THREE.Vector3(p.world.x, planetY(p) - p.radius * (focus ? 1.15 : 1.2), p.world.z + (focus ? p.radius * 0.6 : 0)), prio: focus ? 4500 : isSel("planet", pid) ? 4000 : isHov("planet", pid) ? 3500 : 800 + p.taskIds.length, sides: ["bottom", "left", "right", "top"], off: 8 });
+      const key = "p:" + pid, y = planetY(p);
+      const px = pxSize(p.world.x, y, p.world.z, p.radius, H);
+      const u = urgencyOf(pid);
+      const force = focus || isSel("planet", pid) || isHov("planet", pid);
+      const tier = force ? 2 : cosmosLabelTier("planet", px, prevTier(key), u.urgent + u.late > 0);
+      if (!tier) return;
+      out.push({ key, kind: "planet", id: pid, tier, u, pos: new THREE.Vector3(p.world.x, y - p.radius * (focus ? 1.15 : 1.2), p.world.z + (focus ? p.radius * 0.6 : 0)), prio: focus ? 4500 : isSel("planet", pid) ? 4000 : isHov("planet", pid) ? 3500 : 600 + tier * 250 + Math.min(200, px * 4), sides: ["bottom", "left", "right", "top"], off: 8 });
     });
     if (S.level === "galaxy" && S.galaxyId) {
       M.galaxyById[S.galaxyId].amas.forEach((a) => {
         const g = M.galaxyById[S.galaxyId];
-        out.push({ key: "a:" + a.id, kind: "amas", id: g.id, name: a.name, pos: new THREE.Vector3(g.pos.x + a.center.x, 0, g.pos.z + a.center.z - a.radius), prio: 700, sides: ["top", "bottom"], off: 4 });
+        out.push({ key: "a:" + a.id, kind: "amas", id: g.id, tier: 1, name: a.name, pos: new THREE.Vector3(g.pos.x + a.center.x, 0, g.pos.z + a.center.z - a.radius), prio: 700, sides: ["top", "bottom"], off: 4 });
+      });
+    }
+    if (satList.length) {
+      const ordered = cosmosLabelOrder(satList.map((it) => it.t), sel && sel.kind === "task" ? sel.id : null);
+      const byId = {};
+      satList.forEach((it) => { byId[it.t.id] = it; });
+      const budget = { high: 40, medium: 28, low: 18 }[S.effQuality];
+      let shown = 0;
+      ordered.forEach((t, i) => {
+        const it = byId[t.id], sp = satPos[t.id];
+        if (!it || !sp) return;
+        const key = "t:" + t.id;
+        const hovered = isHov("task", t.id), selected = isSel("task", t.id), flagged = it.f.urgent || it.f.late;
+        const px = pxSize(sp.x, sp.y, sp.z, satSize(it), H);
+        const tier = selected || hovered ? 2 : cosmosLabelTier("task", px, prevTier(key), flagged);
+        if (!tier) return;
+        if (!selected && !hovered && !flagged && ++shown > budget) return;
+        const p = it.p;
+        const side = sp.z > p.world.z ? ["bottom", "right", "left", "top"] : ["top", "right", "left", "bottom"];
+        out.push({ key, kind: "task", id: t.id, tier, f: it.f, pos: sp, prio: selected ? 9000 : hovered ? 8000 : (flagged ? 5000 : 3000) - i, sides: selected ? ["top", "bottom", "right", "left"] : side, off: selected ? 22 : 12 });
       });
     }
     if (S.level === "planet" && S.planetId) {
       const p = M.planets[S.planetId];
-      const tasks = satList.filter((it) => it.focus).map((it) => it.t);
-      const ordered = cosmosLabelOrder(tasks, sel && sel.kind === "task" ? sel.id : null);
-      const budget = { high: 40, medium: 28, low: 18 }[S.effQuality];
-      ordered.forEach((t, i) => {
-        const hovered = isHov("task", t.id), selected = isSel("task", t.id);
-        if (i >= budget && !hovered && !selected) return;
-        const sp = satPos[t.id]; if (!sp) return;
-        const side = sp.z > p.world.z ? ["bottom", "right", "left", "top"] : ["top", "right", "left", "bottom"];
-        out.push({ key: "t:" + t.id, kind: "task", id: t.id, pos: sp, prio: selected ? 9000 : hovered ? 8000 : 3000 - i, sides: selected ? ["top", "bottom", "right", "left"] : side, off: selected ? 22 : 12 });
-      });
       const hiddenDone = p.taskIds.filter((id) => { const t = S.norm.taskById[id]; return t && t.state === "done" && satVisible(t) && !satList.some((it) => it.t.id === id); }).length;
-      if (hiddenDone) out.push({ key: "d:" + p.id, kind: "group", id: p.id, n: hiddenDone, pos: new THREE.Vector3(p.world.x + p.reach, planetY(p), p.world.z), prio: 2000, sides: ["right", "top", "bottom"], off: 10 });
+      if (hiddenDone) out.push({ key: "d:" + p.id, kind: "group", id: p.id, tier: 1, n: hiddenDone, pos: new THREE.Vector3(p.world.x + p.reach, planetY(p), p.world.z), prio: 2000, sides: ["right", "top", "bottom"], off: 10 });
     }
     return out;
   }
+  const chipUrgent = '<span class="lp-cosmos-chip is-urgent">🔥 Urgent</span>';
+  const chipLate = (d) => '<span class="lp-cosmos-chip is-late">↘ Retard ' + d + " j</span>";
   function labelHtml(c) {
     const M = S.model;
     if (c.kind === "galaxy") {
       const g = M.galaxyById[c.id];
       const late = g.stats.overdue ? ' · <b class="is-late">' + g.stats.overdue + " en retard</b>" : "";
-      // Au-delà de 8 galaxies, étiquette compacte : le nom et les compteurs.
-      if (M.galaxies.length > 8 && !(S.selected && S.selected.kind === "galaxy" && S.selected.id === c.id)) return '<span class="lp-cosmos-gtext"><b>' + esc(g.name) + "</b><em>" + (g.projectIds.length ? plural(g.projectIds.length, "projet") : "Aucun projet") + late + "</em></span>";
+      if (c.tier <= 1) return '<span class="lp-cosmos-gtext"><b>' + esc(g.name) + "</b></span>";
+      if (c.tier === 2) return '<span class="lp-cosmos-gtext"><b>' + esc(g.name) + "</b><em>" + (g.projectIds.length ? plural(g.projectIds.length, "projet") : "Aucun projet") + late + "</em></span>";
       return '<span class="lp-cosmos-gico" aria-hidden="true"></span><span class="lp-cosmos-gtext"><small>' + (g.unsorted ? "SANS DOSSIER" : "DOSSIER") + "</small><b>" + esc(g.name) + "</b><em>" + (g.projectIds.length ? plural(g.projectIds.length, "projet") + " · " + plural(g.stats.total, "tâche") : "Aucun projet") + late + "</em></span>";
+    }
+    if (c.kind === "sun") {
+      const g = M.galaxyById[c.id];
+      return "<b>" + g.stats.pct + " %</b><span>" + plural(g.stats.total, "tâche") + (g.stats.overdue ? " · <em>" + g.stats.overdue + " en retard</em>" : "") + "</span>";
     }
     if (c.kind === "planet") {
       const p = M.planets[c.id];
-      const late = p.stats.overdue ? ' · <b class="is-late">' + p.stats.overdue + " en retard</b>" : "";
-      return '<b><i style="background:' + esc(p.color) + '"></i>' + esc(p.name) + "</b><em>" + (p.taskIds.length ? plural(p.taskIds.length, "tâche") + " · " + p.stats.pct + " %" : "Aucune tâche") + late + (p.amasName && c.id !== S.planetId ? " · " + esc(p.amasName) : "") + "</em>";
+      if (c.tier <= 1) return '<b><i style="background:' + esc(p.color) + '"></i>' + esc(p.name) + "</b>";
+      const u = c.u || { urgent: 0, late: 0 };
+      const chips = (u.urgent ? '<span class="lp-cosmos-chip is-urgent">' + plural(u.urgent, "urgente") + "</span>" : "") + (u.late ? '<span class="lp-cosmos-chip is-late">' + u.late + " en retard</span>" : "");
+      return '<b><i style="background:' + esc(p.color) + '"></i>' + esc(p.name) + "</b><em>" + (p.taskIds.length ? plural(p.taskIds.length, "tâche") + " · " + p.stats.pct + " %" : "Aucune tâche") + (p.amasName && c.id !== S.planetId ? " · " + esc(p.amasName) : "") + "</em>" + (chips ? '<span class="lp-cosmos-chips">' + chips + "</span>" : "");
     }
     if (c.kind === "amas") return esc(c.name) + " <small>· amas</small>";
     if (c.kind === "group") return '<i style="background:#22B07D"></i>' + plural(c.n, "terminée") + " · regroupées";
     const t = S.norm.taskById[c.id];
+    const f = c.f || { urgent: false, late: false, lateDays: 0 };
     const prog = S.preview && S.preview.id === t.id ? S.preview.progress : t.progress;
-    return '<i style="background:' + esc(t.statusColor) + '"></i>' + esc(t.title) + ((t.state === "doing" || t.state === "waiting") && prog ? ' <b class="lp-cosmos-pct">' + prog + " %</b>" : "") + (t.overdue ? ' <b class="is-late">· retard ' + t.lateDays + " j</b>" : "");
+    const pct = c.tier >= 2 && (t.state === "doing" || t.state === "waiting") && prog ? ' <b class="lp-cosmos-pct">' + prog + " %</b>" : "";
+    return '<i style="background:' + esc(t.statusColor) + '"></i>' + esc(t.title) + pct + (f.urgent ? " " + chipUrgent : "") + (f.late ? " " + chipLate(f.lateDays) : "");
   }
   function labelAria(c) {
     const M = S.model;
@@ -21768,21 +22399,27 @@ function createCosmosEngine(THREE, container, opts) {
     }
     const placed = (S.obstacles || []).slice();
     const seen = {};
-    const cand = labelCandidates().sort((a, b) => b.prio - a.prio);
+    const cand = labelCandidates(H).sort((a, b) => b.prio - a.prio);
     cand.forEach((c) => {
       pv.copy(c.pos).project(camera);
       if (pv.z > 1 || Math.abs(pv.x) > 1.2 || Math.abs(pv.y) > 1.2) return;
       const sx = (pv.x + 1) / 2 * W, sy = (1 - pv.y) / 2 * H;
       let l = pool[c.key];
       if (!l) {
-        l = document.createElement(c.kind === "amas" || c.kind === "group" ? "div" : "button");
+        l = document.createElement(c.kind === "amas" || c.kind === "group" || c.kind === "sun" ? "div" : "button");
         if (l.tagName === "BUTTON") { l.type = "button"; l.setAttribute("data-cosmos-kind", c.kind); l.setAttribute("data-cosmos-id", c.id); }
         l.className = "lp-cosmos-label lp-cosmos-label--" + c.kind;
         labels.appendChild(l);
         pool[c.key] = l;
       }
       const html = labelHtml(c);
-      if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; if (l.tagName === "BUTTON") l.setAttribute("aria-label", labelAria(c)); }
+      if (l._html !== html || l._tier !== c.tier) {
+        l.innerHTML = html; l._html = html;
+        if (l._tier !== c.tier) { if (l._tier != null) l.classList.remove("is-t" + l._tier); l.classList.add("is-t" + c.tier); l._tier = c.tier; }
+        if (c.kind === "task") { l.classList.toggle("is-urgent", !!(c.f && c.f.urgent)); l.classList.toggle("is-late", !!(c.f && c.f.late)); }
+        l._w = l.offsetWidth; l._h = l.offsetHeight;
+        if (l.tagName === "BUTTON") l.setAttribute("aria-label", labelAria(c));
+      }
       const selected = !!(S.selected && S.selected.kind === c.kind && S.selected.id === c.id) || (c.kind === "planet" && c.id === S.planetId);
       if (l._sel !== selected) { l.classList.toggle("is-selected", selected); l._sel = selected; l._w = l.offsetWidth; l._h = l.offsetHeight; }
       l.classList.toggle("is-dim", (c.kind === "planet" && S.dimmed.has(c.id)) || (c.kind === "galaxy" && S.level === "universe" && !!S.selected && S.selected.kind === "galaxy" && S.selected.id !== c.id));
@@ -21808,10 +22445,11 @@ function createCosmosEngine(THREE, container, opts) {
       placed.push(box);
       seen[c.key] = true;
       l.style.transform = "translate(" + Math.round(box.x) + "px," + Math.round(box.y) + "px)";
-      l.style.visibility = "visible";
+      // Apparition et disparition en fondu (classe is-on, transition CSS).
+      if (!l.classList.contains("is-on")) l.classList.add("is-on");
       l.tabIndex = 0;
     });
-    Object.keys(pool).forEach((k) => { if (!seen[k]) { pool[k].style.visibility = "hidden"; pool[k].tabIndex = -1; } });
+    Object.keys(pool).forEach((k) => { if (!seen[k] && pool[k].classList.contains("is-on")) { pool[k].classList.remove("is-on"); pool[k].tabIndex = -1; } });
     if (Object.keys(pool).length > 500) Object.keys(pool).forEach((k) => { if (!seen[k]) { pool[k].remove(); delete pool[k]; } });
   }
 
@@ -21821,6 +22459,7 @@ function createCosmosEngine(THREE, container, opts) {
     const prevExtent = S.model ? S.model.extent : null;
     S.model = d.model; S.norm = d.norm; S.visible = d.visible || null; S.dimmed = d.dimmed || new Set();
     S.preview = d.preview || null;
+    urgencyCache.clear();
     if (!S.model) return;
     if (S.galaxyId && !S.model.galaxyById[S.galaxyId]) { S.level = "universe"; S.galaxyId = null; S.planetId = null; }
     if (S.planetId && !S.model.planets[S.planetId]) { S.level = S.galaxyId ? "galaxy" : "universe"; S.planetId = null; }
@@ -21870,6 +22509,8 @@ function createCosmosEngine(THREE, container, opts) {
     if (!S.model) return;
     const anim = animOn() && satList.length > 0;
     if (anim) { S.time += dt; placeSatellites(); S.dirty = true; }
+    // Couronnes des soleils : rotation lente (effet visuel seulement).
+    if (animOn() && S.level !== "planet") { coronaMats[0].rotation += dt * 0.04; coronaMats[1].rotation -= dt * 0.025; S.dirty = true; }
     updateHover();
     if (!S.dirty && !S.goal) return;
     S.dirty = false;
@@ -21897,6 +22538,7 @@ function createCosmosEngine(THREE, container, opts) {
       labels.removeEventListener("click", onLabelClick);
       labels.removeEventListener("dblclick", onLabelClick);
       [envGroup, galaxyGroup, detailGroup, fxGroup].forEach(clearGroup);
+      clearAlertFx();
       [satCubes, satWings, satAlerts, farPlanets].forEach((m) => m && m.dispose && m.dispose());
       if (dustPts) dustPts.geometry.dispose();
       Object.keys(planetCache).forEach((k) => (planetCache[k].userData.owned || []).forEach((g) => g.dispose()));
@@ -22350,6 +22992,7 @@ function CosmosView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpda
                   <span><i className="is-sun" />Dossier = galaxie</span>
                   <span><i className="is-planet" />Projet = planète</span>
                   {legendStatuses.map(([name, color]) => <span key={name}><i className="is-cube" style={{ background: color }} />{name}</span>)}
+                  <span><i className="is-urgent" />Urgente</span>
                   <span><i className="is-late" />En retard</span>
                 </div>
                 {quality && <span className="lp-cosmos-quality">Qualité {({ high: "haute", medium: "moyenne", low: "basse" })[quality]}{cfg.quality === "auto" ? " (auto)" : ""}</span>}

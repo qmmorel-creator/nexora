@@ -5089,6 +5089,10 @@ function carteNormalize(ctx, tasks, opts) {
       fromEmail: !!t.sourceMessageId,
       stale: state !== "done" && state !== "info" && last != null && nowMs - last > 30 * CARTE_DAY,
       recentDone: state === "done" && completed != null && nowMs - completed <= 7 * CARTE_DAY,
+      // Animations persistantes (#430, #432) : jours sans interaction, jours
+      // depuis la complétion (null si inconnus).
+      idleDays: last != null ? Math.max(0, Math.floor((nowMs - last) / CARTE_DAY)) : null,
+      doneDaysAgo: state === "done" && completed != null ? Math.max(0, Math.floor((nowMs - completed) / CARTE_DAY)) : null,
       // #400 : une tâche terminée sans date de complétion enregistrée se date
       // par sa fin prévue, sinon par sa dernière interaction.
       oldDone: state === "done" && (completed != null ? nowMs - completed > 30 * CARTE_DAY : end != null ? today - end > 30 : last != null && nowMs - last > 30 * CARTE_DAY),
@@ -5352,17 +5356,97 @@ function carteBuild(input) {
 
 // Statistiques et palier d'un territoire.
 function carteTerritoryStats(tasks) {
-  const s = { todo: 0, doing: 0, waiting: 0, done: 0, info: 0, total: 0, overdue: 0, counted: 0 };
+  const s = { todo: 0, doing: 0, waiting: 0, done: 0, info: 0, total: 0, overdue: 0, counted: 0, velocity: 0 };
   tasks.forEach((t) => {
     s[t.state]++;
     s.total++;
     if (t.overdue) s.overdue++;
+    // Rythme du projet (#432) : tâches terminées sur les 14 derniers jours.
+    if (t.doneDaysAgo != null && t.doneDaysAgo <= 14) s.velocity++;
     if (t.state !== "info") s.counted++;
   });
   // Les informations ne sont ni à faire ni faites : elles ne comptent pas.
   s.pct = s.counted ? Math.round((s.done / s.counted) * 100) : 0;
   s.stage = s.counted ? carteStage(s.done === s.counted ? 100 : (s.done / s.counted) * 100) : 0;
   return s;
+}
+
+// ---------- Animations persistantes (#425 à #436) ----------
+// Lanterne d'échéance (#431) : pulsations par seconde, de 0,4 à J-7 à 2,5 le
+// jour même ; null hors de la fenêtre des 7 jours.
+function carteLanternRate(task) {
+  if (!task || !task.soon || task.overdue || task.dueIn == null) return null;
+  const d = Math.max(0, Math.min(7, task.dueIn));
+  return 2.5 - (d / 7) * 2.1;
+}
+// Avancement d'un jalon (#437), de 0 à 100 : terminé = 100.
+function carteMilestoneProgress(task) {
+  if (!task) return 0;
+  if (task.state === "done") return 100;
+  return Math.max(0, Math.min(100, Number(task.progress) || 0));
+}
+// Pigeon voyageur (#430) : vitesse relative, qui baisse avec l'attente
+// (1 le jour même, 0,5 après une semaine, jamais sous 0,15).
+function cartePigeonSpeed(idleDays) {
+  return Math.max(0.15, 1 / (1 + Math.max(0, Number(idleDays) || 0) / 7));
+}
+// Éolienne du rythme (#432) : radians par seconde selon les tâches terminées
+// sur 14 jours ; à l'arrêt si rien n'a été terminé.
+function carteWindmillSpeed(velocity) {
+  const v = Math.max(0, Number(velocity) || 0);
+  return v ? Math.min(6, 0.8 + v * 0.45) : 0;
+}
+// Météo d'une région (#426) : part de tâches en retard parmi ses tâches
+// ouvertes. Soleil sous 10 %, nuages sous 30 %, pluie au-delà.
+function carteWeather(tasks) {
+  let open = 0, late = 0;
+  (tasks || []).forEach((t) => { if (t.state === "done" || t.state === "info") return; open++; if (t.overdue) late++; });
+  const ratio = open ? late / open : 0;
+  return { kind: ratio < 0.1 ? "sun" : ratio < 0.3 ? "cloud" : "rain", ratio, open, late };
+}
+// Charge des responsables (#434) : plus de `limit` tâches ouvertes à échéance
+// sous 7 jours (retards compris).
+const CARTE_OVERLOAD = 5;
+function carteOverloaded(tasks, limit) {
+  const max = limit == null ? CARTE_OVERLOAD : limit, n = {};
+  (tasks || []).forEach((t) => {
+    if (!t.assignee || t.state === "done" || t.state === "info" || t.dueIn == null || t.dueIn > 7) return;
+    n[t.assignee] = (n[t.assignee] || 0) + 1;
+  });
+  return new Set(Object.keys(n).filter((k) => n[k] > max));
+}
+// Fil d'Ariane (#435) : les prochaines échéances ouvertes, dans l'ordre.
+function carteAriadne(tasks, max) {
+  return (tasks || []).filter((t) => t.state !== "done" && t.state !== "info" && t.dueIn != null && t.dueIn >= 0)
+    .sort((a, b) => a.end - b.end || (String(a.id) < String(b.id) ? -1 : 1)).slice(0, max || 8);
+}
+// Tournée du jour (#427) : urgentes et en retard d'abord (échéance la plus
+// ancienne en tête), puis les échéances des 7 prochains jours.
+function carteTourList(tasks) {
+  const open = (tasks || []).filter((t) => t.state !== "done" && t.state !== "info");
+  const byEnd = (a, b) => (a.end == null ? 1e9 : a.end) - (b.end == null ? 1e9 : b.end) || (String(a.id) < String(b.id) ? -1 : 1);
+  const hot = open.filter((t) => t.overdue || t.criticality === "urgent").sort(byEnd);
+  const seen = new Set(hot.map((t) => t.id));
+  const week = open.filter((t) => !seen.has(t.id) && t.dueIn != null && t.dueIn >= 0 && t.dueIn <= 7).sort(byEnd);
+  return hot.concat(week);
+}
+// Jour et nuit à l'heure réelle (#436) : lumière selon l'heure (0-24). La nuit
+// reste lisible : jamais sous ~45 % de la lumière du jour.
+function carteDaylight(hour) {
+  const h = ((Number(hour) || 0) % 24 + 24) % 24;
+  const mix = (a, b, u) => carteMix(a, b, Math.max(0, Math.min(1, u)));
+  let k, tint;
+  if (h >= 8 && h < 18) { k = 1; tint = 0; }
+  else if (h >= 6 && h < 8) { k = 0.55 + 0.45 * ((h - 6) / 2); tint = 1 - (h - 6) / 2; }
+  else if (h >= 18 && h < 21) { k = 1 - 0.45 * ((h - 18) / 3); tint = (h - 18) / 3; }
+  else { k = 0.55; tint = 1; }
+  const night = h >= 21 || h < 6;
+  return {
+    k, evening: h >= 18 || h < 7,
+    sky: night ? mix("#bfe3f2", "#1f2d4d", 0.85) : mix("#bfe3f2", "#f2b27a", tint * 0.55),
+    sun: night ? "#9fb4ff" : mix("#fff6e0", "#ffb070", tint),
+    hemi: 1.35 * (0.6 + 0.4 * k), sunI: 2.1 * k,
+  };
 }
 
 // Couleur stable d'une personne sans couleur d'équipe.
@@ -5616,9 +5700,9 @@ function carteTaskModel(task, themeId, opts) {
   }
   // En retard : l'horloge (#414) ou, si urgente, les gros éclairs (#406) sont
   // dessinés et animés par le moteur.
-  if (!task.overdue && task.soon) {
-    parts.push(cP("cyl", "#3a3a3a", -0.36, 0, 0.36, 0.03, 0.46, 0.03), cP("box", "#ffcf5a", -0.36, 0.46, 0.36, 0.1, 0.12, 0.1, 0, "g"));
-  }
+  // Échéance sous 7 jours : le poteau porte une lanterne que le moteur fait
+  // pulser, de plus en plus vite quand la date approche (#431).
+  if (!task.overdue && task.soon) parts.push(cP("cyl", "#3a3a3a", -0.36, 0, 0.36, 0.03, 0.46, 0.03));
   if (task.future) parts.push(cP("cyl", "#ffffff", 0, 0.02, 0, 1.5, 0.45, 1.5, 0, "t"));
   // Responsable (#382, #398) : un bonhomme à sa couleur, à tous les niveaux
   // de détail ; le moteur pose au-dessus un badge d'initiales. Masquable
@@ -5856,6 +5940,8 @@ function normalizeCarteViewPrefs(p) {
     simplify: !!v.simplify,
     // Bonshommes des responsables (#398) : affichés par défaut.
     people: v.people !== false,
+    // Animations persistantes (#425 à #436) : actives par défaut.
+    ambient: v.ambient !== false,
   };
 }
 // === NEXORA:CARTE:END ===
@@ -6271,6 +6357,57 @@ function cosmosResolveQuality(pref, taskCount, projectCount) {
   if (taskCount > 3000 || projectCount > 150) return "low";
   if (taskCount > 800 || projectCount > 60) return "medium";
   return "high";
+}
+
+// ---------- Retouches #421 ----------
+// Marques d'une tâche : urgente (criticité) et en retard (échéance passée).
+// Une tâche terminée ou d'information n'est ni l'une ni l'autre.
+function cosmosTaskFlags(t) {
+  const open = t && t.state !== "done" && t.state !== "info";
+  return { urgent: !!(open && t.criticality === "urgent"), late: !!(open && t.overdue), lateDays: open && t.overdue ? t.lateDays || 0 : 0 };
+}
+function cosmosUrgencyCounts(tasks) {
+  const out = { urgent: 0, late: 0 };
+  (tasks || []).forEach((t) => { const f = cosmosTaskFlags(t); if (f.urgent) out.urgent++; if (f.late) out.late++; });
+  return out;
+}
+// Soleil-tableau de bord : un arc par famille d'état (part des tâches du
+// dossier), dans l'ordre terminées → en cours → en attente → à faire → infos,
+// plus un arc extérieur pour la part des retards.
+const COSMOS_STATE_COLORS = { done: "#22B07D", doing: "#0EA5E9", waiting: "#8B5CF6", todo: "#64748B", info: "#94A3B8" };
+function cosmosSunSegments(stats, gap) {
+  const order = ["done", "doing", "waiting", "todo", "info"];
+  const total = order.reduce((n, k) => n + (stats && stats[k] ? stats[k] : 0), 0);
+  if (!total) return { segments: [], late: 0, total: 0 };
+  const g = gap == null ? 0.05 : gap;
+  const used = order.filter((k) => stats[k] > 0);
+  const free = Math.PI * 2 - g * used.length;
+  let a = Math.PI / 2;
+  const segments = used.map((k) => { const len = (stats[k] / total) * free; const seg = { key: k, color: COSMOS_STATE_COLORS[k], start: a, len }; a += len + g; return seg; });
+  const counted = stats.counted || total;
+  return { segments, late: counted ? Math.min(1, (stats.overdue || 0) / counted) : 0, total };
+}
+// Libellés progressifs : le détail suit la taille à l'écran de l'objet (en
+// pixels). 0 = rien, 1 = nom, 2 = nom et compteurs, 3 = carte complète.
+// Une marge de ±12 % autour de chaque seuil évite le clignotement ; les
+// urgences et les retards gagnent un palier plus tôt (seuils abaissés).
+const COSMOS_LABEL_THRESHOLDS = {
+  galaxy: [0, 55, 150],
+  planet: [6, 16, 16],
+  task: [3.5, 7, 7],
+};
+function cosmosLabelTier(kind, px, prevTier, flagged) {
+  const th = (COSMOS_LABEL_THRESHOLDS[kind] || COSMOS_LABEL_THRESHOLDS.task).map((v) => (flagged ? v * 0.62 : v));
+  const prev = prevTier == null ? -1 : prevTier;
+  let tier = 0;
+  for (let i = 0; i < th.length; i++) {
+    const k = i + 1;
+    const need = prev >= k ? th[i] * 0.88 : th[i] * 1.12;
+    if (px >= need) tier = k;
+  }
+  if (kind === "galaxy") tier = Math.max(1, tier);
+  if (kind !== "galaxy") tier = Math.min(tier, 2);
+  return tier;
 }
 // === NEXORA:COSMOS:END ===
 

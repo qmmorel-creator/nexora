@@ -25,6 +25,7 @@ const C = vm.runInThisContext(
     carteNormalize, cosmosBuild, cosmosAssign, cosmosSlotRing, cosmosCapacity, cosmosPathOf, cosmosFrame,
     cosmosSearch, cosmosLabelOrder, normalizeCosmosViewPrefs, cosmosResolveQuality, cosmosFolderRoots,
     COSMOS_ORPHAN_PROJECT, COSMOS_UNSORTED_GALAXY, COSMOS_RINGS,
+    cosmosTaskFlags, cosmosUrgencyCounts, cosmosSunSegments, cosmosLabelTier,
   };\n})`
 )();
 
@@ -241,4 +242,43 @@ test("volume : 300 projets et 12 000 tâches en moins de 3 s, sans place partag�
   const perPlanet = {};
   Object.values(model.satellites).forEach((s) => { const k = s.planetId + ":" + s.slot; assert.ok(!perPlanet[k], "place partagée " + k); perPlanet[k] = 1; });
   Object.keys(model.planets).forEach((id) => assert.deepEqual(again.planets[id].world, model.planets[id].world));
+});
+
+test("#421 : marques urgente et en retard, compteurs", () => {
+  const { norm } = build(tasksFor());
+  const byId = {}; norm.tasks.forEach((x) => { byId[x.id] = x; });
+  assert.deepEqual(C.cosmosTaskFlags(byId["t-vannes"]), { urgent: true, late: true, lateDays: 4 });
+  const done = norm.tasks.find((x) => x.state === "done" && x.overdue === false);
+  assert.equal(C.cosmosTaskFlags({ ...done, criticality: "urgent" }).urgent, false, "une tâche terminée n'est pas urgente");
+  assert.equal(C.cosmosTaskFlags({ state: "info", overdue: true }).late, false);
+  const c = C.cosmosUrgencyCounts(norm.tasks.filter((x) => x.projectId === "p-passe"));
+  assert.equal(c.urgent, 1);
+  assert.ok(c.late >= 1);
+});
+
+test("#421 : arcs du soleil-tableau de bord", () => {
+  const r = C.cosmosSunSegments({ done: 4, doing: 4, waiting: 3, todo: 6, info: 1, overdue: 2, counted: 17 });
+  assert.deepEqual(r.segments.map((x) => x.key), ["done", "doing", "waiting", "todo", "info"]);
+  const sum = r.segments.reduce((n, x) => n + x.len, 0) + 0.05 * 5;
+  assert.ok(Math.abs(sum - Math.PI * 2) < 1e-9);
+  assert.ok(Math.abs(r.segments[3].len / r.segments[0].len - 6 / 4) < 1e-9);
+  assert.ok(Math.abs(r.late - 2 / 17) < 1e-9);
+  assert.deepEqual(C.cosmosSunSegments({ total: 0 }), { segments: [], late: 0, total: 0 });
+});
+
+test("#421 : libellés progressifs, marge anti-clignotement, urgences plus tôt", () => {
+  assert.equal(C.cosmosLabelTier("galaxy", 10), 1, "un dossier garde toujours son nom");
+  assert.equal(C.cosmosLabelTier("galaxy", 80), 2);
+  assert.equal(C.cosmosLabelTier("galaxy", 200), 3);
+  assert.equal(C.cosmosLabelTier("planet", 3), 0);
+  assert.equal(C.cosmosLabelTier("planet", 10), 1);
+  assert.equal(C.cosmosLabelTier("planet", 40), 2);
+  assert.equal(C.cosmosLabelTier("task", 40), 2, "une tâche plafonne au palier 2");
+  // Autour d'un seuil, le palier précédent est conservé.
+  assert.equal(C.cosmosLabelTier("planet", 16.5, 1), 1, "monter exige de dépasser le seuil de 12 %");
+  assert.equal(C.cosmosLabelTier("planet", 15, 2), 2, "descendre exige de passer 12 % sous le seuil");
+  assert.equal(C.cosmosLabelTier("planet", 13, 2), 1);
+  // Une urgence ou un retard apparaît plus tôt.
+  assert.equal(C.cosmosLabelTier("task", 3), 0);
+  assert.equal(C.cosmosLabelTier("task", 3, null, true), 1);
 });

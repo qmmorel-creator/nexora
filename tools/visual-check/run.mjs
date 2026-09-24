@@ -802,6 +802,24 @@ try {
   transfert.error = String(error).split("\n")[0];
 }
 
+/* Widget « Carte (complet) » (#418) : la vraie vue Carte monte dans la
+   DashboardView du banc ; posé petit (3 × 4), il invite à l'agrandir. */
+const carteWidget = {};
+try {
+  const w = page.locator(".lp-widget-embed-carte").first();
+  await w.scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => [...document.querySelectorAll(".lp-widget-embed-carte .lp-carte-stage")].some((e) => e.dataset.carteStatus === "ready"), null, { timeout: 60000 });
+  await page.waitForTimeout(800);
+  Object.assign(carteWidget, await page.evaluate(() => ({
+    widgets: document.querySelectorAll(".lp-widget-embed-carte").length,
+    canvas: document.querySelectorAll(".lp-widget-embed-carte .lp-carte-gl canvas").length,
+    hint: document.querySelectorAll(".lp-widget-embed-carte .lp-carte-small-hint").length,
+    toolbar: document.querySelectorAll(".lp-widget-embed-carte .lp-carte-toolbar").length,
+  })));
+} catch (error) {
+  carteWidget.error = String(error).split("\n")[0];
+}
+
 /* Bandeau de paramètres du widget (issue #56). Le contrôle porte sur ce qui
    défile SOUS le bandeau, pas sur le bandeau lui-même : la panne réelle était
    un axe collant calé sur une barre d'onglets absente, qui laissait une bande
@@ -1902,6 +1920,16 @@ try {
   // #401 : la carte simplifiée (menu « Affichage ») retire les projets écartés.
   // #400 : plus aucune puce de filtre rapide dans la barre.
   carte.chips = await cp.$$eval(".lp-carte-toolbar .lp-carte-fchip, .lp-carte-filter", (e) => e.length);
+  // #427 : la tournée du jour passe de tâche en tâche.
+  await cp.click('.lp-carte-toolbar button:has-text("Tournée du jour")');
+  await cp.waitForTimeout(1200);
+  carte.tour = await cp.evaluate(() => ({ bar: !!document.querySelector(".lp-carte-tour"), count: (document.querySelector(".lp-carte-tour-count") || {}).textContent || "", selected: document.querySelector(".lp-carte-stage").dataset.carteSelected }));
+  await cp.click('.lp-carte-tour [aria-label="Tâche suivante"]').catch(() => {});
+  await cp.waitForTimeout(800);
+  carte.tour.next = (await cp.$eval(".lp-carte-tour-count", (e) => e.textContent).catch(() => ""));
+  await cp.click('.lp-carte-tour [aria-label="Arrêter la tournée"]').catch(() => {});
+  await cp.waitForTimeout(800);
+  carte.tour.closed = await cp.$$eval(".lp-carte-tour", (e) => e.length);
   const terrOf = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteTerritories));
   const toggleSimplify = async () => {
     await cp.click('.lp-carte-toolbar button:has-text("Affichage")');
@@ -2058,7 +2086,7 @@ try {
 const cosmos = {};
 try {
   const cosmosOverlaps = () => {
-    const boxes = [...document.querySelectorAll(".lp-cosmos-label")].filter((l) => l.style.visibility === "visible").map((l) => l.getBoundingClientRect());
+    const boxes = [...document.querySelectorAll(".lp-cosmos-label")].filter((l) => l.classList.contains("is-on")).map((l) => l.getBoundingClientRect());
     let n = 0;
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i], b = boxes[j];
@@ -2093,7 +2121,7 @@ try {
   cosmos.tab = await qp.$$eval(".lp-detail-tab", (b) => b.some((x) => /Cosmos/.test(x.textContent) && x.classList.contains("active")));
   cosmos.tasksBefore = await tasksNow(qp);
   // Univers : une galaxie par dossier racine, vide comprise, plus « À trier ».
-  cosmos.galaxyLabels = await qp.$$eval('.lp-cosmos-label--galaxy', (l) => l.filter((x) => x.style.visibility === "visible").map((x) => x.querySelector("b").textContent));
+  cosmos.galaxyLabels = await qp.$$eval('.lp-cosmos-label--galaxy', (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.querySelector("b").textContent));
   cosmos.overlapsUniverse = await qp.evaluate(cosmosOverlaps);
   await qp.screenshot({ path: path.join(dir, "cosmos-univers.png") });
   // Clic : sélection ; re-clic : entrée dans la galaxie.
@@ -2104,16 +2132,21 @@ try {
   await qp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
   await until(qp, "level", "galaxy");
   await qp.waitForTimeout(2500);
-  cosmos.planetLabels = await qp.$$eval('.lp-cosmos-label--planet', (l) => l.filter((x) => x.style.visibility === "visible").length);
-  cosmos.amas = await qp.$$eval('.lp-cosmos-label--amas', (l) => l.filter((x) => x.style.visibility === "visible").map((x) => x.textContent));
+  cosmos.planetLabels = await qp.$$eval('.lp-cosmos-label--planet', (l) => l.filter((x) => x.classList.contains("is-on")).length);
+  cosmos.amas = await qp.$$eval('.lp-cosmos-label--amas', (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.textContent));
   cosmos.overlapsGalaxy = await qp.evaluate(cosmosOverlaps);
+  // #421 : le soleil-tableau de bord affiche l'avancement du dossier.
+  cosmos.sunLabel = await qp.$$eval(".lp-cosmos-label--sun", (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.textContent));
   await qp.screenshot({ path: path.join(dir, "cosmos-galaxie.png") });
   // Planète : double-clic sur le projet.
   await qp.dblclick('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]');
   await until(qp, "planet", "banc-cp1");
   await qp.waitForTimeout(2500);
-  cosmos.taskLabels = await qp.$$eval('.lp-cosmos-label--task', (l) => l.filter((x) => x.style.visibility === "visible").length);
+  cosmos.taskLabels = await qp.$$eval('.lp-cosmos-label--task', (l) => l.filter((x) => x.classList.contains("is-on")).length);
   cosmos.overlapsPlanet = await qp.evaluate(cosmosOverlaps);
+  // #421 : tâche urgente et en retard (variante E) et compteurs de la planète.
+  cosmos.flagged = await qp.$eval('.lp-cosmos-label--task[data-cosmos-id="banc-ct7"]', (e) => ({ on: e.classList.contains("is-on"), urgent: e.classList.contains("is-urgent"), late: e.classList.contains("is-late"), text: e.textContent })).catch(() => null);
+  cosmos.planetChips = await qp.$eval('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]', (e) => e.textContent).catch(() => "");
   await qp.click('.lp-cosmos-label--task[data-cosmos-id="banc-ct1"]');
   await until(qp, "selected", "task:banc-ct1");
   await qp.waitForSelector(".lp-carte-detail", { timeout: 5000 });
@@ -3165,6 +3198,9 @@ if (!carte.error) {
   expect(carte.stayOnProjectClick && carte.stayOnProjectClick.carte && carte.stayOnProjectClick.dimmed >= 1, `Carte : un clic sur un projet ou un dossier de la barre latérale quitte la Carte (${JSON.stringify(carte.stayOnProjectClick)})`);
   expect(carte.syncLock && /Toussaint/.test(carte.syncLock.title) && carte.syncLock.text && !carte.syncLock.selects && !carte.syncLock.sliders && !carte.syncLock.doneBtn, `Carte : tâche de calendrier synchronisé modifiable (${JSON.stringify(carte.syncLock)})`);
   expect(carte.syncUnchanged, "Carte : ouvrir une tâche de calendrier synchronisé l'a modifiée");
+  expect(!carteWidget.error && carteWidget.canvas >= 1 && carteWidget.toolbar >= 1, `Widget Carte (complet) : la carte ne monte pas dans le tableau de bord (${JSON.stringify(carteWidget)})`);
+  expect(carteWidget.hint >= 1, `Widget Carte (complet) : pas d'invitation à agrandir un widget de 3 × 4 (${JSON.stringify(carteWidget)})`);
+  expect(carte.tour && carte.tour.bar && /^1 \/ \d+$/.test(carte.tour.count) && carte.tour.selected && /^2 \//.test(carte.tour.next) && carte.tour.closed === 0, `Carte : la tournée du jour ne fonctionne pas (${JSON.stringify(carte.tour)})`);
   expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
@@ -3191,6 +3227,9 @@ if (!cosmos.error) {
   expect(cosmos.summaryTitle === "Vallabrègues", `Cosmos : la synthèse du dossier sélectionné affiche « ${cosmos.summaryTitle} »`);
   expect(cosmos.planetLabels >= 3 && cosmos.amas.some((a) => /Lot aval/.test(a)), `Cosmos galaxie : ${cosmos.planetLabels} planète(s) nommée(s), amas ${JSON.stringify(cosmos.amas)}`);
   expect(cosmos.taskLabels >= 6, `Cosmos planète : ${cosmos.taskLabels} satellite(s) nommé(s), 6 au moins attendus`);
+  expect(cosmos.sunLabel.some((x) => /%/.test(x) && /tâches/.test(x)), `Cosmos #421 : chiffre du soleil absent (${JSON.stringify(cosmos.sunLabel)})`);
+  expect(cosmos.flagged && cosmos.flagged.on && cosmos.flagged.urgent && cosmos.flagged.late && /Urgent/.test(cosmos.flagged.text) && /Retard \d+ j/.test(cosmos.flagged.text), `Cosmos #421 : tâche urgente et en retard mal signalée (${JSON.stringify(cosmos.flagged)})`);
+  expect(/1 urgente/.test(cosmos.planetChips) && /en retard/.test(cosmos.planetChips), `Cosmos #421 : compteurs d'urgences et de retards absents de la planète (« ${cosmos.planetChips} »)`);
   expect(cosmos.detailTitle === "Vérifier les vannes", `Cosmos : le satellite ouvre « ${cosmos.detailTitle} »`);
   expect(cosmos.tasksAfterExplore === cosmos.tasksBefore, "Cosmos : explorer la scène a modifié des tâches");
   expect(cosmos.escSelected === "" && cosmos.escLevel1 === "galaxy" && cosmos.escLevel2 === "universe", `Cosmos : Échap ne remonte pas (${cosmos.escSelected} / ${cosmos.escLevel1} / ${cosmos.escLevel2})`);
