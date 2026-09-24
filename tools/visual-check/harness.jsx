@@ -1098,7 +1098,7 @@ if (benchApp) {
     const projects = [
       ...seedProjects.map((p, i) => ({ ...p, folderId: folders[i % 2].id, priority: i === 0 ? "high" : "normal" })),
       { id: "banc-p4", name: "Passerelle quai Nord", icon: "🌉", color: "#B45309", folderId: "banc-f1" },
-      { id: "banc-p5", name: "Audit structure", icon: "🔎", color: "#245EDB", folderId: "banc-f2" },
+      { id: "banc-p5", name: "Audit structure", icon: "iconify:thesvg-color/gmail", color: "#245EDB", folderId: "banc-f2" },
       { id: "banc-p6", name: "Jardin", icon: "🌻", color: "#2A9D8F", folderId: "banc-f3" },
       { id: "banc-p7", name: "Idées en vrac", icon: "💡", color: "#8B5CF6", folderId: "folder-a-trier" },
     ];

@@ -5467,8 +5467,11 @@ function carteHubModel(themeId, stage, color, priority) {
   const theme = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
   const pal = theme.pal;
   const scale = priority === "high" ? 1.25 : priority === "low" ? 0.85 : 1;
-  const base = priority === "high" ? [cP("hex", pal.stone, 0, 0, 0, 1.1, 0.25, 1.1)] : [];
-  const y0 = priority === "high" ? 0.25 : 0;
+  // Le cœur s'élève avec le palier du territoire (#369) ; un projet prioritaire
+  // gagne encore une assise.
+  const rise = stage * 0.18 + (priority === "high" ? 0.25 : 0);
+  const base = rise > 0 ? [cP("hex", pal.stone, 0, 0, 0, 1.1, rise, 1.1)] : [];
+  const y0 = rise;
   const lift = (parts, dx, dz, s, dy) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] * s + dx, p.p[1] * s + (dy || 0), p.p[2] * s + dz], s: [p.s[0] * s, p.s[1] * s, p.s[2] * s] }));
   const main = themeId === "hautemontagne" ? [cP("cone", "#9ba1a8", 0, 0, 0, 1.2, 0.6 + stage * 0.2, 1.2), cP("cone", "#ffffff", 0, 0.36 + stage * 0.12, 0, 0.5, 0.24 + stage * 0.08, 0.5)] : carteTower(pal.wall, color, 0.9 + stage * 0.08, 0.42);
   let out = base.concat(lift(main, 0, 0, scale, y0));
@@ -5554,6 +5557,13 @@ function carteTaskModel(task, themeId, opts) {
     }
   }
   parts = sc(parts, size);
+  // Altitude (#369) : la tâche repose sur un socle qui s'élève avec son palier
+  // (0 à 5) ; une tâche terminée culmine, une tâche à faire reste au ras du sol.
+  const lift = carteTaskLift(task);
+  if (lift > 0 && o.plinth !== false) {
+    parts = at(parts, 0, lift, 0);
+    parts.unshift(cP("hex", carteMix(pal.stone, "#ffffff", 0.12), 0, 0, 0, 1.05, lift, 1.05), cP("hex", pal.top, 0, lift - 0.04, 0, 1.12, 0.05, 1.12));
+  }
   const H = topOf(parts);
   if (task.state === "done" && task.recentDone && detail > 0) {
     [-0.24, 0, 0.24].forEach((x, i) => parts.push(cP("ball", ["#ff5a5a", "#ffd23f", "#4fb0ff"][i], x, H + 0.04, 0.3, 0.07, 0.07, 0.07, 0, "g")));
@@ -5597,6 +5607,34 @@ function carteTaskModel(task, themeId, opts) {
   return parts;
 }
 
+// Palier d'altitude d'une tâche : terminée = 5, en cours ou en attente = palier
+// de progress, à faire et information = 0.
+function carteTaskLevel(task) {
+  if (task.state === "done") return 5;
+  if (task.state === "doing" || task.state === "waiting") return carteStage(task.progress);
+  return 0;
+}
+const CARTE_LIFT_STEP = 0.24;
+function carteTaskLift(task) { return carteTaskLevel(task) * CARTE_LIFT_STEP; }
+
+// Icône utilisable dans une étiquette 3D : un emoji seulement. Les icônes
+// « tabler: », « iconify: » et les images passent par IconGlyph dans React.
+function carteEmojiIcon(icon) {
+  if (typeof icon !== "string") return "";
+  const s = icon.trim();
+  if (!s || s.length > 8 || /[:/.\\]/.test(s) || /^[\x00-\x7F]+$/.test(s)) return "";
+  return s;
+}
+
+// Thème choisi par dossier : le réglage du dossier (mapTheme, #368) prime sur
+// l'ancienne préférence de la vue.
+function carteThemeOverrides(folders, prefThemes) {
+  const out = {};
+  Object.keys(prefThemes || {}).forEach((k) => { if (CARTE_THEME_BY_ID[prefThemes[k]]) out[k] = prefThemes[k]; });
+  (folders || []).forEach((f) => { if (f && f.mapTheme && CARTE_THEME_BY_ID[f.mapTheme]) out[f.id] = f.mapTheme; });
+  return out;
+}
+
 // Légende contextuelle d'un thème (libellés affichés dans l'interface).
 function carteLegend(themeId) {
   const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
@@ -5631,6 +5669,9 @@ function normalizeCarteViewPrefs(p) {
     history: !!v.history,
     quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     folderThemes,
+    // Filtre général de Nexora (#364), même format que les widgets.
+    filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
+    panel: v.panel !== false,
   };
 }
 // === NEXORA:CARTE:END ===
@@ -11292,15 +11333,22 @@ function ProjectNavigationDefaultsEditor({ value, onChange, ctx, inheritedLabel 
 function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, statuses, taskTypes, tasks, teamMembers, projectFolders, projectDefaultView, onClose }) {
   const current = folders.find((f)=>f.id===folder.id) || folder;
   const [navigationDefaults, setNavigationDefaults] = useState(current.navigationDefaults || {});
+  // Thème du dossier sur la vue Carte (#368) : vide = automatique.
+  const [mapTheme, setMapTheme] = useState(current.mapTheme || "");
   const ctx = { projects, statuses, taskTypes, tasks, teamMembers, projectFolders };
 
   const save = () => {
-    setFolders((prev)=>prev.map((f)=>f.id===folder.id ? {...f,navigationDefaults} : f));
+    setFolders((prev)=>prev.map((f)=>{
+      if (f.id!==folder.id) return f;
+      const next={...f,navigationDefaults};
+      if (mapTheme) next.mapTheme=mapTheme; else delete next.mapTheme;
+      return next;
+    }));
     onClose();
   };
 
   return (
-    <Modal title={`Ouverture du dossier — ${folder.name}`} onClose={onClose} wide footer={
+    <Modal title={`Réglages du dossier — ${folder.name}`} onClose={onClose} wide footer={
       <>
         <button className="lp-btn" onClick={onClose}>Annuler</button>
         <button className="lp-btn lp-btn-primary" onClick={save}>Enregistrer</button>
@@ -11315,6 +11363,15 @@ function ProjectFolderNavigationModal({ folder, folders, setFolders, projects, s
         ctx={ctx}
         inheritedLabel={projectDefaultViewFallbackLabel(projectDefaultView)}
       />
+      <hr className="lp-divider" />
+      <div className="lp-field" style={{maxWidth:320}}>
+        <label htmlFor={"lp-folder-map-theme-"+folder.id}>Thème sur la carte</label>
+        <select id={"lp-folder-map-theme-"+folder.id} value={mapTheme} onChange={(e)=>setMapTheme(e.target.value)}>
+          <option value="">Automatique</option>
+          {CARTE_THEMES.map((t)=><option key={t.id} value={t.id}>{t.label}</option>)}
+        </select>
+      </div>
+      <div style={{fontSize:11.5,color:"var(--text-600)",lineHeight:1.45,marginTop:4}}>Les projets du dossier forment une région de ce thème dans la vue Carte.</div>
     </Modal>
   );
 }
@@ -11429,9 +11486,9 @@ function ProjectFoldersManager({ projects, projectFolders, setProjectFolders, st
       {projectFolders.length > 0 && (
         <>
           <hr className="lp-divider" />
-          <div className="lp-section-title">Ouverture par défaut des dossiers</div>
+          <div className="lp-section-title">Réglages par dossier</div>
           <div style={{fontSize:11.5,color:"var(--text-600)",marginBottom:8,lineHeight:1.45}}>
-            Configure la vue, le zoom et les filtres utilisés lorsque tu ouvres un dossier.
+            Configure la vue, le zoom et les filtres utilisés lorsque tu ouvres un dossier, ainsi que son thème sur la carte.
           </div>
           {projectFolders.map((folder)=>{
             const nav=folder.navigationDefaults || {};
@@ -11445,10 +11502,10 @@ function ProjectFoldersManager({ projects, projectFolders, setProjectFolders, st
                 <span className="lp-manage-name">
                   {folder.name}
                   <span style={{display:"block",fontSize:10.5,color:"var(--text-muted)",fontWeight:400,marginTop:2}}>
-                    {viewLabel || "Vue actuelle"}{zoomLabel ? ` · ${zoomLabel}` : ""}{nav.filters ? " · filtres personnalisés" : ""}
+                    {viewLabel || "Vue actuelle"}{zoomLabel ? ` · ${zoomLabel}` : ""}{nav.filters ? " · filtres personnalisés" : ""}{folder.mapTheme && CARTE_THEME_BY_ID[folder.mapTheme] ? ` · carte : ${CARTE_THEME_BY_ID[folder.mapTheme].label}` : ""}
                   </span>
                 </span>
-                <button className="lp-icon-btn" onClick={()=>setFolderNavTarget(folder)} title="Configurer l’ouverture"><Settings size={14}/></button>
+                <button className="lp-icon-btn" onClick={()=>setFolderNavTarget(folder)} title="Réglages du dossier" aria-label={"Réglages du dossier "+folder.name}><Settings size={14}/></button>
               </div>
             );
           })}
