@@ -28,7 +28,7 @@ Pour que la carte se lise sans légende après quelques minutes, chaque champ ut
 
 **Thèmes.** Les objets cités dans cette note (beffroi, atelier, échafaudage…) sont ceux du
 thème **Ville**. Chaque projet reçoit un thème (ville, campagne, forêt, désert, mer, lac,
-montagne, haute montagne, Grand Nord, canyon, marais, jungle, volcan, île tropicale) qui garde le même sens des indices mais change
+montagne, haute montagne, Grand Nord, canyon, marais, jungle, volcan, île tropicale, Cyberpunk) qui garde le même sens des indices mais change
 les objets et la façon de progresser : voir [`CARTE_THEMES.md`](CARTE_THEMES.md).
 
 Principes inchangés :
