@@ -20935,7 +20935,9 @@ function createCosmosEngine(THREE, container, opts) {
     for (let i = 0; i < nClouds; i++) {
       const sp = new THREE.Sprite(cm[r() > 0.4 ? 0 : 1]);
       const sc = (12 + r() * 26) * Math.max(1, ext / 120);
-      const x = (r() - 0.5) * ext * 3, z = (r() - 0.5) * ext * 3, y = -16 - r() * 6;
+      // Le haut du nuage reste sous le disque des galaxies : vu de près, il
+      // ne voile jamais une planète.
+      const x = (r() - 0.5) * ext * 3, z = (r() - 0.5) * ext * 3, y = -sc * 0.5 - 6 - r() * 6;
       sp.scale.set(sc * 1.8, sc, 1);
       sp.position.set(x, y, z);
       envGroup.add(sp);
@@ -21014,10 +21016,12 @@ function createCosmosEngine(THREE, container, opts) {
       const core = new THREE.Mesh(geoCore, matCore);
       core.scale.setScalar(coreR);
       core.position.set(g.pos.x, coreR, g.pos.z);
+      core.userData.core = g.id;
       galaxyGroup.add(core);
       const glow = new THREE.Sprite(spriteMat(texWarm, 1));
       glow.scale.set(coreR * 7, coreR * 7, 1);
       glow.position.copy(core.position);
+      glow.userData.coreGlow = g.id;
       galaxyGroup.add(glow);
     });
     if (orbitPts.length) {
@@ -21229,6 +21233,12 @@ function createCosmosEngine(THREE, container, opts) {
   selFx.add(selGlow, selRing1, selRing2, selGround, selGroundHalo, planetGlow);
   function buildSelection() {
     selFx.children.forEach((c) => { c.visible = false; });
+    // Sur une planète, le soleil de sa galaxie peut passer devant elle : son
+    // halo s'efface pour ne pas la voiler.
+    galaxyGroup.children.forEach((c) => {
+      if (c.userData.coreGlow) c.material.opacity = S.level === "planet" && c.userData.coreGlow === S.galaxyId ? 0.12 : 1;
+      if (c.userData.core) c.visible = !(S.level === "planet" && c.userData.core === S.galaxyId);
+    });
     const M = S.model;
     if (!M) return;
     const sel = S.selected;
@@ -21250,12 +21260,17 @@ function createCosmosEngine(THREE, container, opts) {
       const p = M.planets[S.planetId];
       planetGlow.visible = true;
       planetGlow.scale.setScalar(p.radius * 3.6);
-      planetGlow.position.set(p.world.x, planetY(p), p.world.z - p.radius * 0.3);
     }
     if (sel && sel.kind === "task" && satPos[sel.id]) selGlow.visible = selRing1.visible = selRing2.visible = true;
     S.dirty = true;
   }
   function updateSelectionFx() {
+    // Halo de la planète visitée : toujours DERRIÈRE elle, dans l'axe de la vue.
+    if (planetGlow.visible && S.planetId && S.model.planets[S.planetId]) {
+      const p = S.model.planets[S.planetId];
+      pv.set(p.world.x, planetY(p), p.world.z);
+      planetGlow.position.copy(pv).sub(camera.position).normalize().multiplyScalar(p.radius * 1.6).add(pv);
+    }
     const sel = S.selected;
     if (!(sel && sel.kind === "task" && satPos[sel.id])) { selGlow.visible = selRing1.visible = selRing2.visible = false; return; }
     const it = satList.find((x) => x.t.id === sel.id);
