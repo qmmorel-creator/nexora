@@ -19354,8 +19354,9 @@ function createCarteEngine(THREE, container, opts) {
       const hz = carteHazard(t);
       if (hz === "storm" || hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 7), big: hz === "tempest", ph: carteRand("storm" + t.id) });
       else if (hz === "fire") fires.push({ x, y, z, k, h: Math.max(0.3, Math.min(top, 7)), ph: carteRand("fire" + t.id) * 6.283 });
-      // Avatar (#382) : badge d'initiales au-dessus de la silhouette.
-      if (t.assignee && detail >= 2) {
+      // Avatar (#382, #398) : badge d'initiales au-dessus du bonhomme, à tous
+      // les niveaux de détail et sur les cases partagées.
+      if (t.assignee) {
         const a = carteAvatarAnchor(t);
         const cr = Math.cos(ry), sr = Math.sin(ry);
         avatars.push({ name: t.assignee, color: cartePersonColor(t.assignee, t.assigneeColor), x: x + (a[0] * cr + a[2] * sr) * k, y: y + a[1] * k, z: z + (-a[0] * sr + a[2] * cr) * k, k });
@@ -19726,7 +19727,7 @@ function createCarteEngine(THREE, container, opts) {
     const boltsPer = (s) => (s.big ? 2 : 1);
     const bolts = new THREE.InstancedMesh(G.pyr, MAT.bolt, all.reduce((n, s) => n + boltsPer(s), 0));
     bolts.frustumCulled = false; world.add(bolts);
-    const dropsPer = (s) => (low ? 0 : s.big ? 44 : 14);
+    const dropsPer = (s) => (low ? (s.big ? 18 : 6) : s.big ? 44 : 14);
     const nDrops = all.reduce((n, s) => n + dropsPer(s), 0);
     const rain = nDrops ? new THREE.InstancedMesh(G.box, MAT.rain, nDrops) : null;
     if (rain) { rain.frustumCulled = false; world.add(rain); }
@@ -19735,17 +19736,21 @@ function createCarteEngine(THREE, container, opts) {
     S.storms = { list: all, clouds, bolts, rain, tornado, dropsPer, boltsPer };
     placeStorms(0);
   }
-  function placeStorms(t) {
+  // Animation continue (#397) : l'orage et le feu bougent toujours, même en
+  // qualité basse. Si le système demande moins d'animations, le mouvement
+  // ralentit et l'éclair reste allumé au lieu de clignoter (aucun flash).
+  const calm = reduced;
+  function placeStorms(t0) {
     const W = S.storms;
     if (!W) return;
-    const still = reduced || S.effQuality === "low";
+    const t = calm ? t0 * 0.3 : t0;
     let bi = 0, di = 0, ti = 0;
     W.list.forEach((s) => {
       const f = s.big ? 2.4 : 1;
-      // Éclairs : brefs flashs, décalés d'un orage à l'autre.
+      // Éclairs : flashs répétés, décalés d'un orage à l'autre.
       for (let j = 0; j < W.boltsPer(s); j++) {
-        const cyc = (t * (s.big ? 1.3 : 0.8) + s.ph + j * 0.37) % 1;
-        const on = still || cyc < 0.06 || (cyc > 0.1 && cyc < 0.13);
+        const cyc = (t * (s.big ? 1.3 : 0.9) + s.ph + j * 0.37) % 1;
+        const on = calm || cyc < 0.1 || (cyc > 0.16 && cyc < 0.24) || (cyc > 0.55 && cyc < 0.6);
         const bx = s.x + (j ? 0.5 : -0.2) * f, bz = s.z + (j ? -0.2 : 0.15) * f;
         tmpQ.setFromEuler(tmpE.set(0.25 * (j ? -1 : 1), s.ph * 6, Math.PI));
         const len = (s.cloudY - s.ground) * (s.big ? 0.8 : 0.7);
@@ -19765,8 +19770,8 @@ function createCarteEngine(THREE, container, opts) {
           const u = j / (TORNADO_RINGS - 1);
           const yv = s.ground + u * (s.cloudY - s.ground - 0.2);
           const rad = 0.12 + u * u * 1.15;
-          const sway = still ? 0 : Math.sin(t * 2.2 + s.ph * 6 + u * 3) * 0.28 * u;
-          tmpQ.setFromAxisAngle(UP, still ? 0 : t * 5 + j);
+          const sway = Math.sin(t * 2.2 + s.ph * 6 + u * 3) * 0.28 * u;
+          tmpQ.setFromAxisAngle(UP, t * 5 + j);
           W.tornado.setMatrixAt(ti++, tmpM.compose(tmpP.set(s.x + 0.9 + sway, yv, s.z + 0.5 + sway * 0.5), tmpQ, tmpS.set(rad, 0.16, rad)));
         }
       }
@@ -19796,23 +19801,23 @@ function createCarteEngine(THREE, container, opts) {
     flames.frustumCulled = false; world.add(flames);
     const smoke = new THREE.InstancedMesh(G.ball, MAT.smoke, all.length * FIRE_SMOKE);
     smoke.frustumCulled = false; world.add(smoke);
-    const embers = S.effQuality === "low" ? null : new THREE.InstancedMesh(G.box, MAT.bolt, all.length * FIRE_EMBERS);
+    const embers = new THREE.InstancedMesh(G.box, MAT.bolt, all.length * FIRE_EMBERS);
     if (embers) { embers.frustumCulled = false; world.add(embers); }
     S.fires = { list: all, flames, smoke, embers };
     placeFires(0);
   }
-  function placeFires(t) {
+  function placeFires(t0) {
     const F = S.fires;
     if (!F) return;
-    const still = reduced || S.effQuality === "low";
+    const t = calm ? t0 * 0.3 : t0;
     let fi = 0, si = 0, ei = 0;
     F.list.forEach((u) => {
       const k = u.k;
       FIRE_SPOTS.forEach((sp, j) => {
-        const flick = still ? 1 : 0.8 + 0.3 * Math.sin(t * 11 + u.ph + j * 1.7) + 0.12 * Math.sin(t * 23 + j);
+        const flick = 0.8 + 0.3 * Math.sin(t * 11 + u.ph + j * 1.7) + 0.12 * Math.sin(t * 23 + j);
         const bx = u.x + sp[0] * k, by = u.y + sp[1] * u.h, bz = u.z + sp[2] * k;
         FIRE_FLAMES.forEach((f, m) => {
-          const sway = still ? 0 : Math.sin(t * 7 + u.ph + j + m) * 0.05;
+          const sway = Math.sin(t * 7 + u.ph + j + m) * 0.05;
           const hh = f.h * sp[3] * k * (m ? flick : 0.9 + 0.1 * flick);
           tmpQ.setFromEuler(tmpE.set(sway, 0, sway * 0.6));
           F.flames.setMatrixAt(fi++, tmpM.compose(tmpP.set(bx, by, bz), tmpQ, tmpS.set(f.r * sp[3] * k, hh, f.r * sp[3] * k)));
@@ -19820,14 +19825,14 @@ function createCarteEngine(THREE, container, opts) {
       });
       const top = u.y + u.h + 0.9 * k;
       for (let j = 0; j < FIRE_SMOKE; j++) {
-        const c = still ? j / FIRE_SMOKE : (t * 0.35 + j / FIRE_SMOKE + u.ph) % 1;
+        const c = (t * 0.35 + j / FIRE_SMOKE + u.ph) % 1;
         const r = (0.26 + c * 0.55) * k;
         const drift = c * 0.45 * k;
         F.smoke.setMatrixAt(si++, tmpM.compose(tmpP.set(u.x + drift * 0.8 + Math.sin(j * 2.1 + u.ph) * 0.12, top + c * 2.2 * k, u.z + drift * 0.3), tmpQ.identity(), tmpS.set(r, r * 0.85, r)));
       }
-      if (F.embers) {
+      {
         for (let j = 0; j < FIRE_EMBERS; j++) {
-          const c = still ? 0.5 : (t * 0.9 + carteRand("em" + j) + u.ph) % 1;
+          const c = (t * 0.9 + carteRand("em" + j) + u.ph) % 1;
           const a = carteRand("ea" + j) * 6.283;
           const rr = (0.2 + c * 0.6) * k;
           F.embers.setMatrixAt(ei++, tmpM.compose(tmpP.set(u.x + Math.cos(a) * rr, u.y + u.h * 0.5 + c * 2.4 * k, u.z + Math.sin(a) * rr), tmpQ.identity(), tmpS.setScalar(0.07 * k * (1 - c * 0.6))));
@@ -19864,7 +19869,8 @@ function createCarteEngine(THREE, container, opts) {
     list.slice(0, 800).forEach((a) => {
       const sp = new THREE.Sprite(avatarMaterial(a.name, a.color));
       sp.position.set(a.x, a.y + 0.2, a.z);
-      sp.scale.set(0.72, 0.72, 1);
+      const sz = 0.55 + 0.25 * a.k;
+      sp.scale.set(sz, sz, 1);
       sp.userData.name = a.name;
       world.add(sp);
       S.avatarSprites.push(sp);
@@ -19872,9 +19878,9 @@ function createCarteEngine(THREE, container, opts) {
   }
 
   function animate() {
-    if (reduced) { MAT.alarm.opacity = 0.85; return; }
     const t = S.time;
-    if (S.effQuality !== "low") { placeStorms(t); placeFires(t); }
+    placeStorms(t); placeFires(t);
+    if (reduced) { MAT.alarm.opacity = 0.85; return; }
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
     S.spin.forEach((sp) => {
       tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");

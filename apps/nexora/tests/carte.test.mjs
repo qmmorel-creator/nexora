@@ -426,3 +426,14 @@ test("style D&D : chaque lieu, état et indice a un modèle valide", () => {
   // Le modèle est stable (pas d'aléa hors hachage).
   assert.deepEqual(C.carteTaskModel(full, "ville", { style: "dnd", lieu: "arene" }), C.carteTaskModel(full, "ville", { style: "dnd", lieu: "arene" }));
 });
+
+test("#398 : le bonhomme du responsable est dessiné à tous les niveaux de détail et dans tous les styles", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes, teamMembers: [{ name: "Léo", color: "#123456" }] }, [{ id: "x", projectId: "p", statusId: "s3", assignee: "Léo" }], { now: NOW }).tasks[0];
+  C.CARTE_STYLES.forEach((st) => [0, 1, 2].forEach((detail) => {
+    const parts = C.carteTaskModel(base, "ville", { detail, style: st.id, lieu: "cite" });
+    const body = parts.filter((p) => p.c === "#123456");
+    assert.ok(body.length, `${st.id}, détail ${detail} : pas de bonhomme`);
+    assert.ok(Math.max(...parts.filter((p) => p.m !== "h").map((p) => (p.p[0] < -0.3 ? p.p[1] + p.s[1] : 0))) >= 0.85, `${st.id}, détail ${detail} : bonhomme trop petit`);
+  }));
+  assert.ok(!C.carteTaskModel({ ...base, assignee: null, assigneeColor: null }, "ville", { detail: 2 }).some((p) => p.c === "#123456"), "pas de bonhomme sans responsable");
+});
