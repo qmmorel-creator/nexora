@@ -1040,6 +1040,8 @@ if (benchApp) {
     // #141 : style "Terminées par semaine" du widget Graphique, sur des
     // tâches réellement `completedAt` sur plusieurs semaines distinctes.
     { id: "banc-chart-completed", type: "chart", title: "chart completedPerWeek", chartStyle: "completedPerWeek", layout: { x: 6, y: 110, w: 4, h: 4 } },
+    // #353 : Pixel des habitudes, pleine largeur (trois jours + semaine).
+    { id: "banc-habitPixel", type: "habitPixel", title: "Pixel des habitudes", layout: { x: 0, y: 120, w: 12, h: 13 } },
   );
   const benchHabitThemes = [
     { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [
@@ -1050,14 +1052,30 @@ if (benchApp) {
       { id: "habit-eau", name: "Verres d'eau", color: "#0EA5E9", kind: "numeric", min: 0, max: 8 },
       { id: "habit-sommeil", name: "Sommeil (h)", color: "#8B5CF6", kind: "numeric", min: 3, max: 9 },
     ] },
+    // #353 : une catégorie plus longue, pour des rangées de tailles différentes.
+    { id: "theme-sport", name: "Sport", color: "#1FA971", selectionMode: "multi", habits: [
+      { id: "habit-course", name: "Course", color: "#1FA971", kind: "check" },
+      { id: "habit-velo", name: "Vélo", color: "#F2A93B", kind: "check" },
+      { id: "habit-natation", name: "Natation", color: "#0EA5E9", kind: "check" },
+      { id: "habit-competition", name: "Compétition", color: "#D64545", kind: "check" },
+      { id: "habit-etirements", name: "Étirements", color: "#EC4899", kind: "check" },
+    ] },
   ];
+  const benchDay = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
   const benchHabitLog = [
     { habitId: "habit-bureau", date: "2026-09-14" },
     { habitId: "habit-teletravail", date: "2026-09-15" },
     { habitId: "habit-eau", date: "2026-09-15", value: 6 },
     { habitId: "habit-sommeil", date: "2026-09-15", value: 8 },
     { habitId: "habit-eau", date: "2026-09-05", value: 2 }, // week-end coché -> ne doit PAS rester grisé
+    // #353 : hier et aujourd'hui, relatifs à la date du banc.
+    { habitId: "habit-bureau", date: benchDay(-1) },
+    { habitId: "habit-course", date: benchDay(-1) },
+    { habitId: "habit-eau", date: benchDay(-1), value: 8 },
+    { habitId: "habit-teletravail", date: benchDay(0) },
+    { habitId: "habit-eau", date: benchDay(0), value: 3 },
   ];
+  const benchHabitSkips = [{ habitId: "habit-competition", date: benchDay(0) }];
   const mem = new Map(Object.entries({
     "nexora:tasks": JSON.stringify(benchTasks),
     "nexora:projects": JSON.stringify(seedProjects),
@@ -1066,6 +1084,7 @@ if (benchApp) {
     "nexora:teamMembers": JSON.stringify(seedTeamMembers),
     "nexora:habitThemes": JSON.stringify(benchHabitThemes),
     "nexora:habitLog": JSON.stringify(benchHabitLog),
+    "nexora:habitSkips": JSON.stringify(benchHabitSkips),
     "nexora:dashboards": JSON.stringify([{ id: "banc-d1", name: "Tableau du banc", folderId: null, pages: [{ id: "banc-p1", name: "Page 1", widgets: benchWidgets }], activePageId: "banc-p1" }]),
     "nexora:activeDashboardId": JSON.stringify("banc-d1"),
   }));

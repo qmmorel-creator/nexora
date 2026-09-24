@@ -2125,6 +2125,7 @@ function defaultLayoutForType(type) {
   if (type === "heatmapGrid") return { w: 9, h: 7 };
   if (type === "habitQuick") return { w: 5, h: 8 };
   if (type === "habitHeatmap") return { w: 9, h: 7 };
+  if (type === "habitPixel") return { w: 12, h: 11 };
   if (type === "embedMetro" || type === "embedRadar") return { w: 8, h: 9 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
@@ -2922,7 +2923,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3661,7 +3662,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3839,6 +3840,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "habitQuick" && (
                   <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} viewDate={habitQuickSelectedDate} setViewDate={setHabitQuickSelectedDate} onOpenHabitThemes={onOpenHabitThemes} />
+                )}
+                {w.type === "habitPixel" && (
+                  <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
@@ -12915,14 +12919,14 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
               // valeur posée -> "-" désactivé (rien à retirer) ; "+" démarre à
               // `min` (pas min+1) ; setValue() clampe déjà [min, max] et efface
               // l'entrée sur une valeur vide, réutilisé tel quel ici.
+              // Pas partagé avec le widget Pixel des habitudes (#353).
               const dec = () => {
-                if (val === null) return;
-                const next = val - 1;
-                setValue(habit.id, next < min ? "" : String(next));
+                const next = habitNumericStep(habit, val === null ? NaN : val, -1);
+                if (next !== null) setValue(habit.id, next);
               };
               const inc = () => {
-                const base = val === null ? min - 1 : val;
-                setValue(habit.id, String(Math.min(max, base + 1)));
+                const next = habitNumericStep(habit, val === null ? NaN : val, 1);
+                if (next !== null) setValue(habit.id, next);
               };
               return (
                 <div
@@ -13083,6 +13087,301 @@ function fitYearGridMetrics(space, count) {
 function habitEmptyCellBg(day) {
   if (day.colors.length) return habitCellBackground(day.colors);
   return day.isWeekend ? "rgba(16,21,31,0.08)" : "var(--paper-soft)";
+}
+
+/* Pixel des habitudes (#353, maquette « mosaïque centrale ») : une habitude =
+   un pixel. Trois jours — la veille, le jour affiché (au premier plan), le
+   lendemain — et la semaine en bandeau. Au centre, chaque catégorie aligne
+   ses habitudes, reliées chacune à SON pixel ; le pixel et la case sont deux
+   commandes du MÊME état, écrit par les fonctions existantes du journal
+   (toggleHabitLogEntry, setHabitLogValue, habitNumericStep) — jamais une
+   logique de validation parallèle. « Non applicable » vit dans
+   nexora:habitSkips (setHabitSkip). Dates civiles locales (iso/addDays). */
+const HPX_HEAD_H = 36; // en-tête de catégorie (hauteur de la rangée de pixels)
+const HPX_ROW_H = 24; // une ligne d'habitude
+const HPX_PX = 28; // un pixel du jour affiché
+const HPX_GAP = 10;
+const HPX_PAD = 4; // marge intérieure de la rangée de pixels
+const HPX_LEFT = 40; // retrait de la rangée de pixels après les lignes
+const HPX_STATE_LABELS = { done: "validée", part: "quantité posée", todo: "à faire", na: "non applicable" };
+
+function hpxDayLabel(date, todayIso) {
+  if (date === todayIso) return "Aujourd'hui";
+  if (date === addDays(todayIso, -1)) return "Hier";
+  if (date === addDays(todayIso, 1)) return "Demain";
+  const d = new Date(date + "T00:00:00");
+  const s = d.toLocaleDateString("fr-FR", { weekday: "long" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function hpxLongDate(date) {
+  return new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+}
+function hpxWeekStart(date) {
+  const d = new Date(date + "T00:00:00");
+  return addDays(date, -((d.getDay() + 6) % 7));
+}
+
+function HabitPixel({ habit, st, size, future, focused, onClick, onHover, label }) {
+  const state = st ? st.state : "todo";
+  const max = Number.isFinite(habit.max) ? habit.max : 10;
+  const fill = st && st.value !== null && habit.kind === "numeric" ? Math.round(habitValueIntensity(habit, st.value) * 100) : 0;
+  const cls = "lp-hpx-px is-" + state + (future && state === "todo" ? " is-future" : "") + (focused ? " is-focus" : "");
+  const style = { "--c": habit.color, "--fill": fill + "%", width: size, height: size };
+  const inner = size < 20 ? null
+    : state === "done" && habit.kind !== "numeric" ? <Check size={Math.round(size * 0.5)} strokeWidth={3} />
+    : (state === "done" || state === "part") && habit.kind === "numeric" ? <span className="lp-hpx-px-val">{st.value}/{max}</span>
+    : state === "na" ? <span className="lp-hpx-px-na">–</span> : null;
+  if (!onClick) return <span className={cls} style={style} aria-hidden="true">{inner}</span>;
+  return (
+    <button
+      type="button"
+      className={cls}
+      style={style}
+      onClick={onClick}
+      onMouseEnter={onHover ? () => onHover(habit.id) : undefined}
+      onMouseLeave={onHover ? () => onHover(null) : undefined}
+      onFocus={onHover ? () => onHover(habit.id) : undefined}
+      onBlur={onHover ? () => onHover(null) : undefined}
+      aria-label={label}
+      aria-pressed={state === "done" || state === "part"}
+      title={label}
+    >{inner}</button>
+  );
+}
+
+function HabitPixelMosaic({ themes, day, date, todayIso, size = 8 }) {
+  return (
+    <span className="lp-hpx-mosaic" role="img" aria-label={`${day.done} habitudes validées sur ${day.total}`}>
+      {themes.map((t) => (
+        <span key={t.id} className="lp-hpx-mosaic-row">
+          {t.habits.map((h) => <HabitPixel key={h.id} habit={h} st={day.habits[h.id]} size={size} future={date > todayIso} />)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function HabitPixelSide({ themes, date, day, todayIso, onSelect }) {
+  return (
+    <section className="lp-hpx-side" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
+      <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
+        <span className="lp-hpx-side-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxLongDate(date)}</span></span>
+        <HabitPixelMosaic themes={themes} day={day} date={date} todayIso={todayIso} size={8} />
+        <span className="lp-hpx-count"><b>{day.done}</b> / {day.total}</span>
+      </button>
+      {themes.map((t) => (
+        <div key={t.id} className="lp-hpx-side-theme">
+          <div className="lp-hpx-side-theme-head"><span className="lp-hpx-dot" style={{ background: t.color }} />{t.name}<span className="lp-hpx-muted">{day.themes[t.id].done} / {day.themes[t.id].total}</span></div>
+          {t.habits.map((h) => {
+            const st = day.habits[h.id];
+            return (
+              <div key={h.id} className={"lp-hpx-side-row" + (st.state === "na" ? " is-na" : "")}>
+                <HabitPixel habit={h} st={st} size={11} future={date > todayIso} />
+                <span className="lp-hpx-side-name">{h.name}</span>
+                <span className="lp-hpx-muted">{h.kind === "numeric" ? (st.value === null ? "–" : st.value) + " / " + h.max : st.state === "done" ? "fait" : st.state === "na" ? "n/a" : ""}</span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkips, externalToolbarSlot, onOpenHabitThemes }) {
+  const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes).filter((t) => t.habits.length > 0), [ctx.habitThemes]);
+  const todayIso = iso(new Date());
+  const [date, setDate] = useState(todayIso);
+  const [hover, setHover] = useState(null);
+  const prev = addDays(date, -1);
+  const next = addDays(date, 1);
+  const week = useMemo(() => { const s = hpxWeekStart(date); return [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(s, i)); }, [date]);
+  const stateOf = useMemo(() => {
+    const cache = new Map();
+    return (d) => {
+      if (!cache.has(d)) cache.set(d, habitDayStates(ctx.habitThemes, habitLog, habitSkips, d));
+      return cache.get(d);
+    };
+  }, [ctx.habitThemes, habitLog, habitSkips]);
+  const day = stateOf(date);
+
+  // Écritures : TOUJOURS le catalogue complet (voir HabitThemeGroup).
+  const allThemes = ctx.habitThemes;
+  const clearSkip = (habitId) => { if (setHabitSkips) setHabitSkips((p) => setHabitSkip(p, allThemes, habitId, date, false)); };
+  const toggleCheck = (habit) => {
+    if (!setHabitLog) return;
+    clearSkip(habit.id);
+    setHabitLog((p) => toggleHabitLogEntry(p, allThemes, habit.id, date));
+  };
+  const stepNumeric = (habit, delta) => {
+    if (!setHabitLog) return;
+    const v = day.habits[habit.id].value;
+    const raw = habitNumericStep(habit, v === null ? NaN : v, delta);
+    if (raw === null) return;
+    clearSkip(habit.id);
+    setHabitLog((p) => setHabitLogValue(p, allThemes, habit.id, date, raw));
+  };
+  // Clic sur le pixel d'une quantité : +1 ; au maximum, il repart à vide.
+  const pixelClick = (habit) => {
+    const st = day.habits[habit.id];
+    if (st.state === "na") { clearSkip(habit.id); return; }
+    if (habit.kind !== "numeric") { toggleCheck(habit); return; }
+    if (st.value !== null && st.value >= habit.max) { setHabitLog((p) => setHabitLogValue(p, allThemes, habit.id, date, "")); return; }
+    stepNumeric(habit, 1);
+  };
+  const toggleNa = (habit) => {
+    if (!setHabitSkips) return;
+    const on = day.habits[habit.id].state !== "na";
+    setHabitSkips((p) => setHabitSkip(p, allThemes, habit.id, date, on));
+    // Non applicable efface la validation du jour (une validation primerait).
+    if (on && setHabitLog) setHabitLog((p) => setHabitLogValue(p, allThemes, habit.id, date, ""));
+  };
+  const onKeyDown = (e) => {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (e.key === "ArrowLeft" && e.altKey) { e.preventDefault(); setDate(prev); }
+    if (e.key === "ArrowRight" && e.altKey) { e.preventDefault(); setDate(next); }
+  };
+  const pixelLabel = (habit) => {
+    const st = day.habits[habit.id];
+    const v = habit.kind === "numeric" ? ` (${st.value === null ? 0 : st.value} / ${habit.max})` : "";
+    return `${habit.name} — ${HPX_STATE_LABELS[st.state]}${v}. ${habit.kind === "numeric" ? "Clic : +1" : "Clic : valider / annuler"}`;
+  };
+
+  const toolbar = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <span className="lp-hpx-nav" role="group" aria-label="Jour affiché">
+        <button type="button" className="lp-icon-btn" aria-label="Jour précédent" onClick={() => setDate(prev)}><ChevronLeft size={14} /></button>
+        <button type="button" className="lp-hpx-nav-side" onClick={() => setDate(prev)}>{hpxDayLabel(prev, todayIso)}</button>
+        <label className="lp-hpx-nav-current">
+          {hpxDayLabel(date, todayIso)} · {hpxLongDate(date)}
+          <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Choisir un jour" />
+        </label>
+        <button type="button" className="lp-hpx-nav-side" onClick={() => setDate(next)}>{hpxDayLabel(next, todayIso)}</button>
+        <button type="button" className="lp-icon-btn" aria-label="Jour suivant" onClick={() => setDate(next)}><ChevronRight size={14} /></button>
+      </span>
+      <button type="button" className="lp-tool-btn" disabled={date === todayIso} onClick={() => setDate(todayIso)}>Aujourd'hui</button>
+    </ViewToolbarPortal>
+  );
+
+  if (!themes.length) {
+    return (
+      <>
+        {toolbar}
+        <div className="lp-widget-habit-empty">
+          Aucune habitude configurée.
+          {onOpenHabitThemes && <button type="button" className="lp-tool-btn" onClick={onOpenHabitThemes}>Configurer les thèmes d'habitudes</button>}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="lp-hpx" onKeyDown={onKeyDown}>
+      {toolbar}
+      <div className="lp-hpx-days">
+        <HabitPixelSide themes={themes} date={prev} day={stateOf(prev)} todayIso={todayIso} onSelect={setDate} />
+        <section className="lp-hpx-main" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
+          <div className="lp-hpx-main-head">
+            <div className="lp-hpx-main-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxLongDate(date)}</span></div>
+            <div className="lp-hpx-summary">
+              <HabitPixelMosaic themes={themes} day={day} date={date} todayIso={todayIso} size={9} />
+              <span className="lp-hpx-summary-text"><b>Le pixel du jour</b><span>1 habitude = 1 pixel · non applicables exclues</span></span>
+              <span className="lp-hpx-count is-big" aria-live="polite"><b>{day.done}</b> / {day.total}</span>
+            </div>
+          </div>
+          {themes.map((t) => {
+            const tc = day.themes[t.id];
+            const blockH = HPX_HEAD_H + t.habits.length * HPX_ROW_H;
+            const pxX = (i) => HPX_LEFT + HPX_PAD + i * (HPX_PX + HPX_GAP) + HPX_PX / 2;
+            const pxBottom = HPX_PAD * 2 + HPX_PX;
+            return (
+              <div key={t.id} className="lp-hpx-theme" style={{ height: blockH, "--hpx-rows": t.habits.length }}>
+                <div className="lp-hpx-list">
+                  <div className="lp-hpx-theme-head" style={{ height: HPX_HEAD_H }}>
+                    <span className="lp-hpx-dot is-big" style={{ background: t.color }} />{t.name}<span className="lp-hpx-muted">{tc.done} / {tc.total}</span>
+                  </div>
+                  {t.habits.map((h) => {
+                    const st = day.habits[h.id];
+                    const active = hover === h.id;
+                    return (
+                      <div
+                        key={h.id}
+                        className={"lp-hpx-row" + (st.state === "na" ? " is-na" : "") + (active ? " is-focus" : "")}
+                        style={{ height: HPX_ROW_H }}
+                        onMouseEnter={() => setHover(h.id)}
+                        onMouseLeave={() => setHover(null)}
+                      >
+                        <HabitPixel habit={h} st={st} size={16} future={date > todayIso} focused={active} onClick={() => pixelClick(h)} onHover={setHover} label={pixelLabel(h)} />
+                        <span className="lp-hpx-row-name">{h.name}</span>
+                        {st.state === "na" ? (
+                          <button type="button" className="lp-hpx-na-chip" onClick={() => toggleNa(h)} aria-label={`${h.name} : non applicable — rendre applicable`}>Non applicable</button>
+                        ) : h.kind === "numeric" ? (
+                          <span className="lp-hpx-step">
+                            <button type="button" onClick={() => stepNumeric(h, -1)} disabled={st.value === null} aria-label={`Diminuer ${h.name}`}>−</button>
+                            <b>{st.value === null ? "–" : st.value} / {h.max}</b>
+                            <button type="button" onClick={() => stepNumeric(h, 1)} disabled={st.value !== null && st.value >= h.max} aria-label={`Augmenter ${h.name}`}>+</button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            role="checkbox"
+                            aria-checked={st.state === "done"}
+                            aria-label={h.name}
+                            className={"lp-hpx-check" + (st.state === "done" ? " is-on" : "")}
+                            style={{ "--c": h.color }}
+                            onClick={() => toggleCheck(h)}
+                            onFocus={() => setHover(h.id)}
+                            onBlur={() => setHover(null)}
+                          >{st.state === "done" && <Check size={11} strokeWidth={3.2} />}</button>
+                        )}
+                        {st.state !== "na" && (
+                          <button type="button" className="lp-hpx-na-btn" onClick={() => toggleNa(h)} aria-label={`Marquer ${h.name} non applicable ce jour`} title="Non applicable ce jour">n/a</button>
+                        )}
+                        <span className="lp-hpx-anchor" style={{ background: h.color }} aria-hidden="true" />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="lp-hpx-wires">
+                  <svg className="lp-hpx-wires-svg" aria-hidden="true">
+                    {t.habits.map((h, i) => {
+                      const st = day.habits[h.id];
+                      const on = st.state === "done" || st.state === "part";
+                      return (
+                        <path
+                          key={h.id}
+                          d={habitPixelWirePath(HPX_HEAD_H + i * HPX_ROW_H + HPX_ROW_H / 2, pxX(i), pxBottom + 4, 6)}
+                          className={"lp-hpx-wire" + (on ? " is-on" : "") + (st.state === "na" ? " is-na" : "") + (hover === h.id ? " is-focus" : "")}
+                          style={{ stroke: st.state === "na" ? undefined : h.color }}
+                        />
+                      );
+                    })}
+                  </svg>
+                  <div className="lp-hpx-pixels" style={{ left: HPX_LEFT, padding: HPX_PAD, gap: HPX_GAP, "--tc": t.color }}>
+                    {t.habits.map((h) => (
+                      <HabitPixel key={h.id} habit={h} st={day.habits[h.id]} size={HPX_PX} future={date > todayIso} focused={hover === h.id} onClick={() => pixelClick(h)} onHover={setHover} label={pixelLabel(h)} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </section>
+        <HabitPixelSide themes={themes} date={next} day={stateOf(next)} todayIso={todayIso} onSelect={setDate} />
+      </div>
+      <div className="lp-hpx-week" role="group" aria-label="Semaine">
+        {week.map((d) => {
+          const k = stateOf(d);
+          return (
+            <button key={d} type="button" className={"lp-hpx-week-day" + (d === date ? " is-active" : "") + (d === todayIso ? " is-today" : "")} onClick={() => setDate(d)} aria-pressed={d === date} aria-label={`${hpxLongDate(d)} : ${k.done} sur ${k.total}`}>
+              <HabitPixelMosaic themes={themes} day={k} date={d} todayIso={todayIso} size={6} />
+              <span><b>{new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric" })}</b><span className="lp-hpx-muted">{k.done} / {k.total}</span></span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function WidgetHabitHeatmap({ widget, ctx, habitLog, setHabitLog, onUpdateWidget, selectedDate }) {
@@ -15177,6 +15476,7 @@ const WIDGET_TYPE_META = [
   // heatmap — un seul widget avec bascule Mensuel/Annuel, pas deux.
   { key: "habitQuick", label: "Quick Habit", icon: CheckCircle2, group: "Suivi" },
   { key: "habitHeatmap", label: "Heatmap habitudes", icon: Grid3x3, group: "Suivi" },
+  { key: "habitPixel", label: "Pixel des habitudes", icon: LayoutDashboard, group: "Suivi" },
   { key: "embedMetro", label: "Métro (complet)", icon: TrainTrack, group: "Planning" },
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
   // Finance PRO (#267, lot #275) : widgets dans le moteur de dashboard
@@ -16643,7 +16943,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           Clic sur une tâche de la liste : sa description à droite (volet 3) — double-clic : sa fiche complète.
         </p>
       )}
-      {(type === "habitQuick" || type === "habitHeatmap") && (
+      {(type === "habitQuick" || type === "habitHeatmap" || type === "habitPixel") && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           Ce widget n'a pas de réglage ici — le Thème (Heatmap) et la date (Quick Habit) se choisissent directement
           dans le widget. Les Thèmes et leurs Habitudes se configurent dans Réglages → Thèmes d'habitudes.
@@ -18206,7 +18506,9 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
           </span>
         )}
         {headerExtra}
-        <button type="button" className="lp-cal-btn" onClick={() => { scrollToWeek(compact ? todayWeek : addDays(todayWeek, -7), true); }}>Aujourd'hui</button>
+        {/* « Aujourd'hui » : revient à la semaine courante ET sélectionne le
+            jour (panneau du jour ouvert), comme un clic sur sa case. */}
+        <button type="button" className="lp-cal-btn" onClick={() => { setSelected(todayIso); scrollToWeek(compact ? todayWeek : addDays(todayWeek, -7), true); }} title="Aller à aujourd'hui et sélectionner le jour">Aujourd'hui</button>
         <span className="lp-cal-nav">
           <button type="button" className="lp-cal-btn lp-cal-btn-icon" aria-label="Mois précédent" onClick={() => goMonth(-1)}><ChevronLeft size={16} /></button>
           <button type="button" className="lp-cal-btn lp-cal-btn-icon" aria-label="Mois suivant" onClick={() => goMonth(1)}><ChevronRight size={16} /></button>

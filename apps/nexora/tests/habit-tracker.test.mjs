@@ -25,6 +25,7 @@ const H = vm.runInThisContext(
     habitLogHabitIdsForDate, habitLogValueForDate, toggleHabitLogEntry, setHabitLogValue, habitThemeUsage,
     habitCellColors, habitCellBackground, habitValueIntensity, habitIntensityColor,
     habitMonthDays, habitYearWeeks,
+    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitDayStates, habitPixelWirePath,
   };\n})`
 )();
 
@@ -261,4 +262,59 @@ test("habitYearWeeks : les jours hors de l'année n'ont jamais de couleur", () =
   assert.ok(outOfYearDay, "ce jour doit exister dans la grille (semaine de padding)");
   assert.equal(outOfYearDay.inYear, false);
   assert.deepEqual(outOfYearDay.colors, []);
+});
+
+// --- Pixel des habitudes (#353) ------------------------------------------------
+
+const pxThemes = [
+  theme("s", { selectionMode: "multi", habits: [habit("a"), habit("q", { kind: "numeric", min: 0, max: 3 }), habit("b")] }),
+  theme("t", { selectionMode: "single", habits: [habit("c"), habit("d")] }),
+];
+
+test("Pixel : non applicable stocké à part, identifiant dérivé, habitude supprimée retirée", () => {
+  let skips = H.setHabitSkip([], pxThemes, "b", "2026-09-24", true);
+  assert.deepEqual(skips, [{ id: "b|2026-09-24", habitId: "b", date: "2026-09-24" }]);
+  skips = H.setHabitSkip(skips, pxThemes, "b", "2026-09-24", true);
+  assert.equal(skips.length, 1, "pas de doublon");
+  assert.deepEqual(H.setHabitSkip(skips, pxThemes, "b", "2026-09-24", false), []);
+  assert.deepEqual(H.setHabitSkip([], pxThemes, "inconnue", "2026-09-24", true), []);
+  assert.deepEqual(H.normalizeHabitSkips([{ habitId: "zz", date: "2026-09-24" }, { habitId: "a", date: "24/09" }], ["a"]), []);
+});
+
+test("Pixel : pas du compteur identique à Quick Habit (départ à min, plafond, effacement sous min)", () => {
+  const q = { min: 0, max: 3 };
+  assert.equal(H.habitNumericStep(q, NaN, 1), "0");
+  assert.equal(H.habitNumericStep(q, 2, 1), "3");
+  assert.equal(H.habitNumericStep(q, 3, 1), null);
+  assert.equal(H.habitNumericStep(q, 0, -1), "");
+  assert.equal(H.habitNumericStep(q, NaN, -1), null);
+});
+
+test("Pixel : états du jour et compteur « validées / applicables »", () => {
+  const log = [
+    { habitId: "a", date: "2026-09-24" },
+    { habitId: "q", date: "2026-09-24", value: 1 },
+    { habitId: "c", date: "2026-09-24" },
+    { habitId: "a", date: "2026-09-23" },
+  ];
+  const skips = [{ habitId: "b", date: "2026-09-24" }, { habitId: "c", date: "2026-09-24" }];
+  const day = H.habitDayStates(pxThemes, log, skips, "2026-09-24");
+  assert.equal(day.habits.a.state, "done");
+  assert.deepEqual(day.habits.q, { state: "part", value: 1 });
+  assert.equal(day.habits.b.state, "na");
+  assert.equal(day.habits.c.state, "done", "une validation prime sur non applicable");
+  assert.equal(day.habits.d.state, "todo");
+  assert.deepEqual([day.done, day.total], [3, 4], "b exclue du total");
+  assert.deepEqual(day.themes.s, { done: 2, total: 2 });
+  const full = H.habitDayStates(pxThemes, [{ habitId: "q", date: "2026-09-24", value: 3 }], [], "2026-09-24");
+  assert.equal(full.habits.q.state, "done", "quantité au maximum = validée");
+  // Catégories de tailles différentes, habitude ajoutée : le total suit le catalogue réel.
+  const more = [...pxThemes, theme("u", { habits: [habit("e"), habit("f"), habit("g"), habit("h")] })];
+  assert.equal(H.habitDayStates(more, [], [], "2026-09-24").total, 9);
+});
+
+test("Pixel : liaison en équerre, de la ligne jusqu'au bas du pixel", () => {
+  assert.equal(H.habitPixelWirePath(60, 100, 36, 6), "M 0 60 H 94 Q 100 60 100 54 V 36");
+  // Coin jamais plus grand que la place disponible.
+  assert.equal(H.habitPixelWirePath(40, 100, 36, 6), "M 0 40 H 96 Q 100 40 100 36 V 36");
 });
