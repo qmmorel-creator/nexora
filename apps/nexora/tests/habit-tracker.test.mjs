@@ -25,7 +25,7 @@ const H = vm.runInThisContext(
     habitLogHabitIdsForDate, habitLogValueForDate, toggleHabitLogEntry, setHabitLogValue, habitThemeUsage,
     habitCellColors, habitCellBackground, habitValueIntensity, habitIntensityColor,
     habitMonthDays, habitYearWeeks,
-    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitDayStates, habitPixelWirePath,
+    normalizeHabitSkips, setHabitSkip, habitNumericStep, habitValueLabel, habitDayStates, habitPixelWirePath,
   };\n})`
 )();
 
@@ -330,4 +330,11 @@ test("Pas du « + » : réglable par habitude chiffrée (1 par défaut), borné,
   assert.equal(H.habitNumericStep(q, 2.5, -1), "0");
   assert.equal(H.habitNumericStep(q, 2, -1), "", "sous min : l'entrée est effacée");
   assert.equal(H.habitNumericStep({ min: 0, max: 1, step: 0.1 }, 0.2, 1), "0.3");
+});
+
+test("Valeurs chiffrées affichées à la française", () => {
+  assert.equal(H.habitValueLabel(1.5), "1,5");
+  assert.equal(H.habitValueLabel(0.1 + 0.2), "0,3");
+  assert.equal(H.habitValueLabel(3), "3");
+  assert.equal(H.habitValueLabel(null), "–");
 });

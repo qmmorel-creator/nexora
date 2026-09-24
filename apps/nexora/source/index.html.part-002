@@ -4432,6 +4432,11 @@ function habitPixelWirePath(rowY, pixelX, pixelBottom, radius) {
   return `M 0 ${rowY} H ${pixelX - r} Q ${pixelX} ${rowY} ${pixelX} ${rowY - r} V ${pixelBottom}`;
 }
 
+// Valeur chiffrée affichée à la française (1,5 et non 1.5).
+function habitValueLabel(value) {
+  return Number.isFinite(value) ? String(Math.round(value * 1e6) / 1e6).replace(".", ",") : "–";
+}
+
 function habitThemeUsage(log, themes, themeId) {
   const theme = habitThemeById(themes, themeId);
   if (!theme) return 0;
@@ -12341,6 +12346,33 @@ function TeamAndUserManagerPanel({ teamMembers, setTeamMembers, tasks, setTasks,
 // chacune avec sa propre couleur (widget Heatmap), et le Thème porte son mode
 // de coche (widget Quick Habit) : choix unique (radio) ou multi-sélection.
 // ============================================================================
+/* Pas du « + » (#353) : saisie décimale libre — virgule ou point, et les
+   états intermédiaires (« 0 », « 0, ») restent affichés pendant la frappe au
+   lieu de revenir à l'ancienne valeur. Seul un nombre strictement positif est
+   enregistré ; en quittant le champ, il réaffiche la valeur enregistrée. */
+function HabitStepInput({ value, onCommit }) {
+  const shown = (v) => String(v ?? 1).replace(".", ",");
+  const [draft, setDraft] = useState(null);
+  const parse = (raw) => Number(String(raw).trim().replace(",", "."));
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft ?? shown(value)}
+      aria-label="Pas du bouton +"
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (!/^[0-9]*[.,]?[0-9]*$/.test(raw)) return;
+        setDraft(raw);
+        const num = parse(raw);
+        if (raw !== "" && Number.isFinite(num) && num > 0) onCommit(num);
+      }}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+    />
+  );
+}
+
 function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog, pushToast, onClose, embedded }) {
   const catalogue = normalizeHabitThemes(habitThemes);
   const [editingId, setEditingId] = useState(null);
@@ -12516,7 +12548,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
                       <div className="lp-habit-kindpop-range">
                         <label>Min <input type="number" value={habit.min} onChange={(e) => setHabitRange(theme, habit, "min", e.target.value)} /></label>
                         <label>Max <input type="number" value={habit.max} onChange={(e) => setHabitRange(theme, habit, "max", e.target.value)} /></label>
-                        <label title="Valeur ajoutée à chaque clic sur « + » (et retirée par « − »)">Pas <input type="number" min="0" step="any" value={habit.step ?? 1} onChange={(e) => setHabitRange(theme, habit, "step", e.target.value)} /></label>
+                        <label title="Valeur ajoutée à chaque clic sur « + » (et retirée par « − »)">Pas <HabitStepInput value={habit.step} onCommit={(num) => setHabitRange(theme, habit, "step", num)} /></label>
                       </div>
                     )}
                   </div>
