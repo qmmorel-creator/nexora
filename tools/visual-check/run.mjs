@@ -40,7 +40,9 @@ if (!playwright) {
 }
 
 const { server, port } = await serve(dir);
-const launchOptions = process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {};
+// WebGL logiciel (SwiftShader) : la vue Carte (#361) dessine en 3D, y compris
+// sur une machine sans carte graphique.
+const launchOptions = { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"], ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) };
 const browser = await playwright.chromium.launch(launchOptions);
 const page = await browser.newPage({ viewport: { width: 1400, height: 1100 } });
 
@@ -1824,6 +1826,128 @@ try {
 } catch (e) {
   orgMetro.error = String(e).split("\n")[0];
 }
+
+// --- Vue Carte (#361) --------------------------------------------------------
+// Parcours principal (recherche, marche, lecture, fiche), lecture seule
+// garantie, libellés sans chevauchement, filtres, mobile, gros volume, repli
+// sans WebGL.
+const carte = {};
+try {
+  const labelOverlaps = () => {
+    const boxes = [...document.querySelectorAll(".lp-carte-label")].filter((l) => l.style.visibility === "visible").map((l) => l.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      if (a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) n++;
+    }
+    return { n, count: boxes.length };
+  };
+  const closeGuide = async (pg) => {
+    for (let i = 0; i < 3; i++) {
+      const c = await pg.$('.lp-modal [aria-label="Fermer"]');
+      if (!c) break;
+      await c.click().catch(() => {});
+      await pg.waitForTimeout(300);
+    }
+  };
+  const openCarte = async (pg, scen) => {
+    await pg.goto(`http://127.0.0.1:${port}/index.html?app=1&view=carte&carte=${scen}`, { waitUntil: "load", timeout: 90000 });
+    await pg.waitForSelector(".lp-carte-stage", { timeout: 90000 });
+    await closeGuide(pg);
+  };
+  const cp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  cp.on("pageerror", (e) => pageErrors.push("Carte : " + e.message));
+  await cp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  await openCarte(cp, "demo");
+  await cp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
+  await cp.waitForTimeout(1500);
+  carte.badges = await cp.$$eval(".lp-carte-badge", (b) => b.length);
+  carte.canvas = await cp.$$eval(".lp-carte-gl canvas", (c) => c.length);
+  carte.tasksBefore = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
+  // Recherche : le territoire « Passerelle quai Nord » est atteint.
+  await cp.fill(".lp-carte-search input", "Passerelle");
+  carte.suggestions = await cp.$$eval(".lp-carte-sugg button", (b) => b.map((x) => x.textContent));
+  await cp.press(".lp-carte-search input", "Enter");
+  await cp.waitForTimeout(1500);
+  carte.territory = await cp.getAttribute(".lp-carte-stage", "data-carte-territory");
+  // Marche au clavier jusqu'à une tâche proche.
+  await cp.focus(".lp-carte-stage");
+  const moves = ["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowDown", "ArrowRight", "ArrowRight", "ArrowUp", "ArrowUp", "ArrowUp", "ArrowLeft", "ArrowLeft", "ArrowLeft"];
+  carte.near = "";
+  for (let i = 0; i < moves.length * 2 && !carte.near; i++) {
+    await cp.keyboard.down(moves[i % moves.length]);
+    await cp.waitForTimeout(260 + (i % 3) * 80);
+    await cp.keyboard.up(moves[i % moves.length]);
+    await cp.waitForTimeout(250);
+    carte.near = await cp.getAttribute(".lp-carte-stage", "data-carte-near");
+  }
+  carte.nearTitle = carte.near ? await cp.$eval(".lp-carte-near-title", (e) => e.textContent).catch(() => "") : "";
+  carte.overlapsNear = await cp.evaluate(labelOverlaps);
+  await cp.keyboard.press("Enter");
+  await cp.waitForTimeout(700);
+  carte.selected = await cp.getAttribute(".lp-carte-stage", "data-carte-selected");
+  carte.detailTitle = await cp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
+  carte.tasksAfter = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
+  await cp.screenshot({ path: path.join(dir, "carte.png") });
+  // Filtre : masquer les tâches terminées.
+  const chip = await cp.$('.lp-carte-fchip:text("Terminées")');
+  if (chip) { await chip.click(); await cp.waitForTimeout(300); carte.chipPressed = await chip.getAttribute("aria-pressed"); }
+  // « Ouvrir la fiche » ouvre la fiche Nexora habituelle.
+  await cp.click(".lp-carte-detail .lp-btn-primary");
+  await cp.waitForTimeout(800);
+  carte.modalTitle = await cp.evaluate((t) => [...document.querySelectorAll(".lp-modal input, .lp-modal textarea")].some((i) => i.value === t), carte.detailTitle);
+  await cp.close();
+
+  // Mobile : manette, fiche en tiroir, aucun défilement horizontal.
+  const mp = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  mp.on("pageerror", (e) => pageErrors.push("Carte mobile : " + e.message));
+  await mp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  await openCarte(mp, "demo");
+  const drawerClose = await mp.$(".lp-sidebar-mobile-close");
+  if (drawerClose && await drawerClose.isVisible()) { await drawerClose.click(); await mp.waitForTimeout(400); }
+  await mp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
+  await mp.waitForTimeout(1500);
+  carte.mobile = await mp.evaluate(() => ({
+    joystick: !!document.querySelector(".lp-carte-joy"),
+    action: !!document.querySelector(".lp-carte-act"),
+    scroll: document.documentElement.scrollWidth - window.innerWidth,
+    stageWidth: document.querySelector(".lp-carte-stage").getBoundingClientRect().width,
+  }));
+  await mp.screenshot({ path: path.join(dir, "carte-mobile.png") });
+  await mp.close();
+
+  // Gros volume : 300 projets, 12 000 tâches.
+  const vp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  vp.on("pageerror", (e) => pageErrors.push("Carte volume : " + e.message));
+  await vp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  const t0 = Date.now();
+  await openCarte(vp, "volume");
+  await vp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 120000 });
+  await vp.waitForSelector(".lp-carte-quality-tag", { timeout: 120000 });
+  carte.volumeMs = Date.now() - t0;
+  carte.volumeQuality = await vp.$eval(".lp-carte-quality-tag", (e) => e.textContent);
+  await vp.click('button:has-text("Vue d\'ensemble")');
+  await vp.waitForTimeout(2500);
+  carte.volumeOverlaps = await vp.evaluate(labelOverlaps);
+  await vp.screenshot({ path: path.join(dir, "carte-volume.png") });
+  await vp.close();
+
+  // Sans WebGL : liste de repli, fiches accessibles.
+  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  fp.on("pageerror", (e) => pageErrors.push("Carte sans WebGL : " + e.message));
+  await fp.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
+  await fp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  await openCarte(fp, "demo");
+  await fp.waitForSelector(".lp-carte-fallback", { timeout: 30000 });
+  carte.fallbackProjects = await fp.$$eval(".lp-carte-fallback-proj", (d) => d.length);
+  await fp.click(".lp-carte-fallback-proj summary");
+  await fp.click(".lp-carte-fallback-proj .lp-carte-link-inline");
+  await fp.waitForTimeout(600);
+  carte.fallbackModal = await fp.$$eval(".lp-modal", (m) => m.length);
+  await fp.close();
+} catch (e) {
+  carte.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
+}
 await browser.close();
 server.close();
 
@@ -2743,6 +2867,29 @@ if (!orgMetro.error) {
   expect(orgMetro.narrow && orgMetro.narrow.legendHidden, "Organigramme Métro étroit : la légende reste affichée dans un widget de 380 px");
   expect(orgMetro.narrow && !orgMetro.narrow.exportLabelHidden, "Organigramme Métro étroit : les libellés SVG/PNG ont disparu alors qu'ils tiennent à 380 px");
   expect(orgMetro.narrow && orgMetro.narrow.inside && orgMetro.narrow.scroll <= 0, `Organigramme Métro étroit : barre d'outils hors cadre ou défilement horizontal (${JSON.stringify(orgMetro.narrow)})`);
+}
+
+// --- Vue Carte (#361) ------------------------------------------------------
+expect(!carte.error, `Carte : scénario en échec (${carte.error})`);
+if (!carte.error) {
+  expect(carte.canvas === 1, `Carte : ${carte.canvas} canevas 3D (1 attendu)`);
+  expect(carte.badges === 7, `Carte : ${carte.badges} territoires dans le ruban (7 projets attendus)`);
+  expect(carte.suggestions.some((t) => /Passerelle/.test(t)), `Carte : la recherche « Passerelle » ne propose pas le projet (${JSON.stringify(carte.suggestions)})`);
+  expect(carte.territory === "banc-p4", `Carte : la recherche ne mène pas au territoire « Passerelle quai Nord » (${carte.territory})`);
+  expect(!!carte.near, "Carte : aucune tâche proche atteinte au clavier");
+  expect(carte.selected && carte.selected === carte.near, `Carte : Entrée ne sélectionne pas la tâche proche (${carte.selected} / ${carte.near})`);
+  expect(carte.detailTitle && carte.detailTitle.indexOf(carte.nearTitle) !== -1, `Carte : la fiche de détail ne montre pas la tâche proche (« ${carte.detailTitle} » / « ${carte.nearTitle} »)`);
+  expect(carte.tasksBefore === carte.tasksAfter, "Carte : se déplacer ou lire une tâche a modifié les tâches enregistrées");
+  expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
+  expect(carte.chipPressed === "false", "Carte : le filtre « Terminées » ne se désactive pas");
+  expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
+  expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
+  expect(carte.mobile.scroll <= 0, `Carte mobile : défilement horizontal de ${carte.mobile.scroll}px`);
+  expect(/basse/.test(carte.volumeQuality), `Carte volume : qualité « ${carte.volumeQuality} », basse attendue pour 12 000 tâches`);
+  expect(carte.volumeMs < 60000, `Carte volume : ${carte.volumeMs} ms avant l'affichage (60 s maximum sur rendu logiciel)`);
+  expect(carte.volumeOverlaps.n === 0, `Carte volume : ${carte.volumeOverlaps.n} libellé(s) superposé(s)`);
+  expect(carte.fallbackProjects === 7, `Carte sans WebGL : ${carte.fallbackProjects} territoire(s) listé(s), 7 attendus`);
+  expect(carte.fallbackModal >= 1, "Carte sans WebGL : la liste de repli n'ouvre pas la fiche");
 }
 
 console.log(`Capture : ${shot}`);

@@ -1088,6 +1088,39 @@ if (benchApp) {
     "nexora:dashboards": JSON.stringify([{ id: "banc-d1", name: "Tableau du banc", folderId: null, pages: [{ id: "banc-p1", name: "Page 1", widgets: benchWidgets }], activePageId: "banc-p1" }]),
     "nexora:activeDashboardId": JSON.stringify("banc-d1"),
   }));
+  // Vue Carte (#361) : `?app=1&view=carte` ouvre directement une vue ;
+  // `carte=demo` range les projets dans des dossiers (régions à thème) et
+  // `carte=volume` charge 300 projets et 12 000 tâches pour éprouver le rendu.
+  const benchParams = new URLSearchParams(location.search);
+  if (benchParams.get("view")) mem.set("nexora:startupPref", JSON.stringify({ mode: "view", value: benchParams.get("view") }));
+  if (benchParams.get("carte") === "demo") {
+    const folders = [{ id: "banc-f1", name: "Chantiers", color: "#E07A3F" }, { id: "banc-f2", name: "Ingénierie", color: "#245EDB" }, { id: "banc-f3", name: "Perso", color: "#2A9D8F" }];
+    const projects = [
+      ...seedProjects.map((p, i) => ({ ...p, folderId: folders[i % 2].id, priority: i === 0 ? "high" : "normal" })),
+      { id: "banc-p4", name: "Passerelle quai Nord", icon: "🌉", color: "#B45309", folderId: "banc-f1" },
+      { id: "banc-p5", name: "Audit structure", icon: "🔎", color: "#245EDB", folderId: "banc-f2" },
+      { id: "banc-p6", name: "Jardin", icon: "🌻", color: "#2A9D8F", folderId: "banc-f3" },
+      { id: "banc-p7", name: "Idées en vrac", icon: "💡", color: "#8B5CF6", folderId: "folder-a-trier" },
+    ];
+    const extra = [];
+    projects.slice(3).forEach((p, j) => {
+      for (let i = 0; i < 9; i++) {
+        const st = seedStatuses[(i + j) % seedStatuses.length];
+        extra.push({ id: `banc-c${j}-${i}`, title: `${p.name} · étape ${i + 1}`, projectId: p.id, statusId: st.id, taskTypeId: ["tt1", "tt2", "tt3", "tt1"][i % 4], criticality: [null, "bas", "moyen", "urgent"][i % 4], milestone: i === 8, start: addDaysIso(iso(new Date()), i * 4 - 14), end: addDaysIso(iso(new Date()), i * 4 - 8), progress: (i * 23) % 101, assignee: seedTeamMembers[i % seedTeamMembers.length].name, checklist: i % 3 ? [] : [{ id: "k1", text: "a", done: true }, { id: "k2", text: "b", done: false }], dependsOn: i > 0 && i % 2 === 0 ? [`banc-c${j}-${i - 1}`] : [], recurrence: i === 5 ? { unit: "week", interval: 1 } : null, attachments: i === 2 ? [{ id: "a1", name: "plan.pdf" }] : [] });
+      }
+    });
+    mem.set("nexora:projectFolders", JSON.stringify(folders));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra]));
+  } else if (benchParams.get("carte") === "volume") {
+    const folders = Array.from({ length: 12 }, (_, i) => ({ id: `banc-vf${i}`, name: `Dossier ${i + 1}`, color: "#94A3B8" }));
+    const projects = Array.from({ length: 300 }, (_, i) => ({ id: `banc-vp${i}`, name: `Projet ${i + 1}`, icon: "", color: ["#E07A3F", "#245EDB", "#2A9D8F", "#8B5CF6", "#E0A21A"][i % 5], folderId: folders[i % 12].id }));
+    const tasks = [];
+    for (let i = 0; i < 12000; i++) tasks.push({ id: `banc-vt${i}`, title: `Tâche ${i + 1}`, projectId: projects[i % 300].id, statusId: seedStatuses[i % seedStatuses.length].id, taskTypeId: "tt1", criticality: [null, "bas", "moyen", "urgent"][i % 4], start: addDaysIso(iso(new Date()), (i % 40) - 20), end: addDaysIso(iso(new Date()), (i % 50) - 15), progress: i % 101, assignee: "", checklist: [] });
+    mem.set("nexora:projectFolders", JSON.stringify(folders));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify(tasks));
+  }
   window.storage = {
     async get(key) {
       if (!mem.has(key)) throw new Error("Key not found: " + key);

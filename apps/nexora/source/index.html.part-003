@@ -18810,6 +18810,1098 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
   );
 }
 
+// === NEXORA:CARTE-ENGINE:START ===
+// Moteur 3D de la vue Carte (#361). three.js est chargé à la demande par la
+// vue (import dynamique) et passé en paramètre : aucune autre vue ne le paie.
+// Toutes les pièces des modèles (voir NEXORA:CARTE) sont instanciées par
+// couple géométrie × matériau : quelques dizaines d'appels de dessin, quel que
+// soit le nombre de tâches. Le moteur ne modifie jamais une tâche.
+function createCarteEngine(THREE, container, opts) {
+  const o = opts || {};
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setClearColor("#bfe3f2");
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const canvas = renderer.domElement;
+  canvas.className = "lp-carte-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  container.appendChild(canvas);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog("#bfe3f2", 60, 170);
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.5, 700);
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x8a8f6a, 1.35);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight("#fff6e0", 2.1);
+  sun.position.set(30, 50, 20);
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, far: 220 });
+  scene.add(sun, sun.target);
+  const world = new THREE.Group();
+  const overlay = new THREE.Group();
+  scene.add(world, overlay);
+
+  const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const S = {
+    data: null, layout: null, stats: {}, visible: null, poi: {}, poisByKey: {}, selected: null, near: null, hovered: null,
+    yaw: 0.6, pitch: 0.92, dist: 19, target: new THREE.Vector3(), follow: true, focusGoal: null,
+    keys: {}, joy: { x: 0, y: 0 }, walkTo: null, quality: o.quality || "auto", effQuality: "high", detail: 2,
+    time: 0, raf: 0, disposed: false, spin: [], walkPhase: 0, territory: null, placedKeeper: false,
+  };
+
+  // ---------- Géométries unitaires (base à y = 0, hauteur 1) ----------
+  const G = {};
+  const mk = (name, geo) => { geo.computeVertexNormals(); G[name] = geo; };
+  mk("box", new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0));
+  mk("cyl", new THREE.CylinderGeometry(0.5, 0.5, 1, 8).translate(0, 0.5, 0));
+  mk("hex", new THREE.CylinderGeometry(0.5, 0.5, 1, 6).translate(0, 0.5, 0));
+  mk("cone", new THREE.ConeGeometry(0.5, 1, 8).translate(0, 0.5, 0));
+  mk("pyr", new THREE.ConeGeometry(0.5, 1, 4).translate(0, 0.5, 0));
+  mk("ball", new THREE.IcosahedronGeometry(0.5, 1).translate(0, 0.5, 0));
+  mk("dome", new THREE.SphereGeometry(0.5, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 2, 1));
+  // Variantes « tournantes » : l'axe de rotation est Z.
+  mk("cyl~s", new THREE.CylinderGeometry(0.5, 0.5, 1, 10).rotateX(Math.PI / 2));
+  mk("box~s", new THREE.BoxGeometry(1, 1, 1));
+  const tileGeo = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0);
+  const capGeo = new THREE.CylinderGeometry(0.985, 0.985, 0.14, 6).translate(0, 0.07, 0);
+  const ringGeo = new THREE.RingGeometry(0.78, 0.96, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo]);
+
+  const mats = [];
+  const mat = (m) => { mats.push(m); return m; };
+  const MAT = {
+    l: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    g: mat(new THREE.MeshBasicMaterial({ color: "#ffffff" })),
+    t: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.32, depthWrite: false })),
+    s: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    water: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.86, flatShading: true })),
+    ring: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide })),
+  };
+
+  const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpC = new THREE.Color(), UP = new THREE.Vector3(0, 1, 0);
+  const tmpE = new THREE.Euler();
+
+  function clearGroup(g) {
+    while (g.children.length) {
+      const c = g.children.pop();
+      if (c.isInstancedMesh) c.dispose();
+      if (c.userData.ownGeo) c.geometry.dispose();
+      if (c.userData.ownMat) c.material.dispose();
+    }
+  }
+
+  // Tampon d'instances : on compte d'abord, on alloue ensuite.
+  function makeBatcher() {
+    const buckets = {};
+    return {
+      add(g, m, x, y, z, sx, sy, sz, rot, color, meta) {
+        const key = (m === "s" ? g + "~s" : g) + "|" + m;
+        const b = buckets[key] || (buckets[key] = { g: m === "s" ? g + "~s" : g, m, items: [] });
+        b.items.push([x, y, z, sx, sy, sz, rot || 0, color, meta]);
+      },
+      flush(group, shadows) {
+        const spins = [];
+        Object.keys(buckets).forEach((key) => {
+          const b = buckets[key];
+          const geo = G[b.g] || G.box;
+          const mesh = new THREE.InstancedMesh(geo, MAT[b.m] || MAT.l, b.items.length);
+          mesh.castShadow = shadows && b.m === "l";
+          mesh.receiveShadow = shadows;
+          b.items.forEach((it, i) => {
+            tmpQ.setFromAxisAngle(UP, it[6]);
+            tmpS.set(Math.max(0.001, Math.abs(it[3])), Math.max(0.001, Math.abs(it[4])), Math.max(0.001, Math.abs(it[5])));
+            tmpP.set(it[0], it[1], it[2]);
+            mesh.setMatrixAt(i, tmpM.compose(tmpP, tmpQ, tmpS));
+            mesh.setColorAt(i, tmpC.set(it[7]));
+            if (b.m === "s") spins.push({ mesh, i, p: [it[0], it[1], it[2]], s: [tmpS.x, tmpS.y, tmpS.z], rot: it[6], ph: it[8] || 0 });
+          });
+          mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          mesh.computeBoundingSphere();
+          group.add(mesh);
+        });
+        return spins;
+      },
+    };
+  }
+  // Pose un modèle (liste de pièces locales) à (x, y, z) avec rotation ry.
+  function placeModel(batch, parts, x, y, z, ry, meta) {
+    const c = Math.cos(ry || 0), s = Math.sin(ry || 0);
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const lx = p.p[0], lz = p.p[2];
+      batch.add(p.g, p.m, x + lx * c + lz * s, y + p.p[1], z - lx * s + lz * c, p.s[0], p.s[1], p.s[2], (p.r || 0) + (ry || 0), p.c, meta);
+    }
+  }
+
+  const theme = (id) => CARTE_THEME_BY_ID[id] || CARTE_THEMES[0];
+  function tileColors(t) {
+    if (t.kind === "sea") return { top: "#3f9ccf", side: "#2d7fb0", water: true };
+    if (t.kind === "islet") return { top: "#9fcf6a", side: "#8a6a45" };
+    const th = theme(t.theme);
+    const pal = th.pal;
+    const v = carteRand("v:" + t.q + "," + t.r);
+    if (t.kind === "water") return { top: pal.water, side: carteMix(pal.water, "#000000", 0.25), water: true };
+    let top = t.kind === "edge" || t.kind === "wild" ? pal.wild : v < 0.3 ? pal.alt : pal.top;
+    if (th.relief === "peak" && t.ring >= 3) top = pal.alt;
+    if (th.relief === "crater" && t.ring === 1) top = "#3a3230";
+    if (t.road) top = th.id === "ville" ? "#b8b2a4" : "#e2bb82";
+    if (t.kind === "hub") {
+      const p = S.layout.projectById[t.projectId];
+      top = carteMix(pal.top, (p && p.color) || pal.top, 0.35);
+    }
+    return { top: carteMix(top, v < 0.5 ? "#000000" : "#ffffff", Math.abs(v - 0.5) * 0.12), side: pal.side };
+  }
+
+  // ---------- Construction ----------
+  function build() {
+    clearGroup(world);
+    S.spin = [];
+    const L = S.layout;
+    const q = S.effQuality;
+    const shadows = q === "high";
+    const keys = Object.keys(L.tiles);
+    const baseM = new THREE.InstancedMesh(tileGeo, MAT.l, keys.length);
+    const capM = new THREE.InstancedMesh(capGeo, MAT.l, keys.length);
+    const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
+    capM.count = 0; waterM.count = 0;
+    capM.userData.keys = []; waterM.userData.keys = [];
+    baseM.receiveShadow = capM.receiveShadow = shadows;
+    keys.forEach((k, i) => {
+      const t = L.tiles[k];
+      const w = carteToWorld(t.q, t.r);
+      const col = tileColors(t);
+      if (col.water) {
+        baseM.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, 0.08, 1)));
+        baseM.setColorAt(i, tmpC.set(col.side));
+        const j = waterM.count++;
+        waterM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        waterM.setColorAt(j, tmpC.set(t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
+        waterM.userData.keys[j] = k;
+      } else {
+        baseM.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, t.h, 1)));
+        baseM.setColorAt(i, tmpC.set(col.side));
+        const j = capM.count++;
+        capM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.02, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        capM.setColorAt(j, tmpC.set(col.top));
+        capM.userData.keys[j] = k;
+      }
+    });
+    [baseM, capM, waterM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    S.pickMeshes = [capM, waterM];
+
+    const batch = makeBatcher();
+    const poiKeys = new Set(L.pois.map((p) => p.key));
+    // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
+    const decorShare = q === "low" ? 0.4 : 1;
+    keys.forEach((k) => {
+      const t = L.tiles[k];
+      if (t.road || poiKeys.has(k) || t.kind === "hub") {
+        if (t.bridge) placeModel(batch, [cP("box", "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
+        return;
+      }
+      if (carteRand("share" + k) > decorShare) return;
+      const w = carteToWorld(t.q, t.r);
+      placeModel(batch, carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret"), w.x, t.h + 0.12, w.z, 0);
+    });
+    // Cœurs de projets.
+    L.territories.forEach((tr) => {
+      const p = L.projectById[tr.projectId];
+      const st = S.stats[tr.projectId] || { stage: 0 };
+      const tile = L.tiles[carteKey(tr.q, tr.r)];
+      const w = carteToWorld(tr.q, tr.r);
+      const model = carteHubModel(tr.theme, st.stage, p.color, p.priority).map((m) => Object.assign({}, m, { p: [m.p[0] * 1.3, m.p[1] * 1.3, m.p[2] * 1.3], s: [m.s[0] * 1.3, m.s[1] * 1.3, m.s[2] * 1.3] }));
+      placeModel(batch, model, w.x, tile.h + 0.12, w.z, 0, 0);
+      let top = 0; model.forEach((m) => { top = Math.max(top, m.p[1] + m.s[1]); });
+      tr.anchor = new THREE.Vector3(w.x, tile.h + 0.12 + top + 0.35, w.z);
+      tr.world = new THREE.Vector3(w.x, tile.h + 0.12, w.z);
+    });
+    // Tâches.
+    S.poi = {}; S.poisByKey = {};
+    const vis = S.visible;
+    L.pois.forEach((p) => {
+      const t = S.data.taskById[p.taskId];
+      if (!t || (vis && !vis.has(t.id))) return;
+      const tile = L.tiles[p.key];
+      const w = carteToWorld(tile.q, tile.r);
+      let ox = 0, oz = 0, k = 1.35;
+      const n = L.occupancy[p.key] || 1;
+      if (n > 1) { const a = p.stack * 2.4; const r = 0.42 + 0.12 * Math.floor(p.stack / 6); ox = Math.cos(a) * r; oz = Math.sin(a) * r; k = 0.62; }
+      const x = w.x + ox, z = w.z + oz, y = tile.h + 0.12;
+      const sec = t.secondaryProjectId && L.projectById[t.secondaryProjectId];
+      const detail = n > 1 ? Math.min(S.detail, 1) : S.detail;
+      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null });
+      if (tile.kind === "water" && !/^(mer|ile)$/.test(tile.theme) && t.state !== "info") parts = carteStilts(theme(tile.theme).pal.wood, 0.3).concat(parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0], pp.p[1] + 0.02, pp.p[2]] })));
+      if (k !== 1) parts = parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0] * k, pp.p[1] * k, pp.p[2] * k], s: [pp.s[0] * k, pp.s[1] * k, pp.s[2] * k] }));
+      const ry = (carteRand("ry" + t.id) - 0.5) * 0.8;
+      placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
+      let top = 0; parts.forEach((pp) => { if (pp.m !== "t") top = Math.max(top, pp.p[1] + pp.s[1]); });
+      S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 1.6) + 0.1 };
+      (S.poisByKey[p.key] = S.poisByKey[p.key] || []).push(t.id);
+    });
+    S.spin = batch.flush(world, shadows);
+    const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
+    S.spin = S.spin.slice(0, maxSpin);
+    drawSelection();
+  }
+
+  // ---------- Sélection, routes de convoi ----------
+  function drawSelection() {
+    clearGroup(overlay);
+    S.convoys = [];
+    const id = S.selected;
+    const pos = id && S.poi[id];
+    if (!pos) return;
+    const ring = new THREE.Mesh(ringGeo, MAT.ring.clone());
+    ring.userData.ownMat = true;
+    ring.material.color.set("#245edb");
+    const tile = S.layout.tiles[pos.key];
+    const w = carteToWorld(tile.q, tile.r);
+    ring.position.set(w.x, tile.h + 0.14, w.z);
+    overlay.add(ring);
+    const t = S.data.taskById[id];
+    const links = [];
+    t.dependsOn.forEach((d) => links.push({ other: d, color: "#6b4ce6", into: true }));
+    S.data.tasks.forEach((o2) => { if (o2.dependsOn.indexOf(id) !== -1) links.push({ other: o2.id, color: "#e07b1a", into: false }); });
+    const from = new THREE.Vector3(pos.x, pos.y + 0.2, pos.z);
+    const arc = (a, b, color, dash) => {
+      const mid = a.clone().lerp(b, 0.5); mid.y += 0.8 + a.distanceTo(b) * 0.18;
+      const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+      const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(48));
+      const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color, dashSize: dash, gapSize: dash * 0.7 }));
+      line.computeLineDistances();
+      line.userData.ownGeo = line.userData.ownMat = true;
+      overlay.add(line);
+      return curve;
+    };
+    links.forEach((lk) => {
+      const op = S.poi[lk.other];
+      const other = S.data.taskById[lk.other];
+      let end;
+      if (op) end = new THREE.Vector3(op.x, op.y + 0.2, op.z);
+      else if (other) {
+        const tr = S.layout.territories.find((x) => x.projectId === (other.projectId || "__terre-inconnue__"));
+        if (!tr || !tr.world) return;
+        end = tr.world.clone().add(new THREE.Vector3(0, 0.3, 0));
+      } else return;
+      const a = lk.into ? end : from, b = lk.into ? from : end;
+      const curve = arc(a, b, lk.color, 0.22);
+      // Prédécesseur non terminé : la charrette attend devant une barrière.
+      const pred = lk.into ? other : t;
+      const blocked = pred && pred.state !== "done";
+      const cart = new THREE.Mesh(G.box, new THREE.MeshLambertMaterial({ color: blocked ? "#b0493a" : "#8a5a35" }));
+      cart.userData.ownMat = true;
+      cart.scale.set(0.22, 0.16, 0.3);
+      overlay.add(cart);
+      S.convoys.push({ curve, cart, blocked });
+      if (blocked) {
+        const bar = new THREE.Mesh(G.box, new THREE.MeshBasicMaterial({ color: "#DC2626" }));
+        bar.userData.ownMat = true;
+        const p = curve.getPoint(0.86);
+        bar.position.copy(p); bar.scale.set(0.5, 0.06, 0.06);
+        overlay.add(bar);
+      }
+    });
+    if (t.secondaryProjectId) {
+      const tr = S.layout.territories.find((x) => x.projectId === t.secondaryProjectId);
+      if (tr && tr.world) arc(from, tr.world.clone().add(new THREE.Vector3(0, 0.3, 0)), "#2a9d8f", 0.12);
+    }
+  }
+
+  // ---------- Arpenteur ----------
+  const keeper = new THREE.Group();
+  (function buildKeeper() {
+    const m = (c) => { const x = new THREE.MeshLambertMaterial({ color: c, flatShading: true }); mats.push(x); return x; };
+    const coat = m("#3f6fb5"), skin = m("#f1c9a5"), hat = m("#c9a24a"), boot = m("#4a3a2a"), staff = m("#e8e0d0");
+    const add = (geo, mt, x, y, z, sx, sy, sz) => { const me = new THREE.Mesh(geo, mt); me.position.set(x, y, z); me.scale.set(sx, sy, sz); me.castShadow = true; keeper.add(me); return me; };
+    const body = add(G.cyl, coat, 0, 0.16, 0, 0.36, 0.44, 0.36);
+    add(G.ball, skin, 0, 0.58, 0, 0.28, 0.28, 0.28);
+    add(G.cyl, hat, 0, 0.8, 0, 0.56, 0.04, 0.56);
+    add(G.cyl, hat, 0, 0.82, 0, 0.3, 0.14, 0.3);
+    const l1 = add(G.cyl, boot, -0.08, 0, 0, 0.12, 0.18, 0.12);
+    const l2 = add(G.cyl, boot, 0.08, 0, 0, 0.12, 0.18, 0.12);
+    add(G.cyl, staff, 0.24, 0, 0.08, 0.04, 0.9, 0.04);
+    add(G.box, m("#d9412f"), 0.24, 0.72, 0.08, 0.1, 0.08, 0.02);
+    const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.3, 12), new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.18, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.01; keeper.add(shadow);
+    geos.push(shadow.geometry); mats.push(shadow.material);
+    keeper.userData = { body, l1, l2 };
+    scene.add(keeper);
+  })();
+
+  function groundAt(x, z) {
+    const h = carteFromWorld(x, z);
+    const t = S.layout && S.layout.tiles[carteKey(h[0], h[1])];
+    if (!t) return null;
+    if (t.kind === "sea" || t.kind === "water") return t.bridge ? t.h + 0.1 : Math.max(0.12, t.h) + 0.02;
+    return t.h + 0.12;
+  }
+
+  // ---------- Caméra ----------
+  function updateCamera(dt, snap) {
+    const goal = S.follow ? tmpP.set(keeper.position.x, keeper.position.y + 0.4, keeper.position.z) : (S.focusGoal || S.target);
+    const k = snap || reduced ? 1 : 1 - Math.pow(0.001, dt);
+    S.target.lerp(goal, k);
+    const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+    camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
+    camera.lookAt(S.target);
+    scene.fog.near = S.dist * 0.8 + 25;
+    scene.fog.far = S.dist * 2.2 + 70;
+    if (S.effQuality === "high") { sun.position.set(S.target.x + 30, 50, S.target.z + 20); sun.target.position.copy(S.target); }
+  }
+  function zoomBy(f) { S.dist = Math.max(7, Math.min(150, S.dist * f)); }
+
+  // ---------- Entrées ----------
+  const keyMap = { arrowup: "f", z: "f", w: "f", arrowdown: "b", s: "b", arrowleft: "l", q: "l", a: "l", arrowright: "r", d: "r" };
+  function onKey(e, down) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (/INPUT|TEXTAREA|SELECT/.test(tag) || (e.target && e.target.isContentEditable)) return;
+    const k = String(e.key || "").toLowerCase();
+    if (keyMap[k]) { S.keys[keyMap[k]] = down; if (down) { S.follow = true; S.walkTo = null; } e.preventDefault(); return; }
+    if (!down) return;
+    if (k === "e" || k === "pageup") { S.yaw += Math.PI / 6; e.preventDefault(); }
+    else if (k === "r" || k === "pagedown") { S.yaw -= Math.PI / 6; e.preventDefault(); }
+    else if (k === "+" || k === "=") { zoomBy(0.8); e.preventDefault(); }
+    else if (k === "-") { zoomBy(1.25); e.preventDefault(); }
+    else if (k === "enter" || k === " ") { if (S.near) { select(S.near); e.preventDefault(); } }
+    else if (k === "c") { recenter(); e.preventDefault(); }
+  }
+  const kd = (e) => onKey(e, true), ku = (e) => onKey(e, false);
+  const blur = () => { S.keys = {}; };
+  const keyTarget = o.keyTarget || container;
+  keyTarget.addEventListener("keydown", kd);
+  keyTarget.addEventListener("keyup", ku);
+  keyTarget.addEventListener("blur", blur, true);
+  const onWheel = (e) => { e.preventDefault(); zoomBy(e.deltaY > 0 ? 1.12 : 0.89); };
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+
+  const pointers = {}; let drag = null, pinch = null;
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function pick(cx, cy) {
+    const rect = canvas.getBoundingClientRect();
+    ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObjects(S.pickMeshes || [], false);
+    if (!hits.length) return null;
+    return { key: hits[0].object.userData.keys[hits[0].instanceId], point: hits[0].point };
+  }
+  function taskAt(k, point) {
+    const ids = S.poisByKey[k];
+    if (!ids || !ids.length) return null;
+    if (ids.length === 1 || !point) return ids[0];
+    let best = ids[0], bd = Infinity;
+    ids.forEach((id) => { const p = S.poi[id]; const d = Math.hypot(p.x - point.x, p.z - point.z); if (d < bd) { bd = d; best = id; } });
+    return best;
+  }
+  const hubAt = (k) => { const t = S.layout.tiles[k]; return t && t.kind === "hub" ? t.projectId : null; };
+  const onDown = (e) => {
+    if (keyTarget.focus) keyTarget.focus({ preventScroll: true });
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointeur déjà relâché */ }
+    const ids = Object.keys(pointers);
+    if (ids.length === 2) { const a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist }; drag = null; }
+    else drag = { sx: e.clientX, sy: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false };
+  };
+  const onMove = (e) => {
+    if (pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    const ids = Object.keys(pointers);
+    if (pinch && ids.length === 2) {
+      const a = pointers[ids[0]], b = pointers[ids[1]];
+      S.dist = Math.max(7, Math.min(150, pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y))));
+      return;
+    }
+    if (drag) {
+      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (Math.hypot(dx, dy) > 6) drag.moved = true;
+      if (drag.moved) { S.yaw = drag.yaw - dx * 0.006; S.pitch = Math.max(0.45, Math.min(1.35, drag.pitch + dy * 0.004)); }
+      return;
+    }
+    if (e.pointerType === "mouse" && S.layout) {
+      const h = pick(e.clientX, e.clientY);
+      const id = h ? taskAt(h.key, h.point) : null;
+      const hp = h && !id ? hubAt(h.key) : null;
+      const hv = id ? "t:" + id : hp ? "p:" + hp : null;
+      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv ? "pointer" : "grab"; }
+    }
+  };
+  const onUp = (e) => {
+    delete pointers[e.pointerId];
+    if (pinch) { if (Object.keys(pointers).length < 2) pinch = null; drag = null; return; }
+    if (drag && !drag.moved && S.layout) {
+      const h = pick(e.clientX, e.clientY);
+      if (h) {
+        const id = taskAt(h.key, h.point), hp = hubAt(h.key);
+        if (id) { walkToTask(id); select(id); }
+        else { if (hp && o.onTerritory) o.onTerritory(hp); walkTo(h.point.x, h.point.z); }
+      }
+    }
+    drag = null;
+  };
+  const onCancel = (e) => { delete pointers[e.pointerId]; drag = null; pinch = null; };
+  canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onCancel);
+
+  function walkTo(x, z) { S.walkTo = { x, z }; S.follow = true; }
+  function walkToTask(id) {
+    const p = S.poi[id];
+    if (!p) return false;
+    const dx = keeper.position.x - p.x, dz = keeper.position.z - p.z, d = Math.hypot(dx, dz) || 1;
+    walkTo(p.x + dx / d * 0.75, p.z + dz / d * 0.75);
+    return true;
+  }
+
+  function step(dt) {
+    const f = (S.keys.f ? 1 : 0) - (S.keys.b ? 1 : 0) - S.joy.y;
+    const s = (S.keys.r ? 1 : 0) - (S.keys.l ? 1 : 0) + S.joy.x;
+    let mx = 0, mz = 0;
+    if (Math.abs(f) > 0.05 || Math.abs(s) > 0.05) {
+      const fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
+      mx = fx * f - fz * s; mz = fz * f + fx * s;
+      S.walkTo = null;
+    } else if (S.walkTo) {
+      mx = S.walkTo.x - keeper.position.x; mz = S.walkTo.z - keeper.position.z;
+      if (Math.hypot(mx, mz) < 0.12) { S.walkTo = null; mx = mz = 0; }
+    }
+    const len = Math.hypot(mx, mz);
+    if (len > 0) {
+      const sp = 3.8 * Math.min(1, len);
+      mx /= len; mz /= len;
+      let nx = keeper.position.x + mx * sp * dt, nz = keeper.position.z + mz * sp * dt;
+      if (groundAt(nx, nz) == null) { S.walkTo = null; nx = keeper.position.x; nz = keeper.position.z; }
+      keeper.position.x = nx; keeper.position.z = nz;
+      keeper.rotation.y = Math.atan2(mx, mz);
+      S.walkPhase += dt * 12;
+    }
+    const gy = groundAt(keeper.position.x, keeper.position.z);
+    if (gy != null) keeper.position.y += (gy - keeper.position.y) * Math.min(1, dt * 14);
+    const u = keeper.userData, moving = len > 0 && !reduced;
+    u.l1.position.z = moving ? Math.sin(S.walkPhase) * 0.06 : 0;
+    u.l2.position.z = moving ? -Math.sin(S.walkPhase) * 0.06 : 0;
+    u.body.position.y = 0.16 + (moving ? Math.abs(Math.sin(S.walkPhase)) * 0.03 : 0);
+    // Tâche la plus proche (lecture seule).
+    let near = null, nd = 1.3;
+    const kq = carteFromWorld(keeper.position.x, keeper.position.z);
+    for (let dq = -1; dq <= 1; dq++) for (let dr = -1; dr <= 1; dr++) {
+      const list = S.poisByKey[carteKey(kq[0] + dq, kq[1] + dr)];
+      if (!list) continue;
+      list.forEach((id) => { const p = S.poi[id]; const d = Math.hypot(p.x - keeper.position.x, p.z - keeper.position.z); if (d < nd) { nd = d; near = id; } });
+    }
+    if (near !== S.near) { S.near = near; o.onNear && o.onNear(near); }
+    const here = S.layout.tiles[carteKey(kq[0], kq[1])];
+    const terr = here && here.projectId ? here.projectId : null;
+    if (terr !== S.territory) { S.territory = terr; o.onTerritoryEnter && o.onTerritoryEnter(terr); }
+  }
+
+  function animate() {
+    if (reduced) return;
+    const t = S.time;
+    S.spin.forEach((sp) => {
+      tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");
+      tmpQ.setFromEuler(tmpE);
+      sp.mesh.setMatrixAt(sp.i, tmpM.compose(tmpP.set(sp.p[0], sp.p[1], sp.p[2]), tmpQ, tmpS.set(sp.s[0], sp.s[1], sp.s[2])));
+      sp.mesh.instanceMatrix.needsUpdate = true;
+    });
+    (S.convoys || []).forEach((c) => {
+      const u = c.blocked ? Math.min(0.8, (t * 0.25) % 1) : (t * 0.25) % 1;
+      c.cart.position.copy(c.curve.getPoint(u));
+    });
+  }
+
+  // ---------- Étiquettes HTML sans chevauchement ----------
+  const labels = document.createElement("div");
+  labels.className = "lp-carte-labels";
+  labels.setAttribute("aria-hidden", "true");
+  container.appendChild(labels);
+  const pool = {};
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const projV = new THREE.Vector3();
+  function updateLabels() {
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    const far = S.dist > 48;
+    const cand = [];
+    S.layout.territories.forEach((tr) => {
+      if (!tr.anchor) return;
+      cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, prio: (S.territory === tr.projectId ? 2000 : 500) + ((S.stats[tr.projectId] || {}).total || 0) });
+    });
+    if (!far) {
+      const ids = {};
+      if (S.selected) { ids[S.selected] = 900; const st = S.data.taskById[S.selected]; if (st) st.dependsOn.forEach((d) => { ids[d] = 700; }); }
+      if (S.near) ids[S.near] = 800;
+      if (S.hovered && S.hovered.startsWith("t:")) ids[S.hovered.slice(2)] = 850;
+      if (S.dist < 17) {
+        const kp = keeper.position;
+        Object.keys(S.poi).forEach((id) => { const p = S.poi[id]; const d = Math.hypot(p.x - kp.x, p.z - kp.z); if (d < 5 && !ids[id]) ids[id] = 300 - d * 10; });
+      }
+      Object.keys(ids).forEach((id) => { const p = S.poi[id]; if (p) cand.push({ id: "t:" + id, kind: "task", tid: id, pos: projV.clone().set(p.x, p.top, p.z), prio: ids[id] }); });
+    }
+    cand.sort((a, b) => b.prio - a.prio);
+    const seen = {};
+    // Les commandes posées sur la carte (ruban, pastilles, fiche…) sont des
+    // obstacles : aucun libellé ne passe dessous. Relevées 4 fois par seconde.
+    if (!S.obstacleAt || S.time - S.obstacleAt > 0.25) {
+      S.obstacleAt = S.time;
+      const cr = canvas.getBoundingClientRect();
+      S.obstacles = (o.obstacles ? o.obstacles() : []).filter((r) => r && r.width && r.height).map((r) => ({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height }));
+    }
+    const placed = (S.obstacles || []).slice();
+    cand.forEach((c) => {
+      projV.copy(c.pos).project(camera);
+      if (projV.z > 1 || Math.abs(projV.x) > 1.1 || Math.abs(projV.y) > 1.1) return;
+      const sx = (projV.x + 1) / 2 * W, sy = (1 - projV.y) / 2 * H;
+      let l = pool[c.id];
+      if (!l) { l = document.createElement("div"); l.className = "lp-carte-label lp-carte-label--" + c.kind; labels.appendChild(l); pool[c.id] = l; }
+      let html;
+      if (c.kind === "project") {
+        const p = S.layout.projectById[c.pid];
+        const s = S.stats[c.pid] || { todo: 0, doing: 0, done: 0, pct: 0, stage: 0, overdue: 0 };
+        const th = theme(S.layout.themes[c.pid]);
+        html = '<span class="lp-carte-dot" style="background:' + esc(p.color) + '"></span><span class="lp-carte-name">' + esc(p.icon && !/^(tabler:|https?:|data:)/.test(p.icon) ? p.icon + " " : "") + esc(p.name) + "</span>";
+        if (far || S.territory === c.pid) html += '<span class="lp-carte-meta">' + esc(th.hub[s.stage]) + " · " + s.pct + " %" + (s.overdue ? ' · <b>' + s.overdue + " en retard</b>" : "") + "</span>";
+      } else {
+        const t = S.data.taskById[c.tid];
+        const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
+        html = '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
+      }
+      if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; }
+      l.classList.toggle("is-selected", c.tid != null && c.tid === S.selected);
+      l.classList.toggle("is-near", c.tid != null && c.tid === S.near);
+      const box = { x: sx - l._w / 2, y: sy - l._h - 4, w: l._w, h: l._h };
+      if (box.x < 2 || box.y < 2 || box.x + box.w > W - 2 || box.y + box.h > H - 2) return;
+      for (let i = 0; i < placed.length; i++) {
+        const q2 = placed[i];
+        if (box.x < q2.x + q2.w + 4 && box.x + box.w + 4 > q2.x && box.y < q2.y + q2.h + 2 && box.y + box.h + 2 > q2.y) return;
+      }
+      placed.push(box);
+      seen[c.id] = true;
+      l.style.transform = "translate(" + Math.round(box.x) + "px," + Math.round(box.y) + "px)";
+      l.style.visibility = "visible";
+    });
+    Object.keys(pool).forEach((id) => { if (!seen[id]) pool[id].style.visibility = "hidden"; });
+    // Les étiquettes des territoires disparus sont retirées du DOM.
+    if (Object.keys(pool).length > 600) Object.keys(pool).forEach((id) => { if (!seen[id]) { pool[id].remove(); delete pool[id]; } });
+  }
+
+  // ---------- API ----------
+  function resolveQuality() {
+    const n = S.data ? S.data.tasks.length : 0;
+    S.effQuality = S.quality === "auto" ? (n > 3000 ? "low" : n > 800 ? "medium" : "high") : S.quality;
+    S.detail = n > 3000 ? 0 : n > 1200 ? 1 : 2;
+    const ratio = { low: 1, medium: 1.5, high: 2 }[S.effQuality];
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, ratio));
+    renderer.shadowMap.enabled = S.effQuality === "high";
+    sun.castShadow = S.effQuality === "high";
+  }
+  function setData(d) {
+    S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null;
+    resolveQuality();
+    build();
+    if (!S.placedKeeper && S.layout.territories.length) {
+      const first = S.layout.territories.find((t) => !S.layout.projectById[t.projectId].unknown) || S.layout.territories[0];
+      const w = carteToWorld(first.q + 1, first.r);
+      keeper.position.set(w.x, 1, w.z);
+      S.placedKeeper = true;
+      updateCamera(1, true);
+    }
+    if (S.selected && !S.poi[S.selected]) select(null);
+    o.onQuality && o.onQuality(S.effQuality);
+  }
+  function select(id) {
+    S.selected = id || null;
+    drawSelection();
+    o.onSelect && o.onSelect(S.selected);
+  }
+  function focusProject(pid) {
+    const tr = S.layout && S.layout.territories.find((t) => t.projectId === pid);
+    if (!tr) return false;
+    const w = carteToWorld(tr.q, tr.r + 1);
+    // Au-delà de quelques tuiles, l'arpenteur est « porté » à destination
+    // (la caméra glisse) : la recherche ne doit pas imposer une longue marche.
+    if (Math.hypot(w.x - keeper.position.x, w.z - keeper.position.z) > 12) {
+      const g = groundAt(w.x, w.z);
+      keeper.position.set(w.x, g == null ? 1 : g, w.z);
+      S.walkTo = null;
+    } else walkTo(w.x, w.z);
+    S.follow = true; S.focusGoal = null;
+    S.dist = Math.min(S.dist, 22);
+    return true;
+  }
+  function recenter() { S.follow = true; S.walkTo = null; S.dist = 19; S.pitch = 0.92; S.focusGoal = null; }
+  function overview() {
+    const ts = S.layout ? S.layout.territories : [];
+    if (!ts.length) return;
+    let xs = 0, zs = 0, maxd = 0;
+    ts.forEach((t) => { const w = carteToWorld(t.q, t.r); xs += w.x; zs += w.z; });
+    const cx = xs / ts.length, cz = zs / ts.length;
+    ts.forEach((t) => { const w = carteToWorld(t.q, t.r); maxd = Math.max(maxd, Math.hypot(w.x - cx, w.z - cz)); });
+    S.follow = false;
+    S.focusGoal = new THREE.Vector3(cx, 0, cz);
+    S.dist = Math.min(150, Math.max(32, maxd * 2.3 + 18));
+  }
+  function setQuality(q) { S.quality = q; if (S.layout) { resolveQuality(); build(); } o.onQuality && o.onQuality(S.effQuality); }
+  function resize() {
+    const w = container.clientWidth || 300, h = container.clientHeight || 300;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
+  resize();
+
+  let last = performance.now(), fpsT = 0, fpsN = 0;
+  function frame(now) {
+    if (S.disposed) return;
+    S.raf = requestAnimationFrame(frame);
+    if (document.hidden) { last = now; return; }
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    S.time += dt;
+    if (!S.layout) return;
+    step(dt);
+    updateCamera(dt);
+    animate();
+    renderer.render(scene, camera);
+    updateLabels();
+    fpsT += dt; fpsN++;
+    if (fpsT > 2) { o.onFps && o.onFps(Math.round(fpsN / fpsT)); fpsT = 0; fpsN = 0; }
+  }
+  S.raf = requestAnimationFrame(frame);
+
+  return {
+    setData, select, focusProject, walkToTask, recenter, overview, setQuality, zoomBy,
+    rotate: (d) => { S.yaw += d; },
+    setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
+    nearTask: () => S.near,
+    selected: () => S.selected,
+    dispose() {
+      S.disposed = true;
+      cancelAnimationFrame(S.raf);
+      ro.disconnect();
+      keyTarget.removeEventListener("keydown", kd);
+      keyTarget.removeEventListener("keyup", ku);
+      keyTarget.removeEventListener("blur", blur, true);
+      canvas.removeEventListener("wheel", onWheel);
+      clearGroup(world); clearGroup(overlay);
+      geos.forEach((g) => g.dispose());
+      mats.forEach((m) => m.dispose());
+      renderer.dispose();
+      canvas.remove();
+      labels.remove();
+    },
+  };
+}
+function carteWebglAvailable() {
+  try {
+    const c = document.createElement("canvas");
+    return !!(window.WebGLRenderingContext && (c.getContext("webgl2") || c.getContext("webgl")));
+  } catch (e) { return false; }
+}
+// === NEXORA:CARTE-ENGINE:END ===
+
+// Vue Carte (#361) : exploration 3D des projets et des tâches. Lecture seule :
+// la seule action qui peut mener à une modification est « Ouvrir la fiche »,
+// qui ouvre la fiche Nexora habituelle (onOpen).
+const CARTE_THREE_URL = "https://esm.sh/three@0.158.0";
+const CARTE_MEMORY_KEY = "nexora:carte:layout";
+let carteThreePromise = null;
+function loadCarteThree() {
+  if (!carteThreePromise) carteThreePromise = import(CARTE_THREE_URL).catch((e) => { carteThreePromise = null; throw e; });
+  return carteThreePromise;
+}
+function readCarteMemory() {
+  try { const raw = window.localStorage && window.localStorage.getItem(CARTE_MEMORY_KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+}
+function writeCarteMemory(mem) {
+  try { window.localStorage && window.localStorage.setItem(CARTE_MEMORY_KEY, JSON.stringify(mem)); } catch (e) { /* stockage indisponible : la carte reste déterministe */ }
+}
+function carteDueText(t) {
+  if (t.end == null) return "Sans échéance";
+  if (t.state === "done") return "Échéance passée le " + fmtCarteDate(t.endIso);
+  if (t.dueIn < 0) return "En retard de " + (-t.dueIn) + " j";
+  if (t.dueIn === 0) return "Échéance aujourd'hui";
+  return "Échéance dans " + t.dueIn + " j";
+}
+function fmtCarteDate(isoDate) {
+  if (!isoDate) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return isoDate;
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+}
+const CARTE_WORLD_TEXT = { todo: "todo", waiting: "waiting", doing: "doing", done: "done", info: "info" };
+
+function CarteTaskDetail({ task, norm, layout, onOpen, onGo, onWalk, onClose }) {
+  const p = layout.projectById[task.projectId || "__terre-inconnue__"] || {};
+  const th = CARTE_THEME_BY_ID[layout.themes[p.id]] || CARTE_THEMES[0];
+  const crit = CRITICALITIES.find((c) => c.id === task.criticality);
+  const deps = task.dependsOn.map((id) => norm.taskById[id]).filter(Boolean);
+  const dependents = norm.tasks.filter((o) => o.dependsOn.indexOf(task.id) !== -1);
+  const sec = task.secondaryProjectId && layout.projectById[task.secondaryProjectId];
+  const late = task.overdue;
+  return (
+    <aside className="lp-carte-detail" aria-label="Détail de la tâche">
+      <div className="lp-carte-detail-head">
+        <span className="lp-carte-detail-project"><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}{p.folderName ? <span className="lp-carte-muted"> · {p.folderName}</span> : null}</span>
+        <button type="button" className="lp-icon-btn" aria-label="Fermer le détail" onClick={onClose}><X size={16} /></button>
+      </div>
+      <div className="lp-carte-detail-body">
+        <h3 className="lp-carte-detail-title">{task.milestone && <span className="lp-carte-ms" title="Jalon">◆ </span>}{task.title}</h3>
+        <div className="lp-carte-chips">
+          <span className="lp-carte-chip"><i style={{ background: task.statusColor }} />{task.statusName}</span>
+          <span className="lp-carte-chip"><i style={{ background: task.typeColor }} />{task.typeName}</span>
+          {crit && <span className="lp-carte-chip lp-carte-chip-crit" style={{ "--c": crit.color }}>Criticité {crit.name.toLowerCase()}</span>}
+        </div>
+        <dl className="lp-carte-grid">
+          <dt>Dates</dt><dd>{task.startIso ? fmtCarteDate(task.startIso) + " → " + fmtCarteDate(task.endIso) : "Non renseignées"}{task.startTime ? " · " + task.startTime + (task.endTime ? "–" + task.endTime : "") : ""}</dd>
+          <dt>Échéance</dt><dd className={late ? "is-late" : ""}>{carteDueText(task)}</dd>
+          <dt>Avancement</dt><dd><span className="lp-carte-bar"><span style={{ width: task.progress + "%" }} /></span>{task.progress} %</dd>
+          <dt>Responsable</dt><dd>{task.assignee ? <><span className="lp-carte-dot lp-carte-dot-round" style={{ background: cartePersonColor(task.assignee, task.assigneeColor) }} />{task.assignee}</> : "Non attribuée"}</dd>
+          {task.checklistTotal > 0 && <><dt>Sous-tâches</dt><dd>{task.checklistDone} / {task.checklistTotal} faites</dd></>}
+          {sec && <><dt>Partagée avec</dt><dd><span className="lp-carte-dot" style={{ background: sec.color }} />{sec.name}</dd></>}
+          {(task.attachments > 0 || task.hasReport || task.recurring || task.fromEmail) && <><dt>Aussi</dt><dd>{[task.recurring && "récurrente", task.attachments > 0 && task.attachments + " pièce" + (task.attachments > 1 ? "s" : "") + " jointe" + (task.attachments > 1 ? "s" : ""), task.hasReport && "compte rendu", task.fromEmail && "issue d'un e-mail"].filter(Boolean).join(" · ")}</dd></>}
+        </dl>
+        {task.desc && <p className="lp-carte-desc">{task.desc.length > 280 ? task.desc.slice(0, 279) + "…" : task.desc}</p>}
+        {(deps.length > 0 || dependents.length > 0) && (
+          <div className="lp-carte-links">
+            {deps.map((o) => <button key={"d" + o.id} type="button" className="lp-carte-link" onClick={() => onGo(o.id)}><span className="lp-carte-link-tag is-in">Attend</span>{o.title}</button>)}
+            {dependents.map((o) => <button key={"b" + o.id} type="button" className="lp-carte-link" onClick={() => onGo(o.id)}><span className="lp-carte-link-tag is-out">Bloque</span>{o.title}</button>)}
+          </div>
+        )}
+        <p className="lp-carte-world">Sur la carte ({th.label}) : {th.lg[CARTE_WORLD_TEXT[task.state]]}{task.state === "doing" || task.state === "waiting" ? ", palier " + carteStage(task.progress) + " sur 5" : ""}.</p>
+        <div className="lp-carte-actions">
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => onOpen(task.id)}><ExternalLink size={14} /> Ouvrir la fiche</button>
+          <button type="button" className="lp-btn" onClick={() => onWalk(task.id)}>Y aller</button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function CarteThemeSettings({ ctx, layout, prefs, setPrefs, onClose }) {
+  const used = new Set((ctx.projects || []).map((p) => (p.folderId && p.folderId !== CARTE_UNSORTED_FOLDER ? p.folderId : null)).filter(Boolean));
+  const folders = (ctx.projectFolders || []).filter((f) => used.has(f.id));
+  const setTheme = (fid, value) => setPrefs((v) => {
+    const next = { ...(v.folderThemes || {}) };
+    if (value) next[fid] = value; else delete next[fid];
+    return { folderThemes: next };
+  });
+  return (
+    <Modal title="Thèmes de la carte" onClose={onClose} footer={<button type="button" className="lp-btn lp-btn-primary" onClick={onClose}>Fermer</button>}>
+      <p className="lp-carte-muted" style={{ marginTop: 0 }}>Chaque dossier forme une région d'un seul thème. Ce réglage ne concerne que l'affichage de la carte et ne modifie aucun projet.</p>
+      {folders.length === 0 && <p className="lp-empty">Aucun dossier ne contient de projet.</p>}
+      <div className="lp-carte-theme-list">
+        {folders.map((f) => (
+          <label key={f.id} className="lp-carte-theme-row">
+            <span>{f.name}</span>
+            <select value={prefs.folderThemes[f.id] || ""} onChange={(e) => setTheme(f.id, e.target.value)}>
+              <option value="">Automatique ({(CARTE_THEME_BY_ID[layout && layout.groupThemes[f.id]] || {}).label || "—"})</option>
+              {CARTE_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+          </label>
+        ))}
+        <label className="lp-carte-theme-row">
+          <span>À trier et projets sans dossier</span>
+          <select value={prefs.folderThemes[CARTE_UNSORTED_FOLDER] || ""} onChange={(e) => setTheme(CARTE_UNSORTED_FOLDER, e.target.value)}>
+            <option value="">Automatique (Île tropicale)</option>
+            {CARTE_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
+function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
+  const byProject = {};
+  norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (byProject[k] = byProject[k] || []).push(t); });
+  return (
+    <div className="lp-carte-fallback">
+      <p className="lp-carte-fallback-lead"><AlertTriangle size={16} /> {reason === "nowebgl"
+        ? "La carte 3D n'est pas disponible sur cet appareil (WebGL désactivé ou non pris en charge). Voici les mêmes territoires sous forme de liste."
+        : "La carte 3D n'a pas pu être chargée (connexion interrompue ?). Voici les mêmes territoires sous forme de liste."}
+        {onRetry && <button type="button" className="lp-btn" onClick={onRetry}><RefreshCw size={13} /> Réessayer</button>}
+      </p>
+      {layout.territories.map((tr) => {
+        const p = layout.projectById[tr.projectId];
+        const list = byProject[tr.projectId] || [];
+        const st = carteTerritoryStats(list);
+        const th = CARTE_THEME_BY_ID[tr.theme];
+        return (
+          <details key={tr.projectId} className="lp-carte-fallback-proj">
+            <summary><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}<span className="lp-carte-muted"> · {th.label} · {th.hub[st.stage]} · {st.pct} %</span></summary>
+            <ul>{list.map((t) => <li key={t.id}><button type="button" className="lp-carte-link-inline" onClick={() => onOpen(t.id)}>{t.title}</button> <span className="lp-carte-muted">{t.statusName}{t.overdue ? " · en retard" : ""}</span></li>)}</ul>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+function CarteView({ tasks, ctx, onOpen, prefs, setPrefs, toolbarSlot }) {
+  const cfg = normalizeCarteViewPrefs(prefs);
+  const stageRef = useRef(null);
+  const glRef = useRef(null);
+  const engineRef = useRef(null);
+  const [status, setStatus] = useState("loading");
+  const [attempt, setAttempt] = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [near, setNear] = useState(null);
+  const [territory, setTerritory] = useState(null);
+  const [quality, setQualityLabel] = useState("");
+  const [query, setQuery] = useState("");
+  const [themesOpen, setThemesOpen] = useState(false);
+  const [log, setLog] = useState({ tasks: 0, territories: 0 });
+  const logRef = useRef({ tasks: new Set(), territories: new Set() });
+  const [coarse] = useState(() => !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches));
+
+  // Tous les projets et toutes les tâches servent à la disposition (stabilité :
+  // un filtre ne déplace rien) ; `tasks` (filtres Nexora) + filtres de la vue
+  // décident de ce qui est dessiné.
+  const allTasks = ctx.tasks || tasks || [];
+  const norm = useMemo(() => {
+    const n = carteNormalize(ctx, allTasks);
+    n.taskById = {};
+    n.tasks.forEach((t) => { n.taskById[t.id] = t; });
+    return n;
+  }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers]);
+  const layout = useMemo(() => carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(), themeOverrides: cfg.folderThemes }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [norm, JSON.stringify(cfg.folderThemes)]);
+  useEffect(() => { writeCarteMemory(layout.memory); }, [layout]);
+  const stats = useMemo(() => {
+    const by = {};
+    norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (by[k] = by[k] || []).push(t); });
+    const out = {};
+    layout.territories.forEach((tr) => { out[tr.projectId] = carteTerritoryStats(by[tr.projectId] || []); });
+    return out;
+  }, [norm, layout]);
+  const visible = useMemo(() => {
+    const scope = new Set((tasks || []).map((t) => t.id));
+    const set = new Set();
+    norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [norm, tasks, cfg.states.join(","), cfg.crit, cfg.late, cfg.history]);
+
+  // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const fit = () => {
+      const top = el.getBoundingClientRect().top;
+      // Sur mobile, la barre de navigation basse recouvre le bas de l'écran.
+      const bar = document.querySelector(".lp-mobile-tabbar");
+      const barH = bar && bar.getBoundingClientRect().height && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().height : 0;
+      el.style.height = Math.max(360, window.innerHeight - Math.max(0, top) - barH - 12) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+
+  // Chargement de three.js à la demande, puis création du moteur.
+  useEffect(() => {
+    if (!carteWebglAvailable()) { setStatus("nowebgl"); return undefined; }
+    let cancelled = false;
+    setStatus("loading");
+    loadCarteThree().then((THREE) => {
+      if (cancelled || !glRef.current) return;
+      try {
+        engineRef.current = createCarteEngine(THREE, glRef.current, {
+          keyTarget: stageRef.current,
+          quality: cfg.quality,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-ribbon-more, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
+          onSelect: (id) => setSelected(id),
+          onNear: (id) => {
+            setNear(id);
+            if (id && !logRef.current.tasks.has(id)) { logRef.current.tasks.add(id); setLog((l) => ({ ...l, tasks: logRef.current.tasks.size })); }
+          },
+          onTerritoryEnter: (pid) => {
+            setTerritory(pid);
+            if (pid && !logRef.current.territories.has(pid)) { logRef.current.territories.add(pid); setLog((l) => ({ ...l, territories: logRef.current.territories.size })); }
+          },
+          onTerritory: (pid) => setTerritory(pid),
+          onQuality: (q) => setQualityLabel(q),
+        });
+        setStatus("ready");
+      } catch (e) {
+        console.error("[Nexora Carte]", e);
+        setStatus("nowebgl");
+      }
+    }).catch((e) => { console.error("[Nexora Carte] three.js", e); if (!cancelled) setStatus("error"); });
+    return () => { cancelled = true; if (engineRef.current) { engineRef.current.dispose(); engineRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
+
+  useEffect(() => {
+    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: norm, layout, stats, visible });
+  }, [status, norm, layout, stats, visible]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+
+  const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
+  const go = (id) => { const e = engineRef.current; if (!e) return; e.walkToTask(id); e.select(id); };
+  const focus = (pid) => { const e = engineRef.current; if (e) e.focusProject(pid); setQuery(""); if (stageRef.current) stageRef.current.focus({ preventScroll: true }); };
+  const toggleState = (k) => setPrefs((v) => { const cur = normalizeCarteViewPrefs(v).states; const next = cur.indexOf(k) === -1 ? cur.concat([k]) : cur.filter((x) => x !== k); return { states: next.length ? next : cur }; });
+
+  const suggestions = useMemo(() => {
+    const q = carteNorm(query);
+    if (!q) return [];
+    return layout.territories.map((t) => layout.projectById[t.projectId]).filter((p) => carteNorm(p.name).indexOf(q) !== -1).slice(0, 8);
+  }, [query, layout]);
+
+  // Joystick tactile.
+  const joyRef = useRef(null);
+  const joyState = useRef(null);
+  const joyMove = (e) => {
+    const el = joyRef.current; if (!el || !engineRef.current) return;
+    const r = el.getBoundingClientRect();
+    let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const max = r.width / 2 - 12, len = Math.hypot(dx, dy);
+    if (len > max) { dx = dx / len * max; dy = dy / len * max; }
+    el.firstChild.style.transform = "translate(" + dx + "px," + dy + "px)";
+    engineRef.current.setJoystick(dx / max, dy / max);
+  };
+  const joyEnd = () => { joyState.current = null; if (joyRef.current) joyRef.current.firstChild.style.transform = ""; if (engineRef.current) engineRef.current.setJoystick(0, 0); };
+
+  // Au-delà de 24 territoires, le ruban ne montre que la région courante
+  // (même dossier) : 300 pastilles alignées ne se lisent plus.
+  const RIBBON_MAX = 24;
+  const ribbon = useMemo(() => {
+    const all = layout.territories;
+    if (all.length <= RIBBON_MAX) return { list: all, more: 0 };
+    const here = territory && layout.projectById[territory];
+    const group = here && here.group;
+    const list = (group ? all.filter((t) => layout.projectById[t.projectId].group === group) : all).slice(0, RIBBON_MAX);
+    return { list, more: all.length - list.length };
+  }, [layout, territory]);
+  const empty = norm.projects.length === 0 && norm.tasks.length === 0;
+  const selTask = selected && norm.taskById[selected];
+  const nearTask = near && norm.taskById[near];
+  const terrTheme = territory && layout.themes[territory];
+  const legend = terrTheme ? carteLegend(terrTheme) : null;
+  const terrStats = territory && stats[territory];
+
+  return (
+    <section className="lp-carte-view" aria-label="Carte">
+      <ViewToolbarPortal slot={toolbarSlot} />
+      <div className="lp-carte-toolbar">
+          <div className="lp-carte-search">
+            <Search size={14} />
+            <input type="search" value={query} placeholder="Aller au projet…" aria-label="Rechercher un projet sur la carte" onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) focus(suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
+            {suggestions.length > 0 && (
+              <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés">
+                {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}</button></li>)}
+              </ul>
+            )}
+          </div>
+          <div className="lp-carte-filter" role="group" aria-label="Afficher les tâches">
+            {CARTE_STATE_KEYS.map((k) => (
+              <button key={k} type="button" className="lp-carte-fchip" aria-pressed={cfg.states.indexOf(k) !== -1} onClick={() => toggleState(k)}>{CARTE_STATE_LABELS[k]}</button>
+            ))}
+            <button type="button" className="lp-carte-fchip is-late" aria-pressed={cfg.late} onClick={() => setPrefs({ late: !cfg.late })}>En retard</button>
+          </div>
+          <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
+            <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
+          </select>
+          <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Qualité graphique, historique et thèmes">
+            <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.history} onChange={(e) => setPrefs({ history: e.target.checked })} /> Tâches terminées depuis plus de 30 jours</label>
+            <hr className="lp-divider" style={{ margin: "6px 0" }} />
+            <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
+              {CARTE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
+            </div>
+            <hr className="lp-divider" style={{ margin: "6px 0" }} />
+            <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
+          </DropdownButton>
+          <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
+      </div>
+
+      <div ref={stageRef} className={"lp-carte-stage" + (selTask ? " has-detail" : "")} tabIndex={0}
+        data-carte-status={status} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
+        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer.">
+        {empty ? (
+          <div className="lp-empty lp-carte-empty">
+            <strong>Aucun projet à cartographier.</strong>
+            <span>Créez un projet et quelques tâches : chaque projet deviendra un territoire, chaque tâche un lieu à visiter.</span>
+          </div>
+        ) : (status === "nowebgl" || status === "error") ? (
+          <CarteFallback reason={status} norm={norm} layout={layout} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
+        ) : (
+          <>
+            <div ref={glRef} className="lp-carte-gl" />
+            {status === "loading" && <div className="lp-carte-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Chargement de la carte 3D…</div>}
+            {status === "ready" && (
+              <>
+                <nav className="lp-carte-ribbon" aria-label="Territoires">
+                  {ribbon.list.map((tr) => {
+                    const p = layout.projectById[tr.projectId];
+                    const s = stats[tr.projectId];
+                    return (
+                      <button key={tr.projectId} type="button" className={"lp-carte-badge" + (territory === tr.projectId ? " is-here" : "")} style={{ "--p": s.pct, "--c": p.color }}
+                        onClick={() => focus(tr.projectId)} title={p.name + " — " + CARTE_THEME_BY_ID[tr.theme].label + ", " + CARTE_THEME_BY_ID[tr.theme].hub[s.stage] + ", " + s.pct + " %"} aria-label={p.name + ", " + s.pct + " % terminé"}>
+                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{p.icon && !/^(tabler:|https?:|data:)/.test(p.icon) ? p.icon : (p.name || "?").slice(0, 1)}</span></span>
+                        <small>{p.name}</small>
+                      </button>
+                    );
+                  })}
+                  {ribbon.more > 0 && (
+                    <button type="button" className="lp-carte-ribbon-more" onClick={() => { const i = document.querySelector(".lp-carte-search input"); if (i) i.focus(); }}>
+                      +{ribbon.more} territoires · rechercher
+                    </button>
+                  )}
+                </nav>
+                <div className="lp-carte-hud" aria-live="polite">
+                  <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
+                  {legend && terrStats && (
+                    <details className="lp-carte-legend">
+                      <summary><span className="lp-carte-dot" style={{ background: layout.projectById[territory].color }} />{layout.projectById[territory].name} · {legend.label} · {legend.hub[terrStats.stage]} ({terrStats.pct} %)</summary>
+                      <ul>
+                        {legend.lines.map((l) => <li key={l[0]}><b>{l[0]}</b><span>{l[1]}</span></li>)}
+                        <li><b>Urgente</b><span>Feu rouge (moyenne : fanion orange)</span></li>
+                        <li><b>En retard</b><span>Nuage d'orage · échéance sous 7 j : lanterne</span></li>
+                        <li><b>À venir</b><span>Brume · responsable : habitant coloré</span></li>
+                        <li><b>Dépendance</b><span>Route de convoi à la sélection</span></li>
+                      </ul>
+                    </details>
+                  )}
+                </div>
+                {nearTask && !selTask && (
+                  <div className="lp-carte-near">
+                    <span className="lp-carte-state" style={{ background: nearTask.statusColor }} />
+                    <span className="lp-carte-near-title">{nearTask.title}</span>
+                    <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.select(near)}>Lire <kbd>Entrée</kbd></button>
+                  </div>
+                )}
+                <div className="lp-carte-zoom">
+                  <button type="button" className="lp-icon-btn" aria-label="Zoomer" onClick={() => engineRef.current.zoomBy(0.8)}><Plus size={16} /></button>
+                  <button type="button" className="lp-icon-btn" aria-label="Dézoomer" onClick={() => engineRef.current.zoomBy(1.25)}><Minus size={16} /></button>
+                  <button type="button" className="lp-icon-btn" aria-label="Pivoter la caméra" onClick={() => engineRef.current.rotate(Math.PI / 4)}><RotateCcw size={15} /></button>
+                </div>
+                {coarse && (
+                  <>
+                    <div ref={joyRef} className="lp-carte-joy" aria-hidden="true"
+                      onPointerDown={(e) => { joyState.current = e.pointerId; e.currentTarget.setPointerCapture(e.pointerId); joyMove(e); }}
+                      onPointerMove={(e) => { if (joyState.current === e.pointerId) joyMove(e); }}
+                      onPointerUp={joyEnd} onPointerCancel={joyEnd}><span /></div>
+                    <button type="button" className="lp-carte-act" disabled={!near} onClick={() => engineRef.current && engineRef.current.select(near)}>Lire</button>
+                  </>
+                )}
+                {quality && <span className="lp-carte-quality-tag">Qualité {({ high: "haute", medium: "moyenne", low: "basse" })[quality]}{cfg.quality === "auto" ? " (auto)" : ""}</span>}
+              </>
+            )}
+            {selTask && (
+              <CarteTaskDetail task={selTask} norm={norm} layout={layout} onOpen={openFiche} onGo={go}
+                onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
+            )}
+          </>
+        )}
+      </div>
+      {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} onClose={() => setThemesOpen(false)} />}
+    </section>
+  );
+}
+
 function CalendarViewSettings({ prefs, setPrefs, ctx, onClose }) {
   const filter = { ...widgetDefaultFilter(), ...(prefs.filter || {}) };
   return (

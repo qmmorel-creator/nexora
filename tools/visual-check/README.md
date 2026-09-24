@@ -34,6 +34,13 @@ CHROMIUM_PATH=/chemin/vers/chromium NODE_PATH=$(npm root -g) npm start   # binai
 
 ## Ce qui est contrôlé
 
+Scénario « Carte » (#361), en WebGL logiciel (SwiftShader) : recherche d'un projet, marche au
+clavier jusqu'à une tâche, lecture, ouverture de la fiche Nexora ; aucune tâche modifiée par
+l'exploration ; libellés sans chevauchement ; filtre ; mobile (manette, bouton « Lire », pas de
+défilement horizontal) ; 300 projets et 12 000 tâches (qualité basse automatique) ; liste de
+repli sans WebGL. Captures : `carte.png`, `carte-mobile.png`, `carte-volume.png`.
+Bancs manuels : `index.html?app=1&view=carte&carte=demo` ou `&carte=volume`.
+
 Scénario `harness.jsx` — Mini-Gantt, deux blocs temporels et
 deux encadrés, dont un posé sur des tâches **non successives** :
 
