@@ -1049,7 +1049,7 @@ if (benchApp) {
       { id: "habit-teletravail", name: "Télétravail", color: "#1FA971", kind: "check" },
     ] },
     { id: "theme-sante", name: "Santé", color: "#E2483E", selectionMode: "multi", habits: [
-      { id: "habit-eau", name: "Verres d'eau", color: "#0EA5E9", kind: "numeric", min: 0, max: 8 },
+      { id: "habit-eau", name: "Verres d'eau", color: "#0EA5E9", kind: "numeric", min: 0, max: 8, step: 2 },
       { id: "habit-sommeil", name: "Sommeil (h)", color: "#8B5CF6", kind: "numeric", min: 3, max: 9 },
     ] },
     // #353 : une catégorie plus longue, pour des rangées de tailles différentes.

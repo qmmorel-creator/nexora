@@ -4198,7 +4198,11 @@ function normalizeHabits(list) {
     const kind = normalizeHabitKind(raw.kind);
     const min = Number.isFinite(raw.min) ? raw.min : 0;
     const max = Number.isFinite(raw.max) && raw.max > min ? raw.max : min + 10;
-    out.push({ id, name, color: String(raw.color || "").trim() || "#2C6BE0", kind, min, max });
+    const habit = { id, name, color: String(raw.color || "").trim() || "#2C6BE0", kind, min, max };
+    // Pas du bouton « + » (retour de test, #353) : habitudes chiffrées
+    // seulement, strictement positif, 1 par défaut.
+    if (kind === "numeric") habit.step = Number.isFinite(raw.step) && raw.step > 0 ? raw.step : 1;
+    out.push(habit);
   });
   return out;
 }
@@ -4365,13 +4369,18 @@ function setHabitSkip(skips, themes, habitId, date, on) {
 function habitNumericStep(habit, value, delta) {
   const min = Number.isFinite(habit.min) ? habit.min : 0;
   const max = Number.isFinite(habit.max) && habit.max > min ? habit.max : min + 10;
+  // Pas choisi dans Réglages (habit.step), 1 par défaut ; arrondi pour ne
+  // jamais afficher 0.30000000000000004.
+  const step = Number.isFinite(habit.step) && habit.step > 0 ? habit.step : 1;
+  const round = (n) => Math.round(n * 1e6) / 1e6;
   const has = Number.isFinite(value);
   if (delta < 0) {
     if (!has) return null;
-    return value - 1 < min ? "" : String(value - 1);
+    const next = round(value - step);
+    return next < min ? "" : String(next);
   }
   if (has && value >= max) return null;
-  return String(has ? value + 1 : min);
+  return String(has ? Math.min(max, round(value + step)) : min);
 }
 
 /* État de chaque habitude pour un jour : « done » (coche, ou quantité à son
@@ -12428,6 +12437,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
   const setHabitRange = (theme, habit, field, raw) => {
     const num = Number(raw);
     if (!Number.isFinite(num)) return;
+    if (field === "step" && num <= 0) return;
     setHabitThemes(catalogue.map((t) => (
       t.id !== theme.id ? t : { ...t, habits: t.habits.map((h) => (h.id === habit.id ? { ...h, [field]: num } : h)) }
     )));
@@ -12506,6 +12516,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
                       <div className="lp-habit-kindpop-range">
                         <label>Min <input type="number" value={habit.min} onChange={(e) => setHabitRange(theme, habit, "min", e.target.value)} /></label>
                         <label>Max <input type="number" value={habit.max} onChange={(e) => setHabitRange(theme, habit, "max", e.target.value)} /></label>
+                        <label title="Valeur ajoutée à chaque clic sur « + » (et retirée par « − »)">Pas <input type="number" min="0" step="any" value={habit.step ?? 1} onChange={(e) => setHabitRange(theme, habit, "step", e.target.value)} /></label>
                       </div>
                     )}
                   </div>
