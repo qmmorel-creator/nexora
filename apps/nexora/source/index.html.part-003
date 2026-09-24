@@ -18811,6 +18811,9 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
 }
 
 // === NEXORA:CARTE-ENGINE:START ===
+// Ordre de préséance de la bordure d'une case partagée (#394) : en retard
+// d'abord, puis en cours, en attente, à faire, information, terminée.
+const CARTE_BORDER_RANK = { doing: 1, waiting: 2, todo: 3, info: 4, done: 5 };
 // Moteur 3D de la vue Carte (#361). three.js est chargé à la demande par la
 // vue (import dynamique) et passé en paramètre : aucune autre vue ne le paie.
 // Toutes les pièces des modèles (voir NEXORA:CARTE) sont instanciées par
@@ -18872,7 +18875,16 @@ function createCarteEngine(THREE, container, opts) {
   // case fait 1,73 × 1,5 (rangées décalées) : la dalle en couvre presque tout.
   const dndBaseGeo = new THREE.BoxGeometry(1.7, 1, 1.49).translate(0, 0.5, 0);
   const dndCapGeo = new THREE.BoxGeometry(1.64, 0.14, 1.42).translate(0, 0.07, 0);
-  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, neonRingGeo, dndBaseGeo, dndCapGeo]);
+  // Bordure des cases qui portent une tâche (#394), à la couleur du statut :
+  // un liseré large posé sur le dessus de la dalle, hexagonal ou carré.
+  const borderGeo = new THREE.RingGeometry(0.78, 0.99, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  const dndBorderGeo = (() => {
+    const w = 0.83, d = 0.72, b = 0.17;
+    const sh = new THREE.Shape([new THREE.Vector2(-w, -d), new THREE.Vector2(w, -d), new THREE.Vector2(w, d), new THREE.Vector2(-w, d)]);
+    sh.holes.push(new THREE.Path([new THREE.Vector2(-w + b, -d + b), new THREE.Vector2(-w + b, d - b), new THREE.Vector2(w - b, d - b), new THREE.Vector2(w - b, -d + b)]));
+    return new THREE.ShapeGeometry(sh).rotateX(-Math.PI / 2);
+  })();
+  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, neonRingGeo, dndBaseGeo, dndCapGeo, borderGeo, dndBorderGeo]);
   // Nom d'un dossier écrit au sol (#377) : une texture de texte par région.
   function regionTexture(text, dim) {
     const c = document.createElement("canvas");
@@ -18912,6 +18924,7 @@ function createCarteEngine(THREE, container, opts) {
     flame: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.93, depthWrite: false })),
     smoke: mat(new THREE.MeshLambertMaterial({ color: "#3b3b3f", transparent: true, opacity: 0.45, depthWrite: false, flatShading: true })),
     tornado: mat(new THREE.MeshLambertMaterial({ color: "#8f98a6", transparent: true, opacity: 0.5, depthWrite: false, flatShading: true })),
+    border: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
   };
 
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
@@ -19220,6 +19233,7 @@ function createCarteEngine(THREE, container, opts) {
     capM.count = 0; waterM.count = 0;
     capM.userData.keys = []; waterM.userData.keys = [];
     baseM.receiveShadow = capM.receiveShadow = shadows;
+    const capTop = {};
     keys.forEach((k, i) => {
       const t = L.tiles[k];
       const w = carteToWorld(t.q, t.r);
@@ -19231,6 +19245,7 @@ function createCarteEngine(THREE, container, opts) {
         // En style, la mer passe sous la nappe de vagues ou de grille : la
         // tuile reste cliquable pour y envoyer l'arpenteur.
         waterM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, col.sea ? -0.12 : t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        capTop[k] = (col.sea ? -0.12 : t.h - 0.06) + 0.14;
         waterM.setColorAt(j, tmpC.set(t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
         waterM.userData.keys[j] = k;
       } else {
@@ -19239,6 +19254,7 @@ function createCarteEngine(THREE, container, opts) {
         const cm = dnd ? capOf(col.lieu || "donjon") : capM;
         const j = cm.count++;
         cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.02, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        capTop[k] = t.h + 0.12;
         cm.setColorAt(j, tmpC.set(col.top));
         cm.userData.keys[j] = k;
       }
@@ -19310,6 +19326,7 @@ function createCarteEngine(THREE, container, opts) {
     const fires = [];
     const avatars = [];
     const dones = [];
+    const borders = {};
     const vis = S.visible;
     L.pois.forEach((p) => {
       const t = S.data.taskById[p.taskId];
@@ -19344,6 +19361,9 @@ function createCarteEngine(THREE, container, opts) {
         avatars.push({ name: t.assignee, color: cartePersonColor(t.assignee, t.assigneeColor), x: x + (a[0] * cr + a[2] * sr) * k, y: y + a[1] * k, z: z + (-a[0] * sr + a[2] * cr) * k, k });
       }
       if (t.state === "done") dones.push(x, y + Math.min(top, 7) + 1.05, z);
+      // Une case partagée prend la couleur de sa tâche la plus pressante.
+      const rank = t.overdue ? 0 : CARTE_BORDER_RANK[t.state] != null ? CARTE_BORDER_RANK[t.state] : 5;
+      if (!borders[p.key] || rank < borders[p.key].rank) borders[p.key] = { rank, color: t.statusColor };
       (S.poisByKey[p.key] = S.poisByKey[p.key] || []).push(t.id);
     });
     S.spin = batch.flush(world, shadows, ink);
@@ -19362,6 +19382,19 @@ function createCarteEngine(THREE, container, opts) {
         ring.setMatrixAt(i, tmpM.compose(tmpP.set(u.x, u.y + 0.03, u.z), tmpQ.identity(), tmpS.set(u.k * 0.85, 1, u.k * 0.85)));
       });
       ring.instanceMatrix.needsUpdate = true; ring.computeBoundingSphere(); ring.frustumCulled = false; world.add(ring);
+    }
+    const bKeys = Object.keys(borders);
+    if (bKeys.length) {
+      const bm = new THREE.InstancedMesh(dnd ? dndBorderGeo : borderGeo, MAT.border, bKeys.length);
+      bKeys.forEach((k, i) => {
+        const tile = L.tiles[k], w = carteToWorld(tile.q, tile.r);
+        bm.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, (capTop[k] != null ? capTop[k] : tile.h + 0.12) + 0.006, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        const c = S.dimmed && tile.projectId && S.dimmed.has(tile.projectId) ? carteMix(borders[k].color, CARTE_DIM_TOP, 0.7) : borders[k].color;
+        bm.setColorAt(i, tmpC.set(c || "#94A3B8"));
+      });
+      bm.instanceMatrix.needsUpdate = true; if (bm.instanceColor) bm.instanceColor.needsUpdate = true;
+      bm.computeBoundingSphere();
+      world.add(bm);
     }
     buildStorms(storms);
     buildFires(fires);
@@ -19523,13 +19556,33 @@ function createCarteEngine(THREE, container, opts) {
     return best;
   }
   const hubAt = (k) => { const t = S.layout.tiles[k]; return t && t.kind === "hub" ? t.projectId : null; };
+  // Glisser la vue (#396) : clic molette ou clic droit enfoncé, Maj + clic
+  // gauche, ou clic gauche en mode « main ». La caméra quitte l'arpenteur, qui
+  // ne bouge pas ; le recentrage ou un pas de l'arpenteur la lui rendent.
+  function panBy(dx, dy) {
+    const H = canvas.clientHeight || 600;
+    const k = (2 * S.dist * Math.tan((camera.fov * Math.PI) / 360)) / H;
+    const rx = Math.cos(S.yaw), rz = -Math.sin(S.yaw), fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
+    const kf = k / Math.max(0.5, Math.sin(S.pitch));
+    const mx = -rx * dx * k + fx * dy * kf, mz = -rz * dx * k + fz * dy * kf;
+    if (S.follow || !S.focusGoal) S.focusGoal = S.target.clone();
+    S.follow = false;
+    S.focusGoal.x += mx; S.focusGoal.z += mz;
+    S.target.x += mx; S.target.z += mz;
+  }
   const onDown = (e) => {
     if (keyTarget.focus) keyTarget.focus({ preventScroll: true });
+    // Clic molette : pas de défilement automatique du navigateur.
+    if (e.button === 1) e.preventDefault();
     pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointeur déjà relâché */ }
     const ids = Object.keys(pointers);
     if (ids.length === 2) { const a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist }; drag = null; }
-    else drag = { sx: e.clientX, sy: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false };
+    else {
+      const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (e.shiftKey || S.panMode));
+      drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false, pan };
+      if (pan) canvas.style.cursor = "grabbing";
+    }
   };
   const onMove = (e) => {
     if (pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
@@ -19542,7 +19595,8 @@ function createCarteEngine(THREE, container, opts) {
     if (drag) {
       const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
       if (Math.hypot(dx, dy) > 6) drag.moved = true;
-      if (drag.moved) { S.yaw = drag.yaw - dx * 0.006; S.pitch = Math.max(0.45, Math.min(1.35, drag.pitch + dy * 0.004)); }
+      if (drag.pan) { if (drag.moved) panBy(e.clientX - drag.lx, e.clientY - drag.ly); drag.lx = e.clientX; drag.ly = e.clientY; }
+      else if (drag.moved) { S.yaw = drag.yaw - dx * 0.006; S.pitch = Math.max(0.45, Math.min(1.35, drag.pitch + dy * 0.004)); }
       return;
     }
     if (e.pointerType === "mouse" && S.layout) {
@@ -19560,13 +19614,14 @@ function createCarteEngine(THREE, container, opts) {
       const id = h ? taskAt(h.key, h.point) : null;
       const hp = h && !id ? hubAt(h.key) : null;
       const hv = id ? "t:" + id : hp ? "p:" + hp : null;
-      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv ? "pointer" : "grab"; }
+      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv && !S.panMode ? "pointer" : "grab"; }
     }
   };
   const onUp = (e) => {
     delete pointers[e.pointerId];
     if (pinch) { if (Object.keys(pointers).length < 2) pinch = null; drag = null; return; }
-    if (drag && !drag.moved && S.layout) {
+    if (drag && drag.pan) canvas.style.cursor = S.panMode ? "grab" : S.hovered ? "pointer" : "grab";
+    if (drag && !drag.moved && !(drag.pan && e.button !== 0) && S.layout) {
       const h = pick(e.clientX, e.clientY);
       if (h) {
         const id = taskAt(h.key, h.point), hp = hubAt(h.key);
@@ -19577,6 +19632,10 @@ function createCarteEngine(THREE, container, opts) {
     drag = null;
   };
   const onCancel = (e) => { delete pointers[e.pointerId]; drag = null; pinch = null; };
+  const onMenu = (e) => e.preventDefault();
+  const onAux = (e) => { if (e.button === 1) e.preventDefault(); };
+  canvas.addEventListener("contextmenu", onMenu);
+  canvas.addEventListener("mousedown", onAux);
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
@@ -20025,6 +20084,7 @@ function createCarteEngine(THREE, container, opts) {
   return {
     setData, select, focusProject, walkToTask, recenter, overview, setQuality, setStyle, zoomBy,
     rotate: (d) => { S.yaw += d; },
+    setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
     nearTask: () => S.near,
@@ -20037,6 +20097,8 @@ function createCarteEngine(THREE, container, opts) {
       keyTarget.removeEventListener("keyup", ku);
       keyTarget.removeEventListener("blur", blur, true);
       canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("contextmenu", onMenu);
+      canvas.removeEventListener("mousedown", onAux);
       clearGroup(world); clearGroup(overlay);
       geos.forEach((g) => g.dispose());
       mats.forEach((m) => m.dispose());
@@ -20428,6 +20490,9 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const [log, setLog] = useState({ tasks: 0, territories: 0 });
   const logRef = useRef({ tasks: new Set(), territories: new Set() });
   const [coarse] = useState(() => !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches));
+  // Mode « main » (#396) : le clic gauche fait glisser la vue.
+  const [panMode, setPanMode] = useState(false);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPanMode(panMode); }, [status, panMode]);
 
   // Tous les projets et toutes les tâches servent à la disposition (stabilité :
   // un filtre ne déplace rien) ; `tasks` (filtres Nexora) + filtres de la vue
@@ -20643,7 +20708,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0} data-carte-style={cfg.style}
         data-carte-status={status} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
-        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer.">
+        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
         {empty ? (
           <div className="lp-empty lp-carte-empty">
             <strong>Aucun projet à cartographier.</strong>
@@ -20699,6 +20764,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   <button type="button" className="lp-icon-btn" aria-label="Zoomer" onClick={() => engineRef.current.zoomBy(0.8)}><Plus size={16} /></button>
                   <button type="button" className="lp-icon-btn" aria-label="Dézoomer" onClick={() => engineRef.current.zoomBy(1.25)}><Minus size={16} /></button>
                   <button type="button" className="lp-icon-btn" aria-label="Pivoter la caméra" onClick={() => engineRef.current.rotate(Math.PI / 4)}><RotateCcw size={15} /></button>
+                  <button type="button" className={"lp-icon-btn" + (panMode ? " is-active" : "")} aria-pressed={panMode} aria-label="Déplacer la vue à la souris"
+                    title="Déplacer la vue : clic gauche glissé (sinon clic molette, clic droit ou Maj + clic). Recentrer revient à l'arpenteur." onClick={() => setPanMode((v) => !v)}><Hand size={15} /></button>
                 </div>
                 {coarse && (
                   <>
