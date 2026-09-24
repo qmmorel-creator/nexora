@@ -3842,7 +3842,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetHabitQuick widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} viewDate={habitQuickSelectedDate} setViewDate={setHabitQuickSelectedDate} onOpenHabitThemes={onOpenHabitThemes} />
                 )}
                 {w.type === "habitPixel" && (
-                  <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} />
+                  <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
@@ -13161,7 +13161,7 @@ function HabitPixelMosaic({ themes, day, date, todayIso, size = 8 }) {
   );
 }
 
-function HabitPixelSide({ themes, date, day, todayIso, onSelect }) {
+function HabitPixelSide({ themes, date, day, todayIso, onSelect, collapsed }) {
   return (
     <section className="lp-hpx-side" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
       <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
@@ -13172,7 +13172,7 @@ function HabitPixelSide({ themes, date, day, todayIso, onSelect }) {
       {themes.map((t) => (
         <div key={t.id} className="lp-hpx-side-theme">
           <div className="lp-hpx-side-theme-head"><span className="lp-hpx-dot" style={{ background: t.color }} />{t.name}<span className="lp-hpx-muted">{day.themes[t.id].done} / {day.themes[t.id].total}</span></div>
-          {t.habits.map((h) => {
+          {!collapsed.has(t.id) && t.habits.map((h) => {
             const st = day.habits[h.id];
             return (
               <div key={h.id} className={"lp-hpx-side-row" + (st.state === "na" ? " is-na" : "")}>
@@ -13188,11 +13188,21 @@ function HabitPixelSide({ themes, date, day, todayIso, onSelect }) {
   );
 }
 
-function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkips, externalToolbarSlot, onOpenHabitThemes }) {
+function WidgetHabitPixel({ widget, ctx, habitLog, setHabitLog, habitSkips, setHabitSkips, externalToolbarSlot, onOpenHabitThemes, onUpdateWidget }) {
   const themes = useMemo(() => normalizeHabitThemes(ctx.habitThemes).filter((t) => t.habits.length > 0), [ctx.habitThemes]);
   const todayIso = iso(new Date());
   const [date, setDate] = useState(todayIso);
   const [hover, setHover] = useState(null);
+  // Thèmes repliés (retour de test, #353) : mémorisés sur le widget
+  // (widget.habitPixelCollapsed, identifiants de thèmes). Replié, un thème
+  // garde son en-tête, son compteur et sa rangée de pixels (toujours
+  // cliquables) ; ses lignes et liaisons disparaissent.
+  const [collapsedList, setCollapsedList] = useState(() => (Array.isArray(widget && widget.habitPixelCollapsed) ? widget.habitPixelCollapsed.map(String) : []));
+  useEffect(() => { setCollapsedList(Array.isArray(widget && widget.habitPixelCollapsed) ? widget.habitPixelCollapsed.map(String) : []); }, [widget && widget.habitPixelCollapsed]);
+  const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
+  const saveCollapsed = (list) => { setCollapsedList(list); if (onUpdateWidget) onUpdateWidget({ habitPixelCollapsed: list }); };
+  const toggleTheme = (id) => saveCollapsed(collapsed.has(id) ? collapsedList.filter((x) => x !== id) : [...collapsedList, id]);
+  const allCollapsed = themes.length > 0 && themes.every((t) => collapsed.has(t.id));
   const prev = addDays(date, -1);
   const next = addDays(date, 1);
   const week = useMemo(() => { const s = hpxWeekStart(date); return [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(s, i)); }, [date]);
@@ -13260,6 +13270,19 @@ function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkip
         <button type="button" className="lp-icon-btn" aria-label="Jour suivant" onClick={() => setDate(next)}><ChevronRight size={14} /></button>
       </span>
       <button type="button" className="lp-tool-btn" disabled={date === todayIso} onClick={() => setDate(todayIso)}>Aujourd'hui</button>
+      {/* Accès rapide, comme Quick Habit : Réglages → Thèmes d'habitudes
+          (créer un thème, ajouter / renommer une habitude). Libellé explicite :
+          l'engrenage de l'en-tête règle déjà le widget lui-même. */}
+      {onOpenHabitThemes && (
+        <button type="button" className="lp-tool-btn" onClick={onOpenHabitThemes} title="Réglages → Thèmes d'habitudes" aria-label="Créer ou modifier les thèmes et habitudes">
+          <Settings size={13} /> Thèmes & habitudes
+        </button>
+      )}
+      {themes.length > 1 && (
+        <button type="button" className="lp-tool-btn" onClick={() => saveCollapsed(allCollapsed ? [] : themes.map((t) => t.id))} aria-label={allCollapsed ? "Déplier tous les thèmes" : "Replier tous les thèmes"}>
+          {allCollapsed ? <ChevronsDown size={13} /> : <ChevronsUp size={13} />} {allCollapsed ? "Tout déplier" : "Tout replier"}
+        </button>
+      )}
     </ViewToolbarPortal>
   );
 
@@ -13279,7 +13302,7 @@ function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkip
     <div className="lp-hpx" onKeyDown={onKeyDown}>
       {toolbar}
       <div className="lp-hpx-days">
-        <HabitPixelSide themes={themes} date={prev} day={stateOf(prev)} todayIso={todayIso} onSelect={setDate} />
+        <HabitPixelSide themes={themes} date={prev} day={stateOf(prev)} todayIso={todayIso} onSelect={setDate} collapsed={collapsed} />
         <section className="lp-hpx-main" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
           <div className="lp-hpx-main-head">
             <div className="lp-hpx-main-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxLongDate(date)}</span></div>
@@ -13291,16 +13314,26 @@ function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkip
           </div>
           {themes.map((t) => {
             const tc = day.themes[t.id];
-            const blockH = HPX_HEAD_H + t.habits.length * HPX_ROW_H;
+            const folded = collapsed.has(t.id);
+            const blockH = HPX_HEAD_H + (folded ? 0 : t.habits.length * HPX_ROW_H);
             const pxX = (i) => HPX_LEFT + HPX_PAD + i * (HPX_PX + HPX_GAP) + HPX_PX / 2;
             const pxBottom = HPX_PAD * 2 + HPX_PX;
             return (
-              <div key={t.id} className="lp-hpx-theme" style={{ height: blockH, "--hpx-rows": t.habits.length }}>
+              <div key={t.id} className={"lp-hpx-theme" + (folded ? " is-folded" : "")} style={{ height: blockH, "--hpx-rows": folded ? 0 : t.habits.length }}>
                 <div className="lp-hpx-list">
-                  <div className="lp-hpx-theme-head" style={{ height: HPX_HEAD_H }}>
+                  <button
+                    type="button"
+                    className="lp-hpx-theme-head"
+                    style={{ height: HPX_HEAD_H }}
+                    onClick={() => toggleTheme(t.id)}
+                    aria-expanded={!folded}
+                    title={folded ? "Déplier le thème" : "Replier le thème"}
+                  >
+                    <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
                     <span className="lp-hpx-dot is-big" style={{ background: t.color }} />{t.name}<span className="lp-hpx-muted">{tc.done} / {tc.total}</span>
-                  </div>
-                  {t.habits.map((h) => {
+                    {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{t.habits.length} habitude{t.habits.length > 1 ? "s" : ""}</span>}
+                  </button>
+                  {!folded && t.habits.map((h) => {
                     const st = day.habits[h.id];
                     const active = hover === h.id;
                     return (
@@ -13344,7 +13377,7 @@ function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkip
                 </div>
                 <div className="lp-hpx-wires">
                   <svg className="lp-hpx-wires-svg" aria-hidden="true">
-                    {t.habits.map((h, i) => {
+                    {!folded && t.habits.map((h, i) => {
                       const st = day.habits[h.id];
                       const on = st.state === "done" || st.state === "part";
                       return (
@@ -13367,7 +13400,7 @@ function WidgetHabitPixel({ ctx, habitLog, setHabitLog, habitSkips, setHabitSkip
             );
           })}
         </section>
-        <HabitPixelSide themes={themes} date={next} day={stateOf(next)} todayIso={todayIso} onSelect={setDate} />
+        <HabitPixelSide themes={themes} date={next} day={stateOf(next)} todayIso={todayIso} onSelect={setDate} collapsed={collapsed} />
       </div>
       <div className="lp-hpx-week" role="group" aria-label="Semaine">
         {week.map((d) => {

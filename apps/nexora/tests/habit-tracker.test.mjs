@@ -318,3 +318,16 @@ test("Pixel : liaison en équerre, de la ligne jusqu'au bas du pixel", () => {
   // Coin jamais plus grand que la place disponible.
   assert.equal(H.habitPixelWirePath(40, 100, 36, 6), "M 0 40 H 96 Q 100 40 100 36 V 36");
 });
+
+test("Pas du « + » : réglable par habitude chiffrée (1 par défaut), borné, sans erreur d'arrondi", () => {
+  const [q, c] = H.normalizeHabits([habit("q", { kind: "numeric", min: 0, max: 10, step: 2.5 }), habit("c")]);
+  assert.equal(q.step, 2.5);
+  assert.equal("step" in c, false, "une habitude à cocher n'a pas de pas");
+  assert.equal(H.normalizeHabits([habit("z", { kind: "numeric", step: -3 })])[0].step, 1);
+  assert.equal(H.habitNumericStep(q, NaN, 1), "0", "le premier « + » part de min");
+  assert.equal(H.habitNumericStep(q, 5, 1), "7.5");
+  assert.equal(H.habitNumericStep(q, 9, 1), "10", "plafonné à max");
+  assert.equal(H.habitNumericStep(q, 2.5, -1), "0");
+  assert.equal(H.habitNumericStep(q, 2, -1), "", "sous min : l'entrée est effacée");
+  assert.equal(H.habitNumericStep({ min: 0, max: 1, step: 0.1 }, 0.2, 1), "0.3");
+});
