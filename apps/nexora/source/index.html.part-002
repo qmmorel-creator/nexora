@@ -4326,6 +4326,102 @@ function toggleHabitLogEntry(log, themes, habitId, date) {
   return normalizeHabitLog(next, known);
 }
 
+// --- Pixel des habitudes (#353) ----------------------------------------------
+/* « Non applicable » : une habitude qui n'a pas lieu d'être ce jour-là
+   (compétition sans épreuve, jour off…). Stocké À PART du journal, sous
+   `nexora:habitSkips` ({ id, habitId, date }, identifiant dérivé comme celui
+   du journal) : le contrat de `nexora:habitLog`, lu et écrit par le MCP, ne
+   change pas. Une validation prime toujours sur « non applicable ». */
+function normalizeHabitSkips(list, knownHabitIds) {
+  const known = Array.isArray(knownHabitIds) ? new Set(knownHabitIds.map((id) => String(id))) : null;
+  const byId = new Map();
+  (Array.isArray(list) ? list : []).forEach((entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const habitId = String(entry.habitId || "").trim();
+    const date = String(entry.date || "").trim();
+    if (!habitId || !HABIT_LOG_ISO_RE.test(date)) return;
+    if (known && !known.has(habitId)) return;
+    const id = habitLogCellId(habitId, date);
+    byId.set(id, { id, habitId, date });
+  });
+  return [...byId.values()].sort((a, b) => (
+    a.date === b.date ? a.habitId.localeCompare(b.habitId) : a.date.localeCompare(b.date)
+  ));
+}
+
+function setHabitSkip(skips, themes, habitId, date, on) {
+  const known = normalizeHabitThemes(themes).flatMap((t) => t.habits.map((h) => h.id));
+  const id = habitLogCellId(habitId, date);
+  const next = normalizeHabitSkips(skips, known).filter((e) => e.id !== id);
+  if (on && known.includes(habitId)) next.push({ id, habitId, date });
+  return normalizeHabitSkips(next, known);
+}
+
+/* Pas du compteur −/+ d'une habitude « numeric » — même règle que Quick
+   Habit : « + » démarre à `min` puis plafonne à `max` ; « − » sous `min`
+   efface l'entrée (valeur ""). Renvoie la valeur brute à passer à
+   setHabitLogValue, ou null quand rien ne change. */
+function habitNumericStep(habit, value, delta) {
+  const min = Number.isFinite(habit.min) ? habit.min : 0;
+  const max = Number.isFinite(habit.max) && habit.max > min ? habit.max : min + 10;
+  const has = Number.isFinite(value);
+  if (delta < 0) {
+    if (!has) return null;
+    return value - 1 < min ? "" : String(value - 1);
+  }
+  if (has && value >= max) return null;
+  return String(has ? value + 1 : min);
+}
+
+/* État de chaque habitude pour un jour : « done » (coche, ou quantité à son
+   maximum), « part » (quantité posée, sous le maximum), « na » (non
+   applicable, sans validation), « todo ». Compteur « validées /
+   applicables » : les non applicables sortent du total — exactement les
+   pixels affichés. */
+function habitDayStates(themes, log, skips, date) {
+  const catalogue = normalizeHabitThemes(themes);
+  const known = catalogue.flatMap((t) => t.habits.map((h) => h.id));
+  const entries = new Map(normalizeHabitLog(log, known).filter((e) => e.date === date).map((e) => [e.habitId, e]));
+  const skipped = new Set(normalizeHabitSkips(skips, known).filter((e) => e.date === date).map((e) => e.habitId));
+  const habits = {};
+  const themeCounts = {};
+  let done = 0;
+  let total = 0;
+  catalogue.forEach((theme) => {
+    let td = 0;
+    let tt = 0;
+    theme.habits.forEach((habit) => {
+      const entry = entries.get(habit.id);
+      let state = "todo";
+      let value = null;
+      if (entry) {
+        if (habit.kind === "numeric") {
+          value = Number.isFinite(entry.value) ? entry.value : (Number.isFinite(habit.min) ? habit.min : 0);
+          state = value >= habit.max ? "done" : "part";
+        } else state = "done";
+      } else if (skipped.has(habit.id)) state = "na";
+      habits[habit.id] = { state, value };
+      if (state === "na") return;
+      tt += 1;
+      if (state === "done" || state === "part") td += 1;
+    });
+    themeCounts[theme.id] = { done: td, total: tt };
+    done += td;
+    total += tt;
+  });
+  return { habits, themes: themeCounts, done, total };
+}
+
+/* Liaison habitude → pixel (maquette « mosaïque centrale ») : à
+   l'horizontale depuis la ligne de l'habitude jusqu'à l'aplomb de son pixel,
+   puis à la verticale jusqu'à lui, coin arrondi. Les pixels d'une catégorie
+   sont rangés dans l'ordre de ses lignes : les équerres s'emboîtent sans
+   jamais se croiser. Coordonnées dans le repère de la zone des liaisons. */
+function habitPixelWirePath(rowY, pixelX, pixelBottom, radius) {
+  const r = Math.max(0, Math.min(Number(radius) || 0, pixelX, rowY - pixelBottom));
+  return `M 0 ${rowY} H ${pixelX - r} Q ${pixelX} ${rowY} ${pixelX} ${rowY - r} V ${pixelBottom}`;
+}
+
 function habitThemeUsage(log, themes, themeId) {
   const theme = habitThemeById(themes, themeId);
   if (!theme) return 0;
