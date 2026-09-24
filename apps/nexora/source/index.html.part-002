@@ -5084,7 +5084,9 @@ function carteNormalize(ctx, tasks, opts) {
       fromEmail: !!t.sourceMessageId,
       stale: state !== "done" && state !== "info" && last != null && nowMs - last > 30 * CARTE_DAY,
       recentDone: state === "done" && completed != null && nowMs - completed <= 7 * CARTE_DAY,
-      oldDone: state === "done" && completed != null && nowMs - completed > 30 * CARTE_DAY,
+      // #400 : une tâche terminée sans date de complétion enregistrée se date
+      // par sa fin prévue, sinon par sa dernière interaction.
+      oldDone: state === "done" && (completed != null ? nowMs - completed > 30 * CARTE_DAY : end != null ? today - end > 30 : last != null && nowMs - last > 30 * CARTE_DAY),
       desc: typeof t.desc === "string" ? t.desc : "",
     };
   });
@@ -5630,11 +5632,11 @@ function carteTaskModel(task, themeId, opts) {
     parts.push(cP("cyl", "#3a3a3a", -0.36, 0, 0.36, 0.03, 0.46, 0.03), cP("box", "#ffcf5a", -0.36, 0.46, 0.36, 0.1, 0.12, 0.1, 0, "g"));
   }
   if (task.future) parts.push(cP("cyl", "#ffffff", 0, 0.02, 0, 1.5, 0.45, 1.5, 0, "t"));
+  // Responsable (#382, #398) : un bonhomme à sa couleur, à tous les niveaux
+  // de détail ; le moteur pose au-dessus un badge d'initiales.
+  const pc = cartePersonColor(task.assignee, task.assigneeColor);
+  if (pc) parts = parts.concat(cartePersonFigure(pc, size));
   if (detail >= 2) {
-    // Avatar du responsable (#382) : silhouette à sa couleur ; le moteur pose
-    // au-dessus un badge d'initiales (CARTE_AVATAR_ANCHOR).
-    const pc = cartePersonColor(task.assignee, task.assigneeColor);
-    if (pc) parts.push(cP("cyl", pc, CARTE_AVATAR_ANCHOR[0], 0, CARTE_AVATAR_ANCHOR[2], 0.17, 0.34, 0.17), cP("ball", "#f1c9a5", CARTE_AVATAR_ANCHOR[0], 0.33, CARTE_AVATAR_ANCHOR[2], 0.14, 0.14, 0.14));
     const n = Math.min(6, task.checklistTotal);
     const doneN = Math.min(n, task.checklistDone);
     for (let i = 0; i < n; i++) {
@@ -5659,12 +5661,13 @@ function carteTaskModel(task, themeId, opts) {
 
 // Palier d'altitude d'une tâche : terminée = 5, en cours ou en attente = palier
 // de progress, à faire et information = 0.
-// Bâtiments agrandis en hauteur (#380) : la hauteur finale visée est ~1,6
-// (avant l'échelle du moteur), sans déformer à l'excès les silhouettes basses.
-const CARTE_BUILD_TARGET = 1.6;
+// Bâtiments agrandis en hauteur (#380, #395) : la hauteur finale visée est
+// ~3,6 (avant l'échelle du moteur, soit 4 à 6 fois la largeur d'une case) :
+// une tâche à 100 % domine le paysage et 20, 50 ou 80 % se lisent de loin.
+const CARTE_BUILD_TARGET = 3.6;
 function carteTall(sil) {
   const H = sil.reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0) || 0.5;
-  const f = Math.min(2.2, Math.max(1.4, CARTE_BUILD_TARGET / H));
+  const f = Math.min(9, Math.max(2.4, CARTE_BUILD_TARGET / H));
   return sil.map((p) => Object.assign({}, p, { p: [p.p[0], p.p[1] * f, p.p[2]], s: [p.s[0], p.s[1] * f, p.s[2]] }));
 }
 
@@ -5687,7 +5690,24 @@ function carteHazard(task) {
   if (task.overdue) return urgent ? "tempest" : "storm";
   return urgent ? "fire" : null;
 }
-const CARTE_AVATAR_ANCHOR = [-0.44, 0.78, -0.12];
+// #398 : le bonhomme se tient au bord de la dalle, hors de la construction,
+// et mesure ~1 (avant l'échelle du moteur) : il reste visible à côté des
+// bâtiments agrandis. Le badge d'initiales flotte au-dessus de sa tête.
+const CARTE_AVATAR_ANCHOR = [-0.6, 1.25, -0.22];
+function cartePersonFigure(color, size, o) {
+  const k = size || 1, c = o || {};
+  const x = CARTE_AVATAR_ANCHOR[0] * k, z = CARTE_AVATAR_ANCHOR[2] * k;
+  const legs = c.legs || "#2d3340", skin = c.skin || "#f1c9a5", arm = carteMix(color, "#000000", 0.18);
+  return [
+    cP("cyl", legs, x - 0.07 * k, 0, z, 0.11 * k, 0.36 * k, 0.11 * k),
+    cP("cyl", legs, x + 0.07 * k, 0, z, 0.11 * k, 0.36 * k, 0.11 * k),
+    cP("cyl", color, x, 0.34 * k, z, 0.32 * k, 0.4 * k, 0.26 * k),
+    cP("cyl", arm, x - 0.2 * k, 0.4 * k, z, 0.09 * k, 0.32 * k, 0.09 * k),
+    cP("cyl", arm, x + 0.2 * k, 0.4 * k, z, 0.09 * k, 0.32 * k, 0.09 * k),
+    cP("ball", skin, x, 0.72 * k, z, 0.28 * k, 0.28 * k, 0.28 * k),
+    cP("cyl", color, x, 0.96 * k, z, 0.22 * k, 0.06 * k, 0.22 * k),
+  ];
+}
 function carteAvatarAnchor(task) {
   const k = carteTaskSize(task);
   return [CARTE_AVATAR_ANCHOR[0] * k, CARTE_AVATAR_ANCHOR[1] * k, CARTE_AVATAR_ANCHOR[2] * k];
@@ -5927,7 +5947,7 @@ function carteStyleBase(task, styleId, band, lite) {
     return out;
   }
   // Néon-Grille.
-  const N = CARTE_NEO, H = 1.3, w = task.duration == null ? 0.56 : task.duration < 3 ? 0.46 : task.duration > 21 ? 0.66 : 0.56;
+  const N = CARTE_NEO, H = 3.2, w = task.duration == null ? 0.56 : task.duration < 3 ? 0.46 : task.duration > 21 ? 0.66 : 0.56;
   if (task.state === "info") return [cP("cyl", N.steel, 0, 0, 0, 0.05, 0.8, 0.05), cP("box", N.mag, 0, 0.72, 0, 0.56, 0.34, 0.03, 0.4, "g"), cP("box", N.mag, 0, 0.7, 0, 0.62, 0.4, 0.02, 0.4, "t")];
   if (task.kind === "task") {
     // Grands volumes (`lite`) : l'hologramme seul, sans ses douze arêtes.
@@ -5960,7 +5980,6 @@ const CARTE_STYLE_KIT = {
     overdue: (y) => [cP("ball", "#5d5852", -0.1, y, 0, 0.36, 0.14, 0.28), cP("ball", "#4f4a45", 0.14, y + 0.03, 0.05, 0.3, 0.16, 0.24)].concat([-0.2, -0.05, 0.1, 0.24].map((x, i) => cP("box", "#5a6270", x, y - 0.42 - (i % 2) * 0.08, 0.02, 0.018, 0.3, 0.018, 0))),
     soon: () => carteEToro(true).map((p) => Object.assign({}, p, { p: [p.p[0] - 0.4, p.p[1], p.p[2] + 0.36] })),
     future: () => [cP("cyl", "#ffffff", 0, 0.25, 0, 1.6, 0.14, 1.0, 0, "t"), cP("cyl", "#ffffff", 0.1, 0.62, 0.05, 1.3, 0.12, 0.8, 0, "t")],
-    person: (c) => [cP("cone", c, -0.42, 0, -0.12, 0.2, 0.3, 0.2), cP("ball", "#f1c9a5", -0.42, 0.27, -0.12, 0.1, 0.1, 0.1), cP("cone", "#c9a86a", -0.42, 0.34, -0.12, 0.22, 0.06, 0.22)],
     sub: (d) => [cP("cyl", "#6a4a3a", 0, 0, 0, 0.14, 0.07, 0.14)].concat(d ? [cP("ball", CARTE_EST.pine, 0, 0.06, 0, 0.18, 0.12, 0.16)] : []),
     rec: () => [cP("cyl", CARTE_EST.wood, 0, 0, 0, 0.035, 0.6, 0.035), cP("box", CARTE_EST.ver, 0, 0.62, 0.03, 0.5, 0.08, 0.02, 0, "s"), cP("box", "#f2efe6", 0, 0.62, 0.03, 0.08, 0.5, 0.02, 0, "s")],
     attach: () => [cP("box", CARTE_EST.indigo, 0.2, 0, 0.5, 0.2, 0.12, 0.14), cP("ball", CARTE_EST.indigo, 0.2, 0.1, 0.5, 0.08, 0.06, 0.08)],
@@ -5978,7 +5997,6 @@ const CARTE_STYLE_KIT = {
     overdue: (y) => [cP("box", "#4a0818", 0, 0.02, 0, 0.8, Math.max(0.5, y - 0.4) * 0.6, 0.8, 0, "t")].concat(carteNFrame(0.9, y * 0.55, CARTE_NEO.red), [ cP("box", CARTE_NEO.red, 0.3, y * 0.3, 0.44, 0.22, 0.05, 0.02, 0, "g"), cP("box", CARTE_NEO.red, -0.2, y * 0.75, 0.44, 0.16, 0.05, 0.02, 0, "g")]),
     soon: () => carteNHexRing(0.72, CARTE_NEO.cyan, 0.02),
     future: () => [cP("cyl", CARTE_NEO.vio, 0, 0.02, 0, 1.5, 0.5, 1.5, 0, "t")],
-    person: (c, H) => [cP("box", "#2a2a3a", -0.42, H + 0.45, -0.12, 0.22, 0.06, 0.22), cP("box", "#9aa0b8", -0.42, H + 0.51, -0.12, 0.36, 0.02, 0.04, 0, "s"), cP("ball", c, -0.42, H + 0.36, -0.12, 0.1, 0.1, 0.1, 0, "g")],
     sub: (d) => [cP("box", CARTE_NEO.dark2, 0, 0, 0, 0.16, 0.12, 0.16)].concat(d ? [cP("box", CARTE_NEO.cyan, 0, 0.12, 0, 0.12, 0.02, 0.12, 0, "g")] : []),
     rec: () => [cP("cyl", CARTE_NEO.steel, 0, 0, 0, 0.04, 0.55, 0.04), cP("box", CARTE_NEO.cyan, 0, 0.58, 0.03, 0.46, 0.06, 0.02, 0, "s")],
     attach: () => [cP("box", "#3d6bff", 0.2, 0, 0.5, 0.16, 0.16, 0.16, 0.4, "g")],
@@ -6010,9 +6028,9 @@ function carteStyleTaskModel(task, styleId, o) {
   if (task.overdue) parts = parts.concat(K.overdue(Math.max(H, 0.8) + 0.45));
   else if (task.soon) parts = parts.concat(K.soon());
   if (task.future) parts = parts.concat(K.future());
+  const pc = cartePersonColor(task.assignee, task.assigneeColor);
+  if (pc) parts = parts.concat(cartePersonFigure(pc, size, styleId === "neon" ? { legs: CARTE_NEO.dark2, skin: "#d8d4f0" } : { legs: CARTE_EST.ink }));
   if (detail >= 2) {
-    const pc = cartePersonColor(task.assignee, task.assigneeColor);
-    if (pc) parts = parts.concat(K.person(pc, H));
     const n = Math.min(6, task.checklistTotal), doneN = Math.min(n, task.checklistDone);
     for (let i = 0; i < n; i++) { const a = Math.PI * 0.15 + i * 0.42; parts = parts.concat(at(K.sub(i < doneN), Math.cos(a) * 0.62, 0, Math.sin(a) * 0.62)); }
     if (task.recurring) parts = parts.concat(at(K.rec(), 0.46, 0, 0.42));
@@ -6221,13 +6239,13 @@ function carteDndBase(task, lieu) {
       else if (waiting) o = ddWolf(0.8);
       else o = [cP("cyl", "#6b4a2e", 0, 0, 0, 0.08, 0.7, 0.08), cP("box", "#6b4a2e", 0, 0.48, 0, 0.5, 0.05, 0.05), cP("ball", "#c9b38a", 0, 0.66, 0, 0.22, 0.22, 0.22), cP("ball", "#c9b38a", 0, 0.28, 0, 0.28, 0.36, 0.28), cP("cyl", "#8a5a3a", 0.26, 0.34, 0, 0.24, 0.24, 0.03)];
     } else if (lieu === "cite") {
-      if (done) o = ddHouse("#f0e0c0", "#8a3a2a", 0.66, 0.55, 0.5, true).concat([cP("box", "#b3262b", 0, 0.62, 0.34, 0.64, 0.03, 0.3), cP("box", "#6b4a2e", 0, 0, 0.4, 0.5, 0.18, 0.2), cP("ball", "#e0a21a", -0.15, 0.18, 0.4, 0.1, 0.1, 0.1), cP("ball", "#b3262b", 0, 0.18, 0.4, 0.1, 0.1, 0.1), cP("ball", "#6a9a3a", 0.15, 0.18, 0.4, 0.1, 0.1, 0.1)]);
-      else if (started) { const h = 0.1 + 0.9 * Math.max(0.08, pr); o = [cP("box", "#6d665c", 0, 0, 0, 0.66, 0.14, 0.54), cP("box", "#e8dcc0", 0, 0.14, 0, 0.6, h, 0.48)].concat(ddScaffold(0.62, h + 0.4)); }
+      if (done) o = ddHouse("#f0e0c0", "#8a3a2a", 0.66, 2.9, 0.5, true).concat([cP("box", "#b3262b", 0, 0.62, 0.34, 0.64, 0.03, 0.3), cP("box", "#6b4a2e", 0, 0, 0.4, 0.5, 0.18, 0.2), cP("ball", "#e0a21a", -0.15, 0.18, 0.4, 0.1, 0.1, 0.1), cP("ball", "#b3262b", 0, 0.18, 0.4, 0.1, 0.1, 0.1), cP("ball", "#6a9a3a", 0.15, 0.18, 0.4, 0.1, 0.1, 0.1)]);
+      else if (started) { const h = 0.1 + 2.8 * Math.max(0.08, pr); o = [cP("box", "#6d665c", 0, 0, 0, 0.66, 0.14, 0.54), cP("box", "#e8dcc0", 0, 0.14, 0, 0.6, h, 0.48)].concat(ddScaffold(0.62, h + 0.4)); }
       else if (waiting) o = ddHouse("#cfc4ac", "#5a4a4a", 0.62, 0.5, 0.5, false).concat([cP("box", "#4a5a3a", -0.155, 0.36, 0.26, 0.16, 0.18, 0.03), cP("box", "#4a5a3a", 0.155, 0.36, 0.26, 0.16, 0.18, 0.03), cP("box", "#7a5530", 0.1, 0.1, 0.42, 0.4, 0.14, 0.24)]);
       else o = [cP("cyl", "#7a5530", -0.35, 0, -0.35, 0.04, 0.3, 0.04), cP("cyl", "#7a5530", 0.35, 0, -0.35, 0.04, 0.3, 0.04), cP("cyl", "#7a5530", -0.35, 0, 0.35, 0.04, 0.3, 0.04), cP("cyl", "#7a5530", 0.35, 0, 0.35, 0.04, 0.3, 0.04), cP("box", "#efe6cf", 0, 0.25, -0.35, 0.7, 0.012, 0.012), cP("box", "#efe6cf", 0, 0.25, 0.35, 0.7, 0.012, 0.012), cP("cyl", "#5a3d25", 0.1, 0, 0.1, 0.04, 0.5, 0.04), cP("box", "#d8c8a0", 0.1, 0.35, 0.11, 0.3, 0.18, 0.02), cP("ball", "#8a8174", -0.15, 0, -0.1, 0.16, 0.12, 0.16)];
     } else if (lieu === "foret") {
       if (done) o = ddTree("#2f7a5a", 0.9).concat([cP("box", "#ffe08a", 0.3, 0.5, 0.1, 0.08, 0.1, 0.08, 0, "g"), cP("box", "#ffe08a", -0.25, 0.6, 0.15, 0.08, 0.1, 0.08, 0, "g"), cP("box", "#ffe08a", 0.05, 0.45, -0.3, 0.08, 0.1, 0.08, 0, "g"), cP("ball", "#ffd070", 0, 0.6, 0, 1.3, 1.3, 1.3, 0, "h")]);
-      else if (started) { const h = 0.35 + 1.0 * Math.max(0.08, pr); o = [cP("cyl", "#5a3d25", 0, 0, 0, 0.22, h, 0.22), cP("cyl", "#6b4a2e", 0, h * 0.7, 0, 0.72, 0.04, 0.72), cP("ball", "#3f7a4a", 0, h, 0, 0.6, 0.5, 0.6)]; }
+      else if (started) { const h = 0.35 + 2.6 * Math.max(0.08, pr); o = [cP("cyl", "#5a3d25", 0, 0, 0, 0.22, h, 0.22), cP("cyl", "#6b4a2e", 0, h * 0.7, 0, 0.72, 0.04, 0.72), cP("ball", "#3f7a4a", 0, h, 0, 0.6, 0.5, 0.6)]; }
       else if (waiting) { o = [cP("ball", "#8a6a3a", 0, 0, 0, 0.2, 0.16, 0.2)]; for (let k = 0; k < 7; k++) { const a = k * Math.PI * 2 / 7; o.push(cP("cone", "#2a1a22", Math.cos(a) * 0.22, 0, Math.sin(a) * 0.22, 0.08, 0.5, 0.08)); } }
       else { o = [cP("cyl", "#4a6a2a", 0, 0, 0, 0.03, 0.18, 0.03), cP("ball", "#6fbf4a", 0.04, 0.14, 0, 0.1, 0.04, 0.06), cP("ball", "#6fbf4a", -0.04, 0.14, 0, 0.1, 0.04, 0.06)]; for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; o.push(cP("ball", "#9aa8a0", Math.cos(a) * 0.22, 0, Math.sin(a) * 0.22, 0.08, 0.06, 0.08)); } }
     } else if (lieu === "forge") {
@@ -6267,9 +6285,9 @@ function carteDndTaskModel(task, o) {
   }
   if (!task.overdue && task.soon) parts = parts.concat([cP("cyl", "#4a3322", 0.4, 0, 0.4, 0.05, 0.5, 0.05)], ddFlame(0.4, 0.5, 0.4, "#ffb347", 0.8));
   if (task.future) parts.push(cP("box", "#0e0c0b", 0, 0.03, 0, 1.1, 0.9, 1.1, 0, "t"));
+  const pc = cartePersonColor(task.assignee, task.assigneeColor);
+  if (pc) parts = parts.concat(ddAt(ddHero(pc), CARTE_AVATAR_ANCHOR[0] * size, 0, CARTE_AVATAR_ANCHOR[2] * size, 2.3));
   if (detail >= 2) {
-    const pc = cartePersonColor(task.assignee, task.assigneeColor);
-    if (pc) parts = parts.concat(ddAt(ddHero(pc), CARTE_AVATAR_ANCHOR[0] * size, 0, CARTE_AVATAR_ANCHOR[2] * size, 1.4));
     const n = Math.min(6, task.checklistTotal), doneN = Math.min(n, task.checklistDone);
     for (let i = 0; i < n; i++) { const a = Math.PI * 0.15 + i * 0.42; parts = parts.concat(ddAt(i < doneN ? [cP("box", DD.gold, 0, 0, 0, 0.14, 0.12, 0.14, 0, "g")] : [cP("box", "#6b4a2e", 0, 0, 0, 0.14, 0.12, 0.14)], Math.cos(a) * 0.64, 0, Math.sin(a) * 0.64)); }
     if (task.recurring) parts.push(cP("cyl", "#3b2a1c", 0.48, 0, 0.44, 0.04, 0.55, 0.04), cP("box", lieu === "foret" ? "#6fbf4a" : "#c9a24a", 0.48, 0.58, 0.47, 0.5, 0.07, 0.02, 0, "s"));
@@ -6395,6 +6413,43 @@ function carteMatches(task, f) {
   if (f.hideOldDone && task.oldDone) return false;
   return true;
 }
+// Filtres propres à la vue (#400) : combien sont posés, et leur remise à zéro.
+function carteViewFilterCount(cfg) {
+  let n = 0;
+  if (cfg.states && cfg.states.length < CARTE_STATE_KEYS.length) n++;
+  if (cfg.crit && cfg.crit !== "all") n++;
+  if (cfg.late) n++;
+  return n;
+}
+function carteViewFilterReset() { return { states: CARTE_STATE_KEYS.slice(), crit: "all", late: false, filter: null }; }
+
+// Ruban (#392) : une pastille par dossier (les projets sans dossier sont
+// regroupés en dernier), avancement cumulé des projets du dossier.
+const CARTE_NO_FOLDER = "__sans-dossier__";
+function carteFolderGroups(layout, stats, folders) {
+  const byId = {};
+  (folders || []).forEach((f) => { if (f && f.id != null) byId[f.id] = f; });
+  const out = [], idx = {};
+  (layout.territories || []).forEach((tr) => {
+    const p = layout.projectById[tr.projectId];
+    if (!p) return;
+    const gid = p.group || CARTE_NO_FOLDER;
+    let g = idx[gid];
+    if (!g) {
+      const f = p.group ? byId[p.group] : null;
+      g = idx[gid] = { id: gid, name: p.group ? p.folderName || (f && f.name) || "Dossier" : "Sans dossier", color: (f && f.color) || null, icon: (f && f.icon) || "", projects: [], done: 0, counted: 0, overdue: 0, total: 0 };
+      out.push(g);
+    }
+    g.projects.push(tr.projectId);
+    const st = (stats || {})[tr.projectId] || {};
+    g.done += st.done || 0; g.counted += st.counted || 0; g.overdue += st.overdue || 0; g.total += st.total || 0;
+  });
+  out.forEach((g) => {
+    g.pct = g.counted ? Math.round((g.done / g.counted) * 100) : 0;
+    if (!g.color) g.color = layout.projectById[g.projects[0]].color;
+  });
+  return out.filter((g) => g.id !== CARTE_NO_FOLDER).concat(out.filter((g) => g.id === CARTE_NO_FOLDER));
+}
 const CARTE_STATE_KEYS = ["todo", "waiting", "doing", "done", "info"];
 const CARTE_STATE_LABELS = { todo: "À faire", waiting: "En attente", doing: "En cours", done: "Terminées", info: "Infos" };
 const CARTE_QUALITIES = ["auto", "high", "medium", "low"];
@@ -6418,6 +6473,8 @@ function normalizeCarteViewPrefs(p) {
     // Filtre général de Nexora (#364), même format que les widgets.
     filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
     panel: v.panel !== false,
+    // Carte simplifiée (#401) : les projets écartés par les filtres disparaissent.
+    simplify: !!v.simplify,
   };
 }
 // === NEXORA:CARTE:END ===
