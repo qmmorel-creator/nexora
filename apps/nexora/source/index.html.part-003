@@ -19486,7 +19486,8 @@ function createCarteEngine(THREE, container, opts) {
       } else {
         const t = S.data.taskById[c.tid];
         const n = S.layout.occupancy[S.poi[c.tid].key] || 1;
-        html = '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
+        const building = t.state === "doing" || t.state === "waiting" || (t.state === "todo" && t.progress > 0);
+        html = '<span class="lp-carte-state" style="background:' + esc(t.statusColor) + '"></span>' + esc(t.title) + (building ? ' <b class="lp-carte-pct">' + t.progress + " %</b>" : "") + (n > 1 ? ' <b class="lp-carte-stack">+' + (n - 1) + "</b>" : "");
       }
       if (l._html !== html) { l.innerHTML = html; l._html = html; l._w = l.offsetWidth; l._h = l.offsetHeight; }
       l.classList.toggle("is-selected", c.tid != null && c.tid === S.selected);
@@ -19565,11 +19566,20 @@ function createCarteEngine(THREE, container, opts) {
     S.dist = Math.min(150, Math.max(32, maxd * 2.3 + 18));
   }
   function setQuality(q) { S.quality = q; if (S.layout) { resolveQuality(); build(); } o.onQuality && o.onQuality(S.effQuality); }
+  // Décalage de la vue (en pixels) : la tâche reste visible à côté du volet
+  // (ordinateur) ou au-dessus de la fiche (téléphone).
+  S.viewOffset = [0, 0];
+  function applyViewOffset() {
+    const w = container.clientWidth || 300, h = container.clientHeight || 300;
+    if (S.viewOffset[0] || S.viewOffset[1]) camera.setViewOffset(w, h, S.viewOffset[0], S.viewOffset[1], w, h);
+    else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+  }
   function resize() {
     const w = container.clientWidth || 300, h = container.clientHeight || 300;
     renderer.setSize(w, h);
     camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    applyViewOffset();
   }
   const ro = new ResizeObserver(resize);
   ro.observe(container);
@@ -19596,6 +19606,7 @@ function createCarteEngine(THREE, container, opts) {
   return {
     setData, select, focusProject, walkToTask, recenter, overview, setQuality, zoomBy,
     rotate: (d) => { S.yaw += d; },
+    setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
     nearTask: () => S.near,
     selected: () => S.selected,
@@ -19967,6 +19978,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const [query, setQuery] = useState("");
   const [themesOpen, setThemesOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Suggestions en position fixe : la barre défile horizontalement sur mobile.
+  const searchRef = useRef(null);
   // Aperçu en direct de l'avancement (#371) : la construction suit le curseur
   // avant même l'enregistrement.
   const [preview, setPreview] = useState(null);
@@ -20076,6 +20089,24 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed });
   }, [status, normView, layout, stats, visible, dimmed]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+  // La vue se décale pour que la tâche ne passe pas sous le volet ou la fiche.
+  useEffect(() => {
+    const e = engineRef.current, stage = stageRef.current;
+    if (status !== "ready" || !e || !stage) return undefined;
+    const update = () => {
+      const side = stage.querySelector(".lp-carte-detail, .lp-carte-panel");
+      if (!side) { e.setViewOffset(0, 0); return; }
+      const sr = stage.getBoundingClientRect(), r = side.getBoundingClientRect();
+      if (r.width >= sr.width * 0.8) e.setViewOffset(0, Math.min(r.height, sr.height * 0.6) / 2);
+      else e.setViewOffset(r.width / 2, 0);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(stage);
+    const side = stage.querySelector(".lp-carte-detail, .lp-carte-panel");
+    if (side) ro.observe(side);
+    return () => ro.disconnect();
+  });
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
   const go = (id) => { const e = engineRef.current; if (!e) return; e.walkToTask(id); e.select(id); };
@@ -20124,12 +20155,12 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     <section className="lp-carte-view" aria-label="Carte">
       <ViewToolbarPortal slot={toolbarSlot} />
       <div className="lp-carte-toolbar">
-          <div className="lp-carte-search">
+          <div className="lp-carte-search" ref={searchRef}>
             <Search size={14} />
             <input type="search" value={query} placeholder="Aller au projet…" aria-label="Rechercher un projet sur la carte" onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) focus(suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
             {suggestions.length > 0 && (
-              <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés">
+              <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés" style={searchRef.current ? (() => { const r = searchRef.current.getBoundingClientRect(); return { position: "fixed", left: Math.max(8, Math.min(r.left, window.innerWidth - 248)), top: r.bottom + 4 }; })() : undefined}>
                 {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}</button></li>)}
               </ul>
             )}

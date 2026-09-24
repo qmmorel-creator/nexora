@@ -249,3 +249,11 @@ test("#379 : une tâche au sol a une dalle et, si elle est à faire, un jalon au
   const lifted = C.carteTaskModel({ ...base, state: "done" }, "ville", { detail: 0 });
   assert.equal(lifted.some((p) => p.c === "#fff8e8"), false, "pas de dalle sous une tâche surélevée");
 });
+
+test("#380 : la hauteur construite est proportionnelle au pourcentage d'avancement", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s3", taskTypeId: "tt1" }], { now: NOW }).tasks[0];
+  const built = (pr) => C.carteTaskModel({ ...base, progress: pr }, "ville", { detail: 0, plinth: false }).filter((p) => p.c !== "#c9a060").reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  const full = C.carteTaskModel({ ...base, state: "done" }, "ville", { detail: 0, plinth: false }).reduce((m, p) => Math.max(m, p.p[1] + p.s[1]), 0);
+  [25, 50, 75].forEach((pr) => assert.ok(Math.abs(built(pr) / full - pr / 100) < 0.06, `${pr} % : ${(built(pr) / full * 100).toFixed(0)} % de la hauteur finale`));
+  assert.ok(full >= 1.4, `bâtiment terminé agrandi (${full.toFixed(2)})`);
+});

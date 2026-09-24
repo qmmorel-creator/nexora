@@ -277,3 +277,12 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
 - **Tâches au sol** : une dalle claire bordée de la couleur du statut marque l'emplacement de
   chaque tâche restée au sol ; une tâche à faire porte en plus un jalon au fanion de la couleur
   de son statut ; empreinte et repères du thème plus contrastés.
+
+## Taille de la construction = pourcentage (#380)
+
+- La hauteur construite d'une tâche est exactement le pourcentage d'avancement de sa hauteur
+  finale (à 50 %, la moitié). Les bâtiments sont agrandis en hauteur (hauteur finale visée
+  ~1,6 avant l'échelle de la carte) pour que l'écart se voie de loin, et le socle continue de
+  monter avec l'avancement. L'étiquette de la tâche affiche son pourcentage.
+- La vue se décale pour que la tâche sélectionnée ne passe ni sous le volet (ordinateur) ni
+  sous la fiche (téléphone) ; sur téléphone, la barre d'outils tient sur une ligne défilante.
