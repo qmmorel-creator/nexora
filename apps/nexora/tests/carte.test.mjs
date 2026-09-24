@@ -25,6 +25,7 @@ const C = vm.runInThisContext(
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteDueAltitude, carteDueGround, carteInitials, carteAvatarAnchor, carteHazard,
     CARTE_STYLES, CARTE_STYLE_BY_ID, carteLook, carteStyleTileColors, carteNeonColor,
+    CARTE_DND_LIEUX, CARTE_DND_BY_ID, CARTE_DND_FROM_THEME, carteDndLieux, normalizeCarteLieux,
   };\n})`
 )();
 
@@ -289,7 +290,7 @@ test("#381/#385 : incendie si urgente, orage si en retard, énorme orage si les 
 // Styles de carte (#387) : Archipel d'encre et Néon-Grille, distincts du thème
 // de dossier « cyberpunk » (#384) qui reste intact.
 test("styles de carte : Classique par défaut, deux styles, thèmes inchangés", () => {
-  assert.deepEqual(C.CARTE_STYLES.map((s) => s.id), ["classique", "estampe", "neon"]);
+  assert.deepEqual(C.CARTE_STYLES.map((s) => s.id), ["classique", "estampe", "neon", "dnd"]);
   assert.equal(C.normalizeCarteViewPrefs({}).style, "classique");
   assert.equal(C.normalizeCarteViewPrefs({ style: "estampe" }).style, "estampe");
   assert.equal(C.normalizeCarteViewPrefs({ style: "cyberpunk" }).style, "classique", "un thème n'est pas un style");
@@ -329,7 +330,7 @@ test("styles de carte : chaque état, type et indice a un modèle valide", () =>
     assert.ok(parts.length > 0, label);
     parts.forEach((p) => {
       assert.ok(geos.has(p.g), label + " : géométrie " + p.g);
-      assert.ok(["l", "g", "t", "s"].includes(p.m), label + " : matériau " + p.m);
+      assert.ok(["l", "g", "t", "s", "h"].includes(p.m), label + " : matériau " + p.m);
       assert.match(p.c, /^#[0-9a-f]{6}$/i, label + " : couleur " + p.c);
       p.p.concat(p.s, [p.r]).forEach((v) => assert.ok(Number.isFinite(v), label + " : nombre"));
     });
@@ -353,4 +354,64 @@ test("styles de carte : chaque état, type et indice a un modèle valide", () =>
   assert.deepEqual([0, 20, 40, 60, 80].map(roofs), [1, 2, 3, 4, 5]);
   // Classique inchangé quand aucun style n'est demandé.
   assert.deepEqual(C.carteTaskModel({ ...base, state: "done" }, "ville", {}), C.carteTaskModel({ ...base, state: "done" }, "ville", { style: "classique" }));
+});
+
+// Style Donjons & Dragons (#390) : un lieu par dossier, dalles carrées.
+test("style D&D : cinq lieux, un par dossier, réglables", () => {
+  assert.deepEqual(C.CARTE_DND_LIEUX.map((l) => l.id), ["donjon", "arene", "cite", "foret", "forge"]);
+  C.CARTE_DND_LIEUX.forEach((l) => { assert.equal(l.hub.length, 6, l.id); assert.ok(l.lg.todo && l.lg.done, l.id); });
+  C.CARTE_THEMES.forEach((t) => assert.ok(C.CARTE_DND_BY_ID[C.CARTE_DND_FROM_THEME[t.id]], "lieu automatique pour " + t.id));
+  const L = build(world(12, 200));
+  const auto = C.carteDndLieux(L);
+  L.territories.forEach((tr) => {
+    assert.ok(C.CARTE_DND_BY_ID[auto[tr.projectId]], tr.projectId);
+    const g = L.projectById[tr.projectId].group;
+    L.territories.filter((o) => L.projectById[o.projectId].group === g).forEach((o) => assert.equal(auto[o.projectId], auto[tr.projectId], "un seul lieu par dossier"));
+  });
+  const first = L.territories[0], key = L.projectById[first.projectId].group || "folder-a-trier";
+  const forced = C.carteDndLieux(L, { [key]: "arene" });
+  assert.equal(forced[first.projectId], "arene");
+  assert.deepEqual(C.normalizeCarteLieux({ a: "forge", b: "atlantide", c: 3 }), { a: "forge" });
+  assert.deepEqual(C.normalizeCarteViewPrefs({ style: "dnd", folderLieux: { f1: "cite", f2: "?" } }).folderLieux, { f1: "cite" });
+  assert.equal(C.normalizeCarteViewPrefs({ style: "dnd" }).style, "dnd");
+  // Libellés et légende suivent le lieu.
+  assert.match(C.carteLook("dnd", "ville", "forge").label, /Forge naine/);
+  assert.match(C.carteLook("dnd", "ville").label, /Cité/, "sans réglage, le thème Ville donne la cité");
+  const leg = C.carteLegend("ville", "dnd", "donjon");
+  assert.equal(leg.lines.length, 11); assert.equal(leg.signals.length, 4);
+  // Tuiles : gouffre pour la mer, lieu transmis au moteur.
+  Object.values(L.tiles).slice(0, 400).forEach((t) => {
+    const c = C.carteStyleTileColors("dnd", t, "#336699", "foret");
+    assert.match(c.top, /^#[0-9a-f]{6}$/i); assert.match(c.side, /^#[0-9a-f]{6}$/i);
+    assert.equal(!!c.sea, t.kind === "sea");
+    if (!c.water) assert.equal(c.lieu, "foret");
+  });
+});
+
+test("style D&D : chaque lieu, état et indice a un modèle valide", () => {
+  const geos = new Set(["box", "cyl", "hex", "cone", "pyr", "ball", "dome"]);
+  const valid = (parts, label) => {
+    assert.ok(parts.length > 0, label);
+    parts.forEach((p) => {
+      assert.ok(geos.has(p.g), label + " : géométrie " + p.g);
+      assert.ok(["l", "g", "t", "s", "h"].includes(p.m), label + " : matériau " + p.m);
+      assert.match(p.c, /^#[0-9a-f]{6}$/i, label + " : couleur " + p.c);
+      p.p.concat(p.s, [p.r]).forEach((v) => assert.ok(Number.isFinite(v), label + " : nombre"));
+    });
+  };
+  const base = { id: "x", state: "todo", kind: "task", progress: 0, duration: 5, criticality: null, overdue: false, soon: false, future: false, assignee: null, checklistTotal: 0, checklistDone: 0, recurring: false, attachments: 0, hasReport: false, fromEmail: false, stale: false, startTime: null, secondaryProjectId: null };
+  const full = { ...base, state: "doing", progress: 60, criticality: "urgent", overdue: true, soon: true, future: true, assignee: "Léo", checklistTotal: 3, checklistDone: 1, recurring: true, attachments: 2, hasReport: true, fromEmail: true, stale: true, startTime: "09:00", secondaryProjectId: "p2" };
+  const L = build(world(8, 60));
+  C.CARTE_DND_LIEUX.forEach(({ id: lieu }) => {
+    ["todo", "waiting", "doing", "done", "info"].forEach((state) => ["task", "meeting", "planning", "milestone"].forEach((kind) => [0, 40, 100].forEach((progress) => {
+      valid(C.carteTaskModel({ ...base, state, kind, progress }, "ville", { style: "dnd", lieu }), `${lieu} ${state} ${kind} ${progress}`);
+    })));
+    const rich = C.carteTaskModel(full, "ville", { style: "dnd", lieu, secondaryColor: "#2a9d8f" });
+    valid(rich, lieu + " tous indices");
+    assert.ok(rich.length > C.carteTaskModel({ ...base, state: "doing", progress: 60 }, "ville", { style: "dnd", lieu }).length, lieu + " : les indices ajoutent des pièces");
+    for (let stage = 0; stage <= 5; stage++) valid(C.carteHubModel("ville", stage, "#e07a3f", "normal", "dnd", lieu), `${lieu} cœur ${stage}`);
+    Object.values(L.tiles).slice(0, 300).forEach((t) => C.carteDecorModel(t, C.CARTE_THEMES[0].pal, "ville", "dnd", lieu).forEach((p) => { assert.ok(geos.has(p.g)); assert.match(p.c, /^#[0-9a-f]{6}$/i); }));
+  });
+  // Le modèle est stable (pas d'aléa hors hachage).
+  assert.deepEqual(C.carteTaskModel(full, "ville", { style: "dnd", lieu: "arene" }), C.carteTaskModel(full, "ville", { style: "dnd", lieu: "arene" }));
 });

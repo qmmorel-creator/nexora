@@ -18846,7 +18846,7 @@ function createCarteEngine(THREE, container, opts) {
     yaw: 0.6, pitch: 0.92, dist: 19, target: new THREE.Vector3(), follow: true, focusGoal: null,
     keys: {}, joy: { x: 0, y: 0 }, walkTo: null, quality: o.quality || "auto", effQuality: "high", detail: 2,
     time: 0, raf: 0, disposed: false, spin: [], walkPhase: 0, territory: null, placedKeeper: false,
-    style: CARTE_STYLE_BY_ID[o.style] ? o.style : CARTE_STYLE_DEFAULT, rain: null,
+    style: CARTE_STYLE_BY_ID[o.style] ? o.style : CARTE_STYLE_DEFAULT, rain: null, lieux: {},
   };
 
   // ---------- Géométries unitaires (base à y = 0, hauteur 1) ----------
@@ -18868,7 +18868,11 @@ function createCarteEngine(THREE, container, opts) {
   const planeGeo = new THREE.PlaneGeometry(1, 1);
   // Liseré néon des tuiles (#387, Néon-Grille).
   const neonRingGeo = new THREE.RingGeometry(0.9, 0.975, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
-  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, neonRingGeo]);
+  // Style Donjons & Dragons (#390) : dalles carrées posées sur la grille. Une
+  // case fait 1,73 × 1,5 (rangées décalées) : la dalle en couvre presque tout.
+  const dndBaseGeo = new THREE.BoxGeometry(1.7, 1, 1.49).translate(0, 0.5, 0);
+  const dndCapGeo = new THREE.BoxGeometry(1.64, 0.14, 1.42).translate(0, 0.07, 0);
+  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, neonRingGeo, dndBaseGeo, dndCapGeo]);
   // Nom d'un dossier écrit au sol (#377) : une texture de texte par région.
   function regionTexture(text, dim) {
     const c = document.createElement("canvas");
@@ -18953,6 +18957,7 @@ function createCarteEngine(THREE, container, opts) {
     classique: { clear: "#bfe3f2", fog: "#bfe3f2", sky: "#ffffff", ground: "#8a8f6a", hemi: 1.35, sun: "#fff6e0", sunI: 2.1, fogK: 1, ring: "#245edb" },
     estampe: { clear: "#efe6d2", fog: "#efe6d2", sky: "#fff8ea", ground: "#9a8a66", hemi: 1.6, sun: "#fff3dc", sunI: 1.25, fogK: 1.05, ring: "#cf3b2a" },
     neon: { clear: "#07060d", fog: "#0d0820", sky: "#7a5cff", ground: "#ff2a6d", hemi: 1.25, sun: "#8ab4ff", sunI: 0.9, fogK: 0.85, ring: "#05d9e8" },
+    dnd: { clear: "#15100c", fog: "#15100c", sky: "#ffe2bc", ground: "#3a2a1c", hemi: 1.45, sun: "#ffd8a8", sunI: 1.7, fogK: 0.95, ring: "#e0b44a" },
   };
   const styleEnv = () => STYLE_ENV[S.style] || STYLE_ENV.classique;
   const litMat = (m) => (S.style === "estampe" && (m === "l" || m === "s") ? MAT.toon : MAT[m] || MAT.l);
@@ -18996,6 +19001,34 @@ function createCarteEngine(THREE, container, opts) {
     [[410, 78, 70], [300, 85, 75], [190, 70, 80], [90, 80, 70]].forEach(([x, y, r]) => c.arc(x, y + 30, r * 0.62, 0, Math.PI, true));
     c.closePath(); c.fill(); c.stroke();
   });
+  // Dalles des lieux D&D : une grande pierre, un sable, des pavés, une mousse,
+  // un basalte fendu de lave. Dessinées une fois, teintées case par case.
+  const dndNoise = (c, w, base, n, amp, seed) => { c.fillStyle = base; c.fillRect(0, 0, w, w); let a = carteHash(seed); const r = () => { a = (Math.imul(a ^ (a >>> 15), 2246822519) + 0x6D2B79F5) >>> 0; return a / 4294967296; }; for (let i = 0; i < n; i++) { const k = r() * amp; c.fillStyle = r() < 0.5 ? "rgba(0,0,0," + k + ")" : "rgba(255,255,255," + k * 0.6 + ")"; c.fillRect(r() * w, r() * w, 2, 2); } return r; };
+  const DND_TEX = {
+    flag: () => canvasTex("dnd-flag", 256, 256, (c, w) => { c.fillStyle = "#1a1612"; c.fillRect(0, 0, w, w); const g = c.createRadialGradient(w / 2, w / 2, 20, w / 2, w / 2, w * 0.7); g.addColorStop(0, "#8a8478"); g.addColorStop(1, "#5e584e"); c.fillStyle = g; c.fillRect(9, 9, w - 18, w - 18); const r = dndNoise({ fillStyle: "", fillRect() {} }, 0, "", 0, 0, "f"); for (let i = 0; i < 2500; i++) { c.fillStyle = r() < 0.5 ? "rgba(0,0,0,.08)" : "rgba(255,255,255,.05)"; c.fillRect(10 + r() * (w - 20), 10 + r() * (w - 20), 2, 2); } c.strokeStyle = "rgba(20,16,12,.7)"; c.lineWidth = 1.6; c.beginPath(); let x = 60, y = 20; c.moveTo(x, y); for (let k = 0; k < 6; k++) { x += (r() - 0.3) * 40; y += 30; c.lineTo(x, y); } c.stroke(); }),
+    sand: () => canvasTex("dnd-sand", 256, 256, (c, w) => { dndNoise(c, w, "#d9b97f", 9000, 0.14, "s"); c.strokeStyle = "rgba(150,110,60,.2)"; c.lineWidth = 2; for (let y = 8; y < w; y += 14) { c.beginPath(); c.moveTo(0, y); for (let x = 0; x <= w; x += 32) c.lineTo(x, y + Math.sin(x * 0.05 + y) * 2); c.stroke(); } c.strokeStyle = "rgba(110,80,40,.5)"; c.lineWidth = 4; c.strokeRect(0, 0, w, w); }),
+    cobble: () => canvasTex("dnd-cobble", 256, 256, (c, w) => { const r = dndNoise(c, w, "#2a2622", 0, 0, "c"); for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) { const cx = x * 85 + 42 + (y % 2 ? 10 : -6), cy = y * 85 + 42, g = 120 + r() * 50; c.fillStyle = "rgb(" + (g | 0) + "," + ((g - 8) | 0) + "," + ((g - 20) | 0) + ")"; c.beginPath(); c.ellipse(cx, cy, 36, 34, r(), 0, Math.PI * 2); c.fill(); c.fillStyle = "rgba(255,255,255,.1)"; c.beginPath(); c.ellipse(cx - 8, cy - 9, 16, 11, 0, 0, Math.PI * 2); c.fill(); } }),
+    moss: () => canvasTex("dnd-moss", 256, 256, (c, w) => { const r = dndNoise(c, w, "#3f5a34", 9000, 0.18, "m"); for (let i = 0; i < 90; i++) { c.fillStyle = ["#5d7a33", "#7a8a3a", "#8a5a2a", "#3f6a33"][(r() * 4) | 0]; c.save(); c.translate(r() * w, r() * w); c.rotate(r() * 6.28); c.beginPath(); c.ellipse(0, 0, 6 + r() * 6, 3, 0, 0, Math.PI * 2); c.fill(); c.restore(); } c.strokeStyle = "rgba(10,20,10,.5)"; c.lineWidth = 3; c.strokeRect(0, 0, w, w); }),
+    basalt: () => canvasTex("dnd-basalt", 256, 256, (c, w) => { const r = dndNoise(c, w, "#4a4440", 6000, 0.14, "b"); c.strokeStyle = "#161210"; c.lineWidth = 6; c.strokeRect(3, 3, w - 6, w - 6); c.strokeStyle = "rgba(255,120,40,.8)"; c.lineWidth = 2; c.shadowColor = "#ff6a00"; c.shadowBlur = 8; c.beginPath(); let x = 40 + r() * 60, y = 10; c.moveTo(x, y); for (let i = 0; i < 5; i++) { x += (r() - 0.4) * 40; y += 45; c.lineTo(x, y); } c.stroke(); }),
+    abyss: () => canvasTex("dnd-abyss", 128, 128, (c, w) => { dndNoise(c, w, "#0d0a08", 1400, 0.1, "a"); }, true),
+  };
+  const dndCapMats = {};
+  const dndCapMat = (lieu) => dndCapMats[lieu] || (dndCapMats[lieu] = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", map: DND_TEX[(CARTE_DND_BY_ID[lieu] || CARTE_DND_LIEUX[0]).tex]() })));
+  const haloTex = () => canvasTex("halo", 64, 64, (c) => { const g = c.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.3, "rgba(255,255,255,.45)"); g.addColorStop(1, "rgba(255,255,255,0)"); c.fillStyle = g; c.fillRect(0, 0, 64, 64); });
+  // Halos (pièces « h ») : points lumineux additifs, en trois tailles.
+  function buildHalos(group, items) {
+    [0.6, 1.2, 2.4].forEach((size, ci) => {
+      const pos = [], col = [];
+      items.forEach((it) => { const cls = it[3] < 0.9 ? 0 : it[3] < 1.8 ? 1 : 2; if (cls !== ci) return; pos.push(it[0], it[1] + it[4] / 2, it[2]); tmpC.set(it[7]); col.push(tmpC.r, tmpC.g, tmpC.b); });
+      if (!pos.length) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+      const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: size * 1.5, map: haloTex(), vertexColors: true, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }));
+      pts.userData.ownGeo = true; pts.userData.ownMat = true; pts.frustumCulled = false;
+      group.add(pts);
+    });
+  }
   // Coque d'encre d'un maillage instancié (mêmes instances, aucune copie).
   function inkTwin(mesh) {
     const tw = new THREE.InstancedMesh(mesh.geometry, MAT.ink, mesh.count);
@@ -19014,12 +19047,14 @@ function createCarteEngine(THREE, container, opts) {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     keys.forEach((k) => { const w = carteToWorld(L.tiles[k].q, L.tiles[k].r); x0 = Math.min(x0, w.x); x1 = Math.max(x1, w.x); z0 = Math.min(z0, w.z); z1 = Math.max(z1, w.z); });
     const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, W = x1 - x0 + 160, D = z1 - z0 + 160, R = Math.max(x1 - x0, z1 - z0) / 2;
-    const seaTex = S.style === "estampe" ? seigaihaTex() : neonGridTex();
+    // D&D : un gouffre sombre sépare les dossiers.
+    const seaTex = S.style === "estampe" ? seigaihaTex() : S.style === "dnd" ? DND_TEX.abyss() : neonGridTex();
     const sea = own(new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: seaTex })));
     // Vagues larges : un motif trop fin moire en vue d'ensemble.
     seaTex.repeat.set(W / (S.style === "estampe" ? 13 : 3.46), D / (S.style === "estampe" ? 13 : 3));
     sea.rotation.x = -Math.PI / 2; sea.position.set(cx, 0.1, cz);
     world.add(sea);
+    if (S.style === "dnd") return;
     if (S.style === "estampe") {
       const sunS = own(new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex(), fog: false, depthWrite: false })));
       sunS.scale.set(34, 34, 1); sunS.position.set(cx - R - 50, 26, cz - R - 70);
@@ -19104,6 +19139,7 @@ function createCarteEngine(THREE, container, opts) {
         const twins = [];
         Object.keys(buckets).forEach((key) => {
           const b = buckets[key];
+          if (b.m === "h") { buildHalos(group, b.items); return; }
           const geo = G[b.g] || G.box;
           const mesh = new THREE.InstancedMesh(geo, litMat(b.m), b.items.length);
           mesh.castShadow = shadows && b.m === "l";
@@ -19141,7 +19177,7 @@ function createCarteEngine(THREE, container, opts) {
   function tileColors(t) {
     if (carteStyleOf(S.style)) {
       const p = t.kind === "hub" && S.layout.projectById[t.projectId];
-      const sc = carteStyleTileColors(S.style, t, p ? p.color : null);
+      const sc = carteStyleTileColors(S.style, t, p ? p.color : null, S.lieux[t.projectId]);
       if (S.dimmed && t.projectId && S.dimmed.has(t.projectId) && !sc.water) sc.top = carteMix(sc.top, S.style === "neon" ? "#2a2a33" : CARTE_DIM_TOP, 0.7);
       return sc;
     }
@@ -19171,12 +19207,16 @@ function createCarteEngine(THREE, container, opts) {
     const L = S.layout;
     const q = S.effQuality;
     const styled = !!carteStyleOf(S.style);
-    const shadows = q === "high" && !styled;
+    const dnd = S.style === "dnd";
+    const shadows = q === "high" && (!styled || dnd);
     const ink = S.style === "estampe";
     const keys = Object.keys(L.tiles);
-    const baseM = new THREE.InstancedMesh(tileGeo, litMat("l"), keys.length);
+    const baseM = new THREE.InstancedMesh(dnd ? dndBaseGeo : tileGeo, litMat("l"), keys.length);
+    // D&D : une dalle texturée par lieu (un maillage instancié par lieu).
+    const dndCaps = {};
+    const capOf = (lieu) => { if (!dndCaps[lieu]) { const m = new THREE.InstancedMesh(dndCapGeo, dndCapMat(lieu), keys.length); m.count = 0; m.userData.keys = []; m.receiveShadow = shadows; dndCaps[lieu] = m; } return dndCaps[lieu]; };
     const capM = new THREE.InstancedMesh(capGeo, litMat("l"), keys.length);
-    const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
+    const waterM = new THREE.InstancedMesh(dnd ? dndCapGeo : capGeo, MAT.water, keys.length);
     capM.count = 0; waterM.count = 0;
     capM.userData.keys = []; waterM.userData.keys = [];
     baseM.receiveShadow = capM.receiveShadow = shadows;
@@ -19196,15 +19236,18 @@ function createCarteEngine(THREE, container, opts) {
       } else {
         baseM.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, t.h, 1)));
         baseM.setColorAt(i, tmpC.set(col.side));
-        const j = capM.count++;
-        capM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.02, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
-        capM.setColorAt(j, tmpC.set(col.top));
-        capM.userData.keys[j] = k;
+        const cm = dnd ? capOf(col.lieu || "donjon") : capM;
+        const j = cm.count++;
+        cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.02, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        cm.setColorAt(j, tmpC.set(col.top));
+        cm.userData.keys[j] = k;
       }
     });
-    [baseM, capM, waterM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    const caps = [capM].concat(Object.keys(dndCaps).map((l) => dndCaps[l]));
+    [baseM, waterM].concat(caps).forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    baseM.castShadow = dnd && shadows;
     if (ink) { inkTwin(baseM); inkTwin(capM); }
-    S.pickMeshes = [capM, waterM];
+    S.pickMeshes = caps.concat([waterM]);
     buildStyleEnv(keys);
 
     // Légendes au sol des régions (#377), au pied de chaque dossier.
@@ -19240,12 +19283,12 @@ function createCarteEngine(THREE, container, opts) {
     keys.forEach((k) => {
       const t = L.tiles[k];
       if (t.road || poiKeys.has(k) || t.kind === "hub") {
-        if (t.bridge) placeModel(batch, [cP("box", S.style === "estampe" ? "#cf3b2a" : S.style === "neon" ? "#3a3550" : t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
+        if (t.bridge) placeModel(batch, [cP("box", S.style === "estampe" ? "#cf3b2a" : S.style === "neon" ? "#3a3550" : S.style === "dnd" ? "#6b4a2e" : t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
         return;
       }
       if (carteRand("share" + k) > decorShare) return;
       const w = carteToWorld(t.q, t.r);
-      const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret", S.style);
+      const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret", S.style, S.lieux[t.projectId]);
       placeModel(batch, S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor, w.x, t.h + 0.12, w.z, 0);
     });
     // Cœurs de projets.
@@ -19254,9 +19297,9 @@ function createCarteEngine(THREE, container, opts) {
       const st = S.stats[tr.projectId] || { stage: 0 };
       const tile = L.tiles[carteKey(tr.q, tr.r)];
       const w = carteToWorld(tr.q, tr.r);
-      const model = carteHubModel(tr.theme, st.stage, p.color, p.priority, S.style).map((m) => Object.assign({}, m, { p: [m.p[0] * 1.3, m.p[1] * 1.3, m.p[2] * 1.3], s: [m.s[0] * 1.3, m.s[1] * 1.3, m.s[2] * 1.3] }));
+      const model = carteHubModel(tr.theme, st.stage, p.color, p.priority, S.style, S.lieux[tr.projectId]).map((m) => Object.assign({}, m, { p: [m.p[0] * 1.3, m.p[1] * 1.3, m.p[2] * 1.3], s: [m.s[0] * 1.3, m.s[1] * 1.3, m.s[2] * 1.3] }));
       placeModel(batch, S.dimmed && S.dimmed.has(tr.projectId) ? carteDimParts(model) : model, w.x, tile.h + 0.12, w.z, 0, 0);
-      let top = 0; model.forEach((m) => { top = Math.max(top, m.p[1] + m.s[1]); });
+      let top = 0; model.forEach((m) => { if (m.m !== "h") top = Math.max(top, m.p[1] + m.s[1]); });
       tr.anchor = new THREE.Vector3(w.x, tile.h + 0.12 + top + 0.35, w.z);
       tr.world = new THREE.Vector3(w.x, tile.h + 0.12, w.z);
     });
@@ -19280,12 +19323,12 @@ function createCarteEngine(THREE, container, opts) {
       const sec = t.secondaryProjectId && L.projectById[t.secondaryProjectId];
       const detail = n > 1 ? Math.min(S.detail, 1) : S.detail;
       const home = L.projectById[p.projectId];
-      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null, style: S.style, bandColor: home ? carteMix(home.color || "#05d9e8", "#ffffff", 0.25) : null });
-      if (tile.kind === "water" && (styled || !/^(mer|ile)$/.test(tile.theme)) && t.state !== "info") parts = carteStilts(S.style === "estampe" ? "#5a4030" : S.style === "neon" ? "#3a3550" : theme(tile.theme).pal.wood, 0.3).concat(parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0], pp.p[1] + 0.02, pp.p[2]] })));
+      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null, style: S.style, lieu: S.lieux[p.projectId], bandColor: home ? carteMix(home.color || "#05d9e8", "#ffffff", 0.25) : null });
+      if (tile.kind === "water" && (styled || !/^(mer|ile)$/.test(tile.theme)) && t.state !== "info") parts = carteStilts(S.style === "estampe" ? "#5a4030" : S.style === "neon" ? "#3a3550" : S.style === "dnd" ? "#5a3d25" : theme(tile.theme).pal.wood, 0.3).concat(parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0], pp.p[1] + 0.02, pp.p[2]] })));
       if (k !== 1) parts = parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0] * k, pp.p[1] * k, pp.p[2] * k], s: [pp.s[0] * k, pp.s[1] * k, pp.s[2] * k] }));
       const ry = (carteRand("ry" + t.id) - 0.5) * 0.8;
       placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
-      let top = 0; parts.forEach((pp) => { if (pp.m !== "t") top = Math.max(top, pp.p[1] + pp.s[1]); });
+      let top = 0; parts.forEach((pp) => { if (pp.m !== "t" && pp.m !== "h") top = Math.max(top, pp.p[1] + pp.s[1]); });
       S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 3) + 0.1 };
       const urgentOpen = t.criticality === "urgent" && t.state !== "done" && t.state !== "info";
       if (urgentOpen) urgent.push({ x, y, z, k });
@@ -19882,12 +19925,12 @@ function createCarteEngine(THREE, container, opts) {
     const ratio = { low: 1, medium: 1.5, high: 2 }[S.effQuality];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, ratio));
     // Les styles dessinent en aplats et néons : pas d'ombres portées.
-    const shade = S.effQuality === "high" && !carteStyleOf(S.style);
+    const shade = S.effQuality === "high" && (!carteStyleOf(S.style) || S.style === "dnd");
     renderer.shadowMap.enabled = shade;
     sun.castShadow = shade;
   }
   function setData(d) {
-    S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null; S.dimmed = d.dimmed || null;
+    S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null; S.dimmed = d.dimmed || null; S.lieux = d.lieux || {};
     resolveQuality();
     build();
     if (!S.placedKeeper && S.layout.territories.length) {
@@ -20068,7 +20111,7 @@ function fmtCarteStamp(v) {
 // Volet de détail (#361, enrichi à la demande de Quentin) : tous les champs
 // de la tâche et sa description complète, en lecture seule. Les modifications
 // passent toujours par « Ouvrir la fiche ».
-function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, onOpen, onGo, onWalk, onClose, onUpdate, onPreview, onToggleDone }) {
+function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, lieux, onOpen, onGo, onWalk, onClose, onUpdate, onPreview, onToggleDone }) {
   const r = raw || {};
   // Édition directe (#371) : chaque champ s'enregistre à la validation
   // (sortie du champ, Entrée, lâcher du curseur) par les mécanismes Nexora.
@@ -20089,7 +20132,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, onOpen, onGo, 
   const members = (ctx.teamMembers || []).map((m) => m.name).filter(Boolean);
   if (r.assignee && members.indexOf(r.assignee) === -1) members.push(r.assignee);
   const p = layout.projectById[task.projectId || "__terre-inconnue__"] || {};
-  const th = carteLook(styleId, layout.themes[p.id]);
+  const th = carteLook(styleId, layout.themes[p.id], (lieux || {})[p.id]);
   const crit = CRITICALITIES.find((c) => c.id === task.criticality);
   const deps = task.dependsOn.map((id) => norm.taskById[id]).filter(Boolean);
   const dependents = norm.tasks.filter((o) => o.dependsOn.indexOf(task.id) !== -1);
@@ -20228,11 +20271,11 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, styleId, onOpen, onGo, 
 
 // Panneau de droite (#365) : les projets de la région (dossier) où se trouve
 // l'arpenteur ; le projet courant déplie ses tâches.
-function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, styleId, onFocus, onGo, onClose }) {
+function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, styleId, lieux, onFocus, onGo, onClose }) {
   const here = territory && layout.projectById[territory];
   const group = here ? here.group : null;
   const members = here ? layout.territories.filter((t) => (group ? layout.projectById[t.projectId].group === group : t.projectId === territory)) : [];
-  const theme = here ? carteLook(styleId, layout.themes[here.id]) : null;
+  const theme = here ? carteLook(styleId, layout.themes[here.id], (lieux || {})[here.id]) : null;
   const tasksOf = (pid) => norm.tasks.filter((t) => (t.projectId || "__terre-inconnue__") === pid && visible.has(t.id))
     .sort((a, b) => (b.overdue - a.overdue) || ((a.state === "done") - (b.state === "done")) || ((a.end == null ? 1e9 : a.end) - (b.end == null ? 1e9 : b.end)));
   const current = here ? tasksOf(here.id) : [];
@@ -20293,10 +20336,21 @@ function CarteThemeSettings({ ctx, layout, prefs, setPrefs, setProjectFolders, o
     }
     setPrefs((v) => { const next = { ...(v.folderThemes || {}) }; delete next[fid]; if (value && !(ctx.projectFolders || []).some((f) => f.id === fid)) next[fid] = value; return { folderThemes: next }; });
   };
+  const dnd = prefs.style === "dnd";
+  const lieuOf = (fid) => (prefs.folderLieux || {})[fid] || "";
+  const setLieu = (fid, value) => setPrefs((v) => { const next = { ...(v.folderLieux || {}) }; if (value) next[fid] = value; else delete next[fid]; return { folderLieux: next }; });
+  const autoLieu = (fid) => { const t = CARTE_THEME_BY_ID[themeOf(fid)] ? themeOf(fid) : fid === CARTE_UNSORTED_FOLDER ? "ile" : layout && layout.groupThemes[fid]; return (CARTE_DND_BY_ID[CARTE_DND_FROM_THEME[t]] || CARTE_DND_LIEUX[0]).label; };
+  const lieuSelect = (fid) => dnd && (
+    <select aria-label="Lieu Donjons & Dragons" value={lieuOf(fid)} onChange={(e) => setLieu(fid, e.target.value)}>
+      <option value="">Lieu automatique ({autoLieu(fid)})</option>
+      {CARTE_DND_LIEUX.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+    </select>
+  );
   return (
     <Modal title="Thèmes de la carte" onClose={onClose} footer={<button type="button" className="lp-btn lp-btn-primary" onClick={onClose}>Fermer</button>}>
       <p className="lp-carte-muted" style={{ marginTop: 0 }}>Chaque dossier forme une région d'un seul thème. Ce réglage ne concerne que l'affichage de la carte et ne modifie aucun projet.</p>
-      {carteStyleOf(prefs.style) && <p className="lp-carte-muted">Le style « {carteStyleOf(prefs.style).label} » redessine toute la carte : les thèmes ci-dessous gardent le relief de chaque région et reprennent leur apparence en style Classique.</p>}
+      {dnd && <p className="lp-carte-muted">Style Donjons &amp; Dragons : chaque dossier devient un lieu (donjon, arène, cité, forêt elfique, forge naine). Le lieu automatique découle du thème du dossier.</p>}
+      {carteStyleOf(prefs.style) && !dnd && <p className="lp-carte-muted">Le style « {carteStyleOf(prefs.style).label} » redessine toute la carte : les thèmes ci-dessous gardent le relief de chaque région et reprennent leur apparence en style Classique.</p>}
       {folders.length === 0 && <p className="lp-empty">Aucun dossier ne contient de projet.</p>}
       <div className="lp-carte-theme-list">
         {folders.map((f) => (
@@ -20306,6 +20360,7 @@ function CarteThemeSettings({ ctx, layout, prefs, setPrefs, setProjectFolders, o
               <option value="">Automatique ({(CARTE_THEME_BY_ID[layout && layout.groupThemes[f.id]] || {}).label || "—"})</option>
               {CARTE_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
+            {lieuSelect(f.id)}
           </label>
         ))}
         <label className="lp-carte-theme-row">
@@ -20314,6 +20369,7 @@ function CarteThemeSettings({ ctx, layout, prefs, setPrefs, setProjectFolders, o
             <option value="">Automatique (Île tropicale)</option>
             {CARTE_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
+          {lieuSelect(CARTE_UNSORTED_FOLDER)}
         </label>
       </div>
     </Modal>
@@ -20388,6 +20444,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [norm, JSON.stringify(themeOverrides)]);
   useEffect(() => { writeCarteMemory(layout.memory); }, [layout]);
+  // Style Donjons & Dragons (#390) : un lieu par dossier (réglable).
+  const lieux = useMemo(() => carteDndLieux(layout, cfg.folderLieux),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout, JSON.stringify(cfg.folderLieux)]);
   const stats = useMemo(() => {
     const by = {};
     norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (by[k] = by[k] || []).push(t); });
@@ -20468,8 +20528,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return { ...norm, taskById, tasks: norm.tasks.map((x) => (x.id === t.id ? t : x)) };
   }, [norm, preview]);
   useEffect(() => {
-    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed });
-  }, [status, normView, layout, stats, visible, dimmed]);
+    if (status === "ready" && engineRef.current) engineRef.current.setData({ data: normView, layout, stats, visible, dimmed, lieux });
+  }, [status, normView, layout, stats, visible, dimmed, lieux]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
   // La vue se décale pour que la tâche ne passe pas sous le volet ou la fiche.
   useEffect(() => {
@@ -20531,7 +20591,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const selTask = selected && normView.taskById[selected];
   const nearTask = near && norm.taskById[near];
   const terrTheme = territory && layout.themes[territory];
-  const legend = terrTheme ? carteLegend(terrTheme, cfg.style) : null;
+  const legend = terrTheme ? carteLegend(terrTheme, cfg.style, lieux[territory]) : null;
   const terrStats = territory && stats[territory];
 
   return (
@@ -20575,7 +20635,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               {CARTE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
             </div>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
+            <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes et lieux par dossier…</button>
           </DropdownButton>
           <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
@@ -20653,14 +20713,14 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               </>
             )}
             {status === "ready" && !selTask && panelOn && (
-              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} dimmed={dimmed} territory={territory} styleId={cfg.style}
+              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} dimmed={dimmed} territory={territory} styleId={cfg.style} lieux={lieux}
                 onFocus={focus} onGo={go} onClose={() => setPanelOn(false)} />
             )}
             {status === "ready" && !selTask && !panelOn && (
               <button type="button" className="lp-carte-panel-toggle" onClick={() => setPanelOn(true)}>Liste du territoire</button>
             )}
             {selTask && (
-              <CarteTaskDetail task={selTask} raw={allTasks.find((t) => t.id === selTask.id)} norm={norm} layout={layout} ctx={ctx} styleId={cfg.style} onOpen={openFiche} onGo={go}
+              <CarteTaskDetail task={selTask} raw={allTasks.find((t) => t.id === selTask.id)} norm={norm} layout={layout} ctx={ctx} styleId={cfg.style} lieux={lieux} onOpen={openFiche} onGo={go}
                 onUpdate={onUpdateTask ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={onToggleDone}
                 onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
             )}

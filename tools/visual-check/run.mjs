@@ -1971,10 +1971,10 @@ try {
   await vp.screenshot({ path: path.join(dir, "carte-volume.png") });
   await vp.close();
 
-  // Styles de la carte (#387) : Archipel d'encre et Néon-Grille, de près puis
+  // Styles de la carte (#387) : Archipel d'encre, Néon-Grille et Donjons & Dragons (#390), de près puis
   // en vue d'ensemble ; le choix se fait dans « Affichage ».
   carte.styles = {};
-  for (const style of ["estampe", "neon"]) {
+  for (const style of ["estampe", "neon", "dnd"]) {
     const sp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     sp.on("pageerror", (e) => pageErrors.push("Carte " + style + " : " + e.message));
     await sp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
@@ -2961,7 +2961,7 @@ if (!carte.error) {
   expect(/basse/.test(carte.volumeQuality), `Carte volume : qualité « ${carte.volumeQuality} », basse attendue pour 12 000 tâches`);
   expect(carte.volumeMs < 60000, `Carte volume : ${carte.volumeMs} ms avant l'affichage (60 s maximum sur rendu logiciel)`);
   expect(carte.volumeOverlaps.n === 0, `Carte volume : ${carte.volumeOverlaps.n} libellé(s) superposé(s)`);
-  ["estampe", "neon"].forEach((st) => {
+  ["estampe", "neon", "dnd"].forEach((st) => {
     const r = carte.styles && carte.styles[st];
     expect(r && r.attr === st && r.canvas === 1, `Carte style ${st} : non appliqué (${JSON.stringify(r)})`);
     expect(r && r.overlaps.n === 0, `Carte style ${st} : ${r && r.overlaps.n} libellé(s) superposé(s)`);
