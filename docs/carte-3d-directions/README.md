@@ -9,3 +9,7 @@ Maquettes autonomes : même carte, mêmes tâches, trois styles. Elles ne sont p
 | C · Cartoon vivant | `rendu-C.png` | Façon Animal Crossing : ombrage en 3 tons, contours épais, formes rondes, monde courbé. |
 
 Ouvrir `index.html?d=A` (ou `B`, `C`) dans un navigateur : three.js 0.158 est chargé depuis cdn.jsdelivr.net, la scène est animée (fumées, flammes, grues, portails, feuillages).
+
+## Totems par thème (#488)
+
+`totems-planche.png` : les quinze totems dans l'application (banc visuel, `?app=1&view=carte&carte=totems`).
