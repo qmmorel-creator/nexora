@@ -28,7 +28,7 @@ const C = vm.runInThisContext(
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, cartePersonSocle, carteFigurineTint, CARTE_FIGURINE_BASE, CARTE_AVATAR_ANCHOR, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloBlocks, carteHoloInline,
   };\n})`
 )();
@@ -945,4 +945,27 @@ test("hologramme en Markdown : blocs, cases, citations et call-outs (#502)", () 
   assert.equal(C.carteHoloBlocks("> [!danger] x")[0].kind, "danger");
   assert.deepEqual(C.carteHoloBlocks(""), []);
   assert.deepEqual(C.carteHoloBlocks("\n\nA\n\n").map((x) => x.type), ["p"], "pas de blanc en tête ni en fin");
+});
+
+test("figurine des responsables : socle à la couleur, repli procédural (#501)", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes, teamMembers: [{ name: "Léo", color: "#123456" }] }, [{ id: "x", projectId: "p", statusId: "s3", assignee: "Léo" }], { now: NOW }).tasks[0];
+  const withFig = C.carteTaskModel(base, "ville", { detail: 2, figure: false });
+  const proc = C.carteTaskModel(base, "ville", { detail: 2 });
+  // Avec la figurine Kenney : seul le socle reste, bas, à la couleur de la personne.
+  const socle = withFig.filter((p) => p.p[0] < -0.3 && (p.c === "#123456" || p.p[1] < 0.2));
+  assert.ok(withFig.some((p) => p.c === "#123456"), "repère de couleur conservé");
+  assert.ok(Math.max(...withFig.filter((p) => p.c === "#123456").map((p) => p.p[1] + p.s[1])) <= C.CARTE_FIGURINE_BASE + 1e-9, "socle bas, sous la figurine");
+  assert.ok(socle.length >= 2, "disque et liseré");
+  assert.ok(withFig.length < proc.length, "le bonhomme procédural n'est pas dessiné en double");
+  // Repli : sans figurine (modèles indisponibles), le bonhomme procédural.
+  assert.ok(Math.max(...proc.filter((p) => p.p[0] < -0.3).map((p) => p.p[1] + p.s[1])) >= 0.85);
+  // Masqué sur demande dans les deux cas.
+  assert.ok(!C.carteTaskModel(base, "ville", { detail: 2, figure: false, people: false }).some((p) => p.c === "#123456"));
+  // Socle centré sous l'ancre du badge d'initiales.
+  const disc = C.cartePersonSocle("#abcdef", 1);
+  assert.ok(disc.every((p) => Math.abs(p.p[0] - C.CARTE_AVATAR_ANCHOR[0]) < 1e-9 && Math.abs(p.p[2] - C.CARTE_AVATAR_ANCHOR[2]) < 1e-9));
+  // Teinte partielle : plus claire que la couleur, jamais blanche.
+  assert.match(C.carteFigurineTint("#123456"), /^#[0-9a-f]{6}$/i);
+  assert.notEqual(C.carteFigurineTint("#123456").toLowerCase(), "#ffffff");
+  assert.notEqual(C.carteFigurineTint("#123456").toLowerCase(), "#123456");
 });
