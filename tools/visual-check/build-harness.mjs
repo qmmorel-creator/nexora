@@ -2,7 +2,7 @@
 // redirigées par une import map vers des modules bundlés depuis npm, Firebase
 // est bouchonné, et le point d'entrée React est remplacé par le scénario de
 // contrôle (harness.jsx).
-import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm, cp } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
 import { compileUi } from "../../apps/nexora/scripts/compile-ui.mjs";
@@ -86,6 +86,9 @@ const IMPORT_MAP = {
   "https://esm.sh/@tabler/icons-react@3.46.0?deps=react@18.2.0": "./vendor/tabler.js",
   "https://esm.sh/papaparse@5.4.1": "./vendor/papaparse.js",
   "https://esm.sh/three@0.158.0": "./vendor/three.js",
+  // Modèles 3D de la Carte (#499) : GLTFLoader partage le three.js du banc.
+  three: "./vendor/three.js",
+  "https://esm.sh/three@0.158.0/examples/jsm/loaders/GLTFLoader.js": "./vendor/gltf-loader.js",
   "https://esm.sh/jspdf@2.5.2": "./vendor/jspdf-stub.js",
   "https://esm.sh/jspdf-autotable@3.8.4": "./vendor/jspdf-autotable-stub.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js": "./vendor/firebase-stub.js",
@@ -125,6 +128,17 @@ export async function buildHarness({ compile = true } = {}) {
     define: { "process.env.NODE_ENV": '"production"' },
     logLevel: "error",
   });
+  // GLTFLoader (#499) : bundlé à part, « three » laissé externe pour qu'il
+  // réutilise l'unique three.js de la page (import map).
+  await writeFile(path.join(srcDir, "gltf-loader.js"), `export { GLTFLoader } from ${JSON.stringify(path.join(here, "node_modules", "three", "examples", "jsm", "loaders", "GLTFLoader.js"))};`);
+  await build({
+    entryPoints: [path.join(srcDir, "gltf-loader.js")],
+    bundle: true,
+    format: "esm",
+    outdir: vendorDir,
+    external: ["three"],
+    logLevel: "error",
+  });
   for (const [name, contents] of Object.entries(FACADES)) await writeFile(path.join(vendorDir, name), contents);
   await writeFile(path.join(vendorDir, "babel.min.js"), await readFile(path.join(here, "node_modules", "@babel", "standalone", "babel.min.js")));
   await rm(srcDir, { recursive: true, force: true });
@@ -135,6 +149,8 @@ export async function buildHarness({ compile = true } = {}) {
     .replace(FONT_TAG, "")
     .replace(BOOTSTRAP, harness);
   await writeFile(path.join(outDir, "index.html"), compile ? await compileUi(page) : page);
+  // Ressources statiques publiées avec l'application (modèles 3D de la Carte).
+  await cp(path.join(repoRoot, "apps", "nexora", "public", "carte"), path.join(outDir, "carte"), { recursive: true });
   return outDir;
 }
 

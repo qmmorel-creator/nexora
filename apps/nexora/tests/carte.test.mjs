@@ -29,7 +29,7 @@ const C = vm.runInThisContext(
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
-    carteNormalizeWheel, CARTE_ROAD_LANTERN, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
+    carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
   };\n})`
 )();
 
@@ -745,4 +745,43 @@ test("#496 : effets avancés actifs par défaut, lanterne de route lumineuse", (
   const glow = C.CARTE_ROAD_LANTERN.filter((p) => p.m === "g");
   assert.equal(glow.length, 1);
   assert.ok(glow[0].p[1] > 0.4);
+});
+
+test("#499 : immeubles Kenney — thèmes, stades, découpe à l'avancement", () => {
+  const t = (o) => ({ id: "k1", kind: "task", state: "doing", progress: 40, ...o });
+  assert.equal(C.carteKenneyBuilding(t(), "foret"), null);
+  assert.equal(C.carteKenneyBuilding(t({ kind: "meeting" }), "ville"), null);
+  assert.equal(C.carteKenneyBuilding(t({ state: "info" }), "ville"), null);
+  assert.equal(C.carteKenneyBuilding(t({ state: "todo", progress: 0 }), "ville"), null);
+  const doing = C.carteKenneyBuilding(t(), "ville");
+  assert.ok(C.CARTE_KENNEY_HOUSES.includes(doing.name));
+  assert.equal(doing.built, 0.4);
+  // Même tâche, même immeuble ; un chantier à peine commencé garde un socle.
+  assert.equal(C.carteKenneyBuilding(t(), "campagne").name, doing.name);
+  assert.equal(C.carteKenneyBuilding(t({ progress: 0, state: "todo" }), "ville"), null);
+  assert.equal(C.carteKenneyBuilding(t({ progress: 2 }), "ville").built, 0.08);
+  assert.equal(C.carteKenneyBuilding(t({ state: "done", progress: 10 }), "ville").built, 1);
+});
+
+test("#499 : sans corps, le modèle d'une tâche garde ses indices (échafaudage)", () => {
+  const task = { id: "b1", kind: "task", state: "doing", progress: 50, statusColor: "#0EA5E9", checklistTotal: 0, checklistDone: 0 };
+  const full = C.carteTaskModel(task, "ville", {});
+  const bare = C.carteTaskModel(task, "ville", { body: false });
+  assert.ok(bare.length < full.length);
+  assert.ok(bare.some((p) => p.g === "cyl" && p.c === "#c9a060"), "l'échafaudage reste");
+  const done = C.carteTaskModel({ ...task, state: "done" }, "ville", { body: false });
+  // Plus aucune pièce haute : seules la dalle et les indices au sol restent.
+  assert.ok(done.every((p) => p.p[1] + p.s[1] < 1.2));
+});
+
+test("#499 : recoloration de la planche Kenney vers la palette diorama", () => {
+  // Bleu vif -> terre cuite / ocre (teinte chaude), saturation bornée.
+  const [h, s, l] = C.carteRegradeHsl(0.6, 0.8, 0.5);
+  assert.ok(h >= 0.03 && h <= 0.11);
+  assert.ok(s <= 0.62);
+  assert.ok(l <= 0.72 && l > 0.5);
+  // Gris : pointe de chaleur, luminosité conservée.
+  assert.deepEqual(C.carteRegradeHsl(0.5, 0.05, 0.4), [0.08, 0.12, 0.4]);
+  // Rouges et oranges : inchangés.
+  assert.deepEqual(C.carteRegradeHsl(0.05, 0.7, 0.5), [0.05, 0.7, 0.5]);
 });

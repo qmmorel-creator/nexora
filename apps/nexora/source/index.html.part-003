@@ -19538,6 +19538,182 @@ function createCarteEngine(THREE, container, opts) {
     cloudShadow.instanceMatrix.needsUpdate = true;
   }
 
+  // ---------- Lot 4 (#499) : vrais modèles 3D (Kenney, CC0) ----------
+  // Chaque modèle est chargé une fois, ses pièces fusionnées en une seule
+  // géométrie (pieds à y = 0, centrée, hauteur 1), puis dessiné en
+  // instances. Échec de chargement : la carte garde ses modèles procéduraux.
+  const KENNEY_FILES = ["ville/building-small-a", "ville/building-small-b", "ville/building-small-c", "ville/building-small-d", "arene/tree", "arene/banner", "arene/character-soldier", "arene/bricks", "plateforme/coin", "plateforme/grass", "plateforme/grass-small"];
+  S.kenney = null;
+  const kClipU = [];
+  // Découpe par plan à hauteur d'avancement (#499), instance par instance :
+  // un attribut porte l'altitude de coupe ; au-dessus, le fragment est jeté
+  // (ombre comprise).
+  function clipPatch(sh) {
+    sh.vertexShader = "attribute float aClip;\nvarying float vClipY;\nvarying float vWorldY;\n" + sh.vertexShader.replace("#include <begin_vertex>", [
+      "#include <begin_vertex>",
+      "vClipY = aClip;",
+      "vec4 kW = vec4(transformed, 1.0);",
+      "#ifdef USE_INSTANCING",
+      "kW = instanceMatrix * kW;",
+      "#endif",
+      "vWorldY = (modelMatrix * kW).y;",
+    ].join("\n"));
+    sh.fragmentShader = "varying float vClipY;\nvarying float vWorldY;\n" + sh.fragmentShader.replace("void main() {", "void main() {\n  if (vWorldY > vClipY) discard;");
+  }
+  function regradeTexture(tex, warm) {
+    const img = tex && tex.image;
+    if (!img || !img.width) return null;
+    const c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext("2d");
+    if (!g) return null;
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height), a = d.data, col = new THREE.Color(), hsl = {};
+    for (let i = 0; i < a.length; i += 4) {
+      col.setRGB(a[i] / 255, a[i + 1] / 255, a[i + 2] / 255, THREE.SRGBColorSpace); col.getHSL(hsl, THREE.SRGBColorSpace);
+      let out = [hsl.h, hsl.s, hsl.l];
+      if (warm) out = carteRegradeHsl(hsl.h, hsl.s, hsl.l);
+      else out = [hsl.h, hsl.s * 0.92, hsl.l];
+      col.setHSL(out[0], out[1], out[2], THREE.SRGBColorSpace);
+      const rgb = { r: 0, g: 0, b: 0 }; col.getRGB(rgb, THREE.SRGBColorSpace);
+      a[i] = rgb.r * 255; a[i + 1] = rgb.g * 255; a[i + 2] = rgb.b * 255;
+    }
+    g.putImageData(d, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace; t.flipY = false;
+    t.magFilter = THREE.NearestFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+    texs.push(t);
+    return t;
+  }
+  // Géométrie fusionnée (une par modèle), recopiée dans CE three.js : le
+  // chargeur peut venir d'une autre copie de la bibliothèque.
+  function bakeModel(root) {
+    const pos = [], nor = [], uv = [];
+    let map = null;
+    root.updateMatrixWorld(true);
+    root.traverse((m) => {
+      if (!m.isMesh || !m.geometry || !m.geometry.attributes.position) return;
+      const src = m.geometry, P = src.attributes.position, N = src.attributes.normal, U = src.attributes.uv, idx = src.index;
+      const mw = new THREE.Matrix4().fromArray(m.matrixWorld.elements), nm = new THREE.Matrix3().getNormalMatrix(mw);
+      const v = new THREE.Vector3(), n = new THREE.Vector3();
+      const count = idx ? idx.count : P.count;
+      for (let i = 0; i < count; i++) {
+        const j = idx ? idx.getX(i) : i;
+        v.set(P.getX(j), P.getY(j), P.getZ(j)).applyMatrix4(mw); pos.push(v.x, v.y, v.z);
+        if (N) { n.set(N.getX(j), N.getY(j), N.getZ(j)).applyMatrix3(nm).normalize(); nor.push(n.x, n.y, n.z); } else nor.push(0, 1, 0);
+        uv.push(U ? U.getX(j) : 0, U ? U.getY(j) : 0);
+      }
+      const mm = Array.isArray(m.material) ? m.material[0] : m.material;
+      if (!map && mm && mm.map) map = mm.map;
+    });
+    if (!pos.length) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    geo.computeBoundingBox();
+    const b = geo.boundingBox, h = Math.max(1e-6, b.max.y - b.min.y);
+    geo.translate(-(b.min.x + b.max.x) / 2, -b.min.y, -(b.min.z + b.max.z) / 2);
+    geo.scale(1 / h, 1 / h, 1 / h);
+    geo.computeBoundingBox(); geo.computeBoundingSphere();
+    geos.push(geo);
+    return { geo, map, w: (b.max.x - b.min.x) / h, d: (b.max.z - b.min.z) / h };
+  }
+  function kenneyMaterial(tex, clip) {
+    const m = std({ map: tex || null, roughness: 0.75, envMapIntensity: 0.55, side: clip ? THREE.DoubleSide : THREE.FrontSide });
+    if (clip) { m.onBeforeCompile = clipPatch; m.customProgramCacheKey = () => "carte-kclip"; }
+    return mat(m);
+  }
+  function loadKenney() {
+    if (!o.loadGltf) return;
+    o.loadGltf().then((Loader) => {
+      if (S.disposed) return null;
+      const loader = new Loader();
+      const base = o.modelsBase || "/carte/modeles/";
+      return Promise.all(KENNEY_FILES.map((n) => loader.loadAsync(base + n + ".glb").then((gl) => [n, gl])));
+    }).then((list) => {
+      if (!list || S.disposed) return;
+      const reg = {}, graded = new Map();
+      list.forEach(([n, gl]) => {
+        const baked = bakeModel(gl.scene);
+        if (!baked) return;
+        const kit = n.split("/")[0], name = n.split("/")[1];
+        const key = kit;
+        if (!graded.has(key)) { const t = regradeTexture(baked.map, kit === "ville"); graded.set(key, { t, m: kenneyMaterial(t, false), mc: kenneyMaterial(t, true) }); }
+        const gm = graded.get(key);
+        const clipDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
+        clipDepth.onBeforeCompile = clipPatch; clipDepth.customProgramCacheKey = () => "carte-kclip-depth";
+        mats.push(clipDepth);
+        reg[name] = { geo: baked.geo, w: baked.w, d: baked.d, mat: gm.m, clipMat: gm.mc, clipDepth };
+      });
+      if (!reg["building-small-a"] || !reg.tree) throw new Error("modèles incomplets");
+      S.kenney = reg;
+      mountKeeperModel();
+      if (S.layout) build();
+    }).catch((e) => { console.warn("[Nexora Carte] modèles 3D indisponibles, modèles procéduraux conservés", e && e.message ? e.message : e); });
+  }
+  // Tampon d'instances des modèles Kenney : une maille par modèle (et par
+  // variante découpée).
+  function makeKBatch() {
+    const buckets = {};
+    return {
+      // Pose un modèle : hauteur cible h, emprise maximale f, cap ry.
+      // Renvoie la hauteur réellement posée (null si le modèle manque).
+      // stretch : étirement vertical permis quand l'emprise limite la taille.
+      add(name, x, y, z, h, f, ry, clipY, tint, stretch) {
+        const M = S.kenney && S.kenney[name];
+        if (!M) return null;
+        const s = Math.min(h, f / Math.max(0.01, M.w, M.d));
+        const sy = stretch ? Math.min(h, s * stretch) : s;
+        const clip = clipY != null;
+        const key = name + (clip ? "|c" : "");
+        (buckets[key] || (buckets[key] = { M, clip, items: [] })).items.push([x, y, z, s, ry || 0, typeof clipY === "function" ? clipY(sy) : clipY, tint, sy]);
+        return sy;
+      },
+      flush(group, shadows) {
+        const spin = [];
+        Object.keys(buckets).forEach((key) => {
+          const b = buckets[key];
+          let geo = b.M.geo;
+          if (b.clip) {
+            geo = new THREE.BufferGeometry();
+            Object.keys(b.M.geo.attributes).forEach((a) => geo.setAttribute(a, b.M.geo.attributes[a]));
+            geo.setAttribute("aClip", new THREE.InstancedBufferAttribute(new Float32Array(b.items.map((it) => it[5])), 1));
+            geo.boundingSphere = b.M.geo.boundingSphere;
+          }
+          const mesh = new THREE.InstancedMesh(geo, b.clip ? b.M.clipMat : b.M.mat, b.items.length);
+          if (b.clip) { mesh.customDepthMaterial = b.M.clipDepth; mesh.userData.ownGeo = true; }
+          mesh.castShadow = shadows; mesh.receiveShadow = shadows;
+          b.items.forEach((it, i) => {
+            tmpQ.setFromAxisAngle(UP, it[4]);
+            mesh.setMatrixAt(i, tmpM.compose(tmpP.set(it[0], it[1], it[2]), tmpQ, tmpS.set(it[3], it[7], it[3])));
+            mesh.setColorAt(i, tmpC.set(it[6] || "#ffffff"));
+            if (key === "coin") spin.push({ mesh, i, p: [it[0], it[1], it[2]], s: it[3], ry: it[4] });
+          });
+          mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          mesh.computeBoundingSphere();
+          group.add(mesh);
+        });
+        return spin;
+      },
+    };
+  }
+  // Arpenteur (#499) : chevalier Kenney à la place du bonhomme procédural.
+  function mountKeeperModel() {
+    const M = S.kenney && S.kenney["character-soldier"];
+    const u = keeper.userData;
+    if (!M || u.model) return;
+    const mesh = new THREE.Mesh(M.geo, M.mat);
+    mesh.scale.setScalar(0.85);
+    mesh.castShadow = true;
+    const grp = new THREE.Group();
+    grp.add(mesh);
+    keeper.children.forEach((c) => { if (c !== u.boat && c.isMesh && c.geometry !== M.geo && !(c.material && c.material.transparent)) c.visible = false; });
+    keeper.add(grp);
+    u.model = grp;
+  }
+  loadKenney();
+
   // ---------- Lot 3 (#498) : panneaux de bois, vie ----------
   // Panneau de bois planté près du totem : nom du projet, avancement,
   // retards. Au-delà de 60 projets, les noms restent en étiquettes HTML.
@@ -19772,6 +19948,8 @@ function createCarteEngine(THREE, container, opts) {
 
     const batch = makeBatcher();
     const dBatch = makeBatcher();
+    const kBatch = makeKBatch(), kdBatch = makeKBatch();
+    const useK = !!S.kenney && q !== "low";
     clearGroup(decorGroup);
     // Feuillages (cônes et boules au-dessus du tronc) : matière qui ondule.
     // Feuillages (#479, #485) : les boules deviennent des bosquets de trois,
@@ -19812,7 +19990,21 @@ function createCarteEngine(THREE, container, opts) {
       }
       if (carteRand("share" + k) > decorShare) return;
       const w = carteToWorld(t.q, t.r);
-      const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
+      let decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
+      // Sapins Kenney (#499) : un sapin sur deux environ remplace le cône
+      // procédural (forêt, montagne, îlots).
+      const dimD = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+      if (useK && (t.kind === "islet" || t.theme === "foret" || t.theme === "montagne")) {
+        const cones = decor.filter((pp) => pp.g === "cone" && pp.m === "l" && pp.p[1] > 0.1 && carteRand("m" + k + pp.p[0]) < 0.55);
+        if (cones.length) {
+          cones.forEach((pp) => kdBatch.add("tree", w.x + pp.p[0], t.h + 0.12, w.z + pp.p[2], (pp.p[1] + pp.s[1]) * 1.25, 1.2, carteRand("tr" + k + pp.p[0]) * 6.283, null, dimD ? "#aeb3ba" : "#a6d27c"));
+          decor = decor.filter((pp) => !cones.some((c) => Math.abs(c.p[0] - pp.p[0]) < 1e-6 && Math.abs(c.p[2] - pp.p[2]) < 1e-6));
+        }
+      }
+      if (useK && !dimD && t.kind !== "islet" && TUFT_THEMES.has(t.theme) && carteRand("kg" + k) < 0.5) {
+        const a = carteRand("kga" + k) * 6.283, rr = 0.3 + carteRand("kgr" + k) * 0.45;
+        kdBatch.add(carteRand("kgs" + k) < 0.5 ? "grass" : "grass-small", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.24, 0.5, a);
+      }
       placeModel(dBatch, swayParts(S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor), w.x, t.h + 0.12, w.z, 0);
       // Ombre de contact sous les bosquets (#496).
       if (q === "high" && decor.length > 1) decorBlobs.push([w.x, t.h + 0.13, w.z, 1.6]);
@@ -19837,6 +20029,7 @@ function createCarteEngine(THREE, container, opts) {
       }
     });
     dBatch.flush(decorGroup, shadows);
+    kdBatch.flush(decorGroup, shadows);
     buildGrass(grass);
     buildHorizon(keys);
     // Tâches.
@@ -19865,12 +20058,24 @@ function createCarteEngine(THREE, container, opts) {
       const x = w.x + ox, z = w.z + oz, y = tile.h + 0.12;
       const sec = t.secondaryProjectId && L.projectById[t.secondaryProjectId];
       const detail = n > 1 ? Math.min(S.detail, 1) : S.detail;
-      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null, people: S.people });
+      // Vrai modèle 3D (#499) : immeuble Kenney, découpé à l'avancement.
+      const kb = useK && detail >= 1 ? carteKenneyBuilding(t, tile.theme) : null;
+      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null, people: S.people, body: kb ? false : undefined });
       if (tile.kind === "water" && !/^(mer|ile)$/.test(tile.theme) && t.state !== "info") parts = carteStilts(theme(tile.theme).pal.wood, 0.3).concat(parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0], pp.p[1] + 0.02, pp.p[2]] })));
       if (k !== 1) parts = parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0] * k, pp.p[1] * k, pp.p[2] * k], s: [pp.s[0] * k, pp.s[1] * k, pp.s[2] * k] }));
       const ry = (carteRand("ry" + t.id) - 0.5) * 0.8;
       placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
       let top = 0; parts.forEach((pp) => { if (pp.m !== "t" && pp.m !== "h") top = Math.max(top, pp.p[1] + pp.s[1]); });
+      if (kb) {
+        const sz = carteTaskSize(t) * k, H = 2.3 * sz;
+        const dimK = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+        const h = kBatch.add(kb.name, x, y + 0.02, z, H, 0.95 * sz, ry, kb.built < 1 ? (hh) => y + 0.02 + hh * kb.built : null, dimK ? "#b9bec5" : null, 1.5);
+        if (h) top = Math.max(top, h * kb.built + 0.02);
+      }
+      // Pièces de monnaie Kenney au-dessus des tâches tout juste terminées ;
+      // briques au pied des chantiers.
+      if (useK && t.state === "done" && t.recentDone) kBatch.add("coin", x + 0.15 * k, y + Math.min(top, 7) + 0.45, z, 0.34 * k, 0.4 * k, 0.62);
+      if (useK && t.state === "doing" && detail >= 1) kBatch.add("bricks", x + (0.46 * Math.cos(ry) + 0.36 * Math.sin(ry)) * k, y, z + (-0.46 * Math.sin(ry) + 0.36 * Math.cos(ry)) * k, 0.28 * k, 0.4 * k, ry + 0.4);
       S.poi[t.id] = { x, y, z, k, key: p.key, top: y + Math.min(top, 7) + 0.1 };
       const urgentOpen = t.criticality === "urgent" && t.state !== "done" && t.state !== "info";
       if (urgentOpen) urgent.push({ x, y, z, k });
@@ -19958,7 +20163,13 @@ function createCarteEngine(THREE, container, opts) {
     }
     buildPortals();
     buildSignposts(hubs, batch, q);
+    // Bannières Kenney de part et d'autre du totem (#499).
+    if (useK && hubs.length <= 200) hubs.forEach((h) => {
+      if (h.x == null || (S.dimmed && S.dimmed.has(h.tr.projectId))) return;
+      [-1, 1].forEach((s) => { const a = 0.6 + Math.PI + s * 0.9; kBatch.add("banner", h.x + Math.sin(a) * 1.0, h.base, h.z + Math.cos(a) * 1.0, 1.25, 0.6, 0.6); });
+    });
     S.spin = batch.flush(world, shadows);
+    S.kSpin = kBatch.flush(world, shadows);
     buildCritters(keys, q);
     if (dones.length) {
       const geo = new THREE.BufferGeometry();
@@ -20595,6 +20806,7 @@ function createCarteEngine(THREE, container, opts) {
     u.l1.position.z = moving ? Math.sin(S.walkPhase) * 0.06 : 0;
     u.l2.position.z = moving ? -Math.sin(S.walkPhase) * 0.06 : 0;
     u.body.position.y = 0.16 + (moving ? Math.abs(Math.sin(S.walkPhase)) * 0.03 : 0);
+    if (u.model) { u.model.position.y = moving ? Math.abs(Math.sin(S.walkPhase)) * 0.05 : 0; u.model.rotation.z = moving ? Math.sin(S.walkPhase) * 0.06 : 0; }
     // Tâche la plus proche (lecture seule).
     let near = null, nd = 1.3;
     const kq = carteFromWorld(keeper.position.x, keeper.position.z);
@@ -21889,6 +22101,11 @@ function createCarteEngine(THREE, container, opts) {
     MAT.lavaTop.color.copy(MAT.lava.color);
     if (reduced) { MAT.alarm.opacity = 0.85; return; }
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
+    (S.kSpin || []).forEach((sp) => {
+      tmpQ.setFromAxisAngle(UP, sp.ry + t * 1.5);
+      sp.mesh.setMatrixAt(sp.i, tmpM.compose(tmpP.set(sp.p[0], sp.p[1] + Math.sin(t * 2 + sp.i) * 0.06, sp.p[2]), tmpQ, tmpS.setScalar(sp.s)));
+      sp.mesh.instanceMatrix.needsUpdate = true;
+    });
     S.spin.forEach((sp) => {
       tmpE.set(0, sp.rot, t * 1.6 + sp.ph, "YXZ");
       tmpQ.setFromEuler(tmpE);
@@ -22267,6 +22484,8 @@ function createCarteEngine(THREE, container, opts) {
       return { x: (projV.x + 1) / 2 * canvas.clientWidth, y: (1 - projV.y) / 2 * canvas.clientHeight };
     },
     strategic: () => S.strategic,
+    // Banc visuel : état des effets (#496 à #499).
+    fxState: () => ({ models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
     closeHologram: () => closeHolo(),
@@ -22361,6 +22580,15 @@ function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdate
 // la seule action qui peut mener à une modification est « Ouvrir la fiche »,
 // qui ouvre la fiche Nexora habituelle (onOpen).
 const CARTE_THREE_URL = "https://esm.sh/three@0.158.0";
+// Vrais modèles 3D (#499) : GLTFLoader, chargé après three.js, et fichiers
+// Kenney (CC0) publiés avec l'application sous /carte/modeles/.
+const CARTE_GLTF_URL = "https://esm.sh/three@0.158.0/examples/jsm/loaders/GLTFLoader.js";
+const CARTE_MODELS_BASE = "/carte/modeles/";
+let carteGltfPromise = null;
+function loadCarteGltf() {
+  if (!carteGltfPromise) carteGltfPromise = import(CARTE_GLTF_URL).then((m) => m.GLTFLoader).catch((e) => { carteGltfPromise = null; throw e; });
+  return carteGltfPromise;
+}
 const CARTE_MEMORY_KEY = "nexora:carte:layout";
 let carteThreePromise = null;
 function loadCarteThree() {
@@ -23148,6 +23376,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           people: cfg.people,
           ambient: cfg.ambient,
           fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx,
+          loadGltf: loadCarteGltf, modelsBase: CARTE_MODELS_BASE,
           // Hologramme ouvert (#494) : la roue s'efface pour ne pas le masquer.
           onHologram: (id) => { if (id) setWheel(null); },
           obstacles: () => (stageRef.current ? [...document.querySelectorAll(".lp-carte-folder-pop"), ...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
