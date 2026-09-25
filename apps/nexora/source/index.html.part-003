@@ -18886,6 +18886,8 @@ function createCarteEngine(THREE, container, opts) {
     // Pilotage (#468 à #481) : brouillard, mini-carte, rendu maquette, vie,
     // vue plan. Tous réglables dans « Affichage ».
     fog: o.fog !== false, minimap: o.minimap !== false, miniature: o.miniature !== false, life: o.life !== false, plan: !!o.plan,
+    // Déplacement de l'arpenteur (#493) : désactivé, un clic zoome aussitôt.
+    walk: o.walk !== false, lastClick: null,
     hoverKey: null, strategic: 0, viewGoal: null, buildId: 0, prevTasks: null,
   };
   // Décor (arbres, rochers) dans son propre groupe : il s'efface de loin (#481).
@@ -19928,6 +19930,10 @@ function createCarteEngine(THREE, container, opts) {
       return;
     }
     if (drag && !drag.moved && e.button === 0 && S.layout) {
+      // Double clic sans marche (#493) : on zoome encore.
+      const now = performance.now(), lc = S.lastClick;
+      S.lastClick = { t: now, x: e.clientX, y: e.clientY };
+      if (!S.walk && lc && now - lc.t < 380 && Math.hypot(e.clientX - lc.x, e.clientY - lc.y) < 12) S.dist = Math.max(7, S.dist * 0.6);
       const portal = portalAt(e.clientX, e.clientY);
       if (portal && o.onPortal) { o.onPortal(portal); drag = null; return; }
       // Carte ancienne (#476) : un clic sur un territoire y ramène la 3D.
@@ -19964,7 +19970,18 @@ function createCarteEngine(THREE, container, opts) {
   canvas.addEventListener("pointerleave", hideTip);
   canvas.addEventListener("wheel", hideTip, { passive: true });
 
-  function walkTo(x, z) { S.walkTo = { x, z }; S.follow = true; }
+  function walkTo(x, z) {
+    if (!S.walk) {
+      // Sans marche (#493) : l'arpenteur, invisible, est posé d'un coup ;
+      // la caméra glisse et se rapproche.
+      const g = groundAt(x, z);
+      keeper.position.set(x, g == null ? keeper.position.y : g, z);
+      S.walkTo = null; S.follow = true; S.focusGoal = null; S.viewGoal = null;
+      S.dist = Math.min(S.dist, 14);
+      return;
+    }
+    S.walkTo = { x, z }; S.follow = true;
+  }
   function walkToTask(id) {
     const p = S.poi[id];
     if (!p) return false;
@@ -19997,6 +20014,7 @@ function createCarteEngine(THREE, container, opts) {
     }
     const gy = groundAt(keeper.position.x, keeper.position.z);
     const u = keeper.userData;
+    keeper.visible = S.walk;
     // Sur l'eau (hors pont), l'arpenteur rame dans sa barque (#428).
     const kh = carteFromWorld(keeper.position.x, keeper.position.z);
     const kt = S.layout.tiles[carteKey(kh[0], kh[1])];
@@ -21542,7 +21560,7 @@ function createCarteEngine(THREE, container, opts) {
     setOptions(opt) {
       const v = opt || {};
       const rebuild = "fog" in v && !!v.fog !== S.fog;
-      ["fog", "minimap", "miniature", "life", "plan"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
+      ["fog", "minimap", "miniature", "life", "plan", "walk"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
       if (rebuild && S.layout) build();
       if (!S.minimap) mini.hidden = true;
     },
@@ -22437,7 +22455,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           quality: cfg.quality,
           people: cfg.people,
           ambient: cfg.ambient,
-          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan,
+          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk,
           obstacles: () => (stageRef.current ? [...document.querySelectorAll(".lp-carte-folder-pop"), ...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => { setSelected(id); setWheel(id ? { id, sub: null } : null); },
           onBuild: onCreateTask ? (b) => setBuildAt(b) : null,
@@ -22496,7 +22514,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
-  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, photo]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, photo]);
 
   // ---------- Pilotage (#468 à #481) ----------
   const quests = useMemo(() => carteQuests(norm, visible), [norm, visible]);
@@ -22717,6 +22735,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               <input type="range" min={1} max={5} step={1} value={cfg.density} onChange={(e) => setPrefs({ density: Number(e.target.value) })} aria-label="Densité des tâches" />
             </label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
+            <label className="lp-checkbox-line" title="Sinon, un clic sur une case y amène directement la vue (double clic : zoom plus fort)"><input type="checkbox" checked={cfg.walk} onChange={(e) => setPrefs({ walk: e.target.checked })} /> Déplacer l'arpenteur à pied</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
             <label className="lp-checkbox-line" title="Convois, ouvriers, pigeons, lanternes, drapeaux, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>

@@ -718,3 +718,8 @@ test("#491 : écartement des dossiers et densité des tâches", () => {
   assert.equal(C.normalizeCarteViewPrefs({ expansion: 9, density: 0 }).expansion, 4);
   assert.equal(C.normalizeCarteViewPrefs({ expansion: 9, density: 0 }).density, 1);
 });
+
+test("#493 : déplacement de l'arpenteur en option, actif par défaut", () => {
+  assert.equal(C.normalizeCarteViewPrefs({}).walk, true);
+  assert.equal(C.normalizeCarteViewPrefs({ walk: false }).walk, false);
+});
