@@ -18834,8 +18834,9 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
 const CARTE_TOTEM_LABEL_FAR = 60;
 // Noms des tâches au-dessus des cases (#444) : sous cette distance de caméra
 // (19 = vue par défaut), au plus CARTE_TASK_LABEL_MAX étiquettes candidates.
-const CARTE_TASK_LABEL_NEAR = 22;
-const CARTE_TASK_LABEL_MAX = 80;
+// Seuil relevé de 22 à 38 : les noms apparaissent plus tôt en dézoomant.
+const CARTE_TASK_LABEL_NEAR = 38;
+const CARTE_TASK_LABEL_MAX = 140;
 // Ordre de préséance de la bordure d'une case partagée (#394) : en retard
 // d'abord, puis en cours, en attente, à faire, information, terminée.
 const CARTE_BORDER_RANK = { doing: 1, waiting: 2, todo: 3, info: 4, done: 5 };
@@ -19422,15 +19423,19 @@ function createCarteEngine(THREE, container, opts) {
     if (o.onPortal) {
       hubs.forEach((h) => {
         if (h.x == null || L.projectById[h.tr.projectId].unknown) return;
-        const dx = -0.45, dz = 0.62, ry = Math.atan2(dx, dz);
+        // Au bord de la case du cœur, face à la caméra par défaut : une arche
+        // assez grande pour se voir à côté des totems.
+        const ry = 0.6, dx = Math.sin(ry - 0.95) * 1.02, dz = Math.cos(ry - 0.95) * 1.02;
         const x = h.x + dx, z = h.z + dz;
         const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
-        const stone = dim ? "#b9bec5" : "#7d6aa3";
+        const stone = dim ? "#b9bec5" : "#6f58b8", glow = dim ? "#d6d9de" : "#d9c7ff";
         placeModel(batch, [
-          cP("box", stone, -0.24, 0, 0, 0.1, 0.62, 0.12), cP("box", stone, 0.24, 0, 0, 0.1, 0.62, 0.12),
-          cP("box", stone, 0, 0.62, 0, 0.62, 0.1, 0.14), cP("box", dim ? "#d6d9de" : "#d9c7ff", 0, 0.72, 0, 0.14, 0.1, 0.1, 0, "g"),
+          cP("box", dim ? "#c9ccd2" : "#4b3b86", 0, 0, 0, 1.2, 0.08, 0.42),
+          cP("box", stone, -0.46, 0.08, 0, 0.18, 1.22, 0.2), cP("box", stone, 0.46, 0.08, 0, 0.18, 1.22, 0.2),
+          cP("box", stone, 0, 1.3, 0, 1.2, 0.18, 0.24), cP("pyr", stone, 0, 1.48, 0, 0.5, 0.22, 0.28, Math.PI / 4),
+          cP("ball", glow, -0.46, 1.48, 0, 0.16, 0.16, 0.16, 0, "g"), cP("ball", glow, 0.46, 1.48, 0, 0.16, 0.16, 0.16, 0, "g"),
         ], x, h.base, z, ry);
-        S.portals.push({ pid: h.tr.projectId, pos: new THREE.Vector3(x, h.base + 0.34, z), ry, dim });
+        S.portals.push({ pid: h.tr.projectId, pos: new THREE.Vector3(x, h.base + 0.7, z), ry, dim });
       });
     }
     buildPortals();
@@ -20514,7 +20519,7 @@ function createCarteEngine(THREE, container, opts) {
     const m = new THREE.InstancedMesh(portalGeo, MAT.portal, list.length);
     list.forEach((p, i) => {
       tmpQ.setFromAxisAngle(UP, p.ry);
-      m.setMatrixAt(i, tmpM.compose(tmpP.set(p.pos.x, p.pos.y - 0.02, p.pos.z), tmpQ, tmpS.set(1.15, 1.45, 1)));
+      m.setMatrixAt(i, tmpM.compose(tmpP.set(p.pos.x, p.pos.y - 0.02, p.pos.z), tmpQ, tmpS.set(1.85, 2.95, 1)));
       m.setColorAt(i, tmpC.set(p.dim ? "#c9ccd2" : "#ffffff"));
     });
     m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
@@ -20530,7 +20535,7 @@ function createCarteEngine(THREE, container, opts) {
     list.forEach((p) => {
       portalV.copy(p.pos).project(camera);
       if (portalV.z > 1) return;
-      portalW.copy(p.pos).add(tmpP.set(0, 0.4, 0)).project(camera);
+      portalW.copy(p.pos).add(tmpP.set(0, 0.7, 0)).project(camera);
       const sx = (portalV.x + 1) / 2 * rect.width, sy = (1 - portalV.y) / 2 * rect.height;
       const px = Math.abs((portalW.y - portalV.y) / 2 * rect.height);
       const d = Math.hypot(cx - rect.left - sx, cy - rect.top - sy);
@@ -20749,10 +20754,13 @@ function createCarteEngine(THREE, container, opts) {
   // Parcelle libre d'un territoire, où l'on peut construire (#470).
   function buildableAt(key) {
     const t = S.layout && S.layout.tiles[key];
-    if (!t || !t.projectId || t.kind === "hub" || t.kind === "sea" || t.road || t.lava) return null;
+    // Seules les cases intérieures d'un territoire reçoivent des tâches.
+    if (!t || !t.projectId || !t.inner || t.road || t.lava) return null;
     const p = S.layout.projectById[t.projectId];
     if (!p || p.unknown) return null;
-    if (S.poisByKey[key] || S.layout.occupancy[key]) return null;
+    // Une parcelle dont les tâches sont masquées par les filtres reste
+    // constructible : seules les tâches affichées l'occupent.
+    if (S.poisByKey[key]) return null;
     return { projectId: t.projectId, key };
   }
 
@@ -22183,7 +22191,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           people: cfg.people,
           ambient: cfg.ambient,
           fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
+          obstacles: () => (stageRef.current ? [...document.querySelectorAll(".lp-carte-folder-pop"), ...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => { setSelected(id); setWheel(id ? { id, sub: null } : null); },
           onBuild: onCreateTask ? (b) => setBuildAt(b) : null,
           onPortal: onOpenTimeline ? (pid) => { if (cbRef.current.onOpenTimeline) cbRef.current.onOpenTimeline(pid); } : null,
@@ -22436,11 +22444,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <Search size={14} />
             <input type="search" value={query} placeholder="Aller au projet…" aria-label="Rechercher un projet sur la carte" onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) focus(suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
-            {suggestions.length > 0 && (
+            {suggestions.length > 0 && createPortal(
               <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés" style={searchRef.current ? (() => { const r = searchRef.current.getBoundingClientRect(); return { position: "fixed", left: Math.max(8, Math.min(r.left, window.innerWidth - 248)), top: r.bottom + 4 }; })() : undefined}>
                 {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}{p.groupKind ? <span className="lp-carte-muted"> · {p.folderName}</span> : null}</button></li>)}
-              </ul>
-            )}
+              </ul>, document.body)}
           </div>
           <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
           <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
@@ -22516,7 +22523,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     );
                   })}
                 </nav>
-                {popGroup && (
+                {popGroup && createPortal(
                   <div className="lp-carte-folder-pop" role="menu" aria-label={"Projets — " + grouping.one + " " + popGroup.name} style={{ left: folderPop.left, top: folderPop.top }}
                     onMouseEnter={() => clearTimeout(popTimer.current)} onMouseLeave={closeFolderSoon}>
                     <div className="lp-carte-folder-pop-head"><CarteGroupGlyph kind={popGroup.kind} color={popGroup.color} size={13} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span></div>
@@ -22532,7 +22539,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                       );
                     })}
                   </div>
-                )}
+                , document.body)}
                 <div className="lp-carte-hud" aria-live="polite">
                   <CarteResourceBar res={res} active={questsOn ? questFilter : null} onPick={pickResource} />
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
@@ -22639,12 +22646,12 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           </>
         )}
       </div>
-      {buildAt && layout.projectById[buildAt.projectId] && (
+      {buildAt && layout.projectById[buildAt.projectId] && createPortal(
         <div className="lp-carte-build" role="menu" aria-label="Parcelle libre" style={{ left: Math.max(8, Math.min(buildAt.x, window.innerWidth - 250)), top: Math.max(8, Math.min(buildAt.y, window.innerHeight - 110)) }}>
           <div className="lp-carte-build-head"><span className="lp-carte-dot" style={{ background: layout.projectById[buildAt.projectId].color }} />{layout.projectById[buildAt.projectId].name}</div>
           <button type="button" role="menuitem" autoFocus onClick={buildHere}><Hammer size={14} /> Construire ici <small>Nouvelle tâche dans ce projet</small></button>
         </div>
-      )}
+      , document.body)}
       {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} setProjectFolders={setProjectFolders} onClose={() => setThemesOpen(false)} />}
       {filtersOpen && (
         <Modal title="Filtrer la carte" onClose={() => setFiltersOpen(false)} wide footer={<>
