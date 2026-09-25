@@ -18,4 +18,6 @@ Règles communes, reprises de la Vue Métro 2D (`ProjectMetroView`, projection d
 - train = aujourd'hui, tronçon parcouru grisé ;
 - tableau « Prochains départs » et fiche avec station précédente, station suivante et correspondance.
 
+Captures de la vue d'ouverture : `rendu-1-plan.png`, `rendu-2-cabine.png`, `rendu-3-etoile.png`.
+
 `index.html` est une page autonome : l'ouvrir dans un navigateur. three.js r128 est chargé depuis cdnjs.
