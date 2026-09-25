@@ -1130,10 +1130,13 @@ if (benchApp) {
     const holo = (t) => t.title === "Revue DOE" ? { ...t, desc: "## Revue DOE du lot 2B\nRevue documentaire des **dossiers d'ouvrages exécutés** avant réception, *version provisoire*.\n- [x] Plans de récolement reçus\n- [ ] Contrôler les notices de fonctionnement\n- Lister les réserves documentaires\n> [!WARNING] Réception le **15 octobre**\n> Sans DOE complet, la levée des réserves est bloquée.\n> [!TIP] Astuce\n> Demander l'index `DOE-2B.xlsx` à l'entreprise." }
       : t.title === "Réunion de chantier 2" ? { ...t, desc: "Réunion hebdomadaire avec l'entreprise de gros œuvre.", meetingReport: "Présents : MOE, entreprise GO, bureau de contrôle.\nPoints traités :\n- Planning : retard de 5 j sur le coulage du tablier\n- Réserves : 3 levées, 2 en cours\n- Sécurité : garde-corps provisoires à reposer\nActions : entreprise GO, nouveau planning sous 48 h." } : t;
     mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra].map(holo)));
-  } else if (benchParams.get("carte") === "totems") {
+  } else if (benchParams.get("carte") === "totems" || benchParams.get("carte") === "fleaux") {
     window.__carteBench = {};
     // Vitrine des totems (#488) : un dossier par thème, un projet par
     // dossier, avancement étagé de 0 à 100 % (paliers 0 à 5).
+    // `carte=fleaux` (#509) : en plus, une tâche urgente ET en retard par
+    // thème, pour voir le fléau de chaque thème.
+    const fleaux = benchParams.get("carte") === "fleaux";
     const themes = ["ville", "campagne", "foret", "desert", "mer", "lac", "montagne", "hautemontagne", "grandnord", "canyon", "marais", "jungle", "volcan", "ile", "cyberpunk"];
     const colors = ["#E07A3F", "#245EDB", "#2A9D8F", "#8B5CF6", "#DC2626", "#0EA5E9", "#B45309", "#16A34A", "#DB2777", "#CA8A04"];
     const folders = themes.map((t, i) => ({ id: `banc-tf${i}`, name: t, color: colors[i % colors.length], mapTheme: t }));
@@ -1142,6 +1145,7 @@ if (benchApp) {
     themes.forEach((t, i) => {
       const done = [0, 1, 2, 3, 4, 5][i % 6];
       for (let k = 0; k < 5; k++) tasks.push({ id: `banc-tt${i}-${k}`, title: `${t} · ${k + 1}`, projectId: projects[i].id, statusId: k < done ? "s5" : k % 2 ? "s3" : "s1", taskTypeId: "tt1", start: addDaysIso(iso(new Date()), k * 3 - 6), end: addDaysIso(iso(new Date()), k * 3 + 4), progress: k < done ? 100 : 30 + k * 10, assignee: seedTeamMembers[k % seedTeamMembers.length].name, checklist: [] });
+      if (fleaux) tasks.push({ id: `banc-tt${i}-fl`, title: `${t} · critique`, projectId: projects[i].id, statusId: "s3", taskTypeId: "tt1", criticality: "urgent", start: addDaysIso(iso(new Date()), -20), end: addDaysIso(iso(new Date()), -5), progress: 40, assignee: seedTeamMembers[0].name, checklist: [] });
     });
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));

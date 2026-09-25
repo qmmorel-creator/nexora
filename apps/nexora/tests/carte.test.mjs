@@ -28,7 +28,7 @@ const C = vm.runInThisContext(
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, cartePersonSocle, carteFigurineTint, carteFlagStyle, CARTE_FIGURINE_BASE, CARTE_AVATAR_ANCHOR, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, cartePersonSocle, carteFigurineTint, carteFlagStyle, carteCriticalFx, CARTE_CRITICAL_FX_KINDS, CARTE_FIGURINE_BASE, CARTE_AVATAR_ANCHOR, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloBlocks, carteHoloInline,
   };\n})`
 )();
@@ -984,4 +984,29 @@ test("drapeaux des totems : forme et pommeau pour chaque thème (#508)", () => {
   assert.equal(C.carteFlagStyle("mer").shape, "pennant");
   assert.equal(C.carteFlagStyle("cyberpunk").finial, "#3ef0ff");
   assert.deepEqual(C.carteFlagStyle("inconnu"), { shape: "rect", code: 0, finial: "#d9b23a" }, "repli");
+});
+
+test("fléaux des tâches critiques selon le thème, orage en repli (#509)", () => {
+  const kinds = new Set();
+  C.CARTE_THEMES.forEach((th) => {
+    const f = C.carteCriticalFx(th.id);
+    assert.ok(C.CARTE_CRITICAL_FX_KINDS[f.id], `${th.id} : effet ${f.id} inconnu`);
+    assert.ok(f.label && f.legend, `${th.id} : libellés`);
+    assert.match(f.a, /^#[0-9a-f]{6}$/i); assert.match(f.b, /^#[0-9a-f]{6}$/i);
+    kinds.add(f.id);
+    // La légende du thème annonce son fléau.
+    assert.ok(C.carteLook(th.id).sig.some((l) => l[1].includes(f.legend)), `${th.id} : légende`);
+  });
+  assert.equal(kinds.size, 8, "les huit effets servent");
+  assert.deepEqual(
+    ["grandnord", "desert", "volcan", "foret", "mer", "ile", "cyberpunk", "campagne", "marais"].map((id) => C.carteCriticalFx(id).id),
+    ["blizzard", "sandstorm", "lava", "leaves", "whirlpool", "whirlpool", "glitch", "storm", "miasma"],
+  );
+  assert.equal(C.carteCriticalFx("inconnu").id, "storm", "l'éclair reste le repli");
+  assert.equal(C.carteCriticalFx(undefined).id, "storm");
+  // Codes du shader uniques, de 0 à 7 ; l'orage n'a pas de particules (il garde son rendu).
+  const codes = Object.values(C.CARTE_CRITICAL_FX_KINDS).map((k) => k.kind).sort();
+  assert.deepEqual(codes, [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(C.CARTE_CRITICAL_FX_KINDS.storm.count, 0);
+  Object.values(C.CARTE_CRITICAL_FX_KINDS).forEach((k) => assert.ok(k.count <= 80, "léger : 80 particules au plus par tâche"));
 });

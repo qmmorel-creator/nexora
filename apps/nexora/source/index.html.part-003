@@ -20080,6 +20080,7 @@ function createCarteEngine(THREE, container, opts) {
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
     const storms = [];
+    const critFx = [];
     const clocks = [];
     const fires = [];
     const avatars = [];
@@ -20128,7 +20129,12 @@ function createCarteEngine(THREE, container, opts) {
       // En retard : horloge qui fait tic-tac (#414) ; en plus urgente : gros
       // éclairs venus du ciel (#406). Incendie (#385) : urgente sans retard.
       const hz = carteHazard(t);
-      if (hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 7), big: true, ph: carteRand("storm" + t.id) });
+      // Tâche critique (#509) : le fléau du thème ; l'orage reste le repli.
+      if (hz === "tempest") {
+        const cfx = carteCriticalFx(tile.theme);
+        if (cfx.id === "storm") storms.push({ x, y, z, top: y + Math.min(top, 7), big: true, ph: carteRand("storm" + t.id) });
+        else critFx.push({ x, y, z, k, top: y + Math.min(top, 7), fx: cfx, id: t.id });
+      }
       else if (hz === "clock") clocks.push({ x, y, z, k, top: y + Math.min(top, 7), ph: carteRand("clock" + t.id) });
       else if (hz === "fire") fires.push({ x, y, z, k, h: Math.max(0.3, Math.min(top, 7)), ph: carteRand("fire" + t.id) * 6.283 });
       if (carteDangerSign(t)) {
@@ -20254,6 +20260,7 @@ function createCarteEngine(THREE, container, opts) {
       world.add(bm);
     }
     buildStorms(storms);
+    buildCriticalFx(critFx);
     buildClocks(clocks);
     buildFires(fires);
     buildAvatars(avatars);
@@ -21288,6 +21295,122 @@ function createCarteEngine(THREE, container, opts) {
       }
     });
     [W.bigBolts, W.halo, W.rain].forEach((m) => { m.instanceMatrix.needsUpdate = true; });
+  }
+
+  // ---------- Fléaux des tâches critiques selon le thème (#509) ----------
+  // Blizzard, tempête de sable, éruption, orage de feuilles, tourbillon,
+  // glitch, miasmes : une seule maille instanciée (un quad par particule),
+  // toute l'animation dans le vertex shader. Rien n'est recalculé image par
+  // image côté processeur ; seul le temps avance.
+  const critU = {
+    uTime: { value: 0 },
+    uColA: { value: Array.from({ length: 8 }, () => new THREE.Color("#ffffff")) },
+    uColB: { value: Array.from({ length: 8 }, () => new THREE.Color("#ffffff")) },
+  };
+  Object.keys(CARTE_CRITICAL_FX_KINDS).forEach((id) => { const f = CARTE_CRITICAL_FX_KINDS[id]; critU.uColA.value[f.kind].set(f.a); critU.uColB.value[f.kind].set(f.b); });
+  const critQuad = new THREE.PlaneGeometry(1, 1);
+  geos.push(critQuad);
+  const critMat = mat(new THREE.ShaderMaterial({
+    uniforms: critU, transparent: true, depthWrite: false,
+    vertexShader: [
+      "attribute vec3 aCenter;",
+      "attribute vec4 aP;",
+      "uniform float uTime;",
+      "uniform vec3 uColA[8];",
+      "uniform vec3 uColB[8];",
+      "varying vec3 vCol; varying float vA; varying vec2 vUv; varying float vKind;",
+      "float h1(float n) { return fract(sin(n * 12.9898) * 43758.5453); }",
+      "void main() {",
+      "  float s = aP.x, k = aP.z, H = aP.w, t = uTime;",
+      "  int K = int(aP.y + 0.5);",
+      "  float r1 = h1(s), r2 = h1(s + 1.7), r3 = h1(s + 3.1);",
+      "  vec3 p = vec3(0.0); float size = 0.1; float alpha = 1.0; float rot = 0.0; vec2 stretch = vec2(1.0);",
+      "  if (K == 1) {", // blizzard : flocons en spirale, poussés par le vent
+      "    float u = fract(t * 0.42 + r1); float a = r2 * 6.283 + t * (2.4 + r3 * 1.5);",
+      "    float rad = (0.35 + 1.35 * r3) * k;",
+      "    p = vec3(cos(a) * rad + (u - 0.5) * 1.4 * k, (1.0 - u) * (H + 1.2), sin(a) * rad);",
+      "    size = (0.06 + 0.07 * r1) * k; alpha = smoothstep(0.0, 0.08, u) * (1.0 - smoothstep(0.85, 1.0, u)); stretch = vec2(1.0 + 1.8 * r3, 1.0); rot = -0.5;",
+      "  } else if (K == 2) {", // sable : nappes basses qui s'enroulent et s'élargissent
+      "    float u = fract(t * 0.3 + r1); float a = r2 * 6.283 + t * (1.5 + r3 * 0.9);",
+      "    float rad = (0.5 + 1.7 * u) * k;",
+      "    p = vec3(cos(a) * rad, (0.1 + (0.4 + r3 * 1.6) * u) * k, sin(a) * rad);",
+      "    size = (0.24 + 0.32 * r1) * k; alpha = 0.9 * smoothstep(0.0, 0.1, u) * (1.0 - u * 0.8);",
+      "  } else if (K == 3) {", // éruption : braises qui jaillissent du sommet et retombent
+      "    float u = fract(t * 0.62 + r1); float a = r2 * 6.283; float sp = (0.5 + r3 * 1.0) * k;",
+      "    p = vec3(cos(a) * sp * u, H - (H * 0.2) + (3.4 * u - 4.0 * u * u) * k * 1.3, sin(a) * sp * u);",
+      "    size = (0.08 + 0.1 * (1.0 - u)) * k; alpha = 1.0 - smoothstep(0.72, 1.0, u);",
+      "  } else if (K == 4) {", // feuilles : tourbillon ascendant, feuilles qui tournoient
+      "    float u = fract(t * 0.32 + r1); float a = r2 * 6.283 + t * (1.7 + r3) + u * 5.0;",
+      "    float rad = (0.45 + 0.95 * r3 + 0.3 * sin(t * 2.0 + s)) * k;",
+      "    p = vec3(cos(a) * rad, u * (H + 1.0) + 0.1, sin(a) * rad);",
+      "    size = (0.15 + 0.09 * r1) * k; rot = t * (3.0 + r3 * 4.0) + s; stretch = vec2(1.0, 0.55);",
+      "    alpha = smoothstep(0.0, 0.08, u) * (1.0 - smoothstep(0.85, 1.0, u));",
+      "  } else if (K == 5) {", // tourbillon : écume qui tourne et se resserre vers le centre
+      "    float u = fract(t * 0.3 + r1); float a = r2 * 6.283 + t * 2.6 + u * 10.0;",
+      "    float rad = (1.9 * (1.0 - u) + 0.08) * k;",
+      "    p = vec3(cos(a) * rad, 0.12 - u * 0.3 + 0.12 * sin(a * 3.0 + t * 2.0) * (1.0 - u) * r3, sin(a) * rad);",
+      "    size = (0.11 + 0.15 * (1.0 - u)) * k; alpha = 1.0 - u * 0.5; stretch = vec2(1.7, 0.8);",
+      "  } else if (K == 6) {", // glitch : rectangles néon qui sautent et clignotent
+      "    float st = floor(t * 7.0 + r1 * 7.0);",
+      "    float g1 = h1(s + st * 0.37), g2 = h1(s * 1.3 + st * 0.71), g3 = h1(s * 2.1 + st);",
+      "    p = vec3((g1 - 0.5) * 1.9 * k, g2 * (H + 0.6) + 0.15, (g3 - 0.5) * 1.9 * k);",
+      "    size = (0.06 + 0.2 * h1(s + st * 1.9)) * k; alpha = step(0.4, h1(s + st * 2.3)); stretch = vec2(2.6, 0.45);",
+      "  } else if (K == 7) {", // miasmes : bulles vertes qui montent, gonflent et crèvent
+      "    float u = fract(t * 0.24 + r1); float a = r2 * 6.283; float rad = (0.25 + 1.15 * r3) * k;",
+      "    p = vec3(cos(a) * rad + sin(t * 1.5 + s) * 0.1, (u * 2.0 + 0.1) * k, sin(a) * rad);",
+      "    size = (0.08 + 0.17 * u) * k; alpha = 0.95 * (1.0 - smoothstep(0.86, 1.0, u));",
+      "  }",
+      "  vec4 mv = modelViewMatrix * vec4(aCenter + p, 1.0);",
+      "  vec2 q = position.xy * stretch; float c = cos(rot), sn = sin(rot);",
+      "  mv.xy += vec2(c * q.x - sn * q.y, sn * q.x + c * q.y) * size;",
+      "  gl_Position = projectionMatrix * mv;",
+      "  vCol = mix(uColA[K], uColB[K], r3); vA = alpha; vUv = position.xy + 0.5; vKind = aP.y;",
+      "}",
+    ].join("\n"),
+    fragmentShader: [
+      "varying vec3 vCol; varying float vA; varying vec2 vUv; varying float vKind;",
+      "void main() {",
+      "  int K = int(vKind + 0.5);",
+      "  float r = length(vUv - 0.5) * 2.0; float a = vA;",
+      "  if (K == 6) a *= 0.95;",
+      "  else if (K == 7) a *= (1.0 - smoothstep(0.85, 1.0, r)) * (0.3 + 0.7 * smoothstep(0.5, 0.85, r));",
+      "  else if (K == 4) a *= 1.0 - smoothstep(0.75, 1.0, r);",
+      "  else if (K == 2) a *= 1.0 - smoothstep(0.1, 1.0, r);",
+      "  else a *= 1.0 - smoothstep(0.35, 1.0, r);",
+      "  if (a < 0.02) discard;",
+      "  vec3 col = vCol * ((K == 3 || K == 6) ? 1.6 : 1.0);",
+      "  gl_FragColor = vec4(col, a);",
+      "}",
+    ].join("\n"),
+  }));
+  function buildCriticalFx(list) {
+    S.critFx = null;
+    if (!list.length) return;
+    const low = S.effQuality === "low";
+    const all = list.slice(0, 80);
+    let n = 0;
+    all.forEach((c) => { c.n = Math.max(8, Math.round(c.fx.count * (low ? 0.5 : 1))); n += c.n; });
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = critQuad.index;
+    geo.setAttribute("position", critQuad.attributes.position);
+    geo.setAttribute("uv", critQuad.attributes.uv);
+    const ctr = new Float32Array(n * 3), prm = new Float32Array(n * 4);
+    let i = 0;
+    all.forEach((c) => {
+      const H = Math.max(0.8, c.top - c.y);
+      for (let j = 0; j < c.n; j++, i++) {
+        ctr[i * 3] = c.x; ctr[i * 3 + 1] = c.y; ctr[i * 3 + 2] = c.z;
+        prm[i * 4] = carteRand("cf" + c.id + ":" + j) * 97 + j * 0.013;
+        prm[i * 4 + 1] = c.fx.kind; prm[i * 4 + 2] = Math.max(0.8, c.k); prm[i * 4 + 3] = H;
+      }
+    });
+    geo.setAttribute("aCenter", new THREE.InstancedBufferAttribute(ctr, 3));
+    geo.setAttribute("aP", new THREE.InstancedBufferAttribute(prm, 4));
+    geo.instanceCount = n;
+    const mesh = new THREE.Mesh(geo, critMat);
+    mesh.frustumCulled = false; mesh.renderOrder = 4; mesh.userData.ownGeo = true;
+    world.add(mesh);
+    S.critFx = { mesh, list: all, count: n };
   }
 
   // ---------- Horloge des tâches en retard (#414) ----------
@@ -22448,6 +22571,7 @@ function createCarteEngine(THREE, container, opts) {
     const t = S.time;
     // Matières vivantes (#479) : feuillages, rides de l'eau, portails.
     swayU.value = reduced ? 0 : t;
+    critU.uTime.value = reduced ? t * 0.3 : t;
     flagU.value = reduced ? 0 : t;
     if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); seaU.off.value.set((t * 0.012) % 1, (t * 0.008) % 1); portalTex.rotation = -t * 0.8; }
     placeCloudShadows(t);
@@ -22892,6 +23016,8 @@ function createCarteEngine(THREE, container, opts) {
       return best;
     },
     goToGroup: (ids) => goToGroup(ids),
+    // Banc visuel : position d'une tâche dans le monde.
+    poiOf: (id) => (S.poi[id] ? { x: S.poi[id].x, y: S.poi[id].y, z: S.poi[id].z, top: S.poi[id].top } : null),
     // Banc visuel : cadrage immédiat (sans glissement), pour les captures.
     snapView(v) {
       if (!v) return;
@@ -22905,7 +23031,7 @@ function createCarteEngine(THREE, container, opts) {
     ambientFlags: () => (S.amb ? S.amb.flags.map((f) => [f.x, f.base, f.top, f.z, f.shape, f.pct]) : []),
     // Banc visuel (#505) : fige la téléportation à l'instant t (null : reprend).
     teleportFreeze: (t) => { TP.fixed = t == null ? null : Number(t); if (t != null && !TP.on) { TP.on = true; tpGroup.visible = true; } },
-    fxState: () => ({ teleport: TP.on, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
+    fxState: () => ({ teleport: TP.on, crit: S.critFx ? S.critFx.count : 0, storms: S.storms ? S.storms.list.length : 0, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
     // Banc visuel (#502) : la texture du tableau, pour la capturer à plat.
