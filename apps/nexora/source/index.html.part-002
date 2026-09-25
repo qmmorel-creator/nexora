@@ -5965,6 +5965,159 @@ function carteFolderGroups(layout, stats, folders) {
   });
   return out.filter((g) => g.id !== CARTE_NO_FOLDER).concat(out.filter((g) => g.id === CARTE_NO_FOLDER));
 }
+// ---------- Pilotage depuis la carte (#468 à #481) ----------
+const carteOpen = (t) => t.state !== "done" && t.state !== "info";
+// Brouillard de guerre (#468) : ce qui manque à la fiche d'une tâche ouverte.
+// Liste vide = fiche complète, pas de brouillard. Une tâche à 0 % oubliée
+// depuis plus de 30 jours compte aussi.
+function carteIncomplete(task) {
+  if (!task || !carteOpen(task)) return [];
+  const out = [];
+  if (task.end == null) out.push("nodue");
+  if (!task.assignee) out.push("unassigned");
+  if (task.stale && !(task.progress > 0)) out.push("stale");
+  return out;
+}
+// Dérive (#473) : l'avancement accuse au moins 40 points de retard sur le
+// temps écoulé entre le début et la fin prévus. Une tâche de moins de trois
+// jours ne dérive pas : son échéance suffit.
+function carteDrift(task, today) {
+  if (!task || !carteOpen(task) || task.start == null || task.end == null || task.end - task.start < 2) return false;
+  if (today < task.start || today > task.end) return false;
+  const expected = ((today - task.start + 1) / (task.end - task.start + 1)) * 100;
+  return expected - task.progress >= 40;
+}
+// Prédécesseurs non terminés d'une tâche (convoi bloqué).
+function carteBlockers(task, taskById) {
+  return (task.dependsOn || []).map((id) => taskById[id]).filter((p) => p && p.state !== "done");
+}
+const CARTE_QUEST_KINDS = [
+  { id: "late", label: "En retard", hint: "Échéance dépassée" },
+  { id: "blocked", label: "Bloquées", hint: "Un prédécesseur n'est pas terminé" },
+  { id: "conflict", label: "Conflits de dates", hint: "Commence avant la fin d'un prédécesseur, ou finit avant de commencer" },
+  { id: "drift", label: "En dérive", hint: "L'avancement ne suit pas le temps écoulé" },
+  { id: "unassigned", label: "Sans responsable", hint: "Personne n'est désigné" },
+  { id: "nodue", label: "Sans échéance", hint: "Aucune date de fin" },
+  { id: "stale", label: "Oubliées", hint: "Aucune activité depuis plus de 30 jours" },
+];
+const CARTE_QUEST_BY_ID = Object.fromEntries(CARTE_QUEST_KINDS.map((k) => [k.id, k]));
+// Journal de quêtes (#473) : ce qui demande une décision, tâche par tâche.
+// Une tâche apparaît dans chaque catégorie qui la concerne ; `visible`
+// (Set d'identifiants) restreint aux tâches affichées.
+function carteQuests(norm, visible) {
+  const tasks = (norm && norm.tasks) || [];
+  const byId = norm && norm.taskById ? norm.taskById : Object.fromEntries(tasks.map((t) => [t.id, t]));
+  const today = norm && norm.today != null ? norm.today : carteTodayNumber();
+  const out = [];
+  tasks.forEach((t) => {
+    if (!carteOpen(t) || (visible && !visible.has(t.id))) return;
+    const push = (kind, detail, weight) => out.push({ kind, taskId: t.id, detail, weight });
+    if (t.overdue) push("late", "depuis " + t.lateDays + " j", t.lateDays);
+    const blockers = carteBlockers(t, byId);
+    if (blockers.length) push("blocked", "Attend « " + blockers[0].title + " »" + (blockers.length > 1 ? " et " + (blockers.length - 1) + " autre" + (blockers.length > 2 ? "s" : "") : ""), blockers.length);
+    const clash = blockers.find((p) => p.end != null && t.start != null && t.start <= p.end);
+    if (t.start != null && t.end != null && t.end < t.start) push("conflict", "Finit avant de commencer", 2);
+    else if (clash) push("conflict", "Commence avant la fin de « " + clash.title + " »", 1);
+    if (carteDrift(t, today)) push("drift", t.progress + " % alors que " + Math.round(((today - t.start + 1) / (t.end - t.start + 1)) * 100) + " % du temps est écoulé", 1);
+    if (!t.assignee) push("unassigned", "Personne n'est désigné", 0);
+    if (t.end == null) push("nodue", "Aucune date de fin", 0);
+    if (t.stale) push("stale", t.idleDays != null ? "Sans activité depuis " + t.idleDays + " j" : "Sans activité récente", t.idleDays || 0);
+  });
+  const rank = Object.fromEntries(CARTE_QUEST_KINDS.map((k, i) => [k.id, i]));
+  return out.sort((a, b) => rank[a.kind] - rank[b.kind] || b.weight - a.weight || (String(a.taskId) < String(b.taskId) ? -1 : 1));
+}
+// Barre de ressources (#478) : compteurs permanents, identifiants par clé.
+const CARTE_RESOURCES = [
+  { id: "late", label: "Retards", tone: "red" },
+  { id: "today", label: "Aujourd'hui", tone: "orange" },
+  { id: "doing", label: "En cours", tone: "blue" },
+  { id: "blocked", label: "Bloquées", tone: "purple" },
+  { id: "incomplete", label: "À compléter", tone: "grey" },
+];
+function carteResources(norm, visible) {
+  const tasks = (norm && norm.tasks) || [];
+  const byId = norm && norm.taskById ? norm.taskById : Object.fromEntries(tasks.map((t) => [t.id, t]));
+  const ids = { late: [], today: [], doing: [], blocked: [], incomplete: [] };
+  tasks.forEach((t) => {
+    if (!carteOpen(t) || (visible && !visible.has(t.id))) return;
+    if (t.overdue) ids.late.push(t.id);
+    if (t.dueIn === 0) ids.today.push(t.id);
+    if (t.state === "doing") ids.doing.push(t.id);
+    if (carteBlockers(t, byId).length) ids.blocked.push(t.id);
+    if (carteIncomplete(t).length) ids.incomplete.push(t.id);
+  });
+  return ids;
+}
+// Décale une date ISO (AAAA-MM-JJ) de `days` jours ; null si invalide.
+function carteShiftIso(iso, days) {
+  const n = carteDayNumber(iso);
+  if (n == null) return null;
+  const d = new Date((n + (Number(days) || 0)) * CARTE_DAY);
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
+}
+// Menu d'action rapide (#469) : décalage des dates d'une tâche brute. Une
+// tâche sans date reçoit début et fin au jour visé.
+function carteShiftPatch(raw, days, now) {
+  const r = raw || {};
+  if (!carteDayNumber(r.end) && !carteDayNumber(r.start)) {
+    const d = carteShiftIso("1970-01-01", carteTodayNumber(now) + (Number(days) || 0));
+    return { start: d, end: d };
+  }
+  const patch = {};
+  if (carteDayNumber(r.start) != null) patch.start = carteShiftIso(r.start, days);
+  if (carteDayNumber(r.end) != null) patch.end = carteShiftIso(r.end, days);
+  return patch;
+}
+// Annuler (#475) : valeurs d'avant la modification, pour les seuls champs
+// touchés (null quand le champ était absent).
+function carteUndoPatch(raw, patch) {
+  const r = raw || {};
+  const out = {};
+  Object.keys(patch || {}).forEach((k) => { out[k] = r[k] === undefined ? null : r[k]; });
+  return out;
+}
+// Vie de la carte (#480) : ce qui a changé entre deux relevés de tâches
+// normalisées. `prev` null = premier affichage, aucun événement.
+function carteEvents(prev, next) {
+  if (!prev || !next) return [];
+  const before = {};
+  prev.forEach((t) => { before[t.id] = t; });
+  const out = [];
+  next.forEach((t) => {
+    const p = before[t.id];
+    if (!p) { out.push({ type: "created", id: t.id }); return; }
+    if (p.state !== "done" && t.state === "done") out.push({ type: t.milestone ? "milestone" : "done", id: t.id });
+    else if (t.state !== "done" && t.progress > p.progress) out.push({ type: "progress", id: t.id, from: p.progress, to: t.progress });
+  });
+  return out;
+}
+// Construire ici (#470) : la première nouvelle tâche du projet visé prend la
+// parcelle choisie. Renvoie la mémoire de disposition à utiliser.
+function carteClaimTile(memory, pending, tasks) {
+  if (!pending || !pending.key || !pending.known) return memory;
+  const fresh = (tasks || []).find((t) => (t.projectId == null ? "__terre-inconnue__" : t.projectId) === pending.projectId && !pending.known.has(t.id));
+  if (!fresh) return memory;
+  const mem = memory || {};
+  return { ...mem, tasks: { ...(mem.tasks || {}), [fresh.id]: pending.key } };
+}
+// Zoom stratégique (#476) : part de la carte ancienne selon la distance de
+// caméra, de 0 (3D) à 1 (plan).
+const CARTE_STRATEGIC_FROM = 80;
+const CARTE_STRATEGIC_TO = 95;
+function carteStrategicAlpha(dist) {
+  const u = (Number(dist) - CARTE_STRATEGIC_FROM) / (CARTE_STRATEGIC_TO - CARTE_STRATEGIC_FROM);
+  return Math.max(0, Math.min(1, u));
+}
+// Vues enregistrées (#481) : nom + cadrage, douze au plus.
+const CARTE_VIEWS_MAX = 12;
+function carteNormalizeViews(list) {
+  const num = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.max(lo, Math.min(hi, Number(v))) : d);
+  return (Array.isArray(list) ? list : []).filter((v) => v && typeof v === "object" && String(v.name || "").trim()).slice(0, CARTE_VIEWS_MAX).map((v) => ({
+    name: String(v.name).trim().slice(0, 40),
+    x: num(v.x, -1e4, 1e4, 0), z: num(v.z, -1e4, 1e4, 0),
+    yaw: num(v.yaw, -1e3, 1e3, 0.6), pitch: num(v.pitch, 0.45, 1.5, 0.92), dist: num(v.dist, 7, 150, 19),
+  }));
+}
 const CARTE_QUALITIES = ["auto", "high", "medium", "low"];
 // Préférences de la vue (synchronisées avec les autres préférences de vues).
 function normalizeCarteViewPrefs(p) {
@@ -5991,6 +6144,15 @@ function normalizeCarteViewPrefs(p) {
     ariadne: !!v.ariadne,
     // Regroupement des régions (#438) : dossiers par défaut.
     groupBy: CARTE_GROUPING_BY_ID[v.groupBy] ? v.groupBy : "folder",
+    // Brouillard de guerre (#468), mini-carte (#471) : actifs par défaut.
+    fog: v.fog !== false,
+    minimap: v.minimap !== false,
+    // Rendu maquette (#479) et vie de la carte (#480) : actifs par défaut.
+    miniature: v.miniature !== false,
+    life: v.life !== false,
+    // Vue « comme un plan » (#481) : dessus, nord en haut.
+    plan: !!v.plan,
+    views: carteNormalizeViews(v.views),
   };
 }
 // === NEXORA:CARTE:END ===

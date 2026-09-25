@@ -18848,7 +18848,8 @@ function createCarteEngine(THREE, container, opts) {
   const o = opts || {};
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   renderer.setClearColor("#bfe3f2");
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Ombres adoucies (#479) : filtrage PCF à rayon, plus doux que PCFSoft.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const canvas = renderer.domElement;
   canvas.className = "lp-carte-canvas";
   canvas.setAttribute("aria-hidden", "true");
@@ -18862,6 +18863,7 @@ function createCarteEngine(THREE, container, opts) {
   const sun = new THREE.DirectionalLight("#fff6e0", 2.1);
   sun.position.set(30, 50, 20);
   sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.radius = 3.5;
   Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, far: 220 });
   scene.add(sun, sun.target);
   const world = new THREE.Group();
@@ -18877,7 +18879,14 @@ function createCarteEngine(THREE, container, opts) {
     people: o.people !== false,
     // Animations persistantes (#425 à #436), désactivables dans « Affichage ».
     ambient: o.ambient !== false,
+    // Pilotage (#468 à #481) : brouillard, mini-carte, rendu maquette, vie,
+    // vue plan. Tous réglables dans « Affichage ».
+    fog: o.fog !== false, minimap: o.minimap !== false, miniature: o.miniature !== false, life: o.life !== false, plan: !!o.plan,
+    hoverKey: null, strategic: 0, viewGoal: null, buildId: 0, prevTasks: null,
   };
+  // Décor (arbres, rochers) dans son propre groupe : il s'efface de loin (#481).
+  const decorGroup = new THREE.Group();
+  scene.add(decorGroup);
 
   // ---------- Géométries unitaires (base à y = 0, hauteur 1) ----------
   const G = {};
@@ -19011,6 +19020,99 @@ function createCarteEngine(THREE, container, opts) {
     route: mat(new THREE.LineDashedMaterial({ color: "#8a5a35", dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.55 })),
   };
 
+  // ---------- Matières de la maquette (#479) ----------
+  // Textures procédurales proches du blanc : la couleur de chaque case
+  // (thème, projet) les teinte par instance.
+  const texs = [];
+  function canvasTex(size, draw, repeat) {
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const g = c.getContext("2d");
+    if (g) draw(g, size);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    if (repeat) t.repeat.set(repeat, repeat);
+    t.anisotropy = 4;
+    texs.push(t);
+    return t;
+  }
+  // Herbe : brins courts et taches de lumière.
+  const grassTex = canvasTex(128, (g, n) => {
+    g.fillStyle = "#ffffff"; g.fillRect(0, 0, n, n);
+    for (let i = 0; i < 420; i++) {
+      const x = carteRand("gx" + i) * n, y = carteRand("gy" + i) * n, l = 2 + carteRand("gl" + i) * 5, a = (carteRand("ga" + i) - 0.5) * 0.9;
+      g.strokeStyle = carteRand("gc" + i) < 0.6 ? "rgba(40,70,20,.13)" : "rgba(255,255,230,.35)";
+      g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.sin(a) * l, y - Math.cos(a) * l); g.stroke();
+    }
+  }, 2);
+  // Pavés : rangées décalées de pierres arrondies, joints sombres.
+  const cobbleTex = canvasTex(128, (g, n) => {
+    g.fillStyle = "#8f8a82"; g.fillRect(0, 0, n, n);
+    const rows = 8, h = n / rows;
+    for (let r = 0; r < rows; r++) {
+      const w = n / 6, off = r % 2 ? w / 2 : 0;
+      for (let c = -1; c < 7; c++) {
+        const v = carteRand("cb" + r + ":" + c);
+        const shade = Math.round(222 + v * 33);
+        g.fillStyle = "rgb(" + shade + "," + shade + "," + (shade - 4) + ")";
+        const x = c * w + off + 1.5, y = r * h + 1.5, ww = w - 3, hh = h - 3, rr = 4;
+        g.beginPath();
+        g.moveTo(x + rr, y); g.lineTo(x + ww - rr, y); g.quadraticCurveTo(x + ww, y, x + ww, y + rr);
+        g.lineTo(x + ww, y + hh - rr); g.quadraticCurveTo(x + ww, y + hh, x + ww - rr, y + hh);
+        g.lineTo(x + rr, y + hh); g.quadraticCurveTo(x, y + hh, x, y + hh - rr);
+        g.lineTo(x, y + rr); g.quadraticCurveTo(x, y, x + rr, y); g.fill();
+      }
+    }
+  }, 2);
+  // Eau : rides claires qui défilent (voir animate).
+  const rippleTex = canvasTex(128, (g, n) => {
+    g.fillStyle = "#e9f3f8"; g.fillRect(0, 0, n, n);
+    for (let i = 0; i < 26; i++) {
+      const y = carteRand("wy" + i) * n, x = carteRand("wx" + i) * n, l = 14 + carteRand("wl" + i) * 26;
+      g.strokeStyle = carteRand("wc" + i) < 0.5 ? "rgba(255,255,255,.95)" : "rgba(150,190,215,.45)";
+      g.lineWidth = 1.6;
+      g.beginPath();
+      for (let k = 0; k <= 8; k++) { const px = x + (l * k) / 8, py = y + Math.sin(k * 0.8) * 1.6; if (k) g.lineTo(px % n, py); else g.moveTo(px % n, py); }
+      g.stroke();
+    }
+  }, 1.5);
+  // Ombre de contact (occlusion au pied des bâtiments) : disque dégradé.
+  const blobTex = canvasTex(64, (g, n) => {
+    const gr = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    gr.addColorStop(0, "rgba(0,0,0,.55)"); gr.addColorStop(0.55, "rgba(0,0,0,.25)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+    g.clearRect(0, 0, n, n); g.fillStyle = gr; g.fillRect(0, 0, n, n);
+  });
+  blobTex.colorSpace = THREE.NoColorSpace;
+  MAT.ground = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: grassTex }));
+  MAT.road = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: cobbleTex }));
+  MAT.water.dispose();
+  MAT.water = mat(new THREE.MeshPhongMaterial({ color: "#ffffff", transparent: true, opacity: 0.88, shininess: 80, specular: new THREE.Color("#cfeeff"), map: rippleTex }));
+  MAT.blob = mat(new THREE.MeshBasicMaterial({ color: "#000000", alphaMap: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  // Feuillages qui ondulent (#479) : décalage au sommet des pièces, selon la
+  // position de l'instance. Figé si les animations sont réduites.
+  const swayU = { value: 0 };
+  MAT.w = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true }));
+  MAT.w.onBeforeCompile = (sh) => {
+    sh.uniforms.uSway = swayU;
+    sh.vertexShader = "uniform float uSway;\n" + sh.vertexShader.replace("#include <begin_vertex>", [
+      "#include <begin_vertex>",
+      "#ifdef USE_INSTANCING",
+      "  float swPh = instanceMatrix[3][0] * 0.7 + instanceMatrix[3][2] * 1.3;",
+      "  float swK = clamp(position.y, 0.0, 1.0);",
+      "  transformed.x += sin(uSway * 1.7 + swPh) * 0.09 * swK;",
+      "  transformed.z += cos(uSway * 1.3 + swPh) * 0.07 * swK;",
+      "#endif",
+    ].join("\n"));
+  };
+  MAT.w.customProgramCacheKey = () => "carte-sway";
+  // Brouillard de guerre (#468) : bancs de brume sur les fiches incomplètes.
+  MAT.fog = mat(new THREE.MeshLambertMaterial({ color: "#f3f5f8", transparent: true, opacity: 0.6, depthWrite: false, flatShading: true }));
+  // Particules de chantier (#480) : poussière et fumée (éclairées), étincelles.
+  MAT.fxSoft = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.62, depthWrite: false, flatShading: true }));
+  MAT.fxGlow = mat(new THREE.MeshBasicMaterial({ color: "#ffffff" }));
+
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
   // un nuage de points toujours tourné vers la caméra.
   const checkTex = (() => {
@@ -19060,7 +19162,7 @@ function createCarteEngine(THREE, container, opts) {
           const b = buckets[key];
           const geo = G[b.g] || G.box;
           const mesh = new THREE.InstancedMesh(geo, litMat(b.m), b.items.length);
-          mesh.castShadow = shadows && b.m === "l";
+          mesh.castShadow = shadows && (b.m === "l" || b.m === "w");
           mesh.receiveShadow = shadows;
           b.items.forEach((it, i) => {
             tmpQ.setFromAxisAngle(UP, it[6]);
@@ -19126,10 +19228,14 @@ function createCarteEngine(THREE, container, opts) {
     const capM = new THREE.InstancedMesh(capGeo, litMat("l"), keys.length);
     const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
     const lavaM = new THREE.InstancedMesh(capGeo, MAT.lava, keys.length);
-    capM.count = 0; waterM.count = 0; lavaM.count = 0;
-    capM.userData.keys = []; waterM.userData.keys = []; lavaM.userData.keys = [];
-    baseM.receiveShadow = capM.receiveShadow = shadows;
+    // Sol texturé et routes pavées (#479).
+    capM.material = MAT.ground;
+    const roadM = new THREE.InstancedMesh(capGeo, MAT.road, keys.length);
+    capM.count = 0; waterM.count = 0; lavaM.count = 0; roadM.count = 0;
+    capM.userData.keys = []; waterM.userData.keys = []; lavaM.userData.keys = []; roadM.userData.keys = [];
+    baseM.receiveShadow = capM.receiveShadow = roadM.receiveShadow = shadows;
     const capTop = {};
+    S.tileTop = {};
     keys.forEach((k, i) => {
       const t = L.tiles[k];
       const w = carteToWorld(t.q, t.r);
@@ -19145,16 +19251,18 @@ function createCarteEngine(THREE, container, opts) {
       } else {
         baseM.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, t.h, 1)));
         baseM.setColorAt(i, tmpC.set(col.side));
-        const cm = col.lava ? lavaM : capM;
+        const cm = col.lava ? lavaM : t.road ? roadM : capM;
         const j = cm.count++;
         cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.02, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
         capTop[k] = t.h + 0.12;
         cm.setColorAt(j, tmpC.set(col.top));
         cm.userData.keys[j] = k;
       }
+      S.tileTop[k] = col.top;
     });
-    [baseM, waterM, capM, lavaM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
-    S.pickMeshes = [capM, waterM, lavaM];
+    [baseM, waterM, capM, lavaM, roadM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    S.pickMeshes = [capM, waterM, lavaM, roadM];
+    S.capTop = capTop;
 
     // Noms des dossiers au sol (#377, #393) : le long de l'île, au-dessus de
     // ses dalles. Une seconde passe, très pâle et sans test de profondeur,
@@ -19193,20 +19301,25 @@ function createCarteEngine(THREE, container, opts) {
     });
 
     const batch = makeBatcher();
+    const dBatch = makeBatcher();
+    clearGroup(decorGroup);
+    // Feuillages (cônes et boules au-dessus du tronc) : matière qui ondule.
+    const swayParts = (parts) => (q === "low" ? parts : parts.map((pp) => (pp.m === "l" && (pp.g === "cone" || pp.g === "ball") && pp.p[1] > 0.1 ? Object.assign({}, pp, { m: "w" }) : pp)));
     const poiKeys = new Set(L.pois.map((p) => p.key));
     // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
     const decorShare = q === "low" ? 0.4 : 1;
     keys.forEach((k) => {
       const t = L.tiles[k];
       if (t.road || poiKeys.has(k) || t.kind === "hub") {
-        if (t.bridge) placeModel(batch, [cP("box", t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
+        if (t.bridge) placeModel(dBatch, [cP("box", t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
         return;
       }
       if (carteRand("share" + k) > decorShare) return;
       const w = carteToWorld(t.q, t.r);
       const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
-      placeModel(batch, S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor, w.x, t.h + 0.12, w.z, 0);
+      placeModel(dBatch, swayParts(S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor), w.x, t.h + 0.12, w.z, 0);
     });
+    dBatch.flush(decorGroup, shadows);
     // Tâches.
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
@@ -19218,6 +19331,9 @@ function createCarteEngine(THREE, container, opts) {
     const dones = [];
     const borders = {};
     const amb = [];
+    const blobs = [];
+    const fogs = [];
+    const emit = { sparks: [], smoke: [], dust: [] };
     const vis = S.visible;
     L.pois.forEach((p) => {
       const t = S.data.taskById[p.taskId];
@@ -19236,7 +19352,7 @@ function createCarteEngine(THREE, container, opts) {
       const ry = (carteRand("ry" + t.id) - 0.5) * 0.8;
       placeModel(batch, parts, x, y, z, ry, carteRand(t.id) * 6);
       let top = 0; parts.forEach((pp) => { if (pp.m !== "t" && pp.m !== "h") top = Math.max(top, pp.p[1] + pp.s[1]); });
-      S.poi[t.id] = { x, y, z, key: p.key, top: y + Math.min(top, 7) + 0.1 };
+      S.poi[t.id] = { x, y, z, k, key: p.key, top: y + Math.min(top, 7) + 0.1 };
       const urgentOpen = t.criticality === "urgent" && t.state !== "done" && t.state !== "info";
       if (urgentOpen) urgent.push({ x, y, z, k });
       // En retard : horloge qui fait tic-tac (#414) ; en plus urgente : gros
@@ -19263,6 +19379,14 @@ function createCarteEngine(THREE, container, opts) {
       }
       if (t.state === "done") dones.push(x, y + Math.min(top, 7) + 1.05, z);
       amb.push({ t, x, y, z, k, ry, top: y + Math.min(top, 7) });
+      blobs.push([x, y + 0.01, z, 1.25 * k]);
+      // Brouillard de guerre (#468) : fiche incomplète.
+      if (S.fog && carteIncomplete(t).length) fogs.push({ x, y, z, k, top: y + Math.min(top, 7), ph: carteRand("fog" + t.id) * 6.283 });
+      // Particules (#480) : soudure et poussière sur les chantiers, fumée de
+      // cheminée sur les bâtiments terminés.
+      const h7 = Math.min(top, 7);
+      if (t.state === "doing" && emit.sparks.length < 60) { emit.sparks.push({ x: x + 0.25 * k, y: y + h7 * 0.65, z: z + 0.2 * k, k, next: carteRand("sp" + t.id) * 3 }); emit.dust.push({ x, y, z, k, next: carteRand("du" + t.id) * 4 }); }
+      if (t.state === "done" && t.kind === "task" && emit.smoke.length < 80) emit.smoke.push({ x: x + 0.18 * k, y: y + h7 + 0.05, z: z - 0.12 * k, k, next: carteRand("sm" + t.id) * 2 });
       // Une case partagée prend la couleur de sa tâche la plus pressante.
       const rank = t.overdue ? 0 : CARTE_BORDER_RANK[t.state] != null ? CARTE_BORDER_RANK[t.state] : 5;
       if (!borders[p.key] || rank < borders[p.key].rank) borders[p.key] = { rank, color: t.statusColor };
@@ -19290,7 +19414,26 @@ function createCarteEngine(THREE, container, opts) {
       h.tr.anchor = new THREE.Vector3(w.x, summit + 0.35, w.z);
       h.tr.world = new THREE.Vector3(w.x, h.base, w.z);
       h.x = w.x; h.z = w.z;
+      blobs.push([w.x, h.base + 0.01, w.z, 2.1]);
     });
+    // Portails vers la Timeline 3D (#472) : une arche lumineuse au pied de
+    // chaque totem ; un clic ouvre le projet dans la Timeline 3D.
+    S.portals = [];
+    if (o.onPortal) {
+      hubs.forEach((h) => {
+        if (h.x == null || L.projectById[h.tr.projectId].unknown) return;
+        const dx = -0.45, dz = 0.62, ry = Math.atan2(dx, dz);
+        const x = h.x + dx, z = h.z + dz;
+        const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
+        const stone = dim ? "#b9bec5" : "#7d6aa3";
+        placeModel(batch, [
+          cP("box", stone, -0.24, 0, 0, 0.1, 0.62, 0.12), cP("box", stone, 0.24, 0, 0, 0.1, 0.62, 0.12),
+          cP("box", stone, 0, 0.62, 0, 0.62, 0.1, 0.14), cP("box", dim ? "#d6d9de" : "#d9c7ff", 0, 0.72, 0, 0.14, 0.1, 0.1, 0, "g"),
+        ], x, h.base, z, ry);
+        S.portals.push({ pid: h.tr.projectId, pos: new THREE.Vector3(x, h.base + 0.34, z), ry, dim });
+      });
+    }
+    buildPortals();
     S.spin = batch.flush(world, shadows);
     if (dones.length) {
       const geo = new THREE.BufferGeometry();
@@ -19330,6 +19473,11 @@ function createCarteEngine(THREE, container, opts) {
     buildAmbient({ tasks: amb, hubs, summit, regions, avatars });
     buildTrail();
     buildMilestoneRings(amb);
+    buildBlobs(q === "low" ? [] : blobs);
+    buildFog(fogs);
+    S.emit = q === "low" ? { sparks: [], smoke: [], dust: [] } : emit;
+    S.buildId++;
+    drawMinimapBase();
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
     drawSelection();
@@ -19339,6 +19487,7 @@ function createCarteEngine(THREE, container, opts) {
   function drawSelection() {
     clearGroup(overlay);
     S.convoys = [];
+    S.selRing = null; S.selHalo = null;
     const id = S.selected;
     const pos = id && S.poi[id];
     if (!pos) return;
@@ -19349,6 +19498,12 @@ function createCarteEngine(THREE, container, opts) {
     const w = carteToWorld(tile.q, tile.r);
     ring.position.set(w.x, tile.h + 0.14, w.z);
     overlay.add(ring);
+    S.selRing = ring;
+    const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: "#6f9bff", transparent: true, opacity: 0.3, depthWrite: false }));
+    halo.userData.ownMat = true;
+    halo.position.set(w.x, (S.capTop && S.capTop[pos.key] != null ? S.capTop[pos.key] : tile.h + 0.12) + 0.08, w.z);
+    overlay.add(halo);
+    S.selHalo = halo;
     const t = S.data.taskById[id];
     const links = [];
     t.dependsOn.forEach((d) => links.push({ other: d, color: "#6b4ce6", into: true }));
@@ -19443,6 +19598,17 @@ function createCarteEngine(THREE, container, opts) {
     const goal = S.follow ? tmpP.set(keeper.position.x, keeper.position.y + 0.4, keeper.position.z) : (S.focusGoal || S.target);
     const k = snap || reduced ? 1 : 1 - Math.pow(0.001, dt);
     S.target.lerp(goal, k);
+    // Vue enregistrée (#481) : la caméra glisse vers le cadrage mémorisé.
+    if (S.viewGoal) {
+      const v = S.viewGoal;
+      S.yaw += (v.yaw - S.yaw) * k; S.pitch += (v.pitch - S.pitch) * k; S.dist += (v.dist - S.dist) * k;
+      if (Math.abs(v.yaw - S.yaw) + Math.abs(v.pitch - S.pitch) < 0.002 && Math.abs(v.dist - S.dist) < 0.05) S.viewGoal = null;
+    }
+    // Vue « comme un plan » (#481) : dessus, nord en haut, sans rotation.
+    if (S.plan) {
+      const north = Math.round(S.yaw / (2 * Math.PI)) * 2 * Math.PI;
+      S.yaw += (north - S.yaw) * k; S.pitch += (1.52 - S.pitch) * k;
+    } else if (S.pitch > 1.35 && !S.viewGoal) S.pitch += (1.2 - S.pitch) * k;
     const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
     camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
     camera.lookAt(S.target);
@@ -19471,8 +19637,8 @@ function createCarteEngine(THREE, container, opts) {
     const k = String(e.key || "").toLowerCase();
     if (keyMap[k]) { S.keys[keyMap[k]] = down; if (down) { S.follow = true; S.walkTo = null; } e.preventDefault(); return; }
     if (!down) return;
-    if (k === "e" || k === "pageup") { S.yaw += Math.PI / 6; e.preventDefault(); }
-    else if (k === "r" || k === "pagedown") { S.yaw -= Math.PI / 6; e.preventDefault(); }
+    if ((k === "e" || k === "pageup") && !S.plan) { S.yaw += Math.PI / 6; e.preventDefault(); }
+    else if ((k === "r" || k === "pagedown") && !S.plan) { S.yaw -= Math.PI / 6; e.preventDefault(); }
     else if (k === "+" || k === "=") { zoomBy(0.8); e.preventDefault(); }
     else if (k === "-") { zoomBy(1.25); e.preventDefault(); }
     else if (k === "enter" || k === " ") { if (S.near) { select(S.near); e.preventDefault(); } }
@@ -19552,9 +19718,20 @@ function createCarteEngine(THREE, container, opts) {
     const ids = Object.keys(pointers);
     if (ids.length === 2) { const a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist }; drag = null; }
     else {
-      const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (e.shiftKey || S.panMode));
+      // En vue plan (#481), le clic gauche glissé déplace la carte.
+      const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (e.shiftKey || S.panMode || S.plan));
       drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false, pan };
       if (pan) canvas.style.cursor = "grabbing";
+      // Construire ici (#470) : appui long sur une parcelle libre (tactile).
+      clearTimeout(S.pressTimer);
+      if (e.pointerType !== "mouse" && o.onBuild) {
+        const d0 = drag, cx = e.clientX, cy = e.clientY;
+        S.pressTimer = setTimeout(() => {
+          if (drag !== d0 || d0.moved || !S.layout) return;
+          const h = pick(cx, cy), b = h && buildableAt(h.key);
+          if (b) { d0.consumed = true; o.onBuild({ ...b, x: cx, y: cy }); }
+        }, 550);
+      }
     }
   };
   const onMove = (e) => {
@@ -19567,7 +19744,7 @@ function createCarteEngine(THREE, container, opts) {
     }
     if (drag) {
       const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-      if (Math.hypot(dx, dy) > 6) drag.moved = true;
+      if (Math.hypot(dx, dy) > 6) { drag.moved = true; clearTimeout(S.pressTimer); }
       if (drag.pan) { if (drag.moved) panBy(e.clientX - drag.lx, e.clientY - drag.ly); drag.lx = e.clientX; drag.ly = e.clientY; }
       else if (drag.moved) { S.yaw = drag.yaw - dx * 0.006; S.pitch = Math.max(0.45, Math.min(1.35, drag.pitch + dy * 0.004)); }
       return;
@@ -19583,18 +19760,50 @@ function createCarteEngine(THREE, container, opts) {
         tip.style.transform = "translate(" + Math.round(e.clientX - rect.left + 14) + "px," + Math.round(e.clientY - rect.top + 12) + "px)";
         tip.hidden = false;
       } else tip.hidden = true;
-      const h = pick(e.clientX, e.clientY);
-      const totem = totemAt(e.clientX, e.clientY);
+      const portal = portalAt(e.clientX, e.clientY);
+      if (portal && !av) {
+        const pp = S.layout.projectById[portal];
+        tip.textContent = "Ouvrir « " + (pp ? pp.name : "") + " » dans la Timeline 3D";
+        tip.style.transform = "translate(" + Math.round(e.clientX - rect.left + 14) + "px," + Math.round(e.clientY - rect.top + 12) + "px)";
+        tip.hidden = false;
+      }
+      const h = portal ? null : pick(e.clientX, e.clientY);
+      const totem = portal ? null : totemAt(e.clientX, e.clientY);
       const id = h && !totem ? taskAt(h.key, h.point) : null;
       const hp = totem || (h && !id ? hubAt(h.key) : null);
-      const hv = id ? "t:" + id : hp ? "p:" + hp : null;
+      const hv = portal ? "o:" + portal : id ? "t:" + id : hp ? "p:" + hp : null;
       if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv && !S.panMode ? "pointer" : "grab"; }
+      // Contour lumineux (#477) : tâche, cœur de projet ou parcelle libre.
+      if (S.strategic > 0.5) setHoverTile(null);
+      else if (id) setHoverTile(S.poi[id] ? S.poi[id].key : h.key, "#ffe38a");
+      else if (hp) { const tr = S.layout.territories.find((x) => x.projectId === hp); setHoverTile(tr ? carteKey(tr.q, tr.r) : null, (S.layout.projectById[hp] || {}).color); }
+      else if (h && buildableAt(h.key)) setHoverTile(h.key, "#ffffff");
+      else setHoverTile(null);
     }
   };
   const onUp = (e) => {
     delete pointers[e.pointerId];
+    clearTimeout(S.pressTimer);
     if (pinch) { if (Object.keys(pointers).length < 2) pinch = null; drag = null; return; }
     if (drag && drag.pan) canvas.style.cursor = S.panMode ? "grab" : S.hovered ? "pointer" : "grab";
+    if (drag && drag.consumed) { drag = null; return; }
+    // Clic droit sans glisser sur une parcelle libre : « Construire ici » (#470).
+    if (drag && !drag.moved && e.button === 2 && S.layout && o.onBuild) {
+      const h = pick(e.clientX, e.clientY), b = h && buildableAt(h.key);
+      if (b) o.onBuild({ ...b, x: e.clientX, y: e.clientY });
+      drag = null;
+      return;
+    }
+    if (drag && !drag.moved && e.button === 0 && S.layout) {
+      const portal = portalAt(e.clientX, e.clientY);
+      if (portal && o.onPortal) { o.onPortal(portal); drag = null; return; }
+      // Carte ancienne (#476) : un clic sur un territoire y ramène la 3D.
+      if (S.strategic > 0.5) {
+        const h = pick(e.clientX, e.clientY);
+        const pid = h && S.layout.tiles[h.key] && S.layout.tiles[h.key].projectId;
+        if (pid) { if (o.onTerritory) o.onTerritory(pid); focusProject(pid); drag = null; return; }
+      }
+    }
     if (drag && !drag.moved && !(drag.pan && e.button !== 0) && S.layout) {
       const h = pick(e.clientX, e.clientY);
       const totem = totemAt(e.clientX, e.clientY);
@@ -19618,7 +19827,7 @@ function createCarteEngine(THREE, container, opts) {
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onCancel);
-  const hideTip = () => { tip.hidden = true; if (S.hovered && S.hovered.startsWith("p:")) S.hovered = null; };
+  const hideTip = () => { tip.hidden = true; setHoverTile(null); if (S.hovered && !S.hovered.startsWith("t:")) S.hovered = null; };
   canvas.addEventListener("pointerleave", hideTip);
   canvas.addEventListener("wheel", hideTip, { passive: true });
 
@@ -20241,8 +20450,604 @@ function createCarteEngine(THREE, container, opts) {
     world.add(ring);
   }
 
+  // ---------- Ombres de contact (#479) ----------
+  // Un disque dégradé au pied de chaque bâtiment et de chaque totem : l'effet
+  // d'occlusion ambiante d'une maquette posée sur la table.
+  const blobGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  geos.push(blobGeo);
+  function buildBlobs(list) {
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(blobGeo, MAT.blob, list.length);
+    list.forEach((b, i) => m.setMatrixAt(i, tmpM.compose(tmpP.set(b[0], b[1], b[2]), tmpQ.identity(), tmpS.set(b[3], 1, b[3]))));
+    m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.renderOrder = 1;
+    world.add(m);
+  }
+
+  // ---------- Brouillard de guerre (#468) ----------
+  // Six bancs de brume par tâche à la fiche incomplète, qui dérivent
+  // lentement autour du bâtiment. Compléter la fiche les dissipe.
+  const FOG_PUFFS = 6;
+  function buildFog(list) {
+    S.fogs = null;
+    const all = list.slice(0, 300);
+    if (!all.length) return;
+    const m = new THREE.InstancedMesh(G.ball, MAT.fog, all.length * FOG_PUFFS);
+    m.frustumCulled = false;
+    world.add(m);
+    S.fogs = { list: all, mesh: m };
+    placeFog(S.time);
+  }
+  function placeFog(t0) {
+    const F = S.fogs;
+    if (!F) return;
+    const t = reduced ? 0 : t0;
+    let i = 0;
+    F.list.forEach((f) => {
+      const hgt = Math.max(0.6, f.top - f.y);
+      for (let j = 0; j < FOG_PUFFS; j++) {
+        const a = f.ph + (j / FOG_PUFFS) * 6.283 + t * 0.12;
+        const r = (0.48 + 0.12 * Math.sin(t * 0.5 + j * 1.9 + f.ph)) * f.k;
+        const sz = (0.55 + 0.18 * Math.sin(t * 0.7 + j + f.ph)) * f.k;
+        F.mesh.setMatrixAt(i++, tmpM.compose(tmpP.set(f.x + Math.cos(a) * r, f.y + hgt * (0.15 + 0.5 * ((j * 0.37) % 1)), f.z + Math.sin(a) * r), tmpQ.identity(), tmpS.set(sz * 1.3, sz * 0.8, sz * 1.3)));
+      }
+    });
+    F.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // ---------- Portails (#472) ----------
+  const portalTex = canvasTex(128, (g, n) => {
+    const c = n / 2;
+    const gr = g.createRadialGradient(c, c, 4, c, c, c);
+    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.35, "#c9a8ff"); gr.addColorStop(1, "#5b3fd0");
+    g.fillStyle = gr; g.fillRect(0, 0, n, n);
+    g.strokeStyle = "rgba(255,255,255,.75)"; g.lineWidth = 3;
+    for (let k = 0; k < 3; k++) { g.beginPath(); for (let a = 0; a < 7; a += 0.1) { const r = 6 + a * 7.5; const x = c + Math.cos(a + k * 2.094) * r, y = c + Math.sin(a + k * 2.094) * r; if (a) g.lineTo(x, y); else g.moveTo(x, y); } g.stroke(); }
+  });
+  portalTex.wrapS = portalTex.wrapT = THREE.ClampToEdgeWrapping;
+  portalTex.center.set(0.5, 0.5);
+  const portalGeo = new THREE.CircleGeometry(0.2, 24);
+  geos.push(portalGeo);
+  MAT.portal = mat(new THREE.MeshBasicMaterial({ map: portalTex, transparent: true, opacity: 0.92, side: THREE.DoubleSide, depthWrite: false }));
+  function buildPortals() {
+    const list = S.portals || [];
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(portalGeo, MAT.portal, list.length);
+    list.forEach((p, i) => {
+      tmpQ.setFromAxisAngle(UP, p.ry);
+      m.setMatrixAt(i, tmpM.compose(tmpP.set(p.pos.x, p.pos.y - 0.02, p.pos.z), tmpQ, tmpS.set(1.15, 1.45, 1)));
+      m.setColorAt(i, tmpC.set(p.dim ? "#c9ccd2" : "#ffffff"));
+    });
+    m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    m.computeBoundingSphere();
+    world.add(m);
+  }
+  const portalV = new THREE.Vector3(), portalW = new THREE.Vector3();
+  function portalAt(cx, cy) {
+    const list = S.portals || [];
+    if (!list.length) return null;
+    const rect = canvas.getBoundingClientRect();
+    let best = null, bd = Infinity;
+    list.forEach((p) => {
+      portalV.copy(p.pos).project(camera);
+      if (portalV.z > 1) return;
+      portalW.copy(p.pos).add(tmpP.set(0, 0.4, 0)).project(camera);
+      const sx = (portalV.x + 1) / 2 * rect.width, sy = (1 - portalV.y) / 2 * rect.height;
+      const px = Math.abs((portalW.y - portalV.y) / 2 * rect.height);
+      const d = Math.hypot(cx - rect.left - sx, cy - rect.top - sy);
+      if (d < Math.max(10, px * 0.9) && d < bd) { bd = d; best = p.pid; }
+    });
+    return best;
+  }
+
+  // ---------- Particules et retours d'action (#480) ----------
+  // Deux maillages instanciés à capacité fixe : particules « douces »
+  // (poussière, fumée, brume de chantier) et lumineuses (étincelles).
+  const FX_MAX = 700;
+  const fxGroup = new THREE.Group();
+  scene.add(fxGroup);
+  const fxSoft = new THREE.InstancedMesh(G.ball, MAT.fxSoft, FX_MAX);
+  const fxGlow = new THREE.InstancedMesh(G.box, MAT.fxGlow, FX_MAX);
+  [fxSoft, fxGlow].forEach((m) => { m.frustumCulled = false; m.count = 0; for (let i = 0; i < FX_MAX; i++) m.setColorAt(i, tmpC.set("#ffffff")); scene.add(m); });
+  const fx = { soft: [], glow: [] };
+  function spawn(kind, x, y, z, vx, vy, vz, life, size, color, grow, grav) {
+    const arr = fx[kind];
+    if (arr.length >= FX_MAX) arr.shift();
+    arr.push({ x, y, z, vx, vy, vz, life, max: life, size, color, grow: grow || 0, grav: grav || 0 });
+  }
+  function dustBurst(x, y, z, k, n, color) {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * 6.283 + Math.random() * 0.4, sp = (0.7 + Math.random() * 0.8) * k;
+      spawn("soft", x + Math.cos(a) * 0.3 * k, y + 0.1, z + Math.sin(a) * 0.3 * k, Math.cos(a) * sp, 0.35 + Math.random() * 0.5, Math.sin(a) * sp, 1.1 + Math.random() * 0.6, 0.2 * k, color || "#d8c7a6", 0.45, -0.2);
+    }
+  }
+  function sparkBurst(x, y, z, k, n, colors) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.283, sp = (0.6 + Math.random() * 1.4) * k;
+      spawn("glow", x, y, z, Math.cos(a) * sp, 1 + Math.random() * 1.6, Math.sin(a) * sp, 0.45 + Math.random() * 0.4, 0.05 * k, colors[i % colors.length], -0.05, 4.5);
+    }
+  }
+  function stepFx(dt) {
+    ["soft", "glow"].forEach((kind) => {
+      const arr = fx[kind], mesh = kind === "soft" ? fxSoft : fxGlow;
+      let w = 0;
+      for (let i = 0; i < arr.length; i++) {
+        const p = arr[i];
+        p.life -= dt;
+        if (p.life <= 0) continue;
+        p.vy -= p.grav * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        p.vx *= 1 - Math.min(1, dt * 1.8); p.vz *= 1 - Math.min(1, dt * 1.8);
+        p.size = Math.max(0.01, p.size + p.grow * dt);
+        const u = p.life / p.max;
+        const sz = p.size * (kind === "soft" ? Math.min(1, u * 2.2) : Math.min(1, u * 3));
+        mesh.setMatrixAt(w, tmpM.compose(tmpP.set(p.x, p.y, p.z), tmpQ.identity(), tmpS.setScalar(sz)));
+        mesh.setColorAt(w, tmpC.set(p.color));
+        arr[w++] = p;
+      }
+      arr.length = w;
+      mesh.count = w;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
+  }
+  // Émetteurs permanents : soudure (en cours), poussière (en cours), fumée
+  // de cheminée (terminées). Rien si animations réduites ou qualité basse.
+  function emitAmbient(dt) {
+    const E = S.emit;
+    if (!E || reduced || !S.life || S.dist > 70) return;
+    E.sparks.forEach((e) => {
+      e.next -= dt;
+      if (e.next > 0) return;
+      e.next = 1.6 + Math.random() * 2.6;
+      sparkBurst(e.x, e.y, e.z, e.k * 0.8, 7, ["#fff3b0", "#ffd36b", "#ffffff"]);
+    });
+    E.dust.forEach((e) => {
+      e.next -= dt;
+      if (e.next > 0) return;
+      e.next = 2.5 + Math.random() * 3;
+      for (let i = 0; i < 3; i++) spawn("soft", e.x + (Math.random() - 0.5) * 0.8 * e.k, e.y + 0.05, e.z + (Math.random() - 0.5) * 0.8 * e.k, (Math.random() - 0.5) * 0.3, 0.25, (Math.random() - 0.5) * 0.3, 1.4, 0.14 * e.k, "#d9c9a8", 0.25, 0);
+    });
+    E.smoke.forEach((e) => {
+      e.next -= dt;
+      if (e.next > 0) return;
+      e.next = 0.9 + Math.random() * 0.8;
+      spawn("soft", e.x, e.y, e.z, 0.12, 0.45, 0.04, 3.2, 0.09 * e.k, "#d6d6da", 0.16, -0.02);
+    });
+  }
+  // Animations d'événement (grue, piquets, bannière) : objets temporaires.
+  const anims = [];
+  const fxMats = {};
+  const fxMat = (c, basic) => fxMats[c + (basic ? "b" : "")] || (fxMats[c + (basic ? "b" : "")] = mat(basic ? new THREE.MeshBasicMaterial({ color: c }) : new THREE.MeshLambertMaterial({ color: c, flatShading: true })));
+  function part(group, geo, c, x, y, z, sx, sy, sz, basic) {
+    const m = new THREE.Mesh(geo, fxMat(c, basic));
+    m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.castShadow = true;
+    group.add(m);
+    return m;
+  }
+  function addAnim(group, dur, update) {
+    fxGroup.add(group);
+    anims.push({ group, t0: S.time, dur, update });
+    update(0, group);
+  }
+  function stepAnims() {
+    for (let i = anims.length - 1; i >= 0; i--) {
+      const a = anims[i];
+      const u = (S.time - a.t0) / a.dur;
+      if (u >= 1) {
+        fxGroup.remove(a.group);
+        a.group.traverse((c) => { if (c.userData.ownGeo) c.geometry.dispose(); if (c.userData.ownMat) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } });
+        anims.splice(i, 1);
+        continue;
+      }
+      a.update(u, a.group);
+    }
+  }
+  const ease = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+  // Grue (#480) : elle se dresse, hisse un bloc jusqu'au sommet, puis se retire.
+  function craneAt(p, k) {
+    const g = new THREE.Group();
+    const top = Math.max(1.2, p.top - p.y + 0.6);
+    const H = top + 0.9;
+    const mast = part(g, G.box, "#f2b705", 0, 0, 0, 0.1, H, 0.1);
+    const jib = new THREE.Group(); jib.position.set(0, H, 0); g.add(jib);
+    part(jib, G.box, "#f2b705", 0.45, 0, 0, 1.3, 0.07, 0.07);
+    part(jib, G.box, "#3a3a3a", -0.35, -0.05, 0, 0.3, 0.16, 0.18);
+    const cable = part(jib, G.box, "#2b2b2b", 0.85, 0, 0, 0.015, 1, 0.015);
+    const block = part(jib, G.box, "#b0773c", 0.85, 0, 0, 0.3, 0.26, 0.3);
+    g.position.set(p.x + 0.72 * k, p.y, p.z + 0.1 * k);
+    g.rotation.y = Math.atan2(p.x - g.position.x, p.z - g.position.z) - Math.PI / 2;
+    const dur = reduced ? 2.5 : 5.2;
+    addAnim(g, dur, (u) => {
+      const s = reduced ? 1 : Math.min(ease(u / 0.12), ease((1 - u) / 0.1));
+      g.scale.set(1, Math.max(0.01, s), 1);
+      const lift = reduced ? 1 : ease((u - 0.15) / 0.55);
+      const hang = H - 0.1 - (1 - lift) * (H - 0.35);
+      block.position.y = -(H - hang) - 0.13;
+      cable.scale.y = Math.max(0.01, H - hang);
+      cable.position.y = -(H - hang);
+      jib.rotation.y = reduced ? 0 : Math.sin(u * Math.PI) * 0.35;
+      mast.visible = true;
+    });
+    if (!reduced) dustBurst(g.position.x, p.y, g.position.z, 0.6, 8);
+  }
+  // Nouvelle tâche : la parcelle se jalonne dans un nuage de poussière.
+  function stakeAt(p, k) {
+    const g = new THREE.Group();
+    [[-0.34, -0.3], [0.34, -0.3], [-0.34, 0.32], [0.34, 0.32]].forEach(([x, z]) => part(g, G.cyl, "#8a5a35", x * k, 0, z * k, 0.05, 0.42 * k, 0.05));
+    part(g, G.box, "#f2efe6", 0, 0.34 * k, -0.3 * k, 0.7 * k, 0.02, 0.02, true);
+    part(g, G.box, "#f2efe6", 0, 0.34 * k, 0.32 * k, 0.7 * k, 0.02, 0.02, true);
+    g.position.set(p.x, p.y, p.z);
+    addAnim(g, reduced ? 2 : 3.2, (u) => { const s = reduced ? 1 : Math.min(ease(u / 0.2), ease((1 - u) / 0.2)); g.scale.set(1, Math.max(0.01, s), 1); });
+    if (!reduced) { dustBurst(p.x, p.y, p.z, k, 22); dustBurst(p.x, p.y, p.z, k * 0.6, 10, "#efe6d2"); }
+  }
+  // Jalon franchi : une bannière se déroule au-dessus de la borne, sobrement.
+  function bannerAt(p, t) {
+    const g = new THREE.Group();
+    const H = Math.max(1.8, p.top - p.y + 1.5);
+    part(g, G.cyl, "#5a4030", 0, 0, 0, 0.05, H, 0.05);
+    part(g, G.ball, "#e0b44a", 0, H, 0, 0.12, 0.12, 0.12);
+    const c = document.createElement("canvas"); c.width = 256; c.height = 320;
+    const x = c.getContext("2d");
+    if (x) {
+      x.clearRect(0, 0, 256, 320);
+      x.fillStyle = t.milestoneColor || CARTE_MILESTONE_COLOR;
+      x.beginPath(); x.moveTo(0, 0); x.lineTo(256, 0); x.lineTo(256, 318); x.lineTo(128, 286); x.lineTo(0, 318); x.closePath(); x.fill();
+      x.fillStyle = "#ffffff"; x.textAlign = "center";
+      x.font = "700 34px Georgia, serif"; x.fillText("◆", 128, 60);
+      x.font = "700 26px Inter, -apple-system, 'Segoe UI', sans-serif"; x.fillText("Jalon franchi", 128, 110);
+      x.font = "500 22px Inter, -apple-system, 'Segoe UI', sans-serif";
+      const words = String(t.title || "").split(/\s+/); let line = "", y = 160;
+      words.forEach((w) => { const test = line ? line + " " + w : w; if (x.measureText(test).width > 220 && line) { x.fillText(line, 128, y); line = w; y += 28; } else line = test; });
+      if (line && y < 280) x.fillText(line.length > 22 ? line.slice(0, 21) + "…" : line, 128, y);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const clothGeo = new THREE.PlaneGeometry(1, 1.25).translate(0.55, -0.625, 0);
+    const cloth = new THREE.Mesh(clothGeo, new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }));
+    cloth.userData.ownGeo = cloth.userData.ownMat = true;
+    cloth.position.set(0, H - 0.05, 0);
+    g.add(cloth);
+    g.position.set(p.x + 0.35, p.y, p.z);
+    addAnim(g, reduced ? 6 : 9, (u) => {
+      const unroll = reduced ? 1 : Math.min(ease(u / 0.14), ease((1 - u) / 0.1));
+      cloth.scale.set(1, Math.max(0.01, unroll), 1);
+      g.rotation.y = Math.atan2(camera.position.x - g.position.x, camera.position.z - g.position.z);
+      cloth.rotation.y = reduced ? 0 : Math.sin(S.time * 1.8) * 0.12;
+    });
+    if (!reduced) sparkBurst(p.x, p.top + 0.4, p.z, 1, 18, ["#ffd23f", t.milestoneColor || CARTE_MILESTONE_COLOR, "#ffffff"]);
+  }
+  // Déclenche l'effet d'un événement de carteEvents (#480).
+  function playEvent(ev) {
+    const p = S.poi[ev.id], t = S.data && S.data.taskById[ev.id];
+    if (!p || !t) return;
+    const k = p.k || 1;
+    if (ev.type === "created") stakeAt(p, k);
+    else if (ev.type === "progress") { if (!anims.some((a) => a.craneFor === ev.id)) { craneAt(p, k); anims[anims.length - 1].craneFor = ev.id; } }
+    else if (ev.type === "done") { if (!reduced) { sparkBurst(p.x, p.top, p.z, k, 16, ["#1FA971", "#ffd23f", "#ffffff"]); dustBurst(p.x, p.y, p.z, k, 10); } }
+    else if (ev.type === "milestone") bannerAt(p, t);
+  }
+
+  // ---------- Contour lumineux (#477) ----------
+  // Survol : liseré clair et halo sur la case visée. Sélection : l'anneau
+  // bleu pulse doucement (voir animate).
+  const outlineGeo = new THREE.RingGeometry(0.9, 1.02, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  const haloGeo = new THREE.RingGeometry(1.0, 1.22, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  geos.push(outlineGeo, haloGeo);
+  const hoverLine = new THREE.Mesh(outlineGeo, mat(new THREE.MeshBasicMaterial({ color: "#fff7c2", transparent: true, opacity: 0.95, depthWrite: false })));
+  const hoverHalo = new THREE.Mesh(haloGeo, mat(new THREE.MeshBasicMaterial({ color: "#fff7c2", transparent: true, opacity: 0.35, depthWrite: false })));
+  hoverLine.visible = hoverHalo.visible = false;
+  hoverLine.renderOrder = hoverHalo.renderOrder = 5;
+  scene.add(hoverLine, hoverHalo);
+  function setHoverTile(key, color) {
+    if (!key || !S.layout || !S.layout.tiles[key]) { hoverLine.visible = hoverHalo.visible = false; S.hoverKey = null; return; }
+    S.hoverKey = key;
+    const t = S.layout.tiles[key], w = carteToWorld(t.q, t.r);
+    const y = (S.capTop && S.capTop[key] != null ? S.capTop[key] : t.h + 0.12) + 0.07;
+    hoverLine.position.set(w.x, y, w.z); hoverHalo.position.set(w.x, y, w.z);
+    hoverLine.material.color.set(color || "#fff7c2"); hoverHalo.material.color.set(color || "#fff7c2");
+    hoverLine.visible = hoverHalo.visible = true;
+  }
+  // Parcelle libre d'un territoire, où l'on peut construire (#470).
+  function buildableAt(key) {
+    const t = S.layout && S.layout.tiles[key];
+    if (!t || !t.projectId || t.kind === "hub" || t.kind === "sea" || t.road || t.lava) return null;
+    const p = S.layout.projectById[t.projectId];
+    if (!p || p.unknown) return null;
+    if (S.poisByKey[key] || S.layout.occupancy[key]) return null;
+    return { projectId: t.projectId, key };
+  }
+
+  // ---------- Mini-carte (#471) ----------
+  // Vue de dessus, nord en haut : cases à leur couleur, pings des retards
+  // (rouge) et des échéances du jour (orange), cadre de la caméra. Un clic y
+  // déplace la vue.
+  const mini = document.createElement("canvas");
+  mini.className = "lp-carte-minimap";
+  mini.setAttribute("role", "img");
+  mini.setAttribute("aria-label", "Mini-carte : cliquez pour déplacer la vue");
+  container.appendChild(mini);
+  const miniBase = document.createElement("canvas");
+  const MINI = { x0: 0, z0: 0, k: 1, ox: 0, oz: 0, drawnAt: -1 };
+  function drawMinimapBase() {
+    if (!S.layout) return;
+    const css = container.clientWidth < 600 ? 112 : 156;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    mini.style.width = mini.style.height = css + "px";
+    mini.width = mini.height = miniBase.width = miniBase.height = Math.round(css * dpr);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    Object.keys(S.layout.tiles).forEach((k) => { const t = S.layout.tiles[k]; if (t.kind === "sea") return; const w = carteToWorld(t.q, t.r); x0 = Math.min(x0, w.x); x1 = Math.max(x1, w.x); z0 = Math.min(z0, w.z); z1 = Math.max(z1, w.z); });
+    if (!Number.isFinite(x0)) return;
+    const N = mini.width, pad = 6 * dpr;
+    const k = Math.min((N - 2 * pad) / Math.max(4, x1 - x0 + 2), (N - 2 * pad) / Math.max(4, z1 - z0 + 2));
+    Object.assign(MINI, { k, ox: pad + ((N - 2 * pad) - (x1 - x0) * k) / 2 - x0 * k, oz: pad + ((N - 2 * pad) - (z1 - z0) * k) / 2 - z0 * k });
+    const g = miniBase.getContext("2d");
+    if (!g) return;
+    g.fillStyle = "#cfe6f0"; g.fillRect(0, 0, N, N);
+    const r = Math.max(1, k * 0.95);
+    Object.keys(S.layout.tiles).forEach((key) => {
+      const t = S.layout.tiles[key];
+      if (t.kind === "sea") return;
+      const w = carteToWorld(t.q, t.r);
+      g.fillStyle = S.tileTop[key] || "#9fcf6a";
+      g.beginPath(); g.arc(w.x * k + MINI.ox, w.z * k + MINI.oz, r, 0, 6.283); g.fill();
+    });
+    MINI.drawnAt = -1;
+  }
+  function drawMinimap() {
+    if (!S.minimap || !S.layout || S.strategic > 0.98) { mini.hidden = true; return; }
+    mini.hidden = false;
+    if (S.time - MINI.drawnAt < 0.15) return;
+    MINI.drawnAt = S.time;
+    const g = mini.getContext("2d");
+    if (!g) return;
+    const N = mini.width, dpr = N / (parseFloat(mini.style.width) || N);
+    g.drawImage(miniBase, 0, 0);
+    const X = (x) => x * MINI.k + MINI.ox, Z = (z) => z * MINI.k + MINI.oz;
+    const pulse = reduced ? 0.5 : 0.5 + 0.5 * Math.sin(S.time * 4);
+    Object.keys(S.poi).forEach((id) => {
+      const t = S.data.taskById[id];
+      if (!t || t.state === "done" || t.state === "info") return;
+      const late = t.overdue, today = t.dueIn === 0;
+      if (!late && !today) return;
+      const p = S.poi[id];
+      g.fillStyle = late ? "#e5332a" : "#f08a24";
+      g.beginPath(); g.arc(X(p.x), Z(p.z), (2.2 + (late ? 1.6 * pulse : 0.6)) * dpr, 0, 6.283); g.fill();
+      if (late) { g.strokeStyle = "rgba(229,51,42," + (0.5 * (1 - pulse)) + ")"; g.lineWidth = 1.2 * dpr; g.beginPath(); g.arc(X(p.x), Z(p.z), (4 + 5 * pulse) * dpr, 0, 6.283); g.stroke(); }
+    });
+    // Cadre approximatif de la vue : trapèze au sol autour de la cible.
+    const half = S.dist * Math.tan((camera.fov * Math.PI) / 360) * camera.aspect;
+    const depth = S.dist * 0.75 / Math.max(0.35, Math.sin(S.pitch));
+    const fwx = -Math.sin(S.yaw), fwz = -Math.cos(S.yaw), rx = Math.cos(S.yaw), rz = -Math.sin(S.yaw);
+    const tx = S.target.x, tz = S.target.z;
+    const pts = [[-0.7, -0.45], [0.7, -0.45], [1.15, 0.7], [-1.15, 0.7]].map(([a, b]) => [X(tx + rx * half * a + fwx * depth * b), Z(tz + rz * half * a + fwz * depth * b)]);
+    g.fillStyle = "rgba(36,94,219,.14)"; g.strokeStyle = "#245edb"; g.lineWidth = 1.4 * dpr;
+    g.beginPath(); pts.forEach((q, i) => (i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]))); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = "#18263d"; g.beginPath(); g.arc(X(keeper.position.x), Z(keeper.position.z), 2.6 * dpr, 0, 6.283); g.fill();
+    g.strokeStyle = "rgba(24,38,61,.35)"; g.lineWidth = dpr; g.strokeRect(0.5, 0.5, N - 1, N - 1);
+  }
+  const onMini = (e) => {
+    const r = mini.getBoundingClientRect();
+    const N = mini.width, sx = ((e.clientX - r.left) / r.width) * N, sz = ((e.clientY - r.top) / r.height) * N;
+    const x = (sx - MINI.ox) / MINI.k, z = (sz - MINI.oz) / MINI.k;
+    S.follow = false; S.walkTo = null;
+    S.focusGoal = new THREE.Vector3(x, 0, z);
+    e.preventDefault(); e.stopPropagation();
+  };
+  mini.addEventListener("pointerdown", onMini);
+
+  // ---------- Zoom stratégique (#476) ----------
+  // De loin, la 3D s'efface au profit d'une carte ancienne à plat : cases à
+  // la couleur des projets, frontières à l'encre, et pour chaque territoire
+  // deux gros chiffres (tâches à faire, retards).
+  const strat = document.createElement("canvas");
+  strat.className = "lp-carte-strategic";
+  strat.setAttribute("aria-hidden", "true");
+  container.appendChild(strat);
+  const paperTex = (() => {
+    const c = document.createElement("canvas"); c.width = c.height = 160;
+    const g = c.getContext("2d");
+    if (g) {
+      g.fillStyle = "#efe3c4"; g.fillRect(0, 0, 160, 160);
+      for (let i = 0; i < 900; i++) { g.fillStyle = "rgba(120,90,40," + (carteRand("pp" + i) * 0.07) + ")"; g.fillRect(carteRand("px" + i) * 160, carteRand("py" + i) * 160, 1 + carteRand("pz" + i) * 2, 1); }
+    }
+    return c;
+  })();
+  const stV = new THREE.Vector3(), stA = new THREE.Vector3(), stB = new THREE.Vector3();
+  function drawStrategic(force) {
+    const a = S.strategic;
+    strat.style.opacity = String(a);
+    strat.hidden = a <= 0.001;
+    labels.style.opacity = String(Math.max(0, 1 - a * 2));
+    if (strat.hidden || !S.layout) return;
+    const W = canvas.clientWidth, H = canvas.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+    const key = [Math.round(S.target.x * 10), Math.round(S.target.z * 10), Math.round(S.dist * 10), Math.round(S.yaw * 100), Math.round(S.pitch * 100), W, H, S.buildId, S.viewOffset[0], S.viewOffset[1]].join("|");
+    if (!force && key === S.stratKey) return;
+    S.stratKey = key;
+    if (strat.width !== Math.round(W * dpr) || strat.height !== Math.round(H * dpr)) { strat.width = Math.round(W * dpr); strat.height = Math.round(H * dpr); }
+    const g = strat.getContext("2d");
+    if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = g.createPattern(paperTex, "repeat") || "#efe3c4"; g.fillRect(0, 0, W, H);
+    const scr = (x, y, z, out) => { stV.set(x, y, z).project(camera); out[0] = (stV.x + 1) / 2 * W; out[1] = (1 - stV.y) / 2 * H; return stV.z <= 1; };
+    // Base affine locale : axes X et Z du monde à l'écran, près de la cible.
+    stA.set(S.target.x, 0, S.target.z).project(camera);
+    stB.set(S.target.x + 1, 0, S.target.z).project(camera);
+    const ex = [(stB.x - stA.x) / 2 * W, -(stB.y - stA.y) / 2 * H];
+    stB.set(S.target.x, 0, S.target.z + 1).project(camera);
+    const ez = [(stB.x - stA.x) / 2 * W, -(stB.y - stA.y) / 2 * H];
+    const corner = (i) => { const th = (i * Math.PI) / 3; return [Math.sin(th), Math.cos(th)]; };
+    const cs = [0, 1, 2, 3, 4, 5].map(corner);
+    const c0 = [0, 0];
+    const L = S.layout;
+    const keys = Object.keys(L.tiles);
+    const sc = [];
+    keys.forEach((k) => {
+      const t = L.tiles[k];
+      if (t.kind === "sea") return;
+      const w = carteToWorld(t.q, t.r);
+      if (!scr(w.x, 0, w.z, c0)) return;
+      if (c0[0] < -60 || c0[1] < -60 || c0[0] > W + 60 || c0[1] > H + 60) return;
+      const p = t.projectId && L.projectById[t.projectId];
+      const dim = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+      let fill = t.kind === "water" ? "#cfd8c4" : t.kind === "wild" || t.kind === "edge" || t.kind === "islet" ? "#e3d3a8" : "#e8d9b0";
+      if (p && !p.unknown && t.kind !== "water") fill = carteMix(fill, p.color || "#C08A3E", t.kind === "hub" ? 0.55 : 0.28);
+      if (dim) fill = carteMix(fill, "#cfc8b4", 0.7);
+      g.fillStyle = fill;
+      g.beginPath();
+      cs.forEach(([dx, dz], i) => { const x = c0[0] + ex[0] * dx * 1.01 + ez[0] * dz * 1.01, y = c0[1] + ex[1] * dx * 1.01 + ez[1] * dz * 1.01; if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+      g.closePath(); g.fill();
+      sc.push([k, c0[0], c0[1]]);
+    });
+    // Frontières des territoires à l'encre.
+    g.strokeStyle = "rgba(84,58,26,.75)"; g.lineWidth = 1.6; g.lineCap = "round";
+    g.beginPath();
+    sc.forEach(([k, x, y]) => {
+      const t = L.tiles[k];
+      const w = carteToWorld(t.q, t.r);
+      for (let i = 0; i < 6; i++) {
+        const th = (i * Math.PI) / 3 + Math.PI / 6;
+        const nh = carteFromWorld(w.x + Math.sin(th) * CARTE_SQ3, w.z + Math.cos(th) * CARTE_SQ3);
+        const n = L.tiles[carteKey(nh[0], nh[1])];
+        const other = n && n.kind !== "sea" ? n.projectId || null : "__mer__";
+        if (other === (t.projectId || null)) continue;
+        const a = cs[i], b = cs[(i + 1) % 6];
+        g.moveTo(x + ex[0] * a[0] + ez[0] * a[1], y + ex[1] * a[0] + ez[1] * a[1]);
+        g.lineTo(x + ex[0] * b[0] + ez[0] * b[1], y + ex[1] * b[0] + ez[1] * b[1]);
+      }
+    });
+    g.stroke();
+    // Chiffres des territoires : tâches à faire (affichées) et retards.
+    const open = {}, late = {};
+    S.data.tasks.forEach((t) => {
+      if (t.state === "done" || t.state === "info" || (S.visible && !S.visible.has(t.id))) return;
+      const pid = t.projectId || "__terre-inconnue__";
+      open[pid] = (open[pid] || 0) + 1;
+      if (t.overdue) late[pid] = (late[pid] || 0) + 1;
+    });
+    const unit = Math.hypot(ex[0], ex[1]);
+    const big = Math.max(13, Math.min(34, unit * 2.4));
+    L.territories.forEach((tr) => {
+      const p = L.projectById[tr.projectId];
+      const w = carteToWorld(tr.q, tr.r);
+      if (!scr(w.x, 0, w.z, c0)) return;
+      const dim = S.dimmed && S.dimmed.has(tr.projectId);
+      g.globalAlpha = dim ? 0.45 : 1;
+      const n = open[tr.projectId] || 0, l = late[tr.projectId] || 0;
+      g.fillStyle = "rgba(251,245,228,.92)"; g.strokeStyle = "rgba(84,58,26,.8)"; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(c0[0], c0[1], big * 0.95, 0, 6.283); g.fill(); g.stroke();
+      g.fillStyle = "#3b2a14"; g.textAlign = "center"; g.textBaseline = "middle";
+      g.font = "700 " + Math.round(big) + "px 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif";
+      g.fillText(String(n), c0[0], c0[1] + 1);
+      if (l) {
+        const rx = c0[0] + big * 0.85, ry = c0[1] - big * 0.7, rr = Math.max(8, big * 0.45);
+        g.fillStyle = "#b3261e"; g.beginPath(); g.arc(rx, ry, rr, 0, 6.283); g.fill();
+        g.fillStyle = "#fff"; g.font = "700 " + Math.round(rr * 1.15) + "px Inter, -apple-system, 'Segoe UI', sans-serif"; g.fillText(String(l), rx, ry + 0.5);
+      }
+      if (unit > 3.2) {
+        g.fillStyle = "#3b2a14"; g.font = "italic 600 " + Math.round(Math.max(11, big * 0.42)) + "px 'Palatino Linotype', Palatino, Georgia, serif";
+        const name = (p.name || "").length > 24 ? p.name.slice(0, 23) + "…" : p.name || "";
+        g.fillText(name, c0[0], c0[1] + big * 1.35);
+      }
+      g.globalAlpha = 1;
+    });
+    // Rose des vents (nord = -Z du monde) et cartouche.
+    stB.set(S.target.x, 0, S.target.z - 1).project(camera);
+    const na = Math.atan2(-(stB.y - stA.y) * H, (stB.x - stA.x) * W);
+    const cx = 50, cy = H - 56;
+    g.save(); g.translate(cx, cy); g.rotate(na + Math.PI / 2);
+    g.fillStyle = "#3b2a14"; g.beginPath(); g.moveTo(0, -22); g.lineTo(6, 0); g.lineTo(0, 22); g.lineTo(-6, 0); g.closePath(); g.fill();
+    g.fillStyle = "#b3261e"; g.beginPath(); g.moveTo(0, -22); g.lineTo(6, 0); g.lineTo(-6, 0); g.closePath(); g.fill();
+    g.fillStyle = "#3b2a14"; g.font = "700 12px Georgia, serif"; g.textAlign = "center"; g.fillText("N", 0, -28);
+    g.restore();
+    g.strokeStyle = "rgba(84,58,26,.6)"; g.lineWidth = 3; g.strokeRect(6, 6, W - 12, H - 12);
+    g.lineWidth = 1; g.strokeRect(11, 11, W - 22, H - 22);
+  }
+
+  // ---------- Effet miniature (#479) ----------
+  // Rendu dans une texture, puis flou gaussien séparable dont le rayon croît
+  // avec l'écart vertical à la bande nette (centrée sur la cible) : la
+  // profondeur de champ courte d'une maquette photographiée.
+  const post = { ok: !!(renderer.capabilities && renderer.capabilities.isWebGL2), rtA: null, rtB: null, w: 0, h: 0 };
+  const postScene = new THREE.Scene();
+  const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const postGeo = new THREE.PlaneGeometry(2, 2);
+  geos.push(postGeo);
+  const tsMat = mat(new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uRes: { value: new THREE.Vector2(1, 1) }, uFocus: { value: 0.5 }, uBand: { value: 0.14 }, uAmount: { value: 2.2 }, uSat: { value: 1 } },
+    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader: [
+      "uniform sampler2D tDiffuse; uniform vec2 uDir; uniform vec2 uRes; uniform float uFocus; uniform float uBand; uniform float uAmount; uniform float uSat; varying vec2 vUv;",
+      "void main(){",
+      "  float d = max(0.0, abs(vUv.y - uFocus) - uBand);",
+      "  float r = clamp(d / max(0.05, 0.55 - uBand), 0.0, 1.0);",
+      "  vec2 st = uDir / uRes * r * r * uAmount;",
+      "  vec4 c = texture2D(tDiffuse, vUv) * 0.2270270270;",
+      "  c += (texture2D(tDiffuse, vUv + st * 1.3846153846) + texture2D(tDiffuse, vUv - st * 1.3846153846)) * 0.3162162162;",
+      "  c += (texture2D(tDiffuse, vUv + st * 3.2307692308) + texture2D(tDiffuse, vUv - st * 3.2307692308)) * 0.0702702703;",
+      "  float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));",
+      "  gl_FragColor = vec4(mix(vec3(l), c.rgb, uSat), 1.0);",
+      "  #include <colorspace_fragment>",
+      "}",
+    ].join("\n"),
+    depthTest: false, depthWrite: false,
+  }));
+  postScene.add(new THREE.Mesh(postGeo, tsMat));
+  const postSize = new THREE.Vector2();
+  function ensureRT() {
+    renderer.getDrawingBufferSize(postSize);
+    const w = Math.max(1, postSize.x), h = Math.max(1, postSize.y);
+    if (post.rtA && post.w === w && post.h === h) return;
+    if (post.rtA) { post.rtA.dispose(); post.rtB.dispose(); }
+    // Cible flottante si le contexte sait y dessiner (moins de bandes), sinon 8 bits.
+    const ext = renderer.extensions;
+    const type = ext && (ext.has("EXT_color_buffer_float") || ext.has("EXT_color_buffer_half_float")) ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    post.rtA = new THREE.WebGLRenderTarget(w, h, { type, samples: S.effQuality === "high" ? 4 : 0 });
+    post.rtB = new THREE.WebGLRenderTarget(w, h, { type });
+    post.w = w; post.h = h;
+  }
+  const focusV = new THREE.Vector3();
+  function renderFrame() {
+    // Vue plan : vue de dessus, sans profondeur de champ.
+    const useTs = post.ok && S.miniature && !S.plan && S.effQuality !== "low" && S.strategic < 0.99;
+    if (!useTs) { renderer.render(scene, camera); return; }
+    try {
+      ensureRT();
+      renderer.setRenderTarget(post.rtA);
+      renderer.render(scene, camera);
+      focusV.set(S.target.x, S.target.y, S.target.z).project(camera);
+      const U = tsMat.uniforms;
+      U.uFocus.value = Math.max(0.2, Math.min(0.8, (focusV.y + 1) / 2));
+      // Plus la vue est plongeante et lointaine, plus l'effet est marqué.
+      U.uAmount.value = 1.6 + Math.min(1.4, S.dist / 40);
+      U.uRes.value.set(post.w, post.h);
+      U.tDiffuse.value = post.rtA.texture; U.uDir.value.set(1, 0); U.uSat.value = 1;
+      renderer.setRenderTarget(post.rtB);
+      renderer.render(postScene, postCam);
+      U.tDiffuse.value = post.rtB.texture; U.uDir.value.set(0, 1); U.uSat.value = 1.1;
+      renderer.setRenderTarget(null);
+      renderer.render(postScene, postCam);
+    } catch (e) {
+      // Contexte sans cible flottante : rendu direct, sans l'effet.
+      post.ok = false;
+      renderer.setRenderTarget(null);
+      renderer.render(scene, camera);
+    }
+  }
+
   function animate() {
     const t = S.time;
+    // Matières vivantes (#479) : feuillages, rides de l'eau, portails.
+    swayU.value = reduced ? 0 : t;
+    if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); portalTex.rotation = -t * 0.8; }
+    placeFog(t);
+    // Contour de la sélection (#477) : pulsation douce.
+    if (S.selRing) {
+      const pu = reduced ? 1 : 0.5 + 0.5 * Math.sin(t * 4);
+      const sc = 1 + 0.06 * pu;
+      S.selRing.scale.set(sc, 1, sc);
+      S.selRing.material.opacity = 0.65 + 0.3 * pu;
+      if (S.selHalo) { S.selHalo.scale.set(sc, 1, sc); S.selHalo.material.opacity = 0.18 + 0.22 * pu; }
+    }
+    if (hoverHalo.visible) hoverHalo.material.opacity = reduced ? 0.35 : 0.22 + 0.2 * (0.5 + 0.5 * Math.sin(t * 5));
     placeStorms(t); placeFires(t); placeClocks(t); placeWarnings(t); placeAmbient(t); placeTrail(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
@@ -20401,12 +21206,17 @@ function createCarteEngine(THREE, container, opts) {
     S.effQuality = S.quality === "auto" ? (n > 3000 ? "low" : n > 800 ? "medium" : "high") : S.quality;
     S.detail = n > 3000 ? 0 : n > 1200 ? 1 : 2;
     const ratio = { low: 1, medium: 1.5, high: 2 }[S.effQuality];
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, ratio));
+    S.prMax = Math.min(window.devicePixelRatio || 1, ratio);
+    S.pr = S.prMax;
+    renderer.setPixelRatio(S.pr);
     const shade = S.effQuality === "high";
     renderer.shadowMap.enabled = shade;
     sun.castShadow = shade;
   }
   function setData(d) {
+    // Vie de la carte (#480) : ce qui a changé depuis le relevé précédent.
+    const events = S.life && S.prevTasks ? carteEvents(S.prevTasks, d.data.tasks) : [];
+    S.prevTasks = d.data.tasks.map((t) => ({ id: t.id, state: t.state, progress: t.progress, milestone: t.milestone }));
     S.data = d.data; S.layout = d.layout; S.stats = d.stats || {}; S.visible = d.visible || null; S.dimmed = d.dimmed || null;
     S.trailIds = d.trail || null;
     resolveQuality();
@@ -20423,6 +21233,7 @@ function createCarteEngine(THREE, container, opts) {
     }
     if (S.selected && !S.poi[S.selected]) select(null);
     o.onQuality && o.onQuality(S.effQuality);
+    events.slice(0, 12).forEach(playEvent);
   }
   function select(id) {
     S.selected = id || null;
@@ -20454,7 +21265,7 @@ function createCarteEngine(THREE, container, opts) {
     ts.forEach((t) => { const w = carteToWorld(t.q, t.r); maxd = Math.max(maxd, Math.hypot(w.x - cx, w.z - cz)); });
     S.follow = false;
     S.focusGoal = new THREE.Vector3(cx, 0, cz);
-    S.dist = Math.min(150, Math.max(32, maxd * 2.3 + 18));
+    S.dist = Math.min(CARTE_STRATEGIC_FROM - 2, Math.max(32, maxd * 2.3 + 18));
   }
   // Cadre la caméra sur un ensemble de tâches (mode Fil d'Ariane, #435).
   function frameTasks(ids) {
@@ -20464,8 +21275,56 @@ function createCarteEngine(THREE, container, opts) {
     ps.forEach((p) => { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); });
     S.follow = false; S.walkTo = null;
     S.focusGoal = new THREE.Vector3((x0 + x1) / 2, 0, (z0 + z1) / 2);
-    S.dist = Math.min(150, Math.max(18, Math.hypot(x1 - x0, z1 - z0) * 1.15 + 14));
+    // Reste en 3D, sous le seuil de la carte ancienne (#476).
+    S.dist = Math.min(CARTE_STRATEGIC_FROM - 2, Math.max(18, Math.hypot(x1 - x0, z1 - z0) * 1.15 + 14));
     return true;
+  }
+  // Niveaux de détail (#481) : le décor et les badges s'effacent de loin ;
+  // la résolution suit la fluidité mesurée (qualité « Auto », écrans denses).
+  function applyLod() {
+    const far = S.dist > 75;
+    if (decorGroup.visible === far) decorGroup.visible = !far;
+    const avFar = S.dist > 70;
+    if (S.avatarFar !== avFar || S.avatarBuild !== S.buildId) { S.avatarFar = avFar; S.avatarBuild = S.buildId; (S.avatarSprites || []).forEach((sp) => { sp.visible = !avFar; }); }
+    fxSoft.visible = fxGlow.visible = S.dist < 90;
+  }
+  function adaptResolution(fps) {
+    if (S.quality !== "auto" || !S.prMax || S.prMax <= 1) return;
+    let pr = S.pr || S.prMax;
+    if (fps < 30 && pr > 1) pr = Math.max(1, pr - 0.25);
+    else if (fps > 52 && pr < S.prMax) pr = Math.min(S.prMax, pr + 0.25);
+    if (pr !== S.pr) { S.pr = pr; renderer.setPixelRatio(pr); resize(); }
+  }
+  // Mode photo (#474) : image de la vue courante, avec un cartouche.
+  function snapshot(opts) {
+    const op = opts || {};
+    if (S.strategic < 0.99) renderFrame();
+    const W = canvas.width, H = canvas.height;
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    const g = c.getContext("2d");
+    if (!g) return null;
+    g.drawImage(canvas, 0, 0);
+    if (!strat.hidden && S.strategic > 0.001) { g.globalAlpha = S.strategic; g.drawImage(strat, 0, 0, W, H); g.globalAlpha = 1; }
+    const k = W / Math.max(1, canvas.clientWidth || W);
+    const title = String(op.caption || "").trim();
+    const date = String(op.date || "");
+    if (title || date) {
+      const pad = 18 * k, bw = Math.min(W - 2 * pad, 560 * k), bh = (title && date ? 66 : 44) * k;
+      const x = pad, y = H - pad - bh;
+      g.fillStyle = "rgba(251,247,236,.93)";
+      g.strokeStyle = "rgba(84,58,26,.55)"; g.lineWidth = 1.5 * k;
+      g.beginPath(); g.rect(x, y, bw, bh); g.fill(); g.stroke();
+      g.fillStyle = "#3b2a14"; g.textBaseline = "top";
+      let ty = y + 11 * k;
+      if (title) {
+        g.font = "700 " + Math.round(21 * k) + "px 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif";
+        let tt = title; while (tt.length > 3 && g.measureText(tt).width > bw - 24 * k) tt = tt.slice(0, -2);
+        g.fillText(tt === title ? tt : tt + "…", x + 12 * k, ty); ty += 28 * k;
+      }
+      if (date) { g.font = "500 " + Math.round(13 * k) + "px Inter, -apple-system, 'Segoe UI', sans-serif"; g.fillStyle = "#6b5a3e"; g.fillText(date, x + 12 * k, ty); }
+    }
+    try { return c.toDataURL("image/png"); } catch (e) { return null; }
   }
   function setQuality(q) { S.quality = q; if (S.layout) { resolveQuality(); build(); } o.onQuality && o.onQuality(S.effQuality); }
   // Décalage de la vue (en pixels) : la tâche reste visible à côté du volet
@@ -20516,18 +21375,55 @@ function createCarteEngine(THREE, container, opts) {
     if (!S.layout) return;
     step(dt);
     updateCamera(dt);
+    S.strategic = carteStrategicAlpha(S.dist);
+    applyLod();
     if (!S.lightAt || S.time - S.lightAt > 30) applyDaylight();
-    animate();
-    renderer.render(scene, camera);
-    updateLabels();
+    // Carte ancienne opaque (#476) : la 3D dessous n'est plus dessinée.
+    if (S.strategic < 0.99) {
+      animate();
+      emitAmbient(dt);
+      stepFx(dt);
+      stepAnims();
+      renderFrame();
+    }
+    drawStrategic();
+    drawMinimap();
+    if (S.strategic < 0.99) updateLabels();
     fpsT += dt; fpsN++;
-    if (fpsT > 2) { o.onFps && o.onFps(Math.round(fpsN / fpsT)); fpsT = 0; fpsN = 0; }
+    if (fpsT > 2) { const fps = fpsN / fpsT; o.onFps && o.onFps(Math.round(fps)); adaptResolution(fps); fpsT = 0; fpsN = 0; }
   }
   S.raf = requestAnimationFrame(frame);
 
   return {
     setData, select, focusProject, walkToTask, recenter, overview, frameTasks, setQuality, setPeople, setAmbient, zoomBy,
-    rotate: (d) => { S.yaw += d; },
+    rotate: (d) => { if (!S.plan) S.yaw += d; },
+    // Pilotage (#468 à #481).
+    setOptions(opt) {
+      const v = opt || {};
+      const rebuild = "fog" in v && !!v.fog !== S.fog;
+      ["fog", "minimap", "miniature", "life", "plan"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
+      if (rebuild && S.layout) build();
+      if (!S.minimap) mini.hidden = true;
+    },
+    getView: () => ({ x: Math.round(S.target.x * 100) / 100, z: Math.round(S.target.z * 100) / 100, yaw: Math.round(S.yaw * 1000) / 1000, pitch: Math.round(S.pitch * 1000) / 1000, dist: Math.round(S.dist * 100) / 100 }),
+    setView(v) {
+      if (!v) return;
+      S.follow = false; S.walkTo = null;
+      S.focusGoal = new THREE.Vector3(Number(v.x) || 0, 0, Number(v.z) || 0);
+      const tw = 2 * Math.PI;
+      const dy = ((((Number(v.yaw) || 0) - S.yaw) % tw) + tw * 1.5) % tw - Math.PI;
+      S.viewGoal = { yaw: S.yaw + dy, pitch: Math.max(0.45, Math.min(1.52, Number(v.pitch) || 0.92)), dist: Math.max(7, Math.min(150, Number(v.dist) || 19)) };
+    },
+    // Position à l'écran (px, repère du conteneur) du sommet d'une tâche.
+    screenOf(id) {
+      const p = S.poi[id];
+      if (!p) return null;
+      projV.set(p.x, p.top, p.z).project(camera);
+      if (projV.z > 1) return null;
+      return { x: (projV.x + 1) / 2 * canvas.clientWidth, y: (1 - projV.y) / 2 * canvas.clientHeight };
+    },
+    strategic: () => S.strategic,
+    snapshot,
     setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
@@ -20544,7 +21440,14 @@ function createCarteEngine(THREE, container, opts) {
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("contextmenu", onMenu);
       canvas.removeEventListener("mousedown", onAux);
-      clearGroup(world); clearGroup(overlay);
+      clearTimeout(S.pressTimer);
+      mini.removeEventListener("pointerdown", onMini);
+      clearGroup(world); clearGroup(overlay); clearGroup(decorGroup);
+      anims.forEach((a) => a.group.traverse((c) => { if (c.userData.ownGeo) c.geometry.dispose(); if (c.userData.ownMat) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } }));
+      fxSoft.dispose(); fxGlow.dispose();
+      if (post.rtA) { post.rtA.dispose(); post.rtB.dispose(); }
+      texs.forEach((t) => t.dispose());
+      mini.remove(); strat.remove();
       geos.forEach((g) => g.dispose());
       mats.forEach((m) => m.dispose());
       checkTex.dispose();
@@ -20829,7 +21732,7 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, o
 
 // Panneau de droite (#365) : les projets de la région (dossier) où se trouve
 // l'arpenteur ; le projet courant déplie ses tâches.
-function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, onFocus, onGo, onClose }) {
+function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, onFocus, onGo, onClose, onTimeline }) {
   const here = territory && layout.projectById[territory];
   const group = here ? here.group : null;
   const members = here ? layout.territories.filter((t) => (group ? layout.projectById[t.projectId].group === group : t.projectId === territory)) : [];
@@ -20859,6 +21762,9 @@ function CarteSidePanel({ layout, norm, stats, visible, dimmed, territory, onFoc
                 <span className="lp-carte-panel-name">{p.name}<small>{st.pct} % terminé{st.overdue ? " · " : ""}{st.overdue ? <b>{st.overdue} en retard</b> : null}</small></span>
                 <span className="lp-carte-bar"><span style={{ width: st.pct + "%" }} /></span>
               </button>
+              {isHere && onTimeline && !p.unknown && (
+                <button type="button" className="lp-carte-portal-btn" onClick={() => onTimeline(tr.projectId)} title="Portail : ouvrir ce projet dans la Timeline 3D, centrée sur aujourd'hui"><TrainFront size={13} /> Ouvrir dans la Timeline 3D</button>
+              )}
               {isHere && (
                 <ul className="lp-carte-panel-tasks">
                   {current.length === 0 && <li className="lp-carte-muted">Aucune tâche affichée (filtres).</li>}
@@ -20952,8 +21858,192 @@ function CarteGroupGlyph({ kind, color, size }) {
   if (kind === "status" || kind === "criticality") return <CircleDot size={size} color={color} />;
   return <Folder size={size} color={color} />;
 }
-function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot, embedded }) {
+// Barre de ressources (#478) : compteurs permanents, cliquables.
+function CarteResourceBar({ res, active, onPick }) {
+  return (
+    <div className="lp-carte-res" role="toolbar" aria-label="Ressources : ce qui demande votre attention">
+      {CARTE_RESOURCES.map((r) => {
+        const n = (res[r.id] || []).length;
+        return (
+          <button key={r.id} type="button" className={"lp-carte-res-item is-" + r.tone + (active === r.id ? " is-active" : "") + (n ? "" : " is-zero")}
+            aria-pressed={active === r.id} data-carte-res={r.id} onClick={() => onPick(r.id)}
+            title={r.label + " : " + n + " tâche" + (n > 1 ? "s" : "") + ". Cliquer pour les cadrer et les lister."}>
+            <b>{n}</b><span>{r.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Journal de quêtes (#473) : ce qui demande une décision, avec un bouton
+// « Régler » qui ouvre l'action utile. Aucune visite guidée de caméra.
+const CARTE_RES_TO_QUESTS = { late: ["late"], blocked: ["blocked"], incomplete: ["unassigned", "nodue", "stale"] };
+function CarteQuestPanel({ quests, res, norm, layout, filter, setFilter, onGo, onResolve, onClose }) {
+  const counts = {};
+  quests.forEach((q) => { counts[q.kind] = (counts[q.kind] || 0) + 1; });
+  const kinds = filter && CARTE_RES_TO_QUESTS[filter] ? CARTE_RES_TO_QUESTS[filter] : filter && CARTE_QUEST_BY_ID[filter] ? [filter] : null;
+  const plain = filter === "today" || filter === "doing" ? (res[filter] || []).map((id) => norm.taskById[id]).filter(Boolean) : null;
+  const list = plain ? null : quests.filter((q) => !kinds || kinds.indexOf(q.kind) !== -1);
+  const proj = (t) => layout.projectById[t.projectId || "__terre-inconnue__"] || {};
+  const row = (t, key, detail, action) => (
+    <li key={key} className="lp-carte-quest">
+      <button type="button" className="lp-carte-quest-main" onClick={() => onGo(t.id)} title="Voir sur la carte">
+        <span className="lp-carte-state" style={{ background: t.statusColor }} />
+        <span className="lp-carte-quest-text"><b>{t.milestone ? "◆ " : ""}{t.title}</b><small><span className="lp-carte-dot" style={{ background: proj(t).color }} />{proj(t).name}{detail ? <> · {detail}</> : null}</small></span>
+      </button>
+      {action}
+    </li>
+  );
+  return (
+    <aside className="lp-carte-panel lp-carte-quests" aria-label="Journal de quêtes">
+      <div className="lp-carte-panel-head">
+        <div>
+          <div className="lp-carte-panel-kicker">Journal de quêtes</div>
+          <strong>{plain ? plain.length + (filter === "today" ? " échéance(s) aujourd'hui" : " tâche(s) en cours") : list.length + " décision" + (list.length > 1 ? "s" : "") + " à prendre"}</strong>
+        </div>
+        <button type="button" className="lp-icon-btn" aria-label="Fermer le journal" onClick={onClose}><X size={16} /></button>
+      </div>
+      <div className="lp-carte-quest-filters" role="group" aria-label="Catégories">
+        <button type="button" className={"lp-carte-qchip" + (!filter ? " is-active" : "")} onClick={() => setFilter(null)}>Tout <b>{quests.length}</b></button>
+        {CARTE_QUEST_KINDS.filter((k) => counts[k.id]).map((k) => (
+          <button key={k.id} type="button" className={"lp-carte-qchip is-" + k.id + (filter === k.id ? " is-active" : "")} title={k.hint} onClick={() => setFilter(filter === k.id ? null : k.id)}>{k.label} <b>{counts[k.id]}</b></button>
+        ))}
+      </div>
+      <ul className="lp-carte-panel-body lp-carte-quest-list">
+        {plain && plain.length === 0 && <li className="lp-carte-muted lp-carte-panel-empty">Rien ici.</li>}
+        {plain && plain.map((t) => row(t, t.id, carteDueText(t), null))}
+        {list && list.length === 0 && <li className="lp-carte-muted lp-carte-panel-empty">Aucune décision en attente{filter ? " dans cette catégorie" : ""}. Tout est en ordre.</li>}
+        {list && list.slice(0, 300).map((q) => {
+          const t = norm.taskById[q.taskId];
+          if (!t) return null;
+          const k = CARTE_QUEST_BY_ID[q.kind];
+          return row(t, q.kind + ":" + q.taskId, <><i className={"lp-carte-qtag is-" + q.kind}>{k.label}</i> {q.detail}</>,
+            <button type="button" className="lp-btn lp-carte-quest-fix" onClick={() => onResolve(q)}>Régler</button>);
+        })}
+        {list && list.length > 300 && <li className="lp-carte-muted lp-carte-panel-empty">… et {list.length - 300} autres</li>}
+      </ul>
+    </aside>
+  );
+}
+
+// Menu d'action rapide (#469) : roue autour du bâtiment sélectionné. La
+// position suit la caméra image par image (sans rendu React).
+function CarteActionWheel({ wheelRef, task, raw, ctx, locked, sub, setSub, onDone, onShift, onPatch, onOpen, onClose }) {
+  const [q, setQ] = useState("");
+  useEffect(() => { setQ(""); }, [task.id, sub]);
+  const statusOptions = raw ? getStatusesForTask(ctx.statuses || [], ctx.projects || [], ctx.taskTypes || [], raw.projectId, raw.taskTypeId, raw.statusId) : [];
+  const statusLocked = raw ? !!restrictedStatusForType(ctx.taskTypes || [], ctx.statuses || [], raw.taskTypeId) : true;
+  const members = sortedByName((ctx.teamMembers || []).filter((m) => m && m.name)).filter((m) => !q || carteNorm(m.name).indexOf(carteNorm(q)) !== -1);
+  const done = task.state === "done";
+  const items = [
+    { id: "done", icon: done ? <RotateCcw size={16} /> : <Check size={17} />, label: done ? "Rouvrir" : "Terminer", run: onDone, off: task.state === "info" },
+    { id: "d1", icon: <b>+1 j</b>, label: "Décaler d'un jour", run: () => onShift(1) },
+    { id: "w1", icon: <b>+1 s</b>, label: "Décaler d'une semaine", run: () => onShift(7) },
+    { id: "assignee", icon: <User size={16} />, label: "Changer de responsable", run: () => setSub(sub === "assignee" ? null : "assignee") },
+    { id: "status", icon: <CircleDot size={16} />, label: statusLocked ? "Statut imposé par le type" : "Changer de statut", run: () => setSub(sub === "status" ? null : "status"), off: statusLocked },
+    { id: "fiche", icon: <ExternalLink size={15} />, label: "Ouvrir la fiche", run: onOpen, free: true },
+  ];
+  const R = 56, C = 72;
+  return (
+    <div ref={wheelRef} className="lp-carte-wheel" role="menu" aria-label={"Actions rapides : " + task.title}>
+      <div className="lp-carte-wheel-ring">
+        {items.map((it, i) => {
+          const a = -Math.PI / 2 + (i * 2 * Math.PI) / items.length;
+          const off = (locked && !it.free) || it.off;
+          return (
+            <button key={it.id} type="button" role="menuitem" className={"lp-carte-wheel-btn" + (sub === it.id || (sub === "dates" && (it.id === "d1" || it.id === "w1")) ? " is-active" : "")}
+              style={{ left: C + Math.cos(a) * R - 21, top: C + Math.sin(a) * R - 21 }} disabled={off}
+              title={off && locked && !it.free ? locked : it.label} aria-label={it.label} onClick={it.run}>{it.icon}</button>
+          );
+        })}
+        <button type="button" className="lp-carte-wheel-close" aria-label="Fermer le menu d'action" onClick={onClose}><X size={14} /></button>
+      </div>
+      {sub === "dates" && !locked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Décaler l'échéance">
+          <div className="lp-carte-wheel-sub-title">Décaler {task.end == null ? "(la tâche reçoit une date)" : "début et fin"}</div>
+          <div className="lp-carte-wheel-chips">
+            {[[1, "+1 jour"], [7, "+1 semaine"], [14, "+2 semaines"], [30, "+1 mois"]].map(([d, l]) => <button key={d} type="button" className="lp-btn" onClick={() => onShift(d)}>{l}</button>)}
+          </div>
+        </div>
+      )}
+      {sub === "assignee" && !locked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Responsable">
+          <input className="lp-carte-input" autoFocus placeholder="Chercher une personne…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Chercher une personne" />
+          <ul className="lp-carte-wheel-list">
+            <li><button type="button" className={!raw || !raw.assignee ? "is-current" : ""} onClick={() => onPatch({ assignee: "" }, "Responsable retiré")}>Non attribuée</button></li>
+            {members.slice(0, 60).map((m) => (
+              <li key={m.name}><button type="button" className={raw && raw.assignee === m.name ? "is-current" : ""} onClick={() => onPatch({ assignee: m.name }, "Responsable : " + m.name)}>
+                <span className="lp-carte-dot lp-carte-dot-round" style={{ background: cartePersonColor(m.name, m.color) }} />{m.name}</button></li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {sub === "status" && !locked && !statusLocked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Statut">
+          <ul className="lp-carte-wheel-list">
+            {statusOptions.map((st) => (
+              <li key={st.id}><button type="button" className={raw && raw.statusId === st.id ? "is-current" : ""} onClick={() => onPatch({ statusId: st.id }, "Statut : " + st.name)}>
+                <span className="lp-carte-dot lp-carte-dot-round" style={{ background: st.color || "#94A3B8" }} />{st.name}</button></li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Vues enregistrées et vue plan (#481).
+function CarteViewsMenu({ cfg, setPrefs, engineRef, disabled }) {
+  const [name, setName] = useState("");
+  const save = () => {
+    const e = engineRef.current;
+    const n = name.trim();
+    if (!e || !n) return;
+    const v = { name: n, ...e.getView() };
+    setPrefs({ views: carteNormalizeViews([...cfg.views.filter((x) => x.name !== n), v]) });
+    setName("");
+  };
+  return (
+    <DropdownButton label={"Vues" + (cfg.views.length ? " (" + cfg.views.length + ")" : "")} icon={<Bookmark size={13} />} title="Vues enregistrées et vue plan" panelClassName="lp-carte-views-menu" noSearch>
+      <label className="lp-checkbox-line" title="Vue de dessus, nord en haut, sans rotation"><input type="checkbox" checked={cfg.plan} onChange={(e) => setPrefs({ plan: e.target.checked })} /> Vue plan (dessus, nord en haut)</label>
+      <hr className="lp-divider" style={{ margin: "6px 0" }} />
+      {cfg.views.length === 0 && <p className="lp-carte-muted" style={{ margin: "2px 6px 6px", fontSize: 12 }}>Aucune vue enregistrée. Cadrez la carte puis nommez la vue ci-dessous.</p>}
+      {cfg.views.map((v, i) => (
+        <div key={v.name} className="lp-carte-view-row">
+          <button type="button" className="lp-dropdown-action-row" disabled={disabled} onClick={() => engineRef.current && engineRef.current.setView(v)} title={i < 9 ? "Raccourci : touche " + (i + 1) : undefined}>
+            <MapIcon size={13} /> {v.name}{i < 9 ? <kbd>{i + 1}</kbd> : null}
+          </button>
+          <button type="button" className="lp-icon-btn" aria-label={"Supprimer la vue " + v.name} onClick={() => setPrefs({ views: cfg.views.filter((x) => x.name !== v.name) })}><X size={13} /></button>
+        </div>
+      ))}
+      <div className="lp-carte-view-save">
+        <input className="lp-carte-input" value={name} maxLength={40} placeholder="Nom de la vue…" aria-label="Nom de la vue à enregistrer"
+          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
+        <button type="button" className="lp-btn lp-btn-primary" disabled={disabled || !name.trim()} onClick={save}><Save size={13} /> Enregistrer</button>
+      </div>
+    </DropdownButton>
+  );
+}
+
+function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, onCreateTask, onOpenTimeline, toolbarSlot, embedded }) {
   const cfg = normalizeCarteViewPrefs(prefs);
+  // Pilotage (#468 à #481) : journal de quêtes, roue d'action, annulation,
+  // construction, mode photo.
+  const [questsOpen, setQuestsOpen] = useState(false);
+  const [questFilter, setQuestFilter] = useState(null);
+  const [wheel, setWheel] = useState(null);
+  const wheelRef = useRef(null);
+  const [buildAt, setBuildAt] = useState(null);
+  const pendingBuildRef = useRef(null);
+  const [undoToast, setUndoToast] = useState(null);
+  const undoRef = useRef([]);
+  const [photo, setPhoto] = useState(false);
+  const [photoCaption, setPhotoCaption] = useState("Carte des projets");
+  const [photoDate, setPhotoDate] = useState(true);
+  // Rappels à jour pour le moteur, créé une seule fois.
+  const cbRef = useRef({});
+  cbRef.current = { onOpenTimeline, onCreateTask };
   const stageRef = useRef(null);
   const glRef = useRef(null);
   const engineRef = useRef(null);
@@ -21025,10 +22115,19 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return [...keep].sort().join("\n") || "∅";
   }, [cfg.simplify, visible, norm]);
   const themeOverrides = carteThemeOverrides(ctx.projectFolders, cfg.folderThemes);
+  // Construire ici (#470) : la nouvelle tâche prend la parcelle choisie.
+  const claimMemory = (mem) => {
+    const pend = pendingBuildRef.current;
+    if (!pend) return mem;
+    if (Date.now() - pend.at > 15 * 60 * 1000) { pendingBuildRef.current = null; return mem; }
+    const next = carteClaimTile(mem, pend, norm.tasks);
+    if (next !== mem) pendingBuildRef.current = null;
+    return next;
+  };
   const layout = useMemo(() => {
-    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(cfg.groupBy), themeOverrides });
+    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: claimMemory(readCarteMemory(cfg.groupBy)), themeOverrides });
     const keep = new Set(keepKey.split("\n"));
-    const mem = readCarteMemory(cfg.groupBy);
+    const mem = claimMemory(readCarteMemory(cfg.groupBy));
     const l = carteBuild({
       projects: norm.projects.filter((p) => keep.has(p.id)),
       tasks: norm.tasks.filter((t) => keep.has(t.projectId == null ? "__terre-inconnue__" : t.projectId)),
@@ -21083,8 +22182,11 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           quality: cfg.quality,
           people: cfg.people,
           ambient: cfg.ambient,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag")].map((e) => e.getBoundingClientRect()) : []),
-          onSelect: (id) => setSelected(id),
+          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
+          onSelect: (id) => { setSelected(id); setWheel(id ? { id, sub: null } : null); },
+          onBuild: onCreateTask ? (b) => setBuildAt(b) : null,
+          onPortal: onOpenTimeline ? (pid) => { if (cbRef.current.onOpenTimeline) cbRef.current.onOpenTimeline(pid); } : null,
           onNear: (id) => {
             setNear(id);
             if (id && !logRef.current.tasks.has(id)) { logRef.current.tasks.add(id); setLog((l) => ({ ...l, tasks: logRef.current.tasks.size })); }
@@ -21139,6 +22241,131 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, photo]);
+
+  // ---------- Pilotage (#468 à #481) ----------
+  const quests = useMemo(() => carteQuests(norm, visible), [norm, visible]);
+  const res = useMemo(() => carteResources(norm, visible), [norm, visible]);
+  const rawOf = (id) => allTasks.find((t) => t.id === id) || null;
+  // Annuler (#475) : chaque action faite depuis la carte mémorise les valeurs
+  // d'avant ; Ctrl+Z ou le bouton « Annuler » les rétablissent.
+  const remember = (id, before, label) => {
+    undoRef.current = undoRef.current.slice(-19).concat([{ id, before, label }]);
+    setUndoToast({ label, at: Date.now(), undone: false });
+  };
+  const applyPatch = (id, patch, label) => {
+    const raw = rawOf(id);
+    if (!raw || !onUpdateTask) return;
+    remember(id, carteUndoPatch(raw, patch), label || "Modification");
+    onUpdateTask(id, patch);
+  };
+  const toggleDone = (id) => {
+    const raw = rawOf(id), t = norm.taskById[id];
+    if (!raw || !onToggleDone) return;
+    remember(id, carteUndoPatch(raw, { statusId: 1, progress: 1, completedAt: 1, start: 1, end: 1 }), (t && t.state === "done" ? "Rouverte : " : "Terminée : ") + (raw.title || ""));
+    onToggleDone(id);
+  };
+  const undo = () => {
+    const last = undoRef.current[undoRef.current.length - 1];
+    if (!last || !onUpdateTask) return;
+    undoRef.current = undoRef.current.slice(0, -1);
+    onUpdateTask(last.id, last.before);
+    setUndoToast({ label: "Annulé : " + last.label, at: Date.now(), undone: true });
+  };
+  useEffect(() => {
+    if (!undoToast) return undefined;
+    const tm = setTimeout(() => setUndoToast(null), 8000);
+    return () => clearTimeout(tm);
+  }, [undoToast]);
+  const shiftTask = (id, days) => {
+    const raw = rawOf(id);
+    if (!raw) return;
+    applyPatch(id, carteShiftPatch(raw, days), (days > 0 ? "+" : "") + days + " j : " + (raw.title || ""));
+  };
+  // Construire ici (#470) : la fiche de création s'ouvre, projet rempli.
+  const buildHere = () => {
+    if (!buildAt || !onCreateTask) return;
+    pendingBuildRef.current = { projectId: buildAt.projectId, key: buildAt.key, at: Date.now(), known: new Set(norm.tasks.map((t) => t.id)) };
+    onCreateTask({ projectId: buildAt.projectId });
+    setBuildAt(null);
+  };
+  useEffect(() => {
+    if (!buildAt) return undefined;
+    const away = (e) => { if (!e.target.closest || !e.target.closest(".lp-carte-build")) setBuildAt(null); };
+    const esc = (e) => { if (e.key === "Escape") setBuildAt(null); };
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", esc); };
+  }, [buildAt]);
+  // La roue suit le bâtiment à l'écran, image par image.
+  useEffect(() => {
+    if (!wheel || status !== "ready") return undefined;
+    let raf = 0;
+    const tick = () => {
+      const e = engineRef.current, el = wheelRef.current;
+      if (e && el) {
+        const pnt = e.screenOf(wheel.id);
+        if (pnt && e.strategic() < 0.5) { el.style.transform = "translate(" + Math.round(pnt.x) + "px," + Math.round(pnt.y) + "px)"; el.style.visibility = "visible"; }
+        else el.style.visibility = "hidden";
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [wheel && wheel.id, status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Barre de ressources (#478) : cadrer les tâches et ouvrir le journal filtré.
+  const pickResource = (id) => {
+    const ids = res[id] || [];
+    setQuestFilter(id);
+    setQuestsOpen(true);
+    if (engineRef.current) { engineRef.current.select(null); if (ids.length) engineRef.current.frameTasks(ids); }
+  };
+  // « Régler » (#473) : l'action utile selon la catégorie.
+  const resolveQuest = (q) => {
+    const t = norm.taskById[q.taskId];
+    if (!t) return;
+    if (q.kind === "conflict") { openFiche(q.taskId); return; }
+    if (q.kind === "blocked") {
+      const b = carteBlockers(t, norm.taskById)[0];
+      if (b && visible.has(b.id)) { go(b.id); setWheel({ id: b.id, sub: null }); return; }
+      openFiche(b ? b.id : t.id);
+      return;
+    }
+    go(q.taskId);
+    setWheel({ id: q.taskId, sub: q.kind === "unassigned" ? "assignee" : q.kind === "late" || q.kind === "nodue" ? "dates" : null });
+  };
+  // Mode photo (#474).
+  const photoDateText = new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  const enterPhoto = () => { if (engineRef.current) engineRef.current.select(null); setBuildAt(null); setPhoto(true); };
+  const exportPhoto = () => {
+    const e = engineRef.current;
+    if (!e) return;
+    const url = e.snapshot({ caption: photoCaption, date: photoDate ? photoDateText : "" });
+    if (!url) return;
+    const a = document.createElement("a");
+    const d = new Date();
+    a.href = url;
+    a.download = "nexora-carte-" + d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") + ".png";
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  // La barre d'outils masquée ou rétablie change la place de la scène.
+  useEffect(() => { if (!embedded) window.dispatchEvent(new Event("resize")); }, [photo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!photo) return undefined;
+    const esc = (e) => { if (e.key === "Escape" && !(e.target && /INPUT|TEXTAREA/.test(e.target.tagName || ""))) setPhoto(false); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [photo]);
+  // Raccourcis de la scène : Ctrl+Z (annuler), 1 à 9 (vues enregistrées).
+  const onStageKey = (e) => {
+    const tag = (e.target && e.target.tagName) || "";
+    if (/INPUT|TEXTAREA|SELECT/.test(tag) || (e.target && e.target.isContentEditable)) return;
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && String(e.key).toLowerCase() === "z") { if (undoRef.current.length) { e.preventDefault(); undo(); } return; }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-9]$/.test(e.key)) {
+      const v = cfg.views[Number(e.key) - 1];
+      if (v && engineRef.current) { engineRef.current.setView(v); e.preventDefault(); }
+    }
+  };
 
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
   const go = (id) => { const e = engineRef.current; if (!e) return; e.walkToTask(id); e.select(id); };
@@ -21191,6 +22418,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const shownCount = visible.size, totalCount = norm.tasks.length;
   const empty = norm.projects.length === 0 && norm.tasks.length === 0;
   const selTask = selected && normView.taskById[selected];
+  const questsOn = questsOpen && status === "ready" && !selTask;
   const selRaw = selTask ? allTasks.find((t) => t.id === selTask.id) : null;
   // Tâche d'un calendrier public synchronisé : reconstruite à chaque
   // synchronisation, une modification locale serait perdue (#402).
@@ -21201,7 +22429,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const terrStats = territory && stats[territory];
 
   return (
-    <section className={"lp-carte-view" + (embedded ? " is-embedded" : "")} aria-label="Carte">
+    <section className={"lp-carte-view" + (embedded ? " is-embedded" : "") + (photo ? " is-photo" : "")} aria-label="Carte">
       <ViewToolbarPortal slot={toolbarSlot} />
       <div className="lp-carte-toolbar">
           <div className="lp-carte-search" ref={searchRef}>
@@ -21231,6 +22459,11 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
+            <label className="lp-checkbox-line" title="Brume sur les tâches sans échéance, sans responsable ou oubliées : compléter la fiche la dissipe"><input type="checkbox" checked={cfg.fog} onChange={(e) => setPrefs({ fog: e.target.checked })} /> Brouillard sur les fiches incomplètes</label>
+            <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.minimap} onChange={(e) => setPrefs({ minimap: e.target.checked })} /> Mini-carte</label>
+            <label className="lp-checkbox-line" title="Flou de profondeur façon maquette photographiée (qualité moyenne ou haute)"><input type="checkbox" checked={cfg.miniature} onChange={(e) => setPrefs({ miniature: e.target.checked })} /> Effet miniature</label>
+            <label className="lp-checkbox-line" title="Grue quand l'avancement progresse, poussière à la création, étincelles, fumée, bannière de jalon"><input type="checkbox" checked={cfg.life} onChange={(e) => setPrefs({ life: e.target.checked })} /> Vie de la carte (chantiers, fumées, jalons)</label>
+            <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
               {CARTE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
             </div>
@@ -21239,13 +22472,18 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
             </>)}
           </DropdownButton>
+          <button type="button" className={"lp-btn" + (questsOpen ? " lp-btn-primary" : "")} aria-pressed={questsOpen} disabled={status !== "ready"}
+            onClick={() => { setQuestFilter(null); setQuestsOpen((v) => !v); if (engineRef.current && !questsOpen) engineRef.current.select(null); }}
+            title="Journal de quêtes : ce qui demande une décision (retards, blocages, fiches incomplètes…)"><ScrollText size={13} /> Quêtes{quests.length ? " (" + quests.length + ")" : ""}</button>
+          <CarteViewsMenu cfg={cfg} setPrefs={setPrefs} engineRef={engineRef} disabled={status !== "ready"} />
           <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
           <button type="button" className={"lp-btn" + (cfg.ariadne ? " lp-btn-primary" : "")} aria-pressed={cfg.ariadne} onClick={() => setPrefs({ ariadne: !cfg.ariadne })} disabled={status !== "ready"}
             title="Mode fil d'Ariane : seules les prochaines échéances restent affichées, dans l'ordre, reliées par un fil lumineux"><Footprints size={13} /> Fil d'Ariane</button>
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => engineRef.current && engineRef.current.recenter()} disabled={status !== "ready"}><Crosshair size={13} /> Recentrer</button>
+          <button type="button" className="lp-btn" onClick={enterPhoto} disabled={status !== "ready"} title="Mode photo : cadrage propre, légende et date, export en image"><Camera size={13} /> Photo</button>
       </div>
 
-      <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
+      <div ref={stageRef} className={"lp-carte-stage" + (selTask || questsOn || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0} onKeyDown={onStageKey}
         data-carte-status={status} data-carte-group={cfg.groupBy} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
         {embedded && small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour explorer la carte confortablement.</div>}
@@ -21296,6 +22534,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   </div>
                 )}
                 <div className="lp-carte-hud" aria-live="polite">
+                  <CarteResourceBar res={res} active={questsOn ? questFilter : null} onPick={pickResource} />
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
                   {cfg.ariadne && (
                     <span className="lp-carte-pill lp-carte-filtered" data-carte-ariadne={trailIds ? trailIds.length : 0} title="Les prochaines échéances parmi les tâches retenues par les filtres, dans l'ordre">
@@ -21344,23 +22583,68 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   </>
                 )}
                 {quality && <span className="lp-carte-quality-tag">Qualité {({ high: "haute", medium: "moyenne", low: "basse" })[quality]}{cfg.quality === "auto" ? " (auto)" : ""}</span>}
+                {selTask && wheel && wheel.id === selTask.id && !photo && (() => {
+                  const raw = selRaw;
+                  const gcal = raw && isGoogleCalendarProjectId(raw.projectId, ctx.projects || []);
+                  const locked = !onUpdateTask ? "Modification indisponible ici" : lockReason ? "Tâche de calendrier synchronisé : elle ne se modifie pas ici" : gcal ? "Tâche Google Calendar : elle se modifie dans Google Calendar" : null;
+                  return (
+                    <CarteActionWheel wheelRef={wheelRef} task={selTask} raw={raw} ctx={ctx} locked={locked} sub={wheel.sub} setSub={(sub) => setWheel({ id: selTask.id, sub })}
+                      onDone={() => toggleDone(selTask.id)} onShift={(d) => shiftTask(selTask.id, d)}
+                      onPatch={(patch, label) => { applyPatch(selTask.id, patch, label + " · " + selTask.title); setWheel({ id: selTask.id, sub: null }); }}
+                      onOpen={() => openFiche(selTask.id)} onClose={() => setWheel(null)} />
+                  );
+                })()}
+                {undoToast && !photo && (
+                  <div className="lp-carte-undo" role="status">
+                    <span className="lp-carte-undo-text">{undoToast.label}</span>
+                    {!undoToast.undone && undoRef.current.length > 0 && <button type="button" onClick={undo} title="Ctrl+Z"><Undo2 size={13} /> Annuler</button>}
+                    <button type="button" className="lp-carte-undo-x" aria-label="Fermer" onClick={() => setUndoToast(null)}><X size={13} /></button>
+                  </div>
+                )}
+                {photo && (
+                  <>
+                    <div className="lp-carte-photo" role="toolbar" aria-label="Mode photo">
+                      <Camera size={15} />
+                      <input className="lp-carte-input" value={photoCaption} maxLength={80} aria-label="Légende de la photo" placeholder="Légende…" onChange={(e) => setPhotoCaption(e.target.value)} />
+                      <label className="lp-checkbox-line"><input type="checkbox" checked={photoDate} onChange={(e) => setPhotoDate(e.target.checked)} /> Date</label>
+                      <button type="button" className="lp-btn lp-btn-primary" onClick={exportPhoto}><Download size={13} /> Exporter l'image</button>
+                      <button type="button" className="lp-btn" onClick={() => setPhoto(false)}>Quitter <kbd>Échap</kbd></button>
+                    </div>
+                    {(photoCaption.trim() || photoDate) && (
+                      <div className="lp-carte-photo-card" aria-hidden="true">
+                        {photoCaption.trim() && <b>{photoCaption}</b>}
+                        {photoDate && <span>{photoDateText}</span>}
+                      </div>
+                    )}
+                  </>
+                )}
               </>
             )}
-            {status === "ready" && !selTask && panelOn && (
-              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} dimmed={dimmed} territory={territory}
-                onFocus={focus} onGo={go} onClose={() => setPanelOn(false)} />
+            {questsOn && (
+              <CarteQuestPanel quests={quests} res={res} norm={norm} layout={layout} filter={questFilter} setFilter={setQuestFilter}
+                onGo={go} onResolve={resolveQuest} onClose={() => setQuestsOpen(false)} />
             )}
-            {status === "ready" && !selTask && !panelOn && (
+            {status === "ready" && !selTask && !questsOn && panelOn && (
+              <CarteSidePanel layout={layout} norm={norm} stats={stats} visible={visible} dimmed={dimmed} territory={territory}
+                onFocus={focus} onGo={go} onClose={() => setPanelOn(false)} onTimeline={onOpenTimeline || null} />
+            )}
+            {status === "ready" && !selTask && !questsOn && !panelOn && (
               <button type="button" className="lp-carte-panel-toggle" onClick={() => setPanelOn(true)}>Liste du territoire</button>
             )}
             {selTask && (
               <CarteTaskDetail task={selTask} raw={selRaw} norm={norm} layout={layout} ctx={ctx} onOpen={openFiche} onGo={go} lockReason={lockReason}
-                onUpdate={onUpdateTask && !lockReason ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={lockReason ? null : onToggleDone}
+                onUpdate={onUpdateTask && !lockReason ? (patch) => applyPatch(selTask.id, patch, "Modification : " + selTask.title) : null} onPreview={setPreview} onToggleDone={lockReason || !onToggleDone ? null : toggleDone}
                 onWalk={(id) => engineRef.current && engineRef.current.walkToTask(id)} onClose={() => engineRef.current && engineRef.current.select(null)} />
             )}
           </>
         )}
       </div>
+      {buildAt && layout.projectById[buildAt.projectId] && (
+        <div className="lp-carte-build" role="menu" aria-label="Parcelle libre" style={{ left: Math.max(8, Math.min(buildAt.x, window.innerWidth - 250)), top: Math.max(8, Math.min(buildAt.y, window.innerHeight - 110)) }}>
+          <div className="lp-carte-build-head"><span className="lp-carte-dot" style={{ background: layout.projectById[buildAt.projectId].color }} />{layout.projectById[buildAt.projectId].name}</div>
+          <button type="button" role="menuitem" autoFocus onClick={buildHere}><Hammer size={14} /> Construire ici <small>Nouvelle tâche dans ce projet</small></button>
+        </div>
+      )}
       {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} setProjectFolders={setProjectFolders} onClose={() => setThemesOpen(false)} />}
       {filtersOpen && (
         <Modal title="Filtrer la carte" onClose={() => setFiltersOpen(false)} wide footer={<>
@@ -23218,8 +24502,8 @@ function createTimeline3dEngine(THREE, container, opts) {
     S.hits = S.hits.filter(() => true);
   }
   // ---------- Horizon (#462) ----------
-  // Date projetée par l'utilisateur : une large bande orange au sol, en
-  // travers de toutes les lignes, sous un portique, et la zone entre
+  // Date projetée par l'utilisateur : un pont à treillis orange qui enjambe
+  // toutes les lignes (Grande Ligne), un trait au sol, et la zone entre
   // aujourd'hui et cet horizon teintée — tout ce qui s'y trouve doit être
   // fait avant. En Cabine, un grand anneau orange. Redessiné seul (sans
   // reconstruire la scène ni bouger la caméra) quand la date change.
@@ -23239,13 +24523,48 @@ function createTimeline3dEngine(THREE, container, opts) {
         const zone = new THREE.Mesh(own(new THREE.PlaneGeometry(b - a, Dp)), basic(C, { transparent: true, opacity: 0.24, depthWrite: false }));
         zone.rotation.x = -PI / 2; zone.position.set((a + b) / 2, 0.012, cz); g.add(zone);
       }
-      // La ligne au sol : large bande orange bordée de blanc, au-dessus des voies.
-      box(1.9, 0.06, Dp + 1.2, basic("#fff4e0"), x, 0.35, cz, g, false);
-      box(1.5, 0.08, Dp + 1.2, basic(C), x, 0.37, cz, g, false);
-      // Portique géant aux deux bords, traverse lumineuse.
-      box(0.24, 4.4, 0.24, hot, x, 2.2, z0 + 0.4, g); box(0.24, 4.4, 0.24, hot, x, 2.2, z1 - 0.4, g);
-      box(0.3, 0.45, Dp - 0.6, hot, x, 4.4, cz, g, false);
-      S.targetLabel = addLabel("lp-t3d-lbl--target", (el) => { el.textContent = txt; }, V(x, 4.9, cz), { prio: 130 });
+      // Trait au sol, discret : le pont porte désormais le signal.
+      box(0.7, 0.03, Dp, basic(C), x, 0.02, cz, g, false);
+      // Pont à treillis d'acier orange qui enjambe toutes les voies : tablier
+      // en enrobé, garde-corps, piles entre les voies, culées de pierre aux
+      // deux bords de la table. Les trains passent dessous, vue conducteur
+      // comprise (tablier à 2,1 au-dessus du sol).
+      const deckY = 2.2, W = 1.7, zA = z0 + 0.3, zB = z1 - 0.3, L = zB - zA;
+      const steel = std(C, { roughness: 0.45, metalness: 0.35, emissive: col(C).multiplyScalar(0.18) });
+      const concrete = std("#cfc8bc"), stone = std("#b8ad9c");
+      box(W, 0.22, L, steel, x, deckY, cz, g);
+      box(W - 0.3, 0.04, L, std("#474b52"), x, deckY + 0.13, cz, g, false);
+      for (let z = zA + 0.5; z < zB - 0.5; z += 1.4) box(0.06, 0.01, 0.6, basic("#ffffff"), x, deckY + 0.155, z, g, false);
+      [-1, 1].forEach((sd) => box(0.06, 0.26, L, std("#fff4e0"), x + sd * (W / 2 - 0.12), deckY + 0.28, cz, g, false));
+      // Treillis de Warren de chaque côté : membrure haute et diagonales.
+      const beam = (p1, p2, t) => {
+        const dir = p2.clone().sub(p1), len = dir.length();
+        const m = new THREE.Mesh(geo("tbeam" + t, () => new THREE.BoxGeometry(t, t, 1)), steel);
+        m.scale.z = len; m.position.copy(p1).add(p2).multiplyScalar(0.5);
+        m.quaternion.setFromUnitVectors(V(0, 0, 1), dir.normalize()); m.castShadow = S.quality === "high";
+        g.add(m);
+      };
+      const topY = deckY + 1.25, step = 1.4, n = Math.max(1, Math.round(L / step)), st = L / n;
+      [-1, 1].forEach((sd) => {
+        const xx = x + sd * (W / 2);
+        beam(V(xx, topY, zA + st / 2), V(xx, topY, zB - st / 2), 0.13);
+        for (let k = 0; k < n; k++) {
+          const za = zA + k * st, zm = za + st / 2, zb = za + st;
+          beam(V(xx, deckY + 0.1, za), V(xx, topY, zm), 0.09);
+          beam(V(xx, topY, zm), V(xx, deckY + 0.1, zb), 0.09);
+        }
+      });
+      // Contreventement au-dessus du tablier, un portail sur trois.
+      for (let k = 0; k <= n; k += 3) { const zm = Math.min(zB - st / 2, zA + k * st + st / 2); beam(V(x - W / 2, topY, zm), V(x + W / 2, topY, zm), 0.08); }
+      // Piles dans les intervalles entre les voies, culées aux extrémités.
+      const lanes = S.model.lines.map((l) => S.lane[l.id]).sort((p, q) => p - q);
+      for (let k = 1; k < lanes.length; k++) {
+        const zp = (lanes[k - 1] + lanes[k]) / 2;
+        box(W - 0.2, deckY - 0.11, 0.5, concrete, x, (deckY - 0.11) / 2, zp, g);
+        box(W + 0.1, 0.12, 0.7, concrete, x, deckY - 0.17, zp, g, false);
+      }
+      [z0 + 0.45, z1 - 0.45].forEach((zc) => box(W + 0.6, deckY - 0.1, 0.9, stone, x, (deckY - 0.1) / 2, zc, g));
+      S.targetLabel = addLabel("lp-t3d-lbl--target", (el) => { el.textContent = txt; }, V(x, topY + 0.7, cz), { prio: 130 });
     } else if (S.mode === "cabine") {
       const gateR = S.R + 3.2, z = -d * s;
       const ring = new THREE.Mesh(own(new THREE.TorusGeometry(gateR, 0.26, 10, 120)), hot); ring.position.z = z; g.add(ring);
