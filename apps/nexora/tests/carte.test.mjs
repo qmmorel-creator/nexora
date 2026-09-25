@@ -26,10 +26,10 @@ const C = vm.runInThisContext(
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard, carteDangerSign,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
-    carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
+    carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
-    carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, cartePersonSocle, carteFigurineTint, carteFlagStyle, carteCriticalFx, CARTE_CRITICAL_FX_KINDS, CARTE_FIGURINE_BASE, CARTE_AVATAR_ANCHOR, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloBlocks, carteHoloInline,
   };\n})`
 )();
 
@@ -189,7 +189,7 @@ test("filtres de la vue et préférences normalisées", () => {
   assert.equal(C.carteMatches(t, { states: ["todo"], late: true }), true, "#400 : les puces d'état et « En retard » n'existent plus");
   assert.equal(C.normalizeCarteViewPrefs({}).hideOldDone, false);
   const p = C.normalizeCarteViewPrefs({ crit: "nope", quality: "ultra", folderThemes: { f1: "volcan", f2: "inconnu" } });
-  assert.equal(p.crit, "all"); assert.equal(p.quality, "auto");
+  assert.deepEqual(p.crits, []); assert.equal(p.quality, "auto");
   assert.deepEqual(p.folderThemes, { f1: "volcan" });
 });
 
@@ -401,7 +401,7 @@ test("#400 : « Masquer les terminées depuis 30 jours » vaut aussi sans date d
 
 test("#400 : les filtres propres à la vue se comptent et se remettent à zéro", () => {
   const cfg = C.normalizeCarteViewPrefs({ states: ["todo"], crit: "urgent", late: true });
-  assert.equal(C.carteViewFilterCount(cfg), 1, "seule la criticité reste un filtre propre à la vue");
+  assert.equal(C.carteViewFilterCount(cfg), 1, "seule la criticité reste un filtre propre à la vue (reprise de l'ancienne valeur)");
   assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...cfg, ...C.carteViewFilterReset() })), 0);
   assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({})), 0);
 });
@@ -647,7 +647,10 @@ test("construire ici : la nouvelle tâche prend la parcelle choisie (#470)", () 
 });
 
 test("zoom stratégique et vues enregistrées (#476, #481)", () => {
-  assert.deepEqual([19, 80, 87.5, 95, 150].map(C.carteStrategicAlpha), [0, 0, 0.5, 1, 1]);
+  // Seuil repoussé (#507) : rien avant 120, plan pur à 150 et au-delà.
+  assert.deepEqual([19, 80, 95, 120, 135, 150, 190].map(C.carteStrategicAlpha), [0, 0, 0, 0, 0.5, 1, 1]);
+  assert.ok(C.CARTE_DIST_MAX > 150, "le recul maximal laisse une plage de plan pur");
+  assert.equal(C.carteNormalizeViews([{ name: "loin", dist: 999 }])[0].dist, C.CARTE_DIST_MAX);
   const v = C.carteNormalizeViews([{ name: " Nord ", x: 3, z: 4, yaw: 1, pitch: 9, dist: 2 }, { name: "" }, null, "x"]);
   assert.deepEqual(v, [{ name: "Nord", x: 3, z: 4, yaw: 1, pitch: 1.5, dist: 7 }]);
   assert.equal(C.carteNormalizeViews(Array.from({ length: 20 }, (_, i) => ({ name: "v" + i }))).length, C.CARTE_VIEWS_MAX);
@@ -728,9 +731,8 @@ test("#494 : hologramme — onglets selon le contenu, texte en paragraphes", () 
   assert.deepEqual(C.carteHoloTabs({ desc: "", report: " " }), []);
   assert.deepEqual(C.carteHoloTabs({ desc: "a", report: "" }).map((t) => t.id), ["desc"]);
   assert.deepEqual(C.carteHoloTabs({ desc: "a", report: "b" }).map((t) => t.id), ["desc", "report"]);
-  assert.deepEqual(C.carteHoloParagraphs("Intro **gras**\n- point 1\n2) point 2\n\n\nFin"), [
-    { bullet: false, text: "Intro gras" }, { bullet: true, text: "point 1" }, { bullet: true, text: "point 2" }, { bullet: false, text: "" }, { bullet: false, text: "Fin" },
-  ]);
+  // Remplacé par le rendu Markdown (#502) : un paragraphe, deux puces, un blanc.
+  assert.deepEqual(C.carteHoloBlocks("Intro **gras**\n- point 1\n2) point 2\n\n\nFin").map((b) => b.type), ["p", "li", "li", "gap", "p"]);
   const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s1", meetingReport: "CR" }], { now: NOW });
   assert.equal(n.tasks[0].report, "CR");
   assert.equal(C.normalizeCarteViewPrefs({}).holo, true);
@@ -784,4 +786,227 @@ test("#499 : recoloration de la planche Kenney vers la palette diorama", () => {
   assert.deepEqual(C.carteRegradeHsl(0.5, 0.05, 0.4), [0.08, 0.12, 0.4]);
   // Rouges et oranges : inchangés.
   assert.deepEqual(C.carteRegradeHsl(0.05, 0.7, 0.5), [0.05, 0.7, 0.5]);
+});
+
+test("clic droit : parcelle constructible et parcelle libre la plus proche (#503)", () => {
+  const w = world(2, 6, { perProject: 1 });
+  const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const L = C.carteBuild({ projects: n.projects, tasks: n.tasks });
+  const occupied = {};
+  L.pois.forEach((p) => { (occupied[p.key] = occupied[p.key] || []).push(p.taskId); });
+  const terr = L.territories.find((t) => t.projectId === "p0");
+  const busyKey = L.pois.find((p) => L.tiles[p.key].projectId === "p0").key;
+  // Case occupée : pas constructible, mais la plus proche libre est proposée.
+  assert.equal(C.carteBuildable(L, busyKey, occupied), null);
+  const near = C.carteNearestBuildable(L, busyKey, occupied);
+  assert.ok(near && near.projectId === "p0" && near.key !== busyKey);
+  assert.ok(C.carteBuildable(L, near.key, occupied));
+  // Case libre : proposée telle quelle.
+  assert.deepEqual(C.carteNearestBuildable(L, near.key, occupied), near);
+  // Cœur du projet (hub) ou totem : une parcelle libre du même territoire.
+  const hubKey = Object.keys(L.tiles).find((k) => L.tiles[k].kind === "hub" && L.tiles[k].projectId === "p0");
+  assert.equal(C.carteBuildable(L, hubKey, occupied), null);
+  const fromHub = C.carteNearestBuildable(L, hubKey, occupied);
+  assert.equal(fromHub.projectId, "p0");
+  assert.equal(C.carteDist(L.tiles[fromHub.key].q, L.tiles[fromHub.key].r, terr.q, terr.r), 1);
+  assert.equal(C.carteNearestBuildable(L, null, occupied, "p0").projectId, "p0");
+  // Déterministe.
+  assert.deepEqual(C.carteNearestBuildable(L, hubKey, occupied), fromHub);
+  // Hors territoire ou territoire plein : rien.
+  const sea = Object.keys(L.tiles).find((k) => !L.tiles[k].projectId);
+  if (sea) assert.equal(C.carteNearestBuildable(L, sea, occupied), null);
+  const full = {};
+  terr.tiles.forEach((k) => { full[k] = ["x"]; });
+  assert.equal(C.carteNearestBuildable(L, hubKey, full), null);
+  // Une liste vide n'occupe pas la case (tâches filtrées).
+  assert.ok(C.carteBuildable(L, near.key, { [near.key]: [] }));
+});
+
+test("filtres rapides multi-sélection : normalisation et compatibilité (#506)", () => {
+  // Ancienne valeur unique reprise.
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crit: "urgent" }).crits, ["urgent"]);
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crit: "all" }).crits, []);
+  assert.deepEqual(C.normalizeCarteViewPrefs({}).crits, []);
+  // La liste nouvelle l'emporte sur l'ancienne valeur restée dans l'objet.
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crit: "urgent", crits: [] }).crits, []);
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crits: ["bas", "urgent", "bas", "nope", 3, C.CARTE_NONE] }).crits, ["bas", "urgent", C.CARTE_NONE]);
+  const p = C.normalizeCarteViewPrefs({ statuses: ["s1", "s1", "", null, "s3"], assignees: "Alice" });
+  assert.deepEqual(p.statuses, ["s1", "s3"]);
+  assert.deepEqual(p.assignees, []);
+  assert.equal(C.normalizeCarteViewPrefs({ statuses: Array.from({ length: 500 }, (_, i) => "s" + i) }).statuses.length, 200);
+  // Stable : normaliser deux fois ne change rien.
+  const q = C.normalizeCarteViewPrefs({ crit: "moyen", statuses: ["s2"], assignees: ["Bob"] });
+  assert.deepEqual(C.normalizeCarteViewPrefs(q), q);
+  assert.equal(C.carteViewFilterCount(q), 3);
+  assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...q, ...C.carteViewFilterReset() })), 0);
+});
+
+test("filtres rapides multi-sélection : filtrage et options (#506)", () => {
+  const t = (criticality, statusId, assignee) => ({ criticality, statusId, assignee, oldDone: false });
+  const a = t("urgent", "s1", "Alice"), b = t("bas", "s3", "Bob"), c = t(null, "s3", null);
+  const f = (x) => [a, b, c].filter((k) => C.carteMatches(k, C.normalizeCarteViewPrefs(x)));
+  assert.deepEqual(f({}), [a, b, c]);
+  assert.deepEqual(f({ crits: ["urgent", "bas"] }), [a, b], "plusieurs criticités : OU");
+  assert.deepEqual(f({ crits: [C.CARTE_NONE] }), [c], "« Sans criticité »");
+  assert.deepEqual(f({ statuses: ["s3"] }), [b, c]);
+  assert.deepEqual(f({ assignees: ["Alice", C.CARTE_NONE] }), [a, c], "« Sans responsable »");
+  assert.deepEqual(f({ statuses: ["s3"], assignees: ["Bob"] }), [b], "entre filtres : ET");
+  assert.deepEqual(f({ crit: "urgent" }), [a], "ancienne valeur unique toujours comprise");
+  // Cosmos et Timeline 3D gardent la criticité unique : carteMatches la lit.
+  assert.equal(C.carteMatches(b, { crit: "urgent" }), false);
+  const statuses = [{ id: "s1", name: "À planifier", color: "#64748B" }, { id: "s2", name: "Attente" }, { id: "s3", name: "En cours", color: "#0EA5E9" }];
+  const o = C.carteQuickOptions([a, b, c, { ...b, assigneeColor: "#f00" }], statuses, { statuses: ["s2"], assignees: ["Zoé"] });
+  assert.deepEqual(o.statuses.map((x) => [x.id, x.count]), [["s1", 1], ["s2", 0], ["s3", 3]], "ordre de Nexora ; valeur retenue gardée");
+  assert.deepEqual(o.assignees.map((x) => [x.id, x.count]), [["Alice", 1], ["Bob", 2], ["Zoé", 0], [C.CARTE_NONE, 1]]);
+  assert.equal(o.assignees.find((x) => x.id === "Bob").color, "#f00");
+  assert.deepEqual(o.crits.map((x) => x.count), [1, 0, 2, 1]);
+});
+
+test("pastille de dossier : point d'arrivée au centre du dossier (#504)", () => {
+  const w = world(12, 30);
+  const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const L = C.carteBuild({ projects: n.projects, tasks: n.tasks });
+  const occupied = {};
+  L.pois.forEach((p) => { (occupied[p.key] = occupied[p.key] || []).push(p.taskId); });
+  const ids = n.projects.filter((p) => p.folderId === "f0").map((p) => p.id);
+  assert.ok(ids.length >= 2);
+  const a = C.carteGroupAnchor(L, ids, occupied);
+  assert.ok(a && ids.includes(a.projectId), "le point est dans un territoire du dossier");
+  const t = L.tiles[a.key];
+  assert.ok(t.inner && t.kind !== "water" && !t.lava, "case intérieure praticable");
+  assert.ok(!occupied[a.key], "une case libre l'emporte");
+  assert.ok(a.radius > 0);
+  // Le plus proche du centre des territoires du dossier.
+  const terrs = L.territories.filter((x) => ids.includes(x.projectId));
+  const cx = terrs.reduce((s2, x) => s2 + C.carteToWorld(x.q, x.r).x, 0) / terrs.length;
+  const cz = terrs.reduce((s2, x) => s2 + C.carteToWorld(x.q, x.r).z, 0) / terrs.length;
+  const d = Math.hypot(a.x - cx, a.z - cz);
+  terrs.forEach((tr) => tr.tiles.forEach((k) => { const u = L.tiles[k]; if (u.kind === "water" || u.lava || occupied[k]) return; const p = C.carteToWorld(u.q, u.r); assert.ok(Math.hypot(p.x - cx, p.z - cz) >= d - 1e-9); }));
+  assert.deepEqual(C.carteGroupAnchor(L, ids, occupied), a, "déterministe");
+  // Un seul projet : son territoire ; aucun projet connu : rien.
+  assert.equal(C.carteGroupAnchor(L, [ids[0]], occupied).projectId, ids[0]);
+  assert.equal(C.carteGroupAnchor(L, ["inconnu"], occupied), null);
+  assert.equal(C.carteGroupAnchor(null, ids), null);
+});
+
+test("téléportation magique : chronologie et préférence (#505)", () => {
+  assert.ok(C.CARTE_TP_DUR >= 0.6 && C.CARTE_TP_DUR <= 0.9, "courte : 0,6 à 0,9 s");
+  const p0 = C.carteTeleportPhase(0);
+  assert.equal(p0.side, "from"); assert.equal(p0.keeper.sx, 1); assert.equal(p0.keeper.visible, true); assert.equal(p0.done, false);
+  const mid = C.carteTeleportPhase(C.CARTE_TP_SWAP - 0.01);
+  assert.equal(mid.side, "from"); assert.ok(mid.keeper.sx < 0.2 && mid.keeper.sy > 1.5, "dissous et étiré avant le saut"); assert.equal(mid.keeper.visible, false);
+  assert.ok(mid.a.alpha > 0 && mid.b.alpha > 0, "les deux cercles se chevauchent au moment du saut");
+  const after = C.carteTeleportPhase(C.CARTE_TP_SWAP + 0.01);
+  assert.equal(after.side, "to");
+  const end = C.carteTeleportPhase(C.CARTE_TP_DUR);
+  assert.equal(end.done, true); assert.deepEqual([end.keeper.sx, end.keeper.sy, end.keeper.visible], [1, 1, true]);
+  assert.equal(end.a.alpha, 0); assert.equal(end.b.alpha, 0);
+  for (let t = 0; t <= 1; t += 0.02) {
+    const p = C.carteTeleportPhase(t);
+    [p.a.alpha, p.b.alpha].forEach((v) => assert.ok(v >= 0 && v <= 1));
+    assert.ok(p.keeper.sx > 0 && p.keeper.sx <= 1 && p.keeper.sy >= 1 && p.keeper.sy <= 1.71);
+  }
+  assert.equal(C.normalizeCarteViewPrefs({}).teleport, false, "désactivée par défaut");
+  assert.equal(C.normalizeCarteViewPrefs({ teleport: true }).teleport, true);
+  assert.equal(C.normalizeCarteViewPrefs({ teleport: "oui" }).teleport, false);
+});
+
+test("hologramme en Markdown : segments stylés (#502)", () => {
+  assert.deepEqual(C.carteHoloInline("a **gras** et *ital* `code` ~~barré~~ [lien](https://x.fr) fin"), [
+    { t: "a " }, { t: "gras", b: true }, { t: " et " }, { t: "ital", i: true }, { t: " " }, { t: "code", code: true }, { t: " " }, { t: "barré", s: true }, { t: " lien fin" },
+  ]);
+  assert.deepEqual(C.carteHoloInline("**gras _et ital_**"), [{ t: "gras ", b: true }, { t: "et ital", b: true, i: true }]);
+  assert.deepEqual(C.carteHoloInline("nom_de_fichier reste tel quel"), [{ t: "nom_de_fichier reste tel quel" }], "un tiret bas dans un mot n'est pas de l'italique");
+  assert.deepEqual(C.carteHoloInline("`**pas gras**`"), [{ t: "**pas gras**", code: true }]);
+  assert.deepEqual(C.carteHoloInline(""), []);
+});
+
+test("hologramme en Markdown : blocs, cases, citations et call-outs (#502)", () => {
+  const T = { note: {}, info: {}, tip: {}, warning: {}, danger: {} };
+  const b = C.carteHoloBlocks([
+    "# Titre", "## Sous-titre", "Texte **gras**", "", "", "- puce", "  - sous-puce", "1. un", "- [ ] à faire", "- [x] fait",
+    "> citation", "> suite", "", "> [!WARNING] Attention **forte**", "> - point", "> texte", "", "> [!inconnu]", "> corps",
+    ":::callout-tip Astuce", "contenu", ":::", "---", "| A | B |", "|---|:-:|", "| 1 | 2 |",
+  ].join("\n"), T);
+  assert.deepEqual(b.map((x) => x.type), ["h", "h", "p", "gap", "li", "li", "li", "task", "task", "quote", "gap", "callout", "gap", "callout", "callout", "hr", "row", "row"]);
+  assert.deepEqual([b[0].level, b[1].level], [1, 2]);
+  assert.deepEqual([b[4].depth, b[5].depth, b[6].n], [0, 1, 1]);
+  assert.deepEqual([b[7].done, b[8].done], [false, true]);
+  assert.equal(b[9].children.length, 2, "citation sur deux lignes");
+  assert.equal(b[11].kind, "warning");
+  assert.deepEqual(b[11].title, [{ t: "Attention " }, { t: "forte", b: true }]);
+  assert.deepEqual(b[11].children.map((x) => x.type), ["li", "p"]);
+  assert.equal(b[13].kind, "note", "type inconnu : note, comme dans le reste de l'app");
+  assert.deepEqual(b[13].title, []);
+  assert.equal(b[14].kind, "tip");
+  assert.deepEqual(b[14].children.map((x) => x.runs[0].t), ["contenu"]);
+  assert.deepEqual(b[16].runs.map((r) => r.t).join(""), "A  ·  B");
+  // Sans table fournie, les cinq types de l'app restent reconnus.
+  assert.equal(C.carteHoloBlocks("> [!danger] x")[0].kind, "danger");
+  assert.deepEqual(C.carteHoloBlocks(""), []);
+  assert.deepEqual(C.carteHoloBlocks("\n\nA\n\n").map((x) => x.type), ["p"], "pas de blanc en tête ni en fin");
+});
+
+test("figurine des responsables : socle à la couleur, repli procédural (#501)", () => {
+  const base = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes, teamMembers: [{ name: "Léo", color: "#123456" }] }, [{ id: "x", projectId: "p", statusId: "s3", assignee: "Léo" }], { now: NOW }).tasks[0];
+  const withFig = C.carteTaskModel(base, "ville", { detail: 2, figure: false });
+  const proc = C.carteTaskModel(base, "ville", { detail: 2 });
+  // Avec la figurine Kenney : seul le socle reste, bas, à la couleur de la personne.
+  const socle = withFig.filter((p) => p.p[0] < -0.3 && (p.c === "#123456" || p.p[1] < 0.2));
+  assert.ok(withFig.some((p) => p.c === "#123456"), "repère de couleur conservé");
+  assert.ok(Math.max(...withFig.filter((p) => p.c === "#123456").map((p) => p.p[1] + p.s[1])) <= C.CARTE_FIGURINE_BASE + 1e-9, "socle bas, sous la figurine");
+  assert.ok(socle.length >= 2, "disque et liseré");
+  assert.ok(withFig.length < proc.length, "le bonhomme procédural n'est pas dessiné en double");
+  // Repli : sans figurine (modèles indisponibles), le bonhomme procédural.
+  assert.ok(Math.max(...proc.filter((p) => p.p[0] < -0.3).map((p) => p.p[1] + p.s[1])) >= 0.85);
+  // Masqué sur demande dans les deux cas.
+  assert.ok(!C.carteTaskModel(base, "ville", { detail: 2, figure: false, people: false }).some((p) => p.c === "#123456"));
+  // Socle centré sous l'ancre du badge d'initiales.
+  const disc = C.cartePersonSocle("#abcdef", 1);
+  assert.ok(disc.every((p) => Math.abs(p.p[0] - C.CARTE_AVATAR_ANCHOR[0]) < 1e-9 && Math.abs(p.p[2] - C.CARTE_AVATAR_ANCHOR[2]) < 1e-9));
+  // Teinte partielle : plus claire que la couleur, jamais blanche.
+  assert.match(C.carteFigurineTint("#123456"), /^#[0-9a-f]{6}$/i);
+  assert.notEqual(C.carteFigurineTint("#123456").toLowerCase(), "#ffffff");
+  assert.notEqual(C.carteFigurineTint("#123456").toLowerCase(), "#123456");
+});
+
+test("drapeaux des totems : forme et pommeau pour chaque thème (#508)", () => {
+  const seen = new Set();
+  C.CARTE_THEMES.forEach((th) => {
+    const f = C.carteFlagStyle(th.id);
+    assert.ok(["rect", "swallowtail", "pennant"].includes(f.shape), `${th.id} : forme ${f.shape}`);
+    assert.equal(f.code, { rect: 0, swallowtail: 1, pennant: 2 }[f.shape]);
+    assert.match(f.finial, /^#[0-9a-f]{6}$/i);
+    seen.add(f.shape);
+  });
+  assert.equal(seen.size, 3, "les trois formes servent");
+  assert.equal(C.carteFlagStyle("foret").shape, "swallowtail", "bannière à queue d'aronde en forêt");
+  assert.equal(C.carteFlagStyle("mer").shape, "pennant");
+  assert.equal(C.carteFlagStyle("cyberpunk").finial, "#3ef0ff");
+  assert.deepEqual(C.carteFlagStyle("inconnu"), { shape: "rect", code: 0, finial: "#d9b23a" }, "repli");
+});
+
+test("fléaux des tâches critiques selon le thème, orage en repli (#509)", () => {
+  const kinds = new Set();
+  C.CARTE_THEMES.forEach((th) => {
+    const f = C.carteCriticalFx(th.id);
+    assert.ok(C.CARTE_CRITICAL_FX_KINDS[f.id], `${th.id} : effet ${f.id} inconnu`);
+    assert.ok(f.label && f.legend, `${th.id} : libellés`);
+    assert.match(f.a, /^#[0-9a-f]{6}$/i); assert.match(f.b, /^#[0-9a-f]{6}$/i);
+    kinds.add(f.id);
+    // La légende du thème annonce son fléau.
+    assert.ok(C.carteLook(th.id).sig.some((l) => l[1].includes(f.legend)), `${th.id} : légende`);
+  });
+  assert.equal(kinds.size, 8, "les huit effets servent");
+  assert.deepEqual(
+    ["grandnord", "desert", "volcan", "foret", "mer", "ile", "cyberpunk", "campagne", "marais"].map((id) => C.carteCriticalFx(id).id),
+    ["blizzard", "sandstorm", "lava", "leaves", "whirlpool", "whirlpool", "glitch", "storm", "miasma"],
+  );
+  assert.equal(C.carteCriticalFx("inconnu").id, "storm", "l'éclair reste le repli");
+  assert.equal(C.carteCriticalFx(undefined).id, "storm");
+  // Codes du shader uniques, de 0 à 7 ; l'orage n'a pas de particules (il garde son rendu).
+  const codes = Object.values(C.CARTE_CRITICAL_FX_KINDS).map((k) => k.kind).sort();
+  assert.deepEqual(codes, [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(C.CARTE_CRITICAL_FX_KINDS.storm.count, 0);
+  Object.values(C.CARTE_CRITICAL_FX_KINDS).forEach((k) => assert.ok(k.count <= 80, "léger : 80 particules au plus par tâche"));
 });

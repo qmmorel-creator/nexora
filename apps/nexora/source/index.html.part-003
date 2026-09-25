@@ -2929,7 +2929,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask, onUpdateTaskFromCarte, setProjectFolders, onUpdateTaskFromCosmos, onToggleDoneFromCosmos, favorites }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask, onUpdateTaskFromCarte, setProjectFolders, onUpdateTaskFromCosmos, onToggleDoneFromCosmos, favorites, onCreateTaskFromCarte }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3872,7 +3872,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "embedCarte" && (
-                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} setProjectFolders={setProjectFolders} />
+                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} onCreateTask={onCreateTaskFromCarte} setProjectFolders={setProjectFolders} />
                 )}
                 {w.type === "embedCosmos" && (
                   <WidgetEmbedCosmos widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} favorites={favorites} />
@@ -18891,6 +18891,7 @@ function createCarteEngine(THREE, container, opts) {
     // Déplacement de l'arpenteur (#493) : désactivé, un clic zoome aussitôt.
     walk: o.walk !== false, lastClick: null,
     holo: o.holo !== false,
+    teleport: !!o.teleport,
     // Effets avancés (#496 à #498) : bloom, herbe dense, ombres de nuages.
     fx: o.fx !== false,
     hoverKey: null, strategic: 0, viewGoal: null, buildId: 0, prevTasks: null,
@@ -19264,6 +19265,49 @@ function createCarteEngine(THREE, container, opts) {
     ].join("\n"));
   };
   MAT.w.customProgramCacheKey = () => "carte-sway";
+  // Drapeaux des totems (#508) : un tissu subdivisé, partagé par tous les
+  // drapeaux, qui ondule dans le vertex shader (onde qui part de la hampe,
+  // normales recalculées pour la lumière). Forme (droit, queue d'aronde,
+  // fanion) et phase par instance ; emblème clair dessiné dans le fragment.
+  const flagU = { value: 0 };
+  const flagGeo = new THREE.PlaneGeometry(1, 1, 14, 6).translate(0.5, 0, 0);
+  geos.push(flagGeo);
+  MAT.flag = mat(std({ roughness: 0.86, side: THREE.DoubleSide, envMapIntensity: 0.45 }));
+  MAT.flag.onBeforeCompile = (sh) => {
+    sh.uniforms.uFlagT = flagU;
+    sh.vertexShader = "uniform float uFlagT;\nattribute vec2 aFlag;\nvarying vec2 vFlagUv;\nvarying float vFlagShape;\n" + sh.vertexShader
+      .replace("#include <beginnormal_vertex>", [
+        "float flX = clamp(position.x, 0.0, 1.0);",
+        "float flA = uFlagT * 4.2 - flX * 7.0 + aFlag.x;",
+        "float flB = uFlagT * 6.3 - flX * 12.0 + aFlag.x * 1.7;",
+        "float flS = sin(flA) * 0.16 + sin(flB) * 0.045;",
+        "float flW = flS * flX;",
+        "float flD = flS - (cos(flA) * 1.12 + cos(flB) * 0.54) * flX;",
+        "vec3 objectNormal = normalize(vec3(-flD, 0.0, 1.0));",
+        "#ifdef USE_TANGENT",
+        "vec3 objectTangent = vec3(tangent.xyz);",
+        "#endif",
+      ].join("\n"))
+      .replace("#include <begin_vertex>", [
+        "#include <begin_vertex>",
+        "transformed.z += flW;",
+        "transformed.y -= flX * flX * 0.07;",
+        "vFlagUv = uv; vFlagShape = aFlag.y;",
+      ].join("\n"));
+    sh.fragmentShader = "varying vec2 vFlagUv;\nvarying float vFlagShape;\n" + sh.fragmentShader.replace("#include <color_fragment>", [
+      "#include <color_fragment>",
+      "float flY = abs(vFlagUv.y - 0.5);",
+      "if (vFlagShape > 0.5 && vFlagShape < 1.5 && vFlagUv.x > 0.68 && flY < (vFlagUv.x - 0.68) * 1.25) discard;",
+      "if (vFlagShape > 1.5 && flY > 0.5 * (1.0 - vFlagUv.x) + 0.015) discard;",
+      "vec2 flC = vec2(vFlagShape > 1.5 ? 0.27 : 0.36, 0.5);",
+      "float flE = length((vFlagUv - flC) * vec2(1.7, 1.0));",
+      "float flM = 1.0 - smoothstep(0.15, 0.165, flE);",
+      "float flR = smoothstep(0.08, 0.095, flE);",
+      "diffuseColor.rgb = mix(diffuseColor.rgb, mix(diffuseColor.rgb, vec3(1.0), 0.75), flM * flR);",
+      "diffuseColor.rgb *= 0.8 + 0.2 * smoothstep(0.0, 0.06, vFlagUv.x);",
+    ].join("\n"));
+  };
+  MAT.flag.customProgramCacheKey = () => "carte-flag";
   // Brouillard de guerre (#468) : bancs de brume sur les fiches incomplètes.
   MAT.fog = mat(std({ color: "#f3f5f8", transparent: true, opacity: 0.6, depthWrite: false, roughness: 1 }));
   // Particules de chantier (#480) : poussière et fumée (éclairées), étincelles.
@@ -19542,7 +19586,7 @@ function createCarteEngine(THREE, container, opts) {
   // Chaque modèle est chargé une fois, ses pièces fusionnées en une seule
   // géométrie (pieds à y = 0, centrée, hauteur 1), puis dessiné en
   // instances. Échec de chargement : la carte garde ses modèles procéduraux.
-  const KENNEY_FILES = ["ville/building-small-a", "ville/building-small-b", "ville/building-small-c", "ville/building-small-d", "arene/tree", "arene/banner", "arene/character-soldier", "arene/bricks", "plateforme/coin", "plateforme/grass", "plateforme/grass-small"];
+  const KENNEY_FILES = ["ville/building-small-a", "ville/building-small-b", "ville/building-small-c", "ville/building-small-d", "arene/tree", "arene/banner", "arene/character-soldier", "arene/bricks", "plateforme/coin", "plateforme/character", "plateforme/grass", "plateforme/grass-small"];
   S.kenney = null;
   const kClipU = [];
   // Découpe par plan à hauteur d'avancement (#499), instance par instance :
@@ -20036,6 +20080,7 @@ function createCarteEngine(THREE, container, opts) {
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
     const storms = [];
+    const critFx = [];
     const clocks = [];
     const fires = [];
     const avatars = [];
@@ -20060,7 +20105,9 @@ function createCarteEngine(THREE, container, opts) {
       const detail = n > 1 ? Math.min(S.detail, 1) : S.detail;
       // Vrai modèle 3D (#499) : immeuble Kenney, découpé à l'avancement.
       const kb = useK && detail >= 1 ? carteKenneyBuilding(t, tile.theme) : null;
-      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null, people: S.people, body: kb ? false : undefined });
+      // Figurine Kenney des responsables (#501) ; repli : bonhomme procédural.
+      const fig = useK && S.people && t.assignee && S.kenney.character;
+      let parts = carteTaskModel(t, tile.theme, { detail, secondaryColor: sec ? sec.color : null, people: S.people, body: kb ? false : undefined, figure: fig ? false : undefined });
       if (tile.kind === "water" && !/^(mer|ile)$/.test(tile.theme) && t.state !== "info") parts = carteStilts(theme(tile.theme).pal.wood, 0.3).concat(parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0], pp.p[1] + 0.02, pp.p[2]] })));
       if (k !== 1) parts = parts.map((pp) => Object.assign({}, pp, { p: [pp.p[0] * k, pp.p[1] * k, pp.p[2] * k], s: [pp.s[0] * k, pp.s[1] * k, pp.s[2] * k] }));
       const ry = (carteRand("ry" + t.id) - 0.5) * 0.8;
@@ -20082,7 +20129,12 @@ function createCarteEngine(THREE, container, opts) {
       // En retard : horloge qui fait tic-tac (#414) ; en plus urgente : gros
       // éclairs venus du ciel (#406). Incendie (#385) : urgente sans retard.
       const hz = carteHazard(t);
-      if (hz === "tempest") storms.push({ x, y, z, top: y + Math.min(top, 7), big: true, ph: carteRand("storm" + t.id) });
+      // Tâche critique (#509) : le fléau du thème ; l'orage reste le repli.
+      if (hz === "tempest") {
+        const cfx = carteCriticalFx(tile.theme);
+        if (cfx.id === "storm") storms.push({ x, y, z, top: y + Math.min(top, 7), big: true, ph: carteRand("storm" + t.id) });
+        else critFx.push({ x, y, z, k, top: y + Math.min(top, 7), fx: cfx, id: t.id });
+      }
       else if (hz === "clock") clocks.push({ x, y, z, k, top: y + Math.min(top, 7), ph: carteRand("clock" + t.id) });
       else if (hz === "fire") fires.push({ x, y, z, k, h: Math.max(0.3, Math.min(top, 7)), ph: carteRand("fire" + t.id) * 6.283 });
       if (carteDangerSign(t)) {
@@ -20099,6 +20151,12 @@ function createCarteEngine(THREE, container, opts) {
       if (t.assignee && S.people) {
         const a = carteAvatarAnchor(t);
         const cr = Math.cos(ry), sr = Math.sin(ry);
+        if (fig) {
+          const sz = carteTaskSize(t) * k;
+          const pcol = cartePersonColor(t.assignee, t.assigneeColor);
+          const dimF = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+          kBatch.add("character", x + (a[0] * cr + a[2] * sr) * k, y + CARTE_FIGURINE_BASE * sz, z + (-a[0] * sr + a[2] * cr) * k, CARTE_FIGURINE_H * sz, 0.8 * sz, ry + 0.5 + (carteRand("fig" + t.id) - 0.5) * 0.6, null, dimF ? "#b9bec5" : carteFigurineTint(pcol));
+        }
         avatars.push({ name: t.assignee, color: cartePersonColor(t.assignee, t.assigneeColor), x: x + (a[0] * cr + a[2] * sr) * k, y: y + a[1] * k, z: z + (-a[0] * sr + a[2] * cr) * k, k });
       }
       if (t.state === "done") dones.push(x, y + Math.min(top, 7) + 1.05, z);
@@ -20202,6 +20260,7 @@ function createCarteEngine(THREE, container, opts) {
       world.add(bm);
     }
     buildStorms(storms);
+    buildCriticalFx(critFx);
     buildClocks(clocks);
     buildFires(fires);
     buildAvatars(avatars);
@@ -20373,7 +20432,7 @@ function createCarteEngine(THREE, container, opts) {
     // Soleil plus bas (#485) : ombres longues de fin d'après-midi.
     if (sun.castShadow) { sun.position.set(S.target.x + 34, 32, S.target.z + 12); sun.target.position.copy(S.target); }
   }
-  function zoomBy(f) { S.dist = Math.max(7, Math.min(150, S.dist * f)); }
+  function zoomBy(f) { S.dist = Math.max(7, Math.min(CARTE_DIST_MAX, S.dist * f)); }
 
   // ---------- Entrées ----------
   const keyMap = { arrowup: "f", z: "f", w: "f", arrowdown: "b", s: "b", arrowleft: "l", q: "l", a: "l", arrowright: "r", d: "r" };
@@ -20443,9 +20502,12 @@ function createCarteEngine(THREE, container, opts) {
     });
     return best;
   }
-  // Glisser la vue (#396) : clic molette ou clic droit enfoncé, Maj + clic
-  // gauche, ou clic gauche en mode « main ». La caméra quitte l'arpenteur, qui
-  // ne bouge pas ; le recentrage ou un pas de l'arpenteur la lui rendent.
+  // Gestes de la souris (#510, inversés par rapport à #396) : le clic gauche
+  // glissé (ou un doigt) déplace la carte ; la molette enfoncée glissée fait
+  // tourner la caméra (orbite et inclinaison), tout comme le clic droit glissé
+  // ou Maj + clic gauche (pavés tactiles sans bouton du milieu), et le clic
+  // gauche en mode « orbite ». En déplaçant la carte, la caméra quitte
+  // l'arpenteur, qui ne bouge pas ; le recentrage ou un pas la lui rendent.
   function panBy(dx, dy) {
     const H = canvas.clientHeight || 600;
     const k = (2 * S.dist * Math.tan((camera.fov * Math.PI) / 360)) / H;
@@ -20457,6 +20519,37 @@ function createCarteEngine(THREE, container, opts) {
     S.focusGoal.x += mx; S.focusGoal.z += mz;
     S.target.x += mx; S.target.z += mz;
   }
+  // Clic droit (#470, #503). Cause du « clic droit sans effet » : l'action ne
+  // dépendait que du pointerup du bouton droit. Or ce relâchement n'arrive
+  // pas partout (Safari le perd après un menu contextuel ; Ctrl + clic sur Mac
+  // est un clic GAUCHE, qui faisait marcher l'arpenteur), et tout clic droit
+  // hors d'une parcelle libre (bâtiment, route, lisière, totem) ne faisait
+  // rien, sans aucun retour ; dans le widget, « Construire » n'était même pas
+  // branché. Désormais l'événement contextmenu, émis sur toutes les
+  // plateformes, déclenche l'action, et chaque cas a un effet visible.
+  const CTX_DEDUP_MS = 600;
+  function flashTip(cx, cy, text) {
+    const rect = canvas.getBoundingClientRect();
+    tip.textContent = text;
+    tip.style.transform = "translate(" + Math.round(cx - rect.left + 14) + "px," + Math.round(cy - rect.top + 12) + "px)";
+    tip.hidden = false;
+    clearTimeout(S.tipTimer);
+    S.tipTimer = setTimeout(() => { tip.hidden = true; }, 1800);
+  }
+  function rightClick(cx, cy) {
+    S.ctxAt = performance.now();
+    if (!S.layout) return;
+    if (HOLO.id && holoClick(cx, cy)) return;
+    const h = S.strategic > 0.5 ? null : pick(cx, cy);
+    const totem = S.strategic > 0.5 ? null : totemAt(cx, cy);
+    // Sur un bâtiment : la roue d'action de la tâche (#489).
+    const id = h && !totem ? taskAt(h.key, h.point) : null;
+    if (id) { select(id); return; }
+    if (!o.onBuild) { flashTip(cx, cy, "Clic droit : construire depuis la vue Carte"); return; }
+    const b = carteNearestBuildable(S.layout, h ? h.key : null, S.poisByKey, totem || null);
+    if (b) { setHoverTile(b.key, "#ffffff"); o.onBuild({ ...b, x: cx, y: cy }); S.buildShown = performance.now(); }
+    else if (h || totem) flashTip(cx, cy, "Aucune parcelle libre dans ce territoire");
+  }
   const onDown = (e) => {
     if (keyTarget.focus) keyTarget.focus({ preventScroll: true });
     // Clic molette : pas de défilement automatique du navigateur.
@@ -20464,19 +20557,22 @@ function createCarteEngine(THREE, container, opts) {
     pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointeur déjà relâché */ }
     const ids = Object.keys(pointers);
-    if (ids.length === 2) { const a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist }; drag = null; }
-    else {
-      // En vue plan (#481), le clic gauche glissé déplace la carte.
-      const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (e.shiftKey || S.panMode || S.plan));
-      drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false, pan };
-      if (pan) canvas.style.cursor = "grabbing";
+    if (ids.length === 2) {
+      // Deux doigts : pincer pour zoomer, tourner pour pivoter la caméra.
+      const a = pointers[ids[0]], b = pointers[ids[1]];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist, ang: Math.atan2(b.y - a.y, b.x - a.x), yaw: S.yaw };
+      drag = null;
+    } else {
+      const mouse = e.pointerType === "mouse" || !e.pointerType;
+      const orbit = !S.plan && (e.button === 1 || e.button === 2 || (e.button === 0 && mouse && (e.shiftKey || S.orbitMode)));
+      drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false, pan: !orbit, button: e.button, id: e.pointerId };
       // Construire ici (#470) : appui long sur une parcelle libre (tactile).
       clearTimeout(S.pressTimer);
-      if (e.pointerType !== "mouse" && o.onBuild) {
+      if (!mouse && o.onBuild) {
         const d0 = drag, cx = e.clientX, cy = e.clientY;
         S.pressTimer = setTimeout(() => {
           if (drag !== d0 || d0.moved || !S.layout) return;
-          const h = pick(cx, cy), b = h && buildableAt(h.key);
+          const h = pick(cx, cy), b = h && carteBuildable(S.layout, h.key, S.poisByKey);
           if (b) { d0.consumed = true; o.onBuild({ ...b, x: cx, y: cy }); }
         }, 550);
       }
@@ -20487,12 +20583,24 @@ function createCarteEngine(THREE, container, opts) {
     const ids = Object.keys(pointers);
     if (pinch && ids.length === 2) {
       const a = pointers[ids[0]], b = pointers[ids[1]];
-      S.dist = Math.max(7, Math.min(150, pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y))));
+      S.dist = Math.max(7, Math.min(CARTE_DIST_MAX, pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y))));
+      if (!S.plan) {
+        let da = Math.atan2(b.y - a.y, b.x - a.x) - pinch.ang;
+        da = Math.atan2(Math.sin(da), Math.cos(da));
+        S.yaw = pinch.yaw - da;
+      }
       return;
+    }
+    // Relâchement perdu (hors de la fenêtre, menu système) : plus aucun
+    // bouton enfoncé, le glisser s'arrête au lieu de coller au curseur.
+    if (drag && e.pointerType === "mouse" && e.buttons === 0) {
+      const d0 = drag;
+      drag = null; canvas.style.cursor = S.hovered ? "pointer" : "grab";
+      if (d0.menu && !d0.moved) rightClick(d0.sx, d0.sy);
     }
     if (drag) {
       const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-      if (Math.hypot(dx, dy) > 6) { drag.moved = true; clearTimeout(S.pressTimer); }
+      if (!drag.moved && Math.hypot(dx, dy) > 6) { drag.moved = true; clearTimeout(S.pressTimer); canvas.style.cursor = drag.pan ? "grabbing" : "move"; }
       if (drag.pan) { if (drag.moved) panBy(e.clientX - drag.lx, e.clientY - drag.ly); drag.lx = e.clientX; drag.ly = e.clientY; }
       else if (drag.moved) { S.yaw = drag.yaw - dx * 0.006; S.pitch = Math.max(0.45, Math.min(1.35, drag.pitch + dy * 0.004)); }
       return;
@@ -20520,12 +20628,12 @@ function createCarteEngine(THREE, container, opts) {
       const id = h && !totem ? taskAt(h.key, h.point) : null;
       const hp = totem || (h && !id ? hubAt(h.key) : null);
       const hv = portal ? "o:" + portal : id ? "t:" + id : hp ? "p:" + hp : null;
-      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv && !S.panMode ? "pointer" : "grab"; }
+      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv ? "pointer" : "grab"; }
       // Contour lumineux (#477) : tâche, cœur de projet ou parcelle libre.
       if (S.strategic > 0.5) setHoverTile(null);
       else if (id) setHoverTile(S.poi[id] ? S.poi[id].key : h.key, "#ffe38a");
       else if (hp) { const tr = S.layout.territories.find((x) => x.projectId === hp); setHoverTile(tr ? carteKey(tr.q, tr.r) : null, (S.layout.projectById[hp] || {}).color); }
-      else if (h && buildableAt(h.key)) setHoverTile(h.key, "#ffffff");
+      else if (h && carteBuildable(S.layout, h.key, S.poisByKey)) setHoverTile(h.key, "#ffffff");
       else setHoverTile(null);
     }
   };
@@ -20533,12 +20641,14 @@ function createCarteEngine(THREE, container, opts) {
     delete pointers[e.pointerId];
     clearTimeout(S.pressTimer);
     if (pinch) { if (Object.keys(pointers).length < 2) pinch = null; drag = null; return; }
-    if (drag && drag.pan) canvas.style.cursor = S.panMode ? "grab" : S.hovered ? "pointer" : "grab";
+    if (drag && drag.moved) canvas.style.cursor = S.hovered ? "pointer" : "grab";
     if (drag && drag.consumed) { drag = null; return; }
-    // Clic droit sans glisser sur une parcelle libre : « Construire ici » (#470).
-    if (drag && !drag.moved && e.button === 2 && S.layout && o.onBuild) {
-      const h = pick(e.clientX, e.clientY), b = h && buildableAt(h.key);
-      if (b) o.onBuild({ ...b, x: e.clientX, y: e.clientY });
+    // Clic droit sans glisser (#503) : « Construire ici », ou la roue d'une
+    // tâche. Un clic droit GLISSÉ (rotation) ne déclenche rien, et le
+    // contextmenu qui suit sous Windows est ignoré (horodatage S.ctxAt).
+    if (drag && (e.button === 2 || drag.menu)) {
+      if (!drag.moved) rightClick(e.clientX, e.clientY);
+      else S.ctxAt = performance.now();
       drag = null;
       return;
     }
@@ -20564,7 +20674,7 @@ function createCarteEngine(THREE, container, opts) {
         if (pid) { if (o.onTerritory) o.onTerritory(pid); focusProject(pid); drag = null; return; }
       }
     }
-    if (drag && !drag.moved && !(drag.pan && e.button !== 0) && S.layout) {
+    if (drag && !drag.moved && e.button === 0 && S.layout) {
       const h = pick(e.clientX, e.clientY);
       const totem = totemAt(e.clientX, e.clientY);
       // Un clic (ou un toucher) sur un totem épingle le nom du projet.
@@ -20579,7 +20689,24 @@ function createCarteEngine(THREE, container, opts) {
     drag = null;
   };
   const onCancel = (e) => { delete pointers[e.pointerId]; drag = null; pinch = null; };
-  const onMenu = (e) => e.preventDefault();
+  const onMenu = (e) => {
+    e.preventDefault();
+    // macOS et Linux émettent le menu contextuel à l'APPUI : on attend le
+    // relâchement pour savoir si c'était un glisser (rotation). Ctrl + clic
+    // sur Mac arrive ici avec le bouton gauche et devient un clic droit.
+    if (drag && !drag.moved && !pinch) {
+      drag.menu = true;
+      if (drag.button === 0) drag.pan = false;
+      // Si le relâchement ne vient jamais (Safari), le prochain mouvement
+      // sans bouton enfoncé fait office de relâchement (voir onMove) : pas de
+      // minuterie, qu'une page chargée pourrait déclencher en plein glisser.
+      return;
+    }
+    // Windows : le menu arrive APRÈS le relâchement, déjà traité. Sinon (touche
+    // Menu du clavier, relâchement perdu), le contextmenu agit seul.
+    if (performance.now() - (S.ctxAt || 0) < CTX_DEDUP_MS) return;
+    rightClick(e.clientX, e.clientY);
+  };
   const onAux = (e) => { if (e.button === 1) e.preventDefault(); };
   canvas.addEventListener("contextmenu", onMenu);
   canvas.addEventListener("mousedown", onAux);
@@ -20633,12 +20760,125 @@ function createCarteEngine(THREE, container, opts) {
   scene.add(holoBase);
   holoBeam.visible = holoBase.visible = false;
   const HOLO = { id: null, tab: 0, tabs: [], tabBoxes: [], t0: 0 };
-  function wrapLines(g, text, maxW) {
-    const words = String(text).split(/\s+/).filter(Boolean), out = [];
-    let line = "";
-    words.forEach((w) => { const t = line ? line + " " + w : w; if (g.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; });
-    if (line) out.push(line);
-    return out;
+  // ---------- Hologramme : rendu Markdown (#502) ----------
+  const HOLO_FONT = "Inter, -apple-system, 'Segoe UI', sans-serif";
+  const HOLO_MONO = "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
+  const HOLO_TEXT = "#e9fdff";
+  // Couleur d'un call-out : celle de l'app (CALLOUT_TYPES), éclaircie pour
+  // rester lisible sur le fond sombre du tableau.
+  const holoCalloutCache = {};
+  function holoCallout(kind) {
+    if (holoCalloutCache[kind]) return holoCalloutCache[kind];
+    const T = typeof CALLOUT_TYPES !== "undefined" ? CALLOUT_TYPES : {};
+    const meta = T[kind] || T.note || { label: "Note", color: "#3B82F6", icon: "" };
+    const c = new THREE.Color(meta.color), hsl = {};
+    c.getHSL(hsl); c.setHSL(hsl.h, Math.min(1, hsl.s * 1.05), Math.max(0.64, hsl.l));
+    const rgb = [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)].join(",");
+    return (holoCalloutCache[kind] = { label: meta.label, icon: meta.icon || "", color: "rgb(" + rgb + ")", tint: "rgba(" + rgb + ",0.16)", edge: "rgba(" + rgb + ",0.7)" });
+  }
+  const holoFont = (st, size, weight) => (st.i ? "italic " : "") + (st.b ? 800 : weight) + " " + (st.code ? Math.round(size * 0.9) : size) + "px " + (st.code ? HOLO_MONO : HOLO_FONT);
+  // Texte stylé coupé aux espaces ; renvoie la hauteur occupée.
+  function holoRuns(g, runs, x, w, y, size, weight, color, ctx) {
+    const lh = Math.round(size * 1.4), dy = Math.round((lh - size) / 2);
+    const toks = [];
+    (runs || []).forEach((r) => String(r.t).split(/(\s+)/).forEach((q) => { if (q) toks.push({ t: q, st: r }); }));
+    if (y + lh > ctx.maxY) { ctx.cut = true; return 0; }
+    let cx = x, cy = y, has = false;
+    for (const tk of toks) {
+      g.font = holoFont(tk.st, size, weight);
+      if (/^\s+$/.test(tk.t)) { if (has) cx += g.measureText(" ").width; continue; }
+      let t = tk.t, tw = g.measureText(t).width;
+      if (has && cx + tw > x + w) {
+        cy += lh; cx = x;
+        if (cy + lh > ctx.maxY) { ctx.cut = true; return cy - y; }
+      }
+      if (tw > w) { while (t.length > 2 && g.measureText(t + "…").width > w) t = t.slice(0, -1); t += "…"; tw = g.measureText(t).width; }
+      if (!ctx.dry) {
+        if (tk.st.code) { g.save(); g.shadowBlur = 0; g.fillStyle = "rgba(160,245,255,0.16)"; g.fillRect(cx - 4, cy + 3, tw + 8, lh - 6); g.restore(); }
+        g.fillStyle = tk.st.b ? "#ffffff" : tk.st.code ? "#bff6ff" : color;
+        g.fillText(t, cx, cy + dy);
+        if (tk.st.s) g.fillRect(cx, cy + Math.round(lh / 2), tw, 2.5);
+      }
+      cx += tw; has = true;
+    }
+    return cy + lh - y;
+  }
+  function holoBlocks(g, blocks, x, w, y, ctx) {
+    const y0 = y;
+    for (const b of blocks || []) {
+      if (ctx.cut) break;
+      if (b.type === "gap") { y += 14; continue; }
+      if (b.type === "hr") {
+        if (y + 24 > ctx.maxY) { ctx.cut = true; break; }
+        if (!ctx.dry) { g.fillStyle = "rgba(160,245,255,0.45)"; g.fillRect(x, y + 11, w, 2); }
+        y += 24; continue;
+      }
+      if (b.type === "h") {
+        const size = [0, 42, 37, 33][b.level] || 33;
+        if (y > y0) y += 6;
+        const h = holoRuns(g, b.runs, x, w, y, size, 800, "#bff6ff", ctx);
+        if (!ctx.dry && h && b.level === 1) { g.fillStyle = "rgba(160,245,255,0.5)"; g.fillRect(x, y + h - 2, Math.min(w, 180), 3); }
+        y += h + 6; continue;
+      }
+      if (b.type === "p" || b.type === "row") { y += holoRuns(g, b.runs, x, w, y, 30, 500, HOLO_TEXT, ctx) + 4; continue; }
+      if (b.type === "li" || b.type === "task") {
+        const bx = x + 34 * (b.depth || 0), lh = 42;
+        if (y + lh > ctx.maxY) { ctx.cut = true; break; }
+        let tx = bx + 34;
+        if (b.type === "task") {
+          tx = bx + 44;
+          if (!ctx.dry) {
+            g.strokeStyle = b.done ? "#7ef0b4" : "#bff6ff"; g.lineWidth = 3;
+            g.strokeRect(bx + 3, y + 9, 25, 25);
+            if (b.done) { g.beginPath(); g.moveTo(bx + 8, y + 22); g.lineTo(bx + 14, y + 29); g.lineTo(bx + 25, y + 13); g.stroke(); }
+          }
+        } else if (b.n != null) {
+          g.font = "700 30px " + HOLO_FONT;
+          const label = b.n + ".";
+          tx = bx + Math.max(40, g.measureText(label).width + 12);
+          if (!ctx.dry) { g.fillStyle = "#9fefff"; g.fillText(label, bx, y + 6); }
+        } else if (!ctx.dry) {
+          g.fillStyle = "#9fefff"; g.beginPath();
+          if (b.depth) g.rect(bx + 7, y + 16, 10, 10); else g.arc(bx + 12, y + 21, 6, 0, Math.PI * 2);
+          g.fill();
+        }
+        const runs = b.type === "task" && b.done ? b.runs.map((r) => Object.assign({}, r, { s: true })) : b.runs;
+        y += holoRuns(g, runs, tx, x + w - tx, y, 30, 500, b.type === "task" && b.done ? "rgba(233,253,255,0.62)" : HOLO_TEXT, ctx) + 4;
+        continue;
+      }
+      if (b.type === "quote") {
+        const h = holoBlocks(g, b.children, x + 28, w - 28, y, { dry: true, cut: false, maxY: ctx.maxY });
+        if (!ctx.dry && h) { g.fillStyle = "rgba(160,245,255,0.55)"; g.fillRect(x + 4, y + 4, 6, h - 8); }
+        const sub = Object.assign({}, ctx);
+        y += holoBlocks(g, b.children.map((c) => (c.runs ? Object.assign({}, c, { runs: c.runs.map((r) => Object.assign({}, r, { i: true })) }) : c)), x + 28, w - 28, y, sub) + 8;
+        ctx.cut = sub.cut;
+        continue;
+      }
+      if (b.type === "callout") {
+        const meta = holoCallout(b.kind), pd = 18, head = 50;
+        if (y + head + 8 > ctx.maxY) { ctx.cut = true; break; }
+        const bodyH = holoBlocks(g, b.children, x + pd + 10, w - 2 * pd - 10, 0, { dry: true, cut: false, maxY: Infinity });
+        const boxH = Math.min(ctx.maxY - y, head + (bodyH ? bodyH + 6 : 0) + 12);
+        if (!ctx.dry) {
+          g.save(); g.shadowBlur = 0;
+          g.fillStyle = meta.tint; g.strokeStyle = meta.edge; g.lineWidth = 2;
+          g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, boxH, 12); else g.rect(x, y, w, boxH); g.fill(); g.stroke();
+          g.fillStyle = meta.color; g.fillRect(x, y + 2, 7, boxH - 4);
+          g.font = "700 28px " + HOLO_FONT;
+          if (meta.icon) g.fillText(meta.icon, x + pd + 4, y + 11);
+          g.restore();
+        }
+        const title = b.title && b.title.length ? b.title : [{ t: meta.label }];
+        const ix = x + pd + (meta.icon ? 48 : 6);
+        holoRuns(g, title.map((r) => Object.assign({}, r, { b: false })), ix, x + w - ix - pd, y + 7, 29, 800, meta.color, { dry: ctx.dry, cut: false, maxY: y + head + 4 });
+        const sub = { dry: ctx.dry, cut: false, maxY: Math.min(ctx.maxY, y + boxH - 6) };
+        holoBlocks(g, b.children, x + pd + 10, w - 2 * pd - 10, y + head, sub);
+        if (sub.cut) { ctx.cut = true; }
+        y += boxH + 12;
+        continue;
+      }
+    }
+    return y - y0;
   }
   function drawHolo() {
     const t = S.data && S.data.taskById[HOLO.id];
@@ -20678,21 +20918,13 @@ function createCarteEngine(THREE, container, opts) {
     });
     // Corps.
     const tab = HOLO.tabs[HOLO.tab];
-    const paras = carteHoloParagraphs(tab && tab.id === "report" ? t.report : t.desc);
-    g.font = "500 31px Inter, -apple-system, 'Segoe UI', sans-serif"; g.fillStyle = "#e9fdff"; g.shadowBlur = 6;
-    let y = 222; const lh = 44, maxY = H - 96;
-    let cut = false;
-    for (const para of paras) {
-      if (!para.text) { y += lh * 0.4; continue; }
-      const x0 = pad + (para.bullet ? 34 : 0);
-      const lines = wrapLines(g, para.text, W - x0 - pad);
-      for (let i = 0; i < lines.length; i++) {
-        if (y + lh > maxY) { cut = true; break; }
-        if (para.bullet && i === 0) { g.beginPath(); g.arc(pad + 12, y + 20, 5, 0, Math.PI * 2); g.fill(); }
-        g.fillText(lines[i], x0, y); y += lh;
-      }
-      if (cut) break;
-    }
+    // Markdown (#502) : titres, gras, italique, listes, cases, citations,
+    // call-outs, tableaux ; ce qui déborde est signalé « Suite dans la fiche ».
+    const blocks = carteHoloBlocks(tab && tab.id === "report" ? t.report : t.desc, typeof CALLOUT_TYPES !== "undefined" ? CALLOUT_TYPES : null);
+    g.shadowBlur = 6; g.shadowColor = "rgba(120,235,255,0.6)";
+    const hctx = { dry: false, cut: false, maxY: H - 96 };
+    holoBlocks(g, blocks, pad, W - 2 * pad, 216, hctx);
+    const cut = hctx.cut;
     g.shadowBlur = 0;
     g.fillStyle = "#9fefff"; g.font = "500 22px Inter, -apple-system, 'Segoe UI', sans-serif";
     g.fillText(cut ? "Suite dans la fiche…" : carteDueText(t) + (t.assignee ? " · " + t.assignee : ""), pad, H - 66);
@@ -20769,6 +21001,158 @@ function createCarteEngine(THREE, container, opts) {
     return true;
   }
 
+  // ---------- Téléportation magique (#505) ----------
+  // Cercle runique au sol et colonne de lumière, au départ puis à l'arrivée ;
+  // l'arpenteur se dissout, change de place, se reforme ; la caméra, qui le
+  // suit, glisse vers l'arrivée. 0,8 s en tout (carteTeleportPhase), sur
+  // l'horloge réelle. Matériaux additifs, géométries partagées.
+  const TP = { on: false, start: 0, fixed: null, from: new THREE.Vector3(), to: new THREE.Vector3(), swapped: false };
+  const tpGroup = new THREE.Group();
+  tpGroup.visible = false;
+  scene.add(tpGroup);
+  const runeCanvas = document.createElement("canvas");
+  runeCanvas.width = runeCanvas.height = 256;
+  (function drawRunes() {
+    const g = runeCanvas.getContext("2d");
+    if (!g) return;
+    g.translate(128, 128);
+    g.strokeStyle = "#ffffff"; g.fillStyle = "#ffffff"; g.lineCap = "round";
+    const ring = (r, w) => { g.lineWidth = w; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke(); };
+    ring(120, 5); ring(98, 2.5); ring(56, 3);
+    // Hexagramme.
+    g.lineWidth = 2.5;
+    [0, Math.PI].forEach((off) => { g.beginPath(); for (let i = 0; i <= 3; i++) { const a = off + i * (2 * Math.PI / 3) - Math.PI / 2; const x = Math.cos(a) * 96, y = Math.sin(a) * 96; if (i) g.lineTo(x, y); else g.moveTo(x, y); } g.stroke(); });
+    // Runes : petits glyphes entre les deux cercles extérieurs.
+    g.lineWidth = 2.6;
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      g.save(); g.rotate(a); g.translate(0, -109);
+      const r = (n) => carteRand("rune" + i + ":" + n);
+      g.beginPath();
+      g.moveTo(-4 + r(1) * 3, -6); g.lineTo(r(2) * 6 - 3, 6);
+      if (r(3) < 0.6) { g.moveTo(-5, r(4) * 6 - 3); g.lineTo(5, r(5) * 6 - 3); }
+      if (r(6) < 0.5) { g.moveTo(3, -6); g.lineTo(-2 + r(7) * 5, 0); }
+      g.stroke(); g.restore();
+    }
+    // Cœur lumineux.
+    const rg = g.createRadialGradient(0, 0, 0, 0, 0, 56);
+    rg.addColorStop(0, "rgba(255,255,255,.55)"); rg.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = rg; g.beginPath(); g.arc(0, 0, 56, 0, Math.PI * 2); g.fill();
+  })();
+  const runeTex = new THREE.CanvasTexture(runeCanvas);
+  runeTex.colorSpace = THREE.SRGBColorSpace;
+  texs.push(runeTex);
+  const beamCanvas = document.createElement("canvas");
+  beamCanvas.width = 4; beamCanvas.height = 64;
+  (function drawBeam() {
+    const g = beamCanvas.getContext("2d");
+    if (!g) return;
+    const lg = g.createLinearGradient(0, 0, 0, 64);
+    lg.addColorStop(0, "rgba(255,255,255,0)"); lg.addColorStop(0.55, "rgba(255,255,255,.55)"); lg.addColorStop(1, "rgba(255,255,255,1)");
+    g.fillStyle = lg; g.fillRect(0, 0, 4, 64);
+  })();
+  const beamTex = new THREE.CanvasTexture(beamCanvas);
+  texs.push(beamTex);
+  const tpRingGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const tpBeamGeo = new THREE.CylinderGeometry(0.42, 0.52, 1, 24, 1, true).translate(0, 0.5, 0);
+  geos.push(tpRingGeo, tpBeamGeo);
+  const tpAdd = (p) => mat(new THREE.MeshBasicMaterial(Object.assign({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0, toneMapped: false }, p)));
+  const tpSide = ["from", "to"].map(() => {
+    const ring = new THREE.Mesh(tpRingGeo, tpAdd({ map: runeTex, color: "#8fe3ff" }));
+    const beam = new THREE.Mesh(tpBeamGeo, tpAdd({ map: beamTex, color: "#c9f6ff", side: THREE.DoubleSide }));
+    ring.renderOrder = 5; beam.renderOrder = 6;
+    const g = new THREE.Group();
+    g.add(ring); g.add(beam);
+    tpGroup.add(g);
+    return { g, ring, beam };
+  });
+  const TP_SPARKS = 36;
+  const sparkPos = new Float32Array(TP_SPARKS * 2 * 3);
+  const sparkGeo = new THREE.BufferGeometry();
+  sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPos, 3));
+  geos.push(sparkGeo);
+  const sparkMat = mat(new THREE.PointsMaterial({ color: "#e6fcff", size: 0.13, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.9, toneMapped: false }));
+  const sparks = new THREE.Points(sparkGeo, sparkMat);
+  sparks.frustumCulled = false;
+  tpGroup.add(sparks);
+  function teleportTo(x, z) {
+    const g = groundAt(x, z);
+    if (g == null) return false;
+    if (reduced) { keeper.position.set(x, g, z); S.walkTo = null; S.follow = true; S.focusGoal = null; return true; }
+    TP.on = true; TP.start = performance.now(); TP.swapped = false;
+    TP.from.copy(keeper.position);
+    TP.to.set(x, g, z);
+    S.walkTo = null; S.follow = true; S.focusGoal = null; S.viewGoal = null;
+    tpGroup.visible = true;
+    return true;
+  }
+  function stepTeleport() {
+    if (!TP.on) return;
+    const t = TP.fixed != null ? TP.fixed : (performance.now() - TP.start) / 1000;
+    const ph = carteTeleportPhase(t);
+    if (!TP.swapped && ph.side === "to") {
+      TP.swapped = true;
+      keeper.position.copy(TP.to);
+    }
+    [["from", TP.from, ph.a], ["to", TP.to, ph.b]].forEach(([k, at, e], i) => {
+      const sd = tpSide[i];
+      sd.g.position.set(at.x, at.y + 0.04, at.z);
+      sd.ring.scale.setScalar(Math.max(0.01, e.ring * 1.5));
+      sd.ring.rotation.y = t * 2.4 * (i ? -1 : 1);
+      sd.ring.material.opacity = e.alpha * 0.95;
+      sd.beam.scale.set(1, Math.max(0.01, e.column), 1);
+      sd.beam.material.opacity = e.alpha * 0.8;
+      sd.g.visible = e.alpha > 0.01;
+      // Étincelles qui montent en spirale dans la colonne.
+      for (let j = 0; j < TP_SPARKS; j++) {
+        const o3 = (i * TP_SPARKS + j) * 3;
+        const u = (j / TP_SPARKS + t * 1.3) % 1;
+        const ang = j * 2.39996 + t * 5 * (i ? -1 : 1);
+        const rr = 0.5 * (1 - u * 0.6) * (0.4 + 0.6 * e.alpha);
+        sparkPos[o3] = at.x + Math.cos(ang) * rr;
+        sparkPos[o3 + 1] = at.y + 0.05 + u * e.column * 0.9;
+        sparkPos[o3 + 2] = at.z + Math.sin(ang) * rr;
+      }
+    });
+    sparkGeo.attributes.position.needsUpdate = true;
+    sparkMat.opacity = Math.max(ph.a.alpha, ph.b.alpha);
+    keeper.scale.set(ph.keeper.sx, ph.keeper.sy, ph.keeper.sx);
+    keeper.userData.tpHidden = !ph.keeper.visible;
+    if (ph.done && TP.fixed == null) {
+      TP.on = false; tpGroup.visible = false;
+      keeper.scale.set(1, 1, 1); keeper.userData.tpHidden = false;
+    }
+  }
+  // Déplacement vers un point lointain (#504, #505) : téléportation si
+  // l'option est active, sinon marche si le trajet est praticable, sinon
+  // l'arpenteur est posé (la caméra glisse).
+  function travelTo(x, z, useTeleport) {
+    const d = Math.hypot(x - keeper.position.x, z - keeper.position.z);
+    if (useTeleport && S.teleport && d > 1.5 && teleportTo(x, z)) return "teleport";
+    if (S.walk) {
+      let ok = true;
+      const n = Math.ceil(d / 0.5);
+      for (let i = 1; i <= n && ok; i++) { const k = i / n; if (groundAt(keeper.position.x + (x - keeper.position.x) * k, keeper.position.z + (z - keeper.position.z) * k) == null) ok = false; }
+      if (ok) { walkTo(x, z); return "walk"; }
+    }
+    const g = groundAt(x, z);
+    keeper.position.set(x, g == null ? keeper.position.y : g, z);
+    S.walkTo = null; S.follow = true; S.focusGoal = null; S.viewGoal = null;
+    return "pose";
+  }
+  // Double clic sur une pastille de dossier (#504) : l'arpenteur rejoint le
+  // centre du dossier ; la caméra le suit et cadre le dossier.
+  function goToGroup(projectIds) {
+    if (!S.layout) return null;
+    const a = carteGroupAnchor(S.layout, projectIds, S.poisByKey);
+    if (!a) return null;
+    const how = travelTo(a.x, a.z, true);
+    S.follow = true; S.focusGoal = null;
+    S.dist = Math.max(16, Math.min(CARTE_STRATEGIC_FROM - 30, a.radius * 1.6 + 18));
+    if (o.onTerritory && a.projectId) o.onTerritory(a.projectId);
+    return how;
+  }
+
   function step(dt) {
     const f = (S.keys.f ? 1 : 0) - (S.keys.b ? 1 : 0) - S.joy.y;
     const s = (S.keys.r ? 1 : 0) - (S.keys.l ? 1 : 0) + S.joy.x;
@@ -20793,7 +21177,7 @@ function createCarteEngine(THREE, container, opts) {
     }
     const gy = groundAt(keeper.position.x, keeper.position.z);
     const u = keeper.userData;
-    keeper.visible = S.walk;
+    keeper.visible = S.walk && !keeper.userData.tpHidden;
     // Sur l'eau (hors pont), l'arpenteur rame dans sa barque (#428).
     const kh = carteFromWorld(keeper.position.x, keeper.position.z);
     const kt = S.layout.tiles[carteKey(kh[0], kh[1])];
@@ -20913,6 +21297,122 @@ function createCarteEngine(THREE, container, opts) {
       }
     });
     [W.bigBolts, W.halo, W.rain].forEach((m) => { m.instanceMatrix.needsUpdate = true; });
+  }
+
+  // ---------- Fléaux des tâches critiques selon le thème (#509) ----------
+  // Blizzard, tempête de sable, éruption, orage de feuilles, tourbillon,
+  // glitch, miasmes : une seule maille instanciée (un quad par particule),
+  // toute l'animation dans le vertex shader. Rien n'est recalculé image par
+  // image côté processeur ; seul le temps avance.
+  const critU = {
+    uTime: { value: 0 },
+    uColA: { value: Array.from({ length: 8 }, () => new THREE.Color("#ffffff")) },
+    uColB: { value: Array.from({ length: 8 }, () => new THREE.Color("#ffffff")) },
+  };
+  Object.keys(CARTE_CRITICAL_FX_KINDS).forEach((id) => { const f = CARTE_CRITICAL_FX_KINDS[id]; critU.uColA.value[f.kind].set(f.a); critU.uColB.value[f.kind].set(f.b); });
+  const critQuad = new THREE.PlaneGeometry(1, 1);
+  geos.push(critQuad);
+  const critMat = mat(new THREE.ShaderMaterial({
+    uniforms: critU, transparent: true, depthWrite: false,
+    vertexShader: [
+      "attribute vec3 aCenter;",
+      "attribute vec4 aP;",
+      "uniform float uTime;",
+      "uniform vec3 uColA[8];",
+      "uniform vec3 uColB[8];",
+      "varying vec3 vCol; varying float vA; varying vec2 vUv; varying float vKind;",
+      "float h1(float n) { return fract(sin(n * 12.9898) * 43758.5453); }",
+      "void main() {",
+      "  float s = aP.x, k = aP.z, H = aP.w, t = uTime;",
+      "  int K = int(aP.y + 0.5);",
+      "  float r1 = h1(s), r2 = h1(s + 1.7), r3 = h1(s + 3.1);",
+      "  vec3 p = vec3(0.0); float size = 0.1; float alpha = 1.0; float rot = 0.0; vec2 stretch = vec2(1.0);",
+      "  if (K == 1) {", // blizzard : flocons en spirale, poussés par le vent
+      "    float u = fract(t * 0.42 + r1); float a = r2 * 6.283 + t * (2.4 + r3 * 1.5);",
+      "    float rad = (0.35 + 1.35 * r3) * k;",
+      "    p = vec3(cos(a) * rad + (u - 0.5) * 1.4 * k, (1.0 - u) * (H + 1.2), sin(a) * rad);",
+      "    size = (0.06 + 0.07 * r1) * k; alpha = smoothstep(0.0, 0.08, u) * (1.0 - smoothstep(0.85, 1.0, u)); stretch = vec2(1.0 + 1.8 * r3, 1.0); rot = -0.5;",
+      "  } else if (K == 2) {", // sable : nappes basses qui s'enroulent et s'élargissent
+      "    float u = fract(t * 0.3 + r1); float a = r2 * 6.283 + t * (1.5 + r3 * 0.9);",
+      "    float rad = (0.5 + 1.7 * u) * k;",
+      "    p = vec3(cos(a) * rad, (0.1 + (0.4 + r3 * 1.6) * u) * k, sin(a) * rad);",
+      "    size = (0.24 + 0.32 * r1) * k; alpha = 0.9 * smoothstep(0.0, 0.1, u) * (1.0 - u * 0.8);",
+      "  } else if (K == 3) {", // éruption : braises qui jaillissent du sommet et retombent
+      "    float u = fract(t * 0.62 + r1); float a = r2 * 6.283; float sp = (0.5 + r3 * 1.0) * k;",
+      "    p = vec3(cos(a) * sp * u, H - (H * 0.2) + (3.4 * u - 4.0 * u * u) * k * 1.3, sin(a) * sp * u);",
+      "    size = (0.08 + 0.1 * (1.0 - u)) * k; alpha = 1.0 - smoothstep(0.72, 1.0, u);",
+      "  } else if (K == 4) {", // feuilles : tourbillon ascendant, feuilles qui tournoient
+      "    float u = fract(t * 0.32 + r1); float a = r2 * 6.283 + t * (1.7 + r3) + u * 5.0;",
+      "    float rad = (0.45 + 0.95 * r3 + 0.3 * sin(t * 2.0 + s)) * k;",
+      "    p = vec3(cos(a) * rad, u * (H + 1.0) + 0.1, sin(a) * rad);",
+      "    size = (0.15 + 0.09 * r1) * k; rot = t * (3.0 + r3 * 4.0) + s; stretch = vec2(1.0, 0.55);",
+      "    alpha = smoothstep(0.0, 0.08, u) * (1.0 - smoothstep(0.85, 1.0, u));",
+      "  } else if (K == 5) {", // tourbillon : écume qui tourne et se resserre vers le centre
+      "    float u = fract(t * 0.3 + r1); float a = r2 * 6.283 + t * 2.6 + u * 10.0;",
+      "    float rad = (1.9 * (1.0 - u) + 0.08) * k;",
+      "    p = vec3(cos(a) * rad, 0.12 - u * 0.3 + 0.12 * sin(a * 3.0 + t * 2.0) * (1.0 - u) * r3, sin(a) * rad);",
+      "    size = (0.11 + 0.15 * (1.0 - u)) * k; alpha = 1.0 - u * 0.5; stretch = vec2(1.7, 0.8);",
+      "  } else if (K == 6) {", // glitch : rectangles néon qui sautent et clignotent
+      "    float st = floor(t * 7.0 + r1 * 7.0);",
+      "    float g1 = h1(s + st * 0.37), g2 = h1(s * 1.3 + st * 0.71), g3 = h1(s * 2.1 + st);",
+      "    p = vec3((g1 - 0.5) * 1.9 * k, g2 * (H + 0.6) + 0.15, (g3 - 0.5) * 1.9 * k);",
+      "    size = (0.06 + 0.2 * h1(s + st * 1.9)) * k; alpha = step(0.4, h1(s + st * 2.3)); stretch = vec2(2.6, 0.45);",
+      "  } else if (K == 7) {", // miasmes : bulles vertes qui montent, gonflent et crèvent
+      "    float u = fract(t * 0.24 + r1); float a = r2 * 6.283; float rad = (0.25 + 1.15 * r3) * k;",
+      "    p = vec3(cos(a) * rad + sin(t * 1.5 + s) * 0.1, (u * 2.0 + 0.1) * k, sin(a) * rad);",
+      "    size = (0.08 + 0.17 * u) * k; alpha = 0.95 * (1.0 - smoothstep(0.86, 1.0, u));",
+      "  }",
+      "  vec4 mv = modelViewMatrix * vec4(aCenter + p, 1.0);",
+      "  vec2 q = position.xy * stretch; float c = cos(rot), sn = sin(rot);",
+      "  mv.xy += vec2(c * q.x - sn * q.y, sn * q.x + c * q.y) * size;",
+      "  gl_Position = projectionMatrix * mv;",
+      "  vCol = mix(uColA[K], uColB[K], r3); vA = alpha; vUv = position.xy + 0.5; vKind = aP.y;",
+      "}",
+    ].join("\n"),
+    fragmentShader: [
+      "varying vec3 vCol; varying float vA; varying vec2 vUv; varying float vKind;",
+      "void main() {",
+      "  int K = int(vKind + 0.5);",
+      "  float r = length(vUv - 0.5) * 2.0; float a = vA;",
+      "  if (K == 6) a *= 0.95;",
+      "  else if (K == 7) a *= (1.0 - smoothstep(0.85, 1.0, r)) * (0.3 + 0.7 * smoothstep(0.5, 0.85, r));",
+      "  else if (K == 4) a *= 1.0 - smoothstep(0.75, 1.0, r);",
+      "  else if (K == 2) a *= 1.0 - smoothstep(0.1, 1.0, r);",
+      "  else a *= 1.0 - smoothstep(0.35, 1.0, r);",
+      "  if (a < 0.02) discard;",
+      "  vec3 col = vCol * ((K == 3 || K == 6) ? 1.6 : 1.0);",
+      "  gl_FragColor = vec4(col, a);",
+      "}",
+    ].join("\n"),
+  }));
+  function buildCriticalFx(list) {
+    S.critFx = null;
+    if (!list.length) return;
+    const low = S.effQuality === "low";
+    const all = list.slice(0, 80);
+    let n = 0;
+    all.forEach((c) => { c.n = Math.max(8, Math.round(c.fx.count * (low ? 0.5 : 1))); n += c.n; });
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = critQuad.index;
+    geo.setAttribute("position", critQuad.attributes.position);
+    geo.setAttribute("uv", critQuad.attributes.uv);
+    const ctr = new Float32Array(n * 3), prm = new Float32Array(n * 4);
+    let i = 0;
+    all.forEach((c) => {
+      const H = Math.max(0.8, c.top - c.y);
+      for (let j = 0; j < c.n; j++, i++) {
+        ctr[i * 3] = c.x; ctr[i * 3 + 1] = c.y; ctr[i * 3 + 2] = c.z;
+        prm[i * 4] = carteRand("cf" + c.id + ":" + j) * 97 + j * 0.013;
+        prm[i * 4 + 1] = c.fx.kind; prm[i * 4 + 2] = Math.max(0.8, c.k); prm[i * 4 + 3] = H;
+      }
+    });
+    geo.setAttribute("aCenter", new THREE.InstancedBufferAttribute(ctr, 3));
+    geo.setAttribute("aP", new THREE.InstancedBufferAttribute(prm, 4));
+    geo.instanceCount = n;
+    const mesh = new THREE.Mesh(geo, critMat);
+    mesh.frustumCulled = false; mesh.renderOrder = 4; mesh.userData.ownGeo = true;
+    world.add(mesh);
+    S.critFx = { mesh, list: all, count: n };
   }
 
   // ---------- Horloge des tâches en retard (#414) ----------
@@ -21191,7 +21691,8 @@ function createCarteEngine(THREE, container, opts) {
       if (h.x == null) return;
       const st = S.stats[h.tr.projectId] || { pct: 0 };
       const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
-      A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283 });
+      const fs = carteFlagStyle(h.tr.theme);
+      A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283, shape: fs.code, finial: dim ? "#c9cdd3" : fs.finial });
     });
     // Convois permanents (#425) : une charrette par dépendance affichée.
     taskList.forEach((e) => {
@@ -21231,10 +21732,31 @@ function createCarteEngine(THREE, container, opts) {
     }
     if (A.lanterns.length) A.lMesh = ambMesh(G.ball, MAT.g, A.lanterns.length, () => "#ffcf5a");
     if (A.flags.length) {
-      A.fMast = ambMesh(G.cyl, MAT.l, A.flags.length, () => "#5a4030");
-      A.fCloth = ambMesh(G.box, MAT.l, A.flags.length, (i) => A.flags[i].color);
-      A.flags.forEach((f, i) => A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, Math.max(0.5, f.top - f.base + 0.2), 0.06))));
-      A.fMast.instanceMatrix.needsUpdate = true;
+      // Hampe, pommeau et tissu ondulant (#508). Matrices fixes : le vent est
+      // animé dans le shader (uFlagT), rien n'est recalculé image par image.
+      const n = A.flags.length;
+      A.fMast = ambMesh(G.cyl, MAT.l, n, () => "#5a4030");
+      A.fKnob = ambMesh(G.ball, MAT.l, n, (i) => A.flags[i].finial);
+      const fg = new THREE.BufferGeometry();
+      Object.keys(flagGeo.attributes).forEach((a) => fg.setAttribute(a, flagGeo.attributes[a]));
+      fg.setIndex(flagGeo.index);
+      const fa = new Float32Array(n * 2);
+      A.flags.forEach((f, i) => { fa[i * 2] = f.ph; fa[i * 2 + 1] = f.shape; });
+      fg.setAttribute("aFlag", new THREE.InstancedBufferAttribute(fa, 2));
+      A.fCloth = ambMesh(fg, MAT.flag, n, (i) => A.flags[i].color);
+      A.fCloth.userData.ownGeo = true;
+      A.fCloth.castShadow = true;
+      const windQ = new THREE.Quaternion().setFromAxisAngle(UP, 0.35), q2 = new THREE.Quaternion();
+      A.flags.forEach((f, i) => {
+        const mh = Math.max(0.5, f.top - f.base + 0.2);
+        A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, mh, 0.06)));
+        A.fKnob.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base + mh + 0.04, f.z), tmpQ.identity(), tmpS.set(0.15, 0.15, 0.15)));
+        // Hissé au pourcentage d'avancement.
+        const y = f.base + 0.36 + f.pct * Math.max(0.2, mh - 0.72);
+        tmpQ.copy(windQ).multiply(q2.setFromAxisAngle(UP, (carteRand("fw" + i) - 0.5) * 0.3));
+        A.fCloth.setMatrixAt(i, tmpM.compose(tmpP.set(f.x + 0.03, y, f.z), tmpQ, tmpS.set(0.92, 0.56, 1)));
+      });
+      A.fMast.instanceMatrix.needsUpdate = true; A.fKnob.instanceMatrix.needsUpdate = true; A.fCloth.instanceMatrix.needsUpdate = true;
     }
     if (A.windows.length) {
       A.winMesh = ambMesh(G.box, MAT.g, A.windows.length, () => "#ffd27a");
@@ -21299,16 +21821,7 @@ function createCarteEngine(THREE, container, opts) {
       });
       A.lMesh.instanceMatrix.needsUpdate = true; if (A.lMesh.instanceColor) A.lMesh.instanceColor.needsUpdate = true;
     }
-    // Drapeaux : hissés au pourcentage d'avancement, flottant au vent.
-    if (A.fCloth) {
-      A.flags.forEach((f, i) => {
-        const y = f.base + 0.1 + f.pct * Math.max(0.2, f.top - f.base - 0.5);
-        const wave = Math.sin(t * 2.2 + f.ph) * 0.35;
-        baseOf(tmpM, f.x, y, f.z, wave, 1);
-        putPart(A.fCloth, i, tmpM, 0.34, 0, 0, 0, 0, 0, 0.64 * (0.9 + 0.1 * Math.cos(t * 3 + f.ph)), 0.38, 0.03);
-      });
-      A.fCloth.instanceMatrix.needsUpdate = true;
-    }
+    // Drapeaux (#508) : l'ondulation est dans le shader (MAT.flag).
     // Convois : la charrette avance ; bloquée, elle attend devant la barrière.
     if (A.carts) {
       A.convoys.forEach((cv, i) => {
@@ -21705,18 +22218,7 @@ function createCarteEngine(THREE, container, opts) {
     hoverLine.material.color.set(color || "#fff7c2"); hoverHalo.material.color.set(color || "#fff7c2");
     hoverLine.visible = hoverHalo.visible = true;
   }
-  // Parcelle libre d'un territoire, où l'on peut construire (#470).
-  function buildableAt(key) {
-    const t = S.layout && S.layout.tiles[key];
-    // Seules les cases intérieures d'un territoire reçoivent des tâches.
-    if (!t || !t.projectId || !t.inner || t.road || t.lava) return null;
-    const p = S.layout.projectById[t.projectId];
-    if (!p || p.unknown) return null;
-    // Une parcelle dont les tâches sont masquées par les filtres reste
-    // constructible : seules les tâches affichées l'occupent.
-    if (S.poisByKey[key]) return null;
-    return { projectId: t.projectId, key };
-  }
+  // Parcelle libre d'un territoire (#470) : carteBuildable, bloc CARTE.
 
   // ---------- Mini-carte (#471) ----------
   // Vue de dessus, nord en haut : cases à leur couleur, pings des retards
@@ -22071,6 +22573,8 @@ function createCarteEngine(THREE, container, opts) {
     const t = S.time;
     // Matières vivantes (#479) : feuillages, rides de l'eau, portails.
     swayU.value = reduced ? 0 : t;
+    critU.uTime.value = reduced ? t * 0.3 : t;
+    flagU.value = reduced ? 0 : t;
     if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); seaU.off.value.set((t * 0.012) % 1, (t * 0.008) % 1); portalTex.rotation = -t * 0.8; }
     placeCloudShadows(t);
     placeFog(t);
@@ -22301,6 +22805,11 @@ function createCarteEngine(THREE, container, opts) {
     const tr = S.layout && S.layout.territories.find((t) => t.projectId === pid);
     if (!tr) return false;
     const w = carteToWorld(tr.q, tr.r + 1);
+    // Téléportation magique (#505), si l'option est active.
+    if (S.teleport && Math.hypot(w.x - keeper.position.x, w.z - keeper.position.z) > 1.5 && teleportTo(w.x, w.z)) {
+      S.dist = Math.min(S.dist, 22);
+      return true;
+    }
     // Au-delà de quelques tuiles, l'arpenteur est « porté » à destination
     // (la caméra glisse) : la recherche ne doit pas imposer une longue marche.
     if (Math.hypot(w.x - keeper.position.x, w.z - keeper.position.z) > 12) {
@@ -22431,6 +22940,7 @@ function createCarteEngine(THREE, container, opts) {
     S.lastDt = dt;
     if (!S.layout) return;
     step(dt);
+    stepTeleport();
     updateCamera(dt);
     S.strategic = carteStrategicAlpha(S.dist);
     applyLod();
@@ -22459,7 +22969,7 @@ function createCarteEngine(THREE, container, opts) {
     setOptions(opt) {
       const v = opt || {};
       const rebuild = ("fog" in v && !!v.fog !== S.fog) || ("fx" in v && !!v.fx !== S.fx) || ("life" in v && !!v.life !== S.life);
-      ["fog", "minimap", "miniature", "life", "plan", "walk", "holo", "fx"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
+      ["fog", "minimap", "miniature", "life", "plan", "walk", "holo", "fx", "teleport"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
       if (!S.holo) closeHolo();
       if (rebuild && S.layout) build();
       if (!S.minimap) mini.hidden = true;
@@ -22473,7 +22983,7 @@ function createCarteEngine(THREE, container, opts) {
       S.focusGoal = new THREE.Vector3(Number(v.x) || 0, Number(v.y) || 0, Number(v.z) || 0);
       const tw = 2 * Math.PI;
       const dy = ((((Number(v.yaw) || 0) - S.yaw) % tw) + tw * 1.5) % tw - Math.PI;
-      S.viewGoal = { yaw: S.yaw + dy, pitch: Math.max(0.45, Math.min(1.52, Number(v.pitch) || 0.92)), dist: Math.max(7, Math.min(150, Number(v.dist) || 19)) };
+      S.viewGoal = { yaw: S.yaw + dy, pitch: Math.max(0.45, Math.min(1.52, Number(v.pitch) || 0.92)), dist: Math.max(7, Math.min(CARTE_DIST_MAX, Number(v.dist) || 19)) };
     },
     // Position à l'écran (px, repère du conteneur) du sommet d'une tâche.
     screenOf(id) {
@@ -22485,9 +22995,49 @@ function createCarteEngine(THREE, container, opts) {
     },
     strategic: () => S.strategic,
     // Banc visuel : état des effets (#496 à #499).
-    fxState: () => ({ keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
+    // Banc visuel (#503) : point d'écran d'une parcelle libre visible, le plus
+    // près du centre, vérifié par le lancer de rayon (rien ne la masque).
+    buildPoint: () => {
+      if (!S.layout) return null;
+      const rect = canvas.getBoundingClientRect();
+      const v = new THREE.Vector3();
+      let best = null, bd = Infinity;
+      S.layout.territories.forEach((tr) => tr.tiles.forEach((k) => {
+        if (!carteBuildable(S.layout, k, S.poisByKey)) return;
+        const t = S.layout.tiles[k], w = carteToWorld(t.q, t.r);
+        v.set(w.x, (S.capTop && S.capTop[k] != null ? S.capTop[k] : t.h) + 0.05, w.z).project(camera);
+        if (v.z > 1) return;
+        const x = rect.left + (v.x + 1) / 2 * rect.width, y = rect.top + (1 - v.y) / 2 * rect.height;
+        if (x < rect.left + 60 || x > rect.right - 60 || y < rect.top + 60 || y > rect.bottom - 60) return;
+        const d = Math.hypot(x - (rect.left + rect.width / 2), y - (rect.top + rect.height / 2));
+        if (d >= bd || document.elementFromPoint(x, y) !== canvas) return;
+        const h = pick(x, y);
+        if (!h || h.key !== k || totemAt(x, y) || taskAt(h.key, h.point)) return;
+        bd = d; best = { x: Math.round(x), y: Math.round(y), key: k };
+      }));
+      return best;
+    },
+    goToGroup: (ids) => goToGroup(ids),
+    // Banc visuel : position d'une tâche dans le monde.
+    poiOf: (id) => (S.poi[id] ? { x: S.poi[id].x, y: S.poi[id].y, z: S.poi[id].z, top: S.poi[id].top } : null),
+    // Banc visuel : cadrage immédiat (sans glissement), pour les captures.
+    snapView(v) {
+      if (!v) return;
+      S.follow = false; S.walkTo = null; S.viewGoal = null;
+      S.focusGoal = new THREE.Vector3(Number(v.x) || 0, Number(v.y) || 0, Number(v.z) || 0);
+      S.target.copy(S.focusGoal);
+      S.yaw = Number(v.yaw) || 0; S.pitch = Math.max(0.2, Math.min(1.52, Number(v.pitch) || 0.92)); S.dist = Math.max(3, Math.min(CARTE_DIST_MAX, Number(v.dist) || 19));
+      updateCamera(1, true);
+    },
+    // Banc visuel (#508) : hampes des drapeaux [x, pied, sommet, z, forme].
+    ambientFlags: () => (S.amb ? S.amb.flags.map((f) => [f.x, f.base, f.top, f.z, f.shape, f.pct]) : []),
+    // Banc visuel (#505) : fige la téléportation à l'instant t (null : reprend).
+    teleportFreeze: (t) => { TP.fixed = t == null ? null : Number(t); if (t != null && !TP.on) { TP.on = true; tpGroup.visible = true; } },
+    fxState: () => ({ teleport: TP.on, crit: S.critFx ? S.critFx.count : 0, storms: S.storms ? S.storms.list.length : 0, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
+    // Banc visuel (#502) : la texture du tableau, pour la capturer à plat.
+    hologramImage: () => (HOLO.id ? holoCanvas.toDataURL("image/png") : null),
     closeHologram: () => closeHolo(),
     // Cadre un totem (banc visuel, captures) : caméra posée tout de suite.
     frameProject(pid, dist, yaw) {
@@ -22500,7 +23050,7 @@ function createCarteEngine(THREE, container, opts) {
       updateCamera(1, true);
       return true;
     },
-    setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
+    setOrbitMode: (on) => { S.orbitMode = !!on; canvas.style.cursor = on ? "move" : "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
     nearTask: () => S.near,
@@ -22558,7 +23108,8 @@ function carteWebglAvailable() {
 // agrandir le widget.
 const CARTE_WIDGET_MIN_W = 500;
 const CARTE_WIDGET_MIN_H = 400;
-function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone, setProjectFolders }) {
+// Construire ici (#503) : le widget reçoit aussi la création de tâche.
+function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone, onCreateTask, setProjectFolders }) {
   // Le panneau du territoire est replié par défaut : la place est comptée.
   const stored = widget && widget.cartePrefs && typeof widget.cartePrefs === "object" ? widget.cartePrefs : { panel: false };
   const [local, setLocal] = useState(stored);
@@ -22571,7 +23122,7 @@ function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdate
   return (
     <div className="lp-widget-embed lp-widget-embed-carte">
       <CarteView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs}
-        setProjectFolders={setProjectFolders} onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} embedded />
+        setProjectFolders={setProjectFolders} onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} onCreateTask={onCreateTask} embedded />
     </div>
   );
 }
@@ -23185,6 +23736,30 @@ function CarteWheelSettings({ value, onChange, onClose }) {
 }
 
 // Vues enregistrées et vue plan (#481).
+// Filtre rapide de l'en-tête (#506) : multi-sélection à cases à cocher,
+// liste vide = tout. Même menu déroulant que « Affichage ».
+function CarteQuickFilter({ kind, label, allLabel, icon, options, value, onChange }) {
+  const sel = value || [];
+  const toggle = (id) => onChange(sel.indexOf(id) === -1 ? [...sel, id] : sel.filter((x) => x !== id));
+  const names = sel.map((id) => (options.find((o) => o.id === id) || {}).label).filter(Boolean);
+  const text = !sel.length ? allLabel : sel.length === 1 && names[0] ? names[0] : label + " · " + sel.length;
+  return (
+    <span className={"lp-carte-quick" + (sel.length ? " is-active" : "")} data-carte-quick={kind} data-carte-quick-count={sel.length}>
+      <DropdownButton label={text} icon={icon} title={label + " : cochez une ou plusieurs valeurs ; rien de coché, tout s'affiche"} panelClassName="lp-carte-quick-menu">
+        <button type="button" className="lp-carte-quick-all" disabled={!sel.length} onClick={() => onChange([])}>Tout afficher</button>
+        {options.map((o) => (
+          <label key={o.id} className="lp-checkbox-line">
+            <input type="checkbox" checked={sel.indexOf(o.id) !== -1} onChange={() => toggle(o.id)} aria-label={label + " : " + o.label} />
+            {o.color ? <span className="lp-carte-dot" style={{ background: o.color }} /> : null}
+            <span className="lp-carte-quick-name">{o.label}</span>
+            <small className="lp-carte-muted">{o.count}</small>
+          </label>
+        ))}
+        {!options.length && <span className="lp-carte-muted" style={{ padding: 6 }}>Aucune valeur</span>}
+      </DropdownButton>
+    </span>
+  );
+}
 function CarteViewsMenu({ cfg, setPrefs, engineRef, disabled }) {
   const [name, setName] = useState("");
   const save = () => {
@@ -23261,9 +23836,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const [log, setLog] = useState({ tasks: 0, territories: 0 });
   const logRef = useRef({ tasks: new Set(), territories: new Set() });
   const [coarse] = useState(() => !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches));
-  // Mode « main » (#396) : le clic gauche fait glisser la vue.
-  const [panMode, setPanMode] = useState(false);
-  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPanMode(panMode); }, [status, panMode]);
+  // Mode « orbite » (#510, ancien mode « main » de #396) : le clic gauche
+  // glissé fait tourner la vue au lieu de la déplacer.
+  const [orbitMode, setOrbitMode] = useState(false);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOrbitMode(orbitMode); }, [status, orbitMode]);
 
   // Tous les projets et toutes les tâches servent à la disposition (stabilité :
   // un filtre ne déplace rien) ; `tasks` (filtres Nexora) + filtres de la vue
@@ -23289,7 +23865,13 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  }, [norm, tasks, tasksWithDone, cfg.crits.join("|"), cfg.statuses.join("|"), cfg.assignees.join("|"), cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  // Filtres rapides (#506) : options tirées des tâches de la page.
+  const quickOptions = useMemo(() => {
+    const scope = new Set((tasksWithDone || tasks || []).map((t) => t.id));
+    return carteQuickOptions(norm.tasks.filter((t) => scope.has(t.id)), ctx.statuses, cfg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [norm, tasks, tasksWithDone, ctx.statuses, cfg.statuses.join("|"), cfg.assignees.join("|")]);
   // Mode fil d'Ariane (#435) : seules les prochaines échéances (parmi les
   // tâches retenues par les filtres) restent affichées, dans l'ordre, reliées
   // par le fil lumineux ; les autres projets sont grisés.
@@ -23375,7 +23957,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           quality: cfg.quality,
           people: cfg.people,
           ambient: cfg.ambient,
-          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx,
+          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx, teleport: cfg.teleport,
           loadGltf: loadCarteGltf, modelsBase: CARTE_MODELS_BASE,
           // Hologramme ouvert (#494) : la roue s'efface pour ne pas le masquer.
           onHologram: (id) => { if (id) setWheel(null); },
@@ -23437,7 +24019,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
-  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, cfg.holo, cfg.fx, photo]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx, teleport: cfg.teleport }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, cfg.holo, cfg.fx, cfg.teleport, photo]);
 
   // ---------- Pilotage (#468 à #481) ----------
   const quests = useMemo(() => carteQuests(norm, visible), [norm, visible]);
@@ -23638,9 +24220,9 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               </ul>, document.body)}
           </div>
           <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
-          <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
-            <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
-          </select>
+          <CarteQuickFilter kind="crits" label="Criticité" allLabel="Toute criticité" icon={<AlertTriangle size={13} />} options={quickOptions.crits} value={cfg.crits} onChange={(crits) => setPrefs({ crits, crit: "all" })} />
+          <CarteQuickFilter kind="statuses" label="Statuts" allLabel="Tous statuts" icon={<CircleDot size={13} />} options={quickOptions.statuses} value={cfg.statuses} onChange={(statuses) => setPrefs({ statuses })} />
+          <CarteQuickFilter kind="assignees" label="Responsables" allLabel="Tous responsables" icon={<Users size={13} />} options={quickOptions.assignees} value={cfg.assignees} onChange={(assignees) => setPrefs({ assignees })} />
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Regroupement, responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-carte-groupby" title="Ce qui forme les régions de la carte ; les projets restent les territoires de chaque région">
               <span>Regrouper par</span>
@@ -23660,6 +24242,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <label className="lp-checkbox-line" title="Sinon, un clic sur une case y amène directement la vue (double clic : zoom plus fort)"><input type="checkbox" checked={cfg.walk} onChange={(e) => setPrefs({ walk: e.target.checked })} /> Déplacer l'arpenteur à pied</label>
             <label className="lp-checkbox-line" title="Double clic sur une tâche qui a une description ou un compte rendu : un tableau en hologramme s'affiche au-dessus, à lire de face"><input type="checkbox" checked={cfg.holo} onChange={(e) => setPrefs({ holo: e.target.checked })} /> Hologramme au double clic</label>
+            <label className="lp-checkbox-line" title="Un clic sur un projet (totem, recherche, volet) y téléporte l'arpenteur : cercle runique, colonne de lumière, en moins d'une seconde"><input type="checkbox" checked={cfg.teleport} onChange={(e) => setPrefs({ teleport: e.target.checked })} /> Téléportation magique vers les projets</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
             <label className="lp-checkbox-line" title="Convois, ouvriers, pigeons, lanternes, drapeaux, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
@@ -23694,7 +24277,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || questsOn || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0} onKeyDown={onStageKey}
         data-carte-status={status} data-carte-group={cfg.groupBy} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
-        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
+        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic gauche glissé pour déplacer la carte, molette enfoncée ou clic droit glissé pour la faire tourner, clic droit pour construire.">
         {embedded && small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour explorer la carte confortablement.</div>}
         {empty ? (
           <div className="lp-empty lp-carte-empty">
@@ -23718,7 +24301,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                         aria-haspopup="true" aria-expanded={!!open} data-folder={g.id}
                         onMouseEnter={(e) => { if (!folderPop || !folderPop.pinned) openFolder(g, e.currentTarget, false); }} onMouseLeave={closeFolderSoon}
                         onClick={(e) => { if (open && folderPop.pinned) setFolderPop(null); else openFolder(g, e.currentTarget, true); }}
-                        title={g.name + " — " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + " · " + g.pct + " % terminé"} aria-label={g.name + ", " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + ", " + g.pct + " % terminé"}>
+                        onDoubleClick={() => { setFolderPop(null); if (engineRef.current) engineRef.current.goToGroup(g.projects); }}
+                        title={g.name + " — " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + " · " + g.pct + " % terminé · double clic : s'y rendre"} aria-label={g.name + ", " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + ", " + g.pct + " % terminé"}>
                         <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{g.icon ? <IconGlyph icon={g.icon} size={18} /> : <CarteGroupGlyph kind={g.kind} color={g.color} size={17} />}<i className="lp-carte-badge-count">{g.projects.length}</i></span></span>
                         <small>{g.name}</small>
                       </button>
@@ -23728,7 +24312,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                 {popGroup && createPortal(
                   <div className="lp-carte-folder-pop" role="menu" aria-label={"Projets — " + grouping.one + " " + popGroup.name} style={{ left: folderPop.left, top: folderPop.top }}
                     onMouseEnter={() => clearTimeout(popTimer.current)} onMouseLeave={closeFolderSoon}>
-                    <div className="lp-carte-folder-pop-head"><CarteGroupGlyph kind={popGroup.kind} color={popGroup.color} size={13} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span></div>
+                    <div className="lp-carte-folder-pop-head"><CarteGroupGlyph kind={popGroup.kind} color={popGroup.color} size={13} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span>
+                      <button type="button" className="lp-carte-folder-go" title="L'arpenteur rejoint le centre de ce dossier (aussi : double clic sur la pastille)" onClick={() => { const ids = popGroup.projects; setFolderPop(null); if (engineRef.current) engineRef.current.goToGroup(ids); }}><Footprints size={12} /> S'y rendre</button></div>
                     {popGroup.projects.map((pid) => {
                       const p = layout.projectById[pid];
                       const s = stats[pid] || { pct: 0, overdue: 0 };
@@ -23779,8 +24364,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   <button type="button" className="lp-icon-btn" aria-label="Zoomer" onClick={() => engineRef.current.zoomBy(0.8)}><Plus size={16} /></button>
                   <button type="button" className="lp-icon-btn" aria-label="Dézoomer" onClick={() => engineRef.current.zoomBy(1.25)}><Minus size={16} /></button>
                   <button type="button" className="lp-icon-btn" aria-label="Pivoter la caméra" onClick={() => engineRef.current.rotate(Math.PI / 4)}><RotateCcw size={15} /></button>
-                  <button type="button" className={"lp-icon-btn" + (panMode ? " is-active" : "")} aria-pressed={panMode} aria-label="Déplacer la vue à la souris"
-                    title="Déplacer la vue : clic gauche glissé (sinon clic molette, clic droit ou Maj + clic). Recentrer revient à l'arpenteur." onClick={() => setPanMode((v) => !v)}><Hand size={15} /></button>
+                  <button type="button" className={"lp-icon-btn" + (orbitMode ? " is-active" : "")} aria-pressed={orbitMode} aria-label="Tourner la vue au clic gauche"
+                    title="Tourner la vue : clic gauche glissé dans ce mode (sinon molette enfoncée, clic droit glissé ou Maj + clic glissé). Hors de ce mode, le clic gauche glissé déplace la carte." onClick={() => setOrbitMode((v) => !v)}><Orbit size={15} /></button>
                 </div>
                 {coarse && (
                   <>

@@ -324,6 +324,20 @@ sans tâche n'est pas grisé. Les territoires ne bougent pas.
   dans le ciel, et trois gros éclairs en zigzag, entourés d'un halo, tombent jusqu'au pied de la
   tâche sous une pluie dense. Chaque éclat dessine un tracé nouveau. Si les animations sont
   réduites, les éclairs restent allumés et immobiles.
+- **Fléau du thème** (#509) : l'orage à gros éclairs reste le repli (ville, campagne, thème
+  inconnu) ; les autres thèmes ont leur propre fléau, dessiné par un seul système de
+  particules instancié, animé dans le shader (`carteCriticalFx`) :
+
+  | Thème | Fléau |
+  |---|---|
+  | Ville, campagne | Orage à gros éclairs (repli) |
+  | Forêt, jungle | Orage de feuilles arrachées |
+  | Désert, canyon | Tempête de sable |
+  | Mer, lac, île | Tourbillon qui aspire la tâche |
+  | Montagne, haute montagne, grand nord | Blizzard de glace |
+  | Marais | Bulles de miasmes toxiques |
+  | Volcan | Éruption : braises et lave qui jaillissent |
+  | Cyberpunk | Néon qui grésille, glitch |
 - **Plus d'altitude selon l'échéance** (#407) : le sol garde le relief de son thème (terrasses,
   dunes, cratère…) quelle que soit la date de fin. Le retard reste lisible par l'orage et
   l'imminence par la lanterne.
@@ -351,7 +365,7 @@ Elles tournent en continu, lisent une donnée de Nexora et se coupent ensemble d
 | Ouvriers (#429) | Marteau qui frappe : tâche en cours. Assis, le pied qui tapote : en attente. |
 | Pigeon voyageur (#430) | Tâche en attente ; il vole de plus en plus lentement à mesure que l'attente dure. |
 | Lanterne (#431) | Échéance sous 7 jours ; elle pulse de plus en plus vite à l'approche de la date. |
-| Drapeau (#433) | Hissé sur son mât à la hauteur du pourcentage d'avancement du projet. |
+| Drapeau (#433, #508) | Hissé sur son mât (pommeau au sommet) à la hauteur du pourcentage d'avancement du projet. Vrai tissu qui ondule au vent (animé dans le shader), emblème clair, forme selon le thème : bannière à queue d'aronde (terre, montagne), fanion (eau), drapeau droit (ville, désert, volcan, cyberpunk). |
 | Jour et nuit (#436) | Lumière à l'heure réelle ; le soir, les bâtiments des échéances du jour s'allument. |
 | Anneau des jalons (#437) | Au sol autour de la borne : part allumée = avancement ; complet et vert quand le jalon est terminé. |
 
@@ -394,13 +408,19 @@ marque un événement, elle ne gratifie personne.
 |---|---|---|
 | Brouillard (#468) | `end`, `assignee`, `lastInteraction`, `progress` | Brume sur une tâche ouverte sans échéance, sans responsable, ou à 0 % sans activité depuis 30 jours (`carteIncomplete`). Compléter la fiche la dissipe. |
 | Roue d'action (#469) | `statusId`, `start`/`end`, `assignee` | Terminer ou rouvrir, +1 jour, +1 semaine, responsable, statut, fiche. Mêmes garde-fous que le volet : Google Calendar, calendrier synchronisé, statut imposé par le type. |
-| Construire ici (#470) | `projectId` | Clic droit (appui long au doigt) sur une parcelle libre : la fiche de création s'ouvre, projet rempli. La nouvelle tâche prend la parcelle choisie (`carteClaimTile`). |
+| Construire ici (#470, #503) | `projectId` | Clic droit (Ctrl + clic sur Mac, appui long au doigt) sur une parcelle libre : la fiche de création s'ouvre, projet rempli. La nouvelle tâche prend la parcelle choisie (`carteClaimTile`). Hors d'une parcelle libre du territoire (route, lisière, totem), la parcelle libre la plus proche est proposée (`carteNearestBuildable`) ; sur un bâtiment, le clic droit ouvre sa roue d'action. Disponible aussi dans le widget Carte. |
+| Gestes (#510) | — | Clic gauche glissé ou un doigt : déplacer la carte. Molette enfoncée, clic droit glissé ou Maj + clic glissés : tourner la caméra (le bouton « orbite » fait tourner au clic gauche). Roulette : zoom. Deux doigts : pincer pour zoomer, tourner pour pivoter. |
+| Filtres rapides (#506) | `criticality`, `statusId`, `assignee` | Criticité, Statuts et Responsables en multi-sélection dans l'en-tête de la vue et du widget (rien de coché : tout). Entre valeurs d'un filtre : OU ; entre filtres : ET. L'ancienne criticité unique est reprise. |
+| Pastille de dossier (#504) | — | Double clic (ou « S'y rendre » dans son menu) : l'arpenteur rejoint le centre du dossier (`carteGroupAnchor`), à pied si la marche est active et le trajet praticable, sinon posé ; la caméra le suit et cadre le dossier. |
+| Téléportation (#505) | — | Option d'Affichage, désactivée par défaut : au clic sur un projet, cercle runique, colonne de lumière et étincelles au départ puis à l'arrivée ; l'arpenteur se dissout et se reforme en 0,8 s (`carteTeleportPhase`). |
+| Hologramme en Markdown (#502) | `desc`, `meetingReport` | Titres, gras, italique, code, listes, cases à cocher, citations, call-outs (`> [!note]`, `:::callout-…`) aux couleurs de l'app, tableaux (`carteHoloBlocks`). |
+| Figurine du responsable (#501) | `assignee` | Personnage Kenney (CC0) sur un socle à la couleur de la personne, légèrement teinté ; bonhomme procédural si les modèles ne se chargent pas. |
 | Mini-carte (#471) | `end` | Pings rouges (retard) et orange (échéance du jour) ; un clic y déplace la vue. |
 | Portail (#472) | — | Arche au pied de chaque totem : ouvre le projet dans la Timeline 3D, centrée sur aujourd'hui. |
 | Journal de quêtes (#473) | voir `carteQuests` | En retard, bloquées, conflits de dates, en dérive, sans responsable, sans échéance, oubliées. « Régler » ouvre l'action utile. Pas de visite guidée de la caméra. |
 | Mode photo (#474) | — | Interface masquée, légende et date, export PNG de la vue 3D. |
 | Annuler (#475) | champs modifiés | Chaque action faite depuis la carte (roue, volet) mémorise les valeurs d'avant. Ctrl+Z ou « Annuler » les rétablissent, 20 pas au plus. |
-| Zoom stratégique (#476) | états, `end` | De 80 à 95 de distance, la 3D s'efface au profit d'une carte ancienne à plat : tâches à faire et retards par territoire. |
+| Zoom stratégique (#476) | états, `end` | De 120 à 150 de distance (seuil repoussé par #507 ; recul maximal 190), la 3D s'efface au profit d'une carte ancienne à plat : tâches à faire et retards par territoire. |
 | Contour (#477) | — | Liseré au survol (tâche, cœur de projet, parcelle libre) ; anneau pulsé sur la sélection. |
 | Barre de ressources (#478) | voir `carteResources` | Retards, aujourd'hui, en cours, bloquées, à compléter. Un clic cadre les tâches et ouvre le journal filtré. |
 | Rendu maquette (#479) | — | Effet miniature (flou de profondeur, coupé en vue plan et en qualité basse), ombres de contact, ombres adoucies, herbe, pavés, eau animée, feuillages qui ondulent. |

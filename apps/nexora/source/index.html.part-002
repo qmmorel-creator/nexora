@@ -6048,7 +6048,9 @@ function carteTaskModel(task, themeId, opts) {
   // de détail ; le moteur pose au-dessus un badge d'initiales. Masquable
   // dans « Affichage » (o.people === false).
   const pc = o.people === false ? null : cartePersonColor(task.assignee, task.assigneeColor);
-  if (pc) parts = parts.concat(cartePersonFigure(pc, size));
+  // Figurine Kenney (#501) : le moteur la pose lui-même (o.figure === false) ;
+  // il ne reste ici que le socle à la couleur de la personne.
+  if (pc) parts = parts.concat(o.figure === false ? cartePersonSocle(pc, size) : cartePersonFigure(pc, size));
   if (detail >= 2) {
     const n = Math.min(6, task.checklistTotal);
     const doneN = Math.min(n, task.checklistDone);
@@ -6161,6 +6163,21 @@ function cartePersonFigure(color, size, o) {
     cP("cyl", color, x, 0.96 * k, z, 0.22 * k, 0.06 * k, 0.22 * k),
   ];
 }
+// Socle de la figurine (#501) : disque à la couleur de la personne, liseré
+// plus sombre ; la figurine Kenney se pose dessus (CARTE_FIGURINE_BASE).
+const CARTE_FIGURINE_BASE = 0.09;
+const CARTE_FIGURINE_H = 0.95;
+function cartePersonSocle(color, size) {
+  const k = size || 1;
+  const x = CARTE_AVATAR_ANCHOR[0] * k, z = CARTE_AVATAR_ANCHOR[2] * k;
+  return [
+    cP("cyl", carteMix(color, "#000000", 0.35), x, 0, z, 0.5 * k, 0.05 * k, 0.5 * k),
+    cP("cyl", color, x, 0.05 * k, z, 0.42 * k, (CARTE_FIGURINE_BASE - 0.05) * k, 0.42 * k),
+  ];
+}
+// Teinte partielle de la figurine : la couleur de la personne, adoucie, pour
+// garder les détails du modèle.
+function carteFigurineTint(color) { return carteMix(color || "#8a94a5", "#ffffff", 0.45); }
 function carteAvatarAnchor(task) {
   const k = carteTaskSize(task);
   return [CARTE_AVATAR_ANCHOR[0] * k, CARTE_AVATAR_ANCHOR[1] * k, CARTE_AVATAR_ANCHOR[2] * k];
@@ -6176,11 +6193,41 @@ function carteInitials(name) {
 // dossier. La carte n'a plus qu'un style, Classique (#404).
 const CARTE_CLASSIC_SIGNALS = [
   ["Urgente", "Incendie et anneau rouge (moyenne : fanion orange et panneau danger clignotant)"], ["En retard", "Horloge qui fait tic-tac · urgente en retard : gros éclairs venus du ciel"],
-  ["À venir", "Brume · responsable : bonhomme à sa couleur, badge à ses initiales"], ["Dépendance", "Route de convoi à la sélection"], ["Jalon", "Borne milliaire à la couleur du type · terminé : couronne de laurier"],
+  ["À venir", "Brume · responsable : figurine sur un socle à sa couleur, badge à ses initiales"], ["Dépendance", "Route de convoi à la sélection"], ["Jalon", "Borne milliaire à la couleur du type · terminé : couronne de laurier"],
 ];
+// Tâches critiques (urgentes ET en retard) selon le thème (#509). L'orage à
+// gros éclairs (#406) reste le repli par défaut ; chaque autre thème a son
+// fléau, dessiné par un seul système de particules instancié (animation
+// dans le shader). « kind » est le code du shader ; « count » le nombre de
+// particules par tâche (divisé par deux en qualité basse) ; « a » et « b »
+// les deux couleurs entre lesquelles chaque particule est tirée.
+const CARTE_CRITICAL_FX_KINDS = {
+  storm: { kind: 0, label: "Orage", legend: "gros éclairs venus du ciel", count: 0, a: "#fff6a8", b: "#9ad8ff" },
+  blizzard: { kind: 1, label: "Blizzard", legend: "blizzard de glace qui tourbillonne", count: 70, a: "#ffffff", b: "#bfe6ff" },
+  sandstorm: { kind: 2, label: "Tempête de sable", legend: "tempête de sable", count: 72, a: "#f0d49a", b: "#c08a4e" },
+  lava: { kind: 3, label: "Éruption", legend: "éruption : braises et lave qui jaillissent", count: 56, a: "#ffd23f", b: "#ff4a1c" },
+  leaves: { kind: 4, label: "Orage de feuilles", legend: "orage de feuilles arrachées", count: 56, a: "#6fae3c", b: "#b0722e" },
+  whirlpool: { kind: 5, label: "Tourbillon", legend: "tourbillon qui aspire la tâche", count: 64, a: "#e8fbff", b: "#3a9fd8" },
+  glitch: { kind: 6, label: "Glitch", legend: "néon qui grésille, glitch", count: 36, a: "#3ef0ff", b: "#ff3ec8" },
+  miasma: { kind: 7, label: "Miasmes", legend: "bulles de miasmes toxiques", count: 44, a: "#a6e04a", b: "#5f8f2a" },
+};
+const CARTE_CRITICAL_FX_BY_THEME = {
+  ville: "storm", campagne: "storm",
+  foret: "leaves", jungle: "leaves",
+  desert: "sandstorm", canyon: "sandstorm",
+  mer: "whirlpool", lac: "whirlpool", ile: "whirlpool",
+  montagne: "blizzard", hautemontagne: "blizzard", grandnord: "blizzard",
+  marais: "miasma", volcan: "lava", cyberpunk: "glitch",
+};
+function carteCriticalFx(themeId) {
+  const id = CARTE_CRITICAL_FX_BY_THEME[themeId] || "storm";
+  return Object.assign({ id }, CARTE_CRITICAL_FX_KINDS[id]);
+}
 function carteLook(themeId) {
   const t = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
-  return { id: t.id, label: t.label, hub: t.hub, lg: t.lg, sig: CARTE_CLASSIC_SIGNALS };
+  const fx = carteCriticalFx(t.id);
+  const sig = CARTE_CLASSIC_SIGNALS.map((l) => (l[0] === "En retard" ? [l[0], "Horloge qui fait tic-tac · urgente en retard : " + fx.legend] : l));
+  return { id: t.id, label: t.label, hub: t.hub, lg: t.lg, sig };
 }
 
 // Icône utilisable dans une étiquette 3D : un emoji seulement. Les icônes
@@ -6224,20 +6271,71 @@ function carteLegend(themeId) {
   ] };
 }
 
-// Filtre propre à la vue : criticité et terminées anciennes. Le reste passe
-// par les filtres de la page et le filtre général (#364).
+// Filtres rapides de la vue (#506) : criticité, statuts et responsables, en
+// multi-sélection (liste vide = tout), plus les terminées anciennes. Le reste
+// passe par les filtres de la page et le filtre général (#364).
+const CARTE_NONE = "__aucun__";
+const CARTE_CRIT_OPTIONS = [
+  { id: "urgent", label: "Urgentes" }, { id: "moyen", label: "Moyennes" }, { id: "bas", label: "Basses" }, { id: CARTE_NONE, label: "Sans criticité" },
+];
+const CARTE_QUICK_MAX = 200;
+function carteIdList(v, allowed) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  v.forEach((x) => {
+    if (typeof x !== "string" || !x || out.length >= CARTE_QUICK_MAX) return;
+    if (allowed && allowed.indexOf(x) === -1) return;
+    if (out.indexOf(x) === -1) out.push(x);
+  });
+  return out;
+}
+// Criticités retenues : la liste « crits », sinon l'ancienne valeur unique
+// « crit » (compatibilité ascendante : "urgent" devient ["urgent"]).
+function carteCritsOf(v) {
+  const ids = CARTE_CRIT_OPTIONS.map((o) => o.id);
+  if (Array.isArray(v.crits)) return carteIdList(v.crits, ids);
+  return v.crit && v.crit !== "all" && ids.indexOf(v.crit) !== -1 && v.crit !== CARTE_NONE ? [v.crit] : [];
+}
 function carteMatches(task, f) {
   if (!f) return true;
-  if (f.crit && f.crit !== "all" && task.criticality !== f.crit) return false;
+  const crits = carteCritsOf(f);
+  if (crits.length && crits.indexOf(task.criticality || CARTE_NONE) === -1) return false;
+  if (Array.isArray(f.statuses) && f.statuses.length && f.statuses.indexOf(task.statusId || CARTE_NONE) === -1) return false;
+  if (Array.isArray(f.assignees) && f.assignees.length && f.assignees.indexOf(task.assignee || CARTE_NONE) === -1) return false;
   // Les terminées sont visibles par défaut (#372) ; les masquer est un choix.
   if (f.hideOldDone && task.oldDone) return false;
   return true;
 }
-// Filtres propres à la vue (#400) : combien sont posés, et leur remise à zéro.
-function carteViewFilterCount(cfg) {
-  return cfg.crit && cfg.crit !== "all" ? 1 : 0;
+// Options des filtres rapides : les statuts (ordre de Nexora) et les
+// responsables présents parmi les tâches, avec leur nombre ; une valeur
+// retenue mais absente reste proposée, pour pouvoir la décocher.
+function carteQuickOptions(tasks, statuses, selected) {
+  const sel = selected || {};
+  const nSt = {}, nAs = {}, asColor = {};
+  (tasks || []).forEach((t) => {
+    const s = t.statusId || CARTE_NONE, a = t.assignee || CARTE_NONE;
+    nSt[s] = (nSt[s] || 0) + 1; nAs[a] = (nAs[a] || 0) + 1;
+    if (t.assignee && t.assigneeColor && !asColor[a]) asColor[a] = t.assigneeColor;
+  });
+  const st = [];
+  (statuses || []).forEach((s) => { if (s && s.id && (nSt[s.id] || (sel.statuses || []).indexOf(s.id) !== -1)) st.push({ id: s.id, label: s.name || s.id, color: s.color || null, count: nSt[s.id] || 0 }); });
+  if (nSt[CARTE_NONE] || (sel.statuses || []).indexOf(CARTE_NONE) !== -1) st.push({ id: CARTE_NONE, label: "Sans statut", color: null, count: nSt[CARTE_NONE] || 0 });
+  const names = Object.keys(nAs).filter((k) => k !== CARTE_NONE);
+  (sel.assignees || []).forEach((a) => { if (a !== CARTE_NONE && names.indexOf(a) === -1) names.push(a); });
+  names.sort((a, b) => a.localeCompare(b, "fr"));
+  const as = names.map((a) => ({ id: a, label: a, color: asColor[a] || null, count: nAs[a] || 0 }));
+  if (nAs[CARTE_NONE] || (sel.assignees || []).indexOf(CARTE_NONE) !== -1) as.push({ id: CARTE_NONE, label: "Sans responsable", color: null, count: nAs[CARTE_NONE] || 0 });
+  const nCr = {};
+  (tasks || []).forEach((t) => { const c = t.criticality || CARTE_NONE; nCr[c] = (nCr[c] || 0) + 1; });
+  const crits = CARTE_CRIT_OPTIONS.map((o) => ({ id: o.id, label: o.label, color: null, count: nCr[o.id] || 0 }));
+  return { crits, statuses: st, assignees: as };
 }
-function carteViewFilterReset() { return { crit: "all", filter: null }; }
+// Filtres propres à la vue (#400, #506) : combien sont posés, et leur remise à zéro.
+function carteViewFilterCount(cfg) {
+  const c = cfg || {};
+  return (carteCritsOf(c).length ? 1 : 0) + (Array.isArray(c.statuses) && c.statuses.length ? 1 : 0) + (Array.isArray(c.assignees) && c.assignees.length ? 1 : 0);
+}
+function carteViewFilterReset() { return { crit: "all", crits: [], statuses: [], assignees: [], filter: null }; }
 
 // Ruban (#392) : une pastille par dossier (les projets sans dossier sont
 // regroupés en dernier), avancement cumulé des projets du dossier.
@@ -6435,12 +6533,100 @@ function carteHoloTabs(task) {
   if (task && String(task.report || "").trim()) out.push({ id: "report", label: "Compte rendu" });
   return out;
 }
-function carteHoloParagraphs(text) {
-  return String(text || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter((l, i, a) => l || (i > 0 && a[i - 1])).map((l) => {
-    const m = /^([-*•]|\d+[.)])\s+(.*)$/.exec(l);
-    const clean = (x) => x.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/^#+\s*/, "");
-    return m ? { bullet: true, text: clean(m[2]) } : { bullet: false, text: clean(l) };
-  }).filter((p, i, a) => p.text || (i > 0 && a[i - 1].text));
+// Hologramme en Markdown (#502) : blocs et segments stylés, dessinés sur le
+// canevas du tableau 3D. Même syntaxe que le rendu Markdown de Nexora
+// (renderMarkdown) : titres #, ##, ###, **gras**, *italique*, `code`,
+// ~~barré~~, liens [texte](url), listes - * 1., cases - [ ] et - [x],
+// citations >, call-outs « > [!note] Titre » et « :::callout-note Titre …
+// ::: », tableaux (une ligne par rangée). Les types de call-out sont ceux de
+// l'app (CALLOUT_TYPES, passé en paramètre) ; un type inconnu devient
+// « note », comme ailleurs.
+function carteHoloInline(text) {
+  const src = String(text || "");
+  const out = [];
+  const push = (t, st) => {
+    if (!t) return;
+    const last = out[out.length - 1];
+    if (last && !!last.b === !!st.b && !!last.i === !!st.i && !!last.code === !!st.code && !!last.s === !!st.s) last.t += t;
+    else out.push(Object.assign({ t }, st.b ? { b: true } : {}, st.i ? { i: true } : {}, st.code ? { code: true } : {}, st.s ? { s: true } : {}));
+  };
+  const walk = (str, st) => {
+    const re = /(`([^`]+)`)|(\*\*(.+?)\*\*)|(__(.+?)__)|(~~(.+?)~~)|(\*([^*\s][^*]*?)\*)|((^|[\s(])_([^_\s][^_]*?)_(?=$|[\s.,;:!?)]))|(\[([^\]]+)\]\([^)\s]+\))/g;
+    let at = 0, m;
+    while ((m = re.exec(str))) {
+      push(str.slice(at, m.index), st);
+      if (m[1]) push(m[2], Object.assign({}, st, { code: true }));
+      else if (m[3]) walk(m[4], Object.assign({}, st, { b: true }));
+      else if (m[5]) walk(m[6], Object.assign({}, st, { b: true }));
+      else if (m[7]) walk(m[8], Object.assign({}, st, { s: true }));
+      else if (m[9]) walk(m[10], Object.assign({}, st, { i: true }));
+      else if (m[11]) { push(m[12], st); walk(m[13], Object.assign({}, st, { i: true })); }
+      else if (m[14]) walk(m[15], st);
+      at = m.index + m[0].length;
+    }
+    push(str.slice(at), st);
+  };
+  walk(src, {});
+  return out;
+}
+const CARTE_HOLO_CALLOUTS = ["note", "info", "tip", "warning", "danger"];
+function carteHoloBlocks(text, calloutTypes) {
+  const types = calloutTypes && typeof calloutTypes === "object" ? calloutTypes : null;
+  const kindOf = (k) => { const x = String(k || "").toLowerCase(); return (types ? types[x] : CARTE_HOLO_CALLOUTS.indexOf(x) !== -1) ? x : "note"; };
+  const parse = (lines) => {
+    const out = [];
+    let i = 0;
+    const gap = () => { if (out.length && out[out.length - 1].type !== "gap") out.push({ type: "gap" }); };
+    while (i < lines.length) {
+      const raw = lines[i].replace(/\s+$/, "");
+      const line = raw.trim();
+      let m;
+      if ((m = /^>\s*\[!(\w+)\]([+-])?\s*(.*)$/.exec(line))) {
+        const body = [];
+        i++;
+        while (i < lines.length && /^\s*>/.test(lines[i])) { body.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+        out.push({ type: "callout", kind: kindOf(m[1]), title: carteHoloInline(m[3].trim()), children: parse(body) });
+        continue;
+      }
+      if ((m = /^:::callout-(\w+)([+-])?\s*(.*)$/.exec(line))) {
+        const body = [];
+        i++;
+        while (i < lines.length && lines[i].trim() !== ":::") { body.push(lines[i]); i++; }
+        if (i < lines.length) i++;
+        out.push({ type: "callout", kind: kindOf(m[1]), title: carteHoloInline(m[3].trim()), children: parse(body) });
+        continue;
+      }
+      if (/^>/.test(line)) {
+        const body = [];
+        while (i < lines.length && /^\s*>/.test(lines[i]) && !/^\s*>\s*\[!\w+\]/.test(lines[i])) { body.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+        out.push({ type: "quote", children: parse(body) });
+        continue;
+      }
+      i++;
+      if (!line) { gap(); continue; }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) { out.push({ type: "hr" }); continue; }
+      if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) { out.push({ type: "h", level: Math.min(3, m[1].length), runs: carteHoloInline(m[2]) }); continue; }
+      const depth = Math.min(3, Math.floor((raw.length - raw.replace(/^\s+/, "").length) / 2));
+      if ((m = /^[-*+•]\s+\[([ xX])\]\s+(.*)$/.exec(line))) { out.push({ type: "task", done: m[1] !== " ", depth, runs: carteHoloInline(m[2]) }); continue; }
+      if ((m = /^[-*+•]\s+(.*)$/.exec(line))) { out.push({ type: "li", depth, runs: carteHoloInline(m[1]) }); continue; }
+      if ((m = /^(\d+)[.)]\s+(.*)$/.exec(line))) { out.push({ type: "li", depth, n: Number(m[1]), runs: carteHoloInline(m[2]) }); continue; }
+      // Tableau : la ligne de séparation disparaît, chaque rangée devient une
+      // ligne dont les cellules sont séparées par « · ».
+      if (/\|/.test(line) && /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/.test(line)) continue;
+      if (/^\|.*\|$/.test(line)) {
+        const cells = line.slice(1, -1).split("|").map((c) => c.trim());
+        const runs = [];
+        cells.forEach((c, k) => { if (k) runs.push({ t: "  ·  " }); carteHoloInline(c).forEach((r) => runs.push(r)); });
+        out.push({ type: "row", runs });
+        continue;
+      }
+      out.push({ type: "p", runs: carteHoloInline(line) });
+    }
+    while (out.length && out[out.length - 1].type === "gap") out.pop();
+    while (out.length && out[0].type === "gap") out.shift();
+    return out;
+  };
+  return parse(String(text || "").replace(/\r/g, "").split("\n"));
 }
 // Construire ici (#470) : la première nouvelle tâche du projet visé prend la
 // parcelle choisie. Renvoie la mémoire de disposition à utiliser.
@@ -6452,10 +6638,121 @@ function carteClaimTile(memory, pending, tasks) {
   // La réservation passe après les tâches déjà posées : aucune ne bouge.
   return { ...mem, claim: { id: fresh.id, key: pending.key } };
 }
+// Clic droit (#503) : parcelle constructible — case intérieure libre d'un
+// territoire connu, hors route et lave. « occupied » associe une clé de case
+// aux tâches affichées qui l'occupent.
+function carteBuildable(layout, key, occupied) {
+  const t = layout && layout.tiles && layout.tiles[key];
+  if (!t || !t.projectId || !t.inner || t.road || t.lava) return null;
+  const p = layout.projectById && layout.projectById[t.projectId];
+  if (!p || p.unknown) return null;
+  const o = occupied && occupied[key];
+  if (o && (!Array.isArray(o) || o.length)) return null;
+  return { projectId: t.projectId, key };
+}
+// Un clic droit hors d'une parcelle libre (bâtiment, route, lisière, cœur
+// ou totem du territoire) propose la parcelle libre la plus proche du même
+// territoire, au lieu de ne rien faire. Renvoie null si le territoire est
+// plein ou si la case n'appartient à aucun projet.
+function carteNearestBuildable(layout, key, occupied, projectId) {
+  if (!layout || !layout.tiles) return null;
+  const direct = key ? carteBuildable(layout, key, occupied) : null;
+  if (direct) return direct;
+  const t0 = key ? layout.tiles[key] : null;
+  const pid = projectId || (t0 && t0.projectId);
+  const terr = pid && (layout.territories || []).find((x) => x.projectId === pid);
+  if (!terr) return null;
+  const q0 = t0 ? t0.q : terr.q, r0 = t0 ? t0.r : terr.r;
+  let best = null, bd = Infinity;
+  terr.tiles.forEach((k) => {
+    const b = carteBuildable(layout, k, occupied);
+    if (!b) return;
+    const t = layout.tiles[k];
+    // Départage stable : la clé la plus petite l'emporte à distance égale.
+    const d = carteDist(q0, r0, t.q, t.r);
+    if (d < bd || (d === bd && k < best.key)) { bd = d; best = b; }
+  });
+  return best;
+}
+// Pastille de dossier (#504) : point d'arrivée de l'arpenteur au double
+// clic. Parmi les cases intérieures de TOUS les territoires du dossier (hors
+// eau et lave), celle qui est la plus proche du centre du dossier ; une case
+// libre (sans tâche affichée) l'emporte, pour ne pas atterrir sur un toit.
+function carteGroupAnchor(layout, projectIds, occupied) {
+  if (!layout || !layout.tiles || !Array.isArray(projectIds)) return null;
+  const set = new Set(projectIds);
+  const terrs = (layout.territories || []).filter((t) => set.has(t.projectId));
+  if (!terrs.length) return null;
+  let cx = 0, cz = 0;
+  terrs.forEach((t) => { const w = carteToWorld(t.q, t.r); cx += w.x; cz += w.z; });
+  cx /= terrs.length; cz /= terrs.length;
+  let best = null, bs = Infinity;
+  terrs.forEach((tr) => tr.tiles.forEach((k) => {
+    const t = layout.tiles[k];
+    if (!t || t.kind === "water" || t.kind === "sea" || t.lava) return;
+    const w = carteToWorld(t.q, t.r);
+    const busy = occupied && occupied[k] && (!Array.isArray(occupied[k]) || occupied[k].length);
+    const sc = Math.hypot(w.x - cx, w.z - cz) + (busy ? 1000 : 0);
+    if (sc < bs - 1e-9 || (Math.abs(sc - bs) < 1e-9 && k < best.key)) { bs = sc; best = { key: k, q: t.q, r: t.r, x: w.x, z: w.z, projectId: t.projectId }; }
+  }));
+  if (!best) {
+    // Territoires sans case praticable : le cœur du plus central.
+    const tr = terrs.slice().sort((a, b) => { const wa = carteToWorld(a.q, a.r), wb = carteToWorld(b.q, b.r); return Math.hypot(wa.x - cx, wa.z - cz) - Math.hypot(wb.x - cx, wb.z - cz); })[0];
+    const w = carteToWorld(tr.q, tr.r);
+    best = { key: carteKey(tr.q, tr.r), q: tr.q, r: tr.r, x: w.x, z: w.z, projectId: tr.projectId };
+  }
+  // Rayon du dossier : sert à cadrer la caméra.
+  let rad = 0;
+  terrs.forEach((t) => { const w = carteToWorld(t.q, t.r); rad = Math.max(rad, Math.hypot(w.x - cx, w.z - cz)); });
+  best.radius = Math.round(rad * 100) / 100;
+  return best;
+}
+// Téléportation magique (#505) : chronologie pure d'un saut de 0,8 s. Cercle
+// runique et colonne de lumière au départ (enveloppe « a »), puis à
+// l'arrivée (« b ») ; l'arpenteur s'amincit et s'étire jusqu'à disparaître,
+// change de place à mi-course, puis se reforme.
+const CARTE_TP_DUR = 0.8;
+const CARTE_TP_SWAP = 0.36;
+function carteTeleportPhase(t) {
+  const c = (x) => Math.max(0, Math.min(1, x));
+  const ease = (x) => 1 - Math.pow(1 - c(x), 3);
+  const bell = (x, a, m, b) => (x <= a || x >= b ? 0 : x < m ? ease((x - a) / (m - a)) : 1 - Math.pow(c((x - m) / (b - m)), 2));
+  const tt = Math.max(0, Number(t) || 0);
+  const r = (x) => Math.round(x * 1000) / 1000;
+  const a = bell(tt, 0, 0.14, CARTE_TP_SWAP + 0.2);
+  const b = bell(tt, CARTE_TP_SWAP - 0.1, CARTE_TP_SWAP + 0.08, CARTE_TP_DUR);
+  let side, sx, sy;
+  if (tt < CARTE_TP_SWAP) { const k = ease((tt - 0.06) / (CARTE_TP_SWAP - 0.06)); side = "from"; sx = 1 - 0.88 * k; sy = 1 + 0.7 * k; }
+  else { const k = ease((tt - CARTE_TP_SWAP - 0.05) / 0.32); side = "to"; sx = 0.12 + 0.88 * k; sy = 1.7 - 0.7 * k; }
+  return {
+    done: tt >= CARTE_TP_DUR, side,
+    a: { alpha: r(a), ring: r(0.35 + 1.25 * ease(tt / 0.2)), column: r(3.4 * a) },
+    b: { alpha: r(b), ring: r(0.35 + 1.25 * ease((tt - CARTE_TP_SWAP + 0.1) / 0.2)), column: r(3.4 * b) },
+    keeper: { sx: r(tt >= CARTE_TP_DUR ? 1 : sx), sy: r(tt >= CARTE_TP_DUR ? 1 : sy), visible: tt >= CARTE_TP_DUR || sx > 0.2 },
+  };
+}
+// Drapeaux des totems (#508) : forme du tissu et pommeau selon le thème.
+// « swallowtail » : bannière à queue d'aronde (thèmes de terre et de
+// montagne) ; « pennant » : fanion triangulaire (eau) ; « rect » : drapeau
+// droit (ville, désert, volcan, cyberpunk). Codes de forme du shader : 0, 1, 2.
+const CARTE_FLAG_SHAPES = { rect: 0, swallowtail: 1, pennant: 2 };
+const CARTE_FLAG_BY_THEME = {
+  campagne: "swallowtail", foret: "swallowtail", montagne: "swallowtail", hautemontagne: "swallowtail", grandnord: "swallowtail", canyon: "swallowtail",
+  mer: "pennant", lac: "pennant", ile: "pennant", marais: "pennant", jungle: "pennant",
+  ville: "rect", desert: "rect", volcan: "rect", cyberpunk: "rect",
+};
+const CARTE_FLAG_FINIAL = { cyberpunk: "#3ef0ff", volcan: "#ff8a3d", grandnord: "#dfe9f5", hautemontagne: "#dfe9f5" };
+function carteFlagStyle(themeId) {
+  const shape = CARTE_FLAG_BY_THEME[themeId] || "rect";
+  return { shape, code: CARTE_FLAG_SHAPES[shape], finial: CARTE_FLAG_FINIAL[themeId] || "#d9b23a" };
+}
 // Zoom stratégique (#476) : part de la carte ancienne selon la distance de
-// caméra, de 0 (3D) à 1 (plan).
-const CARTE_STRATEGIC_FROM = 80;
-const CARTE_STRATEGIC_TO = 95;
+// caméra, de 0 (3D) à 1 (plan). Seuil repoussé (#507) : la carte lointaine
+// n'arrive qu'à un dézoom nettement plus large, et le recul maximal de la
+// caméra est agrandi d'autant pour garder une plage de plan pur.
+const CARTE_STRATEGIC_FROM = 120;
+const CARTE_STRATEGIC_TO = 150;
+const CARTE_DIST_MAX = 190;
 function carteStrategicAlpha(dist) {
   const u = (Number(dist) - CARTE_STRATEGIC_FROM) / (CARTE_STRATEGIC_TO - CARTE_STRATEGIC_FROM);
   return Math.max(0, Math.min(1, u));
@@ -6467,7 +6764,7 @@ function carteNormalizeViews(list) {
   return (Array.isArray(list) ? list : []).filter((v) => v && typeof v === "object" && String(v.name || "").trim()).slice(0, CARTE_VIEWS_MAX).map((v) => ({
     name: String(v.name).trim().slice(0, 40),
     x: num(v.x, -1e4, 1e4, 0), z: num(v.z, -1e4, 1e4, 0),
-    yaw: num(v.yaw, -1e3, 1e3, 0.6), pitch: num(v.pitch, 0.45, 1.5, 0.92), dist: num(v.dist, 7, 150, 19),
+    yaw: num(v.yaw, -1e3, 1e3, 0.6), pitch: num(v.pitch, 0.45, 1.5, 0.92), dist: num(v.dist, 7, CARTE_DIST_MAX, 19),
   }));
 }
 const CARTE_QUALITIES = ["auto", "high", "medium", "low"];
@@ -6479,7 +6776,11 @@ function normalizeCarteViewPrefs(p) {
   return {
     // Les puces de filtre rapide (états, « En retard ») sont retirées (#400) :
     // d'anciennes valeurs enregistrées sont ignorées.
-    crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
+    // Filtres rapides en multi-sélection (#506) ; l'ancienne valeur unique
+    // « crit » est reprise dans « crits ».
+    crits: carteCritsOf(v),
+    statuses: carteIdList(v.statuses),
+    assignees: carteIdList(v.assignees),
     hideOldDone: !!v.hideOldDone,
     quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     folderThemes,
@@ -6511,6 +6812,8 @@ function normalizeCarteViewPrefs(p) {
     walk: v.walk !== false,
     // Tableau hologramme au double clic (#494) : actif par défaut.
     holo: v.holo !== false,
+    // Téléportation magique au clic sur un projet (#505) : désactivée par défaut.
+    teleport: v.teleport === true,
     // Effets avancés (#496 à #498) : lueurs (bloom), herbe dense, ombres de
     // nuages. Actifs par défaut ; à couper sur un petit appareil.
     fx: v.fx !== false,
