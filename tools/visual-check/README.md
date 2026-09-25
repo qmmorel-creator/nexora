@@ -41,6 +41,10 @@ défilement horizontal) ; 300 projets et 12 000 tâches (qualité basse automati
 repli sans WebGL. Captures : `carte.png`, `carte-mobile.png`, `carte-volume.png`.
 Bancs manuels : `index.html?app=1&view=carte&carte=demo` ou `&carte=volume`.
 
+Vue « Timeline 3D » (#454) : banc manuel `index.html?app=1&view=timeline3d&t3d=demo` (huit projets
+d'exemple repris des maquettes du réseau du temps : jalons, réunions, actions longues, retards, attentes,
+dépendances entre projets). Rendus « Grande Ligne » et « Cabine », lecture et vue conducteur.
+
 Scénario `harness.jsx` — Mini-Gantt, deux blocs temporels et
 deux encadrés, dont un posé sur des tâches **non successives** :
 

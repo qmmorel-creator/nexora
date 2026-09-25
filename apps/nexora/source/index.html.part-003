@@ -2131,6 +2131,8 @@ function defaultLayoutForType(type) {
   if (type === "embedCarte") return { w: 12, h: 12 };
   // Cosmos (complet) (#439) : la même place que la Carte pour explorer.
   if (type === "embedCosmos") return { w: 12, h: 12 };
+  // Timeline 3D (complet) (#454) : même place que la Carte et le Cosmos.
+  if (type === "embedTimeline3d") return { w: 12, h: 12 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
@@ -3874,6 +3876,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "embedCosmos" && (
                   <WidgetEmbedCosmos widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} favorites={favorites} />
+                )}
+                {w.type === "embedTimeline3d" && (
+                  <WidgetEmbedTimeline3d widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} />
                 )}
                 {w.type === "teamCatalog" && (
                   <WidgetTeamCatalog ctx={ctx} setTeams={setTeams} setTeamMembers={setTeamMembers} setTeamFolders={setTeamFolders} setTasks={setTasks} pushToast={pushToast} />
@@ -15711,6 +15716,7 @@ const WIDGET_TYPE_META = [
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
   { key: "embedCarte", label: "Carte (complet)", icon: MapIcon, group: "Planning" },
   { key: "embedCosmos", label: "Cosmos (complet)", icon: Orbit, group: "Planning" },
+  { key: "embedTimeline3d", label: "Timeline 3D (complet)", icon: TrainFront, group: "Planning" },
   // Finance PRO (#267, lot #275) : widgets dans le moteur de dashboard
   // existant — aucun second système de tableau de bord créé.
   { key: "financeProSynthese", label: "Finance PRO — Synthèse", icon: Wallet, group: "Suivi" },
@@ -16171,7 +16177,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "embedCarte" || type === "embedCosmos" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "embedCarte" || type === "embedCosmos" || type === "embedTimeline3d" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -22585,6 +22591,1049 @@ function createCosmosEngine(THREE, container, opts) {
   };
 }
 // === NEXORA:COSMOS-ENGINE:END ===
+// === NEXORA:TIMELINE3D-ENGINE:START ===
+// Moteur 3D de la vue Timeline 3D (#454), directions validées sur maquettes
+// (#452) : « Grande Ligne » (table de maquettiste, voies sur ballast, gares,
+// trains à vapeur, passage à niveau, vue conducteur) et « Cabine » (faisceau
+// de lignes en plein jour, vue à la première personne). La logique de réseau
+// vit dans NEXORA:TIMELINE3D ; ce moteur ne fait que dessiner et animer.
+// three.js ≥ r155 : intensités lumineuses physiques (× π) et couleurs sRGB.
+function createTimeline3dEngine(THREE, container, opts) {
+  const o = opts || {};
+  const RM = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const LI = Math.PI;
+  const PI = Math.PI, TAU = PI * 2;
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const canvas = renderer.domElement;
+  canvas.className = "lp-t3d-canvas";
+  container.appendChild(canvas);
+  const labelsEl = document.createElement("div");
+  labelsEl.className = "lp-t3d-labels";
+  container.appendChild(labelsEl);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 500);
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const col = (c) => new THREE.Color(c);
+  const mix = (a, b, t) => col(a).lerp(col(b), t);
+  const DONE = "#9aa5b4", RED = "#e5484d", AMBER = "#f2b134";
+  const SIG = { todo: "#2fd36b", doing: "#eaf6ff", wait: "#ffab2e", late: "#ff3b30", done: "#30353b" };
+  const REST = -0.75, RT = 0.25;
+
+  const S = {
+    mode: o.mode === "cabine" ? "cabine" : "rail", animate: o.animate !== false, speed: o.speed || 2.4, qualityPref: o.quality || "auto", quality: "high",
+    model: null, visible: null, scene: null, s: 0.45, lane: {}, ang: {}, R: 5, r0: 0, r1: 0,
+    hits: [], anims: [], labels: [], selRing: null, selectedId: null, focus: 0,
+    playing: false, sim: 0, simEnd: 60, dwell: 0, clockUntil: 0, driver: null, dl: { y: 0, p: -0.07, gy: 0, gp: -0.07 },
+    trains: [], barriers: [], xlights: [], cars: [], clouds: [], puffs: [], ripples: [], boarding: [], hands: [], zones: [],
+    down: 0, lastCab: null, st: {}, owned: [], W: 1, H: 1, stateKey: "", lastEmit: 0, disposed: false, raf: 0, last: performance.now(), intro: false,
+  };
+  const cam = { tx: 0, ty: 0, tz: 0, yaw: -0.5, pitch: 0.7, dist: 40, day: -4 };
+  const goal = Object.assign({}, cam);
+  const anim = () => S.animate && !RM;
+
+  // ---------- Ressources partagées (libérées à chaque reconstruction) ----------
+  const geoCache = new Map(), matCache = new Map();
+  const own = (x) => { S.owned.push(x); return x; };
+  const geo = (key, make) => { let g = geoCache.get(key); if (!g) { g = make(); geoCache.set(key, g); } return g; };
+  const std = (c, extra) => {
+    const key = "s:" + (typeof c === "string" ? c : c.getHexString()) + ":" + JSON.stringify(extra || {});
+    let m = matCache.get(key);
+    if (!m) { m = new THREE.MeshStandardMaterial(Object.assign({ color: col(c), roughness: 0.85 }, extra || {})); matCache.set(key, m); }
+    return m;
+  };
+  const basic = (c, extra) => {
+    const key = "b:" + (typeof c === "string" ? c : c.getHexString()) + ":" + JSON.stringify(extra || {});
+    let m = matCache.get(key);
+    if (!m) { m = new THREE.MeshBasicMaterial(Object.assign({ color: col(c) }, extra || {})); matCache.set(key, m); }
+    return m;
+  };
+  const texOf = (stops) => {
+    const c = document.createElement("canvas"); c.width = 64; c.height = 64;
+    const g = c.getContext("2d"); const r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    stops.forEach(([k, v]) => r.addColorStop(k, v)); g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  };
+  const glowTex = texOf([[0, "rgba(255,255,255,1)"], [0.35, "rgba(255,255,255,.45)"], [1, "rgba(255,255,255,0)"]]);
+  const puffTex = texOf([[0, "rgba(255,255,255,1)"], [0.55, "rgba(255,255,255,.75)"], [1, "rgba(255,255,255,0)"]]);
+  // Halo additif (lampes) ou en mélange normal (lisible sur fond clair).
+  const glow = (c, size, op, additive) => {
+    const sp = new THREE.Sprite(own(new THREE.SpriteMaterial({ map: glowTex, color: col(c), transparent: true, opacity: op == null ? 0.8 : op, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending })));
+    sp.scale.set(size, size, 1); return sp;
+  };
+  function box(w, h, d, m, x, y, z, parent, cast) {
+    const mesh = new THREE.Mesh(geo("box:" + w + ":" + h + ":" + d, () => new THREE.BoxGeometry(w, h, d)), m);
+    mesh.position.set(x, y, z); mesh.receiveShadow = true; if (cast !== false && S.quality === "high") mesh.castShadow = true;
+    (parent || S.scene).add(mesh); return mesh;
+  }
+  function boxAlong(a, b, w, h, y, m, cast) {
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+    if (len < 1e-4) return null;
+    const mesh = new THREE.Mesh(own(new THREE.BoxGeometry(len, h, w)), m);
+    mesh.position.set((a.x + b.x) / 2, y, (a.z + b.z) / 2); mesh.rotation.y = -Math.atan2(dz, dx);
+    mesh.receiveShadow = true; if (cast && S.quality === "high") mesh.castShadow = true;
+    S.scene.add(mesh); return mesh;
+  }
+  function tube(points, r, m) {
+    const pts = points.filter((p, i) => i === 0 || p.distanceTo(points[i - 1]) > 1e-4);
+    if (pts.length < 2) return null;
+    const path = new THREE.CurvePath();
+    for (let i = 1; i < pts.length; i++) path.add(new THREE.LineCurve3(pts[i - 1], pts[i]));
+    const mesh = new THREE.Mesh(own(new THREE.TubeGeometry(path, Math.max(4, pts.length * 3), r, 10, false)), m);
+    S.scene.add(mesh); return mesh;
+  }
+  const rng = (seed) => () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const hashStr = (str) => { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  const dateOf = (d) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + d); return x; };
+  const fmtShort = (d) => dateOf(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+
+  // ---------- Placement ----------
+  const lineOf = (id) => S.model.lineById[id];
+  function pos(l, d, lat) {
+    if (S.mode === "cabine") {
+      const a = S.ang[l.id], r = S.R + (lat || 0) * 1.2;
+      return V(Math.cos(a) * r, Math.sin(a) * r, -d * S.s);
+    }
+    return V(d * S.s, 0.25, S.lane[l.id] + (lat || 0) * 1.05);
+  }
+  function layout() {
+    const M = S.model;
+    S.r0 = M.range.min - 3; S.r1 = M.range.max + 6;
+    if (S.mode === "rail") {
+      S.s = 0.45; S.lane = {};
+      let z = 0, prev = null;
+      M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) z += 3.6; S.lane[l.id] = z; z += 4.4; prev = l.folderId; });
+      const mid = (z - 4.4) / 2; Object.keys(S.lane).forEach((k) => { S.lane[k] -= mid; });
+    } else {
+      S.s = 0.55; S.ang = {};
+      const n = M.lines.length, gap = 0.9, units = n + M.groups.length * gap, step = TAU / Math.max(1, units);
+      S.R = Math.max(5, n * 0.62);
+      let a = PI / 2 + 0.25 + step * gap / 2, prev = null;
+      M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) a += step * gap; S.ang[l.id] = a + step / 2; a += step; prev = l.folderId; });
+    }
+  }
+
+  // ---------- Libellés HTML ----------
+  function addLabel(cls, build, p, extra) {
+    const el = document.createElement("div");
+    el.className = "lp-t3d-lbl " + cls;
+    build(el);
+    labelsEl.appendChild(el);
+    const L = Object.assign({ el, pos: p, prio: 0, w: 0, h: 0, anchor: "above", shown: false }, extra || {});
+    S.labels.push(L); return L;
+  }
+  const text = (tag, t, cls) => { const e = document.createElement(tag); e.textContent = t; if (cls) e.className = cls; return e; };
+  const badge = (l) => { const b = text("span", String(l.n), "lp-t3d-badge"); b.style.setProperty("--c", l.color); return b; };
+
+  // ---------- Grande Ligne ----------
+  function railTrack(pts, past, color) {
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz); if (len < 1e-4) continue;
+      const ux = dx / len, uz = dz / len, nx = -uz, nz = ux;
+      const A = V(a.x - ux * 0.1, 0, a.z - uz * 0.1), B = V(b.x + ux * 0.1, 0, b.z + uz * 0.1);
+      const off = (q, k) => V(q.x + nx * k, 0, q.z + nz * k);
+      boxAlong(A, B, 1.0, 0.14, 0.07, std(past ? "#b9a988" : "#a29d93"));
+      boxAlong(off(A, 0.53), off(B, 0.53), 0.07, 0.05, 0.1, past ? std("#8f969e") : std(color, { roughness: 0.45, metalness: 0.1 }));
+      const railM = past ? std("#8a5a3c", { roughness: 0.75, metalness: 0.2 }) : std("#98a2ad", { roughness: 0.3, metalness: 0.65 });
+      boxAlong(off(A, -0.2), off(B, -0.2), 0.05, 0.06, 0.22, railM, true);
+      boxAlong(off(A, 0.2), off(B, 0.2), 0.05, 0.06, 0.22, railM, true);
+      const n = Math.max(1, Math.floor(len / 0.34)), ang = -Math.atan2(dz, dx);
+      for (let k = 0; k < n; k++) { const t = (k + 0.5) / n; S.sleepers.push([a.x + dx * t, a.z + dz * t, ang, past]); }
+    }
+  }
+  function flushSleepers() {
+    const g = own(new THREE.BoxGeometry(0.12, 0.05, 0.78));
+    [false, true].forEach((past) => {
+      const list = S.sleepers.filter((q) => q[3] === past); if (!list.length) return;
+      const im = new THREE.InstancedMesh(g, std(past ? "#6e5a47" : "#5a4535"), list.length);
+      const ob = new THREE.Object3D();
+      list.forEach((q, i) => { ob.position.set(q[0], 0.165, q[1]); ob.rotation.set(0, q[2], 0); ob.updateMatrix(); im.setMatrixAt(i, ob.matrix); });
+      im.receiveShadow = true; S.scene.add(im);
+    });
+    S.sleepers = [];
+  }
+  function prism(r, len, m) {
+    const g = own(new THREE.CylinderGeometry(r, r, len, 3)); g.rotateZ(PI / 2); g.rotateX(-PI / 2);
+    const mesh = new THREE.Mesh(g, m); if (S.quality === "high") mesh.castShadow = true; return mesh;
+  }
+  function railStation(x) {
+    const l = lineOf(x.lineId), st = x.late ? "late" : x.st;
+    const out = x.branch ? x.side : 1;
+    const base = pos(l, x.e, x.branch ? x.side : 0);
+    const g = new THREE.Group(); g.position.set(base.x, 0, base.z); S.scene.add(g);
+    const done = st === "done", big = x.type === "m", halt = x.type === "r";
+    const roofM = done ? std("#8f969e") : std(l.color, { roughness: 0.45, metalness: 0.1 });
+    const wall = std(done ? "#cfc8bc" : "#f1e7d5");
+    const qLen = big ? 2.0 : 1.25;
+    box(qLen, 0.3, 0.52, std("#d8d2c6"), 0, 0.15, out * 0.8, g);
+    box(qLen, 0.02, 0.07, std("#fbfaf6"), 0, 0.31, out * 0.57, g, false);
+    const R = S.st[x.id];
+    R.out = out; R.pax = []; R.boarded = false;
+    if (!done && !x.info && x.e >= 0 && x.e <= 60 && S.quality === "high") {
+      const r = rng(hashStr(String(x.id))), n = 2 + Math.floor(r() * 3);
+      const cols = ["#e64a3c", "#2f7de1", "#f2b705", "#35a86b", "#8e5bd6", "#ef7fb0", "#3b3f46"];
+      for (let k = 0; k < n; k++) {
+        const f = new THREE.Group();
+        const body = new THREE.Mesh(geo("pax-b", () => new THREE.CylinderGeometry(0.042, 0.055, 0.17, 8)), std(cols[Math.floor(r() * cols.length)]));
+        body.position.y = 0.085; f.add(body);
+        const head = new THREE.Mesh(geo("pax-h", () => new THREE.SphereGeometry(0.04, 10, 8)), std("#f1c9a5")); head.position.y = 0.21; f.add(head);
+        f.position.set(-qLen / 2 + 0.2 + r() * (qLen - 0.4), 0.3, out * (0.78 + (r() - 0.5) * 0.24));
+        f.rotation.y = r() * TAU; g.add(f);
+        R.pax.push({ f, home: f.position.clone() });
+      }
+    }
+    if (halt) {
+      box(0.8, 0.05, 0.38, roofM, 0, 0.84, out * 0.86, g);
+      [-0.32, 0.32].forEach((px) => box(0.04, 0.52, 0.04, std("#46505b", { roughness: 0.5, metalness: 0.4 }), px, 0.57, out * 0.95, g));
+      box(0.5, 0.12, 0.04, std("#7b4e2d", { roughness: 0.7 }), 0, 0.45, out * 1.0, g);
+    } else {
+      const bw = big ? 1.55 : 0.8, bh = big ? 0.72 : 0.48, bd = 0.52, bz = out * 1.34;
+      box(bw, bh, bd, wall, 0, 0.3 + bh / 2, bz, g);
+      const r = bd * 0.64, roof = prism(r, bw + 0.14, roofM);
+      roof.position.set(0, 0.3 + bh + r / 2 - 0.02, bz); g.add(roof);
+      const winM = st === "doing" || st === "late" ? std("#ffd98a", { emissive: col("#ffb13d"), emissiveIntensity: 0.85 }) : done ? std("#8f969e") : std("#34475c", { roughness: 0.25 });
+      box(bw * 0.72, bh * 0.34, 0.03, winM, 0, 0.3 + bh * 0.52, bz - out * (bd / 2 + 0.01), g, false);
+      if (big) {
+        const tx = -bw / 2 + 0.2;
+        box(0.36, 1.45, 0.36, wall, tx, 0.3 + 0.725, bz, g);
+        const cap = new THREE.Mesh(geo("cap", () => new THREE.ConeGeometry(0.3, 0.4, 4)), roofM); cap.rotation.y = PI / 4;
+        cap.position.set(tx, 0.3 + 1.45 + 0.2, bz); g.add(cap);
+        const clock = new THREE.Mesh(geo("clock", () => new THREE.CylinderGeometry(0.13, 0.13, 0.03, 24)), std("#f4f6f9"));
+        clock.rotation.x = PI / 2; clock.position.set(tx, 0.3 + 1.2, bz - out * 0.19); g.add(clock);
+        const pv = new THREE.Group(); pv.position.set(tx, 0.3 + 1.2, bz - out * 0.215); g.add(pv);
+        const hg = new THREE.Group(), mg = new THREE.Group(); pv.add(hg, mg);
+        box(0.025, 0.075, 0.012, std("#262b31"), 0, 0.035, 0, hg, false);
+        box(0.016, 0.11, 0.012, std("#c8322f"), 0, 0.05, -out * 0.004, mg, false);
+        S.hands.push({ hg, mg, sgn: out });
+      }
+    }
+    // Signal : sa couleur porte le statut.
+    const sx = -qLen / 2 - 0.2, sz = out * 0.5;
+    box(0.05, 1.1, 0.05, std("#46505b", { roughness: 0.5, metalness: 0.4 }), sx, 0.55, sz, g);
+    box(0.13, 0.3, 0.1, std("#262b31"), sx, 1.18, sz, g);
+    const lamp = new THREE.Group(); lamp.position.set(sx - 0.07, 1.22, sz); g.add(lamp);
+    lamp.add(new THREE.Mesh(geo("lamp", () => new THREE.SphereGeometry(0.05, 12, 8)), basic(SIG[st])));
+    if (!done) lamp.add(glow(SIG[st], 0.9, 0.95, true));
+    if (st === "doing") S.anims.push({ o: lamp, kind: "blink", f: 2.2 });
+    if (st === "late") S.anims.push({ o: lamp, kind: "blink", f: 6 });
+    if (x.branch) box(0.26, 0.3, 0.6, std("#c8322f"), pos(l, x.e + 1.8, x.side).x - base.x, 0.3, 0, g);
+    const hit = new THREE.Mesh(geo("hit-r", () => new THREE.SphereGeometry(1.0, 8, 6)), basic("#000", { colorWrite: false, depthWrite: false }));
+    hit.position.set(0, 0.6, out * 1.0); hit.userData.id = x.id; g.add(hit); S.hits.push(hit);
+    R.obj = g; R.p = V(base.x, 0.31, base.z + out * 0.8);
+    R.labelY = big ? 2.05 : halt ? 1.0 : 1.35;
+  }
+  function railTrain(l) {
+    if (l.end < 0) return;
+    const g = new THREE.Group(), wheels = [];
+    const body = std(l.color, { roughness: 0.45, metalness: 0.1 }), coachM = std(mix(l.color, "#ffffff", 0.32).getStyle(), { roughness: 0.45 });
+    const brass = std("#c9a13b", { roughness: 0.3, metalness: 0.6 }), rod = std("#d6d9de", { roughness: 0.3, metalness: 0.7 }), dark = std("#262b31"), win = std("#34475c", { roughness: 0.25 });
+    const wheel = (px, z, r) => {
+      const w = new THREE.Group(); w.position.set(px, RT + r, z);
+      const c = new THREE.Mesh(geo("wh" + r, () => new THREE.CylinderGeometry(r, r, 0.045, 16)), dark); c.rotation.z = PI / 2; w.add(c);
+      const sp = new THREE.Mesh(geo("sp" + r, () => new THREE.BoxGeometry(0.05, r * 1.7, 0.035)), rod); sp.position.x = px > 0 ? 0.026 : -0.026; w.add(sp);
+      g.add(w); wheels.push({ w, r });
+    };
+    box(0.34, 0.08, 1.22, dark, 0, RT + 0.2, 0.02, g);
+    const boiler = new THREE.Mesh(geo("boiler", () => new THREE.CylinderGeometry(0.17, 0.17, 0.8, 20)), body);
+    boiler.rotation.x = PI / 2; boiler.position.set(0, RT + 0.41, 0.2); if (S.quality === "high") boiler.castShadow = true; g.add(boiler);
+    [0.02, 0.3].forEach((z) => { const b = new THREE.Mesh(geo("band", () => new THREE.CylinderGeometry(0.176, 0.176, 0.03, 20)), brass); b.rotation.x = PI / 2; b.position.set(0, RT + 0.41, z); g.add(b); });
+    const smoke = new THREE.Mesh(geo("smokebox", () => new THREE.CylinderGeometry(0.178, 0.178, 0.12, 20)), dark);
+    smoke.rotation.x = PI / 2; smoke.position.set(0, RT + 0.41, 0.63); g.add(smoke);
+    const chim = new THREE.Mesh(geo("chim", () => new THREE.CylinderGeometry(0.06, 0.045, 0.22, 12)), dark);
+    chim.position.set(0, RT + 0.67, 0.5); g.add(chim);
+    const top = new THREE.Object3D(); top.position.set(0, 0.14, 0); chim.add(top);
+    const dome = new THREE.Mesh(geo("dome", () => new THREE.SphereGeometry(0.075, 14, 10)), brass); dome.position.set(0, RT + 0.58, 0.16); g.add(dome);
+    box(0.4, 0.44, 0.4, body, 0, RT + 0.44, -0.37, g);
+    box(0.47, 0.045, 0.5, dark, 0, RT + 0.685, -0.37, g);
+    box(0.41, 0.13, 0.22, win, 0, RT + 0.53, -0.32, g, false);
+    box(0.38, 0.07, 0.04, std("#c8322f"), 0, RT + 0.2, 0.65, g);
+    const lampG = glow("#fff1c4", 0.7, 0.75, true); lampG.position.set(0, RT + 0.43, 0.72); g.add(lampG);
+    [0.44, 0.16].forEach((z) => [-0.19, 0.19].forEach((px) => wheel(px, z, 0.1)));
+    [-0.19, 0.19].forEach((px) => wheel(px, -0.3, 0.14));
+    [-1.18, -2.3].forEach((zc) => {
+      box(0.4, 0.36, 1.0, coachM, 0, RT + 0.4, zc, g);
+      box(0.36, 0.06, 1.02, std("#f4f6f9"), 0, RT + 0.61, zc, g);
+      box(0.41, 0.1, 0.82, win, 0, RT + 0.47, zc, g, false);
+      box(0.3, 0.06, 0.9, dark, 0, RT + 0.19, zc, g);
+      [zc + 0.33, zc - 0.33].forEach((z) => [-0.19, 0.19].forEach((px) => wheel(px, z, 0.08)));
+    });
+    g.rotation.y = PI / 2;
+    const tr = { g, l, lz: S.lane[l.id], vel: 0, wheels, top, nextPuff: Math.random() * 1.5, arrived: null,
+      max: (l.end + 1.3) * S.s - 0.2, min: (l.start - 0.6) * S.s + 3.1 };
+    tr.rest = Math.min(tr.max, Math.max(REST, tr.min));
+    tr.front = tr.target = tr.rest;
+    placeTrain(tr); S.scene.add(g); S.trains.push(tr);
+  }
+  const placeTrain = (tr) => { tr.g.position.set(tr.front - 0.65, 0, tr.lz); };
+  const trainStop = (tr, xx) => Math.max(Math.min(xx, tr.max), Math.min(tr.rest, tr.min));
+  const playFront = (sim) => sim * S.s + REST + 1.45 * Math.min(1, Math.max(0, sim));
+  const trainDay = (tr) => (tr.front - REST - 1.45) / S.s;
+  function railLink(a, b) {
+    const h = 1.55, wm = std("#f4f6f9"), gm = std("#9aa3ad", { roughness: 0.5, metalness: 0.3 });
+    const A = a.clone().add(V(0.5, 0, 0)), B = b.clone().add(V(0.5, 0, 0));
+    [A, B].forEach((q) => { box(0.3, h, 0.3, wm, q.x, 0.3 + h / 2, q.z); box(0.36, 0.06, 0.36, std("#46505b"), q.x, 0.3 + h + 0.03, q.z); });
+    boxAlong(A, B, 0.34, 0.12, 0.3 + h + 0.1, wm, true);
+    boxAlong(V(A.x - 0.17, 0, A.z), V(B.x - 0.17, 0, B.z), 0.03, 0.22, 0.3 + h + 0.27, gm, false);
+    boxAlong(V(A.x + 0.17, 0, A.z), V(B.x + 0.17, 0, B.z), 0.03, 0.22, 0.3 + h + 0.27, gm, false);
+  }
+  function decorRail() {
+    const M = S.model, s = S.s, x0 = S.r0 * s - 4, x1 = S.r1 * s + 5;
+    const zs = M.lines.map((l) => S.lane[l.id]);
+    const z0 = Math.min.apply(null, zs) - 4.2, z1 = Math.max.apply(null, zs) + 4.2;
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, W = x1 - x0, Dp = z1 - z0;
+    S.bounds = { x0, x1, z0, z1 };
+    const sc = S.scene;
+    sc.background = col("#cfe2ee");
+    sc.fog = new THREE.Fog("#cfe2ee", 90, 220);
+    sc.add(new THREE.HemisphereLight(0xeaf2ff, 0x5a6a3c, 0.62 * LI));
+    const sun = new THREE.DirectionalLight(0xfff0d8, 0.9 * LI); sun.position.set(cx - 25, 50, cz + 32);
+    if (S.quality === "high") {
+      sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004;
+      Object.assign(sun.shadow.camera, { left: -W / 2 - 6, right: W / 2 + 6, top: Dp / 2 + 10, bottom: -Dp / 2 - 10, near: 1, far: 200 });
+    }
+    sun.target.position.set(cx, 0, cz); sc.add(sun, sun.target);
+    box(W + 1.4, 1.3, Dp + 1.4, std("#7b4e2d", { roughness: 0.7 }), cx, -0.66, cz, null, false);
+    box(W, 0.1, Dp, std("#7ea45a", { roughness: 1 }), cx, -0.05, cz, null, false);
+    const past = new THREE.Mesh(own(new THREE.PlaneGeometry(Math.max(0.1, -x0), Dp)), basic("#e0c486", { transparent: true, opacity: 0.22, depthWrite: false }));
+    past.rotation.x = -PI / 2; past.position.set(x0 / 2, 0.004, cz); sc.add(past);
+    // Passage à niveau d'aujourd'hui
+    box(1.3, 0.05, Dp, std("#474b52"), 0, 0.025, cz, null, false);
+    for (let z = z0 + 0.4; z < z1 - 0.4; z += 1.3) box(0.07, 0.01, 0.6, std("#f4f6f9"), 0, 0.056, z, null, false);
+    S.zones = zs.map((lz) => [lz - 0.8, lz + 0.8]);
+    const redLamp = () => { const q = new THREE.Group(); q.add(new THREE.Mesh(geo("rl", () => new THREE.SphereGeometry(0.045, 10, 8)), basic("#ff2a1f"))); q.add(glow("#ff3b30", 0.7, 0.9, true)); q.visible = false; return q; };
+    [z0 + 0.75, z1 - 0.75].forEach((z, i) => {
+      const x = i ? 0.85 : -0.85, dir = i ? -1 : 1;
+      box(0.08, 0.9, 0.08, std("#f4f6f9"), x, 0.45, z);
+      box(0.16, 0.16, 0.16, std("#262b31"), x, 0.84, z);
+      const pivot = new THREE.Group(); pivot.position.set(x, 0.84, z); sc.add(pivot);
+      for (let k = 0; k < 6; k++) box(0.05, 0.05, 0.22, std(k % 2 ? "#f4f6f9" : "#c8322f"), 0, 0, dir * (0.12 + k * 0.22), pivot);
+      S.barriers.push({ pivot, up: -dir * PI / 2 * 0.94 });
+    });
+    zs.forEach((lz) => [[0.85, lz - 0.95], [-0.85, lz + 0.95]].forEach(([x, z]) => {
+      box(0.05, 0.62, 0.05, std("#f4f6f9"), x, 0.31, z, null, false);
+      box(0.26, 0.08, 0.06, std("#262b31"), x, 0.62, z, null, false);
+      const a = redLamp(), b = redLamp(); a.position.set(x, 0.62, z - 0.1); b.position.set(x, 0.62, z + 0.1); sc.add(a, b);
+      S.xlights.push([a, b]);
+    }));
+    [z0 + 0.25, z1 - 0.25].forEach((z) => {
+      const stone = std("#b8ad9c");
+      box(0.35, 0.7, 0.5, stone, -0.82, 0.35, z); box(0.35, 0.7, 0.5, stone, 0.82, 0.35, z); box(2.0, 0.3, 0.5, stone, 0, 0.82, z);
+      box(1.3, 0.62, 0.46, std("#262b31"), 0, 0.31, z, null, false);
+    });
+    const carCols = ["#e64a3c", "#2f7de1", "#f2b705", "#ffffff", "#35a86b", "#8e5bd6"];
+    const nCars = Math.min(9, 3 + Math.round(Dp / 10));
+    for (let k = 0; k < nCars; k++) {
+      const dir = k % 2 ? -1 : 1, g = new THREE.Group();
+      box(0.3, 0.14, 0.52, std(carCols[k % carCols.length], { roughness: 0.35, metalness: 0.2 }), 0, 0.14, 0, g);
+      box(0.26, 0.12, 0.28, std("#34475c", { roughness: 0.25 }), 0, 0.26, -0.02, g);
+      g.position.set(dir > 0 ? -0.3 : 0.3, 0, 0); if (dir < 0) g.rotation.y = PI; sc.add(g);
+      const zmin = z0 + 0.2, zmax = z1 - 0.2, z = zmin + ((k * 0.37) % 1) * (zmax - zmin);
+      S.cars.push({ g, dir, z, v: 0, speed: 1.0 + (k % 3) * 0.25, zmin, zmax });
+    }
+    addLabel("lp-t3d-lbl--today", (el) => { el.textContent = "Passage à niveau · aujourd'hui " + fmtShort(0); }, V(0, 1.2, z1 - 0.7), { prio: 120 });
+    // Portiques mensuels, bornes hebdomadaires
+    const gm = std("#9aa3ad", { roughness: 0.5, metalness: 0.3 });
+    for (let d = Math.ceil(S.r0); d <= S.r1; d++) {
+      const dt = dateOf(d); const month = dt.getDate() === 1, week = dt.getDay() === 1;
+      if (month) {
+        const x = d * s;
+        box(0.08, 2.4, 0.08, gm, x, 1.2, z0 + 0.9); box(0.08, 2.4, 0.08, gm, x, 1.2, z1 - 0.9);
+        box(0.06, 0.06, Dp - 1.8, gm, x, 2.4, cz, null, false); box(0.05, 0.05, Dp - 1.8, gm, x, 2.2, cz, null, false);
+        addLabel("lp-t3d-lbl--time", (el) => { el.textContent = dt.toLocaleDateString("fr-FR", { month: "long", year: dt.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined }); }, V(x, 2.55, z1 - 0.9), { prio: 45, d });
+      } else if (week) box(0.09, 0.32, 0.09, std("#f4f6f9"), d * s, 0.16, z1 - 0.45);
+    }
+    // Champs entre les groupes, bosquets hors des emprises de voies
+    const Rf = rng(99), crops = ["#e2cd7e", "#c9dd8a", "#b9a7da", "#9cc26d", "#e8b96a"];
+    const fields = [];
+    const sorted = zs.slice().sort((a, b) => a - b);
+    for (let k = 1; k < sorted.length; k++) {
+      const gap = sorted[k] - sorted[k - 1]; if (gap < 6) continue;
+      const zc = (sorted[k] + sorted[k - 1]) / 2, zw = gap - 5.6;
+      for (let x = x0 + 1; x < x1 - 2;) {
+        const w = 3 + Rf() * 5;
+        if (Rf() < 0.6 && (x > 1.6 || x + w < -1.6)) {
+          const f = new THREE.Mesh(own(new THREE.PlaneGeometry(w, zw)), std(crops[Math.floor(Rf() * crops.length)], { roughness: 1 }));
+          f.rotation.x = -PI / 2; f.position.set(x + w / 2, 0.006, zc); f.receiveShadow = true; sc.add(f);
+          fields.push([x, x + w, zc - zw / 2, zc + zw / 2]);
+        }
+        x += w + 0.4;
+      }
+    }
+    const R = rng(20260925), pts = [];
+    const maxTrees = S.quality === "high" ? Math.min(700, Math.round(W * Dp / 9)) : 120;
+    for (let i = 0; i < maxTrees * 5 && pts.length < maxTrees; i++) {
+      const x = x0 + 0.5 + R() * (W - 1), z = z0 + 0.4 + R() * (Dp - 0.8);
+      if (Math.abs(x) < 1.4) continue;
+      if (zs.some((lz) => Math.abs(z - lz) < 2.7)) continue;
+      if (fields.some(([a, b, c, d]) => x > a - 0.3 && x < b + 0.3 && z > c - 0.3 && z < d + 0.3)) continue;
+      pts.push([x, z, 0.7 + R() * 0.8, R()]);
+    }
+    if (pts.length) {
+      const trunkM = new THREE.InstancedMesh(own(new THREE.CylinderGeometry(0.04, 0.06, 0.36, 6)), std("#6b4a2f"), pts.length);
+      const crownM = new THREE.InstancedMesh(own(new THREE.IcosahedronGeometry(0.34, 0)), std("#ffffff", { roughness: 0.9, flatShading: true }), pts.length);
+      const greens = ["#4d7b36", "#5f9043", "#3e6a31", "#6f9c49", "#58833d"].map(col);
+      const ob = new THREE.Object3D();
+      pts.forEach(([x, z, sc2, r], i) => {
+        ob.position.set(x, 0.18 * sc2, z); ob.rotation.set(0, 0, 0); ob.scale.set(sc2, sc2, sc2); ob.updateMatrix(); trunkM.setMatrixAt(i, ob.matrix);
+        ob.position.set(x, 0.62 * sc2, z); ob.rotation.set(0, r * 6, 0); ob.scale.set(sc2, sc2 * (r > 0.7 ? 1.7 : 1.05), sc2); ob.updateMatrix(); crownM.setMatrixAt(i, ob.matrix);
+        crownM.setColorAt(i, greens[Math.floor(r * greens.length) % greens.length]);
+      });
+      if (S.quality === "high") trunkM.castShadow = crownM.castShadow = true;
+      sc.add(trunkM, crownM);
+    }
+    // Nuages derrière la table
+    const cloudM = std("#ffffff", { roughness: 1, flatShading: true, emissive: col("#dde8f2"), emissiveIntensity: 0.4 });
+    const Rc = rng(4242);
+    for (let k = 0; k < 9; k++) {
+      const g = new THREE.Group();
+      for (let q = 0; q < 4; q++) { const m = new THREE.Mesh(geo("cloud" + q, () => new THREE.IcosahedronGeometry(0.9 + q * 0.25, 1)), cloudM); m.position.set(q * 1.1 - 1.6, Rc() * 0.5, Rc() * 0.8); m.scale.y = 0.6; g.add(m); }
+      g.position.set(x0 - 10 + Rc() * (W + 20), 5 + Rc() * 4, z0 - 7 - Rc() * 12); sc.add(g);
+      S.clouds.push({ g, v: 0.25 + Rc() * 0.3, xmin: x0 - 14, xmax: x1 + 14 });
+    }
+    M.groups.forEach((gr) => {
+      const zz = gr.lineIds.map((id) => S.lane[id]);
+      addLabel("lp-t3d-lbl--folder", (el) => { el.textContent = gr.name; }, V(x0 + 0.6, 0.02, (Math.min.apply(null, zz) + Math.max.apply(null, zz)) / 2), { prio: 30, anchor: "right" });
+    });
+    M.lines.forEach((l) => {
+      addLabel("lp-t3d-lbl--badge", (el) => { el.appendChild(badge(l)); el.appendChild(text("span", l.name)); }, pos(l, l.start, 0), { prio: 90, anchor: "left" });
+      addLabel("lp-t3d-lbl--badge", (el) => { el.appendChild(badge(l)); el.appendChild(text("span", "Terminus")); }, pos(l, l.end + 1.4, 0), { prio: 70, anchor: "right" });
+    });
+  }
+  function buildRail() {
+    const M = S.model;
+    S.sleepers = [];
+    M.lines.forEach((l) => {
+      if (l.start < 0) railTrack([pos(l, l.start - 0.6, 0), pos(l, Math.min(0, l.end), 0)], true, l.color);
+      if (l.end > 0) railTrack([pos(l, Math.max(0, l.start), 0), pos(l, l.end + 1.3, 0)], false, l.color);
+      const e = pos(l, l.end + 1.3, 0); box(0.26, 0.32, 0.62, std("#c8322f"), e.x, 0.32, e.z);
+      l.stations.forEach((id) => {
+        const x = M.stationById[id]; if (!x.branch) return;
+        const k = Math.min(1.05 / (S.s * 0.36), (x.e - x.s) / 2);
+        railTrack([pos(l, x.s, 0), pos(l, x.s + k, x.side), pos(l, x.e + 1.7, x.side)], x.st === "done", l.color);
+      });
+      railTrain(l);
+    });
+    flushSleepers();
+    M.stations.forEach(railStation);
+    M.links.forEach(([a, b]) => { if (S.st[a].p && S.st[b].p) railLink(S.st[a].p, S.st[b].p); });
+  }
+
+  // ---------- Cabine ----------
+  function lineMat(c, dim) {
+    return std(dim ? mix(c, "#d3dae3", 0.65).getStyle() : c, { roughness: 0.45, emissive: dim ? col("#000") : col(c).multiplyScalar(0.18) });
+  }
+  function decorCabine() {
+    const s = S.s, sc = S.scene, M = S.model;
+    const bg = document.createElement("canvas"); bg.width = 2; bg.height = 256;
+    const bctx = bg.getContext("2d"); const lg = bctx.createLinearGradient(0, 0, 0, 256);
+    [[0, "#c3d8f0"], [0.5, "#e8f0f9"], [1, "#fbfcfe"]].forEach(([k, v]) => lg.addColorStop(k, v)); bctx.fillStyle = lg; bctx.fillRect(0, 0, 2, 256);
+    const bgTex = own(new THREE.CanvasTexture(bg)); bgTex.colorSpace = THREE.SRGBColorSpace; sc.background = bgTex;
+    sc.fog = new THREE.FogExp2("#edf3f9", 0.024);
+    sc.add(new THREE.HemisphereLight(0xffffff, 0xd3dce7, 1.05 * LI));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.55 * LI); sun.position.set(6, 12, 6); sc.add(sun);
+    const gateR = S.R + 3.2;
+    const ringM = std("#98aecb", { roughness: 0.6 }), weekM = std("#d4deea", { roughness: 0.8 });
+    const len = (S.r1 - S.r0) * s + 60, zc = -((S.r0 + S.r1) / 2) * s;
+    const floor = new THREE.Mesh(own(new THREE.PlaneGeometry(gateR * 8, len)), std("#e4ebf3", { roughness: 1 }));
+    floor.rotation.x = -PI / 2; floor.position.set(0, -gateR - 1, zc); sc.add(floor);
+    for (let d = Math.ceil(S.r0); d <= S.r1; d++) {
+      const dt = dateOf(d); const month = dt.getDate() === 1, week = dt.getDay() === 1;
+      if (!month && !week) continue;
+      const r = new THREE.Mesh(geo("gate" + month, () => new THREE.TorusGeometry(gateR, month ? 0.07 : 0.03, 8, 96)), month ? ringM : weekM);
+      r.position.z = -d * s; sc.add(r);
+      const ln = new THREE.Mesh(geo("fl" + month, () => new THREE.PlaneGeometry(gateR * 8, month ? 0.12 : 0.05)), basic(month ? "#b3c3d8" : "#d3dde9"));
+      ln.rotation.x = -PI / 2; ln.position.set(0, -gateR - 0.99, -d * s); sc.add(ln);
+      if (month) addLabel("lp-t3d-lbl--time", (el) => { el.textContent = dt.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }); }, V(0, gateR + 0.4, -d * s), { prio: 45, d });
+    }
+    const today = new THREE.Mesh(own(new THREE.TorusGeometry(gateR, 0.12, 10, 120)), std("#245edb", { emissive: col("#245edb").multiplyScalar(0.35) }));
+    sc.add(today); sc.add(glow("#245edb", gateR * 2.4, 0.1));
+    addLabel("lp-t3d-lbl--today", (el) => { el.textContent = "Aujourd'hui · " + fmtShort(0); }, V(0, -gateR - 0.5, 0), { prio: 120, anchor: "below", d: 0 });
+    const n = 1400, arr = new Float32Array(n * 3), R = rng(7);
+    for (let i = 0; i < n; i++) {
+      const a = R() * TAU, r = 1.5 + R() * (gateR + 1);
+      arr[i * 3] = Math.cos(a) * r; arr[i * 3 + 1] = Math.sin(a) * r; arr[i * 3 + 2] = -(S.r0 + R() * (S.r1 - S.r0)) * s;
+    }
+    const gd = own(new THREE.BufferGeometry()); gd.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+    sc.add(new THREE.Points(gd, own(new THREE.PointsMaterial({ color: col("#8fa8c9"), size: 0.05, transparent: true, opacity: 0.65 }))));
+    M.lines.forEach((l) => {
+      const L = addLabel("lp-t3d-lbl--badge", (el) => { el.appendChild(badge(l)); el.appendChild(text("span", l.name)); }, V(), { prio: 90 });
+      L.dyn = () => pos(l, Math.min(Math.max(cam.day + 12, l.start), l.end), 0);
+    });
+  }
+  function buildCabine() {
+    const M = S.model;
+    M.lines.forEach((l) => {
+      const pastM = lineMat(l.color, true), futM = lineMat(l.color, false);
+      if (l.start < 0) tube([pos(l, l.start, 0), pos(l, Math.min(0, l.end), 0)], 0.07, pastM);
+      if (l.end > 0) tube([pos(l, Math.max(0, l.start), 0), pos(l, l.end, 0)], 0.07, futM);
+      const term = new THREE.Mesh(geo("term", () => new THREE.CircleGeometry(0.7, 32)), basic(l.color, { side: THREE.DoubleSide }));
+      term.position.copy(pos(l, l.end, 0)); S.scene.add(term);
+      l.stations.forEach((id) => {
+        const x = M.stationById[id]; if (!x.branch) return;
+        const k = Math.min(1.2 / S.s, (x.e - x.s) / 2);
+        tube([pos(l, x.s, 0), pos(l, x.s + k, x.side), pos(l, x.e, x.side)], 0.05, x.st === "done" ? pastM : futM);
+        const j = new THREE.Mesh(geo("junc", () => new THREE.SphereGeometry(0.1, 12, 10)), x.st === "done" || x.s < 0 ? pastM : futM);
+        j.position.copy(pos(l, x.s, 0)); S.scene.add(j);
+      });
+    });
+    M.stations.forEach((x) => {
+      const l = lineOf(x.lineId), st = x.late ? "late" : x.st, dim = st === "done";
+      const p = pos(l, x.e, x.branch ? x.side : 0);
+      const g = new THREE.Group(); g.position.copy(p);
+      const core = st === "done" ? DONE : st === "late" ? RED : st === "wait" ? AMBER : "#ffffff";
+      const ringC = dim ? mix(l.color, DONE, 0.65).getStyle() : l.color;
+      const sm = (c) => std(c, { roughness: 0.4, emissive: col(c).multiplyScalar(0.15) });
+      const ring = new THREE.Mesh(x.type === "m" ? geo("pm", () => new THREE.TorusGeometry(0.95, 0.08, 8, 4)) : geo("pr", () => new THREE.TorusGeometry(0.6, 0.06, 10, 40)), sm(ringC));
+      g.add(ring);
+      g.add(new THREE.Mesh(geo("core" + x.type, () => new THREE.SphereGeometry(x.type === "m" ? 0.2 : 0.15, 16, 12)), sm(core)));
+      if (!dim) g.add(glow(l.color, x.type === "m" ? 3.0 : 2.2, 0.22));
+      if (x.links.length) g.add(new THREE.Mesh(geo("dbl", () => new THREE.TorusGeometry(0.82, 0.04, 8, 36)), basic("#ffffff")));
+      if (st === "late") { const h = glow(RED, 3.0, 0.55); g.add(h); S.anims.push({ o: h, kind: "halo", base: 3.0 }); }
+      if (st === "doing") S.anims.push({ o: ring, kind: "pulse" });
+      const hit = new THREE.Mesh(geo("hit-c", () => new THREE.SphereGeometry(0.9, 8, 6)), basic("#000", { colorWrite: false, depthWrite: false }));
+      hit.userData.id = x.id; g.add(hit); S.hits.push(hit);
+      S.scene.add(g);
+      const R = S.st[x.id]; R.obj = g; R.p = p; R.labelY = 0.9;
+    });
+    M.links.forEach(([a, b]) => tube([S.st[a].p, S.st[b].p], 0.035, basic("#6f86a6", { transparent: true, opacity: 0.85 })));
+    M.lines.forEach((l) => {
+      if (0 < l.start || 0 > l.end) return;
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(geo("cab-train", () => new THREE.BoxGeometry(0.46, 0.4, 1.35)), std(l.color, { roughness: 0.35, emissive: col(l.color).multiplyScalar(0.15) })); g.add(body);
+      const nose = new THREE.Mesh(geo("cab-nose", () => new THREE.BoxGeometry(0.4, 0.2, 0.08)), basic("#ffffff")); nose.position.set(0, 0.06, 0.69); g.add(nose);
+      const p = pos(l, 0, 0); g.position.copy(p); g.lookAt(p.clone().add(V(0, 0, -1)));
+      S.scene.add(g);
+    });
+  }
+
+  // ---------- Construction ----------
+  function disposeScene() {
+    S.owned.forEach((x) => x.dispose && x.dispose()); S.owned = [];
+    geoCache.forEach((g) => g.dispose()); geoCache.clear();
+    matCache.forEach((m) => m.dispose()); matCache.clear();
+    S.puffs.forEach((p) => p.sp.material.dispose());
+    S.ripples.forEach((r) => { r.m.geometry.dispose(); r.m.material.dispose(); });
+    S.labels.forEach((L) => L.el.remove());
+    Object.assign(S, { labels: [], hits: [], anims: [], trains: [], barriers: [], xlights: [], cars: [], clouds: [], puffs: [], ripples: [], boarding: [], hands: [], zones: [], st: {}, selRing: null, lastCab: null });
+  }
+  function rebuild() {
+    disposeScene();
+    S.scene = new THREE.Scene();
+    if (!S.model || !S.model.lines.length) { S.stateKey = ""; return; }
+    S.quality = timeline3dResolveQuality(S.qualityPref, S.model.stations.length);
+    renderer.shadowMap.enabled = S.quality === "high" && S.mode === "rail";
+    S.driver = null; S.playing = false; S.sim = 0; S.dwell = 0; S.down = 0;
+    layout();
+    S.model.stations.forEach((x) => { S.st[x.id] = {}; });
+    if (S.mode === "rail") { decorRail(); buildRail(); } else { decorCabine(); buildCabine(); }
+    S.model.stations.forEach((x) => {
+      const R = S.st[x.id];
+      const cls = "lp-t3d-lbl--st" + (x.type === "m" ? " is-ms" : "") + (x.st === "done" ? " is-done" : "") + (x.late ? " is-late" : "");
+      R.label = addLabel(cls, (el) => {
+        el.style.setProperty("--lc", lineOf(x.lineId).color);
+        el.appendChild(text("b", x.title));
+        el.appendChild(text("small", timeline3dRel(x.e) + " · " + fmtShort(x.e)));
+      }, R.p.clone().add(V(0, R.labelY, 0)), { task: x });
+    });
+    S.selRing = new THREE.Mesh(own(new THREE.TorusGeometry(S.mode === "cabine" ? 1.1 : 0.95, 0.06, 8, 48)), basic("#ffc043"));
+    if (S.mode !== "cabine") S.selRing.rotation.x = PI / 2;
+    S.selRing.visible = false; S.scene.add(S.selRing);
+    applyVisibility();
+    measureLabels();
+    resetCamera(true);
+    if (S.mode === "rail" && !RM) { Object.assign(cam, { tx: goal.tx + 6, yaw: -1.25, pitch: 1.2, dist: 88 }); S.intro = true; }
+    if (S.selectedId && S.st[S.selectedId]) select(S.selectedId, false); else S.selectedId = null;
+    emit(true);
+  }
+  function applyVisibility() {
+    if (!S.model) return;
+    S.model.stations.forEach((x) => {
+      const R = S.st[x.id]; if (!R || !R.obj) return;
+      const on = !S.visible || S.visible.has(x.id);
+      R.obj.visible = on; R.hidden = !on;
+    });
+    S.hits = S.hits.filter(() => true);
+  }
+  function measureLabels() {
+    S.labels.forEach((L) => { L.el.style.transform = "translate(-9999px,0)"; L.el.style.visibility = "hidden"; });
+    S.labels.forEach((L) => { L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; });
+  }
+
+  // ---------- Caméras ----------
+  function resetCamera(instant) {
+    if (S.mode === "rail") Object.assign(goal, { tx: 14 * S.s, ty: 0, tz: 0, yaw: -0.5, pitch: 0.7, dist: 40 });
+    else Object.assign(goal, { day: -4, yaw: 0, pitch: 0.02 });
+    S.focus = 0;
+    if (instant) Object.assign(cam, goal);
+  }
+  function focusDay(d, move) {
+    if (!S.model) return;
+    S.focus = Math.max(Math.floor(S.r0), Math.min(Math.ceil(S.r1), d));
+    if (move === false) return;
+    if (S.mode === "rail") goal.tx = S.focus * S.s; else goal.day = S.focus - 4;
+    if (RM) Object.assign(cam, goal);
+  }
+  function applyCamera() {
+    if (S.mode === "rail" && S.driver) {
+      const tr = S.driver, dl = S.dl;
+      camera.fov = 60; camera.near = 0.05;
+      camera.position.set(tr.front - 0.95, 1.14, tr.lz);
+      const f = V(Math.cos(dl.y) * Math.cos(dl.p), Math.sin(dl.p), -Math.sin(dl.y) * Math.cos(dl.p));
+      camera.lookAt(camera.position.clone().add(f));
+    } else if (S.mode === "cabine") {
+      camera.fov = 64; camera.near = 0.1;
+      camera.position.set(0, 0, -cam.day * S.s);
+      const f = V(-Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), -Math.cos(cam.yaw) * Math.cos(cam.pitch));
+      camera.lookAt(camera.position.clone().add(f));
+    } else {
+      camera.fov = 40; camera.near = 0.1;
+      const cp = Math.cos(cam.pitch);
+      camera.position.set(cam.tx + cam.dist * cp * Math.sin(cam.yaw), cam.ty + cam.dist * Math.sin(cam.pitch), cam.tz + cam.dist * cp * Math.cos(cam.yaw));
+      camera.lookAt(cam.tx, cam.ty, cam.tz);
+    }
+    camera.updateProjectionMatrix();
+  }
+  function flyTo(id) {
+    const x = S.model.stationById[id], R = S.st[id]; if (!x || !R || !R.p) return;
+    if (S.mode === "cabine") {
+      goal.day = x.e - 9;
+      const cp = V(0, 0, -goal.day * S.s), rel = R.p.clone().sub(cp);
+      goal.yaw = Math.atan2(-rel.x, -rel.z); goal.pitch = Math.atan2(rel.y, Math.hypot(rel.x, rel.z)) * 0.8;
+      while (goal.yaw - cam.yaw > PI) goal.yaw -= TAU;
+      while (goal.yaw - cam.yaw < -PI) goal.yaw += TAU;
+    } else if (!S.driver) Object.assign(goal, { tx: R.p.x, ty: R.p.y, tz: R.p.z, dist: 14 });
+    focusDay(x.e, false);
+    if (RM) Object.assign(cam, goal);
+  }
+
+  // ---------- Animations Grande Ligne ----------
+  const _v = new THREE.Vector3();
+  function puff(p, big) {
+    let q = S.puffs.find((z) => !z.alive);
+    if (!q) {
+      if (S.puffs.length > 240) return;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: col("#f4f6f8"), transparent: true, depthWrite: false }));
+      S.scene.add(sp); q = { sp }; S.puffs.push(q);
+    }
+    Object.assign(q, { alive: true, life: 0, max: 1.5 + Math.random() * 0.9, vx: (Math.random() - 0.5) * 0.2, vy: 0.55 + Math.random() * 0.35, vz: (Math.random() - 0.5) * 0.2, s0: big ? 0.26 : 0.17 });
+    q.sp.visible = true; q.sp.position.copy(p);
+  }
+  function board(id) {
+    const R = S.st[id];
+    if (!R || !R.pax || !R.pax.length || R.boarded) return;
+    R.boarded = true; S.boarding.push({ id, life: 0 });
+  }
+  function resetPax() {
+    S.boarding = [];
+    Object.keys(S.st).forEach((id) => { const R = S.st[id]; if (!R.pax) return; R.boarded = false; R.pax.forEach((q) => { q.f.visible = true; q.f.position.copy(q.home); q.f.scale.set(1, 1, 1); }); });
+  }
+  function ripple(id) {
+    const R = S.st[id], x = S.model.stationById[id];
+    if (!R || !R.p || R.hidden) return;
+    board(id);
+    if (!anim()) return;
+    const cab = S.mode === "cabine";
+    const m = new THREE.Mesh(cab ? new THREE.TorusGeometry(x.type === "m" ? 0.95 : 0.62, 0.05, 8, 40) : new THREE.RingGeometry(0.34, 0.44, 40),
+      new THREE.MeshBasicMaterial({ color: col(lineOf(x.lineId).color), transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
+    if (!cab) m.rotation.x = -PI / 2;
+    m.position.copy(R.p); if (!cab) m.position.y += 0.03;
+    S.scene.add(m); S.ripples.push({ m, life: 0, id, cab });
+  }
+  function speedDays() { return S.speed; }
+  function updateRail(dt, tt) {
+    const s = S.s;
+    if (S.playing) {
+      if (S.dwell > 0) S.dwell -= dt;
+      else {
+        const prev = S.sim; let next = Math.min(S.simEnd, S.sim + dt * speedDays());
+        if (S.driver) {
+          const stop = S.driver.l.stations.map((id) => S.model.stationById[id]).find((x) => x.e > prev && x.e <= next && x.st !== "done" && !S.st[x.id].hidden);
+          if (stop) { next = stop.e; S.dwell = 1.4; }
+        }
+        S.sim = next;
+        S.model.stations.forEach((x) => { if (x.e > prev && x.e <= S.sim && x.st !== "done") ripple(x.id); });
+      }
+      S.trains.forEach((tr) => { tr.target = trainStop(tr, playFront(S.sim) - (tr === S.driver ? 1.6 : 0)); });
+      if (!S.driver) goal.tx = S.sim * s + 5;
+      focusDay(S.sim, false);
+      S.clockUntil = tt + 2.5;
+      if (S.sim >= S.simEnd && S.dwell <= 0) { S.playing = false; S.ended = true; }
+    }
+    const k = RM ? 1 : 1 - Math.exp(-dt * 6);
+    S.dl.y += (S.dl.gy - S.dl.y) * k; S.dl.p += (S.dl.gp - S.dl.p) * k;
+    let moving = false;
+    S.trains.forEach((tr) => {
+      const diff = tr.target - tr.front;
+      if (!anim()) { tr.front = tr.target; tr.vel = 0; }
+      else {
+        const want = Math.max(-5, Math.min(5, diff * 2.2));
+        tr.vel += (want - tr.vel) * Math.min(1, dt * 2.6);
+        if (Math.abs(diff) < 0.004 && Math.abs(tr.vel) < 0.03) { tr.vel = 0; tr.front = tr.target; } else tr.front += tr.vel * dt;
+      }
+      placeTrain(tr);
+      const sp = Math.abs(tr.vel);
+      if (sp > 0.05) moving = true;
+      tr.wheels.forEach((w) => { w.w.rotation.x += tr.vel * dt / w.r; });
+      if (anim()) {
+        tr.nextPuff -= dt;
+        if (tr.nextPuff <= 0) {
+          tr.top.getWorldPosition(_v); puff(_v, sp > 0.3 && tr !== S.driver);
+          tr.nextPuff = (sp > 0.1 ? Math.max(0.07, 0.3 / sp) : 1.2 + Math.random() * 0.8) * (tr === S.driver ? 2.2 : 1);
+        }
+      }
+      if (tr.arrived && Math.abs(tr.target - tr.front) < 0.06 && sp < 0.06) { ripple(tr.arrived); tr.arrived = null; }
+    });
+    const down = moving || S.playing;
+    S.down += ((down ? 1 : 0) - S.down) * Math.min(1, dt * (anim() ? 3 : 60));
+    S.barriers.forEach((b) => { b.pivot.rotation.x = b.up * (1 - S.down); });
+    const blink = Math.sin(tt * 7) > 0;
+    S.xlights.forEach(([a, b]) => { a.visible = down && blink; b.visible = down && !blink; });
+    if (anim()) {
+      S.cars.forEach((c) => {
+        let want = c.speed;
+        const front = c.z + c.dir * 0.28;
+        const inZone = S.zones.some(([a, b]) => front > a && front < b);
+        if (S.down > 0.3 && !inZone) {
+          const ahead = S.zones.map(([a, b]) => (c.dir > 0 ? a - front : front - b)).filter((d) => d > -0.01);
+          if (ahead.length && Math.min.apply(null, ahead) < 0.35) want = 0;
+        }
+        S.cars.forEach((q) => { if (q !== c && q.dir === c.dir) { const gap = (q.z - c.z) * c.dir; if (gap > 0 && gap < 0.85) want = 0; } });
+        c.v += (want - c.v) * Math.min(1, dt * 3);
+        c.z += c.dir * c.v * dt;
+        if (c.dir > 0 && c.z > c.zmax) c.z = c.zmin;
+        if (c.dir < 0 && c.z < c.zmin) c.z = c.zmax;
+        c.g.position.z = c.z;
+      });
+      S.clouds.forEach((c) => { c.g.position.x += c.v * dt; if (c.g.position.x > c.xmax) c.g.position.x = c.xmin; });
+    }
+    const now = new Date(), mins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    S.hands.forEach((h) => { h.mg.rotation.z = -h.sgn * (mins % 60) / 60 * TAU; h.hg.rotation.z = -h.sgn * (mins % 720) / 720 * TAU; });
+    S.puffs.forEach((p) => {
+      if (!p.alive) return;
+      p.life += dt; const q = p.life / p.max;
+      if (q >= 1) { p.alive = false; p.sp.visible = false; return; }
+      p.sp.position.x += p.vx * dt; p.sp.position.y += p.vy * dt; p.sp.position.z += p.vz * dt; p.vy *= 0.985;
+      const sc = p.s0 + q * 0.95; p.sp.scale.set(sc, sc, 1); p.sp.material.opacity = 0.9 * (1 - q);
+    });
+    S.boarding = S.boarding.filter((b) => {
+      b.life += dt; const q = Math.min(1, b.life / 1.1), R = S.st[b.id];
+      R.pax.forEach((p, i) => {
+        const kk = Math.max(0, Math.min(1, q * 1.4 - i * 0.12));
+        p.f.position.z = p.home.z + (R.out * 0.6 - p.home.z) * Math.min(1, kk * 1.6);
+        const sh = kk > 0.6 ? Math.max(0, 1 - (kk - 0.6) / 0.4) : 1;
+        p.f.scale.set(sh, sh, sh); p.f.visible = sh > 0.02;
+      });
+      return q < 1;
+    });
+  }
+  function updateCab(dt) {
+    if (S.playing) {
+      S.sim = Math.min(S.simEnd, S.sim + dt * speedDays());
+      goal.day = S.sim - 4; focusDay(S.sim, false);
+      if (S.sim >= S.simEnd) { S.playing = false; S.ended = true; }
+    }
+    const probe = cam.day + 3.5;
+    if (S.lastCab != null && probe > S.lastCab) S.model.stations.forEach((x) => { if (x.e > S.lastCab && x.e <= probe && x.st !== "done") ripple(x.id); });
+    S.lastCab = probe;
+  }
+  function updateEffects(dt, tt) {
+    S.anims.forEach((a) => {
+      if (!anim()) { if (a.kind === "blink") a.o.visible = true; return; }
+      if (a.kind === "pulse") { const q = 1 + 0.18 * (0.5 + 0.5 * Math.sin(tt * 3.2)); a.o.scale.set(q, q, q); }
+      else if (a.kind === "blink") a.o.visible = Math.sin(tt * a.f) > -0.2;
+      else { const q = a.base * (0.85 + 0.3 * (0.5 + 0.5 * Math.sin(tt * 4.2))); a.o.scale.set(q, q, 1); }
+    });
+    S.ripples = S.ripples.filter((r) => {
+      r.life += dt; const q = r.life / (r.cab ? 1.0 : 1.2), R = S.st[r.id];
+      if (q >= 1) { S.scene.remove(r.m); r.m.geometry.dispose(); r.m.material.dispose(); if (R && R.obj) R.obj.scale.set(1, 1, 1); return false; }
+      const sc = 1 + q * (r.cab ? 2.6 : 3.2);
+      if (r.cab) r.m.scale.set(sc, sc, sc); else r.m.scale.set(sc, sc, 1);
+      r.m.material.opacity = 0.95 * (1 - q);
+      if (R && R.obj) { if (r.cab) { const b = 1 + 0.45 * Math.sin(Math.min(1, q * 2) * PI); R.obj.scale.set(b, b, b); } else R.obj.scale.y = 1 + 0.14 * Math.sin(Math.min(1, q * 2.2) * PI); }
+      return true;
+    });
+    if (S.selRing && S.selRing.visible && anim()) S.selRing.rotation.z = tt;
+  }
+
+  // ---------- État remonté à l'interface ----------
+  function hudState(tt) {
+    const M = S.model; if (!M) return null;
+    if (S.mode === "cabine") {
+      const day = cam.day + 4, next = timeline3dNextStop(M, cam.day + 3.5, null, S.visible);
+      return { day, nextId: next ? next.id : null, nextIn: next ? Math.max(0, Math.ceil(next.e - day)) : null };
+    }
+    if (S.driver) {
+      const tr = S.driver, day = S.playing ? S.sim : Math.max(tr.l.start, trainDay(tr));
+      const next = tr.l.stations.map((id) => M.stationById[id]).find((x) => x.e * S.s + 0.7 > tr.front + 0.05 && x.st !== "done" && !S.st[x.id].hidden);
+      return { day, nextId: next ? next.id : null, nextIn: next ? Math.max(0, Math.ceil(next.e - day)) : null };
+    }
+    if (S.playing || tt < S.clockUntil) {
+      const next = timeline3dNextStop(M, S.sim, null, S.visible);
+      return { day: S.sim, nextId: next ? next.id : null, nextIn: next ? Math.max(0, Math.ceil(next.e - S.sim)) : null };
+    }
+    return null;
+  }
+  function emit(force, tt) {
+    if (!o.onState) return;
+    const hud = hudState(tt || 0);
+    const st = { playing: S.playing, ended: !!S.ended, driverLineId: S.driver ? S.driver.l.id : null, focus: Math.round(S.focus), hud: hud ? { day: Math.floor(hud.day), frac: hud.day - Math.floor(hud.day), nextId: hud.nextId, nextIn: hud.nextIn } : null };
+    const key = JSON.stringify([st.playing, st.ended, st.driverLineId, st.focus, hud ? [st.hud.day, st.hud.nextId, st.hud.nextIn] : null]);
+    const now = performance.now();
+    if (!force && key === S.stateKey && now - S.lastEmit < 250) return;
+    if (!force && key === S.stateKey && !hud) return;
+    S.stateKey = key; S.lastEmit = now;
+    o.onState(st);
+  }
+
+  // ---------- Libellés : projection et placement glouton ----------
+  const tmp = new THREE.Vector3();
+  function placeLabels() {
+    const w = S.W, h = S.H, cands = [];
+    const crect = container.getBoundingClientRect();
+    const obstacles = (o.obstacles ? o.obstacles() : []).map((r) => ({ x1: r.left - crect.left, y1: r.top - crect.top, x2: r.right - crect.left, y2: r.bottom - crect.top }));
+    const camDay = S.mode === "cabine" ? cam.day : S.focus;
+    const drv = S.mode === "rail" && S.driver;
+    S.labels.forEach((L) => {
+      const p = L.dyn ? L.dyn() : L.pos;
+      tmp.copy(p).project(camera);
+      let ok = tmp.z < 1 && tmp.z > -1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2;
+      let prio = L.prio;
+      const dist = camera.position.distanceTo(p);
+      if (ok && L.task && S.st[L.task.id] && S.st[L.task.id].hidden) ok = false;
+      if (ok && drv) {
+        if (L.el.classList.contains("lp-t3d-lbl--folder")) ok = false;
+        else if (L.task) { ok = S.st[L.task.id].p.x > camera.position.x + 0.5 && dist < 42; prio = 90 - dist + (L.task.lineId === S.driver.l.id ? 60 : 0) + (L.task.id === S.selectedId ? 300 : 0); }
+        else if (dist > 50) ok = false;
+      } else if (ok && L.task) {
+        const t = L.task, dd = t.e - camDay;
+        if (S.mode === "cabine") ok = dd > 0.5 && dd < 42;
+        else ok = Math.abs(t.e - S.focus) < 40 || t.type === "m";
+        prio = 60 - Math.abs(t.e - (S.mode === "cabine" ? camDay + 8 : S.focus)) * 0.6 + (t.type === "m" ? 12 : 0) + (t.late ? 25 : 0) + (t.st === "done" ? -20 : 0) + (t.id === S.selectedId ? 300 : 0);
+      }
+      if (ok && L.d != null && S.mode === "cabine") ok = L.d - camDay > 0 && L.d - camDay < 70;
+      if (ok && !drv && dist > (S.mode === "cabine" ? 38 : 95)) ok = false;
+      if (!ok) { if (L.shown) { L.el.style.visibility = "hidden"; L.shown = false; } return; }
+      const sx = (tmp.x + 1) / 2 * w, sy = (1 - tmp.y) / 2 * h;
+      let x = sx - L.w / 2, y = sy - L.h - 6;
+      if (L.anchor === "below") y = sy + 6;
+      if (L.anchor === "left") { x = sx - L.w - 10; y = sy - L.h / 2; }
+      if (L.anchor === "right") { x = sx + 10; y = sy - L.h / 2; }
+      cands.push({ L, x, y, prio });
+    });
+    cands.sort((a, b) => b.prio - a.prio);
+    const placed = obstacles.slice();
+    let count = 0;
+    const max = w < 600 ? 22 : 46;
+    cands.forEach((c) => {
+      const r = { x1: c.x - 3, y1: c.y - 2, x2: c.x + c.L.w + 3, y2: c.y + c.L.h + 2 };
+      const clash = r.x2 < 0 || r.x1 > w || r.y2 < 0 || r.y1 > h || placed.some((q) => !(r.x2 < q.x1 || q.x2 < r.x1 || r.y2 < q.y1 || q.y2 < r.y1));
+      if (clash || count >= max) { if (c.L.shown) { c.L.el.style.visibility = "hidden"; c.L.shown = false; } return; }
+      placed.push(r); count++;
+      c.L.el.style.transform = "translate(" + Math.round(c.x) + "px," + Math.round(c.y) + "px)";
+      if (!c.L.shown) { c.L.el.style.visibility = "visible"; c.L.shown = true; }
+    });
+  }
+
+  // ---------- Boucle ----------
+  function frame(now) {
+    if (S.disposed) return;
+    S.raf = requestAnimationFrame(frame);
+    const dt = Math.min(0.05, (now - S.last) / 1000); S.last = now;
+    if (!S.model || !S.model.lines.length) { renderer.render(S.scene, camera); return; }
+    const tt = now / 1000;
+    const k = RM ? 1 : 1 - Math.exp(-dt * (S.intro ? 1.6 : 6));
+    if (S.intro && cam.dist < 50) S.intro = false;
+    Object.keys(goal).forEach((key) => { cam[key] += (goal[key] - cam[key]) * k; });
+    if (S.mode === "rail") updateRail(dt, tt); else updateCab(dt);
+    updateEffects(dt, tt);
+    applyCamera();
+    renderer.render(S.scene, camera);
+    placeLabels();
+    emit(false, tt);
+  }
+  function resize() {
+    const r = container.getBoundingClientRect();
+    S.W = Math.max(1, Math.round(r.width)); S.H = Math.max(1, Math.round(r.height));
+    renderer.setSize(S.W, S.H, false); camera.aspect = S.W / S.H; camera.updateProjectionMatrix();
+  }
+  const ro = new ResizeObserver(resize); ro.observe(container); resize();
+
+  // ---------- Entrées ----------
+  const ptrs = new Map(); let dragMode = null, moved = 0, pinch0 = 0, down = false;
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function hitAt(e) {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObjects(S.hits.filter((m) => m.parent && m.parent.visible), false);
+    return hits[0] ? hits[0].object.userData.id : null;
+  }
+  function moveDays(n) {
+    if (!S.model) return;
+    if (S.playing) pause();
+    if (S.mode === "rail" && S.driver) {
+      const tr = S.driver; tr.target = trainStop(tr, tr.target + n * S.s); tr.arrived = null;
+      focusDay(trainDay(tr) + n, false); return;
+    }
+    if (S.mode === "cabine") { goal.day = Math.max(S.r0 - 6, Math.min(S.r1, goal.day + n)); focusDay(goal.day + 4, false); if (RM) Object.assign(cam, goal); return; }
+    focusDay(S.focus + n);
+  }
+  function zoom(dy) {
+    if (S.mode === "rail" && S.driver) { moveDays(dy * 0.01); return; }
+    if (S.mode === "cabine") { moveDays(dy * 0.02); return; }
+    goal.dist = Math.max(6, Math.min(110, goal.dist * Math.exp(dy * 0.0012)));
+    if (RM) Object.assign(cam, goal);
+  }
+  const onDown = (e) => {
+    canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moved = 0; down = true;
+    dragMode = (e.button === 2 || e.shiftKey) ? "pan" : "rot";
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); dragMode = "pinch"; }
+    canvas.classList.add("is-drag");
+  };
+  let lastHover = 0;
+  const onMove = (e) => {
+    const p = ptrs.get(e.pointerId);
+    if (!p) {
+      const now = performance.now(); if (now - lastHover < 60) return; lastHover = now;
+      canvas.classList.toggle("is-hot", !!hitAt(e)); return;
+    }
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    S.intro = false;
+    if (dragMode === "pinch" && ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch0) zoom((pinch0 - d) * 4); pinch0 = d; return;
+    }
+    if (S.mode === "rail" && S.driver) {
+      if (dragMode === "pan") moveDays(-dy * 0.05);
+      else { S.dl.gy = Math.max(-1.4, Math.min(1.4, S.dl.gy + dx * 0.004)); S.dl.gp = Math.max(-0.6, Math.min(0.5, S.dl.gp + dy * 0.004)); }
+      if (RM) { S.dl.y = S.dl.gy; S.dl.p = S.dl.gp; }
+      return;
+    }
+    if (S.mode === "cabine") {
+      if (dragMode === "pan") moveDays(-dy * 0.08);
+      else { goal.yaw += dx * 0.004; goal.pitch = Math.max(-1.2, Math.min(1.2, goal.pitch + dy * 0.004)); }
+    } else if (dragMode === "pan") {
+      const kk = cam.dist * 0.0016, cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+      goal.tx -= (dx * cy + dy * sy) * kk; goal.tz -= (-dx * sy + dy * cy) * kk;
+      focusDay(goal.tx / S.s, false);
+    } else {
+      goal.yaw -= dx * 0.005; goal.pitch = Math.max(0.12, Math.min(1.45, goal.pitch + dy * 0.005));
+    }
+    if (RM) Object.assign(cam, goal);
+  };
+  const onUp = (e) => {
+    ptrs.delete(e.pointerId); canvas.classList.remove("is-drag");
+    if (ptrs.size === 0 && down && moved < 6) { const id = hitAt(e); if (id) select(id, true); }
+    if (ptrs.size === 0) down = false;
+    if (ptrs.size < 2) pinch0 = 0;
+  };
+  const onCancel = (e) => { ptrs.delete(e.pointerId); if (!ptrs.size) down = false; };
+  const onWheel = (e) => { e.preventDefault(); S.intro = false; zoom(e.deltaY); };
+  const onCtx = (e) => e.preventDefault();
+  const onKey = (e) => {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") { moveDays(e.shiftKey ? 1 : 7); e.preventDefault(); }
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") { moveDays(e.shiftKey ? -1 : -7); e.preventDefault(); }
+    else if (e.key === " ") { e.preventDefault(); togglePlay(); }
+    else if (e.key === "Escape") { if (S.driver) driver(null); else select(null); }
+  };
+  canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onCancel);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("contextmenu", onCtx);
+  const keyTarget = o.keyTarget || container;
+  keyTarget.addEventListener("keydown", onKey);
+
+  // ---------- API ----------
+  function select(id, fly) {
+    if (!S.model) return;
+    S.selectedId = id && S.model.stationById[id] ? id : null;
+    const R = S.selectedId ? S.st[S.selectedId] : null;
+    if (S.selRing) {
+      S.selRing.visible = !!(R && R.p);
+      if (R && R.p) { S.selRing.position.copy(R.p); if (S.mode !== "cabine") S.selRing.position.y += 0.02; }
+    }
+    S.labels.forEach((L) => { if (L.task) L.el.classList.toggle("is-selected", L.task.id === S.selectedId); });
+    if (o.onSelect) o.onSelect(S.selectedId);
+    if (!S.selectedId || !fly) return;
+    flyTo(S.selectedId);
+    if (S.mode === "rail") {
+      const x = S.model.stationById[S.selectedId];
+      const tr = S.trains.find((q) => q.l.id === x.lineId);
+      if (tr) {
+        if (S.playing) pause();
+        if (S.driver && S.driver !== tr) driver(tr.l.id);
+        tr.target = trainStop(tr, x.e * S.s + (S.driver === tr ? -0.9 : 0.7)); tr.arrived = S.selectedId;
+      }
+    }
+  }
+  function play() {
+    if (!S.model || !S.model.lines.length) return;
+    S.ended = false;
+    if (S.mode === "cabine") {
+      S.simEnd = S.r1 - 2; S.sim = cam.day + 4; if (S.sim >= S.simEnd - 0.5) S.sim = 0;
+    } else {
+      S.simEnd = Math.min(S.r1, 90);
+      if (S.sim >= S.simEnd - 0.01 || S.sim < 0) { S.sim = 0; resetPax(); }
+      S.trains.forEach((tr) => { tr.arrived = null; });
+      S.dwell = 0;
+      if (!S.driver) Object.assign(goal, { dist: Math.min(goal.dist, 22), pitch: Math.min(goal.pitch, 0.58), tz: 0 });
+    }
+    select(null);
+    S.playing = true; emit(true);
+  }
+  function pause() { S.playing = false; emit(true); }
+  function togglePlay() { if (S.playing) pause(); else play(); }
+  function today() {
+    S.playing = false; S.ended = false; S.sim = 0; S.dwell = 0; S.clockUntil = 0;
+    if (S.mode === "rail") { resetPax(); S.trains.forEach((tr) => { tr.target = tr.rest; tr.arrived = null; }); }
+    if (!S.driver) resetCamera(RM);
+    select(null); emit(true);
+  }
+  function driver(lineId) {
+    if (S.mode !== "rail") return;
+    const tr = lineId ? S.trains.find((q) => q.l.id === lineId) : null;
+    if (!tr) {
+      const was = S.driver; S.driver = null;
+      if (was) Object.assign(goal, { tx: was.front, tz: was.lz, dist: 18, pitch: 0.6 });
+    } else { S.driver = tr; S.dl = { y: 0, p: -0.07, gy: 0, gp: -0.07 }; }
+    emit(true);
+  }
+  const api = {
+    setData(d) {
+      const modelChanged = d.model !== S.model;
+      S.model = d.model; S.visible = d.visible || null;
+      if (modelChanged) rebuild(); else { applyVisibility(); emit(true); }
+    },
+    setMode(m) { const next = m === "cabine" ? "cabine" : "rail"; if (next === S.mode) return; S.mode = next; rebuild(); },
+    setAnimate(b) { S.animate = b !== false; },
+    setSpeed(v) { S.speed = v > 0 ? v : 2.4; },
+    setQuality(q) { if (q === S.qualityPref) return; S.qualityPref = q; rebuild(); },
+    select, play, pause, togglePlay, today, driver,
+    step: moveDays,
+    zoomBy(f) { if (S.mode === "rail" && !S.driver) { goal.dist = Math.max(6, Math.min(110, goal.dist * f)); if (RM) Object.assign(cam, goal); } else moveDays(f < 1 ? 7 : -7); },
+    trainLines() { return S.trains.map((tr) => tr.l.id); },
+    dispose() {
+      S.disposed = true; cancelAnimationFrame(S.raf); ro.disconnect();
+      canvas.removeEventListener("pointerdown", onDown); canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp); canvas.removeEventListener("pointercancel", onCancel);
+      canvas.removeEventListener("wheel", onWheel); canvas.removeEventListener("contextmenu", onCtx);
+      keyTarget.removeEventListener("keydown", onKey);
+      disposeScene(); glowTex.dispose(); puffTex.dispose(); renderer.dispose();
+      canvas.remove(); labelsEl.remove();
+    },
+  };
+  S.scene = new THREE.Scene();
+  S.raf = requestAnimationFrame(frame);
+  return api;
+}
+// === NEXORA:TIMELINE3D-ENGINE:END ===
 
 // Vue Cosmos (#402) : exploration des dossiers (galaxies), projets (planètes)
 // et tâches (satellites) sur trois échelles. Même règle que la Carte :
@@ -23092,6 +24141,307 @@ function CosmosView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpda
           <button type="button" className="lp-btn lp-btn-primary" onClick={() => setFiltersOpen(false)}>Terminé</button>
         </>}>
           <p className="lp-carte-muted" style={{ marginTop: 0 }}>Le même filtre que partout ailleurs dans Nexora. Les tâches écartées disparaissent de l'univers ; les galaxies et les planètes ne bougent pas.</p>
+          <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+// Widget « Timeline 3D (complet) » (#454) : la vue Timeline 3D intégrale dans
+// un tableau de bord, avec son propre choix Grande Ligne / Cabine. Ses
+// réglages vivent dans la configuration DU widget : ils survivent au
+// rechargement et suivent le widget quand on le duplique.
+const T3D_WIDGET_MIN_W = 520;
+const T3D_WIDGET_MIN_H = 380;
+function WidgetEmbedTimeline3d({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone }) {
+  // Le tableau des départs est replié par défaut : la place est comptée.
+  const stored = widget && widget.timeline3dPrefs && typeof widget.timeline3dPrefs === "object" ? widget.timeline3dPrefs : { board: false };
+  const [local, setLocal] = useState(stored);
+  useEffect(() => { setLocal(stored); }, [JSON.stringify(stored)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setPrefs = (patch) => {
+    const next = { ...local, ...(typeof patch === "function" ? patch(local) : patch) };
+    setLocal(next);
+    if (onUpdateWidget) onUpdateWidget({ timeline3dPrefs: next });
+  };
+  return (
+    <div className="lp-widget-embed lp-widget-embed-t3d">
+      <Timeline3DView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs}
+        onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} embedded />
+    </div>
+  );
+}
+
+const t3dDate = (d) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + d); return x.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }); };
+const T3D_SIGNALS = [["#2fd36b", "Signal vert : à venir"], ["#eaf6ff", "Blanc clignotant : en cours"], ["#ffab2e", "Orange : attente d'un tiers"], ["#ff3b30", "Rouge clignotant : en retard"], ["#555b63", "Éteint : terminée"]];
+
+function Timeline3dBadge({ line }) {
+  return <span className="lp-t3d-badge" style={{ "--c": line.color }} aria-hidden="true">{line.n}</span>;
+}
+
+// Repli sans WebGL : le même réseau en liste, ligne par ligne.
+function Timeline3dFallback({ reason, model, onOpen, onRetry }) {
+  return (
+    <div className="lp-t3d-fallback" role="region" aria-label="Réseau en liste">
+      <p className="lp-carte-muted" style={{ marginTop: 0 }}>
+        {reason === "error" ? "Le moteur 3D n'a pas pu être chargé." : "La 3D n'est pas disponible sur cet appareil."} Voici le même réseau, ligne par ligne.
+        {onRetry && <> <button type="button" className="lp-btn" onClick={onRetry}><RefreshCw size={13} /> Réessayer</button></>}
+      </p>
+      {model.lines.map((l) => (
+        <details key={l.id} open={l.n <= 3}>
+          <summary><Timeline3dBadge line={l} />{l.name}<span className="lp-carte-muted"> · {l.folderName}</span></summary>
+          <ul>
+            {l.stations.map((id) => { const x = model.stationById[id]; return (
+              <li key={id}><button type="button" onClick={() => onOpen(id)}>{timeline3dRel(x.e)} · {x.title}{x.late ? " · en retard" : x.st === "done" ? " · terminée" : ""}</button></li>
+            ); })}
+          </ul>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+// Vue Timeline 3D (#454) : projets en lignes, tâches en stations posées à leur
+// échéance, échelle de temps linéaire. Deux rendus au choix, « Grande Ligne »
+// et « Cabine ». Lecture seule, comme la Carte et le Cosmos : les
+// modifications passent par la fiche Nexora ou le volet de détail partagé.
+function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpdateTask, onToggleDone, toolbarSlot, embedded }) {
+  const cfg = normalizeTimeline3dViewPrefs(prefs);
+  const stageRef = useRef(null);
+  const glRef = useRef(null);
+  const engineRef = useRef(null);
+  const [status, setStatus] = useState("loading");
+  const [attempt, setAttempt] = useState(0);
+  const [selectedId, setSelectedId] = useState(null);
+  const [eng, setEng] = useState({ playing: false, ended: false, driverLineId: null, focus: 0, hud: null });
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [driverLine, setDriverLine] = useState("");
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const small = embedded && box.w > 0 && (box.w < T3D_WIDGET_MIN_W || box.h < T3D_WIDGET_MIN_H);
+
+  const allTasks = ctx.tasks || tasks || [];
+  const norm = useMemo(() => {
+    const n = carteNormalize(ctx, allTasks);
+    n.taskById = {};
+    n.tasks.forEach((t) => { n.taskById[t.id] = t; });
+    return n;
+  }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers, ctx.milestoneTypes]);
+  const model = useMemo(() => timeline3dBuild(ctx, norm), [norm, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+  const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
+  const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
+  // Les filtres masquent des stations ; ils ne déplacent jamais le réseau.
+  const visible = useMemo(() => {
+    const pageScope = tasksWithDone || tasks || [];
+    const scoped = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
+    const scope = new Set(scoped.map((t) => t.id));
+    const set = new Set();
+    norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+
+  // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    if (embedded) {
+      const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); setBox((b) => (Math.round(r.width) === b.w && Math.round(r.height) === b.h ? b : { w: Math.round(r.width), h: Math.round(r.height) })); });
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    const fit = () => {
+      const top = el.getBoundingClientRect().top;
+      const bar = document.querySelector(".lp-mobile-tabbar");
+      const barH = bar && bar.getBoundingClientRect().height && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().height : 0;
+      el.style.height = Math.max(380, window.innerHeight - Math.max(0, top) - barH - 12) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+
+  const empty = model.lines.length === 0;
+  useEffect(() => {
+    if (empty) return undefined;
+    if (!carteWebglAvailable()) { setStatus("nowebgl"); return undefined; }
+    let cancelled = false;
+    setStatus("loading");
+    loadCarteThree().then((THREE) => {
+      if (cancelled || !glRef.current) return;
+      try {
+        engineRef.current = createTimeline3dEngine(THREE, glRef.current, {
+          keyTarget: stageRef.current,
+          mode: cfg.mode, animate: cfg.animate, speed: T3D_SPEEDS[cfg.speed], quality: cfg.quality,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-t3d-board, .lp-t3d-hud, .lp-t3d-transport, .lp-carte-detail, .lp-carte-small-hint")].map((e) => e.getBoundingClientRect()) : []),
+          onSelect: (id) => setSelectedId(id),
+          onState: (st) => setEng(st),
+        });
+        setStatus("ready");
+      } catch (e) {
+        console.error("[Nexora Timeline 3D]", e);
+        setStatus("nowebgl");
+      }
+    }).catch((e) => { console.error("[Nexora Timeline 3D] three.js", e); if (!cancelled) setStatus("error"); });
+    return () => { cancelled = true; if (engineRef.current) { engineRef.current.dispose(); engineRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt, empty]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setData({ model, visible }); }, [status, model, visible]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setMode(cfg.mode); }, [status, cfg.mode]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAnimate(cfg.animate); }, [status, cfg.animate]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setSpeed(T3D_SPEEDS[cfg.speed]); }, [status, cfg.speed]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+
+  const engine = () => engineRef.current;
+  const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
+  const goTo = (id) => { const e = engine(); if (e) e.select(id, true); if (stageRef.current) stageRef.current.focus({ preventScroll: true }); };
+  const departures = useMemo(() => timeline3dNextDepartures(model, visible, 8), [model, visible]);
+  const trainLines = useMemo(() => model.lines.filter((l) => l.end >= 0), [model]);
+  const driveLine = driverLine && model.lineById[driverLine] ? driverLine : (trainLines[0] ? trainLines[0].id : "");
+
+  const sel = selectedId ? model.stationById[selectedId] : null;
+  const selTask = sel ? norm.taskById[sel.id] : null;
+  const selRaw = selTask ? allTasks.find((t) => t.id === selTask.id) : null;
+  const lockReason = selRaw && selRaw.syncedCalendarImported ? CARTE_SYNCED_LOCK_REASON : null;
+  const nb = sel ? timeline3dNeighbours(model, sel.id) : { prev: null, next: null };
+  const projectIndex = useMemo(() => {
+    const out = {};
+    model.lines.forEach((l) => { out[l.orphan ? "__terre-inconnue__" : l.id] = { id: l.id, name: l.name, color: l.color, folderName: l.folderName }; });
+    return { projectById: out, themes: {} };
+  }, [model]);
+  const hud = eng.hud;
+  const hudNext = hud && hud.nextId ? model.stationById[hud.nextId] : null;
+  const rail = cfg.mode === "rail";
+  const playLabel = eng.playing ? "Pause" : eng.ended ? "Rejouer" : rail ? "Lecture" : "Rouler";
+  const note = [model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " hors de la fenêtre (−90 j à +1 an)" : ""].filter(Boolean).join(" · ");
+
+  return (
+    <section className={"lp-carte-view lp-t3d-view" + (embedded ? " is-embedded" : "")} aria-label="Timeline 3D">
+      <ViewToolbarPortal slot={toolbarSlot} />
+      <div className="lp-carte-toolbar">
+        <div className="lp-t3d-modes" role="group" aria-label="Rendu">
+          {T3D_MODES.map((m) => (
+            <button key={m} type="button" aria-pressed={cfg.mode === m} onClick={() => setPrefs({ mode: m })}>
+              {m === "rail" ? <TrainFront size={14} /> : <Crosshair size={14} />}{T3D_MODE_LABELS[m]}
+            </button>
+          ))}
+        </div>
+        <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
+        <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
+          <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
+        </select>
+        <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Animations, tableau des départs, qualité et légende">
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.animate} onChange={(e) => setPrefs({ animate: e.target.checked })} /> Animations (trains, fumée, voitures, nuages)</label>
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.board} onChange={(e) => setPrefs({ board: e.target.checked })} /> Tableau « Prochains départs »</label>
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
+            {T3D_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", low: "Basse" }[q]}</button>)}
+          </div>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          <div className="lp-t3d-legend" aria-label="Légende">
+            <span><Timeline3dBadge line={{ n: 1, color: "#245edb" }} /> Ligne = projet, station = tâche à son échéance</span>
+            {rail ? T3D_SIGNALS.map(([c, t]) => <span key={t}><i style={{ background: c }} />{t}</span>)
+              : <><span><i style={{ background: "#fff" }} />Portique = station à venir</span><span><i style={{ background: "#e5484d" }} />Halo rouge : en retard</span><span><i style={{ background: "#9aa5b4" }} />Portique grisé : terminée</span></>}
+            <span>{rail ? "Grande gare : jalon · voie de garage : action longue · passerelle : dépendance entre projets · passage à niveau : aujourd'hui" : "Losange : jalon · dérivation : action longue · trait fin : dépendance entre projets · porte bleue : aujourd'hui"}</span>
+          </div>
+        </DropdownButton>
+        {note && <span className="lp-t3d-note">{note}</span>}
+      </div>
+
+      <div ref={stageRef} className={"lp-t3d-stage" + (rail ? "" : " is-cabine")} tabIndex={0}
+        data-t3d-status={status} data-t3d-mode={cfg.mode} data-t3d-selected={selectedId || ""} data-t3d-playing={eng.playing ? "1" : ""} data-t3d-driver={eng.driverLineId || ""}
+        aria-label="Réseau du temps en 3D. Glisser pour tourner, molette pour zoomer ou avancer, flèches pour avancer d'une semaine, espace pour lancer la lecture, Échap pour revenir.">
+        {small && status === "ready" && !empty && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour parcourir le réseau confortablement.</div>}
+        {empty ? (
+          <div className="lp-empty lp-carte-empty">
+            <strong>Aucune tâche datée à placer sur le réseau.</strong>
+            <span>Chaque projet devient une ligne et chaque tâche avec une échéance une station, placée à sa date.</span>
+          </div>
+        ) : (status === "nowebgl" || status === "error") ? (
+          <Timeline3dFallback reason={status} model={model} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
+        ) : (
+          <>
+            <div ref={glRef} className="lp-t3d-gl" />
+            {status === "loading" && <div className="lp-carte-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Chargement du réseau 3D…</div>}
+            {status === "ready" && (
+              <>
+                {cfg.board && departures.length > 0 && (
+                  <aside className="lp-t3d-board" aria-label="Prochains départs">
+                    <header><span>Prochains départs</span><span>{new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span></header>
+                    <ol>
+                      {departures.map((x) => { const l = model.lineById[x.lineId]; return (
+                        <li key={x.id}><button type="button" onClick={() => goTo(x.id)} aria-current={x.id === selectedId ? "true" : undefined}>
+                          <span className={"lp-t3d-when" + (x.late ? " is-late" : "")}>{x.late ? "retard" : x.e === 0 ? "auj." : "J+" + x.e}</span>
+                          <Timeline3dBadge line={l} />
+                          <span className="lp-t3d-ttl">{x.title}</span>
+                        </button></li>
+                      ); })}
+                    </ol>
+                  </aside>
+                )}
+                {hud && (
+                  <div className="lp-t3d-hud" role="status" aria-live="polite">
+                    <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+                      <circle cx="15" cy="15" r="13" fill="#fff" stroke="#ffd200" strokeWidth="2" />
+                      <path d="M15 15V8" stroke="#0d2b66" strokeWidth="2.4" strokeLinecap="round" transform={"rotate(" + ((((hud.day % 12) + 12) % 12) * 30 + hud.frac * 30) + " 15 15)"} />
+                      <path d="M15 15V5" stroke="#c62828" strokeWidth="1.6" strokeLinecap="round" transform={"rotate(" + (hud.frac * 360) + " 15 15)"} />
+                    </svg>
+                    <div style={{ minWidth: 0 }}>
+                      <b>{timeline3dRel(hud.day)}</b><span className="lp-t3d-hud-date">{t3dDate(hud.day)}</span>
+                      {hudNext && <div className="lp-t3d-hud-next">Prochain arrêt <Timeline3dBadge line={model.lineById[hudNext.lineId]} /><span>{hudNext.title}</span><em>· {hud.nextIn === 0 ? "à quai" : "dans " + hud.nextIn + " j"}</em></div>}
+                    </div>
+                  </div>
+                )}
+                <div className="lp-t3d-transport" role="group" aria-label="Parcourir le temps">
+                  <button type="button" className="lp-btn" onClick={() => engine() && engine().step(-7)} aria-label="Reculer d'une semaine"><ChevronLeft size={14} /> 7 j</button>
+                  <button type="button" className="lp-btn lp-btn-primary" onClick={() => engine() && engine().today()}>Aujourd'hui</button>
+                  <button type="button" className="lp-btn" onClick={() => engine() && engine().step(7)} aria-label="Avancer d'une semaine">7 j <ChevronRight size={14} /></button>
+                  <span className="lp-t3d-sep" aria-hidden="true" />
+                  <button type="button" className="lp-btn lp-t3d-play" onClick={() => engine() && engine().togglePlay()}>{eng.playing ? <Pause size={14} /> : <Play size={14} />} {playLabel}</button>
+                  <select className="lp-t3d-opt" aria-label="Vitesse" value={cfg.speed} onChange={(e) => setPrefs({ speed: e.target.value })}>
+                    {Object.keys(T3D_SPEEDS).map((k) => <option key={k} value={k}>{T3D_SPEED_LABELS[k]}</option>)}
+                  </select>
+                  {rail && trainLines.length > 0 && (
+                    <>
+                      <span className="lp-t3d-sep" aria-hidden="true" />
+                      <button type="button" className="lp-btn" aria-pressed={!!eng.driverLineId}
+                        onClick={() => { const e = engine(); if (!e) return; e.driver(eng.driverLineId ? null : (sel && model.lineById[sel.lineId] && sel.lineId) || driveLine); }}>
+                        <TrainFront size={14} /> {eng.driverLineId ? "Vue d'ensemble" : "Vue conducteur"}
+                      </button>
+                      <select className="lp-t3d-opt" aria-label="Train à conduire" value={eng.driverLineId || driveLine}
+                        onChange={(e) => { setDriverLine(e.target.value); if (eng.driverLineId && engine()) engine().driver(e.target.value); }}>
+                        {trainLines.map((l) => <option key={l.id} value={l.id}>Ligne {l.n} · {l.name}</option>)}
+                      </select>
+                    </>
+                  )}
+                  {sel && (
+                    <>
+                      <span className="lp-t3d-sep lp-t3d-opt" aria-hidden="true" />
+                      <button type="button" className="lp-btn lp-t3d-opt" disabled={!nb.prev} onClick={() => nb.prev && goTo(nb.prev)}>← Station précédente</button>
+                      <button type="button" className="lp-btn lp-t3d-opt" disabled={!nb.next} onClick={() => nb.next && goTo(nb.next)}>Station suivante →</button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+            {selTask && (
+              <CarteTaskDetail task={preview && preview.id === selTask.id ? { ...selTask, progress: preview.progress } : selTask} raw={selRaw} norm={norm} layout={projectIndex} ctx={ctx} onOpen={openFiche}
+                onGo={goTo} onWalk={goTo} walkLabel="Y aller"
+                worldText={"Sur la Timeline 3D : station de la ligne " + (model.lineById[sel.lineId] || {}).n + " « " + ((model.lineById[sel.lineId] || {}).name || "") + " », " + timeline3dRel(sel.e) + (sel.links.length ? ", avec correspondance." : ".")}
+                lockReason={lockReason}
+                onUpdate={onUpdateTask && !lockReason ? (patch) => onUpdateTask(selTask.id, patch) : null} onPreview={setPreview} onToggleDone={lockReason ? null : onToggleDone}
+                onClose={() => engine() && engine().select(null)} />
+            )}
+          </>
+        )}
+      </div>
+      {filtersOpen && (
+        <Modal title="Filtrer la Timeline 3D" onClose={() => setFiltersOpen(false)} wide footer={<>
+          <button type="button" className="lp-btn" onClick={() => setPrefs({ filter: null })} disabled={!filterCount}>Tout afficher</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => setFiltersOpen(false)}>Terminé</button>
+        </>}>
+          <p className="lp-carte-muted" style={{ marginTop: 0 }}>Le même filtre que partout ailleurs dans Nexora. Les tâches écartées disparaissent du réseau ; les lignes ne bougent pas.</p>
           <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
         </Modal>
       )}
