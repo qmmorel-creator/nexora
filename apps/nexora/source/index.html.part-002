@@ -237,7 +237,9 @@ function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
   const isDateField = cond.field === "start" || cond.field === "end";
   const isTitleField = cond.field === "title";
   const isInactivityField = cond.field === "inactivity";
-  const isEntityField = cond.field === "project" || cond.field === "status" || cond.field === "taskType";
+  // #445 : le responsable rejoint la liste déroulante avec recherche rapide ;
+  // une chip par personne devenait illisible.
+  const isEntityField = cond.field === "project" || cond.field === "status" || cond.field === "taskType" || cond.field === "assignee";
   return (
     <div className="lp-filter-condition-row">
       <select className="lp-filter-cond-select" value={cond.field} onChange={(e) => onChange({ ...cond, field: e.target.value, values: [], datePreset: "", textValue: "", numberValue: "", mode: "is" })}>
@@ -285,6 +287,13 @@ function FilterConditionRow({ cond, onChange, onRemove, ctx, fieldsOverride }) {
           <EntityFilterMultiSelect
             compact
             options={options}
+            placeholder={cond.field === "assignee" ? "Rechercher un responsable…" : undefined}
+            emptyLabel={cond.field === "assignee" ? "Choisir un ou plusieurs responsables" : undefined}
+            summary={(() => {
+              // Une ou deux valeurs choisies : leurs noms, lisibles sans ouvrir la liste.
+              const picked = options.filter((o) => (cond.values || []).includes(o.value));
+              return picked.length > 0 && picked.length <= 2 ? picked.map((o) => o.label).join(", ") : undefined;
+            })()}
             selectedIds={cond.values || []}
             onToggle={(id)=>{
               const current=cond.values || [];
@@ -5760,6 +5769,12 @@ function carteHazard(task) {
   if (task.overdue) return urgent ? "tempest" : "clock";
   return urgent ? "fire" : null;
 }
+// Panneau danger clignotant (#450) : tâche ouverte de criticité moyenne. Il
+// flotte au-dessus de la construction (au-dessus du réveil si elle est en
+// retard) ; le fanion orange reste planté à côté.
+function carteDangerSign(task) {
+  return !!task && task.criticality === "moyen" && task.state !== "done" && task.state !== "info";
+}
 // #398 : le bonhomme se tient au bord de la dalle, hors de la construction,
 // et mesure ~1 (avant l'échelle du moteur) : il reste visible à côté des
 // bâtiments agrandis. Le badge d'initiales flotte au-dessus de sa tête.
@@ -5792,7 +5807,7 @@ function carteInitials(name) {
 // Habillage lu dans l'interface (nom, paliers, légende) : celui du thème du
 // dossier. La carte n'a plus qu'un style, Classique (#404).
 const CARTE_CLASSIC_SIGNALS = [
-  ["Urgente", "Incendie et anneau rouge (moyenne : fanion orange)"], ["En retard", "Horloge qui fait tic-tac · urgente en retard : gros éclairs venus du ciel"],
+  ["Urgente", "Incendie et anneau rouge (moyenne : fanion orange et panneau danger clignotant)"], ["En retard", "Horloge qui fait tic-tac · urgente en retard : gros éclairs venus du ciel"],
   ["À venir", "Brume · responsable : bonhomme à sa couleur, badge à ses initiales"], ["Dépendance", "Route de convoi à la sélection"], ["Jalon", "Borne milliaire à la couleur du type · terminé : couronne de laurier"],
 ];
 function carteLook(themeId) {
@@ -11014,8 +11029,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       </div>
       {start && (
         <div className="lp-row2">
-          <div className="lp-field"><label>{milestone ? "Date" : "Début"} {dependsOn.length > 0 && <span className="lp-auto-start-badge" title="Calculée automatiquement d'après la fin des tâches dont celle-ci dépend"><RefreshCw size={9} /> auto</span>}</label><input type="date" value={start} onChange={(e) => onStartChange(e.target.value)} /></div>
-          {!milestone && <div className="lp-field"><label>Fin</label><input type="date" value={end} min={start} onChange={(e) => onEndChange(e.target.value)} /></div>}
+          <div className="lp-field"><label>{milestone ? "Date" : "Début"} {dependsOn.length > 0 && <span className="lp-auto-start-badge" title="Calculée automatiquement d'après la fin des tâches dont celle-ci dépend"><RefreshCw size={9} /> auto</span>}</label><DateInput value={start} onChange={onStartChange} /></div>
+          {!milestone && <div className="lp-field"><label>Fin</label><DateInput value={end} min={start} onChange={onEndChange} /></div>}
           <div className="lp-field" style={{ flex: "0 0 auto" }}>
             <label>Icône {milestone ? "du jalon" : ""} <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }} title={`Facultatif — écrase l'icône du projet pour ${milestone ? "ce jalon précis" : "cette tâche précise"}`}>ⓘ</span></label>
             <IconEditor icon={milestoneIcon} setIcon={setMilestoneIcon} />
@@ -11125,24 +11140,24 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 {!milestone && (
                   <div className="lp-field">
                     <label htmlFor="task-comparison-start">Début référence</label>
-                    <input
+                    <DateInput
                       id="task-comparison-start"
-                      type="date"
+                      allowEmpty
                       value={comparison.referenceStart || ""}
                       aria-invalid={comparisonErrors.start ? "true" : undefined}
-                      onChange={(e) => patchComparison({ referenceStart: e.target.value || null })}
+                      onChange={(v) => patchComparison({ referenceStart: v || null })}
                     />
                     {comparisonErrors.start && <p className="lp-gantt-annot-error">{comparisonErrors.start}</p>}
                   </div>
                 )}
                 <div className="lp-field">
                   <label htmlFor="task-comparison-end">Fin / jalon référence</label>
-                  <input
+                  <DateInput
                     id="task-comparison-end"
-                    type="date"
+                    allowEmpty
                     value={comparison.referenceEnd || ""}
                     aria-invalid={comparisonErrors.end ? "true" : undefined}
-                    onChange={(e) => patchComparison({ referenceEnd: e.target.value || null })}
+                    onChange={(v) => patchComparison({ referenceEnd: v || null })}
                   />
                   {comparisonErrors.end && <p className="lp-gantt-annot-error">{comparisonErrors.end}</p>}
                 </div>
@@ -11575,8 +11590,13 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
                 value={item.statusId}
                 onChange={(v) => updateItemDates(item.id, { statusId: v })}
               />
-              <input type="text" className="lp-subtask-meta-input" placeholder="Responsable" value={item.assignee || ""} onChange={(e) => updateItemDates(item.id, { assignee: e.target.value })} />
-              <input type="date" className="lp-subtask-meta-input lp-subtask-meta-date" value={item.end || item.start || end} onChange={(e) => updateItemDates(item.id, { end: e.target.value })} />
+              {/* #446 : le responsable d'une sous-tâche se choisit dans
+                  l'annuaire, comme celui de la tâche (tri alphabétique,
+                  recherche rapide) ; plus de saisie libre. */}
+              <div className="lp-subtask-meta-assignee" title="Responsable de la sous-tâche">
+                <AssigneeSelect compact members={teamMembers || []} value={item.assignee || ""} placeholder="Responsable" onChange={(name) => updateItemDates(item.id, { assignee: name })} />
+              </div>
+              <DateInput className="lp-subtask-meta-input lp-subtask-meta-date" value={item.end || item.start || end} onChange={(v) => updateItemDates(item.id, { end: v })} />
             </div>
           </div>
         ))}
