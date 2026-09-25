@@ -383,3 +383,29 @@ Le ruban, les noms au sol, les totems, le panneau et la recherche suivent le reg
 Chaque regroupement garde sa propre disposition d'une visite à l'autre ; revenir aux
 dossiers retrouve la carte habituelle. Les thèmes par dossier ne s'appliquent qu'au
 regroupement par dossier ; les autres reçoivent des thèmes automatiques.
+
+## Pilotage depuis la carte (#468 à #481)
+
+La carte reste une lecture des champs de Nexora. Ce lot lui ajoute quelques
+gestes d'action, tous annulables. Aucune récompense : la bannière d'un jalon
+marque un événement, elle ne gratifie personne.
+
+| Élément | Champ lu ou écrit | Règle |
+|---|---|---|
+| Brouillard (#468) | `end`, `assignee`, `lastInteraction`, `progress` | Brume sur une tâche ouverte sans échéance, sans responsable, ou à 0 % sans activité depuis 30 jours (`carteIncomplete`). Compléter la fiche la dissipe. |
+| Roue d'action (#469) | `statusId`, `start`/`end`, `assignee` | Terminer ou rouvrir, +1 jour, +1 semaine, responsable, statut, fiche. Mêmes garde-fous que le volet : Google Calendar, calendrier synchronisé, statut imposé par le type. |
+| Construire ici (#470) | `projectId` | Clic droit (appui long au doigt) sur une parcelle libre : la fiche de création s'ouvre, projet rempli. La nouvelle tâche prend la parcelle choisie (`carteClaimTile`). |
+| Mini-carte (#471) | `end` | Pings rouges (retard) et orange (échéance du jour) ; un clic y déplace la vue. |
+| Portail (#472) | — | Arche au pied de chaque totem : ouvre le projet dans la Timeline 3D, centrée sur aujourd'hui. |
+| Journal de quêtes (#473) | voir `carteQuests` | En retard, bloquées, conflits de dates, en dérive, sans responsable, sans échéance, oubliées. « Régler » ouvre l'action utile. Pas de visite guidée de la caméra. |
+| Mode photo (#474) | — | Interface masquée, légende et date, export PNG de la vue 3D. |
+| Annuler (#475) | champs modifiés | Chaque action faite depuis la carte (roue, volet) mémorise les valeurs d'avant. Ctrl+Z ou « Annuler » les rétablissent, 20 pas au plus. |
+| Zoom stratégique (#476) | états, `end` | De 80 à 95 de distance, la 3D s'efface au profit d'une carte ancienne à plat : tâches à faire et retards par territoire. |
+| Contour (#477) | — | Liseré au survol (tâche, cœur de projet, parcelle libre) ; anneau pulsé sur la sélection. |
+| Barre de ressources (#478) | voir `carteResources` | Retards, aujourd'hui, en cours, bloquées, à compléter. Un clic cadre les tâches et ouvre le journal filtré. |
+| Rendu maquette (#479) | — | Effet miniature (flou de profondeur, coupé en vue plan et en qualité basse), ombres de contact, ombres adoucies, herbe, pavés, eau animée, feuillages qui ondulent. |
+| Vie de la carte (#480) | `carteEvents` | Grue quand l'avancement monte, piquets et poussière à la création, étincelles sur les chantiers, fumée sur les bâtiments terminés, bannière quand un jalon est franchi. |
+| Confort (#481) | préférences de vue | Vues enregistrées (touches 1 à 9), vue plan (dessus, nord en haut), décor et badges effacés de loin, résolution adaptative en qualité « Auto ». |
+
+Les effets respectent « réduire les animations » : mouvement figé ou ralenti,
+aucune particule.

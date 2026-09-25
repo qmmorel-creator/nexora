@@ -27,6 +27,8 @@ const C = vm.runInThisContext(
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
+    carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
+    carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
   };\n})`
 )();
 
@@ -527,4 +529,123 @@ test("#438 : regroupement des régions par responsable, statut, type ou criticit
   assert.equal(C.normalizeCarteViewPrefs({}).groupBy, "folder");
   assert.equal(C.normalizeCarteViewPrefs({ groupBy: "assignee" }).groupBy, "assignee");
   assert.equal(C.normalizeCarteViewPrefs({ groupBy: "n'importe" }).groupBy, "folder");
+});
+
+// ---------- Pilotage depuis la carte (#468 à #481) ----------
+const pilotCtx = { projects: [{ id: "p", name: "P" }], statuses, taskTypes, projectFolders: [], teamMembers: [{ name: "Léo" }] };
+const pilotTasks = [
+  // En retard, sans responsable.
+  { id: "late", title: "Livrer", projectId: "p", statusId: "s1", start: "2026-09-01", end: "2026-09-20" },
+  // Bloquée par « late », et commence avant sa fin : conflit.
+  { id: "blk", title: "Recette", projectId: "p", statusId: "s1", start: "2026-09-15", end: "2026-10-10", assignee: "Léo", dependsOn: ["late"] },
+  // En dérive : 10 % alors que 80 % du temps est écoulé.
+  { id: "drf", title: "Chantier", projectId: "p", statusId: "s3", start: "2026-09-17", end: "2026-09-26", progress: 10, assignee: "Léo" },
+  // Sans échéance, oubliée.
+  { id: "old", title: "Idée", projectId: "p", statusId: "s1", assignee: "Léo", lastInteraction: "2026-07-01T00:00:00Z" },
+  // Échéance aujourd'hui, complète.
+  { id: "tod", title: "Appel", projectId: "p", statusId: "s1", start: "2026-09-24", end: "2026-09-24", assignee: "Léo" },
+  // Terminée et information : jamais dans le journal.
+  { id: "fin", title: "Fait", projectId: "p", statusId: "s5", end: "2026-09-01" },
+  { id: "inf", title: "Info", projectId: "p", statusId: "s1", taskTypeId: "tt4" },
+];
+const pilotNorm = () => { const n = C.carteNormalize(pilotCtx, pilotTasks, { now: NOW }); n.taskById = Object.fromEntries(n.tasks.map((t) => [t.id, t])); return n; };
+
+test("brouillard de guerre : fiche incomplète d'une tâche ouverte uniquement (#468)", () => {
+  const by = pilotNorm().taskById;
+  assert.deepEqual(C.carteIncomplete(by.late), ["unassigned"]);
+  assert.deepEqual(C.carteIncomplete(by.old), ["nodue", "stale"]);
+  assert.deepEqual(C.carteIncomplete(by.tod), []);
+  assert.deepEqual(C.carteIncomplete(by.fin), []);
+  assert.deepEqual(C.carteIncomplete(by.inf), [], "une information n'est pas à compléter");
+  assert.deepEqual(C.carteIncomplete({ ...by.old, progress: 30 }), ["nodue"], "commencée : plus oubliée");
+});
+
+test("journal de quêtes : catégories, ordre et exclusions (#473)", () => {
+  const n = pilotNorm();
+  const q = C.carteQuests(n);
+  const kinds = (id) => q.filter((x) => x.taskId === id).map((x) => x.kind);
+  assert.deepEqual(kinds("late"), ["late", "unassigned"]);
+  assert.deepEqual(kinds("blk"), ["blocked", "conflict"]);
+  assert.deepEqual(kinds("drf"), ["drift"]);
+  assert.deepEqual(kinds("old"), ["nodue", "stale"]);
+  assert.deepEqual(kinds("tod"), []);
+  assert.deepEqual(kinds("fin"), []); assert.deepEqual(kinds("inf"), []);
+  const order = C.CARTE_QUEST_KINDS.map((k) => k.id);
+  for (let i = 1; i < q.length; i++) assert.ok(order.indexOf(q[i - 1].kind) <= order.indexOf(q[i].kind), "trié par catégorie");
+  assert.match(q.find((x) => x.kind === "blocked").detail, /Livrer/);
+  // Restreint aux tâches visibles.
+  assert.deepEqual(C.carteQuests(n, new Set(["drf"])).map((x) => x.kind), ["drift"]);
+  // Fin avant début : conflit même sans prédécesseur.
+  const n2 = C.carteNormalize(pilotCtx, [{ id: "x", projectId: "p", statusId: "s1", start: "2026-10-05", end: "2026-10-01", assignee: "Léo" }], { now: NOW });
+  assert.deepEqual(C.carteQuests(n2).map((x) => x.kind), ["conflict"]);
+});
+
+test("dérive : hors de la période ou sans dates, jamais (#473)", () => {
+  const by = pilotNorm().taskById;
+  const today = pilotNorm().today;
+  assert.equal(C.carteDrift(by.drf, today), true);
+  assert.equal(C.carteDrift({ ...by.drf, progress: 60 }, today), false);
+  assert.equal(C.carteDrift(by.old, today), false);
+  assert.equal(C.carteDrift(by.drf, today + 30), false);
+});
+
+test("barre de ressources : compteurs par clé (#478)", () => {
+  const r = C.carteResources(pilotNorm());
+  assert.deepEqual(r.late, ["late"]);
+  assert.deepEqual(r.today, ["tod"]);
+  assert.deepEqual(r.doing, ["drf"]);
+  assert.deepEqual(r.blocked, ["blk"]);
+  assert.deepEqual(r.incomplete.sort(), ["late", "old"]);
+  assert.deepEqual(C.carteResources(pilotNorm(), new Set(["tod"])).late, []);
+});
+
+test("menu d'action rapide : décalage des dates et annulation (#469, #475)", () => {
+  assert.equal(C.carteShiftIso("2026-09-30", 1), "2026-10-01");
+  assert.equal(C.carteShiftIso("2026-12-28", 7), "2027-01-04");
+  assert.equal(C.carteShiftIso("", 1), null);
+  assert.deepEqual(C.carteShiftPatch({ start: "2026-09-10", end: "2026-09-20" }, 7), { start: "2026-09-17", end: "2026-09-27" });
+  assert.deepEqual(C.carteShiftPatch({ end: "2026-09-20" }, 1), { end: "2026-09-21" });
+  assert.deepEqual(C.carteShiftPatch({}, 1, NOW), { start: "2026-09-25", end: "2026-09-25" }, "sans date : demain");
+  assert.deepEqual(C.carteUndoPatch({ start: "2026-09-10", assignee: "Léo" }, { start: "x", end: "y", assignee: "Zoé" }), { start: "2026-09-10", end: null, assignee: "Léo" });
+});
+
+test("vie de la carte : création, avancement, fin, jalon (#480)", () => {
+  const a = [{ id: "1", state: "todo", progress: 0 }, { id: "2", state: "doing", progress: 20 }, { id: "3", state: "doing", progress: 50, milestone: true }];
+  const b = [{ id: "1", state: "done", progress: 0 }, { id: "2", state: "doing", progress: 40 }, { id: "3", state: "done", progress: 100, milestone: true }, { id: "4", state: "todo", progress: 0 }];
+  assert.deepEqual(C.carteEvents(a, b), [
+    { type: "done", id: "1" }, { type: "progress", id: "2", from: 20, to: 40 }, { type: "milestone", id: "3" }, { type: "created", id: "4" },
+  ]);
+  assert.deepEqual(C.carteEvents(null, b), [], "premier affichage : rien");
+  assert.deepEqual(C.carteEvents(b, b), []);
+});
+
+test("construire ici : la nouvelle tâche prend la parcelle choisie (#470)", () => {
+  const mem = { projects: { p: "0,0" }, tasks: { a: "1,0" } };
+  const pending = { projectId: "p", key: "2,1", known: new Set(["a"]) };
+  const tasks = [{ id: "a", projectId: "p" }, { id: "z", projectId: "q" }, { id: "b", projectId: "p" }];
+  assert.deepEqual(C.carteClaimTile(mem, pending, tasks).tasks, { a: "1,0", b: "2,1" });
+  assert.equal(C.carteClaimTile(mem, null, tasks), mem);
+  assert.equal(C.carteClaimTile(mem, pending, tasks.slice(0, 2)), mem, "rien de nouveau : mémoire inchangée");
+  // La disposition respecte la parcelle réservée.
+  const w = world(1, 3);
+  const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const l0 = C.carteBuild({ projects: n.projects, tasks: n.tasks });
+  const free = l0.territories[0].tiles.find((k) => !l0.occupancy[k] && !l0.tiles[k].road && !l0.tiles[k].lava && l0.tiles[k].kind !== "hub");
+  const known = new Set(n.tasks.map((t) => t.id));
+  const n2 = C.carteNormalize(w.ctx, w.tasks.concat([{ id: "nouvelle", projectId: "p0", statusId: "s1" }]), { now: NOW });
+  const mem2 = C.carteClaimTile(l0.memory, { projectId: "p0", key: free, known }, n2.tasks);
+  const l1 = C.carteBuild({ projects: n2.projects, tasks: n2.tasks, memory: mem2 });
+  assert.equal(l1.pois.find((p) => p.taskId === "nouvelle").key, free);
+});
+
+test("zoom stratégique et vues enregistrées (#476, #481)", () => {
+  assert.deepEqual([19, 80, 87.5, 95, 150].map(C.carteStrategicAlpha), [0, 0, 0.5, 1, 1]);
+  const v = C.carteNormalizeViews([{ name: " Nord ", x: 3, z: 4, yaw: 1, pitch: 9, dist: 2 }, { name: "" }, null, "x"]);
+  assert.deepEqual(v, [{ name: "Nord", x: 3, z: 4, yaw: 1, pitch: 1.5, dist: 7 }]);
+  assert.equal(C.carteNormalizeViews(Array.from({ length: 20 }, (_, i) => ({ name: "v" + i }))).length, C.CARTE_VIEWS_MAX);
+  const p = C.normalizeCarteViewPrefs({});
+  assert.equal(p.fog, true); assert.equal(p.minimap, true); assert.equal(p.miniature, true); assert.equal(p.life, true); assert.equal(p.plan, false);
+  assert.deepEqual(p.views, []);
+  assert.equal(C.normalizeCarteViewPrefs({ fog: false, plan: true }).fog, false);
+  assert.equal(C.normalizeCarteViewPrefs({ fog: false, plan: true }).plan, true);
 });
