@@ -29,6 +29,7 @@ const C = vm.runInThisContext(
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteNormalizeWheel, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch,
   };\n})`
 )();
 
@@ -655,4 +656,33 @@ test("zoom stratégique et vues enregistrées (#476, #481)", () => {
   assert.deepEqual(p.views, []);
   assert.equal(C.normalizeCarteViewPrefs({ fog: false, plan: true }).fog, false);
   assert.equal(C.normalizeCarteViewPrefs({ fog: false, plan: true }).plan, true);
+});
+
+test("#488 : totem thématique par dossier, sommet à la hauteur demandée, couleur du projet", () => {
+  for (const th of C.CARTE_THEMES) {
+    for (const h of [0.6, 2.4, 6.5]) {
+      const c = C.carteTotemColumn(h, "#e07a3f", "#9a9488", th.id);
+      assert.equal(c.h, h, th.id);
+      const top = Math.max(...c.parts.map((p) => p.p[1] + p.s[1]));
+      assert.ok(Math.abs(top - h) < 1e-6, `${th.id} h=${h} : sommet ${top}`);
+      assert.ok(c.parts.some((p) => p.c === "#e07a3f"), `${th.id} : couleur du projet`);
+      c.parts.forEach((p) => { assert.ok(["box", "cyl", "hex", "cone", "pyr", "ball", "dome"].includes(p.g)); [...p.p, ...p.s].forEach((v) => assert.ok(Number.isFinite(v))); });
+    }
+    // La couronne s'enrichit avec les paliers.
+    assert.ok(C.carteHubModel(th.id, 5, "#123456", "normal").length > C.carteHubModel(th.id, 0, "#123456", "normal").length, th.id);
+  }
+  // Deux thèmes différents, deux silhouettes différentes.
+  const sig = (id) => C.carteTotemColumn(3, "#123456", "#999999", id).parts.map((p) => p.g).join();
+  assert.notEqual(sig("hautemontagne"), sig("foret"));
+});
+
+test("#489 : roue d'action personnalisable, huit actions au plus, dans l'ordre choisi", () => {
+  assert.deepEqual(C.normalizeCarteViewPrefs({}).wheel, C.CARTE_WHEEL_DEFAULT);
+  assert.deepEqual(C.carteNormalizeWheel(["criticality", "inconnue", "dates", "criticality"]), ["criticality", "dates"]);
+  assert.deepEqual(C.carteNormalizeWheel([]), C.CARTE_WHEEL_DEFAULT, "roue vide : retour au choix par défaut");
+  assert.equal(C.carteNormalizeWheel(C.CARTE_WHEEL_ACTIONS.map((a) => a.id)).length, C.CARTE_WHEEL_MAX);
+  assert.ok(C.CARTE_WHEEL_ACTIONS.length >= 12, "catalogue plus large que la roue");
+  assert.deepEqual(C.carteDueTodayPatch({ start: "2026-09-10", end: "2026-09-30" }, NOW), { start: "2026-09-10", end: "2026-09-24" });
+  assert.deepEqual(C.carteDueTodayPatch({ start: "2026-10-10", end: "2026-10-30" }, NOW), { start: "2026-09-24", end: "2026-09-24" });
+  assert.deepEqual(C.carteDueTodayPatch({}, NOW), { start: "2026-09-24", end: "2026-09-24" });
 });

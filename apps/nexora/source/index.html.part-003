@@ -19536,7 +19536,7 @@ function createCarteEngine(THREE, container, opts) {
     const summit = Math.max(taskTop + CARTE_TOTEM_MARGIN, ...hubs.map((h) => h.base + h.top), CARTE_TOTEM_MIN);
     hubs.forEach((h) => {
       const w = carteToWorld(h.tr.q, h.tr.r);
-      const column = carteTotemColumn(summit - h.base - h.top, h.p.color, theme(h.tr.theme).pal.stone);
+      const column = carteTotemColumn(summit - h.base - h.top, h.p.color, theme(h.tr.theme).pal.stone, h.tr.theme);
       const parts = column.parts.concat(h.model.map((m) => Object.assign({}, m, { p: [m.p[0], m.p[1] + column.h, m.p[2]] })));
       placeModel(batch, S.dimmed && S.dimmed.has(h.tr.projectId) ? carteDimParts(parts) : parts, w.x, h.base, w.z, 0, 0);
       h.tr.anchor = new THREE.Vector3(w.x, summit + 0.35, w.z);
@@ -21535,7 +21535,7 @@ function createCarteEngine(THREE, container, opts) {
   }
   S.raf = requestAnimationFrame(frame);
 
-  return {
+  const api = {
     setData, select, focusProject, walkToTask, recenter, overview, frameTasks, setQuality, setPeople, setAmbient, zoomBy,
     rotate: (d) => { if (!S.plan) S.yaw += d; },
     // Pilotage (#468 à #481).
@@ -21565,6 +21565,17 @@ function createCarteEngine(THREE, container, opts) {
     },
     strategic: () => S.strategic,
     snapshot,
+    // Cadre un totem (banc visuel, captures) : caméra posée tout de suite.
+    frameProject(pid, dist, yaw) {
+      const tr = S.layout && S.layout.territories.find((t) => t.projectId === pid);
+      if (!tr || !tr.world || !tr.anchor) return false;
+      S.follow = false; S.walkTo = null; S.viewGoal = null;
+      const mid = tr.world.clone().lerp(tr.anchor, 0.45);
+      S.focusGoal = mid.clone(); S.target.copy(mid);
+      S.dist = dist || 14; S.pitch = 0.5; if (yaw != null) S.yaw = yaw;
+      updateCamera(1, true);
+      return true;
+    },
     setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
@@ -21599,6 +21610,9 @@ function createCarteEngine(THREE, container, opts) {
       tip.remove();
     },
   };
+  // Banc visuel : accès au moteur pour cadrer les captures.
+  if (typeof window !== "undefined" && window.__carteBench) window.__carteBench.engine = api;
+  return api;
 }
 function carteWebglAvailable() {
   try {
@@ -22068,44 +22082,69 @@ function CarteQuestPanel({ quests, res, norm, layout, filter, setFilter, onGo, o
   );
 }
 
-// Menu d'action rapide (#469) : roue autour du bâtiment sélectionné. La
+// Menu d'action rapide (#469), personnalisable (#489) : roue autour du
+// bâtiment sélectionné, avec les actions choisies dans « Affichage ». La
 // position suit la caméra image par image (sans rendu React).
-function CarteActionWheel({ wheelRef, task, raw, ctx, locked, sub, setSub, onDone, onShift, onPatch, onOpen, onClose }) {
+function CarteActionWheel({ wheelRef, ids, task, raw, ctx, locked, sub, setSub, onDone, onShift, onPatch, onOpen, onTimeline, onCustomize, onClose }) {
   const [q, setQ] = useState("");
-  useEffect(() => { setQ(""); }, [task.id, sub]);
+  const [ds, setDs] = useState("");
+  const [de, setDe] = useState("");
+  useEffect(() => { setQ(""); setDs((raw && raw.start) || ""); setDe((raw && raw.end) || ""); }, [task.id, sub]); // eslint-disable-line react-hooks/exhaustive-deps
   const statusOptions = raw ? getStatusesForTask(ctx.statuses || [], ctx.projects || [], ctx.taskTypes || [], raw.projectId, raw.taskTypeId, raw.statusId) : [];
   const statusLocked = raw ? !!restrictedStatusForType(ctx.taskTypes || [], ctx.statuses || [], raw.taskTypeId) : true;
+  const typeOptions = raw ? sortedByName(getTaskTypesForProject(ctx.taskTypes || [], ctx.projects || [], raw.projectId, raw.taskTypeId)) : [];
   const members = sortedByName((ctx.teamMembers || []).filter((m) => m && m.name)).filter((m) => !q || carteNorm(m.name).indexOf(carteNorm(q)) !== -1);
   const done = task.state === "done";
-  const items = [
-    { id: "done", icon: done ? <RotateCcw size={16} /> : <Check size={17} />, label: done ? "Rouvrir" : "Terminer", run: onDone, off: task.state === "info" },
-    { id: "d1", icon: <b>+1 j</b>, label: "Décaler d'un jour", run: () => onShift(1) },
-    { id: "w1", icon: <b>+1 s</b>, label: "Décaler d'une semaine", run: () => onShift(7) },
-    { id: "assignee", icon: <User size={16} />, label: "Changer de responsable", run: () => setSub(sub === "assignee" ? null : "assignee") },
-    { id: "status", icon: <CircleDot size={16} />, label: statusLocked ? "Statut imposé par le type" : "Changer de statut", run: () => setSub(sub === "status" ? null : "status"), off: statusLocked },
-    { id: "fiche", icon: <ExternalLink size={15} />, label: "Ouvrir la fiche", run: onOpen, free: true },
-  ];
-  const R = 56, C = 72;
+  const toggle = (id) => () => setSub(sub === id ? null : id);
+  const DEF = {
+    done: { icon: done ? <RotateCcw size={16} /> : <Check size={17} />, label: done ? "Rouvrir" : "Terminer", run: onDone, off: task.state === "info" },
+    d1: { icon: <b>+1 j</b>, label: "Décaler d'un jour", run: () => onShift(1) },
+    w1: { icon: <b>+1 s</b>, label: "Décaler d'une semaine", run: () => onShift(7) },
+    m1: { icon: <b>+1 m</b>, label: "Décaler d'un mois", run: () => onShift(30) },
+    b1: { icon: <b>−1 j</b>, label: "Avancer d'un jour", run: () => onShift(-1) },
+    today: { icon: <CalendarClock size={16} />, label: "Échéance aujourd'hui", run: () => onPatch(carteDueTodayPatch(raw), "Échéance aujourd'hui") },
+    dates: { icon: <CalendarDays size={16} />, label: "Choisir les dates", run: toggle("dates") },
+    assignee: { icon: <User size={16} />, label: "Changer de responsable", run: toggle("assignee") },
+    status: { icon: <CircleDot size={16} />, label: statusLocked ? "Statut imposé par le type" : "Changer de statut", run: toggle("status"), off: statusLocked },
+    criticality: { icon: <AlertTriangle size={16} />, label: "Changer la criticité", run: toggle("criticality") },
+    progress: { icon: <Activity size={16} />, label: "Changer l'avancement", run: toggle("progress") },
+    type: { icon: <Tag size={16} />, label: "Changer le type", run: toggle("type") },
+    milestone: { icon: <Milestone size={16} />, label: raw && raw.milestone ? "Retirer le jalon" : "Marquer comme jalon", run: () => onPatch({ milestone: !(raw && raw.milestone) }, raw && raw.milestone ? "Jalon retiré" : "Jalon") },
+    timeline: { icon: <TrainFront size={16} />, label: "Voir dans la Timeline 3D", run: onTimeline, free: true, off: !onTimeline },
+    fiche: { icon: <ExternalLink size={15} />, label: "Ouvrir la fiche", run: onOpen, free: true },
+  };
+  const items = (ids || CARTE_WHEEL_DEFAULT).filter((id) => DEF[id]).map((id) => ({ id, ...DEF[id] }));
+  const R = items.length <= 6 ? 56 : 66, C = R + 24;
+  const crit = raw && raw.criticality ? raw.criticality : "";
   return (
     <div ref={wheelRef} className="lp-carte-wheel" role="menu" aria-label={"Actions rapides : " + task.title}>
-      <div className="lp-carte-wheel-ring">
+      <div className="lp-carte-wheel-ring" style={{ left: -C, top: -C * 2 - 16, width: C * 2, height: C * 2 }}>
         {items.map((it, i) => {
           const a = -Math.PI / 2 + (i * 2 * Math.PI) / items.length;
           const off = (locked && !it.free) || it.off;
           return (
-            <button key={it.id} type="button" role="menuitem" className={"lp-carte-wheel-btn" + (sub === it.id || (sub === "dates" && (it.id === "d1" || it.id === "w1")) ? " is-active" : "")}
+            <button key={it.id} type="button" role="menuitem" className={"lp-carte-wheel-btn" + (sub === it.id || (sub === "shift" && (it.id === "d1" || it.id === "w1" || it.id === "m1")) ? " is-active" : "")}
               style={{ left: C + Math.cos(a) * R - 21, top: C + Math.sin(a) * R - 21 }} disabled={off}
               title={off && locked && !it.free ? locked : it.label} aria-label={it.label} onClick={it.run}>{it.icon}</button>
           );
         })}
-        <button type="button" className="lp-carte-wheel-close" aria-label="Fermer le menu d'action" onClick={onClose}><X size={14} /></button>
+        <button type="button" className="lp-carte-wheel-close" style={{ left: C - 14, top: C - 14 }} aria-label="Fermer le menu d'action" onClick={onClose}><X size={14} /></button>
+        {onCustomize && <button type="button" className="lp-carte-wheel-gear" style={{ left: C - 11, top: C + 16 }} aria-label="Personnaliser la roue" title="Personnaliser la roue" onClick={onCustomize}><Settings size={12} /></button>}
       </div>
-      {sub === "dates" && !locked && (
+      {sub === "shift" && !locked && (
         <div className="lp-carte-wheel-sub" role="group" aria-label="Décaler l'échéance">
           <div className="lp-carte-wheel-sub-title">Décaler {task.end == null ? "(la tâche reçoit une date)" : "début et fin"}</div>
           <div className="lp-carte-wheel-chips">
             {[[1, "+1 jour"], [7, "+1 semaine"], [14, "+2 semaines"], [30, "+1 mois"]].map(([d, l]) => <button key={d} type="button" className="lp-btn" onClick={() => onShift(d)}>{l}</button>)}
           </div>
+        </div>
+      )}
+      {sub === "dates" && !locked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Dates">
+          <div className="lp-carte-wheel-sub-title">Dates de la tâche</div>
+          <label className="lp-carte-wheel-date"><span>Début</span><DateInput className="lp-carte-input" value={ds} onChange={(v) => setDs(v)} /></label>
+          <label className="lp-carte-wheel-date"><span>Fin</span><DateInput className="lp-carte-input" value={de} onChange={(v) => setDe(v)} /></label>
+          <button type="button" className="lp-btn lp-btn-primary" disabled={!ds && !de} onClick={() => { const p = {}; if (ds) p.start = ds; if (de) p.end = de; onPatch(p, "Dates"); }}>Enregistrer</button>
         </div>
       )}
       {sub === "assignee" && !locked && (
@@ -22130,7 +22169,74 @@ function CarteActionWheel({ wheelRef, task, raw, ctx, locked, sub, setSub, onDon
           </ul>
         </div>
       )}
+      {sub === "criticality" && !locked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Criticité">
+          <ul className="lp-carte-wheel-list">
+            <li><button type="button" className={!crit ? "is-current" : ""} onClick={() => onPatch({ criticality: null }, "Criticité retirée")}>Aucune</button></li>
+            {CRITICALITIES.map((c) => (
+              <li key={c.id}><button type="button" className={crit === c.id ? "is-current" : ""} onClick={() => onPatch({ criticality: c.id }, "Criticité : " + c.name.toLowerCase())}>
+                <span className="lp-carte-dot lp-carte-dot-round" style={{ background: c.color }} />{c.name}</button></li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {sub === "progress" && !locked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Avancement">
+          <div className="lp-carte-wheel-sub-title">Avancement · {task.progress} %</div>
+          <div className="lp-carte-wheel-chips">
+            {[0, 25, 50, 75, 100].map((v) => <button key={v} type="button" className={"lp-btn" + (task.progress === v ? " lp-btn-primary" : "")} onClick={() => onPatch({ progress: v }, "Avancement : " + v + " %")}>{v} %</button>)}
+          </div>
+        </div>
+      )}
+      {sub === "type" && !locked && (
+        <div className="lp-carte-wheel-sub" role="group" aria-label="Type">
+          <ul className="lp-carte-wheel-list">
+            {typeOptions.map((ty) => (
+              <li key={ty.id}><button type="button" className={raw && raw.taskTypeId === ty.id ? "is-current" : ""} onClick={() => onPatch({ taskTypeId: ty.id }, "Type : " + ty.name)}>
+                <span className="lp-carte-dot lp-carte-dot-round" style={{ background: ty.color || "#94A3B8" }} />{ty.name}</button></li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
+  );
+}
+
+// Réglage de la roue (#489) : cocher les actions, les ordonner.
+function CarteWheelSettings({ value, onChange, onClose }) {
+  const [list, setList] = useState(value);
+  const move = (i, d) => setList((l) => { const n = l.slice(); const j = i + d; if (j < 0 || j >= n.length) return l; [n[i], n[j]] = [n[j], n[i]]; return n; });
+  const toggle = (id) => setList((l) => (l.indexOf(id) !== -1 ? l.filter((x) => x !== id) : l.length >= CARTE_WHEEL_MAX ? l : l.concat([id])));
+  return (
+    <Modal title="Personnaliser la roue d'action" onClose={onClose} footer={<>
+      <button type="button" className="lp-btn" onClick={() => setList(CARTE_WHEEL_DEFAULT.slice())}>Par défaut</button>
+      <button type="button" className="lp-btn lp-btn-primary" disabled={!list.length} onClick={() => { onChange(list); onClose(); }}>Enregistrer</button>
+    </>}>
+      <p className="lp-carte-muted" style={{ marginTop: 0 }}>Choisissez jusqu'à {CARTE_WHEEL_MAX} actions ; elles s'affichent autour de la tâche dans cet ordre, à partir du haut.</p>
+      <div className="lp-carte-wheel-cfg">
+        <div>
+          <div className="lp-carte-section-title">Dans la roue · {list.length} / {CARTE_WHEEL_MAX}</div>
+          <ol className="lp-carte-wheel-cfg-list">
+            {list.map((id, i) => (
+              <li key={id}>
+                <span>{CARTE_WHEEL_BY_ID[id].label}</span>
+                <button type="button" className="lp-icon-btn" aria-label="Monter" disabled={i === 0} onClick={() => move(i, -1)}><ChevronUp size={14} /></button>
+                <button type="button" className="lp-icon-btn" aria-label="Descendre" disabled={i === list.length - 1} onClick={() => move(i, 1)}><ChevronDown size={14} /></button>
+                <button type="button" className="lp-icon-btn" aria-label="Retirer" onClick={() => toggle(id)}><X size={14} /></button>
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div>
+          <div className="lp-carte-section-title">Actions disponibles</div>
+          {CARTE_WHEEL_ACTIONS.map((a) => (
+            <label key={a.id} className="lp-checkbox-line">
+              <input type="checkbox" checked={list.indexOf(a.id) !== -1} disabled={list.indexOf(a.id) === -1 && list.length >= CARTE_WHEEL_MAX} onChange={() => toggle(a.id)} /> {a.label}
+            </label>
+          ))}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -22180,6 +22286,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const [undoToast, setUndoToast] = useState(null);
   const undoRef = useRef([]);
   const [photo, setPhoto] = useState(false);
+  const [wheelCfgOpen, setWheelCfgOpen] = useState(false);
   const [photoCaption, setPhotoCaption] = useState("Carte des projets");
   const [photoDate, setPhotoDate] = useState(true);
   // Rappels à jour pour le moteur, créé une seule fois.
@@ -22473,7 +22580,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
       return;
     }
     go(q.taskId);
-    setWheel({ id: q.taskId, sub: q.kind === "unassigned" ? "assignee" : q.kind === "late" || q.kind === "nodue" ? "dates" : null });
+    setWheel({ id: q.taskId, sub: q.kind === "unassigned" ? "assignee" : q.kind === "late" || q.kind === "nodue" ? "shift" : null });
   };
   // Mode photo (#474).
   const photoDateText = new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
@@ -22607,6 +22714,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
               {CARTE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
             </div>
+            <hr className="lp-divider" style={{ margin: "6px 0" }} />
+            <button type="button" className="lp-dropdown-action-row" onClick={() => setWheelCfgOpen(true)}><Settings size={13} /> Personnaliser la roue d'action…</button>
             {cfg.groupBy === "folder" && (<>
               <hr className="lp-divider" style={{ margin: "6px 0" }} />
               <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
@@ -22728,7 +22837,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   const gcal = raw && isGoogleCalendarProjectId(raw.projectId, ctx.projects || []);
                   const locked = !onUpdateTask ? "Modification indisponible ici" : lockReason ? "Tâche de calendrier synchronisé : elle ne se modifie pas ici" : gcal ? "Tâche Google Calendar : elle se modifie dans Google Calendar" : null;
                   return (
-                    <CarteActionWheel wheelRef={wheelRef} task={selTask} raw={raw} ctx={ctx} locked={locked} sub={wheel.sub} setSub={(sub) => setWheel({ id: selTask.id, sub })}
+                    <CarteActionWheel wheelRef={wheelRef} ids={cfg.wheel} task={selTask} raw={raw} ctx={ctx} locked={locked} sub={wheel.sub} setSub={(sub) => setWheel({ id: selTask.id, sub })}
+                      onTimeline={onOpenTimeline && selTask.projectId ? () => onOpenTimeline(selTask.projectId) : null} onCustomize={() => setWheelCfgOpen(true)}
                       onDone={() => toggleDone(selTask.id)} onShift={(d) => shiftTask(selTask.id, d)}
                       onPatch={(patch, label) => { applyPatch(selTask.id, patch, label + " · " + selTask.title); setWheel({ id: selTask.id, sub: null }); }}
                       onOpen={() => openFiche(selTask.id)} onClose={() => setWheel(null)} />
@@ -22785,6 +22895,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           <button type="button" role="menuitem" autoFocus onClick={buildHere}><Hammer size={14} /> Construire ici <small>Nouvelle tâche dans ce projet</small></button>
         </div>
       , document.body)}
+      {wheelCfgOpen && <CarteWheelSettings value={cfg.wheel} onChange={(wheel) => setPrefs({ wheel })} onClose={() => setWheelCfgOpen(false)} />}
       {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} setProjectFolders={setProjectFolders} onClose={() => setThemesOpen(false)} />}
       {filtersOpen && (
         <Modal title="Filtrer la carte" onClose={() => setFiltersOpen(false)} wide footer={<>
@@ -24005,7 +24116,7 @@ function createCosmosEngine(THREE, container, opts) {
   }
   S.raf = requestAnimationFrame(frame);
 
-  return {
+  const api = {
     setData, setPreview, setQuality, setAnimate, recenter, zoomBy: (f) => zoomBy(f),
     universe, enterGalaxy, enterPlanet, up, levelUp, reveal,
     select: (sel) => setSelected(sel),

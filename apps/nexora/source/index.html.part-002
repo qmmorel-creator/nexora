@@ -5607,38 +5607,278 @@ function carteStageProp(themeId, which, pal, arg) {
 function carteHubModel(themeId, stage, color, priority) {
   const theme = CARTE_THEME_BY_ID[themeId] || CARTE_THEMES[0];
   const pal = theme.pal;
+  const s = Math.max(0, Math.min(5, Math.round(Number(stage) || 0)));
   const scale = priority === "high" ? 1.25 : priority === "low" ? 0.85 : 1;
-  // Le cœur s'élève avec le palier du territoire (#369) ; un projet prioritaire
-  // gagne encore une assise.
-  const rise = stage * 0.18 + (priority === "high" ? 0.25 : 0);
-  const base = rise > 0 ? [cP("hex", pal.stone, 0, 0, 0, 1.1, rise, 1.1)] : [];
-  const y0 = rise;
-  const lift = (parts, dx, dz, s, dy) => parts.map((p) => Object.assign({}, p, { p: [p.p[0] * s + dx, p.p[1] * s + (dy || 0), p.p[2] * s + dz], s: [p.s[0] * s, p.s[1] * s, p.s[2] * s] }));
-  const main = themeId === "hautemontagne" ? [cP("cone", "#9ba1a8", 0, 0, 0, 1.2, 0.6 + stage * 0.2, 1.2), cP("cone", "#ffffff", 0, 0.36 + stage * 0.12, 0, 0.5, 0.24 + stage * 0.08, 0.5)] : themeId === "cyberpunk" ? [cP("box", pal.wall, 0, 0, 0, 0.55, 0.72 + stage * 0.1, 0.55), cP("box", color, 0, 0.5 + stage * 0.1, 0.29, 0.32, 0.08, 0.025, 0, "g"), cP("box", pal.accent, 0, 0.72 + stage * 0.1, 0, 0.38, 0.06, 0.38)] : carteTower(pal.wall, color, 0.9 + stage * 0.08, 0.42);
-  let out = base.concat(lift(main, 0, 0, scale, y0));
-  const small = carteSilhouette(themeId, "task", pal);
-  for (let i = 0; i < stage; i++) {
-    const a = i * (Math.PI * 2 / 5) + 0.5;
-    out = out.concat(lift(small, Math.cos(a) * 0.62, Math.sin(a) * 0.62, 0.42, y0));
-  }
-  const top = themeId === "hautemontagne" ? 0.6 + stage * 0.2 + 0.2 : themeId === "cyberpunk" ? (0.8 + stage * 0.1) * scale + y0 : (0.9 + stage * 0.08) * scale + 0.3 + y0;
-  out = out.concat(lift(carteFlag("#5a4030", color, 0.7), 0.3, 0, 1, stage === 5 ? top - 0.3 : 0.1 + y0));
-  if (stage === 5) out.push(cP("ball", CARTE_GLOW, 0, top + 0.5, 0, 0.18, 0.18, 0.18, 0, "g"));
+  // Couronne thématique (#488) : elle se complète palier après palier
+  // (0 à 5) au sommet du totem. Un projet prioritaire est plus large.
+  const crown = carteTotemCrown(theme.id, s, color, pal);
+  let top = 0;
+  crown.forEach((p) => { top = Math.max(top, p.p[1] + p.s[1]); });
+  let out = crown.map((p) => Object.assign({}, p, { p: [p.p[0] * scale, p.p[1] * scale, p.p[2] * scale], s: [p.s[0] * scale, p.s[1] * scale, p.s[2] * scale] }));
+  top *= scale;
+  out = out.concat(carteFlag("#5a4030", color, 0.7).map((p) => Object.assign({}, p, { p: [p.p[0] + 0.42 * scale, p.p[1], p.p[2]] })));
+  if (s === 5) out.push(cP("ball", CARTE_GLOW, 0, top + 0.3, 0, 0.18, 0.18, 0.18, 0, "g"));
   return out;
 }
+// Couronnes des totems (#488), une par thème. Pièces locales, base à y = 0.
+function carteTotemCrown(themeId, s, color, pal) {
+  const P = [];
+  const add = (...a) => P.push(cP(...a));
+  const glowIf = (on, c) => (on ? CARTE_GLOW : c);
+  switch (themeId) {
+    case "campagne": // moulin : chapeau et ailes qui tournent
+      add("cyl", pal.wall, 0, 0, 0, 0.66, 0.34, 0.66);
+      add("pyr", color, 0, 0.34, 0, 0.82, 0.42, 0.82, Math.PI / 4);
+      if (s >= 1) { add("box", pal.wood, 0, 0.3, 0.38, 0.1, 1.1 + s * 0.06, 0.03, 0, "s"); add("box", pal.wood, 0, 0.3, 0.38, 1.1 + s * 0.06, 0.1, 0.03, 0, "s"); }
+      if (s >= 3) add("box", "#e6c97a", 0.5, 0, -0.25, 0.28, 0.24, 0.28);
+      break;
+    case "foret": // cabane perchée, puis un hameau de cabanes
+      add("box", pal.wood, 0, 0, 0, 0.95, 0.08, 0.95);
+      add("box", pal.wall, 0, 0.08, 0, 0.5, 0.4, 0.46);
+      add("pyr", color, 0, 0.48, 0, 0.7, 0.34, 0.66, Math.PI / 4);
+      add("box", glowIf(s >= 2, "#3d4a5c"), 0, 0.22, 0.235, 0.14, 0.14, 0.02, 0, s >= 2 ? "g" : "l");
+      if (s >= 3) { add("box", pal.wall, -0.32, 0.08, -0.28, 0.28, 0.26, 0.26); add("pyr", color, -0.32, 0.34, -0.28, 0.4, 0.22, 0.38, Math.PI / 4); }
+      if (s >= 4) add("box", pal.wood, 0.34, 0.08, 0.3, 0.06, 0.5, 0.06);
+      if (s >= 5) add("ball", CARTE_GLOW, 0.34, 0.58, 0.3, 0.12, 0.14, 0.12, 0, "g");
+      break;
+    case "desert": // coupole de minaret
+      add("cyl", pal.accent, 0, 0, 0, 0.86, 0.08, 0.86);
+      add("cyl", pal.wall, 0, 0.08, 0, 0.56, 0.32, 0.56);
+      add("dome", s >= 4 ? "#e8c14a" : color, 0, 0.4, 0, 0.58, 0.46, 0.58);
+      if (s >= 2) add("box", glowIf(s >= 3, "#3d4a5c"), 0, 0.18, 0.28, 0.12, 0.16, 0.02, 0, s >= 3 ? "g" : "l");
+      if (s >= 3) add("cyl", "#e8c14a", 0, 0.86, 0, 0.05, 0.22, 0.05);
+      break;
+    case "mer": // lanterne de phare, allumée à partir du palier 2
+      add("hex", "#3a3f46", 0, 0, 0, 0.86, 0.08, 0.86);
+      add("cyl", s >= 2 ? CARTE_GLOW : "#cfd8dc", 0, 0.08, 0, 0.5, 0.36, 0.5, 0, s >= 2 ? "g" : "l");
+      add("cone", color, 0, 0.44, 0, 0.64, 0.36, 0.64);
+      if (s >= 4) add("box", CARTE_GLOW, 0, 0.2, 0, 1.1, 0.06, 0.06, 0, "s");
+      break;
+    case "lac": // pavillon sur l'eau, roue à aubes
+      add("box", pal.wall, 0, 0, 0, 0.6, 0.36, 0.6);
+      add("pyr", color, 0, 0.36, 0, 0.92, 0.32, 0.92, Math.PI / 4);
+      add("pyr", color, 0, 0.62, 0, 0.5, 0.26, 0.5, Math.PI / 4);
+      if (s >= 3) add("cyl", pal.wood, 0.4, 0.02, 0, 0.44, 0.44, 0.1, 0, "s");
+      if (s >= 4) add("box", glowIf(true, ""), 0, 0.16, 0.305, 0.16, 0.12, 0.02, 0, "g");
+      break;
+    case "montagne": // chalet au sommet du mont
+      add("box", pal.wood, 0, 0, 0, 0.58, 0.4, 0.5);
+      add("pyr", color, 0, 0.4, 0, 0.8, 0.34, 0.7, Math.PI / 4);
+      add("box", pal.stone, 0.16, 0.5, -0.1, 0.1, 0.3, 0.1);
+      if (s >= 2) add("box", glowIf(s >= 3, "#3d4a5c"), -0.12, 0.16, 0.255, 0.14, 0.12, 0.02, 0, s >= 3 ? "g" : "l");
+      if (s >= 4) add("box", pal.wood, 0, 0, 0.33, 0.66, 0.05, 0.18);
+      break;
+    case "hautemontagne": // neige, cairn, puis refuge
+      add("cone", "#ffffff", 0, 0, 0, 0.72, 0.3, 0.72);
+      add("ball", pal.stone, 0, 0.18, 0, 0.3, 0.18, 0.28, 0.6);
+      add("ball", pal.stone, 0, 0.32, 0, 0.22, 0.14, 0.2);
+      if (s >= 3) { add("box", pal.wood, -0.3, 0.12, 0.12, 0.34, 0.24, 0.3); add("pyr", color, -0.3, 0.36, 0.12, 0.46, 0.2, 0.42, Math.PI / 4); }
+      if (s >= 4) add("box", CARTE_GLOW, -0.3, 0.2, 0.275, 0.1, 0.08, 0.02, 0, "g");
+      break;
+    case "grandnord": // igloo, puis aurore boréale
+      add("dome", "#f4fbff", 0, 0, 0, 0.8, 0.46, 0.8);
+      add("box", "#e3f3fa", 0, 0, 0.36, 0.26, 0.2, 0.2);
+      add("box", color, 0, 0.44, 0, 0.08, 0.26, 0.08);
+      if (s >= 3) add("box", "#cfe9f5", 0.44, 0, -0.2, 0.2, 0.2, 0.2);
+      if (s >= 5) { add("box", "#7CFFB2", -0.3, 0.8, -0.3, 0.9, 0.5, 0.03, 0.4, "t"); add("box", "#9b8bff", 0.2, 0.9, -0.35, 0.8, 0.45, 0.03, -0.3, "t"); }
+      break;
+    case "canyon": // arche taillée et bannière
+      add("box", "#b5532f", -0.28, 0, 0, 0.16, 0.56, 0.2);
+      add("box", "#b5532f", 0.28, 0, 0, 0.16, 0.56, 0.2);
+      add("box", "#c0643a", 0, 0.56, 0, 0.74, 0.16, 0.24);
+      add("box", color, 0, 0.26, 0, 0.36, 0.3, 0.02);
+      if (s >= 3) add("box", CARTE_GLOW, 0, 0.72, 0, 0.12, 0.08, 0.08, 0, "g");
+      break;
+    case "marais": // cabane de guet, lanterne, lucioles
+      add("box", pal.wood, 0, 0, 0, 0.56, 0.36, 0.5, 0.12);
+      add("pyr", color, 0, 0.36, 0, 0.74, 0.32, 0.66, Math.PI / 4 + 0.12);
+      if (s >= 2) add("ball", CARTE_GLOW, 0.34, 0.2, 0.28, 0.12, 0.14, 0.12, 0, "g");
+      if (s >= 4) [[-0.4, 0.5, 0.2], [0.3, 0.7, -0.3], [-0.1, 0.8, 0.35]].forEach(([x, y, z]) => add("ball", "#d7ff7a", x, y, z, 0.06, 0.06, 0.06, 0, "g"));
+      break;
+    case "jungle": // temple sommital
+      add("box", pal.stone, 0, 0, 0, 0.62, 0.4, 0.62);
+      add("pyr", color, 0, 0.4, 0, 0.7, 0.3, 0.7, Math.PI / 4);
+      add("box", glowIf(s >= 3, "#2f2a24"), 0, 0.02, 0.315, 0.2, 0.24, 0.02, 0, s >= 3 ? "g" : "l");
+      if (s >= 5) add("ball", "#e8c14a", 0, 0.7, 0, 0.16, 0.16, 0.16);
+      break;
+    case "volcan": // cratère de lave, puis forge
+      add("cyl", "#2f2624", 0, 0, 0, 0.86, 0.18, 0.86);
+      add("cyl", "#ff6a1f", 0, 0.14, 0, 0.62, 0.05, 0.62, 0, "g");
+      if (s >= 2) { add("box", "#3a2e2a", 0.36, 0.18, -0.2, 0.3, 0.28, 0.3); add("box", "#3a2e2a", 0.44, 0.46, -0.28, 0.08, 0.3, 0.08); }
+      if (s >= 4) add("box", "#ff8a2a", 0.36, 0.26, -0.05, 0.12, 0.1, 0.02, 0, "g");
+      add("box", color, -0.44, 0.18, 0, 0.04, 0.4, 0.2);
+      break;
+    case "ile": // coiffe de plumes, torches
+      add("box", pal.wood, 0, 0, 0, 0.66, 0.16, 0.6);
+      [-0.6, -0.3, 0, 0.3, 0.6].forEach((a, i) => add("box", i % 2 ? "#ffd23f" : color, Math.sin(a) * 0.12, 0.14, -0.1, 0.1, 0.5 + (i === 2 ? 0.12 : 0), 0.04, a));
+      if (s >= 3) [-0.36, 0.36].forEach((x) => { add("cyl", pal.wood, x, 0, 0.3, 0.05, 0.4, 0.05); add("ball", "#ff9a3c", x, 0.38, 0.3, 0.12, 0.16, 0.12, 0, "g"); });
+      break;
+    case "cyberpunk": // antenne et balise
+      add("box", pal.wall, 0, 0, 0, 0.56, 0.4, 0.56);
+      add("box", color, 0, 0.12, 0.285, 0.36, 0.08, 0.02, 0, "g");
+      add("cyl", pal.accent, 0, 0.4, 0, 0.05, 0.7 + s * 0.06, 0.05);
+      add("ball", color, 0, 1.05 + s * 0.06, 0, 0.14, 0.14, 0.14, 0, "g");
+      if (s >= 4) add("hex", color, 0, 0.62, 0, 0.5, 0.03, 0.5, 0, "g");
+      break;
+    default: // ville : couronne de beffroi, horloge, flèche
+      add("box", pal.wall, 0, 0, 0, 0.62, 0.52, 0.62);
+      add("pyr", color, 0, 0.52, 0, 0.82, 0.44, 0.82, Math.PI / 4);
+      if (s >= 2) { add("box", "#fffaf0", 0, 0.18, 0.315, 0.26, 0.26, 0.02); add("box", "#2b2b2b", 0, 0.3, 0.33, 0.03, 0.1, 0.01); }
+      if (s >= 4) add("box", CARTE_GLOW, 0, 0.06, 0.315, 0.3, 0.08, 0.02, 0, "g");
+      if (s >= 5) add("cone", "#e8c14a", 0, 0.96, 0, 0.12, 0.3, 0.12);
+  }
+  return P;
+}
 
-// Totem d'un projet (#395) : colonne de pierre cerclée de la couleur du
-// projet, qui porte le cœur à l'altitude commune. Renvoie les pièces et la
-// hauteur de la colonne (0 si le cœur est déjà assez haut).
+// Totem d'un projet (#395, #488) : le corps porte la couronne à l'altitude
+// commune ; sa forme dépend du thème du dossier (tour de moulin, arbre
+// géant, pic enneigé…). Renvoie les pièces et la hauteur du corps (0 si la
+// couronne est déjà assez haute). Le sommet des pièces est à `h` exactement.
 const CARTE_TOTEM_MARGIN = 1.2;
 const CARTE_TOTEM_MIN = 4;
-function carteTotemColumn(height, color, stone) {
+function carteTotemColumn(height, color, stone, themeId) {
   const h = Math.max(0, height);
   if (h < 0.05) return { parts: [], h: 0 };
-  const parts = [cP("hex", stone || "#9a9488", 0, 0, 0, 1.05, h, 1.05)];
-  for (let y = 0.6; y < h - 0.3; y += 1.1) parts.push(cP("hex", color, 0, y, 0, 1.1, 0.12, 1.1));
-  parts.push(cP("hex", color, 0, h - 0.12, 0, 1.3, 0.12, 1.3));
-  return { parts, h };
+  const th = themeId ? CARTE_THEME_BY_ID[themeId] : null;
+  if (!th) {
+    const parts = [cP("hex", stone || "#9a9488", 0, 0, 0, 1.05, h, 1.05)];
+    for (let y = 0.6; y < h - 0.3; y += 1.1) parts.push(cP("hex", color, 0, y, 0, 1.1, 0.12, 1.1));
+    parts.push(cP("hex", color, 0, h - 0.12, 0, 1.3, 0.12, 1.3));
+    return { parts, h };
+  }
+  return { parts: carteTotemBody(th.id, h, color, th.pal), h };
+}
+function carteTotemBody(themeId, h, color, pal) {
+  const P = [];
+  const add = (...a) => P.push(cP(...a));
+  // Empilement de tranches de `from` à `to` (hauteurs), largeur décroissante.
+  const stack = (g, n, w0, w1, from, to, colorOf, m) => {
+    const hh = (to - from) / n;
+    for (let i = 0; i < n; i++) { const w = w0 + (w1 - w0) * (n > 1 ? i / (n - 1) : 0); add(g, colorOf(i), 0, from + i * hh, 0, w, hh, w, 0, m); }
+  };
+  switch (themeId) {
+    case "campagne": { // tour de moulin en pierre
+      stack("cyl", 4, 1.1, 0.78, 0, h, () => pal.wall);
+      for (let y = 0.5; y < h - 0.4; y += 0.9) add("box", "#3d4a5c", 0, y, 0.44 - (y / h) * 0.12, 0.14, 0.2, 0.04);
+      add("box", "#6b4a2e", 0, 0, 0.53, 0.26, 0.4, 0.04);
+      add("cyl", color, 0, h - 0.14, 0, 0.84, 0.14, 0.84);
+      break;
+    }
+    case "foret": { // arbre géant : tronc, branches, frondaisons
+      stack("cyl", 3, 0.9, 0.62, 0, h, () => pal.wood);
+      [[0.4, 0.3], [0.62, 2.4], [0.8, 4.4]].forEach(([f, a]) => {
+        const y = f * h, x = Math.cos(a) * 0.55, z = Math.sin(a) * 0.55;
+        if (y + 0.55 > h) return;
+        add("box", pal.wood, x * 0.5, y, z * 0.5, 0.6, 0.1, 0.12, -a);
+        add("ball", pal.decor, x, y - 0.05, z, 0.62, 0.55, 0.62);
+        add("ball", carteMix(pal.decor, "#ffffff", 0.12), x + 0.12, y + 0.08, z - 0.1, 0.42, 0.4, 0.42);
+      });
+      add("box", color, 0.36, Math.min(h - 0.4, h * 0.5), 0.1, 0.03, 0.22, 0.3);
+      add("cyl", pal.wood, 0, 0, 0, 1.15, 0.2, 1.15);
+      break;
+    }
+    case "desert": { // minaret sur son socle
+      add("box", pal.wall, 0, 0, 0, 1.0, h * 0.34, 1.0);
+      add("cyl", pal.wall, 0, h * 0.34, 0, 0.66, h * 0.66, 0.66);
+      [0.34, 0.74].forEach((f) => { if (f * h + 0.1 < h) add("cyl", pal.accent, 0, f * h, 0, 0.84, 0.08, 0.84); });
+      add("cyl", color, 0, h * 0.55, 0, 0.7, 0.12, 0.7);
+      break;
+    }
+    case "mer": { // phare rayé aux couleurs du projet
+      const n = Math.max(2, Math.round(h / 0.55));
+      stack("cyl", n, 0.98, 0.7, 0, h, (i) => (i % 2 ? color : "#f4f1ea"));
+      add("hex", "#8e8578", 0, 0, 0, 1.2, 0.22, 1.2);
+      break;
+    }
+    case "lac": { // tour de bois sur pilotis
+      const deck = Math.min(h * 0.42, 1.6);
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, z]) => add("cyl", pal.wood, x * 0.36, 0, z * 0.36, 0.1, deck, 0.1));
+      add("box", pal.wood, 0, deck, 0, 1.0, 0.08, 1.0);
+      add("box", pal.wall, 0, deck + 0.08, 0, 0.72, h - deck - 0.08, 0.72);
+      add("box", color, 0, h - 0.16, 0, 0.78, 0.16, 0.78);
+      break;
+    }
+    case "montagne": { // mont boisé
+      add("cone", "#7c8f5c", 0, 0, 0, 1.75, h * 0.92, 1.75);
+      add("hex", pal.stone, 0, h * 0.72, 0, 0.5, h * 0.28, 0.5);
+      for (let i = 0; i < 7; i++) {
+        const f = 0.12 + (i % 4) * 0.16, a = i * 2.3, r = 0.86 * (1 - f) - 0.05;
+        const ph = Math.min(0.42, h - f * h * 0.92);
+        if (ph > 0.08) add("cone", pal.decor, Math.cos(a) * r, f * h * 0.92, Math.sin(a) * r, 0.3, ph, 0.3);
+      }
+      add("box", color, 0.3, h * 0.45, 0.3, 0.03, 0.2, 0.26, 0.8);
+      break;
+    }
+    case "hautemontagne": { // pic enneigé, drapeaux de prière
+      add("cone", "#8f959c", 0, 0, 0, 1.75, h, 1.75);
+      add("cone", "#ffffff", 0, h * 0.6, 0, 0.74, h * 0.4, 0.74);
+      add("cone", "#a8adb3", 0.45, 0, -0.2, 0.9, h * 0.45, 0.9, 0.4);
+      for (let i = 0; i < 5; i++) add("box", i % 2 ? "#ffd23f" : color, -0.5 + i * 0.1, h * (0.3 + i * 0.05), 0.55 - i * 0.07, 0.08, 0.08, 0.02, 0.5);
+      break;
+    }
+    case "grandnord": { // pilier de glace, bandes sculptées
+      const n = Math.max(2, Math.round(h / 0.7));
+      stack("hex", n, 1.0, 0.82, 0, h, (i) => (i % 2 ? "#bfe3f0" : "#dff1f8"));
+      [0.3, 0.62].forEach((f) => { if (f * h + 0.2 < h) add("hex", color, 0, f * h, 0, 0.9, 0.12, 0.9); });
+      break;
+    }
+    case "canyon": { // mesa en strates rouges
+      const strata = ["#c0643a", "#d98a55", "#b5532f", "#e3a36b"];
+      const n = Math.max(2, Math.round(h / 0.45));
+      const hh = h / n;
+      for (let i = 0; i < n; i++) add("hex", strata[i % 4], 0, i * hh, 0, 1.3 - (i % 3) * 0.07 - (i / n) * 0.2, hh, 1.3 - (i % 3) * 0.07 - (i / n) * 0.2, (i % 2) * 0.3);
+      add("box", color, 0.56, Math.max(0, h * 0.5 - 0.3), 0.2, 0.03, 0.6, 0.3, 0.3);
+      break;
+    }
+    case "marais": { // tour de guet biscornue sur pilotis
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, z]) => add("cyl", pal.wood, x * 0.34, 0, z * 0.34, 0.09, Math.min(0.7, h * 0.3), 0.09));
+      const from = Math.min(0.7, h * 0.3), n = Math.max(2, Math.round((h - from) / 0.6)), hh = (h - from) / n;
+      for (let i = 0; i < n; i++) add("box", i % 2 ? pal.wood : carteMix(pal.wood, "#000000", 0.15), (i % 2 ? 0.06 : -0.05), from + i * hh, (i % 3 - 1) * 0.04, 0.72 - i * 0.02, hh, 0.66, (i % 2 ? 0.14 : -0.1));
+      add("box", color, 0, from + (h - from) * 0.5, 0.36, 0.4, 0.16, 0.02, 0.1);
+      break;
+    }
+    case "jungle": { // pyramide à degrés moussue
+      const n = Math.max(2, Math.ceil(h / 0.34)), hh = h / n;
+      for (let i = 0; i < n; i++) {
+        const w = 1.7 - (i / Math.max(1, n - 1)) * 1.05;
+        add("box", i % 2 ? pal.stone : carteMix(pal.stone, "#5f7a45", 0.25), 0, i * hh, 0, w, hh, w);
+      }
+      add("box", color, 0, 0, 0.7, 0.3, h * 0.9, 0.3);
+      break;
+    }
+    case "volcan": { // cône de basalte fissuré de lave
+      add("cone", "#4a3b36", 0, 0, 0, 1.75, h * 0.9, 1.75);
+      add("hex", "#3a2e2a", 0, h * 0.72, 0, 0.62, h * 0.28, 0.62);
+      [[0.5, 0.35], [2.6, 0.2], [4.4, 0.45]].forEach(([a, f]) => { const r = 0.87 * (1 - f) - 0.02; add("box", "#ff6a1f", Math.cos(a) * r, f * h * 0.9, Math.sin(a) * r, 0.05, h * 0.25, 0.05, 0, "g"); });
+      add("box", color, -0.4, h * 0.4, 0.4, 0.03, 0.26, 0.3, -0.8);
+      break;
+    }
+    case "ile": { // totem tiki : visages empilés
+      const n = Math.max(2, Math.round(h / 0.62)), hh = h / n;
+      for (let i = 0; i < n; i++) {
+        const y = i * hh, w = i % 2 ? 0.68 : 0.8;
+        add("box", i % 2 ? "#8a5a35" : "#a0703f", 0, y, 0, w, hh, w * 0.9);
+        add("box", "#fff6e0", -0.15, y + hh * 0.55, w * 0.45, 0.14, 0.1, 0.02);
+        add("box", "#fff6e0", 0.15, y + hh * 0.55, w * 0.45, 0.14, 0.1, 0.02);
+        add("box", "#2b1d12", 0, y + hh * 0.2, w * 0.45, 0.3, 0.07, 0.02);
+        add("box", color, 0, y + hh - 0.06, 0, w + 0.04, 0.05, w * 0.9 + 0.04);
+      }
+      break;
+    }
+    case "cyberpunk": { // tour de verre striée de néons
+      add("box", pal.wall, 0, 0, 0, 0.86, h, 0.86);
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, z]) => add("box", color, x * 0.43, 0, z * 0.43, 0.05, h, 0.05, 0, "g"));
+      for (let y = 0.5; y < h - 0.2; y += 0.7) add("box", pal.accent, 0, y, 0, 0.9, 0.05, 0.9, 0, "g");
+      break;
+    }
+    default: { // ville : beffroi à étages
+      add("box", pal.wall, 0, 0, 0, 0.94, h, 0.94);
+      for (let y = 0.6; y < h - 0.3; y += 1.1) add("box", color, 0, y, 0, 1.0, 0.1, 1.0);
+      for (let y = 0.3; y < h - 0.4; y += 0.55) add("box", Math.round(y / 0.55) % 3 ? "#3d4a5c" : CARTE_GLOW, 0, y, 0.47, 0.2, 0.26, 0.02, 0, Math.round(y / 0.55) % 3 ? "l" : "g");
+      add("box", color, 0, h - 0.12, 0, 1.08, 0.12, 1.08);
+    }
+  }
+  return P;
 }
 
 // Décor d'une tuile libre.
@@ -6095,6 +6335,41 @@ function carteEvents(prev, next) {
   });
   return out;
 }
+// Roue d'action personnalisable (#489) : catalogue des actions proposées,
+// huit au plus dans la roue, dans l'ordre choisi.
+const CARTE_WHEEL_ACTIONS = [
+  { id: "done", label: "Terminer ou rouvrir" },
+  { id: "d1", label: "Décaler d'un jour" },
+  { id: "w1", label: "Décaler d'une semaine" },
+  { id: "m1", label: "Décaler d'un mois" },
+  { id: "b1", label: "Avancer d'un jour" },
+  { id: "today", label: "Échéance aujourd'hui" },
+  { id: "dates", label: "Choisir les dates" },
+  { id: "assignee", label: "Changer de responsable" },
+  { id: "status", label: "Changer de statut" },
+  { id: "criticality", label: "Changer la criticité" },
+  { id: "progress", label: "Changer l'avancement" },
+  { id: "type", label: "Changer le type" },
+  { id: "milestone", label: "Jalon oui ou non" },
+  { id: "timeline", label: "Voir dans la Timeline 3D" },
+  { id: "fiche", label: "Ouvrir la fiche" },
+];
+const CARTE_WHEEL_BY_ID = Object.fromEntries(CARTE_WHEEL_ACTIONS.map((a) => [a.id, a]));
+const CARTE_WHEEL_DEFAULT = ["done", "d1", "w1", "assignee", "status", "fiche"];
+const CARTE_WHEEL_MAX = 8;
+function carteNormalizeWheel(list) {
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((id) => { if (CARTE_WHEEL_BY_ID[id] && out.indexOf(id) === -1 && out.length < CARTE_WHEEL_MAX) out.push(id); });
+  return out.length ? out : CARTE_WHEEL_DEFAULT.slice();
+}
+// « Échéance aujourd'hui » : la fin passe à aujourd'hui, le début ne la
+// dépasse pas.
+function carteDueTodayPatch(raw, now) {
+  const today = carteShiftIso("1970-01-01", carteTodayNumber(now));
+  const r = raw || {};
+  const start = carteDayNumber(r.start);
+  return { end: today, start: start != null && start <= carteDayNumber(today) ? r.start : today };
+}
 // Construire ici (#470) : la première nouvelle tâche du projet visé prend la
 // parcelle choisie. Renvoie la mémoire de disposition à utiliser.
 function carteClaimTile(memory, pending, tasks) {
@@ -6158,6 +6433,8 @@ function normalizeCarteViewPrefs(p) {
     // Vue « comme un plan » (#481) : dessus, nord en haut.
     plan: !!v.plan,
     views: carteNormalizeViews(v.views),
+    // Roue d'action (#489) : actions choisies, dans l'ordre.
+    wheel: carteNormalizeWheel(v.wheel),
   };
 }
 // === NEXORA:CARTE:END ===

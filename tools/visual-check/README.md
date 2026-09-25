@@ -39,7 +39,7 @@ clavier jusqu'à une tâche, lecture, ouverture de la fiche Nexora ; aucune tâc
 l'exploration ; libellés sans chevauchement ; filtre ; mobile (manette, bouton « Lire », pas de
 défilement horizontal) ; 300 projets et 12 000 tâches (qualité basse automatique) ; liste de
 repli sans WebGL. Captures : `carte.png`, `carte-mobile.png`, `carte-volume.png`.
-Bancs manuels : `index.html?app=1&view=carte&carte=demo` ou `&carte=volume`.
+Bancs manuels : `index.html?app=1&view=carte&carte=demo`, `&carte=volume` ou `&carte=totems` (un totem par thème, #488).
 
 Vue « Timeline 3D » (#454) : banc manuel `index.html?app=1&view=timeline3d&t3d=demo` (huit projets
 d'exemple repris des maquettes du réseau du temps : jalons, réunions, actions longues, retards, attentes,
