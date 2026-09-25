@@ -1095,7 +1095,8 @@ if (benchApp) {
   // Vue Carte (#361) : `?app=1&view=carte` ouvre directement une vue ;
   // `carte=demo` range les projets dans des dossiers (régions à thème) et
   // `carte=volume` charge 300 projets et 12 000 tâches pour éprouver le rendu ;
-  // `carte=sync` reprend la démo avec un calendrier public synchronisé.
+  // `carte=sync` reprend la démo avec un calendrier public synchronisé ;
+  // `carte=totems` montre un totem par thème (#488).
   const benchParams = new URLSearchParams(location.search);
   if (benchParams.get("view")) mem.set("nexora:startupPref", JSON.stringify({ mode: "view", value: benchParams.get("view") }));
   if (benchParams.get("carte") === "demo" || benchParams.get("carte") === "sync") {
@@ -1121,6 +1122,22 @@ if (benchApp) {
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
     mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra]));
+  } else if (benchParams.get("carte") === "totems") {
+    window.__carteBench = {};
+    // Vitrine des totems (#488) : un dossier par thème, un projet par
+    // dossier, avancement étagé de 0 à 100 % (paliers 0 à 5).
+    const themes = ["ville", "campagne", "foret", "desert", "mer", "lac", "montagne", "hautemontagne", "grandnord", "canyon", "marais", "jungle", "volcan", "ile", "cyberpunk"];
+    const colors = ["#E07A3F", "#245EDB", "#2A9D8F", "#8B5CF6", "#DC2626", "#0EA5E9", "#B45309", "#16A34A", "#DB2777", "#CA8A04"];
+    const folders = themes.map((t, i) => ({ id: `banc-tf${i}`, name: t, color: colors[i % colors.length], mapTheme: t }));
+    const projects = themes.map((t, i) => ({ id: `banc-tp${i}`, name: `Totem ${t}`, icon: "", color: colors[i % colors.length], folderId: folders[i].id }));
+    const tasks = [];
+    themes.forEach((t, i) => {
+      const done = [0, 1, 2, 3, 4, 5][i % 6];
+      for (let k = 0; k < 5; k++) tasks.push({ id: `banc-tt${i}-${k}`, title: `${t} · ${k + 1}`, projectId: projects[i].id, statusId: k < done ? "s5" : k % 2 ? "s3" : "s1", taskTypeId: "tt1", start: addDaysIso(iso(new Date()), k * 3 - 6), end: addDaysIso(iso(new Date()), k * 3 + 4), progress: k < done ? 100 : 30 + k * 10, assignee: seedTeamMembers[k % seedTeamMembers.length].name, checklist: [] });
+    });
+    mem.set("nexora:projectFolders", JSON.stringify(folders));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify(tasks));
   } else if (benchParams.get("cosmos") === "demo") {
     // Vue Cosmos (#402) : données d'EXEMPLE — dossiers, un sous-dossier (amas),
     // un dossier vide, un projet vide, « À trier » et une tâche sans projet.
