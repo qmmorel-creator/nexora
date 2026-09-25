@@ -5182,9 +5182,12 @@ function carteByOrder(a, b) {
   return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
 }
 
-function cartePlaceProjects(projects, memory) {
+function cartePlaceProjects(projects, memory, expansion) {
   const sorted = projects.slice().sort(carteByOrder);
-  const slots = carteSpiral(Math.max(19, sorted.length * 4 + 7));
+  // Écartement des dossiers (#491) : 0 = régions accolées, 1 = une case de
+  // mer (réglage historique), jusqu'à 4 = îles lointaines.
+  const e = expansion == null ? 1 : Math.max(0, Math.min(4, Math.round(Number(expansion) || 0)));
+  const slots = carteSpiral(Math.max(19, sorted.length * 4 * (e === 1 ? 1 : (1 + e) * (1 + e)) + 7));
   const index = {};
   slots.forEach((s, n) => { index[carteKey(s[0], s[1])] = n; });
   const used = {}, at = {}, groupOf = {};
@@ -5194,7 +5197,7 @@ function cartePlaceProjects(projects, memory) {
     const m = memory && memory.projects && memory.projects[p.id];
     if (m && !used[m] && index[m] !== undefined) { used[m] = p.id; at[p.id] = m.split(",").map(Number); }
   });
-  const otherGroupNear = (s, g) => CARTE_DIRS.some((d) => { const o = used[carteKey(s[0] + d[0], s[1] + d[1])]; return o && (groupOf[o] !== g || g == null); });
+  const otherGroupNear = (s, g) => e > 0 && carteRingTiles(s[0], s[1], e).some((t) => { const o = used[carteKey(t[0], t[1])]; return o && (groupOf[o] !== g || g == null); });
   // 2. Nouveaux projets dans l'ordre de la liste : un ajout ne déplace aucun ancien.
   sorted.forEach((p) => {
     if (at[p.id]) return;
@@ -5207,8 +5210,8 @@ function cartePlaceProjects(projects, memory) {
       if (mates.length) {
         let d = Infinity;
         mates.forEach((o) => { d = Math.min(d, carteDist(s[0], s[1], at[o.id][0], at[o.id][1])); });
-        score = d * 1000 + n;
-      } else score = n + (otherGroupNear(s, g) ? 100000 : 0);
+        score = d * 1000 + n + (e > 1 && otherGroupNear(s, g) ? 1e7 : 0);
+      } else score = n + (otherGroupNear(s, g) ? 1e7 : 0);
       if (score < bestScore) { bestScore = score; best = s; }
     });
     used[carteKey(best[0], best[1])] = p.id;
@@ -5252,23 +5255,40 @@ function carteAssignThemes(sorted, at, overrides) {
   return { byProject, byGroup: groupThemes };
 }
 
+// Densité des tâches (#491) : rayon intérieur des territoires, commun à
+// toute la carte et calé sur le plus gros projet. 3 = réglage historique
+// (rayon 3) ; en dessous, des territoires plus vastes et plus de cases
+// d'habillage ; au-dessus, des territoires resserrés, tâches groupées.
+const CARTE_DENSITY_FILL = { 1: 0.3, 2: 0.45, 4: 0.8, 5: 1 };
+function carteInnerRadius(maxTasks, density) {
+  const d = density == null ? 3 : Math.max(1, Math.min(5, Math.round(Number(density) || 3)));
+  if (d === 3) return CARTE_INNER;
+  const need = Math.ceil(Math.max(0, Number(maxTasks) || 0) / CARTE_DENSITY_FILL[d]);
+  let r = 1;
+  while (3 * r * (r + 1) < need && r < 8) r++;
+  return d < 3 ? Math.max(CARTE_INNER, r) : Math.max(2, r);
+}
+
 // Relief d'une tuile de territoire selon le thème. Renvoie { h, water }.
-function carteRelief(theme, ring, lq, lr, tileKey) {
+function carteRelief(theme, ring, lq, lr, tileKey, inner) {
   const n = carteRand("h:" + tileKey);
+  // Rayon intérieur variable (#491) : le relief garde la même amplitude.
+  const IN = inner || CARTE_INNER;
+  const up = ((IN + 1 - ring) * (CARTE_INNER + 1)) / (IN + 1);
   switch (theme.relief) {
-    case "terraces": return { h: 0.35 + (CARTE_INNER + 1 - ring) * 0.2 + n * 0.08, water: false };
-    case "peak": return { h: 0.3 + (CARTE_INNER + 1 - ring) * 0.42 + n * 0.1, water: false };
+    case "terraces": return { h: 0.35 + up * 0.2 + n * 0.08, water: false };
+    case "peak": return { h: 0.3 + up * 0.42 + n * 0.1, water: false };
     case "crater": {
       if (ring === 0) return { h: 1.25, water: false };
       // Lave (#408) : deux coulées descendent du cratère, et des poches
       // affleurent autour du sommet. Une coulée est un peu en creux.
       const lava = (lq === 0 && lr < 0) || (lr === 0 && lq > 0) || (ring === 1 && n < 0.3);
-      const h = 0.35 + (CARTE_INNER + 1 - ring) * 0.22 + n * 0.1;
+      const h = 0.35 + up * 0.22 + n * 0.1;
       return lava ? { h: h - 0.08, water: false, lava: true } : { h, water: false };
     }
     case "lake": return ring === 1 ? { h: 0.12, water: true } : { h: 0.4 + n * 0.15, water: false };
     case "coast": return lr + lq * 0.5 > 0.8 ? { h: 0.12, water: true } : { h: 0.42 + n * 0.15, water: false };
-    case "island": return ring === 3 ? { h: 0.12, water: true } : { h: 0.38 + (3 - ring) * 0.05 + n * 0.1, water: false };
+    case "island": return ring === IN ? { h: 0.12, water: true } : { h: 0.38 + Math.max(0, 3 - ring) * 0.05 + n * 0.1, water: false };
     case "gorge": return Math.abs(lr) === 0 && ring > 0 ? { h: 0.14, water: true } : { h: 0.95 + n * 0.25, water: false };
     case "marsh": return ring > 0 && n < 0.38 ? { h: 0.13, water: true } : { h: 0.3 + n * 0.1, water: false };
     case "dunes": return { h: 0.38 + Math.abs(Math.sin((lq * 1.3 + lr * 0.7))) * 0.22 + n * 0.05, water: false };
@@ -5289,7 +5309,14 @@ function carteBuild(input) {
     : projects;
   const projectById = {};
   allProjects.forEach((p) => { projectById[p.id] = p; });
-  const placed = cartePlaceProjects(allProjects, memory);
+  const expansion = input.expansion == null ? 1 : Math.max(0, Math.min(4, Math.round(Number(input.expansion) || 0)));
+  const density = input.density == null ? 3 : Math.max(1, Math.min(5, Math.round(Number(input.density) || 3)));
+  const perProject = {};
+  tasks.forEach((t) => { const pid = t.projectId == null ? "__terre-inconnue__" : t.projectId; perProject[pid] = (perProject[pid] || 0) + 1; });
+  const INNER = carteInnerRadius(Math.max(0, ...Object.values(perProject)), density);
+  const RR = INNER + 1;
+  const macro = (i, j) => [(2 * RR + 1) * i + RR * j, -RR * i + (RR + 1) * j];
+  const placed = cartePlaceProjects(allProjects, memory, expansion);
   const themes = carteAssignThemes(placed.sorted, placed.at, input.themeOverrides);
   const tiles = {};
   const territories = [];
@@ -5297,20 +5324,20 @@ function carteBuild(input) {
 
   placed.sorted.forEach((p) => {
     const slot = placed.at[p.id];
-    const c = carteMacroCenter(slot[0], slot[1]);
+    const c = macro(slot[0], slot[1]);
     const theme = CARTE_THEME_BY_ID[themes.byProject[p.id]];
     const terr = { projectId: p.id, slot, q: c[0], r: c[1], theme: theme.id, tiles: [] };
-    carteRingTiles(c[0], c[1], CARTE_R).forEach((t) => {
+    carteRingTiles(c[0], c[1], RR).forEach((t) => {
       const k = carteKey(t[0], t[1]);
       if (t[2] === 0) {
-        const rel = carteRelief(theme, 0, 0, 0, k);
+        const rel = carteRelief(theme, 0, 0, 0, k, INNER);
         setTile(t[0], t[1], { kind: "hub", projectId: p.id, theme: theme.id, ring: 0, h: Math.max(0.55, rel.h + 0.1) });
-      } else if (t[2] <= CARTE_INNER) {
-        const rel = carteRelief(theme, t[2], t[3], t[4], k);
+      } else if (t[2] <= INNER) {
+        const rel = carteRelief(theme, t[2], t[3], t[4], k, INNER);
         setTile(t[0], t[1], { kind: rel.water ? "water" : "land", projectId: p.id, theme: theme.id, ring: t[2], h: rel.h, inner: true, ...(rel.lava ? { lava: true } : {}) });
         terr.tiles.push(k);
       } else {
-        setTile(t[0], t[1], { kind: "edge", projectId: p.id, theme: theme.id, ring: 4, h: 0.3 + carteRand("h:" + k) * 0.15 });
+        setTile(t[0], t[1], { kind: "edge", projectId: p.id, theme: theme.id, ring: RR, h: 0.3 + carteRand("h:" + k) * 0.15 });
       }
     });
     territories.push(terr);
@@ -5334,15 +5361,19 @@ function carteBuild(input) {
   const bySlot = {};
   territories.forEach((t) => { bySlot[carteKey(t.slot[0], t.slot[1])] = true; });
   const around = {};
-  territories.forEach((tr) => CARTE_DIRS.forEach((d) => {
-    const s = [tr.slot[0] + d[0], tr.slot[1] + d[1]];
+  // Écartement (#491) : la mer s'étend assez loin pour combler l'espace
+  // entre deux dossiers éloignés.
+  const seaReach = Math.max(1, Math.ceil((expansion + 1) / 2));
+  territories.forEach((tr) => carteRingTiles(tr.slot[0], tr.slot[1], seaReach).forEach((h) => {
+    if (h[2] === 0) return;
+    const s = [h[0], h[1]];
     const sk = carteKey(s[0], s[1]);
     if (!bySlot[sk]) around[sk] = s;
   }));
   Object.keys(around).sort().forEach((sk) => {
     const s = around[sk];
-    const c = carteMacroCenter(s[0], s[1]);
-    carteRingTiles(c[0], c[1], CARTE_R).forEach((t) => {
+    const c = macro(s[0], s[1]);
+    carteRingTiles(c[0], c[1], RR).forEach((t) => {
       const k = carteKey(t[0], t[1]);
       if (tiles[k]) return;
       const islet = t[2] <= 1 && carteRand("islet:" + sk) < 0.35;
@@ -5367,8 +5398,8 @@ function carteBuild(input) {
       }));
       inTree.push(best.b);
       rest.splice(rest.indexOf(best.b), 1);
-      const ca = carteMacroCenter(placed.at[best.a][0], placed.at[best.a][1]);
-      const cb = carteMacroCenter(placed.at[best.b][0], placed.at[best.b][1]);
+      const ca = macro(placed.at[best.a][0], placed.at[best.a][1]);
+      const cb = macro(placed.at[best.b][0], placed.at[best.b][1]);
       const line = carteHexLine(ca[0], ca[1], cb[0], cb[1]);
       line.forEach((h) => {
         const t = tiles[carteKey(h[0], h[1])];
@@ -5406,7 +5437,8 @@ function carteBuild(input) {
     if (cl && !chosen[cl.id] && candSet.has(cl.key) && list.some((t) => t.id === cl.id)) { chosen[cl.id] = cl.key; occupancy[cl.key] = (occupancy[cl.key] || 0) + 1; }
     list.forEach((t) => {
       if (chosen[t.id]) return;
-      const ranked = cand.slice().sort((a, b) => carteHash(t.id + "@" + b) - carteHash(t.id + "@" + a) || (a < b ? -1 : 1));
+      // Densité forte (#491) : les tâches se groupent autour du cœur.
+      const ranked = cand.slice().sort((a, b) => (density > 3 ? tiles[a].ring - tiles[b].ring : 0) || carteHash(t.id + "@" + b) - carteHash(t.id + "@" + a) || (a < b ? -1 : 1));
       let pick = ranked.find((k) => !occupancy[k]);
       if (!pick) {
         // Territoire plein : regroupement sur la tuile la moins chargée.
@@ -5429,7 +5461,7 @@ function carteBuild(input) {
 
   const memOut = { projects: {}, tasks: taskTile };
   Object.keys(placed.at).forEach((id) => { memOut.projects[id] = carteKey(placed.at[id][0], placed.at[id][1]); });
-  return { tiles, territories, pois, routes, occupancy, themes: themes.byProject, groupThemes: themes.byGroup, memory: memOut, projectById };
+  return { tiles, territories, pois, routes, occupancy, themes: themes.byProject, groupThemes: themes.byGroup, memory: memOut, projectById, inner: INNER, expansion, density };
 }
 
 // Statistiques et palier d'un territoire.
@@ -6435,6 +6467,9 @@ function normalizeCarteViewPrefs(p) {
     views: carteNormalizeViews(v.views),
     // Roue d'action (#489) : actions choisies, dans l'ordre.
     wheel: carteNormalizeWheel(v.wheel),
+    // Écartement des dossiers (0 à 4) et densité des tâches (1 à 5) (#491).
+    expansion: Number.isFinite(Number(v.expansion)) && v.expansion !== null && v.expansion !== "" ? Math.max(0, Math.min(4, Math.round(Number(v.expansion)))) : 1,
+    density: Number.isFinite(Number(v.density)) && v.density !== null && v.density !== "" ? Math.max(1, Math.min(5, Math.round(Number(v.density)))) : 3,
   };
 }
 // === NEXORA:CARTE:END ===
