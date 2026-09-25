@@ -23263,6 +23263,30 @@ function CarteWheelSettings({ value, onChange, onClose }) {
 }
 
 // Vues enregistrées et vue plan (#481).
+// Filtre rapide de l'en-tête (#506) : multi-sélection à cases à cocher,
+// liste vide = tout. Même menu déroulant que « Affichage ».
+function CarteQuickFilter({ kind, label, allLabel, icon, options, value, onChange }) {
+  const sel = value || [];
+  const toggle = (id) => onChange(sel.indexOf(id) === -1 ? [...sel, id] : sel.filter((x) => x !== id));
+  const names = sel.map((id) => (options.find((o) => o.id === id) || {}).label).filter(Boolean);
+  const text = !sel.length ? allLabel : sel.length === 1 && names[0] ? names[0] : label + " · " + sel.length;
+  return (
+    <span className={"lp-carte-quick" + (sel.length ? " is-active" : "")} data-carte-quick={kind} data-carte-quick-count={sel.length}>
+      <DropdownButton label={text} icon={icon} title={label + " : cochez une ou plusieurs valeurs ; rien de coché, tout s'affiche"} panelClassName="lp-carte-quick-menu">
+        <button type="button" className="lp-carte-quick-all" disabled={!sel.length} onClick={() => onChange([])}>Tout afficher</button>
+        {options.map((o) => (
+          <label key={o.id} className="lp-checkbox-line">
+            <input type="checkbox" checked={sel.indexOf(o.id) !== -1} onChange={() => toggle(o.id)} aria-label={label + " : " + o.label} />
+            {o.color ? <span className="lp-carte-dot" style={{ background: o.color }} /> : null}
+            <span className="lp-carte-quick-name">{o.label}</span>
+            <small className="lp-carte-muted">{o.count}</small>
+          </label>
+        ))}
+        {!options.length && <span className="lp-carte-muted" style={{ padding: 6 }}>Aucune valeur</span>}
+      </DropdownButton>
+    </span>
+  );
+}
 function CarteViewsMenu({ cfg, setPrefs, engineRef, disabled }) {
   const [name, setName] = useState("");
   const save = () => {
@@ -23368,7 +23392,13 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  }, [norm, tasks, tasksWithDone, cfg.crits.join("|"), cfg.statuses.join("|"), cfg.assignees.join("|"), cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  // Filtres rapides (#506) : options tirées des tâches de la page.
+  const quickOptions = useMemo(() => {
+    const scope = new Set((tasksWithDone || tasks || []).map((t) => t.id));
+    return carteQuickOptions(norm.tasks.filter((t) => scope.has(t.id)), ctx.statuses, cfg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [norm, tasks, tasksWithDone, ctx.statuses, cfg.statuses.join("|"), cfg.assignees.join("|")]);
   // Mode fil d'Ariane (#435) : seules les prochaines échéances (parmi les
   // tâches retenues par les filtres) restent affichées, dans l'ordre, reliées
   // par le fil lumineux ; les autres projets sont grisés.
@@ -23717,9 +23747,9 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               </ul>, document.body)}
           </div>
           <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
-          <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
-            <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
-          </select>
+          <CarteQuickFilter kind="crits" label="Criticité" allLabel="Toute criticité" icon={<AlertTriangle size={13} />} options={quickOptions.crits} value={cfg.crits} onChange={(crits) => setPrefs({ crits, crit: "all" })} />
+          <CarteQuickFilter kind="statuses" label="Statuts" allLabel="Tous statuts" icon={<CircleDot size={13} />} options={quickOptions.statuses} value={cfg.statuses} onChange={(statuses) => setPrefs({ statuses })} />
+          <CarteQuickFilter kind="assignees" label="Responsables" allLabel="Tous responsables" icon={<Users size={13} />} options={quickOptions.assignees} value={cfg.assignees} onChange={(assignees) => setPrefs({ assignees })} />
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Regroupement, responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-carte-groupby" title="Ce qui forme les régions de la carte ; les projets restent les territoires de chaque région">
               <span>Regrouper par</span>

@@ -26,7 +26,7 @@ const C = vm.runInThisContext(
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard, carteDangerSign,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
-    carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
+    carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
@@ -189,7 +189,7 @@ test("filtres de la vue et préférences normalisées", () => {
   assert.equal(C.carteMatches(t, { states: ["todo"], late: true }), true, "#400 : les puces d'état et « En retard » n'existent plus");
   assert.equal(C.normalizeCarteViewPrefs({}).hideOldDone, false);
   const p = C.normalizeCarteViewPrefs({ crit: "nope", quality: "ultra", folderThemes: { f1: "volcan", f2: "inconnu" } });
-  assert.equal(p.crit, "all"); assert.equal(p.quality, "auto");
+  assert.deepEqual(p.crits, []); assert.equal(p.quality, "auto");
   assert.deepEqual(p.folderThemes, { f1: "volcan" });
 });
 
@@ -401,7 +401,7 @@ test("#400 : « Masquer les terminées depuis 30 jours » vaut aussi sans date d
 
 test("#400 : les filtres propres à la vue se comptent et se remettent à zéro", () => {
   const cfg = C.normalizeCarteViewPrefs({ states: ["todo"], crit: "urgent", late: true });
-  assert.equal(C.carteViewFilterCount(cfg), 1, "seule la criticité reste un filtre propre à la vue");
+  assert.equal(C.carteViewFilterCount(cfg), 1, "seule la criticité reste un filtre propre à la vue (reprise de l'ancienne valeur)");
   assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...cfg, ...C.carteViewFilterReset() })), 0);
   assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({})), 0);
 });
@@ -821,4 +821,44 @@ test("clic droit : parcelle constructible et parcelle libre la plus proche (#503
   assert.equal(C.carteNearestBuildable(L, hubKey, full), null);
   // Une liste vide n'occupe pas la case (tâches filtrées).
   assert.ok(C.carteBuildable(L, near.key, { [near.key]: [] }));
+});
+
+test("filtres rapides multi-sélection : normalisation et compatibilité (#506)", () => {
+  // Ancienne valeur unique reprise.
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crit: "urgent" }).crits, ["urgent"]);
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crit: "all" }).crits, []);
+  assert.deepEqual(C.normalizeCarteViewPrefs({}).crits, []);
+  // La liste nouvelle l'emporte sur l'ancienne valeur restée dans l'objet.
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crit: "urgent", crits: [] }).crits, []);
+  assert.deepEqual(C.normalizeCarteViewPrefs({ crits: ["bas", "urgent", "bas", "nope", 3, C.CARTE_NONE] }).crits, ["bas", "urgent", C.CARTE_NONE]);
+  const p = C.normalizeCarteViewPrefs({ statuses: ["s1", "s1", "", null, "s3"], assignees: "Alice" });
+  assert.deepEqual(p.statuses, ["s1", "s3"]);
+  assert.deepEqual(p.assignees, []);
+  assert.equal(C.normalizeCarteViewPrefs({ statuses: Array.from({ length: 500 }, (_, i) => "s" + i) }).statuses.length, 200);
+  // Stable : normaliser deux fois ne change rien.
+  const q = C.normalizeCarteViewPrefs({ crit: "moyen", statuses: ["s2"], assignees: ["Bob"] });
+  assert.deepEqual(C.normalizeCarteViewPrefs(q), q);
+  assert.equal(C.carteViewFilterCount(q), 3);
+  assert.equal(C.carteViewFilterCount(C.normalizeCarteViewPrefs({ ...q, ...C.carteViewFilterReset() })), 0);
+});
+
+test("filtres rapides multi-sélection : filtrage et options (#506)", () => {
+  const t = (criticality, statusId, assignee) => ({ criticality, statusId, assignee, oldDone: false });
+  const a = t("urgent", "s1", "Alice"), b = t("bas", "s3", "Bob"), c = t(null, "s3", null);
+  const f = (x) => [a, b, c].filter((k) => C.carteMatches(k, C.normalizeCarteViewPrefs(x)));
+  assert.deepEqual(f({}), [a, b, c]);
+  assert.deepEqual(f({ crits: ["urgent", "bas"] }), [a, b], "plusieurs criticités : OU");
+  assert.deepEqual(f({ crits: [C.CARTE_NONE] }), [c], "« Sans criticité »");
+  assert.deepEqual(f({ statuses: ["s3"] }), [b, c]);
+  assert.deepEqual(f({ assignees: ["Alice", C.CARTE_NONE] }), [a, c], "« Sans responsable »");
+  assert.deepEqual(f({ statuses: ["s3"], assignees: ["Bob"] }), [b], "entre filtres : ET");
+  assert.deepEqual(f({ crit: "urgent" }), [a], "ancienne valeur unique toujours comprise");
+  // Cosmos et Timeline 3D gardent la criticité unique : carteMatches la lit.
+  assert.equal(C.carteMatches(b, { crit: "urgent" }), false);
+  const statuses = [{ id: "s1", name: "À planifier", color: "#64748B" }, { id: "s2", name: "Attente" }, { id: "s3", name: "En cours", color: "#0EA5E9" }];
+  const o = C.carteQuickOptions([a, b, c, { ...b, assigneeColor: "#f00" }], statuses, { statuses: ["s2"], assignees: ["Zoé"] });
+  assert.deepEqual(o.statuses.map((x) => [x.id, x.count]), [["s1", 1], ["s2", 0], ["s3", 3]], "ordre de Nexora ; valeur retenue gardée");
+  assert.deepEqual(o.assignees.map((x) => [x.id, x.count]), [["Alice", 1], ["Bob", 2], ["Zoé", 0], [C.CARTE_NONE, 1]]);
+  assert.equal(o.assignees.find((x) => x.id === "Bob").color, "#f00");
+  assert.deepEqual(o.crits.map((x) => x.count), [1, 0, 2, 1]);
 });

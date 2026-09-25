@@ -1937,9 +1937,24 @@ try {
   await cp.click('button:has-text("Recentrer")');
   await cp.waitForTimeout(1500);
   // #374 : avec « Urgentes », les territoires sans tâche urgente sont grisés.
-  await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "urgent");
-  await cp.waitForTimeout(800);
+  // #506 : la criticité est un filtre rapide à cases à cocher (multi-sélection).
+  const quick = async (kind, label) => {
+    await cp.click(`.lp-carte-toolbar [data-carte-quick="${kind}"] .lp-tool-btn`);
+    await cp.waitForTimeout(250);
+    if (label) await cp.click(`.lp-carte-quick-menu input[aria-label="${label}"]`);
+    else await cp.click(".lp-carte-quick-menu .lp-carte-quick-all");
+    await cp.click(`.lp-carte-toolbar [data-carte-quick="${kind}"] .lp-tool-btn`).catch(() => {});
+    await cp.waitForTimeout(800);
+  };
+  const shownOf = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteShown));
+  carte.quick = { kinds: await cp.$$eval(".lp-carte-toolbar [data-carte-quick]", (e) => e.map((x) => x.dataset.carteQuick)), all: await shownOf() };
+  await quick("crits", "Criticité : Urgentes");
   carte.dim = await cp.evaluate(() => ({ dim: Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed), all: 7, pill: !!document.querySelector(".lp-carte-filtered button") }));
+  carte.quick.urgent = await shownOf();
+  await quick("crits", "Criticité : Moyennes");
+  carte.quick.urgentMoyen = await shownOf();
+  carte.quick.count = await cp.$eval('[data-carte-quick="crits"]', (e) => Number(e.dataset.carteQuickCount));
+  await quick("crits", "Criticité : Moyennes");
   // #401 : la carte simplifiée (menu « Affichage ») retire les projets écartés.
   // #400 : plus aucune puce de filtre rapide dans la barre.
   carte.chips = await cp.$$eval(".lp-carte-toolbar .lp-carte-fchip, .lp-carte-filter", (e) => e.length);
@@ -1982,7 +1997,8 @@ try {
   await groupBy("folder");
   carte.groupBy.back = await ribbonOf();
   carte.groupBy.backTerr = await terrOf();
-  await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "all");
+  await quick("crits", null);
+  carte.quick.back = await shownOf();
   await cp.waitForTimeout(800);
   carte.dimAfter = await cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed));
   // #364 : le moteur de filtre général s'ouvre depuis la carte.
@@ -3326,6 +3342,8 @@ if (!carte.error) {
   expect(cosmosWidget.largeHint && cosmosWidget.largeHint.length >= 1 && cosmosWidget.largeHint.every((n) => n === 0), `Widget Cosmos (complet) : un widget de 12 × 14 ne doit pas inviter à l'agrandir (${JSON.stringify(cosmosWidget)})`);
   expect(carte.ariadne && carte.ariadne.pill && carte.ariadne.n >= 1 && carte.ariadne.n <= 8 && carte.ariadne.shown === carte.ariadne.n && carte.ariadne.steps >= 1 && carte.ariadne.closed === 0 && carte.ariadne.after === carte.ariadne.before, `Carte : le mode Fil d'Ariane ne fonctionne pas (${JSON.stringify(carte.ariadne)})`);
   expect(carte.chips === 0, `Carte : ${carte.chips} puce(s) de filtre rapide encore affichée(s)`);
+  expect(carte.quick && ["crits", "statuses", "assignees"].every((k) => carte.quick.kinds.includes(k)), `Carte (#506) : filtres rapides Criticité, Statuts et Responsables absents (${JSON.stringify(carte.quick)})`);
+  expect(carte.quick && carte.quick.urgent < carte.quick.urgentMoyen && carte.quick.urgentMoyen < carte.quick.all && carte.quick.count === 2 && carte.quick.back === carte.quick.all, `Carte (#506) : la criticité en multi-sélection ne filtre pas comme attendu (${JSON.stringify(carte.quick)})`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
   {
     const G = carte.gestures || {};

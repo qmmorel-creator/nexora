@@ -6224,20 +6224,71 @@ function carteLegend(themeId) {
   ] };
 }
 
-// Filtre propre à la vue : criticité et terminées anciennes. Le reste passe
-// par les filtres de la page et le filtre général (#364).
+// Filtres rapides de la vue (#506) : criticité, statuts et responsables, en
+// multi-sélection (liste vide = tout), plus les terminées anciennes. Le reste
+// passe par les filtres de la page et le filtre général (#364).
+const CARTE_NONE = "__aucun__";
+const CARTE_CRIT_OPTIONS = [
+  { id: "urgent", label: "Urgentes" }, { id: "moyen", label: "Moyennes" }, { id: "bas", label: "Basses" }, { id: CARTE_NONE, label: "Sans criticité" },
+];
+const CARTE_QUICK_MAX = 200;
+function carteIdList(v, allowed) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  v.forEach((x) => {
+    if (typeof x !== "string" || !x || out.length >= CARTE_QUICK_MAX) return;
+    if (allowed && allowed.indexOf(x) === -1) return;
+    if (out.indexOf(x) === -1) out.push(x);
+  });
+  return out;
+}
+// Criticités retenues : la liste « crits », sinon l'ancienne valeur unique
+// « crit » (compatibilité ascendante : "urgent" devient ["urgent"]).
+function carteCritsOf(v) {
+  const ids = CARTE_CRIT_OPTIONS.map((o) => o.id);
+  if (Array.isArray(v.crits)) return carteIdList(v.crits, ids);
+  return v.crit && v.crit !== "all" && ids.indexOf(v.crit) !== -1 && v.crit !== CARTE_NONE ? [v.crit] : [];
+}
 function carteMatches(task, f) {
   if (!f) return true;
-  if (f.crit && f.crit !== "all" && task.criticality !== f.crit) return false;
+  const crits = carteCritsOf(f);
+  if (crits.length && crits.indexOf(task.criticality || CARTE_NONE) === -1) return false;
+  if (Array.isArray(f.statuses) && f.statuses.length && f.statuses.indexOf(task.statusId || CARTE_NONE) === -1) return false;
+  if (Array.isArray(f.assignees) && f.assignees.length && f.assignees.indexOf(task.assignee || CARTE_NONE) === -1) return false;
   // Les terminées sont visibles par défaut (#372) ; les masquer est un choix.
   if (f.hideOldDone && task.oldDone) return false;
   return true;
 }
-// Filtres propres à la vue (#400) : combien sont posés, et leur remise à zéro.
-function carteViewFilterCount(cfg) {
-  return cfg.crit && cfg.crit !== "all" ? 1 : 0;
+// Options des filtres rapides : les statuts (ordre de Nexora) et les
+// responsables présents parmi les tâches, avec leur nombre ; une valeur
+// retenue mais absente reste proposée, pour pouvoir la décocher.
+function carteQuickOptions(tasks, statuses, selected) {
+  const sel = selected || {};
+  const nSt = {}, nAs = {}, asColor = {};
+  (tasks || []).forEach((t) => {
+    const s = t.statusId || CARTE_NONE, a = t.assignee || CARTE_NONE;
+    nSt[s] = (nSt[s] || 0) + 1; nAs[a] = (nAs[a] || 0) + 1;
+    if (t.assignee && t.assigneeColor && !asColor[a]) asColor[a] = t.assigneeColor;
+  });
+  const st = [];
+  (statuses || []).forEach((s) => { if (s && s.id && (nSt[s.id] || (sel.statuses || []).indexOf(s.id) !== -1)) st.push({ id: s.id, label: s.name || s.id, color: s.color || null, count: nSt[s.id] || 0 }); });
+  if (nSt[CARTE_NONE] || (sel.statuses || []).indexOf(CARTE_NONE) !== -1) st.push({ id: CARTE_NONE, label: "Sans statut", color: null, count: nSt[CARTE_NONE] || 0 });
+  const names = Object.keys(nAs).filter((k) => k !== CARTE_NONE);
+  (sel.assignees || []).forEach((a) => { if (a !== CARTE_NONE && names.indexOf(a) === -1) names.push(a); });
+  names.sort((a, b) => a.localeCompare(b, "fr"));
+  const as = names.map((a) => ({ id: a, label: a, color: asColor[a] || null, count: nAs[a] || 0 }));
+  if (nAs[CARTE_NONE] || (sel.assignees || []).indexOf(CARTE_NONE) !== -1) as.push({ id: CARTE_NONE, label: "Sans responsable", color: null, count: nAs[CARTE_NONE] || 0 });
+  const nCr = {};
+  (tasks || []).forEach((t) => { const c = t.criticality || CARTE_NONE; nCr[c] = (nCr[c] || 0) + 1; });
+  const crits = CARTE_CRIT_OPTIONS.map((o) => ({ id: o.id, label: o.label, color: null, count: nCr[o.id] || 0 }));
+  return { crits, statuses: st, assignees: as };
 }
-function carteViewFilterReset() { return { crit: "all", filter: null }; }
+// Filtres propres à la vue (#400, #506) : combien sont posés, et leur remise à zéro.
+function carteViewFilterCount(cfg) {
+  const c = cfg || {};
+  return (carteCritsOf(c).length ? 1 : 0) + (Array.isArray(c.statuses) && c.statuses.length ? 1 : 0) + (Array.isArray(c.assignees) && c.assignees.length ? 1 : 0);
+}
+function carteViewFilterReset() { return { crit: "all", crits: [], statuses: [], assignees: [], filter: null }; }
 
 // Ruban (#392) : une pastille par dossier (les projets sans dossier sont
 // regroupés en dernier), avancement cumulé des projets du dossier.
@@ -6518,7 +6569,11 @@ function normalizeCarteViewPrefs(p) {
   return {
     // Les puces de filtre rapide (états, « En retard ») sont retirées (#400) :
     // d'anciennes valeurs enregistrées sont ignorées.
-    crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
+    // Filtres rapides en multi-sélection (#506) ; l'ancienne valeur unique
+    // « crit » est reprise dans « crits ».
+    crits: carteCritsOf(v),
+    statuses: carteIdList(v.statuses),
+    assignees: carteIdList(v.assignees),
     hideOldDone: !!v.hideOldDone,
     quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     folderThemes,
