@@ -13,3 +13,7 @@ Ouvrir `index.html?d=A` (ou `B`, `C`) dans un navigateur : three.js 0.158 est ch
 ## Totems par thème (#488)
 
 `totems-planche.png` : les quinze totems dans l'application (banc visuel, `?app=1&view=carte&carte=totems`).
+
+## Tableau hologramme (#494, maquette)
+
+`hologramme-description.png` et `hologramme-compte-rendu.png` : un double clic sur une tâche dont la description ou le compte rendu est non vide projette un tableau au-dessus d'elle. Un onglet par contenu ; double clic ou Échap pour fermer.
