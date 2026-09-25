@@ -19265,6 +19265,49 @@ function createCarteEngine(THREE, container, opts) {
     ].join("\n"));
   };
   MAT.w.customProgramCacheKey = () => "carte-sway";
+  // Drapeaux des totems (#508) : un tissu subdivisé, partagé par tous les
+  // drapeaux, qui ondule dans le vertex shader (onde qui part de la hampe,
+  // normales recalculées pour la lumière). Forme (droit, queue d'aronde,
+  // fanion) et phase par instance ; emblème clair dessiné dans le fragment.
+  const flagU = { value: 0 };
+  const flagGeo = new THREE.PlaneGeometry(1, 1, 14, 6).translate(0.5, 0, 0);
+  geos.push(flagGeo);
+  MAT.flag = mat(std({ roughness: 0.86, side: THREE.DoubleSide, envMapIntensity: 0.45 }));
+  MAT.flag.onBeforeCompile = (sh) => {
+    sh.uniforms.uFlagT = flagU;
+    sh.vertexShader = "uniform float uFlagT;\nattribute vec2 aFlag;\nvarying vec2 vFlagUv;\nvarying float vFlagShape;\n" + sh.vertexShader
+      .replace("#include <beginnormal_vertex>", [
+        "float flX = clamp(position.x, 0.0, 1.0);",
+        "float flA = uFlagT * 4.2 - flX * 7.0 + aFlag.x;",
+        "float flB = uFlagT * 6.3 - flX * 12.0 + aFlag.x * 1.7;",
+        "float flS = sin(flA) * 0.16 + sin(flB) * 0.045;",
+        "float flW = flS * flX;",
+        "float flD = flS - (cos(flA) * 1.12 + cos(flB) * 0.54) * flX;",
+        "vec3 objectNormal = normalize(vec3(-flD, 0.0, 1.0));",
+        "#ifdef USE_TANGENT",
+        "vec3 objectTangent = vec3(tangent.xyz);",
+        "#endif",
+      ].join("\n"))
+      .replace("#include <begin_vertex>", [
+        "#include <begin_vertex>",
+        "transformed.z += flW;",
+        "transformed.y -= flX * flX * 0.07;",
+        "vFlagUv = uv; vFlagShape = aFlag.y;",
+      ].join("\n"));
+    sh.fragmentShader = "varying vec2 vFlagUv;\nvarying float vFlagShape;\n" + sh.fragmentShader.replace("#include <color_fragment>", [
+      "#include <color_fragment>",
+      "float flY = abs(vFlagUv.y - 0.5);",
+      "if (vFlagShape > 0.5 && vFlagShape < 1.5 && vFlagUv.x > 0.68 && flY < (vFlagUv.x - 0.68) * 1.25) discard;",
+      "if (vFlagShape > 1.5 && flY > 0.5 * (1.0 - vFlagUv.x) + 0.015) discard;",
+      "vec2 flC = vec2(vFlagShape > 1.5 ? 0.27 : 0.36, 0.5);",
+      "float flE = length((vFlagUv - flC) * vec2(1.7, 1.0));",
+      "float flM = 1.0 - smoothstep(0.15, 0.165, flE);",
+      "float flR = smoothstep(0.08, 0.095, flE);",
+      "diffuseColor.rgb = mix(diffuseColor.rgb, mix(diffuseColor.rgb, vec3(1.0), 0.75), flM * flR);",
+      "diffuseColor.rgb *= 0.8 + 0.2 * smoothstep(0.0, 0.06, vFlagUv.x);",
+    ].join("\n"));
+  };
+  MAT.flag.customProgramCacheKey = () => "carte-flag";
   // Brouillard de guerre (#468) : bancs de brume sur les fiches incomplètes.
   MAT.fog = mat(std({ color: "#f3f5f8", transparent: true, opacity: 0.6, depthWrite: false, roughness: 1 }));
   // Particules de chantier (#480) : poussière et fumée (éclairées), étincelles.
@@ -21523,7 +21566,8 @@ function createCarteEngine(THREE, container, opts) {
       if (h.x == null) return;
       const st = S.stats[h.tr.projectId] || { pct: 0 };
       const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
-      A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283 });
+      const fs = carteFlagStyle(h.tr.theme);
+      A.flags.push({ x: h.x + 0.95, base: h.base, top: src.summit - 0.2, z: h.z, pct: Math.max(0, Math.min(100, st.pct || 0)) / 100, color: dim ? "#aeb3ba" : h.p.color || "#C08A3E", ph: carteRand("fl" + h.tr.projectId) * 6.283, shape: fs.code, finial: dim ? "#c9cdd3" : fs.finial });
     });
     // Convois permanents (#425) : une charrette par dépendance affichée.
     taskList.forEach((e) => {
@@ -21563,10 +21607,31 @@ function createCarteEngine(THREE, container, opts) {
     }
     if (A.lanterns.length) A.lMesh = ambMesh(G.ball, MAT.g, A.lanterns.length, () => "#ffcf5a");
     if (A.flags.length) {
-      A.fMast = ambMesh(G.cyl, MAT.l, A.flags.length, () => "#5a4030");
-      A.fCloth = ambMesh(G.box, MAT.l, A.flags.length, (i) => A.flags[i].color);
-      A.flags.forEach((f, i) => A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, Math.max(0.5, f.top - f.base + 0.2), 0.06))));
-      A.fMast.instanceMatrix.needsUpdate = true;
+      // Hampe, pommeau et tissu ondulant (#508). Matrices fixes : le vent est
+      // animé dans le shader (uFlagT), rien n'est recalculé image par image.
+      const n = A.flags.length;
+      A.fMast = ambMesh(G.cyl, MAT.l, n, () => "#5a4030");
+      A.fKnob = ambMesh(G.ball, MAT.l, n, (i) => A.flags[i].finial);
+      const fg = new THREE.BufferGeometry();
+      Object.keys(flagGeo.attributes).forEach((a) => fg.setAttribute(a, flagGeo.attributes[a]));
+      fg.setIndex(flagGeo.index);
+      const fa = new Float32Array(n * 2);
+      A.flags.forEach((f, i) => { fa[i * 2] = f.ph; fa[i * 2 + 1] = f.shape; });
+      fg.setAttribute("aFlag", new THREE.InstancedBufferAttribute(fa, 2));
+      A.fCloth = ambMesh(fg, MAT.flag, n, (i) => A.flags[i].color);
+      A.fCloth.userData.ownGeo = true;
+      A.fCloth.castShadow = true;
+      const windQ = new THREE.Quaternion().setFromAxisAngle(UP, 0.35), q2 = new THREE.Quaternion();
+      A.flags.forEach((f, i) => {
+        const mh = Math.max(0.5, f.top - f.base + 0.2);
+        A.fMast.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base, f.z), tmpQ.identity(), tmpS.set(0.06, mh, 0.06)));
+        A.fKnob.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.base + mh + 0.04, f.z), tmpQ.identity(), tmpS.set(0.15, 0.15, 0.15)));
+        // Hissé au pourcentage d'avancement.
+        const y = f.base + 0.36 + f.pct * Math.max(0.2, mh - 0.72);
+        tmpQ.copy(windQ).multiply(q2.setFromAxisAngle(UP, (carteRand("fw" + i) - 0.5) * 0.3));
+        A.fCloth.setMatrixAt(i, tmpM.compose(tmpP.set(f.x + 0.03, y, f.z), tmpQ, tmpS.set(0.92, 0.56, 1)));
+      });
+      A.fMast.instanceMatrix.needsUpdate = true; A.fKnob.instanceMatrix.needsUpdate = true; A.fCloth.instanceMatrix.needsUpdate = true;
     }
     if (A.windows.length) {
       A.winMesh = ambMesh(G.box, MAT.g, A.windows.length, () => "#ffd27a");
@@ -21631,16 +21696,7 @@ function createCarteEngine(THREE, container, opts) {
       });
       A.lMesh.instanceMatrix.needsUpdate = true; if (A.lMesh.instanceColor) A.lMesh.instanceColor.needsUpdate = true;
     }
-    // Drapeaux : hissés au pourcentage d'avancement, flottant au vent.
-    if (A.fCloth) {
-      A.flags.forEach((f, i) => {
-        const y = f.base + 0.1 + f.pct * Math.max(0.2, f.top - f.base - 0.5);
-        const wave = Math.sin(t * 2.2 + f.ph) * 0.35;
-        baseOf(tmpM, f.x, y, f.z, wave, 1);
-        putPart(A.fCloth, i, tmpM, 0.34, 0, 0, 0, 0, 0, 0.64 * (0.9 + 0.1 * Math.cos(t * 3 + f.ph)), 0.38, 0.03);
-      });
-      A.fCloth.instanceMatrix.needsUpdate = true;
-    }
+    // Drapeaux (#508) : l'ondulation est dans le shader (MAT.flag).
     // Convois : la charrette avance ; bloquée, elle attend devant la barrière.
     if (A.carts) {
       A.convoys.forEach((cv, i) => {
@@ -22392,6 +22448,7 @@ function createCarteEngine(THREE, container, opts) {
     const t = S.time;
     // Matières vivantes (#479) : feuillages, rides de l'eau, portails.
     swayU.value = reduced ? 0 : t;
+    flagU.value = reduced ? 0 : t;
     if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); seaU.off.value.set((t * 0.012) % 1, (t * 0.008) % 1); portalTex.rotation = -t * 0.8; }
     placeCloudShadows(t);
     placeFog(t);
@@ -22835,6 +22892,17 @@ function createCarteEngine(THREE, container, opts) {
       return best;
     },
     goToGroup: (ids) => goToGroup(ids),
+    // Banc visuel : cadrage immédiat (sans glissement), pour les captures.
+    snapView(v) {
+      if (!v) return;
+      S.follow = false; S.walkTo = null; S.viewGoal = null;
+      S.focusGoal = new THREE.Vector3(Number(v.x) || 0, Number(v.y) || 0, Number(v.z) || 0);
+      S.target.copy(S.focusGoal);
+      S.yaw = Number(v.yaw) || 0; S.pitch = Math.max(0.2, Math.min(1.52, Number(v.pitch) || 0.92)); S.dist = Math.max(3, Math.min(CARTE_DIST_MAX, Number(v.dist) || 19));
+      updateCamera(1, true);
+    },
+    // Banc visuel (#508) : hampes des drapeaux [x, pied, sommet, z, forme].
+    ambientFlags: () => (S.amb ? S.amb.flags.map((f) => [f.x, f.base, f.top, f.z, f.shape, f.pct]) : []),
     // Banc visuel (#505) : fige la téléportation à l'instant t (null : reprend).
     teleportFreeze: (t) => { TP.fixed = t == null ? null : Number(t); if (t != null && !TP.on) { TP.on = true; tpGroup.visible = true; } },
     fxState: () => ({ teleport: TP.on, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),

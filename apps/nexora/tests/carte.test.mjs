@@ -28,7 +28,7 @@ const C = vm.runInThisContext(
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, cartePersonSocle, carteFigurineTint, CARTE_FIGURINE_BASE, CARTE_AVATAR_ANCHOR, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, cartePersonSocle, carteFigurineTint, carteFlagStyle, CARTE_FIGURINE_BASE, CARTE_AVATAR_ANCHOR, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloBlocks, carteHoloInline,
   };\n})`
 )();
@@ -968,4 +968,20 @@ test("figurine des responsables : socle à la couleur, repli procédural (#501)"
   assert.match(C.carteFigurineTint("#123456"), /^#[0-9a-f]{6}$/i);
   assert.notEqual(C.carteFigurineTint("#123456").toLowerCase(), "#ffffff");
   assert.notEqual(C.carteFigurineTint("#123456").toLowerCase(), "#123456");
+});
+
+test("drapeaux des totems : forme et pommeau pour chaque thème (#508)", () => {
+  const seen = new Set();
+  C.CARTE_THEMES.forEach((th) => {
+    const f = C.carteFlagStyle(th.id);
+    assert.ok(["rect", "swallowtail", "pennant"].includes(f.shape), `${th.id} : forme ${f.shape}`);
+    assert.equal(f.code, { rect: 0, swallowtail: 1, pennant: 2 }[f.shape]);
+    assert.match(f.finial, /^#[0-9a-f]{6}$/i);
+    seen.add(f.shape);
+  });
+  assert.equal(seen.size, 3, "les trois formes servent");
+  assert.equal(C.carteFlagStyle("foret").shape, "swallowtail", "bannière à queue d'aronde en forêt");
+  assert.equal(C.carteFlagStyle("mer").shape, "pennant");
+  assert.equal(C.carteFlagStyle("cyberpunk").finial, "#3ef0ff");
+  assert.deepEqual(C.carteFlagStyle("inconnu"), { shape: "rect", code: 0, finial: "#d9b23a" }, "repli");
 });
