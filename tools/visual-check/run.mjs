@@ -2127,6 +2127,17 @@ try {
       await gp.waitForTimeout(900);
       G.createModal = await gp.evaluate(() => document.querySelectorAll(".lp-modal").length > 0);
     }
+    // #504 : double clic sur une pastille de dossier : l'arpenteur s'y rend.
+    await gp.keyboard.press("Escape").catch(() => {});
+    await gp.waitForTimeout(400);
+    const k0 = await gp.evaluate(() => window.__carteBench.engine.fxState());
+    const badges = await gp.$$(".lp-carte-badge");
+    if (badges.length > 1) {
+      await badges[1].dblclick();
+      await gp.waitForTimeout(1500);
+      const k1 = await gp.evaluate(() => window.__carteBench.engine.fxState());
+      G.folderGo = { goal: k1.walkTo, moved: Math.hypot(k1.keeper[0] - k0.keeper[0], k1.keeper[1] - k0.keeper[1]), pop: await gp.$$eval(".lp-carte-folder-pop", (e) => e.length) };
+    }
     await gp.screenshot({ path: path.join(dir, "carte-gestes.png") });
   } catch (e) {
     carte.gestures.error = String(e).split("\n")[0];
@@ -3357,6 +3368,7 @@ if (!carte.error) {
       expect(G.createModal, "Carte (#503) : « Construire ici » n'ouvre pas la fiche de création");
     }
     expect(G.leftDrag && G.leftDrag.moved > 0.5 && G.leftDrag.yaw < 0.01 && !G.leftDrag.walkTo, `Carte (#510) : le clic gauche glissé doit déplacer la carte sans tourner ni marcher (${JSON.stringify(G.leftDrag)})`);
+    expect(!G.folderGo || ((G.folderGo.goal || G.folderGo.moved > 1) && G.folderGo.pop === 0), `Carte (#504) : le double clic sur une pastille de dossier n'y emmène pas l'arpenteur (${JSON.stringify(G.folderGo)})`);
     expect(G.middleDrag && G.middleDrag.yaw > 0.05, `Carte (#510) : la molette enfoncée glissée doit faire tourner la caméra (${JSON.stringify(G.middleDrag)})`);
   }
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);

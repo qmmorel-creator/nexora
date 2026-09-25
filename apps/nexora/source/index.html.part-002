@@ -6539,6 +6539,63 @@ function carteNearestBuildable(layout, key, occupied, projectId) {
   });
   return best;
 }
+// Pastille de dossier (#504) : point d'arrivée de l'arpenteur au double
+// clic. Parmi les cases intérieures de TOUS les territoires du dossier (hors
+// eau et lave), celle qui est la plus proche du centre du dossier ; une case
+// libre (sans tâche affichée) l'emporte, pour ne pas atterrir sur un toit.
+function carteGroupAnchor(layout, projectIds, occupied) {
+  if (!layout || !layout.tiles || !Array.isArray(projectIds)) return null;
+  const set = new Set(projectIds);
+  const terrs = (layout.territories || []).filter((t) => set.has(t.projectId));
+  if (!terrs.length) return null;
+  let cx = 0, cz = 0;
+  terrs.forEach((t) => { const w = carteToWorld(t.q, t.r); cx += w.x; cz += w.z; });
+  cx /= terrs.length; cz /= terrs.length;
+  let best = null, bs = Infinity;
+  terrs.forEach((tr) => tr.tiles.forEach((k) => {
+    const t = layout.tiles[k];
+    if (!t || t.kind === "water" || t.kind === "sea" || t.lava) return;
+    const w = carteToWorld(t.q, t.r);
+    const busy = occupied && occupied[k] && (!Array.isArray(occupied[k]) || occupied[k].length);
+    const sc = Math.hypot(w.x - cx, w.z - cz) + (busy ? 1000 : 0);
+    if (sc < bs - 1e-9 || (Math.abs(sc - bs) < 1e-9 && k < best.key)) { bs = sc; best = { key: k, q: t.q, r: t.r, x: w.x, z: w.z, projectId: t.projectId }; }
+  }));
+  if (!best) {
+    // Territoires sans case praticable : le cœur du plus central.
+    const tr = terrs.slice().sort((a, b) => { const wa = carteToWorld(a.q, a.r), wb = carteToWorld(b.q, b.r); return Math.hypot(wa.x - cx, wa.z - cz) - Math.hypot(wb.x - cx, wb.z - cz); })[0];
+    const w = carteToWorld(tr.q, tr.r);
+    best = { key: carteKey(tr.q, tr.r), q: tr.q, r: tr.r, x: w.x, z: w.z, projectId: tr.projectId };
+  }
+  // Rayon du dossier : sert à cadrer la caméra.
+  let rad = 0;
+  terrs.forEach((t) => { const w = carteToWorld(t.q, t.r); rad = Math.max(rad, Math.hypot(w.x - cx, w.z - cz)); });
+  best.radius = Math.round(rad * 100) / 100;
+  return best;
+}
+// Téléportation magique (#505) : chronologie pure d'un saut de 0,8 s. Cercle
+// runique et colonne de lumière au départ (enveloppe « a »), puis à
+// l'arrivée (« b ») ; l'arpenteur s'amincit et s'étire jusqu'à disparaître,
+// change de place à mi-course, puis se reforme.
+const CARTE_TP_DUR = 0.8;
+const CARTE_TP_SWAP = 0.36;
+function carteTeleportPhase(t) {
+  const c = (x) => Math.max(0, Math.min(1, x));
+  const ease = (x) => 1 - Math.pow(1 - c(x), 3);
+  const bell = (x, a, m, b) => (x <= a || x >= b ? 0 : x < m ? ease((x - a) / (m - a)) : 1 - Math.pow(c((x - m) / (b - m)), 2));
+  const tt = Math.max(0, Number(t) || 0);
+  const r = (x) => Math.round(x * 1000) / 1000;
+  const a = bell(tt, 0, 0.14, CARTE_TP_SWAP + 0.2);
+  const b = bell(tt, CARTE_TP_SWAP - 0.1, CARTE_TP_SWAP + 0.08, CARTE_TP_DUR);
+  let side, sx, sy;
+  if (tt < CARTE_TP_SWAP) { const k = ease((tt - 0.06) / (CARTE_TP_SWAP - 0.06)); side = "from"; sx = 1 - 0.88 * k; sy = 1 + 0.7 * k; }
+  else { const k = ease((tt - CARTE_TP_SWAP - 0.05) / 0.32); side = "to"; sx = 0.12 + 0.88 * k; sy = 1.7 - 0.7 * k; }
+  return {
+    done: tt >= CARTE_TP_DUR, side,
+    a: { alpha: r(a), ring: r(0.35 + 1.25 * ease(tt / 0.2)), column: r(3.4 * a) },
+    b: { alpha: r(b), ring: r(0.35 + 1.25 * ease((tt - CARTE_TP_SWAP + 0.1) / 0.2)), column: r(3.4 * b) },
+    keeper: { sx: r(tt >= CARTE_TP_DUR ? 1 : sx), sy: r(tt >= CARTE_TP_DUR ? 1 : sy), visible: tt >= CARTE_TP_DUR || sx > 0.2 },
+  };
+}
 // Zoom stratégique (#476) : part de la carte ancienne selon la distance de
 // caméra, de 0 (3D) à 1 (plan). Seuil repoussé (#507) : la carte lointaine
 // n'arrive qu'à un dézoom nettement plus large, et le recul maximal de la
@@ -6605,6 +6662,8 @@ function normalizeCarteViewPrefs(p) {
     walk: v.walk !== false,
     // Tableau hologramme au double clic (#494) : actif par défaut.
     holo: v.holo !== false,
+    // Téléportation magique au clic sur un projet (#505) : désactivée par défaut.
+    teleport: v.teleport === true,
     // Effets avancés (#496 à #498) : lueurs (bloom), herbe dense, ombres de
     // nuages. Actifs par défaut ; à couper sur un petit appareil.
     fx: v.fx !== false,

@@ -28,7 +28,7 @@ const C = vm.runInThisContext(
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
   };\n})`
 )();
@@ -861,4 +861,53 @@ test("filtres rapides multi-sélection : filtrage et options (#506)", () => {
   assert.deepEqual(o.assignees.map((x) => [x.id, x.count]), [["Alice", 1], ["Bob", 2], ["Zoé", 0], [C.CARTE_NONE, 1]]);
   assert.equal(o.assignees.find((x) => x.id === "Bob").color, "#f00");
   assert.deepEqual(o.crits.map((x) => x.count), [1, 0, 2, 1]);
+});
+
+test("pastille de dossier : point d'arrivée au centre du dossier (#504)", () => {
+  const w = world(12, 30);
+  const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const L = C.carteBuild({ projects: n.projects, tasks: n.tasks });
+  const occupied = {};
+  L.pois.forEach((p) => { (occupied[p.key] = occupied[p.key] || []).push(p.taskId); });
+  const ids = n.projects.filter((p) => p.folderId === "f0").map((p) => p.id);
+  assert.ok(ids.length >= 2);
+  const a = C.carteGroupAnchor(L, ids, occupied);
+  assert.ok(a && ids.includes(a.projectId), "le point est dans un territoire du dossier");
+  const t = L.tiles[a.key];
+  assert.ok(t.inner && t.kind !== "water" && !t.lava, "case intérieure praticable");
+  assert.ok(!occupied[a.key], "une case libre l'emporte");
+  assert.ok(a.radius > 0);
+  // Le plus proche du centre des territoires du dossier.
+  const terrs = L.territories.filter((x) => ids.includes(x.projectId));
+  const cx = terrs.reduce((s2, x) => s2 + C.carteToWorld(x.q, x.r).x, 0) / terrs.length;
+  const cz = terrs.reduce((s2, x) => s2 + C.carteToWorld(x.q, x.r).z, 0) / terrs.length;
+  const d = Math.hypot(a.x - cx, a.z - cz);
+  terrs.forEach((tr) => tr.tiles.forEach((k) => { const u = L.tiles[k]; if (u.kind === "water" || u.lava || occupied[k]) return; const p = C.carteToWorld(u.q, u.r); assert.ok(Math.hypot(p.x - cx, p.z - cz) >= d - 1e-9); }));
+  assert.deepEqual(C.carteGroupAnchor(L, ids, occupied), a, "déterministe");
+  // Un seul projet : son territoire ; aucun projet connu : rien.
+  assert.equal(C.carteGroupAnchor(L, [ids[0]], occupied).projectId, ids[0]);
+  assert.equal(C.carteGroupAnchor(L, ["inconnu"], occupied), null);
+  assert.equal(C.carteGroupAnchor(null, ids), null);
+});
+
+test("téléportation magique : chronologie et préférence (#505)", () => {
+  assert.ok(C.CARTE_TP_DUR >= 0.6 && C.CARTE_TP_DUR <= 0.9, "courte : 0,6 à 0,9 s");
+  const p0 = C.carteTeleportPhase(0);
+  assert.equal(p0.side, "from"); assert.equal(p0.keeper.sx, 1); assert.equal(p0.keeper.visible, true); assert.equal(p0.done, false);
+  const mid = C.carteTeleportPhase(C.CARTE_TP_SWAP - 0.01);
+  assert.equal(mid.side, "from"); assert.ok(mid.keeper.sx < 0.2 && mid.keeper.sy > 1.5, "dissous et étiré avant le saut"); assert.equal(mid.keeper.visible, false);
+  assert.ok(mid.a.alpha > 0 && mid.b.alpha > 0, "les deux cercles se chevauchent au moment du saut");
+  const after = C.carteTeleportPhase(C.CARTE_TP_SWAP + 0.01);
+  assert.equal(after.side, "to");
+  const end = C.carteTeleportPhase(C.CARTE_TP_DUR);
+  assert.equal(end.done, true); assert.deepEqual([end.keeper.sx, end.keeper.sy, end.keeper.visible], [1, 1, true]);
+  assert.equal(end.a.alpha, 0); assert.equal(end.b.alpha, 0);
+  for (let t = 0; t <= 1; t += 0.02) {
+    const p = C.carteTeleportPhase(t);
+    [p.a.alpha, p.b.alpha].forEach((v) => assert.ok(v >= 0 && v <= 1));
+    assert.ok(p.keeper.sx > 0 && p.keeper.sx <= 1 && p.keeper.sy >= 1 && p.keeper.sy <= 1.71);
+  }
+  assert.equal(C.normalizeCarteViewPrefs({}).teleport, false, "désactivée par défaut");
+  assert.equal(C.normalizeCarteViewPrefs({ teleport: true }).teleport, true);
+  assert.equal(C.normalizeCarteViewPrefs({ teleport: "oui" }).teleport, false);
 });
