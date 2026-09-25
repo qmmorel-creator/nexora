@@ -394,7 +394,8 @@ marque un événement, elle ne gratifie personne.
 |---|---|---|
 | Brouillard (#468) | `end`, `assignee`, `lastInteraction`, `progress` | Brume sur une tâche ouverte sans échéance, sans responsable, ou à 0 % sans activité depuis 30 jours (`carteIncomplete`). Compléter la fiche la dissipe. |
 | Roue d'action (#469) | `statusId`, `start`/`end`, `assignee` | Terminer ou rouvrir, +1 jour, +1 semaine, responsable, statut, fiche. Mêmes garde-fous que le volet : Google Calendar, calendrier synchronisé, statut imposé par le type. |
-| Construire ici (#470) | `projectId` | Clic droit (appui long au doigt) sur une parcelle libre : la fiche de création s'ouvre, projet rempli. La nouvelle tâche prend la parcelle choisie (`carteClaimTile`). |
+| Construire ici (#470, #503) | `projectId` | Clic droit (Ctrl + clic sur Mac, appui long au doigt) sur une parcelle libre : la fiche de création s'ouvre, projet rempli. La nouvelle tâche prend la parcelle choisie (`carteClaimTile`). Hors d'une parcelle libre du territoire (route, lisière, totem), la parcelle libre la plus proche est proposée (`carteNearestBuildable`) ; sur un bâtiment, le clic droit ouvre sa roue d'action. Disponible aussi dans le widget Carte. |
+| Gestes (#510) | — | Clic gauche glissé ou un doigt : déplacer la carte. Molette enfoncée, clic droit glissé ou Maj + clic glissés : tourner la caméra (le bouton « orbite » fait tourner au clic gauche). Roulette : zoom. Deux doigts : pincer pour zoomer, tourner pour pivoter. |
 | Mini-carte (#471) | `end` | Pings rouges (retard) et orange (échéance du jour) ; un clic y déplace la vue. |
 | Portail (#472) | — | Arche au pied de chaque totem : ouvre le projet dans la Timeline 3D, centrée sur aujourd'hui. |
 | Journal de quêtes (#473) | voir `carteQuests` | En retard, bloquées, conflits de dates, en dérive, sans responsable, sans échéance, oubliées. « Régler » ouvre l'action utile. Pas de visite guidée de la caméra. |

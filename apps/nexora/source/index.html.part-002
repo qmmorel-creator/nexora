@@ -6452,6 +6452,42 @@ function carteClaimTile(memory, pending, tasks) {
   // La réservation passe après les tâches déjà posées : aucune ne bouge.
   return { ...mem, claim: { id: fresh.id, key: pending.key } };
 }
+// Clic droit (#503) : parcelle constructible — case intérieure libre d'un
+// territoire connu, hors route et lave. « occupied » associe une clé de case
+// aux tâches affichées qui l'occupent.
+function carteBuildable(layout, key, occupied) {
+  const t = layout && layout.tiles && layout.tiles[key];
+  if (!t || !t.projectId || !t.inner || t.road || t.lava) return null;
+  const p = layout.projectById && layout.projectById[t.projectId];
+  if (!p || p.unknown) return null;
+  const o = occupied && occupied[key];
+  if (o && (!Array.isArray(o) || o.length)) return null;
+  return { projectId: t.projectId, key };
+}
+// Un clic droit hors d'une parcelle libre (bâtiment, route, lisière, cœur
+// ou totem du territoire) propose la parcelle libre la plus proche du même
+// territoire, au lieu de ne rien faire. Renvoie null si le territoire est
+// plein ou si la case n'appartient à aucun projet.
+function carteNearestBuildable(layout, key, occupied, projectId) {
+  if (!layout || !layout.tiles) return null;
+  const direct = key ? carteBuildable(layout, key, occupied) : null;
+  if (direct) return direct;
+  const t0 = key ? layout.tiles[key] : null;
+  const pid = projectId || (t0 && t0.projectId);
+  const terr = pid && (layout.territories || []).find((x) => x.projectId === pid);
+  if (!terr) return null;
+  const q0 = t0 ? t0.q : terr.q, r0 = t0 ? t0.r : terr.r;
+  let best = null, bd = Infinity;
+  terr.tiles.forEach((k) => {
+    const b = carteBuildable(layout, k, occupied);
+    if (!b) return;
+    const t = layout.tiles[k];
+    // Départage stable : la clé la plus petite l'emporte à distance égale.
+    const d = carteDist(q0, r0, t.q, t.r);
+    if (d < bd || (d === bd && k < best.key)) { bd = d; best = b; }
+  });
+  return best;
+}
 // Zoom stratégique (#476) : part de la carte ancienne selon la distance de
 // caméra, de 0 (3D) à 1 (plan). Seuil repoussé (#507) : la carte lointaine
 // n'arrive qu'à un dézoom nettement plus large, et le recul maximal de la

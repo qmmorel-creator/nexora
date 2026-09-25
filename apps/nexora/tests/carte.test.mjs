@@ -28,7 +28,7 @@ const C = vm.runInThisContext(
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
   };\n})`
 )();
@@ -787,4 +787,38 @@ test("#499 : recoloration de la planche Kenney vers la palette diorama", () => {
   assert.deepEqual(C.carteRegradeHsl(0.5, 0.05, 0.4), [0.08, 0.12, 0.4]);
   // Rouges et oranges : inchangés.
   assert.deepEqual(C.carteRegradeHsl(0.05, 0.7, 0.5), [0.05, 0.7, 0.5]);
+});
+
+test("clic droit : parcelle constructible et parcelle libre la plus proche (#503)", () => {
+  const w = world(2, 6, { perProject: 1 });
+  const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const L = C.carteBuild({ projects: n.projects, tasks: n.tasks });
+  const occupied = {};
+  L.pois.forEach((p) => { (occupied[p.key] = occupied[p.key] || []).push(p.taskId); });
+  const terr = L.territories.find((t) => t.projectId === "p0");
+  const busyKey = L.pois.find((p) => L.tiles[p.key].projectId === "p0").key;
+  // Case occupée : pas constructible, mais la plus proche libre est proposée.
+  assert.equal(C.carteBuildable(L, busyKey, occupied), null);
+  const near = C.carteNearestBuildable(L, busyKey, occupied);
+  assert.ok(near && near.projectId === "p0" && near.key !== busyKey);
+  assert.ok(C.carteBuildable(L, near.key, occupied));
+  // Case libre : proposée telle quelle.
+  assert.deepEqual(C.carteNearestBuildable(L, near.key, occupied), near);
+  // Cœur du projet (hub) ou totem : une parcelle libre du même territoire.
+  const hubKey = Object.keys(L.tiles).find((k) => L.tiles[k].kind === "hub" && L.tiles[k].projectId === "p0");
+  assert.equal(C.carteBuildable(L, hubKey, occupied), null);
+  const fromHub = C.carteNearestBuildable(L, hubKey, occupied);
+  assert.equal(fromHub.projectId, "p0");
+  assert.equal(C.carteDist(L.tiles[fromHub.key].q, L.tiles[fromHub.key].r, terr.q, terr.r), 1);
+  assert.equal(C.carteNearestBuildable(L, null, occupied, "p0").projectId, "p0");
+  // Déterministe.
+  assert.deepEqual(C.carteNearestBuildable(L, hubKey, occupied), fromHub);
+  // Hors territoire ou territoire plein : rien.
+  const sea = Object.keys(L.tiles).find((k) => !L.tiles[k].projectId);
+  if (sea) assert.equal(C.carteNearestBuildable(L, sea, occupied), null);
+  const full = {};
+  terr.tiles.forEach((k) => { full[k] = ["x"]; });
+  assert.equal(C.carteNearestBuildable(L, hubKey, full), null);
+  // Une liste vide n'occupe pas la case (tâches filtrées).
+  assert.ok(C.carteBuildable(L, near.key, { [near.key]: [] }));
 });

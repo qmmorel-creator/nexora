@@ -2929,7 +2929,7 @@ function WidgetFrame({ title, titleColor, titleEmoji, bandColor, onEdit, onDelet
   );
 }
 
-function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask, onUpdateTaskFromCarte, setProjectFolders, onUpdateTaskFromCosmos, onToggleDoneFromCosmos, favorites }) {
+function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, tabsSlot, expenses, expenseCategories, financeProQuotes, financeProBillingSchedule, financeProPayments, financeProMissions, financeProClients, dashboardName, dashboardProjectFilter, onUpdateDashboardProjectFilter, appearance, onViewDay, activityLog, myName, pages, activePageId, onSwitchPage, onAddPage, onRenamePage, onDeletePage, onDuplicatePage, onUpdatePageFilter, onUpdatePageMeta, taskBaselines, setTasks, setTaskArchive, pushToast, shortcutPrefs, metaTemporalBlocks, dashboardId, onOpenProject, onEditProject, boardId, transferBoards, onTransferWidget, tasksBeforeSearch, staffing, setStaffing, setWorkshops, setTeamMembers, setTeams, setTeamFolders, habitLog, setHabitLog, habitSkips, setHabitSkips, onOpenGanttView, onOpenMetaFilters, onOpenHabitThemes, onOpenTeamsSettings, onMarkDone, onStartTask, onUpdateTaskFromCarte, setProjectFolders, onUpdateTaskFromCosmos, onToggleDoneFromCosmos, favorites, onCreateTaskFromCarte }) {
   const [editingPageId, setEditingPageId] = useState(null); // page en cours de renommage (double-clic)
   const [editingPageName, setEditingPageName] = useState("");
   const [editingWidget, setEditingWidget] = useState(null); // null | "new" | widget à modifier
@@ -3872,7 +3872,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetEmbedRadar tasks={scoped} ctx={ctx} onOpen={onOpen} appearance={appearance} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "embedCarte" && (
-                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} setProjectFolders={setProjectFolders} />
+                  <WidgetEmbedCarte widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} onCreateTask={onCreateTaskFromCarte} setProjectFolders={setProjectFolders} />
                 )}
                 {w.type === "embedCosmos" && (
                   <WidgetEmbedCosmos widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} favorites={favorites} />
@@ -20443,9 +20443,12 @@ function createCarteEngine(THREE, container, opts) {
     });
     return best;
   }
-  // Glisser la vue (#396) : clic molette ou clic droit enfoncé, Maj + clic
-  // gauche, ou clic gauche en mode « main ». La caméra quitte l'arpenteur, qui
-  // ne bouge pas ; le recentrage ou un pas de l'arpenteur la lui rendent.
+  // Gestes de la souris (#510, inversés par rapport à #396) : le clic gauche
+  // glissé (ou un doigt) déplace la carte ; la molette enfoncée glissée fait
+  // tourner la caméra (orbite et inclinaison), tout comme le clic droit glissé
+  // ou Maj + clic gauche (pavés tactiles sans bouton du milieu), et le clic
+  // gauche en mode « orbite ». En déplaçant la carte, la caméra quitte
+  // l'arpenteur, qui ne bouge pas ; le recentrage ou un pas la lui rendent.
   function panBy(dx, dy) {
     const H = canvas.clientHeight || 600;
     const k = (2 * S.dist * Math.tan((camera.fov * Math.PI) / 360)) / H;
@@ -20457,6 +20460,37 @@ function createCarteEngine(THREE, container, opts) {
     S.focusGoal.x += mx; S.focusGoal.z += mz;
     S.target.x += mx; S.target.z += mz;
   }
+  // Clic droit (#470, #503). Cause du « clic droit sans effet » : l'action ne
+  // dépendait que du pointerup du bouton droit. Or ce relâchement n'arrive
+  // pas partout (Safari le perd après un menu contextuel ; Ctrl + clic sur Mac
+  // est un clic GAUCHE, qui faisait marcher l'arpenteur), et tout clic droit
+  // hors d'une parcelle libre (bâtiment, route, lisière, totem) ne faisait
+  // rien, sans aucun retour ; dans le widget, « Construire » n'était même pas
+  // branché. Désormais l'événement contextmenu, émis sur toutes les
+  // plateformes, déclenche l'action, et chaque cas a un effet visible.
+  const CTX_DEDUP_MS = 600;
+  function flashTip(cx, cy, text) {
+    const rect = canvas.getBoundingClientRect();
+    tip.textContent = text;
+    tip.style.transform = "translate(" + Math.round(cx - rect.left + 14) + "px," + Math.round(cy - rect.top + 12) + "px)";
+    tip.hidden = false;
+    clearTimeout(S.tipTimer);
+    S.tipTimer = setTimeout(() => { tip.hidden = true; }, 1800);
+  }
+  function rightClick(cx, cy) {
+    S.ctxAt = performance.now();
+    if (!S.layout) return;
+    if (HOLO.id && holoClick(cx, cy)) return;
+    const h = S.strategic > 0.5 ? null : pick(cx, cy);
+    const totem = S.strategic > 0.5 ? null : totemAt(cx, cy);
+    // Sur un bâtiment : la roue d'action de la tâche (#489).
+    const id = h && !totem ? taskAt(h.key, h.point) : null;
+    if (id) { select(id); return; }
+    if (!o.onBuild) { flashTip(cx, cy, "Clic droit : construire depuis la vue Carte"); return; }
+    const b = carteNearestBuildable(S.layout, h ? h.key : null, S.poisByKey, totem || null);
+    if (b) { setHoverTile(b.key, "#ffffff"); o.onBuild({ ...b, x: cx, y: cy }); S.buildShown = performance.now(); }
+    else if (h || totem) flashTip(cx, cy, "Aucune parcelle libre dans ce territoire");
+  }
   const onDown = (e) => {
     if (keyTarget.focus) keyTarget.focus({ preventScroll: true });
     // Clic molette : pas de défilement automatique du navigateur.
@@ -20464,19 +20498,22 @@ function createCarteEngine(THREE, container, opts) {
     pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointeur déjà relâché */ }
     const ids = Object.keys(pointers);
-    if (ids.length === 2) { const a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist }; drag = null; }
-    else {
-      // En vue plan (#481), le clic gauche glissé déplace la carte.
-      const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (e.shiftKey || S.panMode || S.plan));
-      drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false, pan };
-      if (pan) canvas.style.cursor = "grabbing";
+    if (ids.length === 2) {
+      // Deux doigts : pincer pour zoomer, tourner pour pivoter la caméra.
+      const a = pointers[ids[0]], b = pointers[ids[1]];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist, ang: Math.atan2(b.y - a.y, b.x - a.x), yaw: S.yaw };
+      drag = null;
+    } else {
+      const mouse = e.pointerType === "mouse" || !e.pointerType;
+      const orbit = !S.plan && (e.button === 1 || e.button === 2 || (e.button === 0 && mouse && (e.shiftKey || S.orbitMode)));
+      drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.yaw, pitch: S.pitch, moved: false, pan: !orbit, button: e.button, id: e.pointerId };
       // Construire ici (#470) : appui long sur une parcelle libre (tactile).
       clearTimeout(S.pressTimer);
-      if (e.pointerType !== "mouse" && o.onBuild) {
+      if (!mouse && o.onBuild) {
         const d0 = drag, cx = e.clientX, cy = e.clientY;
         S.pressTimer = setTimeout(() => {
           if (drag !== d0 || d0.moved || !S.layout) return;
-          const h = pick(cx, cy), b = h && buildableAt(h.key);
+          const h = pick(cx, cy), b = h && carteBuildable(S.layout, h.key, S.poisByKey);
           if (b) { d0.consumed = true; o.onBuild({ ...b, x: cx, y: cy }); }
         }, 550);
       }
@@ -20488,11 +20525,19 @@ function createCarteEngine(THREE, container, opts) {
     if (pinch && ids.length === 2) {
       const a = pointers[ids[0]], b = pointers[ids[1]];
       S.dist = Math.max(7, Math.min(CARTE_DIST_MAX, pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y))));
+      if (!S.plan) {
+        let da = Math.atan2(b.y - a.y, b.x - a.x) - pinch.ang;
+        da = Math.atan2(Math.sin(da), Math.cos(da));
+        S.yaw = pinch.yaw - da;
+      }
       return;
     }
+    // Relâchement perdu (hors de la fenêtre, menu système) : plus aucun
+    // bouton enfoncé, le glisser s'arrête au lieu de coller au curseur.
+    if (drag && e.pointerType === "mouse" && e.buttons === 0) { drag = null; canvas.style.cursor = S.hovered ? "pointer" : "grab"; }
     if (drag) {
       const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-      if (Math.hypot(dx, dy) > 6) { drag.moved = true; clearTimeout(S.pressTimer); }
+      if (!drag.moved && Math.hypot(dx, dy) > 6) { drag.moved = true; clearTimeout(S.pressTimer); canvas.style.cursor = drag.pan ? "grabbing" : "move"; }
       if (drag.pan) { if (drag.moved) panBy(e.clientX - drag.lx, e.clientY - drag.ly); drag.lx = e.clientX; drag.ly = e.clientY; }
       else if (drag.moved) { S.yaw = drag.yaw - dx * 0.006; S.pitch = Math.max(0.45, Math.min(1.35, drag.pitch + dy * 0.004)); }
       return;
@@ -20520,25 +20565,27 @@ function createCarteEngine(THREE, container, opts) {
       const id = h && !totem ? taskAt(h.key, h.point) : null;
       const hp = totem || (h && !id ? hubAt(h.key) : null);
       const hv = portal ? "o:" + portal : id ? "t:" + id : hp ? "p:" + hp : null;
-      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv && !S.panMode ? "pointer" : "grab"; }
+      if (hv !== S.hovered) { S.hovered = hv; canvas.style.cursor = hv ? "pointer" : "grab"; }
       // Contour lumineux (#477) : tâche, cœur de projet ou parcelle libre.
       if (S.strategic > 0.5) setHoverTile(null);
       else if (id) setHoverTile(S.poi[id] ? S.poi[id].key : h.key, "#ffe38a");
       else if (hp) { const tr = S.layout.territories.find((x) => x.projectId === hp); setHoverTile(tr ? carteKey(tr.q, tr.r) : null, (S.layout.projectById[hp] || {}).color); }
-      else if (h && buildableAt(h.key)) setHoverTile(h.key, "#ffffff");
+      else if (h && carteBuildable(S.layout, h.key, S.poisByKey)) setHoverTile(h.key, "#ffffff");
       else setHoverTile(null);
     }
   };
   const onUp = (e) => {
     delete pointers[e.pointerId];
-    clearTimeout(S.pressTimer);
+    clearTimeout(S.pressTimer); clearTimeout(S.menuTimer);
     if (pinch) { if (Object.keys(pointers).length < 2) pinch = null; drag = null; return; }
-    if (drag && drag.pan) canvas.style.cursor = S.panMode ? "grab" : S.hovered ? "pointer" : "grab";
+    if (drag && drag.moved) canvas.style.cursor = S.hovered ? "pointer" : "grab";
     if (drag && drag.consumed) { drag = null; return; }
-    // Clic droit sans glisser sur une parcelle libre : « Construire ici » (#470).
-    if (drag && !drag.moved && e.button === 2 && S.layout && o.onBuild) {
-      const h = pick(e.clientX, e.clientY), b = h && buildableAt(h.key);
-      if (b) o.onBuild({ ...b, x: e.clientX, y: e.clientY });
+    // Clic droit sans glisser (#503) : « Construire ici », ou la roue d'une
+    // tâche. Un clic droit GLISSÉ (rotation) ne déclenche rien, et le
+    // contextmenu qui suit sous Windows est ignoré (horodatage S.ctxAt).
+    if (drag && (e.button === 2 || drag.menu)) {
+      if (!drag.moved) rightClick(e.clientX, e.clientY);
+      else S.ctxAt = performance.now();
       drag = null;
       return;
     }
@@ -20564,7 +20611,7 @@ function createCarteEngine(THREE, container, opts) {
         if (pid) { if (o.onTerritory) o.onTerritory(pid); focusProject(pid); drag = null; return; }
       }
     }
-    if (drag && !drag.moved && !(drag.pan && e.button !== 0) && S.layout) {
+    if (drag && !drag.moved && e.button === 0 && S.layout) {
       const h = pick(e.clientX, e.clientY);
       const totem = totemAt(e.clientX, e.clientY);
       // Un clic (ou un toucher) sur un totem épingle le nom du projet.
@@ -20579,7 +20626,26 @@ function createCarteEngine(THREE, container, opts) {
     drag = null;
   };
   const onCancel = (e) => { delete pointers[e.pointerId]; drag = null; pinch = null; };
-  const onMenu = (e) => e.preventDefault();
+  const onMenu = (e) => {
+    e.preventDefault();
+    // macOS et Linux émettent le menu contextuel à l'APPUI : on attend le
+    // relâchement pour savoir si c'était un glisser (rotation). Ctrl + clic
+    // sur Mac arrive ici avec le bouton gauche et devient un clic droit.
+    if (drag && !drag.moved && !pinch) {
+      drag.menu = true;
+      if (drag.button === 0) drag.pan = false;
+      // Filet : si le relâchement ne vient jamais (Safari), l'action part
+      // quand même, tant que le pointeur n'a pas bougé.
+      const d0 = drag, cx = e.clientX, cy = e.clientY;
+      clearTimeout(S.menuTimer);
+      S.menuTimer = setTimeout(() => { if (drag === d0 && !d0.moved) { drag = null; rightClick(cx, cy); } }, 900);
+      return;
+    }
+    // Windows : le menu arrive APRÈS le relâchement, déjà traité. Sinon (touche
+    // Menu du clavier, relâchement perdu), le contextmenu agit seul.
+    if (performance.now() - (S.ctxAt || 0) < CTX_DEDUP_MS) return;
+    rightClick(e.clientX, e.clientY);
+  };
   const onAux = (e) => { if (e.button === 1) e.preventDefault(); };
   canvas.addEventListener("contextmenu", onMenu);
   canvas.addEventListener("mousedown", onAux);
@@ -21705,18 +21771,7 @@ function createCarteEngine(THREE, container, opts) {
     hoverLine.material.color.set(color || "#fff7c2"); hoverHalo.material.color.set(color || "#fff7c2");
     hoverLine.visible = hoverHalo.visible = true;
   }
-  // Parcelle libre d'un territoire, où l'on peut construire (#470).
-  function buildableAt(key) {
-    const t = S.layout && S.layout.tiles[key];
-    // Seules les cases intérieures d'un territoire reçoivent des tâches.
-    if (!t || !t.projectId || !t.inner || t.road || t.lava) return null;
-    const p = S.layout.projectById[t.projectId];
-    if (!p || p.unknown) return null;
-    // Une parcelle dont les tâches sont masquées par les filtres reste
-    // constructible : seules les tâches affichées l'occupent.
-    if (S.poisByKey[key]) return null;
-    return { projectId: t.projectId, key };
-  }
+  // Parcelle libre d'un territoire (#470) : carteBuildable, bloc CARTE.
 
   // ---------- Mini-carte (#471) ----------
   // Vue de dessus, nord en haut : cases à leur couleur, pings des retards
@@ -22485,6 +22540,28 @@ function createCarteEngine(THREE, container, opts) {
     },
     strategic: () => S.strategic,
     // Banc visuel : état des effets (#496 à #499).
+    // Banc visuel (#503) : point d'écran d'une parcelle libre visible, le plus
+    // près du centre, vérifié par le lancer de rayon (rien ne la masque).
+    buildPoint: () => {
+      if (!S.layout) return null;
+      const rect = canvas.getBoundingClientRect();
+      const v = new THREE.Vector3();
+      let best = null, bd = Infinity;
+      S.layout.territories.forEach((tr) => tr.tiles.forEach((k) => {
+        if (!carteBuildable(S.layout, k, S.poisByKey)) return;
+        const t = S.layout.tiles[k], w = carteToWorld(t.q, t.r);
+        v.set(w.x, (S.capTop && S.capTop[k] != null ? S.capTop[k] : t.h) + 0.05, w.z).project(camera);
+        if (v.z > 1) return;
+        const x = rect.left + (v.x + 1) / 2 * rect.width, y = rect.top + (1 - v.y) / 2 * rect.height;
+        if (x < rect.left + 60 || x > rect.right - 60 || y < rect.top + 60 || y > rect.bottom - 60) return;
+        const d = Math.hypot(x - (rect.left + rect.width / 2), y - (rect.top + rect.height / 2));
+        if (d >= bd || document.elementFromPoint(x, y) !== canvas) return;
+        const h = pick(x, y);
+        if (!h || h.key !== k || totemAt(x, y) || taskAt(h.key, h.point)) return;
+        bd = d; best = { x: Math.round(x), y: Math.round(y), key: k };
+      }));
+      return best;
+    },
     fxState: () => ({ keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
@@ -22500,7 +22577,7 @@ function createCarteEngine(THREE, container, opts) {
       updateCamera(1, true);
       return true;
     },
-    setPanMode: (on) => { S.panMode = !!on; canvas.style.cursor = "grab"; },
+    setOrbitMode: (on) => { S.orbitMode = !!on; canvas.style.cursor = on ? "move" : "grab"; },
     setViewOffset: (dx, dy) => { const nx = Math.round(dx || 0), ny = Math.round(dy || 0); if (nx === S.viewOffset[0] && ny === S.viewOffset[1]) return; S.viewOffset = [nx, ny]; applyViewOffset(); },
     setJoystick: (x, y) => { S.joy.x = x; S.joy.y = y; if (x || y) { S.follow = true; S.walkTo = null; } },
     nearTask: () => S.near,
@@ -22558,7 +22635,8 @@ function carteWebglAvailable() {
 // agrandir le widget.
 const CARTE_WIDGET_MIN_W = 500;
 const CARTE_WIDGET_MIN_H = 400;
-function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone, setProjectFolders }) {
+// Construire ici (#503) : le widget reçoit aussi la création de tâche.
+function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdateTask, onToggleDone, onCreateTask, setProjectFolders }) {
   // Le panneau du territoire est replié par défaut : la place est comptée.
   const stored = widget && widget.cartePrefs && typeof widget.cartePrefs === "object" ? widget.cartePrefs : { panel: false };
   const [local, setLocal] = useState(stored);
@@ -22571,7 +22649,7 @@ function WidgetEmbedCarte({ widget, tasks, ctx, onOpen, onUpdateWidget, onUpdate
   return (
     <div className="lp-widget-embed lp-widget-embed-carte">
       <CarteView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs}
-        setProjectFolders={setProjectFolders} onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} embedded />
+        setProjectFolders={setProjectFolders} onUpdateTask={onUpdateTask} onToggleDone={onToggleDone} onCreateTask={onCreateTask} embedded />
     </div>
   );
 }
@@ -23261,9 +23339,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const [log, setLog] = useState({ tasks: 0, territories: 0 });
   const logRef = useRef({ tasks: new Set(), territories: new Set() });
   const [coarse] = useState(() => !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches));
-  // Mode « main » (#396) : le clic gauche fait glisser la vue.
-  const [panMode, setPanMode] = useState(false);
-  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPanMode(panMode); }, [status, panMode]);
+  // Mode « orbite » (#510, ancien mode « main » de #396) : le clic gauche
+  // glissé fait tourner la vue au lieu de la déplacer.
+  const [orbitMode, setOrbitMode] = useState(false);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOrbitMode(orbitMode); }, [status, orbitMode]);
 
   // Tous les projets et toutes les tâches servent à la disposition (stabilité :
   // un filtre ne déplace rien) ; `tasks` (filtres Nexora) + filtres de la vue
@@ -23694,7 +23773,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || questsOn || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0} onKeyDown={onStageKey}
         data-carte-status={status} data-carte-group={cfg.groupBy} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
-        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
+        aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic gauche glissé pour déplacer la carte, molette enfoncée ou clic droit glissé pour la faire tourner, clic droit pour construire.">
         {embedded && small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour explorer la carte confortablement.</div>}
         {empty ? (
           <div className="lp-empty lp-carte-empty">
@@ -23779,8 +23858,8 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                   <button type="button" className="lp-icon-btn" aria-label="Zoomer" onClick={() => engineRef.current.zoomBy(0.8)}><Plus size={16} /></button>
                   <button type="button" className="lp-icon-btn" aria-label="Dézoomer" onClick={() => engineRef.current.zoomBy(1.25)}><Minus size={16} /></button>
                   <button type="button" className="lp-icon-btn" aria-label="Pivoter la caméra" onClick={() => engineRef.current.rotate(Math.PI / 4)}><RotateCcw size={15} /></button>
-                  <button type="button" className={"lp-icon-btn" + (panMode ? " is-active" : "")} aria-pressed={panMode} aria-label="Déplacer la vue à la souris"
-                    title="Déplacer la vue : clic gauche glissé (sinon clic molette, clic droit ou Maj + clic). Recentrer revient à l'arpenteur." onClick={() => setPanMode((v) => !v)}><Hand size={15} /></button>
+                  <button type="button" className={"lp-icon-btn" + (orbitMode ? " is-active" : "")} aria-pressed={orbitMode} aria-label="Tourner la vue au clic gauche"
+                    title="Tourner la vue : clic gauche glissé dans ce mode (sinon molette enfoncée, clic droit glissé ou Maj + clic glissé). Hors de ce mode, le clic gauche glissé déplace la carte." onClick={() => setOrbitMode((v) => !v)}><Orbit size={15} /></button>
                 </div>
                 {coarse && (
                   <>
