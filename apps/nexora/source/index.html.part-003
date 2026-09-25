@@ -18888,6 +18888,7 @@ function createCarteEngine(THREE, container, opts) {
     fog: o.fog !== false, minimap: o.minimap !== false, miniature: o.miniature !== false, life: o.life !== false, plan: !!o.plan,
     // Déplacement de l'arpenteur (#493) : désactivé, un clic zoome aussitôt.
     walk: o.walk !== false, lastClick: null,
+    holo: o.holo !== false,
     hoverKey: null, strategic: 0, viewGoal: null, buildId: 0, prevTasks: null,
   };
   // Décor (arbres, rochers) dans son propre groupe : il s'efface de loin (#481).
@@ -19777,6 +19778,7 @@ function createCarteEngine(THREE, container, opts) {
     else if (k === "+" || k === "=") { zoomBy(0.8); e.preventDefault(); }
     else if (k === "-") { zoomBy(1.25); e.preventDefault(); }
     else if (k === "enter" || k === " ") { if (S.near) { select(S.near); e.preventDefault(); } }
+    else if (k === "escape" && HOLO.id) { closeHolo(); e.preventDefault(); }
     else if (k === "c") { recenter(); e.preventDefault(); }
   }
   const kd = (e) => onKey(e, true), ku = (e) => onKey(e, false);
@@ -19933,7 +19935,15 @@ function createCarteEngine(THREE, container, opts) {
       // Double clic sans marche (#493) : on zoome encore.
       const now = performance.now(), lc = S.lastClick;
       S.lastClick = { t: now, x: e.clientX, y: e.clientY };
-      if (!S.walk && lc && now - lc.t < 380 && Math.hypot(e.clientX - lc.x, e.clientY - lc.y) < 12) S.dist = Math.max(7, S.dist * 0.6);
+      const dbl = lc && now - lc.t < 380 && Math.hypot(e.clientX - lc.x, e.clientY - lc.y) < 12;
+      // Hologramme (#494) : clic sur un onglet, double clic pour fermer.
+      if (HOLO.id && holoClick(e.clientX, e.clientY)) { if (dbl) closeHolo(); drag = null; return; }
+      if (dbl && S.holo) {
+        const hh = pick(e.clientX, e.clientY), tid = hh && taskAt(hh.key, hh.point);
+        if (tid && tid === HOLO.id) { closeHolo(); drag = null; return; }
+        if (tid && openHolo(tid)) { drag = null; return; }
+      }
+      if (!S.walk && dbl) S.dist = Math.max(7, S.dist * 0.6);
       const portal = portalAt(e.clientX, e.clientY);
       if (portal && o.onPortal) { o.onPortal(portal); drag = null; return; }
       // Carte ancienne (#476) : un clic sur un territoire y ramène la 3D.
@@ -19970,6 +19980,164 @@ function createCarteEngine(THREE, container, opts) {
   canvas.addEventListener("pointerleave", hideTip);
   canvas.addEventListener("wheel", hideTip, { passive: true });
 
+  // ---------- Tableau hologramme (#494) ----------
+  // Un panneau 3D projeté au-dessus d'une tâche qui a une description ou un
+  // compte rendu. Il est fixe dans l'espace, tourné vers la caméra au moment
+  // où il s'ouvre : pour le lire, il faut se placer devant (de dos, le texte
+  // apparaît en miroir). Un faisceau le relie au bâtiment.
+  const HOLO_W = 6.2, HOLO_H = 4.1, HOLO_PX = 1100, HOLO_PY = Math.round(HOLO_PX * HOLO_H / HOLO_W);
+  const holoCanvas = document.createElement("canvas");
+  holoCanvas.width = HOLO_PX; holoCanvas.height = HOLO_PY;
+  const holoTex = new THREE.CanvasTexture(holoCanvas);
+  holoTex.colorSpace = THREE.SRGBColorSpace;
+  holoTex.anisotropy = 8;
+  texs.push(holoTex);
+  const holoGroup = new THREE.Group();
+  holoGroup.visible = false;
+  scene.add(holoGroup);
+  const holoPlane = new THREE.PlaneGeometry(HOLO_W, HOLO_H);
+  const holoMat = mat(new THREE.MeshBasicMaterial({ map: holoTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+  const holoPanel = new THREE.Mesh(holoPlane, holoMat);
+  holoPanel.renderOrder = 20;
+  holoGroup.add(holoPanel);
+  // Cadre lumineux en relief et barre de balayage.
+  const holoFrameMat = mat(new THREE.MeshBasicMaterial({ color: "#8ff3ff", transparent: true, opacity: 0.9, toneMapped: false }));
+  [[0, HOLO_H / 2, HOLO_W + 0.08, 0.035], [0, -HOLO_H / 2, HOLO_W + 0.08, 0.035], [-HOLO_W / 2, 0, 0.035, HOLO_H], [HOLO_W / 2, 0, 0.035, HOLO_H]].forEach(([x, y, w, h]) => {
+    const b = new THREE.Mesh(G["box~s"], holoFrameMat); b.position.set(x, y, 0); b.scale.set(w, h, 0.035); holoGroup.add(b);
+  });
+  const holoScanMat = mat(new THREE.MeshBasicMaterial({ color: "#bff9ff", transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+  const holoScan = new THREE.Mesh(holoPlane, holoScanMat);
+  holoScan.scale.set(1, 0.05, 1); holoScan.position.z = 0.01; holoScan.renderOrder = 21;
+  holoGroup.add(holoScan);
+  // Faisceau (cône ouvert, pointe sur le bâtiment) et socle lumineux.
+  const holoBeamGeo = new THREE.CylinderGeometry(1, 0.08, 1, 32, 1, true).translate(0, 0.5, 0);
+  geos.push(holoPlane, holoBeamGeo);
+  const holoBeamMat = mat(new THREE.MeshBasicMaterial({ color: "#6fe8ff", transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false }));
+  const holoBeam = new THREE.Mesh(holoBeamGeo, holoBeamMat);
+  holoBeam.renderOrder = 19;
+  scene.add(holoBeam);
+  const holoBaseGeo = new THREE.RingGeometry(1.0, 1.22, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  geos.push(holoBaseGeo);
+  const holoBase = new THREE.Mesh(holoBaseGeo, mat(new THREE.MeshBasicMaterial({ color: "#8ff3ff", transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false })));
+  scene.add(holoBase);
+  holoBeam.visible = holoBase.visible = false;
+  const HOLO = { id: null, tab: 0, tabs: [], tabBoxes: [], t0: 0 };
+  function wrapLines(g, text, maxW) {
+    const words = String(text).split(/\s+/).filter(Boolean), out = [];
+    let line = "";
+    words.forEach((w) => { const t = line ? line + " " + w : w; if (g.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; });
+    if (line) out.push(line);
+    return out;
+  }
+  function drawHolo() {
+    const t = S.data && S.data.taskById[HOLO.id];
+    const g = holoCanvas.getContext("2d");
+    if (!t || !g) return;
+    const W = HOLO_PX, H = HOLO_PY, pad = 46;
+    g.clearRect(0, 0, W, H);
+    const bg = g.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, "rgba(12,48,82,0.97)"); bg.addColorStop(1, "rgba(8,30,64,0.96)");
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    g.fillStyle = "rgba(160,245,255,0.07)";
+    for (let y = 0; y < H; y += 4) g.fillRect(0, y, W, 1);
+    g.strokeStyle = "rgba(160,245,255,0.55)"; g.lineWidth = 2; g.strokeRect(10, 10, W - 20, H - 20);
+    g.strokeStyle = "#aef7ff"; g.lineWidth = 5;
+    [[18, 18, 1, 1], [W - 18, 18, -1, 1], [18, H - 18, 1, -1], [W - 18, H - 18, -1, -1]].forEach(([x, y, sx, sy]) => { g.beginPath(); g.moveTo(x, y + 34 * sy); g.lineTo(x, y); g.lineTo(x + 34 * sx, y); g.stroke(); });
+    const p = S.layout.projectById[t.projectId || "__terre-inconnue__"] || {};
+    g.shadowColor = "rgba(120,235,255,0.9)"; g.shadowBlur = 10;
+    g.fillStyle = "#9fefff"; g.font = "600 24px Inter, -apple-system, 'Segoe UI', sans-serif"; g.textBaseline = "top";
+    g.fillText(((p.name || "") + (p.folderName ? " · " + p.folderName : "")).toUpperCase(), pad, 40);
+    const st = t.statusName + (t.state === "doing" || t.progress > 0 ? " · " + t.progress + " %" : "");
+    g.textAlign = "right"; g.fillText(st.toUpperCase(), W - pad, 40); g.textAlign = "left";
+    g.fillStyle = "#ffffff"; g.font = "800 50px Inter, -apple-system, 'Segoe UI', sans-serif";
+    let title = t.title; while (title.length > 4 && g.measureText(title).width > W - 2 * pad) title = title.slice(0, -2);
+    g.fillText(title === t.title ? title : title + "…", pad, 76);
+    // Onglets (cliquables : coordonnées gardées pour le lancer de rayon).
+    HOLO.tabBoxes = [];
+    let tx = pad;
+    g.font = "700 26px Inter, -apple-system, 'Segoe UI', sans-serif";
+    HOLO.tabs.forEach((tab, i) => {
+      const w = g.measureText(tab.label).width + 44, on = i === HOLO.tab;
+      g.fillStyle = on ? "rgba(160,245,255,0.30)" : "rgba(160,245,255,0.06)";
+      g.strokeStyle = "rgba(160,245,255,0.8)"; g.lineWidth = 2;
+      g.beginPath(); g.roundRect ? g.roundRect(tx, 146, w, 46, 23) : g.rect(tx, 146, w, 46); g.fill(); g.stroke();
+      g.fillStyle = on ? "#ffffff" : "#bff6ff"; g.fillText(tab.label, tx + 22, 156);
+      HOLO.tabBoxes.push([tx / W, 146 / H, (tx + w) / W, 192 / H]);
+      tx += w + 14;
+    });
+    // Corps.
+    const tab = HOLO.tabs[HOLO.tab];
+    const paras = carteHoloParagraphs(tab && tab.id === "report" ? t.report : t.desc);
+    g.font = "500 31px Inter, -apple-system, 'Segoe UI', sans-serif"; g.fillStyle = "#e9fdff"; g.shadowBlur = 6;
+    let y = 222; const lh = 44, maxY = H - 96;
+    let cut = false;
+    for (const para of paras) {
+      if (!para.text) { y += lh * 0.4; continue; }
+      const x0 = pad + (para.bullet ? 34 : 0);
+      const lines = wrapLines(g, para.text, W - x0 - pad);
+      for (let i = 0; i < lines.length; i++) {
+        if (y + lh > maxY) { cut = true; break; }
+        if (para.bullet && i === 0) { g.beginPath(); g.arc(pad + 12, y + 20, 5, 0, Math.PI * 2); g.fill(); }
+        g.fillText(lines[i], x0, y); y += lh;
+      }
+      if (cut) break;
+    }
+    g.shadowBlur = 0;
+    g.fillStyle = "#9fefff"; g.font = "500 22px Inter, -apple-system, 'Segoe UI', sans-serif";
+    g.fillText(cut ? "Suite dans la fiche…" : carteDueText(t) + (t.assignee ? " · " + t.assignee : ""), pad, H - 66);
+    g.textAlign = "right"; g.fillText("Double-clic ou Échap pour fermer", W - pad, H - 66); g.textAlign = "left";
+    holoTex.needsUpdate = true;
+  }
+  const holoFwd = new THREE.Vector3();
+  function openHolo(id) {
+    const t = S.data && S.data.taskById[id], p = S.poi[id];
+    const tabs = carteHoloTabs(t);
+    if (!t || !p || !tabs.length) return false;
+    HOLO.id = id; HOLO.tabs = tabs; HOLO.tab = 0; HOLO.t0 = S.time;
+    drawHolo();
+    const lift = 2.4, cy = p.top + lift + HOLO_H / 2;
+    holoGroup.position.set(p.x, cy, p.z);
+    // Orienté vers la caméra au moment de l'ouverture, puis fixe.
+    // Incliné vers le regard du moment : lisible de face, oblique dès qu'on tourne.
+    holoGroup.rotation.order = "YXZ";
+    holoGroup.rotation.set(-Math.min(0.75, S.pitch * 0.6), S.yaw, 0);
+    holoGroup.visible = true;
+    const beamH = cy - HOLO_H / 2 - p.top;
+    holoBeam.position.set(p.x, p.top, p.z); holoBeam.scale.set(HOLO_W * 0.5, Math.max(0.3, beamH), HOLO_W * 0.12);
+    holoBeam.rotation.set(0, S.yaw, 0);
+    holoBase.position.set(p.x, p.top + 0.02, p.z); holoBase.scale.set(0.4, 1, 0.4);
+    holoBeam.visible = holoBase.visible = true;
+    o.onHologram && o.onHologram(id);
+    return true;
+  }
+  function closeHolo() {
+    if (!HOLO.id) return;
+    HOLO.id = null; holoGroup.visible = holoBeam.visible = holoBase.visible = false;
+    o.onHologram && o.onHologram(null);
+  }
+  function stepHolo() {
+    if (!HOLO.id) return;
+    const u = Math.min(1, (S.time - HOLO.t0) / 0.35);
+    const k = reduced ? 1 : 1 - Math.pow(1 - u, 3);
+    holoGroup.scale.set(1, Math.max(0.02, k), 1);
+    const flick = reduced ? 1 : 0.9 + 0.1 * Math.sin(S.time * 23) * Math.sin(S.time * 7.3);
+    holoMat.opacity = 0.97 + 0.03 * (flick - 0.9) / 0.1;
+    holoScan.position.y = reduced ? 0 : ((S.time * 0.6) % 1 - 0.5) * HOLO_H;
+    holoBeamMat.opacity = 0.12 + (reduced ? 0 : 0.05 * Math.sin(S.time * 4));
+  }
+  // Clic sur le panneau : changement d'onglet (lancer de rayon, coordonnées UV).
+  function holoClick(cx, cy) {
+    if (!HOLO.id) return false;
+    const rect = canvas.getBoundingClientRect();
+    ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObject(holoPanel, false)[0];
+    if (!hit || !hit.uv) return false;
+    const u = hit.uv.x, v = 1 - hit.uv.y;
+    const i = HOLO.tabBoxes.findIndex((b) => u >= b[0] && u <= b[2] && v >= b[1] && v <= b[3]);
+    if (i !== -1 && i !== HOLO.tab) { HOLO.tab = i; drawHolo(); }
+    return true;
+  }
   function walkTo(x, z) {
     if (!S.walk) {
       // Sans marche (#493) : l'arpenteur, invisible, est posé d'un coup ;
@@ -21171,7 +21339,8 @@ function createCarteEngine(THREE, container, opts) {
       ensureRT();
       renderer.setRenderTarget(post.rtA);
       renderer.render(scene, camera);
-      focusV.set(S.target.x, S.target.y, S.target.z).project(camera);
+      if (HOLO.id) focusV.copy(holoGroup.position).project(camera);
+      else focusV.set(S.target.x, S.target.y, S.target.z).project(camera);
       const U = tsMat.uniforms;
       U.uFocus.value = Math.max(0.2, Math.min(0.8, (focusV.y + 1) / 2));
       // Plus la vue est plongeante et lointaine, plus l'effet est marqué.
@@ -21267,7 +21436,7 @@ function createCarteEngine(THREE, container, opts) {
     const step = {};
     if (S.trailIds) S.trailIds.forEach((id, i) => { step[id] = i + 1; });
     if (far && S.trailIds) S.trailIds.forEach((id, i) => { const p = S.poi[id]; if (p) cand.push({ id: "t:" + id, kind: "task", tid: id, pos: projV.clone().set(p.x, p.labelTop || p.top, p.z), prio: 600 - i }); });
-    if (!far) {
+    if (!far && !HOLO.id) {
       const ids = {};
       if (S.trailIds) S.trailIds.forEach((id, i) => { ids[id] = 600 - i; });
       if (S.selected) { ids[S.selected] = 900; const st = S.data.taskById[S.selected]; if (st) st.dependsOn.forEach((d) => { ids[d] = 700; }); }
@@ -21393,6 +21562,7 @@ function createCarteEngine(THREE, container, opts) {
     if (S.selected && !S.poi[S.selected]) select(null);
     o.onQuality && o.onQuality(S.effQuality);
     events.slice(0, 12).forEach(playEvent);
+    if (HOLO.id) { if (!S.poi[HOLO.id] || !carteHoloTabs(S.data.taskById[HOLO.id]).length) closeHolo(); else { HOLO.tabs = carteHoloTabs(S.data.taskById[HOLO.id]); HOLO.tab = Math.min(HOLO.tab, HOLO.tabs.length - 1); drawHolo(); } }
   }
   function select(id) {
     S.selected = id || null;
@@ -21543,6 +21713,7 @@ function createCarteEngine(THREE, container, opts) {
       emitAmbient(dt);
       stepFx(dt);
       stepAnims();
+      stepHolo();
       renderFrame();
     }
     drawStrategic();
@@ -21560,15 +21731,18 @@ function createCarteEngine(THREE, container, opts) {
     setOptions(opt) {
       const v = opt || {};
       const rebuild = "fog" in v && !!v.fog !== S.fog;
-      ["fog", "minimap", "miniature", "life", "plan", "walk"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
+      ["fog", "minimap", "miniature", "life", "plan", "walk", "holo"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
+      if (!S.holo) closeHolo();
       if (rebuild && S.layout) build();
       if (!S.minimap) mini.hidden = true;
     },
+    hologramAt: () => (HOLO.id ? { x: holoGroup.position.x, y: holoGroup.position.y, z: holoGroup.position.z } : null),
+    hologramTab: (i) => { if (HOLO.id && HOLO.tabs[i]) { HOLO.tab = i; drawHolo(); } },
     getView: () => ({ x: Math.round(S.target.x * 100) / 100, z: Math.round(S.target.z * 100) / 100, yaw: Math.round(S.yaw * 1000) / 1000, pitch: Math.round(S.pitch * 1000) / 1000, dist: Math.round(S.dist * 100) / 100 }),
     setView(v) {
       if (!v) return;
       S.follow = false; S.walkTo = null;
-      S.focusGoal = new THREE.Vector3(Number(v.x) || 0, 0, Number(v.z) || 0);
+      S.focusGoal = new THREE.Vector3(Number(v.x) || 0, Number(v.y) || 0, Number(v.z) || 0);
       const tw = 2 * Math.PI;
       const dy = ((((Number(v.yaw) || 0) - S.yaw) % tw) + tw * 1.5) % tw - Math.PI;
       S.viewGoal = { yaw: S.yaw + dy, pitch: Math.max(0.45, Math.min(1.52, Number(v.pitch) || 0.92)), dist: Math.max(7, Math.min(150, Number(v.dist) || 19)) };
@@ -21583,6 +21757,8 @@ function createCarteEngine(THREE, container, opts) {
     },
     strategic: () => S.strategic,
     snapshot,
+    openHologram: (id) => openHolo(id),
+    closeHologram: () => closeHolo(),
     // Cadre un totem (banc visuel, captures) : caméra posée tout de suite.
     frameProject(pid, dist, yaw) {
       const tr = S.layout && S.layout.territories.find((t) => t.projectId === pid);
@@ -22455,7 +22631,9 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           quality: cfg.quality,
           people: cfg.people,
           ambient: cfg.ambient,
-          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk,
+          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo,
+          // Hologramme ouvert (#494) : la roue s'efface pour ne pas le masquer.
+          onHologram: (id) => { if (id) setWheel(null); },
           obstacles: () => (stageRef.current ? [...document.querySelectorAll(".lp-carte-folder-pop"), ...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => { setSelected(id); setWheel(id ? { id, sub: null } : null); },
           onBuild: onCreateTask ? (b) => setBuildAt(b) : null,
@@ -22514,7 +22692,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
-  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, photo]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, cfg.holo, photo]);
 
   // ---------- Pilotage (#468 à #481) ----------
   const quests = useMemo(() => carteQuests(norm, visible), [norm, visible]);
@@ -22736,6 +22914,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             </label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <label className="lp-checkbox-line" title="Sinon, un clic sur une case y amène directement la vue (double clic : zoom plus fort)"><input type="checkbox" checked={cfg.walk} onChange={(e) => setPrefs({ walk: e.target.checked })} /> Déplacer l'arpenteur à pied</label>
+            <label className="lp-checkbox-line" title="Double clic sur une tâche qui a une description ou un compte rendu : un tableau en hologramme s'affiche au-dessus, à lire de face"><input type="checkbox" checked={cfg.holo} onChange={(e) => setPrefs({ holo: e.target.checked })} /> Hologramme au double clic</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
             <label className="lp-checkbox-line" title="Convois, ouvriers, pigeons, lanternes, drapeaux, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
