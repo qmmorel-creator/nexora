@@ -22710,13 +22710,18 @@ function createTimeline3dEngine(THREE, container, opts) {
   const fmtShort = (d) => dateOf(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 
   // ---------- Placement ----------
+  // #461 : la voie d'une bifurcation est posée à 2,2 unités de l'axe de sa
+  // ligne (1,05 auparavant, la largeur du ballast : les deux voies se
+  // touchaient). Les lignes s'écartent d'autant pour que les bifurcations de
+  // deux lignes voisines, et leurs gares, ne se chevauchent pas.
+  const T3D_RAIL_BRANCH_LAT = 2.2, T3D_RAIL_LANE = 6.6;
   const lineOf = (id) => S.model.lineById[id];
   function pos(l, d, lat) {
     if (S.mode === "cabine") {
       const a = S.ang[l.id], r = S.R + (lat || 0) * 1.2;
       return V(Math.cos(a) * r, Math.sin(a) * r, -d * S.s);
     }
-    return V(d * S.s, 0.25, S.lane[l.id] + (lat || 0) * 1.05);
+    return V(d * S.s, 0.25, S.lane[l.id] + (lat || 0) * T3D_RAIL_BRANCH_LAT);
   }
   function layout() {
     const M = S.model;
@@ -22724,8 +22729,8 @@ function createTimeline3dEngine(THREE, container, opts) {
     if (S.mode === "rail") {
       S.s = 0.45; S.lane = {};
       let z = 0, prev = null;
-      M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) z += 3.6; S.lane[l.id] = z; z += 4.4; prev = l.folderId; });
-      const mid = (z - 4.4) / 2; Object.keys(S.lane).forEach((k) => { S.lane[k] -= mid; });
+      M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) z += 3.6; S.lane[l.id] = z; z += T3D_RAIL_LANE; prev = l.folderId; });
+      const mid = (z - T3D_RAIL_LANE) / 2; Object.keys(S.lane).forEach((k) => { S.lane[k] -= mid; });
     } else {
       S.s = 0.55; S.ang = {};
       const n = M.lines.length, gap = 0.9, units = n + M.groups.length * gap, step = TAU / Math.max(1, units);
@@ -23031,7 +23036,7 @@ function createTimeline3dEngine(THREE, container, opts) {
       const e = pos(l, l.end + 1.3, 0); box(0.26, 0.32, 0.62, std("#c8322f"), e.x, 0.32, e.z);
       l.stations.forEach((id) => {
         const x = M.stationById[id]; if (!x.branch) return;
-        const k = Math.min(1.05 / (S.s * 0.36), (x.e - x.s) / 2);
+        const k = Math.min(T3D_RAIL_BRANCH_LAT / (S.s * 0.5), (x.e - x.s) / 2);
         railTrack([pos(l, x.s, 0), pos(l, x.s + k, x.side), pos(l, x.e + 1.7, x.side)], x.st === "done", l.color);
       });
       railTrain(l);
@@ -24248,10 +24253,10 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
     n.tasks.forEach((t) => { n.taskById[t.id] = t; });
     return n;
   }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers, ctx.milestoneTypes]);
-  const model = useMemo(() => timeline3dBuild(ctx, norm), [norm, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
   const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
   const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
-  // Les filtres masquent des stations ; ils ne déplacent jamais le réseau.
+  // Tâches retenues par les filtres (bandeau, filtres de la page et de la vue,
+  // criticité).
   const visible = useMemo(() => {
     const pageScope = tasksWithDone || tasks || [];
     const scoped = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
@@ -24261,6 +24266,14 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  // #460 : le réseau suit les filtres. Il n'est construit qu'avec les tâches
+  // retenues : une ligne sans tâche visible disparaît, et le réseau se recadre
+  // sur ce qui reste (auparavant, les filtres masquaient seulement les gares
+  // d'un réseau toujours complet, ce qui semblait sans effet).
+  const visibleKey = useMemo(() => [...visible].sort().join("|"), [visible]);
+  const model = useMemo(() => timeline3dBuild(ctx, { ...norm, tasks: norm.tasks.filter((t) => visible.has(t.id)) }), [norm, visibleKey, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Toutes les tâches placées, filtres ou non : sert au compteur « x sur y ».
+  const placeable = useMemo(() => timeline3dBuild(ctx, norm).stations.length, [norm, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
@@ -24334,7 +24347,11 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   const hudNext = hud && hud.nextId ? model.stationById[hud.nextId] : null;
   const rail = cfg.mode === "rail";
   const playLabel = eng.playing ? "Pause" : eng.ended ? "Rejouer" : rail ? "Lecture" : "Rouler";
-  const note = [model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " hors de la fenêtre (−90 j à +1 an)" : ""].filter(Boolean).join(" · ");
+  // #459 : combien de tâches sont réellement posées sur le réseau, sur combien
+  // de placables (échéance dans la fenêtre) — un réseau vide se comprend alors
+  // d'un coup d'œil (filtres, dates).
+  const shownCount = model.stations.length;
+  const note = [placeable ? (shownCount === placeable ? shownCount + (shownCount > 1 ? " tâches" : " tâche") : shownCount + " sur " + placeable + " tâches") + " sur le réseau" : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " hors de la fenêtre (−90 j à +1 an)" : ""].filter(Boolean).join(" · ");
 
   return (
     <section className={"lp-carte-view lp-t3d-view" + (embedded ? " is-embedded" : "")} aria-label="Timeline 3D">
@@ -24376,8 +24393,17 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
         {small && status === "ready" && !empty && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour parcourir le réseau confortablement.</div>}
         {empty ? (
           <div className="lp-empty lp-carte-empty">
-            <strong>Aucune tâche datée à placer sur le réseau.</strong>
-            <span>Chaque projet devient une ligne et chaque tâche avec une échéance une station, placée à sa date.</span>
+            {placeable > 0 ? (
+              <>
+                <strong>Aucune tâche ne correspond aux filtres.</strong>
+                <span>{placeable} {placeable > 1 ? "tâches datées sont masquées" : "tâche datée est masquée"} par les filtres (bandeau, filtres de la page ou de la vue, criticité).</span>
+              </>
+            ) : (
+              <>
+                <strong>Aucune tâche datée à placer sur le réseau.</strong>
+                <span>Chaque projet devient une ligne et chaque tâche avec une échéance une station, placée à sa date.</span>
+              </>
+            )}
           </div>
         ) : (status === "nowebgl" || status === "error") ? (
           <Timeline3dFallback reason={status} model={model} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
