@@ -1996,7 +1996,9 @@ try {
   // proche au clavier.
   carte.panelPick = await cp.$eval(".lp-carte-panel-tasks button .lp-carte-panel-task", (e) => e.textContent).catch(() => "");
   await cp.click(".lp-carte-panel-tasks button");
-  await cp.waitForFunction(() => document.querySelector(".lp-carte-stage").dataset.carteNear, null, { timeout: 15000 }).catch(() => {});
+  // Sous rendu logiciel (~2 images/s), le pas de l'arpenteur est plafonné à
+  // 0,05 s par image : la marche prend une vingtaine de secondes réelles.
+  await cp.waitForFunction(() => document.querySelector(".lp-carte-stage").dataset.carteNear, null, { timeout: 45000 }).catch(() => {});
   carte.panelSelected = await cp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
   await cp.click('.lp-carte-detail [aria-label="Fermer le détail"]');
   await cp.waitForTimeout(400);
