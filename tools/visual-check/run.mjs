@@ -2055,94 +2055,6 @@ try {
   carte.stayOnProjectClick = await cp.evaluate(() => { const st = document.querySelector(".lp-carte-stage"); return { carte: !!document.querySelector(".lp-carte-view"), dimmed: st ? Number(st.dataset.carteDimmed) : -1 }; });
   await cp.close();
 
-  // #503 et #510 : un VRAI clic droit (souris de Playwright, pas un appel de
-  // l'API) sur une parcelle libre ouvre « Construire ici » ; un contextmenu
-  // seul (Ctrl + clic sur Mac, touche Menu, relâchement perdu) aussi ; un
-  // clic droit glissé fait tourner sans ouvrir le menu. Clic gauche glissé :
-  // la carte se déplace sans tourner ; molette enfoncée glissée : elle tourne.
-  carte.gestures = {};
-  const gp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-  try {
-    gp.on("pageerror", (e) => pageErrors.push("Carte (gestes) : " + e.message));
-    await gp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
-    await gp.addInitScript(() => { window.__carteBench = {}; });
-    await openCarte(gp, "demo", "&carteFx=0");
-    await gp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
-    await gp.waitForTimeout(2500);
-    const G = carte.gestures;
-    const view = () => gp.evaluate(() => window.__carteBench.engine.getView());
-    const menuOpen = () => gp.evaluate(() => !!document.querySelector(".lp-carte-build"));
-    const bp = await gp.evaluate(() => window.__carteBench.engine.buildPoint());
-    G.point = bp;
-    if (bp) {
-      await gp.mouse.click(bp.x, bp.y, { button: "right" });
-      await gp.waitForTimeout(700);
-      G.rightMenu = await menuOpen();
-      G.rightMenuText = await gp.$eval(".lp-carte-build", (e) => e.textContent).catch(() => "");
-      await gp.keyboard.press("Escape");
-      await gp.waitForTimeout(900);
-      G.afterEscape = await menuOpen();
-      // contextmenu sans pointerdown ni pointerup.
-      await gp.evaluate(({ x, y }) => { const c = document.querySelector("canvas.lp-carte-canvas"); c.dispatchEvent(new MouseEvent("contextmenu", { clientX: x, clientY: y, button: 2, bubbles: true, cancelable: true })); }, bp);
-      await gp.waitForTimeout(700);
-      G.ctxOnlyMenu = await menuOpen();
-      await gp.keyboard.press("Escape");
-      await gp.waitForTimeout(900);
-      // Clic droit glissé : rotation, pas de menu.
-      const v0 = await view();
-      await gp.mouse.move(bp.x, bp.y);
-      await gp.mouse.down({ button: "right" });
-      await gp.mouse.move(bp.x + 90, bp.y + 10, { steps: 6 });
-      await gp.mouse.up({ button: "right" });
-      await gp.waitForTimeout(900);
-      const v1 = await view();
-      G.rightDrag = { menu: await menuOpen(), yaw: Math.abs(v1.yaw - v0.yaw) };
-    }
-    // Clic gauche glissé : déplacement, sans rotation ni marche.
-    const box = await gp.locator("canvas.lp-carte-canvas").boundingBox();
-    const cx = Math.round(box.x + box.width * 0.4), cy = Math.round(box.y + box.height * 0.55);
-    const l0 = await view();
-    await gp.mouse.move(cx, cy);
-    await gp.mouse.down();
-    await gp.mouse.move(cx + 140, cy + 60, { steps: 8 });
-    await gp.mouse.up();
-    await gp.waitForTimeout(900);
-    const l1 = await view();
-    G.leftDrag = { moved: Math.hypot(l1.x - l0.x, l1.z - l0.z), yaw: Math.abs(l1.yaw - l0.yaw), walkTo: await gp.evaluate(() => window.__carteBench.engine.fxState().walkTo) };
-    // Molette enfoncée glissée : rotation.
-    const m0 = await view();
-    await gp.mouse.move(cx, cy);
-    await gp.mouse.down({ button: "middle" });
-    await gp.mouse.move(cx + 120, cy - 40, { steps: 8 });
-    await gp.mouse.up({ button: "middle" });
-    await gp.waitForTimeout(900);
-    const m1 = await view();
-    G.middleDrag = { yaw: Math.abs(m1.yaw - m0.yaw), pitch: Math.abs(m1.pitch - m0.pitch) };
-    // « Construire ici » ouvre la fiche de création.
-    const bp2 = await gp.evaluate(() => window.__carteBench.engine.buildPoint());
-    if (bp2) {
-      await gp.mouse.click(bp2.x, bp2.y, { button: "right" });
-      await gp.waitForTimeout(700);
-      await gp.click(".lp-carte-build button").catch(() => {});
-      await gp.waitForTimeout(900);
-      G.createModal = await gp.evaluate(() => document.querySelectorAll(".lp-modal").length > 0);
-    }
-    // #504 : double clic sur une pastille de dossier : l'arpenteur s'y rend.
-    await gp.keyboard.press("Escape").catch(() => {});
-    await gp.waitForTimeout(400);
-    const k0 = await gp.evaluate(() => window.__carteBench.engine.fxState());
-    const badges = await gp.$$(".lp-carte-badge");
-    if (badges.length > 1) {
-      await badges[1].dblclick();
-      await gp.waitForTimeout(1500);
-      const k1 = await gp.evaluate(() => window.__carteBench.engine.fxState());
-      G.folderGo = { goal: k1.walkTo, moved: Math.hypot(k1.keeper[0] - k0.keeper[0], k1.keeper[1] - k0.keeper[1]), pop: await gp.$$eval(".lp-carte-folder-pop", (e) => e.length) };
-    }
-    await gp.screenshot({ path: path.join(dir, "carte-gestes.png") });
-  } catch (e) {
-    carte.gestures.error = String(e).split("\n")[0];
-  }
-  await gp.close();
 
   // Tâche d'un calendrier public synchronisé : volet en lecture seule, rien
   // n'est enregistré (elle serait reconstruite à la synchronisation suivante).
@@ -2223,6 +2135,101 @@ try {
   await fp.close();
 } catch (e) {
   carte.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ") + " — état : " + JSON.stringify({ territory: carte.territory, near: carte.near, selected: carte.selected, panel: carte.panel });
+}
+
+// Gestes de la Carte (#503, #510), sur une page à part : un échec du
+// parcours principal (captures) ne les empêche pas de tourner.
+{
+  // #503 et #510 : un VRAI clic droit (souris de Playwright, pas un appel de
+  // l'API) sur une parcelle libre ouvre « Construire ici » ; un contextmenu
+  // seul (Ctrl + clic sur Mac, touche Menu, relâchement perdu) aussi ; un
+  // clic droit glissé fait tourner sans ouvrir le menu. Clic gauche glissé :
+  // la carte se déplace sans tourner ; molette enfoncée glissée : elle tourne.
+  carte.gestures = {};
+  const gp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  try {
+    gp.on("pageerror", (e) => pageErrors.push("Carte (gestes) : " + e.message));
+    await gp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+    await gp.addInitScript(() => { window.__carteBench = {}; });
+    await gp.goto(`http://127.0.0.1:${port}/index.html?app=1&view=carte&carte=demo&carteFx=0`, { waitUntil: "load", timeout: 90000 });
+    await gp.waitForSelector(".lp-carte-stage", { timeout: 90000 });
+    for (let i = 0; i < 3; i++) { const c = await gp.$('.lp-modal [aria-label="Fermer"]'); if (!c) break; await c.click().catch(() => {}); await gp.waitForTimeout(300); }
+    await gp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
+    await gp.waitForTimeout(2500);
+    const G = carte.gestures;
+    const view = () => gp.evaluate(() => window.__carteBench.engine.getView());
+    const menuOpen = () => gp.evaluate(() => !!document.querySelector(".lp-carte-build"));
+    const bp = await gp.evaluate(() => window.__carteBench.engine.buildPoint());
+    G.point = bp;
+    if (bp) {
+      await gp.mouse.click(bp.x, bp.y, { button: "right" });
+      await gp.waitForTimeout(700);
+      G.rightMenu = await menuOpen();
+      G.rightMenuText = await gp.$eval(".lp-carte-build", (e) => e.textContent).catch(() => "");
+      await gp.keyboard.press("Escape");
+      await gp.waitForTimeout(900);
+      G.afterEscape = await menuOpen();
+      // contextmenu sans pointerdown ni pointerup.
+      await gp.evaluate(({ x, y }) => { const c = document.querySelector("canvas.lp-carte-canvas"); c.dispatchEvent(new MouseEvent("contextmenu", { clientX: x, clientY: y, button: 2, bubbles: true, cancelable: true })); }, bp);
+      await gp.waitForTimeout(700);
+      G.ctxOnlyMenu = await menuOpen();
+      await gp.keyboard.press("Escape");
+      await gp.waitForTimeout(900);
+      // Clic droit glissé : rotation, pas de menu.
+      const v0 = await view();
+      await gp.mouse.move(bp.x, bp.y);
+      await gp.mouse.down({ button: "right" });
+      await gp.mouse.move(bp.x + 90, bp.y + 10, { steps: 6 });
+      await gp.mouse.up({ button: "right" });
+      await gp.waitForTimeout(900);
+      const v1 = await view();
+      G.rightDrag = { menu: await menuOpen(), yaw: Math.abs(v1.yaw - v0.yaw) };
+    }
+    // Clic gauche glissé : déplacement, sans rotation ni marche.
+    const box = await gp.locator("canvas.lp-carte-canvas").boundingBox();
+    const cx = Math.round(box.x + box.width * 0.4), cy = Math.round(box.y + box.height * 0.55);
+    const l0 = await view();
+    await gp.mouse.move(cx, cy);
+    await gp.mouse.down();
+    await gp.mouse.move(cx + 140, cy + 60, { steps: 8 });
+    await gp.mouse.up();
+    await gp.waitForTimeout(900);
+    const l1 = await view();
+    G.leftDrag = { moved: Math.hypot(l1.x - l0.x, l1.z - l0.z), yaw: Math.abs(l1.yaw - l0.yaw), walkTo: await gp.evaluate(() => window.__carteBench.engine.fxState().walkTo) };
+    // Molette enfoncée glissée : rotation.
+    const m0 = await view();
+    await gp.mouse.move(cx, cy);
+    await gp.mouse.down({ button: "middle" });
+    await gp.mouse.move(cx + 120, cy - 40, { steps: 8 });
+    await gp.mouse.up({ button: "middle" });
+    await gp.waitForTimeout(900);
+    const m1 = await view();
+    G.middleDrag = { yaw: Math.abs(m1.yaw - m0.yaw), pitch: Math.abs(m1.pitch - m0.pitch) };
+    // « Construire ici » ouvre la fiche de création.
+    const bp2 = await gp.evaluate(() => window.__carteBench.engine.buildPoint());
+    if (bp2) {
+      await gp.mouse.click(bp2.x, bp2.y, { button: "right" });
+      await gp.waitForTimeout(700);
+      await gp.click(".lp-carte-build button").catch(() => {});
+      await gp.waitForTimeout(900);
+      G.createModal = await gp.evaluate(() => document.querySelectorAll(".lp-modal").length > 0);
+    }
+    // #504 : double clic sur une pastille de dossier : l'arpenteur s'y rend.
+    await gp.keyboard.press("Escape").catch(() => {});
+    await gp.waitForTimeout(400);
+    const k0 = await gp.evaluate(() => window.__carteBench.engine.fxState());
+    const badges = await gp.$$(".lp-carte-badge");
+    if (badges.length > 1) {
+      await badges[1].dblclick();
+      await gp.waitForTimeout(1500);
+      const k1 = await gp.evaluate(() => window.__carteBench.engine.fxState());
+      G.folderGo = { goal: k1.walkTo, moved: Math.hypot(k1.keeper[0] - k0.keeper[0], k1.keeper[1] - k0.keeper[1]), pop: await gp.$$eval(".lp-carte-folder-pop", (e) => e.length) };
+    }
+    await gp.screenshot({ path: path.join(dir, "carte-gestes.png"), timeout: 60000 }).catch(() => {});
+  } catch (e) {
+    carte.gestures.error = String(e).split("\n")[0];
+  }
+  await gp.close();
 }
 
 // --- Vue Cosmos (#402) -------------------------------------------------------
@@ -3324,6 +3331,22 @@ if (!orgMetro.error) {
 
 // --- Vue Carte (#361) ------------------------------------------------------
 expect(!carte.error, `Carte : scénario en échec (${carte.error})`);
+// Gestes de la Carte (#503, #510) : jugés même si le parcours principal échoue.
+{
+  const G = carte.gestures || {};
+  expect(!G.error, `Carte (gestes) : ${G.error}`);
+  expect(G.point, "Carte (#503) : aucune parcelle libre visible pour tester le clic droit");
+  if (G.point) {
+    expect(G.rightMenu && /Construire ici/.test(G.rightMenuText || ""), "Carte (#503) : un vrai clic droit sur une parcelle libre n'ouvre pas « Construire ici »");
+    expect(!G.afterEscape, "Carte (#503) : Échap ne ferme pas le menu « Construire ici »");
+    expect(G.ctxOnlyMenu, "Carte (#503) : un contextmenu seul (Ctrl + clic sur Mac, touche Menu) n'ouvre pas « Construire ici »");
+    expect(G.rightDrag && !G.rightDrag.menu && G.rightDrag.yaw > 0.05, `Carte (#510) : le clic droit glissé doit tourner sans ouvrir le menu (${JSON.stringify(G.rightDrag)})`);
+    expect(G.createModal, "Carte (#503) : « Construire ici » n'ouvre pas la fiche de création");
+  }
+  expect(G.leftDrag && G.leftDrag.moved > 0.5 && G.leftDrag.yaw < 0.01 && !G.leftDrag.walkTo, `Carte (#510) : le clic gauche glissé doit déplacer la carte sans tourner ni marcher (${JSON.stringify(G.leftDrag)})`);
+  expect(!G.folderGo || ((G.folderGo.goal || G.folderGo.moved > 1) && G.folderGo.pop === 0), `Carte (#504) : le double clic sur une pastille de dossier n'y emmène pas l'arpenteur (${JSON.stringify(G.folderGo)})`);
+  expect(G.middleDrag && G.middleDrag.yaw > 0.05, `Carte (#510) : la molette enfoncée glissée doit faire tourner la caméra (${JSON.stringify(G.middleDrag)})`);
+}
 if (!carte.error) {
   expect(carte.canvas === 1, `Carte : ${carte.canvas} canevas 3D (1 attendu)`);
   expect(carte.badges >= 1 && carte.badges < 7, `Carte : ${carte.badges} pastilles dans le ruban (une par dossier attendue, moins que les 7 projets)`);
@@ -3356,21 +3379,6 @@ if (!carte.error) {
   expect(carte.quick && ["crits", "statuses", "assignees"].every((k) => carte.quick.kinds.includes(k)), `Carte (#506) : filtres rapides Criticité, Statuts et Responsables absents (${JSON.stringify(carte.quick)})`);
   expect(carte.quick && carte.quick.urgent < carte.quick.urgentMoyen && carte.quick.urgentMoyen < carte.quick.all && carte.quick.count === 2 && carte.quick.back === carte.quick.all, `Carte (#506) : la criticité en multi-sélection ne filtre pas comme attendu (${JSON.stringify(carte.quick)})`);
   expect(carte.modalTitle, "Carte : « Ouvrir la fiche » n'ouvre pas la fiche Nexora de la tâche");
-  {
-    const G = carte.gestures || {};
-    expect(!G.error, `Carte (gestes) : ${G.error}`);
-    expect(G.point, "Carte (#503) : aucune parcelle libre visible pour tester le clic droit");
-    if (G.point) {
-      expect(G.rightMenu && /Construire ici/.test(G.rightMenuText || ""), "Carte (#503) : un vrai clic droit sur une parcelle libre n'ouvre pas « Construire ici »");
-      expect(!G.afterEscape, "Carte (#503) : Échap ne ferme pas le menu « Construire ici »");
-      expect(G.ctxOnlyMenu, "Carte (#503) : un contextmenu seul (Ctrl + clic sur Mac, touche Menu) n'ouvre pas « Construire ici »");
-      expect(G.rightDrag && !G.rightDrag.menu && G.rightDrag.yaw > 0.05, `Carte (#510) : le clic droit glissé doit tourner sans ouvrir le menu (${JSON.stringify(G.rightDrag)})`);
-      expect(G.createModal, "Carte (#503) : « Construire ici » n'ouvre pas la fiche de création");
-    }
-    expect(G.leftDrag && G.leftDrag.moved > 0.5 && G.leftDrag.yaw < 0.01 && !G.leftDrag.walkTo, `Carte (#510) : le clic gauche glissé doit déplacer la carte sans tourner ni marcher (${JSON.stringify(G.leftDrag)})`);
-    expect(!G.folderGo || ((G.folderGo.goal || G.folderGo.moved > 1) && G.folderGo.pop === 0), `Carte (#504) : le double clic sur une pastille de dossier n'y emmène pas l'arpenteur (${JSON.stringify(G.folderGo)})`);
-    expect(G.middleDrag && G.middleDrag.yaw > 0.05, `Carte (#510) : la molette enfoncée glissée doit faire tourner la caméra (${JSON.stringify(G.middleDrag)})`);
-  }
   expect(carte.mobile.joystick && carte.mobile.action, `Carte mobile : manette ou bouton « Lire » absent (${JSON.stringify(carte.mobile)})`);
   expect(carte.panel.projects >= 2 && carte.panel.tasks >= 1 && /Chantiers/.test(carte.panel.kicker), `Carte : le panneau ne liste pas la région Chantiers et ses tâches (${JSON.stringify(carte.panel)})`);
   expect(carte.panel.done >= 1, `Carte : les tâches terminées n'apparaissent pas, alors qu'elles sont visibles par défaut (${JSON.stringify(carte.panel)})`);
