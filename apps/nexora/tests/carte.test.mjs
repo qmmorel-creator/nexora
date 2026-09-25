@@ -623,7 +623,7 @@ test("construire ici : la nouvelle tâche prend la parcelle choisie (#470)", () 
   const mem = { projects: { p: "0,0" }, tasks: { a: "1,0" } };
   const pending = { projectId: "p", key: "2,1", known: new Set(["a"]) };
   const tasks = [{ id: "a", projectId: "p" }, { id: "z", projectId: "q" }, { id: "b", projectId: "p" }];
-  assert.deepEqual(C.carteClaimTile(mem, pending, tasks).tasks, { a: "1,0", b: "2,1" });
+  assert.deepEqual(C.carteClaimTile(mem, pending, tasks).claim, { id: "b", key: "2,1" });
   assert.equal(C.carteClaimTile(mem, null, tasks), mem);
   assert.equal(C.carteClaimTile(mem, pending, tasks.slice(0, 2)), mem, "rien de nouveau : mémoire inchangée");
   // La disposition respecte la parcelle réservée.
@@ -636,6 +636,13 @@ test("construire ici : la nouvelle tâche prend la parcelle choisie (#470)", () 
   const mem2 = C.carteClaimTile(l0.memory, { projectId: "p0", key: free, known }, n2.tasks);
   const l1 = C.carteBuild({ projects: n2.projects, tasks: n2.tasks, memory: mem2 });
   assert.equal(l1.pois.find((p) => p.taskId === "nouvelle").key, free);
+  // Parcelle déjà occupée par une tâche (masquée par les filtres) : la
+  // nouvelle la partage, l'ancienne ne bouge pas.
+  const busy = l0.pois[0];
+  const mem3 = C.carteClaimTile(l0.memory, { projectId: "p0", key: busy.key, known }, n2.tasks);
+  const l3 = C.carteBuild({ projects: n2.projects, tasks: n2.tasks, memory: mem3 });
+  assert.equal(l3.pois.find((p) => p.taskId === "nouvelle").key, busy.key);
+  assert.equal(l3.pois.find((p) => p.taskId === busy.taskId).key, busy.key);
 });
 
 test("zoom stratégique et vues enregistrées (#476, #481)", () => {

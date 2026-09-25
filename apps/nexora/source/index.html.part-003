@@ -18834,8 +18834,9 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
 const CARTE_TOTEM_LABEL_FAR = 60;
 // Noms des tâches au-dessus des cases (#444) : sous cette distance de caméra
 // (19 = vue par défaut), au plus CARTE_TASK_LABEL_MAX étiquettes candidates.
-const CARTE_TASK_LABEL_NEAR = 22;
-const CARTE_TASK_LABEL_MAX = 80;
+// Seuil relevé de 22 à 38 : les noms apparaissent plus tôt en dézoomant.
+const CARTE_TASK_LABEL_NEAR = 38;
+const CARTE_TASK_LABEL_MAX = 140;
 // Ordre de préséance de la bordure d'une case partagée (#394) : en retard
 // d'abord, puis en cours, en attente, à faire, information, terminée.
 const CARTE_BORDER_RANK = { doing: 1, waiting: 2, todo: 3, info: 4, done: 5 };
@@ -18850,6 +18851,9 @@ function createCarteEngine(THREE, container, opts) {
   renderer.setClearColor("#bfe3f2");
   // Ombres adoucies (#479) : filtrage PCF à rayon, plus doux que PCFSoft.
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  // Direction « diorama doux » (#485) : tonalité filmique, lumière dorée.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
   const canvas = renderer.domElement;
   canvas.className = "lp-carte-canvas";
   canvas.setAttribute("aria-hidden", "true");
@@ -18858,10 +18862,10 @@ function createCarteEngine(THREE, container, opts) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog("#bfe3f2", 60, 170);
   const camera = new THREE.PerspectiveCamera(34, 1, 0.5, 700);
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x8a8f6a, 1.35);
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x9a8a5e, 1.35);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight("#fff6e0", 2.1);
-  sun.position.set(30, 50, 20);
+  sun.position.set(34, 32, 12);
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.radius = 3.5;
   Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, far: 220 });
@@ -18891,8 +18895,25 @@ function createCarteEngine(THREE, container, opts) {
   // ---------- Géométries unitaires (base à y = 0, hauteur 1) ----------
   const G = {};
   const mk = (name, geo) => { geo.computeVertexNormals(); G[name] = geo; };
-  mk("box", new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0));
-  mk("cyl", new THREE.CylinderGeometry(0.5, 0.5, 1, 8).translate(0, 0.5, 0));
+  // Boîte aux arêtes adoucies (#485) : un chanfrein arrondi, normales posées
+  // à la main (pas de computeVertexNormals, qui les aplatirait).
+  function roundedBox(r) {
+    const g = new THREE.BoxGeometry(1, 1, 1, 3, 3, 3);
+    const pos = g.attributes.position, nor = g.attributes.normal;
+    const v = new THREE.Vector3(), inner = new THREE.Vector3(), d = new THREE.Vector3();
+    const snap = (c) => (Math.abs(c) < 0.49 ? Math.sign(c) * (0.5 - r) : c);
+    const clamp = (c) => Math.max(-0.5 + r, Math.min(0.5 - r, c));
+    for (let i = 0; i < pos.count; i++) {
+      v.set(snap(pos.getX(i)), snap(pos.getY(i)), snap(pos.getZ(i)));
+      inner.set(clamp(v.x), clamp(v.y), clamp(v.z));
+      d.subVectors(v, inner);
+      if (d.lengthSq() > 1e-9) { d.normalize(); v.copy(inner).addScaledVector(d, r); nor.setXYZ(i, d.x, d.y, d.z); }
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    return g;
+  }
+  G.box = roundedBox(0.09).translate(0, 0.5, 0);
+  mk("cyl", new THREE.CylinderGeometry(0.5, 0.5, 1, 12).translate(0, 0.5, 0));
   mk("hex", new THREE.CylinderGeometry(0.5, 0.5, 1, 6).translate(0, 0.5, 0));
   mk("cone", new THREE.ConeGeometry(0.5, 1, 8).translate(0, 0.5, 0));
   mk("pyr", new THREE.ConeGeometry(0.5, 1, 4).translate(0, 0.5, 0));
@@ -18900,15 +18921,60 @@ function createCarteEngine(THREE, container, opts) {
   mk("dome", new THREE.SphereGeometry(0.5, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 2, 1));
   // Variantes « tournantes » : l'axe de rotation est Z.
   mk("cyl~s", new THREE.CylinderGeometry(0.5, 0.5, 1, 10).rotateX(Math.PI / 2));
-  mk("box~s", new THREE.BoxGeometry(1, 1, 1));
+  G["box~s"] = roundedBox(0.09);
   const tileGeo = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0);
   const capGeo = new THREE.CylinderGeometry(0.985, 0.985, 0.14, 6).translate(0, 0.07, 0);
+  // Tuile de terre (#485) : hexagone biseauté prolongé en falaise sous
+  // l'eau. Deux morceaux : le dessus (herbe, pavés, lave, teinté par case)
+  // et la falaise en strates de terre (couleurs de sommets). Le dessus est à
+  // y = 0 ; la falaise descend de 2,6.
+  const TILE_BEVEL = 0.09, TILE_DEPTH = 2.6;
+  const [landCapGeo, cliffGeo] = (() => {
+    const sh = new THREE.Shape();
+    for (let i = 0; i < 6; i++) { const a = (Math.PI / 3) * i + Math.PI / 6, rr = 0.975 - TILE_BEVEL; const x = Math.cos(a) * rr, y = Math.sin(a) * rr; if (i) sh.lineTo(x, y); else sh.moveTo(x, y); }
+    sh.closePath();
+    const g = new THREE.ExtrudeGeometry(sh, { depth: TILE_DEPTH, bevelEnabled: true, bevelSize: TILE_BEVEL, bevelThickness: TILE_BEVEL * 0.8, bevelSegments: 2, curveSegments: 1 });
+    g.rotateX(-Math.PI / 2);
+    g.translate(0, -(TILE_DEPTH + TILE_BEVEL * 0.8), 0);
+    const src = g.index ? g.toNonIndexed() : g;
+    const P = src.attributes.position, N = src.attributes.normal, U = src.attributes.uv;
+    const cap = { p: [], n: [], u: [], c: [] }, cliff = { p: [], n: [], u: [], c: [] };
+    const STRATA = ["#b88a5c", "#9a6844", "#c49a68", "#7b4e33", "#a87a52"].map((c) => new THREE.Color(c));
+    const cc = new THREE.Color();
+    const capLimit = -(TILE_BEVEL * 1.6 + 0.01);
+    for (let t = 0; t < P.count; t += 3) {
+      const minY = Math.min(P.getY(t), P.getY(t + 1), P.getY(t + 2));
+      const dst = minY > capLimit ? cap : cliff;
+      for (let k = t; k < t + 3; k++) {
+        const y = P.getY(k);
+        dst.p.push(P.getX(k), y, P.getZ(k)); dst.n.push(N.getX(k), N.getY(k), N.getZ(k)); dst.u.push(U.getX(k), U.getY(k));
+        if (dst === cap) { const f = y > -0.005 && N.getY(k) > 0.9 ? 1 : 0.8; cc.setRGB(f, f, f); }
+        else {
+          const depth = -y;
+          cc.copy(STRATA[Math.max(0, Math.floor((depth - 0.1) / 0.3)) % STRATA.length]).multiplyScalar(0.62 + 0.38 * Math.max(0, 1 - depth / 2.2));
+        }
+        dst.c.push(cc.r, cc.g, cc.b);
+      }
+    }
+    g.dispose(); if (src !== g) src.dispose();
+    return [cap, cliff].map((b) => {
+      const o = new THREE.BufferGeometry();
+      o.setAttribute("position", new THREE.Float32BufferAttribute(b.p, 3));
+      o.setAttribute("normal", new THREE.Float32BufferAttribute(b.n, 3));
+      o.setAttribute("uv", new THREE.Float32BufferAttribute(b.u, 2));
+      o.setAttribute("color", new THREE.Float32BufferAttribute(b.c, 3));
+      o.computeBoundingSphere();
+      return o;
+    });
+  })();
+  // Écume et hauts-fonds le long des rives (#485).
+  const flatHexGeo = new THREE.CircleGeometry(1, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
   const ringGeo = new THREE.RingGeometry(0.78, 0.96, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
   const planeGeo = new THREE.PlaneGeometry(1, 1);
   // Bordure des cases qui portent une tâche (#394), à la couleur du statut :
   // un liseré large posé sur le dessus de la dalle.
   const borderGeo = new THREE.RingGeometry(0.78, 0.99, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
-  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, borderGeo]);
+  const geos = Object.values(G).concat([tileGeo, capGeo, ringGeo, planeGeo, borderGeo, landCapGeo, cliffGeo, flatHexGeo]);
   // Nom d'un dossier écrit au sol (#377, #393), à la manière d'une carte
   // ancienne : capitales espacées, posées lettre à lettre le long de l'axe de
   // l'île (courbe v = a·u² + b·u + c dans le repère de la région). La texture
@@ -19085,8 +19151,12 @@ function createCarteEngine(THREE, container, opts) {
     g.clearRect(0, 0, n, n); g.fillStyle = gr; g.fillRect(0, 0, n, n);
   });
   blobTex.colorSpace = THREE.NoColorSpace;
-  MAT.ground = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: grassTex }));
-  MAT.road = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: cobbleTex }));
+  MAT.ground = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: grassTex, vertexColors: true }));
+  MAT.road = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: cobbleTex, vertexColors: true }));
+  MAT.cliff = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, vertexColors: true }));
+  MAT.lavaTop = mat(new THREE.MeshBasicMaterial({ color: "#ffffff", vertexColors: true }));
+  MAT.foam = mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8, depthWrite: false }));
+  MAT.shallow = mat(new THREE.MeshBasicMaterial({ color: "#a6e6dc", transparent: true, opacity: 0.45, depthWrite: false }));
   MAT.water.dispose();
   MAT.water = mat(new THREE.MeshPhongMaterial({ color: "#ffffff", transparent: true, opacity: 0.88, shininess: 80, specular: new THREE.Color("#cfeeff"), map: rippleTex }));
   MAT.blob = mat(new THREE.MeshBasicMaterial({ color: "#000000", alphaMap: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
@@ -19193,7 +19263,7 @@ function createCarteEngine(THREE, container, opts) {
 
   const theme = (id) => CARTE_THEME_BY_ID[id] || CARTE_THEMES[0];
   function tileColors(t) {
-    if (t.kind === "sea") return { top: "#3f9ccf", side: "#2d7fb0", water: true };
+    if (t.kind === "sea") return { top: "#62b9c6", side: "#3d8f9c", water: true };
     if (t.kind === "islet") return { top: "#9fcf6a", side: "#8a6a45" };
     const th = theme(t.theme);
     const pal = th.pal;
@@ -19227,13 +19297,17 @@ function createCarteEngine(THREE, container, opts) {
     const baseM = new THREE.InstancedMesh(tileGeo, litMat("l"), keys.length);
     const capM = new THREE.InstancedMesh(capGeo, litMat("l"), keys.length);
     const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
-    const lavaM = new THREE.InstancedMesh(capGeo, MAT.lava, keys.length);
-    // Sol texturé et routes pavées (#479).
+    const lavaM = new THREE.InstancedMesh(landCapGeo, MAT.lavaTop, keys.length);
+    // Sol texturé et routes pavées (#479), tuiles biseautées en falaise (#485).
+    capM.geometry = landCapGeo;
     capM.material = MAT.ground;
-    const roadM = new THREE.InstancedMesh(capGeo, MAT.road, keys.length);
-    capM.count = 0; waterM.count = 0; lavaM.count = 0; roadM.count = 0;
+    const roadM = new THREE.InstancedMesh(landCapGeo, MAT.road, keys.length);
+    const cliffM = new THREE.InstancedMesh(cliffGeo, MAT.cliff, keys.length);
+    capM.count = 0; waterM.count = 0; lavaM.count = 0; roadM.count = 0; cliffM.count = 0; baseM.count = 0;
     capM.userData.keys = []; waterM.userData.keys = []; lavaM.userData.keys = []; roadM.userData.keys = [];
-    baseM.receiveShadow = capM.receiveShadow = roadM.receiveShadow = shadows;
+    baseM.receiveShadow = capM.receiveShadow = roadM.receiveShadow = cliffM.receiveShadow = shadows;
+    cliffM.castShadow = shadows;
+    const shore = [];
     const capTop = {};
     S.tileTop = {};
     keys.forEach((k, i) => {
@@ -19241,26 +19315,48 @@ function createCarteEngine(THREE, container, opts) {
       const w = carteToWorld(t.q, t.r);
       const col = tileColors(t);
       if (col.water) {
-        baseM.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, 0.08, 1)));
-        baseM.setColorAt(i, tmpC.set(col.side));
+        const b = baseM.count++;
+        baseM.setMatrixAt(b, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, 0.08, 1)));
+        baseM.setColorAt(b, tmpC.set(col.side));
         const j = waterM.count++;
-        waterM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        // Mer : cases légèrement élargies, sans joint visible (#485).
+        const ws = t.kind === "sea" ? 1.03 : 1;
+        waterM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(ws, 1, ws)));
         capTop[k] = t.h - 0.06 + 0.14;
         waterM.setColorAt(j, tmpC.set(t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
         waterM.userData.keys[j] = k;
       } else {
-        baseM.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, t.h, 1)));
-        baseM.setColorAt(i, tmpC.set(col.side));
+        const top = t.h + 0.12;
+        const c = cliffM.count++;
+        cliffM.setMatrixAt(c, tmpM.compose(tmpP.set(w.x, top, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        const dimT = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+        cliffM.setColorAt(c, tmpC.set(dimT ? "#b9bdc3" : carteMix("#ffffff", col.side, 0.22)));
         const cm = col.lava ? lavaM : t.road ? roadM : capM;
         const j = cm.count++;
-        cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.02, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, top, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        // Rive : une case de terre au bord de la mer reçoit écume et haut-fond.
+        for (let dI = 0; dI < 6; dI++) {
+          const nb = L.tiles[carteKey(t.q + CARTE_DIRS[dI][0], t.r + CARTE_DIRS[dI][1])];
+          if (!nb || nb.kind === "sea") { shore.push(w); break; }
+        }
         capTop[k] = t.h + 0.12;
         cm.setColorAt(j, tmpC.set(col.top));
         cm.userData.keys[j] = k;
       }
       S.tileTop[k] = col.top;
     });
-    [baseM, waterM, capM, lavaM, roadM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    [baseM, waterM, capM, lavaM, roadM, cliffM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    if (shore.length) {
+      let seaY = 0.19;
+      keys.forEach((k) => { const t = L.tiles[k]; if (t.kind === "sea") seaY = Math.max(seaY, capTop[k] || 0); });
+      [[MAT.shallow, 1.52, 0.006], [MAT.foam, 1.15, 0.014]].forEach(([mt, sc, dy], li) => {
+        const m = new THREE.InstancedMesh(flatHexGeo, mt, shore.length);
+        shore.forEach((w, i) => m.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, seaY + dy, w.z), tmpQ.identity(), tmpS.set(sc, 1, sc))));
+        m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.renderOrder = 1 + li;
+        world.add(m);
+        if (li === 1) S.foam = m;
+      });
+    }
     S.pickMeshes = [capM, waterM, lavaM, roadM];
     S.capTop = capTop;
 
@@ -19304,7 +19400,26 @@ function createCarteEngine(THREE, container, opts) {
     const dBatch = makeBatcher();
     clearGroup(decorGroup);
     // Feuillages (cônes et boules au-dessus du tronc) : matière qui ondule.
-    const swayParts = (parts) => (q === "low" ? parts : parts.map((pp) => (pp.m === "l" && (pp.g === "cone" || pp.g === "ball") && pp.p[1] > 0.1 ? Object.assign({}, pp, { m: "w" }) : pp)));
+    // Feuillages (#479, #485) : les boules deviennent des bosquets de trois,
+    // les cônes des sapins étagés ; tout ondule.
+    const swayParts = (parts) => {
+      if (q === "low") return parts;
+      const out = [];
+      parts.forEach((pp) => {
+        if (!(pp.m === "l" && (pp.g === "cone" || pp.g === "ball") && pp.p[1] > 0.1)) { out.push(pp); return; }
+        const [x, y, z] = pp.p, [sx, sy, sz] = pp.s;
+        if (pp.g === "ball") {
+          [[0, 0, 0, 0.78], [2.1, 0.06, 0.22, 0.66], [4.2, 0.2, 0.18, 0.6]].forEach(([a, dy, rr, k], i) => out.push(Object.assign({}, pp, { m: "w", c: i ? carteMix(pp.c, i === 1 ? "#ffffff" : "#000000", 0.08) : pp.c, p: [x + Math.cos(a) * rr * sx, y + dy * sy, z + Math.sin(a) * rr * sz], s: [sx * k, sy * k, sz * k] })));
+        } else {
+          [[0, 1, 0.5], [0.32, 0.78, 0.45], [0.6, 0.55, 0.4]].forEach(([dy, k, hk], i) => out.push(Object.assign({}, pp, { m: "w", c: i === 1 ? carteMix(pp.c, "#ffffff", 0.07) : pp.c, p: [x, y + dy * sy, z], s: [sx * k, sy * hk * 1.25, sz * k] })));
+        }
+      });
+      return out;
+    };
+    const FLOWERS = ["#ffffff", "#ffd23f", "#ff7aa8", "#b388ff"];
+    // Herbes et fleurs : thèmes naturels seulement (pas de pavé urbain).
+    const TUFT_THEMES = new Set(["campagne", "foret", "mer", "lac", "montagne", "marais", "jungle", "ile"]);
+    const FLOWER_THEMES = new Set(["campagne", "foret", "lac", "jungle", "ile", "mer"]);
     const poiKeys = new Set(L.pois.map((p) => p.key));
     // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
     const decorShare = q === "low" ? 0.4 : 1;
@@ -19318,6 +19433,19 @@ function createCarteEngine(THREE, container, opts) {
       const w = carteToWorld(t.q, t.r);
       const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
       placeModel(dBatch, swayParts(S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor), w.x, t.h + 0.12, w.z, 0);
+      // Touffes d'herbe et fleurs sur les cases libres (qualité haute).
+      const natural = t.kind === "islet" || TUFT_THEMES.has(t.theme);
+      if (q === "high" && natural && (t.kind === "land" || t.kind === "wild" || t.kind === "edge" || t.kind === "islet") && !t.lava && !(S.dimmed && t.projectId && S.dimmed.has(t.projectId))) {
+        const tuft = carteMix(S.tileTop[k] || "#8fbf4d", "#000000", 0.22);
+        for (let i = 0; i < 4; i++) {
+          const a = carteRand("ta" + i + k) * 6.283, rr = 0.25 + carteRand("tr" + i + k) * 0.55;
+          dBatch.add("cone", "w", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.07, 0.17, 0.07, 0, tuft);
+        }
+        if ((t.kind === "islet" || FLOWER_THEMES.has(t.theme)) && carteRand("fl" + k) < 0.35) for (let i = 0; i < 5; i++) {
+          const a = carteRand("fa" + i + k) * 6.283, rr = carteRand("fr" + i + k) * 0.5;
+          dBatch.add("ball", "l", w.x + Math.cos(a) * rr, t.h + 0.13, w.z + Math.sin(a) * rr, 0.08, 0.08, 0.08, 0, FLOWERS[(i + Math.floor(carteRand("fc" + k) * 4)) % 4]);
+        }
+      }
     });
     dBatch.flush(decorGroup, shadows);
     // Tâches.
@@ -19422,15 +19550,19 @@ function createCarteEngine(THREE, container, opts) {
     if (o.onPortal) {
       hubs.forEach((h) => {
         if (h.x == null || L.projectById[h.tr.projectId].unknown) return;
-        const dx = -0.45, dz = 0.62, ry = Math.atan2(dx, dz);
+        // Au bord de la case du cœur, face à la caméra par défaut : une arche
+        // assez grande pour se voir à côté des totems.
+        const ry = 0.6, dx = Math.sin(ry - 0.95) * 1.02, dz = Math.cos(ry - 0.95) * 1.02;
         const x = h.x + dx, z = h.z + dz;
         const dim = S.dimmed && S.dimmed.has(h.tr.projectId);
-        const stone = dim ? "#b9bec5" : "#7d6aa3";
+        const stone = dim ? "#b9bec5" : "#6f58b8", glow = dim ? "#d6d9de" : "#d9c7ff";
         placeModel(batch, [
-          cP("box", stone, -0.24, 0, 0, 0.1, 0.62, 0.12), cP("box", stone, 0.24, 0, 0, 0.1, 0.62, 0.12),
-          cP("box", stone, 0, 0.62, 0, 0.62, 0.1, 0.14), cP("box", dim ? "#d6d9de" : "#d9c7ff", 0, 0.72, 0, 0.14, 0.1, 0.1, 0, "g"),
+          cP("box", dim ? "#c9ccd2" : "#4b3b86", 0, 0, 0, 1.2, 0.08, 0.42),
+          cP("box", stone, -0.46, 0.08, 0, 0.18, 1.22, 0.2), cP("box", stone, 0.46, 0.08, 0, 0.18, 1.22, 0.2),
+          cP("box", stone, 0, 1.3, 0, 1.2, 0.18, 0.24), cP("pyr", stone, 0, 1.48, 0, 0.5, 0.22, 0.28, Math.PI / 4),
+          cP("ball", glow, -0.46, 1.48, 0, 0.16, 0.16, 0.16, 0, "g"), cP("ball", glow, 0.46, 1.48, 0, 0.16, 0.16, 0.16, 0, "g"),
         ], x, h.base, z, ry);
-        S.portals.push({ pid: h.tr.projectId, pos: new THREE.Vector3(x, h.base + 0.34, z), ry, dim });
+        S.portals.push({ pid: h.tr.projectId, pos: new THREE.Vector3(x, h.base + 0.7, z), ry, dim });
       });
     }
     buildPortals();
@@ -19624,7 +19756,8 @@ function createCarteEngine(THREE, container, opts) {
     });
     scene.fog.near = S.dist * 0.8 + 25;
     scene.fog.far = S.dist * 2.2 + 70;
-    if (sun.castShadow) { sun.position.set(S.target.x + 30, 50, S.target.z + 20); sun.target.position.copy(S.target); }
+    // Soleil plus bas (#485) : ombres longues de fin d'après-midi.
+    if (sun.castShadow) { sun.position.set(S.target.x + 34, 32, S.target.z + 12); sun.target.position.copy(S.target); }
   }
   function zoomBy(f) { S.dist = Math.max(7, Math.min(150, S.dist * f)); }
 
@@ -20419,8 +20552,8 @@ function createCarteEngine(THREE, container, opts) {
     S.lightKey = d.sky + d.k;
     renderer.setClearColor(d.sky);
     scene.fog.color.set(d.sky);
-    hemi.intensity = d.hemi;
-    sun.intensity = d.sunI; sun.color.set(d.sun);
+    hemi.intensity = d.hemi * 0.8;
+    sun.intensity = d.sunI * 1.45; sun.color.set(carteMix(d.sun, "#ffd6a0", 0.45));
     if (S.daylightWindows) S.daylightWindows.visible = d.evening;
   }
   const tmpC2 = new THREE.Color();
@@ -20514,7 +20647,7 @@ function createCarteEngine(THREE, container, opts) {
     const m = new THREE.InstancedMesh(portalGeo, MAT.portal, list.length);
     list.forEach((p, i) => {
       tmpQ.setFromAxisAngle(UP, p.ry);
-      m.setMatrixAt(i, tmpM.compose(tmpP.set(p.pos.x, p.pos.y - 0.02, p.pos.z), tmpQ, tmpS.set(1.15, 1.45, 1)));
+      m.setMatrixAt(i, tmpM.compose(tmpP.set(p.pos.x, p.pos.y - 0.02, p.pos.z), tmpQ, tmpS.set(1.85, 2.95, 1)));
       m.setColorAt(i, tmpC.set(p.dim ? "#c9ccd2" : "#ffffff"));
     });
     m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
@@ -20530,7 +20663,7 @@ function createCarteEngine(THREE, container, opts) {
     list.forEach((p) => {
       portalV.copy(p.pos).project(camera);
       if (portalV.z > 1) return;
-      portalW.copy(p.pos).add(tmpP.set(0, 0.4, 0)).project(camera);
+      portalW.copy(p.pos).add(tmpP.set(0, 0.7, 0)).project(camera);
       const sx = (portalV.x + 1) / 2 * rect.width, sy = (1 - portalV.y) / 2 * rect.height;
       const px = Math.abs((portalW.y - portalV.y) / 2 * rect.height);
       const d = Math.hypot(cx - rect.left - sx, cy - rect.top - sy);
@@ -20749,10 +20882,13 @@ function createCarteEngine(THREE, container, opts) {
   // Parcelle libre d'un territoire, où l'on peut construire (#470).
   function buildableAt(key) {
     const t = S.layout && S.layout.tiles[key];
-    if (!t || !t.projectId || t.kind === "hub" || t.kind === "sea" || t.road || t.lava) return null;
+    // Seules les cases intérieures d'un territoire reçoivent des tâches.
+    if (!t || !t.projectId || !t.inner || t.road || t.lava) return null;
     const p = S.layout.projectById[t.projectId];
     if (!p || p.unknown) return null;
-    if (S.poisByKey[key] || S.layout.occupancy[key]) return null;
+    // Une parcelle dont les tâches sont masquées par les filtres reste
+    // constructible : seules les tâches affichées l'occupent.
+    if (S.poisByKey[key]) return null;
     return { projectId: t.projectId, key };
   }
 
@@ -20972,10 +21108,10 @@ function createCarteEngine(THREE, container, opts) {
   const postGeo = new THREE.PlaneGeometry(2, 2);
   geos.push(postGeo);
   const tsMat = mat(new THREE.ShaderMaterial({
-    uniforms: { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uRes: { value: new THREE.Vector2(1, 1) }, uFocus: { value: 0.5 }, uBand: { value: 0.14 }, uAmount: { value: 2.2 }, uSat: { value: 1 } },
+    uniforms: { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uRes: { value: new THREE.Vector2(1, 1) }, uFocus: { value: 0.5 }, uBand: { value: 0.14 }, uAmount: { value: 2.2 }, uSat: { value: 1 }, uGrade: { value: 0 } },
     vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
     fragmentShader: [
-      "uniform sampler2D tDiffuse; uniform vec2 uDir; uniform vec2 uRes; uniform float uFocus; uniform float uBand; uniform float uAmount; uniform float uSat; varying vec2 vUv;",
+      "uniform sampler2D tDiffuse; uniform vec2 uDir; uniform vec2 uRes; uniform float uFocus; uniform float uBand; uniform float uAmount; uniform float uSat; uniform float uGrade; varying vec2 vUv;",
       "void main(){",
       "  float d = max(0.0, abs(vUv.y - uFocus) - uBand);",
       "  float r = clamp(d / max(0.05, 0.55 - uBand), 0.0, 1.0);",
@@ -20984,7 +21120,11 @@ function createCarteEngine(THREE, container, opts) {
       "  c += (texture2D(tDiffuse, vUv + st * 1.3846153846) + texture2D(tDiffuse, vUv - st * 1.3846153846)) * 0.3162162162;",
       "  c += (texture2D(tDiffuse, vUv + st * 3.2307692308) + texture2D(tDiffuse, vUv - st * 3.2307692308)) * 0.0702702703;",
       "  float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));",
-      "  gl_FragColor = vec4(mix(vec3(l), c.rgb, uSat), 1.0);",
+      "  vec3 col = mix(vec3(l), c.rgb, uSat);",
+      "  vec2 q = vUv - 0.5;",
+      "  col = mix(col, col * vec3(1.03, 1.0, 0.95) * (1.0 - 0.55 * dot(q, q)), uGrade);",
+      "  gl_FragColor = vec4(col, 1.0);",
+      "  #include <tonemapping_fragment>",
       "  #include <colorspace_fragment>",
       "}",
     ].join("\n"),
@@ -21019,10 +21159,10 @@ function createCarteEngine(THREE, container, opts) {
       // Plus la vue est plongeante et lointaine, plus l'effet est marqué.
       U.uAmount.value = 1.6 + Math.min(1.4, S.dist / 40);
       U.uRes.value.set(post.w, post.h);
-      U.tDiffuse.value = post.rtA.texture; U.uDir.value.set(1, 0); U.uSat.value = 1;
+      U.tDiffuse.value = post.rtA.texture; U.uDir.value.set(1, 0); U.uSat.value = 1; U.uGrade.value = 0;
       renderer.setRenderTarget(post.rtB);
       renderer.render(postScene, postCam);
-      U.tDiffuse.value = post.rtB.texture; U.uDir.value.set(0, 1); U.uSat.value = 1.1;
+      U.tDiffuse.value = post.rtB.texture; U.uDir.value.set(0, 1); U.uSat.value = 1.12; U.uGrade.value = 1;
       renderer.setRenderTarget(null);
       renderer.render(postScene, postCam);
     } catch (e) {
@@ -21052,6 +21192,7 @@ function createCarteEngine(THREE, container, opts) {
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
     MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow);
+    MAT.lavaTop.color.copy(MAT.lava.color);
     if (reduced) { MAT.alarm.opacity = 0.85; return; }
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
     S.spin.forEach((sp) => {
@@ -22183,7 +22324,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           people: cfg.people,
           ambient: cfg.ambient,
           fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan,
-          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
+          obstacles: () => (stageRef.current ? [...document.querySelectorAll(".lp-carte-folder-pop"), ...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => { setSelected(id); setWheel(id ? { id, sub: null } : null); },
           onBuild: onCreateTask ? (b) => setBuildAt(b) : null,
           onPortal: onOpenTimeline ? (pid) => { if (cbRef.current.onOpenTimeline) cbRef.current.onOpenTimeline(pid); } : null,
@@ -22436,11 +22577,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <Search size={14} />
             <input type="search" value={query} placeholder="Aller au projet…" aria-label="Rechercher un projet sur la carte" onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) focus(suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
-            {suggestions.length > 0 && (
+            {suggestions.length > 0 && createPortal(
               <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés" style={searchRef.current ? (() => { const r = searchRef.current.getBoundingClientRect(); return { position: "fixed", left: Math.max(8, Math.min(r.left, window.innerWidth - 248)), top: r.bottom + 4 }; })() : undefined}>
                 {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}{p.groupKind ? <span className="lp-carte-muted"> · {p.folderName}</span> : null}</button></li>)}
-              </ul>
-            )}
+              </ul>, document.body)}
           </div>
           <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
           <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
@@ -22516,7 +22656,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                     );
                   })}
                 </nav>
-                {popGroup && (
+                {popGroup && createPortal(
                   <div className="lp-carte-folder-pop" role="menu" aria-label={"Projets — " + grouping.one + " " + popGroup.name} style={{ left: folderPop.left, top: folderPop.top }}
                     onMouseEnter={() => clearTimeout(popTimer.current)} onMouseLeave={closeFolderSoon}>
                     <div className="lp-carte-folder-pop-head"><CarteGroupGlyph kind={popGroup.kind} color={popGroup.color} size={13} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span></div>
@@ -22532,7 +22672,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                       );
                     })}
                   </div>
-                )}
+                , document.body)}
                 <div className="lp-carte-hud" aria-live="polite">
                   <CarteResourceBar res={res} active={questsOn ? questFilter : null} onPick={pickResource} />
                   <span className="lp-carte-pill" title="Ce que vous avez regardé pendant cette visite. Rien n'est enregistré dans Nexora.">Relevés : {log.tasks} tâche{log.tasks > 1 ? "s" : ""} · {log.territories} territoire{log.territories > 1 ? "s" : ""}</span>
@@ -22639,12 +22779,12 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           </>
         )}
       </div>
-      {buildAt && layout.projectById[buildAt.projectId] && (
+      {buildAt && layout.projectById[buildAt.projectId] && createPortal(
         <div className="lp-carte-build" role="menu" aria-label="Parcelle libre" style={{ left: Math.max(8, Math.min(buildAt.x, window.innerWidth - 250)), top: Math.max(8, Math.min(buildAt.y, window.innerHeight - 110)) }}>
           <div className="lp-carte-build-head"><span className="lp-carte-dot" style={{ background: layout.projectById[buildAt.projectId].color }} />{layout.projectById[buildAt.projectId].name}</div>
           <button type="button" role="menuitem" autoFocus onClick={buildHere}><Hammer size={14} /> Construire ici <small>Nouvelle tâche dans ce projet</small></button>
         </div>
-      )}
+      , document.body)}
       {themesOpen && <CarteThemeSettings ctx={ctx} layout={layout} prefs={cfg} setPrefs={setPrefs} setProjectFolders={setProjectFolders} onClose={() => setThemesOpen(false)} />}
       {filtersOpen && (
         <Modal title="Filtrer la carte" onClose={() => setFiltersOpen(false)} wide footer={<>
