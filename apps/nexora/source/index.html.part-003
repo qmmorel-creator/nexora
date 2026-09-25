@@ -19538,6 +19538,129 @@ function createCarteEngine(THREE, container, opts) {
     cloudShadow.instanceMatrix.needsUpdate = true;
   }
 
+  // ---------- Lot 3 (#498) : panneaux de bois, vie ----------
+  // Panneau de bois planté près du totem : nom du projet, avancement,
+  // retards. Au-delà de 60 projets, les noms restent en étiquettes HTML.
+  const SIGN_MAX = 60, SIGN_K = 1.4;
+  function signTexture(p, st) {
+    const c = document.createElement("canvas");
+    c.width = 512; c.height = 176;
+    const g = c.getContext("2d");
+    if (g) {
+      g.fillStyle = "#8a5a33"; g.fillRect(0, 0, 512, 176);
+      for (let i = 0; i < 4; i++) { g.fillStyle = i % 2 ? "#946238" : "#7f522e"; g.fillRect(0, i * 44, 512, 44); g.fillStyle = "rgba(60,35,15,.5)"; g.fillRect(0, i * 44 + 42, 512, 2); }
+      g.strokeStyle = "#4e2f19"; g.lineWidth = 10; g.strokeRect(5, 5, 502, 166);
+      g.fillStyle = "#3b2412"; [[20, 20], [492, 20], [20, 156], [492, 156]].forEach(([a, b]) => { g.beginPath(); g.arc(a, b, 6, 0, 7); g.fill(); });
+      g.fillStyle = "#fff3d6"; g.textAlign = "center"; g.textBaseline = "middle"; g.shadowColor = "rgba(40,20,5,.6)"; g.shadowOffsetY = 3;
+      const emoji = carteEmojiIcon(p.icon);
+      const name = (emoji ? emoji + " " : "") + String(p.name || "");
+      let fs = 64; g.font = "italic 700 " + fs + "px Georgia, serif";
+      while (fs > 26 && g.measureText(name).width > 460) { fs -= 2; g.font = "italic 700 " + fs + "px Georgia, serif"; }
+      let txt = name; while (txt.length > 4 && g.measureText(txt).width > 470) txt = txt.slice(0, -2);
+      g.fillText(txt === name ? txt : txt + "…", 256, 70);
+      g.font = "700 38px Georgia, serif"; g.fillStyle = "#ffd36a";
+      g.fillText((st.pct || 0) + " %" + (st.overdue ? "  ·  " + st.overdue + " en retard" : ""), 256, 132);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    return t;
+  }
+  const signFaceGeo = new THREE.PlaneGeometry(1.52, 0.52);
+  geos.push(signFaceGeo);
+  function buildSignposts(hubs, batch, q) {
+    S.signed = {};
+    if (q === "low" || hubs.length > SIGN_MAX) return;
+    hubs.forEach((h) => {
+      if (h.x == null) return;
+      const p = h.p;
+      if (!p || p.unknown || (S.dimmed && S.dimmed.has(h.tr.projectId))) return;
+      const ry = 0.6, a = 1.0, rr = 1.35;
+      const x = h.x + Math.sin(a) * rr, z = h.z + Math.cos(a) * rr, K = SIGN_K;
+      placeModel(batch, [
+        cP("cyl", "#6b4424", -0.62 * K, 0, -0.02 * K, 0.11 * K, 1.75 * K, 0.11 * K), cP("cyl", "#6b4424", 0.62 * K, 0, -0.02 * K, 0.11 * K, 1.75 * K, 0.11 * K),
+        cP("box", "#7a4b2a", 0, 1.14 * K, 0, 1.6 * K, 0.56 * K, 0.08 * K),
+        cP("box", "#5a381e", 0, 1.66 * K, 0, 1.75 * K, 0.07 * K, 0.14 * K),
+      ], x, h.base, z, ry);
+      const tex = signTexture(p, S.stats[h.tr.projectId] || {});
+      const face = new THREE.Mesh(signFaceGeo, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, envMapIntensity: 0.4, emissive: "#ffffff", emissiveMap: tex, emissiveIntensity: 0.3 }));
+      face.userData.ownMat = face.userData.ownTex = true;
+      face.position.set(x + Math.sin(ry) * 0.045 * K, h.base + 1.42 * K, z + Math.cos(ry) * 0.045 * K);
+      face.rotation.y = ry; face.scale.setScalar(K);
+      face.castShadow = false; face.receiveShadow = true;
+      world.add(face);
+      S.signed[h.tr.projectId] = true;
+    });
+  }
+  // Papillons, oiseaux et lucioles : de la vie sur la carte (#498). Suivent
+  // l'option « Vie de la carte ».
+  const wingTex = canvasTex(64, (g) => { g.clearRect(0, 0, 64, 64); g.fillStyle = "#fff"; g.beginPath(); g.ellipse(30, 26, 26, 20, -0.4, 0, 7); g.fill(); g.beginPath(); g.ellipse(26, 48, 16, 12, 0.3, 0, 7); g.fill(); });
+  wingTex.wrapS = wingTex.wrapT = THREE.ClampToEdgeWrapping;
+  const wingGeo = new THREE.PlaneGeometry(0.16, 0.16).translate(0.08, 0, 0).rotateX(-Math.PI / 2);
+  geos.push(wingGeo);
+  MAT.wing = mat(new THREE.MeshBasicMaterial({ map: wingTex, transparent: true, side: THREE.DoubleSide, alphaTest: 0.4 }));
+  const WING_C = ["#ffd23f", "#ff9ec4", "#ffffff", "#9fd3ff", "#ffb35c"];
+  const LIFE_THEMES = new Set(["campagne", "foret", "mer", "lac", "montagne", "marais", "jungle", "ile", "ville", "desert", "canyon"]);
+  function buildCritters(keys, q) {
+    S.critters = null;
+    if (!S.life || q === "low" || !S.mapCenter) return;
+    const L = S.layout, poiKeys = S.poisByKey;
+    const spots = keys.filter((k) => { const t = L.tiles[k]; return t && !t.road && t.kind !== "hub" && t.kind !== "sea" && t.kind !== "water" && !t.lava && !poiKeys[k] && (t.kind === "islet" || LIFE_THEMES.has(t.theme)) && !(S.dimmed && t.projectId && S.dimmed.has(t.projectId)); });
+    const C = { butter: [], birds: [], flies: [] };
+    if (spots.length) {
+      const nb = Math.min(28, Math.max(8, Math.round(spots.length / 6)));
+      for (let i = 0; i < nb; i++) {
+        const t = L.tiles[spots[Math.floor(carteRand("bf" + i) * spots.length)]], w = carteToWorld(t.q, t.r);
+        C.butter.push({ x: w.x + (carteRand("bx" + i) - 0.5), y: t.h + 0.55 + carteRand("bh" + i) * 0.6, z: w.z + (carteRand("bz" + i) - 0.5), ph: carteRand("bp" + i) * 6.283, c: WING_C[i % WING_C.length] });
+      }
+      spots.filter((k) => { const t = L.tiles[k]; return t.kind === "wild" || t.kind === "edge" || t.kind === "islet" || t.theme === "foret" || t.theme === "jungle" || t.theme === "marais"; }).slice(0, 40).forEach((k, j) => {
+        const t = L.tiles[k], w = carteToWorld(t.q, t.r);
+        for (let i = 0; i < 3; i++) C.flies.push({ x: w.x + (carteRand("ff" + k + i) - 0.5) * 1.3, y: t.h + 0.35 + carteRand("fh" + k + i) * 0.5, z: w.z + (carteRand("fz" + k + i) - 0.5) * 1.3, ph: carteRand("fp" + k + i) * 6.283 });
+      });
+    }
+    for (let i = 0; i < 7; i++) C.birds.push({ dx: (i - 3) * 0.9, dz: -Math.abs(i - 3) * 0.7, dy: carteRand("oy" + i) * 0.4, ph: carteRand("op" + i) * 6.283 });
+    if (C.butter.length) C.bMesh = ambMesh(wingGeo, MAT.wing, C.butter.length * 2, (i) => C.butter[Math.floor(i / 2)].c);
+    if (C.flies.length) C.fMesh = ambMesh(G.ball, MAT.g, C.flies.length, () => "#fff3a0");
+    C.oMesh = ambMesh(G.box, MAT.l, C.birds.length * 2, () => "#3b3440");
+    S.critters = C;
+    placeCritters(S.time);
+  }
+  function placeCritters(t0) {
+    const C = S.critters;
+    if (!C) return;
+    const t = reduced ? t0 * 0.3 : t0;
+    if (C.bMesh) {
+      C.butter.forEach((b, i) => {
+        const x = b.x + Math.sin(t * 0.45 + b.ph) * 0.6, z = b.z + Math.cos(t * 0.33 + b.ph * 1.3) * 0.6;
+        const y = b.y + Math.sin(t * 2.1 + b.ph) * 0.12;
+        const yaw = Math.atan2(Math.cos(t * 0.45 + b.ph) * 0.27, -Math.sin(t * 0.33 + b.ph * 1.3) * 0.2);
+        baseOf(tmpM, x, y, z, yaw, 1.3);
+        const flap = 0.2 + Math.abs(Math.sin(t * 14 + b.ph)) * 0.9;
+        putPart(C.bMesh, i * 2, tmpM, 0, 0, 0, 0, 0, flap, 1, 1, 1);
+        putPart(C.bMesh, i * 2 + 1, tmpM, 0, 0, 0, 0, Math.PI, flap, 1, 1, 1);
+      });
+      C.bMesh.instanceMatrix.needsUpdate = true;
+    }
+    if (C.fMesh) {
+      C.flies.forEach((f, i) => {
+        const s = 0.05 + 0.03 * Math.sin(t * 3 + f.ph);
+        C.fMesh.setMatrixAt(i, tmpM.compose(tmpP.set(f.x + Math.sin(t * 0.7 + f.ph) * 0.2, f.y + Math.sin(t * 1.1 + f.ph) * 0.12, f.z + Math.cos(t * 0.6 + f.ph) * 0.2), tmpQ.identity(), tmpS.setScalar(Math.max(0.01, s))));
+      });
+      C.fMesh.instanceMatrix.needsUpdate = true;
+    }
+    // Vol d'oiseaux en V qui tourne lentement au-dessus de la carte.
+    const mc = S.mapCenter, R = Math.max(8, mc.r * 0.6), a = t * 0.05;
+    const cx = mc.x + Math.sin(a) * R, cz = mc.z + Math.cos(a) * R, head = a + Math.PI / 2;
+    const ch = Math.cos(head), sh = Math.sin(head);
+    C.birds.forEach((b, i) => {
+      const x = cx + b.dx * ch + b.dz * sh, z = cz - b.dx * sh + b.dz * ch, y = 9.5 + b.dy + Math.sin(t * 1.3 + b.ph) * 0.15;
+      baseOf(tmpM, x, y, z, head, 1);
+      const flap = Math.sin(t * 6 + b.ph) * 0.45;
+      putPart(C.oMesh, i * 2, tmpM, 0.19, 0, 0, 0, 0, 0.35 + flap, 0.42, 0.03, 0.08);
+      putPart(C.oMesh, i * 2 + 1, tmpM, -0.19, 0, 0, 0, 0, -0.35 - flap, 0.42, 0.03, 0.08);
+    });
+    C.oMesh.instanceMatrix.needsUpdate = true;
+  }
+
   // ---------- Construction ----------
   function build() {
     clearGroup(world);
@@ -19834,7 +19957,9 @@ function createCarteEngine(THREE, container, opts) {
       });
     }
     buildPortals();
+    buildSignposts(hubs, batch, q);
     S.spin = batch.flush(world, shadows);
+    buildCritters(keys, q);
     if (dones.length) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(dones, 3));
@@ -19887,23 +20012,33 @@ function createCarteEngine(THREE, container, opts) {
   function drawSelection() {
     clearGroup(overlay);
     S.convoys = [];
-    S.selRing = null; S.selHalo = null;
+    S.selRing = null; S.selHalo = null; S.selSparks = null;
     const id = S.selected;
     const pos = id && S.poi[id];
     if (!pos) return;
-    const ring = new THREE.Mesh(ringGeo, MAT.ring.clone());
-    ring.userData.ownMat = true;
-    ring.material.color.set("#245edb");
+    // Sélection dorée (#498) : anneau lumineux qui rebondit, halo au sol,
+    // étincelles qui montent autour du bâtiment.
     const tile = S.layout.tiles[pos.key];
     const w = carteToWorld(tile.q, tile.r);
-    ring.position.set(w.x, tile.h + 0.14, w.z);
+    const gy = (S.capTop && S.capTop[pos.key] != null ? S.capTop[pos.key] : tile.h + 0.12);
+    const ring = new THREE.Mesh(selTorusGeo, selRingMat);
+    ring.position.set(w.x, gy + 0.06, w.z);
     overlay.add(ring);
     S.selRing = ring;
-    const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: "#6f9bff", transparent: true, opacity: 0.3, depthWrite: false }));
-    halo.userData.ownMat = true;
-    halo.position.set(w.x, (S.capTop && S.capTop[pos.key] != null ? S.capTop[pos.key] : tile.h + 0.12) + 0.08, w.z);
+    const halo = new THREE.Mesh(blobGeo, selGlowMat);
+    halo.position.set(w.x, gy + 0.04, w.z);
+    halo.scale.set(2.6, 1, 2.6);
+    halo.renderOrder = 2;
     overlay.add(halo);
     S.selHalo = halo;
+    S.selT0 = S.time;
+    S.selSparks = [];
+    for (let i = 0; i < 10; i++) {
+      const sp = new THREE.Mesh(selSparkGeo, selSparkMat);
+      sp.userData.a = (i / 10) * 6.283; sp.userData.h = carteRand("sp" + i) * 1.1; sp.userData.c = new THREE.Vector3(w.x, gy, w.z);
+      overlay.add(sp);
+      S.selSparks.push(sp);
+    }
     const t = S.data.taskById[id];
     const links = [];
     t.dependsOn.forEach((d) => links.push({ other: d, color: "#6b4ce6", into: true }));
@@ -21331,6 +21466,19 @@ function createCarteEngine(THREE, container, opts) {
   const outlineGeo = new THREE.RingGeometry(0.9, 1.02, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
   const haloGeo = new THREE.RingGeometry(1.0, 1.22, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
   geos.push(outlineGeo, haloGeo);
+  // Sélection dorée (#498) : anneau lumineux, halo au sol, étincelles.
+  const selTorusGeo = new THREE.TorusGeometry(0.92, 0.06, 12, 64).rotateX(Math.PI / 2);
+  const selSparkGeo = new THREE.OctahedronGeometry(0.045);
+  geos.push(selTorusGeo, selSparkGeo);
+  const selRingMat = mat(new THREE.MeshBasicMaterial({ color: "#ffcf5a" }));
+  const selSparkMat = mat(new THREE.MeshBasicMaterial({ color: "#fff1b0" }));
+  const selGlowTex = canvasTex(128, (g, n) => {
+    const gr = g.createRadialGradient(n / 2, n / 2, n * 0.16, n / 2, n / 2, n / 2);
+    gr.addColorStop(0, "rgba(255,214,110,.55)"); gr.addColorStop(0.7, "rgba(255,200,90,.25)"); gr.addColorStop(1, "rgba(255,200,90,0)");
+    g.clearRect(0, 0, n, n); g.fillStyle = gr; g.fillRect(0, 0, n, n);
+  });
+  selGlowTex.wrapS = selGlowTex.wrapT = THREE.ClampToEdgeWrapping;
+  const selGlowMat = mat(new THREE.MeshBasicMaterial({ map: selGlowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
   const hoverLine = new THREE.Mesh(outlineGeo, mat(new THREE.MeshBasicMaterial({ color: "#fff7c2", transparent: true, opacity: 0.95, depthWrite: false })));
   const hoverHalo = new THREE.Mesh(haloGeo, mat(new THREE.MeshBasicMaterial({ color: "#fff7c2", transparent: true, opacity: 0.35, depthWrite: false })));
   hoverLine.visible = hoverHalo.visible = false;
@@ -21631,7 +21779,7 @@ function createCarteEngine(THREE, container, opts) {
   bloomScene.add(bloomQuad);
   // Matières lumineuses : renforcées au-delà de 1 quand le bloom est actif,
   // pour passer le seuil ; ramenées à leur couleur sinon.
-  const glowMats = [MAT.g, MAT.flame, MAT.bolt, MAT.portal, MAT.fxGlow].filter(Boolean).map((m) => ({ m, base: m.color.clone() }));
+  const glowMats = [MAT.g, MAT.flame, MAT.bolt, MAT.portal, MAT.fxGlow, selRingMat, selSparkMat].filter(Boolean).map((m) => ({ m, base: m.color.clone() }));
   S.glowK = 1;
   function setGlow(k) {
     if (S.glowK === k) return;
@@ -21716,14 +21864,25 @@ function createCarteEngine(THREE, container, opts) {
     placeFog(t);
     // Contour de la sélection (#477) : pulsation douce.
     if (S.selRing) {
-      const pu = reduced ? 1 : 0.5 + 0.5 * Math.sin(t * 4);
-      const sc = 1 + 0.06 * pu;
+      // Rebond à la sélection (dépassement amorti), puis pulsation douce.
+      const u = reduced ? 1 : Math.min(1, (t - (S.selT0 || 0)) / 0.55);
+      const back = 1 + 2.70158 * Math.pow(u - 1, 3) + 1.70158 * Math.pow(u - 1, 2);
+      const pu = reduced ? 0 : Math.sin(t * 3) * 0.04;
+      const sc = Math.max(0.05, back) * (1 + pu);
       S.selRing.scale.set(sc, 1, sc);
-      S.selRing.material.opacity = 0.65 + 0.3 * pu;
-      if (S.selHalo) { S.selHalo.scale.set(sc, 1, sc); S.selHalo.material.opacity = 0.18 + 0.22 * pu; }
+      S.selRing.position.y = S.selHalo.position.y + 0.02 + (reduced ? 0 : Math.abs(Math.sin(u * Math.PI * 2)) * 0.35 * (1 - u));
+      S.selHalo.scale.set(2.6 * sc, 1, 2.6 * sc);
+      (S.selSparks || []).forEach((sp, i) => {
+        const d = sp.userData, a = d.a + (reduced ? 0 : t * 0.6);
+        const hh = reduced ? d.h : (d.h + t * 0.35) % 1.4;
+        sp.position.set(d.c.x + Math.cos(a) * 0.95 * sc, d.c.y + 0.3 + hh, d.c.z + Math.sin(a) * 0.95 * sc);
+        sp.rotation.y = t * 2 + i;
+        const k = reduced ? 1 : Math.sin((hh / 1.4) * Math.PI);
+        sp.scale.setScalar(Math.max(0.05, k));
+      });
     }
     if (hoverHalo.visible) hoverHalo.material.opacity = reduced ? 0.35 : 0.22 + 0.2 * (0.5 + 0.5 * Math.sin(t * 5));
-    placeStorms(t); placeFires(t); placeClocks(t); placeWarnings(t); placeAmbient(t); placeTrail(t);
+    placeStorms(t); placeFires(t); placeClocks(t); placeWarnings(t); placeAmbient(t); placeTrail(t); placeCritters(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
     MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow).multiplyScalar(S.glowK || 1);
@@ -21775,8 +21934,12 @@ function createCarteEngine(THREE, container, opts) {
       const d = Math.hypot(tr.anchor.x - S.target.x, tr.anchor.z - S.target.z);
       if (d <= reach) shown[tr.projectId] = 1000 - d;
     });
+    // Panneaux de bois (#498) : de près, le nom planté dans le décor remplace
+    // l'étiquette, sauf pour le totem survolé ou épinglé.
+    const signNear = S.dist < 40 && S.signed;
     S.layout.territories.forEach((tr) => {
       if (!tr.anchor || !shown[tr.projectId]) return;
+      if (signNear && S.signed[tr.projectId] && !(S.hovered === "p:" + tr.projectId || S.pinnedHub === tr.projectId)) return;
       cand.push({ id: "p:" + tr.projectId, kind: "project", pid: tr.projectId, pos: tr.anchor, base: tr.world, prio: shown[tr.projectId], meta: !!detailed[tr.projectId] });
     });
     // Mode Fil d'Ariane (#435) : les étapes restent nommées et numérotées,
@@ -22078,7 +22241,7 @@ function createCarteEngine(THREE, container, opts) {
     // Pilotage (#468 à #481).
     setOptions(opt) {
       const v = opt || {};
-      const rebuild = ("fog" in v && !!v.fog !== S.fog) || ("fx" in v && !!v.fx !== S.fx);
+      const rebuild = ("fog" in v && !!v.fog !== S.fog) || ("fx" in v && !!v.fx !== S.fx) || ("life" in v && !!v.life !== S.life);
       ["fog", "minimap", "miniature", "life", "plan", "walk", "holo", "fx"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
       if (!S.holo) closeHolo();
       if (rebuild && S.layout) build();
@@ -23233,7 +23396,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   const terrStats = territory && stats[territory];
 
   return (
-    <section className={"lp-carte-view" + (embedded ? " is-embedded" : "") + (photo ? " is-photo" : "")} aria-label="Carte">
+    <section className={"lp-carte-view lp-carte-game" + (embedded ? " is-embedded" : "") + (photo ? " is-photo" : "")} aria-label="Carte">
       <ViewToolbarPortal slot={toolbarSlot} />
       <div className="lp-carte-toolbar">
           <div className="lp-carte-search" ref={searchRef}>
