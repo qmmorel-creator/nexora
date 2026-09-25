@@ -24,7 +24,7 @@ const T = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n${slice("COSMOS")}\n${slice("TIMELINE3D")}\n;return {
     carteNormalize, timeline3dBuild, normalizeTimeline3dViewPrefs, timeline3dNextDepartures,
     timeline3dNeighbours, timeline3dNextStop, timeline3dRel, timeline3dResolveQuality,
-    T3D_ORPHAN_LINE, T3D_SPEEDS,
+    T3D_ORPHAN_LINE, T3D_SPEEDS, timeline3dTarget,
   };\n})`
 )();
 
@@ -160,4 +160,18 @@ test("un réseau vide reste exploitable", () => {
   assert.equal(empty.lines.length, 0);
   assert.deepEqual(empty.range, { min: -7, max: 30 });
   assert.deepEqual(T.timeline3dNextDepartures(empty, null), []);
+});
+
+test("#462 : horizon — jour relatif et tâches encore à faire avant", () => {
+  const h = T.timeline3dTarget(M, iso(7));
+  assert.equal(h.day, 7);
+  // t2 (J+3), t4 (J+7, le jour même), t6 (J+2), t7 (en retard, J-3), t11 (J+4) ;
+  // t1 est terminée, t3/t8/t12/t5 tombent après l'horizon.
+  assert.equal(h.count, 5);
+  assert.deepEqual(T.timeline3dTarget(M, null), { day: null, count: 0 });
+  assert.deepEqual(T.timeline3dTarget(M, "pas une date"), { day: null, count: 0 });
+  assert.equal(T.timeline3dTarget(M, iso(-5)).count, 0, "un horizon passé ne compte que ce qui était dû avant lui");
+  assert.equal(T.normalizeTimeline3dViewPrefs({ targetDate: iso(7) }).targetDate, iso(7));
+  assert.equal(T.normalizeTimeline3dViewPrefs({ targetDate: "demain" }).targetDate, null);
+  assert.equal(T.normalizeTimeline3dViewPrefs({}).targetDate, null);
 });
