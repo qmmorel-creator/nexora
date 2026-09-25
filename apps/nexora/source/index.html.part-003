@@ -18970,6 +18970,8 @@ function createCarteEngine(THREE, container, opts) {
     geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
     return geo;
   }
+  G.blade = new THREE.ConeGeometry(0.022, 1, 3).translate(0, 0.5, 0);
+  G.seam = new THREE.IcosahedronGeometry(0.5, 1).translate(0, 0.5, 0);
   G.leaf = gradGeo(new THREE.IcosahedronGeometry(0.5, 3).translate(0, 0.5, 0), 0.62, 1.12);
   G.leafc = gradGeo(new THREE.ConeGeometry(0.5, 1, 16).translate(0, 0.5, 0), 0.68, 1.1);
   // Les matières à couleurs de sommets acceptent toutes les pièces : celles
@@ -19216,6 +19218,34 @@ function createCarteEngine(THREE, container, opts) {
   MAT.shallow = mat(new THREE.MeshBasicMaterial({ color: "#a6e6dc", transparent: true, opacity: 0.45, depthWrite: false }));
   MAT.water.dispose();
   MAT.water = mat(new THREE.MeshPhongMaterial({ color: "#ffffff", transparent: true, opacity: 0.88, shininess: 80, specular: new THREE.Color("#cfeeff"), map: rippleTex }));
+  // Mer avec profondeur (#497) : une texture dessinée à chaque construction
+  // (bleu profond au large, turquoise près des rives, écume, reflets), lue en
+  // coordonnées du monde ; des rides animées la parcourent.
+  const seaU = { box: { value: new THREE.Vector4(0, 0, 1, 1) }, ripple: { value: rippleTex }, off: { value: new THREE.Vector2() } };
+  MAT.sea = mat(std({ roughness: 0.16, metalness: 0.05, envMapIntensity: 0.9 }));
+  MAT.sea.onBeforeCompile = (sh) => {
+    sh.uniforms.uSeaBox = seaU.box; sh.uniforms.uRipple = seaU.ripple; sh.uniforms.uRippleOff = seaU.off;
+    sh.vertexShader = "varying vec3 vSeaW;\n" + sh.vertexShader.replace("#include <project_vertex>", [
+      "#include <project_vertex>",
+      "vec4 seaW = vec4(transformed, 1.0);",
+      "#ifdef USE_INSTANCING",
+      "seaW = instanceMatrix * seaW;",
+      "#endif",
+      "vSeaW = (modelMatrix * seaW).xyz;",
+    ].join("\n"));
+    sh.fragmentShader = "varying vec3 vSeaW; uniform vec4 uSeaBox; uniform sampler2D uRipple; uniform vec2 uRippleOff;\n" + sh.fragmentShader.replace("#include <map_fragment>", [
+      "#ifdef USE_MAP",
+      "  vec4 sampledDiffuseColor = texture2D(map, clamp((vSeaW.xz - uSeaBox.xy) / uSeaBox.zw, 0.001, 0.999));",
+      "  diffuseColor *= sampledDiffuseColor;",
+      "  float seaRp = texture2D(uRipple, vSeaW.xz * 0.09 + uRippleOff).r;",
+      "  diffuseColor.rgb *= mix(0.9, 1.1, seaRp);",
+      "#endif",
+    ].join("\n"));
+  };
+  MAT.sea.customProgramCacheKey = () => "carte-sea";
+  MAT.grass = mat(std({ roughness: 0.9, envMapIntensity: 0.4 }));
+  // Ombres de nuages (#497) : invisibles à la caméra, elles portent ombre.
+  MAT.ghost = mat(new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
   MAT.blob = mat(new THREE.MeshBasicMaterial({ color: "#000000", alphaMap: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
   // Feuillages qui ondulent (#479) : décalage au sommet des pièces, selon la
   // position de l'instance. Figé si les animations sont réduites.
@@ -19343,6 +19373,171 @@ function createCarteEngine(THREE, container, opts) {
     return col;
   }
 
+  // ---------- Lot 2 (#497) : terrain, eau et ciel ----------
+  const GRASS_PER_TILE = 70, GRASS_MAX = 45000;
+  const seaTex = { canvas: document.createElement("canvas"), tex: null };
+  const seaDisc = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2), MAT.sea);
+  geos.push(seaDisc.geometry);
+  seaDisc.receiveShadow = true;
+  scene.add(seaDisc);
+  const landAt = (x, z) => { const h = carteFromWorld(x, z); const t = S.layout.tiles[carteKey(h[0], h[1])]; return t && t.kind !== "sea" ? t : null; };
+  function buildSea(keys, shore, seaY) {
+    const L = S.layout;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    const land = [];
+    keys.forEach((k) => { const t = L.tiles[k], w = carteToWorld(t.q, t.r); x0 = Math.min(x0, w.x); x1 = Math.max(x1, w.x); z0 = Math.min(z0, w.z); z1 = Math.max(z1, w.z); if (t.kind !== "sea") land.push(w); });
+    if (!Number.isFinite(x0)) { x0 = z0 = -10; x1 = z1 = 10; }
+    const pad = 8, span = Math.max(x1 - x0, z1 - z0) + 2 * pad;
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, bx = cx - span / 2, bz = cz - span / 2;
+    const N = Math.max(512, Math.min(2048, Math.pow(2, Math.ceil(Math.log2(span * 12)))));
+    const c = seaTex.canvas; c.width = c.height = N;
+    const g = c.getContext("2d");
+    const u = N / span, px = (x) => (x - bx) * u, pz = (z) => (z - bz) * u;
+    if (g) {
+      g.fillStyle = "#1f7fa3"; g.fillRect(0, 0, N, N);
+      // Du large vers la rive : bleu moyen, puis turquoise clair.
+      const pass = (r0, r1, col, list) => list.forEach((w) => { const rg = g.createRadialGradient(px(w.x), pz(w.z), r0 * u, px(w.x), pz(w.z), r1 * u); rg.addColorStop(0, col); rg.addColorStop(1, col.replace(/[\d.]+\)$/, "0)")); g.fillStyle = rg; g.fillRect(px(w.x) - r1 * u, pz(w.z) - r1 * u, 2 * r1 * u, 2 * r1 * u); });
+      const near = shore.length ? shore : land;
+      pass(0.8, 4.2, "rgba(44,160,186,0.55)", near.slice(0, 6000));
+      pass(0.9, 2.3, "rgba(120,214,205,0.7)", near.slice(0, 6000));
+      // Écume irrégulière au pied des rives.
+      const per = Math.max(20, Math.min(260, Math.floor(60000 / Math.max(1, shore.length))));
+      shore.forEach((s) => {
+        for (let i = 0; i < per; i++) {
+          const a = carteRand("fa" + s.k + i) * 6.283, rr = 1.26 + Math.pow(carteRand("fr" + s.k + i), 2) * 0.42;
+          const x = s.x + Math.cos(a) * rr, z = s.z + Math.sin(a) * rr;
+          if (landAt(x, z)) continue;
+          g.fillStyle = "rgba(255,255,255," + (0.35 + 0.5 * (1 - (rr - 1.26) / 0.42)).toFixed(3) + ")";
+          g.beginPath(); g.ellipse(px(x), pz(z), (0.03 + carteRand("fs" + s.k + i) * 0.07) * u, (0.02 + carteRand("ft" + s.k + i) * 0.04) * u, a, 0, 7); g.fill();
+        }
+      });
+      // Reflets du ciel au large.
+      const glints = Math.min(4000, Math.round(420 * (span * span) / (84 * 84)));
+      for (let i = 0; i < glints; i++) {
+        const x = bx + carteRand("gx" + i) * span, z = bz + carteRand("gz" + i) * span;
+        const h = carteFromWorld(x, z);
+        if (landAt(x, z) || CARTE_DIRS.some((d) => { const t = L.tiles[carteKey(h[0] + d[0], h[1] + d[1])]; return t && t.kind !== "sea"; })) continue;
+        g.fillStyle = "rgba(255,255,255," + (0.18 + carteRand("go" + i) * 0.35).toFixed(3) + ")";
+        g.beginPath(); g.ellipse(px(x), pz(z), (0.18 + carteRand("gw" + i) * 0.35) * u, 0.035 * u, 0.25, 0, 7); g.fill();
+      }
+    }
+    if (seaTex.tex) seaTex.tex.dispose();
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    seaTex.tex = t;
+    MAT.sea.map = t; MAT.sea.needsUpdate = true;
+    seaU.box.value.set(bx, bz, span, span);
+    // Au-delà des cases de mer, un disque sans fin de bleu profond.
+    seaDisc.position.set(cx, seaY - 0.035, cz);
+    seaDisc.scale.setScalar(span / 2 + 260);
+    S.mapCenter = { x: cx, z: cz, r: span / 2 - pad };
+  }
+  // Plages et galets (#497) : une grève de sable sous chaque case de rivage.
+  function buildShore(shore, seaY) {
+    if (!shore.length || S.effQuality === "low") return;
+    const sand = new THREE.InstancedMesh(tileGeo, MAT.l, shore.length);
+    const pebbles = [];
+    shore.forEach((s, i) => {
+      const th = s.t.theme;
+      const col = th === "cyberpunk" ? "#8a929c" : th === "volcan" ? "#4a403c" : th === "grandnord" ? "#e6ecef" : "#e8d4a2";
+      const top = Math.min(seaY + 0.09, s.top - 0.06);
+      sand.setMatrixAt(i, tmpM.compose(tmpP.set(s.x, top - 0.4, s.z), tmpQ.set(0, 0, 0, 1), tmpS.set(1.24, 0.4, 1.24)));
+      sand.setColorAt(i, tmpC.set(S.dimmed && s.t.projectId && S.dimmed.has(s.t.projectId) ? CARTE_DIM_TOP : col));
+      for (let j = 0; j < 5; j++) {
+        const a = carteRand("gb" + s.k + j) * 6.283, rr = 1.1 + carteRand("gr" + s.k + j) * 0.22;
+        const x = s.x + Math.cos(a) * rr, z = s.z + Math.sin(a) * rr;
+        if (landAt(x, z)) continue;
+        const r = 0.06 + carteRand("gs" + s.k + j) * 0.06;
+        pebbles.push([x, top - r * 0.4, z, r, j % 2 ? "#948b7e" : "#aaa192", a]);
+      }
+    });
+    sand.instanceMatrix.needsUpdate = true; if (sand.instanceColor) sand.instanceColor.needsUpdate = true;
+    sand.computeBoundingSphere(); sand.receiveShadow = true;
+    world.add(sand);
+    if (pebbles.length) {
+      const pm = new THREE.InstancedMesh(G.seam, MAT.l, pebbles.length);
+      pebbles.forEach((p, i) => { tmpQ.setFromAxisAngle(UP, p[5]); pm.setMatrixAt(i, tmpM.compose(tmpP.set(p[0], p[1], p[2]), tmpQ, tmpS.set(p[3] * 2.6, p[3] * 1.4, p[3] * 2))); pm.setColorAt(i, tmpC.set(p[4])); });
+      pm.instanceMatrix.needsUpdate = true; if (pm.instanceColor) pm.instanceColor.needsUpdate = true;
+      pm.computeBoundingSphere(); pm.castShadow = pm.receiveShadow = true;
+      world.add(pm);
+    }
+  }
+  // Coutures adoucies (#497) : un bourrelet d'herbe entre deux cases de
+  // terre voisines de hauteur proche.
+  function buildSeams(keys) {
+    const L = S.layout, list = [];
+    keys.forEach((k) => {
+      const t = L.tiles[k];
+      if (t.kind === "sea" || t.kind === "water" || (t.lava && !t.road)) return;
+      const w = carteToWorld(t.q, t.r);
+      for (let d = 0; d < 3; d++) {
+        const k2 = carteKey(t.q + CARTE_DIRS[d][0], t.r + CARTE_DIRS[d][1]), t2 = L.tiles[k2];
+        if (!t2 || t2.kind === "sea" || t2.kind === "water" || (t2.lava && !t2.road)) continue;
+        const dy = Math.abs(t.h - t2.h);
+        if (dy > 0.3) continue;
+        const w2 = carteToWorld(t2.q, t2.r);
+        const c = carteMix(S.tileTop[k] || "#8fbf4d", S.tileTop[k2] || "#8fbf4d", 0.5);
+        const road = t.road || t2.road;
+        const sy = 0.08 + dy * 1.2;
+        list.push([(w.x + w2.x) / 2, Math.min(t.h, t2.h) + 0.12 - 0.02 - sy / 2, (w.z + w2.z) / 2, sy, Math.atan2(w2.x - w.x, w2.z - w.z), road ? c : carteMix(c, "#5e8f35", 0.12)]);
+      }
+    });
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(G.seam, MAT.l, list.length);
+    list.forEach((s, i) => { tmpQ.setFromAxisAngle(UP, s[4]); m.setMatrixAt(i, tmpM.compose(tmpP.set(s[0], s[1], s[2]), tmpQ, tmpS.set(1.05, s[3], 0.2))); m.setColorAt(i, tmpC.set(s[5])); });
+    m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    m.computeBoundingSphere(); m.receiveShadow = true;
+    world.add(m);
+  }
+  function buildGrass(pts) {
+    if (!pts.length) return;
+    const m = new THREE.InstancedMesh(G.blade, MAT.grass, pts.length);
+    pts.forEach((p, i) => {
+      tmpQ.setFromEuler(tmpE.set((carteRand("bx" + p[5]) - 0.5) * 0.5, carteRand("by" + p[5]) * 6, (carteRand("bz" + p[5]) - 0.5) * 0.5));
+      m.setMatrixAt(i, tmpM.compose(tmpP.set(p[0], p[1], p[2]), tmpQ, tmpS.set(1, 0.1 + p[3] * 0.14, 1)));
+      m.setColorAt(i, tmpC.set(p[4]).lerp(tmpC2.set(p[3] > 0.5 ? "#c9df7a" : "#4f8a2c"), 0.25 + carteRand("bc" + p[5]) * 0.3));
+    });
+    m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    m.computeBoundingSphere(); m.receiveShadow = true;
+    decorGroup.add(m);
+  }
+  // Îles lointaines dans la brume, tout autour de la carte (#497).
+  function buildHorizon() {
+    const mc = S.mapCenter;
+    if (!mc || S.effQuality === "low") return;
+    const b = makeBatcher();
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * 6.283 + carteRand("ia" + i) * 0.3, rr = mc.r + 34 + carteRand("ir" + i) * 18;
+      const s = 8 + carteRand("is" + i) * 8;
+      b.add("dome", "l", mc.x + Math.sin(a) * rr, 0.05, mc.z + Math.cos(a) * rr, s * 1.4, s * (0.18 + carteRand("ih" + i) * 0.16), s, a, carteRand("ic" + i) > 0.5 ? "#7fa66a" : "#8fae78");
+    }
+    b.flush(world, false);
+  }
+  // Ombres de nuages (#497) : quatre bancs invisibles, placés entre le soleil
+  // et la carte, qui dérivent lentement autour du point regardé.
+  const CLOUD_SHADOWS = [[-6, 3, 0], [7, -4, 1], [-2, 10, 2], [12, 8, 3]];
+  const cloudShadow = new THREE.InstancedMesh(G.ball, MAT.ghost, CLOUD_SHADOWS.length * 6);
+  cloudShadow.castShadow = true; cloudShadow.receiveShadow = false; cloudShadow.frustumCulled = false; cloudShadow.visible = false;
+  scene.add(cloudShadow);
+  const cloudSun = new THREE.Vector3(34, 32, 12).normalize();
+  function placeCloudShadows(t0) {
+    const on = S.fx && S.effQuality === "high" && sun.castShadow;
+    cloudShadow.visible = on;
+    if (!on) return;
+    const t = reduced ? 0 : t0;
+    let i = 0;
+    CLOUD_SHADOWS.forEach(([dx, dz, ph]) => {
+      const drift = ((t * 0.35 + ph * 13) % 50) - 25;
+      const gx = S.target.x + dx + drift, gz = S.target.z + dz + drift * 0.3;
+      const lift = 12 / cloudSun.y;
+      for (let j = 0; j < 6; j++) {
+        const r = 1 + carteRand("sh" + ph + j) * 0.7;
+        cloudShadow.setMatrixAt(i++, tmpM.compose(tmpP.set(gx + cloudSun.x * lift + (j - 2.5) * 1.0, 12 + carteRand("sy" + ph + j) * 0.4, gz + cloudSun.z * lift + carteRand("sz" + ph + j) * 1.4), tmpQ.identity(), tmpS.set(r * 2, r, r * 2.6)));
+      }
+    });
+    cloudShadow.instanceMatrix.needsUpdate = true;
+  }
+
   // ---------- Construction ----------
   function build() {
     clearGroup(world);
@@ -19354,6 +19549,8 @@ function createCarteEngine(THREE, container, opts) {
     const baseM = new THREE.InstancedMesh(tileGeo, litMat("l"), keys.length);
     const capM = new THREE.InstancedMesh(capGeo, litMat("l"), keys.length);
     const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
+    const seaM = new THREE.InstancedMesh(capGeo, MAT.sea, keys.length);
+    seaM.count = 0; seaM.userData.keys = []; seaM.receiveShadow = shadows;
     const lavaM = new THREE.InstancedMesh(landCapGeo, MAT.lavaTop, keys.length);
     // Sol texturé et routes pavées (#479), tuiles biseautées en falaise (#485).
     capM.geometry = landCapGeo;
@@ -19375,13 +19572,16 @@ function createCarteEngine(THREE, container, opts) {
         const b = baseM.count++;
         baseM.setMatrixAt(b, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, 0.08, 1)));
         baseM.setColorAt(b, tmpC.set(col.side));
-        const j = waterM.count++;
+        // Mer (#497) : texture de profondeur, couleur neutre ; lacs et
+        // rivières gardent la teinte de leur thème.
+        const wm = t.kind === "sea" ? seaM : waterM;
+        const j = wm.count++;
         // Mer : cases légèrement élargies, sans joint visible (#485).
         const ws = t.kind === "sea" ? 1.03 : 1;
-        waterM.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(ws, 1, ws)));
+        wm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(ws, 1, ws)));
         capTop[k] = t.h - 0.06 + 0.14;
-        waterM.setColorAt(j, tmpC.set(t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
-        waterM.userData.keys[j] = k;
+        wm.setColorAt(j, tmpC.set(t.kind === "sea" ? (t.bridge ? "#e8f4f4" : "#ffffff") : t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
+        wm.userData.keys[j] = k;
       } else {
         const top = t.h + 0.12;
         const c = cliffM.count++;
@@ -19394,7 +19594,7 @@ function createCarteEngine(THREE, container, opts) {
         // Rive : une case de terre au bord de la mer reçoit écume et haut-fond.
         for (let dI = 0; dI < 6; dI++) {
           const nb = L.tiles[carteKey(t.q + CARTE_DIRS[dI][0], t.r + CARTE_DIRS[dI][1])];
-          if (!nb || nb.kind === "sea") { shore.push(w); break; }
+          if (!nb || nb.kind === "sea") { shore.push({ x: w.x, z: w.z, k, t, top }); break; }
         }
         capTop[k] = t.h + 0.12;
         cm.setColorAt(j, tmpC.set(col.top));
@@ -19402,19 +19602,13 @@ function createCarteEngine(THREE, container, opts) {
       }
       S.tileTop[k] = col.top;
     });
-    [baseM, waterM, capM, lavaM, roadM, cliffM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
-    if (shore.length) {
-      let seaY = 0.19;
-      keys.forEach((k) => { const t = L.tiles[k]; if (t.kind === "sea") seaY = Math.max(seaY, capTop[k] || 0); });
-      [[MAT.shallow, 1.52, 0.006], [MAT.foam, 1.15, 0.014]].forEach(([mt, sc, dy], li) => {
-        const m = new THREE.InstancedMesh(flatHexGeo, mt, shore.length);
-        shore.forEach((w, i) => m.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, seaY + dy, w.z), tmpQ.identity(), tmpS.set(sc, 1, sc))));
-        m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.renderOrder = 1 + li;
-        world.add(m);
-        if (li === 1) S.foam = m;
-      });
-    }
-    S.pickMeshes = [capM, waterM, lavaM, roadM];
+    [baseM, waterM, seaM, capM, lavaM, roadM, cliffM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
+    let seaY = 0.19;
+    keys.forEach((k) => { const t = L.tiles[k]; if (t.kind === "sea") seaY = Math.max(seaY, capTop[k] || 0); });
+    buildSea(keys, shore, seaY);
+    buildShore(shore, seaY);
+    if (q === "high") buildSeams(keys);
+    S.pickMeshes = [capM, waterM, seaM, lavaM, roadM];
     S.capTop = capTop;
 
     // Noms des dossiers au sol (#377, #393) : le long de l'île, au-dessus de
@@ -19481,6 +19675,7 @@ function createCarteEngine(THREE, container, opts) {
     // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
     const decorShare = q === "low" ? 0.4 : 1;
     const decorBlobs = [];
+    const grass = [];
     keys.forEach((k) => {
       const t = L.tiles[k];
       if (t.road || poiKeys.has(k) || t.kind === "hub") {
@@ -19502,7 +19697,13 @@ function createCarteEngine(THREE, container, opts) {
       const natural = t.kind === "islet" || TUFT_THEMES.has(t.theme);
       if (q === "high" && natural && (t.kind === "land" || t.kind === "wild" || t.kind === "edge" || t.kind === "islet") && !t.lava && !(S.dimmed && t.projectId && S.dimmed.has(t.projectId))) {
         const tuft = carteMix(S.tileTop[k] || "#8fbf4d", "#000000", 0.22);
-        for (let i = 0; i < 4; i++) {
+        // Herbe dense (#497) : des brins instanciés à la place des touffes.
+        if (S.fx && grass.length < GRASS_MAX) {
+          for (let i = 0; i < GRASS_PER_TILE; i++) {
+            const a = carteRand("ba" + k + i) * 6.283, rr = Math.sqrt(carteRand("br" + k + i)) * 0.84;
+            grass.push([w.x + Math.cos(a) * rr, t.h + 0.11, w.z + Math.sin(a) * rr, carteRand("bh" + k + i), S.tileTop[k] || "#8fbf4d", k + i]);
+          }
+        } else for (let i = 0; i < 4; i++) {
           const a = carteRand("ta" + i + k) * 6.283, rr = 0.25 + carteRand("tr" + i + k) * 0.55;
           dBatch.add("cone", "w", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.07, 0.17, 0.07, 0, tuft);
         }
@@ -19513,6 +19714,8 @@ function createCarteEngine(THREE, container, opts) {
       }
     });
     dBatch.flush(decorGroup, shadows);
+    buildGrass(grass);
+    buildHorizon(keys);
     // Tâches.
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
@@ -20803,7 +21006,14 @@ function createCarteEngine(THREE, container, opts) {
     if (!force && S.lightKey === d.sky + d.k) { if (S.daylightWindows) S.daylightWindows.visible = d.evening; return; }
     S.lightKey = d.sky + d.k;
     renderer.setClearColor(d.sky);
-    scene.fog.color.set(d.sky);
+    // Ciel en dégradé avec halo de soleil, brume chaude à l'horizon (#497).
+    const haze = carteMix(d.sky, "#e7e3d2", 0.65 * d.k);
+    scene.fog.color.set(haze);
+    const skyC = skyCanvas(carteMix(d.sky, "#5d9fd6", 0.45), carteMix(d.sky, "#dcebef", 0.35 * d.k), carteMix(haze, "#f6e3c0", 0.35 * d.k), d.k > 0.8);
+    if (scene.background && scene.background.isTexture) scene.background.dispose();
+    const bg = new THREE.CanvasTexture(skyC);
+    bg.colorSpace = THREE.SRGBColorSpace;
+    scene.background = bg;
     // Lot 1 (#496) : le reflet du ciel prend le relais d'une partie de
     // l'éclairage ambiant ; il baisse avec le jour.
     hemi.intensity = d.hemi * (envTex ? 0.42 : 0.8);
@@ -21501,7 +21711,8 @@ function createCarteEngine(THREE, container, opts) {
     const t = S.time;
     // Matières vivantes (#479) : feuillages, rides de l'eau, portails.
     swayU.value = reduced ? 0 : t;
-    if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); portalTex.rotation = -t * 0.8; }
+    if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); seaU.off.value.set((t * 0.012) % 1, (t * 0.008) % 1); portalTex.rotation = -t * 0.8; }
+    placeCloudShadows(t);
     placeFog(t);
     // Contour de la sélection (#477) : pulsation douce.
     if (S.selRing) {
@@ -21931,6 +22142,9 @@ function createCarteEngine(THREE, container, opts) {
       if (post.rtA) { post.rtA.dispose(); post.rtB.dispose(); }
       if (post.bA) { post.bA.dispose(); post.bB.dispose(); }
       if (envTex) envTex.dispose();
+      if (seaTex.tex) seaTex.tex.dispose();
+      if (scene.background && scene.background.isTexture) scene.background.dispose();
+      cloudShadow.dispose();
       texs.forEach((t) => t.dispose());
       mini.remove(); strat.remove();
       geos.forEach((g) => g.dispose());
