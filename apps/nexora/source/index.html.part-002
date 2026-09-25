@@ -5100,6 +5100,7 @@ function carteNormalize(ctx, tasks, opts) {
       secondaryProjectId: t.secondaryProjectId && projectIds.has(t.secondaryProjectId) ? t.secondaryProjectId : null,
       attachments: Array.isArray(t.attachments) ? t.attachments.length : 0,
       hasReport: !!(t.meetingReport && String(t.meetingReport).trim()),
+      report: typeof t.meetingReport === "string" ? t.meetingReport : "",
       fromEmail: !!t.sourceMessageId,
       stale: state !== "done" && state !== "info" && last != null && nowMs - last > 30 * CARTE_DAY,
       recentDone: state === "done" && completed != null && nowMs - completed <= 7 * CARTE_DAY,
@@ -6402,6 +6403,21 @@ function carteDueTodayPatch(raw, now) {
   const start = carteDayNumber(r.start);
   return { end: today, start: start != null && start <= carteDayNumber(today) ? r.start : today };
 }
+// Tableau hologramme (#494) : onglets disponibles (description, compte
+// rendu) et découpage du texte en paragraphes lisibles (puces, gras retiré).
+function carteHoloTabs(task) {
+  const out = [];
+  if (task && String(task.desc || "").trim()) out.push({ id: "desc", label: "Description" });
+  if (task && String(task.report || "").trim()) out.push({ id: "report", label: "Compte rendu" });
+  return out;
+}
+function carteHoloParagraphs(text) {
+  return String(text || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter((l, i, a) => l || (i > 0 && a[i - 1])).map((l) => {
+    const m = /^([-*•]|\d+[.)])\s+(.*)$/.exec(l);
+    const clean = (x) => x.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/^#+\s*/, "");
+    return m ? { bullet: true, text: clean(m[2]) } : { bullet: false, text: clean(l) };
+  }).filter((p, i, a) => p.text || (i > 0 && a[i - 1].text));
+}
 // Construire ici (#470) : la première nouvelle tâche du projet visé prend la
 // parcelle choisie. Renvoie la mémoire de disposition à utiliser.
 function carteClaimTile(memory, pending, tasks) {
@@ -6467,6 +6483,10 @@ function normalizeCarteViewPrefs(p) {
     views: carteNormalizeViews(v.views),
     // Roue d'action (#489) : actions choisies, dans l'ordre.
     wheel: carteNormalizeWheel(v.wheel),
+    // Arpenteur à pied (#493) : actif par défaut.
+    walk: v.walk !== false,
+    // Tableau hologramme au double clic (#494) : actif par défaut.
+    holo: v.holo !== false,
     // Écartement des dossiers (0 à 4) et densité des tâches (1 à 5) (#491).
     expansion: Number.isFinite(Number(v.expansion)) && v.expansion !== null && v.expansion !== "" ? Math.max(0, Math.min(4, Math.round(Number(v.expansion)))) : 1,
     density: Number.isFinite(Number(v.density)) && v.density !== null && v.density !== "" ? Math.max(1, Math.min(5, Math.round(Number(v.density)))) : 3,

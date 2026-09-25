@@ -29,7 +29,7 @@ const C = vm.runInThisContext(
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
-    carteNormalizeWheel, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius,
+    carteNormalizeWheel, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
   };\n})`
 )();
 
@@ -717,4 +717,21 @@ test("#491 : écartement des dossiers et densité des tâches", () => {
   assert.equal(p.expansion, 1); assert.equal(p.density, 3);
   assert.equal(C.normalizeCarteViewPrefs({ expansion: 9, density: 0 }).expansion, 4);
   assert.equal(C.normalizeCarteViewPrefs({ expansion: 9, density: 0 }).density, 1);
+});
+
+test("#493 : déplacement de l'arpenteur en option, actif par défaut", () => {
+  assert.equal(C.normalizeCarteViewPrefs({}).walk, true);
+  assert.equal(C.normalizeCarteViewPrefs({ walk: false }).walk, false);
+});
+
+test("#494 : hologramme — onglets selon le contenu, texte en paragraphes", () => {
+  assert.deepEqual(C.carteHoloTabs({ desc: "", report: " " }), []);
+  assert.deepEqual(C.carteHoloTabs({ desc: "a", report: "" }).map((t) => t.id), ["desc"]);
+  assert.deepEqual(C.carteHoloTabs({ desc: "a", report: "b" }).map((t) => t.id), ["desc", "report"]);
+  assert.deepEqual(C.carteHoloParagraphs("Intro **gras**\n- point 1\n2) point 2\n\n\nFin"), [
+    { bullet: false, text: "Intro gras" }, { bullet: true, text: "point 1" }, { bullet: true, text: "point 2" }, { bullet: false, text: "" }, { bullet: false, text: "Fin" },
+  ]);
+  const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s1", meetingReport: "CR" }], { now: NOW });
+  assert.equal(n.tasks[0].report, "CR");
+  assert.equal(C.normalizeCarteViewPrefs({}).holo, true);
 });

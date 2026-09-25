@@ -1121,7 +1121,10 @@ if (benchApp) {
     }
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
-    mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra]));
+    // Hologramme (#494) : une description et un compte rendu d'exemple.
+    const holo = (t) => t.title === "Revue DOE" ? { ...t, desc: "Revue documentaire des **dossiers d'ouvrages exécutés** du lot 2B avant réception.\n- Vérifier la complétude des plans de récolement\n- Contrôler les notices de fonctionnement\n- Lister les réserves documentaires à lever" }
+      : t.title === "Réunion de chantier 2" ? { ...t, desc: "Réunion hebdomadaire avec l'entreprise de gros œuvre.", meetingReport: "Présents : MOE, entreprise GO, bureau de contrôle.\nPoints traités :\n- Planning : retard de 5 j sur le coulage du tablier\n- Réserves : 3 levées, 2 en cours\n- Sécurité : garde-corps provisoires à reposer\nActions : entreprise GO, nouveau planning sous 48 h." } : t;
+    mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra].map(holo)));
   } else if (benchParams.get("carte") === "totems") {
     window.__carteBench = {};
     // Vitrine des totems (#488) : un dossier par thème, un projet par

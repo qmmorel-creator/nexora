@@ -13,3 +13,7 @@ Ouvrir `index.html?d=A` (ou `B`, `C`) dans un navigateur : three.js 0.158 est ch
 ## Totems par thème (#488)
 
 `totems-planche.png` : les quinze totems dans l'application (banc visuel, `?app=1&view=carte&carte=totems`).
+
+## Tableau hologramme (#494)
+
+Panneau 3D fixe dans l'espace, orienté vers le regard au moment du double clic : lisible de face (`hologramme-3d-face.png`, `hologramme-3d-compte-rendu.png`), oblique de biais (`hologramme-3d-biais.png`), en miroir de dos (`hologramme-3d-dos.png`). Onglets cliquables sur le panneau ; double clic ou Échap pour fermer.
