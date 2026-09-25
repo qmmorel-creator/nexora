@@ -22644,7 +22644,7 @@ function createTimeline3dEngine(THREE, container, opts) {
 
   const S = {
     mode: o.mode === "cabine" ? "cabine" : "rail", animate: o.animate !== false, speed: o.speed || 2.4, qualityPref: o.quality || "auto", quality: "high",
-    model: null, visible: null, scene: null, s: 0.45, lane: {}, ang: {}, R: 5, r0: 0, r1: 0,
+    model: null, visible: null, scene: null, targetDay: null, targetCount: null, targetGroup: null, targetLabel: null, s: 0.45, lane: {}, ang: {}, R: 5, r0: 0, r1: 0,
     hits: [], anims: [], labels: [], selRing: null, selectedId: null, focus: 0,
     playing: false, sim: 0, simEnd: 60, dwell: 0, clockUntil: 0, driver: null, dl: { y: 0, p: -0.07, gy: 0, gp: -0.07 },
     trains: [], barriers: [], xlights: [], cars: [], clouds: [], puffs: [], ripples: [], boarding: [], hands: [], zones: [],
@@ -22710,13 +22710,18 @@ function createTimeline3dEngine(THREE, container, opts) {
   const fmtShort = (d) => dateOf(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 
   // ---------- Placement ----------
+  // #461 : la voie d'une bifurcation est posée à 2,2 unités de l'axe de sa
+  // ligne (1,05 auparavant, la largeur du ballast : les deux voies se
+  // touchaient). Les lignes s'écartent d'autant pour que les bifurcations de
+  // deux lignes voisines, et leurs gares, ne se chevauchent pas.
+  const T3D_RAIL_BRANCH_LAT = 2.2, T3D_RAIL_LANE = 6.6;
   const lineOf = (id) => S.model.lineById[id];
   function pos(l, d, lat) {
     if (S.mode === "cabine") {
       const a = S.ang[l.id], r = S.R + (lat || 0) * 1.2;
       return V(Math.cos(a) * r, Math.sin(a) * r, -d * S.s);
     }
-    return V(d * S.s, 0.25, S.lane[l.id] + (lat || 0) * 1.05);
+    return V(d * S.s, 0.25, S.lane[l.id] + (lat || 0) * T3D_RAIL_BRANCH_LAT);
   }
   function layout() {
     const M = S.model;
@@ -22724,8 +22729,8 @@ function createTimeline3dEngine(THREE, container, opts) {
     if (S.mode === "rail") {
       S.s = 0.45; S.lane = {};
       let z = 0, prev = null;
-      M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) z += 3.6; S.lane[l.id] = z; z += 4.4; prev = l.folderId; });
-      const mid = (z - 4.4) / 2; Object.keys(S.lane).forEach((k) => { S.lane[k] -= mid; });
+      M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) z += 3.6; S.lane[l.id] = z; z += T3D_RAIL_LANE; prev = l.folderId; });
+      const mid = (z - T3D_RAIL_LANE) / 2; Object.keys(S.lane).forEach((k) => { S.lane[k] -= mid; });
     } else {
       S.s = 0.55; S.ang = {};
       const n = M.lines.length, gap = 0.9, units = n + M.groups.length * gap, step = TAU / Math.max(1, units);
@@ -23031,7 +23036,7 @@ function createTimeline3dEngine(THREE, container, opts) {
       const e = pos(l, l.end + 1.3, 0); box(0.26, 0.32, 0.62, std("#c8322f"), e.x, 0.32, e.z);
       l.stations.forEach((id) => {
         const x = M.stationById[id]; if (!x.branch) return;
-        const k = Math.min(1.05 / (S.s * 0.36), (x.e - x.s) / 2);
+        const k = Math.min(T3D_RAIL_BRANCH_LAT / (S.s * 0.5), (x.e - x.s) / 2);
         railTrack([pos(l, x.s, 0), pos(l, x.s + k, x.side), pos(l, x.e + 1.7, x.side)], x.st === "done", l.color);
       });
       railTrain(l);
@@ -23162,6 +23167,7 @@ function createTimeline3dEngine(THREE, container, opts) {
     if (S.mode !== "cabine") S.selRing.rotation.x = PI / 2;
     S.selRing.visible = false; S.scene.add(S.selRing);
     applyVisibility();
+    drawTarget();
     measureLabels();
     resetCamera(true);
     if (S.mode === "rail" && !RM) { Object.assign(cam, { tx: goal.tx + 6, yaw: -1.25, pitch: 1.2, dist: 88 }); S.intro = true; }
@@ -23176,6 +23182,44 @@ function createTimeline3dEngine(THREE, container, opts) {
       R.obj.visible = on; R.hidden = !on;
     });
     S.hits = S.hits.filter(() => true);
+  }
+  // ---------- Horizon (#462) ----------
+  // Date projetée par l'utilisateur : une large bande orange au sol, en
+  // travers de toutes les lignes, sous un portique, et la zone entre
+  // aujourd'hui et cet horizon teintée — tout ce qui s'y trouve doit être
+  // fait avant. En Cabine, un grand anneau orange. Redessiné seul (sans
+  // reconstruire la scène ni bouger la caméra) quand la date change.
+  const T3D_TARGET_C = "#ff6a00";
+  function drawTarget() {
+    if (S.targetGroup) { if (S.targetGroup.parent) S.targetGroup.parent.remove(S.targetGroup); S.targetGroup = null; }
+    if (S.targetLabel) { S.targetLabel.el.remove(); S.labels = S.labels.filter((L) => L !== S.targetLabel); S.targetLabel = null; }
+    const d = S.targetDay;
+    if (d == null || !S.scene || !S.model || !S.model.lines.length) return;
+    const g = new THREE.Group(); S.targetGroup = g; S.scene.add(g);
+    const s = S.s, C = T3D_TARGET_C, hot = std(C, { emissive: col(C).multiplyScalar(0.45) });
+    const txt = "Horizon · " + fmtShort(d) + (S.targetCount != null ? " · " + S.targetCount + (S.targetCount > 1 ? " tâches" : " tâche") + " à faire avant" : "");
+    if (S.mode === "rail" && S.bounds) {
+      const z0 = S.bounds.z0, z1 = S.bounds.z1, Dp = z1 - z0, cz = (z0 + z1) / 2, x = d * s;
+      const a = Math.min(0, x), b = Math.max(0, x);
+      if (b - a > 0.05) {
+        const zone = new THREE.Mesh(own(new THREE.PlaneGeometry(b - a, Dp)), basic(C, { transparent: true, opacity: 0.24, depthWrite: false }));
+        zone.rotation.x = -PI / 2; zone.position.set((a + b) / 2, 0.012, cz); g.add(zone);
+      }
+      // La ligne au sol : large bande orange bordée de blanc, au-dessus des voies.
+      box(1.9, 0.06, Dp + 1.2, basic("#fff4e0"), x, 0.35, cz, g, false);
+      box(1.5, 0.08, Dp + 1.2, basic(C), x, 0.37, cz, g, false);
+      // Portique géant aux deux bords, traverse lumineuse.
+      box(0.24, 4.4, 0.24, hot, x, 2.2, z0 + 0.4, g); box(0.24, 4.4, 0.24, hot, x, 2.2, z1 - 0.4, g);
+      box(0.3, 0.45, Dp - 0.6, hot, x, 4.4, cz, g, false);
+      S.targetLabel = addLabel("lp-t3d-lbl--target", (el) => { el.textContent = txt; }, V(x, 4.9, cz), { prio: 130 });
+    } else if (S.mode === "cabine") {
+      const gateR = S.R + 3.2, z = -d * s;
+      const ring = new THREE.Mesh(own(new THREE.TorusGeometry(gateR, 0.26, 10, 120)), hot); ring.position.z = z; g.add(ring);
+      const gl = glow(C, gateR * 2.6, 0.14); gl.position.z = z; g.add(gl);
+      const band = new THREE.Mesh(own(new THREE.PlaneGeometry(gateR * 8, 1.1)), basic(C));
+      band.rotation.x = -PI / 2; band.position.set(0, -gateR - 0.97, z); g.add(band);
+      S.targetLabel = addLabel("lp-t3d-lbl--target", (el) => { el.textContent = txt; }, V(0, gateR + 1.1, z), { prio: 130, d });
+    }
   }
   function measureLabels() {
     S.labels.forEach((L) => { L.el.style.transform = "translate(-9999px,0)"; L.el.style.visibility = "hidden"; });
@@ -23633,6 +23677,15 @@ function createTimeline3dEngine(THREE, container, opts) {
       if (modelChanged) rebuild(); else { applyVisibility(); emit(true); }
     },
     setMode(m) { const next = m === "cabine" ? "cabine" : "rail"; if (next === S.mode) return; S.mode = next; rebuild(); },
+    // Horizon (#462) : jour relatif à aujourd'hui (null = aucun) et nombre de
+    // tâches à faire avant, affiché sur l'étiquette.
+    setTarget(day, count) {
+      const d = day == null || !isFinite(day) ? null : day;
+      if (d === S.targetDay && count === S.targetCount) return;
+      S.targetDay = d; S.targetCount = count;
+      drawTarget();
+      if (S.targetLabel) { S.targetLabel.w = S.targetLabel.el.offsetWidth; S.targetLabel.h = S.targetLabel.el.offsetHeight; }
+    },
     setAnimate(b) { S.animate = b !== false; },
     setSpeed(v) { S.speed = v > 0 ? v : 2.4; },
     setQuality(q) { if (q === S.qualityPref) return; S.qualityPref = q; rebuild(); },
@@ -24248,10 +24301,10 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
     n.tasks.forEach((t) => { n.taskById[t.id] = t; });
     return n;
   }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers, ctx.milestoneTypes]);
-  const model = useMemo(() => timeline3dBuild(ctx, norm), [norm, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
   const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
   const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
-  // Les filtres masquent des stations ; ils ne déplacent jamais le réseau.
+  // Tâches retenues par les filtres (bandeau, filtres de la page et de la vue,
+  // criticité).
   const visible = useMemo(() => {
     const pageScope = tasksWithDone || tasks || [];
     const scoped = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
@@ -24261,6 +24314,14 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  // #460 : le réseau suit les filtres. Il n'est construit qu'avec les tâches
+  // retenues : une ligne sans tâche visible disparaît, et le réseau se recadre
+  // sur ce qui reste (auparavant, les filtres masquaient seulement les gares
+  // d'un réseau toujours complet, ce qui semblait sans effet).
+  const visibleKey = useMemo(() => [...visible].sort().join("|"), [visible]);
+  const model = useMemo(() => timeline3dBuild(ctx, { ...norm, tasks: norm.tasks.filter((t) => visible.has(t.id)) }), [norm, visibleKey, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Toutes les tâches placées, filtres ou non : sert au compteur « x sur y ».
+  const placeable = useMemo(() => timeline3dBuild(ctx, norm).stations.length, [norm, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
@@ -24312,6 +24373,9 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAnimate(cfg.animate); }, [status, cfg.animate]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setSpeed(T3D_SPEEDS[cfg.speed]); }, [status, cfg.speed]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+  // Horizon (#462) : date projetée et nombre de tâches à faire avant.
+  const target = useMemo(() => timeline3dTarget(model, cfg.targetDate), [model, cfg.targetDate]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setTarget(target.day, target.day == null ? null : target.count); }, [status, model, target.day, target.count]);
 
   const engine = () => engineRef.current;
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
@@ -24334,7 +24398,11 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   const hudNext = hud && hud.nextId ? model.stationById[hud.nextId] : null;
   const rail = cfg.mode === "rail";
   const playLabel = eng.playing ? "Pause" : eng.ended ? "Rejouer" : rail ? "Lecture" : "Rouler";
-  const note = [model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " hors de la fenêtre (−90 j à +1 an)" : ""].filter(Boolean).join(" · ");
+  // #459 : combien de tâches sont réellement posées sur le réseau, sur combien
+  // de placables (échéance dans la fenêtre) — un réseau vide se comprend alors
+  // d'un coup d'œil (filtres, dates).
+  const shownCount = model.stations.length;
+  const note = [placeable ? (shownCount === placeable ? shownCount + (shownCount > 1 ? " tâches" : " tâche") : shownCount + " sur " + placeable + " tâches") + " sur le réseau" : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " hors de la fenêtre (−90 j à +1 an)" : ""].filter(Boolean).join(" · ");
 
   return (
     <section className={"lp-carte-view lp-t3d-view" + (embedded ? " is-embedded" : "")} aria-label="Timeline 3D">
@@ -24367,6 +24435,14 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
             <span>{rail ? "Grande gare : jalon · voie de garage : action longue · passerelle : dépendance entre projets · passage à niveau : aujourd'hui" : "Losange : jalon · dérivation : action longue · trait fin : dépendance entre projets · porte bleue : aujourd'hui"}</span>
           </div>
         </DropdownButton>
+        {/* Horizon (#462) : une date projetée, tracée au sol en travers du réseau. */}
+        <span className={"lp-t3d-target" + (cfg.targetDate ? " is-set" : "")} title="Horizon : une date projetée, marquée au sol ; tout ce qui est avant doit être fait">
+          <CalendarClock size={13} aria-hidden="true" />
+          <label htmlFor="lp-t3d-target-date">Horizon</label>
+          <DateInput id="lp-t3d-target-date" allowEmpty value={cfg.targetDate || ""} onChange={(v) => setPrefs({ targetDate: v || null })} />
+          {cfg.targetDate && <b>{target.count} à faire avant</b>}
+          {cfg.targetDate && <button type="button" className="lp-icon-btn" aria-label="Retirer l'horizon" onClick={() => setPrefs({ targetDate: null })}><X size={12} /></button>}
+        </span>
         {note && <span className="lp-t3d-note">{note}</span>}
       </div>
 
@@ -24376,8 +24452,17 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
         {small && status === "ready" && !empty && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour parcourir le réseau confortablement.</div>}
         {empty ? (
           <div className="lp-empty lp-carte-empty">
-            <strong>Aucune tâche datée à placer sur le réseau.</strong>
-            <span>Chaque projet devient une ligne et chaque tâche avec une échéance une station, placée à sa date.</span>
+            {placeable > 0 ? (
+              <>
+                <strong>Aucune tâche ne correspond aux filtres.</strong>
+                <span>{placeable} {placeable > 1 ? "tâches datées sont masquées" : "tâche datée est masquée"} par les filtres (bandeau, filtres de la page ou de la vue, criticité).</span>
+              </>
+            ) : (
+              <>
+                <strong>Aucune tâche datée à placer sur le réseau.</strong>
+                <span>Chaque projet devient une ligne et chaque tâche avec une échéance une station, placée à sa date.</span>
+              </>
+            )}
           </div>
         ) : (status === "nowebgl" || status === "error") ? (
           <Timeline3dFallback reason={status} model={model} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
