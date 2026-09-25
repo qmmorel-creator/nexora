@@ -2216,6 +2216,14 @@ try {
       await gp.click(".lp-carte-build button").catch(() => {});
       await gp.waitForTimeout(900);
       G.createModal = await gp.evaluate(() => document.querySelectorAll(".lp-modal").length > 0);
+      // La fiche de création ouverte masquerait le ruban : on la referme.
+      for (let i = 0; i < 3 && (await gp.$(".lp-modal")); i++) {
+        await gp.keyboard.press("Escape").catch(() => {});
+        await gp.waitForTimeout(400);
+        const c = await gp.$('.lp-modal [aria-label="Fermer"]');
+        if (c) await c.click().catch(() => {});
+        await gp.waitForTimeout(400);
+      }
     }
     // #504 : double clic sur une pastille de dossier : l'arpenteur s'y rend.
     await gp.keyboard.press("Escape").catch(() => {});
@@ -2223,7 +2231,7 @@ try {
     const k0 = await gp.evaluate(() => window.__carteBench.engine.fxState());
     const badges = await gp.$$(".lp-carte-badge");
     if (badges.length > 1) {
-      await badges[1].dblclick();
+      await badges[1].dblclick({ timeout: 60000 });
       await gp.waitForTimeout(1500);
       const k1 = await gp.evaluate(() => window.__carteBench.engine.fxState());
       G.folderGo = { goal: k1.walkTo, moved: Math.hypot(k1.keeper[0] - k0.keeper[0], k1.keeper[1] - k0.keeper[1]), pop: await gp.$$eval(".lp-carte-folder-pop", (e) => e.length) };
