@@ -29,7 +29,7 @@ const C = vm.runInThisContext(
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
-    carteNormalizeWheel, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch,
+    carteNormalizeWheel, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius,
   };\n})`
 )();
 
@@ -685,4 +685,36 @@ test("#489 : roue d'action personnalisable, huit actions au plus, dans l'ordre c
   assert.deepEqual(C.carteDueTodayPatch({ start: "2026-09-10", end: "2026-09-30" }, NOW), { start: "2026-09-10", end: "2026-09-24" });
   assert.deepEqual(C.carteDueTodayPatch({ start: "2026-10-10", end: "2026-10-30" }, NOW), { start: "2026-09-24", end: "2026-09-24" });
   assert.deepEqual(C.carteDueTodayPatch({}, NOW), { start: "2026-09-24", end: "2026-09-24" });
+});
+
+test("#491 : écartement des dossiers et densité des tâches", () => {
+  const w = world(10, 120);
+  const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const layout = (o) => C.carteBuild({ projects: n.projects, tasks: n.tasks, ...o });
+  // Réglages par défaut : disposition historique, octet pour octet.
+  assert.deepEqual(JSON.stringify(layout({ expansion: 1, density: 3 })), JSON.stringify(layout({})));
+  // Écartement : distance minimale (en cases) entre deux dossiers différents.
+  const minGap = (l) => {
+    let m = Infinity;
+    l.territories.forEach((a) => l.territories.forEach((b) => {
+      const ga = l.projectById[a.projectId].group, gb = l.projectById[b.projectId].group;
+      if (a === b || (ga && ga === gb)) return;
+      m = Math.min(m, C.carteDist(a.slot[0], a.slot[1], b.slot[0], b.slot[1]));
+    }));
+    return m;
+  };
+  assert.ok(minGap(layout({ expansion: 0 })) <= minGap(layout({ expansion: 1 })));
+  assert.ok(minGap(layout({ expansion: 3 })) >= 4, "îles lointaines : au moins trois cases de mer entre deux dossiers");
+  // Densité : rayon des territoires et tâches groupées autour du cœur.
+  assert.equal(C.carteInnerRadius(20, 3), 3);
+  assert.ok(C.carteInnerRadius(10, 5) < 3, "dense : territoire resserré");
+  assert.ok(C.carteInnerRadius(60, 1) > 3, "clairsemé : territoire plus vaste");
+  const ringMean = (l) => { let s = 0, k = 0; l.pois.forEach((p) => { s += l.tiles[p.key].ring; k++; }); return s / k; };
+  const dense = layout({ density: 5 }), sparse = layout({ density: 1 });
+  assert.ok(ringMean(dense) < ringMean(sparse), "les tâches sont plus proches du cœur en densité forte");
+  assert.ok(Object.values(sparse.tiles).filter((t) => t.inner).length > Object.values(dense.tiles).filter((t) => t.inner).length, "plus de cases d'habillage en densité faible");
+  const p = C.normalizeCarteViewPrefs({});
+  assert.equal(p.expansion, 1); assert.equal(p.density, 3);
+  assert.equal(C.normalizeCarteViewPrefs({ expansion: 9, density: 0 }).expansion, 4);
+  assert.equal(C.normalizeCarteViewPrefs({ expansion: 9, density: 0 }).density, 1);
 });

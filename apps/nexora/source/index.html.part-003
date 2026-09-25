@@ -21659,12 +21659,18 @@ function loadCarteThree() {
 }
 // Une disposition mémorisée par regroupement (#438) : passer par les
 // responsables ne bouscule pas la carte des dossiers.
-const carteMemoryKey = (groupBy) => (groupBy && groupBy !== "folder" ? CARTE_MEMORY_KEY + ":" + groupBy : CARTE_MEMORY_KEY);
-function readCarteMemory(groupBy) {
-  try { const raw = window.localStorage && window.localStorage.getItem(carteMemoryKey(groupBy)); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+// Écartement et densité (#491) : une disposition mémorisée par réglage ; les
+// valeurs par défaut gardent la disposition historique.
+const carteMemoryKey = (groupBy, expansion, density) => {
+  let k = groupBy && groupBy !== "folder" ? CARTE_MEMORY_KEY + ":" + groupBy : CARTE_MEMORY_KEY;
+  if ((expansion != null && expansion !== 1) || (density != null && density !== 3)) k += ":e" + (expansion ?? 1) + "d" + (density ?? 3);
+  return k;
+};
+function readCarteMemory(groupBy, expansion, density) {
+  try { const raw = window.localStorage && window.localStorage.getItem(carteMemoryKey(groupBy, expansion, density)); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
 }
-function writeCarteMemory(mem, groupBy) {
-  try { window.localStorage && window.localStorage.setItem(carteMemoryKey(groupBy), JSON.stringify(mem)); } catch (e) { /* stockage indisponible : la carte reste déterministe */ }
+function writeCarteMemory(mem, groupBy, expansion, density) {
+  try { window.localStorage && window.localStorage.setItem(carteMemoryKey(groupBy, expansion, density), JSON.stringify(mem)); } catch (e) { /* stockage indisponible : la carte reste déterministe */ }
 }
 function carteDueText(t) {
   if (t.end == null) return "Sans échéance";
@@ -22373,20 +22379,21 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     return next;
   };
   const layout = useMemo(() => {
-    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: claimMemory(readCarteMemory(cfg.groupBy)), themeOverrides });
+    const spacing = { expansion: cfg.expansion, density: cfg.density };
+    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: claimMemory(readCarteMemory(cfg.groupBy, cfg.expansion, cfg.density)), themeOverrides, ...spacing });
     const keep = new Set(keepKey.split("\n"));
-    const mem = claimMemory(readCarteMemory(cfg.groupBy));
+    const mem = claimMemory(readCarteMemory(cfg.groupBy, cfg.expansion, cfg.density));
     const l = carteBuild({
       projects: norm.projects.filter((p) => keep.has(p.id)),
       tasks: norm.tasks.filter((t) => keep.has(t.projectId == null ? "__terre-inconnue__" : t.projectId)),
-      memory: { tasks: mem.tasks || {} }, themeOverrides,
+      memory: { tasks: mem.tasks || {} }, themeOverrides, ...spacing,
     });
     l.simplified = true;
     return l;
   },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [norm, keepKey, JSON.stringify(themeOverrides)]);
-  useEffect(() => { if (!layout.simplified) writeCarteMemory(layout.memory, norm.groupBy); }, [layout]); // eslint-disable-line react-hooks/exhaustive-deps
+    [norm, keepKey, JSON.stringify(themeOverrides), cfg.expansion, cfg.density]);
+  useEffect(() => { if (!layout.simplified) writeCarteMemory(layout.memory, norm.groupBy, cfg.expansion, cfg.density); }, [layout]); // eslint-disable-line react-hooks/exhaustive-deps
   const stats = useMemo(() => {
     const by = {};
     norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (by[k] = by[k] || []).push(t); });
@@ -22699,6 +22706,15 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               <select aria-label="Regrouper la carte par" value={cfg.groupBy} onChange={(e) => setPrefs({ groupBy: e.target.value })}>
                 {CARTE_GROUPINGS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
               </select>
+            </label>
+            <hr className="lp-divider" style={{ margin: "6px 0" }} />
+            <label className="lp-carte-factor" title="Distance entre les dossiers : régions accolées ou îles séparées par la mer">
+              <span>Écartement des dossiers <b>{["Accolés", "Proches", "Espacés", "Éloignés", "Îles lointaines"][cfg.expansion]}</b></span>
+              <input type="range" min={0} max={4} step={1} value={cfg.expansion} onChange={(e) => setPrefs({ expansion: Number(e.target.value) })} aria-label="Écartement des dossiers" />
+            </label>
+            <label className="lp-carte-factor" title="Densité des tâches dans un projet : serrées autour du cœur, ou clairsemées avec des cases d'habillage">
+              <span>Densité des tâches <b>{["", "Très clairsemée", "Clairsemée", "Normale", "Serrée", "Très serrée"][cfg.density]}</b></span>
+              <input type="range" min={1} max={5} step={1} value={cfg.density} onChange={(e) => setPrefs({ density: Number(e.target.value) })} aria-label="Densité des tâches" />
             </label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
