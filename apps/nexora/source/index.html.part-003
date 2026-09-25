@@ -23218,8 +23218,8 @@ function createTimeline3dEngine(THREE, container, opts) {
     S.hits = S.hits.filter(() => true);
   }
   // ---------- Horizon (#462) ----------
-  // Date projetée par l'utilisateur : une large bande orange au sol, en
-  // travers de toutes les lignes, sous un portique, et la zone entre
+  // Date projetée par l'utilisateur : un pont à treillis orange qui enjambe
+  // toutes les lignes (Grande Ligne), un trait au sol, et la zone entre
   // aujourd'hui et cet horizon teintée — tout ce qui s'y trouve doit être
   // fait avant. En Cabine, un grand anneau orange. Redessiné seul (sans
   // reconstruire la scène ni bouger la caméra) quand la date change.
@@ -23239,13 +23239,48 @@ function createTimeline3dEngine(THREE, container, opts) {
         const zone = new THREE.Mesh(own(new THREE.PlaneGeometry(b - a, Dp)), basic(C, { transparent: true, opacity: 0.24, depthWrite: false }));
         zone.rotation.x = -PI / 2; zone.position.set((a + b) / 2, 0.012, cz); g.add(zone);
       }
-      // La ligne au sol : large bande orange bordée de blanc, au-dessus des voies.
-      box(1.9, 0.06, Dp + 1.2, basic("#fff4e0"), x, 0.35, cz, g, false);
-      box(1.5, 0.08, Dp + 1.2, basic(C), x, 0.37, cz, g, false);
-      // Portique géant aux deux bords, traverse lumineuse.
-      box(0.24, 4.4, 0.24, hot, x, 2.2, z0 + 0.4, g); box(0.24, 4.4, 0.24, hot, x, 2.2, z1 - 0.4, g);
-      box(0.3, 0.45, Dp - 0.6, hot, x, 4.4, cz, g, false);
-      S.targetLabel = addLabel("lp-t3d-lbl--target", (el) => { el.textContent = txt; }, V(x, 4.9, cz), { prio: 130 });
+      // Trait au sol, discret : le pont porte désormais le signal.
+      box(0.7, 0.03, Dp, basic(C), x, 0.02, cz, g, false);
+      // Pont à treillis d'acier orange qui enjambe toutes les voies : tablier
+      // en enrobé, garde-corps, piles entre les voies, culées de pierre aux
+      // deux bords de la table. Les trains passent dessous, vue conducteur
+      // comprise (tablier à 2,1 au-dessus du sol).
+      const deckY = 2.2, W = 1.7, zA = z0 + 0.3, zB = z1 - 0.3, L = zB - zA;
+      const steel = std(C, { roughness: 0.45, metalness: 0.35, emissive: col(C).multiplyScalar(0.18) });
+      const concrete = std("#cfc8bc"), stone = std("#b8ad9c");
+      box(W, 0.22, L, steel, x, deckY, cz, g);
+      box(W - 0.3, 0.04, L, std("#474b52"), x, deckY + 0.13, cz, g, false);
+      for (let z = zA + 0.5; z < zB - 0.5; z += 1.4) box(0.06, 0.01, 0.6, basic("#ffffff"), x, deckY + 0.155, z, g, false);
+      [-1, 1].forEach((sd) => box(0.06, 0.26, L, std("#fff4e0"), x + sd * (W / 2 - 0.12), deckY + 0.28, cz, g, false));
+      // Treillis de Warren de chaque côté : membrure haute et diagonales.
+      const beam = (p1, p2, t) => {
+        const dir = p2.clone().sub(p1), len = dir.length();
+        const m = new THREE.Mesh(geo("tbeam" + t, () => new THREE.BoxGeometry(t, t, 1)), steel);
+        m.scale.z = len; m.position.copy(p1).add(p2).multiplyScalar(0.5);
+        m.quaternion.setFromUnitVectors(V(0, 0, 1), dir.normalize()); m.castShadow = S.quality === "high";
+        g.add(m);
+      };
+      const topY = deckY + 1.25, step = 1.4, n = Math.max(1, Math.round(L / step)), st = L / n;
+      [-1, 1].forEach((sd) => {
+        const xx = x + sd * (W / 2);
+        beam(V(xx, topY, zA + st / 2), V(xx, topY, zB - st / 2), 0.13);
+        for (let k = 0; k < n; k++) {
+          const za = zA + k * st, zm = za + st / 2, zb = za + st;
+          beam(V(xx, deckY + 0.1, za), V(xx, topY, zm), 0.09);
+          beam(V(xx, topY, zm), V(xx, deckY + 0.1, zb), 0.09);
+        }
+      });
+      // Contreventement au-dessus du tablier, un portail sur trois.
+      for (let k = 0; k <= n; k += 3) { const zm = Math.min(zB - st / 2, zA + k * st + st / 2); beam(V(x - W / 2, topY, zm), V(x + W / 2, topY, zm), 0.08); }
+      // Piles dans les intervalles entre les voies, culées aux extrémités.
+      const lanes = S.model.lines.map((l) => S.lane[l.id]).sort((p, q) => p - q);
+      for (let k = 1; k < lanes.length; k++) {
+        const zp = (lanes[k - 1] + lanes[k]) / 2;
+        box(W - 0.2, deckY - 0.11, 0.5, concrete, x, (deckY - 0.11) / 2, zp, g);
+        box(W + 0.1, 0.12, 0.7, concrete, x, deckY - 0.17, zp, g, false);
+      }
+      [z0 + 0.45, z1 - 0.45].forEach((zc) => box(W + 0.6, deckY - 0.1, 0.9, stone, x, (deckY - 0.1) / 2, zc, g));
+      S.targetLabel = addLabel("lp-t3d-lbl--target", (el) => { el.textContent = txt; }, V(x, topY + 0.7, cz), { prio: 130 });
     } else if (S.mode === "cabine") {
       const gateR = S.R + 3.2, z = -d * s;
       const ring = new THREE.Mesh(own(new THREE.TorusGeometry(gateR, 0.26, 10, 120)), hot); ring.position.z = z; g.add(ring);
