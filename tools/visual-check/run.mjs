@@ -2146,6 +2146,9 @@ try {
   // clic droit glissé fait tourner sans ouvrir le menu. Clic gauche glissé :
   // la carte se déplace sans tourner ; molette enfoncée glissée : elle tourne.
   carte.gestures = {};
+  // Une page Carte restée ouverte après un échec du parcours principal
+  // (rendu logiciel) affamerait celle-ci : on la ferme d'abord.
+  for (const pg of browser.contexts().flatMap((c) => c.pages())) if (/view=carte/.test(pg.url())) await pg.close().catch(() => {});
   const gp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   try {
     gp.on("pageerror", (e) => pageErrors.push("Carte (gestes) : " + e.message));
