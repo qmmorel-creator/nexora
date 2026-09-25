@@ -1898,7 +1898,8 @@ try {
   const cp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   cp.on("pageerror", (e) => pageErrors.push("Carte : " + e.message));
   await cp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
-  await openCarte(cp, "demo");
+  // Parcours au clavier et à la souris : effets avancés coupés (voir harness.jsx).
+  await openCarte(cp, "demo", "&carteFx=0");
   await cp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
   await cp.waitForTimeout(1500);
   carte.badges = await cp.$$eval(".lp-carte-badge", (b) => b.length);

@@ -1099,6 +1099,10 @@ if (benchApp) {
   // `carte=totems` montre un totem par thème (#488).
   const benchParams = new URLSearchParams(location.search);
   if (benchParams.get("view")) mem.set("nexora:startupPref", JSON.stringify({ mode: "view", value: benchParams.get("view") }));
+  // `carteFx=0` coupe les effets avancés de la Carte (#496 à #498) : sous rendu
+  // logiciel, ils ralentissent tant les images que l'arpenteur (pas plafonné à
+  // 0,05 s par image) n'atteint plus sa tâche dans le délai du parcours.
+  if (benchParams.get("carteFx") === "0") mem.set("nexora:viewPrefs", JSON.stringify({ carte: { fx: false } }));
   if (benchParams.get("carte") === "demo" || benchParams.get("carte") === "sync") {
     const folders = [{ id: "banc-f1", name: "Chantiers", color: "#E07A3F", mapTheme: "cyberpunk" }, { id: "banc-f2", name: "Ingénierie", color: "#245EDB" }, { id: "banc-f3", name: "Perso", color: "#2A9D8F" }];
     const projects = [
