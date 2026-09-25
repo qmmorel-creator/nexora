@@ -6440,6 +6440,184 @@ function cosmosLabelTier(kind, px, prevTier, flagged) {
   return tier;
 }
 // === NEXORA:COSMOS:END ===
+// === NEXORA:TIMELINE3D:START ===
+// Vue Timeline 3D (#454) : le réseau du temps, en deux rendus au choix —
+// « Grande Ligne » (réseau ferré miniature) et « Cabine » (vue à la première
+// personne). Logique pure, sans DOM ni three.js, testée par
+// tests/timeline3d.test.mjs. Une ligne par projet, regroupées par dossier
+// racine ; une station par tâche datée, posée à son échéance ; l'échelle de
+// temps est linéaire, en jours relatifs à aujourd'hui (J0).
+const T3D_MODES = ["rail", "cabine"];
+const T3D_MODE_LABELS = { rail: "Grande Ligne", cabine: "Cabine" };
+const T3D_SPEEDS = { slow: 1.2, normal: 2.4, fast: 5 };
+const T3D_SPEED_LABELS = { slow: "Lent", normal: "Normal", fast: "Rapide" };
+const T3D_QUALITIES = ["auto", "high", "low"];
+// Fenêtre dessinée : au-delà, les stations sont comptées mais pas posées.
+const T3D_PAST_DAYS = 90;
+const T3D_FUTURE_DAYS = 365;
+// Action « longue » : plus de 3 jours entre début et échéance → bifurcation.
+const T3D_BRANCH_DAYS = 3;
+const T3D_ORPHAN_LINE = "__t3d-sans-projet__";
+const T3D_NO_FOLDER = "__t3d-sans-dossier__";
+
+function normalizeTimeline3dViewPrefs(p) {
+  const v = p && typeof p === "object" ? p : {};
+  return {
+    mode: T3D_MODES.indexOf(v.mode) !== -1 ? v.mode : "rail",
+    speed: T3D_SPEEDS[v.speed] ? v.speed : "normal",
+    crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
+    hideOldDone: !!v.hideOldDone,
+    quality: T3D_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    // Trains, fumée, voitures, nuages : purement visuel, coupé aussi par
+    // « réduire les animations ».
+    animate: v.animate !== false,
+    board: v.board !== false,
+    filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
+  };
+}
+// Qualité effective : ombres, arbres et voyageurs s'allègent avec le volume.
+function timeline3dResolveQuality(pref, stationCount) {
+  if (pref && pref !== "auto") return pref;
+  return stationCount > 700 ? "low" : "high";
+}
+function timeline3dRel(d) {
+  if (d === 0) return "aujourd'hui";
+  return d > 0 ? "J+" + d : "J−" + (-d);
+}
+// Statut d'une station : done / doing / wait / todo ; « late » l'emporte à
+// l'affichage (échéance passée, tâche ni terminée ni d'information).
+function timeline3dStationState(t) {
+  if (t.state === "done") return "done";
+  if (t.state === "doing") return "doing";
+  if (t.state === "waiting") return "wait";
+  return "todo";
+}
+
+// Construction du réseau. Entrées : ctx Nexora (projectFolders) et la sortie
+// de carteNormalize (dates en numéros de jour, `today`). Toutes les tâches
+// servent à la disposition : un filtre masque des stations sans rien déplacer.
+function timeline3dBuild(ctx, norm, opts) {
+  const o = opts || {};
+  const past = o.pastDays != null ? o.pastDays : T3D_PAST_DAYS;
+  const future = o.futureDays != null ? o.futureDays : T3D_FUTURE_DAYS;
+  const today = norm.today;
+  const folders = (ctx.projectFolders || []).filter((f) => f && f.id != null);
+  const tree = cosmosFolderRoots(folders);
+  const folderOrder = folders.filter((f) => tree.root[f.id] === f.id).sort(cosmosFolderOrder).map((f) => f.id);
+  const rank = {}; folderOrder.forEach((id, i) => { rank[id] = i; });
+  const projById = {}; norm.projects.forEach((p) => { projById[p.id] = p; });
+
+  let undated = 0, outside = 0;
+  const byLine = {};
+  const stations = [];
+  norm.tasks.forEach((t) => {
+    if (t.end == null) { undated++; return; }
+    const e = t.end - today;
+    const s = t.start != null ? Math.min(t.start - today, e) : e;
+    if (e < -past || e > future) { outside++; return; }
+    const lineId = t.projectId != null && projById[t.projectId] ? t.projectId : T3D_ORPHAN_LINE;
+    const type = t.milestone || t.kind === "milestone" ? "m" : t.kind === "meeting" ? "r" : "a";
+    const st = {
+      id: t.id, lineId, title: t.title, s: Math.max(s, -past - 30), e, type,
+      st: timeline3dStationState(t), late: !!t.overdue, info: t.state === "info",
+      crit: t.criticality || null, branch: false, side: 0, links: [],
+      dependsOn: t.dependsOn || [],
+    };
+    st.branch = type === "a" && e - st.s > T3D_BRANCH_DAYS;
+    stations.push(st);
+    (byLine[lineId] = byLine[lineId] || []).push(st);
+  });
+
+  const lines = Object.keys(byLine).map((id) => {
+    const p = projById[id];
+    const orphan = id === T3D_ORPHAN_LINE;
+    const fid = p && p.folderId && tree.root[p.folderId] ? tree.root[p.folderId] : null;
+    const folder = fid ? tree.byId[fid] : null;
+    const list = byLine[id].sort((a, b) => a.e - b.e || a.s - b.s || String(a.id).localeCompare(String(b.id)));
+    return {
+      id, orphan, name: orphan ? "Sans projet" : p.name, color: orphan ? "#94A3B8" : p.color, icon: orphan ? "" : p.icon,
+      folderId: fid || T3D_NO_FOLDER, folderName: folder ? folder.name || "" : "Sans dossier",
+      folderColor: folder && folder.color ? folder.color : "#94A3B8",
+      order: orphan ? Infinity : p.order,
+      start: Math.min.apply(null, list.map((x) => Math.min(x.s, x.e))),
+      end: Math.max.apply(null, list.map((x) => x.e)),
+      stations: list.map((x) => x.id),
+    };
+  });
+  lines.sort((a, b) => {
+    const ra = a.folderId === T3D_NO_FOLDER ? 1e9 : (rank[a.folderId] != null ? rank[a.folderId] : 1e8);
+    const rb = b.folderId === T3D_NO_FOLDER ? 1e9 : (rank[b.folderId] != null ? rank[b.folderId] : 1e8);
+    if (ra !== rb) return ra - rb;
+    if (a.order !== b.order) return a.order - b.order;
+    return String(a.name).localeCompare(String(b.name), "fr");
+  });
+  lines.forEach((l, i) => { l.n = i + 1; });
+  const lineById = {}; lines.forEach((l) => { lineById[l.id] = l; });
+  const stationById = {}; stations.forEach((x) => { stationById[x.id] = x; });
+
+  // Bifurcations qui se chevauchent sur une même ligne : côtés alternés.
+  lines.forEach((l) => {
+    const ends = { 1: -Infinity, "-1": -Infinity };
+    l.stations.map((id) => stationById[id]).filter((x) => x.branch).sort((a, b) => a.s - b.s).forEach((x) => {
+      x.side = ends[1] <= x.s ? 1 : -1;
+      ends[x.side] = x.e + 2;
+    });
+  });
+  // Correspondances : dépendances entre deux projets différents, dans les
+  // deux sens, sans doublon.
+  const links = [];
+  const seen = new Set();
+  stations.forEach((x) => {
+    x.dependsOn.forEach((dep) => {
+      const y = stationById[dep];
+      if (!y || y.lineId === x.lineId) return;
+      const key = [x.id, y.id].sort().join("|");
+      if (seen.has(key)) return;
+      seen.add(key);
+      links.push([y.id, x.id]);
+      x.links.push(y.id); y.links.push(x.id);
+    });
+  });
+  // Groupes de dossiers, dans l'ordre des lignes.
+  const groups = [];
+  lines.forEach((l) => {
+    const g = groups[groups.length - 1];
+    if (g && g.id === l.folderId) g.lineIds.push(l.id);
+    else groups.push({ id: l.folderId, name: l.folderName, color: l.folderColor, lineIds: [l.id] });
+  });
+  const dmin = lines.length ? Math.min(-7, Math.min.apply(null, lines.map((l) => l.start))) : -7;
+  const dmax = lines.length ? Math.max(30, Math.max.apply(null, lines.map((l) => l.end))) : 30;
+  return { today, lines, lineById, stations, stationById, links, groups, undated, outside, range: { min: dmin, max: dmax } };
+}
+
+// Tableau « Prochains départs » : retards d'abord, puis les échéances à venir.
+function timeline3dNextDepartures(model, visible, limit) {
+  const ok = (x) => (!visible || visible.has(x.id)) && x.st !== "done" && !x.info;
+  const late = model.stations.filter((x) => ok(x) && x.late).sort((a, b) => a.e - b.e);
+  const next = model.stations.filter((x) => ok(x) && !x.late && x.e >= 0)
+    .sort((a, b) => a.e - b.e || model.lineById[a.lineId].n - model.lineById[b.lineId].n);
+  return late.concat(next).slice(0, limit || 8);
+}
+// Station précédente / suivante sur la même ligne.
+function timeline3dNeighbours(model, id) {
+  const x = model.stationById[id];
+  if (!x) return { prev: null, next: null };
+  const list = model.lineById[x.lineId].stations;
+  const i = list.indexOf(id);
+  return { prev: i > 0 ? list[i - 1] : null, next: i < list.length - 1 ? list[i + 1] : null };
+}
+// Prochain arrêt après un jour donné (sur une ligne, ou sur tout le réseau).
+function timeline3dNextStop(model, day, lineId, visible) {
+  let best = null;
+  model.stations.forEach((x) => {
+    if (lineId && x.lineId !== lineId) return;
+    if (visible && !visible.has(x.id)) return;
+    if (x.st === "done" || x.info || x.e <= day) return;
+    if (!best || x.e < best.e) best = x;
+  });
+  return best;
+}
+// === NEXORA:TIMELINE3D:END ===
 
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----

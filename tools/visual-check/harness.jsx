@@ -22,6 +22,8 @@ const EMPTY_DASHBOARD_WIDGETS = [
     { id: "vide-countdown-filtre", type: "customCard", title: "countdown filtre", cardBlocks: [{ id: "cdb2", kind: "daysRemaining", countdownMode: "filter" }], layout: { x: 6, y: 40, w: 3, h: 4 } },
     // #439 : Cosmos (complet) à sa taille d'exploration, sans bandeau.
     { id: "vide-cosmos-large", type: "embedCosmos", title: "Cosmos (complet)", layout: { x: 0, y: 48, w: 12, h: 14 } },
+    // #454 : Timeline 3D (complet), même taille d'exploration.
+    { id: "vide-t3d-large", type: "embedTimeline3d", title: "Timeline 3D (complet)", layout: { x: 0, y: 62, w: 12, h: 14 } },
   ]);
 
 function AnnotationsHarness() {
@@ -1170,6 +1172,43 @@ if (benchApp) {
     mem.set("nexora:projects", JSON.stringify(projects));
     mem.set("nexora:tasks", JSON.stringify(tasks));
     mem.set("nexora:favorites", JSON.stringify([{ type: "project", id: "banc-cp1" }, { type: "task", id: "banc-ct7" }]));
+  } else if (benchParams.get("t3d") === "demo") {
+    // Vue Timeline 3D (#454) : données d'EXEMPLE reprises des maquettes du
+    // réseau du temps — huit projets en trois dossiers, jalons, réunions,
+    // actions longues, retards, attentes et deux dépendances entre projets.
+    const folders = [{ id: "banc-tf1", name: "Chantiers", color: "#E07A3F", order: 1 }, { id: "banc-tf2", name: "Ingénierie", color: "#245EDB", order: 2 }, { id: "banc-tf3", name: "Perso", color: "#2A9D8F", order: 3 }];
+    const projects = [
+      { id: "banc-tp1", name: "Lot 2B — Gros œuvre", color: "#F2A900", folderId: "banc-tf1" },
+      { id: "banc-tp2", name: "Réhabilitation école", color: "#1F6FD1", folderId: "banc-tf1" },
+      { id: "banc-tp3", name: "Passerelle quai Nord", color: "#00A88F", folderId: "banc-tf1" },
+      { id: "banc-tp4", name: "Audit structure halle", color: "#C04191", folderId: "banc-tf2" },
+      { id: "banc-tp5", name: "Devis & facturation", color: "#F07C2B", folderId: "banc-tf2" },
+      { id: "banc-tp6", name: "Formation BIM", color: "#7A4FC9", folderId: "banc-tf2" },
+      { id: "banc-tp7", name: "Ruches du jardin", color: "#5DAE3A", folderId: "banc-tf3" },
+      { id: "banc-tp8", name: "Randonnée GR20", color: "#9A6431", folderId: "banc-tf3" },
+    ];
+    const st = (n) => (seedStatuses.find((s) => new RegExp(n, "i").test(s.name)) || seedStatuses[0]).id;
+    const meeting = (seedTaskTypes.find((t) => /r[ée]union/i.test(t.name)) || {}).id || "tt3";
+    const d = (n) => addDaysIso(iso(new Date()), n);
+    const raw = [
+      ["1", "Implantation et terrassement", -42, -28, "a", "termin"], ["1", "Fondations superficielles", -26, -9, "a", "termin"], ["1", "Réception des fonds de fouille", -8, -8, "m", "termin"],
+      ["1", "Coulage dalle basse", -4, 3, "a", "cours"], ["1", "Réunion de chantier n° 14", 7, 7, "r", "planifier"], ["1", "Élévation murs RDC", 4, 24, "a", "planifier"], ["1", "Dalle haute R+1", 22, 38, "a", "planifier"], ["1", "Hors d'eau", 60, 60, "m", "planifier"],
+      ["2", "Diagnostic amiante", -30, -18, "a", "termin"], ["2", "Comité de pilotage", 12, 12, "r", "planifier"], ["2", "DCE lots techniques", 5, 30, "a", "planifier"], ["2", "Retour d'instruction du permis", 18, 18, "m", "attente"], ["2", "Consultation des entreprises", 32, 62, "a", "planifier"],
+      ["3", "Note de calcul du tablier", -20, -3, "a", "termin"], ["3", "Visa du bureau de contrôle", -1, 6, "a", "attente"], ["3", "Réunion de synthèse réseaux", 4, 4, "r", "planifier"], ["3", "Commande de l'acier", 9, 9, "m", "planifier"], ["3", "Fabrication en atelier", 12, 48, "a", "planifier"], ["3", "Mise en service", 88, 88, "m", "planifier"],
+      ["4", "Carottages béton", -25, -15, "a", "termin"], ["4", "Rapport préliminaire", -12, -5, "a", "cours"], ["4", "Restitution au client", 8, 8, "r", "planifier"], ["4", "Rapport final", 10, 26, "a", "planifier"], ["4", "Clôture de mission", 38, 38, "m", "planifier"],
+      ["5", "Devis passerelle", -9, -2, "a", "termin"], ["5", "Relance impayé école", -3, 1, "a", "cours"], ["5", "Facture de situation n° 4", 1, 2, "a", "planifier"], ["5", "Point trésorerie", 15, 15, "r", "planifier"], ["5", "Facture de situation n° 5", 31, 32, "a", "planifier"],
+      ["6", "Inscription validée", 2, 2, "m", "planifier"], ["6", "Module 1 · Revit", 14, 18, "a", "planifier"], ["6", "Projet fil rouge", 20, 80, "a", "planifier"], ["6", "Certification", 98, 98, "m", "planifier"],
+      ["7", "Traitement varroa", -6, 10, "a", "cours"], ["7", "Nourrissement d'automne", 14, 28, "a", "planifier"], ["7", "Hivernage des ruches", 45, 45, "m", "planifier"],
+      ["8", "Réserver les refuges", -10, 5, "a", "cours"], ["8", "Billets de ferry", 3, 6, "a", "planifier"], ["8", "Préparation physique", 10, 80, "a", "planifier"], ["8", "Départ GR20", 115, 115, "m", "planifier"],
+    ];
+    const tasks = raw.map(([p, title, s, e, type, status], i) => ({ id: "banc-tt" + i, title, projectId: "banc-tp" + p, statusId: st(status), taskTypeId: type === "r" ? meeting : "tt1", milestone: type === "m", start: d(s), end: d(e), progress: /termin/.test(status) ? 100 : /cours/.test(status) ? 40 : 0, assignee: "", checklist: [], criticality: i % 7 === 3 ? "urgent" : null }));
+    tasks.push({ id: "banc-tt-undated", title: "Idée sans date", projectId: "banc-tp7", statusId: st("planifier"), taskTypeId: "tt1", progress: 0, assignee: "", checklist: [] });
+    const byTitle = (t) => tasks.find((x) => x.title === t).id;
+    tasks.find((x) => x.title === "Facture de situation n° 4").dependsOn = [byTitle("Coulage dalle basse")];
+    tasks.find((x) => x.title === "Commande de l'acier").dependsOn = [byTitle("Devis passerelle")];
+    mem.set("nexora:projectFolders", JSON.stringify(folders));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify(tasks));
   } else if (benchParams.get("cosmos") === "empty") {
     mem.set("nexora:projectFolders", JSON.stringify([]));
     mem.set("nexora:projects", JSON.stringify([]));
