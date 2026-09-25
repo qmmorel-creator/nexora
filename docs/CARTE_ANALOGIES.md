@@ -400,7 +400,7 @@ marque un événement, elle ne gratifie personne.
 | Journal de quêtes (#473) | voir `carteQuests` | En retard, bloquées, conflits de dates, en dérive, sans responsable, sans échéance, oubliées. « Régler » ouvre l'action utile. Pas de visite guidée de la caméra. |
 | Mode photo (#474) | — | Interface masquée, légende et date, export PNG de la vue 3D. |
 | Annuler (#475) | champs modifiés | Chaque action faite depuis la carte (roue, volet) mémorise les valeurs d'avant. Ctrl+Z ou « Annuler » les rétablissent, 20 pas au plus. |
-| Zoom stratégique (#476) | états, `end` | De 80 à 95 de distance, la 3D s'efface au profit d'une carte ancienne à plat : tâches à faire et retards par territoire. |
+| Zoom stratégique (#476) | états, `end` | De 120 à 150 de distance (seuil repoussé par #507 ; recul maximal 190), la 3D s'efface au profit d'une carte ancienne à plat : tâches à faire et retards par territoire. |
 | Contour (#477) | — | Liseré au survol (tâche, cœur de projet, parcelle libre) ; anneau pulsé sur la sélection. |
 | Barre de ressources (#478) | voir `carteResources` | Retards, aujourd'hui, en cours, bloquées, à compléter. Un clic cadre les tâches et ouvre le journal filtré. |
 | Rendu maquette (#479) | — | Effet miniature (flou de profondeur, coupé en vue plan et en qualité basse), ombres de contact, ombres adoucies, herbe, pavés, eau animée, feuillages qui ondulent. |

@@ -28,7 +28,7 @@ const C = vm.runInThisContext(
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
-    carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
+    carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteNormalizeViews, CARTE_VIEWS_MAX,
     carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
   };\n})`
 )();
@@ -647,7 +647,10 @@ test("construire ici : la nouvelle tâche prend la parcelle choisie (#470)", () 
 });
 
 test("zoom stratégique et vues enregistrées (#476, #481)", () => {
-  assert.deepEqual([19, 80, 87.5, 95, 150].map(C.carteStrategicAlpha), [0, 0, 0.5, 1, 1]);
+  // Seuil repoussé (#507) : rien avant 120, plan pur à 150 et au-delà.
+  assert.deepEqual([19, 80, 95, 120, 135, 150, 190].map(C.carteStrategicAlpha), [0, 0, 0, 0, 0.5, 1, 1]);
+  assert.ok(C.CARTE_DIST_MAX > 150, "le recul maximal laisse une plage de plan pur");
+  assert.equal(C.carteNormalizeViews([{ name: "loin", dist: 999 }])[0].dist, C.CARTE_DIST_MAX);
   const v = C.carteNormalizeViews([{ name: " Nord ", x: 3, z: 4, yaw: 1, pitch: 9, dist: 2 }, { name: "" }, null, "x"]);
   assert.deepEqual(v, [{ name: "Nord", x: 3, z: 4, yaw: 1, pitch: 1.5, dist: 7 }]);
   assert.equal(C.carteNormalizeViews(Array.from({ length: 20 }, (_, i) => ({ name: "v" + i }))).length, C.CARTE_VIEWS_MAX);
