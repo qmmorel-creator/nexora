@@ -365,3 +365,21 @@ ouvertes (parmi les tâches retenues par les filtres), la caméra les cadre, cha
 son numéro d'ordre et un chemin de points lumineux les relie dans l'ordre. La pastille
 « Fil d'Ariane » en bas de la vue permet d'en sortir. Le mode ne dépend pas des animations
 d'ambiance.
+
+## Regroupement variable (#438)
+
+*Affichage → Regrouper par* choisit ce qui forme les régions de la carte :
+
+| Regroupement | Région | Territoires de la région |
+|---|---|---|
+| Dossier et projet (par défaut) | Un dossier | Ses projets |
+| Responsable | Une personne (« Sans responsable » en dernier) | Les projets où elle a des tâches |
+| Statut | Un statut, dans l'ordre du catalogue | Les projets qui ont des tâches à ce statut |
+| Type de tâche | Un type, dans l'ordre du catalogue | Les projets qui ont des tâches de ce type |
+| Criticité | Urgente, moyenne, basse, sans criticité | Les projets concernés |
+
+Un même projet peut donc apparaître dans plusieurs régions, chacune avec ses seules tâches.
+Le ruban, les noms au sol, les totems, le panneau et la recherche suivent le regroupement.
+Chaque regroupement garde sa propre disposition d'une visite à l'autre ; revenir aux
+dossiers retrouve la carte habituelle. Les thèmes par dossier ne s'appliquent qu'au
+regroupement par dossier ; les autres reçoivent des thèmes automatiques.
