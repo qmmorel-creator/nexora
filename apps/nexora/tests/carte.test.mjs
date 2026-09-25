@@ -23,7 +23,7 @@ const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
-    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard,
+    carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard, carteDangerSign,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
     carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
@@ -311,6 +311,19 @@ test("#385/#406/#414 : incendie si urgente, horloge si en retard, gros éclairs 
   assert.equal(C.carteHazard(t({})), null);
   assert.equal(C.carteHazard(t({ state: "done", criticality: "urgent" })), null);
   assert.equal(C.carteHazard(t({ state: "info", criticality: "urgent" })), null);
+});
+
+test("#450 : panneau danger sur les tâches ouvertes de criticité moyenne seulement", () => {
+  const t = (o) => ({ state: "doing", criticality: "moyen", overdue: false, ...o });
+  assert.equal(C.carteDangerSign(t({})), true);
+  assert.equal(C.carteDangerSign(t({ state: "todo", overdue: true })), true, "aussi en retard, au-dessus du réveil");
+  assert.equal(C.carteDangerSign(t({ criticality: "urgent" })), false, "l'urgente a son incendie");
+  assert.equal(C.carteDangerSign(t({ criticality: "bas" })), false);
+  assert.equal(C.carteDangerSign(t({ criticality: null })), false);
+  assert.equal(C.carteDangerSign(t({ state: "done" })), false);
+  assert.equal(C.carteDangerSign(t({ state: "info" })), false);
+  assert.equal(C.carteDangerSign(null), false);
+  assert.match(C.carteLook("ville").sig[0][1], /panneau danger/, "la légende l'annonce");
 });
 
 // Un seul style de carte, Classique (#404).

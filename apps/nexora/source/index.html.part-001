@@ -767,7 +767,7 @@ function ProjectSelect({ projects, value, onChange, emptyLabel, allowCurrent }) 
 // bas de liste, pour ajouter la personne à l'annuaire sans quitter la fiche
 // tâche. Absent (autres appelants), le sélecteur garde son comportement
 // d'origine : rechercher/choisir parmi l'existant, jamais en créer.
-function AssigneeSelect({ members, value, onChange, onCreateMember }) {
+function AssigneeSelect({ members, value, onChange, onCreateMember, placeholder, emptyLabel, compact, id }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ref = useRef(null);
@@ -784,21 +784,32 @@ function AssigneeSelect({ members, value, onChange, onCreateMember }) {
   const current = (members || []).find((u) => u.name === value);
   const exactMatch = trimmedQ && (members || []).some((u) => u.name.toLowerCase() === trimmedQ.toLowerCase());
   const showCreate = !!onCreateMember && !!trimmedQ && !exactMatch;
+  // Entrée : choisit le premier résultat de la recherche (#446, #449).
+  const pickFirst = () => {
+    if (filtered.length) { onChange(filtered[0].name); setOpen(false); }
+    else if (showCreate) { onCreateMember(trimmedQ); setOpen(false); }
+  };
   return (
-    <div className="lp-color-select" ref={ref}>
-      <button type="button" className="lp-color-select-btn" onClick={() => setOpen((o) => !o)}>
-        {current?.avatarDataUrl ? <IconGlyph icon={current.avatarDataUrl} size={16} /> : <span className="lp-color-select-swatch" style={{ background: current?.color || "var(--text-muted)" }} />}
-        <span className="lp-color-select-label">{current?.name || "Non assigné"}</span>
+    <div className={"lp-color-select" + (compact ? " lp-color-select-compact" : "")} ref={ref}>
+      <button type="button" className="lp-color-select-btn" id={id} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {current?.avatarDataUrl ? <IconGlyph icon={current.avatarDataUrl} size={16} /> : <span className="lp-color-select-swatch" style={{ background: current?.color || (value ? "var(--text-muted)" : "#CBD5E1") }} />}
+        {/* Un nom saisi avant le lien à l'annuaire (sous-tâches, #446) reste
+            affiché tel quel plutôt que de passer pour « Non assigné ». */}
+        <span className="lp-color-select-label">{current?.name || value || placeholder || emptyLabel || "Non assigné"}</span>
         <ChevronDown size={14} />
       </button>
       {open && (
         <div className="lp-color-select-panel">
-          {((members || []).length > 5 || onCreateMember) && (
-            <input ref={searchRef} type="text" className="lp-select-search" placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} onClick={(e) => e.stopPropagation()} />
-          )}
+          {/* Recherche rapide toujours présente (#449), quelle que soit la
+              taille de l'annuaire. */}
+          <input ref={searchRef} type="text" className="lp-select-search" placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pickFirst(); }
+              else if (e.key === "Escape") { e.stopPropagation(); setOpen(false); }
+            }} />
           <button type="button" className={"lp-color-select-option" + (!value ? " active" : "")} onClick={() => { onChange(""); setOpen(false); }}>
             <span className="lp-color-select-swatch" style={{ background: "#CBD5E1" }} />
-            Non assigné
+            {emptyLabel || "Non assigné"}
           </button>
           {filtered.map((u) => (
             <button type="button" key={u.id} className={"lp-color-select-option" + (u.name === value ? " active" : "")} onClick={() => { onChange(u.name); setOpen(false); }}>
@@ -816,6 +827,66 @@ function AssigneeSelect({ members, value, onChange, onCreateMember }) {
         </div>
       )}
     </div>
+  );
+}
+
+// === NEXORA:DATE-INPUT:START ===
+// Champ date d'édition de tâche (#448). Pendant la frappe, un <input
+// type="date"> passe par des valeurs transitoires : "" tant que le jour est
+// incomplet, "0002-…" quand l'année se tape chiffre par chiffre. Les appliquer
+// telles quelles vidait la date de début (la fiche cochait alors « Aucune
+// date » et repliait la section) ou enregistrait une année absurde (la tâche
+// sortait des filtres de la Carte et son volet se refermait). Ce champ garde
+// la saisie en brouillon et ne transmet qu'une date complète et plausible ;
+// `debounce` (ms) regroupe les frappes quand chaque changement s'enregistre
+// aussitôt dans la tâche. Sortie du champ ou Entrée : envoi immédiat.
+// `allowEmpty` : un champ réellement vidé (et non en cours de frappe) est
+// transmis comme "".
+function isPlausibleDateInput(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || "");
+  return !!m && +m[1] >= 1900 && +m[1] <= 2200;
+}
+// === NEXORA:DATE-INPUT:END ===
+function DateInput({ value, onChange, allowEmpty = false, debounce = 0, onBlur, onKeyDown, ...rest }) {
+  const [draft, setDraft] = useState(value || "");
+  const timer = useRef(null);
+  const pending = useRef(null);
+  const latest = useRef({ value, onChange });
+  latest.current = { value, onChange };
+  useEffect(() => { setDraft(value || ""); }, [value]);
+  const flush = () => {
+    clearTimeout(timer.current); timer.current = null;
+    const v = pending.current;
+    pending.current = null;
+    if (v != null && v !== (latest.current.value || "")) latest.current.onChange(v);
+  };
+  // Une date valide encore en attente n'est pas perdue si le champ disparaît.
+  useEffect(() => () => flush(), []);
+  const schedule = (v) => {
+    pending.current = v;
+    clearTimeout(timer.current);
+    if (debounce > 0) timer.current = setTimeout(flush, debounce); else flush();
+  };
+  return (
+    <input
+      {...rest}
+      type="date"
+      value={draft}
+      onChange={(e) => {
+        const v = e.target.value;
+        setDraft(v);
+        if (isPlausibleDateInput(v)) schedule(v);
+        else if (v === "" && allowEmpty && !(e.target.validity && e.target.validity.badInput)) schedule("");
+        else { pending.current = null; clearTimeout(timer.current); }
+      }}
+      onBlur={(e) => {
+        flush();
+        const cleared = allowEmpty && e.target.value === "" && !(e.target.validity && e.target.validity.badInput);
+        if (!isPlausibleDateInput(e.target.value) && !cleared) setDraft(latest.current.value || "");
+        if (onBlur) onBlur(e);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") flush(); if (onKeyDown) onKeyDown(e); }}
+    />
   );
 }
 
@@ -4004,6 +4075,12 @@ function GlobalStyles() {
         .lp-subtask-card-meta{ display:flex; align-items:center; gap:7px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); flex-wrap:wrap; }
         .lp-subtask-meta-input{ font-size:11.5px; padding:5px 8px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text-900); width:auto !important; flex:0 1 auto; }
         .lp-subtask-meta-date{ flex:0 0 auto; }
+        /* #446 : sélecteur de responsable d'une sous-tâche, au format des
+           autres métadonnées de la carte. */
+        .lp-subtask-meta-assignee{ flex:0 1 190px; min-width:140px; }
+        .lp-color-select-compact .lp-color-select-btn{ padding:5px 8px; font-size:11.5px; border-radius:7px; gap:6px; }
+        .lp-color-select-compact .lp-color-select-swatch{ width:11px; height:11px; }
+        .lp-color-select-compact .lp-color-select-panel{ min-width:220px; right:auto; }
         .lp-subtask-add-row{ display:flex; gap:8px; margin-top:6px; }
 
 
@@ -4633,6 +4710,12 @@ function GlobalStyles() {
         .lp-carte-progress-edit label b{ color:var(--text-primary); font-variant-numeric:tabular-nums; }
         .lp-carte-progress-edit input[type="range"]{ width:100%; accent-color:#e2a31b; min-height:28px; }
         .lp-carte-progress-edit small{ font-size:11.5px; }
+        /* #447 : l'avancement est une ligne de la grille des champs. */
+        .lp-carte-grid dd > .lp-carte-progress-edit{ flex:1; min-width:0; background:none; padding:0; margin:0; gap:2px; }
+        .lp-carte-progress-row{ display:flex; align-items:center; gap:8px; }
+        .lp-carte-progress-row b{ font-variant-numeric:tabular-nums; min-width:44px; text-align:right; }
+        .lp-carte-grid dd > .lp-carte-input, .lp-carte-grid dd > .lp-color-select{ flex:1; min-width:0; }
+        .lp-carte-checklist li input[type="checkbox"]{ margin:2px 0 0; accent-color:var(--success); cursor:pointer; }
         .lp-carte-btn-done{ border-color:#1FA971; color:#127a4f; }
         .lp-carte-section-title{ font-size:11px; font-weight:650; letter-spacing:.06em; text-transform:uppercase; color:var(--text-600); margin:14px 0 6px; }
         .lp-carte-checklist, .lp-carte-attachments{ list-style:none; margin:0 0 4px; padding:0; display:flex; flex-direction:column; gap:4px; font-size:13px; }
@@ -7000,6 +7083,10 @@ function GlobalStyles() {
           min-width:0;
         }
 
+        /* #445 : même alignement à droite dans toute ligne de condition (la
+           modale « Filtrer la carte » n'a pas la classe lp-filters-modal) :
+           sinon le panneau débordait et faisait défiler la modale de côté. */
+        .lp-filter-condition-row .lp-entity-filter-panel{ left:auto; right:0; max-width:calc(100vw - 48px); }
         /* Le panneau projet/statut reste dans le viewport et ne force jamais
            le contenu de la modale à s'élargir. */
         .lp-filters-modal .lp-entity-filter-panel{
@@ -11206,7 +11293,17 @@ export default function LePlan({ currentUser, onSignOut }) {
       return;
     }
     const next = { ...patch };
-    if ("statusId" in next) {
+    // Type modifié depuis le volet (#447) : même règle que la fiche — un type
+    // qui impose son statut l'applique, sinon le statut courant est conservé
+    // s'il reste permis, remplacé par le statut par défaut dans le cas contraire.
+    if ("taskTypeId" in next && next.taskTypeId !== target.taskTypeId) {
+      const allowed = getStatusesForTask(statuses, projects, taskTypes, target.projectId, next.taskTypeId);
+      const wanted = "statusId" in next ? next.statusId : target.statusId;
+      if (!allowed.some((s) => s.id === wanted)) {
+        const fallback = getDefaultStatusForTask(statuses, projects, taskTypes, target.projectId, next.taskTypeId);
+        if (fallback) next.statusId = fallback.id;
+      }
+    } else if ("statusId" in next) {
       if (restrictedStatusForType(taskTypes, statuses, target.taskTypeId)) delete next.statusId;
       else {
         const st = statuses.find((s) => s.id === next.statusId);
