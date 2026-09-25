@@ -22730,7 +22730,10 @@ function createTimeline3dEngine(THREE, container, opts) {
     // la table (au plus 3 unités par jour, soit plus du double d'une gare),
     // au lieu de 0,6 / 0,55 par défaut (0,6 en Grande Ligne pour aérer les
     // gares, #465 ; 0,45 auparavant).
-    const stretch = (base, len) => (M.stretch ? Math.max(base, Math.min(3, len / M.stretch)) : base);
+    // Fenêtre longue (#459, plusieurs années) : l'échelle se resserre pour que
+    // le réseau reste parcourable, sans descendre sous 0,15 unité par jour.
+    const span = M.range.max - M.range.min;
+    const stretch = (base, len) => (M.stretch ? Math.max(base, Math.min(3, len / M.stretch)) : span > 600 ? Math.max(0.15, Math.min(base, (len * 3.6) / span)) : base);
     if (S.mode === "rail") {
       S.s = stretch(0.6, 100); S.lane = {};
       let z = 0, prev = null;
@@ -24354,10 +24357,13 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   // d'un réseau toujours complet, ce qui semblait sans effet).
   const visibleKey = useMemo(() => [...visible].sort().join("|"), [visible]);
   // Période « du / au » (#464) : fenêtre et échelle du réseau.
-  const win = useMemo(() => timeline3dWindow(norm.today, cfg.rangeFrom, cfg.rangeTo), [norm.today, cfg.rangeFrom, cfg.rangeTo]);
+  // Sans période choisie, fenêtre adaptative (#459) : elle couvre toutes les
+  // tâches retenues, passées comme futures.
+  const ranged = !!(cfg.rangeFrom || cfg.rangeTo);
+  const win = useMemo(() => (ranged ? timeline3dWindow(norm.today, cfg.rangeFrom, cfg.rangeTo) : timeline3dAutoWindow(norm, visible)), [norm, visibleKey, ranged, cfg.rangeFrom, cfg.rangeTo]); // eslint-disable-line react-hooks/exhaustive-deps
   const model = useMemo(() => timeline3dBuild(ctx, { ...norm, tasks: norm.tasks.filter((t) => visible.has(t.id)) }, win), [norm, visibleKey, ctx.projectFolders, win]); // eslint-disable-line react-hooks/exhaustive-deps
   // Toutes les tâches placées, filtres ou non : sert au compteur « x sur y ».
-  const placeable = useMemo(() => timeline3dBuild(ctx, norm, win).stations.length, [norm, ctx.projectFolders, win]); // eslint-disable-line react-hooks/exhaustive-deps
+  const placeable = useMemo(() => timeline3dBuild(ctx, norm, ranged ? win : timeline3dAutoWindow(norm, null)).stations.length, [norm, ctx.projectFolders, ranged, win]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
@@ -24438,7 +24444,7 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   // de placables (échéance dans la fenêtre) — un réseau vide se comprend alors
   // d'un coup d'œil (filtres, dates).
   const shownCount = model.stations.length;
-  const note = [placeable ? (shownCount === placeable ? shownCount + (shownCount > 1 ? " tâches" : " tâche") : shownCount + " sur " + placeable + " tâches") + " sur le réseau" : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + (cfg.rangeFrom || cfg.rangeTo ? " hors de la période" : " hors de la fenêtre (−90 j à +1 an)") : ""].filter(Boolean).join(" · ");
+  const note = [placeable ? (shownCount === placeable ? shownCount + (shownCount > 1 ? " tâches" : " tâche") : shownCount + " sur " + placeable + " tâches") + " sur le réseau" : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + (ranged ? " hors de la période" : " à plus de cinq ans") : ""].filter(Boolean).join(" · ");
 
   return (
     <section className={"lp-carte-view lp-t3d-view" + (embedded ? " is-embedded" : "")} aria-label="Timeline 3D">
