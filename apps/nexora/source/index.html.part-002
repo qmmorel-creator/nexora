@@ -5068,6 +5068,7 @@ function carteNormalize(ctx, tasks, opts) {
       state, kind: carteKindOf(t, typeById), milestone: !!t.milestone,
       milestoneColor: t.milestone ? (mTypeOf(t.milestoneTypeId) || {}).color || CARTE_MILESTONE_COLOR : null,
       milestoneSymbol: t.milestone ? (mTypeOf(t.milestoneTypeId) || {}).symbol || "diamond" : null,
+      statusId: st ? st.id : null, typeId: ty ? ty.id : null,
       statusName: st ? st.name : "Sans statut", statusColor: st && st.color ? st.color : "#94A3B8",
       typeName: ty ? ty.name : "Sans type", typeColor: ty && ty.color ? ty.color : "#94A3B8",
       criticality: carteCriticality(t, statusById),
@@ -5098,6 +5099,68 @@ function carteNormalize(ctx, tasks, opts) {
     };
   });
   return { projects, tasks: out, today };
+}
+
+// ---------- Regroupement variable (#438) ----------
+// Les régions de la carte ne sont plus forcément les dossiers : chaque région
+// est une valeur du critère choisi (responsable, statut, type, criticité) et
+// ses territoires sont les projets qui y ont des tâches. Le résultat garde la
+// forme de carteNormalize : disposition, ruban, noms au sol, totems et
+// panneau s'en servent tels quels.
+const CARTE_GROUPINGS = [
+  { id: "folder", label: "Dossier et projet", ribbon: "Dossiers", one: "dossier" },
+  { id: "assignee", label: "Responsable", ribbon: "Responsables", one: "responsable" },
+  { id: "status", label: "Statut", ribbon: "Statuts", one: "statut" },
+  { id: "type", label: "Type de tâche", ribbon: "Types de tâche", one: "type" },
+  { id: "criticality", label: "Criticité", ribbon: "Criticités", one: "criticité" },
+];
+const CARTE_GROUPING_BY_ID = Object.fromEntries(CARTE_GROUPINGS.map((g) => [g.id, g]));
+const CARTE_CRIT_GROUPS = { urgent: ["Urgente", "#DC2626", 0], moyen: ["Moyenne", "#F59E0B", 1], bas: ["Basse", "#10B981", 2] };
+// Région d'une tâche : { key, label, color, order }.
+function carteGroupOf(task, mode, ctx) {
+  const idx = (list, id) => { const i = (list || []).findIndex((x) => x && x.id === id); return i === -1 ? 9999 : i; };
+  if (mode === "assignee") {
+    if (!task.assignee) return { key: "~", label: "Sans responsable", color: "#94A3B8", order: 1e6 };
+    return { key: "a:" + task.assignee, label: task.assignee, color: cartePersonColor(task.assignee, task.assigneeColor), order: 0 };
+  }
+  if (mode === "status") {
+    if (!task.statusId) return { key: "~", label: "Sans statut", color: "#94A3B8", order: 1e6 };
+    return { key: "s:" + task.statusId, label: task.statusName, color: task.statusColor, order: idx(ctx && ctx.statuses, task.statusId) };
+  }
+  if (mode === "type") {
+    if (!task.typeId) return { key: "~", label: "Sans type", color: "#94A3B8", order: 1e6 };
+    return { key: "t:" + task.typeId, label: task.typeName, color: task.typeColor, order: idx(ctx && ctx.taskTypes, task.typeId) };
+  }
+  const c = CARTE_CRIT_GROUPS[task.criticality];
+  return c ? { key: "c:" + task.criticality, label: c[0], color: c[1], order: c[2] } : { key: "~", label: "Sans criticité", color: "#94A3B8", order: 1e6 };
+}
+function carteRegroup(norm, mode, ctx) {
+  if (!mode || mode === "folder" || !CARTE_GROUPING_BY_ID[mode]) return norm;
+  const projById = {};
+  norm.projects.forEach((p) => { projById[p.id] = p; });
+  const groups = {}, projects = {};
+  const tasks = norm.tasks.map((t) => {
+    const g = carteGroupOf(t, mode, ctx);
+    if (!groups[g.key]) groups[g.key] = g;
+    const src = t.projectId != null ? projById[t.projectId] : null;
+    const pid = mode + "|" + g.key + "|" + (t.projectId == null ? "~" : t.projectId);
+    if (!projects[pid]) {
+      projects[pid] = {
+        id: pid, name: src ? src.name : "Sans projet", icon: src ? src.icon : "", color: src ? src.color : "#8A8F98",
+        priority: src ? src.priority : "normal", folderId: null, folderName: g.label,
+        group: mode + "|" + g.key, groupColor: g.color, groupKind: mode,
+        order: src ? src.order : 1e5, fromCalendar: !!(src && src.fromCalendar), sourceProjectId: t.projectId,
+      };
+    }
+    return Object.assign({}, t, { projectId: pid, sourceProjectId: t.projectId, secondaryProjectId: null });
+  });
+  // Ordre des régions : celui du critère (catalogue, criticité), puis
+  // alphabétique ; « Sans … » en dernier. Dans une région, l'ordre des projets.
+  const keys = Object.keys(groups).sort((a, b) => groups[a].order - groups[b].order || groups[a].label.localeCompare(groups[b].label, "fr"));
+  const rank = {}; keys.forEach((k, i) => { rank[mode + "|" + k] = i; });
+  const list = Object.keys(projects).map((k) => projects[k]);
+  list.forEach((p) => { p.order = rank[p.group] * 1e6 + p.order; });
+  return Object.assign({}, norm, { projects: list, tasks, groupBy: mode });
 }
 
 // ---------- Disposition ----------
@@ -5870,7 +5933,7 @@ function carteFolderGroups(layout, stats, folders) {
     let g = idx[gid];
     if (!g) {
       const f = p.group ? byId[p.group] : null;
-      g = idx[gid] = { id: gid, name: p.group ? p.folderName || (f && f.name) || "Dossier" : "Sans dossier", color: (f && f.color) || null, icon: (f && f.icon) || "", projects: [], done: 0, counted: 0, overdue: 0, total: 0 };
+      g = idx[gid] = { id: gid, name: p.group ? p.folderName || (f && f.name) || "Dossier" : "Sans dossier", color: (f && f.color) || p.groupColor || null, icon: (f && f.icon) || "", kind: p.groupKind || "folder", projects: [], done: 0, counted: 0, overdue: 0, total: 0 };
       out.push(g);
     }
     g.projects.push(tr.projectId);
@@ -5907,6 +5970,8 @@ function normalizeCarteViewPrefs(p) {
     ambient: v.ambient !== false,
     // Mode Fil d'Ariane (#435) : seules les prochaines échéances restent en vue.
     ariadne: !!v.ariadne,
+    // Regroupement des régions (#438) : dossiers par défaut.
+    groupBy: CARTE_GROUPING_BY_ID[v.groupBy] ? v.groupBy : "folder",
   };
 }
 // === NEXORA:CARTE:END ===

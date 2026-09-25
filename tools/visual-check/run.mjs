@@ -1967,6 +1967,20 @@ try {
   carte.simplify.on = await terrOf();
   await toggleSimplify();
   carte.simplify.off = await terrOf();
+  // #438 : la carte se regroupe par responsable (menu « Affichage »), puis
+  // revient à l'identique par dossier.
+  const groupBy = async (v) => {
+    await cp.click('.lp-carte-toolbar button:has-text("Affichage")');
+    await cp.selectOption('select[aria-label="Regrouper la carte par"]', v);
+    await cp.click('.lp-carte-toolbar button:has-text("Affichage")');
+    await cp.waitForTimeout(1500);
+  };
+  const ribbonOf = () => cp.evaluate(() => ({ group: document.querySelector(".lp-carte-stage").dataset.carteGroup, ribbon: document.querySelector(".lp-carte-ribbon").getAttribute("aria-label"), badges: [...document.querySelectorAll(".lp-carte-badge small")].map((e) => e.textContent) }));
+  await groupBy("assignee");
+  carte.groupBy = { assignee: await ribbonOf(), terr: await terrOf() };
+  await groupBy("folder");
+  carte.groupBy.back = await ribbonOf();
+  carte.groupBy.backTerr = await terrOf();
   await cp.selectOption('.lp-carte-toolbar select[aria-label="Criticité"]', "all");
   await cp.waitForTimeout(800);
   carte.dimAfter = await cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed));
@@ -3207,6 +3221,7 @@ if (!carte.error) {
   expect(carte.badges >= 1 && carte.badges < 7, `Carte : ${carte.badges} pastilles dans le ruban (une par dossier attendue, moins que les 7 projets)`);
   expect(carte.folderPop && carte.folderPop.open && carte.folderPop.projects >= 1 && carte.folderPop.total === 7, `Carte : le survol d'une pastille de dossier ne déroule pas ses projets (${JSON.stringify(carte.folderPop)})`);
   expect(carte.folderPopClosed === 0, "Carte : le menu du dossier reste ouvert après le survol");
+  expect(carte.groupBy && carte.groupBy.assignee.group === "assignee" && carte.groupBy.assignee.ribbon === "Responsables" && carte.groupBy.assignee.badges.length >= 2 && carte.groupBy.terr >= 1 && carte.groupBy.back.group === "folder" && carte.groupBy.back.ribbon === "Dossiers" && carte.groupBy.backTerr === carte.simplify.off, `Carte : le regroupement par responsable ne fonctionne pas (${JSON.stringify(carte.groupBy)})`);
   expect(carte.simplify && carte.simplify.on >= 1 && carte.simplify.on < carte.simplify.before && carte.simplify.off === carte.simplify.before, `Carte : la carte simplifiée ne retire pas les projets écartés (${JSON.stringify(carte.simplify)})`);
   expect(carte.projectLabels >= 1, "Carte : aucun nom de totem près de l'arpenteur (#410)");
   expect(carte.projectLabelsFar <= 1, `Carte : ${carte.projectLabelsFar} noms de totems en vue d'ensemble, 1 au plus attendu (#410)`);
