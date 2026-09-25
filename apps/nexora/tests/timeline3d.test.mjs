@@ -24,7 +24,7 @@ const T = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n${slice("COSMOS")}\n${slice("TIMELINE3D")}\n;return {
     carteNormalize, timeline3dBuild, normalizeTimeline3dViewPrefs, timeline3dNextDepartures,
     timeline3dNeighbours, timeline3dNextStop, timeline3dRel, timeline3dResolveQuality,
-    T3D_ORPHAN_LINE, T3D_SPEEDS, timeline3dTarget,
+    T3D_ORPHAN_LINE, T3D_SPEEDS, timeline3dTarget, timeline3dWindow,
   };\n})`
 )();
 
@@ -174,4 +174,24 @@ test("#462 : horizon — jour relatif et tâches encore à faire avant", () => {
   assert.equal(T.normalizeTimeline3dViewPrefs({ targetDate: iso(7) }).targetDate, iso(7));
   assert.equal(T.normalizeTimeline3dViewPrefs({ targetDate: "demain" }).targetDate, null);
   assert.equal(T.normalizeTimeline3dViewPrefs({}).targetDate, null);
+});
+
+test("#464 : période « du / au » — fenêtre, plage fixe et échelle étirée", () => {
+  const today = norm.today;
+  assert.deepEqual(T.timeline3dWindow(today, null, null), {});
+  const w = T.timeline3dWindow(today, iso(0), iso(10));
+  assert.deepEqual(w, { pastDays: 0, futureDays: 10, rangeMin: 0, rangeMax: 10 });
+  assert.deepEqual(T.timeline3dWindow(today, iso(10), iso(0)), w, "bornes inversées remises dans l'ordre");
+  const only = T.timeline3dWindow(today, iso(-5), null);
+  assert.equal(only.pastDays, 5); assert.equal(only.rangeMin, undefined);
+  const Mw = T.timeline3dBuild(ctx, norm, w);
+  assert.deepEqual(Mw.range, { min: 0, max: 10 });
+  assert.equal(Mw.stretch, 10);
+  const ids = Mw.stations.map((x) => x.id).sort();
+  // Échéances entre J0 et J+10 : t2 (J+3), t4 (J+7), t6 (J+2), t11 (J+4).
+  assert.deepEqual(ids, ["t11", "t2", "t4", "t6"]);
+  assert.ok(Mw.stations.every((x) => x.s >= 0), "les bifurcations partent au plus tôt au début de la période");
+  assert.equal(T.timeline3dBuild(ctx, norm).stretch, null);
+  const p = T.normalizeTimeline3dViewPrefs({ rangeFrom: iso(0), rangeTo: "x" });
+  assert.equal(p.rangeFrom, iso(0)); assert.equal(p.rangeTo, null);
 });

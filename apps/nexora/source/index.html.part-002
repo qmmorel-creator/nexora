@@ -6492,6 +6492,9 @@ function normalizeTimeline3dViewPrefs(p) {
     animate: v.animate !== false,
     board: v.board !== false,
     filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
+    // Période d'affichage (#464) : « du / au », null = fenêtre par défaut.
+    rangeFrom: typeof v.rangeFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.rangeFrom) ? v.rangeFrom : null,
+    rangeTo: typeof v.rangeTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.rangeTo) ? v.rangeTo : null,
     // Horizon (#462) : date projetée, tracée au sol ; null = aucune.
     targetDate: typeof v.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.targetDate) ? v.targetDate : null,
   };
@@ -6549,7 +6552,7 @@ function timeline3dBuild(ctx, norm, opts) {
     const lineId = t.projectId != null && projById[t.projectId] ? t.projectId : T3D_ORPHAN_LINE;
     const type = t.milestone || t.kind === "milestone" ? "m" : t.kind === "meeting" ? "r" : "a";
     const st = {
-      id: t.id, lineId, title: t.title, s: Math.max(s, -past - 30), e, type,
+      id: t.id, lineId, title: t.title, s: Math.max(s, o.rangeMin != null ? o.rangeMin : -past - 30), e, type,
       st: timeline3dStationState(t), late: !!t.overdue, info: t.state === "info",
       crit: t.criticality || null, branch: false, side: 0, links: [],
       dependsOn: t.dependsOn || [],
@@ -6616,9 +6619,26 @@ function timeline3dBuild(ctx, norm, opts) {
     if (g && g.id === l.folderId) g.lineIds.push(l.id);
     else groups.push({ id: l.folderId, name: l.folderName, color: l.folderColor, lineIds: [l.id] });
   });
-  const dmin = lines.length ? Math.min(-7, Math.min.apply(null, lines.map((l) => l.start))) : -7;
-  const dmax = lines.length ? Math.max(30, Math.max.apply(null, lines.map((l) => l.end))) : 30;
-  return { today, lines, lineById, stations, stationById, links, groups, undated, outside, range: { min: dmin, max: dmax } };
+  // Période choisie (#464) : la plage affichée est exactement celle-là, et le
+  // moteur étire l'échelle du temps pour qu'elle remplisse la table.
+  const fixed = o.rangeMin != null && o.rangeMax != null;
+  const dmin = fixed ? o.rangeMin : lines.length ? Math.min(-7, Math.min.apply(null, lines.map((l) => l.start))) : -7;
+  const dmax = fixed ? o.rangeMax : lines.length ? Math.max(30, Math.max.apply(null, lines.map((l) => l.end))) : 30;
+  return { today, lines, lineById, stations, stationById, links, groups, undated, outside, range: { min: dmin, max: dmax }, stretch: fixed ? Math.max(1, o.rangeMax - o.rangeMin) : null };
+}
+// Période d'affichage (#464) : bornes « du / au » en jours relatifs à
+// aujourd'hui, converties en options de timeline3dBuild. Une borne seule
+// restreint la fenêtre de ce côté ; les deux ensemble fixent la plage et
+// étirent l'échelle. Bornes inversées : remises dans l'ordre.
+function timeline3dWindow(today, from, to) {
+  let a = carteDayNumber(from), b = carteDayNumber(to);
+  if (a == null && b == null) return {};
+  if (a != null && b != null && a > b) { const x = a; a = b; b = x; }
+  const out = {};
+  if (a != null) out.pastDays = today - a;
+  if (b != null) out.futureDays = b - today;
+  if (a != null && b != null) { out.rangeMin = a - today; out.rangeMax = b - today; }
+  return out;
 }
 
 // Tableau « Prochains départs » : retards d'abord, puis les échéances à venir.

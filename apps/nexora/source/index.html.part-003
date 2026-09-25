@@ -22726,13 +22726,18 @@ function createTimeline3dEngine(THREE, container, opts) {
   function layout() {
     const M = S.model;
     S.r0 = M.range.min - 3; S.r1 = M.range.max + 6;
+    // Période choisie (#464) : l'échelle s'étire pour que la période remplisse
+    // la table (au plus 3 unités par jour, soit plus du double d'une gare),
+    // au lieu de 0,6 / 0,55 par défaut (0,6 en Grande Ligne pour aérer les
+    // gares, #465 ; 0,45 auparavant).
+    const stretch = (base, len) => (M.stretch ? Math.max(base, Math.min(3, len / M.stretch)) : base);
     if (S.mode === "rail") {
-      S.s = 0.45; S.lane = {};
+      S.s = stretch(0.6, 100); S.lane = {};
       let z = 0, prev = null;
       M.lines.forEach((l) => { if (prev !== null && prev !== l.folderId) z += 3.6; S.lane[l.id] = z; z += T3D_RAIL_LANE; prev = l.folderId; });
       const mid = (z - T3D_RAIL_LANE) / 2; Object.keys(S.lane).forEach((k) => { S.lane[k] -= mid; });
     } else {
-      S.s = 0.55; S.ang = {};
+      S.s = stretch(0.55, 90); S.ang = {};
       const n = M.lines.length, gap = 0.9, units = n + M.groups.length * gap, step = TAU / Math.max(1, units);
       S.R = Math.max(5, n * 0.62);
       let a = PI / 2 + 0.25 + step * gap / 2, prev = null;
@@ -22784,9 +22789,27 @@ function createTimeline3dEngine(THREE, container, opts) {
     const g = own(new THREE.CylinderGeometry(r, r, len, 3)); g.rotateZ(PI / 2); g.rotateX(-PI / 2);
     const mesh = new THREE.Mesh(g, m); if (S.quality === "high") mesh.castShadow = true; return mesh;
   }
+  // Isolement des gares (#465) : sur une même ligne, une gare trop proche de
+  // la précédente passe de l'autre côté de la voie ; si les deux côtés sont
+  // pris, elle va du côté libéré le plus tôt. Largeur d'une gare = son quai,
+  // plus une marge nette entre deux gares.
+  const T3D_STATION_GAP = 0.9;
+  function railSides() {
+    const M = S.model;
+    M.lines.forEach((l) => {
+      const last = { 1: -Infinity, "-1": -Infinity };
+      l.stations.map((id) => M.stationById[id]).filter((x) => !x.branch).sort((a, b) => a.e - b.e).forEach((x) => {
+        const half = (x.type === "m" ? 2.0 : 1.25) / 2, cx = x.e * S.s;
+        const fits = (side) => cx - half >= last[side] + T3D_STATION_GAP;
+        const side = fits(1) ? 1 : fits(-1) ? -1 : (last[1] <= last[-1] ? 1 : -1);
+        last[side] = cx + half;
+        S.st[x.id].side = side;
+      });
+    });
+  }
   function railStation(x) {
     const l = lineOf(x.lineId), st = x.late ? "late" : x.st;
-    const out = x.branch ? x.side : 1;
+    const out = x.branch ? x.side : (S.st[x.id].side || 1);
     const base = pos(l, x.e, x.branch ? x.side : 0);
     const g = new THREE.Group(); g.position.set(base.x, 0, base.z); S.scene.add(g);
     const done = st === "done", big = x.type === "m", halt = x.type === "r";
@@ -22922,8 +22945,14 @@ function createTimeline3dEngine(THREE, container, opts) {
     sun.target.position.set(cx, 0, cz); sc.add(sun, sun.target);
     box(W + 1.4, 1.3, Dp + 1.4, std("#7b4e2d", { roughness: 0.7 }), cx, -0.66, cz, null, false);
     box(W, 0.1, Dp, std("#7ea45a", { roughness: 1 }), cx, -0.05, cz, null, false);
-    const past = new THREE.Mesh(own(new THREE.PlaneGeometry(Math.max(0.1, -x0), Dp)), basic("#e0c486", { transparent: true, opacity: 0.22, depthWrite: false }));
-    past.rotation.x = -PI / 2; past.position.set(x0 / 2, 0.004, cz); sc.add(past);
+    // Passé teinté ; passage à niveau d'aujourd'hui seulement si aujourd'hui
+    // est sur la table (une période choisie peut être toute à venir, #464).
+    if (x0 < 0) {
+      const pe = Math.min(0, x1);
+      const past = new THREE.Mesh(own(new THREE.PlaneGeometry(Math.max(0.1, pe - x0), Dp)), basic("#e0c486", { transparent: true, opacity: 0.22, depthWrite: false }));
+      past.rotation.x = -PI / 2; past.position.set((x0 + pe) / 2, 0.004, cz); sc.add(past);
+    }
+    if (x0 < 0 && x1 > 0) {
     // Passage à niveau d'aujourd'hui
     box(1.3, 0.05, Dp, std("#474b52"), 0, 0.025, cz, null, false);
     for (let z = z0 + 0.4; z < z1 - 0.4; z += 1.3) box(0.07, 0.01, 0.6, std("#f4f6f9"), 0, 0.056, z, null, false);
@@ -22959,6 +22988,7 @@ function createTimeline3dEngine(THREE, container, opts) {
       S.cars.push({ g, dir, z, v: 0, speed: 1.0 + (k % 3) * 0.25, zmin, zmax });
     }
     addLabel("lp-t3d-lbl--today", (el) => { el.textContent = "Passage à niveau · aujourd'hui " + fmtShort(0); }, V(0, 1.2, z1 - 0.7), { prio: 120 });
+    }
     // Portiques mensuels, bornes hebdomadaires
     const gm = std("#9aa3ad", { roughness: 0.5, metalness: 0.3 });
     for (let d = Math.ceil(S.r0); d <= S.r1; d++) {
@@ -23042,6 +23072,7 @@ function createTimeline3dEngine(THREE, container, opts) {
       railTrain(l);
     });
     flushSleepers();
+    railSides();
     M.stations.forEach(railStation);
     M.links.forEach(([a, b]) => { if (S.st[a].p && S.st[b].p) railLink(S.st[a].p, S.st[b].p); });
   }
@@ -23228,8 +23259,11 @@ function createTimeline3dEngine(THREE, container, opts) {
 
   // ---------- Caméras ----------
   function resetCamera(instant) {
-    if (S.mode === "rail") Object.assign(goal, { tx: 14 * S.s, ty: 0, tz: 0, yaw: -0.5, pitch: 0.7, dist: 40 });
-    else Object.assign(goal, { day: -4, yaw: 0, pitch: 0.02 });
+    const M = S.model, mid = M && M.stretch ? (M.range.min + M.range.max) / 2 : null;
+    if (S.mode === "rail") Object.assign(goal, mid != null
+      ? { tx: mid * S.s, ty: 0, tz: 0, yaw: -0.5, pitch: 0.75, dist: Math.max(30, Math.min(100, M.stretch * S.s * 0.55)) }
+      : { tx: 14 * S.s, ty: 0, tz: 0, yaw: -0.5, pitch: 0.7, dist: 40 });
+    else Object.assign(goal, { day: mid != null ? M.range.min - 1 : -4, yaw: 0, pitch: 0.02 });
     S.focus = 0;
     if (instant) Object.assign(cam, goal);
   }
@@ -24319,9 +24353,11 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   // sur ce qui reste (auparavant, les filtres masquaient seulement les gares
   // d'un réseau toujours complet, ce qui semblait sans effet).
   const visibleKey = useMemo(() => [...visible].sort().join("|"), [visible]);
-  const model = useMemo(() => timeline3dBuild(ctx, { ...norm, tasks: norm.tasks.filter((t) => visible.has(t.id)) }), [norm, visibleKey, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Période « du / au » (#464) : fenêtre et échelle du réseau.
+  const win = useMemo(() => timeline3dWindow(norm.today, cfg.rangeFrom, cfg.rangeTo), [norm.today, cfg.rangeFrom, cfg.rangeTo]);
+  const model = useMemo(() => timeline3dBuild(ctx, { ...norm, tasks: norm.tasks.filter((t) => visible.has(t.id)) }, win), [norm, visibleKey, ctx.projectFolders, win]); // eslint-disable-line react-hooks/exhaustive-deps
   // Toutes les tâches placées, filtres ou non : sert au compteur « x sur y ».
-  const placeable = useMemo(() => timeline3dBuild(ctx, norm).stations.length, [norm, ctx.projectFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+  const placeable = useMemo(() => timeline3dBuild(ctx, norm, win).stations.length, [norm, ctx.projectFolders, win]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
   useLayoutEffect(() => {
@@ -24402,7 +24438,7 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
   // de placables (échéance dans la fenêtre) — un réseau vide se comprend alors
   // d'un coup d'œil (filtres, dates).
   const shownCount = model.stations.length;
-  const note = [placeable ? (shownCount === placeable ? shownCount + (shownCount > 1 ? " tâches" : " tâche") : shownCount + " sur " + placeable + " tâches") + " sur le réseau" : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " hors de la fenêtre (−90 j à +1 an)" : ""].filter(Boolean).join(" · ");
+  const note = [placeable ? (shownCount === placeable ? shownCount + (shownCount > 1 ? " tâches" : " tâche") : shownCount + " sur " + placeable + " tâches") + " sur le réseau" : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + (cfg.rangeFrom || cfg.rangeTo ? " hors de la période" : " hors de la fenêtre (−90 j à +1 an)") : ""].filter(Boolean).join(" · ");
 
   return (
     <section className={"lp-carte-view lp-t3d-view" + (embedded ? " is-embedded" : "")} aria-label="Timeline 3D">
@@ -24442,6 +24478,14 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
           <DateInput id="lp-t3d-target-date" allowEmpty value={cfg.targetDate || ""} onChange={(v) => setPrefs({ targetDate: v || null })} />
           {cfg.targetDate && <b>{target.count} à faire avant</b>}
           {cfg.targetDate && <button type="button" className="lp-icon-btn" aria-label="Retirer l'horizon" onClick={() => setPrefs({ targetDate: null })}><X size={12} /></button>}
+        </span>
+        {/* Période (#464) : borner la vue et étirer l'échelle du temps. */}
+        <span className={"lp-t3d-target lp-t3d-range" + (cfg.rangeFrom || cfg.rangeTo ? " is-set" : "")} title="Période affichée : les deux dates étirent le réseau sur cette période">
+          <label htmlFor="lp-t3d-range-from">Du</label>
+          <DateInput id="lp-t3d-range-from" allowEmpty value={cfg.rangeFrom || ""} max={cfg.rangeTo || undefined} onChange={(v) => setPrefs({ rangeFrom: v || null })} />
+          <label htmlFor="lp-t3d-range-to">au</label>
+          <DateInput id="lp-t3d-range-to" allowEmpty value={cfg.rangeTo || ""} min={cfg.rangeFrom || undefined} onChange={(v) => setPrefs({ rangeTo: v || null })} />
+          {(cfg.rangeFrom || cfg.rangeTo) && <button type="button" className="lp-icon-btn" aria-label="Revenir à la période par défaut" onClick={() => setPrefs({ rangeFrom: null, rangeTo: null })}><X size={12} /></button>}
         </span>
         {note && <span className="lp-t3d-note">{note}</span>}
       </div>
