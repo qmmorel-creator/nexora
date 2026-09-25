@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, copyFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, copyFile, cp, rm } from "node:fs/promises";
 import path from "node:path";
 import { compileUi } from "./compile-ui.mjs";
 
@@ -21,5 +21,8 @@ await writeFile(path.join(assembledDir, "index.html"), source);
 const html = await compileUi(source.toString("utf8"));
 await writeFile(path.join(outputDir, "index.html"), html);
 await copyFile(path.join(root, "public", "openapi.yaml"), path.join(outputDir, "openapi.yaml"));
+// Modèles 3D de la vue Carte (#499, Kenney, CC0) : servis tels quels sous /carte/.
+await rm(path.join(outputDir, "carte"), { recursive: true, force: true });
+await cp(path.join(root, "public", "carte"), path.join(outputDir, "carte"), { recursive: true });
 console.log(`Build Nexora: ${parts.length} fragments, ${buffers.reduce((sum, item) => sum + item.length, 0)} octets`);
 
