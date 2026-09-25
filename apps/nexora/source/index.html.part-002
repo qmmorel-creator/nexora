@@ -6486,12 +6486,100 @@ function carteHoloTabs(task) {
   if (task && String(task.report || "").trim()) out.push({ id: "report", label: "Compte rendu" });
   return out;
 }
-function carteHoloParagraphs(text) {
-  return String(text || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter((l, i, a) => l || (i > 0 && a[i - 1])).map((l) => {
-    const m = /^([-*•]|\d+[.)])\s+(.*)$/.exec(l);
-    const clean = (x) => x.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/^#+\s*/, "");
-    return m ? { bullet: true, text: clean(m[2]) } : { bullet: false, text: clean(l) };
-  }).filter((p, i, a) => p.text || (i > 0 && a[i - 1].text));
+// Hologramme en Markdown (#502) : blocs et segments stylés, dessinés sur le
+// canevas du tableau 3D. Même syntaxe que le rendu Markdown de Nexora
+// (renderMarkdown) : titres #, ##, ###, **gras**, *italique*, `code`,
+// ~~barré~~, liens [texte](url), listes - * 1., cases - [ ] et - [x],
+// citations >, call-outs « > [!note] Titre » et « :::callout-note Titre …
+// ::: », tableaux (une ligne par rangée). Les types de call-out sont ceux de
+// l'app (CALLOUT_TYPES, passé en paramètre) ; un type inconnu devient
+// « note », comme ailleurs.
+function carteHoloInline(text) {
+  const src = String(text || "");
+  const out = [];
+  const push = (t, st) => {
+    if (!t) return;
+    const last = out[out.length - 1];
+    if (last && !!last.b === !!st.b && !!last.i === !!st.i && !!last.code === !!st.code && !!last.s === !!st.s) last.t += t;
+    else out.push(Object.assign({ t }, st.b ? { b: true } : {}, st.i ? { i: true } : {}, st.code ? { code: true } : {}, st.s ? { s: true } : {}));
+  };
+  const walk = (str, st) => {
+    const re = /(`([^`]+)`)|(\*\*(.+?)\*\*)|(__(.+?)__)|(~~(.+?)~~)|(\*([^*\s][^*]*?)\*)|((^|[\s(])_([^_\s][^_]*?)_(?=$|[\s.,;:!?)]))|(\[([^\]]+)\]\([^)\s]+\))/g;
+    let at = 0, m;
+    while ((m = re.exec(str))) {
+      push(str.slice(at, m.index), st);
+      if (m[1]) push(m[2], Object.assign({}, st, { code: true }));
+      else if (m[3]) walk(m[4], Object.assign({}, st, { b: true }));
+      else if (m[5]) walk(m[6], Object.assign({}, st, { b: true }));
+      else if (m[7]) walk(m[8], Object.assign({}, st, { s: true }));
+      else if (m[9]) walk(m[10], Object.assign({}, st, { i: true }));
+      else if (m[11]) { push(m[12], st); walk(m[13], Object.assign({}, st, { i: true })); }
+      else if (m[14]) walk(m[15], st);
+      at = m.index + m[0].length;
+    }
+    push(str.slice(at), st);
+  };
+  walk(src, {});
+  return out;
+}
+const CARTE_HOLO_CALLOUTS = ["note", "info", "tip", "warning", "danger"];
+function carteHoloBlocks(text, calloutTypes) {
+  const types = calloutTypes && typeof calloutTypes === "object" ? calloutTypes : null;
+  const kindOf = (k) => { const x = String(k || "").toLowerCase(); return (types ? types[x] : CARTE_HOLO_CALLOUTS.indexOf(x) !== -1) ? x : "note"; };
+  const parse = (lines) => {
+    const out = [];
+    let i = 0;
+    const gap = () => { if (out.length && out[out.length - 1].type !== "gap") out.push({ type: "gap" }); };
+    while (i < lines.length) {
+      const raw = lines[i].replace(/\s+$/, "");
+      const line = raw.trim();
+      let m;
+      if ((m = /^>\s*\[!(\w+)\]([+-])?\s*(.*)$/.exec(line))) {
+        const body = [];
+        i++;
+        while (i < lines.length && /^\s*>/.test(lines[i])) { body.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+        out.push({ type: "callout", kind: kindOf(m[1]), title: carteHoloInline(m[3].trim()), children: parse(body) });
+        continue;
+      }
+      if ((m = /^:::callout-(\w+)([+-])?\s*(.*)$/.exec(line))) {
+        const body = [];
+        i++;
+        while (i < lines.length && lines[i].trim() !== ":::") { body.push(lines[i]); i++; }
+        if (i < lines.length) i++;
+        out.push({ type: "callout", kind: kindOf(m[1]), title: carteHoloInline(m[3].trim()), children: parse(body) });
+        continue;
+      }
+      if (/^>/.test(line)) {
+        const body = [];
+        while (i < lines.length && /^\s*>/.test(lines[i]) && !/^\s*>\s*\[!\w+\]/.test(lines[i])) { body.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+        out.push({ type: "quote", children: parse(body) });
+        continue;
+      }
+      i++;
+      if (!line) { gap(); continue; }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) { out.push({ type: "hr" }); continue; }
+      if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) { out.push({ type: "h", level: Math.min(3, m[1].length), runs: carteHoloInline(m[2]) }); continue; }
+      const depth = Math.min(3, Math.floor((raw.length - raw.replace(/^\s+/, "").length) / 2));
+      if ((m = /^[-*+•]\s+\[([ xX])\]\s+(.*)$/.exec(line))) { out.push({ type: "task", done: m[1] !== " ", depth, runs: carteHoloInline(m[2]) }); continue; }
+      if ((m = /^[-*+•]\s+(.*)$/.exec(line))) { out.push({ type: "li", depth, runs: carteHoloInline(m[1]) }); continue; }
+      if ((m = /^(\d+)[.)]\s+(.*)$/.exec(line))) { out.push({ type: "li", depth, n: Number(m[1]), runs: carteHoloInline(m[2]) }); continue; }
+      // Tableau : la ligne de séparation disparaît, chaque rangée devient une
+      // ligne dont les cellules sont séparées par « · ».
+      if (/\|/.test(line) && /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/.test(line)) continue;
+      if (/^\|.*\|$/.test(line)) {
+        const cells = line.slice(1, -1).split("|").map((c) => c.trim());
+        const runs = [];
+        cells.forEach((c, k) => { if (k) runs.push({ t: "  ·  " }); carteHoloInline(c).forEach((r) => runs.push(r)); });
+        out.push({ type: "row", runs });
+        continue;
+      }
+      out.push({ type: "p", runs: carteHoloInline(line) });
+    }
+    while (out.length && out[out.length - 1].type === "gap") out.pop();
+    while (out.length && out[0].type === "gap") out.shift();
+    return out;
+  };
+  return parse(String(text || "").replace(/\r/g, "").split("\n"));
 }
 // Construire ici (#470) : la première nouvelle tâche du projet visé prend la
 // parcelle choisie. Renvoie la mémoire de disposition à utiliser.

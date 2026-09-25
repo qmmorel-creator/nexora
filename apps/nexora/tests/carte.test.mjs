@@ -29,7 +29,7 @@ const C = vm.runInThisContext(
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER, carteQuickOptions, CARTE_NONE,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, CARTE_DIST_MAX, carteBuildable, carteNearestBuildable, carteGroupAnchor, carteTeleportPhase, CARTE_TP_DUR, CARTE_TP_SWAP, carteToWorld, carteNormalizeViews, CARTE_VIEWS_MAX,
-    carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
+    carteNormalizeWheel, CARTE_ROAD_LANTERN, carteKenneyBuilding, carteRegradeHsl, CARTE_KENNEY_HOUSES, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloBlocks, carteHoloInline,
   };\n})`
 )();
 
@@ -731,9 +731,8 @@ test("#494 : hologramme — onglets selon le contenu, texte en paragraphes", () 
   assert.deepEqual(C.carteHoloTabs({ desc: "", report: " " }), []);
   assert.deepEqual(C.carteHoloTabs({ desc: "a", report: "" }).map((t) => t.id), ["desc"]);
   assert.deepEqual(C.carteHoloTabs({ desc: "a", report: "b" }).map((t) => t.id), ["desc", "report"]);
-  assert.deepEqual(C.carteHoloParagraphs("Intro **gras**\n- point 1\n2) point 2\n\n\nFin"), [
-    { bullet: false, text: "Intro gras" }, { bullet: true, text: "point 1" }, { bullet: true, text: "point 2" }, { bullet: false, text: "" }, { bullet: false, text: "Fin" },
-  ]);
+  // Remplacé par le rendu Markdown (#502) : un paragraphe, deux puces, un blanc.
+  assert.deepEqual(C.carteHoloBlocks("Intro **gras**\n- point 1\n2) point 2\n\n\nFin").map((b) => b.type), ["p", "li", "li", "gap", "p"]);
   const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s1", meetingReport: "CR" }], { now: NOW });
   assert.equal(n.tasks[0].report, "CR");
   assert.equal(C.normalizeCarteViewPrefs({}).holo, true);
@@ -910,4 +909,40 @@ test("téléportation magique : chronologie et préférence (#505)", () => {
   assert.equal(C.normalizeCarteViewPrefs({}).teleport, false, "désactivée par défaut");
   assert.equal(C.normalizeCarteViewPrefs({ teleport: true }).teleport, true);
   assert.equal(C.normalizeCarteViewPrefs({ teleport: "oui" }).teleport, false);
+});
+
+test("hologramme en Markdown : segments stylés (#502)", () => {
+  assert.deepEqual(C.carteHoloInline("a **gras** et *ital* `code` ~~barré~~ [lien](https://x.fr) fin"), [
+    { t: "a " }, { t: "gras", b: true }, { t: " et " }, { t: "ital", i: true }, { t: " " }, { t: "code", code: true }, { t: " " }, { t: "barré", s: true }, { t: " lien fin" },
+  ]);
+  assert.deepEqual(C.carteHoloInline("**gras _et ital_**"), [{ t: "gras ", b: true }, { t: "et ital", b: true, i: true }]);
+  assert.deepEqual(C.carteHoloInline("nom_de_fichier reste tel quel"), [{ t: "nom_de_fichier reste tel quel" }], "un tiret bas dans un mot n'est pas de l'italique");
+  assert.deepEqual(C.carteHoloInline("`**pas gras**`"), [{ t: "**pas gras**", code: true }]);
+  assert.deepEqual(C.carteHoloInline(""), []);
+});
+
+test("hologramme en Markdown : blocs, cases, citations et call-outs (#502)", () => {
+  const T = { note: {}, info: {}, tip: {}, warning: {}, danger: {} };
+  const b = C.carteHoloBlocks([
+    "# Titre", "## Sous-titre", "Texte **gras**", "", "", "- puce", "  - sous-puce", "1. un", "- [ ] à faire", "- [x] fait",
+    "> citation", "> suite", "", "> [!WARNING] Attention **forte**", "> - point", "> texte", "", "> [!inconnu]", "> corps",
+    ":::callout-tip Astuce", "contenu", ":::", "---", "| A | B |", "|---|:-:|", "| 1 | 2 |",
+  ].join("\n"), T);
+  assert.deepEqual(b.map((x) => x.type), ["h", "h", "p", "gap", "li", "li", "li", "task", "task", "quote", "gap", "callout", "gap", "callout", "callout", "hr", "row", "row"]);
+  assert.deepEqual([b[0].level, b[1].level], [1, 2]);
+  assert.deepEqual([b[4].depth, b[5].depth, b[6].n], [0, 1, 1]);
+  assert.deepEqual([b[7].done, b[8].done], [false, true]);
+  assert.equal(b[9].children.length, 2, "citation sur deux lignes");
+  assert.equal(b[11].kind, "warning");
+  assert.deepEqual(b[11].title, [{ t: "Attention " }, { t: "forte", b: true }]);
+  assert.deepEqual(b[11].children.map((x) => x.type), ["li", "p"]);
+  assert.equal(b[13].kind, "note", "type inconnu : note, comme dans le reste de l'app");
+  assert.deepEqual(b[13].title, []);
+  assert.equal(b[14].kind, "tip");
+  assert.deepEqual(b[14].children.map((x) => x.runs[0].t), ["contenu"]);
+  assert.deepEqual(b[16].runs.map((r) => r.t).join(""), "A  ·  B");
+  // Sans table fournie, les cinq types de l'app restent reconnus.
+  assert.equal(C.carteHoloBlocks("> [!danger] x")[0].kind, "danger");
+  assert.deepEqual(C.carteHoloBlocks(""), []);
+  assert.deepEqual(C.carteHoloBlocks("\n\nA\n\n").map((x) => x.type), ["p"], "pas de blanc en tête ni en fin");
 });

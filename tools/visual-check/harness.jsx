@@ -1126,7 +1126,8 @@ if (benchApp) {
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
     // Hologramme (#494) : une description et un compte rendu d'exemple.
-    const holo = (t) => t.title === "Revue DOE" ? { ...t, desc: "Revue documentaire des **dossiers d'ouvrages exécutés** du lot 2B avant réception.\n- Vérifier la complétude des plans de récolement\n- Contrôler les notices de fonctionnement\n- Lister les réserves documentaires à lever" }
+    // Markdown (#502) : titre, gras, italique, cases, citation et call-outs.
+    const holo = (t) => t.title === "Revue DOE" ? { ...t, desc: "## Revue DOE du lot 2B\nRevue documentaire des **dossiers d'ouvrages exécutés** avant réception, *version provisoire*.\n- [x] Plans de récolement reçus\n- [ ] Contrôler les notices de fonctionnement\n- Lister les réserves documentaires\n> [!WARNING] Réception le **15 octobre**\n> Sans DOE complet, la levée des réserves est bloquée.\n> [!TIP] Astuce\n> Demander l'index `DOE-2B.xlsx` à l'entreprise." }
       : t.title === "Réunion de chantier 2" ? { ...t, desc: "Réunion hebdomadaire avec l'entreprise de gros œuvre.", meetingReport: "Présents : MOE, entreprise GO, bureau de contrôle.\nPoints traités :\n- Planning : retard de 5 j sur le coulage du tablier\n- Réserves : 3 levées, 2 en cours\n- Sécurité : garde-corps provisoires à reposer\nActions : entreprise GO, nouveau planning sous 48 h." } : t;
     mem.set("nexora:tasks", JSON.stringify([...benchTasks, ...extra].map(holo)));
   } else if (benchParams.get("carte") === "totems") {

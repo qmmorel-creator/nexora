@@ -20700,12 +20700,125 @@ function createCarteEngine(THREE, container, opts) {
   scene.add(holoBase);
   holoBeam.visible = holoBase.visible = false;
   const HOLO = { id: null, tab: 0, tabs: [], tabBoxes: [], t0: 0 };
-  function wrapLines(g, text, maxW) {
-    const words = String(text).split(/\s+/).filter(Boolean), out = [];
-    let line = "";
-    words.forEach((w) => { const t = line ? line + " " + w : w; if (g.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; });
-    if (line) out.push(line);
-    return out;
+  // ---------- Hologramme : rendu Markdown (#502) ----------
+  const HOLO_FONT = "Inter, -apple-system, 'Segoe UI', sans-serif";
+  const HOLO_MONO = "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
+  const HOLO_TEXT = "#e9fdff";
+  // Couleur d'un call-out : celle de l'app (CALLOUT_TYPES), éclaircie pour
+  // rester lisible sur le fond sombre du tableau.
+  const holoCalloutCache = {};
+  function holoCallout(kind) {
+    if (holoCalloutCache[kind]) return holoCalloutCache[kind];
+    const T = typeof CALLOUT_TYPES !== "undefined" ? CALLOUT_TYPES : {};
+    const meta = T[kind] || T.note || { label: "Note", color: "#3B82F6", icon: "" };
+    const c = new THREE.Color(meta.color), hsl = {};
+    c.getHSL(hsl); c.setHSL(hsl.h, Math.min(1, hsl.s * 1.05), Math.max(0.64, hsl.l));
+    const rgb = [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)].join(",");
+    return (holoCalloutCache[kind] = { label: meta.label, icon: meta.icon || "", color: "rgb(" + rgb + ")", tint: "rgba(" + rgb + ",0.16)", edge: "rgba(" + rgb + ",0.7)" });
+  }
+  const holoFont = (st, size, weight) => (st.i ? "italic " : "") + (st.b ? 800 : weight) + " " + (st.code ? Math.round(size * 0.9) : size) + "px " + (st.code ? HOLO_MONO : HOLO_FONT);
+  // Texte stylé coupé aux espaces ; renvoie la hauteur occupée.
+  function holoRuns(g, runs, x, w, y, size, weight, color, ctx) {
+    const lh = Math.round(size * 1.4), dy = Math.round((lh - size) / 2);
+    const toks = [];
+    (runs || []).forEach((r) => String(r.t).split(/(\s+)/).forEach((q) => { if (q) toks.push({ t: q, st: r }); }));
+    if (y + lh > ctx.maxY) { ctx.cut = true; return 0; }
+    let cx = x, cy = y, has = false;
+    for (const tk of toks) {
+      g.font = holoFont(tk.st, size, weight);
+      if (/^\s+$/.test(tk.t)) { if (has) cx += g.measureText(" ").width; continue; }
+      let t = tk.t, tw = g.measureText(t).width;
+      if (has && cx + tw > x + w) {
+        cy += lh; cx = x;
+        if (cy + lh > ctx.maxY) { ctx.cut = true; return cy - y; }
+      }
+      if (tw > w) { while (t.length > 2 && g.measureText(t + "…").width > w) t = t.slice(0, -1); t += "…"; tw = g.measureText(t).width; }
+      if (!ctx.dry) {
+        if (tk.st.code) { g.save(); g.shadowBlur = 0; g.fillStyle = "rgba(160,245,255,0.16)"; g.fillRect(cx - 4, cy + 3, tw + 8, lh - 6); g.restore(); }
+        g.fillStyle = tk.st.b ? "#ffffff" : tk.st.code ? "#bff6ff" : color;
+        g.fillText(t, cx, cy + dy);
+        if (tk.st.s) g.fillRect(cx, cy + Math.round(lh / 2), tw, 2.5);
+      }
+      cx += tw; has = true;
+    }
+    return cy + lh - y;
+  }
+  function holoBlocks(g, blocks, x, w, y, ctx) {
+    const y0 = y;
+    for (const b of blocks || []) {
+      if (ctx.cut) break;
+      if (b.type === "gap") { y += 14; continue; }
+      if (b.type === "hr") {
+        if (y + 24 > ctx.maxY) { ctx.cut = true; break; }
+        if (!ctx.dry) { g.fillStyle = "rgba(160,245,255,0.45)"; g.fillRect(x, y + 11, w, 2); }
+        y += 24; continue;
+      }
+      if (b.type === "h") {
+        const size = [0, 42, 37, 33][b.level] || 33;
+        if (y > y0) y += 6;
+        const h = holoRuns(g, b.runs, x, w, y, size, 800, "#bff6ff", ctx);
+        if (!ctx.dry && h && b.level === 1) { g.fillStyle = "rgba(160,245,255,0.5)"; g.fillRect(x, y + h - 2, Math.min(w, 180), 3); }
+        y += h + 6; continue;
+      }
+      if (b.type === "p" || b.type === "row") { y += holoRuns(g, b.runs, x, w, y, 30, 500, HOLO_TEXT, ctx) + 4; continue; }
+      if (b.type === "li" || b.type === "task") {
+        const bx = x + 34 * (b.depth || 0), lh = 42;
+        if (y + lh > ctx.maxY) { ctx.cut = true; break; }
+        let tx = bx + 34;
+        if (b.type === "task") {
+          tx = bx + 44;
+          if (!ctx.dry) {
+            g.strokeStyle = b.done ? "#7ef0b4" : "#bff6ff"; g.lineWidth = 3;
+            g.strokeRect(bx + 3, y + 9, 25, 25);
+            if (b.done) { g.beginPath(); g.moveTo(bx + 8, y + 22); g.lineTo(bx + 14, y + 29); g.lineTo(bx + 25, y + 13); g.stroke(); }
+          }
+        } else if (b.n != null) {
+          g.font = "700 30px " + HOLO_FONT;
+          const label = b.n + ".";
+          tx = bx + Math.max(40, g.measureText(label).width + 12);
+          if (!ctx.dry) { g.fillStyle = "#9fefff"; g.fillText(label, bx, y + 6); }
+        } else if (!ctx.dry) {
+          g.fillStyle = "#9fefff"; g.beginPath();
+          if (b.depth) g.rect(bx + 7, y + 16, 10, 10); else g.arc(bx + 12, y + 21, 6, 0, Math.PI * 2);
+          g.fill();
+        }
+        const runs = b.type === "task" && b.done ? b.runs.map((r) => Object.assign({}, r, { s: true })) : b.runs;
+        y += holoRuns(g, runs, tx, x + w - tx, y, 30, 500, b.type === "task" && b.done ? "rgba(233,253,255,0.62)" : HOLO_TEXT, ctx) + 4;
+        continue;
+      }
+      if (b.type === "quote") {
+        const h = holoBlocks(g, b.children, x + 28, w - 28, y, { dry: true, cut: false, maxY: ctx.maxY });
+        if (!ctx.dry && h) { g.fillStyle = "rgba(160,245,255,0.55)"; g.fillRect(x + 4, y + 4, 6, h - 8); }
+        const sub = Object.assign({}, ctx);
+        y += holoBlocks(g, b.children.map((c) => (c.runs ? Object.assign({}, c, { runs: c.runs.map((r) => Object.assign({}, r, { i: true })) }) : c)), x + 28, w - 28, y, sub) + 8;
+        ctx.cut = sub.cut;
+        continue;
+      }
+      if (b.type === "callout") {
+        const meta = holoCallout(b.kind), pd = 18, head = 50;
+        if (y + head + 8 > ctx.maxY) { ctx.cut = true; break; }
+        const bodyH = holoBlocks(g, b.children, x + pd + 10, w - 2 * pd - 10, 0, { dry: true, cut: false, maxY: Infinity });
+        const boxH = Math.min(ctx.maxY - y, head + (bodyH ? bodyH + 6 : 0) + 12);
+        if (!ctx.dry) {
+          g.save(); g.shadowBlur = 0;
+          g.fillStyle = meta.tint; g.strokeStyle = meta.edge; g.lineWidth = 2;
+          g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, boxH, 12); else g.rect(x, y, w, boxH); g.fill(); g.stroke();
+          g.fillStyle = meta.color; g.fillRect(x, y + 2, 7, boxH - 4);
+          g.font = "700 28px " + HOLO_FONT;
+          if (meta.icon) g.fillText(meta.icon, x + pd + 4, y + 11);
+          g.restore();
+        }
+        const title = b.title && b.title.length ? b.title : [{ t: meta.label }];
+        const ix = x + pd + (meta.icon ? 48 : 6);
+        holoRuns(g, title.map((r) => Object.assign({}, r, { b: false })), ix, x + w - ix - pd, y + 7, 29, 800, meta.color, { dry: ctx.dry, cut: false, maxY: y + head + 4 });
+        const sub = { dry: ctx.dry, cut: false, maxY: Math.min(ctx.maxY, y + boxH - 6) };
+        holoBlocks(g, b.children, x + pd + 10, w - 2 * pd - 10, y + head, sub);
+        if (sub.cut) { ctx.cut = true; }
+        y += boxH + 12;
+        continue;
+      }
+    }
+    return y - y0;
   }
   function drawHolo() {
     const t = S.data && S.data.taskById[HOLO.id];
@@ -20745,21 +20858,13 @@ function createCarteEngine(THREE, container, opts) {
     });
     // Corps.
     const tab = HOLO.tabs[HOLO.tab];
-    const paras = carteHoloParagraphs(tab && tab.id === "report" ? t.report : t.desc);
-    g.font = "500 31px Inter, -apple-system, 'Segoe UI', sans-serif"; g.fillStyle = "#e9fdff"; g.shadowBlur = 6;
-    let y = 222; const lh = 44, maxY = H - 96;
-    let cut = false;
-    for (const para of paras) {
-      if (!para.text) { y += lh * 0.4; continue; }
-      const x0 = pad + (para.bullet ? 34 : 0);
-      const lines = wrapLines(g, para.text, W - x0 - pad);
-      for (let i = 0; i < lines.length; i++) {
-        if (y + lh > maxY) { cut = true; break; }
-        if (para.bullet && i === 0) { g.beginPath(); g.arc(pad + 12, y + 20, 5, 0, Math.PI * 2); g.fill(); }
-        g.fillText(lines[i], x0, y); y += lh;
-      }
-      if (cut) break;
-    }
+    // Markdown (#502) : titres, gras, italique, listes, cases, citations,
+    // call-outs, tableaux ; ce qui déborde est signalé « Suite dans la fiche ».
+    const blocks = carteHoloBlocks(tab && tab.id === "report" ? t.report : t.desc, typeof CALLOUT_TYPES !== "undefined" ? CALLOUT_TYPES : null);
+    g.shadowBlur = 6; g.shadowColor = "rgba(120,235,255,0.6)";
+    const hctx = { dry: false, cut: false, maxY: H - 96 };
+    holoBlocks(g, blocks, pad, W - 2 * pad, 216, hctx);
+    const cut = hctx.cut;
     g.shadowBlur = 0;
     g.fillStyle = "#9fefff"; g.font = "500 22px Inter, -apple-system, 'Segoe UI', sans-serif";
     g.fillText(cut ? "Suite dans la fiche…" : carteDueText(t) + (t.assignee ? " · " + t.assignee : ""), pad, H - 66);
@@ -22727,6 +22832,8 @@ function createCarteEngine(THREE, container, opts) {
     fxState: () => ({ teleport: TP.on, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
+    // Banc visuel (#502) : la texture du tableau, pour la capturer à plat.
+    hologramImage: () => (HOLO.id ? holoCanvas.toDataURL("image/png") : null),
     closeHologram: () => closeHolo(),
     // Cadre un totem (banc visuel, captures) : caméra posée tout de suite.
     frameProject(pid, dist, yaw) {
