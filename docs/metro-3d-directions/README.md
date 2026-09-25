@@ -19,6 +19,8 @@ Règles communes, reprises de la Vue Métro 2D (`ProjectMetroView`, projection d
 - train = aujourd'hui, tronçon parcouru grisé ;
 - tableau « Prochains départs » et fiche avec station précédente, station suivante et correspondance.
 
-Captures de la vue d'ouverture : `rendu-1-plan.png`, `rendu-2-cabine.png`, `rendu-3-etoile.png`, `rendu-4-grande-ligne.png`, `rendu-4-grande-ligne-gare.png`.
+Captures de la vue d'ouverture : `rendu-1-plan.png`, `rendu-2-cabine.png`, `rendu-3-etoile.png`, `rendu-4-grande-ligne.png`, `rendu-4-grande-ligne-lecture.png`, `rendu-4-grande-ligne-gare.png`.
+
+Animations de la Grande Ligne : bouton Lecture (la date avance, les trains à vapeur la suivent, chaque gare desservie réagit), train envoyé vers la gare cliquée, barrières et feux du passage à niveau, voitures qui s'arrêtent, fumée, horloges à l'heure réelle, nuages. Page en thème clair uniquement.
 
 `index.html` est une page autonome : l'ouvrir dans un navigateur. three.js r128 est chargé depuis cdnjs.
