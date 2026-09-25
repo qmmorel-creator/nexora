@@ -24,7 +24,7 @@ const T = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n${slice("COSMOS")}\n${slice("TIMELINE3D")}\n;return {
     carteNormalize, timeline3dBuild, normalizeTimeline3dViewPrefs, timeline3dNextDepartures,
     timeline3dNeighbours, timeline3dNextStop, timeline3dRel, timeline3dResolveQuality,
-    T3D_ORPHAN_LINE, T3D_SPEEDS, timeline3dTarget, timeline3dWindow,
+    T3D_ORPHAN_LINE, T3D_SPEEDS, timeline3dTarget, timeline3dWindow, timeline3dAutoWindow,
   };\n})`
 )();
 
@@ -194,4 +194,21 @@ test("#464 : période « du / au » — fenêtre, plage fixe et échelle étiré
   assert.equal(T.timeline3dBuild(ctx, norm).stretch, null);
   const p = T.normalizeTimeline3dViewPrefs({ rangeFrom: iso(0), rangeTo: "x" });
   assert.equal(p.rangeFrom, iso(0)); assert.equal(p.rangeTo, null);
+});
+
+test("#459 : fenêtre adaptative — couvre toutes les tâches retenues, bornée à cinq ans", () => {
+  // t10 (J+500) sortait de la fenêtre fixe J-90 à J+365.
+  const w = T.timeline3dAutoWindow(norm, null);
+  assert.equal(w.pastDays, 90);
+  assert.equal(w.futureDays, 500);
+  const Mw = T.timeline3dBuild(ctx, norm, w);
+  assert.ok(Mw.stationById.t10, "la tâche lointaine est placée");
+  assert.equal(Mw.outside, 0);
+  // Restreinte aux tâches retenues : sans t10, on retombe sur le minimum.
+  const only = new Set(["t2", "t3"]);
+  assert.deepEqual(T.timeline3dAutoWindow(norm, only), { pastDays: 90, futureDays: 365 });
+  // Tâche très ancienne : fenêtre étendue, plafonnée à cinq ans.
+  const far = T.carteNormalize(ctx, [{ id: "old", projectId: "p-lot", statusId: "s5", taskTypeId: "tt1", start: iso(-4000), end: iso(-4000) }, { id: "mid", projectId: "p-lot", statusId: "s5", taskTypeId: "tt1", start: iso(-800), end: iso(-800) }], { now: NOW });
+  assert.equal(T.timeline3dAutoWindow(far, new Set(["mid"])).pastDays, 800);
+  assert.equal(T.timeline3dAutoWindow(far, null).pastDays, 1830);
 });
