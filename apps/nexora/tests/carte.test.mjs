@@ -25,7 +25,7 @@ const C = vm.runInThisContext(
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard, carteDangerSign,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
-    carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteMilestoneProgress,
+    carteLanternRate, cartePigeonSpeed, carteAriadne, CARTE_ARIADNE_MAX, carteDaylight, carteRegroup, CARTE_GROUPINGS, carteMilestoneProgress,
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
   };\n})`
 )();
@@ -489,4 +489,42 @@ test("#425 à #436 : les animations d'ambiance sont une préférence active par 
 test("#435 : le mode Fil d'Ariane est une préférence inactive par défaut", () => {
   assert.equal(C.normalizeCarteViewPrefs({}).ariadne, false);
   assert.equal(C.normalizeCarteViewPrefs({ ariadne: true }).ariadne, true);
+});
+
+test("#438 : regroupement des régions par responsable, statut, type ou criticité", () => {
+  const n = C.carteNormalize({ projects: [{ id: "p1", name: "Alpha", folderId: "f1" }, { id: "p2", name: "Beta" }], projectFolders: [{ id: "f1", name: "Dossier" }], statuses, taskTypes }, [
+    { id: "a", projectId: "p1", statusId: "s3", assignee: "Léo", taskTypeId: "tt1", criticality: "urgent" },
+    { id: "b", projectId: "p2", statusId: "s3", assignee: "Léo", taskTypeId: "tt3" },
+    { id: "c", projectId: "p1", statusId: "s1", assignee: "Ana", taskTypeId: "tt1" },
+    { id: "d", statusId: "s1" },
+  ], { now: NOW });
+  assert.equal(C.carteRegroup(n, "folder"), n, "par dossier : rien ne change");
+  assert.deepEqual(C.CARTE_GROUPINGS.map((g) => g.id), ["folder", "assignee", "status", "type", "criticality"]);
+  const byA = C.carteRegroup(n, "assignee", {});
+  assert.equal(byA.groupBy, "assignee");
+  const proj = (r, id) => r.projects.find((p) => p.id === r.tasks.find((t) => t.id === id).projectId);
+  assert.equal(proj(byA, "a").folderName, "Léo");
+  assert.equal(proj(byA, "a"), proj(byA, "a"));
+  assert.notEqual(proj(byA, "a").id, proj(byA, "b").id, "même responsable, projets différents : deux territoires");
+  assert.equal(proj(byA, "a").group, proj(byA, "b").group, "… dans la même région");
+  assert.equal(proj(byA, "a").name, "Alpha");
+  assert.equal(proj(byA, "d").folderName, "Sans responsable");
+  assert.equal(proj(byA, "d").name, "Sans projet");
+  assert.equal(byA.tasks.find((t) => t.id === "a").sourceProjectId, "p1", "le vrai projet reste connu");
+  // Ordre des régions : alphabétique, « Sans responsable » en dernier.
+  const regions = [...new Set(byA.projects.slice().sort((x, y) => x.order - y.order).map((p) => p.folderName))];
+  assert.deepEqual(regions, ["Ana", "Léo", "Sans responsable"]);
+  // Statut : ordre du catalogue.
+  const byS = C.carteRegroup(n, "status", { statuses });
+  assert.deepEqual([...new Set(byS.projects.slice().sort((x, y) => x.order - y.order).map((p) => p.folderName))], ["À planifier", "En cours"]);
+  assert.equal(proj(byS, "a").groupColor, "#0EA5E9");
+  assert.equal(proj(C.carteRegroup(n, "criticality", {}), "a").folderName, "Urgente");
+  assert.equal(proj(C.carteRegroup(n, "type", { taskTypes }), "b").folderName, "Réunions");
+  // La disposition accepte le regroupement : une région par valeur.
+  const l = C.carteBuild({ projects: byA.projects, tasks: byA.tasks, memory: {} });
+  assert.equal(l.territories.length, byA.projects.length);
+  assert.ok(!l.territories.some((t) => t.projectId === "__terre-inconnue__"));
+  assert.equal(C.normalizeCarteViewPrefs({}).groupBy, "folder");
+  assert.equal(C.normalizeCarteViewPrefs({ groupBy: "assignee" }).groupBy, "assignee");
+  assert.equal(C.normalizeCarteViewPrefs({ groupBy: "n'importe" }).groupBy, "folder");
 });

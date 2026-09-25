@@ -20572,11 +20572,14 @@ function loadCarteThree() {
   if (!carteThreePromise) carteThreePromise = import(CARTE_THREE_URL).catch((e) => { carteThreePromise = null; throw e; });
   return carteThreePromise;
 }
-function readCarteMemory() {
-  try { const raw = window.localStorage && window.localStorage.getItem(CARTE_MEMORY_KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+// Une disposition mémorisée par regroupement (#438) : passer par les
+// responsables ne bouscule pas la carte des dossiers.
+const carteMemoryKey = (groupBy) => (groupBy && groupBy !== "folder" ? CARTE_MEMORY_KEY + ":" + groupBy : CARTE_MEMORY_KEY);
+function readCarteMemory(groupBy) {
+  try { const raw = window.localStorage && window.localStorage.getItem(carteMemoryKey(groupBy)); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
 }
-function writeCarteMemory(mem) {
-  try { window.localStorage && window.localStorage.setItem(CARTE_MEMORY_KEY, JSON.stringify(mem)); } catch (e) { /* stockage indisponible : la carte reste déterministe */ }
+function writeCarteMemory(mem, groupBy) {
+  try { window.localStorage && window.localStorage.setItem(carteMemoryKey(groupBy), JSON.stringify(mem)); } catch (e) { /* stockage indisponible : la carte reste déterministe */ }
 }
 function carteDueText(t) {
   if (t.end == null) return "Sans échéance";
@@ -20915,6 +20918,13 @@ function CarteFallback({ reason, norm, layout, onOpen, onRetry }) {
   );
 }
 
+// Pastille d'une région selon le regroupement (#438).
+function CarteGroupGlyph({ kind, color, size }) {
+  if (kind === "assignee") return <User size={size} color={color} />;
+  if (kind === "type") return <Tag size={size} color={color} />;
+  if (kind === "status" || kind === "criticality") return <CircleDot size={size} color={color} />;
+  return <Folder size={size} color={color} />;
+}
 function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProjectFolders, onUpdateTask, onToggleDone, toolbarSlot, embedded }) {
   const cfg = normalizeCarteViewPrefs(prefs);
   const stageRef = useRef(null);
@@ -20951,11 +20961,13 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   // décident de ce qui est dessiné.
   const allTasks = ctx.tasks || tasks || [];
   const norm = useMemo(() => {
-    const n = carteNormalize(ctx, allTasks);
+    // Regroupement variable (#438) : régions par responsable, statut, etc.
+    const n = carteRegroup(carteNormalize(ctx, allTasks), cfg.groupBy, ctx);
     n.taskById = {};
     n.tasks.forEach((t) => { n.taskById[t.id] = t; });
     return n;
-  }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers, ctx.milestoneTypes]);
+  }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers, ctx.milestoneTypes, cfg.groupBy]);
+  const grouping = CARTE_GROUPING_BY_ID[cfg.groupBy];
   // Filtre général de Nexora (#364) : le même moteur que les widgets et le
   // Calendrier, appliqué par-dessus les filtres de la page.
   const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
@@ -20983,13 +20995,13 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     if (!cfg.simplify || visible.size >= norm.tasks.length) return "";
     const keep = new Set();
     norm.tasks.forEach((t) => { if (visible.has(t.id)) keep.add(t.projectId == null ? "__terre-inconnue__" : t.projectId); });
-    return [...keep].sort().join("|") || "∅";
+    return [...keep].sort().join("\n") || "∅";
   }, [cfg.simplify, visible, norm]);
   const themeOverrides = carteThemeOverrides(ctx.projectFolders, cfg.folderThemes);
   const layout = useMemo(() => {
-    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(), themeOverrides });
-    const keep = new Set(keepKey.split("|"));
-    const mem = readCarteMemory();
+    if (!keepKey) return carteBuild({ projects: norm.projects, tasks: norm.tasks, memory: readCarteMemory(cfg.groupBy), themeOverrides });
+    const keep = new Set(keepKey.split("\n"));
+    const mem = readCarteMemory(cfg.groupBy);
     const l = carteBuild({
       projects: norm.projects.filter((p) => keep.has(p.id)),
       tasks: norm.tasks.filter((t) => keep.has(t.projectId == null ? "__terre-inconnue__" : t.projectId)),
@@ -21000,7 +21012,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [norm, keepKey, JSON.stringify(themeOverrides)]);
-  useEffect(() => { if (!layout.simplified) writeCarteMemory(layout.memory); }, [layout]);
+  useEffect(() => { if (!layout.simplified) writeCarteMemory(layout.memory, norm.groupBy); }, [layout]); // eslint-disable-line react-hooks/exhaustive-deps
   const stats = useMemo(() => {
     const by = {};
     norm.tasks.forEach((t) => { const k = t.projectId || "__terre-inconnue__"; (by[k] = by[k] || []).push(t); });
@@ -21171,7 +21183,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
               onKeyDown={(e) => { if (e.key === "Enter" && suggestions[0]) focus(suggestions[0].id); if (e.key === "Escape") setQuery(""); }} />
             {suggestions.length > 0 && (
               <ul className="lp-carte-sugg" role="listbox" aria-label="Projets trouvés" style={searchRef.current ? (() => { const r = searchRef.current.getBoundingClientRect(); return { position: "fixed", left: Math.max(8, Math.min(r.left, window.innerWidth - 248)), top: r.bottom + 4 }; })() : undefined}>
-                {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}</button></li>)}
+                {suggestions.map((p) => <li key={p.id}><button type="button" onClick={() => focus(p.id)}><span className="lp-carte-dot" style={{ background: p.color }} />{p.name}{p.groupKind ? <span className="lp-carte-muted"> · {p.folderName}</span> : null}</button></li>)}
               </ul>
             )}
           </div>
@@ -21179,7 +21191,14 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
             <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
           </select>
-          <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
+          <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Regroupement, responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
+            <label className="lp-carte-groupby" title="Ce qui forme les régions de la carte ; les projets restent les territoires de chaque région">
+              <span>Regrouper par</span>
+              <select aria-label="Regrouper la carte par" value={cfg.groupBy} onChange={(e) => setPrefs({ groupBy: e.target.value })}>
+                {CARTE_GROUPINGS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+              </select>
+            </label>
+            <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.people} onChange={(e) => setPrefs({ people: e.target.checked })} /> Afficher les responsables des tâches</label>
             <label className="lp-checkbox-line" title="Convois, ouvriers, pigeons, lanternes, drapeaux, jour et nuit"><input type="checkbox" checked={cfg.ambient} onChange={(e) => setPrefs({ ambient: e.target.checked })} /> Animations d'ambiance</label>
             <label className="lp-checkbox-line" title="Carte simplifiée : les dossiers et projets écartés par les filtres disparaissent, la carte se resserre sur ce qui reste"><input type="checkbox" checked={cfg.simplify} onChange={(e) => setPrefs({ simplify: e.target.checked })} /> Masquer les dossiers et projets écartés par les filtres</label>
@@ -21188,8 +21207,10 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
               {CARTE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", medium: "Moyenne", low: "Basse" }[q]}</button>)}
             </div>
-            <hr className="lp-divider" style={{ margin: "6px 0" }} />
-            <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
+            {cfg.groupBy === "folder" && (<>
+              <hr className="lp-divider" style={{ margin: "6px 0" }} />
+              <button type="button" className="lp-dropdown-action-row" onClick={() => setThemesOpen(true)}><Palette size={13} /> Thèmes par dossier…</button>
+            </>)}
           </DropdownButton>
           <button type="button" className="lp-btn" onClick={() => engineRef.current && engineRef.current.overview()} disabled={status !== "ready"}><Maximize2 size={13} /> Vue d'ensemble</button>
           <button type="button" className={"lp-btn" + (cfg.ariadne ? " lp-btn-primary" : "")} aria-pressed={cfg.ariadne} onClick={() => setPrefs({ ariadne: !cfg.ariadne })} disabled={status !== "ready"}
@@ -21198,7 +21219,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
       </div>
 
       <div ref={stageRef} className={"lp-carte-stage" + (selTask || (panelOn && status === "ready") ? " has-detail" : "")} tabIndex={0}
-        data-carte-status={status} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
+        data-carte-status={status} data-carte-group={cfg.groupBy} data-carte-dimmed={dimmed.size} data-carte-territories={layout.territories.length} data-carte-shown={shownCount} data-carte-near={near || ""} data-carte-selected={selected || ""} data-carte-territory={territory || ""}
         aria-label="Carte des projets. Flèches ou Z Q S D pour marcher, Entrée pour lire la tâche proche, E et R pour pivoter, plus et moins pour zoomer, C pour recentrer. Clic molette ou clic droit glissé pour déplacer la vue.">
         {embedded && small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour explorer la carte confortablement.</div>}
         {empty ? (
@@ -21214,7 +21235,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             {status === "loading" && <div className="lp-carte-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Chargement de la carte 3D…</div>}
             {status === "ready" && (
               <>
-                <nav className="lp-carte-ribbon" aria-label="Dossiers">
+                <nav className="lp-carte-ribbon" aria-label={grouping.ribbon}>
                   {folderGroups.map((g) => {
                     const dim = g.projects.every((pid) => dimmed.has(pid));
                     const open = folderPop && folderPop.id === g.id;
@@ -21224,16 +21245,16 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
                         onMouseEnter={(e) => { if (!folderPop || !folderPop.pinned) openFolder(g, e.currentTarget, false); }} onMouseLeave={closeFolderSoon}
                         onClick={(e) => { if (open && folderPop.pinned) setFolderPop(null); else openFolder(g, e.currentTarget, true); }}
                         title={g.name + " — " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + " · " + g.pct + " % terminé"} aria-label={g.name + ", " + g.projects.length + " projet" + (g.projects.length > 1 ? "s" : "") + ", " + g.pct + " % terminé"}>
-                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{g.icon ? <IconGlyph icon={g.icon} size={18} /> : <Folder size={17} color={g.color} />}<i className="lp-carte-badge-count">{g.projects.length}</i></span></span>
+                        <span className="lp-carte-badge-ring"><span className="lp-carte-badge-core">{g.icon ? <IconGlyph icon={g.icon} size={18} /> : <CarteGroupGlyph kind={g.kind} color={g.color} size={17} />}<i className="lp-carte-badge-count">{g.projects.length}</i></span></span>
                         <small>{g.name}</small>
                       </button>
                     );
                   })}
                 </nav>
                 {popGroup && (
-                  <div className="lp-carte-folder-pop" role="menu" aria-label={"Projets du dossier " + popGroup.name} style={{ left: folderPop.left, top: folderPop.top }}
+                  <div className="lp-carte-folder-pop" role="menu" aria-label={"Projets — " + grouping.one + " " + popGroup.name} style={{ left: folderPop.left, top: folderPop.top }}
                     onMouseEnter={() => clearTimeout(popTimer.current)} onMouseLeave={closeFolderSoon}>
-                    <div className="lp-carte-folder-pop-head"><Folder size={13} color={popGroup.color} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span></div>
+                    <div className="lp-carte-folder-pop-head"><CarteGroupGlyph kind={popGroup.kind} color={popGroup.color} size={13} /><b>{popGroup.name}</b><span>{popGroup.pct} %{popGroup.overdue ? " · " + popGroup.overdue + " en retard" : ""}</span></div>
                     {popGroup.projects.map((pid) => {
                       const p = layout.projectById[pid];
                       const s = stats[pid] || { pct: 0, overdue: 0 };
