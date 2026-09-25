@@ -29,7 +29,7 @@ const C = vm.runInThisContext(
     carteFolderGroups, carteViewFilterCount, carteViewFilterReset, CARTE_NO_FOLDER,
     carteIncomplete, carteDrift, carteQuests, CARTE_QUEST_KINDS, carteResources, carteShiftIso, carteShiftPatch, carteUndoPatch,
     carteEvents, carteClaimTile, carteStrategicAlpha, carteNormalizeViews, CARTE_VIEWS_MAX,
-    carteNormalizeWheel, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
+    carteNormalizeWheel, CARTE_ROAD_LANTERN, CARTE_WHEEL_ACTIONS, CARTE_WHEEL_DEFAULT, CARTE_WHEEL_MAX, carteDueTodayPatch, carteInnerRadius, carteHoloTabs, carteHoloParagraphs,
   };\n})`
 )();
 
@@ -734,4 +734,15 @@ test("#494 : hologramme — onglets selon le contenu, texte en paragraphes", () 
   const n = C.carteNormalize({ projects: [{ id: "p" }], statuses, taskTypes }, [{ id: "x", projectId: "p", statusId: "s1", meetingReport: "CR" }], { now: NOW });
   assert.equal(n.tasks[0].report, "CR");
   assert.equal(C.normalizeCarteViewPrefs({}).holo, true);
+});
+
+test("#496 : effets avancés actifs par défaut, lanterne de route lumineuse", () => {
+  assert.equal(C.normalizeCarteViewPrefs({}).fx, true);
+  assert.equal(C.normalizeCarteViewPrefs(null).fx, true);
+  assert.equal(C.normalizeCarteViewPrefs({ fx: false }).fx, false);
+  assert.equal(C.normalizeCarteViewPrefs({ fx: 0 }).fx, true);
+  // La lanterne porte une pièce lumineuse (bloom) au-dessus du poteau.
+  const glow = C.CARTE_ROAD_LANTERN.filter((p) => p.m === "g");
+  assert.equal(glow.length, 1);
+  assert.ok(glow[0].p[1] > 0.4);
 });

@@ -18849,11 +18849,11 @@ function createCarteEngine(THREE, container, opts) {
   const o = opts || {};
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   renderer.setClearColor("#bfe3f2");
-  // Ombres adoucies (#479) : filtrage PCF à rayon, plus doux que PCFSoft.
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  // Ombres douces PCFSoft (#496, lot 1).
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // Direction « diorama doux » (#485) : tonalité filmique, lumière dorée.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 1.0;
   const canvas = renderer.domElement;
   canvas.className = "lp-carte-canvas";
   canvas.setAttribute("aria-hidden", "true");
@@ -18862,9 +18862,11 @@ function createCarteEngine(THREE, container, opts) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog("#bfe3f2", 60, 170);
   const camera = new THREE.PerspectiveCamera(34, 1, 0.5, 700);
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x9a8a5e, 1.35);
+  // Lumière du lot 1 (#496) : ciel bleuté, sol terre, soleil doré ; le
+  // reflet du ciel (env map) complète l'éclairage ambiant.
+  const hemi = new THREE.HemisphereLight("#9cc9ea", "#6f6045", 0.72);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight("#fff6e0", 2.1);
+  const sun = new THREE.DirectionalLight("#ffd9a3", 3.0);
   sun.position.set(34, 32, 12);
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.radius = 3.5;
@@ -18889,8 +18891,38 @@ function createCarteEngine(THREE, container, opts) {
     // Déplacement de l'arpenteur (#493) : désactivé, un clic zoome aussitôt.
     walk: o.walk !== false, lastClick: null,
     holo: o.holo !== false,
+    // Effets avancés (#496 à #498) : bloom, herbe dense, ombres de nuages.
+    fx: o.fx !== false,
     hoverKey: null, strategic: 0, viewGoal: null, buildId: 0, prevTasks: null,
   };
+  // Ciel en dégradé (#496, #497) : il sert de reflet aux matières (env map
+  // PMREM) et, derrière la carte, de fond avec le halo du soleil.
+  const CARTE_SKY = ["#86bfe6", "#cfe6ef", "#f6e3c0"];
+  function skyCanvas(top, mid, bottom, glow) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 256;
+    const g = c.getContext("2d");
+    if (g) {
+      const gr = g.createLinearGradient(0, 0, 0, 256);
+      gr.addColorStop(0, top); gr.addColorStop(0.55, mid); gr.addColorStop(1, bottom);
+      g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+      if (glow) { const rg = g.createRadialGradient(215, 40, 0, 215, 40, 150); rg.addColorStop(0, "rgba(255,244,214,.85)"); rg.addColorStop(1, "rgba(255,244,214,0)"); g.fillStyle = rg; g.fillRect(0, 0, 256, 256); }
+    }
+    return c;
+  }
+  let envTex = null;
+  try {
+    const envScene = new THREE.Scene();
+    const skyT = new THREE.CanvasTexture(skyCanvas(CARTE_SKY[0], CARTE_SKY[1], CARTE_SKY[2], false));
+    skyT.colorSpace = THREE.SRGBColorSpace;
+    const skyGeo = new THREE.SphereGeometry(50, 32, 16);
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyT, side: THREE.BackSide });
+    envScene.add(new THREE.Mesh(skyGeo, skyMat));
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    envTex = pmrem.fromScene(envScene, 0.04).texture;
+    pmrem.dispose(); skyGeo.dispose(); skyMat.dispose(); skyT.dispose();
+    scene.environment = envTex;
+  } catch (e) { envTex = null; /* contexte limité : éclairage sans reflets */ }
   // Décor (arbres, rochers) dans son propre groupe : il s'efface de loin (#481).
   const decorGroup = new THREE.Group();
   scene.add(decorGroup);
@@ -18916,15 +18948,33 @@ function createCarteEngine(THREE, container, opts) {
     return g;
   }
   G.box = roundedBox(0.09).translate(0, 0.5, 0);
-  mk("cyl", new THREE.CylinderGeometry(0.5, 0.5, 1, 12).translate(0, 0.5, 0));
-  mk("hex", new THREE.CylinderGeometry(0.5, 0.5, 1, 6).translate(0, 0.5, 0));
-  mk("cone", new THREE.ConeGeometry(0.5, 1, 8).translate(0, 0.5, 0));
-  mk("pyr", new THREE.ConeGeometry(0.5, 1, 4).translate(0, 0.5, 0));
-  mk("ball", new THREE.IcosahedronGeometry(0.5, 1).translate(0, 0.5, 0));
-  mk("dome", new THREE.SphereGeometry(0.5, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 2, 1));
+  // Lot 1 (#496) : pièces lisses (plus de facettes), sauf les formes à
+  // arêtes vives (pyramides, hexagones) qui gardent des normales par face.
+  const flatGeo = (geo) => { const g = geo.toNonIndexed(); geo.dispose(); g.computeVertexNormals(); return g; };
+  mk("cyl", new THREE.CylinderGeometry(0.5, 0.5, 1, 20).translate(0, 0.5, 0));
+  G.hex = flatGeo(new THREE.CylinderGeometry(0.5, 0.5, 1, 6).translate(0, 0.5, 0));
+  mk("cone", new THREE.ConeGeometry(0.5, 1, 14).translate(0, 0.5, 0));
+  G.pyr = flatGeo(new THREE.ConeGeometry(0.5, 1, 4).translate(0, 0.5, 0));
+  G.ball = new THREE.IcosahedronGeometry(0.5, 2).translate(0, 0.5, 0);
+  mk("dome", new THREE.SphereGeometry(0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 2, 1));
   // Variantes « tournantes » : l'axe de rotation est Z.
-  mk("cyl~s", new THREE.CylinderGeometry(0.5, 0.5, 1, 10).rotateX(Math.PI / 2));
+  mk("cyl~s", new THREE.CylinderGeometry(0.5, 0.5, 1, 16).rotateX(Math.PI / 2));
   G["box~s"] = roundedBox(0.09);
+  // Feuillages lisses (#496) : dégradé vertical porté par les couleurs de
+  // sommets, plus sombre dessous, lumineux dessus.
+  function gradGeo(geo, lo, hi) {
+    geo.computeBoundingBox();
+    const p = geo.attributes.position, y0 = geo.boundingBox.min.y, y1 = geo.boundingBox.max.y;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) { const u = (p.getY(i) - y0) / Math.max(1e-6, y1 - y0); const v = lo + (hi - lo) * u; col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = v; }
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    return geo;
+  }
+  G.leaf = gradGeo(new THREE.IcosahedronGeometry(0.5, 3).translate(0, 0.5, 0), 0.62, 1.12);
+  G.leafc = gradGeo(new THREE.ConeGeometry(0.5, 1, 16).translate(0, 0.5, 0), 0.68, 1.1);
+  // Les matières à couleurs de sommets acceptent toutes les pièces : celles
+  // qui n'en portent pas reçoivent un blanc neutre.
+  Object.keys(G).forEach((k) => { const g = G[k]; if (!g.attributes.color) g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3).fill(1), 3)); });
   const tileGeo = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0);
   const capGeo = new THREE.CylinderGeometry(0.985, 0.985, 0.14, 6).translate(0, 0.07, 0);
   // Tuile de terre (#485) : hexagone biseauté prolongé en falaise sous
@@ -19068,20 +19118,24 @@ function createCarteEngine(THREE, container, opts) {
 
   const mats = [];
   const mat = (m) => { mats.push(m); return m; };
+  // Matières physiques (#496) : elles reflètent le ciel (env map). L'intensité
+  // de reflet de référence suit la lumière du jour (applyDaylight).
+  const std = (p) => { const m = new THREE.MeshStandardMaterial(Object.assign({ color: "#ffffff", roughness: 0.82, metalness: 0, envMapIntensity: 0.6 }, p)); m.userData.env = m.envMapIntensity; return m; };
   const MAT = {
-    l: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    l: mat(std({})),
     g: mat(new THREE.MeshBasicMaterial({ color: "#ffffff" })),
     t: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.32, depthWrite: false })),
-    s: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    s: mat(std({ roughness: 0.55 })),
     water: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.86, flatShading: true })),
     ring: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide })),
     alarm: mat(new THREE.MeshBasicMaterial({ color: "#ff1f1f", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })),
-    cloud: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    cloud: mat(std({ roughness: 1 })),
     bolt: mat(new THREE.MeshBasicMaterial({ color: "#fff3a0" })),
     rain: mat(new THREE.MeshBasicMaterial({ color: "#5d97d6", transparent: true, opacity: 0.9, depthWrite: false })),
     flame: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.93, depthWrite: false })),
-    smoke: mat(new THREE.MeshLambertMaterial({ color: "#3b3b3f", transparent: true, opacity: 0.45, depthWrite: false, flatShading: true })),
-    clock: mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true })),
+    // Fumée plus discrète (#496) : gris tourterelle, plus transparente.
+    smoke: mat(std({ color: "#7d7a80", transparent: true, opacity: 0.5, depthWrite: false, roughness: 1 })),
+    clock: mat(std({ roughness: 0.35 })),
     boltHalo: mat(new THREE.MeshBasicMaterial({ color: "#bfe2ff", transparent: true, opacity: 0.35, depthWrite: false })),
     border: mat(new THREE.MeshBasicMaterial({ color: "#ffffff", side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
     // Lave du thème Volcan (#408) : lumineuse, elle pulse doucement.
@@ -19154,9 +19208,9 @@ function createCarteEngine(THREE, container, opts) {
     g.clearRect(0, 0, n, n); g.fillStyle = gr; g.fillRect(0, 0, n, n);
   });
   blobTex.colorSpace = THREE.NoColorSpace;
-  MAT.ground = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: grassTex, vertexColors: true }));
-  MAT.road = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, map: cobbleTex, vertexColors: true }));
-  MAT.cliff = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true, vertexColors: true }));
+  MAT.ground = mat(std({ map: grassTex, vertexColors: true, roughness: 0.95, envMapIntensity: 0.45 }));
+  MAT.road = mat(std({ map: cobbleTex, vertexColors: true, roughness: 0.9, envMapIntensity: 0.45 }));
+  MAT.cliff = mat(std({ vertexColors: true, roughness: 0.95, envMapIntensity: 0.4 }));
   MAT.lavaTop = mat(new THREE.MeshBasicMaterial({ color: "#ffffff", vertexColors: true }));
   MAT.foam = mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8, depthWrite: false }));
   MAT.shallow = mat(new THREE.MeshBasicMaterial({ color: "#a6e6dc", transparent: true, opacity: 0.45, depthWrite: false }));
@@ -19166,7 +19220,7 @@ function createCarteEngine(THREE, container, opts) {
   // Feuillages qui ondulent (#479) : décalage au sommet des pièces, selon la
   // position de l'instance. Figé si les animations sont réduites.
   const swayU = { value: 0 };
-  MAT.w = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true }));
+  MAT.w = mat(std({ vertexColors: true, roughness: 0.9 }));
   MAT.w.onBeforeCompile = (sh) => {
     sh.uniforms.uSway = swayU;
     sh.vertexShader = "uniform float uSway;\n" + sh.vertexShader.replace("#include <begin_vertex>", [
@@ -19181,9 +19235,9 @@ function createCarteEngine(THREE, container, opts) {
   };
   MAT.w.customProgramCacheKey = () => "carte-sway";
   // Brouillard de guerre (#468) : bancs de brume sur les fiches incomplètes.
-  MAT.fog = mat(new THREE.MeshLambertMaterial({ color: "#f3f5f8", transparent: true, opacity: 0.6, depthWrite: false, flatShading: true }));
+  MAT.fog = mat(std({ color: "#f3f5f8", transparent: true, opacity: 0.6, depthWrite: false, roughness: 1 }));
   // Particules de chantier (#480) : poussière et fumée (éclairées), étincelles.
-  MAT.fxSoft = mat(new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.62, depthWrite: false, flatShading: true }));
+  MAT.fxSoft = mat(std({ transparent: true, opacity: 0.62, depthWrite: false, roughness: 1 }));
   MAT.fxGlow = mat(new THREE.MeshBasicMaterial({ color: "#ffffff" }));
 
   // Coche verte des tâches terminées (#372) : une texture dessinée une fois,
@@ -19412,9 +19466,9 @@ function createCarteEngine(THREE, container, opts) {
         if (!(pp.m === "l" && (pp.g === "cone" || pp.g === "ball") && pp.p[1] > 0.1)) { out.push(pp); return; }
         const [x, y, z] = pp.p, [sx, sy, sz] = pp.s;
         if (pp.g === "ball") {
-          [[0, 0, 0, 0.78], [2.1, 0.06, 0.22, 0.66], [4.2, 0.2, 0.18, 0.6]].forEach(([a, dy, rr, k], i) => out.push(Object.assign({}, pp, { m: "w", c: i ? carteMix(pp.c, i === 1 ? "#ffffff" : "#000000", 0.08) : pp.c, p: [x + Math.cos(a) * rr * sx, y + dy * sy, z + Math.sin(a) * rr * sz], s: [sx * k, sy * k, sz * k] })));
+          [[0, 0, 0, 0.78], [2.1, 0.06, 0.22, 0.66], [4.2, 0.2, 0.18, 0.6]].forEach(([a, dy, rr, k], i) => out.push(Object.assign({}, pp, { g: "leaf", m: "w", c: i ? carteMix(pp.c, i === 1 ? "#ffffff" : "#000000", 0.08) : pp.c, p: [x + Math.cos(a) * rr * sx, y + dy * sy, z + Math.sin(a) * rr * sz], s: [sx * k, sy * k, sz * k] })));
         } else {
-          [[0, 1, 0.5], [0.32, 0.78, 0.45], [0.6, 0.55, 0.4]].forEach(([dy, k, hk], i) => out.push(Object.assign({}, pp, { m: "w", c: i === 1 ? carteMix(pp.c, "#ffffff", 0.07) : pp.c, p: [x, y + dy * sy, z], s: [sx * k, sy * hk * 1.25, sz * k] })));
+          [[0, 1, 0.5], [0.32, 0.78, 0.45], [0.6, 0.55, 0.4]].forEach(([dy, k, hk], i) => out.push(Object.assign({}, pp, { g: "leafc", m: "w", c: i === 1 ? carteMix(pp.c, "#ffffff", 0.07) : pp.c, p: [x, y + dy * sy, z], s: [sx * k, sy * hk * 1.25, sz * k] })));
         }
       });
       return out;
@@ -19426,16 +19480,24 @@ function createCarteEngine(THREE, container, opts) {
     const poiKeys = new Set(L.pois.map((p) => p.key));
     // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
     const decorShare = q === "low" ? 0.4 : 1;
+    const decorBlobs = [];
     keys.forEach((k) => {
       const t = L.tiles[k];
       if (t.road || poiKeys.has(k) || t.kind === "hub") {
         if (t.bridge) placeModel(dBatch, [cP("box", t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
+        // Lanternes le long des routes (#496) : leur lueur passe au bloom.
+        else if (t.road && !poiKeys.has(k) && t.kind !== "hub" && q !== "low" && carteRand("ln" + k) < 0.55) {
+          const a = carteRand("la" + k) * 6.283, w = carteToWorld(t.q, t.r), dim = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+          placeModel(dBatch, dim ? carteDimParts(CARTE_ROAD_LANTERN) : CARTE_ROAD_LANTERN, w.x + Math.cos(a) * 0.62, t.h + 0.12, w.z + Math.sin(a) * 0.62, 0);
+        }
         return;
       }
       if (carteRand("share" + k) > decorShare) return;
       const w = carteToWorld(t.q, t.r);
       const decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
       placeModel(dBatch, swayParts(S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor), w.x, t.h + 0.12, w.z, 0);
+      // Ombre de contact sous les bosquets (#496).
+      if (q === "high" && decor.length > 1) decorBlobs.push([w.x, t.h + 0.13, w.z, 1.6]);
       // Touffes d'herbe et fleurs sur les cases libres (qualité haute).
       const natural = t.kind === "islet" || TUFT_THEMES.has(t.theme);
       if (q === "high" && natural && (t.kind === "land" || t.kind === "wild" || t.kind === "edge" || t.kind === "islet") && !t.lava && !(S.dimmed && t.projectId && S.dimmed.has(t.projectId))) {
@@ -19608,7 +19670,7 @@ function createCarteEngine(THREE, container, opts) {
     buildAmbient({ tasks: amb, hubs, summit, regions, avatars });
     buildTrail();
     buildMilestoneRings(amb);
-    buildBlobs(q === "low" ? [] : blobs);
+    buildBlobs(q === "low" ? [] : blobs.concat(decorBlobs));
     buildFog(fogs);
     S.emit = q === "low" ? { sparks: [], smoke: [], dust: [] } : emit;
     S.buildId++;
@@ -19669,7 +19731,7 @@ function createCarteEngine(THREE, container, opts) {
       // Prédécesseur non terminé : la charrette attend devant une barrière.
       const pred = lk.into ? other : t;
       const blocked = pred && pred.state !== "done";
-      const cart = new THREE.Mesh(G.box, new THREE.MeshLambertMaterial({ color: blocked ? "#b0493a" : "#8a5a35" }));
+      const cart = new THREE.Mesh(G.box, std({ color: blocked ? "#b0493a" : "#8a5a35" }));
       cart.userData.ownMat = true;
       cart.scale.set(0.22, 0.16, 0.3);
       overlay.add(cart);
@@ -19691,7 +19753,7 @@ function createCarteEngine(THREE, container, opts) {
   // ---------- Arpenteur ----------
   const keeper = new THREE.Group();
   (function buildKeeper() {
-    const m = (c) => { const x = new THREE.MeshLambertMaterial({ color: c, flatShading: true }); mats.push(x); return x; };
+    const m = (c) => { const x = std({ color: c }); mats.push(x); return x; };
     const coat = m("#3f6fb5"), skin = m("#f1c9a5"), hat = m("#c9a24a"), boot = m("#4a3a2a"), staff = m("#e8e0d0");
     const add = (geo, mt, x, y, z, sx, sy, sz) => { const me = new THREE.Mesh(geo, mt); me.position.set(x, y, z); me.scale.set(sx, sy, sz); me.castShadow = true; keeper.add(me); return me; };
     const body = add(G.cyl, coat, 0, 0.16, 0, 0.36, 0.44, 0.36);
@@ -20308,7 +20370,8 @@ function createCarteEngine(THREE, container, opts) {
   // caméra : cadran blanc, quatre repères, petite aiguille et trotteuse qui
   // avance d'un cran chaque seconde. À chaque tic, le réveil bascule
   // légèrement d'un côté puis de l'autre. Figé si animations réduites.
-  const CLOCK_R = 0.42, CLOCK_RISE = 0.9;
+  // Lot 1 (#496) : réveil émaillé plus petit, corail et crème.
+  const CLOCK_R = 0.3, CLOCK_RISE = 0.9;
   const clockYaw = new THREE.Quaternion(), clockTilt = new THREE.Quaternion(), clockPart = new THREE.Quaternion();
   const clockFace = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
   const clockFwd = new THREE.Vector3(), clockRight = new THREE.Vector3(), clockC = new THREE.Vector3(), clockV = new THREE.Vector3();
@@ -20321,9 +20384,9 @@ function createCarteEngine(THREE, container, opts) {
     const knobs = new THREE.InstancedMesh(G.ball, MAT.clock, all.length * 4);
     // Couleurs fixes : boîtier, cadran ; 4 repères, petite aiguille, trotteuse ; 2 cloches, 2 pieds.
     all.forEach((s, i) => {
-      discs.setColorAt(i * 2, tmpC.set("#d6332a")); discs.setColorAt(i * 2 + 1, tmpC.set("#fbf7ee"));
-      for (let j = 0; j < 6; j++) sticks.setColorAt(i * 6 + j, tmpC.set(j < 5 ? "#2b2b2b" : "#d6332a"));
-      for (let j = 0; j < 4; j++) knobs.setColorAt(i * 4 + j, tmpC.set(j < 2 ? "#e0b44a" : "#2b2b2b"));
+      discs.setColorAt(i * 2, tmpC.set("#e8746a")); discs.setColorAt(i * 2 + 1, tmpC.set("#fff4e0"));
+      for (let j = 0; j < 6; j++) sticks.setColorAt(i * 6 + j, tmpC.set(j < 5 ? "#3b2a14" : "#e8746a"));
+      for (let j = 0; j < 4; j++) knobs.setColorAt(i * 4 + j, tmpC.set(j < 2 ? "#e3b35a" : "#3b2a14"));
     });
     [discs, sticks, knobs].forEach((m) => { if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; world.add(m); });
     S.clocks = { list: all, discs, sticks, knobs };
@@ -20374,10 +20437,11 @@ function createCarteEngine(THREE, container, opts) {
   // bâtiment, un au sommet. Chaque foyer = trois flammes (rouge, orange,
   // jaune) qui vacillent. Au-dessus, une colonne de fumée noire monte en
   // boucle et des braises jaillissent.
-  const FIRE_FLAMES = [{ c: "#e0301a", r: 0.3, h: 0.78 }, { c: "#ff8616", r: 0.21, h: 0.6 }, { c: "#ffd94a", r: 0.11, h: 0.4 }];
+  // Lot 1 (#496) : flammes plus petites, tons corail, orange doux et crème.
+  const FIRE_FLAMES = [{ c: "#f2603a", r: 0.23, h: 0.58 }, { c: "#f59a45", r: 0.16, h: 0.45 }, { c: "#ffd98a", r: 0.08, h: 0.3 }];
   // [dx, hauteur relative au bâtiment, dz, taille]
   const FIRE_SPOTS = [[0.5, 0, 0.1, 1], [-0.42, 0, 0.3, 0.9], [0.05, 0, -0.5, 0.95], [-0.2, 0, -0.1, 1.1], [0.22, 0.45, 0.18, 0.85], [-0.2, 0.7, -0.12, 0.8], [0.02, 1, 0.02, 1.25]];
-  const FIRE_SMOKE = 7, FIRE_EMBERS = 8;
+  const FIRE_SMOKE = 6, FIRE_EMBERS = 5;
   function buildFires(list) {
     S.fires = null;
     const all = list.slice(0, 150);
@@ -20438,13 +20502,15 @@ function createCarteEngine(THREE, container, opts) {
     const key = name + "|" + color;
     if (avatarCache[key]) return avatarCache[key];
     const c = document.createElement("canvas");
-    c.width = c.height = 96;
+    c.width = c.height = 128;
     const g = c.getContext("2d");
     if (g) {
-      g.fillStyle = color; g.beginPath(); g.arc(48, 48, 42, 0, Math.PI * 2); g.fill();
-      g.lineWidth = 6; g.strokeStyle = "#ffffff"; g.stroke();
-      g.fillStyle = "#ffffff"; g.font = "800 38px Inter, -apple-system, 'Segoe UI', sans-serif";
-      g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(carteInitials(name), 48, 51);
+      // Lot 1 (#496) : pastille pastel, liseré crème épais, petite ombre.
+      g.fillStyle = "rgba(40,25,10,.25)"; g.beginPath(); g.arc(64, 70, 56, 0, Math.PI * 2); g.fill();
+      g.fillStyle = "#fffaf0"; g.beginPath(); g.arc(64, 62, 56, 0, Math.PI * 2); g.fill();
+      g.fillStyle = carteMix(/^#[0-9a-f]{6}$/i.test(color) ? color : "#4F6AF5", "#ffffff", 0.18); g.beginPath(); g.arc(64, 62, 46, 0, Math.PI * 2); g.fill();
+      g.fillStyle = "#ffffff"; g.font = "800 42px Inter, -apple-system, 'Segoe UI', sans-serif";
+      g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(carteInitials(name), 64, 64);
     }
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -20738,8 +20804,12 @@ function createCarteEngine(THREE, container, opts) {
     S.lightKey = d.sky + d.k;
     renderer.setClearColor(d.sky);
     scene.fog.color.set(d.sky);
-    hemi.intensity = d.hemi * 0.8;
-    sun.intensity = d.sunI * 1.45; sun.color.set(carteMix(d.sun, "#ffd6a0", 0.45));
+    // Lot 1 (#496) : le reflet du ciel prend le relais d'une partie de
+    // l'éclairage ambiant ; il baisse avec le jour.
+    hemi.intensity = d.hemi * (envTex ? 0.42 : 0.8);
+    sun.intensity = d.sunI * 1.45; sun.color.set(carteMix(d.sun, "#ffc98a", 0.5));
+    const envK = 0.35 + 0.65 * d.k;
+    mats.forEach((m) => { if (m.userData && m.userData.env != null) m.envMapIntensity = m.userData.env * envK; });
     if (S.daylightWindows) S.daylightWindows.visible = d.evening;
   }
   const tmpC2 = new THREE.Color();
@@ -20936,7 +21006,7 @@ function createCarteEngine(THREE, container, opts) {
   // Animations d'événement (grue, piquets, bannière) : objets temporaires.
   const anims = [];
   const fxMats = {};
-  const fxMat = (c, basic) => fxMats[c + (basic ? "b" : "")] || (fxMats[c + (basic ? "b" : "")] = mat(basic ? new THREE.MeshBasicMaterial({ color: c }) : new THREE.MeshLambertMaterial({ color: c, flatShading: true })));
+  const fxMat = (c, basic) => fxMats[c + (basic ? "b" : "")] || (fxMats[c + (basic ? "b" : "")] = mat(basic ? new THREE.MeshBasicMaterial({ color: c }) : std({ color: c })));
   function part(group, geo, c, x, y, z, sx, sy, sz, basic) {
     const m = new THREE.Mesh(geo, fxMat(c, basic));
     m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.castShadow = true;
@@ -21294,10 +21364,10 @@ function createCarteEngine(THREE, container, opts) {
   const postGeo = new THREE.PlaneGeometry(2, 2);
   geos.push(postGeo);
   const tsMat = mat(new THREE.ShaderMaterial({
-    uniforms: { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uRes: { value: new THREE.Vector2(1, 1) }, uFocus: { value: 0.5 }, uBand: { value: 0.14 }, uAmount: { value: 2.2 }, uSat: { value: 1 }, uGrade: { value: 0 } },
+    uniforms: { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uRes: { value: new THREE.Vector2(1, 1) }, uFocus: { value: 0.5 }, uBand: { value: 0.14 }, uAmount: { value: 2.2 }, uSat: { value: 1 }, uGrade: { value: 0 }, tBloom: { value: null }, uBloom: { value: 0 } },
     vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
     fragmentShader: [
-      "uniform sampler2D tDiffuse; uniform vec2 uDir; uniform vec2 uRes; uniform float uFocus; uniform float uBand; uniform float uAmount; uniform float uSat; uniform float uGrade; varying vec2 vUv;",
+      "uniform sampler2D tDiffuse; uniform vec2 uDir; uniform vec2 uRes; uniform float uFocus; uniform float uBand; uniform float uAmount; uniform float uSat; uniform float uGrade; uniform sampler2D tBloom; uniform float uBloom; varying vec2 vUv;",
       "void main(){",
       "  float d = max(0.0, abs(vUv.y - uFocus) - uBand);",
       "  float r = clamp(d / max(0.05, 0.55 - uBand), 0.0, 1.0);",
@@ -21305,10 +21375,13 @@ function createCarteEngine(THREE, container, opts) {
       "  vec4 c = texture2D(tDiffuse, vUv) * 0.2270270270;",
       "  c += (texture2D(tDiffuse, vUv + st * 1.3846153846) + texture2D(tDiffuse, vUv - st * 1.3846153846)) * 0.3162162162;",
       "  c += (texture2D(tDiffuse, vUv + st * 3.2307692308) + texture2D(tDiffuse, vUv - st * 3.2307692308)) * 0.0702702703;",
+      // Lueurs (#496) : le halo flouté des zones très claires s'ajoute ici.
+      "  if (uBloom > 0.0) c.rgb += texture2D(tBloom, vUv).rgb * uBloom;",
       "  float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));",
       "  vec3 col = mix(vec3(l), c.rgb, uSat);",
       "  vec2 q = vUv - 0.5;",
-      "  col = mix(col, col * vec3(1.03, 1.0, 0.95) * (1.0 - 0.55 * dot(q, q)), uGrade);",
+      // Étalonnage chaud et vignette (#496).
+      "  col = mix(col, (col + vec3(0.045, 0.018, -0.027)) * (1.0 - 0.79 * dot(q, q)), uGrade);",
       "  gl_FragColor = vec4(col, 1.0);",
       "  #include <tonemapping_fragment>",
       "  #include <colorspace_fragment>",
@@ -21316,7 +21389,45 @@ function createCarteEngine(THREE, container, opts) {
     ].join("\n"),
     depthTest: false, depthWrite: false,
   }));
-  postScene.add(new THREE.Mesh(postGeo, tsMat));
+  const postQuad = new THREE.Mesh(postGeo, tsMat);
+  postScene.add(postQuad);
+  // Bloom sélectif (#496) : seuls les pixels au-delà du seuil (lanternes,
+  // fenêtres, portails, feu : matières lumineuses renforcées) sont extraits à
+  // quart de résolution, floutés en deux passes, puis ajoutés dans la passe
+  // finale. Nécessite une cible flottante ; coupé avec les effets avancés.
+  const bloomMat = mat(new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2(1, 1) }, uDir: { value: new THREE.Vector2(1, 0) }, uThr: { value: 0.93 }, uMode: { value: 0 } },
+    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader: [
+      "uniform sampler2D tDiffuse; uniform vec2 uTexel; uniform vec2 uDir; uniform float uThr; uniform float uMode; varying vec2 vUv;",
+      "void main(){",
+      "  if (uMode < 0.5) {",
+      "    vec3 c = 0.25 * (texture2D(tDiffuse, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(1.0, -1.0)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(1.0, 1.0)).rgb);",
+      "    float l = max(c.r, max(c.g, c.b));",
+      "    gl_FragColor = vec4(c * smoothstep(uThr, uThr + 0.6, l), 1.0);",
+      "  } else {",
+      "    vec2 st = uDir * uTexel;",
+      "    vec3 c = texture2D(tDiffuse, vUv).rgb * 0.2270270270;",
+      "    c += (texture2D(tDiffuse, vUv + st * 1.3846153846).rgb + texture2D(tDiffuse, vUv - st * 1.3846153846).rgb) * 0.3162162162;",
+      "    c += (texture2D(tDiffuse, vUv + st * 3.2307692308).rgb + texture2D(tDiffuse, vUv - st * 3.2307692308).rgb) * 0.0702702703;",
+      "    gl_FragColor = vec4(c, 1.0);",
+      "  }",
+      "}",
+    ].join("\n"),
+    depthTest: false, depthWrite: false,
+  }));
+  const bloomQuad = new THREE.Mesh(postGeo, bloomMat);
+  const bloomScene = new THREE.Scene();
+  bloomScene.add(bloomQuad);
+  // Matières lumineuses : renforcées au-delà de 1 quand le bloom est actif,
+  // pour passer le seuil ; ramenées à leur couleur sinon.
+  const glowMats = [MAT.g, MAT.flame, MAT.bolt, MAT.portal, MAT.fxGlow].filter(Boolean).map((m) => ({ m, base: m.color.clone() }));
+  S.glowK = 1;
+  function setGlow(k) {
+    if (S.glowK === k) return;
+    S.glowK = k;
+    glowMats.forEach((g) => g.m.color.copy(g.base).multiplyScalar(k));
+  }
   const postSize = new THREE.Vector2();
   function ensureRT() {
     renderer.getDrawingBufferSize(postSize);
@@ -21328,33 +21439,59 @@ function createCarteEngine(THREE, container, opts) {
     const type = ext && (ext.has("EXT_color_buffer_float") || ext.has("EXT_color_buffer_half_float")) ? THREE.HalfFloatType : THREE.UnsignedByteType;
     post.rtA = new THREE.WebGLRenderTarget(w, h, { type, samples: S.effQuality === "high" ? 4 : 0 });
     post.rtB = new THREE.WebGLRenderTarget(w, h, { type });
+    post.float = type === THREE.HalfFloatType;
+    if (post.bA) { post.bA.dispose(); post.bB.dispose(); }
+    const bw = Math.max(1, Math.round(w / 4)), bh = Math.max(1, Math.round(h / 4));
+    post.bA = new THREE.WebGLRenderTarget(bw, bh, { type });
+    post.bB = new THREE.WebGLRenderTarget(bw, bh, { type });
+    post.bw = bw; post.bh = bh;
     post.w = w; post.h = h;
   }
   const focusV = new THREE.Vector3();
   function renderFrame() {
     // Vue plan : vue de dessus, sans profondeur de champ.
-    const useTs = post.ok && S.miniature && !S.plan && S.effQuality !== "low" && S.strategic < 0.99;
-    if (!useTs) { renderer.render(scene, camera); return; }
+    const tilt = S.miniature && !S.plan;
+    const bloomOn = S.fx && post.float !== false;
+    const useTs = post.ok && (tilt || bloomOn) && S.effQuality !== "low" && S.strategic < 0.99;
+    if (!useTs) { setGlow(1); renderer.render(scene, camera); return; }
     try {
       ensureRT();
+      const bloom = bloomOn && post.float;
+      setGlow(bloom ? 1.9 : 1);
       renderer.setRenderTarget(post.rtA);
       renderer.render(scene, camera);
+      if (bloom) {
+        const B = bloomMat.uniforms;
+        postScene.remove(postQuad);
+        B.uMode.value = 0; B.tDiffuse.value = post.rtA.texture; B.uTexel.value.set(1 / post.w, 1 / post.h);
+        renderer.setRenderTarget(post.bA); renderer.render(bloomScene, postCam);
+        B.uMode.value = 1; B.uTexel.value.set(1 / post.bw, 1 / post.bh);
+        [1, 2].forEach((spread) => {
+          B.uDir.value.set(spread, 0); B.tDiffuse.value = post.bA.texture;
+          renderer.setRenderTarget(post.bB); renderer.render(bloomScene, postCam);
+          B.uDir.value.set(0, spread); B.tDiffuse.value = post.bB.texture;
+          renderer.setRenderTarget(post.bA); renderer.render(bloomScene, postCam);
+        });
+        postScene.add(postQuad);
+      }
       if (HOLO.id) focusV.copy(holoGroup.position).project(camera);
       else focusV.set(S.target.x, S.target.y, S.target.z).project(camera);
       const U = tsMat.uniforms;
       U.uFocus.value = Math.max(0.2, Math.min(0.8, (focusV.y + 1) / 2));
       // Plus la vue est plongeante et lointaine, plus l'effet est marqué.
-      U.uAmount.value = 1.6 + Math.min(1.4, S.dist / 40);
+      U.uAmount.value = tilt ? 1.6 + Math.min(1.4, S.dist / 40) : 0;
       U.uRes.value.set(post.w, post.h);
-      U.tDiffuse.value = post.rtA.texture; U.uDir.value.set(1, 0); U.uSat.value = 1; U.uGrade.value = 0;
+      U.tDiffuse.value = post.rtA.texture; U.uDir.value.set(1, 0); U.uSat.value = 1; U.uGrade.value = 0; U.uBloom.value = 0;
       renderer.setRenderTarget(post.rtB);
       renderer.render(postScene, postCam);
-      U.tDiffuse.value = post.rtB.texture; U.uDir.value.set(0, 1); U.uSat.value = 1.12; U.uGrade.value = 1;
+      U.tDiffuse.value = post.rtB.texture; U.uDir.value.set(0, 1); U.uSat.value = 1.14; U.uGrade.value = 1;
+      U.tBloom.value = bloom ? post.bA.texture : null; U.uBloom.value = bloom ? 0.55 : 0;
       renderer.setRenderTarget(null);
       renderer.render(postScene, postCam);
     } catch (e) {
       // Contexte sans cible flottante : rendu direct, sans l'effet.
       post.ok = false;
+      setGlow(1);
       renderer.setRenderTarget(null);
       renderer.render(scene, camera);
     }
@@ -21378,7 +21515,7 @@ function createCarteEngine(THREE, container, opts) {
     placeStorms(t); placeFires(t); placeClocks(t); placeWarnings(t); placeAmbient(t); placeTrail(t);
     // Lave (#408) : pulsation lente, très atténuée si les animations sont réduites.
     const glow = Math.sin(t * (reduced ? 0.6 : 1.8)) * (reduced ? 0.04 : 0.12);
-    MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow);
+    MAT.lava.color.setRGB(1, 0.88 + glow, 0.8 + glow).multiplyScalar(S.glowK || 1);
     MAT.lavaTop.color.copy(MAT.lava.color);
     if (reduced) { MAT.alarm.opacity = 0.85; return; }
     MAT.alarm.opacity = 0.15 + 0.8 * (0.5 + 0.5 * Math.sin(t * 6.5));
@@ -21730,8 +21867,8 @@ function createCarteEngine(THREE, container, opts) {
     // Pilotage (#468 à #481).
     setOptions(opt) {
       const v = opt || {};
-      const rebuild = "fog" in v && !!v.fog !== S.fog;
-      ["fog", "minimap", "miniature", "life", "plan", "walk", "holo"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
+      const rebuild = ("fog" in v && !!v.fog !== S.fog) || ("fx" in v && !!v.fx !== S.fx);
+      ["fog", "minimap", "miniature", "life", "plan", "walk", "holo", "fx"].forEach((k) => { if (k in v) S[k] = !!v[k]; });
       if (!S.holo) closeHolo();
       if (rebuild && S.layout) build();
       if (!S.minimap) mini.hidden = true;
@@ -21792,6 +21929,8 @@ function createCarteEngine(THREE, container, opts) {
       anims.forEach((a) => a.group.traverse((c) => { if (c.userData.ownGeo) c.geometry.dispose(); if (c.userData.ownMat) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } }));
       fxSoft.dispose(); fxGlow.dispose();
       if (post.rtA) { post.rtA.dispose(); post.rtB.dispose(); }
+      if (post.bA) { post.bA.dispose(); post.bB.dispose(); }
+      if (envTex) envTex.dispose();
       texs.forEach((t) => t.dispose());
       mini.remove(); strat.remove();
       geos.forEach((g) => g.dispose());
@@ -22631,7 +22770,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           quality: cfg.quality,
           people: cfg.people,
           ambient: cfg.ambient,
-          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo,
+          fog: cfg.fog, minimap: cfg.minimap, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx,
           // Hologramme ouvert (#494) : la roue s'efface pour ne pas le masquer.
           onHologram: (id) => { if (id) setWheel(null); },
           obstacles: () => (stageRef.current ? [...document.querySelectorAll(".lp-carte-folder-pop"), ...stageRef.current.querySelectorAll(".lp-carte-badge, .lp-carte-folder-pop, .lp-carte-small-hint, .lp-carte-hud > *, .lp-carte-near, .lp-carte-zoom, .lp-carte-detail, .lp-carte-panel, .lp-carte-panel-toggle, .lp-carte-joy, .lp-carte-act, .lp-carte-quality-tag, .lp-carte-minimap, .lp-carte-wheel-ring, .lp-carte-wheel-sub, .lp-carte-undo")].map((e) => e.getBoundingClientRect()) : []),
@@ -22692,7 +22831,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
   });
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setPeople(cfg.people); }, [status, cfg.people]);
   useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAmbient(cfg.ambient); }, [status, cfg.ambient]);
-  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, cfg.holo, photo]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setOptions({ fog: cfg.fog, minimap: cfg.minimap && !photo, miniature: cfg.miniature, life: cfg.life, plan: cfg.plan, walk: cfg.walk, holo: cfg.holo, fx: cfg.fx }); }, [status, cfg.fog, cfg.minimap, cfg.miniature, cfg.life, cfg.plan, cfg.walk, cfg.holo, cfg.fx, photo]);
 
   // ---------- Pilotage (#468 à #481) ----------
   const quests = useMemo(() => carteQuests(norm, visible), [norm, visible]);
@@ -22923,6 +23062,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
             <label className="lp-checkbox-line" title="Brume sur les tâches sans échéance, sans responsable ou oubliées : compléter la fiche la dissipe"><input type="checkbox" checked={cfg.fog} onChange={(e) => setPrefs({ fog: e.target.checked })} /> Brouillard sur les fiches incomplètes</label>
             <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.minimap} onChange={(e) => setPrefs({ minimap: e.target.checked })} /> Mini-carte</label>
             <label className="lp-checkbox-line" title="Flou de profondeur façon maquette photographiée (qualité moyenne ou haute)"><input type="checkbox" checked={cfg.miniature} onChange={(e) => setPrefs({ miniature: e.target.checked })} /> Effet miniature</label>
+            <label className="lp-checkbox-line" title="Lueurs, herbe dense, ombres de nuages : à couper sur un petit appareil si la carte manque de fluidité"><input type="checkbox" checked={cfg.fx} onChange={(e) => setPrefs({ fx: e.target.checked })} /> Effets avancés</label>
             <label className="lp-checkbox-line" title="Grue quand l'avancement progresse, poussière à la création, étincelles, fumée, bannière de jalon"><input type="checkbox" checked={cfg.life} onChange={(e) => setPrefs({ life: e.target.checked })} /> Vie de la carte (chantiers, fumées, jalons)</label>
             <hr className="lp-divider" style={{ margin: "6px 0" }} />
             <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
