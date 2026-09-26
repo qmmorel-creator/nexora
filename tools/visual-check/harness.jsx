@@ -1119,6 +1119,11 @@ if (benchApp) {
         extra.push({ id: `banc-c${j}-${i}`, title: `${p.name} · étape ${i + 1}`, projectId: p.id, statusId: st.id, taskTypeId: ["tt1", "tt2", "tt3", "tt1"][i % 4], criticality: [null, "bas", "moyen", "urgent"][i % 4], milestone: i === 8, start: addDaysIso(iso(new Date()), i * 4 - 14), end: addDaysIso(iso(new Date()), i * 4 - 8), progress: (i * 23) % 101, assignee: seedTeamMembers[i % seedTeamMembers.length].name, checklist: i % 3 ? [] : [{ id: "k1", text: "a", done: true }, { id: "k2", text: "b", done: false }], dependsOn: i > 0 && i % 2 === 0 ? [`banc-c${j}-${i - 1}`] : [], recurrence: i === 5 ? { unit: "week", interval: 1 } : null, attachments: i === 2 ? [{ id: "a1", name: "plan.pdf" }] : [] });
       }
     });
+    // Mode focus (#512) : deux tâches ouvertes de la passerelle passent en
+    // focus ; la Carte les coiffe d'un halo, le filtre rapide les isole.
+    extra.filter((t) => t.projectId === "banc-p4" && !/termin|info/i.test((seedStatuses.find((s) => s.id === t.statusId) || {}).name || "")).slice(0, 2).forEach((t) => { t.focus = true; });
+    // Le moteur de la Carte s'expose au banc (compteurs d'effets, #512).
+    window.__carteBench = window.__carteBench || {};
     if (benchParams.get("carte") === "sync") {
       projects.push({ id: "banc-psync", name: "Jours fériés", color: "#64748B", folderId: "folder-a-trier", syncedCalendarSource: true, syncedCalendarId: "fr-feries" });
       extra.push({ id: "banc-tsync", title: "Toussaint", projectId: "banc-psync", statusId: seedStatuses[0].id, taskTypeId: "tt1", milestone: true, start: addDaysIso(iso(new Date()), 20), end: addDaysIso(iso(new Date()), 20), progress: 0, assignee: "", checklist: [], syncedCalendarImported: true, syncedCalendarId: "fr-feries", syncedCalendarKey: "toussaint" });

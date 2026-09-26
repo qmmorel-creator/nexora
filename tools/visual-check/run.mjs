@@ -1948,6 +1948,20 @@ try {
   };
   const shownOf = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteShown));
   carte.quick = { kinds: await cp.$$eval(".lp-carte-toolbar [data-carte-quick]", (e) => e.map((x) => x.dataset.carteQuick)), all: await shownOf() };
+  // #512 : mode focus — halo posé sur les deux tâches en focus du jeu de
+  // démo, filtre rapide qui les isole puis rend toute la carte.
+  carte.focus = {
+    halo: await cp.evaluate(() => (window.__carteBench && window.__carteBench.engine ? window.__carteBench.engine.fxState().focus : -1)),
+    count: await cp.$eval('[data-focus-quick="carte"] .lp-focus-quick-count', (e) => Number(e.textContent)).catch(() => -1),
+  };
+  await cp.click('[data-focus-quick="carte"]');
+  await cp.waitForTimeout(800);
+  carte.focus.shown = await shownOf();
+  carte.focus.pressed = await cp.getAttribute('[data-focus-quick="carte"]', "aria-pressed");
+  carte.focus.haloFiltered = await cp.evaluate(() => (window.__carteBench && window.__carteBench.engine ? window.__carteBench.engine.fxState().focus : -1));
+  await cp.click('[data-focus-quick="carte"]');
+  await cp.waitForTimeout(800);
+  carte.focus.back = await shownOf();
   await quick("crits", "Criticité : Urgentes");
   carte.dim = await cp.evaluate(() => ({ dim: Number(document.querySelector(".lp-carte-stage").dataset.carteDimmed), all: 7, pill: !!document.querySelector(".lp-carte-filtered button") }));
   carte.quick.urgent = await shownOf();
@@ -3342,6 +3356,9 @@ if (!orgMetro.error) {
 
 // --- Vue Carte (#361) ------------------------------------------------------
 expect(!carte.error, `Carte : scénario en échec (${carte.error})`);
+// Mode focus (#512) : jugé dès que le parcours l'a mesuré, même si une capture
+// ultérieure échoue (polices indisponibles hors ligne).
+if (carte.focus || !carte.error) expect(carte.focus && carte.focus.halo === 2 && carte.focus.count === 2 && carte.focus.shown === 2 && carte.focus.pressed === "true" && carte.focus.haloFiltered === 2 && carte.focus.back === carte.quick.all, `Carte (#512) : le mode focus (halo et filtre rapide) ne suit pas les deux tâches en focus du jeu de démo (${JSON.stringify(carte.focus)})`);
 // Gestes de la Carte (#503, #510) : jugés même si le parcours principal échoue.
 {
   const G = carte.gestures || {};
