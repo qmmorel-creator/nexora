@@ -22,6 +22,7 @@ function slice(name) {
 const C = vm.runInThisContext(
   `(function () {\n${slice("CARTE")}\n;return {
     carteHash, carteStage, carteNormalize, carteBuild, carteTerritoryStats, carteTaskModel, carteHubModel,
+    carteWheelFactor, carteDampDistance, carteFrameTiming, cartePixelRatio, carteRenderKeys,
     carteDecorModel, carteLegend, carteMatches, normalizeCarteViewPrefs, carteDist, CARTE_THEMES, CARTE_THEME_BY_ID,
     carteEmojiIcon, carteThemeOverrides, carteTaskLevel, carteDimmedProjects, carteInitials, carteAvatarAnchor, carteHazard, carteDangerSign,
     carteLook, carteTotemColumn, CARTE_TOTEM_MARGIN,
@@ -1009,4 +1010,94 @@ test("fléaux des tâches critiques selon le thème, orage en repli (#509)", () 
   assert.deepEqual(codes, [0, 1, 2, 3, 4, 5, 6, 7]);
   assert.equal(C.CARTE_CRITICAL_FX_KINDS.storm.count, 0);
   Object.values(C.CARTE_CRITICAL_FX_KINDS).forEach((k) => assert.ok(k.count <= 80, "léger : 80 particules au plus par tâche"));
+});
+
+test("#517 : franchir les paliers de densité conserve les centres et les parcelles mémorisées", () => {
+  for (const [density, threshold] of [[1, 10], [2, 16], [4, 14], [5, 18]]) {
+    const w = world(3, threshold, { perProject: 1 });
+    const n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+    const before = C.carteBuild({ ...n, density });
+    w.tasks.push({ ...w.tasks[0], id: "extra" });
+    const n2 = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+    const grown = C.carteBuild({ ...n2, density, memory: JSON.parse(JSON.stringify(before.memory)) });
+    const centers = (l) => l.territories.map((t) => [t.projectId, t.q, t.r]);
+    assert.deepEqual(centers(grown), centers(before), `densité ${density}`);
+    before.pois.forEach((p) => assert.equal(grown.memory.tasks[p.taskId], p.key));
+    assert.ok(grown.memory.tasks.extra, "la nouvelle tâche reste accessible");
+    const shrunk = C.carteBuild({ ...n, density, memory: grown.memory });
+    assert.deepEqual(centers(shrunk), centers(before));
+    assert.equal(shrunk.inner, before.inner);
+    // Les anciennes mémoires sont migrées au rayon actuel ; une valeur
+    // corrompue ou provenant d'un autre réglage n'impose jamais son rayon.
+    for (const memory of [{ projects: before.memory.projects, tasks: before.memory.tasks }, { ...before.memory, inner: 99 }, { ...before.memory, density: 3 }]) {
+      const migrated = C.carteBuild({ ...n, density, memory });
+      assert.equal(migrated.inner, before.inner);
+      assert.equal(migrated.memory.density, density);
+    }
+  }
+});
+
+test("#517 : le zoom respecte l'amplitude, les unités et les gestes horizontaux", () => {
+  const f = C.carteWheelFactor;
+  assert.equal(f(0, 0, 600), 1);
+  assert.equal(f(NaN, 0, 600), 1);
+  assert.equal(f(Infinity, 0, 600), 1);
+  assert.equal(f(3, 1, 600), f(48, 0, 600));
+  assert.equal(f(1, 2, 480), f(480, 0, 480));
+  assert.ok(f(1, 0) < f(100, 0));
+  assert.ok(Math.abs(f(100, 0) * f(-100, 0) - 1) < 1e-12);
+  assert.ok(Math.abs(Math.pow(f(1, 0), 100) - f(100, 0)) < 1e-12, "un geste fractionné donne le même zoom");
+  assert.ok(Number.isFinite(f(1e9, 2, 600)));
+});
+
+test("#517 : amortissement indépendant de la cadence, arrêt précis et mouvement réduit immédiat", () => {
+  const step = (hz, duration) => {
+    let d = 20;
+    for (let i = 0; i < hz * duration; i++) d = C.carteDampDistance(d, 40, 1 / hz, false);
+    return d;
+  };
+  assert.ok(Math.abs(step(30, 0.5) - step(120, 0.5)) < 1e-9);
+  assert.ok(step(60, 0.5) > 20 && step(60, 0.5) < 40);
+  assert.equal(step(60, 2), 40);
+  assert.equal(C.carteDampDistance(20, 40, 0, true), 40);
+  assert.equal(C.carteDampDistance(20, 40, 0, false), 20);
+});
+
+test("#517 : 10 images/s restent mesurées à 10, avec un pas de simulation plafonné", () => {
+  let elapsed = 0, simulated = 0;
+  for (let i = 1; i <= 20; i++) {
+    const t = C.carteFrameTiming(i * 100, (i - 1) * 100);
+    elapsed += t.elapsed; simulated += t.dt;
+  }
+  assert.ok(Math.abs(20 / elapsed - 10) < 1e-9);
+  assert.ok(Math.abs(simulated - 1) < 1e-9, "la simulation reste protégée des grands pas");
+  assert.equal(C.carteFrameTiming(100, 200).dt, 0);
+  assert.equal(C.cartePixelRatio(1.25, 2, true, false), 1.25, "une édition ne réinitialise pas la résolution adaptée");
+  assert.equal(C.cartePixelRatio(1.75, 1.5, true, false), 1.5, "respecte le plafond d'un palier inférieur");
+  assert.equal(C.cartePixelRatio(1.25, 2, true, true), 2, "un changement explicite de qualité peut réinitialiser");
+  assert.equal(C.cartePixelRatio(1.25, 2, false, false), 2);
+});
+
+test("#517 : les invalidations distinguent terrain, teintes, noms et occupation", () => {
+  const w = world(3, 12), n = C.carteNormalize(w.ctx, w.tasks, { now: NOW });
+  const l = C.carteBuild(n);
+  const keys = (layout, dimmed = null, fx = true, quality = "high", kenney = false) => C.carteRenderKeys(layout, quality, dimmed, fx, kenney);
+  const initial = keys(l);
+  const edited = C.carteBuild({ ...n, tasks: n.tasks.map((t) => ({ ...t, progress: 100, state: "done" })), memory: l.memory });
+  assert.deepEqual(keys(edited), initial, "l'avancement ne reconstruit pas le paysage");
+  const filtered = keys(l, new Set(["p1"]));
+  assert.equal(filtered.terrain, initial.terrain, "griser un projet conserve les surfaces et la mer");
+  assert.notEqual(filtered.paint, initial.paint);
+  const renamed = keys({ ...l, projectById: { ...l.projectById, p0: { ...l.projectById.p0, folderName: "Autre nom" } } });
+  assert.equal(renamed.terrain, initial.terrain);
+  assert.equal(renamed.paint, initial.paint);
+  assert.notEqual(renamed.labels, initial.labels);
+  const moved = keys({ ...l, pois: [{ ...l.pois[0], key: "nouvelle-case" }, ...l.pois.slice(1)] });
+  assert.equal(moved.terrain, initial.terrain);
+  assert.notEqual(moved.decor, initial.decor);
+  const recolored = keys({ ...l, projectById: { ...l.projectById, p0: { ...l.projectById.p0, color: "#ff0000" } } });
+  assert.notEqual(recolored.paint, initial.paint);
+  assert.notEqual(keys(l, null, false).decor, initial.decor);
+  assert.notEqual(keys(l, null, true, "high", true).decor, initial.decor);
+  assert.notEqual(keys(l, null, true, "low").terrain, initial.terrain);
 });

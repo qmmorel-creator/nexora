@@ -44,6 +44,21 @@ en sortant, même en échec, pour ne pas ralentir les suivants. Ce qui est véri
 
 ## Ce qui est contrôlé
 
+Les régressions de cycle de vie de la Carte peuvent aussi être testées sans
+navigateur, avec les objets Three.js réels et un renderer bouchonné (#517).
+Depuis la racine du dépôt :
+
+```bash
+npm run build --prefix apps/nexora
+npm run test:carte-engine --prefix tools/visual-check
+```
+
+Ces tests vérifient la réutilisation et la libération des surfaces, les filtres,
+le zoom et l'horloge. Ils ne remplacent pas le contrôle visuel WebGL. Dans le
+banc navigateur, `window.__carteBench.engine.performanceStats()` expose les FPS
+réels, la résolution adaptée, le temps CPU du dernier build, les reconstructions
+du terrain/décor et les appels de dessin de toutes les passes du dernier rendu.
+
 Scénario « Carte » (#361), en WebGL logiciel (SwiftShader) : recherche d'un projet, marche au
 clavier jusqu'à une tâche, lecture, ouverture de la fiche Nexora ; aucune tâche modifiée par
 l'exploration ; libellés sans chevauchement ; filtre ; mobile (manette, bouton « Lire », pas de
