@@ -7311,6 +7311,330 @@ function cosmosLabelTier(kind, px, prevTier, flagged) {
   return tier;
 }
 // === NEXORA:COSMOS:END ===
+// === NEXORA:FLEUVE:START ===
+// Vue « Fleuve du temps » (#515) : le temps coule vers le spectateur. L'aval
+// est aujourd'hui, l'amont les semaines à venir ; chaque tâche ouverte est un
+// bateau posé à son échéance. Logique pure, sans DOM ni three.js, testée par
+// tests/fleuve.test.mjs ; elle s'appuie sur la normalisation de la Carte
+// (carteNormalize) et ne modifie jamais une tâche.
+//
+// Unités : les jours sont relatifs à aujourd'hui (J0). La semaine S commence
+// le lundi de la semaine en cours ; S+1 le lundi suivant, etc.
+const FLEUVE_DZ = 3.4; // longueur de fleuve (unités du monde) par jour
+const FLEUVE_PAST_DAYS = 4; // navigation vers l'aval, en deçà d'aujourd'hui
+const FLEUVE_MIN_WEEKS = 6; // au moins S+1 à S+6 navigables
+const FLEUVE_MAX_WEEKS = 16; // au plus S+16 : au-delà, tâches comptées « plus loin »
+// Capacité hebdomadaire par défaut (hypothèse, réglable dans « Affichage ») :
+// 35 h, soit 5 jours de 7 h.
+const FLEUVE_CAPACITY_DEFAULT = 35;
+// Repli sans créneau horaire : une journée de tâche compte 3,5 h de charge
+// (une demi-journée de travail effectif), plafonnée à 40 h.
+const FLEUVE_HOURS_PER_DAY = 3.5;
+const FLEUVE_HOURS_MAX = 40;
+// Barque ≤ 4 h, voilier ≤ 12 h, péniche au-delà ; longueur de coque en unités.
+const FLEUVE_KINDS = [["barque", 4, 1.5], ["voilier", 12, 2.3], ["peniche", Infinity, 3.8]];
+const FLEUVE_KIND_LABELS = { barque: "Barque", voilier: "Voilier", peniche: "Péniche" };
+// Couloirs de navigation, en fraction de la demi-largeur navigable.
+const FLEUVE_LANES = [-0.8, -0.27, 0.27, 0.8];
+// Écart minimal entre deux coques d'un même couloir (en jours) et dérive
+// admise vers l'amont quand tous les couloirs sont pris.
+const FLEUVE_GAP_DAYS = 0.14;
+const FLEUVE_MAX_DRIFT = 0.9;
+// Plafond de bateaux dessinés (au-delà : regroupés en radeaux par semaine) et
+// des épaves échouées (au-delà : un tas d'épaves « +N »).
+const FLEUVE_MAX_BOATS = { high: 160, low: 70 };
+const FLEUVE_MAX_LATE = 12;
+const FLEUVE_LATE_STEP = 1.35; // espacement des bancs de sable, en jours
+const FLEUVE_MAX_PORTIQUES = 20;
+const FLEUVE_QUALITIES = ["auto", "high", "low"];
+const FLEUVE_JOURS = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+const FLEUVE_MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+
+function normalizeFleuveViewPrefs(p) {
+  const v = p && typeof p === "object" ? p : {};
+  const cap = Number(v.capacity);
+  return {
+    // Filtres rapides : projets et responsables (liste vide = tout), focus.
+    projects: carteIdList(v.projects),
+    assignees: carteIdList(v.assignees),
+    focusOnly: !!v.focusOnly,
+    // Capacité hebdomadaire (h) qui décide du « bouchon ».
+    capacity: Number.isFinite(cap) && cap >= 1 ? Math.min(168, Math.round(cap * 2) / 2) : FLEUVE_CAPACITY_DEFAULT,
+    quality: FLEUVE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    // Clapotis, voiles, drapeaux : coupés aussi par « réduire les animations ».
+    animate: v.animate !== false,
+    labels: v.labels !== false,
+    legend: v.legend !== false,
+    // Filtre général de Nexora, même format que les widgets.
+    filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
+  };
+}
+// Filtres rapides de la vue ; les tâches sans projet ou sans responsable se
+// choisissent avec CARTE_NONE.
+function fleuveMatches(task, cfg) {
+  if (!cfg) return true;
+  if (cfg.projects && cfg.projects.length && cfg.projects.indexOf(task.projectId || CARTE_NONE) === -1) return false;
+  if (cfg.assignees && cfg.assignees.length && cfg.assignees.indexOf(task.assignee || CARTE_NONE) === -1) return false;
+  if (cfg.focusOnly && !task.focus) return false;
+  return true;
+}
+function fleuveViewFilterCount(cfg) {
+  const c = cfg || {};
+  return (c.projects && c.projects.length ? 1 : 0) + (c.assignees && c.assignees.length ? 1 : 0) + (c.focusOnly ? 1 : 0);
+}
+// Options du filtre rapide « Projets » : projets qui portent des tâches
+// ouvertes, avec leur nombre ; une valeur retenue mais absente reste proposée.
+function fleuveQuickProjects(tasks, projects, selected) {
+  const n = {};
+  (tasks || []).forEach((t) => { if (t.state === "done" || t.state === "info") return; const k = t.projectId || CARTE_NONE; n[k] = (n[k] || 0) + 1; });
+  const sel = selected || [];
+  const out = [];
+  (projects || []).forEach((p) => { if (n[p.id] || sel.indexOf(p.id) !== -1) out.push({ id: p.id, label: p.name, color: p.color || null, count: n[p.id] || 0 }); });
+  if (n[CARTE_NONE] || sel.indexOf(CARTE_NONE) !== -1) out.push({ id: CARTE_NONE, label: "Sans projet", color: null, count: n[CARTE_NONE] || 0 });
+  return out;
+}
+
+// ---------- Calendrier ----------
+// Lundi de la semaine d'aujourd'hui, en jours relatifs (0 à -6).
+function fleuveMondayOffset(today) { return -(((today + 3) % 7) + 7) % 7; }
+function fleuveWeekOf(day, monday) { return Math.floor((Math.floor(day + 1e-6) - monday) / 7); }
+function fleuveWeekLabel(k) { return k === 0 ? "cette semaine" : "S" + (k > 0 ? "+" : "") + k; }
+function fleuveShortWeek(k) { return k === 0 ? "S" : "S" + (k > 0 ? "+" : "") + k; }
+function fleuveIsWorkday(today, d) { return ((today + d + 3) % 7 + 7) % 7 < 5; }
+function fleuveDate(today, d) { return new Date((today + Math.floor(d + 1e-6)) * CARTE_DAY); }
+// « jeu. 8 oct. 2026 », « 1er » pour le premier du mois.
+function fleuveDayLabel(today, d, withYear, withWeekday) {
+  const t = fleuveDate(today, d), n = t.getUTCDate();
+  return (withWeekday === false ? "" : FLEUVE_JOURS[t.getUTCDay()] + " ") + (n === 1 ? "1er" : n) + " " + FLEUVE_MOIS[t.getUTCMonth()] + (withYear ? " " + t.getUTCFullYear() : "");
+}
+function fleuveIso(today, d) { return fleuveDate(today, d).toISOString().slice(0, 10); }
+function fleuveDayFromIso(isoDate, today) { const n = carteDayNumber(isoDate); return n == null ? null : n - today; }
+function fleuveRelText(d) {
+  const n = Math.floor(d + 1e-6);
+  if (n === 0) return "Aujourd'hui";
+  return n > 0 ? "dans " + n + " jour" + (n > 1 ? "s" : "") : "il y a " + (-n) + " jour" + (n < -1 ? "s" : "");
+}
+// Cartouche de la date visée : « jeu. 8 oct. 2026 · S+2 ».
+function fleuveTarget(model, day) {
+  const d = Math.floor(day + 1e-6), k = fleuveWeekOf(d, model.monday);
+  return { day: d, date: fleuveDayLabel(model.today, d, true), week: fleuveWeekLabel(k), weekIndex: k, sub: fleuveRelText(d), iso: fleuveIso(model.today, d) };
+}
+function fleuveClampDay(day, range) { const r = range || {}; return Math.max(r.navMin, Math.min(r.navMax, Number(day) || 0)); }
+// Boutons « ‹ semaine › » : sept jours à partir du jour entier visé.
+function fleuveStepWeek(day, dir, range) { return fleuveClampDay(Math.round(day) + 7 * (dir < 0 ? -1 : 1), range); }
+// Molette : jours parcourus pour un cran (pixels, lignes ou pages).
+function fleuveWheelDays(deltaY, deltaMode) {
+  const dy = Number(deltaY) || 0;
+  if (deltaMode === 1) return dy * 0.5;
+  if (deltaMode === 2) return dy * 7;
+  return Math.max(-3, Math.min(3, dy * 0.012));
+}
+// Portique illuminé une fois la date visée passée au-delà du jalon.
+function fleuveMilestoneLit(day, cursor) { return cursor >= day + 0.5; }
+// Qualité effective : petits écrans et gros volumes passent en qualité basse.
+function fleuveResolveQuality(pref, width, boats) {
+  if (pref === "high" || pref === "low") return pref;
+  return (width > 0 && width < 760) || boats > 140 ? "low" : "high";
+}
+
+// ---------- Charge ----------
+function fleuveKindOf(hours) { for (let i = 0; i < FLEUVE_KINDS.length; i++) if (hours <= FLEUVE_KINDS[i][1]) return FLEUVE_KINDS[i][0]; return "peniche"; }
+function fleuveKindLength(kind) { const k = FLEUVE_KINDS.find((x) => x[0] === kind); return k ? k[2] : 2.3; }
+// Charge d'une tâche en heures : créneau horaire d'une même journée s'il
+// existe, sinon repli sur la durée en jours (3,5 h par jour, 40 h au plus).
+// Le modèle de Nexora n'a pas de champ d'estimation : rien n'est inventé.
+function fleuveHours(t) {
+  const sameDay = t.start == null || t.end == null || t.start === t.end;
+  if (t.startTime && t.endTime && sameDay) {
+    const m = (s) => { const x = /^(\d{1,2}):(\d{2})/.exec(String(s)); return x ? +x[1] * 60 + +x[2] : null; };
+    const a = m(t.startTime), b = m(t.endTime);
+    if (a != null && b != null && b > a) return Math.max(0.5, Math.round((b - a) / 30) / 2);
+  }
+  const days = t.duration != null ? t.duration : 1;
+  return Math.min(FLEUVE_HOURS_MAX, Math.max(1, days) * FLEUVE_HOURS_PER_DAY);
+}
+// Répartition de la charge sur les jours ouvrés restants de la tâche (du
+// plus tard de son début et d'aujourd'hui, à son échéance). Une tâche en
+// retard pèse entièrement sur aujourd'hui. Renvoie { semaine: heures }.
+function fleuveSpread(today, monday, startRel, dueRel, hours) {
+  const e = Math.max(0, dueRel);
+  const s = Math.min(e, Math.max(0, startRel == null ? dueRel : startRel));
+  const days = [];
+  for (let d = s; d <= e; d++) if (fleuveIsWorkday(today, d)) days.push(d);
+  if (!days.length) for (let d = s; d <= e; d++) days.push(d);
+  const out = {};
+  days.forEach((d) => { const k = fleuveWeekOf(d, monday); out[k] = (out[k] || 0) + hours / days.length; });
+  return out;
+}
+// Semaines S à S+n : charge prévue, capacité, bouchon. La semaine en cours
+// n'offre que ses jours ouvrés restants (au moins un).
+function fleuveWeeks(today, monday, nWeeks, loads, capacity, counts) {
+  const out = [];
+  for (let k = 0; k <= nWeeks; k++) {
+    const from = monday + 7 * k;
+    let cap = capacity;
+    if (k === 0) { let n = 0; for (let d = 0; d <= from + 6; d++) if (fleuveIsWorkday(today, d)) n++; cap = capacity * Math.max(1, n) / 5; }
+    const hours = Math.round((loads[k] || 0) * 2) / 2;
+    cap = Math.round(cap * 2) / 2;
+    out.push({ k, from, to: from + 6, label: fleuveShortWeek(k), sub: fleuveDayLabel(today, from, false, false), hours, capacity: cap, count: (counts && counts[k]) || 0, over: hours > cap + 0.01, ratio: cap > 0 ? hours / cap : 0 });
+  }
+  return out;
+}
+function fleuveJamText(w) {
+  const h = (x) => String(x).replace(".", ",");
+  return h(w.hours) + " h prévues pour " + h(w.capacity) + " h disponibles";
+}
+
+// ---------- Construction du fleuve ----------
+// Entrées : sortie de carteNormalize (tâches déjà filtrées), options
+// { capacity, maxBoats }. Sortie : bateaux placés (jour, couloir), épaves,
+// radeaux de regroupement, semaines, portiques, cordes et compteurs.
+function fleuveBuild(norm, opts) {
+  const o = opts || {};
+  const today = norm.today;
+  const monday = fleuveMondayOffset(today);
+  const capacity = o.capacity > 0 ? o.capacity : FLEUVE_CAPACITY_DEFAULT;
+  const maxBoats = o.maxBoats > 0 ? o.maxBoats : FLEUVE_MAX_BOATS.high;
+  const projById = {};
+  (norm.projects || []).forEach((p) => { projById[p.id] = p; });
+  const open = (norm.tasks || []).filter((t) => t.state !== "done" && t.state !== "info");
+  // Horizon : de S+6 à S+16 selon l'échéance ouverte la plus lointaine.
+  const cap = monday + 7 * (FLEUVE_MAX_WEEKS + 1) - 1;
+  let far = 0;
+  open.forEach((t) => { if (t.end != null && t.end - today <= cap) far = Math.max(far, t.end - today); });
+  const nWeeks = Math.max(FLEUVE_MIN_WEEKS, Math.min(FLEUVE_MAX_WEEKS, Math.ceil((far - monday - 6) / 7)));
+  const lastDay = monday + 7 * (nWeeks + 1) - 1;
+  const range = { navMin: -FLEUVE_PAST_DAYS, navMax: lastDay + 0.5, worldMin: -14, worldMax: lastDay + 4 };
+
+  const boats = [], late = [], milestones = [];
+  const loads = {}, counts = {};
+  let undated = 0, outside = 0, past = 0;
+  open.forEach((t) => {
+    if (t.end == null) { undated++; return; }
+    const due = t.end - today;
+    const p = t.projectId != null ? projById[t.projectId] : null;
+    const base = {
+      id: t.id, title: t.title, projectId: t.projectId || null, projectName: p ? p.name : "Sans projet", color: p && p.color ? p.color : "#94A3B8",
+      assignee: t.assignee || null, due, start: t.start != null ? Math.min(t.start - today, due) : due, statusName: t.statusName,
+      crit: t.criticality === "urgent", criticality: t.criticality || null, focus: !!t.focus, late: !!t.overdue, lateDays: t.lateDays || 0,
+    };
+    if (t.milestone) {
+      if (due < range.navMin - 2) { past++; return; }
+      if (due > lastDay) { outside++; return; }
+      milestones.push(base); return;
+    }
+    if (due > lastDay) { outside++; return; }
+    const hours = fleuveHours(t);
+    // Les tâches en retard sont déjà signalées (échouées) : elles ne comptent
+    // pas dans la charge des semaines, sinon la semaine en cours serait
+    // presque toujours un bouchon.
+    if (!base.late) {
+      const spread = fleuveSpread(today, monday, base.start, due, hours);
+      Object.keys(spread).forEach((k) => { loads[k] = (loads[k] || 0) + spread[k]; });
+    }
+    const b = Object.assign(base, { hours, kind: fleuveKindOf(hours), week: base.late ? 0 : fleuveWeekOf(due, monday), dependsOn: (t.dependsOn || []).slice() });
+    counts[b.week] = (counts[b.week] || 0) + 1;
+    (b.late ? late : boats).push(b);
+  });
+  const weeks = fleuveWeeks(today, monday, nWeeks, loads, capacity, counts);
+  boats.forEach((b) => { const w = weeks[b.week]; b.jam = !!(w && w.over); });
+  late.forEach((b) => { b.jam = false; });
+
+  // Épaves : les plus en retard au plus près d'aujourd'hui, côtés alternés.
+  late.sort((a, b) => a.lateDays - b.lateDays || String(a.id).localeCompare(String(b.id)));
+  const wrecks = late.slice(0, FLEUVE_MAX_LATE);
+  wrecks.forEach((b, i) => { b.grounded = true; b.side = i % 2 ? -1 : 1; b.day = -1.1 - Math.floor(i / 2) * FLEUVE_LATE_STEP; b.lat = b.side; });
+  const clusters = [];
+  if (late.length > wrecks.length) {
+    clusters.push({ id: "late", late: true, week: 0, day: -1.1 - Math.ceil(FLEUVE_MAX_LATE / 2) * FLEUVE_LATE_STEP, side: -1, ids: late.slice(FLEUVE_MAX_LATE).map((b) => b.id), label: "Épaves" });
+  }
+
+  // Couloirs : dans l'ordre des échéances, chaque bateau prend un couloir
+  // libre (préférence stable, tirée de son identifiant) ; sinon il dérive un
+  // peu vers l'amont ; au-delà, ou passé le plafond, il rejoint le radeau de
+  // sa semaine. Les pontons (Aujourd'hui à droite, lundis à gauche) bloquent
+  // les couloirs de leur rive.
+  const blocks = [{ from: -0.75, to: 0.75, side: 1 }];
+  for (let k = 1; k <= nWeeks; k++) { const d = monday + 7 * k; blocks.push({ from: d - 0.65, to: d + 0.65, side: -1 }); }
+  const blocked = (lane, a, z) => blocks.some((q) => q.side * FLEUVE_LANES[lane] > 0.4 && z > q.from && a < q.to);
+  const ends = FLEUVE_LANES.map(() => -Infinity);
+  const order = boats.slice().sort((a, b) => a.due - b.due || (b.crit - a.crit) || (b.focus - a.focus) || String(a.id).localeCompare(String(b.id)));
+  const placed = [], overflow = {};
+  order.forEach((b) => {
+    const half = fleuveKindLength(b.kind) / FLEUVE_DZ / 2 + FLEUVE_GAP_DAYS;
+    const want = Math.max(0.35, b.due + 0.5);
+    let best = null;
+    if (placed.length < maxBoats) {
+      const h = carteHash(String(b.id));
+      for (let i = 0; i < FLEUVE_LANES.length; i++) {
+        const lane = (h + i) % FLEUVE_LANES.length;
+        let pos = Math.max(want, ends[lane] + half);
+        // Un ponton sur la rive : on passe derrière lui.
+        for (let guard = 0; guard < 4 && blocked(lane, pos - half, pos + half); guard++) {
+          const q = blocks.find((x) => x.side * FLEUVE_LANES[lane] > 0.4 && pos + half > x.from && pos - half < x.to);
+          pos = q.to + half;
+        }
+        if (pos - want > FLEUVE_MAX_DRIFT) continue;
+        if (!best || pos < best.pos - 1e-6) best = { lane, pos };
+        if (pos === want) break;
+      }
+    }
+    if (!best) { (overflow[b.week] = overflow[b.week] || []).push(b); return; }
+    ends[best.lane] = best.pos + half;
+    b.day = best.pos; b.lane = best.lane; b.lat = FLEUVE_LANES[best.lane]; b.grounded = false; b.side = 0;
+    placed.push(b);
+  });
+  Object.keys(overflow).forEach((k) => {
+    const w = weeks[k] || { from: monday + 7 * k };
+    clusters.push({ id: "w" + k, late: false, week: +k, day: w.from + 3.5, side: 1, ids: overflow[k].map((b) => b.id), label: fleuveShortWeek(+k) });
+  });
+
+  const shown = placed.concat(wrecks);
+  const byId = {};
+  shown.forEach((b) => { byId[b.id] = b; });
+  // Cordes : dépendances entre deux bateaux dessinés, sans doublon.
+  const links = [], seen = new Set();
+  shown.forEach((b) => (b.dependsOn || []).forEach((dep) => {
+    if (!byId[dep] || dep === b.id) return;
+    const key = [dep, b.id].sort().join("|");
+    if (seen.has(key)) return;
+    seen.add(key); links.push([dep, b.id]);
+  }));
+  // Portiques : jalons à moins de 1,2 jour d'écart réunis sous une même arche.
+  milestones.sort((a, b) => a.due - b.due || String(a.id).localeCompare(String(b.id)));
+  const portiques = [];
+  milestones.forEach((m) => {
+    const last = portiques[portiques.length - 1];
+    if (last && m.due - last.day < 1.2) { last.ids.push(m.id); last.titles.push(m.title); return; }
+    portiques.push({ id: "p:" + m.id, day: m.due, ids: [m.id], titles: [m.title], title: m.title, color: m.color, projectName: m.projectName, late: m.late });
+  });
+  portiques.forEach((p) => { if (p.ids.length > 1) p.title = p.ids.length + " jalons · " + p.titles[0]; });
+  const shownPortiques = portiques.slice(0, FLEUVE_MAX_PORTIQUES);
+
+  const jams = weeks.filter((w) => w.over);
+  const busiest = jams.length ? jams.slice().sort((a, b) => b.ratio - a.ratio || a.k - b.k)[0] : null;
+  const counters = {
+    open: boats.length + late.length, late: late.length, crit: boats.concat(late).filter((b) => b.crit).length,
+    focus: boats.concat(late).filter((b) => b.focus).length, milestones: milestones.length, jams: jams.length, busiest: busiest ? busiest.k : null,
+    shown: shown.length, grouped: clusters.reduce((n, c) => n + c.ids.length, 0),
+  };
+  return { today, monday, nWeeks, range, capacity, boats: placed, wrecks, clusters, weeks, portiques: shownPortiques, links, byId, counters, undated, outside, past };
+}
+// Frise des semaines et des jalons : positions en pourcentage de la plage
+// navigable.
+function fleuveFrise(model) {
+  const from = model.range.navMin - 0.5, to = model.range.navMax + 0.5;
+  const pct = (d) => Math.max(0, Math.min(100, ((d - from) / (to - from)) * 100));
+  const weeks = model.weeks.map((w) => ({ k: w.k, label: w.label, sub: fleuveDayLabel(model.today, w.from, false, false), left: pct(Math.max(from, w.from)), width: pct(w.to + 1) - pct(Math.max(from, w.from)), over: w.over }));
+  const milestones = model.portiques.map((p) => ({ id: p.id, left: pct(p.day + 0.5), day: p.day, title: p.title, color: p.color }));
+  return { from, to, weeks, milestones, today: pct(0), pct };
+}
+// Jour visé depuis un clic sur la frise (fraction 0..1 de sa largeur).
+function fleuveFriseDay(model, frac) {
+  const from = model.range.navMin - 0.5, to = model.range.navMax + 0.5;
+  return fleuveClampDay(from + Math.max(0, Math.min(1, frac)) * (to - from), model.range);
+}
+// === NEXORA:FLEUVE:END ===
 // === NEXORA:TIMELINE3D:START ===
 // Vue Timeline 3D (#454) : le réseau du temps, en deux rendus au choix —
 // « Grande Ligne » (réseau ferré miniature) et « Cabine » (vue à la première

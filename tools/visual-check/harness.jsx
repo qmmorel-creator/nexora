@@ -22,6 +22,8 @@ const EMPTY_DASHBOARD_WIDGETS = [
     { id: "vide-countdown-filtre", type: "customCard", title: "countdown filtre", cardBlocks: [{ id: "cdb2", kind: "daysRemaining", countdownMode: "filter" }], layout: { x: 6, y: 40, w: 3, h: 4 } },
     // #439 : Cosmos (complet) à sa taille d'exploration, sans bandeau.
     { id: "vide-cosmos-large", type: "embedCosmos", title: "Cosmos (complet)", layout: { x: 0, y: 48, w: 12, h: 14 } },
+    // #515 : Fleuve du temps (complet), vide : message « fleuve calme ».
+    { id: "vide-fleuve-large", type: "embedFleuve", title: "Fleuve du temps (complet)", layout: { x: 0, y: 76, w: 12, h: 14 } },
     // #454 : Timeline 3D (complet), même taille d'exploration.
     { id: "vide-t3d-large", type: "embedTimeline3d", title: "Timeline 3D (complet)", layout: { x: 0, y: 62, w: 12, h: 14 } },
   ]);
@@ -1304,6 +1306,78 @@ if (benchApp) {
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
     mem.set("nexora:tasks", JSON.stringify(tasks));
+  } else if (benchParams.get("fleuve") === "demo") {
+    // Vue « Fleuve du temps » (#515) : données d'EXEMPLE reprises de la
+    // maquette validée — quatre projets, 28 tâches sur six semaines, trois
+    // retards, deux critiques, trois jalons, trois dépendances, deux tâches en
+    // focus et une semaine S+2 surchargée.
+    const projects = [
+      { id: "banc-fp1", name: "Lot 2B", color: "#8b5cf6" },
+      { id: "banc-fp2", name: "Passerelle quai Nord", color: "#e07b1a" },
+      { id: "banc-fp3", name: "Jardin", color: "#22a06b" },
+      { id: "banc-fp4", name: "Communication", color: "#2e86ab" },
+    ];
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const monday = -((now.getDay() + 6) % 7);
+    // Jours de la maquette (samedi = J0, lundi = J-5) recalés sur la semaine du banc.
+    const shift = monday + 5;
+    const d = (n) => addDaysIso(iso(new Date()), n);
+    const P = { lot: "banc-fp1", pass: "banc-fp2", jardin: "banc-fp3", com: "banc-fp4" };
+    const who = (i) => seedTeamMembers[i % seedTeamMembers.length].name;
+    // [id, titre, projet, échéance (jour de la maquette), charge : "HH:MM-HH:MM" ou nombre de jours, options]
+    const raw = [
+      ["reserves", "Réserves Lot 2B", "lot", -5, 2, { late: true }],
+      ["gc", "Commande garde-corps", "pass", -3, "09:00-12:00", { late: true }],
+      ["devis", "Devis arrosage", "jardin", -2, 4, { late: true }],
+      ["reunion", "Réunion de chantier", "lot", 2, "08:30-10:30", {}],
+      ["doe", "Revue DOE", "lot", 3, "09:00-15:00", { crit: true, focus: true }],
+      ["plantations", "Plantations", "jardin", 5, 2, { focus: true }],
+      ["presse", "Point presse", "com", 6, "10:00-12:00", {}],
+      ["arrosage", "Arrosage auto", "jardin", 6, "08:00-10:00", {}],
+      ["levage", "Levage passerelle", "pass", 7, 4, { crit: true }],
+      ["news", "Lettre de chantier", "com", 9, "14:00-18:00", {}],
+      ["essais", "Essais garde-corps", "pass", 10, 2, {}],
+      ["eclairage", "Mise en service éclairage", "pass", 11, 3, {}],
+      ["cloisons", "Cloisons R+2", "lot", 11, 5, {}],
+      ["opc", "Visite OPC", "lot", 11, "10:00-12:00", {}],
+      ["levee", "Levée des réserves", "lot", 12, 3, {}],
+      ["elus", "Visite des élus", "com", 12, "09:00-15:00", {}],
+      ["paillage", "Paillage massifs", "jardin", 12, "13:00-17:00", {}],
+      ["recolement", "Plan de récolement", "lot", 17, 2, {}],
+      ["bilanpresse", "Revue de presse", "com", 18, "09:00-12:00", {}],
+      ["engazon", "Engazonnement", "jardin", 20, 4, {}],
+      ["charge", "Essais de charge", "pass", 23, 3, {}],
+      ["haies", "Taille des haies", "jardin", 24, "09:00-12:00", {}],
+      ["inaug", "Inauguration", "com", 27, "09:00-18:00", {}],
+      ["dossier", "Dossier DOE final", "lot", 31, 5, {}],
+      ["film", "Film du chantier", "com", 32, "13:00-18:00", {}],
+      ["hiver", "Hivernage arrosage", "jardin", 34, "09:00-12:00", {}],
+      ["nettoyage", "Repli de chantier", "lot", 38, 4, {}],
+      ["bilan", "Bilan de projet", "com", 41, "14:00-18:00", {}],
+    ];
+    const tasks = raw.map(([id, title, p, day, load, o], i) => {
+      const due = o.late ? day : day + shift;
+      const slot = typeof load === "string" ? load.split("-") : null;
+      return {
+        id: "banc-f-" + id, title, projectId: P[p], statusId: o.late || i % 3 === 0 ? "s3" : "s1", taskTypeId: id === "reunion" || id === "opc" ? "tt3" : "tt1",
+        start: d(slot ? due : due - load + 1), end: d(due), ...(slot ? { startTime: slot[0], endTime: slot[1] } : {}),
+        progress: o.late ? 40 : 0, assignee: who(i), checklist: [], criticality: o.crit ? "urgent" : i % 5 === 1 ? "moyen" : null,
+        ...(o.focus ? { focus: true } : {}),
+      };
+    });
+    [["Réception Lot 2B", "lot", 13], ["Mise en service passerelle", "pass", 26], ["Ouverture du jardin", "jardin", 41]].forEach(([title, p, day], i) => {
+      tasks.push({ id: "banc-f-ms" + i, title, projectId: P[p], statusId: "s1", taskTypeId: "tt1", milestone: true, start: d(day + shift), end: d(day + shift), progress: 0, assignee: who(i), checklist: [] });
+    });
+    // Une tâche terminée : elle ne navigue pas.
+    tasks.push({ id: "banc-f-done", title: "Piquetage", projectId: P.lot, statusId: "s5", taskTypeId: "tt1", start: d(-9), end: d(-6), progress: 100, assignee: who(0), checklist: [] });
+    const dep = (a, b) => { tasks.find((t) => t.id === "banc-f-" + b).dependsOn = ["banc-f-" + a]; };
+    dep("reunion", "doe"); dep("plantations", "arrosage"); dep("cloisons", "elus");
+    mem.set("nexora:projectFolders", JSON.stringify([]));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify(tasks));
+    // Le moteur du Fleuve s'expose au banc (positions des bateaux, compteurs).
+    window.__fleuveBench = {};
+    if (benchParams.get("fleuveQ")) mem.set("nexora:viewPrefs", JSON.stringify({ fleuve: { quality: benchParams.get("fleuveQ") } }));
   } else if (benchParams.get("cosmos") === "empty") {
     mem.set("nexora:projectFolders", JSON.stringify([]));
     mem.set("nexora:projects", JSON.stringify([]));
