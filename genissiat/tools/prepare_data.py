@@ -132,7 +132,18 @@ def fetch_osm(bbox_wgs, offline):
 
 
 def el_geom_l93(el):
-    """Géométrie shapely en Lambert 93 d'un élément Overpass `out geom`."""
+    """Géométrie shapely en Lambert 93 d'un élément Overpass `out geom` (None si invalide)."""
+    try:
+        g = _el_geom_l93(el)
+        if g is not None and not g.is_valid:
+            g = g.buffer(0) if g.geom_type in ("Polygon", "MultiPolygon") else g
+        return g
+    except Exception as e:  # une géométrie OSM cassée ne doit pas arrêter la préparation
+        log(f"  géométrie ignorée {el.get('type')}/{el.get('id')} : {e}")
+        return None
+
+
+def _el_geom_l93(el):
     t = el.get("type")
     if t == "node":
         x, y = TO_L93.transform(el["lon"], el["lat"])
@@ -156,8 +167,9 @@ def el_geom_l93(el):
             lines.append(ls)
         tags = el.get("tags", {})
         if tags.get("type") in ("multipolygon", "boundary") or tags.get("natural") == "water" or "building" in tags:
-            po = list(polygonize(linemerge(unary_union(outers)))) if outers else []
-            pi = list(polygonize(linemerge(unary_union(inners)))) if inners else []
+            # unary_union noue les segments ; polygonize referme les anneaux
+            po = list(polygonize(unary_union(outers))) if outers else []
+            pi = list(polygonize(unary_union(inners))) if inners else []
             if po:
                 g = unary_union(po)
                 if pi:
