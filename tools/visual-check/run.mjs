@@ -1947,9 +1947,13 @@ try {
   await cp.waitForTimeout(500);
   carte.folderPopClosed = await cp.$$eval(".lp-carte-folder-pop", (e) => e.length);
   // #410 : de près, le nom des totems proches réapparaît (au moins celui du
-  // territoire de l'arpenteur).
+  // territoire de l'arpenteur). Depuis #498, il peut être porté par un
+  // panneau de bois 3D planté près du totem, qui masque alors l'étiquette HTML.
   carte.projectLabels = await cp.$$eval(".lp-carte-label--project", (l) => l.filter((x) => x.style.visibility === "visible").length);
-  carte.canvas = await cp.$$eval(".lp-carte-gl canvas", (c) => c.length);
+  carte.projectSigns = await cp.evaluate(() => { const e = window.__carteBench && window.__carteBench.engine; const st = e && e.fxState ? e.fxState() : null; return st ? st.signs : 0; });
+  // Depuis #482, la Carte a aussi une mini-carte et une carte lointaine en
+  // canvas : seule la scène principale (canvas.lp-carte-canvas) est comptée.
+  carte.canvas = await cp.$$eval(".lp-carte-gl canvas.lp-carte-canvas", (c) => c.length);
   carte.tasksBefore = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
   // Recherche : le territoire « Passerelle quai Nord » est atteint.
   await cp.fill(".lp-carte-search input", "Passerelle");
@@ -3667,13 +3671,13 @@ if (carte.focus || !carte.error) expect(carte.focus && carte.focus.halo === 2 &&
   expect(G.middleDrag && G.middleDrag.yaw > 0.05, `Carte (#510) : la molette enfoncée glissée doit faire tourner la caméra (${JSON.stringify(G.middleDrag)})`);
 }
 if (!carte.error) {
-  expect(carte.canvas === 1, `Carte : ${carte.canvas} canevas 3D (1 attendu)`);
+  expect(carte.canvas === 1, `Carte : ${carte.canvas} scène(s) 3D principale(s) (1 attendue)`);
   expect(carte.badges >= 1 && carte.badges < 7, `Carte : ${carte.badges} pastilles dans le ruban (une par dossier attendue, moins que les 7 projets)`);
   expect(carte.folderPop && carte.folderPop.open && carte.folderPop.projects >= 1 && carte.folderPop.total === 7, `Carte : le survol d'une pastille de dossier ne déroule pas ses projets (${JSON.stringify(carte.folderPop)})`);
   expect(carte.folderPopClosed === 0, "Carte : le menu du dossier reste ouvert après le survol");
   expect(carte.groupBy && carte.groupBy.assignee.group === "assignee" && carte.groupBy.assignee.ribbon === "Responsables" && carte.groupBy.assignee.badges.length >= 2 && carte.groupBy.terr >= 1 && carte.groupBy.back.group === "folder" && carte.groupBy.back.ribbon === "Dossiers" && carte.groupBy.backTerr === carte.simplify.off, `Carte : le regroupement par responsable ne fonctionne pas (${JSON.stringify(carte.groupBy)})`);
   expect(carte.simplify && carte.simplify.on >= 1 && carte.simplify.on < carte.simplify.before && carte.simplify.off === carte.simplify.before, `Carte : la carte simplifiée ne retire pas les projets écartés (${JSON.stringify(carte.simplify)})`);
-  expect(carte.projectLabels >= 1, "Carte : aucun nom de totem près de l'arpenteur (#410)");
+  expect(carte.projectLabels >= 1 || carte.projectSigns >= 1, `Carte : aucun nom de totem près de l'arpenteur, ni étiquette ni panneau de bois (#410, #498) (${carte.projectLabels} / ${carte.projectSigns})`);
   expect(carte.projectLabelsFar <= 1, `Carte : ${carte.projectLabelsFar} noms de totems en vue d'ensemble, 1 au plus attendu (#410)`);
   expect(carte.suggestions.some((t) => /Passerelle/.test(t)), `Carte : la recherche « Passerelle » ne propose pas le projet (${JSON.stringify(carte.suggestions)})`);
   expect(carte.territory === "banc-p4", `Carte : la recherche ne mène pas au territoire « Passerelle quai Nord » (${carte.territory})`);
