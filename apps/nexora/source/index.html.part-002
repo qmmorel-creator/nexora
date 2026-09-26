@@ -7311,6 +7311,330 @@ function cosmosLabelTier(kind, px, prevTier, flagged) {
   return tier;
 }
 // === NEXORA:COSMOS:END ===
+// === NEXORA:FLEUVE:START ===
+// Vue « Fleuve du temps » (#515) : le temps coule vers le spectateur. L'aval
+// est aujourd'hui, l'amont les semaines à venir ; chaque tâche ouverte est un
+// bateau posé à son échéance. Logique pure, sans DOM ni three.js, testée par
+// tests/fleuve.test.mjs ; elle s'appuie sur la normalisation de la Carte
+// (carteNormalize) et ne modifie jamais une tâche.
+//
+// Unités : les jours sont relatifs à aujourd'hui (J0). La semaine S commence
+// le lundi de la semaine en cours ; S+1 le lundi suivant, etc.
+const FLEUVE_DZ = 3.4; // longueur de fleuve (unités du monde) par jour
+const FLEUVE_PAST_DAYS = 4; // navigation vers l'aval, en deçà d'aujourd'hui
+const FLEUVE_MIN_WEEKS = 6; // au moins S+1 à S+6 navigables
+const FLEUVE_MAX_WEEKS = 16; // au plus S+16 : au-delà, tâches comptées « plus loin »
+// Capacité hebdomadaire par défaut (hypothèse, réglable dans « Affichage ») :
+// 35 h, soit 5 jours de 7 h.
+const FLEUVE_CAPACITY_DEFAULT = 35;
+// Repli sans créneau horaire : une journée de tâche compte 3,5 h de charge
+// (une demi-journée de travail effectif), plafonnée à 40 h.
+const FLEUVE_HOURS_PER_DAY = 3.5;
+const FLEUVE_HOURS_MAX = 40;
+// Barque ≤ 4 h, voilier ≤ 12 h, péniche au-delà ; longueur de coque en unités.
+const FLEUVE_KINDS = [["barque", 4, 1.5], ["voilier", 12, 2.3], ["peniche", Infinity, 3.8]];
+const FLEUVE_KIND_LABELS = { barque: "Barque", voilier: "Voilier", peniche: "Péniche" };
+// Couloirs de navigation, en fraction de la demi-largeur navigable.
+const FLEUVE_LANES = [-0.8, -0.27, 0.27, 0.8];
+// Écart minimal entre deux coques d'un même couloir (en jours) et dérive
+// admise vers l'amont quand tous les couloirs sont pris.
+const FLEUVE_GAP_DAYS = 0.14;
+const FLEUVE_MAX_DRIFT = 0.9;
+// Plafond de bateaux dessinés (au-delà : regroupés en radeaux par semaine) et
+// des épaves échouées (au-delà : un tas d'épaves « +N »).
+const FLEUVE_MAX_BOATS = { high: 160, low: 70 };
+const FLEUVE_MAX_LATE = 12;
+const FLEUVE_LATE_STEP = 1.35; // espacement des bancs de sable, en jours
+const FLEUVE_MAX_PORTIQUES = 20;
+const FLEUVE_QUALITIES = ["auto", "high", "low"];
+const FLEUVE_JOURS = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+const FLEUVE_MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+
+function normalizeFleuveViewPrefs(p) {
+  const v = p && typeof p === "object" ? p : {};
+  const cap = Number(v.capacity);
+  return {
+    // Filtres rapides : projets et responsables (liste vide = tout), focus.
+    projects: carteIdList(v.projects),
+    assignees: carteIdList(v.assignees),
+    focusOnly: !!v.focusOnly,
+    // Capacité hebdomadaire (h) qui décide du « bouchon ».
+    capacity: Number.isFinite(cap) && cap >= 1 ? Math.min(168, Math.round(cap * 2) / 2) : FLEUVE_CAPACITY_DEFAULT,
+    quality: FLEUVE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    // Clapotis, voiles, drapeaux : coupés aussi par « réduire les animations ».
+    animate: v.animate !== false,
+    labels: v.labels !== false,
+    legend: v.legend !== false,
+    // Filtre général de Nexora, même format que les widgets.
+    filter: v.filter && typeof v.filter === "object" && !Array.isArray(v.filter) ? v.filter : null,
+  };
+}
+// Filtres rapides de la vue ; les tâches sans projet ou sans responsable se
+// choisissent avec CARTE_NONE.
+function fleuveMatches(task, cfg) {
+  if (!cfg) return true;
+  if (cfg.projects && cfg.projects.length && cfg.projects.indexOf(task.projectId || CARTE_NONE) === -1) return false;
+  if (cfg.assignees && cfg.assignees.length && cfg.assignees.indexOf(task.assignee || CARTE_NONE) === -1) return false;
+  if (cfg.focusOnly && !task.focus) return false;
+  return true;
+}
+function fleuveViewFilterCount(cfg) {
+  const c = cfg || {};
+  return (c.projects && c.projects.length ? 1 : 0) + (c.assignees && c.assignees.length ? 1 : 0) + (c.focusOnly ? 1 : 0);
+}
+// Options du filtre rapide « Projets » : projets qui portent des tâches
+// ouvertes, avec leur nombre ; une valeur retenue mais absente reste proposée.
+function fleuveQuickProjects(tasks, projects, selected) {
+  const n = {};
+  (tasks || []).forEach((t) => { if (t.state === "done" || t.state === "info") return; const k = t.projectId || CARTE_NONE; n[k] = (n[k] || 0) + 1; });
+  const sel = selected || [];
+  const out = [];
+  (projects || []).forEach((p) => { if (n[p.id] || sel.indexOf(p.id) !== -1) out.push({ id: p.id, label: p.name, color: p.color || null, count: n[p.id] || 0 }); });
+  if (n[CARTE_NONE] || sel.indexOf(CARTE_NONE) !== -1) out.push({ id: CARTE_NONE, label: "Sans projet", color: null, count: n[CARTE_NONE] || 0 });
+  return out;
+}
+
+// ---------- Calendrier ----------
+// Lundi de la semaine d'aujourd'hui, en jours relatifs (0 à -6).
+function fleuveMondayOffset(today) { return -(((today + 3) % 7) + 7) % 7; }
+function fleuveWeekOf(day, monday) { return Math.floor((Math.floor(day + 1e-6) - monday) / 7); }
+function fleuveWeekLabel(k) { return k === 0 ? "cette semaine" : "S" + (k > 0 ? "+" : "") + k; }
+function fleuveShortWeek(k) { return k === 0 ? "S" : "S" + (k > 0 ? "+" : "") + k; }
+function fleuveIsWorkday(today, d) { return ((today + d + 3) % 7 + 7) % 7 < 5; }
+function fleuveDate(today, d) { return new Date((today + Math.floor(d + 1e-6)) * CARTE_DAY); }
+// « jeu. 8 oct. 2026 », « 1er » pour le premier du mois.
+function fleuveDayLabel(today, d, withYear, withWeekday) {
+  const t = fleuveDate(today, d), n = t.getUTCDate();
+  return (withWeekday === false ? "" : FLEUVE_JOURS[t.getUTCDay()] + " ") + (n === 1 ? "1er" : n) + " " + FLEUVE_MOIS[t.getUTCMonth()] + (withYear ? " " + t.getUTCFullYear() : "");
+}
+function fleuveIso(today, d) { return fleuveDate(today, d).toISOString().slice(0, 10); }
+function fleuveDayFromIso(isoDate, today) { const n = carteDayNumber(isoDate); return n == null ? null : n - today; }
+function fleuveRelText(d) {
+  const n = Math.floor(d + 1e-6);
+  if (n === 0) return "Aujourd'hui";
+  return n > 0 ? "dans " + n + " jour" + (n > 1 ? "s" : "") : "il y a " + (-n) + " jour" + (n < -1 ? "s" : "");
+}
+// Cartouche de la date visée : « jeu. 8 oct. 2026 · S+2 ».
+function fleuveTarget(model, day) {
+  const d = Math.floor(day + 1e-6), k = fleuveWeekOf(d, model.monday);
+  return { day: d, date: fleuveDayLabel(model.today, d, true), week: fleuveWeekLabel(k), weekIndex: k, sub: fleuveRelText(d), iso: fleuveIso(model.today, d) };
+}
+function fleuveClampDay(day, range) { const r = range || {}; return Math.max(r.navMin, Math.min(r.navMax, Number(day) || 0)); }
+// Boutons « ‹ semaine › » : sept jours à partir du jour entier visé.
+function fleuveStepWeek(day, dir, range) { return fleuveClampDay(Math.round(day) + 7 * (dir < 0 ? -1 : 1), range); }
+// Molette : jours parcourus pour un cran (pixels, lignes ou pages).
+function fleuveWheelDays(deltaY, deltaMode) {
+  const dy = Number(deltaY) || 0;
+  if (deltaMode === 1) return dy * 0.5;
+  if (deltaMode === 2) return dy * 7;
+  return Math.max(-3, Math.min(3, dy * 0.012));
+}
+// Portique illuminé une fois la date visée passée au-delà du jalon.
+function fleuveMilestoneLit(day, cursor) { return cursor >= day + 0.5; }
+// Qualité effective : petits écrans et gros volumes passent en qualité basse.
+function fleuveResolveQuality(pref, width, boats) {
+  if (pref === "high" || pref === "low") return pref;
+  return (width > 0 && width < 760) || boats > 140 ? "low" : "high";
+}
+
+// ---------- Charge ----------
+function fleuveKindOf(hours) { for (let i = 0; i < FLEUVE_KINDS.length; i++) if (hours <= FLEUVE_KINDS[i][1]) return FLEUVE_KINDS[i][0]; return "peniche"; }
+function fleuveKindLength(kind) { const k = FLEUVE_KINDS.find((x) => x[0] === kind); return k ? k[2] : 2.3; }
+// Charge d'une tâche en heures : créneau horaire d'une même journée s'il
+// existe, sinon repli sur la durée en jours (3,5 h par jour, 40 h au plus).
+// Le modèle de Nexora n'a pas de champ d'estimation : rien n'est inventé.
+function fleuveHours(t) {
+  const sameDay = t.start == null || t.end == null || t.start === t.end;
+  if (t.startTime && t.endTime && sameDay) {
+    const m = (s) => { const x = /^(\d{1,2}):(\d{2})/.exec(String(s)); return x ? +x[1] * 60 + +x[2] : null; };
+    const a = m(t.startTime), b = m(t.endTime);
+    if (a != null && b != null && b > a) return Math.max(0.5, Math.round((b - a) / 30) / 2);
+  }
+  const days = t.duration != null ? t.duration : 1;
+  return Math.min(FLEUVE_HOURS_MAX, Math.max(1, days) * FLEUVE_HOURS_PER_DAY);
+}
+// Répartition de la charge sur les jours ouvrés restants de la tâche (du
+// plus tard de son début et d'aujourd'hui, à son échéance). Une tâche en
+// retard pèse entièrement sur aujourd'hui. Renvoie { semaine: heures }.
+function fleuveSpread(today, monday, startRel, dueRel, hours) {
+  const e = Math.max(0, dueRel);
+  const s = Math.min(e, Math.max(0, startRel == null ? dueRel : startRel));
+  const days = [];
+  for (let d = s; d <= e; d++) if (fleuveIsWorkday(today, d)) days.push(d);
+  if (!days.length) for (let d = s; d <= e; d++) days.push(d);
+  const out = {};
+  days.forEach((d) => { const k = fleuveWeekOf(d, monday); out[k] = (out[k] || 0) + hours / days.length; });
+  return out;
+}
+// Semaines S à S+n : charge prévue, capacité, bouchon. La semaine en cours
+// n'offre que ses jours ouvrés restants (au moins un).
+function fleuveWeeks(today, monday, nWeeks, loads, capacity, counts) {
+  const out = [];
+  for (let k = 0; k <= nWeeks; k++) {
+    const from = monday + 7 * k;
+    let cap = capacity;
+    if (k === 0) { let n = 0; for (let d = 0; d <= from + 6; d++) if (fleuveIsWorkday(today, d)) n++; cap = capacity * Math.max(1, n) / 5; }
+    const hours = Math.round((loads[k] || 0) * 2) / 2;
+    cap = Math.round(cap * 2) / 2;
+    out.push({ k, from, to: from + 6, label: fleuveShortWeek(k), sub: fleuveDayLabel(today, from, false, false), hours, capacity: cap, count: (counts && counts[k]) || 0, over: hours > cap + 0.01, ratio: cap > 0 ? hours / cap : 0 });
+  }
+  return out;
+}
+function fleuveJamText(w) {
+  const h = (x) => String(x).replace(".", ",");
+  return h(w.hours) + " h prévues pour " + h(w.capacity) + " h disponibles";
+}
+
+// ---------- Construction du fleuve ----------
+// Entrées : sortie de carteNormalize (tâches déjà filtrées), options
+// { capacity, maxBoats }. Sortie : bateaux placés (jour, couloir), épaves,
+// radeaux de regroupement, semaines, portiques, cordes et compteurs.
+function fleuveBuild(norm, opts) {
+  const o = opts || {};
+  const today = norm.today;
+  const monday = fleuveMondayOffset(today);
+  const capacity = o.capacity > 0 ? o.capacity : FLEUVE_CAPACITY_DEFAULT;
+  const maxBoats = o.maxBoats > 0 ? o.maxBoats : FLEUVE_MAX_BOATS.high;
+  const projById = {};
+  (norm.projects || []).forEach((p) => { projById[p.id] = p; });
+  const open = (norm.tasks || []).filter((t) => t.state !== "done" && t.state !== "info");
+  // Horizon : de S+6 à S+16 selon l'échéance ouverte la plus lointaine.
+  const cap = monday + 7 * (FLEUVE_MAX_WEEKS + 1) - 1;
+  let far = 0;
+  open.forEach((t) => { if (t.end != null && t.end - today <= cap) far = Math.max(far, t.end - today); });
+  const nWeeks = Math.max(FLEUVE_MIN_WEEKS, Math.min(FLEUVE_MAX_WEEKS, Math.ceil((far - monday - 6) / 7)));
+  const lastDay = monday + 7 * (nWeeks + 1) - 1;
+  const range = { navMin: -FLEUVE_PAST_DAYS, navMax: lastDay + 0.5, worldMin: -14, worldMax: lastDay + 4 };
+
+  const boats = [], late = [], milestones = [];
+  const loads = {}, counts = {};
+  let undated = 0, outside = 0, past = 0;
+  open.forEach((t) => {
+    if (t.end == null) { undated++; return; }
+    const due = t.end - today;
+    const p = t.projectId != null ? projById[t.projectId] : null;
+    const base = {
+      id: t.id, title: t.title, projectId: t.projectId || null, projectName: p ? p.name : "Sans projet", color: p && p.color ? p.color : "#94A3B8",
+      assignee: t.assignee || null, due, start: t.start != null ? Math.min(t.start - today, due) : due, statusName: t.statusName,
+      crit: t.criticality === "urgent", criticality: t.criticality || null, focus: !!t.focus, late: !!t.overdue, lateDays: t.lateDays || 0,
+    };
+    if (t.milestone) {
+      if (due < range.navMin - 2) { past++; return; }
+      if (due > lastDay) { outside++; return; }
+      milestones.push(base); return;
+    }
+    if (due > lastDay) { outside++; return; }
+    const hours = fleuveHours(t);
+    // Les tâches en retard sont déjà signalées (échouées) : elles ne comptent
+    // pas dans la charge des semaines, sinon la semaine en cours serait
+    // presque toujours un bouchon.
+    if (!base.late) {
+      const spread = fleuveSpread(today, monday, base.start, due, hours);
+      Object.keys(spread).forEach((k) => { loads[k] = (loads[k] || 0) + spread[k]; });
+    }
+    const b = Object.assign(base, { hours, kind: fleuveKindOf(hours), week: base.late ? 0 : fleuveWeekOf(due, monday), dependsOn: (t.dependsOn || []).slice() });
+    counts[b.week] = (counts[b.week] || 0) + 1;
+    (b.late ? late : boats).push(b);
+  });
+  const weeks = fleuveWeeks(today, monday, nWeeks, loads, capacity, counts);
+  boats.forEach((b) => { const w = weeks[b.week]; b.jam = !!(w && w.over); });
+  late.forEach((b) => { b.jam = false; });
+
+  // Épaves : les plus en retard au plus près d'aujourd'hui, côtés alternés.
+  late.sort((a, b) => a.lateDays - b.lateDays || String(a.id).localeCompare(String(b.id)));
+  const wrecks = late.slice(0, FLEUVE_MAX_LATE);
+  wrecks.forEach((b, i) => { b.grounded = true; b.side = i % 2 ? -1 : 1; b.day = -1.1 - Math.floor(i / 2) * FLEUVE_LATE_STEP; b.lat = b.side; });
+  const clusters = [];
+  if (late.length > wrecks.length) {
+    clusters.push({ id: "late", late: true, week: 0, day: -1.1 - Math.ceil(FLEUVE_MAX_LATE / 2) * FLEUVE_LATE_STEP, side: -1, ids: late.slice(FLEUVE_MAX_LATE).map((b) => b.id), label: "Épaves" });
+  }
+
+  // Couloirs : dans l'ordre des échéances, chaque bateau prend un couloir
+  // libre (préférence stable, tirée de son identifiant) ; sinon il dérive un
+  // peu vers l'amont ; au-delà, ou passé le plafond, il rejoint le radeau de
+  // sa semaine. Les pontons (Aujourd'hui à droite, lundis à gauche) bloquent
+  // les couloirs de leur rive.
+  const blocks = [{ from: -0.75, to: 0.75, side: 1 }];
+  for (let k = 1; k <= nWeeks; k++) { const d = monday + 7 * k; blocks.push({ from: d - 0.65, to: d + 0.65, side: -1 }); }
+  const blocked = (lane, a, z) => blocks.some((q) => q.side * FLEUVE_LANES[lane] > 0.4 && z > q.from && a < q.to);
+  const ends = FLEUVE_LANES.map(() => -Infinity);
+  const order = boats.slice().sort((a, b) => a.due - b.due || (b.crit - a.crit) || (b.focus - a.focus) || String(a.id).localeCompare(String(b.id)));
+  const placed = [], overflow = {};
+  order.forEach((b) => {
+    const half = fleuveKindLength(b.kind) / FLEUVE_DZ / 2 + FLEUVE_GAP_DAYS;
+    const want = Math.max(0.35, b.due + 0.5);
+    let best = null;
+    if (placed.length < maxBoats) {
+      const h = carteHash(String(b.id));
+      for (let i = 0; i < FLEUVE_LANES.length; i++) {
+        const lane = (h + i) % FLEUVE_LANES.length;
+        let pos = Math.max(want, ends[lane] + half);
+        // Un ponton sur la rive : on passe derrière lui.
+        for (let guard = 0; guard < 4 && blocked(lane, pos - half, pos + half); guard++) {
+          const q = blocks.find((x) => x.side * FLEUVE_LANES[lane] > 0.4 && pos + half > x.from && pos - half < x.to);
+          pos = q.to + half;
+        }
+        if (pos - want > FLEUVE_MAX_DRIFT) continue;
+        if (!best || pos < best.pos - 1e-6) best = { lane, pos };
+        if (pos === want) break;
+      }
+    }
+    if (!best) { (overflow[b.week] = overflow[b.week] || []).push(b); return; }
+    ends[best.lane] = best.pos + half;
+    b.day = best.pos; b.lane = best.lane; b.lat = FLEUVE_LANES[best.lane]; b.grounded = false; b.side = 0;
+    placed.push(b);
+  });
+  Object.keys(overflow).forEach((k) => {
+    const w = weeks[k] || { from: monday + 7 * k };
+    clusters.push({ id: "w" + k, late: false, week: +k, day: w.from + 3.5, side: 1, ids: overflow[k].map((b) => b.id), label: fleuveShortWeek(+k) });
+  });
+
+  const shown = placed.concat(wrecks);
+  const byId = {};
+  shown.forEach((b) => { byId[b.id] = b; });
+  // Cordes : dépendances entre deux bateaux dessinés, sans doublon.
+  const links = [], seen = new Set();
+  shown.forEach((b) => (b.dependsOn || []).forEach((dep) => {
+    if (!byId[dep] || dep === b.id) return;
+    const key = [dep, b.id].sort().join("|");
+    if (seen.has(key)) return;
+    seen.add(key); links.push([dep, b.id]);
+  }));
+  // Portiques : jalons à moins de 1,2 jour d'écart réunis sous une même arche.
+  milestones.sort((a, b) => a.due - b.due || String(a.id).localeCompare(String(b.id)));
+  const portiques = [];
+  milestones.forEach((m) => {
+    const last = portiques[portiques.length - 1];
+    if (last && m.due - last.day < 1.2) { last.ids.push(m.id); last.titles.push(m.title); return; }
+    portiques.push({ id: "p:" + m.id, day: m.due, ids: [m.id], titles: [m.title], title: m.title, color: m.color, projectName: m.projectName, late: m.late });
+  });
+  portiques.forEach((p) => { if (p.ids.length > 1) p.title = p.ids.length + " jalons · " + p.titles[0]; });
+  const shownPortiques = portiques.slice(0, FLEUVE_MAX_PORTIQUES);
+
+  const jams = weeks.filter((w) => w.over);
+  const busiest = jams.length ? jams.slice().sort((a, b) => b.ratio - a.ratio || a.k - b.k)[0] : null;
+  const counters = {
+    open: boats.length + late.length, late: late.length, crit: boats.concat(late).filter((b) => b.crit).length,
+    focus: boats.concat(late).filter((b) => b.focus).length, milestones: milestones.length, jams: jams.length, busiest: busiest ? busiest.k : null,
+    shown: shown.length, grouped: clusters.reduce((n, c) => n + c.ids.length, 0),
+  };
+  return { today, monday, nWeeks, range, capacity, boats: placed, wrecks, clusters, weeks, portiques: shownPortiques, links, byId, counters, undated, outside, past };
+}
+// Frise des semaines et des jalons : positions en pourcentage de la plage
+// navigable.
+function fleuveFrise(model) {
+  const from = model.range.navMin - 0.5, to = model.range.navMax + 0.5;
+  const pct = (d) => Math.max(0, Math.min(100, ((d - from) / (to - from)) * 100));
+  const weeks = model.weeks.map((w) => ({ k: w.k, label: w.label, sub: fleuveDayLabel(model.today, w.from, false, false), left: pct(Math.max(from, w.from)), width: pct(w.to + 1) - pct(Math.max(from, w.from)), over: w.over }));
+  const milestones = model.portiques.map((p) => ({ id: p.id, left: pct(p.day + 0.5), day: p.day, title: p.title, color: p.color }));
+  return { from, to, weeks, milestones, today: pct(0), pct };
+}
+// Jour visé depuis un clic sur la frise (fraction 0..1 de sa largeur).
+function fleuveFriseDay(model, frac) {
+  const from = model.range.navMin - 0.5, to = model.range.navMax + 0.5;
+  return fleuveClampDay(from + Math.max(0, Math.min(1, frac)) * (to - from), model.range);
+}
+// === NEXORA:FLEUVE:END ===
 // === NEXORA:TIMELINE3D:START ===
 // Vue Timeline 3D (#454) : le réseau du temps, en deux rendus au choix —
 // « Grande Ligne » (réseau ferré miniature) et « Cabine » (vue à la première
@@ -7542,6 +7866,307 @@ function timeline3dNextStop(model, day, lineId, visible) {
   return best;
 }
 // === NEXORA:TIMELINE3D:END ===
+// === NEXORA:REUNIONS3D:START ===
+// Vue « Réunions 3D » (#514) : la Chambre des réunions, un amphithéâtre en
+// gradins où chaque réunion de la période est un pupitre. Logique pure, sans
+// DOM ni three.js, testée par tests/reunions3d.test.mjs. Lecture seule : rien
+// ici n'écrit une tâche.
+//
+// Une réunion est une tâche dont le TYPE s'appelle « Réunion » ou « Réunions »
+// (même définition que isMeetingTask et que `meetingsOnly` côté MCP), jamais
+// devinée sur le titre. Le compte rendu formel suit `reportEvidence`
+// (apps/nexora-mcp/src/nexora.mts) : champ dédié, champ personnalisé « compte
+// rendu », ou description ouverte par un titre « Compte rendu ».
+const REU3D_PERIODS = ["week", "month"];
+const REU3D_QUICKS = ["all", "notes", "noreport", "upcoming"];
+const REU3D_QUICK_LABELS = { all: "Toutes", notes: "Avec notes", noreport: "Sans compte rendu", upcoming: "À venir" };
+const REU3D_QUALITIES = ["auto", "high", "low"];
+// Au-delà de 5 fils, la cinquième tablette affiche « +N ».
+const REU3D_MAX_FILS = 5;
+// Longueur maximale d'une ligne d'extrait sur l'hologramme.
+const REU3D_LINE_MAX = 90;
+const REU3D_MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+const REU3D_MOIS_LONG = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+const REU3D_JOURS = ["Dim.", "Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam."];
+const REU3D_DAY = 864e5;
+const REU3D_NO_PROJECT = "__reu3d-sans-projet__";
+
+function reunions3dNorm(s) { return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim(); }
+const reunions3dIsIso = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+// Préférences (viewPrefs.reunions3d) : période, ancre (null = période
+// courante), filtre rapide, projet, qualité et animations.
+function normalizeReunions3dViewPrefs(p) {
+  const v = p && typeof p === "object" ? p : {};
+  return {
+    period: REU3D_PERIODS.indexOf(v.period) !== -1 ? v.period : "week",
+    anchor: reunions3dIsIso(v.anchor) ? v.anchor : null,
+    quick: REU3D_QUICKS.indexOf(v.quick) !== -1 ? v.quick : "all",
+    projectId: typeof v.projectId === "string" && v.projectId ? v.projectId : null,
+    quality: REU3D_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
+    animate: v.animate !== false,
+  };
+}
+
+// ---------- Dates (UTC, jour calendaire) ----------
+function reunions3dDate(isoDate) { const [y, m, d] = isoDate.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); }
+function reunions3dIso(dt) { return dt.toISOString().slice(0, 10); }
+function reunions3dAddDays(isoDate, n) { return reunions3dIso(new Date(reunions3dDate(isoDate).getTime() + n * REU3D_DAY)); }
+function reunions3dIsoWeek(isoDate) {
+  const dt = reunions3dDate(isoDate), wd = (dt.getUTCDay() + 6) % 7;
+  const th = new Date(dt.getTime() + (3 - wd) * REU3D_DAY), y = th.getUTCFullYear();
+  const jan1 = Date.UTC(y, 0, 1);
+  return { y, w: 1 + Math.floor((th.getTime() - jan1) / REU3D_DAY / 7) };
+}
+function reunions3dMonday(isoDate) { const wd = (reunions3dDate(isoDate).getUTCDay() + 6) % 7; return reunions3dAddDays(isoDate, -wd); }
+function reunions3dFmtDate(isoDate) { const dt = reunions3dDate(isoDate), j = dt.getUTCDate(); return (j === 1 ? "1er" : j) + " " + REU3D_MOIS[dt.getUTCMonth()]; }
+function reunions3dFmtDay(isoDate) { return REU3D_JOURS[reunions3dDate(isoDate).getUTCDay()] + " " + reunions3dFmtDate(isoDate); }
+function reunions3dFmtTime(t) { return t ? String(t).replace(":", "h") : ""; }
+
+// Période affichée : bornes incluses, libellé du sélecteur et clé stable.
+// `anchor` est un jour quelconque de la période ; absent, aujourd'hui.
+function reunions3dPeriod(kind, anchor, today) {
+  const a = reunions3dIsIso(anchor) ? anchor : today;
+  if (kind === "month") {
+    const [y, m] = a.split("-").map(Number);
+    const from = a.slice(0, 7) + "-01";
+    const to = reunions3dIso(new Date(Date.UTC(y, m, 0)));
+    return { kind: "month", from, to, key: a.slice(0, 7), label: REU3D_MOIS_LONG[m - 1] + " " + y, short: REU3D_MOIS_LONG[m - 1], current: today >= from && today <= to };
+  }
+  const from = reunions3dMonday(a), to = reunions3dAddDays(from, 6);
+  const { y, w } = reunions3dIsoWeek(from);
+  const df = reunions3dDate(from), dt = reunions3dDate(to);
+  const txt = df.getUTCMonth() === dt.getUTCMonth()
+    ? df.getUTCDate() + "–" + dt.getUTCDate() + " " + REU3D_MOIS[dt.getUTCMonth()]
+    : reunions3dFmtDate(from) + " – " + reunions3dFmtDate(to);
+  return { kind: "week", from, to, key: y + "-W" + String(w).padStart(2, "0"), label: "S" + w + " · " + txt, short: "S" + w, current: today >= from && today <= to };
+}
+// Ancre de la période voisine (dir = -1 ou +1) : lundi ou premier du mois.
+function reunions3dShift(kind, anchor, dir, today) {
+  const p = reunions3dPeriod(kind, anchor, today);
+  if (kind === "month") {
+    const [y, m] = p.from.split("-").map(Number);
+    return reunions3dIso(new Date(Date.UTC(y, m - 1 + dir, 1)));
+  }
+  return reunions3dAddDays(p.from, 7 * dir);
+}
+
+// ---------- Contenu d'une réunion ----------
+// Compte rendu formel : même preuve que `reportEvidence` côté MCP. Rend le
+// texte trouvé ("" sans compte rendu).
+function reunions3dReportText(task, defs) {
+  const t = task || {};
+  for (const key of ["meetingMinutes", "minutes", "meetingReport", "report", "compteRendu"]) {
+    if (typeof t[key] === "string" && t[key].trim()) return t[key];
+  }
+  for (const d of defs || []) {
+    const v = d && t.customFields ? t.customFields[d.id] : null;
+    if (v && /compte.?rendu|minutes|rapport.*reunion/i.test(reunions3dNorm(d.name))) return String(v);
+  }
+  const desc = typeof t.desc === "string" ? t.desc : "";
+  if (/(?:^|\n)\s*(?:#{1,6}\s*)?(?:compte[ -]rendu|cr de reunion|minutes)(?:\s|:|$)/i.test(reunions3dNorm(desc))) return desc;
+  return "";
+}
+// Nettoyage d'un texte Markdown en lignes lisibles sur un hologramme :
+// call-outs et citations retirés, liens réduits à leur texte, adresses web et
+// chemins réseau ou disque retirés, puces et emphases effacées, lignes
+// tronquées à `max` caractères.
+function reunions3dCleanLines(text, max) {
+  const lim = max || REU3D_LINE_MAX;
+  const out = [];
+  String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach((raw) => {
+    let l = raw.trim();
+    if (!l || /^>/.test(l)) return; // call-outs « > [!NOTE] » et citations
+    if (/^(```|---+|\*\*\*+|___+|\|)/.test(l)) return; // code, séparateurs, tableaux
+    // Titres génériques (« Compte rendu », « Ordre du jour ») : sans contenu.
+    if (/^#{0,6}\s*(compte[ -]rendu|cr de reunion|minutes|ordre du jour|notes?|notes de reunion)\s*:?\s*$/i.test(reunions3dNorm(l))) return;
+    l = l.replace(/!\[[^\]]*\]\([^)]*\)/g, "") // images
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // liens : leur texte seul
+      .replace(/<[^>]+>/g, "")
+      .replace(/\b(?:https?|ftp|file):\/\/\S+/gi, "")
+      .replace(/\bwww\.\S+/gi, "")
+      .replace(/\\\\[^\s\\]+(?:\\[^\s\\]*)*/g, "") // \\serveur\partage\...
+      .replace(/\b[A-Za-z]:\\\S*/g, "") // C:\dossier\...
+      .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "")
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^(?:[-*+]|\d+[.)])\s+/, "")
+      .replace(/^\[[xX]\]\s*/, "☑ ").replace(/^\[ \]\s*/, "☐ ")
+      .replace(/(\*\*|__|~~|`)/g, "").replace(/(^|\s)[*_](\S[^*_]*\S|\S)[*_](?=\s|$|[.,;:!?])/g, "$1$2")
+      .replace(/\s+/g, " ").trim();
+    if (l.length < 3 || !/[a-zà-ÿ0-9]{2,}/i.test(l)) return;
+    if (l.length > lim) l = l.slice(0, lim - 1).replace(/\s+\S*$/, "").trimEnd() + "…";
+    out.push(l);
+  });
+  return out;
+}
+// Points notés : les éléments de liste du compte rendu (à défaut, des
+// notes), plus les points de la checklist de la réunion. Une puce vide ou
+// réduite à un lien ne compte pas.
+function reunions3dPoints(text, checklist) {
+  let n = 0;
+  String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach((raw) => {
+    const m = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(raw);
+    if (!m) return;
+    const rest = m[1].replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\b(?:https?|ftp|file):\/\/\S+/gi, "").replace(/\\\\\S+|\b[A-Za-z]:\\\S*/g, "");
+    if (/[\p{L}\p{N}]/u.test(rest)) n++;
+  });
+  (Array.isArray(checklist) ? checklist : []).forEach((c) => { if (c && String(c.text || "").trim()) n++; });
+  return n;
+}
+// Tablettes reliées au pupitre : au plus 5 ; la cinquième porte « +N » quand
+// il y a plus de 5 points.
+function reunions3dTablets(points) {
+  const n = Math.max(0, Math.floor(Number(points) || 0));
+  const k = Math.min(REU3D_MAX_FILS, n);
+  const out = [];
+  for (let i = 0; i < k; i++) out.push(i === REU3D_MAX_FILS - 1 && n > REU3D_MAX_FILS ? { n: i + 1, more: n - (REU3D_MAX_FILS - 1) } : { n: i + 1, more: 0 });
+  return out;
+}
+
+// ---------- Collecte ----------
+// État d'une réunion, lu sur son statut (jamais déduit de la date) :
+// « done » (terminée), « ongoing » (en cours) ou « open » (à venir, à tenir).
+function reunions3dStateOf(task, status) {
+  const n = reunions3dNorm(status && status.name);
+  if (Number(task.progress) >= 100 || task.completedAt || /^(termine|terminee|completed|done|livre|ok|fait|faite|clos|close|cloture|cloturee)$/.test(n) || /termin/.test(n)) return "done";
+  if (/en\s*cours/.test(n)) return "ongoing";
+  return "open";
+}
+// Entrée : ctx Nexora ({projects, statuses, taskTypes, customFieldDefs}) et
+// tâches. Sortie : les réunions datées, triées par date, heure puis titre.
+function reunions3dCollect(ctx, tasks) {
+  const c = ctx || {};
+  const meetingTypes = new Set((c.taskTypes || []).filter((t) => t && ["reunion", "reunions"].indexOf(reunions3dNorm(t.name)) !== -1).map((t) => t.id));
+  const statusById = {}; (c.statuses || []).forEach((s) => { statusById[s.id] = s; });
+  const projById = {}; (c.projects || []).forEach((p) => { projById[p.id] = p; });
+  const out = [];
+  (tasks || []).forEach((t, i) => {
+    if (!t || !meetingTypes.has(t.taskTypeId)) return;
+    const date = reunions3dIsIso(t.start) ? t.start : reunions3dIsIso(t.end) ? t.end : typeof t.start === "string" && reunions3dIsIso(t.start.slice(0, 10)) ? t.start.slice(0, 10) : null;
+    if (!date) return;
+    const st = statusById[t.statusId];
+    const state = reunions3dStateOf(t, st);
+    const reportText = reunions3dReportText(t, c.customFieldDefs);
+    const desc = typeof t.desc === "string" ? t.desc : "";
+    const source = reportText || desc;
+    const lines = reunions3dCleanLines(source);
+    const hasNotes = !!reportText.trim() || !!desc.trim();
+    const p = projById[t.projectId];
+    const points = reunions3dPoints(source, t.checklist);
+    out.push({
+      id: t.id, title: String(t.title || "Sans titre"), date,
+      time: typeof t.startTime === "string" && /^\d{2}:\d{2}$/.test(t.startTime) ? t.startTime : null,
+      endTime: typeof t.endTime === "string" && /^\d{2}:\d{2}$/.test(t.endTime) ? t.endTime : null,
+      projectId: p ? p.id : REU3D_NO_PROJECT, projectName: p ? p.name || "Sans nom" : "Sans projet", color: p && p.color ? p.color : "#94A3B8",
+      statusName: st ? st.name : "Sans statut", state,
+      report: !!reportText.trim(), hasNotes, lines, points,
+      // Pupitre éteint : réunion terminée sans aucune note.
+      dark: state === "done" && !hasNotes,
+      order: i,
+    });
+  });
+  out.sort((a, b) => a.date.localeCompare(b.date) || String(a.time || "").localeCompare(String(b.time || "")) || a.title.localeCompare(b.title, "fr") || a.order - b.order);
+  return out;
+}
+function reunions3dInPeriod(list, period) {
+  return (list || []).filter((m) => m.date >= period.from && m.date <= period.to);
+}
+// Filtres rapides : toutes, avec notes, sans compte rendu (terminées sans
+// notes : les pupitres éteints), à venir ou en cours ; plus un projet.
+function reunions3dQuickFilter(list, quick, projectId) {
+  return (list || []).filter((m) => {
+    if (projectId && m.projectId !== projectId) return false;
+    if (quick === "notes") return m.hasNotes;
+    if (quick === "noreport") return m.dark;
+    if (quick === "upcoming") return m.state !== "done";
+    return true;
+  });
+}
+function reunions3dSummary(list) {
+  const l = list || [];
+  return {
+    total: l.length,
+    notes: l.filter((m) => m.hasNotes).length,
+    report: l.filter((m) => m.report).length,
+    open: l.filter((m) => m.state !== "done").length,
+    planned: l.filter((m) => m.state === "open").length,
+    dark: l.filter((m) => m.dark).length,
+    points: l.reduce((s, m) => s + (m.points || 0), 0),
+  };
+}
+// Légende des projets, du plus représenté au moins représenté.
+function reunions3dProjects(list) {
+  const by = {};
+  (list || []).forEach((m) => { const p = by[m.projectId] || (by[m.projectId] = { id: m.projectId, name: m.projectName, color: m.color, count: 0 }); p.count++; });
+  return Object.values(by).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "fr"));
+}
+
+// ---------- Gradins ----------
+// Emplacements d'autant plus larges (et textes d'autant plus lisibles) que
+// la rangée la plus chargée compte peu de réunions.
+function reunions3dDims(maxPerRow) {
+  if (maxPerRow <= 3) return { bay: 4.2, cw: 3.95, dy: 4.1 };
+  if (maxPerRow <= 5) return { bay: 3.4, cw: 3.15, dy: 3.7 };
+  return { bay: 2.8, cw: 2.55, dy: 3.2 };
+}
+// Découpage en gradins : un gradin par jour, ou des jours consécutifs (parmi
+// ceux qui ont des réunions) regroupés quand cela rend l'ensemble plus
+// lisible. On garde le découpage qui donne la plus grande échelle à l'écran,
+// avec au moins 3 gradins dès qu'il y a 3 jours ; un gradin par jour reste
+// préféré s'il est presque aussi lisible (85 %). Rangée 0 = la plus récente,
+// en bas près de la scène ; la plus ancienne est tout en haut.
+function reunions3dTiers(list, opts) {
+  const o = opts || {};
+  const vw = o.width || 1480, vh = o.height || 820;
+  const days = [];
+  (list || []).forEach((m) => { const d = days[days.length - 1]; if (d && d.date === m.date) d.items.push(m); else days.push({ date: m.date, items: [m] }); });
+  if (!days.length) return { rows: [], dims: reunions3dDims(1), maxPerRow: 0 };
+  const load = (row) => row.reduce((a, d) => a + d.items.length, 0);
+  const score = (rows) => {
+    const mx = Math.max.apply(null, rows.map(load)); const d = reunions3dDims(mx);
+    return Math.min(vw / (mx * d.bay + 3), vh / (rows.length * d.dy + 2.6));
+  };
+  const pack = (cap) => { const rows = []; let cur = [], n = 0; days.forEach((d) => { if (cur.length && n + d.items.length > cap) { rows.push(cur); cur = []; n = 0; } cur.push(d); n += d.items.length; }); if (cur.length) rows.push(cur); return rows; };
+  const minRows = Math.min(3, days.length);
+  const perDay = days.map((d) => [d]);
+  const perDayScore = score(perDay);
+  let best = perDay, bestScore = perDayScore;
+  const total = (list || []).length;
+  for (let cap = 1; cap <= total; cap++) {
+    const r = pack(cap);
+    if (r.length < minRows) continue;
+    const sc = score(r);
+    if (sc > bestScore + 1e-6) { best = r; bestScore = sc; }
+  }
+  if (perDayScore >= 0.85 * bestScore) best = perDay;
+  const rows = best.map((ds, i) => {
+    const items = ds.reduce((a, d) => a.concat(d.items), []);
+    const a = ds[0].date, b = ds[ds.length - 1].date;
+    const title = ds.length === 1 ? reunions3dFmtDay(a)
+      : a.slice(5, 7) === b.slice(5, 7) ? reunions3dDate(a).getUTCDate() + "–" + reunions3dFmtDate(b) : reunions3dFmtDate(a) + " – " + reunions3dFmtDate(b);
+    return { row: best.length - 1 - i, from: a, to: b, days: ds.map((d) => d.date), items, title, sub: items.length + (items.length > 1 ? " réunions" : " réunion") };
+  });
+  const maxPerRow = Math.max.apply(null, rows.map((r) => r.items.length));
+  return { rows, dims: reunions3dDims(maxPerRow), maxPerRow };
+}
+// Libellé d'état d'un pupitre (plaque, infobulle, liste de repli).
+function reunions3dStateText(m) {
+  if (m.state === "ongoing") return m.hasNotes ? "En cours · notes consignées" : "En cours";
+  if (m.state === "open") return m.hasNotes ? "À venir · ordre du jour" : "À venir";
+  if (m.dark) return "Terminée · aucun compte rendu";
+  return m.report ? "Compte rendu rédigé" : "Notes consignées";
+}
+// Modèle complet de la vue pour une période : réunions retenues, gradins,
+// synthèse (sur toute la période, avant filtre rapide) et légende.
+function reunions3dModel(all, prefs, today, opts) {
+  const cfg = normalizeReunions3dViewPrefs(prefs);
+  const period = reunions3dPeriod(cfg.period, cfg.anchor, today);
+  const inPeriod = reunions3dInPeriod(all, period);
+  const shown = reunions3dQuickFilter(inPeriod, cfg.quick, cfg.projectId);
+  const tiers = reunions3dTiers(shown, opts);
+  return { period, inPeriod, shown, tiers, summary: reunions3dSummary(inPeriod), shownSummary: reunions3dSummary(shown), projects: reunions3dProjects(inPeriod), today };
+}
+// === NEXORA:REUNIONS3D:END ===
 
 
 /* --- Annotations horizontales (bandes temporelles calées sur une tâche) ----

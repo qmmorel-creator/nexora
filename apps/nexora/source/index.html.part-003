@@ -2135,8 +2135,12 @@ function defaultLayoutForType(type) {
   if (type === "embedCarte") return { w: 12, h: 12 };
   // Cosmos (complet) (#439) : la même place que la Carte pour explorer.
   if (type === "embedCosmos") return { w: 12, h: 12 };
+  // Fleuve du temps (complet) (#515) : même place que la Carte.
+  if (type === "embedFleuve") return { w: 12, h: 12 };
   // Timeline 3D (complet) (#454) : même place que la Carte et le Cosmos.
   if (type === "embedTimeline3d") return { w: 12, h: 12 };
+  // Réunions 3D (#514) : même place que les autres vues 3D.
+  if (type === "embedReunions3d") return { w: 12, h: 12 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
@@ -3881,8 +3885,14 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "embedCosmos" && (
                   <WidgetEmbedCosmos widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} favorites={favorites} />
                 )}
+                {w.type === "embedFleuve" && (
+                  <WidgetEmbedFleuve widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} />
+                )}
                 {w.type === "embedTimeline3d" && (
                   <WidgetEmbedTimeline3d widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} onUpdateTask={onUpdateTaskFromCosmos} onToggleDone={onToggleDoneFromCosmos} />
+                )}
+                {w.type === "embedReunions3d" && (
+                  <WidgetEmbedReunions3d widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onUpdateWidget={(patch)=>updateWidget(w.id,patch)} />
                 )}
                 {w.type === "teamCatalog" && (
                   <WidgetTeamCatalog ctx={ctx} setTeams={setTeams} setTeamMembers={setTeamMembers} setTeamFolders={setTeamFolders} setTasks={setTasks} pushToast={pushToast} />
@@ -15721,7 +15731,9 @@ const WIDGET_TYPE_META = [
   { key: "embedRadar", label: "Radar (complet)", icon: Crosshair, group: "Planning" },
   { key: "embedCarte", label: "Carte (complet)", icon: MapIcon, group: "Planning" },
   { key: "embedCosmos", label: "Cosmos (complet)", icon: Orbit, group: "Planning" },
+  { key: "embedFleuve", label: "Fleuve du temps (complet)", icon: FleuveIcon, group: "Planning" },
   { key: "embedTimeline3d", label: "Timeline 3D (complet)", icon: TrainFront, group: "Planning" },
+  { key: "embedReunions3d", label: "Réunions 3D", icon: Presentation, group: "Planning" },
   // Finance PRO (#267, lot #275) : widgets dans le moteur de dashboard
   // existant — aucun second système de tableau de bord créé.
   { key: "financeProSynthese", label: "Finance PRO — Synthèse", icon: Wallet, group: "Suivi" },
@@ -16185,7 +16197,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return { ...f, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
   });
 
-  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "embedCarte" || type === "embedCosmos" || type === "embedTimeline3d" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
+  const usesTaskFilter = type === "customCard" || type === "chart" || type === "list" || type === "minigantt" || type === "bubbles" || type === "criticalPath" || type === "heatmapMonth" || type === "nextBestAction" || type === "dailyBriefing" || type === "dominoEffect" || type === "embedMetro" || type === "embedRadar" || type === "embedCarte" || type === "embedCosmos" || type === "embedFleuve" || type === "embedTimeline3d" || type === "embedReunions3d" || type === "taskDetail" || type === "projectTreemap" || type === "heatmapGrid" || type === "calendar" || type === "focusDay";
 
   // Tâches proposées dans le sélecteur du widget "Tâche détaillée" : le filtre
   // de page (onglet) s'applique en priorité, puis le filtre propre au widget
@@ -25793,6 +25805,1635 @@ function createCosmosEngine(THREE, container, opts) {
   };
 }
 // === NEXORA:COSMOS-ENGINE:END ===
+// === NEXORA:FLEUVE-ENGINE:START ===
+// Moteur 3D de la vue « Fleuve du temps » (#515), porté de la maquette validée
+// docs/vues-3d-innovantes/fleuve/index.html. La logique (placement, charge,
+// jalons, navigation) vit dans NEXORA:FLEUVE ; ce moteur ne fait que dessiner
+// et animer. Le décor (terrain, eau, pontons, végétation instanciée) ne se
+// reconstruit que si l'horizon ou la qualité change ; les bateaux, portiques,
+// cordes et halos se reconstruisent à chaque changement de données.
+// three.js 0.158 seul (sans modules « addons ») : boîtes simples, fusion de
+// géométries et post-traitement (flou de bascule, étalonnage, lueur) maison.
+function createFleuveEngine(THREE, container, opts) {
+  const o = opts || {};
+  const RM = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const PI = Math.PI;
+  const DZ = FLEUVE_DZ, ZT = 4.5, XS = 17, WX = 11;
+  const zOf = (d) => ZT - d * DZ;
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const canvas = renderer.domElement;
+  canvas.className = "lp-fleuve-canvas";
+  canvas.tabIndex = -1;
+  container.appendChild(canvas);
+  const tagsEl = document.createElement("div");
+  tagsEl.className = "lp-fleuve-tags";
+  container.appendChild(tagsEl);
+  const tipEl = document.createElement("div");
+  tipEl.className = "lp-fleuve-tip";
+  tipEl.setAttribute("role", "tooltip");
+  container.appendChild(tipEl);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.5, 520);
+
+  const S = {
+    model: null, qualityPref: o.quality || "auto", quality: "high", animate: o.animate !== false, labels: o.labels !== false,
+    worldKey: "", disposed: false, raf: 0, W: 1, H: 1, last: performance.now(), t0: performance.now(),
+    cur: 0, goal: 0, lastCur: null, lastCamKey: "", emitDay: null, selectedId: null, hoverId: null,
+    boats: [], boatById: {}, ports: [], tags: [], anim: { bob: [], whirls: null, focus: null }, flags: [], halos: [],
+  };
+  const cam = { zoom: 1, yaw: 0, pitch: 0, pan: 0 };
+  const goalCam = { zoom: 1, yaw: 0, pitch: 0, pan: 0 };
+  const moving = () => S.animate && !RM;
+
+  // ---------- Outils ----------
+  function rnd(s) { let h = 2166136261; const str = String(s); for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; }
+  const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  function hash(i, j) { let h = Math.imul(i, 374761393) + Math.imul(j, 668265263); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
+  function vnoise(x, z) { const i = Math.floor(x), j = Math.floor(z), fx = x - i, fz = z - j, u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz); const a = hash(i, j), b = hash(i + 1, j), c = hash(i, j + 1), d = hash(i + 1, j + 1); return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; }
+  const fbm = (x, z) => vnoise(x, z) * 0.6 + vnoise(x * 2.1 + 5.3, z * 2.1 - 1.7) * 0.3 + vnoise(x * 4.3 - 2, z * 4.3 + 7) * 0.1;
+  const C = (c) => new THREE.Color(c);
+  const mix = (a, b, t) => C(a).lerp(C(b), t);
+  const V1 = new THREE.Vector3(), V2 = new THREE.Vector3(), M4 = new THREE.Matrix4(), M5 = new THREE.Matrix4(), QQ = new THREE.Quaternion(), EE = new THREE.Euler();
+  const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  // ---------- Le fleuve ----------
+  const cx = (z) => 2.2 * Math.sin(z * 0.075 + 0.6) + 0.8 * Math.sin(z * 0.023 + 1.1);
+  const RW = (z) => 4.5 + 0.35 * Math.sin(z * 0.13 + 1);
+  function ground(x, z) {
+    const d = Math.abs(x - cx(z)), w = RW(z), n = fbm(x * 0.35, z * 0.35);
+    const beach = 0.3 + n * 1.0, bedEdge = w - 1.3;
+    let y = -1.1 + 0.3 * Math.min(1, d / bedEdge) ** 2;
+    y += smooth(bedEdge, w + beach * 0.5, d) * 0.98;
+    const c0 = w + beach * 0.5 + 0.05, cliffH = 0.5 + 0.4 * fbm(x * 0.2 + 9, z * 0.2);
+    y += smooth(c0, c0 + 0.42, d) * cliffH;
+    y += smooth(c0, c0 + 2.5, d) * (fbm(x * 0.18, z * 0.18) - 0.5) * 0.4;
+    const t1 = w + 9 + fbm(x * 0.1 + 3, z * 0.1) * 6;
+    y += smooth(t1, t1 + 0.55, d) * 1.0;
+    const t2 = t1 + 6 + fbm(x * 0.1 - 4, z * 0.1 + 2) * 5;
+    y += smooth(t2, t2 + 0.55, d) * 1.1;
+    return y;
+  }
+  const bankX = (z, side, off) => cx(z) + side * (RW(z) + (off || 0));
+  const downDir = (z, s) => { const k = s || 1; return new THREE.Vector3(cx(z + k) - cx(z - k), 0, 2 * k).normalize(); };
+  const slopeAt = (x, z) => { const e = 0.25; return Math.hypot(ground(x + e, z) - ground(x - e, z), ground(x, z + e) - ground(x, z - e)) / (2 * e); };
+
+  // ---------- Ressources ----------
+  const textures = new Set();
+  const matCache = new Map();
+  const track = (t) => { textures.add(t); return t; };
+  const srgb = (t) => { t.colorSpace = THREE.SRGBColorSpace; return track(t); };
+  function mkCanvas(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return [c, c.getContext("2d")]; }
+  function mat(color, op) {
+    const x = op || {};
+    const k = C(color).getHexString() + JSON.stringify(x);
+    if (matCache.has(k)) return matCache.get(k);
+    const m = new THREE.MeshStandardMaterial({ color, vertexColors: !!x.vc, roughness: x.rough != null ? x.rough : 0.85, metalness: 0, emissive: x.glow ? color : "#000000", emissiveIntensity: x.glow ? (x.gi != null ? x.gi : 2) : 0, flatShading: !!x.flat, envMapIntensity: x.env != null ? x.env : 0.6, side: x.ds ? THREE.DoubleSide : THREE.FrontSide, transparent: !!x.opacity, opacity: x.opacity != null ? x.opacity : 1 });
+    matCache.set(k, m); return m;
+  }
+  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0);
+  const cyl = (rt, rb, h, seg) => new THREE.CylinderGeometry(rt, rb, h, seg || 12).translate(0, h / 2, 0);
+  const ball = (r, d) => new THREE.IcosahedronGeometry(r, d == null ? 2 : d);
+  function prism(w, h, d) {
+    const s = new THREE.Shape(); s.moveTo(-w / 2, 0); s.lineTo(w / 2, 0); s.lineTo(0, h); s.closePath();
+    const g = new THREE.ExtrudeGeometry(s, { depth: d, bevelEnabled: true, bevelSize: 0.03, bevelThickness: 0.03, bevelSegments: 1 });
+    g.translate(0, 0, -d / 2); g.computeVertexNormals(); return g;
+  }
+  function leafGeo(r, dark) {
+    const g = new THREE.IcosahedronGeometry(r, 2), p = g.attributes.position, col = new Float32Array(p.count * 3), dk = dark == null ? 0.6 : dark;
+    for (let i = 0; i < p.count; i++) { const u = (p.getY(i) / r + 1) / 2, k = dk + (1.12 - dk) * u; col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = k; }
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3)); return g;
+  }
+  // Fusion maison : pièces colorées réunies en un seul maillage à couleurs de
+  // sommets (pontons, portiques, caisses) — un appel de dessin au lieu de cent.
+  function Batch() {
+    const pos = [], nor = [], col = [];
+    const nm = new THREE.Matrix3(), c = new THREE.Color(), v = new THREE.Vector3();
+    return {
+      add(geo, color, x, y, z, o2, parent) {
+        const r = o2 || {};
+        const g = geo.index ? geo.toNonIndexed() : geo;
+        M4.compose(V1.set(x, y, z), QQ.setFromEuler(EE.set(r.rx || 0, r.ry || 0, r.rz || 0)), V2.set(...(r.s || [1, 1, 1])));
+        if (parent) M4.premultiply(parent);
+        nm.getNormalMatrix(M4);
+        c.set(color);
+        const p = g.attributes.position, n = g.attributes.normal;
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i).applyMatrix4(M4); pos.push(v.x, v.y, v.z);
+          v.fromBufferAttribute(n, i).applyMatrix3(nm).normalize(); nor.push(v.x, v.y, v.z);
+          col.push(c.r, c.g, c.b);
+        }
+        if (g !== geo) g.dispose();
+        geo.dispose();
+      },
+      mesh(m, cast) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+        g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+        const mesh = new THREE.Mesh(g, m || mat("#ffffff", { vc: true, rough: 0.85 }));
+        mesh.castShadow = cast !== false && S.quality === "high"; mesh.receiveShadow = true;
+        return mesh;
+      },
+      get empty() { return !pos.length; },
+    };
+  }
+  function add(geo, material, x, y, z, parent, op) {
+    const r = op || {};
+    const m = new THREE.Mesh(geo, material);
+    m.position.set(x, y, z);
+    if (r.ry) m.rotation.y = r.ry; if (r.rx) m.rotation.x = r.rx; if (r.rz) m.rotation.z = r.rz;
+    if (r.s) m.scale.set(...r.s);
+    m.castShadow = r.cast !== false && S.quality === "high"; m.receiveShadow = true;
+    parent.add(m); return m;
+  }
+
+  // ---------- Ciel, lumière, brume ----------
+  const FOG = "#eedbba";
+  {
+    const [c, g] = mkCanvas(4, 256), gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, "#b9d5df"); gr.addColorStop(0.45, "#e6e0c8"); gr.addColorStop(0.7, FOG); gr.addColorStop(1, FOG);
+    g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+    scene.background = srgb(new THREE.CanvasTexture(c));
+  }
+  let envRT = null;
+  try {
+    const [c, g] = mkCanvas(128, 128), gr = g.createLinearGradient(0, 0, 0, 128);
+    gr.addColorStop(0, "#8fc0df"); gr.addColorStop(0.5, "#d9e6e2"); gr.addColorStop(0.75, "#f3dfbd"); gr.addColorStop(1, "#efd6aa");
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    const envScene = new THREE.Scene(), tex = srgb(new THREE.CanvasTexture(c));
+    const sph = new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide }));
+    envScene.add(sph);
+    const pm = new THREE.PMREMGenerator(renderer);
+    envRT = pm.fromScene(envScene, 0.04);
+    scene.environment = envRT.texture;
+    pm.dispose(); sph.geometry.dispose(); sph.material.dispose();
+  } catch (e) { /* environnement facultatif */ }
+  scene.fog = new THREE.Fog(FOG, 36, 115);
+  scene.add(new THREE.HemisphereLight("#b4d3e6", "#7d6245", 0.6));
+  const sun = new THREE.DirectionalLight("#ffcf92", 3.7);
+  const SUN = new THREE.Vector3(-0.66, 0.6, 0.3).normalize();
+  scene.add(sun.target); scene.add(sun);
+  Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 10, far: 150 });
+  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+  function aimSun(p) { sun.target.position.copy(p); sun.position.copy(p).addScaledVector(SUN, 70); sun.target.updateMatrixWorld(); }
+
+  // Textures partagées (cache par canevas, libérées au démontage).
+  const ringTex = (() => {
+    const [c, g] = mkCanvas(256, 256);
+    for (let i = 0; i < 700; i++) {
+      const a = rnd("ra" + i) * 6.283, rr = 0.8 + (rnd("rr" + i) - 0.5) * 0.28;
+      g.fillStyle = "rgba(255,255,255," + (0.25 + rnd("ro" + i) * 0.55) + ")"; g.beginPath(); g.ellipse(128 + Math.cos(a) * rr * 118, 128 + Math.sin(a) * rr * 118, 2 + rnd("rs" + i) * 5, 1.5 + rnd("rt" + i) * 2.5, a, 0, 7); g.fill();
+    }
+    const rg = g.createRadialGradient(128, 128, 60, 128, 128, 128); rg.addColorStop(0, "rgba(255,255,255,0)"); rg.addColorStop(0.75, "rgba(255,255,255,.35)"); rg.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = rg; g.fillRect(0, 0, 256, 256);
+    return track(new THREE.CanvasTexture(c));
+  })();
+  const whirlTex = (() => {
+    const [c, g] = mkCanvas(384, 384), h = 192;
+    const rg = g.createRadialGradient(h, h, 0, h, h, h); rg.addColorStop(0, "rgba(8,70,95,.55)"); rg.addColorStop(0.35, "rgba(20,110,130,.25)"); rg.addColorStop(1, "rgba(20,110,130,0)");
+    g.fillStyle = rg; g.fillRect(0, 0, 384, 384);
+    g.translate(h, h); g.lineCap = "round";
+    for (let k = 0; k < 5; k++) for (let s = 0; s < 110; s++) {
+      const a0 = (k / 5) * 6.283 + s * 0.057, r = 30 + s * 1.4 + Math.sin(s * 0.3 + k) * 3;
+      g.strokeStyle = "rgba(255,255,255," + ((0.9 - s / 135) * (0.5 + 0.5 * rnd("w" + k + s))) + ")";
+      g.lineWidth = 2.4 + (1 - s / 110) * 5 * rnd("wl" + k + s);
+      g.beginPath(); g.arc(0, 0, r, a0, a0 + 0.1); g.stroke();
+    }
+    for (let i = 0; i < 200; i++) { const a = rnd("wf" + i) * 6.283, r = 45 + rnd("wr" + i) * 140; g.fillStyle = "rgba(255,255,255," + (0.3 + rnd("wo" + i) * 0.5) + ")"; g.beginPath(); g.arc(Math.cos(a) * r, Math.sin(a) * r, 1.2 + rnd("ws" + i) * 2.8, 0, 7); g.fill(); }
+    return srgb(new THREE.CanvasTexture(c));
+  })();
+  const radialTex = (stops, size) => {
+    const n = size || 128, [c, g] = mkCanvas(n, n), rg = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    stops.forEach(([k, v]) => rg.addColorStop(k, v)); g.fillStyle = rg; g.fillRect(0, 0, n, n);
+    return srgb(new THREE.CanvasTexture(c));
+  };
+  const haloTex = radialTex([[0, "rgba(255,170,60,.35)"], [0.6, "rgba(255,160,50,.7)"], [0.82, "rgba(255,160,50,.3)"], [1, "rgba(255,160,50,0)"]], 256);
+  const focusTex = radialTex([[0, "rgba(90,235,215,.0)"], [0.45, "rgba(60,220,200,.55)"], [0.62, "rgba(40,200,190,.9)"], [0.78, "rgba(40,190,185,.25)"], [1, "rgba(40,190,185,0)"]], 128);
+  const glowTex = radialTex([[0, "rgba(255,230,160,1)"], [0.35, "rgba(255,200,110,.45)"], [1, "rgba(255,190,90,0)"]], 64);
+  const selTex = radialTex([[0, "rgba(255,215,110,0)"], [0.6, "rgba(255,215,110,0)"], [0.7, "rgba(255,215,110,.95)"], [0.82, "rgba(255,200,90,.5)"], [1, "rgba(255,200,90,0)"]], 128);
+  const beamTex = (() => {
+    const [c, g] = mkCanvas(8, 128), gr = g.createLinearGradient(0, 0, 0, 128);
+    gr.addColorStop(0, "rgba(120,255,235,0)"); gr.addColorStop(0.55, "rgba(90,235,215,.32)"); gr.addColorStop(1, "rgba(60,220,200,.75)");
+    g.fillStyle = gr; g.fillRect(0, 0, 8, 128);
+    return srgb(new THREE.CanvasTexture(c));
+  })();
+  const flowTex = (() => {
+    const [c, g] = mkCanvas(256, 1024);
+    for (let i = 0; i < 260; i++) {
+      const x = rnd("sx" + i) * 256, y = rnd("sy" + i) * 1024, l = 20 + rnd("sl" + i) * 70;
+      g.strokeStyle = "rgba(255,255,255," + (0.12 + rnd("so" + i) * 0.3) + ")"; g.lineWidth = 1 + rnd("sw" + i) * 1.6; g.lineCap = "round";
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + (rnd("sc" + i) - 0.5) * 8, y + l / 2, x + (rnd("sd" + i) - 0.5) * 6, y + l); g.stroke();
+    }
+    const t = track(new THREE.CanvasTexture(c)); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+  })();
+  const FONT = '"Trebuchet MS", "Segoe UI", sans-serif';
+  function signTexture(big, small, w, h) {
+    const [c, g] = mkCanvas(w, h);
+    g.fillStyle = "#6d4424"; g.beginPath(); g.roundRect(0, 0, w, h, 22); g.fill();
+    g.fillStyle = "#8a5a33"; g.beginPath(); g.roundRect(8, 8, w - 16, h - 16, 18); g.fill();
+    g.fillStyle = "#fff4d8"; g.beginPath(); g.roundRect(20, 20, w - 40, h - 40, 12); g.fill();
+    g.fillStyle = "#4e2f19"; g.textAlign = "center"; g.textBaseline = "middle";
+    let fs = Math.round(h * 0.46); g.font = "bold " + fs + "px " + FONT;
+    while (g.measureText(big).width > w - 70 && fs > 10) { fs -= 3; g.font = "bold " + fs + "px " + FONT; }
+    g.fillText(big, w / 2, h * 0.43);
+    g.font = "bold " + Math.round(h * 0.16) + "px " + FONT; g.fillStyle = "#8a5a33"; g.fillText(small, w / 2, h * 0.78);
+    const t = srgb(new THREE.CanvasTexture(c)); t.anisotropy = 4; return t;
+  }
+  const bannerCache = new Map();
+  function bannerTexture(color) {
+    if (bannerCache.has(color)) return bannerCache.get(color);
+    const [c, g] = mkCanvas(96, 240);
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(96, 0); g.lineTo(96, 225); g.lineTo(48, 188); g.lineTo(0, 225); g.closePath();
+    g.fillStyle = color; g.fill(); g.lineWidth = 8; g.strokeStyle = "#e7b24c"; g.stroke();
+    g.save(); g.translate(48, 90); g.rotate(PI / 4); g.fillStyle = "#fff4d8"; g.fillRect(-17, -17, 34, 34); g.fillStyle = color; g.fillRect(-8, -8, 16, 16); g.restore();
+    g.fillStyle = "rgba(0,0,0,.12)"; for (let x = 12; x < 96; x += 20) g.fillRect(x, 0, 3, 188);
+    const t = srgb(new THREE.CanvasTexture(c)); bannerCache.set(color, t); return t;
+  }
+
+  // ---------- Décor : terrain, eau, pontons, végétation ----------
+  const worldG = new THREE.Group(); scene.add(worldG);
+  const dataG = new THREE.Group(); scene.add(dataG);
+  const veg = []; // maillages instanciés éclaircis autour des objets de données
+  const STRATA = ["#8e5d3b", "#a8744a", "#c49a68", "#7c5035", "#b3875b", "#94643f"];
+  function groundColor(x, y, z, ny, out) {
+    const d = Math.abs(x - cx(z)), w = RW(z), n = fbm(x * 0.6, z * 0.6);
+    if (y < -0.1) out.copy(mix("#c7ad78", "#8f7d58", clamp((-y - 0.1) / 0.8, 0, 1)));
+    else if (ny < 0.7 && y > 0.12) {
+      const band = Math.floor(y * 5.2 + fbm(x * 0.25, z * 0.25) * 1.4 + 20);
+      out.set(STRATA[band % STRATA.length]).multiplyScalar(0.78 + 0.22 * clamp(y / 1.2, 0, 1));
+    } else if (y < 0.3 && d < w + 1.5) {
+      out.copy(mix("#ecd8a6", "#dcc38e", n)); if (y < 0.03) out.lerp(C("#c9b07c"), 0.5);
+    } else {
+      const m = fbm(x * 0.09 + 11, z * 0.09);
+      out.copy(mix("#7fa846", "#a9c75c", n)).lerp(C("#c9bd68"), smooth(0.55, 0.8, m) * 0.6);
+      if (ny < 0.85) out.multiplyScalar(0.9);
+    }
+  }
+  function clearGroup(g) {
+    g.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material && x.material.userData && x.material.userData.own) { if (x.material.map && !x.material.userData.sharedMap) x.material.map.dispose(); x.material.dispose(); } });
+    while (g.children.length) g.remove(g.children[0]);
+  }
+  const ownMat = (m, sharedMap) => { m.userData.own = true; if (sharedMap) m.userData.sharedMap = true; return m; };
+
+  function buildWorld(model) {
+    clearGroup(worldG); veg.length = 0; S.signs = [];
+    const hi = S.quality === "high";
+    const R = model.range, ZF = zOf(R.worldMin), ZB = zOf(R.worldMax + 2), LEN = ZF - ZB;
+    const avoid = [];
+    const inAvoid = (x, z) => avoid.some(([ax, az, r]) => Math.hypot(x - ax, z - az) < r);
+    // Terrain.
+    {
+      const SX = hi ? 150 : 80, SZ = Math.round(LEN / (hi ? 0.3 : 0.55));
+      const g = new THREE.PlaneGeometry(2 * XS, LEN, SX, SZ).rotateX(-PI / 2).translate(0, 0, (ZF + ZB) / 2);
+      const p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setY(i, ground(p.getX(i), p.getZ(i)));
+      g.computeVertexNormals();
+      const nm = g.attributes.normal, col = new Float32Array(p.count * 3), c = new THREE.Color();
+      for (let i = 0; i < p.count; i++) { groundColor(p.getX(i), p.getY(i), p.getZ(i), nm.getY(i), c); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+      g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+      add(g, mat("#ffffff", { vc: true, rough: 0.95, env: 0.4 }), 0, 0, 0, worldG, { cast: hi });
+      // Coupes du diorama : strates de terre sur les bords.
+      const BOT = -3.4, LV = [0, 0.07, 0.14];
+      for (let y = 0.3; y < 5; y += 0.17) LV.push(y);
+      const skirt = (pts) => {
+        const pos = [], cols = [], idx = [], cc = new THREE.Color();
+        pts.forEach(([x, z], i) => {
+          const top = ground(x, z);
+          LV.forEach((l, j) => {
+            const y = Math.max(BOT, top - l);
+            pos.push(x, y, z);
+            if (l < 0.1 && top > 0.05) cc.copy(mix("#6f9e3e", "#5d8a35", l / 0.1));
+            else { const band = Math.floor((y + 4) * 3.6 + fbm(x * 0.3 + z * 0.3, y) * 0.9); cc.set(STRATA[band % STRATA.length]).multiplyScalar(0.55 + 0.45 * clamp((y - BOT) / 4.4, 0, 1)); }
+            cols.push(cc.r, cc.g, cc.b);
+            if (i && j) { const a = (i - 1) * LV.length + j - 1, b = i * LV.length + j - 1; idx.push(a, b, a + 1, b, b + 1, a + 1); }
+          });
+        });
+        const sg = new THREE.BufferGeometry();
+        sg.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); sg.setAttribute("color", new THREE.Float32BufferAttribute(cols, 3)); sg.setIndex(idx); sg.computeVertexNormals();
+        add(sg, mat("#ffffff", { vc: true, rough: 1, ds: true, env: 0.3 }), 0, 0, 0, worldG, { cast: false });
+      };
+      const front = [], left = [], right = [];
+      for (let x = -XS; x <= XS + 1e-6; x += 0.25) front.push([x, ZF]);
+      for (let z = ZF; z >= ZB; z -= hi ? 0.5 : 1) { left.push([-XS, z]); right.push([XS, z]); }
+      skirt(front); skirt(left); skirt(right);
+      // Coupe de l'eau à l'avant.
+      const pos = [], cols = [], idx = [], a = C("#1d6f88"), b = C("#44bcc4");
+      let n = 0;
+      for (let x = -12; x <= 12; x += 0.1) {
+        const gy = ground(x, ZF); if (gy >= 0) continue;
+        pos.push(x, gy, ZF + 0.02, x, 0, ZF + 0.02); cols.push(a.r, a.g, a.b, b.r, b.g, b.b);
+        if (n) idx.push((n - 1) * 2, n * 2, (n - 1) * 2 + 1, n * 2, n * 2 + 1, (n - 1) * 2 + 1);
+        n++;
+      }
+      const wg = new THREE.BufferGeometry();
+      wg.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); wg.setAttribute("color", new THREE.Float32BufferAttribute(cols, 3)); wg.setIndex(idx); wg.computeVertexNormals();
+      add(wg, ownMat(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.25, transparent: true, opacity: 0.86, side: THREE.DoubleSide, envMapIntensity: 0.8 })), 0, 0, 0, worldG, { cast: false });
+    }
+    // Eau : profondeur, écume des berges, reflets (texture canevas en valeurs linéaires).
+    {
+      const TW = hi ? 384 : 192, TH = Math.min(4096, Math.round(LEN / (hi ? 0.1 : 0.2))), sx = (2 * WX) / TW, sz = LEN / TH;
+      const [c, g] = mkCanvas(TW, TH), img = g.createImageData(TW, TH), a = img.data;
+      const shallow = C("#93d8c4"), mid = C("#34a6ae"), deep = C("#125f7c"), white = C("#ffffff"), tmp = new THREE.Color();
+      for (let j = 0; j < TH; j++) {
+        const z = ZB + (j + 0.5) * sz;
+        for (let i = 0; i < TW; i++) {
+          const x = -WX + (i + 0.5) * sx, oo = (j * TW + i) * 4;
+          if (Math.abs(x - cx(z)) > RW(z) + 2.2) { a[oo] = 200; a[oo + 1] = 190; a[oo + 2] = 150; a[oo + 3] = 255; continue; }
+          const h = ground(x, z), dep = Math.max(0, -h);
+          if (h > 0.3) { a[oo] = 200; a[oo + 1] = 190; a[oo + 2] = 150; a[oo + 3] = 255; continue; }
+          tmp.copy(shallow).lerp(mid, smooth(0, 0.45, dep)).lerp(deep, smooth(0.4, 1.1, dep) * 0.9);
+          tmp.multiplyScalar(0.93 + fbm(x * 0.8 + z * 0.1, z * 0.35) * 0.12);
+          let f = 0;
+          if (dep < 0.09) f = (1 - dep / 0.09) * (0.55 + 0.45 * smooth(0.35, 0.6, fbm(x * 3, z * 3)));
+          const f2 = Math.exp(-(((dep - 0.2) / 0.035) ** 2)) * smooth(0.52, 0.72, fbm(x * 2.2 + 4, z * 1.4)) * 0.6;
+          tmp.lerp(white, clamp(Math.max(f, f2), 0, 0.95));
+          a[oo] = tmp.r * 255; a[oo + 1] = tmp.g * 255; a[oo + 2] = tmp.b * 255; a[oo + 3] = 255;
+        }
+      }
+      g.putImageData(img, 0, 0);
+      const tex = track(new THREE.CanvasTexture(c)); tex.colorSpace = THREE.NoColorSpace; tex.anisotropy = hi ? 8 : 2;
+      add(new THREE.PlaneGeometry(2 * WX, LEN).rotateX(-PI / 2), ownMat(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.34, metalness: 0, envMapIntensity: 0.55 })), 0, 0, (ZF + ZB) / 2, worldG, { cast: false });
+      // Courant : traînées d'écume qui glissent vers l'aval.
+      const fg = new THREE.PlaneGeometry(1, LEN, 1, Math.round(LEN / 0.5)).rotateX(-PI / 2).translate(0, 0, (ZF + ZB) / 2);
+      const fp = fg.attributes.position;
+      for (let i = 0; i < fp.count; i++) { const z = fp.getZ(i); fp.setX(i, cx(z) + fp.getX(i) * 2 * (RW(z) - 1.2)); }
+      flowTex.repeat.set(2, LEN / 11);
+      add(fg, ownMat(new THREE.MeshBasicMaterial({ map: flowTex, transparent: true, opacity: 0.2, depthWrite: false }), true), 0, 0.02, 0, worldG, { cast: false });
+    }
+    // Pontons : « Aujourd'hui » sur la rive droite, un par lundi sur la rive gauche.
+    const lanterns = [];
+    const planks = Batch(), posts = Batch();
+    const pontoons = [{ label: "Aujourd'hui", sub: fleuveDayLabel(model.today, 0, false), day: 0, side: 1, big: true }];
+    for (let k = 1; k <= model.nWeeks; k++) { const d = model.monday + 7 * k; pontoons.push({ label: "S+" + k, sub: fleuveDayLabel(model.today, d, false), day: d, side: -1 }); }
+    pontoons.forEach((pt, i) => {
+      const z = zOf(pt.day), side = pt.side, w = RW(z), c0 = cx(z);
+      const x0 = c0 + side * (w + 1.6), x1 = c0 + side * (w - 2.0), deckY = 0.98, len = Math.abs(x1 - x0), xm = (x0 + x1) / 2;
+      for (let k = 0; k < Math.round(len / 0.24); k++) planks.add(box(0.22, 0.07, 1.3), k % 3 ? "#b58a5a" : "#a67c4f", x0 - side * (0.12 + k * 0.24), deckY, z, { ry: (rnd("pk" + i + k) - 0.5) * 0.03 });
+      [x0 - side * 0.3, xm, x1 + side * 0.15].forEach((x) => [-0.6, 0.6].forEach((dz) => posts.add(cyl(0.07, 0.08, deckY + 1.3, 8), "#6d4a2e", x, -1.3, z + dz)));
+      const bw = pt.big ? 3.4 : 2.4, bh = pt.big ? 1.25 : 1.0;
+      const sg = new THREE.Group(); sg.position.set(x1 + side * 0.4, deckY, z); sg.rotation.y = -side * 0.35; worldG.add(sg); sg.updateMatrixWorld(true);
+      S.signs.push({ m: sg.matrixWorld, x0: -bw / 2, x1: bw / 2, y0: 0.55, y1: 0.55 + bh, z: 0.04 });
+      [-bw / 2 + 0.2, bw / 2 - 0.2].forEach((x) => posts.add(cyl(0.05, 0.06, 0.55 + bh, 8), "#5b3b22", x, 0, 0, null, sg.matrixWorld));
+      posts.add(box(bw + 0.1, bh + 0.1, 0.1), "#5b3b22", 0, 0.5, -0.02, null, sg.matrixWorld);
+      const tex = signTexture(pt.label, pt.sub, pt.big ? 560 : 440, pt.big ? 208 : 184);
+      add(new THREE.PlaneGeometry(bw, bh), ownMat(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, envMapIntensity: 0.4 })), 0, 0.55 + bh / 2, 0.04, sg, { cast: false });
+      [-0.55, 0.55].forEach((dz) => {
+        const lx = x0 - side * 0.3;
+        posts.add(cyl(0.03, 0.03, 0.9, 6), "#4e3524", lx, deckY, z + dz);
+        posts.add(box(0.2, 0.05, 0.2), "#3a2a1c", lx, deckY + 0.9, z + dz);
+        posts.add(new THREE.ConeGeometry(0.14, 0.12, 4).rotateY(PI / 4).translate(0, 0.06, 0), "#3a2a1c", lx, deckY + 1.15, z + dz);
+        lanterns.push([lx, deckY + 0.95, z + dz]);
+      });
+      avoid.push([xm, z, len / 2 + 1.4]);
+    });
+    worldG.add(planks.mesh(null, true)); worldG.add(posts.mesh(null, true));
+    if (lanterns.length) {
+      const lm = new THREE.InstancedMesh(box(0.15, 0.2, 0.15), mat("#ffcf70", { glow: true, gi: 2.6 }), lanterns.length);
+      lanterns.forEach((p, i) => { M4.makeTranslation(p[0], p[1], p[2]); lm.setMatrixAt(i, M4); });
+      worldG.add(lm);
+    }
+    // Bornes de pierre sur la rive droite, chaque lundi.
+    const stones = Batch();
+    for (let k = 1; k <= model.nWeeks; k++) {
+      const z = zOf(model.monday + 7 * k) + 0.4, x = bankX(z, 1, 1.7), y = ground(x, z);
+      stones.add(box(0.42, 0.62, 0.3), "#cfc6b4", x, y - 0.05, z, { ry: -0.3 });
+      stones.add(box(0.44, 0.1, 0.32), "#8a5a33", x, y + 0.35, z, { ry: -0.3 });
+      avoid.push([x, z, 0.8]);
+    }
+    // Maisons, de loin en loin, rive alternée.
+    for (let i = 0, z = zOf(1); z > ZB + 10; i++, z -= 34 + rnd("cz" + i) * 10) {
+      const side = i % 2 ? 1 : -1, s = i ? 0.9 : 1, x = bankX(z, side, 3.6 + rnd("cx" + i) * 0.6), y = ground(x, z) - 0.05, ry = side < 0 ? 0.5 : -0.6;
+      const P = new THREE.Matrix4().compose(V1.set(x, y, z), QQ.setFromEuler(EE.set(0, ry, 0)), V2.setScalar(s));
+      stones.add(box(1.5, 0.95, 1.1), "#f3ead8", 0, 0, 0, null, P);
+      stones.add(box(1.6, 0.14, 1.2), "#b9a98f", 0, -0.08, 0, null, P);
+      stones.add(prism(1.3, 0.75, 1.75).rotateY(PI / 2), "#c65a3a", 0, 0.95, 0, null, P);
+      stones.add(box(0.28, 0.5, 0.28), "#b9a98f", 0.45, 1.2, 0.2, null, P);
+      stones.add(box(0.3, 0.55, 0.03), "#6b4a2e", 0.76, 0, 0.1, { ry: PI / 2 }, P);
+      [-0.4, 0.4].forEach((wx) => stones.add(box(0.3, 0.04, 0.07), "#6b4a2e", wx, 0.39, 0.58, null, P));
+      avoid.push([x, z, 1.8 * s]);
+    }
+    worldG.add(stones.mesh(mat("#ffffff", { vc: true, rough: 0.9 })));
+    // Végétation instanciée ; densité selon la qualité.
+    const dens = hi ? 1 : 0.35, per = LEN / 224;
+    const scatter = (n, seed, test) => {
+      const out = [], want = Math.round(n * per * dens);
+      for (let i = 0; out.length < want && i < want * 14; i++) {
+        const x = (rnd(seed + "x" + i) - 0.5) * 2 * (XS - 0.8), z = ZB + 2 + rnd(seed + "z" + i) * (LEN - 2.6);
+        const r = test(x, z, i); if (r) out.push(r);
+      }
+      return out;
+    };
+    const LEAF = ["#4f8f3a", "#5ea447", "#6fb24f", "#3f7d33", "#86b84a"];
+    const inst = (geo, m, list, fill, dyn, cast) => {
+      if (!list.length) { geo.dispose(); return null; }
+      const im = new THREE.InstancedMesh(geo, m, list.length);
+      list.forEach((s, i) => fill(s, i, im));
+      im.castShadow = !!cast && hi; im.receiveShadow = true; worldG.add(im);
+      if (dyn) { const ms = []; for (let i = 0; i < list.length; i++) { const mm = new THREE.Matrix4(); im.getMatrixAt(i, mm); ms.push(mm); } veg.push({ im, pts: list, ms }); }
+      return im;
+    };
+    const spots = scatter(820, "tr", (x, z, i) => {
+      const d = Math.abs(x - cx(z)), w = RW(z), y = ground(x, z);
+      if (d < w + 2.4 || y < 0.6 || slopeAt(x, z) > 0.35 || inAvoid(x, z)) return null;
+      if (fbm(x * 0.13 + 7, z * 0.13 - 3) < 0.5 && rnd("tq" + i) > 0.12) return null;
+      return { x, y, z, s: 0.8 + rnd("ts" + i) * 0.6, pine: rnd("tp" + i) < 0.28, c: rnd("tc" + i) };
+    });
+    const round = spots.filter((t) => !t.pine), pines = spots.filter((t) => t.pine);
+    inst(cyl(0.07, 0.1, 0.55, 6), mat("#7a5234"), spots, (t, i, im) => { M4.compose(V1.set(t.x, t.y - 0.05, t.z), QQ.identity(), V2.setScalar(t.s)); im.setMatrixAt(i, M4); }, false, true);
+    const leaves = []; round.forEach((t) => { for (let k = 0; k < 3; k++) leaves.push({ t, k }); });
+    inst(leafGeo(0.38), mat("#ffffff", { vc: true, rough: 0.9 }), leaves, ({ t, k }, i, im) => {
+      const a = k * 2.1 + t.c * 6, rr = 0.17 * t.s, r = (0.85 + ((k + t.c * 3) % 1.2) * 0.25) * t.s;
+      M4.compose(V1.set(t.x + Math.cos(a) * rr, t.y + (0.62 + (k === 2 ? 0.22 : 0)) * t.s, t.z + Math.sin(a) * rr), QQ.identity(), V2.setScalar(r));
+      im.setMatrixAt(i, M4); im.setColorAt(i, C(LEAF[Math.floor(t.c * 5 + k) % 5]));
+    }, false, true);
+    const cones = []; pines.forEach((t) => { for (let k = 0; k < 3; k++) cones.push({ t, k }); });
+    inst(new THREE.ConeGeometry(0.42, 0.62, 8).translate(0, 0.31, 0), mat("#ffffff", { rough: 0.9 }), cones, ({ t, k }, i, im) => {
+      M4.compose(V1.set(t.x, t.y + (0.35 + k * 0.32) * t.s, t.z), QQ.identity(), V2.setScalar((1 - k * 0.24) * t.s));
+      im.setMatrixAt(i, M4); im.setColorAt(i, mix(LEAF[3], LEAF[0], k * 0.3 + t.c * 0.2));
+    }, false, true);
+    const rocks = scatter(520, "rk", (x, z, i) => {
+      const d = Math.abs(x - cx(z)), w = RW(z), y = ground(x, z);
+      if (inAvoid(x, z)) return null;
+      const near = d > w - 0.3 && d < w + 1.2 && y > -0.1;
+      if (!near && (y < 0.5 || rnd("rq" + i) > 0.15)) return null;
+      return { x, y, z, s: (near ? 0.12 : 0.18) + rnd("rs" + i) * 0.25, a: rnd("ra" + i) };
+    });
+    inst(ball(1, 1), mat("#ffffff", { flat: true, rough: 0.9 }), rocks, (s, i, im) => { M4.compose(V1.set(s.x, s.y + s.s * 0.2, s.z), QQ.setFromEuler(EE.set(s.a, s.a * 5, 0)), V2.set(s.s * 1.3, s.s * 0.75, s.s)); im.setMatrixAt(i, M4); im.setColorAt(i, mix("#a39c8f", "#c5bcab", s.a)); }, true, true);
+    const reeds = scatter(1100, "rs", (x, z) => { const y = ground(x, z); if (y < -0.12 || y > 0.2 || inAvoid(x, z) || fbm(x * 0.5, z * 0.5) < 0.45) return null; return { x, y, z }; });
+    const stalks = [], heads = [];
+    reeds.forEach((s, i) => {
+      for (let k = 0; k < 5; k++) {
+        const a = rnd("ra" + i + k) * 6.28, r = rnd("rr" + i + k) * 0.18, h = 0.35 + rnd("rh" + i + k) * 0.45;
+        const q = new THREE.Quaternion().setFromEuler(EE.set((rnd("rx" + i + k) - 0.5) * 0.3, 0, (rnd("rz" + i + k) - 0.5) * 0.3));
+        const bx = s.x + Math.cos(a) * r, by = Math.max(s.y, -0.05), bz = s.z + Math.sin(a) * r;
+        stalks.push({ x: bx, y: by, z: bz, q, h });
+        if (k < 2) { const tip = new THREE.Vector3(0, h, 0).applyQuaternion(q); heads.push({ x: bx + tip.x, y: by + tip.y - 0.06, z: bz + tip.z, q }); }
+      }
+    });
+    inst(cyl(0.012, 0.018, 1, 4), mat("#6f9a3a"), stalks, (s, i, im) => { M4.compose(V1.set(s.x, s.y, s.z), s.q, V2.set(1, s.h, 1)); im.setMatrixAt(i, M4); }, true, true);
+    inst(new THREE.CapsuleGeometry(0.03, 0.1, 2, 5), mat("#7a4d2e"), heads, (s, i, im) => { M4.compose(V1.set(s.x, s.y, s.z), s.q, V2.set(1, 1, 1)); im.setMatrixAt(i, M4); }, true, true);
+    const tufts = scatter(5500, "gt", (x, z, i) => { const y = ground(x, z); if (y < 0.45 || slopeAt(x, z) > 0.4 || inAvoid(x, z)) return null; return { x, y, z, a: rnd("ga" + i) }; });
+    inst(new THREE.ConeGeometry(0.05, 0.24, 4).translate(0, 0.12, 0), mat("#ffffff", { rough: 0.95 }), tufts, (s, i, im) => { M4.compose(V1.set(s.x, s.y - 0.02, s.z), QQ.setFromEuler(EE.set(0, s.a * 6, 0)), V2.set(1, 0.8 + s.a * 0.8, 1)); im.setMatrixAt(i, M4); im.setColorAt(i, mix("#6f9e3a", "#9cc454", s.a)); }, true, false);
+    const FL = ["#ffffff", "#ffd23f", "#ff9eb8", "#c7a6ff", "#ffffff"];
+    const flowers = scatter(2800, "fl", (x, z, i) => { const y = ground(x, z); if (y < 0.5 || slopeAt(x, z) > 0.4 || inAvoid(x, z) || fbm(x * 0.3 + 2, z * 0.3) < 0.55) return null; return { x, y, z, c: FL[Math.floor(rnd("fc" + i) * 5)] }; });
+    inst(ball(0.05, 0), mat("#ffffff", { rough: 0.7 }), flowers, (s, i, im) => { M4.makeTranslation(s.x, s.y + 0.06, s.z); im.setMatrixAt(i, M4); im.setColorAt(i, C(s.c)); }, true, false);
+    const bushes = scatter(540, "bu", (x, z, i) => { const d = Math.abs(x - cx(z)), w = RW(z), y = ground(x, z); if (d < w + 2.0 || d > w + 3.9 || y < 0.6 || inAvoid(x, z)) return null; return { x, y, z, s: 0.22 + rnd("bs" + i) * 0.2, c: rnd("bc" + i) }; });
+    inst(leafGeo(1, 0.55), mat("#ffffff", { vc: true, rough: 0.9 }), bushes, (s, i, im) => { M4.compose(V1.set(s.x, s.y + s.s * 0.5, s.z), QQ.identity(), V2.set(s.s * 1.2, s.s, s.s * 1.2)); im.setMatrixAt(i, M4); im.setColorAt(i, C(LEAF[Math.floor(s.c * 5)])); }, true, true);
+  }
+  // Végétation écartée des objets de données (bancs de sable, portiques, radeaux).
+  function clearVegetation(zones) {
+    veg.forEach(({ im, pts, ms }) => {
+      pts.forEach((p, i) => {
+        const hit = zones.some(([x, z, r]) => Math.hypot((p.x != null ? p.x : p.t.x) - x, (p.z != null ? p.z : p.t.z) - z) < r);
+        im.setMatrixAt(i, hit ? ZERO : ms[i]);
+      });
+      im.instanceMatrix.needsUpdate = true;
+    });
+  }
+
+  // ---------- Bateaux ----------
+  function hullWidth(u, blunt) {
+    let ws;
+    if (blunt) { ws = u > 0.55 ? 1 - 0.6 * ((u - 0.55) / 0.45) ** 2 : 1; if (u < -0.85) ws *= 1 - 0.15 * ((-u - 0.85) / 0.15); }
+    else { ws = u > 0.05 ? Math.sqrt(Math.max(0, 1 - ((u - 0.05) / 0.95) ** 2)) : 1; if (u < -0.6) ws *= 1 - 0.32 * ((-u - 0.6) / 0.4) ** 1.5; }
+    return Math.max(ws, 0.015);
+  }
+  const sheer = (u, D) => D * 0.16 * u * u * (u > 0 ? 1 : 0.4);
+  function hullGeo(L, B, D, cols, blunt) {
+    const g = new THREE.BoxGeometry(B, D, L, 6, 6, 16), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      let x = p.getX(i), y = p.getY(i); const z = p.getZ(i), u = z / (L / 2), v = clamp((y + D / 2) / D, 0, 1);
+      x *= hullWidth(u, blunt) * (0.52 + 0.48 * Math.pow(v, 0.5));
+      y += (1 - v) * D * (u > 0 ? (blunt ? 0.3 : 0.5) * u * u : 0.15 * u * u) + v * sheer(u, D);
+      p.setXYZ(i, x, y, z);
+    }
+    g.computeVertexNormals();
+    const nm = g.attributes.normal, col = new Float32Array(p.count * 3), c = new THREE.Color();
+    for (let i = 0; i < p.count; i++) {
+      const v = (p.getY(i) + D / 2) / D;
+      if (nm.getY(i) > 0.8 && v > 0.9) c.set(cols.deck);
+      else if (v > 0.8) c.set(cols.stripe);
+      else c.set(cols.hull).multiplyScalar(0.75 + 0.25 * v);
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.translate(0, D / 2, 0);
+    return g;
+  }
+  function rimGeo(L, B, D, blunt, r) {
+    const pts = [];
+    for (let k = 0; k <= 24; k++) { const u = -1 + (2 * k) / 24; pts.push(new THREE.Vector3((B / 2) * hullWidth(u, blunt), D + sheer(u, D), u * L / 2)); }
+    for (let k = 23; k >= 1; k--) { const u = -1 + (2 * k) / 24; pts.push(new THREE.Vector3((-B / 2) * hullWidth(u, blunt), D + sheer(u, D), u * L / 2)); }
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 72, r, 5, true);
+  }
+  function sailGeo(h, l, belly, sign) {
+    const nA = 8, nB = 6, pos = [], idx = [], col = [];
+    for (let a = 0; a <= nA; a++) for (let b = 0; b <= nB; b++) {
+      const A = a / nA, Bb = b / nB;
+      pos.push(sign * belly * Math.sin(PI * Bb) * (1 - A * 0.7), A * h, -Bb * (1 - A) * l);
+      const k = a % 2 ? 1 : 0.9; col.push(k, k, k);
+      if (a && b) { const i0 = (a - 1) * (nB + 1) + b - 1, i1 = a * (nB + 1) + b - 1; idx.push(i0, i0 + 1, i1, i1, i0 + 1, i1 + 1); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); g.computeVertexNormals();
+    return g;
+  }
+  function flagGeo(w, h) { const g = new THREE.PlaneGeometry(w, h, 8, 2).translate(w / 2, 0, 0); g.userData.base = g.attributes.position.array.slice(); return g; }
+  const DIM = { barque: { L: 1.5, B: 0.62, D: 0.42, fb: 0.16 }, voilier: { L: 2.3, B: 0.86, D: 0.6, fb: 0.24 }, peniche: { L: 3.8, B: 1.3, D: 0.72, fb: 0.3 } };
+  // Plan de chaque type de bateau : pièces à matrice locale ; « pivot » = la
+  // voile et sa bôme tournent avec le vent ; couleur « p » = projet, « l » =
+  // projet éclairci, « d » = projet assombri.
+  const PARTS = {};
+  function kindParts(kind) {
+    if (PARTS[kind]) return PARTS[kind];
+    const d = DIM[kind], out = [], fb = d.fb, blunt = kind === "peniche";
+    const part = (geo, m, x, y, z, op) => { const r = op || {}; const lm = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(r.rx || 0, r.ry || 0, r.rz || 0)), new THREE.Vector3(1, 1, 1)); out.push({ geo, m, lm, color: r.color || null, pivot: r.pivot || null, sail: r.sail || 0, flag: !!r.flag, cast: r.cast !== false }); };
+    const cols = kind === "barque" ? { hull: "#a8693f", stripe: "#e9d7b0", deck: "#7a4d2e" } : kind === "voilier" ? { hull: "#f3ebdb", stripe: "#35516b", deck: "#c79a63" } : { hull: "#34495e", stripe: "#b8452e", deck: "#6d5a47" };
+    part(hullGeo(d.L, d.B, d.D, cols, blunt), mat("#ffffff", { vc: true, rough: 0.6 }), 0, fb - d.D, 0);
+    part(rimGeo(d.L, d.B, d.D, blunt, kind === "barque" ? 0.04 : 0.03), mat(kind === "peniche" ? "#2a3847" : "#d9b27c", { rough: 0.6 }), 0, fb - d.D, 0);
+    let top = fb, topZ = 0;
+    const sailM = mat("#ffffff", { vc: true, ds: true, rough: 0.8 });
+    if (kind === "barque") {
+      part(box(d.B * 0.8, 0.05, 0.14), mat("#c89a63"), 0, fb - 0.02, -0.1);
+      part(box(d.B * 0.8, 0.05, 0.14), mat("#c89a63"), 0, fb - 0.02, -0.5);
+      part(cyl(0.025, 0.03, 1.05, 6), mat("#7a4b2a"), 0, fb, 0.25);
+      const pv = [0, fb + 0.14, 0.25];
+      part(sailGeo(0.82, 0.78, 0.1, 1), sailM, 0, 0, 0, { pivot: pv, sail: 1, color: "p" });
+      part(sailGeo(0.82, 0.78, 0.1, -1), sailM, 0, 0, 0, { pivot: pv, sail: -1, color: "p" });
+      part(cyl(0.018, 0.018, 0.8, 5).rotateX(-PI / 2), mat("#7a4b2a"), 0, 0, 0, { pivot: pv });
+      [-1, 1].forEach((s) => part(cyl(0.015, 0.015, 1.0, 5).rotateZ(PI / 2), mat("#c89a63"), s * 0.2, fb + 0.03, -0.25, { ry: s * 1.3 }));
+      top = fb + 1.08; topZ = 0.25;
+    } else if (kind === "voilier") {
+      const mz = d.L * 0.12, mh = 2.05;
+      part(cyl(0.035, 0.045, mh, 8), mat("#6d4424"), 0, fb, mz);
+      part(box(0.5, 0.26, 0.62), mat("#f5eedf"), 0, fb - 0.02, -0.42);
+      part(box(0.54, 0.05, 0.66), mat("#c79a63"), 0, fb + 0.24, -0.42);
+      const pv = [0, fb + 0.3, mz];
+      part(sailGeo(1.7, 1.15, 0.2, 1), sailM, 0, 0, 0, { pivot: pv, sail: 1, color: "p" });
+      part(sailGeo(1.7, 1.15, 0.2, -1), sailM, 0, 0, 0, { pivot: pv, sail: -1, color: "p" });
+      part(cyl(0.025, 0.025, 1.18, 6).rotateX(-PI / 2), mat("#6d4424"), 0, 0, 0, { pivot: pv });
+      const jg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, fb + mh * 0.92, mz), new THREE.Vector3(0, fb + 0.12, d.L * 0.47), new THREE.Vector3(0, fb + 0.35, mz + 0.12)]);
+      jg.computeVertexNormals();
+      part(jg, mat("#ffffff", { ds: true, rough: 0.8 }), 0, 0, 0, { color: "l" });
+      part(flagGeo(0.32, 0.14), mat("#ffffff", { ds: true }), 0, fb + mh - 0.02, mz, { color: "p", flag: true, cast: false });
+      top = fb + mh + 0.1; topZ = mz;
+    } else {
+      const wz = -d.L / 2 + 0.7;
+      part(box(d.B * 0.82, 0.62, 0.95), mat("#f1e4c8"), 0, fb - 0.02, wz);
+      part(box(d.B * 0.95, 0.09, 1.1), mat("#ffffff", { rough: 0.7 }), 0, fb + 0.6, wz, { color: "p" });
+      part(box(0.02, 0.16, 0.22), mat("#ffd27a", { glow: true, gi: 1.6 }), d.B * 0.415, fb + 0.3, wz, { cast: false });
+      part(box(0.02, 0.16, 0.22), mat("#ffd27a", { glow: true, gi: 1.6 }), -d.B * 0.415, fb + 0.3, wz, { cast: false });
+      part(cyl(0.05, 0.05, 0.35, 6), mat("#3a3a3a"), d.B * 0.2, fb + 0.65, -d.L / 2 + 0.55);
+      const bl = d.L - 1.7, bz = -d.L / 2 + 1.25 + bl / 2;
+      part(new THREE.CylinderGeometry(d.B * 0.4, d.B * 0.4, bl, 16, 1, false, -PI / 2, PI).rotateX(-PI / 2), mat("#ffffff", { rough: 0.75, ds: true }), 0, fb + 0.02, bz, { color: "p" });
+      for (let k = 0; k < 4; k++) part(new THREE.TorusGeometry(d.B * 0.405, 0.018, 5, 16, PI), mat("#ffffff"), 0, fb + 0.02, bz - bl / 2 + (k + 0.5) * bl / 4, { color: "d" });
+      part(cyl(0.02, 0.02, 1.2, 5), mat("#6d4424"), 0, fb + 0.65, -d.L / 2 + 0.25);
+      part(flagGeo(0.4, 0.22), mat("#ffffff", { ds: true }), 0, fb + 1.72, -d.L / 2 + 0.25, { color: "p", flag: true, cast: false });
+      part(cyl(0.012, 0.012, 0.3, 5), mat("#333333"), 0, fb, d.L / 2 - 0.35);
+      part(ball(0.06, 1), mat("#ffcf70", { glow: true, gi: 3 }), 0, fb + 0.33, d.L / 2 - 0.35, { cast: false });
+      top = fb + 1.9; topZ = -d.L / 2 + 0.25;
+    }
+    PARTS[kind] = { parts: out, top, topZ };
+    return PARTS[kind];
+  }
+
+  // ---------- Données : bateaux, épaves, remous, halos, cordes, portiques ----------
+  let pickMesh = null, selMesh = null, selPin = null, boatMeshes = [], flagGeos = [];
+  const dataMats = [];
+  const dmat = (m) => { dataMats.push(m); return m; };
+  function boatMatrix(b, bob, roll, out) {
+    QQ.setFromEuler(EE.set(b.rx, b.ry, b.rz + roll));
+    return out.compose(V1.set(b.x, b.y + bob, b.z), QQ, V2.set(1, 1, 1));
+  }
+  function buildData(model) {
+    clearGroup(dataG);
+    dataMats.splice(0).forEach((m) => m.dispose());
+    S.tags.forEach((t) => t.el.remove()); S.tags = [];
+    S.boats = []; S.boatById = {}; S.ports = []; S.halos = []; boatMeshes = []; flagGeos = [];
+    S.anim = { bob: [], whirls: null, focus: null, beams: null };
+    S.signs = (S.signs || []).filter((sn) => !sn.data);
+    const hi = S.quality === "high";
+    const zones = [];
+    // Bateaux : position et orientation.
+    const all = model.boats.concat(model.wrecks);
+    all.forEach((m) => {
+      const d = DIM[m.kind], z = zOf(m.day);
+      const b = { m, id: m.id, kind: m.kind, d, z, swing: (rnd("sw" + m.id) < 0.5 ? -1 : 1) * (1.05 + rnd("sa" + m.id) * 0.25), ph: rnd("b" + m.id) * 6.28 };
+      if (m.grounded) {
+        const X = cx(z) + m.side * (RW(z) - (m.kind === "peniche" ? 0.55 : 0.4));
+        b.x = X; b.z = z; b.y = 0.3 - 0.1 - (d.fb - d.D) * 0.35;
+        b.rx = -0.06; b.ry = m.side * 0.35 + (rnd("y" + m.id) - 0.5) * 0.3; b.rz = m.side * (m.kind === "peniche" ? 0.24 : 0.36);
+        b.swing = 0.35;
+        b.bank = { x: X, z, rx: m.kind === "peniche" ? 1.9 : 1.5, rz: d.L * 0.62 + 0.9 };
+        zones.push([X, z, b.bank.rz]);
+      } else {
+        const X = cx(z) + m.lat * (RW(z) - 1.05), dd = downDir(z);
+        b.x = X; b.z = z; b.y = 0; b.rx = 0; b.rz = 0;
+        b.ry = Math.atan2(dd.x, dd.z) + (rnd("y" + m.id) - 0.5) * (m.jam ? 0.18 : 0.24);
+      }
+      b.mat = boatMatrix(b, 0, 0, new THREE.Matrix4());
+      b.inv = b.mat.clone().invert();
+      const kp = kindParts(m.kind);
+      b.top = new THREE.Vector3(0, kp.top + 0.15, kp.topZ).applyMatrix4(b.mat);
+      b.bow = new THREE.Vector3(0, d.fb + 0.12, d.L * 0.42).applyMatrix4(b.mat);
+      b.stern = new THREE.Vector3(0, d.fb + 0.12, -d.L * 0.42).applyMatrix4(b.mat);
+      S.boats.push(b); S.boatById[b.id] = b;
+    });
+    // Pièces instanciées, par type de bateau.
+    ["barque", "voilier", "peniche"].forEach((kind) => {
+      const list = S.boats.filter((b) => b.kind === kind);
+      if (!list.length) return;
+      const kp = kindParts(kind);
+      kp.parts.forEach((pt) => {
+        const im = new THREE.InstancedMesh(pt.geo, pt.m, list.length);
+        im.castShadow = pt.cast && hi; im.receiveShadow = true; im.frustumCulled = false;
+        const locals = list.map((b) => {
+          if (pt.sail && Math.sign(-b.swing) !== pt.sail) return null;
+          if (!pt.pivot) return pt.lm;
+          return new THREE.Matrix4().compose(V1.set(pt.pivot[0], pt.pivot[1], pt.pivot[2]), QQ.setFromEuler(EE.set(0, b.swing, 0)), V2.set(1, 1, 1)).multiply(pt.lm);
+        });
+        list.forEach((b, i) => {
+          im.setMatrixAt(i, locals[i] ? M4.multiplyMatrices(b.mat, locals[i]) : ZERO);
+          if (pt.color) {
+            const c = C(b.m.color);
+            if (pt.color === "l") c.lerp(C("#ffffff"), 0.35); else if (pt.color === "d") c.lerp(C("#000000"), 0.25);
+            im.setColorAt(i, c);
+          }
+        });
+        dataG.add(im);
+        boatMeshes.push({ im, list, locals });
+        if (pt.flag && flagGeos.indexOf(pt.geo) === -1) flagGeos.push(pt.geo);
+      });
+    });
+    // Sillage d'écume (à flot) et bancs de sable (échoués).
+    const floats = S.boats.filter((b) => !b.m.grounded), wrecks = S.boats.filter((b) => b.m.grounded);
+    if (floats.length) {
+      const rm = dmat(new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, opacity: 0.75, depthWrite: false }));
+      const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), rm, floats.length);
+      floats.forEach((b, i) => { M4.compose(V1.set(b.x, 0.03, b.z), QQ.setFromEuler(EE.set(0, b.ry, 0)), V2.set(b.d.B + 0.9, 1, b.d.L + 1.1)); im.setMatrixAt(i, M4); });
+      im.renderOrder = 2; dataG.add(im);
+    }
+    if (wrecks.length) {
+      const sand = leafGeo(1, 0.72);
+      const cols = sand.attributes.color, sc = C("#e6cf98");
+      for (let i = 0; i < cols.count; i++) { const k = cols.getX(i); cols.setXYZ(i, sc.r * k, sc.g * k, sc.b * k); }
+      const im = new THREE.InstancedMesh(sand, mat("#ffffff", { vc: true, rough: 0.95, env: 0.3 }), wrecks.length);
+      const wet = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), dmat(new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, opacity: 0.45, depthWrite: false, color: "#fff6e0" })), wrecks.length);
+      wrecks.forEach((b, i) => {
+        M4.compose(V1.set(b.bank.x, -0.9, b.bank.z), QQ.setFromEuler(EE.set(0, rnd("bk" + b.id) * 3, 0)), V2.set(b.bank.rx, 1.2, b.bank.rz)); im.setMatrixAt(i, M4);
+        M4.compose(V1.set(b.bank.x, 0.02, b.bank.z), QQ.identity(), V2.set(b.bank.rx * 2.3, 1, b.bank.rz * 2.1)); wet.setMatrixAt(i, M4);
+      });
+      im.receiveShadow = true; im.castShadow = hi; dataG.add(im); dataG.add(wet);
+    }
+    // Remous d'écume des tâches critiques à flot.
+    const crits = floats.filter((b) => b.m.crit);
+    if (crits.length) {
+      const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), dmat(new THREE.MeshBasicMaterial({ map: whirlTex, transparent: true, depthWrite: false })), crits.length);
+      im.renderOrder = 1; im.frustumCulled = false; dataG.add(im);
+      S.anim.whirls = { im, list: crits.map((b) => ({ b, R: b.d.L * 0.55 + 1.3 })) };
+      setWhirls(0);
+    }
+    // Mode focus (#512) : halo sarcelle sur l'eau et colonne de lumière.
+    const focus = S.boats.filter((b) => b.m.focus);
+    if (focus.length) {
+      const hm = dmat(new THREE.MeshBasicMaterial({ map: focusTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.9 }));
+      const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), hm, focus.length);
+      const bm = dmat(new THREE.MeshBasicMaterial({ map: beamTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: 0.8 }));
+      const beams = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.45, 0.75, 7, 18, 1, true).translate(0, 3.5, 0), bm, focus.length);
+      focus.forEach((b, i) => {
+        const r = b.d.L * 0.75 + 1.1;
+        M4.compose(V1.set(b.x, b.m.grounded ? 0.33 : 0.04, b.z), QQ.identity(), V2.set(r, 1, r)); im.setMatrixAt(i, M4);
+        M4.compose(V1.set(b.x, b.m.grounded ? 0.3 : 0, b.z), QQ.identity(), V2.set(1, 1, 1)); beams.setMatrixAt(i, M4);
+      });
+      im.renderOrder = 3; beams.renderOrder = 4; dataG.add(im); dataG.add(beams);
+      S.anim.focus = { hm, bm };
+    }
+    // Cordes de dépendance, tendues de la poupe à la proue.
+    const ropes = Batch();
+    let ropeCount = 0;
+    model.links.slice(0, 60).forEach(([a, bId]) => {
+      const A = S.boatById[a], B = S.boatById[bId];
+      if (!A || !B) return;
+      const pa = A.bow.z > B.bow.z ? A.stern : A.bow, pb = B.bow.z > A.bow.z ? B.stern : B.bow;
+      const s = pa.clone(), e = pb.clone(), pts = [], dist = s.distanceTo(e);
+      if (dist < 0.3 || dist > 80) return;
+      for (let i = 0; i <= 24; i++) { const t = i / 24, p = s.clone().lerp(e, t); p.y -= Math.min(0.35, dist * 0.025) * 4 * t * (1 - t); p.y = Math.max(p.y, 0.1); pts.push(p); }
+      ropes.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(12, Math.round(dist * 2)), 0.03, 5), "#d9b779", 0, 0, 0);
+      [s, e].forEach((p) => ropes.add(cyl(0.05, 0.06, 0.14, 6), "#4a3a2c", p.x, p.y - 0.12, p.z));
+      ropeCount++;
+    });
+    if (!ropes.empty) dataG.add(ropes.mesh(mat("#ffffff", { vc: true, rough: 0.9 })));
+    // Bouchons : halo orange sur les bateaux d'une semaine surchargée.
+    model.weeks.filter((w) => w.over).forEach((w) => {
+      const list = floats.filter((b) => b.m.week === w.k);
+      if (!list.length) return;
+      const z0 = Math.min(...list.map((b) => b.z)), z1 = Math.max(...list.map((b) => b.z)), zc = (z0 + z1) / 2, dd = downDir(zc);
+      const hm = dmat(new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, depthWrite: false, opacity: 0.72 }));
+      const h = add(new THREE.PlaneGeometry(10.5, z1 - z0 + 7).rotateX(-PI / 2), hm, cx(zc) + 0.2, 0.028, zc, dataG, { cast: false, ry: Math.atan2(dd.x, dd.z) });
+      h.renderOrder = 1; S.halos.push(h);
+      const due = list.map((b) => b.m.due);
+      const d0 = Math.min(...due), d1 = Math.max(...due);
+      const sameMonth = fleuveDate(model.today, d0).getUTCMonth() === fleuveDate(model.today, d1).getUTCMonth();
+      const span = d0 === d1 ? "le " + fleuveDayLabel(model.today, d0, false, false) : "du " + (sameMonth ? fleuveDate(model.today, d0).getUTCDate() : fleuveDayLabel(model.today, d0, false, false)) + " au " + fleuveDayLabel(model.today, d1, false, false);
+      addTag({ pos: new THREE.Vector3(cx(zc) + 0.3, 3.6, zc), cls: "is-jam", html: "<b>Bouchon · " + list.length + " tâche" + (list.length > 1 ? "s" : "") + " " + esc(span) + "</b><small>" + esc(fleuveJamText(w)) + "</small>", color: "#e0701a", prio: 20, week: w.k });
+    });
+    // Radeaux et tas d'épaves : les bateaux regroupés, sur la berge.
+    const crates = Batch();
+    model.clusters.forEach((c) => {
+      const z = zOf(c.day), x = bankX(z, c.side, 1.9), y = ground(x, z);
+      const n = Math.min(6, 2 + Math.ceil(c.ids.length / 4));
+      for (let k = 0; k < n; k++) {
+        const col = c.late ? ["#7a5a3c", "#8d6a48", "#6d4c30"][k % 3] : ["#c79a63", "#b5854f", "#d7ab72"][k % 3];
+        const lx = ((k % 3) - 1) * 0.62, lz = Math.floor(k / 3) * 0.62 - 0.3;
+        crates.add(box(0.55, 0.45, 0.55), col, x + lx, y + (k >= 3 ? 0.45 : 0), z + lz, { ry: (rnd("cr" + c.id + k) - 0.5) * 0.5 });
+      }
+      crates.add(cyl(0.03, 0.03, 1.5, 5), "#5b3b22", x + 0.9, y, z);
+      zones.push([x, z, 2.2]);
+      addTag({ pos: new THREE.Vector3(x, y + 1.7, z), cls: "is-raft", html: "<b>+" + c.ids.length + " tâche" + (c.ids.length > 1 ? "s" : "") + (c.late ? " en retard" : "") + "</b><small>" + (c.late ? "Épaves regroupées" : "Regroupées · " + esc(fleuveWeekLabel(c.week))) + "</small>", color: c.late ? "#c2412d" : "#8a5a33", prio: 6 });
+    });
+    if (!crates.empty) dataG.add(crates.mesh(mat("#ffffff", { vc: true, rough: 0.9 })));
+    // Portiques des jalons.
+    model.portiques.forEach((p, i) => { const P = portique(p, i, model); S.ports.push(P); zones.push(...P.zones); });
+    // Étiquettes des bateaux.
+    S.boats.forEach((b) => {
+      const m = b.m;
+      const badge = m.late ? '<em class="is-late">En retard · ' + m.lateDays + " j</em>" : m.crit ? '<em class="is-crit">Critique</em>' : "";
+      const fcs = m.focus ? '<em class="is-focus">Focus</em>' : "";
+      const when = m.late ? "prévu " + fleuveDayLabel(model.today, m.due, false) : fleuveDayLabel(model.today, m.due, false);
+      b.tag = addTag({ pos: b.top, html: "<b>" + esc(m.title) + badge + fcs + "</b><small>" + esc(m.projectName) + " · " + String(m.hours).replace(".", ",") + " h · " + esc(when) + "</small>", color: m.color, prio: (m.late || m.crit ? 10 : 0) + (m.focus ? 8 : 0) + { barque: 1, voilier: 2, peniche: 3 }[m.kind], jam: m.jam, boat: b });
+    });
+    // Sélection et zone de clic.
+    selMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), dmat(new THREE.MeshBasicMaterial({ map: selTex, transparent: true, depthWrite: false, color: "#ffc94a" })));
+    selMesh.visible = false; selMesh.renderOrder = 5; dataG.add(selMesh);
+    // Repère doré au-dessus du bateau sélectionné.
+    selPin = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0).scale(0.8, 1.4, 0.8), mat("#ffc94a", { glow: true, gi: 1.4, rough: 0.4 }));
+    selPin.visible = false; selPin.castShadow = false; dataG.add(selPin);
+    if (S.boats.length) {
+      pickMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), dmat(new THREE.MeshBasicMaterial({ visible: false })), S.boats.length);
+      S.boats.forEach((b, i) => {
+        const kp = kindParts(b.kind);
+        M4.compose(V1.set(b.x, b.y - 0.2, b.z), QQ.setFromEuler(EE.set(b.rx, b.ry, b.rz)), V2.set(Math.max(b.d.B + 0.5, 1.4), kp.top + 0.4, b.d.L + 0.3));
+        pickMesh.setMatrixAt(i, M4);
+      });
+      pickMesh.computeBoundingSphere(); dataG.add(pickMesh);
+    } else pickMesh = null;
+    clearVegetation(zones);
+    measureTags();
+    S.ropes = ropeCount;
+    if (S.selectedId && !S.boatById[S.selectedId]) select(null);
+    else if (S.selectedId) select(S.selectedId, false);
+    S.lastCamKey = "";
+  }
+  function setWhirls(t) {
+    const w = S.anim.whirls; if (!w) return;
+    w.list.forEach(({ b, R }, i) => { M4.compose(V1.set(b.x, 0.035, b.z), QQ.setFromEuler(EE.set(0, -t * (0.9 + (i % 3) * 0.2), 0)), V2.set(2 * R, 1, 2 * R)); w.im.setMatrixAt(i, M4); });
+    w.im.instanceMatrix.needsUpdate = true;
+  }
+
+  // ---------- Portiques ----------
+  const LAMP_ON = mat("#ffcf70", { glow: true, gi: 3.2 }), LAMP_OFF = mat("#6a5d50", { rough: 0.35, env: 1 });
+  function cartoucheDraw(P, lit) {
+    const w = 640, h = 178, g = P.ctx, p = P.p;
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = "#5b3b22"; g.beginPath(); g.roundRect(0, 0, w, h, 22); g.fill();
+    g.fillStyle = lit ? "#e7b24c" : "#8a5a33"; g.beginPath(); g.roundRect(7, 7, w - 14, h - 14, 17); g.fill();
+    const pg = g.createLinearGradient(0, 16, 0, h - 16); pg.addColorStop(0, lit ? "#fff8e2" : "#efe0bd"); pg.addColorStop(1, lit ? "#f6e3b4" : "#dcc79c");
+    g.fillStyle = pg; g.beginPath(); g.roundRect(16, 16, w - 32, h - 32, 11); g.fill();
+    g.strokeStyle = "rgba(90,55,25,.35)"; g.lineWidth = 2; g.beginPath(); g.roundRect(25, 25, w - 50, h - 50, 7); g.stroke();
+    g.textAlign = "center"; g.textBaseline = "middle";
+    let fs = 51; g.font = "bold " + fs + "px " + FONT;
+    while (g.measureText(p.title).width > w - 140 && fs > 14) { fs -= 2; g.font = "bold " + fs + "px " + FONT; }
+    const tw = g.measureText(p.title).width, tx = w / 2 + 18;
+    g.fillStyle = "rgba(255,255,255,.7)"; g.fillText(p.title, tx, h * 0.4 + 2);
+    g.fillStyle = "#4e2f19"; g.fillText(p.title, tx, h * 0.4);
+    g.save(); g.translate(tx - tw / 2 - 28, h * 0.4); g.rotate(PI / 4); g.fillStyle = p.color; g.fillRect(-11, -11, 22, 22); g.strokeStyle = "#4e2f19"; g.lineWidth = 2; g.strokeRect(-11, -11, 22, 22); g.restore();
+    g.font = "bold 28px " + FONT; g.fillStyle = lit ? "#9a5a12" : "#7a5a3a";
+    g.fillText(fleuveDayLabel(P.today, p.day, true) + "  ·  " + (lit ? "jalon franchi ✓" : "jalon à venir"), w / 2, h * 0.74);
+    P.tex.needsUpdate = true;
+  }
+  function portique(p, i, model) {
+    const z = zOf(p.day + 0.5), c0 = cx(z), w = RW(z), dd = downDir(z);
+    const g = new THREE.Group(); g.position.set(c0, 0, z); g.rotation.y = Math.atan2(dd.x, dd.z); dataG.add(g); g.updateMatrixWorld(true);
+    const Hx = w + 0.8, springY = 2.9, rise = 1.25, topY = springY + rise + 0.45;
+    const stone = Batch(), wood = Batch(), lamps = [];
+    const sc = (k) => mix("#d8cbb2", "#ab9e87", rnd("ps" + p.id + k));
+    const lamp = (x, y, zz) => {
+      wood.add(box(0.26, 0.05, 0.26), "#3a2a1c", x, y, zz);
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b]) => wood.add(cyl(0.012, 0.012, 0.28, 4), "#3a2a1c", x + a * 0.1, y + 0.04, zz + b * 0.1));
+      lamps.push(add(box(0.17, 0.26, 0.17), LAMP_OFF, x, y + 0.04, zz, g, { cast: false }));
+      wood.add(new THREE.ConeGeometry(0.2, 0.16, 4).rotateY(PI / 4).translate(0, 0.08, 0), "#3a2a1c", x, y + 0.32, zz);
+    };
+    const bannerM = ownMat(new THREE.MeshStandardMaterial({ map: bannerTexture(p.color), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.8, envMapIntensity: 0.5 }), true);
+    const zones = [];
+    [-1, 1].forEach((s) => {
+      const x = s * Hx, wp = new THREE.Vector3(x, 0, 0).applyMatrix4(g.matrixWorld), gy = ground(wp.x, wp.z);
+      zones.push([wp.x, wp.z, 1.9]);
+      const y0 = Math.min(gy - 0.35, -0.2);
+      stone.add(box(2.0, gy - y0 + 0.28, 2.0), sc("pl" + s), x, y0, 0);
+      let y = gy + 0.28, k = 0;
+      while (y < topY - 0.05) {
+        const hh = Math.min(0.46, topY - y);
+        if (k % 2) stone.add(box(1.5, hh - 0.03, 1.5), sc(s + "c" + k), x, y, 0);
+        else [-1, 1].forEach((t) => stone.add(box(0.72, hh - 0.03, 1.52), sc(s + "d" + k + t), x + t * 0.38, y, 0));
+        y += hh; k++;
+      }
+      stone.add(box(1.8, 0.2, 1.8), "#e3d8c2", x, topY, 0);
+      lamp(x + s * 0.55, topY + 0.2, 0.55);
+      wood.add(cyl(0.025, 0.025, 1.05, 6).rotateZ(PI / 2).translate(0.5, 0, 0), "#5b3b22", x - 0.5, topY - 0.3, 0.8);
+      const bn = add(new THREE.PlaneGeometry(0.9, 2.25), bannerM, x, topY - 0.3 - 1.12, 0.79, g); bn.castShadow = false;
+    });
+    // Arche segmentaire en pierre.
+    const a = Hx - 0.75, R = (a * a + rise * rise) / (2 * rise), cy = springY + rise - R, th = Math.asin(a / R), N = 13;
+    for (let k = 0; k < N; k++) {
+      const ph = -th + (k + 0.5) * (2 * th / N), len = (2 * th / N) * (R + 0.3) * 0.9, key = k === (N - 1) / 2;
+      const kh = key ? 0.78 : 0.6;
+      stone.add(new THREE.BoxGeometry(len * (key ? 1.1 : 1), kh, key ? 1.3 : 1.18), key ? "#efe6d3" : sc("v" + k), Math.sin(ph) * (R + 0.3), cy + Math.cos(ph) * (R + 0.3), 0, { rz: -ph });
+      if (key) wood.add(new THREE.OctahedronGeometry(0.16).scale(1, 1, 0.3), p.color, 0, cy + R + 0.3, 0.67);
+    }
+    // Linteau, toiture et cartouche.
+    wood.add(box(2 * Hx + 2.0, 0.4, 0.8), "#7c5132", 0, topY + 0.2, 0);
+    for (let k = -3; k <= 3; k++) wood.add(box(0.14, 0.14, 0.9), "#5b3b22", k * (Hx / 3), topY + 0.34, 0);
+    wood.add(prism(1.25, 0.55, 2 * Hx + 2.3).rotateY(PI / 2), "#9a4f32", 0, topY + 0.6, 0);
+    wood.add(box(4.5, 1.5, 0.16), "#5b3b22", 0, topY + 0.45, 0.5);
+    wood.add(prism(4.9, 0.6, 0.9), "#9a4f32", 0, topY + 1.95, 0.45);
+    const sm = stone.mesh(mat("#ffffff", { vc: true, rough: 0.92 })); g.add(sm);
+    const wm = wood.mesh(mat("#ffffff", { vc: true, rough: 0.8 })); g.add(wm);
+    const [cv, ctx] = mkCanvas(640, 178);
+    const tex = srgb(new THREE.CanvasTexture(cv)); tex.anisotropy = 4;
+    const cartMat = ownMat(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, envMapIntensity: 0.4, emissive: "#ffffff", emissiveMap: tex, emissiveIntensity: 0 }));
+    add(new THREE.PlaneGeometry(4.3, 1.3), cartMat, 0, topY + 0.55 + 0.65, 0.59, g, { cast: false });
+    lamp(-2.5, topY + 0.95, 0.55); lamp(2.5, topY + 0.95, 0.55);
+    // Lueurs des lanternes (sprites additifs, visibles une fois le jalon franchi).
+    const glows = lamps.map((l) => {
+      const sp = new THREE.Sprite(ownMat(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.85 }), true));
+      sp.position.copy(l.position); sp.position.y += 0.17; sp.scale.set(1.3, 1.3, 1); sp.visible = false; g.add(sp); return sp;
+    });
+    S.signs.push({ m: g.matrixWorld, x0: -2.15, x1: 2.15, y0: topY + 0.55, y1: topY + 1.85, z: 0.59, data: true });
+    const P = { p, g, lamps, glows, cartMat, tex, ctx, today: model.today, lit: null, zones, top: new THREE.Vector3(0, topY + 2.6, 0.5).applyMatrix4(g.matrixWorld) };
+    P.tag = addTag({ pos: P.top, cls: "is-ms", html: "<b>" + esc(p.title) + "</b><small>Jalon · " + esc(p.projectName) + " · " + esc(fleuveDayLabel(model.today, p.day, false)) + "</small>", color: p.color, prio: 12, far: 24 });
+    return P;
+  }
+  function setLit(P, lit) {
+    if (P.lit === lit) return; P.lit = lit;
+    P.lamps.forEach((l) => { l.material = lit ? LAMP_ON : LAMP_OFF; });
+    P.glows.forEach((g) => { g.visible = lit; });
+    cartoucheDraw(P, lit);
+    P.cartMat.emissiveIntensity = lit ? 0.07 : 0;
+  }
+
+  // ---------- Repère de la date visée : bouées ----------
+  const NB = 11;
+  const dateLine = (() => {
+    const g = new THREE.Group(); scene.add(g);
+    const [c, x] = mkCanvas(8, 64), gr = x.createLinearGradient(0, 0, 0, 64);
+    gr.addColorStop(0, "rgba(255,200,90,0)"); gr.addColorStop(0.5, "rgba(255,210,110,.85)"); gr.addColorStop(1, "rgba(255,200,90,0)");
+    x.fillStyle = gr; x.fillRect(0, 0, 8, 64);
+    const band = add(new THREE.PlaneGeometry(1, 1.1).rotateX(-PI / 2), new THREE.MeshBasicMaterial({ map: srgb(new THREE.CanvasTexture(c)), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.55 }), 0, 0.045, 0, g, { cast: false });
+    band.renderOrder = 3;
+    const buoys = [];
+    const bodyG = ball(0.15, 1), poleG = cyl(0.015, 0.015, 0.2, 5), lightG = ball(0.065, 1);
+    for (let k = 0; k < NB; k++) {
+      const b = new THREE.Group(); g.add(b);
+      add(bodyG, mat(k % 2 ? "#f4ecdc" : "#e7b24c", { rough: 0.45 }), 0, 0.02, 0, b, { s: [1, 0.8, 1] });
+      add(poleG, mat("#4e3524"), 0, 0.1, 0, b);
+      add(lightG, mat("#ffd36b", { glow: true, gi: 4 }), 0, 0.33, 0, b, { cast: false });
+      buoys.push(b);
+    }
+    return { g, band, buoys };
+  })();
+  function placeDateLine(day) {
+    const z = zOf(day), c0 = cx(z), w = RW(z) - 0.55, dd = downDir(z);
+    dateLine.g.position.set(c0, 0, z); dateLine.g.rotation.y = Math.atan2(dd.x, dd.z);
+    dateLine.band.scale.set(2 * w + 0.6, 1, 1);
+    dateLine.g.updateMatrixWorld(true);
+    dateLine.buoys.forEach((b, k) => {
+      b.position.set(-w + (2 * w * k) / (NB - 1), b.position.y, 0);
+      b.updateMatrixWorld(true);
+      const wp = b.getWorldPosition(V1);
+      b.visible = !S.boats.some((bt) => { if (bt.m.grounded || Math.abs(bt.z - wp.z) > 3) return false; const lp = V2.copy(wp).applyMatrix4(bt.inv); return Math.abs(lp.x) < bt.d.B / 2 + 0.3 && Math.abs(lp.z) < bt.d.L / 2 + 0.35; });
+    });
+  }
+
+  // ---------- Étiquettes en parchemin ----------
+  function addTag(t) {
+    const el = document.createElement("div");
+    el.className = "lp-fleuve-tag " + (t.cls || "");
+    el.style.setProperty("--c", t.color || "#8a5a33");
+    el.innerHTML = '<div class="lp-fleuve-card">' + t.html + '</div><div class="lp-fleuve-stem"></div>';
+    tagsEl.appendChild(el);
+    t.el = el; t.card = el.firstChild; t.w = 0; t.h = 0; t.shown = false;
+    if (t.boat) el.setAttribute("data-fleuve-tag", t.boat.id);
+    S.tags.push(t); return t;
+  }
+  function measureTags() {
+    S.tags.forEach((t) => { t.el.style.display = "flex"; });
+    S.tags.forEach((t) => { const r = t.el.getBoundingClientRect(); t.w = r.width; t.h = Math.max(0, r.height - 8); });
+    S.tags.forEach((t) => { t.el.style.display = "none"; t.shown = false; });
+  }
+  const vv = new THREE.Vector3();
+  const proj = (p) => { vv.copy(p).project(camera); return [(vv.x + 1) / 2 * S.W, (1 - vv.y) / 2 * S.H, vv.z]; };
+  function layoutTags() {
+    const W = S.W, H = S.H, maxDist = 50 * cam.zoom;
+    const base = container.getBoundingClientRect();
+    const hud = (o.obstacles ? o.obstacles() : []).map((r) => ({ l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top }));
+    // Panneaux des pontons et cartouches des portiques : jamais recouverts.
+    const placed = [];
+    (S.signs || []).forEach((sn) => {
+      const xs = [], ys = [];
+      [[sn.x0, sn.y0], [sn.x1, sn.y0], [sn.x1, sn.y1], [sn.x0, sn.y1]].forEach(([a, b]) => { const [x, y, z] = proj(V2.set(a, b, sn.z).applyMatrix4(sn.m)); if (z < 1) { xs.push(x); ys.push(y); } });
+      if (xs.length === 4) placed.push({ l: Math.min(...xs), r: Math.max(...xs), t: Math.min(...ys), b: Math.max(...ys) });
+    });
+    const boatRects = [];
+    S.boats.forEach((b) => {
+      const [x0, y0, z0] = proj(V2.set(b.x, b.y, b.z)), [x1, y1] = proj(b.top); if (z0 > 1) return;
+      const r = Math.max(8, Math.abs(y0 - y1) * 0.35);
+      boatRects.push({ l: Math.min(x0, x1) - r, r: Math.max(x0, x1) + r, t: y1 + 6, b: y0 + r * 0.5 });
+    });
+    const cand = [];
+    S.tags.forEach((t) => {
+      t.stem = null;
+      if (!S.labels && !(t.boat && t.boat.id === S.selectedId) && !t.cls) return;
+      const dist = camera.position.distanceTo(t.pos);
+      const sel = t.boat && t.boat.id === S.selectedId;
+      if (!sel && (dist > maxDist || (t.far && dist < t.far))) return;
+      const [x, y, z] = proj(t.pos);
+      if (!(z < 1 && z > -1 && x > 0 && x < W && y > 0 && y < H)) return;
+      t.x = x; t.y = y; t.k = clamp(24 / dist, 0.9, 1.2);
+      cand.push({ t, prio: t.prio + (sel ? 100 : 0) + (t.boat && t.boat.id === S.hoverId ? 50 : 0) });
+    });
+    cand.sort((a, b) => b.prio - a.prio);
+    let count = 0;
+    const max = W < 700 ? 14 : 34;
+    cand.forEach(({ t }) => {
+      if (count >= max) return;
+      const w = t.w * t.k, h = t.h * t.k;
+      search: for (const soft of [boatRects, []]) for (const s of [8, 24, 40, 56, 72, 90]) for (const f of [0, -0.38, 0.38, -0.75, 0.75]) {
+        const dx = f * w, rc = { l: t.x + dx - w / 2 - 3, r: t.x + dx + w / 2 + 3, t: t.y - s * t.k - h - 3, b: t.y - s * t.k + 3 };
+        if (rc.l < 4 || rc.r > W - 4 || rc.t < 4) continue;
+        const hit = (q) => !(rc.r < q.l || rc.l > q.r || rc.b < q.t || rc.t > q.b);
+        if (placed.some(hit) || soft.some(hit) || hud.some(hit)) continue;
+        const st = { l: t.x - 2, r: t.x + 2, t: rc.b - 3, b: t.y };
+        if (soft.length && placed.some((q) => !(st.r < q.l || st.l > q.r || st.b < q.t || st.t > q.b))) continue;
+        t.stem = s; t.dx = dx / t.k; placed.push(rc, st); count++; break search;
+      }
+    });
+    S.tags.forEach((t) => {
+      if (t.stem == null) { if (t.shown) { t.el.style.display = "none"; t.shown = false; } return; }
+      if (!t.shown) { t.el.style.display = "flex"; t.shown = true; }
+      t.el.style.setProperty("--stem", t.stem + "px");
+      t.card.style.transform = "translateX(" + Math.round(t.dx) + "px)";
+      t.el.style.transform = "translate(" + Math.round(t.x) + "px," + Math.round(t.y) + "px) translate(-50%,-100%) scale(" + t.k.toFixed(3) + ")";
+      t.el.classList.toggle("is-selected", !!(t.boat && t.boat.id === S.selectedId));
+    });
+  }
+
+  // ---------- Post-traitement : flou de bascule, étalonnage, lueur ----------
+  let rt = null, post = null;
+  function setupPost() {
+    if (rt) { rt.dispose(); rt = null; }
+    if (S.quality !== "high") return;
+    const pr = renderer.getPixelRatio();
+    rt = new THREE.WebGLRenderTarget(Math.max(1, S.W * pr), Math.max(1, S.H * pr), { type: THREE.HalfFloatType, samples: 4 });
+    if (!post) {
+      const m = new THREE.ShaderMaterial({
+        uniforms: { tDiffuse: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uSat: { value: 1.06 }, uWarm: { value: 0.04 }, uFocus: { value: 0.52 }, uVig: { value: 0.34 }, uBloom: { value: 0.5 }, uExpo: { value: 1.0 } },
+        vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+        fragmentShader: [
+          "uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uSat; uniform float uWarm; uniform float uFocus; uniform float uVig; uniform float uBloom; uniform float uExpo; varying vec2 vUv;",
+          "vec3 rrt(vec3 v){ vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081; return a / b; }",
+          "vec3 aces(vec3 c){ const mat3 I = mat3(vec3(0.59719,0.07600,0.02840), vec3(0.35458,0.90834,0.13383), vec3(0.04823,0.01566,0.83777)); const mat3 O = mat3(vec3(1.60475,-0.10208,-0.00327), vec3(-0.53108,1.10813,-0.07276), vec3(-0.07367,-0.00605,1.07602)); c *= uExpo / 0.6; c = I * c; c = rrt(c); c = O * c; return clamp(c, 0.0, 1.0); }",
+          "vec3 srgb(vec3 c){ return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, step(c, vec3(0.0031308))); }",
+          "void main(){",
+          "  float d = vUv.y > uFocus ? max(0.0, vUv.y - uFocus - 0.17) / 0.3 : max(0.0, uFocus - vUv.y - 0.3) / 0.3 * 0.6; float r = clamp(d, 0.0, 1.0); r = r * r * 4.5;",
+          "  vec3 c = vec3(0.0); float tw = 0.0;",
+          "  if (r < 0.05) { c = texture2D(tDiffuse, vUv).rgb; } else {",
+          "    for (int i = -3; i <= 3; i++) for (int j = -3; j <= 3; j++) { float w = exp(-float(i*i + j*j) / 6.0); c += texture2D(tDiffuse, vUv + vec2(float(i), float(j)) * r / uRes).rgb * w; tw += w; }",
+          "    c /= tw; }",
+          "  vec3 b = vec3(0.0);",
+          "  for (int k = 0; k < 12; k++) { float a = float(k) * 0.5236; vec2 q = vec2(cos(a), sin(a));",
+          "    b += max(texture2D(tDiffuse, vUv + q * 5.0 / uRes).rgb - 1.0, 0.0) + 0.6 * max(texture2D(tDiffuse, vUv + q * 12.0 / uRes).rgb - 1.0, 0.0); }",
+          "  c += b * uBloom / 12.0;",
+          "  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));",
+          "  vec3 col = mix(vec3(l), c, uSat);",
+          "  col += vec3(uWarm, uWarm * 0.45, -uWarm * 0.5);",
+          "  col = max(col, 0.0); col = mix(col, col * col * (3.0 - 2.0 * min(col, 1.0)), 0.18);",
+          "  vec2 v = vUv - 0.5; col *= 1.0 - uVig * dot(v, v) * 2.2;",
+          "  gl_FragColor = vec4(srgb(aces(col)), 1.0);",
+          "}",
+        ].join("\n"),
+        depthTest: false, depthWrite: false,
+      });
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), m); q.frustumCulled = false;
+      const qs = new THREE.Scene(); qs.add(q);
+      post = { m, q, qs, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+    }
+    post.m.uniforms.uRes.value.set(S.W * pr, S.H * pr);
+  }
+  function render() {
+    if (rt && post) {
+      renderer.setRenderTarget(rt); renderer.render(scene, camera);
+      renderer.setRenderTarget(null);
+      post.m.uniforms.tDiffuse.value = rt.texture;
+      renderer.render(post.qs, post.cam);
+    } else renderer.render(scene, camera);
+  }
+
+  // ---------- Qualité et reconstruction ----------
+  function applyQuality() {
+    const q = fleuveResolveQuality(S.qualityPref, S.W, S.model ? S.model.boats.length + S.model.wrecks.length : 0);
+    const changed = q !== S.quality;
+    S.quality = q;
+    const hi = q === "high";
+    renderer.setPixelRatio(hi ? Math.min(window.devicePixelRatio || 1, 2) : 1);
+    renderer.shadowMap.enabled = hi;
+    sun.castShadow = hi;
+    if (hi) sun.shadow.mapSize.set(2048, 2048);
+    if (changed || !S.sized || (hi && !rt)) { renderer.setSize(S.W, S.H, false); setupPost(); S.sized = true; }
+    return changed;
+  }
+  function rebuild(force) {
+    if (!S.model) return;
+    const changed = applyQuality();
+    const key = S.model.nWeeks + ":" + S.model.today + ":" + S.quality;
+    if (force || changed || key !== S.worldKey) {
+      buildWorld(S.model); S.worldKey = key;
+    }
+    buildData(S.model);
+    S.dirty = true;
+    S.goal = fleuveClampDay(S.goal, S.model.range);
+    if (!S.started) { S.cur = S.goal; S.started = true; }
+    S.lastCur = null;
+    emit(true);
+  }
+
+  // ---------- Caméra : elle suit le lit du fleuve ----------
+  const lookT = new THREE.Vector3(), focusT = new THREE.Vector3();
+  function applyCamera() {
+    const Z = cam.zoom, z = zOf(S.cur), T = V1.set(cx(z), 0, z);
+    const up = downDir(z, 9).negate(), right = new THREE.Vector3(-up.z, 0, up.x);
+    lookT.copy(T).addScaledVector(up, 8).addScaledVector(right, cam.pan); lookT.y = 0.5;
+    // Cadrage de la maquette : caméra 17 unités en aval de la date visée,
+    // 10,5 au-dessus, regard 8 unités en amont ; le zoom l'éloigne du regard.
+    const off = new THREE.Vector3().addScaledVector(up, -25 * Z).addScaledVector(right, 2.6 * Z); off.y = 10 * Z;
+    const r = off.length(), yaw = Math.atan2(off.x, off.z) + cam.yaw, el = clamp(Math.asin(off.y / r) + cam.pitch, 0.12, 1.42);
+    camera.position.set(lookT.x + Math.sin(yaw) * Math.cos(el) * r, lookT.y + Math.sin(el) * r, lookT.z + Math.cos(yaw) * Math.cos(el) * r);
+    camera.lookAt(lookT); camera.updateMatrixWorld(true);
+    focusT.copy(T).addScaledVector(up, 8);
+    aimSun(focusT);
+    scene.fog.near = 22 + 14 * Z; scene.fog.far = 80 + 35 * Z;
+  }
+
+  // ---------- Boucle ----------
+  let lastLayout = 0;
+  function frame(now) {
+    if (S.disposed) return;
+    S.raf = requestAnimationFrame(frame);
+    const dt = Math.min(0.05, (now - S.last) / 1000); S.last = now;
+    if (!S.model) { renderer.render(scene, camera); return; }
+    const t = moving() ? (now - S.t0) / 1000 : 2.3;
+    // Inertie : la date visée rattrape l'objectif en douceur.
+    S.cur += (S.goal - S.cur) * (RM ? 1 : 1 - Math.exp(-dt * 2.6));
+    if (Math.abs(S.goal - S.cur) < 1e-3) S.cur = S.goal;
+    const kc = RM ? 1 : 1 - Math.exp(-dt * 9);
+    Object.keys(goalCam).forEach((k) => { cam[k] += (goalCam[k] - cam[k]) * kc; if (Math.abs(goalCam[k] - cam[k]) < 1e-4) cam[k] = goalCam[k]; });
+    const camKey = S.cur.toFixed(4) + ":" + cam.zoom.toFixed(4) + ":" + cam.yaw.toFixed(4) + ":" + cam.pitch.toFixed(4) + ":" + cam.pan.toFixed(4) + ":" + S.W + "x" + S.H;
+    // Rendu à la demande : rien ne bouge, rien ne se redessine.
+    const camChanged = camKey !== S.lastCamKey;
+    if (camChanged) {
+      applyCamera();
+      if (S.cur !== S.lastCur) { placeDateLine(S.cur); S.ports.forEach((P) => setLit(P, fleuveMilestoneLit(P.p.day, S.cur))); S.lastCur = S.cur; }
+      S.lastCamKey = camKey; lastLayout = 0;
+    }
+    if (moving()) {
+      flowTex.offset.y = -t * 0.035;
+      setWhirls(t);
+      S.boats.length && boatMeshes.forEach(({ im, list, locals }) => {
+        list.forEach((b, i) => {
+          if (b.m.grounded || !locals[i]) return;
+          boatMatrix(b, Math.sin(t * 1.4 + b.ph) * 0.025, Math.sin(t * 1.1 + b.ph) * 0.025, M5);
+          im.setMatrixAt(i, M4.multiplyMatrices(M5, locals[i]));
+        });
+        im.instanceMatrix.needsUpdate = true;
+      });
+      flagGeos.forEach((g) => { const p = g.attributes.position, b = g.userData.base; for (let i = 0; i < p.count; i++) { const x = b[i * 3]; p.setZ(i, Math.sin(x * 5 - t * 4) * 0.08 * x); } p.needsUpdate = true; });
+      dateLine.buoys.forEach((b, k) => { b.position.y = Math.sin(t * 1.6 + k * 0.7) * 0.03; });
+      S.halos.forEach((h) => { h.material.opacity = 0.7 + Math.sin(t * 2) * 0.08; });
+      if (S.anim.focus) { S.anim.focus.hm.opacity = 0.75 + Math.sin(t * 2.4) * 0.2; S.anim.focus.bm.opacity = 0.55 + Math.sin(t * 2.4 + 1) * 0.2; }
+      if (selMesh && selMesh.visible) selMesh.material.opacity = 0.75 + Math.sin(t * 3) * 0.25;
+      if (selPin && selPin.visible) { selPin.rotation.y = t * 1.5; const b = S.boatById[S.selectedId]; if (b) selPin.position.y = b.top.y + 0.75 + Math.sin(t * 2.2) * 0.12; }
+    }
+    if (moving() || camChanged || S.dirty) { render(); S.dirty = false; }
+    if (!lastLayout || now - lastLayout > 400) { layoutTags(); lastLayout = now; }
+    emit(false);
+  }
+  function emit(force) {
+    if (!o.onCursor) return;
+    if (!force && S.emitDay === S.cur) return;
+    S.emitDay = S.cur;
+    o.onCursor(S.cur, S.goal);
+  }
+  function resize() {
+    const r = container.getBoundingClientRect();
+    const W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+    if (W === S.W && H === S.H) return;
+    S.W = W; S.H = H;
+    camera.aspect = W / H; camera.updateProjectionMatrix();
+    const before = S.quality;
+    if (S.model && S.qualityPref === "auto" && fleuveResolveQuality("auto", W, S.model.boats.length + S.model.wrecks.length) !== before) { rebuild(true); return; }
+    renderer.setSize(W, H, false);
+    setupPost();
+    S.lastCamKey = ""; S.dirty = true;
+  }
+  const ro = new ResizeObserver(resize); ro.observe(container);
+  { const r = container.getBoundingClientRect(); S.W = Math.max(1, Math.round(r.width)); S.H = Math.max(1, Math.round(r.height)); camera.aspect = S.W / S.H; camera.updateProjectionMatrix(); renderer.setSize(S.W, S.H, false); }
+
+  // ---------- Entrées ----------
+  // Gestes de la Carte (#510) : clic gauche glissé = se déplacer (le long du
+  // fleuve, c'est-à-dire dans le temps, et d'une rive à l'autre), molette
+  // enfoncée (ou clic droit) glissée = tourner. La molette parcourt le temps ;
+  // Ctrl + molette (ou pincer) zoome.
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function hitAt(e) {
+    if (!pickMesh) return null;
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObject(pickMesh, false);
+    return hits.length && hits[0].instanceId != null ? S.boats[hits[0].instanceId].id : null;
+  }
+  const goTo = (d, instant) => { if (S.model) S.goal = fleuveClampDay(d, S.model.range); if (RM || instant) S.cur = S.goal; };
+  const zoomTo = (z) => { goalCam.zoom = clamp(z, 0.45, 2.6); if (RM) cam.zoom = goalCam.zoom; };
+  const ptrs = new Map(); let mode = null, moved = 0, pinch0 = 0;
+  const onDown = (e) => {
+    if (e.button === 1) e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* capture facultative */ }
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moved = 0;
+    mode = e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey) ? "rot" : "pan";
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); mode = "pinch"; }
+    canvas.classList.add("is-drag"); hideTip();
+    if (o.keyTarget && document.activeElement !== o.keyTarget) { try { o.keyTarget.focus({ preventScroll: true }); } catch (err) { /* sans focus */ } }
+  };
+  let lastHover = 0;
+  const onMove = (e) => {
+    const p = ptrs.get(e.pointerId);
+    if (!p) {
+      const now = performance.now(); if (now - lastHover < 50) return; lastHover = now;
+      const id = hitAt(e);
+      canvas.classList.toggle("is-hot", !!id);
+      if (id !== S.hoverId) { S.hoverId = id; lastLayout = 0; }
+      if (id) showTip(id, e); else hideTip();
+      return;
+    }
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    if (mode === "pinch" && ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch0 && d) zoomTo(goalCam.zoom * pinch0 / d); pinch0 = d; return;
+    }
+    if (mode === "rot") {
+      goalCam.yaw = clamp(goalCam.yaw - dx * 0.005, -1.35, 1.35);
+      goalCam.pitch = clamp(goalCam.pitch + dy * 0.004, -0.45, 0.7);
+      if (RM) Object.assign(cam, goalCam);
+    } else {
+      goalCam.pan = clamp(goalCam.pan - dx * 0.02 * cam.zoom, -12, 12);
+      if (RM) cam.pan = goalCam.pan;
+      goTo(S.goal + dy * 0.016 * cam.zoom);
+    }
+  };
+  const onUp = (e) => {
+    const had = ptrs.has(e.pointerId);
+    ptrs.delete(e.pointerId); canvas.classList.remove("is-drag");
+    if (had && ptrs.size === 0 && moved < 6 && e.button === 0) select(hitAt(e), false);
+    if (ptrs.size < 2) pinch0 = 0;
+  };
+  const onCancel = (e) => { ptrs.delete(e.pointerId); canvas.classList.remove("is-drag"); };
+  const onDbl = (e) => { const id = hitAt(e); if (id) { select(id, false); if (o.onOpen) o.onOpen(id); } };
+  const onWheel = (e) => {
+    e.preventDefault(); hideTip();
+    if (e.ctrlKey || e.metaKey) { zoomTo(goalCam.zoom * Math.exp(e.deltaY * (e.deltaMode ? 0.05 : 0.0015))); return; }
+    goTo(S.goal + fleuveWheelDays(e.deltaY, e.deltaMode));
+  };
+  const onLeave = () => { hideTip(); if (S.hoverId) { S.hoverId = null; lastLayout = 0; } canvas.classList.remove("is-hot"); };
+  const onCtx = (e) => e.preventDefault();
+  const onAux = (e) => { if (e.button === 1) e.preventDefault(); };
+  const onKey = (e) => {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;
+    const k = e.key;
+    if (k === "ArrowUp" || k === "ArrowRight") { goTo(S.goal + (e.shiftKey ? 7 : 1)); e.preventDefault(); }
+    else if (k === "ArrowDown" || k === "ArrowLeft") { goTo(S.goal - (e.shiftKey ? 7 : 1)); e.preventDefault(); }
+    else if (k === "PageUp") { goTo(fleuveStepWeek(S.goal, 1, S.model.range)); e.preventDefault(); }
+    else if (k === "PageDown") { goTo(fleuveStepWeek(S.goal, -1, S.model.range)); e.preventDefault(); }
+    else if (k === "Home") { goTo(0); e.preventDefault(); }
+    else if (k === "+" || k === "=") zoomTo(goalCam.zoom * 0.85);
+    else if (k === "-" || k === "_") zoomTo(goalCam.zoom * 1.18);
+    else if (k === "r" || k === "R") api.resetView();
+    else if (k === "Enter" && S.selectedId && o.onOpen) o.onOpen(S.selectedId);
+    else if (k === "Escape") select(null);
+  };
+  canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onCancel);
+  canvas.addEventListener("pointerleave", onLeave);
+  canvas.addEventListener("dblclick", onDbl);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("contextmenu", onCtx);
+  canvas.addEventListener("auxclick", onAux);
+  const keyTarget = o.keyTarget || container;
+  keyTarget.addEventListener("keydown", onKey);
+
+  // ---------- Infobulle et sélection ----------
+  function showTip(id, e) {
+    const b = S.boatById[id]; if (!b) return;
+    const m = b.m, M = S.model;
+    const flags = [m.late ? '<em class="is-late">En retard de ' + m.lateDays + " j</em>" : "", m.crit ? '<em class="is-crit">Critique</em>' : "", m.focus ? '<em class="is-focus">Focus</em>' : "", m.jam ? '<em class="is-jam">Semaine chargée</em>' : ""].join("");
+    tipEl.innerHTML = '<b style="--c:' + esc(m.color) + '">' + esc(m.title) + "</b><span>" + esc(m.projectName) + " · " + FLEUVE_KIND_LABELS[m.kind] + " · " + String(m.hours).replace(".", ",") + " h</span><span>Échéance : " + esc(fleuveDayLabel(M.today, m.due, true)) + " (" + esc(fleuveRelText(m.due).toLowerCase()) + ")</span><span>" + esc(m.statusName || "") + (m.assignee ? " · " + esc(m.assignee) : "") + "</span>" + (flags ? "<div>" + flags + "</div>" : "") + "<small>Double-cliquer pour ouvrir la fiche</small>";
+    const r = container.getBoundingClientRect();
+    let x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
+    tipEl.style.display = "block";
+    const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+    if (x + tw > S.W - 6) x = Math.max(6, e.clientX - r.left - tw - 14);
+    if (y + th > S.H - 6) y = Math.max(6, e.clientY - r.top - th - 14);
+    tipEl.style.transform = "translate(" + Math.round(x) + "px," + Math.round(y) + "px)";
+  }
+  function hideTip() { tipEl.style.display = "none"; }
+  function select(id, fly) {
+    S.selectedId = id && S.boatById[id] ? id : null;
+    const b = S.selectedId ? S.boatById[S.selectedId] : null;
+    if (selMesh) {
+      selMesh.visible = !!b;
+      if (b) { const r = b.d.L + 1.6; selMesh.position.set(b.x, b.m.grounded ? 0.35 : 0.05, b.z); selMesh.scale.set(r, 1, r); }
+    }
+    if (selPin) { selPin.visible = !!b; if (b) selPin.position.copy(b.top).add(V1.set(0, 0.75, 0)); }
+    if (b && fly) goTo(b.m.day - 2.3);
+    lastLayout = 0; S.dirty = true;
+    if (o.onSelect) o.onSelect(S.selectedId);
+  }
+
+  const api = {
+    setData(model) { S.model = model; rebuild(false); },
+    setQuality(q) { if (q === S.qualityPref) return; S.qualityPref = q; if (S.model) rebuild(true); },
+    setAnimate(b) { S.animate = b !== false; S.dirty = true; },
+    setLabels(b) { S.labels = b !== false; lastLayout = 0; },
+    goTo, step(days) { goTo(S.goal + days); },
+    stepWeek(dir) { if (S.model) goTo(fleuveStepWeek(S.goal, dir, S.model.range)); },
+    today() { goTo(0); },
+    select, zoomBy(f) { zoomTo(goalCam.zoom * f); },
+    resetView() { Object.assign(goalCam, { zoom: 1, yaw: 0, pitch: 0, pan: 0 }); if (RM) Object.assign(cam, goalCam); },
+    cursor() { return S.cur; },
+    quality() { return S.quality; },
+    // Banc visuel : position écran d'un bateau (coordonnées de la page).
+    screenOf(id) {
+      const b = S.boatById[id]; if (!b) return null;
+      const r = canvas.getBoundingClientRect();
+      const [x, y, z] = proj(V2.set(b.x, b.y + 0.5, b.z));
+      return z < 1 ? { x: r.left + x, y: r.top + y } : null;
+    },
+    boatIds() { return S.boats.map((b) => b.id); },
+    state() { return { boats: S.boats.length, ports: S.ports.length, lit: S.ports.filter((P) => P.lit).length, ropes: S.ropes || 0, halos: S.halos.length, whirls: S.anim.whirls ? S.anim.whirls.list.length : 0, focus: S.boats.filter((b) => b.m.focus).length, wrecks: S.boats.filter((b) => b.m.grounded).length, tags: S.tags.filter((t) => t.shown).length, cur: S.cur, quality: S.quality }; },
+    dispose() {
+      S.disposed = true; cancelAnimationFrame(S.raf); ro.disconnect();
+      canvas.removeEventListener("pointerdown", onDown); canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp); canvas.removeEventListener("pointercancel", onCancel);
+      canvas.removeEventListener("pointerleave", onLeave); canvas.removeEventListener("dblclick", onDbl);
+      canvas.removeEventListener("wheel", onWheel); canvas.removeEventListener("contextmenu", onCtx); canvas.removeEventListener("auxclick", onAux);
+      keyTarget.removeEventListener("keydown", onKey);
+      clearGroup(dataG); clearGroup(worldG);
+      scene.traverse((x) => { if (x.geometry) x.geometry.dispose(); });
+      dataMats.forEach((m) => m.dispose());
+      matCache.forEach((m) => m.dispose());
+      dateLine.band.material.dispose();
+      textures.forEach((t) => t.dispose());
+      if (envRT) envRT.dispose();
+      if (rt) rt.dispose();
+      if (post) { post.m.dispose(); post.q.geometry.dispose(); }
+      renderer.dispose();
+      canvas.remove(); tagsEl.remove(); tipEl.remove();
+    },
+  };
+  S.raf = requestAnimationFrame(frame);
+  return api;
+}
+// === NEXORA:FLEUVE-ENGINE:END ===
+// === NEXORA:FLEUVE-VIEW:START ===
+// Vue « Fleuve du temps » (#515) : on navigue au fil de l'eau dans les
+// semaines à venir. Lecture seule, comme la Carte et le Cosmos : double-cliquer
+// un bateau ouvre la fiche Nexora ; le volet de détail ne modifie rien.
+const FLEUVE_WIDGET_MIN_W = 520;
+const FLEUVE_WIDGET_MIN_H = 380;
+function FleuveIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v11" /><path d="M12 4l6 9h-6" /><path d="M4 16h16l-2 3H6z" /><path d="M2 21c2 0 2-1 4-1s2 1 4 1 2-1 4-1 2 1 4 1 2-1 4-1" />
+    </svg>
+  );
+}
+// Légende : pictogrammes repris de la maquette validée.
+const FLEUVE_LEGEND = [
+  ["Barque, voilier, péniche", "taille = charge (≤ 4 h · ≤ 12 h · > 12 h), voile = projet", <svg key="i" viewBox="0 0 34 22"><path d="M3 15h9l-1.5 3H5z" fill="#9a6440"/><path d="M8 14V9l3 5z" fill="#7a4b2a"/><path d="M14 15h9l-1.5 3.5h-6z" fill="#efe4cf" stroke="#7a4b2a" strokeWidth=".8"/><path d="M18.5 14V5l4 9z" fill="#7a4b2a"/><path d="M24 15.5h9.5l-1 3h-8z" fill="#3b4f62"/><rect x="25" y="12.5" width="4" height="3" fill="#f1e4c8"/></svg>],
+  ["Échoué sur la berge", "tâche en retard", <svg key="i" viewBox="0 0 34 22"><path d="M0 18q9-7 18-3t16-1v8H0z" fill="#e7d19c"/><g transform="rotate(-18 16 13)"><path d="M8 13h14l-2 3.5h-10z" fill="#efe4cf" stroke="#7a4b2a" strokeWidth=".8"/><path d="M15 12.5V4l5 8.5z" fill="#8b5cf6"/></g></svg>],
+  ["Remous d'écume", "tâche critique", <svg key="i" viewBox="0 0 34 22"><ellipse cx="17" cy="14" rx="15" ry="6.5" fill="#3aa7b6"/><path d="M5 14a12 5 0 0 1 22-2M9 15a8 3.5 0 0 1 16-2M29 14a12 5 0 0 1-20 3" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round"/><path d="M13 13h8l-1 2h-6z" fill="#efe4cf"/></svg>],
+  ["Halo sarcelle", "tâche en mode focus", <svg key="i" viewBox="0 0 34 22"><ellipse cx="17" cy="15" rx="15" ry="5.5" fill="none" stroke="#2cc4b4" strokeWidth="2.4" opacity=".85"/><rect x="14" y="1" width="6" height="14" fill="#5de0d0" opacity=".35"/><path d="M12 14h10l-1.5 2.5h-7z" fill="#efe4cf" stroke="#7a4b2a" strokeWidth=".6"/></svg>],
+  ["Portique de jalon", "illuminé = franchi · éteint = à venir", <svg key="i" viewBox="0 0 34 22"><rect x="2" y="6" width="6" height="16" fill="#cdbfa6" stroke="#8d8270" strokeWidth=".8"/><rect x="26" y="6" width="6" height="16" fill="#cdbfa6" stroke="#8d8270" strokeWidth=".8"/><path d="M8 14a9 7 0 0 1 18 0" stroke="#bfb198" strokeWidth="3" fill="none"/><path d="M0 6l17-5 17 5z" fill="#8a4a2f"/><rect x="11" y="2.5" width="12" height="4" fill="#fff4d6" stroke="#6d4424" strokeWidth=".7"/><circle cx="5" cy="4" r="2" fill="#ffcf70"/><circle cx="29" cy="4" r="2" fill="#ffcf70"/></svg>],
+  ["Corde tendue", "dépendance entre tâches", <svg key="i" viewBox="0 0 34 22"><path d="M2 15h8l-1 2.5H3zM24 15h8l-1 2.5h-6z" fill="#efe4cf" stroke="#7a4b2a" strokeWidth=".7"/><path d="M9 14q8 5 16 0" stroke="#c89a55" strokeWidth="1.6" fill="none"/></svg>],
+  ["Halo orange", "semaine surchargée (bouchon)", <svg key="i" viewBox="0 0 34 22"><ellipse cx="17" cy="13" rx="17" ry="9" fill="#ff9a3c" opacity=".45"/><path d="M6 12h6l-1 2H7zM14 14h6l-1 2h-4zM21 11h6l-1 2h-4z" fill="#efe4cf" stroke="#7a4b2a" strokeWidth=".6"/></svg>],
+  ["Bouées dorées", "date visée, suit la navigation", <svg key="i" viewBox="0 0 34 22"><rect x="0" y="12" width="34" height="5" rx="2.5" fill="#ffd97a" opacity=".6"/><g fill="#f4ecdc" stroke="#7a4b2a" strokeWidth=".6"><circle cx="5" cy="14.5" r="2.6"/><circle cx="13" cy="14.5" r="2.6"/><circle cx="21" cy="14.5" r="2.6"/><circle cx="29" cy="14.5" r="2.6"/></g></svg>],
+];
+
+// Repli sans WebGL : les mêmes bateaux, semaine par semaine.
+function FleuveFallback({ reason, model, onOpen, onRetry }) {
+  const byWeek = {};
+  model.boats.concat(model.wrecks).forEach((b) => { (byWeek[b.week] = byWeek[b.week] || []).push(b); });
+  return (
+    <div className="lp-fleuve-fallback" role="region" aria-label="Fleuve en liste">
+      <p className="lp-carte-muted" style={{ marginTop: 0 }}>
+        {reason === "error" ? "Le moteur 3D n'a pas pu être chargé." : "La 3D n'est pas disponible sur cet appareil."} Voici les mêmes tâches, semaine par semaine.
+        {onRetry && <> <button type="button" className="lp-btn" onClick={onRetry}><RefreshCw size={13} /> Réessayer</button></>}
+      </p>
+      {model.weeks.map((w) => (
+        <details key={w.k} open={w.k <= 2}>
+          <summary><b>{fleuveWeekLabel(w.k)}</b><span className="lp-carte-muted"> · {w.sub} · {String(w.hours).replace(".", ",")} h pour {String(w.capacity).replace(".", ",")} h{w.over ? " · bouchon" : ""}</span></summary>
+          <ul>
+            {(byWeek[w.k] || []).sort((a, b) => a.due - b.due).map((b) => (
+              <li key={b.id}><button type="button" onClick={() => onOpen(b.id)}>{fleuveDayLabel(model.today, b.due, false)} · {b.title} · {b.projectName}{b.late ? " · en retard" : b.crit ? " · critique" : ""}</button></li>
+            ))}
+          </ul>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+// Widget « Fleuve du temps (complet) » : la vue intégrale dans un tableau de
+// bord ; ses réglages vivent dans la configuration DU widget.
+function WidgetEmbedFleuve({ widget, tasks, ctx, onOpen, onUpdateWidget }) {
+  // Légende repliée par défaut : la place est comptée.
+  const stored = widget && widget.fleuvePrefs && typeof widget.fleuvePrefs === "object" ? widget.fleuvePrefs : { legend: false };
+  const [local, setLocal] = useState(stored);
+  useEffect(() => { setLocal(stored); }, [JSON.stringify(stored)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setPrefs = (patch) => {
+    const next = { ...local, ...(typeof patch === "function" ? patch(local) : patch) };
+    setLocal(next);
+    if (onUpdateWidget) onUpdateWidget({ fleuvePrefs: next });
+  };
+  return (
+    <div className="lp-widget-embed lp-widget-embed-fleuve">
+      <FleuveView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs} embedded />
+    </div>
+  );
+}
+
+function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolbarSlot, embedded }) {
+  const cfg = normalizeFleuveViewPrefs(prefs);
+  const stageRef = useRef(null);
+  const glRef = useRef(null);
+  const engineRef = useRef(null);
+  const friseRef = useRef(null);
+  const curRef = useRef(null);
+  const [status, setStatus] = useState("loading");
+  const [attempt, setAttempt] = useState(0);
+  const [day, setDay] = useState(0);
+  const [selectedId, setSelectedId] = useState(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const small = embedded && box.w > 0 && (box.w < FLEUVE_WIDGET_MIN_W || box.h < FLEUVE_WIDGET_MIN_H);
+
+  const allTasks = ctx.tasks || tasks || [];
+  const norm = useMemo(() => {
+    const n = carteNormalize(ctx, allTasks);
+    n.taskById = {};
+    n.tasks.forEach((t) => { n.taskById[t.id] = t; });
+    return n;
+  }, [allTasks, ctx.projects, ctx.projectFolders, ctx.statuses, ctx.taskTypes, ctx.teamMembers, ctx.milestoneTypes]);
+  const generalFilter = cfg.filter ? { ...widgetDefaultFilter(), ...cfg.filter } : null;
+  const filterCount = generalFilter ? activeWidgetFilterCount(generalFilter) : 0;
+  // Périmètre de la page (bandeau, filtres globaux), filtre général de la vue.
+  const scoped = useMemo(() => {
+    const pageScope = tasksWithDone || tasks || [];
+    const list = generalFilter ? applyWidgetFilter(pageScope, generalFilter, ctx) : pageScope;
+    const ids = new Set(list.map((t) => t.id));
+    return norm.tasks.filter((t) => ids.has(t.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [norm, tasks, tasksWithDone, JSON.stringify(cfg.filter), ctx]);
+  const visibleTasks = useMemo(() => scoped.filter((t) => fleuveMatches(t, cfg)), [scoped, cfg.projects.join("|"), cfg.assignees.join("|"), cfg.focusOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  const quality = fleuveResolveQuality(cfg.quality, box.w || (typeof window !== "undefined" ? window.innerWidth : 1200), 0);
+  const model = useMemo(() => fleuveBuild({ ...norm, tasks: visibleTasks }, { capacity: cfg.capacity, maxBoats: FLEUVE_MAX_BOATS[quality] }), [norm, visibleTasks, cfg.capacity, quality]);
+  const projectOptions = useMemo(() => fleuveQuickProjects(scoped, norm.projects, cfg.projects), [scoped, norm.projects, cfg.projects.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const assigneeOptions = useMemo(() => carteQuickOptions(scoped.filter((t) => t.state !== "done" && t.state !== "info"), [], { assignees: cfg.assignees }).assignees, [scoped, cfg.assignees.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const focusCount = useMemo(() => carteFocusCount(scoped.filter((t) => t.state !== "done" && t.state !== "info")), [scoped]);
+  const frise = useMemo(() => fleuveFrise(model), [model]);
+  const target = fleuveTarget(model, day);
+  const openRef = useRef(null);
+  const modelRef = useRef(model);
+  modelRef.current = model;
+
+  // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); setBox((b) => (Math.round(r.width) === b.w && Math.round(r.height) === b.h ? b : { w: Math.round(r.width), h: Math.round(r.height) })); });
+    ro.observe(el);
+    if (embedded) return () => ro.disconnect();
+    const fit = () => {
+      const top = el.getBoundingClientRect().top;
+      const bar = document.querySelector(".lp-mobile-tabbar");
+      const barH = bar && bar.getBoundingClientRect().height && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().height : 0;
+      el.style.height = Math.max(420, window.innerHeight - Math.max(0, top) - barH - 12) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const empty = model.boats.length + model.wrecks.length + model.portiques.length === 0;
+  useEffect(() => {
+    if (empty) return undefined;
+    if (!carteWebglAvailable()) { setStatus("nowebgl"); return undefined; }
+    let cancelled = false;
+    setStatus("loading");
+    loadCarteThree().then((THREE) => {
+      if (cancelled || !glRef.current) return;
+      try {
+        const eng = createFleuveEngine(THREE, glRef.current, {
+          keyTarget: stageRef.current, quality: cfg.quality, animate: cfg.animate, labels: cfg.labels,
+          obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-fleuve-plate, .lp-carte-detail, .lp-fleuve-zoom, .lp-carte-small-hint")].map((e) => e.getBoundingClientRect()) : []),
+          onSelect: (id) => setSelectedId(id),
+          onOpen: (id) => openRef.current(id),
+          onCursor: (cur) => {
+            const m = modelRef.current;
+            if (curRef.current && m) curRef.current.style.left = fleuveFrise(m).pct(cur) + "%";
+            if (stageRef.current) stageRef.current.setAttribute("data-fleuve-cursor", cur.toFixed(2));
+            setDay((d) => (d === Math.floor(cur + 1e-6) ? d : Math.floor(cur + 1e-6)));
+          },
+        });
+        engineRef.current = eng;
+        if (window.__fleuveBench) window.__fleuveBench.engine = eng;
+        setStatus("ready");
+      } catch (e) {
+        console.error("[Nexora Fleuve]", e);
+        setStatus("nowebgl");
+      }
+    }).catch((e) => { console.error("[Nexora Fleuve] three.js", e); if (!cancelled) setStatus("error"); });
+    return () => { cancelled = true; if (engineRef.current) { engineRef.current.dispose(); engineRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt, empty]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setData(model); }, [status, model]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAnimate(cfg.animate); }, [status, cfg.animate]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setLabels(cfg.labels); }, [status, cfg.labels]);
+
+  const engine = () => engineRef.current;
+  const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
+  openRef.current = openFiche;
+  const go = (d) => { const e = engine(); if (e) e.goTo(d); };
+  const onFrise = (e) => { const r = friseRef.current.getBoundingClientRect(); go(fleuveFriseDay(model, (e.clientX - r.left) / r.width)); };
+  const selB = selectedId ? model.byId[selectedId] : null;
+  const selTask = selB ? norm.taskById[selB.id] : null;
+  const selRaw = selTask ? allTasks.find((t) => t.id === selTask.id) : null;
+  const projectIndex = useMemo(() => {
+    const out = {};
+    norm.projects.forEach((p) => { out[p.id] = { id: p.id, name: p.name, color: p.color, folderName: p.folderName }; });
+    out["__terre-inconnue__"] = { id: null, name: "Sans projet", color: "#94A3B8" };
+    return { projectById: out, themes: {} };
+  }, [norm]);
+  const c = model.counters;
+  const lastWeek = model.weeks[model.weeks.length - 1];
+  const projCount = new Set(model.boats.concat(model.wrecks).map((b) => b.projectId || "~")).size;
+  const legendProjects = useMemo(() => {
+    const seen = {}, out = [];
+    model.boats.concat(model.wrecks).forEach((b) => { const k = b.projectId || "~"; if (!seen[k]) { seen[k] = 1; out.push([k, b.projectName, b.color]); } });
+    return out.slice(0, 8);
+  }, [model]);
+  const note = [c.grouped ? c.grouped + (c.grouped > 1 ? " tâches regroupées" : " tâche regroupée") : "", model.undated ? model.undated + (model.undated > 1 ? " tâches sans échéance" : " tâche sans échéance") : "", model.outside ? model.outside + " au-delà de " + fleuveShortWeek(model.nWeeks) : ""].filter(Boolean).join(" · ");
+  const busiest = c.busiest != null ? model.weeks[c.busiest] : null;
+  const ready = status === "ready";
+
+  return (
+    <section className={"lp-carte-view lp-fleuve-view" + (embedded ? " is-embedded" : "")} aria-label="Fleuve du temps">
+      <ViewToolbarPortal slot={toolbarSlot} />
+      <div className="lp-carte-toolbar">
+        <button type="button" className={"lp-btn" + (filterCount ? " lp-btn-primary" : "")} onClick={() => setFiltersOpen(true)}><Filter size={13} /> Filtres{filterCount > 0 ? " (" + filterCount + ")" : ""}</button>
+        <CarteQuickFilter kind="projects" label="Projets" allLabel="Tous les projets" icon={<Folder size={13} />} options={projectOptions} value={cfg.projects} onChange={(v) => setPrefs({ projects: v })} />
+        <CarteQuickFilter kind="assignees" label="Responsables" allLabel="Tous les responsables" icon={<Users size={13} />} options={assigneeOptions} value={cfg.assignees} onChange={(v) => setPrefs({ assignees: v })} />
+        <FocusQuickToggle view="fleuve" active={cfg.focusOnly} count={focusCount} onChange={(focusOnly) => setPrefs({ focusOnly })} />
+        <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Capacité, étiquettes, légende, animations et qualité">
+          <label className="lp-fleuve-capacity">
+            <span>Capacité hebdomadaire</span>
+            <input key={cfg.capacity} type="number" min="1" max="168" step="0.5" defaultValue={cfg.capacity} aria-label="Capacité hebdomadaire en heures"
+              onBlur={(e) => { if (Number(e.target.value) !== cfg.capacity) setPrefs({ capacity: e.target.value }); }} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+            <span>h</span>
+          </label>
+          <p className="lp-carte-muted lp-fleuve-hint">Au-delà, la semaine forme un bouchon. Charge d'une tâche : son créneau horaire, sinon 3,5 h par jour de durée.</p>
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.labels} onChange={(e) => setPrefs({ labels: e.target.checked })} /> Étiquettes des bateaux</label>
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.legend} onChange={(e) => setPrefs({ legend: e.target.checked })} /> Légende</label>
+          <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.animate} onChange={(e) => setPrefs({ animate: e.target.checked })} /> Animations (clapotis, remous, drapeaux)</label>
+          <hr className="lp-divider" style={{ margin: "6px 0" }} />
+          <div className="lp-carte-quality" role="group" aria-label="Qualité graphique">
+            {FLEUVE_QUALITIES.map((q) => <button key={q} type="button" className={"lp-btn" + (cfg.quality === q ? " lp-btn-primary" : "")} onClick={() => setPrefs({ quality: q })}>{{ auto: "Auto", high: "Haute", low: "Basse" }[q]}</button>)}
+          </div>
+        </DropdownButton>
+        {note && <span className="lp-t3d-note">{note}</span>}
+      </div>
+
+      <div ref={stageRef} className={"lp-fleuve-stage" + (small ? " is-small" : "") + (selTask ? " has-detail" : "")} tabIndex={0}
+        data-fleuve-status={status} data-fleuve-day={day} data-fleuve-selected={selectedId || ""} data-fleuve-boats={model.boats.length + model.wrecks.length} data-fleuve-quality={quality}
+        aria-label="Fleuve du temps en 3D. Molette : avancer ou reculer dans le temps ; Ctrl + molette : zoomer ; glisser : se déplacer ; molette enfoncée glissée : tourner ; flèches : un jour, Maj + flèches : une semaine ; Origine : aujourd'hui ; double-clic sur un bateau : ouvrir la fiche.">
+        {small && ready && !empty && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour naviguer confortablement.</div>}
+        {empty ? (
+          <div className="lp-empty lp-carte-empty">
+            <strong>Le fleuve est calme : aucune tâche ouverte datée.</strong>
+            <span>{scoped.length ? "Les filtres écartent peut-être des tâches (bandeau, filtres de la page ou de la vue)." : "Donnez une échéance à vos tâches : chacune deviendra un bateau posé sur le fleuve à sa date."}</span>
+          </div>
+        ) : (status === "nowebgl" || status === "error") ? (
+          <FleuveFallback reason={status} model={model} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
+        ) : (
+          <>
+            <div ref={glRef} className="lp-fleuve-gl" />
+            {status === "loading" && <div className="lp-carte-loading lp-fleuve-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Mise à l'eau du fleuve…</div>}
+            {ready && (
+              <>
+                <div className="lp-fleuve-plate lp-fleuve-title"><div className="lp-fleuve-in">
+                  <b>Le Fleuve du temps</b>
+                  <span>{projCount} projet{projCount > 1 ? "s" : ""} · {model.nWeeks} semaines · jusqu'au {fleuveDayLabel(model.today, lastWeek.to, false)}</span>
+                </div></div>
+                <div className="lp-fleuve-plate lp-fleuve-date" aria-live="polite"><div className="lp-fleuve-in">
+                  <small>Date visée</small>
+                  <b data-fleuve-date={target.iso}>{target.date} · <em>{target.week}</em></b>
+                  <span>{target.sub}</span>
+                </div></div>
+                <div className="lp-fleuve-plate lp-fleuve-counter"><div className="lp-fleuve-in">
+                  <span><i style={{ background: "#c2412d" }} /><b>{c.late}</b> en retard</span>
+                  <span className="lp-fleuve-sep">·</span>
+                  <span><i style={{ background: "#e0701a" }} /><b>{c.crit}</b> critique{c.crit > 1 ? "s" : ""}</span>
+                  {c.focus > 0 && <><span className="lp-fleuve-sep">·</span><span><i style={{ background: "#2cc4b4" }} /><b>{c.focus}</b> en focus</span></>}
+                  <span className="lp-fleuve-sep">·</span>
+                  {busiest ? <button type="button" className="lp-fleuve-jam" onClick={() => go(busiest.from + 2)} title={fleuveJamText(busiest)}><i />{busiest.k === 0 ? <><b>cette semaine</b> chargée</> : <>semaine <b>{busiest.label}</b> chargée</>}</button> : <span>aucune semaine chargée</span>}
+                </div></div>
+                {cfg.legend && !small && (
+                  <aside className="lp-fleuve-plate lp-fleuve-legend" aria-label="Légende"><div className="lp-fleuve-in">
+                    <h3>Lecture du fleuve <button type="button" className="lp-fleuve-x" aria-label="Masquer la légende" onClick={() => setPrefs({ legend: false })}><X size={12} /></button></h3>
+                    <div className="lp-fleuve-projs">{legendProjects.map(([k, name, color]) => <span key={k}><i style={{ background: color }} />{name}</span>)}</div>
+                    <ul>{FLEUVE_LEGEND.map(([t, s, icon]) => <li key={t}>{icon}<span>{t}<small>{s}</small></span></li>)}</ul>
+                  </div></aside>
+                )}
+                {!cfg.legend && !small && <button type="button" className="lp-fleuve-plate lp-fleuve-legend-toggle" onClick={() => setPrefs({ legend: true })}><span className="lp-fleuve-in">Légende</span></button>}
+                <div className="lp-fleuve-plate lp-fleuve-timeline"><div className="lp-fleuve-in">
+                  <div className="lp-fleuve-ctrls">
+                    <button type="button" className="lp-fleuve-btn" title="Semaine précédente" onClick={() => engine() && engine().stepWeek(-1)}>‹ semaine</button>
+                    <DateInput className="lp-fleuve-dateinput" aria-label="Aller à la date" value={target.iso} min={fleuveIso(model.today, model.range.navMin)} max={fleuveIso(model.today, model.range.navMax)}
+                      onChange={(v) => { const d = fleuveDayFromIso(v, model.today); if (d != null) go(d); }} />
+                    <button type="button" className="lp-fleuve-btn" title="Semaine suivante" onClick={() => engine() && engine().stepWeek(1)}>semaine ›</button>
+                    <button type="button" className="lp-fleuve-btn is-gold" onClick={() => engine() && engine().today()}>Aujourd'hui</button>
+                  </div>
+                  <div ref={friseRef} className="lp-fleuve-frise" onClick={onFrise} onWheel={(e) => { const en = engine(); if (en) en.goTo(en.cursor() + fleuveWheelDays(e.deltaY, e.deltaMode)); }} role="slider" aria-label="Frise des semaines et des jalons" aria-valuemin={model.range.navMin} aria-valuemax={Math.floor(model.range.navMax)} aria-valuenow={day} aria-valuetext={target.date}>
+                    {frise.weeks.map((w) => <div key={w.k} className={"lp-fleuve-wk" + (w.over ? " is-jam" : "")} style={{ left: w.left + "%", width: w.width + "%" }} title={w.over ? fleuveJamText(model.weeks[w.k]) : undefined}>{w.label}<small>{w.sub}</small></div>)}
+                    <div className="lp-fleuve-today" style={{ left: frise.today + "%" }} />
+                    {frise.milestones.map((m) => <div key={m.id} className={"lp-fleuve-ms" + (fleuveMilestoneLit(m.day, day + 0.99) ? " is-on" : "")} title={m.title + " · " + fleuveDayLabel(model.today, m.day, false)} style={{ left: m.left + "%", background: m.color }} />)}
+                    <div ref={curRef} className="lp-fleuve-cur" style={{ left: frise.pct(day) + "%" }} />
+                  </div>
+                </div></div>
+                {!small && (
+                  <div className="lp-fleuve-plate lp-fleuve-flow"><div className="lp-fleuve-in">
+                    ↑ Amont : semaines à venir<br />↓ Aval : aujourd'hui
+                    <span>Molette : voyager dans le temps<br />Ctrl + molette : zoomer<br />Glisser : se déplacer<br />Molette enfoncée : tourner<br />Double-clic : ouvrir la fiche</span>
+                  </div></div>
+                )}
+                <div className="lp-fleuve-zoom" role="group" aria-label="Zoom">
+                  <button type="button" className="lp-icon-btn" aria-label="Zoomer" onClick={() => engine() && engine().zoomBy(0.8)}><Plus size={15} /></button>
+                  <button type="button" className="lp-icon-btn" aria-label="Dézoomer" onClick={() => engine() && engine().zoomBy(1.25)}><Minus size={15} /></button>
+                  <button type="button" className="lp-icon-btn" aria-label="Recadrer la vue" onClick={() => engine() && engine().resetView()}><Crosshair size={15} /></button>
+                </div>
+              </>
+            )}
+            {selTask && (
+              <CarteTaskDetail task={selTask} raw={selRaw} norm={norm} layout={projectIndex} ctx={ctx} onOpen={openFiche}
+                onGo={(id) => { const e = engine(); if (e) e.select(id, true); }} onWalk={(id) => { const e = engine(); if (e) e.select(id, true); }} walkLabel="Rejoindre"
+                worldText={"Sur le fleuve : " + FLEUVE_KIND_LABELS[selB.kind].toLowerCase() + " de " + String(selB.hours).replace(".", ",") + " h" + (selB.grounded ? ", échouée sur un banc de sable (en retard)" : selB.crit ? ", dans un remous d'écume (critique)" : "") + (selB.jam ? ", dans le bouchon de " + fleuveWeekLabel(selB.week) : "") + ". Lecture seule : les modifications passent par la fiche."}
+                lockReason={null} onUpdate={null} onPreview={null} onToggleDone={null}
+                onClose={() => engine() && engine().select(null)} />
+            )}
+          </>
+        )}
+      </div>
+      {filtersOpen && (
+        <Modal title="Filtrer le Fleuve du temps" onClose={() => setFiltersOpen(false)} wide footer={<>
+          <button type="button" className="lp-btn" onClick={() => setPrefs({ filter: null })} disabled={!filterCount}>Tout afficher</button>
+          <button type="button" className="lp-btn lp-btn-primary" onClick={() => setFiltersOpen(false)}>Terminé</button>
+        </>}>
+          <p className="lp-carte-muted" style={{ marginTop: 0 }}>Le même filtre que partout ailleurs dans Nexora. Les tâches écartées quittent le fleuve.</p>
+          <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
+        </Modal>
+      )}
+    </section>
+  );
+}
+// === NEXORA:FLEUVE-VIEW:END ===
 // === NEXORA:TIMELINE3D-ENGINE:START ===
 // Moteur 3D de la vue Timeline 3D (#454), directions validées sur maquettes
 // (#452) : « Grande Ligne » (table de maquettiste, voies sur ballast, gares,
@@ -26961,6 +28602,941 @@ function createTimeline3dEngine(THREE, container, opts) {
   return api;
 }
 // === NEXORA:TIMELINE3D-ENGINE:END ===
+// === NEXORA:REUNIONS3D-ENGINE:START ===
+// Moteur 3D de la vue Réunions 3D (#514) : la Chambre des réunions. three.js
+// est chargé à la demande par la vue (même import que la Carte) et passé en
+// paramètre. Toute la logique (périodes, gradins, synthèse, extraits) vit
+// dans NEXORA:REUNIONS3D ; ce moteur ne fait que dessiner. Pièces des
+// pupitres et tablettes instanciées, géométries et matières partagées,
+// textures de canevas mises en cache et libérées quand elles ne servent
+// plus ; tout est libéré par dispose(). Le moteur ne modifie jamais une tâche.
+const REU3D_SERIF = "'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, 'DejaVu Serif', serif";
+const REU3D_SANS = "'Inter', 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif";
+function reunions3dAbbr(name) {
+  const n = String(name || "").trim();
+  if (n.length <= 8) return n;
+  const words = n.split(/[\s\-–_/]+/).filter((w) => w && !/^(de|du|des|la|le|les|et|à|au|aux|d|l)$/i.test(w));
+  if (words.length > 1) return words.slice(0, 4).map((w) => w[0].toUpperCase()).join("");
+  return n.slice(0, 7) + ".";
+}
+function createReunions3dEngine(THREE, container, opts) {
+  const o = opts || {};
+  const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const S = {
+    model: null, qualityPref: o.quality || "auto", quality: "high", animate: o.animate !== false, disposed: false, raf: 0,
+    buildId: 0, selected: null, hovered: null, time: 0, last: performance.now(), dirty: true,
+    base: null, cur: null, goal: null, bounds: null, items: {}, order: [], anim: [], sparks: null,
+  };
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setClearColor("#1a100a");
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const canvas = renderer.domElement;
+  canvas.className = "lp-reu-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  container.appendChild(canvas);
+  const tip = document.createElement("div");
+  tip.className = "lp-reu-tip";
+  tip.hidden = true;
+  container.appendChild(tip);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color("#1a100a");
+  scene.fog = new THREE.Fog("#24160d", 140, 320);
+  const camera = new THREE.PerspectiveCamera(20, 1, 0.3, 600);
+  const world = new THREE.Group();
+  const stageGroup = new THREE.Group();
+  scene.add(world, stageGroup);
+  const maxAni = Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
+
+  // ---------- Textures de canevas (cache) ----------
+  // Clé → { tex, used } ; une texture absente de la dernière construction
+  // est libérée. Les textures « statiques » (bois, pierre, sceau…) restent.
+  const texCache = new Map();
+  const staticTex = [];
+  function makeCanvasTex(w, h, draw, scale) {
+    const k = scale || 2;
+    const c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
+    const g = c.getContext("2d");
+    if (g) { g.scale(k, k); draw(g, w, h); }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = maxAni;
+    return t;
+  }
+  function cachedTex(key, w, h, draw) {
+    let e = texCache.get(key);
+    if (!e) { e = { tex: makeCanvasTex(w, h, draw, S.quality === "low" ? 1.5 : 2), mats: {} }; texCache.set(key, e); }
+    e.used = S.buildId;
+    return e;
+  }
+  function cachedMat(key, w, h, draw, variant, factory) {
+    const e = cachedTex(key, w, h, draw);
+    if (!e.mats[variant]) e.mats[variant] = factory(e.tex);
+    return e.mats[variant];
+  }
+  function sweepCache() {
+    texCache.forEach((e, k) => {
+      if (e.used === S.buildId) return;
+      e.tex.dispose(); Object.values(e.mats).forEach((m) => m.dispose());
+      texCache.delete(k);
+    });
+  }
+  function staticCanvasTex(w, h, draw, repeat) {
+    const t = makeCanvasTex(w, h, draw, 2);
+    if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
+    staticTex.push(t);
+    return t;
+  }
+  const fit = (g, text, maxW) => { if (g.measureText(text).width <= maxW) return text; let s = text; while (s.length > 1 && g.measureText(s + "…").width > maxW) s = s.slice(0, -1); return s.trimEnd() + "…"; };
+  function wrap(g, text, maxW, maxLines) {
+    const words = String(text).split(" "), out = []; let cur = "";
+    for (let k = 0; k < words.length; k++) {
+      const t = cur ? cur + " " + words[k] : words[k];
+      if (g.measureText(t).width <= maxW) cur = t;
+      else { if (cur) out.push(cur); cur = words[k]; if (out.length === maxLines - 1) { cur = words.slice(k).join(" "); break; } }
+    }
+    if (cur) out.push(cur);
+    if (out.length > maxLines) out.length = maxLines;
+    if (out.length) out[out.length - 1] = fit(g, out[out.length - 1], maxW);
+    return out;
+  }
+  function rrect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+  const spaced = (g, px) => { try { g.letterSpacing = px; } catch (e) { /* navigateur sans letterSpacing */ } };
+  function woodTex(base, dark, w, h) {
+    return staticCanvasTex(w || 256, h || 256, (g, W, H) => {
+      g.fillStyle = base; g.fillRect(0, 0, W, H);
+      for (let i = 0; i < 90; i++) {
+        const r = carteRand("reu-bois-" + base + i);
+        g.strokeStyle = "rgba(" + dark + "," + (0.08 + r * 0.18) + ")"; g.lineWidth = 0.6 + carteRand("l" + i) * 1.6;
+        g.beginPath(); const p = carteRand("p" + base + i) * H;
+        for (let s = 0; s <= 20; s++) g.lineTo(s / 20 * W, p + Math.sin(s * 0.7 + i) * 2.5);
+        g.stroke();
+      }
+    }, [1, 1]);
+  }
+  function holoBg(g, w, h, r) {
+    rrect(g, 3, 3, w - 6, h - 6, r);
+    const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "rgba(14,44,50,.92)"); gr.addColorStop(1, "rgba(8,26,32,.95)");
+    g.fillStyle = gr; g.fill();
+    g.save(); g.clip(); g.fillStyle = "rgba(255,220,150,.035)"; for (let y = 0; y < h; y += 4) g.fillRect(0, y, w, 1.2); g.restore();
+    g.strokeStyle = "rgba(255,214,140,.95)"; g.lineWidth = 2.5; rrect(g, 3, 3, w - 6, h - 6, r); g.stroke();
+    g.strokeStyle = "rgba(255,214,140,.35)"; g.lineWidth = 1; rrect(g, 9, 9, w - 18, h - 18, r - 5); g.stroke();
+  }
+
+  // ---------- Environnement et lumières (fixes) ----------
+  let envTex = null;
+  try {
+    const c = document.createElement("canvas"); c.width = 256; c.height = 128;
+    const g = c.getContext("2d");
+    if (g) {
+      const gr = g.createLinearGradient(0, 0, 0, 128);
+      gr.addColorStop(0, "#3a2a1c"); gr.addColorStop(0.45, "#e0b070"); gr.addColorStop(0.6, "#6a4428"); gr.addColorStop(1, "#1c120b");
+      g.fillStyle = gr; g.fillRect(0, 0, 256, 128);
+      for (let i = 0; i < 8; i++) { g.fillStyle = "rgba(255,225,160,.8)"; g.fillRect(i * 32 + 10, 34, 10, 26); }
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    const es = new THREE.Scene(); const sg = new THREE.SphereGeometry(50, 32, 16); const sm = new THREE.MeshBasicMaterial({ map: t, side: THREE.BackSide });
+    es.add(new THREE.Mesh(sg, sm));
+    const pm = new THREE.PMREMGenerator(renderer);
+    envTex = pm.fromScene(es, 0.04).texture;
+    pm.dispose(); sg.dispose(); sm.dispose(); t.dispose();
+    scene.environment = envTex;
+  } catch (e) { envTex = null; }
+  scene.add(new THREE.HemisphereLight("#ffd9a8", "#2a1a10", 0.75));
+  const sun = new THREE.DirectionalLight("#ffc98a", 2.4);
+  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.03;
+  scene.add(sun, sun.target);
+  const fill = new THREE.DirectionalLight("#b8c4dc", 0.55);
+  scene.add(fill, fill.target);
+  const torches = [-1, 1].map((s) => { const L = new THREE.PointLight("#ffab55", 22, 16, 1.6); L.position.set(s * 4.3, 3.6, 0.4); scene.add(L); return L; });
+
+  // ---------- Matières partagées ----------
+  const std = (color, x) => new THREE.MeshStandardMaterial({ color, roughness: x && x.r != null ? x.r : 0.7, metalness: x && x.m != null ? x.m : 0, envMapIntensity: x && x.env != null ? x.env : 0.8, map: (x && x.map) || null, side: (x && x.side) || THREE.FrontSide });
+  const M = {};
+  M.wood = std("#ffffff", { map: woodTex("#5b3820", "30,15,6"), r: 0.55, env: 0.7 });
+  M.woodD = std("#ffffff", { map: woodTex("#3c2414", "12,6,2"), r: 0.6, env: 0.6 });
+  M.floor = std("#ffffff", { map: woodTex("#6a4326", "30,14,4", 512, 64), r: 0.5, env: 0.8, side: THREE.DoubleSide });
+  M.wall = std("#ffffff", { map: woodTex("#3a2314", "0,0,0", 512, 128), r: 0.75, env: 0.4, side: THREE.BackSide });
+  M.brass = std("#d2a75a", { m: 0.85, r: 0.32, env: 1.2 });
+  M.stone = std("#ffffff", { r: 0.9, env: 0.35, side: THREE.DoubleSide, map: staticCanvasTex(512, 256, (g, w, h) => {
+    g.fillStyle = "#8a7b68"; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 32) for (let x = (y / 32) % 2 ? -32 : 0; x < w; x += 64) {
+      const r = carteRand("pierre" + x + "," + y);
+      g.fillStyle = "hsl(" + (28 + r * 8) + "," + (12 + r * 8) + "%," + (42 + carteRand("l" + x + y) * 12) + "%)"; g.fillRect(x + 1.5, y + 1.5, 61, 29);
+    }
+  }, [8, 1]) });
+  M.stoneP = std("#8d7f6c", { r: 0.9, env: 0.35, side: THREE.DoubleSide });
+  M.ground = std("#4a3525", { r: 0.8, env: 0.3 });
+  M.ghost = new THREE.MeshStandardMaterial({ color: "#d8c9a6", roughness: 0.2, transparent: true, opacity: 0.3, depthWrite: false, emissive: "#7a8fa8", emissiveIntensity: 0.3 });
+  M.dark = std("#2a1a10", { r: 0.8, env: 0.3 });
+  M.inlay = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.5, transparent: true, opacity: 0.85 });
+  M.inlayGhost = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.5, transparent: true, opacity: 0.4, depthWrite: false });
+  M.bulb = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 2.1, 1.0), toneMapped: false });
+  M.bulbBlue = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 1.8, 2.6), toneMapped: false });
+  M.bulbGhost = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 0.9, 1.0), toneMapped: false, transparent: true, opacity: 0.5 });
+  M.candle = std("#b8ab92");
+  M.pages = std("#efe0bc", { r: 0.9 });
+  M.cover = std("#5c1f18", { r: 0.8 });
+  M.tablet = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.8 });
+  M.tabletGhost = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.8, transparent: true, opacity: 0.6, depthWrite: false });
+  M.bead = new THREE.MeshBasicMaterial({ color: "#ffffff", toneMapped: false });
+  M.fils = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
+  M.filsGhost = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, transparent: true, opacity: 0.5, depthWrite: false });
+  M.frame = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.7, 0.8), toneMapped: false, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
+  M.frameDim = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.9, 1.4, 0.7), toneMapped: false, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
+  M.flame = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 1.8, 0.6), toneMapped: false });
+  M.lens = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 1.7, 0.9), toneMapped: false });
+  M.select = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.0, 0.9), toneMapped: false, transparent: true, opacity: 0.9, depthWrite: false });
+  M.pick = new THREE.MeshBasicMaterial({ visible: false });
+  const beamTex = staticCanvasTex(64, 256, (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "rgba(255,210,130,0)"); gr.addColorStop(1, "rgba(255,210,130,1)"); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
+  const beamMat = (op) => new THREE.MeshBasicMaterial({ map: beamTex, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false, color: new THREE.Color(1.3, 1.0, 0.6) });
+  M.beam = beamMat(0.22); M.beamGhost = beamMat(0.12); M.beamStage = beamMat(0.35);
+  const sealTex = staticCanvasTex(256, 256, (g, w) => {
+    g.translate(w / 2, w / 2);
+    for (let k = 0; k < 24; k++) { g.rotate(Math.PI / 12); g.beginPath(); g.arc(0, -112, 14, 0, 7); g.fillStyle = "#c9912e"; g.fill(); }
+    const gr = g.createRadialGradient(-30, -30, 10, 0, 0, 118); gr.addColorStop(0, "#ffe9a6"); gr.addColorStop(0.6, "#e0a93e"); gr.addColorStop(1, "#9c6a1c");
+    g.beginPath(); g.arc(0, 0, 112, 0, 7); g.fillStyle = gr; g.fill();
+    g.lineWidth = 3; g.strokeStyle = "#7a4e12"; g.beginPath(); g.arc(0, 0, 98, 0, 7); g.stroke(); g.beginPath(); g.arc(0, 0, 62, 0, 7); g.stroke();
+    g.fillStyle = "#5a360a"; g.font = "700 22px " + REU3D_SERIF; g.textAlign = "center";
+    const txt = "COMPTE RENDU · COMPTE RENDU · ", n = txt.length;
+    for (let k = 0; k < n; k++) { g.save(); g.rotate(k / n * Math.PI * 2); g.fillText(txt[k], 0, -72); g.restore(); }
+    g.font = "700 64px " + REU3D_SERIF; g.fillText("✓", 0, 22);
+  });
+  M.seal = new THREE.MeshStandardMaterial({ map: sealTex, transparent: true, metalness: 0.6, roughness: 0.3, emissive: "#ffb040", emissiveMap: sealTex, emissiveIntensity: 0.7 });
+  const winTex = staticCanvasTex(160, 400, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "#ffe7b0"); gr.addColorStop(0.5, "#ffc06a"); gr.addColorStop(1, "#e08a3c");
+    g.fillStyle = gr; g.beginPath(); g.moveTo(0, h); g.lineTo(0, w / 2); g.arc(w / 2, w / 2, w / 2, Math.PI, 0); g.lineTo(w, h); g.closePath(); g.fill();
+    g.strokeStyle = "#2a180c"; g.lineWidth = 6; g.stroke();
+    g.lineWidth = 3; for (let y = w / 2; y < h; y += 44) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
+  });
+  M.win = new THREE.MeshBasicMaterial({ map: winTex, transparent: true, color: new THREE.Color(1.5, 1.35, 1.15), toneMapped: false, side: THREE.DoubleSide });
+  const dotTex = staticCanvasTex(32, 32, (c, w) => { const gr = c.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); gr.addColorStop(0, "rgba(255,225,170,1)"); gr.addColorStop(1, "rgba(255,225,170,0)"); c.fillStyle = gr; c.fillRect(0, 0, w, w); });
+  M.dust = new THREE.PointsMaterial({ map: dotTex, size: 0.1, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending });
+
+  // ---------- Géométries partagées ----------
+  const HOLO_W = 560, HOLO_H = 270, HOLO_R = HOLO_H / HOLO_W;
+  const G = {
+    base: new THREE.BoxGeometry(1.1, 0.12, 0.8), column: new THREE.CylinderGeometry(0.17, 0.24, 0.95, 8),
+    front: new THREE.BoxGeometry(1.16, 0.95, 0.07), top: new THREE.BoxGeometry(1.24, 0.12, 0.8), bar: new THREE.BoxGeometry(1.28, 0.05, 0.05),
+    inlay: new THREE.CircleGeometry(0.72, 32).rotateX(-Math.PI / 2), bulb: new THREE.SphereGeometry(0.065, 12, 8), arm: new THREE.CylinderGeometry(0.018, 0.018, 0.4, 6),
+    candle: new THREE.CylinderGeometry(0.05, 0.05, 0.14, 8), page: new THREE.BoxGeometry(0.34, 0.03, 0.46), cover: new THREE.BoxGeometry(0.76, 0.02, 0.5),
+    cloth: new THREE.PlaneGeometry(0.5, 0.62), plaque: new THREE.PlaneGeometry(1.1, 0.38), seal: new THREE.CircleGeometry(0.34, 40),
+    tablet: new THREE.BoxGeometry(0.54, 0.4, 0.04), face: new THREE.PlaneGeometry(0.52, 0.38), post: new THREE.CylinderGeometry(0.025, 0.04, 0.34, 6),
+    bead: new THREE.SphereGeometry(0.04, 10, 8), spark: new THREE.SphereGeometry(0.028, 8, 6),
+    holo: new THREE.PlaneGeometry(1, HOLO_R), beam: new THREE.CylinderGeometry(0.42, 0.06, 1, 16, 1, true),
+    sign: new THREE.PlaneGeometry(1.95, 0.72), signPost: new THREE.CylinderGeometry(0.05, 0.05, 0.6, 6), cap: new THREE.BoxGeometry(0.5, 0.25, 0.5),
+    win: new THREE.PlaneGeometry(3.0, 7.2), col: new THREE.CylinderGeometry(0.45, 0.55, 10.5, 12), ring: new THREE.TorusGeometry(0.95, 0.045, 8, 48).rotateX(Math.PI / 2),
+    pick: new THREE.BoxGeometry(1.4, 1.9, 1.2).translate(0, 0.95, 0),
+  };
+  G.frame = (() => {
+    const s = new THREE.Shape(); const x = 0.5 + 0.006, y = HOLO_R / 2 + 0.006, i = 0.007;
+    s.moveTo(-x, -y); s.lineTo(x, -y); s.lineTo(x, y); s.lineTo(-x, y); s.lineTo(-x, -y);
+    const h = new THREE.Path(); h.moveTo(-x + i, -y + i); h.lineTo(-x + i, y - i); h.lineTo(x - i, y - i); h.lineTo(x - i, -y + i); h.lineTo(-x + i, -y + i); s.holes.push(h);
+    return new THREE.ShapeGeometry(s);
+  })();
+
+  // ---------- Scène centrale (fixe) ----------
+  const stageTex = { panel: null };
+  {
+    const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); stageGroup.add(m); return m; };
+    const floorGeo = new THREE.CircleGeometry(60, 64).rotateX(-Math.PI / 2);
+    const floor = add(floorGeo, M.ground, 0, 0, 0); floor.receiveShadow = true;
+    const stage = add(new THREE.CylinderGeometry(6.2, 6.5, 0.8, 64), M.wood, 0, 0.4, 0); stage.castShadow = stage.receiveShadow = true;
+    add(new THREE.TorusGeometry(6.22, 0.07, 8, 96).rotateX(Math.PI / 2), M.brass, 0, 0.8, 0);
+    const step = add(new THREE.CylinderGeometry(7.0, 7.2, 0.35, 64), M.stoneP, 0, 0.175, 0); step.receiveShadow = true;
+    add(new THREE.BoxGeometry(6.0, 0.18, 0.5), M.brass, 0, 0.9, 1.6);
+    add(new THREE.PlaneGeometry(5.7, 0.3).rotateX(-Math.PI / 2), M.lens, 0, 1.0, 1.6);
+    const beam = add(new THREE.PlaneGeometry(6.2, 0.8), M.beamStage, 0, 1.4, 1.6); beam.rotation.z = Math.PI;
+    stageTex.mesh = add(new THREE.PlaneGeometry(6.6, 1.65), new THREE.MeshBasicMaterial({ transparent: true, toneMapped: false, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(0.97, 0.95, 0.9) }), 0, 1.75, 1.6);
+    stageTex.mesh.renderOrder = 5;
+    const fr = add(G.frame, M.frame, 0, 1.75, 1.6); fr.scale.set(6.6, 1.65 / HOLO_R, 1); fr.renderOrder = 6;
+    stageTex.frame = fr;
+    S.flames = [-1, 1].map((s) => {
+      add(new THREE.CylinderGeometry(0.1, 0.16, 0.3, 10), M.brass, s * 4.3, 0.95, 0.4);
+      return add(new THREE.ConeGeometry(0.15, 0.48, 10), M.flame, s * 4.3, 1.34, 0.4);
+    });
+  }
+  function drawSummary(P, Sm) {
+    return (g, w, h) => {
+      holoBg(g, w, h, 20);
+      g.textAlign = "center"; g.fillStyle = "#ffd98f"; g.font = "600 17px " + REU3D_SANS; spaced(g, "4px");
+      g.fillText("SYNTHÈSE · " + P.label.toUpperCase(), w / 2, 40); spaced(g, "0px");
+      g.fillStyle = "#fff0cf"; g.font = "700 54px " + REU3D_SERIF; g.textAlign = "left";
+      g.fillText(Sm.total + (Sm.total > 1 ? " réunions" : " réunion"), 40, 140);
+      g.fillStyle = "rgba(241,226,192,.85)"; g.font = "italic 20px " + REU3D_SERIF;
+      g.fillText(fit(g, Sm.dark + " sans compte rendu · " + Sm.points + (Sm.points > 1 ? " points notés" : " point noté"), 440), 42, 190);
+      const cells = [[Sm.notes, "avec notes"], [Sm.report, "compte rendu formel"], [Sm.open, "à venir ou en cours"]];
+      g.textAlign = "center";
+      cells.forEach(([n, l], k) => {
+        const x = 575 + k * 160;
+        g.strokeStyle = "rgba(255,210,130,.45)"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x - 80, 78); g.lineTo(x - 80, 200); g.stroke();
+        g.fillStyle = "#ffd27a"; g.font = "700 58px " + REU3D_SERIF; g.fillText(String(n), x, 142);
+        g.fillStyle = "#f1e2c0"; g.font = "19px " + REU3D_SERIF; wrap(g, l, 150, 2).forEach((t, j) => g.fillText(t, x, 176 + j * 22));
+      });
+    };
+  }
+
+  // ---------- Textures par réunion ----------
+  const dateLine = (m, upper) => { const s = reunions3dFmtDate(m.date) + (m.time ? " · " + reunions3dFmtTime(m.time) : ""); return upper ? s.toUpperCase() : s; };
+  function plaqueMat(m) {
+    const ghost = m.state !== "done" && !m.hasNotes;
+    return cachedMat("plaque|" + m.id + "|" + m.date + m.time + m.title + m.state + m.dark + m.report + m.hasNotes, 300, 104, (g, w, h) => {
+      const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, m.dark ? "#9a8a6c" : "#e9c877"); gr.addColorStop(0.5, m.dark ? "#7d6d52" : "#c9a04c"); gr.addColorStop(1, m.dark ? "#5e5040" : "#9c7532");
+      rrect(g, 2, 2, w - 4, h - 4, 10); g.fillStyle = gr; g.fill(); g.strokeStyle = "rgba(60,36,10,.8)"; g.lineWidth = 2; g.stroke();
+      g.textAlign = "center"; g.fillStyle = m.dark ? "#1c140b" : "#3a220c"; g.font = "700 30px " + REU3D_SERIF;
+      g.fillText(fit(g, dateLine(m), w - 20), w / 2, 42);
+      g.font = "20px " + REU3D_SERIF; g.fillText(fit(g, m.title, w - 24), w / 2, 72);
+      g.font = "italic 15px " + REU3D_SERIF; g.fillStyle = m.dark ? "#2a1e10" : "#5a3a14";
+      g.fillText(fit(g, reunions3dStateText(m), w - 20), w / 2, 94);
+    }, "std", (tex) => {
+      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.35, metalness: m.dark ? 0.3 : 0.5, envMapIntensity: 0.9 });
+      if (ghost) { mat.transparent = true; mat.opacity = 0.92; mat.emissive.set("#3a2a10"); mat.emissiveIntensity = 0.4; }
+      return mat;
+    });
+  }
+  function clothMat(m, ghost) {
+    return cachedMat("cloth|" + m.projectId + "|" + m.color + "|" + m.projectName, 128, 160, (g, w, h) => {
+      g.fillStyle = m.color; g.beginPath(); g.moveTo(0, 0); g.lineTo(w, 0); g.lineTo(w, h - 26); g.lineTo(w / 2, h); g.lineTo(0, h - 26); g.closePath(); g.fill();
+      const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, "rgba(0,0,0,.28)"); gr.addColorStop(0.5, "rgba(255,255,255,.08)"); gr.addColorStop(1, "rgba(0,0,0,.28)"); g.fillStyle = gr; g.fill();
+      g.strokeStyle = "#e7c070"; g.lineWidth = 4; g.beginPath(); g.moveTo(6, 0); g.lineTo(6, h - 29); g.lineTo(w / 2, h - 6); g.lineTo(w - 6, h - 29); g.lineTo(w - 6, 0); g.stroke();
+      g.fillStyle = "#f3d58a"; g.textAlign = "center"; g.font = "700 24px " + REU3D_SERIF;
+      g.fillText(fit(g, reunions3dAbbr(m.projectName), w - 20), w / 2, 58);
+    }, ghost ? "ghost" : "std", (tex) => new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.9, opacity: ghost ? 0.6 : 1, alphaTest: ghost ? 0 : 0.5, depthWrite: !ghost }));
+  }
+  function holoMat(m, dense) {
+    return cachedMat("holo|" + m.id + "|" + dense + "|" + m.date + m.time + m.title + m.projectName + m.state + m.report + m.points + m.lines.slice(0, 3).join("¶"), HOLO_W, HOLO_H, (g, w, h) => {
+      holoBg(g, w, h, 14);
+      g.fillStyle = "#ffd27a"; g.font = "600 16px " + REU3D_SANS; spaced(g, "1.5px");
+      g.fillText(fit(g, (m.state === "open" ? "À VENIR · " : m.state === "ongoing" ? "EN COURS · " : "") + dateLine(m, true) + " · " + m.projectName.toUpperCase(), w - 44), 22, 36); spaced(g, "0px");
+      g.fillStyle = "#fff1d2"; const TS = dense ? 38 : 34, LH = dense ? 40 : 38;
+      g.font = "700 " + TS + "px " + REU3D_SERIF;
+      const tl = wrap(g, m.title, w - 44, 2);
+      tl.forEach((l, k) => g.fillText(l, 22, 74 + k * LH));
+      let y = 74 + tl.length * LH;
+      g.strokeStyle = "rgba(255,210,130,.5)"; g.lineWidth = 1.2; g.beginPath(); g.moveTo(22, y - 18); g.lineTo(w - 22, y - 18); g.stroke();
+      const ES = dense ? 27 : 25, EL = dense ? 31 : 30;
+      const room = Math.max(1, Math.min(3, Math.floor((h - 34 - (y + 6)) / EL) + 1));
+      const lines = m.lines.slice(0, Math.min(dense ? 2 : 3, room));
+      g.font = ES + "px " + REU3D_SERIF; g.fillStyle = "#eadcbc";
+      if (!lines.length) { g.font = "italic 22px " + REU3D_SERIF; g.fillText("Notes présentes, sans extrait lisible", 22, y + 10); }
+      lines.forEach((l) => { g.fillText(fit(g, l, w - 44), 22, y + 10); y += EL; });
+      g.font = "italic " + (dense ? 21 : 18) + "px " + REU3D_SERIF; g.fillStyle = "#ffd27a";
+      g.fillText([m.report ? "Compte rendu formel" : m.state === "done" ? "Notes consignées" : "Ordre du jour", m.points ? m.points + (m.points > 1 ? " points notés" : " point noté") : null].filter(Boolean).join("  ·  "), 22, h - 18);
+    }, m.state === "open" ? "ghost" : "std", (tex) => new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(0.97, 0.95, 0.9).multiplyScalar(m.state === "open" ? 0.82 : 1) }));
+  }
+  function cardMat(m, dense) {
+    return cachedMat("card|" + m.id + "|" + dense + "|" + m.date + m.time + m.title + m.state + m.dark, HOLO_W, HOLO_H, (g, w, h) => {
+      rrect(g, 3, 3, w - 6, h - 6, 14);
+      if (m.dark) { g.fillStyle = "rgba(34,25,18,.95)"; g.fill(); g.strokeStyle = "#8a6636"; g.lineWidth = 3; g.stroke(); }
+      else { g.fillStyle = "rgba(243,230,200,.62)"; g.fill(); g.setLineDash([12, 8]); g.strokeStyle = "rgba(255,236,190,.95)"; g.lineWidth = 3; g.stroke(); g.setLineDash([]); }
+      const x0 = m.dark ? 142 : 24;
+      if (m.dark) {
+        g.beginPath(); g.arc(74, h / 2, 52, 0, 7); g.fillStyle = "#170f0a"; g.fill(); g.lineWidth = 4; g.strokeStyle = "#7d5c33"; g.stroke();
+        g.fillStyle = "#e8914a"; g.font = "700 78px " + REU3D_SERIF; g.textAlign = "center"; g.fillText("?", 74, h / 2 + 27); g.textAlign = "left";
+      }
+      g.fillStyle = m.dark ? "#b48a52" : "#5a3a14"; g.font = "600 " + (dense ? 19 : 16) + "px " + REU3D_SANS; spaced(g, "1.5px");
+      g.fillText(fit(g, (m.state === "open" ? "À VENIR · " : m.state === "ongoing" ? "EN COURS · " : "") + dateLine(m, true), w - x0 - 20), x0, 40); spaced(g, "0px");
+      g.fillStyle = m.dark ? "#e3cfaa" : "#2e1c0c"; g.font = "700 " + (dense ? 40 : 34) + "px " + REU3D_SERIF;
+      wrap(g, m.title, w - x0 - 22, 3).forEach((l, k) => g.fillText(l, x0, 88 + k * (dense ? 44 : 38)));
+      if (!m.dark && m.time) { g.textAlign = "right"; g.fillStyle = "#5a3a14"; g.font = "700 " + (dense ? 44 : 38) + "px " + REU3D_SERIF; g.fillText(reunions3dFmtTime(m.time), w - 24, h - 52); g.textAlign = "left"; }
+      g.font = "italic " + (dense ? 22 : 19) + "px " + REU3D_SERIF; g.fillStyle = m.dark ? "#e8914a" : "#5a3a14";
+      g.fillText(m.dark ? "Terminée · aucun compte rendu" : m.state === "ongoing" ? "En cours · pas encore de notes" : "À venir · pas encore de notes", x0, h - 20);
+    }, "card", (tex) => new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false, color: new THREE.Color(m.dark ? 0.95 : 1, m.dark ? 0.92 : 1, m.dark ? 0.88 : 1) }));
+  }
+  function faceMat(label, ghost) {
+    return cachedMat("face|" + label, 128, 92, (g, w, h) => {
+      rrect(g, 2, 2, w - 4, h - 4, 8); g.fillStyle = "#efdcb2"; g.fill(); g.lineWidth = 3; g.strokeStyle = "#7a5424"; g.stroke();
+      g.fillStyle = "#3b2716"; g.textAlign = "center";
+      if (label[0] === "+") { g.font = "700 30px " + REU3D_SERIF; g.fillText(label, w / 2, 46); g.font = "16px " + REU3D_SERIF; g.fillText("autres", w / 2, 72); }
+      else { g.font = "17px " + REU3D_SERIF; g.fillText("Point", w / 2, 32); g.font = "700 34px " + REU3D_SERIF; g.fillText(label, w / 2, 72); }
+    }, ghost ? "ghost" : "std", (tex) => new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, emissive: "#ffcf88", emissiveMap: tex, emissiveIntensity: ghost ? 0.05 : 0.14, transparent: ghost, opacity: ghost ? 0.7 : 1, depthWrite: !ghost }));
+  }
+  function signMat(title, sub) {
+    return cachedMat("sign|" + title + "|" + sub, 300, 110, (g, w, h) => {
+      rrect(g, 3, 3, w - 6, h - 6, 12);
+      const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "#6b4428"); gr.addColorStop(1, "#3a2213"); g.fillStyle = gr; g.fill();
+      g.strokeStyle = "#e3b964"; g.lineWidth = 3; g.stroke();
+      g.fillStyle = "#ffe2a0"; g.textAlign = "center"; g.font = "700 36px " + REU3D_SERIF; g.fillText(fit(g, title, w - 30), w / 2, 50);
+      g.fillStyle = "#e8d3a8"; g.font = "italic 22px " + REU3D_SERIF; g.fillText(fit(g, sub, w - 30), w / 2, 86);
+    }, "std", (tex) => new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: "#ffffff", emissiveMap: tex, emissiveIntensity: 0.12 }));
+  }
+
+  // ---------- Construction d'une période ----------
+  const buildGeos = [], buildInst = [];
+  const pol = (phi, r, y) => new THREE.Vector3(Math.sin(phi) * r, y || 0, Math.cos(phi) * r);
+  const ang = (alpha) => Math.PI - alpha;
+  function clearWorld() {
+    while (world.children.length) world.remove(world.children[0]);
+    buildGeos.splice(0).forEach((g) => g.dispose());
+    buildInst.splice(0).forEach((m) => { if (m.dispose) m.dispose(); });
+    S.items = {}; S.order = []; S.anim = []; S.sparks = null; S.pickables = [];
+  }
+  // Instances : pièce × matière → liste de matrices (et de couleurs).
+  function batcher() {
+    const lists = new Map();
+    const tmp = new THREE.Object3D();
+    return {
+      add(geo, mat, parent, x, y, z, rx, sx, sy, sz, color) {
+        const k = geo.uuid + "|" + mat.uuid;
+        let l = lists.get(k); if (!l) { l = { geo, mat, mats: [], colors: [] }; lists.set(k, l); }
+        tmp.position.set(x, y, z); tmp.rotation.set(rx || 0, 0, 0); tmp.scale.set(sx || 1, sy || 1, sz || 1);
+        tmp.updateMatrix();
+        l.mats.push(parent ? parent.clone().multiply(tmp.matrix) : tmp.matrix.clone());
+        l.colors.push(color || null);
+      },
+      flush(shadows) {
+        lists.forEach((l) => {
+          const im = new THREE.InstancedMesh(l.geo, l.mat, l.mats.length);
+          l.mats.forEach((m, i) => { im.setMatrixAt(i, m); if (l.colors[i]) im.setColorAt(i, l.colors[i]); });
+          im.instanceMatrix.needsUpdate = true;
+          if (im.instanceColor) im.instanceColor.needsUpdate = true;
+          im.castShadow = shadows && !l.mat.transparent; im.receiveShadow = shadows;
+          world.add(im); buildInst.push(im);
+        });
+      },
+    };
+  }
+  function mergeColored(parts) {
+    // Fusion de géométries non indexées avec une couleur par morceau : tous
+    // les fils d'une période en un seul appel de dessin.
+    let n = 0; parts.forEach((p) => { n += p.geo.attributes.position.count; });
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    let o3 = 0;
+    parts.forEach((p) => {
+      const a = p.geo.attributes.position.array; pos.set(a, o3);
+      for (let i = 0; i < a.length; i += 3) { col[o3 + i] = p.color.r; col[o3 + i + 1] = p.color.g; col[o3 + i + 2] = p.color.b; }
+      o3 += a.length; p.geo.dispose();
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    buildGeos.push(g);
+    return g;
+  }
+  function build() {
+    const model = S.model;
+    S.buildId++;
+    clearWorld();
+    const low = S.quality === "low";
+    const shadows = !low;
+    renderer.shadowMap.enabled = shadows; sun.castShadow = shadows;
+    if (shadows) sun.shadow.mapSize.set(2048, 2048);
+    const seg = low ? 48 : 96;
+    const rows = model ? model.tiers.rows : [];
+    const dims = model ? model.tiers.dims : reunions3dDims(1);
+    const BAY = dims.bay, CW = dims.cw, DY = dims.dy, dense = (model ? model.tiers.maxPerRow : 0) > 3;
+    const N = Math.max(rows.length, 1);
+    const A0 = 8, DEP = 3.0, Y0 = 3.0;
+    const rowA = (k) => A0 + k * DEP, rowY = (k) => Y0 + k * DY, pupR = (k) => rowA(k) + 1.6;
+    let HALF = 0.35;
+    rows.forEach((g) => { HALF = Math.max(HALF, ((g.items.length - 1) / 2 + 1.2) * BAY / pupR(g.row)); });
+    HALF = Math.min(HALF + 0.12, 1.45);
+    const phiStart = Math.PI - HALF, phiLen = HALF * 2;
+    const pts = [];
+    const corners = (c, yaw, w, h) => { const ax = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)).multiplyScalar(w / 2); for (const sx of [-1, 1]) for (const sy of [-1, 1]) pts.push(c.clone().addScaledVector(ax, sx).add(new THREE.Vector3(0, sy * h / 2, 0))); };
+    const mesh = (geo, mat, own) => { const m = new THREE.Mesh(geo, mat); if (own) buildGeos.push(geo); world.add(m); return m; };
+    const B = batcher();
+
+    // Gradins : pierre, planchers de bois, nez de marche en laiton.
+    const prof = [[A0 - 0.001, 0], [A0, Y0]];
+    for (let k = 0; k < N; k++) prof.push([rowA(k) + DEP, rowY(k)], [rowA(k) + DEP, rowY(k + 1)]);
+    const outer = rowA(N - 1) + DEP;
+    prof.push([outer + 2.5, rowY(N)], [outer + 2.5, 0]);
+    const tiers = mesh(new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), seg, phiStart, phiLen), M.stone, true);
+    tiers.castShadow = tiers.receiveShadow = shadows;
+    for (let k = 0; k < N; k++) {
+      const fl = mesh(new THREE.LatheGeometry([new THREE.Vector2(rowA(k) + DEP - 0.02, rowY(k) + 0.03), new THREE.Vector2(rowA(k) + 0.02, rowY(k) + 0.03)], seg, phiStart, phiLen), M.floor, true);
+      fl.receiveShadow = shadows;
+      mesh(new THREE.LatheGeometry([[-0.08, -0.12], [-0.08, 0.06], [0.12, 0.06], [0.12, 0.0]].map(([dr, dy]) => new THREE.Vector2(rowA(k) + dr, rowY(k) + dy)), seg, phiStart, phiLen), M.brass, true);
+    }
+    {
+      const sh = new THREE.Shape(); sh.moveTo(A0, 0); prof.slice(1).forEach(([r, y]) => sh.lineTo(r, y)); sh.lineTo(A0, 0);
+      const cheekGeo = new THREE.ShapeGeometry(sh); buildGeos.push(cheekGeo);
+      for (const phi of [phiStart, phiStart + phiLen]) {
+        const cheek = mesh(cheekGeo, M.stoneP); cheek.rotation.y = phi - Math.PI / 2; cheek.castShadow = cheek.receiveShadow = shadows;
+        for (let k = 0; k < N; k++) { const p = pol(phi, rowA(k) + 0.1, rowY(k) + 0.12); B.add(G.cap, M.brass, null, p.x, p.y, p.z); }
+      }
+    }
+    // Mur du fond, verrières et colonnes.
+    {
+      const RW = outer + 2.5, top = rowY(N) + 11;
+      const wall = mesh(new THREE.CylinderGeometry(RW, RW, top - rowY(N), low ? 40 : 80, 1, true, phiStart - 0.25, phiLen + 0.5), M.wall, true);
+      wall.position.y = (top + rowY(N)) / 2; wall.receiveShadow = shadows;
+      const nWin = Math.max(3, Math.round(phiLen * RW / 6.5));
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1);
+      for (let i = 0; i < nWin; i++) {
+        const phi = phiStart + (i + 0.5) / nWin * phiLen;
+        const p = pol(phi, RW - 0.05, rowY(N) + 5.6);
+        q.setFromEuler(e.set(0, phi + Math.PI, 0));
+        B.add(G.win, M.win, m4.compose(p, q, one), 0, 0, 0);
+        const cp = pol(phiStart + i / nWin * phiLen, RW - 0.6, rowY(N) + 5.25);
+        B.add(G.col, M.stoneP, null, cp.x, cp.y, cp.z);
+      }
+      const corn = mesh(new THREE.TorusGeometry(RW - 0.3, 0.3, 8, low ? 40 : 80, phiLen + 0.5), M.woodD, true);
+      corn.rotation.set(Math.PI / 2, 0, -(phiStart - 0.25) + Math.PI / 2); corn.position.y = top - 0.4;
+      pts.push(new THREE.Vector3(0, rowY(N) + 1.5, -RW));
+    }
+    pts.push(new THREE.Vector3(-3.4, 0.9, 1.6), new THREE.Vector3(3.4, 0.9, 1.6), new THREE.Vector3(0, 0.2, 6.5));
+    if (!rows.length) {
+      const s = mesh(G.sign, signMat("Aucune réunion", model && model.inPeriod.length ? "ne correspond au filtre" : "sur cette période"));
+      s.scale.set(2.2, 2.2, 1); s.position.set(0, rowY(0) + 1.4, -rowA(0) - 1.6);
+    }
+
+    // Rangées de pupitres.
+    const filsParts = [], ghostParts = [], curves = [];
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eul = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1);
+    rows.forEach((gp) => {
+      const k = gp.row, y = rowY(k), rp = pupR(k), n = gp.items.length, da = BAY / rp;
+      {
+        const a = (-(n - 1) / 2 - 0.95) * da;
+        const s = mesh(G.sign, signMat(gp.title, gp.sub));
+        const p = pol(ang(a), rowA(k) + 1.6, y + 0.95); s.position.copy(p); s.rotation.y = -a * 0.5; corners(p, -a * 0.5, 1.95, 0.72);
+        B.add(G.signPost, M.brass, null, p.x, y + 0.3, p.z);
+      }
+      gp.items.forEach((m, i) => {
+        const alpha = (i - (n - 1) / 2) * da, phi = ang(alpha);
+        const ghost = m.state !== "done" && !m.hasNotes;
+        const color = new THREE.Color(m.color);
+        const gpos = pol(phi, rp, y + 0.03);
+        const P = m4.clone().compose(gpos, q.clone().setFromEuler(eul.set(0, phi + Math.PI, 0)), one);
+        const woodM = ghost ? M.ghost : m.dark ? M.dark : M.wood;
+        B.add(G.base, woodM, P, 0, 0.06, 0);
+        B.add(G.column, woodM, P, 0, 0.6, -0.08);
+        B.add(G.front, woodM, P, 0, 0.62, 0.2);
+        B.add(G.top, woodM, P, 0, 1.2, 0, -0.32);
+        if (!ghost) B.add(G.bar, M.brass, P, 0, 1.12, 0.39);
+        B.add(G.inlay, ghost ? M.inlayGhost : M.inlay, P, 0, 0.01, 0.05, 0, 1, 1, 1, color);
+        if (m.hasNotes && !ghost) {
+          const book = P.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(0, 1.28, -0.02), new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.32, 0, 0)), one));
+          for (const sd of [-1, 1]) B.add(G.page, M.pages, book, sd * 0.18, 0.02, 0);
+          B.add(G.cover, M.cover, book, 0, 0, 0);
+        }
+        if (!m.dark) {
+          B.add(G.arm, M.brass, P, 0.52, 1.45, -0.25);
+          B.add(G.bulb, ghost ? M.bulbGhost : m.state === "ongoing" ? M.bulbBlue : M.bulb, P, 0.52, 1.68, -0.25);
+        } else B.add(G.candle, M.candle, P, 0.45, 1.38, -0.2);
+        const grp = new THREE.Group(); grp.position.copy(gpos); grp.rotation.y = phi + Math.PI; world.add(grp);
+        const cloth = new THREE.Mesh(G.cloth, clothMat(m, ghost)); cloth.position.set(0, 0.36, 0.24); grp.add(cloth);
+        const pl = new THREE.Mesh(G.plaque, plaqueMat(m)); pl.position.set(0, 0.86, 0.245); grp.add(pl);
+        if (m.report) { const seal = new THREE.Mesh(G.seal, M.seal); seal.position.set(0, 0.36, 0.27); grp.add(seal); }
+        const pick = new THREE.Mesh(G.pick, M.pick); pick.userData.reuId = m.id; grp.add(pick);
+        pts.push(pol(phi, rp, y + 0.2), pol(phi + 0.6 / rp, rp, y), pol(phi - 0.6 / rp, rp, y));
+
+        // Hologramme (notes, compte rendu) ou carte (« ? » éteint, planifiée).
+        const hw = CW, hh = hw * HOLO_R, baseY = y + DY - 0.12 - hh / 2, yaw = -alpha * 0.75;
+        const hp = pol(phi, rowA(k) + DEP - 0.55, baseY);
+        const holo = new THREE.Group(); holo.position.copy(hp); holo.rotation.y = yaw; world.add(holo);
+        const panel = new THREE.Mesh(G.holo, m.hasNotes ? holoMat(m, dense) : cardMat(m, dense)); panel.scale.set(hw, hw, 1); panel.renderOrder = 5; panel.userData.reuId = m.id; holo.add(panel);
+        if (m.hasNotes) { const fr = new THREE.Mesh(G.frame, m.state === "open" ? M.frameDim : M.frame); fr.scale.set(hw, hw, 1); fr.renderOrder = 6; holo.add(fr); }
+        corners(hp, yaw, hw, hh);
+        if (m.report) {
+          const sr = hh * 0.3; const seal = new THREE.Mesh(G.seal, M.seal); seal.scale.setScalar(sr / 0.34);
+          seal.position.set(hw / 2 - sr * 0.55, -hh / 2 + sr * 0.55, 0.08); seal.renderOrder = 8; holo.add(seal);
+        }
+        const bob = i * 1.3;
+        S.anim.push((t) => { holo.position.y = baseY + Math.sin(t * 1.1 + bob) * (m.hasNotes ? 0.03 : 0.02); });
+        if (m.hasNotes) {
+          const bh = baseY - hh / 2 - (y + 1.5);
+          if (bh > 0.05) { const bp = pol(phi, rp + 0.4, y + 1.5 + bh / 2); B.add(G.beam, ghost || m.state === "open" ? M.beamGhost : M.beam, null, bp.x, bp.y, bp.z, 0, 1, bh, 1); }
+        }
+        // Fils vers les points notés (tablettes au bord de la rangée).
+        const tabs = reunions3dTablets(m.points);
+        if (tabs.length) {
+          const start = pol(phi, rp - 0.38, y + 1.18), rt = rowA(k) + 0.62;
+          const faint = m.state === "open";
+          const c = color.clone().lerp(new THREE.Color("#ffd27a"), 0.45).multiplyScalar(faint ? 0.9 : 1.7);
+          tabs.forEach((tb, j) => {
+            const off = (j - (tabs.length - 1) / 2) * 0.6, tphi = phi - off / rt;
+            const pos = pol(tphi, rt, y);
+            const T = new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, tphi + Math.PI, 0)), one);
+            B.add(G.post, M.brass, T, 0, 0.17, 0);
+            B.add(G.tablet, faint ? M.tabletGhost : M.tablet, T, 0, 0.56, 0, 0.28);
+            const face = T.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(0, 0.56, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0.28, 0, 0)), one)).multiply(new THREE.Matrix4().makeTranslation(0, 0, 0.022));
+            B.add(G.face, faceMat(tb.more ? "+" + tb.more : String(tb.n), faint), face, 0, 0, 0);
+            const end = pos.clone().add(new THREE.Vector3(0, 0.77, 0));
+            const mid = start.clone().lerp(end, 0.5); mid.y = start.y + 0.35 + Math.abs(off) * 0.12;
+            const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+            const tg = new THREE.TubeGeometry(curve, low ? 12 : 24, 0.016, 5, false).toNonIndexed();
+            (faint ? ghostParts : filsParts).push({ geo: tg, color: c });
+            B.add(G.bead, M.bead, null, end.x, end.y, end.z, 0, 1, 1, 1, c.clone().multiplyScalar(1.3));
+            curves.push({ curve, phase: j * 0.21 + i * 0.13, color: c.clone().multiplyScalar(1.3) });
+          });
+        }
+        S.items[m.id] = { m, pos: gpos.clone(), holo: hp.clone(), alpha, row: k, hh };
+        S.order.push(m.id);
+      });
+    });
+    B.flush(shadows);
+    S.pickables = [];
+    world.traverse((c) => { if (c.userData && c.userData.reuId) S.pickables.push(c); });
+    if (filsParts.length) mesh(mergeColored(filsParts), M.fils);
+    if (ghostParts.length) mesh(mergeColored(ghostParts), M.filsGhost);
+    // Étincelles qui courent le long des fils (animations, qualité haute).
+    if (curves.length && !low) {
+      const sp = new THREE.InstancedMesh(G.spark, M.bead, curves.length);
+      curves.forEach((c, i) => sp.setColorAt(i, c.color));
+      if (sp.instanceColor) sp.instanceColor.needsUpdate = true;
+      world.add(sp); buildInst.push(sp);
+      const tmp = new THREE.Object3D();
+      S.sparks = (t) => { curves.forEach((c, i) => { tmp.position.copy(c.curve.getPoint((t * 0.4 + c.phase) % 1)); tmp.updateMatrix(); sp.setMatrixAt(i, tmp.matrix); }); sp.instanceMatrix.needsUpdate = true; };
+      S.sparks(1.7);
+    }
+    // Poussière dorée dans la lumière.
+    if (!low) {
+      const n = 220, pos = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { const a = ang((carteRand("pa" + i) * 2 - 1) * HALF), r = 3 + carteRand("pr" + i) * outer; pos.set([Math.sin(a) * r, 1 + carteRand("py" + i) * (rowY(N) + 6), Math.cos(a) * r], i * 3); }
+      const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      const pts3 = new THREE.Points(g, M.dust); buildGeos.push(g); world.add(pts3);
+      S.anim.push((t) => { pts3.rotation.y = Math.sin(t * 0.05) * 0.02; pts3.position.y = Math.sin(t * 0.3) * 0.1; });
+    }
+    // Anneau de sélection.
+    S.ring = new THREE.Mesh(G.ring, M.select); S.ring.visible = false; world.add(S.ring);
+    // Synthèse sur la scène.
+    if (model) {
+      stageTex.mesh.material.map = cachedTex("synthese|" + model.period.label + "|" + JSON.stringify(model.summary), 1000, 250, drawSummary(model.period, model.summary)).tex;
+      stageTex.mesh.material.needsUpdate = true;
+    }
+    // Lumière principale cadrée sur l'amphithéâtre.
+    const cz = -(A0 + outer) / 2 * 0.8;
+    sun.position.set(-18, rowY(N) + 26, cz + 22); sun.target.position.set(0, rowY(N) / 2, cz);
+    const ext = outer + 6; Object.assign(sun.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 1, far: 140 }); sun.shadow.camera.updateProjectionMatrix();
+    fill.position.set(14, 6, 30); fill.target.position.set(0, rowY(N) / 2, cz);
+    const box = new THREE.Box3().setFromPoints(pts);
+    S.bounds = box;
+    S.pts = pts;
+    sweepCache();
+    fitCamera(true);
+    if (S.selected && !S.items[S.selected]) setSelected(null);
+    else if (S.selected) placeRing();
+    S.dirty = true;
+  }
+
+  // ---------- Caméra ----------
+  const CAMY = 0.55;
+  function fitCamera(reset) {
+    if (!S.pts) return;
+    const W = container.clientWidth || 800, H = container.clientHeight || 600;
+    camera.aspect = W / H; camera.updateProjectionMatrix();
+    const pts = S.pts;
+    const box = new THREE.Box3().setFromPoints(pts);
+    const T = new THREE.Vector3(0, (box.min.y + box.max.y) / 2, (box.min.z + box.max.z) / 2);
+    const v = new THREE.Vector3();
+    // Marges pour le bandeau du haut et la légende du bas (HUD).
+    let hud = { top: 86, bottom: 66 };
+    try { if (o.hud) hud = o.hud() || hud; } catch (e) { /* HUD absent : marges par défaut */ }
+    const band = { x: 0.95, top: 1 - 2 * Math.min(0.3, hud.top / H), bot: -1 + 2 * Math.min(0.3, hud.bottom / H) };
+    let ok = false, z = 12;
+    for (; z < 500 && !ok; z += 0.5) {
+      camera.position.set(0, CAMY, z);
+      for (let it = 0; it < 6; it++) {
+        camera.lookAt(T); camera.updateMatrixWorld(true);
+        let y0 = 9, y1 = -9;
+        pts.forEach((p) => { v.copy(p).project(camera); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y); });
+        const d = (y0 + y1) / 2 - (band.top + band.bot) / 2;
+        T.y += d * (z - T.z) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.9;
+      }
+      camera.lookAt(T); camera.updateMatrixWorld(true);
+      ok = pts.every((p) => { v.copy(p).project(camera); return Math.abs(v.x) <= band.x && v.y <= band.top && v.y >= band.bot; });
+    }
+    const off = camera.position.clone().sub(T);
+    const dist = off.length();
+    S.base = { target: T.clone(), yaw: 0, pitch: Math.asin(off.y / dist), dist };
+    if (reset || !S.cur) { S.goal = { target: T.clone(), yaw: 0, pitch: S.base.pitch, dist }; if (!S.cur || reduced) S.cur = { target: T.clone(), yaw: 0, pitch: S.base.pitch, dist }; }
+    applyCamera();
+  }
+  function clampGoal() {
+    const b = S.base, g = S.goal;
+    if (!b || !g) return;
+    g.yaw = Math.max(-0.75, Math.min(0.75, g.yaw));
+    g.pitch = Math.max(b.pitch - 0.2, Math.min(Math.min(0.9, b.pitch + 0.55), g.pitch));
+    g.dist = Math.max(b.dist * 0.18, Math.min(b.dist * 1.35, g.dist));
+    if (S.bounds) {
+      const bb = S.bounds;
+      g.target.x = Math.max(bb.min.x, Math.min(bb.max.x, g.target.x));
+      g.target.y = Math.max(bb.min.y - 1, Math.min(bb.max.y, g.target.y));
+      g.target.z = Math.max(bb.min.z, Math.min(bb.max.z, g.target.z));
+    }
+  }
+  function applyCamera() {
+    const c = S.cur;
+    if (!c) return;
+    const cp = Math.cos(c.pitch);
+    camera.position.set(c.target.x + Math.sin(c.yaw) * cp * c.dist, c.target.y + Math.sin(c.pitch) * c.dist, c.target.z + Math.cos(c.yaw) * cp * c.dist);
+    camera.lookAt(c.target);
+  }
+  function stepCamera(dt) {
+    const c = S.cur, g = S.goal;
+    if (!c || !g) return false;
+    const k = reduced ? 1 : 1 - Math.exp(-dt * 5);
+    const before = c.dist + c.yaw + c.pitch + c.target.x + c.target.y + c.target.z;
+    c.target.lerp(g.target, k); c.yaw += (g.yaw - c.yaw) * k; c.pitch += (g.pitch - c.pitch) * k; c.dist += (g.dist - c.dist) * k;
+    const moving = Math.abs(before - (c.dist + c.yaw + c.pitch + c.target.x + c.target.y + c.target.z)) > 1e-4;
+    applyCamera();
+    return moving;
+  }
+  function resetView() {
+    if (!S.base) return;
+    S.goal = { target: S.base.target.clone(), yaw: 0, pitch: S.base.pitch, dist: S.base.dist };
+    S.dirty = true;
+  }
+  function flyTo(id) {
+    const it = S.items[id];
+    if (!it || !S.base) return;
+    const tgt = it.pos.clone().lerp(it.holo, 0.55);
+    const d = Math.max(10, S.base.dist * 0.42);
+    S.goal = { target: tgt, yaw: Math.max(-0.75, Math.min(0.75, -it.alpha * 0.8)), pitch: Math.max(S.base.pitch, 0.08), dist: d };
+    clampGoal();
+    S.dirty = true;
+  }
+  function placeRing() {
+    const it = S.selected && S.items[S.selected];
+    if (!S.ring) return;
+    S.ring.visible = !!it;
+    if (it) S.ring.position.copy(it.pos).setY(it.pos.y + 0.03);
+  }
+  function setSelected(id, fly) {
+    S.selected = id && S.items[id] ? id : null;
+    placeRing();
+    if (S.selected && fly !== false) flyTo(S.selected);
+    if (o.onSelect) o.onSelect(S.selected);
+    S.dirty = true;
+  }
+
+  // ---------- Qualité ----------
+  function resolveQuality() {
+    if (S.qualityPref === "high" || S.qualityPref === "low") return S.qualityPref;
+    const w = container.clientWidth || window.innerWidth;
+    return w < 720 || (window.innerWidth || 1200) < 720 ? "low" : "high";
+  }
+  function applyPixelRatio() {
+    renderer.setPixelRatio(S.quality === "low" ? 1 : Math.min(2, window.devicePixelRatio || 1));
+  }
+  function resize() {
+    const W = container.clientWidth || 800, H = container.clientHeight || 600;
+    renderer.setSize(W, H, false);
+    canvas.style.width = "100%"; canvas.style.height = "100%";
+    const q = resolveQuality();
+    if (q !== S.quality) { S.quality = q; applyPixelRatio(); renderer.setSize(W, H, false); if (S.model) build(); return; }
+    fitCamera(!S.selected);
+    if (S.selected) flyTo(S.selected);
+    S.dirty = true;
+  }
+  S.quality = resolveQuality();
+  applyPixelRatio();
+  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => resize()) : null;
+  if (ro) ro.observe(container); else window.addEventListener("resize", resize);
+
+  // ---------- Entrées (gestes de la Carte, #510) ----------
+  // Clic gauche glissé (ou un doigt) : déplacer ; molette enfoncée, clic
+  // droit ou Maj + clic gauche glissés : tourner ; roulette ou pincement :
+  // zoomer. Rotation et zoom restent modérés autour du cadrage de la période.
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function pick(cx, cy) {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    camera.updateMatrixWorld();
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects(S.pickables || [], false)[0];
+    return hit ? hit.object.userData.reuId : null;
+  }
+  function showTip(id, cx, cy) {
+    const it = id && S.items[id];
+    if (!it) { tip.hidden = true; return; }
+    const m = it.m;
+    tip.textContent = "";
+    const b = document.createElement("b"); b.textContent = m.title; tip.appendChild(b);
+    const s1 = document.createElement("span"); s1.textContent = reunions3dFmtDay(m.date) + (m.time ? " · " + reunions3dFmtTime(m.time) + (m.endTime ? "–" + reunions3dFmtTime(m.endTime) : "") : "") + " · " + m.projectName; tip.appendChild(s1);
+    const s2 = document.createElement("span"); s2.textContent = reunions3dStateText(m) + (m.points ? " · " + m.points + (m.points > 1 ? " points notés" : " point noté") : ""); tip.appendChild(s2);
+    const r = container.getBoundingClientRect();
+    const x = Math.min(cx - r.left + 14, r.width - 260), y = Math.min(cy - r.top + 14, r.height - 70);
+    tip.style.transform = "translate(" + Math.max(4, Math.round(x)) + "px," + Math.max(4, Math.round(y)) + "px)";
+    tip.hidden = false;
+  }
+  const pointers = {}; let drag = null, pinch = null, lastClick = null;
+  function panBy(dx, dy) {
+    const g = S.goal, c = S.cur; if (!g || !c) return;
+    const H = canvas.clientHeight || 600;
+    const k = (2 * c.dist * Math.tan((camera.fov * Math.PI) / 360)) / H;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    const move = right.multiplyScalar(-dx * k).add(up.multiplyScalar(dy * k));
+    g.target.add(move);
+    clampGoal();
+    c.target.copy(g.target);
+    applyCamera();
+  }
+  const keyTarget = o.keyTarget || container;
+  const onDown = (e) => {
+    if (keyTarget.focus) keyTarget.focus({ preventScroll: true });
+    if (e.button === 1) e.preventDefault();
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* déjà relâché */ }
+    const ids = Object.keys(pointers);
+    if (ids.length === 2) {
+      const a = pointers[ids[0]], b = pointers[ids[1]];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.goal ? S.goal.dist : 1 }; drag = null;
+      return;
+    }
+    const mouse = e.pointerType === "mouse" || !e.pointerType;
+    const orbit = e.button === 1 || e.button === 2 || (e.button === 0 && mouse && e.shiftKey);
+    drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, yaw: S.goal ? S.goal.yaw : 0, pitch: S.goal ? S.goal.pitch : 0, moved: false, pan: !orbit, button: e.button };
+  };
+  const onMove = (e) => {
+    if (pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    const ids = Object.keys(pointers);
+    if (pinch && ids.length === 2 && S.goal) {
+      const a = pointers[ids[0]], b = pointers[ids[1]];
+      S.goal.dist = pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)); clampGoal(); S.dirty = true;
+      return;
+    }
+    if (drag && e.pointerType === "mouse" && e.buttons === 0) drag = null;
+    if (drag) {
+      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.hypot(dx, dy) > 5) { drag.moved = true; canvas.classList.add("is-drag"); tip.hidden = true; }
+      if (drag.moved) {
+        if (drag.pan) panBy(e.clientX - drag.lx, e.clientY - drag.ly);
+        else if (S.goal) { S.goal.yaw = drag.yaw - dx * 0.004; S.goal.pitch = drag.pitch + dy * 0.003; clampGoal(); }
+        drag.lx = e.clientX; drag.ly = e.clientY; S.dirty = true;
+      }
+      return;
+    }
+    if (e.pointerType === "mouse" || !e.pointerType) {
+      const id = pick(e.clientX, e.clientY);
+      if (id !== S.hovered) { S.hovered = id; canvas.classList.toggle("is-hot", !!id); if (o.onHover) o.onHover(id); }
+      showTip(id, e.clientX, e.clientY);
+    }
+  };
+  const onUp = (e) => {
+    delete pointers[e.pointerId];
+    if (pinch) { if (Object.keys(pointers).length < 2) pinch = null; drag = null; return; }
+    const d = drag; drag = null;
+    canvas.classList.remove("is-drag");
+    if (!d || d.moved || d.button !== 0) return;
+    const id = pick(e.clientX, e.clientY);
+    const now = performance.now();
+    // Double clic : même endroit, moins de 400 ms. La caméra a pu bouger
+    // entre les deux clics (zoom doux) : la réunion du premier clic fait foi.
+    const dbl = lastClick && lastClick.id && now - lastClick.t < 400 && Math.hypot(e.clientX - lastClick.x, e.clientY - lastClick.y) < 12;
+    if (dbl) { const target = lastClick.id; lastClick = null; if (o.onOpen) o.onOpen(target); return; }
+    lastClick = { t: now, x: e.clientX, y: e.clientY, id };
+    if (id) setSelected(id);
+    else if (S.selected) { setSelected(null, false); resetView(); }
+  };
+  const onCancel = (e) => { delete pointers[e.pointerId]; drag = null; pinch = null; canvas.classList.remove("is-drag"); };
+  const onWheel = (e) => { e.preventDefault(); if (!S.goal) return; S.goal.dist *= e.deltaY > 0 ? 1.1 : 0.9; clampGoal(); tip.hidden = true; S.dirty = true; };
+  const onMenu = (e) => e.preventDefault();
+  const onAux = (e) => { if (e.button === 1) e.preventDefault(); };
+  const onLeave = () => { tip.hidden = true; if (S.hovered) { S.hovered = null; canvas.classList.remove("is-hot"); if (o.onHover) o.onHover(null); } };
+  const onKey = (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (/INPUT|TEXTAREA|SELECT|BUTTON/.test(tag)) return;
+    const k = e.key;
+    if (k === "Escape" && S.selected) { setSelected(null, false); resetView(); e.preventDefault(); }
+    else if (k === "Enter" && S.selected) { if (o.onOpen) o.onOpen(S.selected); e.preventDefault(); }
+    else if (k === "ArrowRight" || k === "ArrowLeft") {
+      if (!S.order.length) return;
+      const i = S.order.indexOf(S.selected);
+      const n = i === -1 ? (k === "ArrowRight" ? 0 : S.order.length - 1) : Math.max(0, Math.min(S.order.length - 1, i + (k === "ArrowRight" ? 1 : -1)));
+      setSelected(S.order[n]); e.preventDefault();
+    } else if (k === "+" || k === "=") { if (S.goal) { S.goal.dist *= 0.85; clampGoal(); S.dirty = true; } }
+    else if (k === "-") { if (S.goal) { S.goal.dist *= 1.15; clampGoal(); S.dirty = true; } }
+    else if (k === "c" || k === "C") { resetView(); }
+  };
+  canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onCancel);
+  canvas.addEventListener("pointerleave", onLeave);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("contextmenu", onMenu);
+  canvas.addEventListener("mousedown", onAux);
+  keyTarget.addEventListener("keydown", onKey);
+
+  // ---------- Boucle ----------
+  function frame(now) {
+    if (S.disposed) return;
+    S.raf = requestAnimationFrame(frame);
+    const dt = Math.min(0.1, (now - S.last) / 1000); S.last = now;
+    const live = S.animate && !reduced;
+    if (live) S.time += dt;
+    const moving = stepCamera(dt);
+    if (!live && !moving && !S.dirty) return;
+    const t = live ? S.time : 1.7;
+    S.anim.forEach((f) => f(t));
+    if (live && S.sparks) S.sparks(t);
+    if (live) S.flames.forEach((f, i) => { f.scale.y = 0.85 + 0.2 * Math.sin(t * 8 + i * 2); });
+    stageTex.mesh.position.y = 1.75 + (live ? Math.sin(t * 1.2) * 0.03 : 0); stageTex.frame.position.y = stageTex.mesh.position.y;
+    if (S.ring && S.ring.visible) { const s = 1 + (live ? Math.sin(t * 3) * 0.06 : 0); S.ring.scale.set(s, 1, s); }
+    renderer.render(scene, camera);
+    S.dirty = false;
+    S.frames = (S.frames || 0) + 1;
+  }
+  resize();
+  S.raf = requestAnimationFrame(frame);
+
+  const api = {
+    setData(model) { S.model = model; build(); },
+    select(id, fly) { setSelected(id, fly); },
+    resetView() { setSelected(null, false); resetView(); },
+    refit() { fitCamera(!S.selected); if (S.selected) flyTo(S.selected); S.dirty = true; },
+    setQuality(q) { S.qualityPref = q || "auto"; const nq = resolveQuality(); if (nq !== S.quality) { S.quality = nq; applyPixelRatio(); resize(); if (S.model) build(); } },
+    setAnimate(b) { S.animate = b !== false; S.dirty = true; },
+    // Banc visuel : état du moteur (compteurs, sélection, caméra).
+    info() {
+      return {
+        quality: S.quality, selected: S.selected, pupitres: S.order.length, frames: S.frames || 0, textures: texCache.size,
+        calls: renderer.info.render.calls, geometries: renderer.info.memory.geometries, dist: S.cur ? S.cur.dist : 0, baseDist: S.base ? S.base.dist : 0,
+      };
+    },
+    // Caméra arrivée à destination (banc visuel : rendu logiciel lent).
+    settled() {
+      const c = S.cur, g = S.goal;
+      if (!c || !g) return true;
+      return c.target.distanceTo(g.target) < 0.02 && Math.abs(c.dist - g.dist) < 0.05 && Math.abs(c.yaw - g.yaw) < 0.002 && Math.abs(c.pitch - g.pitch) < 0.002;
+    },
+    // Position à l'écran d'un pupitre (banc visuel, clics simulés).
+    screenOf(id) {
+      const it = S.items[id]; if (!it) return null;
+      camera.updateMatrixWorld();
+      const v = it.holo.clone().project(camera), r = canvas.getBoundingClientRect();
+      return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height };
+    },
+    dispose() {
+      S.disposed = true;
+      cancelAnimationFrame(S.raf);
+      if (ro) ro.disconnect(); else window.removeEventListener("resize", resize);
+      canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onCancel);
+      canvas.removeEventListener("pointerleave", onLeave);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("contextmenu", onMenu);
+      canvas.removeEventListener("mousedown", onAux);
+      keyTarget.removeEventListener("keydown", onKey);
+      clearWorld();
+      texCache.forEach((e) => { e.tex.dispose(); Object.values(e.mats).forEach((m) => m.dispose()); });
+      texCache.clear();
+      staticTex.forEach((t) => t.dispose());
+      Object.values(G).forEach((g) => g.dispose());
+      Object.values(M).forEach((m) => m.dispose());
+      stageGroup.traverse((c) => { if (c.geometry && !Object.values(G).includes(c.geometry)) c.geometry.dispose(); });
+      stageTex.mesh.material.dispose();
+      torches.forEach((l) => l.dispose && l.dispose());
+      if (envTex) envTex.dispose();
+      renderer.dispose();
+      if (renderer.forceContextLoss) renderer.forceContextLoss();
+      if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      if (tip.parentNode) tip.parentNode.removeChild(tip);
+      if (typeof window !== "undefined" && window.__reu3dBench && window.__reu3dBench.engine === api) window.__reu3dBench.engine = null;
+    },
+  };
+  if (typeof window !== "undefined" && window.__reu3dBench) window.__reu3dBench.engine = api;
+  return api;
+}
+// === NEXORA:REUNIONS3D-ENGINE:END ===
 
 // Vue Cosmos (#402) : exploration des dossiers (galaxies), projets (planètes)
 // et tâches (satellites) sur trois échelles. Même règle que la Carte :
@@ -27829,6 +30405,247 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
           <TaskFilterFields filter={generalFilter || widgetDefaultFilter()} setFilter={(next) => setPrefs({ filter: typeof next === "function" ? next(generalFilter || widgetDefaultFilter()) : next })} ctx={ctx} />
         </Modal>
       )}
+    </section>
+  );
+}
+
+// Widget « Réunions 3D » (#514) : la Chambre des réunions dans un tableau de
+// bord. Ses réglages (période, filtre rapide, projet) vivent dans la
+// configuration DU widget, comme ceux de la Carte, du Cosmos et de la
+// Timeline 3D.
+const REU3D_WIDGET_MIN_W = 520;
+const REU3D_WIDGET_MIN_H = 380;
+function WidgetEmbedReunions3d({ widget, tasks, ctx, onOpen, onUpdateWidget }) {
+  const stored = widget && widget.reunions3dPrefs && typeof widget.reunions3dPrefs === "object" ? widget.reunions3dPrefs : {};
+  const [local, setLocal] = useState(stored);
+  useEffect(() => { setLocal(stored); }, [JSON.stringify(stored)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setPrefs = (patch) => {
+    const next = { ...local, ...(typeof patch === "function" ? patch(local) : patch) };
+    setLocal(next);
+    if (onUpdateWidget) onUpdateWidget({ reunions3dPrefs: next });
+  };
+  return (
+    <div className="lp-widget-embed lp-widget-embed-reu">
+      <Reunions3DView tasks={tasks} tasksWithDone={tasks} ctx={ctx} onOpen={onOpen} prefs={local} setPrefs={setPrefs} embedded />
+    </div>
+  );
+}
+
+function reunions3dTodayIso() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+// Repli sans WebGL : les mêmes gradins, en liste, chaque réunion ouvrant sa fiche.
+function Reunions3dFallback({ reason, model, onOpen, onRetry }) {
+  const rows = [...model.tiers.rows].sort((a, b) => b.row - a.row);
+  return (
+    <div className="lp-reu-fallback" role="region" aria-label="Réunions en liste">
+      <p style={{ marginTop: 0 }}>
+        {reason === "error" ? "Le moteur 3D n'a pas pu être chargé." : "La 3D n'est pas disponible sur cet appareil."} Voici les mêmes réunions, gradin par gradin.
+        {onRetry && <> <button type="button" className="lp-btn" onClick={onRetry}><RefreshCw size={13} /> Réessayer</button></>}
+      </p>
+      {rows.length === 0 && <p><strong>Aucune réunion sur cette période.</strong></p>}
+      {rows.map((r) => (
+        <section key={r.from + r.to}>
+          <h3>{r.title} <small>· {r.sub}</small></h3>
+          <ul>
+            {r.items.map((m) => (
+              <li key={m.id}><button type="button" onClick={() => onOpen(m.id)}>
+                <i style={{ background: m.color }} aria-hidden="true" />
+                <span>{m.time ? reunions3dFmtTime(m.time) + " · " : ""}{m.title}</span>
+                <em>{m.projectName} · {reunions3dStateText(m)}{m.points ? " · " + m.points + (m.points > 1 ? " points notés" : " point noté") : ""}</em>
+              </button></li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+// Vue Réunions 3D (#514) : la Chambre des réunions. Les réunions de la
+// période (semaine ou mois) prennent place sur les gradins d'un amphithéâtre,
+// les plus anciennes en haut, les plus récentes près de la scène, où s'affiche
+// la synthèse. Lecture seule : le double clic, Entrée ou « Ouvrir la fiche »
+// mènent à la fiche Nexora habituelle (onOpen).
+function Reunions3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolbarSlot, embedded }) {
+  const cfg = normalizeReunions3dViewPrefs(prefs);
+  const stageRef = useRef(null);
+  const glRef = useRef(null);
+  const topRef = useRef(null);
+  const bottomRef = useRef(null);
+  const engineRef = useRef(null);
+  const [status, setStatus] = useState("loading");
+  const [attempt, setAttempt] = useState(0);
+  const [selectedId, setSelectedId] = useState(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const today = useMemo(() => reunions3dTodayIso(), []);
+  const small = embedded && box.w > 0 && (box.w < REU3D_WIDGET_MIN_W || box.h < REU3D_WIDGET_MIN_H);
+
+  const scope = tasksWithDone || tasks || [];
+  const all = useMemo(() => reunions3dCollect(ctx, scope), [scope, ctx.projects, ctx.statuses, ctx.taskTypes, ctx.customFieldDefs]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Le découpage en gradins vise la plus grande échelle lisible dans le cadre :
+  // il suit la taille de la scène, arrondie pour ne pas reconstruire à chaque pixel.
+  const bw = Math.max(400, Math.round(((box.w || 1600) - 120) / 100) * 100), bh = Math.max(300, Math.round(((box.h || 1000) - 180) / 100) * 100);
+  const model = useMemo(() => reunions3dModel(all, cfg, today, { width: bw, height: bh }), [all, cfg.period, cfg.anchor, cfg.quick, cfg.projectId, today, bw, bh]); // eslint-disable-line react-hooks/exhaustive-deps
+  const quickCounts = useMemo(() => {
+    const out = {};
+    REU3D_QUICKS.forEach((q) => { out[q] = reunions3dQuickFilter(model.inPeriod, q, cfg.projectId).length; });
+    return out;
+  }, [model, cfg.projectId]);
+  const projectOptions = useMemo(() => {
+    const list = model.projects.slice();
+    if (cfg.projectId && !list.some((p) => p.id === cfg.projectId)) {
+      const p = (ctx.projects || []).find((x) => x.id === cfg.projectId);
+      list.push({ id: cfg.projectId, name: p ? p.name : "Projet", color: p && p.color ? p.color : "#94A3B8", count: 0 });
+    }
+    return list;
+  }, [model, cfg.projectId, ctx.projects]);
+
+  // Hauteur : tout l'espace sous la barre d'outils, sans défilement de page.
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); setBox((b) => (Math.round(r.width) === b.w && Math.round(r.height) === b.h ? b : { w: Math.round(r.width), h: Math.round(r.height) })); });
+    ro.observe(el);
+    if (embedded) return () => ro.disconnect();
+    const fit = () => {
+      const top = el.getBoundingClientRect().top;
+      const bar = document.querySelector(".lp-mobile-tabbar");
+      const barH = bar && bar.getBoundingClientRect().height && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().height : 0;
+      el.style.height = Math.max(420, window.innerHeight - Math.max(0, top) - barH - 12) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!carteWebglAvailable()) { setStatus("nowebgl"); return undefined; }
+    let cancelled = false;
+    setStatus("loading");
+    loadCarteThree().then((THREE) => {
+      if (cancelled || !glRef.current) return;
+      try {
+        engineRef.current = createReunions3dEngine(THREE, glRef.current, {
+          keyTarget: stageRef.current,
+          quality: cfg.quality, animate: cfg.animate,
+          // Marges du cadrage : bandeau du haut et légende du bas.
+          hud: () => {
+            const st = stageRef.current && stageRef.current.getBoundingClientRect();
+            const t = topRef.current && topRef.current.getBoundingClientRect(), b = bottomRef.current && bottomRef.current.getBoundingClientRect();
+            return { top: st && t && t.height ? t.bottom - st.top + 8 : 16, bottom: st && b && b.height ? st.bottom - b.top + 8 : 16 };
+          },
+          onSelect: (id) => setSelectedId(id),
+          onOpen: (id) => openFicheRef.current(id),
+        });
+        setStatus("ready");
+      } catch (e) {
+        console.error("[Nexora Réunions 3D]", e);
+        setStatus("nowebgl");
+      }
+    }).catch((e) => { console.error("[Nexora Réunions 3D] three.js", e); if (!cancelled) setStatus("error"); });
+    return () => { cancelled = true; if (engineRef.current) { engineRef.current.dispose(); engineRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
+  useLayoutEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setData(model); }, [status, model]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setQuality(cfg.quality); }, [status, cfg.quality]);
+  useEffect(() => { if (status === "ready" && engineRef.current) engineRef.current.setAnimate(cfg.animate); }, [status, cfg.animate]);
+
+  const openFiche = (id) => {
+    const raw = scope.find((t) => t.id === id) || (ctx.tasks || []).find((t) => t.id === id);
+    if (raw && onOpen) onOpen(raw);
+  };
+  const openFicheRef = useRef(openFiche);
+  openFicheRef.current = openFiche;
+  const engine = () => engineRef.current;
+  const P = model.period, Sm = model.summary;
+  const sel = selectedId ? model.shown.find((m) => m.id === selectedId) : null;
+  const go = (dir) => setPrefs({ anchor: reunions3dShift(cfg.period, cfg.anchor, dir, today) });
+  const legendStates = [
+    ["notes", "≡", "Notes", Sm.notes],
+    ["report", "✓", "Compte rendu", Sm.report],
+    ["dark", "?", "Sans compte rendu", Sm.dark],
+    ["planned", "", "À venir", Sm.planned],
+  ];
+
+  return (
+    <section className={"lp-carte-view lp-reu-view" + (embedded ? " is-embedded" : "")} aria-label="Réunions 3D">
+      <ViewToolbarPortal slot={toolbarSlot} />
+      <div ref={stageRef} className={"lp-reu-stage" + (sel ? " has-detail" : "")} tabIndex={0}
+        data-reu-status={status} data-reu-period={P.label} data-reu-kind={P.kind} data-reu-shown={model.shown.length} data-reu-total={Sm.total}
+        data-reu-selected={selectedId || ""} data-reu-quick={cfg.quick}
+        aria-label="Amphithéâtre des réunions en 3D. Clic : sélectionner ; double clic ou Entrée : ouvrir la fiche ; glisser : déplacer ; molette enfoncée : tourner ; roulette : zoomer ; flèches gauche et droite : réunion précédente ou suivante ; Échap : revenir.">
+        {status === "nowebgl" || status === "error" ? (
+          <Reunions3dFallback reason={status} model={model} onOpen={openFiche} onRetry={status === "error" ? () => setAttempt((a) => a + 1) : null} />
+        ) : (
+          <>
+            <div ref={glRef} className="lp-reu-gl" />
+            {status === "loading" && <div className="lp-carte-loading lp-reu-loading" role="status"><div className="lp-skeleton lp-carte-skeleton" />Ouverture de la Chambre des réunions…</div>}
+          </>
+        )}
+        {small && status === "ready" && <div className="lp-carte-small-hint" role="note">Agrandissez le widget pour parcourir les réunions confortablement.</div>}
+
+        <div ref={topRef} className="lp-reu-top">
+          <div className="lp-reu-title lp-reu-plank">
+            <h2>La Chambre des réunions</h2>
+            <small>Amphithéâtre · les plus anciennes en haut</small>
+          </div>
+          <div className="lp-reu-period lp-reu-plank" role="group" aria-label="Période">
+            <div className="lp-reu-seg">
+              <button type="button" aria-pressed={cfg.period === "week"} onClick={() => setPrefs({ period: "week" })}>Semaine</button>
+              <button type="button" aria-pressed={cfg.period === "month"} onClick={() => setPrefs({ period: "month" })}>Mois</button>
+            </div>
+            <div className="lp-reu-nav">
+              <button type="button" onClick={() => go(-1)} aria-label={cfg.period === "week" ? "Semaine précédente" : "Mois précédent"}>‹</button>
+              <button type="button" className="lp-reu-cur" onClick={() => setPrefs({ anchor: null })} title={P.current ? "Période courante" : "Revenir à la période courante"} aria-label={"Période affichée : " + P.label + (P.current ? "" : ". Revenir à la période courante")}>
+                {P.label}{!P.current && <span className="lp-reu-back" aria-hidden="true">↺</span>}
+              </button>
+              <button type="button" onClick={() => go(1)} aria-label={cfg.period === "week" ? "Semaine suivante" : "Mois suivant"}>›</button>
+            </div>
+            <div className="lp-reu-count"><b>{Sm.total}</b> réunion{Sm.total > 1 ? "s" : ""}</div>
+          </div>
+          <div className="lp-reu-quick lp-reu-plank" role="group" aria-label="Filtres rapides">
+            {REU3D_QUICKS.map((q) => (
+              <button key={q} type="button" aria-pressed={cfg.quick === q} data-reu-quick={q} onClick={() => setPrefs({ quick: q })}>
+                {REU3D_QUICK_LABELS[q]} <span className="lp-reu-n">{quickCounts[q]}</span>
+              </button>
+            ))}
+            <select aria-label="Projet" value={cfg.projectId || ""} onChange={(e) => setPrefs({ projectId: e.target.value || null })}>
+              <option value="">Tous les projets</option>
+              {projectOptions.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.count})</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div ref={bottomRef} className="lp-reu-legend lp-reu-parch" aria-label="Légende">
+          <div className="lp-reu-lg">
+            {model.projects.length ? model.projects.map((p) => (
+              <button type="button" key={p.id} className={"lp-reu-it" + (cfg.projectId === p.id ? " is-on" : "")} aria-pressed={cfg.projectId === p.id} title={"Ne montrer que « " + p.name + " »"}
+                onClick={() => setPrefs({ projectId: cfg.projectId === p.id ? null : p.id })}>
+                <span className="lp-reu-sw" style={{ background: p.color }} />{p.name} <b>{p.count}</b>
+              </button>
+            )) : <i>Aucune réunion sur cette période</i>}
+          </div>
+          <div className="lp-reu-lg">
+            {legendStates.map(([k, sym, label, n]) => <span key={k} className="lp-reu-it"><span className={"lp-reu-ic is-" + k} aria-hidden="true">{sym}</span>{label} <b>{n}</b></span>)}
+            <span className="lp-reu-it"><span className="lp-reu-ic is-fil" aria-hidden="true">—</span>Fil = point noté (5 au plus)</span>
+          </div>
+        </div>
+
+        {sel && (
+          <aside className="lp-reu-detail lp-reu-parch" aria-label="Réunion sélectionnée" style={{ "--reu-detail-top": ((topRef.current ? topRef.current.offsetHeight : 100) + 18) + "px" }}>
+            <button type="button" className="lp-reu-close" aria-label="Fermer" onClick={() => { const e = engine(); if (e) e.resetView(); else setSelectedId(null); }}><X size={14} /></button>
+            <div className="lp-reu-kicker"><span className="lp-reu-sw" style={{ background: sel.color }} />{sel.projectName}</div>
+            <h3>{sel.title}</h3>
+            <p className="lp-reu-when">{reunions3dFmtDay(sel.date)}{sel.time ? " · " + reunions3dFmtTime(sel.time) + (sel.endTime ? "–" + reunions3dFmtTime(sel.endTime) : "") : ""}</p>
+            <p className="lp-reu-state">{reunions3dStateText(sel)}{sel.points ? " · " + sel.points + (sel.points > 1 ? " points notés" : " point noté") : ""}{sel.report ? " · sceau « Compte rendu »" : ""}</p>
+            {sel.lines.length > 0 && <ul className="lp-reu-lines">{sel.lines.slice(0, 4).map((l, i) => <li key={i}>{l}</li>)}</ul>}
+            <button type="button" className="lp-btn lp-btn-primary lp-reu-open" onClick={() => openFiche(sel.id)}><ExternalLink size={13} /> Ouvrir la fiche</button>
+          </aside>
+        )}
+      </div>
     </section>
   );
 }
