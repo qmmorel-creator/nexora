@@ -3,7 +3,7 @@
 // une capture. Sort en erreur si un contrôle échoue.
 import http from "node:http";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { buildHarness } from "./build-harness.mjs";
 
@@ -2433,6 +2433,107 @@ try {
 } catch (e) {
   cosmos.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
 }
+// Vue « Fleuve du temps » (#515) : la vue s'ouvre, la date visée change
+// (boutons, frise, molette), les bateaux, épaves, portiques et cordes sont là,
+// un double clic sur un bateau ouvre la fiche ; explorer ne modifie rien.
+// Rendu logiciel lent : « réduire les animations » rend la navigation
+// immédiate, et les captures passent par le protocole du navigateur.
+const fleuve = {};
+try {
+  const fleuveShot = async (pg, name) => {
+    const cdp = await pg.context().newCDPSession(pg);
+    const sh = await cdp.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(path.join(dir, name), Buffer.from(sh.data, "base64"));
+    await cdp.detach().catch(() => {});
+  };
+  const offlineFleuve = (pg) => pg.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
+  const openFleuve = async (pg) => {
+    await pg.goto(`http://127.0.0.1:${port}/index.html?app=1&view=fleuve&fleuve=demo&fleuveQ=low`, { waitUntil: "load", timeout: 90000 });
+    await pg.waitForSelector(".lp-fleuve-view", { timeout: 90000 });
+    for (let i = 0; i < 3; i++) { const c = await pg.$('.lp-modal [aria-label="Fermer"]'); if (!c) break; await c.click().catch(() => {}); await pg.waitForTimeout(300); }
+  };
+  const fattr = (pg, name) => pg.getAttribute(".lp-fleuve-stage", "data-fleuve-" + name);
+  const dayIs = (pg, min, max) => pg.waitForFunction(([lo, hi]) => { const s = document.querySelector(".lp-fleuve-stage"); const d = s ? +s.getAttribute("data-fleuve-day") : NaN; return d >= lo && d <= hi; }, [min, max == null ? 1e9 : max], { timeout: 30000 });
+  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  fp.on("pageerror", (e) => pageErrors.push("Fleuve : " + e.message));
+  await fp.emulateMedia({ reducedMotion: "reduce" });
+  await offlineFleuve(fp);
+  await openFleuve(fp);
+  await fp.waitForSelector('.lp-fleuve-stage[data-fleuve-status="ready"]', { timeout: 120000 });
+  await fp.waitForTimeout(2500);
+  fleuve.tab = await fp.$$eval(".lp-detail-tab", (b) => b.some((x) => /Fleuve du temps/.test(x.textContent) && x.classList.contains("active")));
+  fleuve.canvas = await fp.$$eval(".lp-fleuve-gl canvas", (c) => c.length);
+  fleuve.state = await fp.evaluate(() => window.__fleuveBench.engine.state());
+  fleuve.counter = await fp.$eval(".lp-fleuve-counter", (e) => e.textContent);
+  fleuve.dayStart = await fattr(fp, "day");
+  fleuve.dateStart = await fp.$eval(".lp-fleuve-date b", (e) => e.textContent);
+  fleuve.tasksBefore = await fp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
+  await fleuveShot(fp, "fleuve.png");
+  // Deux semaines vers l'amont : la date visée passe en S+2.
+  const next = await fp.$('.lp-fleuve-btn[title="Semaine suivante"]');
+  await next.click(); await next.click();
+  await dayIs(fp, 11);
+  fleuve.dayWeek = await fattr(fp, "day");
+  fleuve.dateWeek = await fp.$eval(".lp-fleuve-date b", (e) => e.textContent);
+  fleuve.litWeek = (await fp.evaluate(() => window.__fleuveBench.engine.state())).lit;
+  // « Aujourd'hui », puis la frise (clic aux trois quarts), puis la molette.
+  await fp.click(".lp-fleuve-btn.is-gold");
+  await dayIs(fp, 0, 0);
+  const fr = await fp.$eval(".lp-fleuve-frise", (e) => { const r = e.getBoundingClientRect(); return { x: r.left + r.width * 0.75, y: r.top + r.height / 2 }; });
+  await fp.mouse.click(fr.x, fr.y);
+  await dayIs(fp, 25);
+  fleuve.dayFrise = await fattr(fp, "day");
+  fleuve.litFrise = (await fp.evaluate(() => window.__fleuveBench.engine.state())).lit;
+  await fp.click(".lp-fleuve-btn.is-gold");
+  await dayIs(fp, 0, 0);
+  const box = await fp.$eval(".lp-fleuve-gl canvas", (e) => { const r = e.getBoundingClientRect(); return { x: r.left + r.width * 0.5, y: r.top + r.height * 0.45 }; });
+  await fp.mouse.move(box.x, box.y);
+  for (let i = 0; i < 5; i++) { await fp.mouse.wheel(0, 250); await fp.waitForTimeout(150); }
+  await dayIs(fp, 3);
+  fleuve.dayWheel = await fattr(fp, "day");
+  // Double clic sur un bateau à l'écran : sélection et fiche Nexora.
+  const target = await fp.evaluate(() => {
+    const e = window.__fleuveBench.engine, c = document.querySelector(".lp-fleuve-gl canvas").getBoundingClientRect();
+    for (const id of e.boatIds()) {
+      const p = e.screenOf(id);
+      if (!p || p.x < c.left + c.width * 0.2 || p.x > c.right - c.width * 0.2 || p.y < c.top + c.height * 0.25 || p.y > c.bottom - c.height * 0.25) continue;
+      const el = document.elementFromPoint(p.x, p.y);
+      if (el && el.tagName === "CANVAS") return { id, x: p.x, y: p.y };
+    }
+    return null;
+  });
+  fleuve.target = target;
+  if (target) {
+    await fp.mouse.dblclick(target.x, target.y);
+    await fp.waitForSelector(".lp-modal", { timeout: 10000 }).catch(() => {});
+    fleuve.fiche = await fp.evaluate((id) => {
+      const m = document.querySelector(".lp-modal"); if (!m) return null;
+      return { text: m.textContent.slice(0, 400), inputs: [...m.querySelectorAll("input")].map((i) => i.value).filter(Boolean).slice(0, 5) };
+    }, target.id);
+    fleuve.expectedTitle = JSON.parse(fleuve.tasksBefore).find((t) => t.id === target.id).title;
+    fleuve.selected = await fattr(fp, "selected");
+    for (let i = 0; i < 3; i++) { const c = await fp.$('.lp-modal [aria-label="Fermer"]'); if (!c) break; await c.click().catch(() => {}); await fp.waitForTimeout(400); }
+    fleuve.detailTitle = await fp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
+  }
+  fleuve.tasksAfter = await fp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
+  await fleuveShot(fp, "fleuve-selection.png");
+  await fp.close();
+
+  // Sans WebGL : la liste de repli, semaine par semaine, ouvre la fiche.
+  const fb = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  fb.on("pageerror", (e) => pageErrors.push("Fleuve sans WebGL : " + e.message));
+  await fb.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
+  await offlineFleuve(fb);
+  await openFleuve(fb);
+  await fb.waitForSelector(".lp-fleuve-fallback", { timeout: 30000 });
+  fleuve.fallbackWeeks = await fb.$$eval(".lp-fleuve-fallback details", (d) => d.length);
+  await fb.click(".lp-fleuve-fallback details[open] li button");
+  await fb.waitForTimeout(600);
+  fleuve.fallbackModal = await fb.$$eval(".lp-modal", (m) => m.length);
+  await fb.close();
+} catch (e) {
+  fleuve.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
+}
 await browser.close();
 server.close();
 
@@ -3449,6 +3550,25 @@ if (!cosmos.error) {
   expect(cosmos.volumeOverlaps.n === 0 && cosmos.volumeGalaxyOverlaps.n === 0, `Cosmos volume : libellés superposés (${cosmos.volumeOverlaps.n} / ${cosmos.volumeGalaxyOverlaps.n})`);
   expect(cosmos.fallbackGalaxies === 6, `Cosmos sans WebGL : ${cosmos.fallbackGalaxies} galaxie(s) listée(s), 6 attendues`);
   expect(cosmos.fallbackModal >= 1, "Cosmos sans WebGL : la liste de repli n'ouvre pas la fiche");
+}
+
+expect(!fleuve.error, `Fleuve du temps : scénario en échec (${fleuve.error})`);
+if (!fleuve.error) {
+  const st = fleuve.state || {};
+  expect(fleuve.canvas === 1 && fleuve.tab, `Fleuve du temps : vue non montée ou onglet inactif (${fleuve.canvas} canvas)`);
+  expect(st.boats >= 25 && st.wrecks === 3 && st.ports === 3 && st.ropes === 3 && st.whirls === 2 && st.focus === 2 && st.halos === 1, `Fleuve du temps : scène incomplète ${JSON.stringify(st)}`);
+  expect(/3\s*en retard/.test(fleuve.counter) && /2\s*critiques/.test(fleuve.counter) && /S\+2\s*chargée/.test(fleuve.counter), `Fleuve du temps : compteurs « ${fleuve.counter} »`);
+  expect(fleuve.dayStart === "0" && /cette semaine/.test(fleuve.dateStart), `Fleuve du temps : date de départ ${fleuve.dayStart} « ${fleuve.dateStart} »`);
+  expect(+fleuve.dayWeek >= 11 && /S\+2/.test(fleuve.dateWeek), `Fleuve du temps : « semaine › » ×2 mène à ${fleuve.dayWeek} « ${fleuve.dateWeek} »`);
+  expect(+fleuve.dayFrise >= 25 && fleuve.litFrise >= 1, `Fleuve du temps : la frise mène au jour ${fleuve.dayFrise}, ${fleuve.litFrise} portique(s) illuminé(s)`);
+  expect(+fleuve.dayWheel >= 3, `Fleuve du temps : la molette ne remonte pas le fleuve (jour ${fleuve.dayWheel})`);
+  expect(!!fleuve.target, "Fleuve du temps : aucun bateau cliquable à l'écran");
+  if (fleuve.target) {
+    expect(fleuve.fiche && (fleuve.fiche.inputs.includes(fleuve.expectedTitle) || fleuve.fiche.text.includes(fleuve.expectedTitle)), `Fleuve du temps : le double clic n'ouvre pas la fiche « ${fleuve.expectedTitle} » (${JSON.stringify(fleuve.fiche)})`);
+    expect(fleuve.selected === fleuve.target.id && fleuve.detailTitle.includes(fleuve.expectedTitle), `Fleuve du temps : sélection « ${fleuve.selected} », volet « ${fleuve.detailTitle} »`);
+  }
+  expect(fleuve.tasksAfter === fleuve.tasksBefore, "Fleuve du temps : naviguer a modifié des tâches");
+  expect(fleuve.fallbackWeeks >= 7 && fleuve.fallbackModal >= 1, `Fleuve du temps sans WebGL : ${fleuve.fallbackWeeks} semaine(s), fiche ${fleuve.fallbackModal ? "ouverte" : "fermée"}`);
 }
 
 console.log(`Capture : ${shot}`);
