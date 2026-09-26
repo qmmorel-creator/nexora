@@ -2438,7 +2438,8 @@ try {
 // le filtre de période et les filtres rapides changent la scène, la synthèse
 // concorde avec la légende, un clic sélectionne une réunion et « Ouvrir la
 // fiche » comme le double clic ouvrent la fiche ; rien n'est écrit ; repli
-// sans WebGL.
+// sans WebGL. Les captures ne sont pas des contrôles : sous rendu logiciel,
+// l'attente des polices peut expirer sans rien dire de la vue.
 const reu = {};
 try {
   const reuOffline = (pg) => pg.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
@@ -2469,14 +2470,14 @@ try {
   reu.week = await ds(rp);
   reu.weekHud = await hud(rp);
   reu.engine = await rp.evaluate(() => (window.__reu3dBench && window.__reu3dBench.engine ? window.__reu3dBench.engine.info() : null));
-  await rp.screenshot({ path: path.join(dir, "reunions-semaine.png") });
+  await rp.screenshot({ path: path.join(dir, "reunions-semaine.png"), timeout: 60000 }).catch(() => {}); // capture seule, pas un contrôle
   // Filtre de période : Mois, mois précédent, retour à la période courante.
   await rp.click('.lp-reu-seg button:has-text("Mois")');
   await rp.waitForFunction(() => document.querySelector(".lp-reu-stage").dataset.reuKind === "month", null, { timeout: 60000 });
   await rp.waitForTimeout(2000);
   reu.month = await ds(rp);
   reu.monthHud = await hud(rp);
-  await rp.screenshot({ path: path.join(dir, "reunions-mois.png") });
+  await rp.screenshot({ path: path.join(dir, "reunions-mois.png"), timeout: 60000 }).catch(() => {}); // capture seule, pas un contrôle
   await rp.click('.lp-reu-nav button[aria-label="Mois précédent"]');
   await rp.waitForTimeout(1200);
   reu.prevMonth = (await ds(rp)).reuPeriod;
@@ -2502,7 +2503,7 @@ try {
   await settle(rp);
   reu.detail = await rp.$eval(".lp-reu-detail h3", (e) => e.textContent).catch(() => "");
   reu.zoom = await rp.evaluate(() => { const i = window.__reu3dBench.engine.info(); return i.dist / i.baseDist; });
-  await rp.screenshot({ path: path.join(dir, "reunions-selection.png") });
+  await rp.screenshot({ path: path.join(dir, "reunions-selection.png"), timeout: 60000 }).catch(() => {}); // capture seule, pas un contrôle
   await rp.click(".lp-reu-open");
   await rp.waitForTimeout(800);
   reu.modalButton = await rp.$$eval(".lp-modal", (m) => m.length);

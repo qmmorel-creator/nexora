@@ -1250,6 +1250,10 @@ if (benchApp) {
     // call-outs, liens et chemins réseau à nettoyer, et une tâche « Préparer
     // la réunion » qui n'est PAS une réunion.
     window.__reu3dBench = {};
+    // Comme `carteFx=0` pour la Carte : sous rendu logiciel, l'animation
+    // continue accapare la page et fait expirer les clics du scénario. Le
+    // moteur ne dessine alors que sur changement ; `reuAnim=1` la rétablit.
+    if (benchParams.get("reuAnim") !== "1") mem.set("nexora:viewPrefs", JSON.stringify({ reunions3d: { animate: false } }));
     const folders = [{ id: "banc-rf1", name: "Chantiers", color: "#E07A3F" }, { id: "banc-rf2", name: "Ingénierie", color: "#245EDB" }];
     const projects = [
       { id: "banc-rp1", name: "Passerelle quai Nord", color: "#E08A2E", folderId: "banc-rf1" },
