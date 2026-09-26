@@ -5308,6 +5308,36 @@ function carteRelief(theme, ring, lq, lr, tileKey, inner) {
 
 // Construit la carte complète. `input` = sortie de carteNormalize (+ memory,
 // themeOverrides). Mêmes entrées => même sortie, octet pour octet.
+// Entrées continues et horloge réelle : indépendantes du moteur WebGL (#517).
+function carteWheelFactor(deltaY, deltaMode, height) {
+  if (!Number.isFinite(deltaY) || deltaY === 0) return 1;
+  const pixels = deltaY * (deltaMode === 1 ? 16 : deltaMode === 2 ? Math.max(1, height || 300) : 1);
+  return Math.exp(Math.max(-600, Math.min(600, pixels)) * 0.0015);
+}
+function carteDampDistance(current, target, dt, instant) {
+  if (instant || !Number.isFinite(current)) return target;
+  const next = current + (target - current) * (1 - Math.exp(-12 * Math.max(0, dt)));
+  return Math.abs(next - target) < 0.001 ? target : next;
+}
+function carteFrameTiming(now, last) {
+  const elapsed = Math.max(0, (now - last) / 1000);
+  return { elapsed, dt: Math.min(0.05, elapsed) };
+}
+function cartePixelRatio(current, max, auto, reset) {
+  return auto && !reset && Number.isFinite(current) ? Math.min(current, max) : max;
+}
+// Les états métier, la sélection et les filtres de tâches ne changent pas
+// la géométrie du sol. Les teintes et l'occupation ont leurs propres clés.
+function carteRenderKeys(layout, quality, dimmed, fx, kenney) {
+  const ids = Object.keys(layout.projectById).sort();
+  return {
+    terrain: JSON.stringify([layout.tiles, quality]),
+    paint: JSON.stringify([ids.map((id) => [id, layout.projectById[id].color]), [...(dimmed || [])].sort()]),
+    labels: JSON.stringify(ids.map((id) => { const p = layout.projectById[id]; return [id, p.group, p.folderName]; })),
+    decor: JSON.stringify([[...new Set(layout.pois.map((p) => p.key))].sort(), !!fx, !!kenney]),
+  };
+}
+
 function carteBuild(input) {
   const projects = input.projects || [];
   const tasks = input.tasks || [];
@@ -5323,7 +5353,11 @@ function carteBuild(input) {
   const density = input.density == null ? 3 : Math.max(1, Math.min(5, Math.round(Number(input.density) || 3)));
   const perProject = {};
   tasks.forEach((t) => { const pid = t.projectId == null ? "__terre-inconnue__" : t.projectId; perProject[pid] = (perProject[pid] || 0) + 1; });
-  const INNER = carteInnerRadius(Math.max(0, ...Object.values(perProject)), density);
+  // Le rayon fait partie du repère mémorisé (#517). Une tâche supplémentaire
+  // utilise les emplacements/empilements existants, sans déplacer toutes les îles.
+  // La mémoire est distincte pour chaque réglage de densité et d'espacement.
+  const savedInner = memory.density === density && Number.isInteger(memory.inner) && memory.inner >= (density < 3 ? 3 : 2) && memory.inner <= 8 ? memory.inner : null;
+  const INNER = density === 3 ? CARTE_INNER : savedInner || carteInnerRadius(Math.max(0, ...Object.values(perProject)), density);
   const RR = INNER + 1;
   const macro = (i, j) => [(2 * RR + 1) * i + RR * j, -RR * i + (RR + 1) * j];
   const placed = cartePlaceProjects(allProjects, memory, expansion);
@@ -5469,7 +5503,7 @@ function carteBuild(input) {
     });
   });
 
-  const memOut = { projects: {}, tasks: taskTile };
+  const memOut = { projects: {}, tasks: taskTile, inner: INNER, density };
   Object.keys(placed.at).forEach((id) => { memOut.projects[id] = carteKey(placed.at[id][0], placed.at[id][1]); });
   return { tiles, territories, pois, routes, occupancy, themes: themes.byProject, groupThemes: themes.byGroup, memory: memOut, projectById, inner: INNER, expansion, density };
 }

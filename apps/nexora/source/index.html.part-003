@@ -18894,7 +18894,8 @@ function createCarteEngine(THREE, container, opts) {
   scene.add(sun, sun.target);
   const world = new THREE.Group();
   const overlay = new THREE.Group();
-  scene.add(world, overlay);
+  const terrainGroup = new THREE.Group(), shoreGroup = new THREE.Group(), regionGroup = new THREE.Group();
+  scene.add(world, overlay, terrainGroup, shoreGroup, regionGroup);
 
   const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const S = {
@@ -18915,6 +18916,8 @@ function createCarteEngine(THREE, container, opts) {
     // Effets avancés (#496 à #498) : bloom, herbe dense, ombres de nuages.
     fx: o.fx !== false,
     hoverKey: null, strategic: 0, viewGoal: null, buildId: 0, prevTasks: null,
+    renderKeys: null, terrainBuilds: 0, decorBuilds: 0, cameraDist: 19,
+    lastFps: null, buildMs: 0,
   };
   // Ciel en dégradé (#496, #497) : il sert de reflet aux matières (env map
   // PMREM) et, derrière la carte, de fond avec le halo du soleil.
@@ -19360,7 +19363,8 @@ function createCarteEngine(THREE, container, opts) {
 
   function clearGroup(g) {
     while (g.children.length) {
-      const c = g.children.pop();
+      const c = g.children[g.children.length - 1];
+      g.remove(c);
       if (c.isInstancedMesh) c.dispose();
       if (c.userData.ownGeo) c.geometry.dispose();
       if (c.userData.ownTex && c.material && c.material.map) c.material.map.dispose();
@@ -19517,13 +19521,13 @@ function createCarteEngine(THREE, container, opts) {
     });
     sand.instanceMatrix.needsUpdate = true; if (sand.instanceColor) sand.instanceColor.needsUpdate = true;
     sand.computeBoundingSphere(); sand.receiveShadow = true;
-    world.add(sand);
+    shoreGroup.add(sand);
     if (pebbles.length) {
       const pm = new THREE.InstancedMesh(G.seam, MAT.l, pebbles.length);
       pebbles.forEach((p, i) => { tmpQ.setFromAxisAngle(UP, p[5]); pm.setMatrixAt(i, tmpM.compose(tmpP.set(p[0], p[1], p[2]), tmpQ, tmpS.set(p[3] * 2.6, p[3] * 1.4, p[3] * 2))); pm.setColorAt(i, tmpC.set(p[4])); });
       pm.instanceMatrix.needsUpdate = true; if (pm.instanceColor) pm.instanceColor.needsUpdate = true;
       pm.computeBoundingSphere(); pm.castShadow = pm.receiveShadow = true;
-      world.add(pm);
+      shoreGroup.add(pm);
     }
   }
   // Coutures adoucies (#497) : un bourrelet d'herbe entre deux cases de
@@ -19551,7 +19555,7 @@ function createCarteEngine(THREE, container, opts) {
     list.forEach((s, i) => { tmpQ.setFromAxisAngle(UP, s[4]); m.setMatrixAt(i, tmpM.compose(tmpP.set(s[0], s[1], s[2]), tmpQ, tmpS.set(1.05, s[3], 0.2))); m.setColorAt(i, tmpC.set(s[5])); });
     m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
     m.computeBoundingSphere(); m.receiveShadow = true;
-    world.add(m);
+    shoreGroup.add(m);
   }
   function buildGrass(pts) {
     if (!pts.length) return;
@@ -19575,7 +19579,7 @@ function createCarteEngine(THREE, container, opts) {
       const s = 8 + carteRand("is" + i) * 8;
       b.add("dome", "l", mc.x + Math.sin(a) * rr, 0.05, mc.z + Math.cos(a) * rr, s * 1.4, s * (0.18 + carteRand("ih" + i) * 0.16), s, a, carteRand("ic" + i) > 0.5 ? "#7fa66a" : "#8fae78");
     }
-    b.flush(world, false);
+    b.flush(terrainGroup, false);
   }
   // Ombres de nuages (#497) : quatre bancs invisibles, placés entre le soleil
   // et la carte, qui dérivent lentement autour du point regardé.
@@ -19903,82 +19907,114 @@ function createCarteEngine(THREE, container, opts) {
 
   // ---------- Construction ----------
   function build() {
+    const started = performance.now();
     clearGroup(world);
     S.spin = [];
     const L = S.layout;
     const q = S.effQuality;
     const shadows = q === "high";
     const keys = Object.keys(L.tiles);
-    const baseM = new THREE.InstancedMesh(tileGeo, litMat("l"), keys.length);
-    const capM = new THREE.InstancedMesh(capGeo, litMat("l"), keys.length);
-    const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
-    const seaM = new THREE.InstancedMesh(capGeo, MAT.sea, keys.length);
-    seaM.count = 0; seaM.userData.keys = []; seaM.receiveShadow = shadows;
-    const lavaM = new THREE.InstancedMesh(landCapGeo, MAT.lavaTop, keys.length);
-    // Sol texturé et routes pavées (#479), tuiles biseautées en falaise (#485).
-    capM.geometry = landCapGeo;
-    capM.material = MAT.ground;
-    const roadM = new THREE.InstancedMesh(landCapGeo, MAT.road, keys.length);
-    const cliffM = new THREE.InstancedMesh(cliffGeo, MAT.cliff, keys.length);
-    capM.count = 0; waterM.count = 0; lavaM.count = 0; roadM.count = 0; cliffM.count = 0; baseM.count = 0;
-    capM.userData.keys = []; waterM.userData.keys = []; lavaM.userData.keys = []; roadM.userData.keys = [];
-    baseM.receiveShadow = capM.receiveShadow = roadM.receiveShadow = cliffM.receiveShadow = shadows;
-    cliffM.castShadow = shadows;
-    const shore = [];
-    const capTop = {};
-    S.tileTop = {};
-    keys.forEach((k, i) => {
-      const t = L.tiles[k];
-      const w = carteToWorld(t.q, t.r);
-      const col = tileColors(t);
-      if (col.water) {
-        const b = baseM.count++;
-        baseM.setMatrixAt(b, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, 0.08, 1)));
-        baseM.setColorAt(b, tmpC.set(col.side));
-        // Mer (#497) : texture de profondeur, couleur neutre ; lacs et
-        // rivières gardent la teinte de leur thème.
-        const wm = t.kind === "sea" ? seaM : waterM;
-        const j = wm.count++;
-        // Mer : cases légèrement élargies, sans joint visible (#485).
-        const ws = t.kind === "sea" ? 1.03 : 1;
-        wm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(ws, 1, ws)));
-        capTop[k] = t.h - 0.06 + 0.14;
-        wm.setColorAt(j, tmpC.set(t.kind === "sea" ? (t.bridge ? "#e8f4f4" : "#ffffff") : t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
-        wm.userData.keys[j] = k;
-      } else {
-        const top = t.h + 0.12;
-        const c = cliffM.count++;
-        cliffM.setMatrixAt(c, tmpM.compose(tmpP.set(w.x, top, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
-        const dimT = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
-        cliffM.setColorAt(c, tmpC.set(dimT ? "#b9bdc3" : carteMix("#ffffff", col.side, 0.22)));
-        const cm = col.lava ? lavaM : t.road ? roadM : capM;
-        const j = cm.count++;
-        cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, top, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
-        // Rive : une case de terre au bord de la mer reçoit écume et haut-fond.
-        for (let dI = 0; dI < 6; dI++) {
-          const nb = L.tiles[carteKey(t.q + CARTE_DIRS[dI][0], t.r + CARTE_DIRS[dI][1])];
-          if (!nb || nb.kind === "sea") { shore.push({ x: w.x, z: w.z, k, t, top }); break; }
+    const next = carteRenderKeys(L, q, S.dimmed, S.fx, S.kenney);
+    const prev = S.renderKeys;
+    const terrainDirty = !prev || prev.terrain !== next.terrain;
+    const paintDirty = terrainDirty || prev.paint !== next.paint;
+    const labelsDirty = paintDirty || prev.labels !== next.labels;
+    const decorDirty = paintDirty || prev.decor !== next.decor;
+    if (terrainDirty) {
+      clearGroup(terrainGroup);
+      S.terrainBuilds++;
+      const baseM = new THREE.InstancedMesh(tileGeo, litMat("l"), keys.length);
+      const capM = new THREE.InstancedMesh(capGeo, litMat("l"), keys.length);
+      const waterM = new THREE.InstancedMesh(capGeo, MAT.water, keys.length);
+      const seaM = new THREE.InstancedMesh(capGeo, MAT.sea, keys.length);
+      seaM.count = 0; seaM.userData.keys = []; seaM.receiveShadow = shadows;
+      const lavaM = new THREE.InstancedMesh(landCapGeo, MAT.lavaTop, keys.length);
+      // Sol texturé et routes pavées (#479), tuiles biseautées en falaise (#485).
+      capM.geometry = landCapGeo;
+      capM.material = MAT.ground;
+      const roadM = new THREE.InstancedMesh(landCapGeo, MAT.road, keys.length);
+      const cliffM = new THREE.InstancedMesh(cliffGeo, MAT.cliff, keys.length);
+      capM.count = 0; waterM.count = 0; lavaM.count = 0; roadM.count = 0; cliffM.count = 0; baseM.count = 0;
+      capM.userData.keys = []; waterM.userData.keys = []; lavaM.userData.keys = []; roadM.userData.keys = [];
+      baseM.userData.keys = []; cliffM.userData.keys = [];
+      baseM.receiveShadow = capM.receiveShadow = roadM.receiveShadow = cliffM.receiveShadow = shadows;
+      cliffM.castShadow = shadows;
+      const shore = [];
+      const capTop = {};
+      S.tileTop = {};
+      keys.forEach((k, i) => {
+        const t = L.tiles[k];
+        const w = carteToWorld(t.q, t.r);
+        const col = tileColors(t);
+        if (col.water) {
+          const b = baseM.count++;
+          baseM.userData.keys[b] = k;
+          baseM.setMatrixAt(b, tmpM.compose(tmpP.set(w.x, 0, w.z), tmpQ.identity(), tmpS.set(1, 0.08, 1)));
+          baseM.setColorAt(b, tmpC.set(col.side));
+          // Mer (#497) : texture de profondeur, couleur neutre ; lacs et
+          // rivières gardent la teinte de leur thème.
+          const wm = t.kind === "sea" ? seaM : waterM;
+          const j = wm.count++;
+          // Mer : cases légèrement élargies, sans joint visible (#485).
+          const ws = t.kind === "sea" ? 1.03 : 1;
+          wm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, t.h - 0.06, w.z), tmpQ.identity(), tmpS.set(ws, 1, ws)));
+          capTop[k] = t.h - 0.06 + 0.14;
+          wm.setColorAt(j, tmpC.set(t.kind === "sea" ? (t.bridge ? "#e8f4f4" : "#ffffff") : t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top));
+          wm.userData.keys[j] = k;
+        } else {
+          const top = t.h + 0.12;
+          const c = cliffM.count++;
+          cliffM.userData.keys[c] = k;
+          cliffM.setMatrixAt(c, tmpM.compose(tmpP.set(w.x, top, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+          const dimT = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+          cliffM.setColorAt(c, tmpC.set(dimT ? "#b9bdc3" : carteMix("#ffffff", col.side, 0.22)));
+          const cm = col.lava ? lavaM : t.road ? roadM : capM;
+          const j = cm.count++;
+          cm.setMatrixAt(j, tmpM.compose(tmpP.set(w.x, top, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+          // Rive : une case de terre au bord de la mer reçoit écume et haut-fond.
+          for (let dI = 0; dI < 6; dI++) {
+            const nb = L.tiles[carteKey(t.q + CARTE_DIRS[dI][0], t.r + CARTE_DIRS[dI][1])];
+            if (!nb || nb.kind === "sea") { shore.push({ x: w.x, z: w.z, k, t, top }); break; }
+          }
+          capTop[k] = t.h + 0.12;
+          cm.setColorAt(j, tmpC.set(col.top));
+          cm.userData.keys[j] = k;
         }
-        capTop[k] = t.h + 0.12;
-        cm.setColorAt(j, tmpC.set(col.top));
-        cm.userData.keys[j] = k;
-      }
-      S.tileTop[k] = col.top;
-    });
-    [baseM, waterM, seaM, capM, lavaM, roadM, cliffM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); world.add(m); });
-    let seaY = 0.19;
-    keys.forEach((k) => { const t = L.tiles[k]; if (t.kind === "sea") seaY = Math.max(seaY, capTop[k] || 0); });
-    buildSea(keys, shore, seaY);
-    buildShore(shore, seaY);
-    if (q === "high") buildSeams(keys);
-    S.pickMeshes = [capM, waterM, seaM, lavaM, roadM];
-    S.capTop = capTop;
+        S.tileTop[k] = col.top;
+      });
+      [baseM, waterM, seaM, capM, lavaM, roadM, cliffM].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.computeBoundingSphere(); terrainGroup.add(m); });
+      let seaY = 0.19;
+      keys.forEach((k) => { const t = L.tiles[k]; if (t.kind === "sea") seaY = Math.max(seaY, capTop[k] || 0); });
+      buildSea(keys, shore, seaY);
+      S.terrainMeshes = { baseM, waterM, seaM, capM, lavaM, roadM, cliffM };
+      S.shore = shore; S.seaY = seaY;
+      buildHorizon();
+      S.pickMeshes = [capM, waterM, seaM, lavaM, roadM];
+      S.capTop = capTop;
+    } else if (paintDirty) {
+      // Un filtre change les couleurs, pas les positions ni la texture de mer.
+      const m = S.terrainMeshes;
+      keys.forEach((k) => { S.tileTop[k] = tileColors(L.tiles[k]).top; });
+      [m.baseM, m.waterM, m.capM, m.lavaM, m.roadM, m.cliffM].forEach((mesh) => {
+        mesh.userData.keys.forEach((k, i) => {
+          const t = L.tiles[k], col = tileColors(t);
+          const dim = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+          const color = mesh === m.baseM ? col.side : mesh === m.cliffM ? (dim ? "#b9bdc3" : carteMix("#ffffff", col.side, 0.22)) : mesh === m.waterM && t.bridge ? carteMix(col.top, "#ffffff", 0.15) : col.top;
+          mesh.setColorAt(i, tmpC.set(color));
+        });
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      });
+    }
+    if (paintDirty) {
+      clearGroup(shoreGroup);
+      buildShore(S.shore, S.seaY);
+      if (q === "high") buildSeams(keys);
+    }
 
     // Noms des dossiers au sol (#377, #393) : le long de l'île, au-dessus de
     // ses dalles. Une seconde passe, très pâle et sans test de profondeur,
     // garde le nom devinable derrière les bâtiments. Une région entièrement
     // écartée par les filtres n'affiche pas son nom.
-    S.regionLabels = [];
     const regions = {};
     keys.forEach((k) => {
       const t = L.tiles[k];
@@ -19988,114 +20024,122 @@ function createCarteEngine(THREE, container, opts) {
       const g = regions[p.group] || (regions[p.group] = { name: p.folderName, pts: [], top: 0, projects: new Set() });
       g.pts.push([w.x, w.z]); g.top = Math.max(g.top, t.h); g.projects.add(t.projectId);
     });
-    Object.keys(regions).sort().forEach((gid) => {
-      const g = regions[gid];
-      if (S.dimmed && [...g.projects].every((pid) => S.dimmed.has(pid))) return;
-      const cv = regionCurve(g.pts);
-      const tx = regionTexture(g.name.toUpperCase(), cv);
-      const ux = Math.cos(cv.theta), uz = Math.sin(cv.theta);
-      const px = cv.cx + ux * tx.cu - uz * tx.cv, pz = cv.cz + uz * tx.cu + ux * tx.cv;
-      [{ depthTest: true, opacity: 0.96, order: 3 }, { depthTest: false, opacity: 0.22, order: 4 }].forEach((pass, i) => {
-        const mesh = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tx.texture, transparent: true, depthWrite: false, depthTest: pass.depthTest, opacity: pass.opacity }));
-        mesh.userData.ownMat = true;
-        if (i === 0) mesh.userData.ownTex = true;
-        mesh.scale.set(tx.w, tx.h, 1);
-        mesh.position.set(px, g.top + 0.3, pz);
-        mesh.userData.theta = cv.theta;
-        mesh.userData.alpha = pass.opacity;
-        mesh.rotation.set(-Math.PI / 2, 0, -cv.theta);
-        mesh.renderOrder = pass.order;
-        world.add(mesh);
-        S.regionLabels.push(mesh);
+    if (labelsDirty) {
+      clearGroup(regionGroup);
+      S.regionLabels = [];
+      Object.keys(regions).sort().forEach((gid) => {
+        const g = regions[gid];
+        if (S.dimmed && [...g.projects].every((pid) => S.dimmed.has(pid))) return;
+        const cv = regionCurve(g.pts);
+        const tx = regionTexture(g.name.toUpperCase(), cv);
+        const ux = Math.cos(cv.theta), uz = Math.sin(cv.theta);
+        const px = cv.cx + ux * tx.cu - uz * tx.cv, pz = cv.cz + uz * tx.cu + ux * tx.cv;
+        [{ depthTest: true, opacity: 0.96, order: 3 }, { depthTest: false, opacity: 0.22, order: 4 }].forEach((pass, i) => {
+          const mesh = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tx.texture, transparent: true, depthWrite: false, depthTest: pass.depthTest, opacity: pass.opacity }));
+          mesh.userData.ownMat = true;
+          if (i === 0) mesh.userData.ownTex = true;
+          mesh.scale.set(tx.w, tx.h, 1);
+          mesh.position.set(px, g.top + 0.3, pz);
+          mesh.userData.theta = cv.theta;
+          mesh.userData.alpha = pass.opacity;
+          mesh.rotation.set(-Math.PI / 2, 0, -cv.theta);
+          mesh.renderOrder = pass.order;
+          regionGroup.add(mesh);
+          S.regionLabels.push(mesh);
+        });
       });
-    });
 
+    }
     const batch = makeBatcher();
     const dBatch = makeBatcher();
     const kBatch = makeKBatch(), kdBatch = makeKBatch();
     const useK = !!S.kenney && q !== "low";
-    clearGroup(decorGroup);
-    // Feuillages (cônes et boules au-dessus du tronc) : matière qui ondule.
-    // Feuillages (#479, #485) : les boules deviennent des bosquets de trois,
-    // les cônes des sapins étagés ; tout ondule.
-    const swayParts = (parts) => {
-      if (q === "low") return parts;
-      const out = [];
-      parts.forEach((pp) => {
-        if (!(pp.m === "l" && (pp.g === "cone" || pp.g === "ball") && pp.p[1] > 0.1)) { out.push(pp); return; }
-        const [x, y, z] = pp.p, [sx, sy, sz] = pp.s;
-        if (pp.g === "ball") {
-          [[0, 0, 0, 0.78], [2.1, 0.06, 0.22, 0.66], [4.2, 0.2, 0.18, 0.6]].forEach(([a, dy, rr, k], i) => out.push(Object.assign({}, pp, { g: "leaf", m: "w", c: i ? carteMix(pp.c, i === 1 ? "#ffffff" : "#000000", 0.08) : pp.c, p: [x + Math.cos(a) * rr * sx, y + dy * sy, z + Math.sin(a) * rr * sz], s: [sx * k, sy * k, sz * k] })));
-        } else {
-          [[0, 1, 0.5], [0.32, 0.78, 0.45], [0.6, 0.55, 0.4]].forEach(([dy, k, hk], i) => out.push(Object.assign({}, pp, { g: "leafc", m: "w", c: i === 1 ? carteMix(pp.c, "#ffffff", 0.07) : pp.c, p: [x, y + dy * sy, z], s: [sx * k, sy * hk * 1.25, sz * k] })));
+    let decorBlobs = S.decorBlobs || [];
+    if (decorDirty) {
+      clearGroup(decorGroup);
+      S.decorBuilds++;
+      // Feuillages (cônes et boules au-dessus du tronc) : matière qui ondule.
+      // Feuillages (#479, #485) : les boules deviennent des bosquets de trois,
+      // les cônes des sapins étagés ; tout ondule.
+      const swayParts = (parts) => {
+        if (q === "low") return parts;
+        const out = [];
+        parts.forEach((pp) => {
+          if (!(pp.m === "l" && (pp.g === "cone" || pp.g === "ball") && pp.p[1] > 0.1)) { out.push(pp); return; }
+          const [x, y, z] = pp.p, [sx, sy, sz] = pp.s;
+          if (pp.g === "ball") {
+            [[0, 0, 0, 0.78], [2.1, 0.06, 0.22, 0.66], [4.2, 0.2, 0.18, 0.6]].forEach(([a, dy, rr, k], i) => out.push(Object.assign({}, pp, { g: "leaf", m: "w", c: i ? carteMix(pp.c, i === 1 ? "#ffffff" : "#000000", 0.08) : pp.c, p: [x + Math.cos(a) * rr * sx, y + dy * sy, z + Math.sin(a) * rr * sz], s: [sx * k, sy * k, sz * k] })));
+          } else {
+            [[0, 1, 0.5], [0.32, 0.78, 0.45], [0.6, 0.55, 0.4]].forEach(([dy, k, hk], i) => out.push(Object.assign({}, pp, { g: "leafc", m: "w", c: i === 1 ? carteMix(pp.c, "#ffffff", 0.07) : pp.c, p: [x, y + dy * sy, z], s: [sx * k, sy * hk * 1.25, sz * k] })));
+          }
+        });
+        return out;
+      };
+      const FLOWERS = ["#ffffff", "#ffd23f", "#ff7aa8", "#b388ff"];
+      // Herbes et fleurs : thèmes naturels seulement (pas de pavé urbain).
+      const TUFT_THEMES = new Set(["campagne", "foret", "mer", "lac", "montagne", "marais", "jungle", "ile"]);
+      const FLOWER_THEMES = new Set(["campagne", "foret", "lac", "jungle", "ile", "mer"]);
+      const poiKeys = new Set(L.pois.map((p) => p.key));
+      // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
+      const decorShare = q === "low" ? 0.4 : 1;
+      decorBlobs = [];
+      const grass = [];
+      keys.forEach((k) => {
+        const t = L.tiles[k];
+        if (t.road || poiKeys.has(k) || t.kind === "hub") {
+          if (t.bridge) placeModel(dBatch, [cP("box", t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
+          // Lanternes le long des routes (#496) : leur lueur passe au bloom.
+          else if (t.road && !poiKeys.has(k) && t.kind !== "hub" && q !== "low" && carteRand("ln" + k) < 0.55) {
+            const a = carteRand("la" + k) * 6.283, w = carteToWorld(t.q, t.r), dim = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+            placeModel(dBatch, dim ? carteDimParts(CARTE_ROAD_LANTERN) : CARTE_ROAD_LANTERN, w.x + Math.cos(a) * 0.62, t.h + 0.12, w.z + Math.sin(a) * 0.62, 0);
+          }
+          return;
+        }
+        if (carteRand("share" + k) > decorShare) return;
+        const w = carteToWorld(t.q, t.r);
+        let decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
+        // Sapins Kenney (#499) : un sapin sur deux environ remplace le cône
+        // procédural (forêt, montagne, îlots).
+        const dimD = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
+        if (useK && (t.kind === "islet" || t.theme === "foret" || t.theme === "montagne")) {
+          const cones = decor.filter((pp) => pp.g === "cone" && pp.m === "l" && pp.p[1] > 0.1 && carteRand("m" + k + pp.p[0]) < 0.55);
+          if (cones.length) {
+            cones.forEach((pp) => kdBatch.add("tree", w.x + pp.p[0], t.h + 0.12, w.z + pp.p[2], (pp.p[1] + pp.s[1]) * 1.25, 1.2, carteRand("tr" + k + pp.p[0]) * 6.283, null, dimD ? "#aeb3ba" : "#a6d27c"));
+            decor = decor.filter((pp) => !cones.some((c) => Math.abs(c.p[0] - pp.p[0]) < 1e-6 && Math.abs(c.p[2] - pp.p[2]) < 1e-6));
+          }
+        }
+        if (useK && !dimD && t.kind !== "islet" && TUFT_THEMES.has(t.theme) && carteRand("kg" + k) < 0.5) {
+          const a = carteRand("kga" + k) * 6.283, rr = 0.3 + carteRand("kgr" + k) * 0.45;
+          kdBatch.add(carteRand("kgs" + k) < 0.5 ? "grass" : "grass-small", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.24, 0.5, a);
+        }
+        placeModel(dBatch, swayParts(S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor), w.x, t.h + 0.12, w.z, 0);
+        // Ombre de contact sous les bosquets (#496).
+        if (q === "high" && decor.length > 1) decorBlobs.push([w.x, t.h + 0.13, w.z, 1.6]);
+        // Touffes d'herbe et fleurs sur les cases libres (qualité haute).
+        const natural = t.kind === "islet" || TUFT_THEMES.has(t.theme);
+        if (q === "high" && natural && (t.kind === "land" || t.kind === "wild" || t.kind === "edge" || t.kind === "islet") && !t.lava && !(S.dimmed && t.projectId && S.dimmed.has(t.projectId))) {
+          const tuft = carteMix(S.tileTop[k] || "#8fbf4d", "#000000", 0.22);
+          // Herbe dense (#497) : des brins instanciés à la place des touffes.
+          if (S.fx && grass.length < GRASS_MAX) {
+            for (let i = 0; i < GRASS_PER_TILE; i++) {
+              const a = carteRand("ba" + k + i) * 6.283, rr = Math.sqrt(carteRand("br" + k + i)) * 0.84;
+              grass.push([w.x + Math.cos(a) * rr, t.h + 0.11, w.z + Math.sin(a) * rr, carteRand("bh" + k + i), S.tileTop[k] || "#8fbf4d", k + i]);
+            }
+          } else for (let i = 0; i < 4; i++) {
+            const a = carteRand("ta" + i + k) * 6.283, rr = 0.25 + carteRand("tr" + i + k) * 0.55;
+            dBatch.add("cone", "w", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.07, 0.17, 0.07, 0, tuft);
+          }
+          if ((t.kind === "islet" || FLOWER_THEMES.has(t.theme)) && carteRand("fl" + k) < 0.35) for (let i = 0; i < 5; i++) {
+            const a = carteRand("fa" + i + k) * 6.283, rr = carteRand("fr" + i + k) * 0.5;
+            dBatch.add("ball", "l", w.x + Math.cos(a) * rr, t.h + 0.13, w.z + Math.sin(a) * rr, 0.08, 0.08, 0.08, 0, FLOWERS[(i + Math.floor(carteRand("fc" + k) * 4)) % 4]);
+          }
         }
       });
-      return out;
-    };
-    const FLOWERS = ["#ffffff", "#ffd23f", "#ff7aa8", "#b388ff"];
-    // Herbes et fleurs : thèmes naturels seulement (pas de pavé urbain).
-    const TUFT_THEMES = new Set(["campagne", "foret", "mer", "lac", "montagne", "marais", "jungle", "ile"]);
-    const FLOWER_THEMES = new Set(["campagne", "foret", "lac", "jungle", "ile", "mer"]);
-    const poiKeys = new Set(L.pois.map((p) => p.key));
-    // Décor (allégé en qualité basse ; limité aux territoires en grands volumes).
-    const decorShare = q === "low" ? 0.4 : 1;
-    const decorBlobs = [];
-    const grass = [];
-    keys.forEach((k) => {
-      const t = L.tiles[k];
-      if (t.road || poiKeys.has(k) || t.kind === "hub") {
-        if (t.bridge) placeModel(dBatch, [cP("box", t.theme === "cyberpunk" ? "#65768a" : "#a8743f", 0, 0, 0, 1.5, 0.08, 0.5)], carteToWorld(t.q, t.r).x, t.h + 0.02, carteToWorld(t.q, t.r).z, carteRand("b" + k) < 0.5 ? 0 : Math.PI / 3);
-        // Lanternes le long des routes (#496) : leur lueur passe au bloom.
-        else if (t.road && !poiKeys.has(k) && t.kind !== "hub" && q !== "low" && carteRand("ln" + k) < 0.55) {
-          const a = carteRand("la" + k) * 6.283, w = carteToWorld(t.q, t.r), dim = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
-          placeModel(dBatch, dim ? carteDimParts(CARTE_ROAD_LANTERN) : CARTE_ROAD_LANTERN, w.x + Math.cos(a) * 0.62, t.h + 0.12, w.z + Math.sin(a) * 0.62, 0);
-        }
-        return;
-      }
-      if (carteRand("share" + k) > decorShare) return;
-      const w = carteToWorld(t.q, t.r);
-      let decor = carteDecorModel(t, theme(t.theme || "foret").pal, t.theme || "foret");
-      // Sapins Kenney (#499) : un sapin sur deux environ remplace le cône
-      // procédural (forêt, montagne, îlots).
-      const dimD = S.dimmed && t.projectId && S.dimmed.has(t.projectId);
-      if (useK && (t.kind === "islet" || t.theme === "foret" || t.theme === "montagne")) {
-        const cones = decor.filter((pp) => pp.g === "cone" && pp.m === "l" && pp.p[1] > 0.1 && carteRand("m" + k + pp.p[0]) < 0.55);
-        if (cones.length) {
-          cones.forEach((pp) => kdBatch.add("tree", w.x + pp.p[0], t.h + 0.12, w.z + pp.p[2], (pp.p[1] + pp.s[1]) * 1.25, 1.2, carteRand("tr" + k + pp.p[0]) * 6.283, null, dimD ? "#aeb3ba" : "#a6d27c"));
-          decor = decor.filter((pp) => !cones.some((c) => Math.abs(c.p[0] - pp.p[0]) < 1e-6 && Math.abs(c.p[2] - pp.p[2]) < 1e-6));
-        }
-      }
-      if (useK && !dimD && t.kind !== "islet" && TUFT_THEMES.has(t.theme) && carteRand("kg" + k) < 0.5) {
-        const a = carteRand("kga" + k) * 6.283, rr = 0.3 + carteRand("kgr" + k) * 0.45;
-        kdBatch.add(carteRand("kgs" + k) < 0.5 ? "grass" : "grass-small", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.24, 0.5, a);
-      }
-      placeModel(dBatch, swayParts(S.dimmed && t.projectId && S.dimmed.has(t.projectId) ? carteDimParts(decor) : decor), w.x, t.h + 0.12, w.z, 0);
-      // Ombre de contact sous les bosquets (#496).
-      if (q === "high" && decor.length > 1) decorBlobs.push([w.x, t.h + 0.13, w.z, 1.6]);
-      // Touffes d'herbe et fleurs sur les cases libres (qualité haute).
-      const natural = t.kind === "islet" || TUFT_THEMES.has(t.theme);
-      if (q === "high" && natural && (t.kind === "land" || t.kind === "wild" || t.kind === "edge" || t.kind === "islet") && !t.lava && !(S.dimmed && t.projectId && S.dimmed.has(t.projectId))) {
-        const tuft = carteMix(S.tileTop[k] || "#8fbf4d", "#000000", 0.22);
-        // Herbe dense (#497) : des brins instanciés à la place des touffes.
-        if (S.fx && grass.length < GRASS_MAX) {
-          for (let i = 0; i < GRASS_PER_TILE; i++) {
-            const a = carteRand("ba" + k + i) * 6.283, rr = Math.sqrt(carteRand("br" + k + i)) * 0.84;
-            grass.push([w.x + Math.cos(a) * rr, t.h + 0.11, w.z + Math.sin(a) * rr, carteRand("bh" + k + i), S.tileTop[k] || "#8fbf4d", k + i]);
-          }
-        } else for (let i = 0; i < 4; i++) {
-          const a = carteRand("ta" + i + k) * 6.283, rr = 0.25 + carteRand("tr" + i + k) * 0.55;
-          dBatch.add("cone", "w", w.x + Math.cos(a) * rr, t.h + 0.12, w.z + Math.sin(a) * rr, 0.07, 0.17, 0.07, 0, tuft);
-        }
-        if ((t.kind === "islet" || FLOWER_THEMES.has(t.theme)) && carteRand("fl" + k) < 0.35) for (let i = 0; i < 5; i++) {
-          const a = carteRand("fa" + i + k) * 6.283, rr = carteRand("fr" + i + k) * 0.5;
-          dBatch.add("ball", "l", w.x + Math.cos(a) * rr, t.h + 0.13, w.z + Math.sin(a) * rr, 0.08, 0.08, 0.08, 0, FLOWERS[(i + Math.floor(carteRand("fc" + k) * 4)) % 4]);
-        }
-      }
-    });
-    dBatch.flush(decorGroup, shadows);
-    kdBatch.flush(decorGroup, shadows);
-    buildGrass(grass);
-    buildHorizon(keys);
+      dBatch.flush(decorGroup, shadows);
+      kdBatch.flush(decorGroup, shadows);
+      buildGrass(grass);
+      S.decorBlobs = decorBlobs;
+    }
     // Tâches.
     S.poi = {}; S.poisByKey = {};
     const urgent = [];
@@ -20274,7 +20318,7 @@ function createCarteEngine(THREE, container, opts) {
       bKeys.forEach((k, i) => {
         const tile = L.tiles[k], w = carteToWorld(tile.q, tile.r);
         // Au-dessus de la dalle claire de la tâche (#379), qui la masquerait.
-        bm.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, (capTop[k] != null ? capTop[k] : tile.h + 0.12) + 0.05, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        bm.setMatrixAt(i, tmpM.compose(tmpP.set(w.x, (S.capTop[k] != null ? S.capTop[k] : tile.h + 0.12) + 0.05, w.z), tmpQ.identity(), tmpS.set(1, 1, 1)));
         const c = S.dimmed && tile.projectId && S.dimmed.has(tile.projectId) ? carteMix(borders[k].color, CARTE_DIM_TOP, 0.7) : borders[k].color;
         bm.setColorAt(i, tmpC.set(c || "#94A3B8"));
       });
@@ -20296,10 +20340,12 @@ function createCarteEngine(THREE, container, opts) {
     buildFocus(focusL, q);
     S.emit = q === "low" ? { sparks: [], smoke: [], dust: [] } : emit;
     S.buildId++;
+    S.renderKeys = next;
     drawMinimapBase();
     const maxSpin = q === "low" || reduced ? 0 : q === "medium" ? 60 : 240;
     S.spin = S.spin.slice(0, maxSpin);
     drawSelection();
+    S.buildMs = performance.now() - started;
   }
 
   // ---------- Sélection, routes de convoi ----------
@@ -20438,8 +20484,9 @@ function createCarteEngine(THREE, container, opts) {
       const north = Math.round(S.yaw / (2 * Math.PI)) * 2 * Math.PI;
       S.yaw += (north - S.yaw) * k; S.pitch += (1.52 - S.pitch) * k;
     } else if (S.pitch > 1.35 && !S.viewGoal) S.pitch += (1.2 - S.pitch) * k;
+    S.cameraDist = carteDampDistance(S.cameraDist, S.dist, dt, snap || reduced);
     const cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
-    camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.dist, S.target.y + sp * S.dist, S.target.z + Math.cos(S.yaw) * cp * S.dist);
+    camera.position.set(S.target.x + Math.sin(S.yaw) * cp * S.cameraDist, S.target.y + sp * S.cameraDist, S.target.z + Math.cos(S.yaw) * cp * S.cameraDist);
     camera.lookAt(S.target);
     // Les noms de dossiers se retournent quand la caméra passe de l'autre
     // côté de l'île : ils se lisent toujours de gauche à droite.
@@ -20451,12 +20498,16 @@ function createCarteEngine(THREE, container, opts) {
       m.material.opacity = m.userData.alpha * Math.max(0, Math.min(1, (S.dist - 17) / 15));
       m.visible = m.material.opacity > 0.01;
     });
-    scene.fog.near = S.dist * 0.8 + 25;
-    scene.fog.far = S.dist * 2.2 + 70;
+    scene.fog.near = S.cameraDist * 0.8 + 25;
+    scene.fog.far = S.cameraDist * 2.2 + 70;
     // Soleil plus bas (#485) : ombres longues de fin d'après-midi.
     if (sun.castShadow) { sun.position.set(S.target.x + 34, 32, S.target.z + 12); sun.target.position.copy(S.target); }
   }
-  function zoomBy(f) { S.dist = Math.max(7, Math.min(CARTE_DIST_MAX, S.dist * f)); }
+  function zoomBy(f) {
+    if (!Number.isFinite(f) || f <= 0 || f === 1) return;
+    S.viewGoal = null;
+    S.dist = Math.max(7, Math.min(CARTE_DIST_MAX, S.dist * f));
+  }
 
   // ---------- Entrées ----------
   const keyMap = { arrowup: "f", z: "f", w: "f", arrowdown: "b", s: "b", arrowleft: "l", q: "l", a: "l", arrowright: "r", d: "r" };
@@ -20481,7 +20532,11 @@ function createCarteEngine(THREE, container, opts) {
   keyTarget.addEventListener("keydown", kd);
   keyTarget.addEventListener("keyup", ku);
   keyTarget.addEventListener("blur", blur, true);
-  const onWheel = (e) => { e.preventDefault(); zoomBy(e.deltaY > 0 ? 1.12 : 0.89); };
+  const onWheel = (e) => {
+    const factor = carteWheelFactor(e.deltaY, e.deltaMode, canvas.clientHeight);
+    if (factor === 1) return;
+    e.preventDefault(); zoomBy(factor);
+  };
   canvas.addEventListener("wheel", onWheel, { passive: false });
 
   const pointers = {}; let drag = null, pinch = null;
@@ -20534,7 +20589,7 @@ function createCarteEngine(THREE, container, opts) {
   // l'arpenteur, qui ne bouge pas ; le recentrage ou un pas la lui rendent.
   function panBy(dx, dy) {
     const H = canvas.clientHeight || 600;
-    const k = (2 * S.dist * Math.tan((camera.fov * Math.PI) / 360)) / H;
+    const k = (2 * S.cameraDist * Math.tan((camera.fov * Math.PI) / 360)) / H;
     const rx = Math.cos(S.yaw), rz = -Math.sin(S.yaw), fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
     const kf = k / Math.max(0.5, Math.sin(S.pitch));
     const mx = -rx * dx * k + fx * dy * kf, mz = -rz * dx * k + fz * dy * kf;
@@ -20584,6 +20639,7 @@ function createCarteEngine(THREE, container, opts) {
     if (ids.length === 2) {
       // Deux doigts : pincer pour zoomer, tourner pour pivoter la caméra.
       const a = pointers[ids[0]], b = pointers[ids[1]];
+      S.dist = S.cameraDist; S.viewGoal = null;
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist, ang: Math.atan2(b.y - a.y, b.x - a.x), yaw: S.yaw };
       drag = null;
     } else {
@@ -20607,7 +20663,9 @@ function createCarteEngine(THREE, container, opts) {
     const ids = Object.keys(pointers);
     if (pinch && ids.length === 2) {
       const a = pointers[ids[0]], b = pointers[ids[1]];
+      S.viewGoal = null;
       S.dist = Math.max(7, Math.min(CARTE_DIST_MAX, pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y))));
+      S.cameraDist = S.dist; // Le pincement suit les doigts sans retard.
       if (!S.plan) {
         let da = Math.atan2(b.y - a.y, b.x - a.x) - pinch.ang;
         da = Math.atan2(Math.sin(da), Math.cos(da));
@@ -22606,7 +22664,9 @@ function createCarteEngine(THREE, container, opts) {
     post.w = w; post.h = h;
   }
   const focusV = new THREE.Vector3();
+  renderer.info.autoReset = false;
   function renderFrame() {
+    renderer.info.reset();
     // Vue plan : vue de dessus, sans profondeur de champ.
     const tilt = S.miniature && !S.plan;
     const bloomOn = S.fx && post.float !== false;
@@ -22848,14 +22908,14 @@ function createCarteEngine(THREE, container, opts) {
   }
 
   // ---------- API ----------
-  function resolveQuality() {
+  function resolveQuality(reset) {
     const n = S.data ? S.data.tasks.length : 0;
     S.effQuality = S.quality === "auto" ? (n > 3000 ? "low" : n > 800 ? "medium" : "high") : S.quality;
     S.detail = n > 3000 ? 0 : n > 1200 ? 1 : 2;
     const ratio = { low: 1, medium: 1.5, high: 2 }[S.effQuality];
     S.prMax = Math.min(window.devicePixelRatio || 1, ratio);
-    S.pr = S.prMax;
-    renderer.setPixelRatio(S.pr);
+    const pr = cartePixelRatio(S.pr, S.prMax, S.quality === "auto", reset);
+    if (pr !== S.pr) { S.pr = pr; renderer.setPixelRatio(pr); }
     const shade = S.effQuality === "high";
     renderer.shadowMap.enabled = shade;
     sun.castShadow = shade;
@@ -22935,11 +22995,11 @@ function createCarteEngine(THREE, container, opts) {
   // Niveaux de détail (#481) : le décor et les badges s'effacent de loin ;
   // la résolution suit la fluidité mesurée (qualité « Auto », écrans denses).
   function applyLod() {
-    const far = S.dist > 75;
+    const far = S.cameraDist > 75;
     if (decorGroup.visible === far) decorGroup.visible = !far;
-    const avFar = S.dist > 70;
+    const avFar = S.cameraDist > 70;
     if (S.avatarFar !== avFar || S.avatarBuild !== S.buildId) { S.avatarFar = avFar; S.avatarBuild = S.buildId; (S.avatarSprites || []).forEach((sp) => { sp.visible = !avFar; }); }
-    fxSoft.visible = fxGlow.visible = S.dist < 90;
+    fxSoft.visible = fxGlow.visible = S.cameraDist < 90;
   }
   function adaptResolution(fps) {
     if (S.quality !== "auto" || !S.prMax || S.prMax <= 1) return;
@@ -22979,7 +23039,12 @@ function createCarteEngine(THREE, container, opts) {
     }
     try { return c.toDataURL("image/png"); } catch (e) { return null; }
   }
-  function setQuality(q) { S.quality = q; if (S.layout) { resolveQuality(); build(); } o.onQuality && o.onQuality(S.effQuality); }
+  function setQuality(q) {
+    if (S.quality === q) return;
+    S.quality = q;
+    if (S.layout) { resolveQuality(true); build(); }
+    o.onQuality && o.onQuality(S.effQuality);
+  }
   // Décalage de la vue (en pixels) : la tâche reste visible à côté du volet
   // (ordinateur) ou au-dessus de la fiche (téléphone).
   S.viewOffset = [0, 0];
@@ -23014,22 +23079,24 @@ function createCarteEngine(THREE, container, opts) {
   // Hors de l'écran (widget d'un tableau de bord qu'on a fait défiler, #418),
   // la carte ne se redessine plus : aucune animation ne tourne pour rien.
   S.onScreen = true;
-  const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries) => { entries.forEach((e) => { S.onScreen = e.isIntersecting; }); }) : null;
+  const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries) => { entries.forEach((e) => { if (S.onScreen !== e.isIntersecting) resetFrameClock(); S.onScreen = e.isIntersecting; }); }) : null;
   if (io) io.observe(container);
 
   let last = performance.now(), fpsT = 0, fpsN = 0;
+  function resetFrameClock() { last = performance.now(); fpsT = 0; fpsN = 0; }
+  document.addEventListener("visibilitychange", resetFrameClock);
   function frame(now) {
     if (S.disposed) return;
     S.raf = requestAnimationFrame(frame);
-    if (document.hidden || !S.onScreen) { last = now; return; }
-    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (document.hidden || !S.onScreen) { last = now; fpsT = 0; fpsN = 0; return; }
+    const { elapsed, dt } = carteFrameTiming(now, last); last = now;
     S.time += dt;
     S.lastDt = dt;
     if (!S.layout) return;
     step(dt);
     stepTeleport();
     updateCamera(dt);
-    S.strategic = carteStrategicAlpha(S.dist);
+    S.strategic = carteStrategicAlpha(S.cameraDist);
     applyLod();
     if (!S.lightAt || S.time - S.lightAt > 30) applyDaylight();
     // Carte ancienne opaque (#476) : la 3D dessous n'est plus dessinée.
@@ -23044,8 +23111,8 @@ function createCarteEngine(THREE, container, opts) {
     drawStrategic();
     drawMinimap();
     if (S.strategic < 0.99) updateLabels();
-    fpsT += dt; fpsN++;
-    if (fpsT > 2) { const fps = fpsN / fpsT; o.onFps && o.onFps(Math.round(fps)); adaptResolution(fps); fpsT = 0; fpsN = 0; }
+    fpsT += elapsed; fpsN++;
+    if (fpsT > 2) { const fps = fpsN / fpsT; S.lastFps = fps; o.onFps && o.onFps(Math.round(fps)); adaptResolution(fps); fpsT = 0; fpsN = 0; }
   }
   S.raf = requestAnimationFrame(frame);
 
@@ -23120,6 +23187,7 @@ function createCarteEngine(THREE, container, opts) {
     ambientFlags: () => (S.amb ? S.amb.flags.map((f) => [f.x, f.base, f.top, f.z, f.shape, f.pct]) : []),
     // Banc visuel (#505) : fige la téléportation à l'instant t (null : reprend).
     teleportFreeze: (t) => { TP.fixed = t == null ? null : Number(t); if (t != null && !TP.on) { TP.on = true; tpGroup.visible = true; } },
+    performanceStats: () => ({ fps: S.lastFps, pixelRatio: S.pr, maxPixelRatio: S.prMax, buildMs: S.buildMs, builds: S.buildId, terrainBuilds: S.terrainBuilds, decorBuilds: S.decorBuilds, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }),
     fxState: () => ({ teleport: TP.on, crit: S.critFx ? S.critFx.count : 0, focus: S.focusFx ? S.focusFx.list.length : 0, storms: S.storms ? S.storms.list.length : 0, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
@@ -23155,7 +23223,9 @@ function createCarteEngine(THREE, container, opts) {
       canvas.removeEventListener("mousedown", onAux);
       clearTimeout(S.pressTimer);
       mini.removeEventListener("pointerdown", onMini);
+      document.removeEventListener("visibilitychange", resetFrameClock);
       clearGroup(world); clearGroup(overlay); clearGroup(decorGroup);
+      clearGroup(terrainGroup); clearGroup(shoreGroup); clearGroup(regionGroup);
       anims.forEach((a) => a.group.traverse((c) => { if (c.userData.ownGeo) c.geometry.dispose(); if (c.userData.ownMat) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } }));
       fxSoft.dispose(); fxGlow.dispose();
       if (post.rtA) { post.rtA.dispose(); post.rtB.dispose(); }
