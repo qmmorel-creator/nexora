@@ -1759,6 +1759,7 @@ function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete
                   <tr key={t.id} className={selected.has(t.id) ? "lp-table-row-selected" : ""}>
                     <td className="lp-table-th-check"><input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleRow(t.id)} /></td>
                     <td className="lp-table-title-cell">
+                      <TaskFocusBadge task={t} size={15} />
                       {t.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={13} />}
                       <InlineTextField value={t.title} onCommit={(v) => updateTask(t.id, { title: v })} style={{ fontWeight: 600, textDecoration: done ? "line-through" : "none", color: done ? "var(--text-600)" : "var(--text-900)" }} />
                       {t.dependsOn && t.dependsOn.length > 0 && <span className="lp-dep-badge" title={`Dépend de ${t.dependsOn.length} tâche${t.dependsOn.length > 1 ? "s" : ""}`}><GripVertical size={11} />{t.dependsOn.length}</span>}
@@ -1876,6 +1877,7 @@ function TableView({ tasks, ctx, setTasks, onOpen, onAdd, onDelete, onBulkDelete
                       </td>
                     )}
                     <td className="lp-table-th-actions">
+                      <button className={"lp-icon-btn lp-focus-row-btn" + (isTaskFocus(t) ? " is-on" : "")} aria-pressed={isTaskFocus(t)} data-focus-row-toggle={t.id} onClick={() => updateTask(t.id, { focus: !isTaskFocus(t) })} title={isTaskFocus(t) ? "Retirer du mode focus" : "Passer en mode focus"}><Target size={13} /></button>
                       <button className="lp-icon-btn" onClick={() => duplicateTask(t)} title="Dupliquer cette tâche"><Bookmark size={13} /></button>
                       <button className="lp-icon-btn" onClick={() => onDelete(t)} title="Supprimer"><Trash2 size={13} /></button>
                     </td>
@@ -1995,7 +1997,7 @@ const GAUGE_METRICS = [
 ];
 
 function widgetDefaultFilter() {
-  return { projectIds: [], projectIdsMode: "is", statusIds: [], statusIdsMode: "is", taskTypeIds: [], taskTypeIdsMode: "is", onlyLate: false, onlyMilestone: false, excludeDone: false, assigneeEmpty: false, dueWithinDays: "", pastDays: "", inactivityDays: "", datePresetField: "end", datePreset: "" };
+  return { projectIds: [], projectIdsMode: "is", statusIds: [], statusIdsMode: "is", taskTypeIds: [], taskTypeIdsMode: "is", onlyLate: false, onlyMilestone: false, onlyFocus: false, excludeDone: false, assigneeEmpty: false, dueWithinDays: "", pastDays: "", inactivityDays: "", datePresetField: "end", datePreset: "" };
 }
 
 // Migration douce : les widgets Mini-Gantt / Mini métro créés avant l'introduction
@@ -2016,7 +2018,7 @@ function activeWidgetFilterCount(filter) {
   const f = { ...widgetDefaultFilter(), ...(filter || {}) };
   let n = 0;
   ["projectIds", "statusIds", "taskTypeIds"].forEach((k) => { if ((f[k] || []).length) n += 1; });
-  ["onlyLate", "onlyMilestone", "excludeDone", "assigneeEmpty"].forEach((k) => { if (f[k]) n += 1; });
+  ["onlyLate", "onlyMilestone", "onlyFocus", "excludeDone", "assigneeEmpty"].forEach((k) => { if (f[k]) n += 1; });
   ["dueWithinDays", "pastDays", "inactivityDays"].forEach((k) => { if (f[k] !== "" && f[k] != null) n += 1; });
   if (f.datePreset) n += 1;
   n += countFilterGroup(f.advanced);
@@ -2052,6 +2054,8 @@ function applyWidgetFilter(tasks, filter, ctx) {
     }
     if (f.onlyLate && !isTaskLate(t, ctx)) return false;
     if (f.onlyMilestone && !t.milestone) return false;
+    // Mode focus (#512).
+    if (f.onlyFocus && !isTaskFocus(t)) return false;
     if (f.excludeDone && isTaskDoneGlobal(t, ctx)) return false;
     if (f.assigneeEmpty && t.assignee) return false;
     {
@@ -4231,6 +4235,7 @@ function WidgetList({ tasks, sortBy, limit, groupBy, ctx, onOpen, onMarkDone, on
       <div className="lp-today-row" key={t.id} onClick={() => onOpen(t)}>
         <span className="lp-project-dot" style={{ background: proj?.color || "var(--text-muted)", width: 14, height: 14, fontSize: 9 }}><IconGlyph icon={proj?.icon} size={10} /></span>
         {t.milestone && <MilestoneTypeGlyph types={ctx.milestoneTypes} type={t.milestoneTypeId} icon={resolveMilestoneIcon(t, ctx)} size={12} />}
+        <TaskFocusBadge task={t} size={14} />
         <span className="lp-today-row-title">{t.title}</span>
         {st && <span className="lp-chip" style={{ background: st.color + "22", color: st.color }}>{st.name}</span>}
         <span className="lp-today-row-date">{fmtShort(t.end)}</span>
@@ -15781,6 +15786,9 @@ function TaskFilterFields({ filter, setFilter, ctx }) {
         <label className="lp-checkbox-row"><input type="checkbox" checked={!!filter.onlyMilestone} onChange={(e) => setFilter((f) => ({ ...f, onlyMilestone: e.target.checked }))} /><span style={{ textTransform: "none", fontWeight: 500 }}>Uniquement les jalons</span></label>
       </div>
       <div className="lp-row2">
+        <label className="lp-checkbox-row lp-focus-check" data-focus-widget-filter=""><input type="checkbox" checked={!!filter.onlyFocus} onChange={(e) => setFilter((f) => ({ ...f, onlyFocus: e.target.checked }))} /><span style={{ textTransform: "none", fontWeight: 500 }}><Target size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Uniquement les tâches en focus</span></label>
+      </div>
+      <div className="lp-row2">
         <label className="lp-checkbox-row"><input type="checkbox" checked={!!filter.excludeDone} onChange={(e) => setFilter((f) => ({ ...f, excludeDone: e.target.checked }))} /><span style={{ textTransform: "none", fontWeight: 500 }}>Exclure les terminées</span></label>
         <label className="lp-checkbox-row"><input type="checkbox" checked={!!filter.assigneeEmpty} onChange={(e) => setFilter((f) => ({ ...f, assigneeEmpty: e.target.checked }))} /><span style={{ textTransform: "none", fontWeight: 500 }}>Uniquement sans responsable</span></label>
       </div>
@@ -18465,7 +18473,7 @@ function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, comp
                 >
                   <span className="lp-cal-dot" aria-hidden="true" />
                   {done && <Check size={13} className="lp-cal-check" aria-label="Terminée" />}
-                  <span className="lp-cal-chip-title">{task.title || "Sans titre"}</span>
+                  <span className="lp-cal-chip-title">{isTaskFocus(task) && <Target size={10} className="lp-cal-focus" aria-label="En focus" />}{task.title || "Sans titre"}</span>
                   {range && range.start !== range.end && (
                     <span className="lp-cal-chip-range">{calendarShortDate(range.start)} → {calendarShortDate(range.end)}</span>
                   )}
@@ -18526,12 +18534,12 @@ function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, comp
                     {compact ? (
                       <span className="lp-cal-row-text" style={textStyle}>
                         <span className="lp-cal-row-time">{calendarMinutesToLabel(r.startMin)}</span>
-                        <span className="lp-cal-row-title">{r.done && <Check size={12} className="lp-cal-check" />}{r.task.title || "Sans titre"}</span>
+                        <span className="lp-cal-row-title">{r.done && <Check size={12} className="lp-cal-check" />}<TaskFocusBadge task={r.task} size={13} />{r.task.title || "Sans titre"}</span>
                       </span>
                     ) : (
                       <span className="lp-cal-row-text" style={textStyle}>
                         <span className="lp-cal-row-time">{timeLabel} · {calendarDurationLabel(r.endMin - r.startMin)}</span>
-                        <span className="lp-cal-row-title">{r.done && <Check size={15} className="lp-cal-check" />}<span>{r.task.title || "Sans titre"}</span></span>
+                        <span className="lp-cal-row-title">{r.done && <Check size={15} className="lp-cal-check" />}<TaskFocusBadge task={r.task} size={15} /><span>{r.task.title || "Sans titre"}</span></span>
                         <span className="lp-cal-row-meta">
                           <span className="lp-cal-dot" aria-hidden="true" />
                           <span>{[meta.projectName, place, r.done ? "Terminée" : ""].filter(Boolean).join(" · ")}</span>
@@ -18782,7 +18790,7 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
                             <span key={t.id} className="lp-cal-chip" style={{ "--cal-color": meta.projectColor }} title={(time ? time + " · " : "") + (t.title || "")}>
                               <span className="lp-cal-dot" aria-hidden="true" />
                               {time && <span className="lp-cal-chip-time">{time}</span>}
-                              <span className="lp-cal-chip-title">{t.title || "Sans titre"}</span>
+                              <span className="lp-cal-chip-title">{isTaskFocus(t) && <Target size={10} className="lp-cal-focus" aria-label="En focus" />}{t.title || "Sans titre"}</span>
                             </span>
                           );
                         })}
@@ -20090,6 +20098,7 @@ function createCarteEngine(THREE, container, opts) {
     const amb = [];
     const blobs = [];
     const fogs = [];
+    const focusL = [];
     const emit = { sparks: [], smoke: [], dust: [] };
     const vis = S.visible;
     L.pois.forEach((p) => {
@@ -20164,6 +20173,8 @@ function createCarteEngine(THREE, container, opts) {
       blobs.push([x, y + 0.01, z, 1.25 * k]);
       // Brouillard de guerre (#468) : fiche incomplète.
       if (S.fog && carteIncomplete(t).length) fogs.push({ x, y, z, k, top: y + Math.min(top, 7), ph: carteRand("fog" + t.id) * 6.283 });
+      // Mode focus (#512) : halo de lumière qui monte, tant que la tâche est ouverte.
+      if (t.focus && t.state !== "done" && t.state !== "info") focusL.push({ x, y, z, k, top: y + Math.min(top, 7), ph: carteRand("focus" + t.id) });
       // Particules (#480) : soudure et poussière sur les chantiers, fumée de
       // cheminée sur les bâtiments terminés.
       const h7 = Math.min(top, 7);
@@ -20270,6 +20281,7 @@ function createCarteEngine(THREE, container, opts) {
     buildMilestoneRings(amb);
     buildBlobs(q === "low" ? [] : blobs.concat(decorBlobs));
     buildFog(fogs);
+    buildFocus(focusL, q);
     S.emit = q === "low" ? { sparks: [], smoke: [], dust: [] } : emit;
     S.buildId++;
     drawMinimapBase();
@@ -21953,6 +21965,68 @@ function createCarteEngine(THREE, container, opts) {
     F.mesh.instanceMatrix.needsUpdate = true;
   }
 
+  // ---------- Mode focus (#512) ----------
+  // Au-dessus de chaque tâche en focus : une colonne de lumière sarcelle, douce
+  // (dégradé qui s'efface vers le haut), et des anneaux qui s'élèvent en boucle
+  // en s'estompant. Deux maillages instanciés pour toutes les tâches, quel que
+  // soit leur nombre. Le sarcelle se distingue de la sélection dorée (#498),
+  // du rouge des tâches urgentes (#367) et des fléaux critiques (#509).
+  const FOCUS_MAX = 300;
+  const FOCUS_COLOR = "#2dd4bf";
+  const focusBeamTex = canvasTex(64, (g, n) => {
+    const gr = g.createLinearGradient(0, n, 0, 0);
+    gr.addColorStop(0, "rgba(153,246,228,.9)"); gr.addColorStop(0.3, "rgba(45,212,191,.42)"); gr.addColorStop(1, "rgba(45,212,191,0)");
+    g.clearRect(0, 0, n, n); g.fillStyle = gr; g.fillRect(0, 0, n, n);
+  });
+  focusBeamTex.wrapS = focusBeamTex.wrapT = THREE.ClampToEdgeWrapping;
+  const focusBeamGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1, true).translate(0, 0.5, 0);
+  const focusRingGeo = new THREE.TorusGeometry(0.5, 0.032, 6, 36).rotateX(Math.PI / 2);
+  geos.push(focusBeamGeo, focusRingGeo);
+  MAT.focusBeam = mat(new THREE.MeshBasicMaterial({ map: focusBeamTex, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  // Blanc : la teinte (et l'effacement, en additif) passe par la couleur
+  // d'instance ; renforcée par le bloom comme les autres matières lumineuses.
+  MAT.focusRing = mat(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  function buildFocus(list, q) {
+    S.focusFx = null;
+    const all = list.slice(0, FOCUS_MAX);
+    if (!all.length) return;
+    // Effets avancés coupés ou qualité basse : deux anneaux au lieu de trois.
+    const rings = !S.fx || q === "low" ? 2 : 3;
+    const beam = new THREE.InstancedMesh(focusBeamGeo, MAT.focusBeam, all.length);
+    all.forEach((f, i) => {
+      const H = Math.max(1.2, f.top - f.y) + 2.6 * f.k;
+      beam.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.y + 0.04, f.z), tmpQ.identity(), tmpS.set(1.05 * f.k, H, 1.05 * f.k)));
+    });
+    beam.instanceMatrix.needsUpdate = true; beam.computeBoundingSphere(); beam.renderOrder = 3;
+    const ring = new THREE.InstancedMesh(focusRingGeo, MAT.focusRing, all.length * rings);
+    ring.frustumCulled = false; ring.renderOrder = 3;
+    world.add(beam, ring);
+    S.focusFx = { list: all, beam, ring, rings };
+    placeFocus(S.time);
+  }
+  function placeFocus(t0) {
+    const F = S.focusFx;
+    if (!F) return;
+    const t = reduced ? 0 : t0;
+    let i = 0;
+    F.list.forEach((f) => {
+      const H = Math.max(1.2, f.top - f.y) + 2.6 * f.k;
+      for (let j = 0; j < F.rings; j++) {
+        // Montée en boucle, décalée par anneau et par tâche ; figée à mi-course
+        // si les animations sont réduites.
+        const u = reduced ? (j + 0.5) / F.rings : (t * 0.32 + j / F.rings + f.ph) % 1;
+        const r = (1.25 - 0.55 * u) * f.k;
+        const a = Math.sin(u * Math.PI);
+        F.ring.setMatrixAt(i, tmpM.compose(tmpP.set(f.x, f.y + 0.08 + u * H, f.z), tmpQ.identity(), tmpS.set(r, 1, r)));
+        F.ring.setColorAt(i, tmpC.set(FOCUS_COLOR).multiplyScalar(0.15 + 0.85 * a));
+        i++;
+      }
+    });
+    F.ring.instanceMatrix.needsUpdate = true;
+    if (F.ring.instanceColor) F.ring.instanceColor.needsUpdate = true;
+    MAT.focusBeam.opacity = reduced ? 0.6 : 0.5 + 0.18 * Math.sin(t0 * 1.7);
+  }
+
   // ---------- Portails (#472) ----------
   const portalTex = canvasTex(128, (g, n) => {
     const c = n / 2;
@@ -22493,7 +22567,7 @@ function createCarteEngine(THREE, container, opts) {
   bloomScene.add(bloomQuad);
   // Matières lumineuses : renforcées au-delà de 1 quand le bloom est actif,
   // pour passer le seuil ; ramenées à leur couleur sinon.
-  const glowMats = [MAT.g, MAT.flame, MAT.bolt, MAT.portal, MAT.fxGlow, selRingMat, selSparkMat].filter(Boolean).map((m) => ({ m, base: m.color.clone() }));
+  const glowMats = [MAT.g, MAT.flame, MAT.bolt, MAT.portal, MAT.fxGlow, MAT.focusRing, selRingMat, selSparkMat].filter(Boolean).map((m) => ({ m, base: m.color.clone() }));
   S.glowK = 1;
   function setGlow(k) {
     if (S.glowK === k) return;
@@ -22578,6 +22652,7 @@ function createCarteEngine(THREE, container, opts) {
     if (!reduced) { rippleTex.offset.set((t * 0.018) % 1, (t * 0.011) % 1); seaU.off.value.set((t * 0.012) % 1, (t * 0.008) % 1); portalTex.rotation = -t * 0.8; }
     placeCloudShadows(t);
     placeFog(t);
+    placeFocus(t);
     // Contour de la sélection (#477) : pulsation douce.
     if (S.selRing) {
       // Rebond à la sélection (dépassement amorti), puis pulsation douce.
@@ -23033,7 +23108,7 @@ function createCarteEngine(THREE, container, opts) {
     ambientFlags: () => (S.amb ? S.amb.flags.map((f) => [f.x, f.base, f.top, f.z, f.shape, f.pct]) : []),
     // Banc visuel (#505) : fige la téléportation à l'instant t (null : reprend).
     teleportFreeze: (t) => { TP.fixed = t == null ? null : Number(t); if (t != null && !TP.on) { TP.on = true; tpGroup.visible = true; } },
-    fxState: () => ({ teleport: TP.on, crit: S.critFx ? S.critFx.count : 0, storms: S.storms ? S.storms.list.length : 0, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
+    fxState: () => ({ teleport: TP.on, crit: S.critFx ? S.critFx.count : 0, focus: S.focusFx ? S.focusFx.list.length : 0, storms: S.storms ? S.storms.list.length : 0, keeper: [Math.round(keeper.position.x * 10) / 10, Math.round(keeper.position.z * 10) / 10], walkTo: S.walkTo ? [Math.round(S.walkTo.x * 10) / 10, Math.round(S.walkTo.z * 10) / 10] : null, time: Math.round(S.time), models: !!S.kenney, signs: Object.keys(S.signed || {}).length, dist: Math.round(S.dist * 10) / 10, quality: S.effQuality, bloom: S.glowK > 1 }),
     snapshot,
     openHologram: (id) => openHolo(id),
     // Banc visuel (#502) : la texture du tableau, pour la capturer à plat.
@@ -23270,6 +23345,13 @@ function CarteTaskDetail({ task, raw, norm, layout, ctx, onOpen, onGo, onWalk, o
             </button>
           )}
           <button type="button" className="lp-btn" onClick={() => onWalk(task.id)}>{walkLabel || "Y aller"}</button>
+          {/* Mode focus (#512) : bascule depuis le volet ; repère seul en lecture. */}
+          {editable ? (
+            <button type="button" className={"lp-btn lp-focus-quick" + (task.focus ? " is-on" : "")} aria-pressed={!!task.focus} data-carte-focus-toggle=""
+              onClick={() => onUpdate({ focus: !task.focus })} title={task.focus ? "Retirer du mode focus" : "Passer en mode focus"}>
+              <Target size={14} /> {task.focus ? "En focus" : "Focus"}
+            </button>
+          ) : task.focus ? <span className="lp-carte-chip lp-focus-chip"><Target size={11} /> En focus</span> : null}
         </div>
 
         <div className="lp-carte-section-title">Champs</div>
@@ -23605,6 +23687,8 @@ function CarteActionWheel({ wheelRef, ids, task, raw, ctx, locked, sub, setSub, 
     progress: { icon: <Activity size={16} />, label: "Changer l'avancement", run: toggle("progress") },
     type: { icon: <Tag size={16} />, label: "Changer le type", run: toggle("type") },
     milestone: { icon: <Milestone size={16} />, label: raw && raw.milestone ? "Retirer le jalon" : "Marquer comme jalon", run: () => onPatch({ milestone: !(raw && raw.milestone) }, raw && raw.milestone ? "Jalon retiré" : "Jalon") },
+    // Mode focus (#512) : bascule rapide depuis la carte.
+    focus: { icon: <Target size={16} />, label: raw && raw.focus === true ? "Retirer du focus" : "Passer en mode focus", run: () => onPatch({ focus: !(raw && raw.focus === true) }, raw && raw.focus === true ? "Focus retiré" : "Mode focus") },
     timeline: { icon: <TrainFront size={16} />, label: "Voir dans la Timeline 3D", run: onTimeline, free: true, off: !onTimeline },
     fiche: { icon: <ExternalLink size={15} />, label: "Ouvrir la fiche", run: onOpen, free: true },
   };
@@ -23736,6 +23820,17 @@ function CarteWheelSettings({ value, onChange, onClose }) {
 }
 
 // Vues enregistrées et vue plan (#481).
+// Filtre rapide « Mode focus » (#512) des vues 3D (Carte, Cosmos, Timeline
+// 3D) : un bouton bascule, le nombre de tâches en focus en pastille.
+function FocusQuickToggle({ active, count, onChange, view }) {
+  return (
+    <button type="button" className={"lp-btn lp-focus-quick" + (active ? " lp-btn-primary is-on" : "")} aria-pressed={!!active} data-focus-quick={view || ""}
+      onClick={() => onChange(!active)}
+      title={active ? "Mode focus actif : seules les tâches en focus sont affichées. Cliquer pour tout réafficher." : "Mode focus : n'afficher que les tâches sur lesquelles travailler absolument"}>
+      <Target size={13} /> Focus{count ? <span className="lp-focus-quick-count">{count}</span> : null}
+    </button>
+  );
+}
 // Filtre rapide de l'en-tête (#506) : multi-sélection à cases à cocher,
 // liste vide = tout. Même menu déroulant que « Affichage ».
 function CarteQuickFilter({ kind, label, allLabel, icon, options, value, onChange }) {
@@ -23865,7 +23960,12 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, tasksWithDone, cfg.crits.join("|"), cfg.statuses.join("|"), cfg.assignees.join("|"), cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  }, [norm, tasks, tasksWithDone, cfg.crits.join("|"), cfg.statuses.join("|"), cfg.assignees.join("|"), cfg.hideOldDone, cfg.focusOnly, JSON.stringify(cfg.filter), ctx]);
+  // Mode focus (#512) : nombre de tâches en focus dans le périmètre de la page.
+  const focusCount = useMemo(() => {
+    const scope = new Set((tasksWithDone || tasks || []).map((t) => t.id));
+    return carteFocusCount(norm.tasks.filter((t) => scope.has(t.id)));
+  }, [norm, tasks, tasksWithDone]);
   // Filtres rapides (#506) : options tirées des tâches de la page.
   const quickOptions = useMemo(() => {
     const scope = new Set((tasksWithDone || tasks || []).map((t) => t.id));
@@ -24223,6 +24323,7 @@ function CarteView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, setProj
           <CarteQuickFilter kind="crits" label="Criticité" allLabel="Toute criticité" icon={<AlertTriangle size={13} />} options={quickOptions.crits} value={cfg.crits} onChange={(crits) => setPrefs({ crits, crit: "all" })} />
           <CarteQuickFilter kind="statuses" label="Statuts" allLabel="Tous statuts" icon={<CircleDot size={13} />} options={quickOptions.statuses} value={cfg.statuses} onChange={(statuses) => setPrefs({ statuses })} />
           <CarteQuickFilter kind="assignees" label="Responsables" allLabel="Tous responsables" icon={<Users size={13} />} options={quickOptions.assignees} value={cfg.assignees} onChange={(assignees) => setPrefs({ assignees })} />
+          <FocusQuickToggle view="carte" active={cfg.focusOnly} count={focusCount} onChange={(focusOnly) => setPrefs({ focusOnly })} />
           <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Regroupement, responsables, carte simplifiée, qualité graphique et thèmes" panelClassName="lp-carte-display-menu" noSearch>
             <label className="lp-carte-groupby" title="Ce qui forme les régions de la carte ; les projets restent les territoires de chaque région">
               <span>Regrouper par</span>
@@ -27125,7 +27226,12 @@ function CosmosView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpda
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, cfg.focusOnly, JSON.stringify(cfg.filter), ctx]);
+  // Mode focus (#512) : nombre de tâches en focus dans le périmètre de la page.
+  const focusCount = useMemo(() => {
+    const scope = new Set((tasksWithDone || tasks || []).map((t) => t.id));
+    return carteFocusCount(norm.tasks.filter((t) => scope.has(t.id)));
+  }, [norm, tasks, tasksWithDone]);
   const dimmed = useMemo(() => {
     const d = carteDimmedProjects(norm.tasks, visible);
     if (d.has("__terre-inconnue__")) { d.delete("__terre-inconnue__"); d.add(COSMOS_ORPHAN_PROJECT); }
@@ -27272,6 +27378,7 @@ function CosmosView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, onUpda
         <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
           <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
         </select>
+        <FocusQuickToggle view="cosmos" active={cfg.focusOnly} count={focusCount} onChange={(focusOnly) => setPrefs({ focusOnly })} />
         <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Qualité graphique, animation et historique">
           <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.animate} onChange={(e) => setPrefs({ animate: e.target.checked })} /> Orbites animées (effet visuel seulement)</label>
           <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.hideOldDone} onChange={(e) => setPrefs({ hideOldDone: e.target.checked })} /> Masquer les tâches terminées depuis plus de 30 jours</label>
@@ -27465,7 +27572,12 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
     norm.tasks.forEach((t) => { if (scope.has(t.id) && carteMatches(t, cfg)) set.add(t.id); });
     return set;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, JSON.stringify(cfg.filter), ctx]);
+  }, [norm, tasks, tasksWithDone, cfg.crit, cfg.hideOldDone, cfg.focusOnly, JSON.stringify(cfg.filter), ctx]);
+  // Mode focus (#512) : nombre de tâches en focus dans le périmètre de la page.
+  const focusCount = useMemo(() => {
+    const scope = new Set((tasksWithDone || tasks || []).map((t) => t.id));
+    return carteFocusCount(norm.tasks.filter((t) => scope.has(t.id)));
+  }, [norm, tasks, tasksWithDone]);
   // #460 : le réseau suit les filtres. Il n'est construit qu'avec les tâches
   // retenues : une ligne sans tâche visible disparaît, et le réseau se recadre
   // sur ce qui reste (auparavant, les filtres masquaient seulement les gares
@@ -27576,6 +27688,7 @@ function Timeline3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, on
         <select className="lp-carte-select" aria-label="Criticité" value={cfg.crit} onChange={(e) => setPrefs({ crit: e.target.value })}>
           <option value="all">Toute criticité</option><option value="urgent">Urgentes</option><option value="moyen">Moyennes</option><option value="bas">Basses</option>
         </select>
+        <FocusQuickToggle view="timeline3d" active={cfg.focusOnly} count={focusCount} onChange={(focusOnly) => setPrefs({ focusOnly })} />
         <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Animations, tableau des départs, qualité et légende">
           <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.animate} onChange={(e) => setPrefs({ animate: e.target.checked })} /> Animations (trains, fumée, voitures, nuages)</label>
           <label className="lp-checkbox-line"><input type="checkbox" checked={cfg.board} onChange={(e) => setPrefs({ board: e.target.checked })} /> Tableau « Prochains départs »</label>

@@ -2751,6 +2751,7 @@ const IMPORT_FIELD_OPTIONS = [
   { key: "taskType", label: "Type de tâche" },
   { key: "assignee", label: "Responsable" },
   { key: "milestone", label: "Jalon (oui/non)" },
+  { key: "focus", label: "Mode focus (oui/non)" },
   { key: "start", label: "Début" },
   { key: "end", label: "Fin" },
   { key: "progress", label: "Avancement (%)" },
@@ -2764,6 +2765,7 @@ function guessImportField(header) {
   if (/type/.test(h)) return "taskType";
   if (/responsable|assign/.test(h)) return "assignee";
   if (/jalon|milestone/.test(h)) return "milestone";
+  if (/focus/.test(h)) return "focus";
   if (/d[ée]but|start|^jour$|^date$/.test(h)) return "start";
   if (/^fin$|end/.test(h)) return "end";
   if (/avanc|progress|%/.test(h)) return "progress";
@@ -3099,6 +3101,8 @@ const FIELD_DEFS = [
     optionsFn: (ctx) => sortedByName(normalizeTeams(ctx?.teams)).map((tm) => ({ value: tm.id, label: tm.name, color: tm.color })) },
   { key: "milestone", label: "Jalon", kind: "boolean", getValue: (t) => getTaskType(t) === "milestone" },
   { key: "sameDay", label: "Début = Fin", kind: "boolean", getValue: (t) => !!t.start && !!t.end && t.start === t.end },
+  // Mode focus (#512) : champ booléen optionnel, absent = false.
+  { key: "focus", label: "Mode focus", kind: "boolean", getValue: (t) => isTaskFocus(t) },
   { key: "progress", label: "Avancement", kind: "number", getValue: (t) => t.progress },
   { key: "start", label: "Début", kind: "date", getValue: (t) => t.start },
   { key: "end", label: "Fin", kind: "date", getValue: (t) => t.end },
@@ -3216,7 +3220,7 @@ function tabBarViewKeysFor(viewOrder, enabledViews) {
 }
 // === NEXORA:VIEW-TABS:END ===
 
-const FIELD_PROP = { project: "projectId", status: "statusId", taskType: "taskTypeId", assignee: "assignee", milestone: "milestone", progress: "progress", start: "start", end: "end", title: "title" };
+const FIELD_PROP = { project: "projectId", status: "statusId", taskType: "taskTypeId", assignee: "assignee", milestone: "milestone", focus: "focus", progress: "progress", start: "start", end: "end", title: "title" };
 
 function groupTasks(tasks, fieldKey, ctx) {
   if (!fieldKey || fieldKey === "none") return [{ key: "all", label: "Toutes les tâches", color: "var(--text-muted)", icon: null, tasks }];
@@ -3264,7 +3268,7 @@ function setTaskField(setTasks, taskId, fieldKey, key) {
   const prop = FIELD_PROP[fieldKey];
   if (!prop) return;
   let value = key;
-  if (fieldKey === "milestone") value = key === "true";
+  if (fieldKey === "milestone" || fieldKey === "focus") value = key === "true";
   if (fieldKey === "progress") value = Number(key);
   setTasks((prev) => prev.map((t) => {
     if (t.id !== taskId) return t;
@@ -3311,7 +3315,27 @@ function isZeroDurationTask({ start, end, startTime, endTime } = {}) {
 }
 
 
-const ADVANCED_FILTER_FIELDS = ["title", "project", "status", "criticality", "taskType", "assignee", "milestone", "sameDay", "start", "end", "inactivity"];
+const ADVANCED_FILTER_FIELDS = ["title", "project", "status", "criticality", "taskType", "assignee", "milestone", "focus", "sameDay", "start", "end", "inactivity"];
+
+// === NEXORA:TASK-FOCUS:START ===
+// Mode focus (#512) : les tâches sur lesquelles il faut absolument travailler.
+// Champ booléen `focus`, purement additif : absent (tâches existantes, API,
+// MCP, imports) vaut false. Seul `true` compte, jamais une valeur « vraie ».
+function isTaskFocus(task) {
+  return !!task && task.focus === true;
+}
+// Filtre tri-état des filtres de vue : "all" (défaut, et toute valeur
+// inconnue ou absente d'un filtre enregistré avant #512), "yes", "no".
+function normalizeFocusFilter(value) {
+  return value === "yes" || value === "no" ? value : "all";
+}
+function matchFocusFilter(task, value) {
+  const v = normalizeFocusFilter(value);
+  if (v === "yes") return isTaskFocus(task);
+  if (v === "no") return !isTaskFocus(task);
+  return true;
+}
+// === NEXORA:TASK-FOCUS:END ===
 
 const NO_PROJECT_FILTER = "__nexora_without_project__";
 // === NEXORA:ASSIGNEE-FILTER:START ===
@@ -3358,7 +3382,7 @@ function resolveProjectFilterIds(ids, ctx) {
 
 const defaultFilters = () => ({
   search: "",
-  milestone: "all", progressMin: 0, progressMax: 100, startFrom: "", startTo: "", endFrom: "", endTo: "", lateOnly: false,
+  milestone: "all", focus: "all", progressMin: 0, progressMax: 100, startFrom: "", startTo: "", endFrom: "", endTo: "", lateOnly: false,
   dueWithinDays: "", pastDays: "", inactivityDays: "",
   quickDatePreset: "", // préréglage rapide sur la date de fin, depuis la barre du haut
   showDone: false,
@@ -4009,6 +4033,7 @@ function taskAdvancedFieldValue(task, field) {
   if (field === "assignee") return assigneeFilterValue(task);
   if (field === "milestone") return getTaskType(task) === "milestone" ? "yes" : "no";
   if (field === "sameDay") return (!!task.start && !!task.end && task.start === task.end) ? "yes" : "no";
+  if (field === "focus") return isTaskFocus(task) ? "yes" : "no";
   return "";
 }
 function evalFilterCondition(task, cond) {
@@ -4062,6 +4087,7 @@ function taskSearchHaystack(task, ctx) {
     tt?.name,
     taskTypeLabel(task),
     getTaskType(task) === "milestone" ? "jalon" : "",
+    isTaskFocus(task) ? "focus" : "",
     fmtShort(task.start),
     fmtShort(task.end),
     String(task.progress),
@@ -4120,6 +4146,7 @@ function matchTaskFilters(task, f, ctx) {
   }
   if (f.milestone === "yes" && getTaskType(task) !== "milestone") return false;
   if (f.milestone === "no" && getTaskType(task) === "milestone") return false;
+  if (!matchFocusFilter(task, f.focus)) return false;
   if (task.progress < f.progressMin || task.progress > f.progressMax) return false;
   if (f.startFrom && task.start < f.startFrom) return false;
   if (f.startTo && task.start > f.startTo) return false;
@@ -4162,6 +4189,7 @@ function activeFilterCount(f) {
   let n = 0;
   if (f.search.trim()) n++;
   if (f.milestone !== "all") n++;
+  if (normalizeFocusFilter(f.focus) !== "all") n++;
   if (f.progressMin > 0 || f.progressMax < 100) n++;
   if (f.startFrom || f.startTo) n++;
   if (f.endFrom || f.endTo) n++;

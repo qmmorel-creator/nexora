@@ -134,3 +134,30 @@ test('taskBaselines refuses any other action, and any malformed entry',async()=>
  assert.deepEqual((await r.readResource({resource:'taskBaselines',offset:0,limit:50})).items,[]);
  assert.equal(await rev(),null);
 });
+
+/* Mode focus (#512) — champ booléen additif : absent vaut false, il se filtre,
+   s'écrit par create_task/update_task et survit aux autres modifications. */
+test('focus filter keeps only tasks explicitly in focus, absent counts as false',async()=>{
+ const {taskChangesSchema}=await import('../src/nexora.mts');
+ const list=[{id:'f1',focus:true},{id:'f2',focus:false},{id:'f3'},{id:'f4',focus:'true'}];
+ assert.deepEqual(filterTasks(list,c,{focus:true}).map(x=>x.id),['f1']);
+ assert.deepEqual(filterTasks(list,c,{focus:false}).map(x=>x.id),['f2','f3','f4']);
+ assert.equal(filterTasks(list,c,{}).length,4);
+ assert.equal(taskChangesSchema.parse({focus:true}).focus,true);
+ assert.throws(()=>taskChangesSchema.parse({focus:'oui'}));
+});
+test('focus is written by create/update and preserved by unrelated updates',async()=>{
+ const {db}=fakeDb(),r=repository(db,'u');
+ const x=await r.createTask({title:'Focus',projectId:'p',idempotencyKey:'focus-create',focus:true});
+ assert.equal(x.task.focus,true);
+ const y=await r.mutateTask({taskId:x.task.id,expectedVersion:x.version,idempotencyKey:'focus-title',changes:{title:'Renommée'}});
+ assert.equal(y.task.focus,true,'une modification sans focus ne l’efface pas');
+ const listed=await r.list({archive:'active',limit:10,detail:'summary',focus:true});
+ assert.deepEqual(listed.tasks.map(t=>t.id),[x.task.id]);
+ assert.equal(listed.tasks[0].focus,true);
+ const z=await r.mutateTask({taskId:x.task.id,expectedVersion:y.version,idempotencyKey:'focus-off',changes:{focus:false}});
+ assert.equal(z.task.focus,false);
+ assert.equal((await r.list({archive:'active',limit:10,detail:'summary',focus:true})).total,0);
+ const plain=await r.createTask({title:'Sans focus',projectId:'p',idempotencyKey:'focus-none'});
+ assert.equal('focus' in plain.task,false,'une tâche créée sans focus ne gagne pas de champ');
+});

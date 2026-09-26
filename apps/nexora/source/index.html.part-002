@@ -233,6 +233,7 @@ function filterFieldOptions(field, ctx) {
   ];
   if (field === "milestone") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
   if (field === "sameDay") return [{ value: "yes", label: "Oui" }, { value: "no", label: "Non" }];
+  if (field === "focus") return [{ value: "yes", label: "En focus" }, { value: "no", label: "Hors focus" }];
   return [];
 }
 
@@ -381,6 +382,12 @@ function FilterFieldsBody({ local, setLocal, ctx }) {
         <div className="lp-section-title">Jalon (compatibilité)</div>
         <div className="lp-filter-chipset">
           {[["all", "Tous"], ["yes", "Oui"], ["no", "Non"]].map(([v, l]) => <button key={v} className={"lp-filter-chip" + (local.milestone === v ? " active" : "")} onClick={() => setLocal({ ...local, milestone: v })}>{l}</button>)}
+        </div>
+      </div>
+      <div className="lp-filter-section">
+        <div className="lp-section-title lp-focus-title"><Target size={12} /> Mode focus</div>
+        <div className="lp-filter-chipset" role="group" aria-label="Mode focus">
+          {[["all", "Toutes"], ["yes", "En focus seulement"], ["no", "Hors focus"]].map(([v, l]) => <button key={v} type="button" data-focus-filter={v} className={"lp-filter-chip" + (normalizeFocusFilter(local.focus) === v ? " active" : "")} onClick={() => setLocal({ ...local, focus: v })}>{l}</button>)}
         </div>
       </div>
       <div className="lp-checkbox-row">
@@ -5085,6 +5092,8 @@ function carteNormalize(ctx, tasks, opts) {
       statusName: st ? st.name : "Sans statut", statusColor: st && st.color ? st.color : "#94A3B8",
       typeName: ty ? ty.name : "Sans type", typeColor: ty && ty.color ? ty.color : "#94A3B8",
       criticality: carteCriticality(t, statusById),
+      // Mode focus (#512) : seul `true` compte, absent vaut false.
+      focus: t.focus === true,
       start, end, startIso: t.start || null, endIso: t.end || null,
       startTime: t.startTime || null, endTime: t.endTime || null,
       duration: start != null && end != null ? Math.max(0, end - start) + 1 : null,
@@ -6194,6 +6203,7 @@ function carteInitials(name) {
 const CARTE_CLASSIC_SIGNALS = [
   ["Urgente", "Incendie et anneau rouge (moyenne : fanion orange et panneau danger clignotant)"], ["En retard", "Horloge qui fait tic-tac · urgente en retard : gros éclairs venus du ciel"],
   ["À venir", "Brume · responsable : figurine sur un socle à sa couleur, badge à ses initiales"], ["Dépendance", "Route de convoi à la sélection"], ["Jalon", "Borne milliaire à la couleur du type · terminé : couronne de laurier"],
+  ["Mode focus", "Colonne de lumière sarcelle et anneaux qui montent en boucle (#512)"],
 ];
 // Tâches critiques (urgentes ET en retard) selon le thème (#509). L'orage à
 // gros éclairs (#406) reste le repli par défaut ; chaque autre thème a son
@@ -6304,6 +6314,8 @@ function carteMatches(task, f) {
   if (Array.isArray(f.assignees) && f.assignees.length && f.assignees.indexOf(task.assignee || CARTE_NONE) === -1) return false;
   // Les terminées sont visibles par défaut (#372) ; les masquer est un choix.
   if (f.hideOldDone && task.oldDone) return false;
+  // Mode focus (#512) : les seules tâches à travailler absolument.
+  if (f.focusOnly && !task.focus) return false;
   return true;
 }
 // Options des filtres rapides : les statuts (ordre de Nexora) et les
@@ -6333,9 +6345,15 @@ function carteQuickOptions(tasks, statuses, selected) {
 // Filtres propres à la vue (#400, #506) : combien sont posés, et leur remise à zéro.
 function carteViewFilterCount(cfg) {
   const c = cfg || {};
-  return (carteCritsOf(c).length ? 1 : 0) + (Array.isArray(c.statuses) && c.statuses.length ? 1 : 0) + (Array.isArray(c.assignees) && c.assignees.length ? 1 : 0);
+  return (carteCritsOf(c).length ? 1 : 0) + (Array.isArray(c.statuses) && c.statuses.length ? 1 : 0) + (Array.isArray(c.assignees) && c.assignees.length ? 1 : 0) + (c.focusOnly ? 1 : 0);
 }
-function carteViewFilterReset() { return { crit: "all", crits: [], statuses: [], assignees: [], filter: null }; }
+function carteViewFilterReset() { return { crit: "all", crits: [], statuses: [], assignees: [], focusOnly: false, filter: null }; }
+// Nombre de tâches en focus (#512) parmi une liste de tâches normalisées.
+function carteFocusCount(tasks) {
+  let n = 0;
+  (tasks || []).forEach((t) => { if (t && t.focus) n++; });
+  return n;
+}
 
 // Ruban (#392) : une pastille par dossier (les projets sans dossier sont
 // regroupés en dernier), avancement cumulé des projets du dossier.
@@ -6506,6 +6524,7 @@ const CARTE_WHEEL_ACTIONS = [
   { id: "progress", label: "Changer l'avancement" },
   { id: "type", label: "Changer le type" },
   { id: "milestone", label: "Jalon oui ou non" },
+  { id: "focus", label: "Mode focus oui ou non" },
   { id: "timeline", label: "Voir dans la Timeline 3D" },
   { id: "fiche", label: "Ouvrir la fiche" },
 ];
@@ -6782,6 +6801,8 @@ function normalizeCarteViewPrefs(p) {
     statuses: carteIdList(v.statuses),
     assignees: carteIdList(v.assignees),
     hideOldDone: !!v.hideOldDone,
+    // Mode focus (#512) : filtre rapide, désactivé par défaut.
+    focusOnly: !!v.focusOnly,
     quality: CARTE_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     folderThemes,
     // Filtre général de Nexora (#364), même format que les widgets.
@@ -7222,6 +7243,8 @@ function normalizeCosmosViewPrefs(p) {
   return {
     crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
     hideOldDone: !!v.hideOldDone,
+    // Mode focus (#512) : filtre rapide, désactivé par défaut.
+    focusOnly: !!v.focusOnly,
     quality: COSMOS_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     // Orbites animées : purement visuel, coupé aussi par « réduire les animations ».
     animate: v.animate !== false,
@@ -7315,6 +7338,8 @@ function normalizeTimeline3dViewPrefs(p) {
     speed: T3D_SPEEDS[v.speed] ? v.speed : "normal",
     crit: ["all", "urgent", "moyen", "bas"].indexOf(v.crit) !== -1 ? v.crit : "all",
     hideOldDone: !!v.hideOldDone,
+    // Mode focus (#512) : filtre rapide, désactivé par défaut.
+    focusOnly: !!v.focusOnly,
     quality: T3D_QUALITIES.indexOf(v.quality) !== -1 ? v.quality : "auto",
     // Trains, fumée, voitures, nuages : purement visuel, coupé aussi par
     // « réduire les animations ».
@@ -11457,6 +11482,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   // Pas de valeur par défaut imposée : une tâche sans criticité n'affiche pas de
   // capsule, plutôt que de se voir attribuer un « Moyen » que personne n'a choisi.
   const [criticality, setCriticality] = useState(base.criticality || "");
+  // Mode focus (#512) : bascule de la fiche, enregistrée avec le reste.
+  const [focus, setFocus] = useState(isTaskFocus(base));
   const availableStatuses = useMemo(
     () => getStatusesForTask(statuses, projects, taskTypes, projectId, taskTypeId, statusId),
     [statuses, projects, taskTypes, projectId, taskTypeId, statusId]
@@ -11858,6 +11885,9 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       secondaryProjectId: secondaryProjectId || null,
       statusId: finalStatusId,
       criticality: criticality || null,
+      // Mode focus (#512) : `true`, ou `false` pour éteindre un focus existant ;
+      // une tâche qui ne l'a jamais eu ne gagne pas de champ.
+      ...(focus ? { focus: true } : base.focus !== undefined ? { focus: false } : {}),
       taskTypeId,
       milestone,
       milestoneIcon: milestoneIcon || null,
@@ -12017,6 +12047,13 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         {!isNew && (
           <button type="button" className={"lp-task-tab-btn" + (activeTab === "history" ? " active" : "")} onClick={() => setActiveTab("history")}>Historique</button>
         )}
+        <button type="button" className={"lp-task-focus-toggle" + (focus ? " is-on" : "")} aria-pressed={focus} data-task-focus-toggle=""
+          onClick={() => setFocus((v) => !v)}
+          title={focus ? "Tâche en mode focus : à travailler absolument. Cliquer pour la retirer du focus." : "Passer cette tâche en mode focus : une tâche sur laquelle travailler absolument"}>
+          <Target size={14} />
+          <span>{focus ? "En focus" : "Mode focus"}</span>
+          <i className="lp-task-focus-switch" aria-hidden="true" />
+        </button>
       </div>
       {activeTab === "history" && (
       <>
@@ -15472,7 +15509,9 @@ function ImportCsvModal({ ctx, projects, statuses, setProjects, setStatuses, set
         checklist: [],
         lastInteraction:new Date().toISOString(),
         importSource:"csv",
-        importFileName:fileName || null
+        importFileName:fileName || null,
+        // Mode focus (#512) : posé seulement quand la colonne dit oui.
+        ...(parseImportBool(getMappedValue(row, mapping, "focus")) ? { focus: true } : {})
       }));
     });
 
