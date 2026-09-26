@@ -706,7 +706,9 @@ view.prepend(renderer.domElement);
 const labelRenderer = new CSS2DRenderer({element: $('#labels')});
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 5, 12000);
-const HOME = isMobile ? { pos:DW(200, 560, 900), target:DW(0, 290, 20) } : { pos:DW(170, 450, 640), target:DW(-10, 295, 40) };
+// vue d'ensemble depuis l'aval, toujours au-dessus du relief réel
+const homeAt = (x,y,z) => { let top=0; for(let k=0;k<=10;k++){ const f=k/10; top=Math.max(top, gH(x*f, z*f)); } return DW(x, Math.max(y, top+90), z); };
+const HOME = isMobile ? { pos:homeAt(260, 600, 980), target:DW(0, 300, 40) } : { pos:homeAt(230, 520, 700), target:DW(-10, 300, 60) };
 camera.position.copy(HOME.pos);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(HOME.target);
@@ -738,7 +740,9 @@ function buildTerrain(){
     const mat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:.96, metalness:0});
     if(GEO.ortho){
       const img = new Image();
-      img.onload = ()=>{ const tex = new THREE.Texture(img); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); tex.needsUpdate = true; mat.map = tex; mat.needsUpdate = true; };
+      img.onload = ()=>{ const tex = new THREE.Texture(img); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); tex.needsUpdate = true;
+        // l'orthophoto porte déjà son propre ombrage : une part émissive évite des versants trop sombres
+        mat.map = tex; mat.emissiveMap = tex; mat.emissive.set(0xffffff); mat.emissiveIntensity = .28; mat.needsUpdate = true; };
       img.src = GEO.ortho;
     } else mat.color.set(0x8e9c74);
     terrainMesh = new THREE.Mesh(g, mat); scene.add(terrainMesh);
@@ -877,12 +881,15 @@ if(OSM){
     }
   }
 }
+// conduites forcées OSM (man_made=pipeline au pied du barrage) : une par groupe
+const PENSTOCKS = OSM && OSM.pois ? OSM.pois.filter(p=>p.man_made==='pipeline').map(p=>w2d(p.p[0],p.p[1])).filter(([x,z])=>Math.abs(x)<150 && z>20 && z<200).sort((a,b)=>a[0]-b[0]) : [];
+if(PENSTOCKS.length===6 && !U.osm){ U.cx = PENSTOCKS.reduce((a,p)=>a+p[0],0)/6; U.penstocks = true; }
 U.z1 = U.cz + U.dep/2;   // façade aval
-GROUPS.forEach((g,i)=>{ g.x = U.cx + (i-2.5)*U.len/6.4; });
+GROUPS.forEach((g,i)=>{ g.x = U.penstocks ? PENSTOCKS[i][0] : U.cx + (i-2.5)*U.len/6.4; });
 
 /* ---------- barrage-poids ---------- */
 // Profil réel : 104 m de haut, crête de 9 m, base de 100 m, parement amont vertical.
-const DAM_L = REAL ? DAM_AXIS_LEN/2 + 18 : 190;
+const DAM_L = REAL ? DAM_AXIS_LEN/2 - 8 : 190;   // l'emprise OSM englobe les culées
 const DAM_BASE = SITE.crest - 104;
 {
   const sh = new THREE.Shape();
@@ -925,22 +932,30 @@ const bayMats = [];
   box(4, 8, 4, M.steel, U.cx-U.len/2+1, U.roof+4.5, U.z1-4); box(4, 8, 4, M.steel, U.cx+U.len/2-1, U.roof+4.5, U.z1-4);
 }
 /* ---------- évacuateurs / vidange (implantation est.) ---------- */
-const XE = REAL ? DAM_AXIS_LEN/2 : 70;   // demi-longueur de crête
+const XE = REAL ? Math.min(DAM_AXIS_LEN/2, 85) : 70;   // demi-longueur de crête (140 à 165 m)
 const EV = { rd:[-(XE+32), 40], rg:[XE+22, 190], vid:[-(XE+34), 206] };
 {
-  // évacuateur de surface RD en saut de ski
-  const [ex] = EV.rd, y0 = SITE.crest-2, z1 = 150, y1 = Math.min(y0-20, Math.max(SITE.zAval0+6, gH(ex, z1)+2));
-  const L = Math.hypot(z1-2, y0-y1);
-  const ch = new THREE.Mesh(new THREE.BoxGeometry(14, 3, L), M.concrete2);
-  ch.position.set(ex, (y0+y1)/2, (2+z1)/2); ch.rotation.x = Math.atan2(y0-y1, z1-2); DF.add(ch); ch.userData.ref='evacRD'; pickables.push(ch);
-  box(18, 8, 8, M.concrete, ex, SITE.crest-3, 2);
-  EV.rdY = (y0+y1)/2; EV.rdY1 = y1;
+  if(REAL){
+    // évacuateur de surface en saut de ski au-dessus de l'usine (visible sur l'orthophoto) :
+    // pertuis de crête et tremplin sur le toit de l'usine
+    EV.rd = [U.cx, 40]; EV.rdY = U.roof+6; EV.rdY1 = U.roof+2; EV.skijump = true;
+    for(let i=-2;i<=2;i++) box(6, 6, 6, M.concrete2, U.cx+i*16, SITE.crest-2, 1);
+    const lip = box(U.len*.7, 3, 6, M.concrete, U.cx, U.roof+2.5, U.z1-1); lip.rotation.x = -.35; lip.userData.ref='evacRD'; pickables.push(lip);
+  } else {
+    // évacuateur de surface RD en saut de ski (implantation est.)
+    const [ex] = EV.rd, y0 = SITE.crest-2, z1 = 150, y1 = Math.min(y0-20, Math.max(SITE.zAval0+6, gH(ex, z1)+2));
+    const L = Math.hypot(z1-2, y0-y1);
+    const ch = new THREE.Mesh(new THREE.BoxGeometry(14, 3, L), M.concrete2);
+    ch.position.set(ex, (y0+y1)/2, (2+z1)/2); ch.rotation.x = Math.atan2(y0-y1, z1-2); DF.add(ch); ch.userData.ref='evacRD'; pickables.push(ch);
+    box(18, 8, 8, M.concrete, ex, SITE.crest-3, 2);
+    EV.rdY = (y0+y1)/2; EV.rdY1 = y1;
+  }
   // galerie évacuatrice RG (portail)
-  const [gx,gz] = EV.rg; const gy = Math.max(SITE.zAval0+8, gH(gx,gz)+6); EV.rgY = gy;
+  const [gx,gz] = EV.rg; const gy = REAL ? gH(gx,gz)+4 : Math.max(SITE.zAval0+8, gH(gx,gz)+6); EV.rgY = gy;
   const pg = box(16, 14, 8, M.concrete2, gx, gy, gz); pg.userData.ref='evacRG'; pickables.push(pg);
   box(9, 9, 1, M.dark, gx, gy-2, gz+4.2);
   // vidange de fond RD (portail)
-  const [vx,vz] = EV.vid; const vy = Math.max(SITE.zAval0+10, gH(vx,vz)+6); EV.vidY = vy;
+  const [vx,vz] = EV.vid; const vy = REAL ? gH(vx,vz)+4 : Math.max(SITE.zAval0+10, gH(vx,vz)+6); EV.vidY = vy;
   const pv = box(14, 12, 8, M.concrete2, vx, vy, vz); pv.userData.ref='vidange'; pickables.push(pv);
   box(8, 8, 1, M.dark, vx+4, vy-2, vz+4.2);
   if(!REAL){
@@ -957,12 +972,16 @@ if(OSM && OSM.buildings){
   const mats = [M.house, M.concrete2, new THREE.MeshStandardMaterial({color:0xd9cfbf, roughness:.9})];
   for(const [k,b] of OSM.buildings.entries()){
     const [cx,cz] = polyCentroid(b.o); const dd = w2d(cx,cz);
-    if(U.osm && Math.abs(dd[0]-U.cx) < U.len/2 && Math.abs(dd[1]-U.cz) < U.dep/2) continue; // l'usine est modélisée à part
+    if(b.kind==='no') continue;
+    if(Math.abs(dd[0]) < DAM_L+15 && dd[1] > -15 && dd[1] < U.z1+40) continue; // barrage et usine sont modélisés à part
+    if(polyArea(b.o) > 8000) continue;
     const lv = parseFloat(b.levels), ht = parseFloat(b.height);
     const hgt = isFinite(ht) ? ht : isFinite(lv) ? lv*3+1.5 : (b.kind==='industrial' ? 9 : 6.5);
+    // bâtiment à flanc de pente : toit calé sur le sol au centre, murs descendus jusqu'au point le plus bas
     let gmin = 1e9; for(const [x,z] of b.o) gmin = Math.min(gmin, terrainH(x,z));
+    const gc = Math.max(gmin, terrainH(cx,cz)), top = gc + hgt;
     const sh = new THREE.Shape(b.o.map(([x,z])=>new THREE.Vector2(x,-z)));
-    const g = new THREE.ExtrudeGeometry(sh, {depth:hgt+1.5, bevelEnabled:false}); g.rotateX(-Math.PI/2);
+    const g = new THREE.ExtrudeGeometry(sh, {depth:top-gmin+1.5, bevelEnabled:false}); g.rotateX(-Math.PI/2);
     const m = new THREE.Mesh(g, mats[k%3]); m.position.y = gmin-1.5; scene.add(m);
   }
 }
@@ -975,32 +994,46 @@ function pylon(x,z,dirx,dirz,hh=42){
   box(24,1,1,M.steel,0,hh-4,0,g); box(16,1,1,M.steel,0,hh-10,0,g); scene.add(g); return y+hh-4;
 }
 if(OSM && (OSM.power_lines||[]).length){
-  // poste : le plus proche de l'usine
-  const uw = DW(U.cx, 0, U.cz);
-  let bestS=null, bd=1e9;
-  for(const s of OSM.substations||[]){ const [cx,cz]=polyCentroid(s.o); const d=Math.hypot(cx-uw.x, cz-uw.z); if(d<bd){ bd=d; bestS={s,cx,cz}; } }
-  if(bestS){
-    posteReal = true; POSTE = new THREE.Vector3(bestS.cx, 0, bestS.cz); POSTE.y = terrainH(POSTE.x, POSTE.z);
-    const sh = new THREE.Shape(bestS.s.o.map(([x,z])=>new THREE.Vector2(x,-z)));
-    const pad = new THREE.Mesh(new THREE.ExtrudeGeometry(sh,{depth:2,bevelEnabled:false}).rotateX(-Math.PI/2), new THREE.MeshStandardMaterial({color:0xa19b8e, transparent:true, opacity:.7}));
-    let gmin=1e9; for(const [x,z] of bestS.s.o) gmin=Math.min(gmin, terrainH(x,z)); pad.position.y = gmin-1; scene.add(pad);
-    for(let i=0;i<3;i++){ const t=box(7,6,5,M.steel,POSTE.x-14+i*14,POSTE.y+3,POSTE.z,scene); t.userData.ref='poste'; pickables.push(t); }
+  // postes : emprises OSM ; le poste principal est le plus haut en tension (puis le plus grand)
+  const kv = v => Math.max(0, ...String(v||'').split(';').map(Number).filter(isFinite));
+  const subs = (OSM.substations||[]).map(s=>({s, c:polyCentroid(s.o), a:polyArea(s.o), kv:kv(s.voltage)})).filter(x=>x.a > 200);
+  subs.sort((p,q)=> (q.kv-p.kv) || (q.a-p.a));
+  const padMat = new THREE.MeshStandardMaterial({color:0xa19b8e, transparent:true, opacity:.55});
+  for(const x of subs){
+    const sh = new THREE.Shape(x.s.o.map(([px,pz])=>new THREE.Vector2(px,-pz)));
+    const pad = new THREE.Mesh(new THREE.ExtrudeGeometry(sh,{depth:2,bevelEnabled:false}).rotateX(-Math.PI/2), padMat);
+    let gmin=1e9; for(const [px,pz] of x.s.o) gmin=Math.min(gmin, terrainH(px,pz)); pad.position.y = gmin-1; scene.add(pad);
   }
-  // lignes : tracé OSM réel, pylônes aux sommets (ou aux nœuds power=tower)
-  const lineMat = new THREE.LineBasicMaterial({color:0x2a2a2a, transparent:true, opacity:.75});
-  const towerAt = new Map(); for(const t of OSM.towers||[]) towerAt.set(t.p[0].toFixed(0)+','+t.p[1].toFixed(0), t);
+  if(subs.length){
+    const m = subs[0]; posteReal = true; POSTE = new THREE.Vector3(m.c[0], 0, m.c[1]); POSTE.y = terrainH(POSTE.x, POSTE.z);
+    for(let i=0;i<3;i++){ const t=box(9,8,6,M.steel,POSTE.x-18+i*18,POSTE.y+4,POSTE.z,scene); t.userData.ref='poste'; pickables.push(t); }
+    for(let i=0;i<5;i++) box(1,18,1,M.steel,POSTE.x-40+i*20,POSTE.y+9,POSTE.z+22,scene);
+    box(82,1,1,M.steel,POSTE.x,POSTE.y+18,POSTE.z+22,scene);
+  }
+  // pylônes : nœuds OSM power=tower ; conducteurs : tracé OSM des lignes aériennes (les câbles sont souterrains)
+  const lineMat = new THREE.LineBasicMaterial({color:0x2a2a2a, transparent:true, opacity:.7});
+  const towers = (OSM.towers||[]).filter(t=>t.kind!=='pole' && inZone(t.p[0],t.p[1]));
+  const nearTower = (x,z) => { let b=null, bd=6; for(const t of towers){ const d=Math.hypot(t.p[0]-x,t.p[1]-z); if(d<bd){ bd=d; b=t; } } return b; };
+  const built = new Map();
+  const curves = [];
   for(const ln of OSM.power_lines){
+    if(ln.kind==='cable') continue;
     const pts = ln.l; if(pts.length<2) continue;
-    const minor = ln.kind!=='line'; const hh = minor ? 14 : (parseFloat(ln.voltage)>=300000 ? 52 : 42);
-    const tops = pts.map(([x,z],i)=>{ const a=pts[Math.max(0,i-1)], b=pts[Math.min(pts.length-1,i+1)]; const dx=b[0]-a[0], dz=b[1]-a[1];
-      return { x, z, y: inZone(x,z) ? pylon(x,z,dx,dz,hh) : terrainH(x,z)+hh-4, px:-dz/Math.hypot(dx,dz||1e-6), pz:dx/Math.hypot(dx,dz||1e-6) }; });
+    const minor = ln.kind!=='line'; const hh = minor ? 14 : (kv(ln.voltage)>=300000 ? 52 : 40);
+    const tops = pts.map(([x,z],i)=>{ const a=pts[Math.max(0,i-1)], b=pts[Math.min(pts.length-1,i+1)]; const dx=b[0]-a[0], dz=b[1]-a[1], L=Math.hypot(dx,dz)||1;
+      const t = nearTower(x,z); let y;
+      if(t){ const k=t.p.join(','); if(!built.has(k)) built.set(k, pylon(t.p[0],t.p[1],dx,dz,hh)); y = built.get(k); }
+      else y = terrainH(x,z) + (minor? 10 : 20);   // portique de poste ou extrémité hors emprise
+      return { x, z, y, px:-dz/L, pz:dx/L }; });
     for(const off of minor ? [0] : [-8,0,8]){
       const arr=[]; for(let i=0;i<tops.length-1;i++){ const a=tops[i], b=tops[i+1];
         const seg = catenary(new THREE.Vector3(a.x+a.px*off, a.y, a.z+a.pz*off), new THREE.Vector3(b.x+b.px*off, b.y, b.z+b.pz*off)); if(i>0) seg.shift(); arr.push(...seg); }
-      const cu = new THREE.CatmullRomCurve3(arr); if(!minor) lineCurves.push(cu);
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cu.getPoints(Math.min(600, arr.length*4))), lineMat));
+      const cu = new THREE.CatmullRomCurve3(arr); if(!minor && off===0) curves.push(cu);
+      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cu.getPoints(Math.min(400, arr.length*3))), lineMat));
     }
   }
+  // flux d'énergie : les plus longues portées (index sur 8 bits dans Flow)
+  curves.sort((p,q)=>q.getLength()-p.getLength()); lineCurves.push(...curves.slice(0, 48));
 }
 if(!POSTE){
   // implantation indicative (est.)
@@ -1079,9 +1112,8 @@ function placePost(dx, dz, maxD=90, poi=null){
 const visitorPoi = () => {
   if(!OSM || !OSM.pois) return null;
   const [nx,nz] = d2w(-XE-110, -66); let best=null, bd=450;
-  for(const p of OSM.pois){ if(!p.tourism || !/information|museum|attraction|viewpoint/.test(p.tourism)) continue;
-    const d = Math.hypot(p.p[0]-nx, p.p[1]-nz) - (/visit|barrage|génissiat|genissiat|cnr/i.test(p.name||'') ? 300 : 0);
-    if(d<bd){ bd=d; best=p; } }
+  for(const p of OSM.pois){ if(!p.tourism || !/information|museum/.test(p.tourism)) continue;
+    const d = Math.hypot(p.p[0], p.p[1]); if(d<bd){ bd=d; best=p; } }
   return best ? [best.p[0]+10, best.p[1]+10] : null;
 };
 const POSTS = {
@@ -1263,7 +1295,9 @@ const RIV_UP = riverPts([-1150,-950,-800,-600,-400,-250,-120]);
 const RIV_DN = riverPts([250,400,500,650,800,950,1150]);
 const inflowCurves = [-20,0,20].map(o=>mkCurve([...RIV_UP.map(([x,s])=>[x+o*.8,0,s]), [o*.6+10,0,-40], [o*1.5,0,-12]]));
 const outCurves = [-40,-15,15,40].map(o=>mkCurve([[U.cx+o,0,U.z1+2], ...RIV_DN.map(([x,s])=>[x+o*.5,0,s])]));
-const spillCurves = [-3,3].map(o=>{ const ex=EV.rd[0]+o, y0=SITE.crest-2.7, y1=EV.rdY1, xr=riverCenterAt(300);
+const spillCurves = EV.skijump ? [-40,-20,0,20,40].map(o=>{ const x=U.cx+o, xr=riverCenterAt(U.z1+90);
+    return mkCurve([[x,SITE.crest-2.7,3],[x,SITE.crest-25,28],[x,U.roof+4,U.cz-U.dep/2+4],[x,U.roof+3,U.z1-3],[x,U.roof+6,U.z1+14],[lerp(x,xr,.5),SITE.zAval0+18,U.z1+50],[lerp(x,xr,.8),SITE.zAval0+1,U.z1+90]]); })
+  : [-3,3].map(o=>{ const ex=EV.rd[0]+o, y0=SITE.crest-2.7, y1=EV.rdY1, xr=riverCenterAt(300);
   return mkCurve([[ex,y0,4],[ex,lerp(y0,y1,.25),40],[ex,lerp(y0,y1,.6),90],[ex+2,y1,145],[ex+12,y1+3,160],[lerp(ex,xr,.5),SITE.zAval0+4,215],[xr,SITE.zAval0+3,300]]); });
 const fIn = new Flow(inflowCurves, isMobile?300:600, 0xe8fbff, 3.2, 38, DF);
 const fOut = new Flow(outCurves, isMobile?400:900, 0xffffff, 3.2, 55, DF);
@@ -1312,7 +1346,7 @@ const V = (x,y,z)=>new THREE.Vector3(x,y,z);
 addEnt('usine','inst','Usine · 6 groupes', DW(U.cx,U.roof+1.5,U.cz), 70, 90, {dist:320});
 addEnt('barrage','inst','Barrage-poids', DW(-40,SITE.crest+1,0), 55, 70, {dist:380});
 addEnt('retenue','inst','Retenue', DW(riverCenterAt(-520),SITE.zNormal,-520), 40, 60, {dist:700});
-addEnt('evacRD','inst','Évacuateur RD', DW(EV.rd[0],SITE.crest-16,40), 45, 45, {dist:260});
+addEnt('evacRD','inst', EV.skijump ? 'Évacuateur · saut de ski' : 'Évacuateur RD', EV.skijump ? DW(U.cx+30,U.roof+3,U.z1-4) : DW(EV.rd[0],SITE.crest-16,40), 45, 45, {dist:260});
 addEnt('evacRG','inst','Galerie évacuatrice RG', DW(EV.rg[0],EV.rgY+7,EV.rg[1]), 40, 30, {dist:240});
 addEnt('vidange','inst','Vidange de fond', DW(EV.vid[0],EV.vidY+6,EV.vid[1]), 38, 40, {dist:240});
 addEnt('poste','inst','Poste HT', V(POSTE.x,POSTE.y+8,POSTE.z), 45, 35, {dist:300});
@@ -1597,7 +1631,7 @@ function renderFiche(){
     h += `<p class="note">« Démarrer » rend le groupe disponible : il est couplé dès que le programme ou la consigne le demande.</p>`;
   } else if(e.id==='usine'){
     h += `<p>Six groupes Francis verticaux de ${SITE.pUnit} MW et deux groupes auxiliaires de 2,5 MVA, en pied de barrage. Fonctionnement en éclusées, Seyssel régule à l'aval.</p>`;
-    h += kv([['Production', `${nf1.format(S.P)} MW`],['Débit turbiné', `${nf0.format(S.qTurb)} m³/s`],['Chute nette', `${nf1.format(S.head)} m`],['Énergie du jour', `${nf0.format(S.eDay)} MWh`],['Productible annuel','≈ 1,7 TWh'],['Dimensions','143 m × 50 m'],['Emprise', U.osm? 'bâtiment OSM' : `indicative ${EST}`]]);
+    h += kv([['Production', `${nf1.format(S.P)} MW`],['Débit turbiné', `${nf0.format(S.qTurb)} m³/s`],['Chute nette', `${nf1.format(S.head)} m`],['Énergie du jour', `${nf0.format(S.eDay)} MWh`],['Productible annuel','≈ 1,7 TWh'],['Dimensions','143 m × 50 m'],['Emprise', U.osm? 'bâtiment OSM' : U.penstocks ? 'calée sur les 6 conduites forcées OSM' : `indicative ${EST}`]]);
     h += '<h3>Groupes</h3><div class="tblwrap"><table><thead><tr><th>Groupe</th><th>État</th><th>MW</th><th>m³/s</th></tr></thead><tbody>'+GROUPS.map(g=>{const st=groupState(g);return `<tr data-sel="${g.id}"><td>${g.id}</td><td>${pill(st,GSTLAB[st])}</td><td class="n">${nf1.format(g.p)}</td><td class="n">${nf0.format(g.q)}</td></tr>`;}).join('')+'</tbody></table></div>';
   } else if(e.id==='barrage'){
     h += `<p>Barrage-poids en béton de six plots, un par groupe. Mis en eau les 19 et 20 janvier 1948.</p>`;
@@ -1605,7 +1639,7 @@ function renderFiche(){
   } else if(e.id==='retenue'){
     h += kv([['Cote', `${nf2.format(S.zRes)} m NGF ${EST}`],['Retenue normale', `${nf1.format(SITE.zNormal)} m NGF`],['Longueur','≈ 23 km (jusqu\'à la Suisse)'],['Capacité utile','12 hm³'],['Débit entrant', `${nf0.format(S.qin)} m³/s ${EST}`],['Tendance', `${S.qin - S.qTurb - S.qSpill >= 0 ? '↗ remplissage':'↘ vidange'} ${nf0.format(Math.abs(S.qin - S.qTurb - S.qSpill))} m³/s`]]);
   } else if(e.id==='evacRD'){
-    h += kv([['Débit déversé', `${nf0.format(S.qSpill)} m³/s`],['État', S.qSpill>5?'Déverse':'Fermé'],['Implantation', `saut de ski rive droite ${EST}`]]);
+    h += kv([['Débit déversé', `${nf0.format(S.qSpill)} m³/s`],['État', S.qSpill>5?'Déverse':'Fermé'],['Implantation', EV.skijump ? 'saut de ski au-dessus de l\'usine (orthophoto)' : `saut de ski rive droite ${EST}`],['Pertuis', `5 ${EST}`]]);
   } else if(e.id==='evacRG'){ h += '<p class="note">Galerie évacuatrice en rive gauche, en réserve pour les crues exceptionnelles. Implantation estimée.</p>';
   } else if(e.id==='vidange'){ h += kv([['Ouvrage','Ancienne galerie de dérivation RD'],['État', S.vidangeOK? 'Disponible, fermée':'Indisponible (chantier)']]);
   } else if(e.id==='poste'){ h += kv([['Puissance évacuée', `${nf0.format(S.P)} MW ${EST}`],['Implantation', posteReal? 'emprise OSM (power=substation)' : `indicative ${EST}`],['Lignes HT', lineCurves.length && OSM && (OSM.power_lines||[]).length ? 'tracé OSM réel' : `indicatives ${EST}`]]);
@@ -1734,7 +1768,7 @@ function renderInst(){
     ['usine','Groupes auxiliaires (×2)','service','4,2 MW '+EST,'2 × 2,5 MVA'],
     ['barrage','Barrage-poids','service','—','auscultation normale'],
     ['retenue','Retenue', S.zRes>SITE.zNormal?'partiel':'service', `${nf2.format(S.zRes)} m`, ''],
-    ['evacRD','Évacuateur RD', S.qSpill>5?'service':'arret', `${nf0.format(S.qSpill)} m³/s`, ''],
+    ['evacRD', EV.skijump ? 'Évacuateur (saut de ski)' : 'Évacuateur RD', S.qSpill>5?'service':'arret', `${nf0.format(S.qSpill)} m³/s`, ''],
     ['evacRG','Galerie évacuatrice RG','arret','—','réserve'],
     ['vidange','Vidange de fond', S.vidangeOK?'arret':'partiel','—', S.vidangeOK?'disponible':'indisponible (chantier)'],
     ['poste','Poste HT', S.P>1?'service':'arret', `${nf0.format(S.P)} MW`, posteReal? 'emprise OSM' : 'implantation est.']
@@ -1785,7 +1819,7 @@ function updateChart(){
 <ul>
 ${REAL ? `<li><strong>Relief</strong> : IGN RGE ALTI${T.source? ' — '+T.source.replace(/^IGN RGE ALTI ?/,''):''}, Géoplateforme, reprojeté en Lambert 93 (EPSG:2154), emprise 2,4 × 2,4 km centrée sur la crête${gen}. Cote de l'eau lue sur le MNT : retenue ${ws.up? nf1.format(ws.up)+' m':'—'}, Rhône aval ${ws.down? nf1.format(ws.down)+' m':'—'} NGF.</li>` : ''}
 ${REAL && GEO.ortho ? `<li><strong>Orthophotographie</strong> : IGN BD ORTHO (Géoplateforme), drapée sur le relief.</li>` : ''}
-${OSM ? `<li><strong>Implantations</strong> (OpenStreetMap${OSM.extract? ', extraction du '+OSM.extract.slice(0,10):''}) : axe du barrage (${OSM.dam && OSM.dam.name ? OSM.dam.name : 'waterway=dam'}), contour du Rhône amont et aval, ${osmBld} bâtiments${U.osm? ' dont l\'emprise de l\'usine':''}, ${osmLines} lignes électriques et ${nOsm('towers')} pylônes${posteReal? ', poste électrique':''}.</li>` : ''}
+${OSM ? `<li><strong>Implantations</strong> (OpenStreetMap${OSM.extract? ', extraction du '+OSM.extract.slice(0,10):''}) : axe du barrage (${OSM.dam && OSM.dam.name ? OSM.dam.name : 'waterway=dam'}), contour du Rhône amont et aval, ${osmBld} bâtiments${U.osm? ' dont l\'emprise de l\'usine':''}${U.penstocks? ', les 6 conduites forcées (position des groupes)':''}, ${osmLines} lignes électriques et ${nOsm('towers')} pylônes${posteReal? ', poste électrique':''}.</li>` : ''}
 <li>Barrage-poids de 104 m de haut (fondations comprises), 140 m en crête, 100 m à la base, 9 m d'épaisseur en crête, parement amont vertical ; mise en eau les 19 et 20 janvier 1948 ; inauguration le 1<sup>er</sup> août 1948.</li>
 <li>Cote de crête 335,7 m NGF ; retenue normale 330,7 m NGF (CFBR).</li>
 <li>Usine en pied de barrage : 143 m de long, 50 m de haut des aspirateurs au toit. Six groupes Francis verticaux de 70 MW (66 MW selon certaines sources), 750 m³/s turbinables, chute maximale de 67 m ; deux groupes auxiliaires de 2,5 MVA.</li>
@@ -1797,7 +1831,7 @@ ${OSM ? `<li><strong>Implantations</strong> (OpenStreetMap${OSM.extract? ', extr
 <h3>Estimé <em class="est">est.</em></h3>
 <ul>
 ${REAL ? `<li><strong>Lit sous l'eau</strong> : le MNT donne la surface de l'eau ; le fond est creusé sous le contour OSM (profondeur estimée) pour que la cote simulée reste visible.</li>` : `<li><strong>Relief</strong> : gorge procédurale. Les données IGN (RGE ALTI, BD ORTHO) et OpenStreetMap ne sont pas embarquées dans cette version de la page : relancer <code>tools/prepare_data.py</code> puis <code>tools/build_page.py</code>.</li><li><strong>Positions</strong> : axe du barrage calé à ~46,052 N / 5,813 E, implantations indicatives.</li>`}
-<li><strong>Ouvrages absents d'OSM</strong> : évacuateur en saut de ski RD, galerie évacuatrice RG et vidange de fond placés de façon indicative par rapport à l'axe réel${U.osm? '' : ' ; emprise de l\'usine'} ; hauteur visible de l'usine au-dessus du Rhône.</li>
+<li><strong>Ouvrages absents d'OSM</strong> : ${EV.skijump ? 'pertuis de l\'évacuateur (le saut de ski au-dessus de l\'usine se lit sur l\'orthophoto)' : 'évacuateur en saut de ski RD'}, galerie évacuatrice RG et vidange de fond placés de façon indicative par rapport à l'axe réel${U.osm? '' : ' ; emprise de l\'usine'} ; hauteur visible de l'usine au-dessus du Rhône.</li>
 ${posteReal && osmLines ? '' : '<li>Poste HT et lignes : implantation indicative (absents de l\'extraction OSM).</li>'}
 <li><strong>Hydrologie</strong> : cote minimale 325 m, surface de retenue 3 km², débit entrant saisonnier, loi de cote aval${REAL && ws.down? ' (calée sur la cote mesurée)':''}, rendement 90 %, programme d'éclusées.</li>
 <li>Compteurs d'heures et de démarrages des groupes ; puissance des auxiliaires.</li>
@@ -1974,6 +2008,7 @@ function tick(){
 renderFiche(); updateLabels(); renderKpis();
 requestAnimationFrame(tick);
 window.__sim = S;
+window.__view = { camera, controls, DW, scene, THREE };  // pour les vérifications headless
 </script>
 
 </body></html>

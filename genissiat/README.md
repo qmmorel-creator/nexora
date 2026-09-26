@@ -11,6 +11,9 @@ python tools/prepare_data.py      # télécharge IGN + OSM → data/terrain.json
 python tools/build_page.py        # embarque les données dans genissiat.html (16 Mo maximum)
 ```
 
+- Sur GitHub, le workflow `Génissiat — données réelles` (`.github/workflows/genissiat-data.yml`)
+  lance `prepare_data.py` à chaque modification du script (ou à la demande) et committe `data/`
+  sur la branche. Il faut ensuite relancer `build_page.py`.
 - Les réponses brutes des services sont gardées dans `data/raw/` (hors git).
   `prepare_data.py --offline` les retraite sans réseau.
 - `data/report.json` consigne les contrôles de cohérence : cote de l'eau lue sur le MNT
@@ -31,3 +34,8 @@ Repère local : origine au milieu de la crête (géométrie OSM `waterway=dam`),
 y = altitude m NGF, axes de la grille Lambert 93 (EPSG:2154). Aucune donnée Google.
 
 Scripts de la page : Three.js 0.160 et Chart.js 4.4.1 depuis `cdn.jsdelivr.net/npm`, versions figées.
+
+## Captures
+
+`captures/` : vue d'ordinateur (1440 × 880), mobile (400 × 820), vue zénithale de contrôle du
+calage (crête de l'orthophoto sous le modèle 3D) et vue rapprochée du barrage-usine.
