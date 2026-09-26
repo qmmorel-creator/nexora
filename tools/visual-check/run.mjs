@@ -46,6 +46,38 @@ const launchOptions = { args: ["--use-angle=swiftshader", "--enable-unsafe-swift
 const browser = await playwright.chromium.launch(launchOptions);
 const page = await browser.newPage({ viewport: { width: 1400, height: 1100 } });
 
+// Vues 3D sous rendu logiciel : mesuré seul, une page 3D tourne à 1 ou 2
+// images/s et une image dure jusqu'à 3,6 s pendant un déplacement de caméra.
+// Un clic Playwright attend plusieurs images (visible, stable, cible atteinte),
+// si bien que 30 s ne suffisent pas toujours quand la machine est chargée : les
+// boutons HTML ne bougent pas, c'est le rendu qui n'avance plus. Les pages 3D
+// reçoivent donc un délai d'attente par défaut plus long ; ce qui est vérifié
+// ne change pas, seul le temps accordé pour y parvenir.
+const SLOW_3D_MS = 90000;
+const page3d = async (options) => {
+  const pg = await browser.newPage(options);
+  pg.setDefaultTimeout(SLOW_3D_MS);
+  return pg;
+};
+// Une page 3D laissée ouverte par un scénario en échec continue de dessiner et
+// affame les scénarios suivants : chaque scénario 3D ferme ses pages en sortant.
+const closeScenarioPages = async () => {
+  for (const pg of browser.contexts().flatMap((c) => c.pages())) if (pg !== page) await pg.close().catch(() => {});
+};
+// Captures des vues 3D par le protocole du navigateur : `page.screenshot`
+// attend le chargement des polices, qui peut expirer sous rendu logiciel et
+// interrompait tout le scénario. Une capture n'est pas un contrôle.
+const shot3d = async (pg, name) => {
+  try {
+    const cdp = await pg.context().newCDPSession(pg);
+    const sh = await cdp.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(path.join(dir, name), Buffer.from(sh.data, "base64"));
+    await cdp.detach().catch(() => {});
+  } catch (e) {
+    console.warn(`Capture ${name} non écrite : ${String(e).split("\n")[0]}`);
+  }
+};
+
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 // Babel signale en console qu'il ne stylise pas un script de plus de 500 Ko :
@@ -1167,6 +1199,10 @@ try {
   // Dans la fiche d'un jalon, la PREMIÈRE liste déroulante est le type ; la
   // seconde est la tâche rattachée, celle qu'on veut contrôler ici.
   const triggers = page.locator(".lp-modal .lp-activity-search-trigger");
+  // La fiche se remplit après l'ouverture de la modale : compter tout de suite
+  // donnait parfois 0 sur une machine chargée. On attend les deux listes, puis
+  // on compte ; délai dépassé, le compte est jugé tel quel.
+  await page.waitForFunction(() => document.querySelectorAll(".lp-modal .lp-activity-search-trigger").length > 1, null, { timeout: 15000 }).catch(() => {});
   dropdown.triggers = await triggers.count();
   if (dropdown.triggers > 1) {
     await triggers.nth(1).click();
@@ -1895,7 +1931,7 @@ try {
     await pg.waitForSelector(".lp-carte-stage", { timeout: 90000 });
     await closeGuide(pg);
   };
-  const cp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const cp = await page3d({ viewport: { width: 1400, height: 900 } });
   cp.on("pageerror", (e) => pageErrors.push("Carte : " + e.message));
   await cp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
   // Parcours au clavier et à la souris : effets avancés coupés (voir harness.jsx).
@@ -1919,6 +1955,10 @@ try {
   await cp.fill(".lp-carte-search input", "Passerelle");
   carte.suggestions = await cp.$$eval(".lp-carte-sugg button", (b) => b.map((x) => x.textContent));
   await cp.press(".lp-carte-search input", "Enter");
+  // Le territoire courant ne change qu'une fois la caméra arrivée : sous rendu
+  // logiciel, 1,5 s ne suffisait pas toujours (lu « p1 », le point de départ).
+  // Délai dépassé : on lit quand même, le contrôle juge la valeur.
+  await cp.waitForFunction(() => document.querySelector(".lp-carte-stage").dataset.carteTerritory === "banc-p4", null, { timeout: 60000 }).catch(() => {});
   await cp.waitForTimeout(1500);
   carte.territory = await cp.getAttribute(".lp-carte-stage", "data-carte-territory");
   // #365 : le panneau liste les projets de la région et les tâches du projet.
@@ -1954,12 +1994,21 @@ try {
     halo: await cp.evaluate(() => (window.__carteBench && window.__carteBench.engine ? window.__carteBench.engine.fxState().focus : -1)),
     count: await cp.$eval('[data-focus-quick="carte"] .lp-focus-quick-count', (e) => Number(e.textContent)).catch(() => -1),
   };
+  // Attente explicite : le bouton a basculé ET la scène a été recomptée (le
+  // compteur de la scène diffère de l'état précédent) ; les valeurs sont
+  // ensuite lues et jugées comme avant. Délai dépassé : on lit quand même.
+  const focusToggled = (pressed, before) => cp.waitForFunction(([p, b]) => {
+    const btn = document.querySelector('[data-focus-quick="carte"]'), st = document.querySelector(".lp-carte-stage");
+    return btn && st && btn.getAttribute("aria-pressed") === p && st.dataset.carteShown !== String(b);
+  }, [pressed, before], { timeout: 30000 }).catch(() => {});
   await cp.click('[data-focus-quick="carte"]');
+  await focusToggled("true", carte.quick.all);
   await cp.waitForTimeout(800);
   carte.focus.shown = await shownOf();
   carte.focus.pressed = await cp.getAttribute('[data-focus-quick="carte"]', "aria-pressed");
   carte.focus.haloFiltered = await cp.evaluate(() => (window.__carteBench && window.__carteBench.engine ? window.__carteBench.engine.fxState().focus : -1));
   await cp.click('[data-focus-quick="carte"]');
+  await focusToggled("false", carte.focus.shown);
   await cp.waitForTimeout(800);
   carte.focus.back = await shownOf();
   await quick("crits", "Criticité : Urgentes");
@@ -1977,6 +2026,10 @@ try {
   const shownNow = () => cp.evaluate(() => Number(document.querySelector(".lp-carte-stage").dataset.carteShown));
   const shownBefore = await shownNow();
   await cp.click('.lp-carte-toolbar button:has-text("Fil d\'Ariane")');
+  // Les étapes numérotées sont des étiquettes projetées : elles n'apparaissent
+  // qu'après quelques images (lues à 0 ou 4 selon la charge). Attente
+  // explicite, puis lecture et jugement comme avant.
+  await cp.waitForFunction(() => document.querySelector("[data-carte-ariadne]") && document.querySelectorAll(".lp-carte-step").length > 0, null, { timeout: 60000 }).catch(() => {});
   await cp.waitForTimeout(1200);
   carte.ariadne = await cp.evaluate(() => { const pill = document.querySelector("[data-carte-ariadne]"); return { pill: !!pill, n: pill ? Number(pill.dataset.carteAriadne) : -1, steps: document.querySelectorAll(".lp-carte-step").length }; });
   carte.ariadne.before = shownBefore;
@@ -2042,7 +2095,7 @@ try {
   carte.detailTitle = await cp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
   carte.detailSections = await cp.$$eval(".lp-carte-detail .lp-carte-section-title", (e) => e.map((x) => x.textContent));
   carte.tasksAfter = await cp.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
-  await cp.screenshot({ path: path.join(dir, "carte.png") });
+  await shot3d(cp, "carte.png");
   // #371 : l'avancement réglé dans le volet est enregistré par Nexora.
   const progressOf = async (id) => cp.evaluate(async (tid) => { const all = JSON.parse((await window.storage.get("nexora:tasks")).value); const t = all.find((x) => x.id === tid); return t ? (t.progress || 0) : null; }, id);
   carte.progressBefore = await progressOf(carte.selected);
@@ -2051,7 +2104,9 @@ try {
   if (slider) {
     await slider.focus();
     for (let i = 0; i < 4; i++) { await cp.keyboard.press(carte.progressBefore >= 80 ? "ArrowLeft" : "ArrowRight"); await cp.waitForTimeout(120); }
-    await cp.waitForTimeout(2500);
+    // Attente explicite de l'enregistrement (sous rendu logiciel, 2,5 s fixes
+    // ne suffisent pas toujours) ; délai dépassé, la valeur est jugée telle quelle.
+    await cp.waitForFunction(async ([tid, before]) => { try { const t = JSON.parse((await window.storage.get("nexora:tasks")).value).find((x) => x.id === tid); return !!t && (t.progress || 0) !== before; } catch (e) { return false; } }, [carte.selected, carte.progressBefore], { timeout: 30000, polling: 500 }).catch(() => {});
     carte.progressAfter = await progressOf(carte.selected);
   }
   // « Ouvrir la fiche » ouvre la fiche Nexora habituelle.
@@ -2072,13 +2127,16 @@ try {
 
   // Tâche d'un calendrier public synchronisé : volet en lecture seule, rien
   // n'est enregistré (elle serait reconstruite à la synchronisation suivante).
-  const sp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const sp = await page3d({ viewport: { width: 1400, height: 900 } });
   sp.on("pageerror", (e) => pageErrors.push("Carte synchronisée : " + e.message));
   await sp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
   await openCarte(sp, "sync");
   await sp.waitForSelector('.lp-carte-stage[data-carte-status="ready"]', { timeout: 60000 });
   await sp.waitForTimeout(1500);
   const syncTask = () => sp.evaluate(async () => JSON.stringify(JSON.parse((await window.storage.get("nexora:tasks")).value).find((t) => t.id === "banc-tsync") || null));
+  // Relevé de référence une fois la tâche chargée (lue « null » sur une
+  // machine chargée, ce qui faisait conclure à tort à une modification).
+  await sp.waitForFunction(async () => { try { return JSON.parse((await window.storage.get("nexora:tasks")).value).some((t) => t.id === "banc-tsync"); } catch (e) { return false; } }, null, { timeout: 60000 }).catch(() => {});
   const syncBefore = await syncTask();
   await sp.fill(".lp-carte-search input", "Jours fériés");
   await sp.press(".lp-carte-search input", "Enter");
@@ -2096,11 +2154,13 @@ try {
       doneBtn: !!document.querySelector(".lp-carte-detail .lp-carte-btn-done"),
     };
   });
-  carte.syncUnchanged = syncBefore !== "null" && syncBefore === await syncTask();
+  const syncAfter = await syncTask();
+  carte.syncUnchanged = syncBefore !== "null" && syncBefore === syncAfter;
+  if (!carte.syncUnchanged) carte.syncDiff = { before: syncBefore, after: syncAfter };
   await sp.close();
 
   // Mobile : manette, fiche en tiroir, aucun défilement horizontal.
-  const mp = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const mp = await page3d({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   mp.on("pageerror", (e) => pageErrors.push("Carte mobile : " + e.message));
   await mp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
   await openCarte(mp, "demo");
@@ -2115,11 +2175,11 @@ try {
     panelHidden: !document.querySelector(".lp-carte-panel") && !!document.querySelector(".lp-carte-panel-toggle"),
     stageWidth: document.querySelector(".lp-carte-stage").getBoundingClientRect().width,
   }));
-  await mp.screenshot({ path: path.join(dir, "carte-mobile.png") });
+  await shot3d(mp, "carte-mobile.png");
   await mp.close();
 
   // Gros volume : 300 projets, 12 000 tâches.
-  const vp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const vp = await page3d({ viewport: { width: 1400, height: 900 } });
   vp.on("pageerror", (e) => pageErrors.push("Carte volume : " + e.message));
   await vp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
   const t0 = Date.now();
@@ -2131,11 +2191,11 @@ try {
   await vp.click('button:has-text("Vue d\'ensemble")');
   await vp.waitForTimeout(2500);
   carte.volumeOverlaps = await vp.evaluate(labelOverlaps);
-  await vp.screenshot({ path: path.join(dir, "carte-volume.png") });
+  await shot3d(vp, "carte-volume.png");
   await vp.close();
 
   // Sans WebGL : liste de repli, fiches accessibles.
-  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const fp = await page3d({ viewport: { width: 1400, height: 900 } });
   fp.on("pageerror", (e) => pageErrors.push("Carte sans WebGL : " + e.message));
   await fp.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
   await fp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
@@ -2149,6 +2209,8 @@ try {
   await fp.close();
 } catch (e) {
   carte.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ") + " — état : " + JSON.stringify({ territory: carte.territory, near: carte.near, selected: carte.selected, panel: carte.panel });
+} finally {
+  await closeScenarioPages();
 }
 
 // Gestes de la Carte (#503, #510), sur une page à part : un échec du
@@ -2163,7 +2225,7 @@ try {
   // Une page Carte restée ouverte après un échec du parcours principal
   // (rendu logiciel) affamerait celle-ci : on la ferme d'abord.
   for (const pg of browser.contexts().flatMap((c) => c.pages())) if (/view=carte/.test(pg.url())) await pg.close().catch(() => {});
-  const gp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const gp = await page3d({ viewport: { width: 1400, height: 900 } });
   try {
     gp.on("pageerror", (e) => pageErrors.push("Carte (gestes) : " + e.message));
     await gp.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
@@ -2250,7 +2312,7 @@ try {
       const k1 = await gp.evaluate(() => window.__carteBench.engine.fxState());
       G.folderGo = { goal: k1.walkTo, moved: Math.hypot(k1.keeper[0] - k0.keeper[0], k1.keeper[1] - k0.keeper[1]), pop: await gp.$$eval(".lp-carte-folder-pop", (e) => e.length) };
     }
-    await gp.screenshot({ path: path.join(dir, "carte-gestes.png"), timeout: 60000 }).catch(() => {});
+    await shot3d(gp, "carte-gestes.png");
   } catch (e) {
     carte.gestures.error = String(e).split("\n")[0];
   }
@@ -2288,9 +2350,17 @@ try {
     await closeGuide(pg);
   };
   const attr = (pg, name) => pg.getAttribute(".lp-cosmos-stage", "data-cosmos-" + name);
-  const until = (pg, name, value) => pg.waitForFunction(([n, v]) => { const s = document.querySelector(".lp-cosmos-stage"); return s && s.getAttribute("data-cosmos-" + n) === v; }, [name, value], { timeout: 15000 });
+  const until = (pg, name, value) => pg.waitForFunction(([n, v]) => { const s = document.querySelector(".lp-cosmos-stage"); return s && s.getAttribute("data-cosmos-" + n) === v; }, [name, value], { timeout: 60000 });
+  // Les étiquettes sont projetées par le moteur 3D : elles n'existent qu'une
+  // fois la scène dessinée. On attend qu'elle soit affichée avant de cliquer
+  // (la stabilité image par image reste vérifiée par Playwright) ; absente,
+  // l'échec dit ce qui manque au lieu d'un délai dépassé muet.
+  const labelShown = (pg, sel) => pg.waitForFunction((s) => { const el = document.querySelector(s); return !!el && el.classList.contains("is-on"); }, sel, { timeout: 60000 }).catch(async () => {
+    const shown = await pg.$$eval(".lp-cosmos-label.is-on", (l) => l.map((x) => x.dataset.cosmosId || x.className)).catch(() => []);
+    throw new Error(`étiquette ${sel} non affichée ; étiquettes affichées dans la scène : ${shown.length} ${JSON.stringify(shown.slice(0, 8))}`);
+  });
   const tasksNow = (pg) => pg.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
-  const qp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const qp = await page3d({ viewport: { width: 1400, height: 900 } });
   qp.on("pageerror", (e) => pageErrors.push("Cosmos : " + e.message));
   await offline(qp);
   await openCosmos(qp, "demo");
@@ -2302,12 +2372,14 @@ try {
   // Univers : une galaxie par dossier racine, vide comprise, plus « À trier ».
   cosmos.galaxyLabels = await qp.$$eval('.lp-cosmos-label--galaxy', (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.querySelector("b").textContent));
   cosmos.overlapsUniverse = await qp.evaluate(cosmosOverlaps);
-  await qp.screenshot({ path: path.join(dir, "cosmos-univers.png") });
+  await shot3d(qp, "cosmos-univers.png");
   // Clic : sélection ; re-clic : entrée dans la galaxie.
+  await labelShown(qp, '.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
   await qp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
   await until(qp, "selected", "galaxy:banc-cf1");
   cosmos.summaryTitle = await qp.$eval(".lp-cosmos-panel .lp-cosmos-title", (e) => e.textContent).catch(() => "");
   await qp.waitForTimeout(1500);
+  await labelShown(qp, '.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
   await qp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-cf1"]');
   await until(qp, "level", "galaxy");
   await qp.waitForTimeout(2500);
@@ -2316,8 +2388,9 @@ try {
   cosmos.overlapsGalaxy = await qp.evaluate(cosmosOverlaps);
   // #421 : le soleil-tableau de bord affiche l'avancement du dossier.
   cosmos.sunLabel = await qp.$$eval(".lp-cosmos-label--sun", (l) => l.filter((x) => x.classList.contains("is-on")).map((x) => x.textContent));
-  await qp.screenshot({ path: path.join(dir, "cosmos-galaxie.png") });
+  await shot3d(qp, "cosmos-galaxie.png");
   // Planète : double-clic sur le projet.
+  await labelShown(qp, '.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]');
   await qp.dblclick('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]');
   await until(qp, "planet", "banc-cp1");
   await qp.waitForTimeout(2500);
@@ -2326,12 +2399,13 @@ try {
   // #421 : tâche urgente et en retard (variante E) et compteurs de la planète.
   cosmos.flagged = await qp.$eval('.lp-cosmos-label--task[data-cosmos-id="banc-ct7"]', (e) => ({ on: e.classList.contains("is-on"), urgent: e.classList.contains("is-urgent"), late: e.classList.contains("is-late"), text: e.textContent })).catch(() => null);
   cosmos.planetChips = await qp.$eval('.lp-cosmos-label--planet[data-cosmos-id="banc-cp1"]', (e) => e.textContent).catch(() => "");
+  await labelShown(qp, '.lp-cosmos-label--task[data-cosmos-id="banc-ct1"]');
   await qp.click('.lp-cosmos-label--task[data-cosmos-id="banc-ct1"]');
   await until(qp, "selected", "task:banc-ct1");
   await qp.waitForSelector(".lp-carte-detail", { timeout: 5000 });
   cosmos.detailTitle = await qp.$eval(".lp-carte-detail-title", (e) => e.textContent).catch(() => "");
   await qp.waitForTimeout(2500);
-  await qp.screenshot({ path: path.join(dir, "cosmos-planete.png") });
+  await shot3d(qp, "cosmos-planete.png");
   // Explorer (clics, orbites animées, zoom) n'a rien écrit.
   await qp.mouse.move(500, 500); await qp.mouse.wheel(0, 200); await qp.waitForTimeout(800);
   cosmos.tasksAfterExplore = await tasksNow(qp);
@@ -2368,7 +2442,7 @@ try {
   await qp.close();
 
   // Univers vide.
-  const ep = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const ep = await page3d({ viewport: { width: 1400, height: 900 } });
   ep.on("pageerror", (e) => pageErrors.push("Cosmos vide : " + e.message));
   await offline(ep);
   await openCosmos(ep, "empty");
@@ -2377,7 +2451,7 @@ try {
   await ep.close();
 
   // Écran étroit : panneau replié, commandes accessibles, sans défilement horizontal.
-  const mp = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const mp = await page3d({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   mp.on("pageerror", (e) => pageErrors.push("Cosmos mobile : " + e.message));
   await offline(mp);
   await openCosmos(mp, "demo");
@@ -2391,11 +2465,11 @@ try {
     rail: !!document.querySelector(".lp-cosmos-rail"),
     crumbs: !!document.querySelector(".lp-cosmos-crumbs"),
   }));
-  await mp.screenshot({ path: path.join(dir, "cosmos-mobile.png") });
+  await shot3d(mp, "cosmos-mobile.png");
   await mp.close();
 
   // Gros volume : 300 projets, 12 000 tâches.
-  const vp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const vp = await page3d({ viewport: { width: 1400, height: 900 } });
   vp.on("pageerror", (e) => pageErrors.push("Cosmos volume : " + e.message));
   await offline(vp);
   const t0 = Date.now();
@@ -2406,18 +2480,20 @@ try {
   cosmos.volumeQuality = await vp.$eval(".lp-cosmos-quality", (e) => e.textContent);
   await vp.waitForTimeout(2500);
   cosmos.volumeOverlaps = await vp.evaluate(cosmosOverlaps);
-  await vp.screenshot({ path: path.join(dir, "cosmos-volume.png") });
+  await shot3d(vp, "cosmos-volume.png");
+  await labelShown(vp, '.lp-cosmos-label--galaxy[data-cosmos-id="banc-vf0"]');
   await vp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-vf0"]');
-  await vp.waitForTimeout(800);
+  await until(vp, "selected", "galaxy:banc-vf0");
+  await labelShown(vp, '.lp-cosmos-label--galaxy[data-cosmos-id="banc-vf0"]');
   await vp.click('.lp-cosmos-label--galaxy[data-cosmos-id="banc-vf0"]');
   await until(vp, "level", "galaxy");
   await vp.waitForTimeout(2500);
   cosmos.volumeGalaxyOverlaps = await vp.evaluate(cosmosOverlaps);
-  await vp.screenshot({ path: path.join(dir, "cosmos-volume-galaxie.png") });
+  await shot3d(vp, "cosmos-volume-galaxie.png");
   await vp.close();
 
   // Sans WebGL : liste de repli, fiches accessibles.
-  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const fp = await page3d({ viewport: { width: 1400, height: 900 } });
   fp.on("pageerror", (e) => pageErrors.push("Cosmos sans WebGL : " + e.message));
   await fp.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
   await offline(fp);
@@ -2431,7 +2507,9 @@ try {
   cosmos.fallbackModal = await fp.$$eval(".lp-modal", (m) => m.length);
   await fp.close();
 } catch (e) {
-  cosmos.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
+  cosmos.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ") || String(e).split("\n")[0];
+} finally {
+  await closeScenarioPages();
 }
 // --- Vue Réunions 3D (#514) --------------------------------------------------
 // Données FICTIVES (`reunions=demo`) : la vue s'ouvre sur la semaine courante,
@@ -2458,7 +2536,7 @@ try {
   const tasksNow = (pg) => pg.evaluate(async () => (await window.storage.get("nexora:tasks")).value);
   // Rendu logiciel lent : on attend que la caméra (zoom doux) soit arrivée.
   const settle = (pg) => pg.waitForFunction(() => window.__reu3dBench && window.__reu3dBench.engine && window.__reu3dBench.engine.settled(), null, { timeout: 60000, polling: 250 });
-  const rp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const rp = await page3d({ viewport: { width: 1400, height: 900 } });
   rp.on("pageerror", (e) => pageErrors.push("Réunions 3D : " + e.message));
   await reuOffline(rp);
   await openReu(rp);
@@ -2470,24 +2548,32 @@ try {
   reu.week = await ds(rp);
   reu.weekHud = await hud(rp);
   reu.engine = await rp.evaluate(() => (window.__reu3dBench && window.__reu3dBench.engine ? window.__reu3dBench.engine.info() : null));
-  await rp.screenshot({ path: path.join(dir, "reunions-semaine.png"), timeout: 60000 }).catch(() => {}); // capture seule, pas un contrôle
+  await shot3d(rp, "reunions-semaine.png"); // capture seule, pas un contrôle
   // Filtre de période : Mois, mois précédent, retour à la période courante.
   await rp.click('.lp-reu-seg button:has-text("Mois")');
   await rp.waitForFunction(() => document.querySelector(".lp-reu-stage").dataset.reuKind === "month", null, { timeout: 60000 });
-  await rp.waitForTimeout(2000);
+  await settle(rp);
   reu.month = await ds(rp);
   reu.monthHud = await hud(rp);
-  await rp.screenshot({ path: path.join(dir, "reunions-mois.png"), timeout: 60000 }).catch(() => {}); // capture seule, pas un contrôle
+  await shot3d(rp, "reunions-mois.png"); // capture seule, pas un contrôle
+  // Attentes explicites : la période affichée a changé, puis la caméra s'est
+  // posée (sous rendu logiciel, une image dure jusqu'à 3,6 s pendant le
+  // déplacement, ce qui faisait expirer le clic suivant). Délai dépassé : on
+  // lit quand même, le contrôle juge la valeur.
+  const periodIs = (pred, ref) => rp.waitForFunction(([p, r]) => { const v = document.querySelector(".lp-reu-stage").dataset.reuPeriod; return p === "differs" ? v !== r : v === r; }, [pred, ref], { timeout: 60000 }).catch(() => {});
   await rp.click('.lp-reu-nav button[aria-label="Mois précédent"]');
-  await rp.waitForTimeout(1200);
+  await periodIs("differs", reu.month.reuPeriod);
+  await settle(rp);
   reu.prevMonth = (await ds(rp)).reuPeriod;
   await rp.click(".lp-reu-cur");
-  await rp.waitForTimeout(1200);
+  await periodIs("equals", reu.month.reuPeriod);
+  await settle(rp);
   reu.backMonth = (await ds(rp)).reuPeriod;
   reu.prefs = await rp.evaluate(async () => { try { return JSON.parse((await window.storage.get("nexora:viewPrefs")).value).reunions3d; } catch (e) { return null; } });
   // Filtre rapide « Sans compte rendu » : la scène ne garde que ces pupitres.
   await rp.click('.lp-reu-quick [data-reu-quick="noreport"]');
-  await rp.waitForTimeout(1500);
+  await rp.waitForFunction(() => document.querySelector(".lp-reu-stage").dataset.reuQuick === "noreport", null, { timeout: 60000 }).catch(() => {});
+  await settle(rp);
   reu.noreport = { ...(await ds(rp)), button: (await hud(rp)).quick.noreport, pupitres: await rp.evaluate(() => window.__reu3dBench.engine.info().pupitres) };
   await rp.click('.lp-reu-quick [data-reu-quick="all"]');
   await rp.click('.lp-reu-seg button:has-text("Semaine")');
@@ -2503,7 +2589,7 @@ try {
   await settle(rp);
   reu.detail = await rp.$eval(".lp-reu-detail h3", (e) => e.textContent).catch(() => "");
   reu.zoom = await rp.evaluate(() => { const i = window.__reu3dBench.engine.info(); return i.dist / i.baseDist; });
-  await rp.screenshot({ path: path.join(dir, "reunions-selection.png"), timeout: 60000 }).catch(() => {}); // capture seule, pas un contrôle
+  await shot3d(rp, "reunions-selection.png"); // capture seule, pas un contrôle
   await rp.click(".lp-reu-open");
   await rp.waitForTimeout(800);
   reu.modalButton = await rp.$$eval(".lp-modal", (m) => m.length);
@@ -2523,7 +2609,7 @@ try {
   await rp.close();
 
   // Sans WebGL : les mêmes gradins en liste, chaque réunion ouvre sa fiche.
-  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const fp = await page3d({ viewport: { width: 1400, height: 900 } });
   fp.on("pageerror", (e) => pageErrors.push("Réunions 3D sans WebGL : " + e.message));
   await fp.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
   await reuOffline(fp);
@@ -2536,6 +2622,8 @@ try {
   await fp.close();
 } catch (e) {
   reu.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ") || String(e).split("\n")[0];
+} finally {
+  await closeScenarioPages();
 }
 
 // Vue « Fleuve du temps » (#515) : la vue s'ouvre, la date visée change
@@ -2545,12 +2633,7 @@ try {
 // immédiate, et les captures passent par le protocole du navigateur.
 const fleuve = {};
 try {
-  const fleuveShot = async (pg, name) => {
-    const cdp = await pg.context().newCDPSession(pg);
-    const sh = await cdp.send("Page.captureScreenshot", { format: "png" });
-    await writeFile(path.join(dir, name), Buffer.from(sh.data, "base64"));
-    await cdp.detach().catch(() => {});
-  };
+  const fleuveShot = shot3d;
   const offlineFleuve = (pg) => pg.route("**/*", (route) => { const url = route.request().url(); if (url.startsWith(`http://127.0.0.1:${port}`) || url.startsWith("data:") || url.startsWith("blob:")) return route.continue(); return route.fulfill({ status: 200, contentType: "image/png", body: TRANSPARENT_PNG }); });
   const openFleuve = async (pg) => {
     await pg.goto(`http://127.0.0.1:${port}/index.html?app=1&view=fleuve&fleuve=demo&fleuveQ=low`, { waitUntil: "load", timeout: 90000 });
@@ -2559,7 +2642,7 @@ try {
   };
   const fattr = (pg, name) => pg.getAttribute(".lp-fleuve-stage", "data-fleuve-" + name);
   const dayIs = (pg, min, max) => pg.waitForFunction(([lo, hi]) => { const s = document.querySelector(".lp-fleuve-stage"); const d = s ? +s.getAttribute("data-fleuve-day") : NaN; return d >= lo && d <= hi; }, [min, max == null ? 1e9 : max], { timeout: 30000 });
-  const fp = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const fp = await page3d({ viewport: { width: 1400, height: 900 } });
   fp.on("pageerror", (e) => pageErrors.push("Fleuve : " + e.message));
   await fp.emulateMedia({ reducedMotion: "reduce" });
   await offlineFleuve(fp);
@@ -2625,7 +2708,7 @@ try {
   await fp.close();
 
   // Sans WebGL : la liste de repli, semaine par semaine, ouvre la fiche.
-  const fb = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const fb = await page3d({ viewport: { width: 1400, height: 900 } });
   fb.on("pageerror", (e) => pageErrors.push("Fleuve sans WebGL : " + e.message));
   await fb.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/.test(type) ? null : orig.call(this, type, ...rest); }; });
   await offlineFleuve(fb);
@@ -2638,6 +2721,8 @@ try {
   await fb.close();
 } catch (e) {
   fleuve.error = String(e).split("\n").filter((l) => /Timeout|waiting for|Error/.test(l)).slice(0, 3).join(" · ");
+} finally {
+  await closeScenarioPages();
 }
 await browser.close();
 server.close();
@@ -3602,7 +3687,7 @@ if (!carte.error) {
   expect(carte.overlapsNear.n === 0, `Carte : ${carte.overlapsNear.n} libellé(s) superposé(s) sur ${carte.overlapsNear.count}`);
   expect(carte.stayOnProjectClick && carte.stayOnProjectClick.carte && carte.stayOnProjectClick.dimmed >= 1, `Carte : un clic sur un projet ou un dossier de la barre latérale quitte la Carte (${JSON.stringify(carte.stayOnProjectClick)})`);
   expect(carte.syncLock && /Toussaint/.test(carte.syncLock.title) && carte.syncLock.text && !carte.syncLock.selects && !carte.syncLock.sliders && !carte.syncLock.doneBtn, `Carte : tâche de calendrier synchronisé modifiable (${JSON.stringify(carte.syncLock)})`);
-  expect(carte.syncUnchanged, "Carte : ouvrir une tâche de calendrier synchronisé l'a modifiée");
+  expect(carte.syncUnchanged, `Carte : ouvrir une tâche de calendrier synchronisé l'a modifiée (${JSON.stringify(carte.syncDiff)})`);
   expect(!carteWidget.error && carteWidget.canvas >= 1 && carteWidget.toolbar >= 1, `Widget Carte (complet) : la carte ne monte pas dans le tableau de bord (${JSON.stringify(carteWidget)})`);
   expect(carteWidget.hint >= 1, `Widget Carte (complet) : pas d'invitation à agrandir un widget de 3 × 4 (${JSON.stringify(carteWidget)})`);
   expect(!cosmosWidget.error && cosmosWidget.canvas >= 1 && cosmosWidget.toolbar >= 1 && cosmosWidget.rail >= 1 && cosmosWidget.crumbs >= 1, `Widget Cosmos (complet) : l'univers ne monte pas dans le tableau de bord (${JSON.stringify(cosmosWidget)})`);

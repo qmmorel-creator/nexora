@@ -32,6 +32,16 @@ NODE_PATH=$(npm root -g) npm start
 CHROMIUM_PATH=/chemin/vers/chromium NODE_PATH=$(npm root -g) npm start   # binaire hors emplacement par défaut
 ```
 
+### Vues 3D sous rendu logiciel
+
+Les vues 3D (Carte, Cosmos, Réunions 3D, Fleuve du temps) tournent à 1 ou 2 images/s en
+SwiftShader, et une image peut durer plusieurs secondes pendant un déplacement de caméra. Un clic
+Playwright attend plusieurs images avant de partir : le banc accorde donc 90 s aux actions de ces
+pages (au lieu de 30 s), attend des conditions explicites (bouton basculé, période affichée,
+caméra posée, étiquette affichée) plutôt que des délais fixes, écrit leurs captures par le
+protocole du navigateur (une capture n'est pas un contrôle) et ferme les pages de chaque scénario
+en sortant, même en échec, pour ne pas ralentir les suivants. Ce qui est vérifié ne change pas.
+
 ## Ce qui est contrôlé
 
 Scénario « Carte » (#361), en WebGL logiciel (SwiftShader) : recherche d'un projet, marche au
