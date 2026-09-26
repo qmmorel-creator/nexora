@@ -22,6 +22,8 @@ const EMPTY_DASHBOARD_WIDGETS = [
     { id: "vide-countdown-filtre", type: "customCard", title: "countdown filtre", cardBlocks: [{ id: "cdb2", kind: "daysRemaining", countdownMode: "filter" }], layout: { x: 6, y: 40, w: 3, h: 4 } },
     // #439 : Cosmos (complet) à sa taille d'exploration, sans bandeau.
     { id: "vide-cosmos-large", type: "embedCosmos", title: "Cosmos (complet)", layout: { x: 0, y: 48, w: 12, h: 14 } },
+    // #515 : Fleuve du temps (complet), vide : message « fleuve calme ».
+    { id: "vide-fleuve-large", type: "embedFleuve", title: "Fleuve du temps (complet)", layout: { x: 0, y: 76, w: 12, h: 14 } },
     // #454 : Timeline 3D (complet), même taille d'exploration.
     { id: "vide-t3d-large", type: "embedTimeline3d", title: "Timeline 3D (complet)", layout: { x: 0, y: 62, w: 12, h: 14 } },
   ]);

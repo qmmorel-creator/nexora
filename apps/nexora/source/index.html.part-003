@@ -26397,7 +26397,7 @@ function createFleuveEngine(THREE, container, opts) {
   }
 
   // ---------- Données : bateaux, épaves, remous, halos, cordes, portiques ----------
-  let pickMesh = null, selMesh = null, boatMeshes = [], flagGeos = [];
+  let pickMesh = null, selMesh = null, selPin = null, boatMeshes = [], flagGeos = [];
   const dataMats = [];
   const dmat = (m) => { dataMats.push(m); return m; };
   function boatMatrix(b, bob, roll, out) {
@@ -26562,8 +26562,11 @@ function createFleuveEngine(THREE, container, opts) {
       b.tag = addTag({ pos: b.top, html: "<b>" + esc(m.title) + badge + fcs + "</b><small>" + esc(m.projectName) + " · " + String(m.hours).replace(".", ",") + " h · " + esc(when) + "</small>", color: m.color, prio: (m.late || m.crit ? 10 : 0) + (m.focus ? 8 : 0) + { barque: 1, voilier: 2, peniche: 3 }[m.kind], jam: m.jam, boat: b });
     });
     // Sélection et zone de clic.
-    selMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), dmat(new THREE.MeshBasicMaterial({ map: selTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })));
+    selMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-PI / 2), dmat(new THREE.MeshBasicMaterial({ map: selTex, transparent: true, depthWrite: false, color: "#ffc94a" })));
     selMesh.visible = false; selMesh.renderOrder = 5; dataG.add(selMesh);
+    // Repère doré au-dessus du bateau sélectionné.
+    selPin = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0).scale(0.8, 1.4, 0.8), mat("#ffc94a", { glow: true, gi: 1.4, rough: 0.4 }));
+    selPin.visible = false; selPin.castShadow = false; dataG.add(selPin);
     if (S.boats.length) {
       pickMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), dmat(new THREE.MeshBasicMaterial({ visible: false })), S.boats.length);
       S.boats.forEach((b, i) => {
@@ -26844,8 +26847,7 @@ function createFleuveEngine(THREE, container, opts) {
     renderer.shadowMap.enabled = hi;
     sun.castShadow = hi;
     if (hi) sun.shadow.mapSize.set(2048, 2048);
-    renderer.setSize(S.W, S.H, false);
-    setupPost();
+    if (changed || !S.sized || (hi && !rt)) { renderer.setSize(S.W, S.H, false); setupPost(); S.sized = true; }
     return changed;
   }
   function rebuild(force) {
@@ -26856,6 +26858,7 @@ function createFleuveEngine(THREE, container, opts) {
       buildWorld(S.model); S.worldKey = key;
     }
     buildData(S.model);
+    S.dirty = true;
     S.goal = fleuveClampDay(S.goal, S.model.range);
     if (!S.started) { S.cur = S.goal; S.started = true; }
     S.lastCur = null;
@@ -26893,7 +26896,9 @@ function createFleuveEngine(THREE, container, opts) {
     const kc = RM ? 1 : 1 - Math.exp(-dt * 9);
     Object.keys(goalCam).forEach((k) => { cam[k] += (goalCam[k] - cam[k]) * kc; if (Math.abs(goalCam[k] - cam[k]) < 1e-4) cam[k] = goalCam[k]; });
     const camKey = S.cur.toFixed(4) + ":" + cam.zoom.toFixed(4) + ":" + cam.yaw.toFixed(4) + ":" + cam.pitch.toFixed(4) + ":" + cam.pan.toFixed(4) + ":" + S.W + "x" + S.H;
-    if (camKey !== S.lastCamKey) {
+    // Rendu à la demande : rien ne bouge, rien ne se redessine.
+    const camChanged = camKey !== S.lastCamKey;
+    if (camChanged) {
       applyCamera();
       if (S.cur !== S.lastCur) { placeDateLine(S.cur); S.ports.forEach((P) => setLit(P, fleuveMilestoneLit(P.p.day, S.cur))); S.lastCur = S.cur; }
       S.lastCamKey = camKey; lastLayout = 0;
@@ -26914,8 +26919,9 @@ function createFleuveEngine(THREE, container, opts) {
       S.halos.forEach((h) => { h.material.opacity = 0.7 + Math.sin(t * 2) * 0.08; });
       if (S.anim.focus) { S.anim.focus.hm.opacity = 0.75 + Math.sin(t * 2.4) * 0.2; S.anim.focus.bm.opacity = 0.55 + Math.sin(t * 2.4 + 1) * 0.2; }
       if (selMesh && selMesh.visible) selMesh.material.opacity = 0.75 + Math.sin(t * 3) * 0.25;
+      if (selPin && selPin.visible) { selPin.rotation.y = t * 1.5; const b = S.boatById[S.selectedId]; if (b) selPin.position.y = b.top.y + 0.75 + Math.sin(t * 2.2) * 0.12; }
     }
-    render();
+    if (moving() || camChanged || S.dirty) { render(); S.dirty = false; }
     if (!lastLayout || now - lastLayout > 400) { layoutTags(); lastLayout = now; }
     emit(false);
   }
@@ -26935,7 +26941,7 @@ function createFleuveEngine(THREE, container, opts) {
     if (S.model && S.qualityPref === "auto" && fleuveResolveQuality("auto", W, S.model.boats.length + S.model.wrecks.length) !== before) { rebuild(true); return; }
     renderer.setSize(W, H, false);
     setupPost();
-    S.lastCamKey = "";
+    S.lastCamKey = ""; S.dirty = true;
   }
   const ro = new ResizeObserver(resize); ro.observe(container);
   { const r = container.getBoundingClientRect(); S.W = Math.max(1, Math.round(r.width)); S.H = Math.max(1, Math.round(r.height)); camera.aspect = S.W / S.H; camera.updateProjectionMatrix(); renderer.setSize(S.W, S.H, false); }
@@ -27058,15 +27064,16 @@ function createFleuveEngine(THREE, container, opts) {
       selMesh.visible = !!b;
       if (b) { const r = b.d.L + 1.6; selMesh.position.set(b.x, b.m.grounded ? 0.35 : 0.05, b.z); selMesh.scale.set(r, 1, r); }
     }
+    if (selPin) { selPin.visible = !!b; if (b) selPin.position.copy(b.top).add(V1.set(0, 0.75, 0)); }
     if (b && fly) goTo(b.m.day - 2.3);
-    lastLayout = 0;
+    lastLayout = 0; S.dirty = true;
     if (o.onSelect) o.onSelect(S.selectedId);
   }
 
   const api = {
     setData(model) { S.model = model; rebuild(false); },
     setQuality(q) { if (q === S.qualityPref) return; S.qualityPref = q; if (S.model) rebuild(true); },
-    setAnimate(b) { S.animate = b !== false; },
+    setAnimate(b) { S.animate = b !== false; S.dirty = true; },
     setLabels(b) { S.labels = b !== false; lastLayout = 0; },
     goTo, step(days) { goTo(S.goal + days); },
     stepWeek(dir) { if (S.model) goTo(fleuveStepWeek(S.goal, dir, S.model.range)); },
@@ -27216,6 +27223,7 @@ function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolba
   const focusCount = useMemo(() => carteFocusCount(scoped.filter((t) => t.state !== "done" && t.state !== "info")), [scoped]);
   const frise = useMemo(() => fleuveFrise(model), [model]);
   const target = fleuveTarget(model, day);
+  const openRef = useRef(null);
   const modelRef = useRef(model);
   modelRef.current = model;
 
@@ -27250,7 +27258,7 @@ function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolba
           keyTarget: stageRef.current, quality: cfg.quality, animate: cfg.animate, labels: cfg.labels,
           obstacles: () => (stageRef.current ? [...stageRef.current.querySelectorAll(".lp-fleuve-plate, .lp-carte-detail, .lp-fleuve-zoom, .lp-carte-small-hint")].map((e) => e.getBoundingClientRect()) : []),
           onSelect: (id) => setSelectedId(id),
-          onOpen: (id) => { const raw = (ctx.tasks || tasks || []).find((t) => t.id === id); if (raw) onOpen(raw); },
+          onOpen: (id) => openRef.current(id),
           onCursor: (cur) => {
             const m = modelRef.current;
             if (curRef.current && m) curRef.current.style.left = fleuveFrise(m).pct(cur) + "%";
@@ -27276,6 +27284,7 @@ function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolba
 
   const engine = () => engineRef.current;
   const openFiche = (id) => { const raw = allTasks.find((t) => t.id === id); if (raw) onOpen(raw); };
+  openRef.current = openFiche;
   const go = (d) => { const e = engine(); if (e) e.goTo(d); };
   const onFrise = (e) => { const r = friseRef.current.getBoundingClientRect(); go(fleuveFriseDay(model, (e.clientX - r.left) / r.width)); };
   const selB = selectedId ? model.byId[selectedId] : null;
@@ -27310,7 +27319,8 @@ function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolba
         <DropdownButton label="Affichage" icon={<SlidersHorizontal size={13} />} title="Capacité, étiquettes, légende, animations et qualité">
           <label className="lp-fleuve-capacity">
             <span>Capacité hebdomadaire</span>
-            <input type="number" min="1" max="168" step="0.5" value={cfg.capacity} aria-label="Capacité hebdomadaire en heures" onChange={(e) => setPrefs({ capacity: e.target.value })} />
+            <input key={cfg.capacity} type="number" min="1" max="168" step="0.5" defaultValue={cfg.capacity} aria-label="Capacité hebdomadaire en heures"
+              onBlur={(e) => { if (Number(e.target.value) !== cfg.capacity) setPrefs({ capacity: e.target.value }); }} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
             <span>h</span>
           </label>
           <p className="lp-carte-muted lp-fleuve-hint">Au-delà, la semaine forme un bouchon. Charge d'une tâche : son créneau horaire, sinon 3,5 h par jour de durée.</p>
@@ -27375,7 +27385,7 @@ function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolba
                     <button type="button" className="lp-fleuve-btn" title="Semaine suivante" onClick={() => engine() && engine().stepWeek(1)}>semaine ›</button>
                     <button type="button" className="lp-fleuve-btn is-gold" onClick={() => engine() && engine().today()}>Aujourd'hui</button>
                   </div>
-                  <div ref={friseRef} className="lp-fleuve-frise" onClick={onFrise} role="slider" aria-label="Frise des semaines et des jalons" aria-valuemin={model.range.navMin} aria-valuemax={Math.floor(model.range.navMax)} aria-valuenow={day} aria-valuetext={target.date}>
+                  <div ref={friseRef} className="lp-fleuve-frise" onClick={onFrise} onWheel={(e) => { const en = engine(); if (en) en.goTo(en.cursor() + fleuveWheelDays(e.deltaY, e.deltaMode)); }} role="slider" aria-label="Frise des semaines et des jalons" aria-valuemin={model.range.navMin} aria-valuemax={Math.floor(model.range.navMax)} aria-valuenow={day} aria-valuetext={target.date}>
                     {frise.weeks.map((w) => <div key={w.k} className={"lp-fleuve-wk" + (w.over ? " is-jam" : "")} style={{ left: w.left + "%", width: w.width + "%" }} title={w.over ? fleuveJamText(model.weeks[w.k]) : undefined}>{w.label}<small>{w.sub}</small></div>)}
                     <div className="lp-fleuve-today" style={{ left: frise.today + "%" }} />
                     {frise.milestones.map((m) => <div key={m.id} className={"lp-fleuve-ms" + (fleuveMilestoneLit(m.day, day + 0.99) ? " is-on" : "")} title={m.title + " · " + fleuveDayLabel(model.today, m.day, false)} style={{ left: m.left + "%", background: m.color }} />)}
@@ -27385,7 +27395,7 @@ function FleuveView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, toolba
                 {!small && (
                   <div className="lp-fleuve-plate lp-fleuve-flow"><div className="lp-fleuve-in">
                     ↑ Amont : semaines à venir<br />↓ Aval : aujourd'hui
-                    <span>Molette : voyager dans le temps<br />Ctrl + molette : zoomer<br />Glisser : se déplacer · molette enfoncée : tourner<br />Double-clic : ouvrir la fiche</span>
+                    <span>Molette : voyager dans le temps<br />Ctrl + molette : zoomer<br />Glisser : se déplacer<br />Molette enfoncée : tourner<br />Double-clic : ouvrir la fiche</span>
                   </div></div>
                 )}
                 <div className="lp-fleuve-zoom" role="group" aria-label="Zoom">
