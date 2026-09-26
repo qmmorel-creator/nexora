@@ -1243,6 +1243,63 @@ if (benchApp) {
     mem.set("nexora:projectFolders", JSON.stringify(folders));
     mem.set("nexora:projects", JSON.stringify(projects));
     mem.set("nexora:tasks", JSON.stringify(tasks));
+  } else if (benchParams.get("reunions") === "demo") {
+    // Vue Réunions 3D (#514) : une vingtaine de réunions FICTIVES sur cinq
+    // semaines, calées sur le lundi de la semaine courante — notes, comptes
+    // rendus formels, réunions terminées sans notes, planifiées avec heure,
+    // call-outs, liens et chemins réseau à nettoyer, et une tâche « Préparer
+    // la réunion » qui n'est PAS une réunion.
+    window.__reu3dBench = {};
+    const folders = [{ id: "banc-rf1", name: "Chantiers", color: "#E07A3F" }, { id: "banc-rf2", name: "Ingénierie", color: "#245EDB" }];
+    const projects = [
+      { id: "banc-rp1", name: "Passerelle quai Nord", color: "#E08A2E", folderId: "banc-rf1" },
+      { id: "banc-rp2", name: "Réhabilitation école", color: "#4F7FC0", folderId: "banc-rf1" },
+      { id: "banc-rp3", name: "Audit structure halle", color: "#3F9C8F", folderId: "banc-rf2" },
+      { id: "banc-rp4", name: "Formation BIM", color: "#8A6CC2", folderId: "banc-rf2" },
+      { id: "banc-rp5", name: "Ruches du jardin", color: "#6FA05A", folderId: "banc-rf2" },
+    ];
+    const st = (n) => (seedStatuses.find((x) => new RegExp(n, "i").test(x.name)) || seedStatuses[0]).id;
+    const meeting = (seedTaskTypes.find((t) => /r[ée]union/i.test(t.name)) || {}).id || "tt3";
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const monday = addDaysIso(iso(now), -((now.getDay() + 6) % 7));
+    const d = (n) => addDaysIso(monday, n);
+    const agenda = "## Ordre du jour\n- Avancement des travaux\n- Points bloquants\n- Planning des trois prochaines semaines";
+    const report = "## Compte rendu\nPrésents : maîtrise d'œuvre, entreprise, bureau de contrôle.\n- Planning : retard de 5 j sur le coulage du tablier\n- Réserves : 3 levées, 2 en cours\n- Sécurité : garde-corps provisoires à reposer\n- Voir le [plan de phasage](https://exemple.test/phasage.pdf)\n- Dossier sur \\\\serveur\\chantiers\\passerelle\n- Nouveau planning sous 48 h\n- Prochaine réunion dans quinze jours";
+    const notes = "> [!NOTE] Notes prises en séance\n> à relire\nL'entreprise demande un avenant pour les fondations.\n- Chiffrage attendu vendredi\n- Visite du site à organiser\n- [x] Envoyer les plans à jour";
+    const R = (id, off, title, projectId, status, extra = {}) => ({ id: "banc-r-" + id, title, projectId, statusId: st(status), taskTypeId: meeting, start: d(off), end: d(off), progress: /termin/i.test(status) ? 100 : 0, assignee: "", checklist: [], ...extra });
+    const tasks = [
+      // Semaine −3
+      R("a1", -21, "Lancement de la passerelle", "banc-rp1", "termin", { startTime: "09:00", endTime: "10:30", meetingReport: report }),
+      R("a2", -20, "Visite de la halle", "banc-rp3", "termin", { desc: notes }),
+      R("a3", -18, "Point formation", "banc-rp4", "termin"),
+      // Semaine −2
+      R("b1", -14, "Réunion de chantier n° 12", "banc-rp1", "termin", { startTime: "08:30", desc: notes }),
+      R("b2", -13, "Comité de pilotage école", "banc-rp2", "termin", { startTime: "14:00", meetingReport: "- Budget confirmé\n- Planning validé\n- Consultation lancée" }),
+      R("b3", -12, "Revue des carottages", "banc-rp3", "termin"),
+      R("b4", -10, "Point ruches d'automne", "banc-rp5", "termin", { desc: "Nourrissement à prévoir.\n- Sirop 50/50\n- Contrôle varroa" }),
+      // Semaine −1
+      R("c1", -7, "Réunion de chantier n° 13", "banc-rp1", "termin", { startTime: "08:30", desc: agenda }),
+      R("c2", -6, "Synthèse réseaux", "banc-rp2", "termin"),
+      R("c3", -5, "Restitution intermédiaire", "banc-rp3", "termin", { startTime: "10:00", meetingReport: report }),
+      R("c4", -4, "Atelier maquette BIM", "banc-rp4", "termin", { desc: "Maquette fédérée : conventions de nommage à revoir.\n- Gabarit commun\n- Niveaux\n- Export IFC" }),
+      // Semaine courante
+      R("d1", 0, "Réunion de chantier n° 14", "banc-rp1", "termin", { startTime: "08:30", endTime: "10:00", meetingReport: report, checklist: [{ id: "k1", text: "Relancer le bureau de contrôle", done: false }, { id: "k2", text: "Diffuser le compte rendu", done: true }] }),
+      R("d2", 0, "Point budget école", "banc-rp2", "termin", { startTime: "14:00" }),
+      R("d3", 1, "Revue du rapport préliminaire", "banc-rp3", "termin", { startTime: "11:00", desc: notes }),
+      R("d4", 2, "Point hebdomadaire BIM", "banc-rp4", "en cours", { startTime: "09:30", desc: agenda }),
+      R("d5", 3, "Visite de chantier école", "banc-rp2", "planifier", { startTime: "10:00", endTime: "12:00" }),
+      R("d6", 4, "Comité de pilotage passerelle", "banc-rp1", "planifier", { startTime: "15:00", desc: agenda }),
+      R("d7", 4, "Rucher : récolte", "banc-rp5", "planifier", { startTime: "17:30" }),
+      // Semaine +1
+      R("e1", 7, "Réunion de chantier n° 15", "banc-rp1", "planifier", { startTime: "08:30" }),
+      R("e2", 9, "Restitution au client", "banc-rp3", "planifier", { startTime: "14:00", desc: agenda }),
+      R("e3", 11, "Certification BIM", "banc-rp4", "planifier"),
+      // Pas une réunion : type « Tâches ».
+      { id: "banc-r-x", title: "Préparer la réunion de chantier", projectId: "banc-rp1", statusId: st("planifier"), taskTypeId: "tt1", start: d(1), end: d(1), progress: 0, assignee: "", checklist: [] },
+    ];
+    mem.set("nexora:projectFolders", JSON.stringify(folders));
+    mem.set("nexora:projects", JSON.stringify(projects));
+    mem.set("nexora:tasks", JSON.stringify(tasks));
   } else if (benchParams.get("cosmos") === "empty") {
     mem.set("nexora:projectFolders", JSON.stringify([]));
     mem.set("nexora:projects", JSON.stringify([]));
