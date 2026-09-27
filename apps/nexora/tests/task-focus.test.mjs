@@ -1,7 +1,7 @@
 /* Mode focus (#512) : champ booléen `focus` de la tâche et son critère dans
    tous les systèmes de filtres (filtre global et méta-filtres, filtres
    avancés, filtres de widgets et de pages, filtres rapides Carte / Cosmos /
-   Timeline 3D, vues enregistrées). Les fonctions sont extraites du bundle
+   Fleuve du temps, vues enregistrées). Les fonctions sont extraites du bundle
    RÉELLEMENT construit (.build/index.html), jamais recopiées. */
 
 import test from "node:test";
@@ -67,7 +67,7 @@ const F = vm.runInThisContext(`(function () {
 })`)();
 
 const C = vm.runInThisContext(
-  `(function () {\n${slice("CARTE")}\n${slice("COSMOS")}\n${slice("TIMELINE3D")}\n;return { carteNormalize, carteMatches, normalizeCarteViewPrefs, normalizeCosmosViewPrefs, normalizeTimeline3dViewPrefs,
+  `(function () {\n${slice("CARTE")}\n${slice("COSMOS")}\n;return { carteNormalize, carteMatches, normalizeCarteViewPrefs, normalizeCosmosViewPrefs,
     carteViewFilterCount, carteViewFilterReset, carteFocusCount, CARTE_WHEEL_ACTIONS };\n})`
 )();
 
@@ -128,7 +128,7 @@ test("#512 : filtres de widgets et de pages (onlyFocus), neutres par défaut", (
   assert.deepEqual(ids(F.applyWidgetFilter(tasks, { onlyFocus: true, advanced: { op: "and", items: [{ field: "focus", mode: "is", values: ["no"] }] } }, {})), []);
 });
 
-test("#512 : la Carte lit le champ, et ses filtres rapides (Carte, Cosmos, Timeline 3D) le filtrent", () => {
+test("#512 : la Carte lit le champ, et ses filtres rapides (Carte, Cosmos) le filtrent", () => {
   const ctx = { projects: [{ id: "p", name: "P" }], projectFolders: [], statuses: [], taskTypes: [], teamMembers: [] };
   const norm = C.carteNormalize(ctx, tasks.map((t) => ({ ...t, projectId: "p" })), { now: Date.parse("2026-09-26T10:00:00") });
   const byId = Object.fromEntries(norm.tasks.map((t) => [t.id, t]));
@@ -137,7 +137,7 @@ test("#512 : la Carte lit le champ, et ses filtres rapides (Carte, Cosmos, Timel
   assert.equal(byId.c.focus, false);
   assert.equal(byId.d.focus, false, "une chaîne n'est pas un booléen");
   assert.equal(C.carteFocusCount(norm.tasks), 1);
-  for (const normalize of [C.normalizeCarteViewPrefs, C.normalizeCosmosViewPrefs, C.normalizeTimeline3dViewPrefs]) {
+  for (const normalize of [C.normalizeCarteViewPrefs, C.normalizeCosmosViewPrefs]) {
     assert.equal(normalize({}).focusOnly, false, "désactivé par défaut");
     const on = normalize({ focusOnly: true });
     assert.equal(on.focusOnly, true);
@@ -160,5 +160,5 @@ test("#512 : le halo de la Carte, la fiche et les filtres sont bien câblés dan
   for (const hook of ["data-task-focus-toggle", "data-focus-toolbar-toggle", "data-focus-widget-filter", "data-focus-filter", "data-focus-row-toggle", "data-carte-focus-toggle"]) {
     assert.ok(html.includes(hook), `repère ${hook} absent`);
   }
-  for (const view of ["carte", "cosmos", "timeline3d"]) assert.ok(html.includes(`view: "${view}"`) || html.includes(`view="${view}"`), `filtre rapide focus absent de ${view}`);
+  for (const view of ["carte", "cosmos", "fleuve"]) assert.ok(html.includes(`view: "${view}"`) || html.includes(`view="${view}"`), `filtre rapide focus absent de ${view}`);
 });

@@ -416,7 +416,7 @@ marque un événement, elle ne gratifie personne.
 | Hologramme en Markdown (#502) | `desc`, `meetingReport` | Titres, gras, italique, code, listes, cases à cocher, citations, call-outs (`> [!note]`, `:::callout-…`) aux couleurs de l'app, tableaux (`carteHoloBlocks`). |
 | Figurine du responsable (#501) | `assignee` | Personnage Kenney (CC0) sur un socle à la couleur de la personne, légèrement teinté ; bonhomme procédural si les modèles ne se chargent pas. |
 | Mini-carte (#471) | `end` | Pings rouges (retard) et orange (échéance du jour) ; un clic y déplace la vue. |
-| Portail (#472) | — | Arche au pied de chaque totem : ouvre le projet dans la Timeline 3D, centrée sur aujourd'hui. |
+| Portail (#472) | — | Arche au pied de chaque totem : ouvre le projet dans le Fleuve du temps, filtré sur lui seul. |
 | Journal de quêtes (#473) | voir `carteQuests` | En retard, bloquées, conflits de dates, en dérive, sans responsable, sans échéance, oubliées. « Régler » ouvre l'action utile. Pas de visite guidée de la caméra. |
 | Mode photo (#474) | — | Interface masquée, légende et date, export PNG de la vue 3D. |
 | Annuler (#475) | champs modifiés | Chaque action faite depuis la carte (roue, volet) mémorise les valeurs d'avant. Ctrl+Z ou « Annuler » les rétablissent, 20 pas au plus. |
