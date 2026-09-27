@@ -853,7 +853,7 @@ test("filtres rapides multi-sélection : filtrage et options (#506)", () => {
   assert.deepEqual(f({ assignees: ["Alice", C.CARTE_NONE] }), [a, c], "« Sans responsable »");
   assert.deepEqual(f({ statuses: ["s3"], assignees: ["Bob"] }), [b], "entre filtres : ET");
   assert.deepEqual(f({ crit: "urgent" }), [a], "ancienne valeur unique toujours comprise");
-  // Cosmos et Timeline 3D gardent la criticité unique : carteMatches la lit.
+  // Cosmos garde la criticité unique : carteMatches la lit.
   assert.equal(C.carteMatches(b, { crit: "urgent" }), false);
   const statuses = [{ id: "s1", name: "À planifier", color: "#64748B" }, { id: "s2", name: "Attente" }, { id: "s3", name: "En cours", color: "#0EA5E9" }];
   const o = C.carteQuickOptions([a, b, c, { ...b, assigneeColor: "#f00" }], statuses, { statuses: ["s2"], assignees: ["Zoé"] });
