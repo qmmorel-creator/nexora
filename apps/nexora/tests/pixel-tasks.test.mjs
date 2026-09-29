@@ -19,7 +19,7 @@ function slice(name) {
 
 const P = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("PIXEL-TASKS")}\n;return {
-    pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue,
+    pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue, pixelTaskOutlinePath, PIXEL_TASKS_FUTURE_WINDOWS,
   };\n})`
 )();
 
@@ -148,4 +148,32 @@ test("pixelTasksForDay : fantômes = tâches en cours (début avant, fin après)
   const [g] = P.pixelTaskGroupsFor(on.items, "project", { projects: [], statuses }, "none");
   assert.deepEqual(g.packages.map((p) => [p.id, p.count]), [["all", 1], ["ghost", 1]]);
   assert.equal(g.total, 1);
+});
+
+test("pixelTasksForDay : futur = tâches entièrement à venir dans la fenêtre, hors score, après les fantômes", () => {
+  const today = "2026-09-29";
+  const tasks = [
+    T("soon", { start: "2026-10-01", end: "2026-10-03" }),
+    T("ms", { milestone: true, start: "2026-10-01", end: "2026-10-01" }),
+    T("far", { start: "2026-11-01", end: "2026-11-02" }),
+    T("running", { start: "2026-09-20", end: "2026-10-02" }),
+    T("base", { start: today, end: today }),
+  ];
+  const d = P.pixelTasksForDay(tasks, today, today, statuses, { ghosts: true, futureDays: 14 });
+  assert.deepEqual(d.items.map((i) => [i.task.id, i.ghost ? "g" : i.future ? "f" + i.daysAhead : "b"]), [["base", "b"], ["running", "g"], ["ms", "f2"], ["soon", "f4"]]);
+  assert.equal(d.total, 1);
+  assert.equal(d.future, 2);
+  // La tâche en cours n'est jamais « future », même sans fantômes.
+  const noGhost = P.pixelTasksForDay(tasks, today, today, statuses, { futureDays: 14 });
+  assert.deepEqual(noGhost.items.map((i) => i.task.id), ["base", "ms", "soon"]);
+  const [g] = P.pixelTaskGroupsFor(d.items, "project", { projects: [], statuses }, "none");
+  assert.deepEqual(g.packages.map((p) => [p.id, p.count]), [["all", 1], ["ghost", 1], ["future", 2]]);
+  assert.equal(g.total, 1);
+  assert.deepEqual([...P.PIXEL_TASKS_FUTURE_WINDOWS], [0, 7, 14, 30]);
+});
+
+test("pixelTaskOutlinePath : départ au milieu du bord haut, carré arrondi ou rond", () => {
+  assert.match(P.pixelTaskOutlinePath(28, 5, 0.75, false), /^M 14 0\.75 H /);
+  assert.match(P.pixelTaskOutlinePath(28, 5, 0.75, false), / Z$/);
+  assert.match(P.pixelTaskOutlinePath(28, 5, 1, true), /^M 14 1 A 13 13 0 1 1 13\.99 1$/);
 });

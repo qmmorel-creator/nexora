@@ -13570,6 +13570,7 @@ function ptxStatusColor(task, ctx) {
   return (st && st.color) || "#94A3B8";
 }
 function ptxBadge(item) {
+  if (item.future) return { text: (item.task.milestone ? "◆ " : "") + "dans " + item.daysAhead + " j", cls: " is-horizon" };
   if (item.ghost) return { text: "fin " + String(item.task.end || "").slice(8, 10) + "/" + String(item.task.end || "").slice(5, 7), cls: " is-ghost" };
   if (item.lateDays > 0 && !item.done) return { text: "retard " + item.lateDays + " j", cls: " is-late" };
   if (item.task.startTime) return { text: item.task.startTime, cls: "" };
@@ -13583,18 +13584,30 @@ function ptxLabel(item, ctx) {
   if (item.lateDays > 0 && !item.done) bits.push("en retard de " + item.lateDays + " j");
   if (item.task.milestone) bits.push("jalon");
   if (item.ghost) bits.push("en cours jusqu'au " + String(item.task.end || "").split("-").reverse().join("/"));
+  if (item.future) bits.push("à venir, dans " + item.daysAhead + " j");
   return bits.join(" — ") + ". Clic : ouvrir la fiche";
 }
 
-function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint }) {
+function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futureWindow }) {
   const t = item.task;
   const progress = Math.max(0, Math.min(100, Number(t.progress) || 0));
-  // Jalon = pixel rond, tâche avec durée = pixel carré.
-  const cls = "lp-hpx-px lp-ptx-px " + (item.done ? "is-done" : "is-todo") + (item.ghost ? " is-ghost" : "") + (t.milestone ? " is-milestone" : "") + (item.lateDays > 0 && !item.done ? " is-late" : "") + (focused ? " is-focus" : "");
-  const style = { "--c": ptxStatusColor(t, ctx), "--prog": progress + "%", width: size, height: size };
-  const inner = size < 20 ? null : item.done ? <Check size={Math.round(size * 0.5)} strokeWidth={3} /> : null;
-  const bar = !item.done && progress > 0 && size >= 14 ? <span className="lp-ptx-prog" aria-hidden="true" /> : null;
-  if (!onClick) return <span className={cls} style={style} aria-hidden="true">{inner}{bar}</span>;
+  // Jalon = pixel rond, tâche avec durée = pixel carré ; futur = « horizon ».
+  const cls = "lp-hpx-px lp-ptx-px " + (item.done ? "is-done" : "is-todo") + (item.ghost ? " is-ghost" : "") + (item.future ? " is-horizon" : "") + (t.milestone ? " is-milestone" : "") + (item.lateDays > 0 && !item.done ? " is-late" : "") + (focused ? " is-focus" : "");
+  const style = { "--c": ptxStatusColor(t, ctx), width: size, height: size };
+  // Futur : plus l'échéance est loin dans la fenêtre, plus la case s'efface.
+  if (item.future && futureWindow) style.opacity = Math.max(0.4, 1 - (item.daysAhead / futureWindow) * 0.6);
+  const inner = item.future
+    ? (size >= 20 ? <span className="lp-ptx-px-j">J+{item.daysAhead}</span> : null)
+    : size < 20 ? null : item.done ? <Check size={Math.round(size * 0.5)} strokeWidth={3} /> : null;
+  /* Avancement : la part accomplie du contour EXISTANT se fonce (même trait,
+     même épaisseur), du milieu du bord haut, sens horaire. */
+  const sw = item.future ? 2 : 1.5;
+  const ring = !item.done && progress > 0 && size >= 14 ? (
+    <svg className="lp-ptx-ring-outline" viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <path d={pixelTaskOutlinePath(size, 5, item.ghost ? 1.25 : sw / 2, !!t.milestone)} pathLength="100" strokeWidth={sw} strokeDasharray={`${progress} 100`} />
+    </svg>
+  ) : null;
+  if (!onClick) return <span className={cls} style={style} aria-hidden="true">{inner}{ring}</span>;
   const label = clickHint ? ptxLabel(item, ctx).replace(/Clic : ouvrir la fiche$/, clickHint) : ptxLabel(item, ctx);
   return (
     <button
@@ -13608,13 +13621,13 @@ function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint }) {
       onBlur={onHover ? () => onHover(null) : undefined}
       aria-label={label}
       title={label}
-    >{inner}{bar}</button>
+    >{inner}{ring}</button>
   );
 }
 
 function TaskPixelMosaic({ groups: allGroups, day, ctx, size = 8, gap = 2 }) {
   // Le carré journalier ne compte que les vraies tâches du jour, sans fantômes.
-  const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost) })).filter((g) => g.items.length);
+  const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost && !i.future) })).filter((g) => g.items.length);
   const n = pixelTasksSquareSize(groups);
   const filler = (key) => <span key={key} className="lp-hpx-px is-filler" style={{ width: size, height: size }} aria-hidden="true" />;
   const rows = groups.map((g) => (
@@ -13630,7 +13643,7 @@ function TaskPixelMosaic({ groups: allGroups, day, ctx, size = 8, gap = 2 }) {
 }
 
 function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, onOpen, collapsed }) {
-  const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost) })).filter((g) => g.items.length);
+  const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost && !i.future) })).filter((g) => g.items.length);
   return (
     <section className="lp-hpx-side" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
       <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
@@ -13731,6 +13744,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   const packageBy = PIXEL_TASKS_PACKAGE_BY.some(([k]) => k === (widget && widget.pixelTasksPackageBy)) ? widget.pixelTasksPackageBy : "none";
   // Fantômes : tâches en cours ce jour-là (début avant, fin après), en gris pointillé.
   const ghostOn = !!(widget && widget.pixelTasksGhost);
+  // Futur : tâches entièrement à venir dans la fenêtre choisie (0 = désactivé).
+  const futureWindow = PIXEL_TASKS_FUTURE_WINDOWS.includes(Number(widget && widget.pixelTasksFuture)) ? Number(widget.pixelTasksFuture) : 0;
   const [ring, setRing] = useState(null); // { taskId, x, y } — anneau de progression ouvert
   const rootRef = useRef(null);
   const openDay = (d) => { setDate(d); setView("day"); };
@@ -13748,12 +13763,12 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
     const cache = new Map();
     return (d) => {
       if (!cache.has(d)) {
-        const day = pixelTasksForDay(tasks, d, todayIso, ctx.statuses, { ghosts: ghostOn });
+        const day = pixelTasksForDay(tasks, d, todayIso, ctx.statuses, { ghosts: ghostOn, futureDays: futureWindow });
         cache.set(d, { ...day, groups: pixelTaskGroupsFor(day.items, groupBy, ctx, packageBy) });
       }
       return cache.get(d);
     };
-  }, [tasks, ctx, groupBy, packageBy, ghostOn, todayIso]);
+  }, [tasks, ctx, groupBy, packageBy, ghostOn, futureWindow, todayIso]);
   const day = stateOf(date);
   const groups = day.groups;
   // Largeur de la carte centrale, pour dimensionner les rangées de pixels.
@@ -13799,6 +13814,11 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
           <input type="checkbox" checked={ghostOn} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksGhost: e.target.checked })} />
           Fantômes
         </label>
+      )}
+      {view === "day" && (
+        <select className={"lp-ptx-groupby lp-ptx-future-select" + (futureWindow ? " is-on" : "")} value={futureWindow} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksFuture: Number(e.target.value) })} aria-label="Tâches à venir (futur)" title="Ajoute les tâches entièrement à venir (début, fin, jalon après ce jour) dans la fenêtre choisie — hors score">
+          {PIXEL_TASKS_FUTURE_WINDOWS.map((n) => <option key={n} value={n}>{n ? "Futur · " + n + " j" : "Sans futur"}</option>)}
+        </select>
       )}
       {view === "day" ? (
         <span className="lp-hpx-nav" role="group" aria-label="Jour affiché">
@@ -13933,6 +13953,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   };
   // Clic sur une case : jalon → terminé / rouvert ; tâche avec durée → anneau.
   const pixelClick = (it, e) => {
+    // Futur : ouverture de la fiche seulement.
+    if (it.future) { if (onOpen) onOpen(it.task); return; }
     if (it.task.milestone) { if (onToggleDone) onToggleDone(it.task.id); return; }
     const root = rootRef.current;
     const r = e.currentTarget.getBoundingClientRect();
@@ -13985,10 +14007,13 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
               {day.items.some((i) => i.lateDays > 0 && !i.done) && <span><i className="is-late" />En retard</span>}
               <span className="lp-ptx-legend-shape"><i className="is-milestone" />Jalon (clic = terminé)</span>
               <span className="lp-ptx-legend-shape"><i className="is-duration" />Tâche avec durée (clic = avancement)</span>
+              <span className="lp-ptx-legend-shape"><i className="is-progress" />Avancement : le contour se fonce, depuis le haut</span>
+              {ghostOn && <span className="lp-ptx-legend-shape"><i className="is-ghost" />Fantôme : en cours</span>}
+              {futureWindow > 0 && <span className="lp-ptx-legend-shape"><i className="is-horizon" />Futur : à venir sous {futureWindow} j (J+N)</span>}
             </div>
           )}
           {!groups.length && <div className="lp-empty lp-ptx-empty">Aucune tâche à cette date pour ce filtre.</div>}
-          {groups.map((g) => {
+          {groups.map((g, gi) => {
             const folded = collapsed.has(g.id);
             const geom = pxGeom(g);
             const headH = geom.headH;
@@ -14001,7 +14026,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
                   <button type="button" className="lp-hpx-theme-head" style={{ height: headH }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={folded ? "Déplier le groupe" : "Replier le groupe"}>
                     <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
                     <span className="lp-hpx-dot is-big" style={{ background: g.color }} />{g.name}<span className="lp-hpx-muted">{g.done} / {g.total}</span>
-                    {g.items.length > g.total && <span className="lp-hpx-muted lp-ptx-ghost-count" title="Tâches en cours ce jour-là (fantômes)">+{g.items.length - g.total} en cours</span>}
+                    {g.items.some((i) => i.ghost) && <span className="lp-hpx-muted lp-ptx-ghost-count" title="Tâches en cours ce jour-là (fantômes)">+{g.items.filter((i) => i.ghost).length} en cours</span>}
+                    {g.items.some((i) => i.future) && <span className="lp-ptx-future-count" title="Tâches à venir (futur)">✦ {g.items.filter((i) => i.future).length} à venir</span>}
                     {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{g.total} tâche{g.total > 1 ? "s" : ""}</span>}
                   </button>
                   {!folded && g.items.map((it) => {
@@ -14010,8 +14036,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
                     const badge = ptxBadge(it);
                     const color = ptxStatusColor(t, ctx);
                     return (
-                      <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
-                        <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
+                      <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
+                        <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} futureWindow={futureWindow} clickHint={it.future ? "Clic : ouvrir la fiche" : t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
                         <button type="button" className={"lp-hpx-row-name lp-ptx-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
                         {badge && <span className={"lp-ptx-badge" + badge.cls}>{badge.text}</span>}
                         <button
@@ -14034,20 +14060,21 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
                 </div>
                 <div className="lp-hpx-wires">
                   <svg className="lp-hpx-wires-svg" aria-hidden="true">
+                    <defs><linearGradient id={`ptx-aurore-${gi}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#6366f1" /><stop offset=".6" stopColor="#06b6d4" /><stop offset="1" stopColor="#a855f7" /></linearGradient></defs>
                     {!folded && g.items.map((it, i) => (
                       <path
                         key={it.task.id}
                         d={habitPixelWirePath(headH + i * HPX_ROW_H + HPX_ROW_H / 2, pxX(i), pxBottom + 4, 6)}
-                        className={"lp-hpx-wire" + (it.done ? " is-on" : "") + (it.ghost ? " lp-ptx-ghost-wire" : "") + (hover === it.task.id ? " is-focus" : "")}
-                        style={{ stroke: it.ghost ? undefined : ptxStatusColor(it.task, ctx) }}
+                        className={"lp-hpx-wire" + (it.done ? " is-on" : "") + (it.ghost ? " lp-ptx-ghost-wire" : "") + (it.future ? " lp-ptx-future-wire" : "") + (hover === it.task.id ? " is-focus" : "")}
+                        style={{ stroke: it.ghost ? undefined : it.future ? `url(#ptx-aurore-${gi})` : ptxStatusColor(it.task, ctx) }}
                       />
                     ))}
                   </svg>
                   <div className={"lp-hpx-pixels" + (geom.tinted ? " lp-ptx-packed" : "")} style={{ left: HPX_LEFT, top: geom.top, padding: HPX_PAD, gap: PACK_GAP, "--tc": g.color }}>
                     {geom.packs.map((pk) => (
-                      <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "") + (pk.id === "ghost" ? " is-ghost" : "")} style={{ gap: geom.gap, padding: geom.tinted ? `${geom.pp - 1 + PACK_LABEL}px ${geom.pp - 1}px ${geom.pp - 1}px` : 0, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
+                      <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "") + (pk.id === "ghost" ? " is-ghost" : "") + (pk.id === "future" ? " is-horizon" : "")} style={{ gap: geom.gap, padding: geom.tinted ? `${geom.pp - 1 + PACK_LABEL}px ${geom.pp - 1}px ${geom.pp - 1}px` : 0, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
                         {g.items.slice(pk.start, pk.start + pk.count).map((it) => (
-                          <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
+                          <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} futureWindow={futureWindow} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.future ? "Clic : ouvrir la fiche" : it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
                         ))}
                       </span>
                     ))}
