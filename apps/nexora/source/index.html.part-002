@@ -4650,12 +4650,20 @@ function pixelTaskIsDone(task, statuses) {
    restent sous les yeux tant qu'elles ne sont pas faites. Une tâche en retard
    terminée un jour donné (completedAt) reste affichée ce jour-là, rattrapée :
    la cocher ne la fait pas disparaître de la journée. */
-function pixelTasksForDay(tasks, date, todayIso, statuses) {
+function pixelTasksForDay(tasks, date, todayIso, statuses, options) {
+  const ghosts = !!(options && options.ghosts);
   const items = [];
   for (const task of tasks || []) {
     const d = pixelTaskDate(task);
     if (!d) continue;
     const done = pixelTaskIsDone(task, statuses);
+    /* Fantômes (option) : tâches EN COURS à cette date — début avant, fin
+       après — qui ne s'affichent pas d'ordinaire (une tâche n'apparaît qu'à
+       sa date de jalon ou de fin). Montrées à part, hors score. */
+    if (ghosts && d > date && PIXEL_TASKS_DATE_RE.test(task.start || "") && task.start < date && PIXEL_TASKS_DATE_RE.test(task.end || "") && task.end > date) {
+      items.push({ task, date: d, done, lateDays: 0, carried: false, ghost: true });
+      continue;
+    }
     if (d === date) {
       const lateDays = !done && d < todayIso ? dayIndex(todayIso) - dayIndex(d) : 0;
       items.push({ task, date: d, done, lateDays, carried: false });
@@ -4665,11 +4673,13 @@ function pixelTasksForDay(tasks, date, todayIso, statuses) {
       else if (completedDay === date) items.push({ task, date: d, done, lateDays: 0, carried: true });
     }
   }
-  items.sort((a, b) => (Number(a.done) - Number(b.done))
+  items.sort((a, b) => (Number(!!a.ghost) - Number(!!b.ghost))
+    || (Number(a.done) - Number(b.done))
     || (b.lateDays - a.lateDays)
     || String(a.task.startTime || "99").localeCompare(String(b.task.startTime || "99"))
     || String(a.task.title || "").localeCompare(String(b.task.title || ""), "fr"));
-  return { items, done: items.filter((i) => i.done).length, total: items.length };
+  const counted = items.filter((i) => !i.ghost);
+  return { items, done: counted.filter((i) => i.done).length, total: counted.length, ghosts: items.length - counted.length };
 }
 
 /* Regroupement des tâches du jour (projet par défaut). Groupes triés par nom,
@@ -4713,10 +4723,10 @@ function pixelTaskBucket(items, by, ctx) {
   const map = new Map();
   for (const item of items || []) {
     const k = pixelTaskKey(item.task, by, ctx) || { id: "none", name: PIXEL_TASKS_EMPTY_LABELS[by] || "Sans valeur", color: "#94A3B8" };
-    if (!map.has(k.id)) map.set(k.id, { ...k, items: [], done: 0 });
+    if (!map.has(k.id)) map.set(k.id, { ...k, items: [], done: 0, total: 0 });
     const g = map.get(k.id);
     g.items.push(item);
-    if (item.done) g.done += 1;
+    if (!item.ghost) { g.total += 1; if (item.done) g.done += 1; }
   }
   return [...map.values()].sort((a, b) => (a.id === "none") - (b.id === "none") || String(a.name).localeCompare(String(b.name), "fr"));
 }
@@ -4729,11 +4739,13 @@ function pixelTaskBucket(items, by, ctx) {
 function pixelTaskGroupsFor(items, groupBy, ctx, packageBy) {
   const groups = pixelTaskBucket(items, groupBy, ctx);
   for (const g of groups) {
-    if (!packageBy || packageBy === "none") {
-      g.packages = [{ id: "all", name: "", color: g.color, start: 0, count: g.items.length }];
-      continue;
-    }
-    const packs = pixelTaskBucket(g.items, packageBy, ctx);
+    // Les fantômes ferment la rangée, dans leur propre package.
+    const real = g.items.filter((i) => !i.ghost);
+    const ghostItems = g.items.filter((i) => i.ghost);
+    let packs;
+    if (!packageBy || packageBy === "none") packs = real.length ? [{ id: "all", name: "", color: g.color, items: real }] : [];
+    else packs = pixelTaskBucket(real, packageBy, ctx);
+    if (ghostItems.length) packs.push({ id: "ghost", name: "Fantômes (en cours)", color: "#94A3B8", items: ghostItems });
     let start = 0;
     g.items = [];
     g.packages = packs.map((p) => {
