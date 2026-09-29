@@ -13720,9 +13720,9 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   const setView = (v) => { setViewState(v); if (onUpdateWidget) onUpdateWidget({ pixelTasksView: v }); };
   const [groupBy, setGroupByState] = useState(() => (PIXEL_TASKS_GROUP_BY.some(([k]) => k === (widget && widget.pixelTasksGroupBy)) ? widget.pixelTasksGroupBy : "project"));
   const setGroupBy = (g) => { setGroupByState(g); if (onUpdateWidget) onUpdateWidget({ pixelTasksGroupBy: g }); };
-  // Réglé depuis la fiche du widget : le choix suit.
+  // Réglage mémorisé sur le widget (ex. autre onglet) : le choix suit.
   useEffect(() => { if (PIXEL_TASKS_GROUP_BY.some(([k]) => k === (widget && widget.pixelTasksGroupBy))) setGroupByState(widget.pixelTasksGroupBy); }, [widget && widget.pixelTasksGroupBy]);
-  // Packages de cases dans chaque rangée (réglage de la fiche du widget).
+  // Packages de cases dans chaque rangée (sélecteur de l'en-tête, mémorisé sur le widget).
   const packageBy = PIXEL_TASKS_PACKAGE_BY.some(([k]) => k === (widget && widget.pixelTasksPackageBy)) ? widget.pixelTasksPackageBy : "none";
   const [ring, setRing] = useState(null); // { taskId, x, y } — anneau de progression ouvert
   const rootRef = useRef(null);
@@ -13781,8 +13781,11 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
           <button key={k} type="button" className={"lp-density-btn" + (view === k ? " active" : "")} aria-pressed={view === k} onClick={() => setView(k)}>{label}</button>
         ))}
       </span>
-      <select className="lp-ptx-groupby" value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Grouper par" title="Grouper par">
+      <select className="lp-ptx-groupby" value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Regrouper les tâches par" title="Regrouper les tâches par">
         {PIXEL_TASKS_GROUP_BY.map(([k, label]) => <option key={k} value={k}>Par {label.toLowerCase()}</option>)}
+      </select>
+      <select className="lp-ptx-groupby" value={packageBy} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksPackageBy: e.target.value })} aria-label="Packages de cases dans chaque rangée" title="Packages de cases dans chaque rangée">
+        {PIXEL_TASKS_PACKAGE_BY.map(([k, label]) => <option key={k} value={k}>{k === "none" ? "Sans packages" : "Packages : " + (k === "kind" ? "jalon / durée" : label.toLowerCase())}</option>)}
       </select>
       {view === "day" ? (
         <span className="lp-hpx-nav" role="group" aria-label="Jour affiché">
@@ -13885,12 +13888,12 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
      d'habitudes. */
   const wiresW = Math.max(0, mainW - 32 - 300);
   /* Packages actifs : chaque package est un conteneur distinct (cadre et
-     fond à sa couleur, étiquette à cheval sur le bord haut), côte à côte avec
-     un écart net ; l'en-tête du groupe grandit pour loger l'étiquette. */
+     fond à sa couleur, nom et nombre dans l'infobulle), côte à côte avec un
+     écart net. */
   const PACK_GAP = 14; // écart entre deux conteneurs
   const PACK_PAD = 5;  // marge intérieure d'un conteneur, bordure comprise
-  const PACK_TOP = 10; // place de l'étiquette au-dessus des conteneurs
-  const PACK_LABEL = 7; // marge haute supplémentaire sous l'étiquette
+  const PACK_TOP = 2;  // léger retrait des conteneurs sous le haut du groupe
+  const PACK_LABEL = 0; // pas d'étiquette : le nom du package est dans l'infobulle
   /* Géométrie d'une rangée : taille des cases, écart, et centre x de chaque
      case (packages compris), pour poser les liaisons au bon endroit. */
   const pxGeom = (g) => {
@@ -14029,7 +14032,6 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
                   <div className={"lp-hpx-pixels" + (geom.tinted ? " lp-ptx-packed" : "")} style={{ left: HPX_LEFT, top: geom.top, padding: HPX_PAD, gap: PACK_GAP, "--tc": g.color }}>
                     {geom.packs.map((pk) => (
                       <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "")} style={{ gap: geom.gap, padding: geom.tinted ? `${geom.pp - 1 + PACK_LABEL}px ${geom.pp - 1}px ${geom.pp - 1}px` : 0, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
-                        {geom.tinted && pk.name && <span className="lp-ptx-pack-label" aria-hidden="true">{pk.name}<b>{pk.count}</b></span>}
                         {g.items.slice(pk.start, pk.start + pk.count).map((it) => (
                           <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
                         ))}
@@ -16594,9 +16596,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // bloquantes » (nombre de tâches bloquées directement) en alternative au tri
   // par défaut (impact total pondéré).
   const [dominoSortBy, setDominoSortBy] = useState(widget?.dominoSortBy === "directImpact" ? "directImpact" : "score");
-  // Pixel Tasks (#524) : regroupement choisi aussi depuis la fiche du widget.
-  const [pixelTasksGroupBy, setPixelTasksGroupBy] = useState(PIXEL_TASKS_GROUP_BY.some(([k]) => k === widget?.pixelTasksGroupBy) ? widget.pixelTasksGroupBy : "project");
-  const [pixelTasksPackageBy, setPixelTasksPackageBy] = useState(PIXEL_TASKS_PACKAGE_BY.some(([k]) => k === widget?.pixelTasksPackageBy) ? widget.pixelTasksPackageBy : "none");
   // Heat map — la normalisation reste seul juge des défauts et des collisions
   // d'axes ; la fiche ne fait qu'éditer.
   const heatmapCfg = useMemo(() => heatmapNormalizeConfig(widget || {}), [widget]);
@@ -16790,7 +16789,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     }
     if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id) && !orgMetroHorizontalTeams.includes(id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
-    if (type === "pixelTasks") { data.pixelTasksGroupBy = pixelTasksGroupBy; data.pixelTasksPackageBy = pixelTasksPackageBy; }
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
@@ -17720,24 +17718,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           1 tâche = 1 pixel, affichée à sa date de jalon (jalon) ou de fin (sinon) ; aujourd'hui reprend les tâches en
           retard non terminées. Le filtre ci-dessous (responsable, projets, statuts…) décide des tâches retenues ; la
-          vue (Jour, Semaine, Mois) se choisit dans le widget.
+          vue (Jour, Semaine, Mois), le regroupement et les packages de cases se choisissent dans l'en-tête du widget.
         </p>
-      )}
-      {type === "pixelTasks" && (
-        <div className="lp-field">
-          <label>Regrouper les tâches par</label>
-          <select value={pixelTasksGroupBy} onChange={(e) => setPixelTasksGroupBy(e.target.value)}>
-            {PIXEL_TASKS_GROUP_BY.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-          </select>
-        </div>
-      )}
-      {type === "pixelTasks" && (
-        <div className="lp-field">
-          <label>Packages de cases (dans chaque rangée)</label>
-          <select value={pixelTasksPackageBy} onChange={(e) => setPixelTasksPackageBy(e.target.value)}>
-            {PIXEL_TASKS_PACKAGE_BY.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-          </select>
-        </div>
       )}
       {type === "teamCatalog" && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
