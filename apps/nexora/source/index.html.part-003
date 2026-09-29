@@ -3176,6 +3176,25 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     }
   };
   const duplicateWidget = (w) => setWidgets((prev) => packWidgets([...prev, { ...w, id: uid(), title: (w.title || "Widget") + " (copie)", layout: undefined }]));
+  /* Pixel Tasks : chaque action sur une tâche (terminer, rouvrir, faire
+     avancer) propose « Annuler » quelques secondes dans une notification
+     discrète. Annuler remet la tâche telle qu'avant ; une occurrence
+     récurrente créée par la complétion est retirée avec. */
+  const pixelTaskUndoable = (taskId, run, describe) => {
+    const all = ctx.tasks || [];
+    const before = all.find((t) => t.id === taskId);
+    const beforeIds = new Set(all.map((t) => t.id));
+    run();
+    if (!before || !pushToast || !setTasks) return;
+    pushToast({
+      message: `« ${before.title || "Tâche"} » ${describe(before)}.`,
+      actionLabel: "Annuler",
+      duration: 7000,
+      onAction: () => setTasks((prev) => prev
+        .filter((t) => beforeIds.has(t.id) || !(before.recurrence && t.title === before.title))
+        .map((t) => (t.id === taskId ? { ...before, lastInteraction: new Date().toISOString() } : t))),
+    });
+  };
   const saveWidget = (data) => {
     if (editingWidget === "new") setWidgets((prev) => packWidgets([...prev, { id: uid(), ...data }]));
     else setWidgets((prev) => prev.map((w) => (w.id === editingWidget.id ? { ...w, ...data } : w)));
@@ -3864,7 +3883,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "pixelTasks" && !showEmptyFunnel && (
-                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={onToggleDoneFromCosmos} onUpdateTask={onUpdateTaskFromCosmos} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
+                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={(id) => pixelTaskUndoable(id, () => onToggleDoneFromCosmos && onToggleDoneFromCosmos(id), (t) => (isTaskDoneGlobal(t, ctx) ? "rouverte" : "terminée"))} onUpdateTask={(id, patch) => pixelTaskUndoable(id, () => onUpdateTaskFromCosmos && onUpdateTaskFromCosmos(id, patch), () => ("progress" in patch && patch.progress >= 100 && patch.statusId ? "terminée" : "avancement " + Math.round(Number(patch.progress) || 0) + " %"))} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />

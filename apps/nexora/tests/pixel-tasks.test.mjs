@@ -169,7 +169,7 @@ test("pixelTasksForDay : futur = tâches entièrement à venir dans la fenêtre,
   const [g] = P.pixelTaskGroupsFor(d.items, "project", { projects: [], statuses }, "none");
   assert.deepEqual(g.packages.map((p) => [p.id, p.count]), [["all", 1], ["ghost", 1], ["future", 2]]);
   assert.equal(g.total, 1);
-  assert.deepEqual([...P.PIXEL_TASKS_FUTURE_WINDOWS], [0, 7, 14, 30]);
+  assert.deepEqual([...P.PIXEL_TASKS_FUTURE_WINDOWS], [0, 7, 14, 30, 90]);
 });
 
 test("pixelTaskOutlinePath : départ au milieu du bord haut, carré arrondi ou rond", () => {
