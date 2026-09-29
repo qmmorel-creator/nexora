@@ -4622,7 +4622,9 @@ function habitYearWeeks(theme, log, year) {
 /* Pixel des tâches (#524) : la vue Jour du Pixel des habitudes appliquée aux
    tâches filtrées d'un widget. Logique pure (testée), rendu dans
    WidgetPixelTasks. */
-const PIXEL_TASKS_GROUP_BY = [["project", "Projet"], ["status", "Statut"], ["assignee", "Responsable"], ["taskType", "Type"]];
+const PIXEL_TASKS_GROUP_BY = [["project", "Projet"], ["folder", "Dossier"], ["status", "Statut"], ["assignee", "Responsable"], ["taskType", "Type"]];
+// Packages de cases dans une rangée : les mêmes clés, plus Jalon / Tâche.
+const PIXEL_TASKS_PACKAGE_BY = [["none", "Aucun"], ["kind", "Jalon / tâche avec durée"], ...PIXEL_TASKS_GROUP_BY];
 const PIXEL_TASKS_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /* Une tâche s'affiche à UNE seule date : sa date de jalon si c'est un jalon,
@@ -4648,12 +4650,20 @@ function pixelTaskIsDone(task, statuses) {
    restent sous les yeux tant qu'elles ne sont pas faites. Une tâche en retard
    terminée un jour donné (completedAt) reste affichée ce jour-là, rattrapée :
    la cocher ne la fait pas disparaître de la journée. */
-function pixelTasksForDay(tasks, date, todayIso, statuses) {
+function pixelTasksForDay(tasks, date, todayIso, statuses, options) {
+  const ghosts = !!(options && options.ghosts);
   const items = [];
   for (const task of tasks || []) {
     const d = pixelTaskDate(task);
     if (!d) continue;
     const done = pixelTaskIsDone(task, statuses);
+    /* Fantômes (option) : tâches EN COURS à cette date — début avant, fin
+       après — qui ne s'affichent pas d'ordinaire (une tâche n'apparaît qu'à
+       sa date de jalon ou de fin). Montrées à part, hors score. */
+    if (ghosts && d > date && PIXEL_TASKS_DATE_RE.test(task.start || "") && task.start < date && PIXEL_TASKS_DATE_RE.test(task.end || "") && task.end > date) {
+      items.push({ task, date: d, done, lateDays: 0, carried: false, ghost: true });
+      continue;
+    }
     if (d === date) {
       const lateDays = !done && d < todayIso ? dayIndex(todayIso) - dayIndex(d) : 0;
       items.push({ task, date: d, done, lateDays, carried: false });
@@ -4663,45 +4673,89 @@ function pixelTasksForDay(tasks, date, todayIso, statuses) {
       else if (completedDay === date) items.push({ task, date: d, done, lateDays: 0, carried: true });
     }
   }
-  items.sort((a, b) => (Number(a.done) - Number(b.done))
+  items.sort((a, b) => (Number(!!a.ghost) - Number(!!b.ghost))
+    || (Number(a.done) - Number(b.done))
     || (b.lateDays - a.lateDays)
     || String(a.task.startTime || "99").localeCompare(String(b.task.startTime || "99"))
     || String(a.task.title || "").localeCompare(String(b.task.title || ""), "fr"));
-  return { items, done: items.filter((i) => i.done).length, total: items.length };
+  const counted = items.filter((i) => !i.ghost);
+  return { items, done: counted.filter((i) => i.done).length, total: counted.length, ghosts: items.length - counted.length };
 }
 
 /* Regroupement des tâches du jour (projet par défaut). Groupes triés par nom,
    le groupe « Sans … » en dernier. */
-function pixelTaskGroupsFor(items, groupBy, ctx) {
+/* Clé de regroupement d'une tâche ({id, name, color}, null = « Sans … »).
+   Sert aux groupes (rangées) comme aux packages (cases d'une rangée). */
+function pixelTaskKey(t, by, ctx) {
   const c = ctx || {};
-  const keyOf = (t) => {
-    if (groupBy === "status") {
-      const st = (c.statuses || []).find((s) => s.id === t.statusId);
-      return st ? { id: "s:" + st.id, name: st.name, color: st.color || "#94A3B8" } : null;
-    }
-    if (groupBy === "assignee") {
-      const name = String(t.assignee || "").trim();
-      if (!name) return null;
-      const m = (c.teamMembers || []).find((u) => u.name === name);
-      return { id: "a:" + name, name, color: (m && m.color) || "#94A3B8" };
-    }
-    if (groupBy === "taskType") {
-      const tt = (c.taskTypes || []).find((x) => x.id === t.taskTypeId);
-      return tt ? { id: "t:" + tt.id, name: tt.name, color: tt.color || "#94A3B8" } : null;
-    }
-    const p = (c.projects || []).find((x) => x.id === t.projectId);
-    return p ? { id: "p:" + p.id, name: p.name, color: p.color || "#94A3B8" } : null;
-  };
-  const emptyLabel = { status: "Sans statut", assignee: "Non attribuée", taskType: "Sans type" }[groupBy] || "Sans projet";
+  if (by === "kind") return t.milestone ? { id: "k:milestone", name: "Jalons", color: "#c2410c" } : { id: "k:task", name: "Tâches avec durée", color: "#475569" };
+  if (by === "status") {
+    const st = (c.statuses || []).find((s) => s.id === t.statusId);
+    return st ? { id: "s:" + st.id, name: st.name, color: st.color || "#94A3B8" } : null;
+  }
+  if (by === "assignee") {
+    const name = String(t.assignee || "").trim();
+    if (!name) return null;
+    const m = (c.teamMembers || []).find((u) => u.name === name);
+    return { id: "a:" + name, name, color: (m && m.color) || "#94A3B8" };
+  }
+  if (by === "taskType") {
+    const tt = (c.taskTypes || []).find((x) => x.id === t.taskTypeId);
+    return tt ? { id: "t:" + tt.id, name: tt.name, color: tt.color || "#94A3B8" } : null;
+  }
+  const p = (c.projects || []).find((x) => x.id === t.projectId);
+  if (by === "folder") {
+    // Dossier du projet principal, affiché avec son chemin (Parent › Enfant).
+    const folders = c.projectFolders || [];
+    const f = p && folders.find((x) => x.id === p.folderId);
+    if (!f) return null;
+    const names = [];
+    const seen = new Set();
+    for (let cur = f; cur && !seen.has(cur.id); cur = folders.find((x) => x.id === cur.parentId)) { seen.add(cur.id); names.unshift(cur.name); }
+    return { id: "f:" + f.id, name: names.join(" › "), color: f.color || "#94A3B8" };
+  }
+  return p ? { id: "p:" + p.id, name: p.name, color: p.color || "#94A3B8" } : null;
+}
+const PIXEL_TASKS_EMPTY_LABELS = { status: "Sans statut", assignee: "Non attribuée", taskType: "Sans type", folder: "Sans dossier", project: "Sans projet" };
+
+// Regroupe des entrées par clé ; groupes triés par nom, « Sans … » en dernier.
+function pixelTaskBucket(items, by, ctx) {
   const map = new Map();
   for (const item of items || []) {
-    const k = keyOf(item.task) || { id: "none", name: emptyLabel, color: "#94A3B8" };
-    if (!map.has(k.id)) map.set(k.id, { ...k, items: [], done: 0 });
+    const k = pixelTaskKey(item.task, by, ctx) || { id: "none", name: PIXEL_TASKS_EMPTY_LABELS[by] || "Sans valeur", color: "#94A3B8" };
+    if (!map.has(k.id)) map.set(k.id, { ...k, items: [], done: 0, total: 0 });
     const g = map.get(k.id);
     g.items.push(item);
-    if (item.done) g.done += 1;
+    if (!item.ghost) { g.total += 1; if (item.done) g.done += 1; }
   }
   return [...map.values()].sort((a, b) => (a.id === "none") - (b.id === "none") || String(a.name).localeCompare(String(b.name), "fr"));
+}
+
+/* Regroupement des tâches du jour en rangées (projet par défaut), puis, dans
+   chaque rangée, en « packages » de cases (packageBy, « none » = aucun) : les
+   entrées d'un même package se suivent, lignes et cases dans le même ordre
+   pour que les liaisons restent droites. g.packages = [{id, name, color,
+   start, count}] ; sans package, un seul bloc couvre toute la rangée. */
+function pixelTaskGroupsFor(items, groupBy, ctx, packageBy) {
+  const groups = pixelTaskBucket(items, groupBy, ctx);
+  for (const g of groups) {
+    // Les fantômes ferment la rangée, dans leur propre package.
+    const real = g.items.filter((i) => !i.ghost);
+    const ghostItems = g.items.filter((i) => i.ghost);
+    let packs;
+    if (!packageBy || packageBy === "none") packs = real.length ? [{ id: "all", name: "", color: g.color, items: real }] : [];
+    else packs = pixelTaskBucket(real, packageBy, ctx);
+    if (ghostItems.length) packs.push({ id: "ghost", name: "Fantômes (en cours)", color: "#94A3B8", items: ghostItems });
+    let start = 0;
+    g.items = [];
+    g.packages = packs.map((p) => {
+      const out = { id: p.id, name: p.name, color: p.color, start, count: p.items.length };
+      g.items.push(...p.items);
+      start += p.items.length;
+      return out;
+    });
+  }
+  return groups;
 }
 
 // Côté du carré journalier : assez grand pour la plus longue rangée et le
@@ -4709,6 +4763,16 @@ function pixelTaskGroupsFor(items, groupBy, ctx) {
 function pixelTasksSquareSize(groups) {
   const list = Array.isArray(groups) ? groups : [];
   return Math.max(list.length, list.reduce((m, g) => Math.max(m, g.items.length), 0), 1);
+}
+/* Anneau de progression : position du pointeur (dx, dy relatifs au centre)
+   → pourcentage, 0 en haut, sens horaire, arrondi au pas (5 % par défaut).
+   Tout près du haut, côté gauche, on reste à 100 % plutôt que de retomber à 0. */
+function pixelTaskRingValue(dx, dy, step) {
+  const s = Number(step) > 0 ? Number(step) : 5;
+  let deg = Math.atan2(dx, -dy) * 180 / Math.PI;
+  if (deg < 0) deg += 360;
+  const v = Math.round((deg / 360) * 100 / s) * s;
+  return Math.max(0, Math.min(100, v === 0 && dx < 0 ? 100 : v));
 }
 // === NEXORA:PIXEL-TASKS:END ===
 

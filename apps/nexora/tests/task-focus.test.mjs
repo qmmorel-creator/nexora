@@ -162,3 +162,13 @@ test("#512 : le halo de la Carte, la fiche et les filtres sont bien câblés dan
   }
   for (const view of ["carte", "cosmos", "fleuve"]) assert.ok(html.includes(`view: "${view}"`) || html.includes(`view="${view}"`), `filtre rapide focus absent de ${view}`);
 });
+
+// Filtre « Sans projet » d'un widget : une tâche rattachée à un projet
+// supprimé (id inconnu du catalogue) y est retrouvée, comme une tâche sans projet.
+test("Filtre de widget « Sans projet » : inclut les tâches d'un projet supprimé", () => {
+  const ctx = { projects: [{ id: "p1", name: "Lot 1" }] };
+  const list = [{ id: "a", projectId: "p1" }, { id: "b", projectId: "supprime" }, { id: "c", projectId: "" }];
+  const filter = { ...F.widgetDefaultFilter(), projectIds: ["__nexora_without_project__"] };
+  assert.deepEqual(ids(F.applyWidgetFilter(list, filter, ctx)), ["b", "c"]);
+  assert.deepEqual(ids(F.applyWidgetFilter(list, { ...filter, projectIds: ["p1"] }, ctx)), ["a"]);
+});
