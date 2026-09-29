@@ -3180,21 +3180,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
      avancer) propose « Annuler » quelques secondes dans une notification
      discrète. Annuler remet la tâche telle qu'avant ; une occurrence
      récurrente créée par la complétion est retirée avec. */
-  const pixelTaskUndoable = (taskId, run, describe) => {
-    const all = ctx.tasks || [];
-    const before = all.find((t) => t.id === taskId);
-    const beforeIds = new Set(all.map((t) => t.id));
-    run();
-    if (!before || !pushToast || !setTasks) return;
-    pushToast({
-      message: `« ${before.title || "Tâche"} » ${describe(before)}.`,
-      actionLabel: "Annuler",
-      duration: 7000,
-      onAction: () => setTasks((prev) => prev
-        .filter((t) => beforeIds.has(t.id) || !(before.recurrence && t.title === before.title))
-        .map((t) => (t.id === taskId ? { ...before, lastInteraction: new Date().toISOString() } : t))),
-    });
-  };
+  const pixelTaskUndoable = makePixelTaskUndoable(ctx, pushToast, setTasks);
   const saveWidget = (data) => {
     if (editingWidget === "new") setWidgets((prev) => packWidgets([...prev, { id: uid(), ...data }]));
     else setWidgets((prev) => prev.map((w) => (w.id === editingWidget.id ? { ...w, ...data } : w)));
@@ -13803,6 +13789,47 @@ function TaskProgressRing({ item, ctx, x, y, onClose, onValidate, onOpen }) {
         <button type="button" className="lp-tool-btn" onClick={onClose}>Annuler</button>
         <button type="button" className="lp-btn lp-btn-primary" onClick={() => onValidate(value)}>Valider</button>
       </div>
+    </div>
+  );
+}
+
+/* Pixel Tasks : chaque action sur une tâche (terminer, rouvrir, faire
+   avancer) propose « Annuler » quelques secondes dans une notification
+   discrète. Annuler remet la tâche telle qu'avant ; une occurrence
+   récurrente créée par la complétion est retirée avec. Partagé par le
+   widget (tableau de bord) et la vue de projet (#542). */
+function makePixelTaskUndoable(ctx, pushToast, setTasks) {
+  return (taskId, run, describe) => {
+    const all = (ctx && ctx.tasks) || [];
+    const before = all.find((t) => t.id === taskId);
+    const beforeIds = new Set(all.map((t) => t.id));
+    run();
+    if (!before || !pushToast || !setTasks) return;
+    pushToast({
+      message: `« ${before.title || "Tâche"} » ${describe(before)}.`,
+      actionLabel: "Annuler",
+      duration: 7000,
+      onAction: () => setTasks((prev) => prev
+        .filter((t) => beforeIds.has(t.id) || !(before.recurrence && t.title === before.title))
+        .map((t) => (t.id === taskId ? { ...before, lastInteraction: new Date().toISOString() } : t))),
+    });
+  };
+}
+const pixelTaskDoneLabel = (ctx) => (t) => (isTaskDoneGlobal(t, ctx) ? "rouverte" : "terminée");
+const pixelTaskUpdateLabel = (patch) => () => ("progress" in patch && patch.progress >= 100 && patch.statusId ? "terminée" : "avancement " + Math.round(Number(patch.progress) || 0) + " %");
+
+/* Vue de projet Pixel Tasks (#542) : le widget sur les tâches filtrées de la
+   vue (projet / dossier sélectionné, filtres). Ses réglages vivent dans les
+   préférences de vue au lieu du widget ; la barre d'outils va dans celle de
+   l'application. */
+function PixelTasksView({ tasks, ctx, onOpen, prefs, setPrefs, onToggleDone, onUpdateTask, setTasks, pushToast, toolbarSlot }) {
+  const undoable = makePixelTaskUndoable(ctx, pushToast, setTasks);
+  return (
+    <div className="lp-ptx-view">
+      <WidgetPixelTasks widget={prefs || {}} tasks={tasks} ctx={ctx} onOpen={onOpen}
+        onToggleDone={(id) => undoable(id, () => onToggleDone && onToggleDone(id), pixelTaskDoneLabel(ctx))}
+        onUpdateTask={(id, patch) => undoable(id, () => onUpdateTask && onUpdateTask(id, patch), pixelTaskUpdateLabel(patch))}
+        onUpdateWidget={setPrefs} externalToolbarSlot={toolbarSlot} />
     </div>
   );
 }
