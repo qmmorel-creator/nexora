@@ -77,13 +77,11 @@ test("pixelTaskGroupsFor : projet par défaut, groupe « Sans … » en dernier,
   assert.equal(P.pixelTasksSquareSize([]), 1);
 });
 
-test("pixelTasksForDay : une tâche en retard terminée un jour reste affichée ce jour-là", () => {
+test("pixelTasksForDay : une tâche terminée ne s'affiche qu'à sa date, même terminée aujourd'hui", () => {
   const today = "2026-09-29";
-  const caught = T("caught", { end: "2026-09-20", statusId: "s5", completedAt: "2026-09-29T08:00:00" });
-  const d = P.pixelTasksForDay([caught], today, today, statuses);
-  assert.deepEqual(d.items.map((i) => [i.task.id, i.done, i.carried, i.lateDays]), [["caught", true, true, 0]]);
-  assert.equal(P.pixelTasksForDay([caught], "2026-09-28", today, statuses).total, 0);
-  assert.equal(P.pixelTasksForDay([caught], "2026-09-20", today, statuses).total, 1);
+  const closed = T("closed", { start: "2026-08-26", end: "2026-08-26", statusId: "s5", completedAt: "2026-09-29T14:12:00" });
+  assert.equal(P.pixelTasksForDay([closed], today, today, statuses).total, 0);
+  assert.equal(P.pixelTasksForDay([closed], "2026-08-26", today, statuses).total, 1);
 });
 
 test("pixelTaskGroupsFor : regroupement par dossier du projet, chemin complet", () => {
