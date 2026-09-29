@@ -61,14 +61,17 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
 1. Avant de commencer un batch de travail, lire les issues ouvertes labellisées
    `statut:backlog` pour la ou les zones concernées.
 2. Passer le label en `statut:en-cours` au démarrage du travail sur une issue.
-3. Développer sur la branche de travail et **y accumuler les commits**. Pousser sur cette
-   branche ne déclenche aucun déploiement : c'est gratuit, et c'est là que le travail attend.
-4. **Ne jamais ouvrir de pull request ni fusionner sans le feu vert explicite de Quentin**
-   (voir « Déploiement : validation explicite » ci-dessous). Quand plusieurs correctifs sont
-   prêts, les annoncer et demander l'autorisation de publier le lot.
-5. Une fois le feu vert donné : **une seule** pull request pour tout le lot, `Nexora CI`
-   verte, **une seule** fusion. Commenter chaque issue concernée avec un résumé, puis passer
-   en `statut:à-tester`.
+3. Développer sur la branche de travail et **y accumuler les commits**, avec
+   `npm run install:all && npm run verify` avant chaque push. Pousser sur une branche de
+   travail ne déclenche ni CI ni déploiement.
+4. Livrer par **pull request vers `develop`**, fusionnée quand son `verdict` est terminé et
+   vert, puis mettre le lot en préproduction (`outils/publier preproduction`). Ces étapes ne
+   publient rien en production et ne demandent pas de nouvelle autorisation. Commenter chaque
+   issue concernée avec l'environnement, l'URL et le SHA testés, puis passer en
+   `statut:à-tester`.
+5. La **production** ne se publie que par `outils/publier production`, après un feu vert
+   explicite de Quentin portant sur la version, le SHA et les composants (voir
+   « Déploiement : validation explicite » et [`docs/PUBLICATION.md`](../docs/PUBLICATION.md)).
 6. Ne fermer une issue et passer en `statut:fait` qu'après validation explicite de Quentin
    dans un commentaire.
 7. Un commit qui répond à une issue doit le mentionner dans son message
@@ -86,6 +89,8 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
 Ces contraintes s'ajoutent aux règles de suivi et priment sur toute demande d'issue :
 
 - exécuter `npm run install:all && npm run verify` avant de pousser ;
+- ne jamais publier la production autrement que par `outils/publier production` après feu
+  vert, ni rétablir les builds Git Netlify hors d'une restauration explicitement demandée ;
 - ne jamais committer de secret (compte de service Firebase, `NEXORA_ASSISTANT_API_KEY`,
   token Todoist personnel, clés Supabase) — les variables restent dans Netlify ;
 - ne pas changer les URL publiques, les identifiants de projets Netlify/Firebase ni les
@@ -95,104 +100,80 @@ Ces contraintes s'ajoutent aux règles de suivi et priment sur toute demande d'i
 
 ## Déploiement : validation explicite
 
-**Les publications de production Netlify sont facturées. Elles ne se déclenchent donc plus au fil de l'eau.**
+**Les publications de production Netlify sont facturées ; elles sont volontaires, tracées et
+réversibles.** Référence complète : [`docs/PUBLICATION.md`](../docs/PUBLICATION.md).
 
-Les deux sites sont reliés à ce dépôt :
-
-| Projet Netlify | Branche | Base directory |
+| Projet Netlify | Composant | Base directory |
 |---|---|---|
-| `nexora-project` | `main` | `apps/nexora` |
-| `nexora-chatgpt-mcp` | `main` | `apps/nexora-mcp` |
+| `nexora-project` | `application` | `apps/nexora` |
+| `nexora-chatgpt-mcp` | `mcp` | `apps/nexora-mcp` |
+
+Depuis l'issue #544, **une fusion dans `main` ne publie plus rien** : la commande `ignore`
+versionnée saute tout build Git de production (`scripts/netlify-ignore.mjs`) et les builds Git
+sont arrêtés dans Netlify. Une PR de développement vers `develop` n'est donc **pas** une
+demande de publication.
 
 ### Ce qui coûte, et ce qui ne coûte rien
 
-Le compte est sur un forfait Netlify **à crédits** (vérifié le 29/09/2026). Dans ce modèle, ce
-n'est pas la minute de build qui est facturée, mais chaque **publication de production
-réussie** (15 crédits), ainsi que le trafic (bande passante, requêtes) et le calcul des fonctions.
-Les *Deploy Previews* ne consomment pas de crédits et sont de toute façon désactivées sur les deux
-sites. Source : [How credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/)
+Le compte est sur un forfait Netlify **à crédits** (vérifié le 29/09/2026) : chaque
+**publication de production réussie** coûte (15 crédits), ainsi que le trafic et le calcul des
+fonctions. Source : [How credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/)
 et [netlify.com/pricing](https://www.netlify.com/pricing/), consultés le 29/09/2026.
 
 | Action | Effet Netlify | Crédits |
 |---|---|---|
-| Commit et push sur la branche de travail | aucun | 0 |
-| Ouvrir une pull request | aucun aujourd'hui (Deploy Previews désactivées) | 0 |
-| **Fusionner dans `main`** un changement sous `apps/nexora` ou `apps/nexora-mcp` | une publication de production **par site concerné** | 15 par site publié |
-| Fusionner dans `main` un changement hors de ces deux dossiers (docs, CI, outils) | construction sautée par la commande `ignore` | non confirmé par Netlify ; aucune publication |
-| Construction en échec, retour à un deploy précédent | aucune publication | 0 |
+| Commit et push sur la branche de travail | aucun (et plus de CI) | 0 |
+| PR vers `develop`, fusion dans `develop` ou `main` | aucun | 0 |
+| `outils/publier preproduction` | brouillon non publié, alias `preprod` | aucun crédit de publication annoncé ; trafic compté |
+| `outils/publier production` (après feu vert) | une publication **par composant modifié** | 15 par site publié |
+| `outils/publier retour` | republication d'un Deploy ID existant | selon Netlify, sans construction |
 | Visites, appels d'API, rapports planifiés | trafic et calcul des fonctions | selon l'usage |
 
-Le coût est donc porté par **chaque fusion qui touche un site**, pas par le nombre de commits ni
-par la durée du build. Cinq fusions dans la journée coûtent cinq publications ; les mêmes
-correctifs regroupés en une fusion n'en coûtent qu'une. C'est là que la validation s'impose.
-GitHub Actions, lui, ne coûte rien sur ce dépôt public (runners standard `ubuntu-latest`).
+GitHub Actions ne coûte rien sur ce dépôt public (runners standard `ubuntu-latest`).
 
 ### La règle
 
-1. L'assistant accumule le travail en commits sur la branche, autant de fois qu'il le faut.
-2. Il **n'ouvre pas** de pull request et **ne fusionne pas** de sa propre initiative. Il
-   annonce ce qui est prêt et **demande le feu vert**.
-3. Sur feu vert : **une** pull request pour tout le lot, CI verte, **une** fusion. Un lot de
-   cinq correctifs coûte alors autant qu'un seul.
-4. Le feu vert vaut pour **ce lot-là**. Il ne se reporte pas au suivant.
-5. Exception, et elle seule : une régression qui casse la production en ligne. Là, publier
-   tout de suite et le dire — laisser le site cassé coûte plus cher qu'une construction.
+1. L'assistant accumule le travail en commits sur sa branche, livre par PR vers `develop`
+   après `verdict` vert, et met le lot en préproduction : tout cela sans nouvelle autorisation.
+2. Il **ne publie pas la production** de sa propre initiative. Il présente en un seul message
+   la version, le SHA définitif, le changelog, les composants, la recette et le retour arrière,
+   et **demande le feu vert**.
+3. Le feu vert vaut pour **ce candidat-là** (version, SHA, contenu, composants). S'il change,
+   nouvelle préproduction et nouvel accord.
+4. Viser une version officielle par semaine environ : un lot de cinq correctifs coûte autant
+   qu'un seul.
+5. Exception, et elle seule : une régression avérée qui casse la production autorise le
+   **retour** au dernier déploiement connu et compatible (`outils/publier retour`), puis
+   information de Quentin.
 
-### Ce qui remplace la CI au fil de l'eau
+### Vérification continue
 
-Comme `Nexora CI` ne tournait qu'à l'ouverture d'une pull request, elle tourne désormais aussi
-**à chaque push sur une branche de travail** : la vérification reste continue, sans qu'aucun
-déploiement Netlify ne soit déclenché. `npm run install:all && npm run verify` reste obligatoire
-avant chaque push : c'est ce qui garantit qu'un lot entier est publiable d'un coup.
-
-Le banc visuel (`tools/visual-check`) ne tourne ni dans la CI ni sur Netlify : il s'exécute sur la
-machine ou l'environnement de l'assistant. Il suit la matrice de
+`Nexora CI` tourne sur les pull requests, sur `main` et `develop` et à la demande ; son statut
+final `verdict` est exigé par l'outil sur le SHA exact publié. `npm run install:all && npm run
+verify` reste obligatoire avant chaque push. Le banc visuel (`tools/visual-check`) ne tourne
+ni dans la CI ni sur Netlify ; il suit la matrice de
 [`tools/visual-check/README.md`](../tools/visual-check/README.md#ne-lancer-que-ce-qui-est-concerné) :
 
-- quand l'interface bouge, avant de pousser : `npm run visual:affected`, qui ne rejoue que les
-  scénarios concernés (une modification de texte ou de formulaire ne relance pas les vues 3D) ;
-- la campagne complète `npm run visual:check` (toutes les vues 3D, mobile, gros volume, captures)
-  se passe **une fois, sur le lot stabilisé qui sera livré**, quand le sélecteur la réclame
-  (moteur 3D, modèles, build, banc). Pas à chaque push, ni à chaque itération 3D.
+- quand l'interface bouge, avant de pousser : `npm run visual:affected` ;
+- la campagne complète `npm run visual:check` se passe **une fois, sur le lot stabilisé qui sera
+  livré**, quand le sélecteur la réclame.
 
 Une suite visuelle non exécutée est annoncée comme telle, jamais comme réussie.
 
-### Chaque site ne se construit que s'il est concerné
+### En cas de problème de production
 
-Les deux sites vivent dans le même dépôt. Sans garde-fou, un correctif d'interface
-reconstruisait **aussi** le site MCP, et inversement : deux constructions facturées là où une
-seule était utile. Chaque `netlify.toml` porte donc une commande `ignore` qui saute la
-construction quand son propre dossier n'a pas changé :
-
-```toml
-ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- ."
-```
-
-Netlify l'exécute depuis le *base directory* : « `.` » désigne donc `apps/nexora` ou
-`apps/nexora-mcp`. Code de sortie 0 = rien n'a changé, on saute ; non nul = on construit. Au
-premier build ou après un vidage de cache, `$CACHED_COMMIT_REF` est vide, la commande échoue,
-et la construction a lieu — le repli sûr est bien « construire ».
-
-Vérifié sur des fusions réelles :
-
-| Modification | `nexora-project` | `nexora-chatgpt-mcp` |
-|---|---|---|
-| Correctif d'interface (`apps/nexora`) | construit | **sauté** |
-| Documentation ou CI uniquement | **sauté** | **sauté** |
-
-**Conséquence à connaître** : une fusion qui ne touche ni `apps/nexora` ni `apps/nexora-mcp`
-ne déploie plus rien, et c'est voulu. Un site qui « ne se redéploie pas » après une fusion de
-documentation n'est pas une panne.
-
-### En cas d'échec de construction
-
-Republier le dernier Deploy ID fonctionnel du projet concerné.
+`outils/publier retour --version <précédente>` republie les Deploy IDs connus du registre, sans
+reconstruction. Un retour Netlify ne restaure ni Firebase, ni les fonctions Todoist, ni les
+jetons MCP.
 
 ## Suivi visuel
 
 En plus du tableau Projects, un board en lecture seule (Kanban par statut, filtrable par
 zone) peut être publié en artefact Claude : il se synchronise sur demande
-(« resynchronise le roadmap ») à partir des issues GitHub, pas en continu.
+(« resynchronise le roadmap ») à partir des issues GitHub, pas en continu. Il comporte une
+section **« Versions en ligne »** lue depuis `publication/registre.json` (version, commit,
+Deploy ID, date par site) et la préproduction depuis l'historique Netlify
+(`outils/publier etat`), jamais d'une copie tenue à la main.
 
 ## Pourquoi GitHub plutôt qu'un outil propriétaire
 

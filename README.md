@@ -22,23 +22,23 @@ Les demandes d'amélioration et de correction sont suivies en issues GitHub : mo
 labels `statut:*` et `zone:*`, board Projects. Le processus complet, identique à celui
 d'OS360, est décrit dans [.github/PROCESS.md](.github/PROCESS.md).
 
-## Validation locale
+## Développement, préproduction et versions
 
 ```bash
 npm run install:all
-npm run verify
-npm run smoke:production
+npm run verify               # socle, obligatoire avant tout push
+npm run local                # interface sur http://127.0.0.1:8888, données fictives, bandeau LOCAL
+npm run smoke:production     # lecture seule de la production
+outils/publier etat          # versions en ligne, préproduction, garde-fous
 ```
 
-## Déploiement Git
+Chaque site sert un `version.json` public. Une fusion dans `main` ne publie rien : la
+production se publie par `outils/publier production`, après feu vert explicite. Versions dans
+[CHANGELOG.md](CHANGELOG.md), production réellement servie dans
+[publication/registre.json](publication/registre.json), guide complet dans
+[docs/PUBLICATION.md](docs/PUBLICATION.md).
 
-Chaque projet Netlify doit être relié à ce même dépôt, avec :
-
-| Projet Netlify | Branche | Base directory |
-|---|---|---|
-| `nexora-project` | `main` | `apps/nexora` |
-| `nexora-chatgpt-mcp` | `main` | `apps/nexora-mcp` |
-
-Les domaines existants doivent être conservés. Les variables d'environnement restent configurées dans Netlify et ne sont jamais recopiées dans GitHub.
-
-Consulter [MIGRATION_GITHUB.md](docs/MIGRATION_GITHUB.md) avant la première bascule.
+Les projets Netlify restent reliés à ce dépôt (base `apps/nexora` et `apps/nexora-mcp`) pour
+leur configuration, mais leurs builds Git ne publient plus. Les domaines existants sont
+conservés ; les variables d'environnement restent dans Netlify et ne sont jamais recopiées dans
+GitHub. Historique de la bascule : [MIGRATION_GITHUB.md](docs/MIGRATION_GITHUB.md).
