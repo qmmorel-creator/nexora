@@ -95,7 +95,7 @@ Ces contraintes s'ajoutent aux règles de suivi et priment sur toute demande d'i
 
 ## Déploiement : validation explicite
 
-**Les déploiements Netlify sont facturés. Ils ne se déclenchent donc plus au fil de l'eau.**
+**Les publications de production Netlify sont facturées. Elles ne se déclenchent donc plus au fil de l'eau.**
 
 Les deux sites sont reliés à ce dépôt :
 
@@ -106,14 +106,26 @@ Les deux sites sont reliés à ce dépôt :
 
 ### Ce qui coûte, et ce qui ne coûte rien
 
-| Action | Construction Netlify |
-|---|---|
-| Commit et push sur la branche de travail | **aucune** — tant qu'aucune pull request n'est ouverte |
-| **Ouvrir une pull request** | une *Deploy Preview* **par site** |
-| **Fusionner dans `main`** | une construction de production **par site** |
+Le compte est sur un forfait Netlify **à crédits** (vérifié le 29/09/2026). Dans ce modèle, ce
+n'est pas la minute de build qui est facturée, mais chaque **publication de production
+réussie** (15 crédits), ainsi que le trafic (bande passante, requêtes) et le calcul des fonctions.
+Les *Deploy Previews* ne consomment pas de crédits et sont de toute façon désactivées sur les deux
+sites. Source : [How credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/)
+et [netlify.com/pricing](https://www.netlify.com/pricing/), consultés le 29/09/2026.
 
-Le coût est donc porté par l'**ouverture d'une pull request** et par la **fusion**, jamais par
-le fait de committer. C'est exactement là que la validation s'impose.
+| Action | Effet Netlify | Crédits |
+|---|---|---|
+| Commit et push sur la branche de travail | aucun | 0 |
+| Ouvrir une pull request | aucun aujourd'hui (Deploy Previews désactivées) | 0 |
+| **Fusionner dans `main`** un changement sous `apps/nexora` ou `apps/nexora-mcp` | une publication de production **par site concerné** | 15 par site publié |
+| Fusionner dans `main` un changement hors de ces deux dossiers (docs, CI, outils) | construction sautée par la commande `ignore` | non confirmé par Netlify ; aucune publication |
+| Construction en échec, retour à un deploy précédent | aucune publication | 0 |
+| Visites, appels d'API, rapports planifiés | trafic et calcul des fonctions | selon l'usage |
+
+Le coût est donc porté par **chaque fusion qui touche un site**, pas par le nombre de commits ni
+par la durée du build. Cinq fusions dans la journée coûtent cinq publications ; les mêmes
+correctifs regroupés en une fusion n'en coûtent qu'une. C'est là que la validation s'impose.
+GitHub Actions, lui, ne coûte rien sur ce dépôt public (runners standard `ubuntu-latest`).
 
 ### La règle
 
@@ -130,9 +142,20 @@ le fait de committer. C'est exactement là que la validation s'impose.
 
 Comme `Nexora CI` ne tournait qu'à l'ouverture d'une pull request, elle tourne désormais aussi
 **à chaque push sur une branche de travail** : la vérification reste continue, sans qu'aucun
-déploiement Netlify ne soit déclenché. `npm run install:all && npm run verify` (plus
-`npm run visual:check` quand l'interface bouge) reste obligatoire avant chaque push : c'est ce
-qui garantit qu'un lot entier est publiable d'un coup.
+déploiement Netlify ne soit déclenché. `npm run install:all && npm run verify` reste obligatoire
+avant chaque push : c'est ce qui garantit qu'un lot entier est publiable d'un coup.
+
+Le banc visuel (`tools/visual-check`) ne tourne ni dans la CI ni sur Netlify : il s'exécute sur la
+machine ou l'environnement de l'assistant. Il suit la matrice de
+[`tools/visual-check/README.md`](../tools/visual-check/README.md#ne-lancer-que-ce-qui-est-concerné) :
+
+- quand l'interface bouge, avant de pousser : `npm run visual:affected`, qui ne rejoue que les
+  scénarios concernés (une modification de texte ou de formulaire ne relance pas les vues 3D) ;
+- la campagne complète `npm run visual:check` (toutes les vues 3D, mobile, gros volume, captures)
+  se passe **une fois, sur le lot stabilisé qui sera livré**, quand le sélecteur la réclame
+  (moteur 3D, modèles, build, banc). Pas à chaque push, ni à chaque itération 3D.
+
+Une suite visuelle non exécutée est annoncée comme telle, jamais comme réussie.
 
 ### Chaque site ne se construit que s'il est concerné
 
