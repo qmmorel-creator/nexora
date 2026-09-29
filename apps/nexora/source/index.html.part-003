@@ -13669,15 +13669,40 @@ function TaskPixelMosaic({ groups: allGroups, day, ctx, size = 8, gap = 2 }) {
   return <span className="lp-hpx-mosaic" style={{ gap }} role="img" aria-label={`${day.done} tâches terminées sur ${day.total}`}>{rows}</span>;
 }
 
-function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, onOpen, collapsed }) {
+function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, onOpen, collapsed, side, folded, onToggleFold }) {
   const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost && !i.future) })).filter((g) => g.items.length);
+  const label = hpxDayLabel(date, todayIso);
+  /* Volet plié : une fine colonne (chevron, jour en vertical, compteur) ;
+     le chevron pointe vers le côté où le volet se déplie. */
+  const towardOut = side === "prev" ? "‹" : "›";
+  const towardIn = side === "prev" ? "›" : "‹";
+  const fold = onToggleFold ? (
+    <button type="button" className="lp-ptx-fold" onClick={onToggleFold} aria-expanded={!folded}
+      aria-label={(folded ? "Déplier le volet " : "Plier le volet ") + label} title={folded ? "Déplier" : "Plier"}>
+      {folded ? towardIn : towardOut}
+    </button>
+  ) : null;
+  if (folded) {
+    return (
+      <section className="lp-hpx-side lp-ptx-side is-folded" aria-label={label + " — " + hpxLongDate(date) + " (plié)"}>
+        {fold}
+        <button type="button" className="lp-ptx-side-strip" onClick={onToggleFold} title={`Déplier — ${label} : ${day.done} / ${day.total}`} tabIndex={-1}>
+          <span className="lp-ptx-side-vlabel">{label}</span>
+          <span className="lp-hpx-count"><b>{day.done}</b>/{day.total}</span>
+        </button>
+      </section>
+    );
+  }
   return (
-    <section className="lp-hpx-side" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
-      <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
-        <span className="lp-hpx-side-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxSubDate(date, todayIso)}</span></span>
-        <TaskPixelMosaic groups={groups} day={day} ctx={ctx} size={8} />
-        <span className="lp-hpx-count"><b>{day.done}</b> / {day.total}</span>
-      </button>
+    <section className="lp-hpx-side lp-ptx-side" aria-label={label + " — " + hpxLongDate(date)}>
+      <div className="lp-ptx-side-top">
+        <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
+          <span className="lp-hpx-side-title"><b>{label}</b><span>{hpxSubDate(date, todayIso)}</span></span>
+          <TaskPixelMosaic groups={groups} day={day} ctx={ctx} size={8} />
+          <span className="lp-hpx-count"><b>{day.done}</b> / {day.total}</span>
+        </button>
+        {fold}
+      </div>
       {!groups.length && <div className="lp-hpx-muted lp-ptx-empty-side">Aucune tâche ce jour.</div>}
       {groups.map((g) => (
         <div key={g.id} className="lp-hpx-side-theme">
@@ -13782,6 +13807,14 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
   const saveCollapsed = (list) => { setCollapsedList(list); if (onUpdateWidget) onUpdateWidget({ pixelTasksCollapsed: list }); };
   const toggleGroup = (id) => saveCollapsed(collapsed.has(id) ? collapsedList.filter((x) => x !== id) : [...collapsedList, id]);
+  // Volets Hier / Demain pliés, mémorisés sur le widget.
+  const [sidesFolded, setSidesFolded] = useState(() => ({ ...((widget && widget.pixelTasksSidesFolded) || {}) }));
+  useEffect(() => { setSidesFolded({ ...((widget && widget.pixelTasksSidesFolded) || {}) }); }, [widget && widget.pixelTasksSidesFolded]);
+  const toggleSide = (key) => {
+    const nextFolded = { prev: !!sidesFolded.prev, next: !!sidesFolded.next, [key]: !sidesFolded[key] };
+    setSidesFolded(nextFolded);
+    if (onUpdateWidget) onUpdateWidget({ pixelTasksSidesFolded: nextFolded });
+  };
 
   const prev = addDays(date, -1);
   const next = addDays(date, 1);
@@ -14034,8 +14067,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
     <div ref={rootRef} className="lp-hpx lp-ptx" onKeyDown={onKeyDown}>
       {toolbar}
       {ringItem && <TaskProgressRing key={ringItem.task.id} item={ringItem} ctx={ctx} x={ring.x} y={ring.y} onClose={() => setRing(null)} onValidate={validateRing} onOpen={onOpen} />}
-      <div className="lp-hpx-days">
-        <TaskPixelSide date={prev} day={stateOf(prev)} groups={stateOf(prev).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} />
+      <div className={"lp-hpx-days lp-ptx-days" + (sidesFolded.prev ? " is-prev-folded" : "") + (sidesFolded.next ? " is-next-folded" : "")}>
+        <TaskPixelSide date={prev} day={stateOf(prev)} groups={stateOf(prev).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="prev" folded={!!sidesFolded.prev} onToggleFold={() => toggleSide("prev")} />
         <section ref={mainRef} className="lp-hpx-main" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
           <div className="lp-hpx-main-head">
             <div className="lp-hpx-main-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxSubDate(date, todayIso)}</span></div>
@@ -14129,7 +14162,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
             );
           })}
         </section>
-        <TaskPixelSide date={next} day={stateOf(next)} groups={stateOf(next).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} />
+        <TaskPixelSide date={next} day={stateOf(next)} groups={stateOf(next).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="next" folded={!!sidesFolded.next} onToggleFold={() => toggleSide("next")} />
       </div>
       <div className="lp-hpx-week" role="group" aria-label="Semaine">
         {week.map((d) => {
