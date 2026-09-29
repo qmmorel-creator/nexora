@@ -32,6 +32,81 @@ NODE_PATH=$(npm root -g) npm start
 CHROMIUM_PATH=/chemin/vers/chromium NODE_PATH=$(npm root -g) npm start   # binaire hors emplacement par défaut
 ```
 
+## Ne lancer que ce qui est concerné
+
+Le banc complet enchaîne les scénarios 2D puis quatre vues 3D sous rendu logiciel. C'est lui
+qui coûte du temps. Une modification de texte, de formulaire ou de widget 2D n'a pas à
+rejouer la Carte, Cosmos, les Réunions 3D et le Fleuve du temps. Trois niveaux :
+
+| Niveau | Quand | Commande |
+|---|---|---|
+| **Socle** — build, typage, tests de logique, dates, tâches/projets, contrats API/MCP, droits, invariants du dépôt, tests du sélecteur | automatique : `Nexora CI` à chaque push de branche de travail et à chaque PR ; bloquant avant tout push | `npm run install:all && npm run verify` |
+| **Ciblé** — seulement les scénarios que la modification peut toucher ; pour une vue 3D, le parcours fonctionnel | avant de pousser une modification d'interface | `npm run visual:affected` |
+| **Exhaustif** — tout le banc, variantes mobile et gros volume, gestes, captures 3D | à la main, **une fois**, sur le lot stabilisé qui sera livré, quand le sélecteur l'indique (moteur, modèles, build, banc) | `npm run visual:check` |
+
+`npm run visual:plan` affiche la sélection sans rien lancer. `npm run visual:affected` compare
+l'arbre de travail au point de départ de la branche (`merge-base` avec `origin/main`,
+`--base=<ref>` pour une autre base), construit l'interface, lance le test du moteur de la Carte si
+elle est concernée, puis le banc limité aux scénarios retenus. Il **dit ce qu'il n'a pas lancé** :
+une suite non exécutée n'est jamais comptée comme réussie.
+
+### Comment la sélection est faite
+
+L'interface est un monofichier découpé en fragments (`apps/nexora/source/index.html.part-*`) :
+le nom du fichier ne dit rien de la vue touchée. Le sélecteur recolle l'ancienne et la nouvelle
+version, les compare ligne à ligne, puis rattache chaque ligne modifiée :
+
+- à la **déclaration** qui la contient. Les noms `carte*`, `cosmos*`, `fleuve*` et
+  `reunions3d*`/`REU3D_*` désignent leur vue. Une déclaration commune entraîne le 2D et, de proche
+  en proche, les vues 3D qui l'utilisent ;
+- pour le **CSS** (y compris celui de `GlobalStyles`), aux composants qui emploient ses classes. Un
+  sélecteur composé ne vise que les vues où toutes ses classes vivent. Une classe commune au 2D et
+  à plusieurs vues 3D (bouton, état) se vérifie sur **une** vue 3D représentative, la Carte ;
+- pour `harness.jsx`, au scénario 2D, au bloc de démo d'une vue, ou à tout si la ligne touche les
+  données communes de l'application de démo.
+
+Un moteur (`create*Engine`), les modèles 3D, la chaîne de build, les dépendances du banc ou le
+banc lui-même déclenchent en plus le rappel de la campagne exhaustive avant livraison.
+
+**Toute incertitude élargit la sélection** : diff indisponible, chemin non répertorié, import ou
+instruction de premier niveau, CSS global sans classe.
+
+### Matrice
+
+| Modification | Socle (CI) | Banc ciblé | Exhaustif avant livraison |
+|---|---|---|---|
+| Documentation, `.github/`, `scripts/`, MCP, fonctions Netlify, tests unitaires | oui | aucun | non |
+| Module 2D (widget, fiche, tableau de bord, organigramme) | oui | `2d` | non |
+| CSS d'une vue 3D, composant d'une vue 3D | oui | cette vue (parcours ciblé) | non |
+| CSS commun au 2D et aux vues 3D, règle globale | oui | `2d` + Carte | non |
+| Utilitaire commun (dates, filtres, fiche) | oui | `2d` + vues 3D qui l'utilisent | non |
+| Moteur 3D (`createCarteEngine`…) | oui | cette vue + test moteur Carte | **oui** |
+| Modèles `apps/nexora/public/carte/`, build de l'interface, `three`, banc | oui | vues concernées | **oui** |
+| Import CDN, instruction de premier niveau, chemin inconnu, diff indisponible | oui | tout, ciblé | selon le cas |
+
+### Profondeur d'une vue 3D
+
+Le banc accepte `--only=2d,carte,cosmos,reunions3d,fleuve` et `--depth=cible|complet`, ou les
+variables `VISUAL_ONLY` et `VISUAL_DEPTH` (`VISUAL_ONLY=carte VISUAL_DEPTH=cible npm run visual:check`).
+Sans option, tout est exécuté en profondeur `complet`.
+
+| Assertion | Nature | `cible` | `complet` |
+|---|---|---|---|
+| Chargement, un seul canevas, aucune erreur JavaScript | interaction | oui | oui |
+| Recherche, marche, sélection, volet, fiche, double clic, Échap, filtres rapides, période | interaction | oui | oui |
+| Réglage d'avancement ou de statut enregistré ; explorer n'écrit rien | données, persistance | oui | oui |
+| Tâche de calendrier synchronisé en lecture seule | droits | oui | oui |
+| Repli sans WebGL qui ouvre la fiche ; univers vide (Cosmos) | interaction, données | oui | oui |
+| Libellés sans chevauchement sur la scène de démo | apparence | oui | oui |
+| Écran mobile ou étroit | apparence, interaction | non | oui |
+| Gros volume (300 projets, 12 000 tâches), qualité basse automatique | charge | non | oui |
+| Gestes de la Carte (clic droit, glisser, molette, double clic sur un dossier) | interaction | non | oui |
+| Captures 3D (`carte*.png`, `cosmos*.png`, `reunions*.png`, `fleuve*.png`) | apparence | non | oui |
+
+Chaque exécution écrit `.harness/result.json` : portée, profondeur, sous-parcours non exécutés,
+durées par scénario, commit et état de l'arbre de travail. Un résultat ne vaut que pour ce
+commit-là, cet arbre-là et cette portée-là.
+
 ### Vues 3D sous rendu logiciel
 
 Les vues 3D (Carte, Cosmos, Réunions 3D, Fleuve du temps) tournent à 1 ou 2 images/s en
