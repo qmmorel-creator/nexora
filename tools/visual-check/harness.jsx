@@ -1019,6 +1019,19 @@ if (benchApp) {
     ...seedTasks.map((t, i) => (i % 3 === 0 ? { ...t, completedAt: addDaysIso(iso(new Date()), -(i % 40)) + "T10:00:00Z" } : t)),
     ...seedTasks.map((t, i) => ({ ...t, id: `bench-${i}`, title: `Réunion de chantier ${i}` })),
     realMeetingTask,
+    // #524 : tâches datées hier / aujourd'hui / demain pour le Pixel Tasks —
+    // un retard, un jalon, une tâche terminée, un avancement partiel.
+    ...[
+      ["ptx-late", "Appeler le fournisseur", -2, { statusId: "s3", progress: 40 }],
+      ["ptx-done", "Envoyer le compte rendu", 0, { statusId: "s5", progress: 100 }],
+      ["ptx-today", "Relire la note de synthèse", 0, { statusId: "s3", progress: 65, startTime: "09:00" }],
+      ["ptx-milestone", "Signature du PV", 0, { statusId: "s1", milestone: true }],
+      ["ptx-yesterday", "Préparer la réunion", -1, { statusId: "s5", progress: 100 }],
+      ["ptx-tomorrow", "Déposer le dossier", 1, { statusId: "s2" }],
+    ].map(([id, title, offset, extra], i) => {
+      const d = addDaysIso(iso(new Date()), offset);
+      return { id, title, projectId: seedProjects[i % 2]?.id, taskTypeId: "tt1", start: extra.milestone ? d : addDaysIso(d, -3), end: d, progress: 0, milestone: false, assignee: "Quentin", checklist: [], desc: "", ...extra };
+    }),
   ];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
@@ -1046,6 +1059,8 @@ if (benchApp) {
     { id: "banc-chart-completed", type: "chart", title: "chart completedPerWeek", chartStyle: "completedPerWeek", layout: { x: 6, y: 110, w: 4, h: 4 } },
     // #353 : Pixel des habitudes, pleine largeur (trois jours + semaine).
     { id: "banc-habitPixel", type: "habitPixel", title: "Pixel des habitudes", layout: { x: 0, y: 120, w: 12, h: 13 } },
+    // #524 : Pixel Tasks, pleine largeur, mêmes gabarits que le précédent.
+    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", layout: { x: 0, y: 134, w: 12, h: 13 } },
   );
   const benchHabitThemes = [
     { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [

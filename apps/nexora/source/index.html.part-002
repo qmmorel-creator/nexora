@@ -4618,6 +4618,100 @@ function habitYearWeeks(theme, log, year) {
 }
 // === NEXORA:HABITS:END ===
 
+// === NEXORA:PIXEL-TASKS:START ===
+/* Pixel des tâches (#524) : la vue Jour du Pixel des habitudes appliquée aux
+   tâches filtrées d'un widget. Logique pure (testée), rendu dans
+   WidgetPixelTasks. */
+const PIXEL_TASKS_GROUP_BY = [["project", "Projet"], ["status", "Statut"], ["assignee", "Responsable"], ["taskType", "Type"]];
+const PIXEL_TASKS_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/* Une tâche s'affiche à UNE seule date : sa date de jalon si c'est un jalon,
+   sa date de fin sinon (repli sur l'autre borne quand la première manque).
+   Jamais répétée sur chaque jour de sa durée. */
+function pixelTaskDate(task) {
+  if (!task) return null;
+  const first = task.milestone ? task.start : task.end;
+  const second = task.milestone ? task.end : task.start;
+  if (PIXEL_TASKS_DATE_RE.test(first || "")) return first;
+  if (PIXEL_TASKS_DATE_RE.test(second || "")) return second;
+  return null;
+}
+
+// Même définition que isTaskDoneGlobal : statut dont le nom contient « termin ».
+function pixelTaskIsDone(task, statuses) {
+  const st = (statuses || []).find((s) => s.id === task.statusId);
+  return !!(st && /termin/i.test(st.name || ""));
+}
+
+/* Tâches d'un jour. Aujourd'hui reprend en plus les tâches non terminées dont
+   la date est passée, marquées en retard (lateDays = jours de retard) : elles
+   restent sous les yeux tant qu'elles ne sont pas faites. Une tâche en retard
+   terminée un jour donné (completedAt) reste affichée ce jour-là, rattrapée :
+   la cocher ne la fait pas disparaître de la journée. */
+function pixelTasksForDay(tasks, date, todayIso, statuses) {
+  const items = [];
+  for (const task of tasks || []) {
+    const d = pixelTaskDate(task);
+    if (!d) continue;
+    const done = pixelTaskIsDone(task, statuses);
+    if (d === date) {
+      const lateDays = !done && d < todayIso ? dayIndex(todayIso) - dayIndex(d) : 0;
+      items.push({ task, date: d, done, lateDays, carried: false });
+    } else if (d < date) {
+      const completedDay = done && task.completedAt ? iso(new Date(task.completedAt)) : null;
+      if (date === todayIso && !done) items.push({ task, date: d, done, lateDays: dayIndex(todayIso) - dayIndex(d), carried: true });
+      else if (completedDay === date) items.push({ task, date: d, done, lateDays: 0, carried: true });
+    }
+  }
+  items.sort((a, b) => (Number(a.done) - Number(b.done))
+    || (b.lateDays - a.lateDays)
+    || String(a.task.startTime || "99").localeCompare(String(b.task.startTime || "99"))
+    || String(a.task.title || "").localeCompare(String(b.task.title || ""), "fr"));
+  return { items, done: items.filter((i) => i.done).length, total: items.length };
+}
+
+/* Regroupement des tâches du jour (projet par défaut). Groupes triés par nom,
+   le groupe « Sans … » en dernier. */
+function pixelTaskGroupsFor(items, groupBy, ctx) {
+  const c = ctx || {};
+  const keyOf = (t) => {
+    if (groupBy === "status") {
+      const st = (c.statuses || []).find((s) => s.id === t.statusId);
+      return st ? { id: "s:" + st.id, name: st.name, color: st.color || "#94A3B8" } : null;
+    }
+    if (groupBy === "assignee") {
+      const name = String(t.assignee || "").trim();
+      if (!name) return null;
+      const m = (c.teamMembers || []).find((u) => u.name === name);
+      return { id: "a:" + name, name, color: (m && m.color) || "#94A3B8" };
+    }
+    if (groupBy === "taskType") {
+      const tt = (c.taskTypes || []).find((x) => x.id === t.taskTypeId);
+      return tt ? { id: "t:" + tt.id, name: tt.name, color: tt.color || "#94A3B8" } : null;
+    }
+    const p = (c.projects || []).find((x) => x.id === t.projectId);
+    return p ? { id: "p:" + p.id, name: p.name, color: p.color || "#94A3B8" } : null;
+  };
+  const emptyLabel = { status: "Sans statut", assignee: "Non attribuée", taskType: "Sans type" }[groupBy] || "Sans projet";
+  const map = new Map();
+  for (const item of items || []) {
+    const k = keyOf(item.task) || { id: "none", name: emptyLabel, color: "#94A3B8" };
+    if (!map.has(k.id)) map.set(k.id, { ...k, items: [], done: 0 });
+    const g = map.get(k.id);
+    g.items.push(item);
+    if (item.done) g.done += 1;
+  }
+  return [...map.values()].sort((a, b) => (a.id === "none") - (b.id === "none") || String(a.name).localeCompare(String(b.name), "fr"));
+}
+
+// Côté du carré journalier : assez grand pour la plus longue rangée et le
+// nombre de groupes (même principe que habitPixelSquareSize).
+function pixelTasksSquareSize(groups) {
+  const list = Array.isArray(groups) ? groups : [];
+  return Math.max(list.length, list.reduce((m, g) => Math.max(m, g.items.length), 0), 1);
+}
+// === NEXORA:PIXEL-TASKS:END ===
+
 // === NEXORA:FIXED-PAGES:START ===
 /* Méta d'affichage partagée par les pages qui listent des tâches datées hors
    widget (le Calendrier). Fonction pure et testable, comme NEXORA:HABITS
