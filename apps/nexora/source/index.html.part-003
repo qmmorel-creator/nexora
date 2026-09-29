@@ -13655,6 +13655,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
   const setView = (v) => { setViewState(v); if (onUpdateWidget) onUpdateWidget({ pixelTasksView: v }); };
   const [groupBy, setGroupByState] = useState(() => (PIXEL_TASKS_GROUP_BY.some(([k]) => k === (widget && widget.pixelTasksGroupBy)) ? widget.pixelTasksGroupBy : "project"));
   const setGroupBy = (g) => { setGroupByState(g); if (onUpdateWidget) onUpdateWidget({ pixelTasksGroupBy: g }); };
+  // Réglé depuis la fiche du widget : le choix suit.
+  useEffect(() => { if (PIXEL_TASKS_GROUP_BY.some(([k]) => k === (widget && widget.pixelTasksGroupBy))) setGroupByState(widget.pixelTasksGroupBy); }, [widget && widget.pixelTasksGroupBy]);
   const openDay = (d) => { setDate(d); setView("day"); };
   // Groupes repliés, mémorisés sur le widget (identifiants de groupe).
   const [collapsedList, setCollapsedList] = useState(() => (Array.isArray(widget && widget.pixelTasksCollapsed) ? widget.pixelTasksCollapsed.map(String) : []));
@@ -13710,6 +13712,9 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
           <button key={k} type="button" className={"lp-density-btn" + (view === k ? " active" : "")} aria-pressed={view === k} onClick={() => setView(k)}>{label}</button>
         ))}
       </span>
+      <select className="lp-ptx-groupby" value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Grouper par" title="Grouper par">
+        {PIXEL_TASKS_GROUP_BY.map(([k, label]) => <option key={k} value={k}>Par {label.toLowerCase()}</option>)}
+      </select>
       {view === "day" ? (
         <span className="lp-hpx-nav" role="group" aria-label="Jour affiché">
           <button type="button" className="lp-icon-btn" aria-label="Jour précédent" onClick={() => setDate(prev)}><ChevronLeft size={14} /></button>
@@ -13734,9 +13739,6 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
         </span>
       )}
       <button type="button" className="lp-tool-btn" disabled={date === todayIso} onClick={() => setDate(todayIso)}>Aujourd'hui</button>
-      <select className="lp-ptx-groupby" value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Grouper par" title="Grouper par">
-        {PIXEL_TASKS_GROUP_BY.map(([k, label]) => <option key={k} value={k}>Par {label.toLowerCase()}</option>)}
-      </select>
       {onEditWidget && (
         <button type="button" className="lp-tool-btn" onClick={onEditWidget} title="Filtre du widget (responsable, projets, statuts…)" aria-label="Modifier le filtre du widget">
           <Filter size={13} /> Filtre · {(tasks || []).length} tâche{(tasks || []).length > 1 ? "s" : ""}
@@ -16457,6 +16459,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   // bloquantes » (nombre de tâches bloquées directement) en alternative au tri
   // par défaut (impact total pondéré).
   const [dominoSortBy, setDominoSortBy] = useState(widget?.dominoSortBy === "directImpact" ? "directImpact" : "score");
+  // Pixel Tasks (#524) : regroupement choisi aussi depuis la fiche du widget.
+  const [pixelTasksGroupBy, setPixelTasksGroupBy] = useState(PIXEL_TASKS_GROUP_BY.some(([k]) => k === widget?.pixelTasksGroupBy) ? widget.pixelTasksGroupBy : "project");
   // Heat map — la normalisation reste seul juge des défauts et des collisions
   // d'axes ; la fiche ne fait qu'éditer.
   const heatmapCfg = useMemo(() => heatmapNormalizeConfig(widget || {}), [widget]);
@@ -16650,6 +16654,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     }
     if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id) && !orgMetroHorizontalTeams.includes(id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
+    if (type === "pixelTasks") data.pixelTasksGroupBy = pixelTasksGroupBy;
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
@@ -17579,8 +17584,16 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           1 tâche = 1 pixel, affichée à sa date de jalon (jalon) ou de fin (sinon) ; aujourd'hui reprend les tâches en
           retard non terminées. Le filtre ci-dessous (responsable, projets, statuts…) décide des tâches retenues ; la
-          vue (Jour, Semaine, Mois) et le regroupement se choisissent directement dans le widget.
+          vue (Jour, Semaine, Mois) se choisit dans le widget.
         </p>
+      )}
+      {type === "pixelTasks" && (
+        <div className="lp-field">
+          <label>Regrouper les tâches par</label>
+          <select value={pixelTasksGroupBy} onChange={(e) => setPixelTasksGroupBy(e.target.value)}>
+            {PIXEL_TASKS_GROUP_BY.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </div>
       )}
       {type === "teamCatalog" && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>

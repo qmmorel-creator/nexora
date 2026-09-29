@@ -85,3 +85,21 @@ test("pixelTasksForDay : une tâche en retard terminée un jour reste affichée 
   assert.equal(P.pixelTasksForDay([caught], "2026-09-28", today, statuses).total, 0);
   assert.equal(P.pixelTasksForDay([caught], "2026-09-20", today, statuses).total, 1);
 });
+
+test("pixelTaskGroupsFor : regroupement par dossier du projet, chemin complet", () => {
+  const ctx = {
+    projects: [{ id: "p1", name: "Lot 1", folderId: "f2" }, { id: "p2", name: "Perso", folderId: "f3" }, { id: "p3", name: "Lot 2B", folderId: "f2" }],
+    projectFolders: [{ id: "f1", name: "CNR", color: "#123456" }, { id: "f2", name: "PCH VA", parentId: "f1", color: "#abcdef" }, { id: "f3", name: "Vie perso" }],
+    statuses, taskTypes: [], teamMembers: [],
+  };
+  const items = [
+    { task: T("a", { projectId: "p1" }), done: false },
+    { task: T("b", { projectId: "p3" }), done: true },
+    { task: T("c", { projectId: "p2" }), done: false },
+    { task: T("d", { projectId: "inconnu" }), done: false },
+  ];
+  const g = P.pixelTaskGroupsFor(items, "folder", ctx);
+  assert.deepEqual(g.map((x) => [x.name, x.items.length, x.done]), [["CNR › PCH VA", 2, 1], ["Vie perso", 1, 0], ["Sans dossier", 1, 0]]);
+  assert.equal(g[0].color, "#abcdef");
+  assert.ok(P.PIXEL_TASKS_GROUP_BY.some(([k]) => k === "folder"));
+});
