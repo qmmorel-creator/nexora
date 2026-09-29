@@ -129,3 +129,23 @@ test("pixelTaskRingValue : 0 en haut, sens horaire, pas de 5 %", () => {
   assert.equal(P.pixelTaskRingValue(-0.5, -10), 100);
   assert.equal(P.pixelTaskRingValue(Math.sin(0.4 * 2 * Math.PI), -Math.cos(0.4 * 2 * Math.PI)), 40);
 });
+
+test("pixelTasksForDay : fantômes = tâches en cours (début avant, fin après), hors score", () => {
+  const today = "2026-09-29";
+  const tasks = [
+    T("run", { start: "2026-09-20", end: "2026-10-05" }),
+    T("startsToday", { start: today, end: "2026-10-05" }),
+    T("ms", { milestone: true, start: "2026-10-02", end: "2026-10-02" }),
+    T("due", { start: "2026-09-01", end: today, statusId: "s5" }),
+  ];
+  const off = P.pixelTasksForDay(tasks, today, today, statuses);
+  assert.deepEqual(off.items.map((i) => i.task.id), ["due"]);
+  const on = P.pixelTasksForDay(tasks, today, today, statuses, { ghosts: true });
+  assert.deepEqual(on.items.map((i) => [i.task.id, !!i.ghost]), [["due", false], ["run", true]]);
+  assert.equal(on.total, 1);
+  assert.equal(on.done, 1);
+  assert.equal(on.ghosts, 1);
+  const [g] = P.pixelTaskGroupsFor(on.items, "project", { projects: [], statuses }, "none");
+  assert.deepEqual(g.packages.map((p) => [p.id, p.count]), [["all", 1], ["ghost", 1]]);
+  assert.equal(g.total, 1);
+});
