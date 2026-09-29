@@ -30,14 +30,24 @@ export default async (req: Request) => {
     const isParcelTracking = body.isParcelTracking === true || ["parcel_tracking", "colis", "suivi_colis"].includes(emailTaskKind);
     const isGmailInformation = source.toLocaleLowerCase("fr") === "gmail" && ["information", "info"].includes(emailTaskKind);
 
-    const [projectsDoc, statusesDoc, taskTypesDoc] = await Promise.all([
+    const [projectsDoc, statusesDoc, taskTypesDoc, teamMembersDoc] = await Promise.all([
       readLogicalDocument(config.uid, KEYS.projects),
       readLogicalDocument(config.uid, KEYS.statuses),
-      readLogicalDocument(config.uid, KEYS.taskTypes)
+      readLogicalDocument(config.uid, KEYS.taskTypes),
+      // Facultatif : sans équipe enregistrée, la création ne doit pas échouer.
+      readLogicalDocument(config.uid, KEYS.teamMembers).catch(() => null)
     ]);
     const projects = parseArray(projectsDoc);
     const statuses = parseArray(statusesDoc);
     const taskTypes = parseArray(taskTypesDoc);
+    // L'application range le responsable par NOM : un identifiant de membre
+    // reçu (ex. « u1 ») est traduit en son nom, sinon la valeur reste telle quelle.
+    const teamMembers: unknown[] = teamMembersDoc ? parseArray(teamMembersDoc) : [];
+    const assigneeName = (value: unknown) => {
+      const raw = text(value, 200);
+      const member = teamMembers.find((m) => m && typeof m === "object" && (m as Record<string, unknown>).id === raw) as Record<string, unknown> | undefined;
+      return typeof member?.name === "string" && member.name ? member.name : raw;
+    };
 
     const requestedProjectId = isParcelTracking ? "" : text(body.projectId, 200);
     const requestedProjectName = isParcelTracking
@@ -105,7 +115,7 @@ export default async (req: Request) => {
       const value = typeof item === "string" ? { text: item } : item as Record<string, unknown>;
       const itemText = text(value?.text, 500);
       if (!itemText) throw new Error("invalid_checklist_item");
-      return { id: `ast-ck-${crypto.randomUUID()}`, text: itemText, done: Boolean(value.done), end: text(value.end, 10) || end || null, statusId: null, assignee: text(value.assignee, 200) };
+      return { id: `ast-ck-${crypto.randomUUID()}`, text: itemText, done: Boolean(value.done), end: text(value.end, 10) || end || null, statusId: null, assignee: assigneeName(value.assignee) };
     });
     const sourceUrl = text(body.sourceUrl, 2000) || null;
     const rawDescription = text(body.description ?? body.desc, 10000);
@@ -134,7 +144,7 @@ export default async (req: Request) => {
       ...(times.startTime ? times : {}),
       progress: 0,
       desc: description,
-      assignee: text(body.assignee, 200),
+      assignee: assigneeName(body.assignee),
       checklist,
       dependsOn: [],
       recurrence: null,
