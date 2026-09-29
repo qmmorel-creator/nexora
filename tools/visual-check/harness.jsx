@@ -1028,9 +1028,15 @@ if (benchApp) {
       ["ptx-milestone", "Signature du PV", 0, { statusId: "s1", milestone: true }],
       ["ptx-yesterday", "Préparer la réunion", -1, { statusId: "s5", progress: 100 }],
       ["ptx-tomorrow", "Déposer le dossier", 1, { statusId: "s2" }],
+      // Futur (#524) : entièrement à venir — début et fin après aujourd'hui.
+      ["ptx-future-1", "Essais à l'eau", 5, { statusId: "s3", progress: 20, futureStart: 3 }],
+      ["ptx-future-2", "Réunion Expert", 2, { statusId: "s1", milestone: true }],
+      ["ptx-future-3", "Levée des réserves", 12, { statusId: "s1", futureStart: 10 }],
     ].map(([id, title, offset, extra], i) => {
       const d = addDaysIso(iso(new Date()), offset);
-      return { id, title, projectId: seedProjects[i % 2]?.id, taskTypeId: "tt1", start: extra.milestone ? d : addDaysIso(d, -3), end: d, progress: 0, milestone: false, assignee: "Quentin", checklist: [], desc: "", ...extra };
+      const { futureStart, ...rest } = extra;
+      const start = rest.milestone ? d : futureStart ? addDaysIso(iso(new Date()), futureStart) : addDaysIso(d, -3);
+      return { id, title, projectId: seedProjects[i % 2]?.id, taskTypeId: "tt1", start, end: d, progress: 0, milestone: false, assignee: "Quentin", checklist: [], desc: "", ...rest };
     }),
   ];
   const benchWidgets = [
@@ -1060,7 +1066,7 @@ if (benchApp) {
     // #353 : Pixel des habitudes, pleine largeur (trois jours + semaine).
     { id: "banc-habitPixel", type: "habitPixel", title: "Pixel des habitudes", layout: { x: 0, y: 120, w: 12, h: 13 } },
     // #524 : Pixel Tasks, pleine largeur, mêmes gabarits que le précédent.
-    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", pixelTasksPackageBy: "kind", pixelTasksGhost: true, layout: { x: 0, y: 134, w: 12, h: 13 } },
+    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", pixelTasksPackageBy: "kind", pixelTasksGhost: true, pixelTasksFuture: 14, layout: { x: 0, y: 134, w: 12, h: 13 } },
   );
   const benchHabitThemes = [
     { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [

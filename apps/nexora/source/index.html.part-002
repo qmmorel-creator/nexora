@@ -4652,6 +4652,7 @@ function pixelTaskIsDone(task, statuses) {
    la cocher ne la fait pas disparaître de la journée. */
 function pixelTasksForDay(tasks, date, todayIso, statuses, options) {
   const ghosts = !!(options && options.ghosts);
+  const futureDays = Math.max(0, Math.round(Number(options && options.futureDays) || 0));
   const items = [];
   for (const task of tasks || []) {
     const d = pixelTaskDate(task);
@@ -4664,6 +4665,13 @@ function pixelTasksForDay(tasks, date, todayIso, statuses, options) {
       items.push({ task, date: d, done, lateDays: 0, carried: false, ghost: true });
       continue;
     }
+    /* Futur (option, fenêtre de futureDays jours) : tâches ENTIÈREMENT à
+       venir — début, fin, date de jalon après la date affichée. Hors score. */
+    if (futureDays && d > date && !(PIXEL_TASKS_DATE_RE.test(task.start || "") && task.start <= date)) {
+      const ahead = dayIndex(d) - dayIndex(date);
+      if (ahead <= futureDays) items.push({ task, date: d, done, lateDays: 0, carried: false, future: true, daysAhead: ahead });
+      continue;
+    }
     if (d === date) {
       const lateDays = !done && d < todayIso ? dayIndex(todayIso) - dayIndex(d) : 0;
       items.push({ task, date: d, done, lateDays, carried: false });
@@ -4673,13 +4681,15 @@ function pixelTasksForDay(tasks, date, todayIso, statuses, options) {
       else if (completedDay === date) items.push({ task, date: d, done, lateDays: 0, carried: true });
     }
   }
-  items.sort((a, b) => (Number(!!a.ghost) - Number(!!b.ghost))
+  const layer = (i) => (i.future ? 2 : i.ghost ? 1 : 0);
+  items.sort((a, b) => (layer(a) - layer(b))
+    || ((a.daysAhead || 0) - (b.daysAhead || 0))
     || (Number(a.done) - Number(b.done))
     || (b.lateDays - a.lateDays)
     || String(a.task.startTime || "99").localeCompare(String(b.task.startTime || "99"))
     || String(a.task.title || "").localeCompare(String(b.task.title || ""), "fr"));
-  const counted = items.filter((i) => !i.ghost);
-  return { items, done: counted.filter((i) => i.done).length, total: counted.length, ghosts: items.length - counted.length };
+  const counted = items.filter((i) => !i.ghost && !i.future);
+  return { items, done: counted.filter((i) => i.done).length, total: counted.length, ghosts: items.filter((i) => i.ghost).length, future: items.filter((i) => i.future).length };
 }
 
 /* Regroupement des tâches du jour (projet par défaut). Groupes triés par nom,
@@ -4726,7 +4736,7 @@ function pixelTaskBucket(items, by, ctx) {
     if (!map.has(k.id)) map.set(k.id, { ...k, items: [], done: 0, total: 0 });
     const g = map.get(k.id);
     g.items.push(item);
-    if (!item.ghost) { g.total += 1; if (item.done) g.done += 1; }
+    if (!item.ghost && !item.future) { g.total += 1; if (item.done) g.done += 1; }
   }
   return [...map.values()].sort((a, b) => (a.id === "none") - (b.id === "none") || String(a.name).localeCompare(String(b.name), "fr"));
 }
@@ -4739,13 +4749,15 @@ function pixelTaskBucket(items, by, ctx) {
 function pixelTaskGroupsFor(items, groupBy, ctx, packageBy) {
   const groups = pixelTaskBucket(items, groupBy, ctx);
   for (const g of groups) {
-    // Les fantômes ferment la rangée, dans leur propre package.
-    const real = g.items.filter((i) => !i.ghost);
+    // Fantômes puis futur ferment la rangée, chacun dans son propre package.
+    const real = g.items.filter((i) => !i.ghost && !i.future);
     const ghostItems = g.items.filter((i) => i.ghost);
+    const futureItems = g.items.filter((i) => i.future);
     let packs;
     if (!packageBy || packageBy === "none") packs = real.length ? [{ id: "all", name: "", color: g.color, items: real }] : [];
     else packs = pixelTaskBucket(real, packageBy, ctx);
     if (ghostItems.length) packs.push({ id: "ghost", name: "Fantômes (en cours)", color: "#94A3B8", items: ghostItems });
+    if (futureItems.length) packs.push({ id: "future", name: "Horizon (à venir)", color: "#6366F1", items: futureItems });
     let start = 0;
     g.items = [];
     g.packages = packs.map((p) => {
@@ -4774,6 +4786,18 @@ function pixelTaskRingValue(dx, dy, step) {
   const v = Math.round((deg / 360) * 100 / s) * s;
   return Math.max(0, Math.min(100, v === 0 && dx < 0 ? 100 : v));
 }
+/* Contour d'une case (carré arrondi ou rond) en chemin SVG qui part du
+   milieu du bord haut et tourne dans le sens horaire : sert à foncer la part
+   accomplie du trait existant (avancement), sans trait ajouté. inset = demi-
+   épaisseur du trait, pour poser le tracé exactement sur le contour. */
+function pixelTaskOutlinePath(size, radius, inset, round) {
+  const s = Number(size) || 0, o = Number(inset) || 0, w = s - 2 * o;
+  const mid = s / 2;
+  if (round) { const r = w / 2; return `M ${mid} ${o} A ${r} ${r} 0 1 1 ${mid - 0.01} ${o}`; }
+  const r = Math.max(0, Math.min(w / 2, (Number(radius) || 0) - o));
+  return `M ${mid} ${o} H ${o + w - r} A ${r} ${r} 0 0 1 ${o + w} ${o + r} V ${o + w - r} A ${r} ${r} 0 0 1 ${o + w - r} ${o + w} H ${o + r} A ${r} ${r} 0 0 1 ${o} ${o + w - r} V ${o + r} A ${r} ${r} 0 0 1 ${o + r} ${o} Z`;
+}
+const PIXEL_TASKS_FUTURE_WINDOWS = [0, 7, 14, 30];
 // === NEXORA:PIXEL-TASKS:END ===
 
 // === NEXORA:FIXED-PAGES:START ===
