@@ -1060,7 +1060,7 @@ if (benchApp) {
     // #353 : Pixel des habitudes, pleine largeur (trois jours + semaine).
     { id: "banc-habitPixel", type: "habitPixel", title: "Pixel des habitudes", layout: { x: 0, y: 120, w: 12, h: 13 } },
     // #524 : Pixel Tasks, pleine largeur, mêmes gabarits que le précédent.
-    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", layout: { x: 0, y: 134, w: 12, h: 13 } },
+    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", pixelTasksPackageBy: "kind", layout: { x: 0, y: 134, w: 12, h: 13 } },
   );
   const benchHabitThemes = [
     { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [

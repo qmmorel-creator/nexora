@@ -3864,7 +3864,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "pixelTasks" && !showEmptyFunnel && (
-                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={onToggleDoneFromCosmos} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
+                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={onToggleDoneFromCosmos} onUpdateTask={onUpdateTaskFromCosmos} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
@@ -13580,18 +13580,20 @@ function ptxLabel(item, ctx) {
   const bits = [item.task.title || "Sans titre", st ? st.name : "Sans statut"];
   if (!item.done && Number(item.task.progress) > 0) bits.push(Math.round(Number(item.task.progress)) + " %");
   if (item.lateDays > 0 && !item.done) bits.push("en retard de " + item.lateDays + " j");
+  if (item.task.milestone) bits.push("jalon");
   return bits.join(" — ") + ". Clic : ouvrir la fiche";
 }
 
-function TaskPixel({ item, ctx, size, focused, onClick, onHover }) {
+function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint }) {
   const t = item.task;
   const progress = Math.max(0, Math.min(100, Number(t.progress) || 0));
-  const cls = "lp-hpx-px lp-ptx-px " + (item.done ? "is-done" : "is-todo") + (item.lateDays > 0 && !item.done ? " is-late" : "") + (focused ? " is-focus" : "");
+  // Jalon = pixel rond, tâche avec durée = pixel carré.
+  const cls = "lp-hpx-px lp-ptx-px " + (item.done ? "is-done" : "is-todo") + (t.milestone ? " is-milestone" : "") + (item.lateDays > 0 && !item.done ? " is-late" : "") + (focused ? " is-focus" : "");
   const style = { "--c": ptxStatusColor(t, ctx), "--prog": progress + "%", width: size, height: size };
   const inner = size < 20 ? null : item.done ? <Check size={Math.round(size * 0.5)} strokeWidth={3} /> : null;
   const bar = !item.done && progress > 0 && size >= 14 ? <span className="lp-ptx-prog" aria-hidden="true" /> : null;
   if (!onClick) return <span className={cls} style={style} aria-hidden="true">{inner}{bar}</span>;
-  const label = ptxLabel(item, ctx);
+  const label = clickHint ? ptxLabel(item, ctx).replace(/Clic : ouvrir la fiche$/, clickHint) : ptxLabel(item, ctx);
   return (
     <button
       type="button"
@@ -13650,7 +13652,67 @@ function TaskPixelSide({ date, day, groups, ctx, todayIso, onSelect, onOpen, col
   );
 }
 
-function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWidget, onEditWidget, externalToolbarSlot }) {
+/* Anneau de progression (#524) : un clic sur le pixel d'une tâche avec durée
+   l'ouvre ; on fait tourner l'anneau (glisser, clic, flèches ou raccourcis)
+   puis « Valider ». À 100 %, la validation passe la tâche en Terminé. */
+function TaskProgressRing({ item, ctx, x, y, onClose, onValidate, onOpen }) {
+  const t = item.task;
+  const [value, setValue] = useState(() => (item.done ? 100 : Math.max(0, Math.min(100, Math.round(Number(t.progress) || 0)))));
+  const ref = useRef(null);
+  const dragging = useRef(false);
+  const R = 46, C = 2 * Math.PI * R, SIZE = 120;
+  const color = ptxStatusColor(t, ctx);
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  const fromPointer = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setValue(pixelTaskRingValue(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2), 5));
+  };
+  const onKeyDown = (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); setValue((v) => Math.min(100, v + 5)); }
+    if (e.key === "ArrowDown" || e.key === "ArrowLeft") { e.preventDefault(); setValue((v) => Math.max(0, v - 5)); }
+    if (e.key === "Enter") { e.preventDefault(); onValidate(value); }
+  };
+  return (
+    <div ref={ref} className="lp-ptx-ring" style={{ left: x, top: y, "--c": color }} role="dialog" aria-label={"Avancement de " + (t.title || "la tâche")}>
+      <div className="lp-ptx-ring-title" title={t.title}>{t.title || "Sans titre"}</div>
+      <svg
+        width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}
+        className="lp-ptx-ring-svg"
+        role="slider" tabIndex={0} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} aria-label="Avancement (%)"
+        onKeyDown={onKeyDown}
+        onPointerDown={(e) => { dragging.current = true; e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId); fromPointer(e); }}
+        onPointerMove={(e) => { if (dragging.current) fromPointer(e); }}
+        onPointerUp={() => { dragging.current = false; }}
+      >
+        <circle cx={SIZE / 2} cy={SIZE / 2} r={R} className="lp-ptx-ring-track" />
+        <circle cx={SIZE / 2} cy={SIZE / 2} r={R} className="lp-ptx-ring-bar" strokeDasharray={C} strokeDashoffset={C * (1 - value / 100)} transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`} />
+        <circle cx={SIZE / 2 + R * Math.sin(value / 100 * 2 * Math.PI)} cy={SIZE / 2 - R * Math.cos(value / 100 * 2 * Math.PI)} r={7} className="lp-ptx-ring-knob" />
+        <text x={SIZE / 2} y={SIZE / 2 + 7} textAnchor="middle" className="lp-ptx-ring-value">{value} %</text>
+      </svg>
+      <div className="lp-ptx-ring-steps">
+        {[0, 25, 50, 75, 100].map((v) => (
+          <button key={v} type="button" className={value === v ? "is-on" : ""} onClick={() => setValue(v)}>{v}</button>
+        ))}
+      </div>
+      {value === 100 && !item.done && <div className="lp-ptx-ring-hint">Valider passera la tâche en « Terminé ».</div>}
+      {value < 100 && item.done && <div className="lp-ptx-ring-hint">Valider rouvrira la tâche.</div>}
+      <div className="lp-ptx-ring-actions">
+        {onOpen && <button type="button" className="lp-tool-btn" onClick={() => { onClose(); onOpen(t); }}>Fiche</button>}
+        <span style={{ flex: 1 }} />
+        <button type="button" className="lp-tool-btn" onClick={onClose}>Annuler</button>
+        <button type="button" className="lp-btn lp-btn-primary" onClick={() => onValidate(value)}>Valider</button>
+      </div>
+    </div>
+  );
+}
+
+function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTask, onUpdateWidget, onEditWidget, externalToolbarSlot }) {
   const todayIso = iso(new Date());
   const [date, setDate] = useState(todayIso);
   const [hover, setHover] = useState(null);
@@ -13660,6 +13722,10 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
   const setGroupBy = (g) => { setGroupByState(g); if (onUpdateWidget) onUpdateWidget({ pixelTasksGroupBy: g }); };
   // Réglé depuis la fiche du widget : le choix suit.
   useEffect(() => { if (PIXEL_TASKS_GROUP_BY.some(([k]) => k === (widget && widget.pixelTasksGroupBy))) setGroupByState(widget.pixelTasksGroupBy); }, [widget && widget.pixelTasksGroupBy]);
+  // Packages de cases dans chaque rangée (réglage de la fiche du widget).
+  const packageBy = PIXEL_TASKS_PACKAGE_BY.some(([k]) => k === (widget && widget.pixelTasksPackageBy)) ? widget.pixelTasksPackageBy : "none";
+  const [ring, setRing] = useState(null); // { taskId, x, y } — anneau de progression ouvert
+  const rootRef = useRef(null);
   const openDay = (d) => { setDate(d); setView("day"); };
   // Groupes repliés, mémorisés sur le widget (identifiants de groupe).
   const [collapsedList, setCollapsedList] = useState(() => (Array.isArray(widget && widget.pixelTasksCollapsed) ? widget.pixelTasksCollapsed.map(String) : []));
@@ -13676,11 +13742,11 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
     return (d) => {
       if (!cache.has(d)) {
         const day = pixelTasksForDay(tasks, d, todayIso, ctx.statuses);
-        cache.set(d, { ...day, groups: pixelTaskGroupsFor(day.items, groupBy, ctx) });
+        cache.set(d, { ...day, groups: pixelTaskGroupsFor(day.items, groupBy, ctx, packageBy) });
       }
       return cache.get(d);
     };
-  }, [tasks, ctx, groupBy, todayIso]);
+  }, [tasks, ctx, groupBy, packageBy, todayIso]);
   const day = stateOf(date);
   const groups = day.groups;
   // Largeur de la carte centrale, pour dimensionner les rangées de pixels.
@@ -13818,16 +13884,67 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
      la carte — un groupe de tâches est souvent plus long qu'un thème
      d'habitudes. */
   const wiresW = Math.max(0, mainW - 32 - 300);
-  const pxGeom = (n) => {
-    const fit = (size, gap) => HPX_LEFT + HPX_PAD * 2 + n * size + (n - 1) * gap + 8 <= wiresW;
-    if (!mainW || fit(HPX_PX, HPX_GAP)) return { size: HPX_PX, gap: HPX_GAP };
-    const gap = 4;
-    const size = Math.floor((wiresW - HPX_LEFT - HPX_PAD * 2 - 8 - (n - 1) * gap) / Math.max(1, n));
-    return { size: Math.max(12, Math.min(HPX_PX, size)), gap };
+  const PACK_GAP = 10; // écart entre deux packages
+  const PACK_PAD = 3;  // marge intérieure d'un package teinté
+  /* Géométrie d'une rangée : taille des cases, écart, et centre x de chaque
+     case (packages compris), pour poser les liaisons au bon endroit. */
+  const pxGeom = (g) => {
+    const packs = g.packages || [{ start: 0, count: g.items.length }];
+    const tinted = packs.length > 1 || (packs[0] && packs[0].id !== "all");
+    const pp = tinted ? PACK_PAD : 0;
+    const width = (size, gap) => HPX_LEFT + HPX_PAD * 2 + packs.reduce((w, p) => w + pp * 2 + p.count * size + Math.max(0, p.count - 1) * gap, 0) + Math.max(0, packs.length - 1) * PACK_GAP + 8;
+    let size = HPX_PX, gap = HPX_GAP;
+    if (mainW && width(size, gap) > wiresW) {
+      gap = 4;
+      const fixed = width(0, gap);
+      size = Math.max(12, Math.min(HPX_PX, Math.floor((wiresW - fixed) / Math.max(1, g.items.length))));
+    }
+    const xs = [];
+    let x = HPX_LEFT + HPX_PAD;
+    for (const p of packs) {
+      x += pp;
+      for (let j = 0; j < p.count; j++) xs.push(x + j * (size + gap) + size / 2);
+      x += p.count * size + Math.max(0, p.count - 1) * gap + pp + PACK_GAP;
+    }
+    return { size, gap, pp, tinted, packs, xs, bottom: HPX_PAD * 2 + pp * 2 + size };
+  };
+  // Clic sur une case : jalon → terminé / rouvert ; tâche avec durée → anneau.
+  const pixelClick = (it, e) => {
+    if (it.task.milestone) { if (onToggleDone) onToggleDone(it.task.id); return; }
+    const root = rootRef.current;
+    const r = e.currentTarget.getBoundingClientRect();
+    const base = root ? root.getBoundingClientRect() : { left: 0, top: 0 };
+    const rootW = root ? root.clientWidth : 0;
+    const left = Math.max(4, Math.min(r.left - base.left + (root ? root.scrollLeft : 0) - 90, rootW - 244));
+    setRing({ taskId: it.task.id, x: left, y: r.bottom - base.top + (root ? root.scrollTop : 0) + 8 });
+  };
+  const ringItem = ring ? day.items.find((i) => i.task.id === ring.taskId) : null;
+  const validateRing = (value) => {
+    const it = ringItem;
+    setRing(null);
+    if (!it) return;
+    const t = it.task;
+    const allowed = getStatusesForProject(ctx.statuses || [], ctx.projects || [], t.projectId, t.statusId);
+    if (value >= 100) {
+      if (it.done) { if (onUpdateTask && Number(t.progress) !== 100) onUpdateTask(t.id, { progress: 100 }); return; }
+      const doneStatus = allowed.find((st) => /termin/i.test(st.name || ""));
+      // Même chemin que la fiche : le passage à Terminé suit markTaskDone.
+      if (onUpdateTask && doneStatus) onUpdateTask(t.id, { progress: 100, statusId: doneStatus.id });
+      else if (onToggleDone) onToggleDone(t.id);
+      return;
+    }
+    if (!onUpdateTask) return;
+    const patch = { progress: value };
+    if (it.done) {
+      const reopen = allowed.find((st) => /en\s*cours/i.test(st.name || "")) || allowed.find((st) => !/termin/i.test(st.name || ""));
+      if (reopen) patch.statusId = reopen.id;
+    }
+    onUpdateTask(t.id, patch);
   };
   return (
-    <div className="lp-hpx lp-ptx" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="lp-hpx lp-ptx" onKeyDown={onKeyDown}>
       {toolbar}
+      {ringItem && <TaskProgressRing key={ringItem.task.id} item={ringItem} ctx={ctx} x={ring.x} y={ring.y} onClose={() => setRing(null)} onValidate={validateRing} onOpen={onOpen} />}
       <div className="lp-hpx-days">
         <TaskPixelSide date={prev} day={stateOf(prev)} groups={stateOf(prev).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} />
         <section ref={mainRef} className="lp-hpx-main" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
@@ -13843,15 +13960,17 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
             <div className="lp-ptx-legend" aria-label="Légende">
               {statusLegend.map((s) => <span key={s.id}><i style={{ "--c": s.color || "#94A3B8" }} />{s.name}</span>)}
               {day.items.some((i) => i.lateDays > 0 && !i.done) && <span><i className="is-late" />En retard</span>}
+              <span className="lp-ptx-legend-shape"><i className="is-milestone" />Jalon (clic = terminé)</span>
+              <span className="lp-ptx-legend-shape"><i className="is-duration" />Tâche avec durée (clic = avancement)</span>
             </div>
           )}
           {!groups.length && <div className="lp-empty lp-ptx-empty">Aucune tâche à cette date pour ce filtre.</div>}
           {groups.map((g) => {
             const folded = collapsed.has(g.id);
             const blockH = HPX_HEAD_H + (folded ? 0 : g.items.length * HPX_ROW_H);
-            const geom = pxGeom(g.items.length);
-            const pxX = (i) => HPX_LEFT + HPX_PAD + i * (geom.size + geom.gap) + geom.size / 2;
-            const pxBottom = HPX_PAD * 2 + geom.size;
+            const geom = pxGeom(g);
+            const pxX = (i) => geom.xs[i];
+            const pxBottom = geom.bottom;
             return (
               <div key={g.id} className={"lp-hpx-theme" + (folded ? " is-folded" : "")} style={{ height: blockH, "--hpx-rows": folded ? 0 : g.items.length }}>
                 <div className="lp-hpx-list">
@@ -13867,7 +13986,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
                     const color = ptxStatusColor(t, ctx);
                     return (
                       <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
-                        <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={() => onOpen && onOpen(t)} onHover={setHover} />
+                        <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
                         <button type="button" className={"lp-hpx-row-name lp-ptx-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
                         {badge && <span className={"lp-ptx-badge" + badge.cls}>{badge.text}</span>}
                         <button
@@ -13899,9 +14018,13 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateWi
                       />
                     ))}
                   </svg>
-                  <div className="lp-hpx-pixels" style={{ left: HPX_LEFT, padding: HPX_PAD, gap: geom.gap, "--tc": g.color }}>
-                    {g.items.map((it) => (
-                      <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} focused={hover === it.task.id} onClick={() => onOpen && onOpen(it.task)} onHover={setHover} />
+                  <div className="lp-hpx-pixels" style={{ left: HPX_LEFT, padding: HPX_PAD, gap: PACK_GAP, "--tc": g.color }}>
+                    {geom.packs.map((pk) => (
+                      <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "")} style={{ gap: geom.gap, padding: geom.pp, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
+                        {g.items.slice(pk.start, pk.start + pk.count).map((it) => (
+                          <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
+                        ))}
+                      </span>
                     ))}
                   </div>
                 </div>
@@ -16464,6 +16587,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [dominoSortBy, setDominoSortBy] = useState(widget?.dominoSortBy === "directImpact" ? "directImpact" : "score");
   // Pixel Tasks (#524) : regroupement choisi aussi depuis la fiche du widget.
   const [pixelTasksGroupBy, setPixelTasksGroupBy] = useState(PIXEL_TASKS_GROUP_BY.some(([k]) => k === widget?.pixelTasksGroupBy) ? widget.pixelTasksGroupBy : "project");
+  const [pixelTasksPackageBy, setPixelTasksPackageBy] = useState(PIXEL_TASKS_PACKAGE_BY.some(([k]) => k === widget?.pixelTasksPackageBy) ? widget.pixelTasksPackageBy : "none");
   // Heat map — la normalisation reste seul juge des défauts et des collisions
   // d'axes ; la fiche ne fait qu'éditer.
   const heatmapCfg = useMemo(() => heatmapNormalizeConfig(widget || {}), [widget]);
@@ -16657,7 +16781,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     }
     if (type === "orgchart") { data.orgChartShowUnassigned = orgChartShowUnassigned; data.orgChartHiddenTeamIds = orgChartHiddenTeamIds; data.orgChartFolderId = orgChartFolderId; data.orgChartRootLabel = orgChartRootLabel; data.orgMetroShowTransverse = orgMetroShowTransverse; data.orgChartRelations = normalizeOrgChartRelations(orgChartRelations); data.orgChartInactiveMembers = orgChartInactiveMembers.filter((k) => orgChartMemberOptions.some((o) => o.id === k)); data.orgMetroHorizontalTeams = orgMetroHorizontalTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id)); data.orgMetroStackedTeams = orgMetroStackedTeams.filter((id) => orgChartTeamOptions.some((t) => t.id === id) && !orgMetroHorizontalTeams.includes(id)); }
     if (type === "habitHeatmap") data.habitHeatmapView = habitHeatmapView;
-    if (type === "pixelTasks") data.pixelTasksGroupBy = pixelTasksGroupBy;
+    if (type === "pixelTasks") { data.pixelTasksGroupBy = pixelTasksGroupBy; data.pixelTasksPackageBy = pixelTasksPackageBy; }
     if (type === "dominoEffect") data.dominoSortBy = dominoSortBy;
     if (type === "projectTreemap") {
       data.treemapTileBy = treemapTileBy;
@@ -17595,6 +17719,14 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <label>Regrouper les tâches par</label>
           <select value={pixelTasksGroupBy} onChange={(e) => setPixelTasksGroupBy(e.target.value)}>
             {PIXEL_TASKS_GROUP_BY.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </div>
+      )}
+      {type === "pixelTasks" && (
+        <div className="lp-field">
+          <label>Packages de cases (dans chaque rangée)</label>
+          <select value={pixelTasksPackageBy} onChange={(e) => setPixelTasksPackageBy(e.target.value)}>
+            {PIXEL_TASKS_PACKAGE_BY.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
           </select>
         </div>
       )}
