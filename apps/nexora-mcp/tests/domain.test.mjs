@@ -174,3 +174,18 @@ test('Member ids given as assignee are stored as the member name',async()=>{
  const v=await r.mutateTask({taskId:t.task.id,expectedVersion:u.version,idempotencyKey:'resp-3',changes:{assignee:'u1'}});
  assert.equal(v.task.assignee,'Quentin Morel');
 });
+
+/* Doublon actif + archivé (même id) : la copie archivée se supprime par sa
+   version exacte ; la tâche active reste intacte, toute autre action refuse. */
+test('Archived copy of a duplicated task ID can be deleted by its exact version only',async()=>{
+ const {db,data}=fakeDb();const r=repository(db,'u');
+ const active={id:'dup',title:'Actif',projectId:'p',statusId:'s1',start:'2026-09-01',end:'2026-09-02',assignee:'Quentin Morel'};
+ const archived={...active,assignee:'Quentin',archivedAt:'2026-09-20T21:50:45Z'};
+ data.set('users/u/kv_store/nexora:tasks',{value:JSON.stringify([active]),revision:'initial',storageMode:'inline'});
+ data.set('users/u/kv_store/nexora:taskArchive',{value:JSON.stringify([archived]),revision:'initial',storageMode:'inline'});
+ await assert.rejects(()=>r.mutateTask({taskId:'dup',expectedVersion:fingerprint(active),idempotencyKey:'bad-version'},'delete'),/Duplicate task ID/);
+ await assert.rejects(()=>r.mutateTask({taskId:'dup',expectedVersion:fingerprint(archived),idempotencyKey:'upd',changes:{title:'X'}}),/Duplicate task ID/);
+ const out=await r.mutateTask({taskId:'dup',expectedVersion:fingerprint(archived),idempotencyKey:'del-dup'},'delete');
+ assert.equal(out.duplicateArchivedCopyDeleted,true);
+ const got=await r.get('dup');assert.equal(got.tasks[0]._archived,false);assert.equal(got.tasks[0].assignee,'Quentin Morel');
+});

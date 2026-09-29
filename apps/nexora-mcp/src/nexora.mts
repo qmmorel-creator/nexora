@@ -212,7 +212,16 @@ export function repository(db,uid){
  function validateTask(t,c){for(const [field,resource] of [['projectId','projects'],['secondaryProjectId','projects'],['statusId','statuses'],['taskTypeId','taskTypes']]){if(t[field]&&!c[resource].some(x=>x.id===t[field]))throw new Error('Unknown '+field);}for(const key of ['statuses','taskTypes']){const item=c[key].find(x=>x.id===t[key==='statuses'?'statusId':'taskTypeId']);if(item?.projectId&&item.projectId!==t.projectId)throw new Error('Catalog item belongs to another project');}if(t.start&&t.end&&t.start>t.end)throw new Error('End precedes start');if(t.dependsOn?.includes(t.id))throw new Error('Task cannot depend on itself');}
  async function mutateTask(args,action='update'){return atomic(action,args.idempotencyKey,args,async tx=>{
   const d=Object.fromEntries(await Promise.all(['tasks','taskArchive','projects','statuses','taskTypes','teamMembers'].map(async n=>[n,await read(n,tx)]))),c=Object.fromEntries(Object.entries(d).map(([k,v])=>[k,v.value]));
-  const active=c.tasks.find(t=>t.id===args.taskId),archived=c.taskArchive.find(t=>t.id===args.taskId);if(active&&archived)throw new Error('Duplicate task ID');const old=active||archived;if(!old)throw new Error('Task not found');if(args.expectedVersion&&fingerprint(old)!==args.expectedVersion)throw new Error('Conflict: task changed; read it again');
+  const active=c.tasks.find(t=>t.id===args.taskId),archived=c.taskArchive.find(t=>t.id===args.taskId);
+  /* Doublon actif + archivé (même id) : seule la suppression de la copie
+     ARCHIVÉE est permise, et seulement quand expectedVersion la désigne
+     exactement — la tâche active n'est jamais touchée. Tout le reste refuse. */
+  if(active&&archived){
+   const copies=c.taskArchive.filter(t=>t.id===args.taskId&&args.expectedVersion&&fingerprint(t)===args.expectedVersion);
+   if(action!=='delete'||copies.length!==1)throw new Error('Duplicate task ID');
+   const target=copies[0];write(tx,d.taskArchive,c.taskArchive.filter(t=>t!==target));
+   return {ok:true,action,taskId:target.id,version:null,task:null,duplicateArchivedCopyDeleted:true};
+  }const old=active||archived;if(!old)throw new Error('Task not found');if(args.expectedVersion&&fingerprint(old)!==args.expectedVersion)throw new Error('Conflict: task changed; read it again');
   let next={...old},changes={...(args.changes||{})};if('description'in changes){changes.desc=changes.description;delete changes.description;}
   if(action==='update'){next={...old,...changes};normalizeAssignees(next,c.teamMembers);}
   if(action==='complete'){const done=c.statuses.filter(x=>normalize(x.name)==='termine'&&(!x.projectId||x.projectId===old.projectId));if(done.length!==1)throw new Error('Completion status ambiguous');next={...old,statusId:done[0].id,progress:100,completedAt:new Date().toISOString()};}
