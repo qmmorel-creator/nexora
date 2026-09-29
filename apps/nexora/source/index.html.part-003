@@ -13627,13 +13627,29 @@ function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futu
       <path d={pixelTaskOutlinePath(size, 5, item.ghost ? 1.25 : sw / 2, !!t.milestone)} pathLength="100" strokeWidth={sw} strokeDasharray={`${progress} 100`} />
     </svg>
   ) : null;
-  /* Focus : un éclat de lumière fait lentement le tour du bord de la case en
-     changeant de couleur (pas de halo) — même contour que l'avancement. */
-  const spark = isTaskFocus(t) && size >= 14 ? (
-    <svg className="lp-ptx-spark" viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-      <path d={pixelTaskOutlinePath(size, 5, item.ghost ? 1.25 : sw / 2, !!t.milestone)} pathLength="100" />
-    </svg>
-  ) : null;
+  /* Focus : une comète lumineuse (traînée qui luit + tête vive) fait le tour
+     du bord de la case en changeant de couleur, et deux étoiles scintillent
+     aux coins. Le point de départ est tiré au hasard UNE fois par tâche (dérivé
+     de son id, donc stable d'un rendu à l'autre) : les cases Focus ne tournent
+     pas en même temps. */
+  const sparkSeed = isTaskFocus(t) ? ptxSparkSeed(t.id) : 0;
+  const sparkStyle = { "--ptx-spark-delay": `${-(sparkSeed * 3.6).toFixed(2)}s`, "--ptx-hue-delay": `${-(((sparkSeed * 7.3) % 1) * 7.2).toFixed(2)}s`, "--ptx-star-delay": `${-(((sparkSeed * 13.7) % 1) * 2.6).toFixed(2)}s` };
+  const star = (pos) => (
+    <svg className={"lp-ptx-star is-" + pos} viewBox="0 0 10 10" aria-hidden="true"><path d="M5 0 Q5.6 4.4 10 5 Q5.6 5.6 5 10 Q4.4 5.6 0 5 Q4.4 4.4 5 0Z" /></svg>
+  );
+  const spark = isTaskFocus(t) && size >= 14 ? (() => {
+    const sparkPath = pixelTaskOutlinePath(size, 5, item.ghost ? 1.25 : sw / 2, !!t.milestone);
+    return (
+      <span className="lp-ptx-spark-wrap" style={sparkStyle} aria-hidden="true">
+        <svg className="lp-ptx-spark" viewBox={`0 0 ${size} ${size}`}>
+          <path className="lp-ptx-spark-trail" d={sparkPath} pathLength="100" />
+          <path className="lp-ptx-spark-head" d={sparkPath} pathLength="100" />
+        </svg>
+        {star("tr")}
+        {star("bl")}
+      </span>
+    );
+  })() : null;
   if (!onClick) return <span className={cls} style={style} aria-hidden="true">{inner}{ring}{spark}</span>;
   const label = clickHint ? ptxLabel(item, ctx).replace(/Clic : ouvrir la fiche$/, clickHint) : ptxLabel(item, ctx);
   return (
@@ -13650,6 +13666,15 @@ function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futu
       title={label}
     >{inner}{ring}{spark}</button>
   );
+}
+
+// Graine pseudo-aléatoire dans [0, 1) tirée de l'id de la tâche : décale le
+// départ de l'éclat Focus sans le faire sauter à chaque rendu.
+function ptxSparkSeed(id) {
+  let h = 2166136261;
+  const str = String(id || "");
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 10000) / 10000;
 }
 
 function TaskPixelMosaic({ groups: allGroups, day, ctx, size = 8, gap = 2 }) {
