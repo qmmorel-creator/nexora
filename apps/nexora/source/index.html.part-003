@@ -3176,6 +3176,25 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
     }
   };
   const duplicateWidget = (w) => setWidgets((prev) => packWidgets([...prev, { ...w, id: uid(), title: (w.title || "Widget") + " (copie)", layout: undefined }]));
+  /* Pixel Tasks : chaque action sur une tâche (terminer, rouvrir, faire
+     avancer) propose « Annuler » quelques secondes dans une notification
+     discrète. Annuler remet la tâche telle qu'avant ; une occurrence
+     récurrente créée par la complétion est retirée avec. */
+  const pixelTaskUndoable = (taskId, run, describe) => {
+    const all = ctx.tasks || [];
+    const before = all.find((t) => t.id === taskId);
+    const beforeIds = new Set(all.map((t) => t.id));
+    run();
+    if (!before || !pushToast || !setTasks) return;
+    pushToast({
+      message: `« ${before.title || "Tâche"} » ${describe(before)}.`,
+      actionLabel: "Annuler",
+      duration: 7000,
+      onAction: () => setTasks((prev) => prev
+        .filter((t) => beforeIds.has(t.id) || !(before.recurrence && t.title === before.title))
+        .map((t) => (t.id === taskId ? { ...before, lastInteraction: new Date().toISOString() } : t))),
+    });
+  };
   const saveWidget = (data) => {
     if (editingWidget === "new") setWidgets((prev) => packWidgets([...prev, { id: uid(), ...data }]));
     else setWidgets((prev) => prev.map((w) => (w.id === editingWidget.id ? { ...w, ...data } : w)));
@@ -3864,7 +3883,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "pixelTasks" && !showEmptyFunnel && (
-                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={onToggleDoneFromCosmos} onUpdateTask={onUpdateTaskFromCosmos} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
+                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={(id) => pixelTaskUndoable(id, () => onToggleDoneFromCosmos && onToggleDoneFromCosmos(id), (t) => (isTaskDoneGlobal(t, ctx) ? "rouverte" : "terminée"))} onUpdateTask={(id, patch) => pixelTaskUndoable(id, () => onUpdateTaskFromCosmos && onUpdateTaskFromCosmos(id, patch), () => ("progress" in patch && patch.progress >= 100 && patch.statusId ? "terminée" : "avancement " + Math.round(Number(patch.progress) || 0) + " %"))} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
@@ -13583,6 +13602,7 @@ function ptxLabel(item, ctx) {
   if (!item.done && Number(item.task.progress) > 0) bits.push(Math.round(Number(item.task.progress)) + " %");
   if (item.lateDays > 0 && !item.done) bits.push("en retard de " + item.lateDays + " j");
   if (item.task.milestone) bits.push("jalon");
+  if (isTaskFocus(item.task)) bits.push("focus");
   if (item.ghost) bits.push("en cours jusqu'au " + String(item.task.end || "").split("-").reverse().join("/"));
   if (item.future) bits.push("à venir, dans " + item.daysAhead + " j");
   return bits.join(" — ") + ". Clic : ouvrir la fiche";
@@ -13592,7 +13612,7 @@ function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futu
   const t = item.task;
   const progress = Math.max(0, Math.min(100, Number(t.progress) || 0));
   // Jalon = pixel rond, tâche avec durée = pixel carré ; futur = « horizon ».
-  const cls = "lp-hpx-px lp-ptx-px " + (item.done ? "is-done" : "is-todo") + (item.ghost ? " is-ghost" : "") + (item.future ? " is-horizon" : "") + (t.milestone ? " is-milestone" : "") + (item.lateDays > 0 && !item.done ? " is-late" : "") + (focused ? " is-focus" : "");
+  const cls = "lp-hpx-px lp-ptx-px " + (item.done ? "is-done" : "is-todo") + (item.ghost ? " is-ghost" : "") + (item.future ? " is-horizon" : "") + (isTaskFocus(t) ? " is-flagged" : "") + (t.milestone ? " is-milestone" : "") + (item.lateDays > 0 && !item.done ? " is-late" : "") + (focused ? " is-focus" : "");
   const style = { "--c": ptxStatusColor(t, ctx), width: size, height: size };
   // Futur : plus l'échéance est loin dans la fenêtre, plus la case s'efface.
   if (item.future && futureWindow) style.opacity = Math.max(0.4, 1 - (item.daysAhead / futureWindow) * 0.6);
@@ -14025,6 +14045,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
               <span className="lp-ptx-legend-shape"><i className="is-milestone" />Jalon (clic = terminé)</span>
               <span className="lp-ptx-legend-shape"><i className="is-duration" />Tâche avec durée (clic = avancement)</span>
               <span className="lp-ptx-legend-shape"><i className="is-progress" />Avancement : le contour se fonce, depuis le haut</span>
+              {day.items.some((i) => isTaskFocus(i.task)) && <span className="lp-ptx-legend-shape"><i className="is-flagged" />Focus</span>}
               {ghostOn && <span className="lp-ptx-legend-shape"><i className="is-ghost" />Fantôme : en cours</span>}
               {futureWindow > 0 && <span className="lp-ptx-legend-shape"><i className="is-horizon" />Futur : à venir sous {futureWindow} j (J+N)</span>}
             </div>
@@ -14053,7 +14074,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
                     const badge = ptxBadge(it);
                     const color = ptxStatusColor(t, ctx);
                     return (
-                      <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
+                      <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "") + (isTaskFocus(t) ? " lp-ptx-flag-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
                         <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} futureWindow={futureWindow} clickHint={it.future ? "Clic : ouvrir la fiche" : t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
                         <button type="button" className={"lp-hpx-row-name lp-ptx-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
                         {badge && <span className={"lp-ptx-badge" + badge.cls}>{badge.text}</span>}
@@ -14082,7 +14103,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
                       <path
                         key={it.task.id}
                         d={habitPixelWirePath(headH + i * HPX_ROW_H + HPX_ROW_H / 2, pxX(i), pxBottom + 4, 6)}
-                        className={"lp-hpx-wire" + (it.done ? " is-on" : "") + (it.ghost ? " lp-ptx-ghost-wire" : "") + (it.future ? " lp-ptx-future-wire" : "") + (hover === it.task.id ? " is-focus" : "")}
+                        className={"lp-hpx-wire" + (it.done ? " is-on" : "") + (it.ghost ? " lp-ptx-ghost-wire" : "") + (it.future ? " lp-ptx-future-wire" : "") + (isTaskFocus(it.task) ? " lp-ptx-flag-wire" : "") + (hover === it.task.id ? " is-focus" : "")}
                         style={{ stroke: it.ghost ? undefined : it.future ? `url(#ptx-aurore-${gi})` : ptxStatusColor(it.task, ctx) }}
                       />
                     ))}

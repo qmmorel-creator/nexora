@@ -1024,13 +1024,13 @@ if (benchApp) {
     ...[
       ["ptx-late", "Appeler le fournisseur", -2, { statusId: "s3", progress: 40 }],
       ["ptx-done", "Envoyer le compte rendu", 0, { statusId: "s5", progress: 100 }],
-      ["ptx-today", "Relire la note de synthèse", 0, { statusId: "s3", progress: 65, startTime: "09:00" }],
+      ["ptx-today", "Relire la note de synthèse", 0, { statusId: "s3", progress: 65, startTime: "09:00", focus: true }],
       ["ptx-milestone", "Signature du PV", 0, { statusId: "s1", milestone: true }],
       ["ptx-yesterday", "Préparer la réunion", -1, { statusId: "s5", progress: 100 }],
       ["ptx-tomorrow", "Déposer le dossier", 1, { statusId: "s2" }],
       // Futur (#524) : entièrement à venir — début et fin après aujourd'hui.
       ["ptx-future-1", "Essais à l'eau", 5, { statusId: "s3", progress: 20, futureStart: 3 }],
-      ["ptx-future-2", "Réunion Expert", 2, { statusId: "s1", milestone: true }],
+      ["ptx-future-2", "Réunion Expert", 2, { statusId: "s1", milestone: true, focus: true }],
       ["ptx-future-3", "Levée des réserves", 12, { statusId: "s1", futureStart: 10 }],
     ].map(([id, title, offset, extra], i) => {
       const d = addDaysIso(iso(new Date()), offset);
