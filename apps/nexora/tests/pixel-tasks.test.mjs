@@ -19,7 +19,7 @@ function slice(name) {
 
 const P = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("PIXEL-TASKS")}\n;return {
-    pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY,
+    pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue,
   };\n})`
 )();
 
@@ -102,4 +102,30 @@ test("pixelTaskGroupsFor : regroupement par dossier du projet, chemin complet", 
   assert.deepEqual(g.map((x) => [x.name, x.items.length, x.done]), [["CNR › PCH VA", 2, 1], ["Vie perso", 1, 0], ["Sans dossier", 1, 0]]);
   assert.equal(g[0].color, "#abcdef");
   assert.ok(P.PIXEL_TASKS_GROUP_BY.some(([k]) => k === "folder"));
+});
+
+test("pixelTaskGroupsFor : packages de cases dans une rangée, lignes dans le même ordre", () => {
+  const ctx = { projects: [{ id: "p1", name: "Lot 1" }], statuses: [{ id: "s1", name: "À planifier", color: "#64748B" }, { id: "s3", name: "En cours", color: "#0EA5E9" }], taskTypes: [], teamMembers: [] };
+  const items = [
+    { task: T("a", { projectId: "p1", statusId: "s3" }), done: false },
+    { task: T("b", { projectId: "p1", statusId: "s1", milestone: true }), done: false },
+    { task: T("c", { projectId: "p1", statusId: "s3", milestone: true }), done: true },
+  ];
+  const [g] = P.pixelTaskGroupsFor(items, "project", ctx, "status");
+  assert.deepEqual(g.packages.map((p) => [p.name, p.start, p.count]), [["À planifier", 0, 1], ["En cours", 1, 2]]);
+  assert.deepEqual(g.items.map((i) => i.task.id), ["b", "a", "c"]);
+  const [k] = P.pixelTaskGroupsFor(items, "project", ctx, "kind");
+  assert.deepEqual(k.packages.map((p) => [p.name, p.count]), [["Jalons", 2], ["Tâches avec durée", 1]]);
+  const [n] = P.pixelTaskGroupsFor(items, "project", ctx, "none");
+  assert.deepEqual(n.packages, [{ id: "all", name: "", color: n.color, start: 0, count: 3 }]);
+  assert.ok(P.PIXEL_TASKS_PACKAGE_BY.some(([key]) => key === "kind"));
+});
+
+test("pixelTaskRingValue : 0 en haut, sens horaire, pas de 5 %", () => {
+  assert.equal(P.pixelTaskRingValue(0, -10), 0);
+  assert.equal(P.pixelTaskRingValue(10, 0), 25);
+  assert.equal(P.pixelTaskRingValue(0, 10), 50);
+  assert.equal(P.pixelTaskRingValue(-10, 0), 75);
+  assert.equal(P.pixelTaskRingValue(-0.5, -10), 100);
+  assert.equal(P.pixelTaskRingValue(Math.sin(0.4 * 2 * Math.PI), -Math.cos(0.4 * 2 * Math.PI)), 40);
 });
