@@ -66,7 +66,7 @@ test("les vues proposées sont toutes des vues qui existent encore", () => {
   const keys = PROJECT_DEFAULT_VIEW_OPTIONS.map((v) => v.key);
   // #137 : "dashboard" (Tableau de bord contextuel) s'ajoute aux vues de
   // tâches déjà proposées — utile avec une page dont le filtre porte sur
-  // "Projet courant".
-  assert.deepEqual(keys, ["projects", "gantt", "heatmap", "radar", "table", "dashboard"]);
+  // "Projet courant". #542 : Pixel Tasks devient une vue de projet.
+  assert.deepEqual(keys, ["projects", "gantt", "heatmap", "radar", "pixelTasks", "table", "dashboard"]);
   keys.forEach((k) => assert.equal(normalizeProjectDefaultView(k), k));
 });
