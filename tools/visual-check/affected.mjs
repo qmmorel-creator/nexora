@@ -252,6 +252,11 @@ export const PATH_RULES = [
   [/^apps\/nexora\/public\/carte\//, { scenarios: ["carte"], exhaustive: "modèles 3D de la Carte" }],
   [/^apps\/nexora\/scripts\//, { scenarios: ALL, exhaustive: "chaîne de build de l'interface" }],
   [/^apps\/nexora\/package(-lock)?\.json$/, { scenarios: ALL }],
+  // Environnements (#544) : la configuration commune entre dans le build de
+  // l'interface ; le mode démonstration ne sert qu'aux constructions local et
+  // préproduction (le banc a son propre bouchon Firebase).
+  [/^config\//, { scenarios: ALL }],
+  [/^apps\/nexora\/environnement-demo\//, null],
   [/^apps\/nexora\/(netlify|lib|tests)\//, null],
   [/^apps\/nexora\/(openapi\.yaml|public\/openapi\.yaml|tsconfig\.json|netlify\.toml|[^/]+\.md)$/, null],
   [/^apps\/nexora-mcp\//, null],
@@ -262,9 +267,14 @@ export const PATH_RULES = [
   [/^tools\/visual-check\/build-harness\.mjs$/, { scenarios: ALL }],
   [/^tools\/visual-check\/run\.mjs$/, { scenarios: ALL, exhaustive: "banc visuel modifié" }],
   [/^tools\/visual-check\/package(-lock)?\.json$/, { scenarios: ALL, exhaustive: "dépendances du banc (three, React)" }],
-  [/^tools\/visual-check\/[^/]+\.md$/, null],
+  [/^tools\/visual-check\/[^/]+\.(md|png)$/, null],
   [/^tools\/pdf-check\//, null],
   [/^(docs\/|\.github\/|scripts\/)/, null],
+  // Outil de publication, registre, source de version et tests du mécanisme
+  // (#544) : couverts par le socle `npm run verify`, sans rendu.
+  [/^(outils\/|publication\/|tests\/)/, null],
+  // Relevé des jetons de design (référencé par DESIGN.md), sans effet sur le rendu.
+  [/^\.impeccable\//, null],
   [/^[^/]+\.md$/, null],
   [/^(package\.json|\.gitignore|\.gitattributes|\.editorconfig)$/, null],
 ];

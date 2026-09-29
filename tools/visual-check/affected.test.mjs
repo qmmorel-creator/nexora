@@ -169,3 +169,15 @@ test("lancement manuel : portée explicite, défaut exhaustif, rien d'inconnu", 
   assert.throws(() => parseScope(["--only=carte,timeline3d"], {}), /inconnu/);
   assert.throws(() => parseScope(["--depth=rapide"], {}), /inconnue/);
 });
+
+// Tout fichier suivi doit être classé (#544) : un nouvel outil ou dossier non
+// répertorié élargirait chaque sélection par prudence, sans que personne ne
+// décide de sa place.
+test("inventaire : chaque fichier du dépôt correspond à une règle du sélecteur", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { PATH_RULES } = await import("./affected.mjs");
+  const racine = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const fichiers = execFileSync("git", ["ls-files"], { cwd: racine, encoding: "utf8" }).split("\n").filter(Boolean);
+  const orphelins = fichiers.filter((f) => !PATH_RULES.some(([re]) => re.test(f)));
+  assert.deepEqual(orphelins, [], `fichiers non classés dans PATH_RULES : ${orphelins.join(", ")}`);
+});

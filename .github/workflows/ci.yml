@@ -1,29 +1,79 @@
 name: Nexora CI
 
+# Validation seulement : ce workflow ne publie RIEN et ne reçoit aucun secret
+# Netlify. La publication se fait hors GitHub Actions, par outils/publier,
+# après feu vert explicite (Ref #544, docs/PUBLICATION.md).
+#
+# Déclencheurs : pull requests (dont release/** et hotfix/** par leur PR),
+# push sur main et develop, lancement manuel. Aucun run sur un simple push de
+# branche de travail claude/** ou codex/** : la vérification locale
+# (`npm run install:all && npm run verify`) y est obligatoire avant push.
 on:
   pull_request:
   push:
-    # Les branches de travail sont vérifiées ici plutôt qu'à l'ouverture d'une
-    # pull request : une pull request déclenche une construction Netlify FACTURÉE
-    # sur chaque site, alors que GitHub Actions ne coûte rien sur un dépôt public.
-    # Le travail peut donc s'accumuler et rester vérifié, sans déployer.
-    branches: [main, 'claude/**', 'codex/**']
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Portée : rapide (preuve réutilisable), representatif ou complet (socle rejoué)"
+        type: choice
+        options: [rapide, representatif, complet]
+        default: representatif
 
-# Une seule exécution à la fois par branche (push) ou par pull request : un
-# nouveau push annule la vérification devenue obsolète. Le run `push` d'une
-# branche et le run `pull_request` de sa PR restent distincts : le second
-# vérifie le commit de fusion avec `main`, pas seulement la branche. Les deux
-# sont gratuits (dépôt public, runner standard).
-# Le banc visuel (tools/visual-check) ne tourne pas ici : voir son README.
+# Annule les exécutions devenues obsolètes, SAUF sur main : chaque commit de
+# main susceptible d'être publié garde son propre verdict.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  perimetre:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      verifier: ${{ steps.p.outputs.verifier }}
+      empreinte: ${{ steps.p.outputs.empreinte }}
+      preuve: ${{ steps.preuve.outputs.trouvee }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: p
+        name: Périmètre du changement
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          node scripts/ci-perimetre.mjs --base "$BASE" --head HEAD > perimetre.json
+          cat perimetre.json
+          echo "verifier=$(node -p 'require("./perimetre.json").verifier')" >> "$GITHUB_OUTPUT"
+          echo "empreinte=$(node -p 'require("./perimetre.json").empreinte')" >> "$GITHUB_OUTPUT"
+      # Réutilisation d'une preuve : même empreinte de contenu (CI, outils et
+      # dépendances compris), run fiable du même dépôt, moins de 3 jours (le
+      # socle contient des contrôles datés). Jamais en mode manuel
+      # « representatif » ou « complet ».
+      - id: preuve
+        name: Recherche d'une preuve réutilisable
+        if: steps.p.outputs.verifier == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'rapide')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOM: preuve-verify-${{ steps.p.outputs.empreinte }}
+        run: |
+          limite=$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=$NOM&per_page=20" \
+            --jq "[.artifacts[] | select(.expired == false and .created_at >= \"$limite\" and .workflow_run.head_repository_id == .workflow_run.repository_id)] | length")
+          echo "Preuves applicables : $n"
+          echo "trouvee=$([ "$n" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   verify:
+    needs: perimetre
+    if: needs.perimetre.outputs.verifier == 'true' && needs.perimetre.outputs.preuve != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -37,4 +87,51 @@ jobs:
             apps/nexora-mcp/package-lock.json
       - run: npm run install:all
       - run: npm run verify
+      - name: Preuve du socle
+        run: |
+          node -e 'console.log(JSON.stringify({ empreinte: process.argv[1], commit: process.argv[2], arbre: require("child_process").execSync("git rev-parse HEAD^{tree}").toString().trim(), evenement: process.argv[3], node: process.version, controles: "npm run verify (check + tests + invariants)", resultat: "succès", date: new Date().toISOString() }, null, 2))' \
+            "${{ needs.perimetre.outputs.empreinte }}" "${{ github.sha }}" "${{ github.event_name }}" > preuve.json
+          cat preuve.json
+      # Seuls les runs du dépôt lui-même déposent une preuve réutilisable.
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          name: preuve-verify-${{ needs.perimetre.outputs.empreinte }}
+          path: preuve.json
+          retention-days: 30
+          overwrite: true
 
+  # Statut final unique, exigé par outils/publier sur le SHA exact publié.
+  # Échoue si un contrôle requis manque, échoue ou est annulé ; un socle sauté
+  # n'est accepté que s'il est justifié (documentation seule ou preuve
+  # applicable), jamais parce que tout a été sauté.
+  verdict:
+    needs: [perimetre, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verdict
+        env:
+          PERIMETRE: ${{ needs.perimetre.result }}
+          VERIFY: ${{ needs.verify.result }}
+          VERIFIER: ${{ needs.perimetre.outputs.verifier }}
+          PREUVE: ${{ needs.perimetre.outputs.preuve }}
+          MODE: ${{ inputs.mode || 'automatique' }}
+        run: |
+          {
+            echo "## Verdict Nexora CI"
+            echo "- mode : $MODE"
+            echo "- périmètre : $PERIMETRE (socle requis : $VERIFIER)"
+            echo "- socle npm run verify : $VERIFY"
+            echo "- preuve réutilisée : ${PREUVE:-false}"
+            echo "- banc visuel et 3D : local, hors CI (npm run visual:affected / visual:check)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$PERIMETRE" = "success" ] || { echo "Périmètre non établi ($PERIMETRE)"; exit 1; }
+          if [ "$VERIFIER" = "true" ]; then
+            if [ "$VERIFY" = "success" ]; then echo "Socle exécuté et vert."; exit 0; fi
+            if [ "$VERIFY" = "skipped" ] && [ "$PREUVE" = "true" ]; then echo "Socle couvert par une preuve applicable (même empreinte, < 3 jours)."; exit 0; fi
+            echo "Socle requis : $VERIFY"; exit 1
+          fi
+          [ "$VERIFY" = "skipped" ] || { echo "Socle inattendu : $VERIFY"; exit 1; }
+          echo "Documentation ou registre seuls : socle non requis."
