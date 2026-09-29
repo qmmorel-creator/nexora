@@ -161,3 +161,16 @@ test('focus is written by create/update and preserved by unrelated updates',asyn
  const plain=await r.createTask({title:'Sans focus',projectId:'p',idempotencyKey:'focus-none'});
  assert.equal('focus' in plain.task,false,'une tâche créée sans focus ne gagne pas de champ');
 });
+
+/* Responsable : l'application range un NOM de membre. Un identifiant reçu par
+   le MCP (« u1 ») était écrit tel quel et s'affichait comme un inconnu. */
+test('Member ids given as assignee are stored as the member name',async()=>{
+ const {db,data}=fakeDb();const r=repository(db,'u');
+ data.set('users/u/kv_store/nexora:teamMembers',{value:JSON.stringify([{id:'u1',name:'Quentin Morel'}]),revision:'initial',storageMode:'inline'});
+ const t=await r.createTask({title:'Resp',projectId:'p',idempotencyKey:'resp',assignee:'u1',checklist:[{id:'k',text:'Point',done:false,assignee:'u1'}]});
+ assert.equal(t.task.assignee,'Quentin Morel');assert.equal(t.task.checklist[0].assignee,'Quentin Morel');
+ const u=await r.mutateTask({taskId:t.task.id,expectedVersion:t.version,idempotencyKey:'resp-2',changes:{assignee:'Externe libre'}});
+ assert.equal(u.task.assignee,'Externe libre');
+ const v=await r.mutateTask({taskId:t.task.id,expectedVersion:u.version,idempotencyKey:'resp-3',changes:{assignee:'u1'}});
+ assert.equal(v.task.assignee,'Quentin Morel');
+});
