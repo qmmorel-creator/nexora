@@ -64,8 +64,8 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
 3. Développer sur la branche de travail et **y accumuler les commits**, avec
    `npm run install:all && npm run verify` avant chaque push. Pousser sur une branche de
    travail ne déclenche ni CI ni déploiement.
-4. Livrer par **pull request vers `develop`**, fusionnée quand son `verdict` est terminé et
-   vert, puis mettre le lot en préproduction (`outils/publier preproduction`). Ces étapes ne
+4. Livrer par **pull request vers `main`**, fusionnée quand son `verdict` est terminé et
+   vert (une fusion dans `main` ne publie rien), puis mettre le lot en préproduction (`outils/publier preproduction`). Ces étapes ne
    publient rien en production et ne demandent pas de nouvelle autorisation. Commenter chaque
    issue concernée avec l'environnement, l'URL et le SHA testés, puis passer en
    `statut:à-tester`.
@@ -110,7 +110,7 @@ réversibles.** Référence complète : [`docs/PUBLICATION.md`](../docs/PUBLICAT
 
 Depuis l'issue #544, **une fusion dans `main` ne publie plus rien** : la commande `ignore`
 versionnée saute tout build Git de production (`scripts/netlify-ignore.mjs`) et les builds Git
-sont arrêtés dans Netlify. Une PR de développement vers `develop` n'est donc **pas** une
+sont arrêtés dans Netlify. Une PR de développement vers `main` n'est donc **pas** une
 demande de publication.
 
 ### Ce qui coûte, et ce qui ne coûte rien
@@ -123,7 +123,7 @@ et [netlify.com/pricing](https://www.netlify.com/pricing/), consultés le 29/09/
 | Action | Effet Netlify | Crédits |
 |---|---|---|
 | Commit et push sur la branche de travail | aucun (et plus de CI) | 0 |
-| PR vers `develop`, fusion dans `develop` ou `main` | aucun | 0 |
+| PR vers `main`, fusion dans `main` | aucun | 0 |
 | `outils/publier preproduction` | brouillon non publié, alias `preprod` | aucun crédit de publication annoncé ; trafic compté |
 | `outils/publier production` (après feu vert) | une publication **par composant modifié** | 15 par site publié |
 | `outils/publier retour` | republication d'un Deploy ID existant | selon Netlify, sans construction |
@@ -133,7 +133,7 @@ GitHub Actions ne coûte rien sur ce dépôt public (runners standard `ubuntu-la
 
 ### La règle
 
-1. L'assistant accumule le travail en commits sur sa branche, livre par PR vers `develop`
+1. L'assistant accumule le travail en commits sur sa branche, livre par PR vers `main`
    après `verdict` vert, et met le lot en préproduction : tout cela sans nouvelle autorisation.
 2. Il **ne publie pas la production** de sa propre initiative. Il présente en un seul message
    la version, le SHA définitif, le changelog, les composants, la recette et le retour arrière,
@@ -148,7 +148,7 @@ GitHub Actions ne coûte rien sur ce dépôt public (runners standard `ubuntu-la
 
 ### Vérification continue
 
-`Nexora CI` tourne sur les pull requests, sur `main` et `develop` et à la demande ; son statut
+`Nexora CI` tourne sur les pull requests, sur `main` et à la demande ; son statut
 final `verdict` est exigé par l'outil sur le SHA exact publié. `npm run install:all && npm run
 verify` reste obligatoire avant chaque push. Le banc visuel (`tools/visual-check`) ne tourne
 ni dans la CI ni sur Netlify ; il suit la matrice de

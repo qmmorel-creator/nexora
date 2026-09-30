@@ -13,15 +13,24 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Nouveautés
 
-- Versions officielles, environnements local et préproduction, publication volontaire et réversible par `outils/publier` (Ref #544).
-- `version.json` public sur chaque site ; bandeau LOCAL / PRÉPRODUCTION et `noindex` hors production.
-- Préproduction en données fictives : aucun accès à Firebase de production, aucune fonction déposée.
-
 ### Corrections
 
 ### Incompatibilités
 
+## [0.1.0] — 2026-09-30
+
+### Nouveautés
+
+- Versions officielles, environnements local et préproduction, publication volontaire et réversible par `outils/publier` (Ref #544).
+- `version.json` public sur chaque site ; bandeau LOCAL / PRÉPRODUCTION et `noindex` hors production.
+- Préproduction en données fictives : aucun accès à Firebase de production, aucune fonction déposée.
+- Pixel Tasks : sous-groupes « Rameaux » sous les groupes principaux (projet, dossier, statut, responsable, type, jalon/durée) — tronc, rameaux, bourgeons qui éclosent, ruban spectral (Ref #546).
+
+
+### Incompatibilités
+
 - Une fusion dans `main` ne publie plus la production : la publication passe par `outils/publier production`, après feu vert explicite.
+- Branche `develop` abandonnée : les PR visent `main`, la préproduction se fait depuis `main` (Ref #549).
 
 ## État initial (non versionné) — relevé du 29/09/2026
 

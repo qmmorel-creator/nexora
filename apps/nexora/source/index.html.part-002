@@ -4625,6 +4625,8 @@ function habitYearWeeks(theme, log, year) {
 const PIXEL_TASKS_GROUP_BY = [["project", "Projet"], ["folder", "Dossier"], ["status", "Statut"], ["assignee", "Responsable"], ["taskType", "Type"]];
 // Packages de cases dans une rangée : les mêmes clés, plus Jalon / Tâche.
 const PIXEL_TASKS_PACKAGE_BY = [["none", "Aucun"], ["kind", "Jalon / tâche avec durée"], ...PIXEL_TASKS_GROUP_BY];
+// Sous-groupes « Rameaux » (#546) : les mêmes clés, sous chaque groupe principal.
+const PIXEL_TASKS_SUB_BY = [["none", "Aucun"], ...PIXEL_TASKS_GROUP_BY, ["kind", "Jalon / durée"]];
 const PIXEL_TASKS_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /* Une tâche s'affiche à UNE seule date : sa date de jalon si c'est un jalon,
@@ -4743,10 +4745,27 @@ function pixelTaskBucket(items, by, ctx) {
    chaque rangée, en « packages » de cases (packageBy, « none » = aucun) : les
    entrées d'un même package se suivent, lignes et cases dans le même ordre
    pour que les liaisons restent droites. g.packages = [{id, name, color,
-   start, count}] ; sans package, un seul bloc couvre toute la rangée. */
-function pixelTaskGroupsFor(items, groupBy, ctx, packageBy) {
+   start, count}] ; sans package, un seul bloc couvre toute la rangée.
+   subBy (#546, « none » ou égal à groupBy = aucun) : chaque groupe reçoit
+   g.subgroups, regroupés et empaquetés de la même façon, chacun avec sa
+   propre rangée de cases et une clé de repli unique (key = groupe › sous-
+   groupe) ; g.items et g.packages mettent alors les sous-groupes bout à bout. */
+function pixelTaskGroupsFor(items, groupBy, ctx, packageBy, subBy) {
   const groups = pixelTaskBucket(items, groupBy, ctx);
+  const withSubs = !!subBy && subBy !== "none" && subBy !== groupBy;
   for (const g of groups) {
+    if (withSubs) {
+      g.subgroups = pixelTaskGroupsFor(g.items, subBy, ctx, packageBy).map((sg) => ({ ...sg, key: g.id + "›" + sg.id }));
+      let start = 0;
+      g.items = [];
+      g.packages = [];
+      for (const sg of g.subgroups) {
+        g.items.push(...sg.items);
+        for (const p of sg.packages) g.packages.push({ ...p, id: sg.key + "›" + p.id, start: start + p.start });
+        start += sg.items.length;
+      }
+      continue;
+    }
     // Fantômes puis futur ferment la rangée, chacun dans son propre package.
     const real = g.items.filter((i) => !i.ghost && !i.future);
     const ghostItems = g.items.filter((i) => i.ghost);
@@ -4766,6 +4785,24 @@ function pixelTaskGroupsFor(items, groupBy, ctx, packageBy) {
     });
   }
   return groups;
+}
+
+/* Ruban spectral d'un groupe (#546) : un segment par sous-groupe, largeur =
+   part des tâches comptées du groupe (fantômes et futur à défaut), done =
+   part terminée du segment (0 à 1). */
+function pixelTaskSpectrum(subgroups) {
+  const list = Array.isArray(subgroups) ? subgroups : [];
+  const weightOf = (sg) => sg.total || sg.items.length;
+  const sum = list.reduce((n, sg) => n + weightOf(sg), 0) || 1;
+  return list.map((sg) => ({ id: sg.key || sg.id, name: sg.name, color: sg.color, weight: weightOf(sg) / sum, done: sg.total ? sg.done / sg.total : 0, count: sg.total, doneCount: sg.done }));
+}
+
+/* Bourgeon d'un sous-groupe : share = part terminée (arc de l'anneau), bloom
+   = tout est fait (au moins une tâche comptée), empty = rien à compter. */
+function pixelTaskBud(sg) {
+  const total = (sg && sg.total) || 0;
+  const done = (sg && sg.done) || 0;
+  return { share: total ? done / total : 0, bloom: total > 0 && done >= total, empty: total === 0 };
 }
 
 // Côté du carré journalier : assez grand pour la plus longue rangée et le

@@ -8,19 +8,19 @@ Mis en place par l'issue #544 (29/09/2026). Ce guide est la référence ; `CLAUD
 | Niveau | Code | Publication | Données |
 |---|---|---|---|
 | **Local** | branche de travail `claude/…` | aucune — `npm run local`, `http://127.0.0.1:8888`, bandeau LOCAL | fictives, dans le navigateur |
-| **Préproduction** | `develop`, ou `release/X.Y.Z` pour isoler un candidat | brouillon Netlify, alias stable `preprod`, déposé par `outils/publier preproduction` | fictives, dans le navigateur ; aucune fonction |
+| **Préproduction** | `main` (ou un SHA précis) | brouillon Netlify, alias stable `preprod`, déposé par `outils/publier preproduction` | fictives, dans le navigateur ; aucune fonction |
 | **Production** | commit de `origin/main` associé à `vX.Y.Z` | `outils/publier production`, **après feu vert explicite de Quentin** sur version, SHA et composants | Firebase `nexora-cb20d` |
 
 Une fusion dans `main` **ne publie rien**. Elle fournit le SHA définitif à présenter pour
 la publication. Le registre `publication/registre.json` dit ce qui est réellement en ligne ;
 `main` peut contenir du code non publié.
 
-Cycle : branche de travail → PR vers `develop` → `verdict` vert → fusion → préproduction →
-(`release/X.Y.Z` si `develop` contient des travaux inachevés) → PR vers `main` → `verdict`
-du commit final → feu vert pour ce commit → `outils/publier production` → registre committé
-sur `main` → fusion de `main` dans `develop`. Un correctif urgent part du déploiement
-réellement servi (tag, ou provenance du registre tant qu'aucun tag n'existe) dans
-`hotfix/<prochaine-version>`, puis rejoint `main` **et** `develop`.
+Cycle (depuis le 30/09/2026, la branche `develop` est abandonnée, #549) : branche de travail →
+PR vers `main` → `verdict` vert → fusion (ne publie rien) → préproduction depuis `main` →
+`preparer --version X.Y.Z` par PR vers `main` → `verdict` du commit final → feu vert pour ce
+commit → `outils/publier production` → registre committé sur `main`. Un correctif urgent part
+du déploiement réellement servi (tag, ou provenance du registre tant qu'aucun tag n'existe)
+dans `hotfix/<prochaine-version>`, puis rejoint `main` par PR.
 
 ## Commandes
 
@@ -37,7 +37,7 @@ npm run smoke:production                # lecture seule de la production
 npm run publier:installer               # une fois : empaqueteur de fonctions de l'outil (hors CI)
 outils/publier etat
 outils/publier garde [--arreter]
-outils/publier preproduction [--ref develop] [--essai]
+outils/publier preproduction [--ref main] [--essai]
 outils/publier preparer --version 0.1.0
 outils/publier production --version 0.1.0 --commit <sha complet> --essai
 outils/publier production --version 0.1.0 --commit <sha complet> --brouillon
@@ -208,7 +208,7 @@ Dépôt **public** : les rulesets de branches et de tags sont disponibles avec G
 
 | Ruleset | Cible | Règles |
 |---|---|---|
-| `branches-officielles` | Branch targeting : `main`, `develop` ; Enforcement : Active ; aucun bypass | **Restrict deletions**, **Block force pushes** — rien d'autre (pas de PR ni de statut obligatoires : l'outil écrit le registre directement sur `main`) |
+| `branches-officielles` | Branch targeting : `main` ; Enforcement : Active ; aucun bypass | **Restrict deletions**, **Block force pushes** — rien d'autre (pas de PR ni de statut obligatoires : l'outil écrit le registre directement sur `main`) |
 | `tags-de-version` | Tag targeting : `v*` ; Enforcement : Active | **Restrict updates**, **Restrict deletions** — laisser la création possible |
 
 Les protections d'environnement GitHub ne sont pas le verrou de publication : l'outil
@@ -216,7 +216,7 @@ s'exécute hors Actions.
 
 ## CI et preuves
 
-- `Nexora CI` : pull requests, push sur `main` et `develop`, lancement manuel
+- `Nexora CI` : pull requests, push sur `main`, lancement manuel
   (`rapide | representatif | complet`). Plus aucun run sur un simple push de branche de
   travail : la vérification locale est obligatoire avant push.
 - Jobs `perimetre` → `verify` → `verdict`. `verdict` est le statut exigé par l'outil ; il
@@ -246,7 +246,7 @@ par semaine environ, sauf urgence. Aucun changement d'abonnement.
 
 | Demande de Quentin | Comportement |
 |---|---|
-| « Développe cette fonctionnalité » | issue, branche, commits `Ref #N`, tests locaux, PR vers `develop`, fusion après `verdict` vert, préproduction, URL et SHA testés, `statut:à-tester` — sans nouvelle autorisation pour ces étapes |
+| « Développe cette fonctionnalité » | issue, branche, commits `Ref #N`, tests locaux, PR vers `main`, fusion après `verdict` vert, préproduction, URL et SHA testés, `statut:à-tester` — sans nouvelle autorisation pour ces étapes |
 | « Mets ce lot en préproduction » | `outils/publier preproduction`, vérifier, donner liens et SHA |
 | « Publie la version X validée » | un seul message : version, SHA définitif, changelog, composants, recette, retour arrière ; publier après le « oui » applicable, sans redemander s'il a déjà été donné pour ce candidat exact |
 | « Reviens à la version Y » | `outils/publier retour --version Y`, vérifier, registre à jour |

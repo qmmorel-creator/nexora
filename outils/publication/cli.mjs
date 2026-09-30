@@ -16,7 +16,7 @@ const AIDE = `outils/publier <commande>
 
   etat                                   productions servies, préproduction, registre, garde-fous, divergences
   garde [--arreter]                      lit (ou arrête) les builds Git Netlify des deux projets
-  preproduction [--ref develop] [--essai] construit et dépose un brouillon « preprod » (application, données fictives)
+  preproduction [--ref main] [--essai] construit et dépose un brouillon « preprod » (application, données fictives)
   preparer --version X.Y.Z               déclare la version et date la section « À venir » du changelog
   production --version X.Y.Z --commit <sha> [--composants application,mcp]
              --essai                     prérequis et plan, aucune modification distante
@@ -99,7 +99,7 @@ if (principal) {
     const d = dependances(racine, { essai: !!o.essai });
     if (commande === "etat") r = await commandes.etat(d);
     else if (commande === "garde") r = await commandes.garde(d, { arreter: !!o.arreter, retablir: !!o.retablir });
-    else if (commande === "preproduction") r = await commandes.preproduction(d, { ref: o.ref || "develop", composants: o.composants });
+    else if (commande === "preproduction") r = await commandes.preproduction(d, { ref: o.ref || "main", composants: o.composants });
     else if (commande === "preparer") r = await commandes.preparer(d, { version: o.version });
     else if (commande === "production") r = await commandes.production(d, { version: o.version, commit: o.commit, composants: o.composants, essai: !!o.essai, brouillon: !!o.brouillon, sansRecette: o.sansRecette || null, accord: o.accord || null });
     else if (commande === "retour") r = await commandes.retour(d, { version: o.version, sites: o.sites, essai: !!o.essai });

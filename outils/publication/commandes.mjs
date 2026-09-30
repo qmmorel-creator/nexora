@@ -76,7 +76,7 @@ export async function etat(d) {
 }
 
 // ------------------------------------------------------- preproduction ---
-export async function preproduction(d, { ref = "develop", composants: liste = "application" } = {}) {
+export async function preproduction(d, { ref = "main", composants: liste = "application" } = {}) {
   const env = environnement("preproduction");
   const noms = composantsDemandes(liste);
   if (noms.includes("mcp")) throw new Refus("MCP : aucune préproduction possible sur le projet existant — ses fonctions recevraient les secrets de production (servis à tous les contextes). Préparer d'abord le projet de test décrit dans docs/PUBLICATION.md.");
