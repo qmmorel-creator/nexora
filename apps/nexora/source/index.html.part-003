@@ -13928,9 +13928,13 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
      vue Jour — il ne reste que fantômes et futur. Le score et le carré
      journalier, eux, comptent toujours les tâches du jour. */
   const baseOn = !(widget && widget.pixelTasksBase === false);
+  // Terminées masquées (bouton de l'en-tête, mémorisé sur le widget) : les
+  // cases et lignes cochées quittent la vue Jour, score et compteurs restent.
+  const hideDone = !!(widget && widget.pixelTasksHideDone);
+  const hiddenDone = hideDone ? day.items.filter((i) => i.done && (baseOn || i.ghost || i.future)).length : 0;
   const groups = useMemo(
-    () => (baseOn ? day.groups : pixelTaskGroupsFor(day.items.filter((i) => i.ghost || i.future), groupBy, ctx, packageBy, subBy)),
-    [baseOn, day, groupBy, ctx, packageBy, subBy]
+    () => pixelTaskVisibleGroups(day.items, day.groups, { base: baseOn, hideDone }, groupBy, ctx, packageBy, subBy),
+    [baseOn, hideDone, day, groupBy, ctx, packageBy, subBy]
   );
   // Largeur de la carte centrale, pour dimensionner les rangées de pixels.
   const mainRef = useRef(null);
@@ -13978,6 +13982,11 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
           <input type="checkbox" checked={baseOn} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksBase: e.target.checked })} />
           Base
         </label>
+      )}
+      {view === "day" && (
+        <button type="button" className={"lp-tool-btn lp-ptx-done-toggle" + (hideDone ? " is-on" : "")} aria-pressed={hideDone} onClick={() => onUpdateWidget && onUpdateWidget({ pixelTasksHideDone: !hideDone })} title={hideDone ? "Afficher les tâches terminées" : "Cacher les tâches terminées (le score les compte toujours)"}>
+          {hideDone ? <Eye size={13} /> : <EyeOff size={13} />} {hideDone ? "Afficher terminées" + (hiddenDone ? " (" + hiddenDone + ")" : "") : "Cacher terminées"}
+        </button>
       )}
       {view === "day" && (
         <label className={"lp-ptx-ghost-toggle" + (ghostOn ? " is-on" : "")} title="Ajoute, en gris pointillé, les tâches en cours ce jour-là (début avant, fin après) — hors score">
@@ -14332,7 +14341,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
               {futureWindow > 0 && <span className="lp-ptx-legend-shape"><i className="is-horizon" />Futur : à venir sous {futureWindow} j (J+N)</span>}
             </div>
           )}
-          {!groups.length && <div className="lp-empty lp-ptx-empty">{baseOn ? "Aucune tâche à cette date pour ce filtre." : "Tâches du jour masquées (case « Base ») — cocher Fantômes ou Futur pour afficher les autres couches."}</div>}
+          {!groups.length && <div className="lp-empty lp-ptx-empty">{baseOn ? (hiddenDone ? "Toutes les tâches de ce jour sont terminées (" + hiddenDone + " masquée" + (hiddenDone > 1 ? "s" : "") + ")." : "Aucune tâche à cette date pour ce filtre.") : "Tâches du jour masquées (case « Base ») — cocher Fantômes ou Futur pour afficher les autres couches."}</div>}
           {groups.map((g, gi) => (g.subgroups ? renderTree(g, gi) : renderBlock(g, String(gi), collapsed.has(g.id), (headH, folded) => (
             <button type="button" className="lp-hpx-theme-head lp-ptx-group-head" style={{ height: headH }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={(folded ? "Déplier le groupe " : "Replier le groupe ") + g.name}>
               <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
