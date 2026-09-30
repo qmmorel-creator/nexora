@@ -13,6 +13,8 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Nouveautés
 
+- Pixel Tasks, « Rameaux » : un fil pointillé descend de chaque bourgeon le long des tâches du sous-groupe, avec un nœud par tâche, plein quand elle est terminée (Ref #546).
+
 ### Corrections
 
 ### Incompatibilités
