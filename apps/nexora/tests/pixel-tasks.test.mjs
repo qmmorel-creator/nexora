@@ -20,7 +20,7 @@ function slice(name) {
 const P = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("PIXEL-TASKS")}\n;return {
     pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue, pixelTaskOutlinePath, PIXEL_TASKS_FUTURE_WINDOWS,
-    PIXEL_TASKS_SUB_BY, pixelTaskSpectrum, pixelTaskBud,
+    PIXEL_TASKS_SUB_BY, pixelTaskSpectrum, pixelTaskBud, pixelTaskVisibleGroups,
   };\n})`
 )();
 
@@ -224,4 +224,26 @@ test("pixelTaskOutlinePath : départ au milieu du bord haut, carré arrondi ou r
   assert.match(P.pixelTaskOutlinePath(28, 5, 0.75, false), /^M 14 0\.75 H /);
   assert.match(P.pixelTaskOutlinePath(28, 5, 0.75, false), / Z$/);
   assert.match(P.pixelTaskOutlinePath(28, 5, 1, true), /^M 14 1 A 13 13 0 1 1 13\.99 1$/);
+});
+
+test("pixelTaskVisibleGroups : terminées masquées, compteurs de la journée complète conservés", () => {
+  const today = "2026-09-29";
+  const ctx = { statuses, projects: [{ id: "p1", name: "Alpha" }, { id: "p2", name: "Beta" }] };
+  const tasks = [
+    T("a", { projectId: "p1", end: today }),
+    T("b", { projectId: "p1", end: today, statusId: "s5" }),
+    T("c", { projectId: "p2", end: today, statusId: "s5" }),
+  ];
+  const d = P.pixelTasksForDay(tasks, today, today, statuses);
+  const full = P.pixelTaskGroupsFor(d.items, "project", ctx, "none", "none");
+  // Sans option : les groupes complets, inchangés.
+  assert.equal(P.pixelTaskVisibleGroups(d.items, full, {}, "project", ctx, "none", "none"), full);
+  const vis = P.pixelTaskVisibleGroups(d.items, full, { hideDone: true }, "project", ctx, "none", "none");
+  // Beta, entièrement terminé, disparaît ; Alpha garde « 1 / 2 ».
+  assert.deepEqual(vis.map((g) => [g.name, g.items.map((i) => i.task.id), g.done, g.total]), [["Alpha", ["a"], 1, 2]]);
+  assert.equal(vis[0].packages.reduce((n, p) => n + p.count, 0), 1);
+  // Sous-groupes : compteurs restaurés par clé.
+  const fullSub = P.pixelTaskGroupsFor(d.items, "project", ctx, "none", "status");
+  const visSub = P.pixelTaskVisibleGroups(d.items, fullSub, { hideDone: true }, "project", ctx, "none", "status");
+  assert.deepEqual(visSub[0].subgroups.map((sg) => [sg.name, sg.items.length, sg.done, sg.total]), [["À planifier", 1, 0, 1]]);
 });

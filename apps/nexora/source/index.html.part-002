@@ -4787,6 +4787,30 @@ function pixelTaskGroupsFor(items, groupBy, ctx, packageBy, subBy) {
   return groups;
 }
 
+/* Groupes affichés en vue Jour : base (tâches du jour) et/ou terminées
+   masquées. Les compteurs done / total de chaque groupe et sous-groupe
+   restent ceux de la journée complète (fullGroups), pour que « 3 / 10 » ne
+   devienne pas « 0 / 7 » quand les terminées sont cachées. Un groupe dont
+   toutes les tâches visibles sont terminées disparaît. */
+function pixelTaskVisibleGroups(items, fullGroups, opts, groupBy, ctx, packageBy, subBy) {
+  const base = !(opts && opts.base === false);
+  const hideDone = !!(opts && opts.hideDone);
+  if (base && !hideDone) return fullGroups;
+  const kept = (items || []).filter((i) => (base || i.ghost || i.future) && !(hideDone && i.done));
+  const groups = pixelTaskGroupsFor(kept, groupBy, ctx, packageBy, subBy);
+  if (!hideDone) return groups;
+  const counts = new Map();
+  for (const g of fullGroups || []) {
+    counts.set(g.id, g);
+    for (const sg of g.subgroups || []) counts.set(sg.key, sg);
+  }
+  const restore = (g, k) => { const src = counts.get(k); return src ? { ...g, done: src.done, total: src.total } : g; };
+  return groups.map((g) => {
+    const out = restore(g, g.id);
+    return g.subgroups ? { ...out, subgroups: g.subgroups.map((sg) => restore(sg, sg.key)) } : out;
+  });
+}
+
 /* Ruban spectral d'un groupe (#546) : un segment par sous-groupe, largeur =
    part des tâches comptées du groupe (fantômes et futur à défaut), done =
    part terminée du segment (0 à 1). */
