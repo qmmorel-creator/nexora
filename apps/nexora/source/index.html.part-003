@@ -13680,6 +13680,43 @@ function TaskPixelMosaic({ groups: allGroups, day, ctx, size = 8, gap = 2 }) {
   return <span className="lp-hpx-mosaic" style={{ gap }} role="img" aria-label={`${day.done} tâches terminées sur ${day.total}`}>{rows}</span>;
 }
 
+/* Bourgeon d'un sous-groupe (#546) : anneau dont l'arc se remplit avec les
+   tâches terminées, puis fleur éclose (cinq pétales, léger halo) quand tout
+   est fait. */
+function TaskPixelBud({ sg, size = 18 }) {
+  const b = pixelTaskBud(sg);
+  const c = 2 * Math.PI * 6.5;
+  return (
+    <svg className={"lp-ptx-bud" + (b.bloom ? " is-bloom" : "") + (b.empty ? " is-empty" : "")} width={size} height={size} viewBox="0 0 18 18" style={{ "--bc": sg.color }} aria-hidden="true">
+      {b.bloom ? (
+        <g className="lp-ptx-bud-flower">
+          {[0, 72, 144, 216, 288].map((a) => <ellipse key={a} cx="9" cy="4.7" rx="3" ry="4.2" transform={`rotate(${a} 9 9)`} />)}
+          <circle className="lp-ptx-bud-heart" cx="9" cy="9" r="2.6" />
+        </g>
+      ) : (
+        <g>
+          <circle className="lp-ptx-bud-track" cx="9" cy="9" r="6.5" />
+          {b.share > 0 && <circle className="lp-ptx-bud-arc" cx="9" cy="9" r="6.5" strokeDasharray={`${(b.share * c).toFixed(2)} ${c.toFixed(2)}`} transform="rotate(-90 9 9)" />}
+          <circle className="lp-ptx-bud-core" cx="9" cy="9" r="2.4" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
+/* Ruban spectral (#546) : un segment par sous-groupe, largeur = nombre de
+   tâches, part foncée = terminées. */
+function TaskPixelSpectrum({ subgroups }) {
+  const segs = pixelTaskSpectrum(subgroups);
+  return (
+    <span className="lp-ptx-spectrum" role="img" aria-label={"Sous-groupes : " + segs.map((x) => `${x.name} ${x.doneCount} sur ${x.count}`).join(", ")}>
+      {segs.map((x) => (
+        <i key={x.id} style={{ flexGrow: x.weight, "--sc": x.color }} title={`${x.name} — ${x.doneCount} / ${x.count}`}><b style={{ width: Math.round(x.done * 100) + "%" }} /></i>
+      ))}
+    </span>
+  );
+}
+
 function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, onOpen, collapsed, side, folded, onToggleFold }) {
   const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost && !i.future) })).filter((g) => g.items.length);
   const label = hpxDayLabel(date, todayIso);
@@ -13846,12 +13883,17 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   useEffect(() => { if (PIXEL_TASKS_GROUP_BY.some(([k]) => k === (widget && widget.pixelTasksGroupBy))) setGroupByState(widget.pixelTasksGroupBy); }, [widget && widget.pixelTasksGroupBy]);
   // Packages de cases dans chaque rangée (sélecteur de l'en-tête, mémorisé sur le widget).
   const packageBy = PIXEL_TASKS_PACKAGE_BY.some(([k]) => k === (widget && widget.pixelTasksPackageBy)) ? widget.pixelTasksPackageBy : "none";
+  // Sous-groupes « Rameaux » (#546) : aucun si la clé est celle des groupes.
+  const subBy = PIXEL_TASKS_SUB_BY.some(([k]) => k === (widget && widget.pixelTasksSubBy)) && widget.pixelTasksSubBy !== groupBy ? widget.pixelTasksSubBy : "none";
   // Fantômes : tâches en cours ce jour-là (début avant, fin après), en gris pointillé.
   const ghostOn = !!(widget && widget.pixelTasksGhost);
   // Futur : tâches entièrement à venir dans la fenêtre choisie (0 = désactivé).
   const futureWindow = PIXEL_TASKS_FUTURE_WINDOWS.includes(Number(widget && widget.pixelTasksFuture)) ? Number(widget.pixelTasksFuture) : 0;
   const [ring, setRing] = useState(null); // { taskId, x, y } — anneau de progression ouvert
   const rootRef = useRef(null);
+  // Préfixe des identifiants SVG (dégradés) propre à ce widget : deux Pixel
+  // Tasks sur une même page ne se prêtent pas leurs couleurs.
+  const svgIdRef = useRef("ptx" + Math.random().toString(36).slice(2, 8));
   const openDay = (d) => { setDate(d); setView("day"); };
   // Groupes repliés, mémorisés sur le widget (identifiants de groupe).
   const [collapsedList, setCollapsedList] = useState(() => (Array.isArray(widget && widget.pixelTasksCollapsed) ? widget.pixelTasksCollapsed.map(String) : []));
@@ -13876,19 +13918,19 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
     return (d) => {
       if (!cache.has(d)) {
         const day = pixelTasksForDay(tasks, d, todayIso, ctx.statuses, { ghosts: ghostOn, futureDays: futureWindow });
-        cache.set(d, { ...day, groups: pixelTaskGroupsFor(day.items, groupBy, ctx, packageBy) });
+        cache.set(d, { ...day, groups: pixelTaskGroupsFor(day.items, groupBy, ctx, packageBy, subBy) });
       }
       return cache.get(d);
     };
-  }, [tasks, ctx, groupBy, packageBy, ghostOn, futureWindow, todayIso]);
+  }, [tasks, ctx, groupBy, packageBy, subBy, ghostOn, futureWindow, todayIso]);
   const day = stateOf(date);
   /* Base (case cochée par défaut) : décochée, les tâches du jour quittent la
      vue Jour — il ne reste que fantômes et futur. Le score et le carré
      journalier, eux, comptent toujours les tâches du jour. */
   const baseOn = !(widget && widget.pixelTasksBase === false);
   const groups = useMemo(
-    () => (baseOn ? day.groups : pixelTaskGroupsFor(day.items.filter((i) => i.ghost || i.future), groupBy, ctx, packageBy)),
-    [baseOn, day, groupBy, ctx, packageBy]
+    () => (baseOn ? day.groups : pixelTaskGroupsFor(day.items.filter((i) => i.ghost || i.future), groupBy, ctx, packageBy, subBy)),
+    [baseOn, day, groupBy, ctx, packageBy, subBy]
   );
   // Largeur de la carte centrale, pour dimensionner les rangées de pixels.
   const mainRef = useRef(null);
@@ -13927,6 +13969,9 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
       </select>
       <select className="lp-ptx-groupby" value={packageBy} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksPackageBy: e.target.value })} aria-label="Packages de cases dans chaque rangée" title="Packages de cases dans chaque rangée">
         {PIXEL_TASKS_PACKAGE_BY.map(([k, label]) => <option key={k} value={k}>{k === "none" ? "Sans packages" : "Packages : " + (k === "kind" ? "jalon / durée" : label.toLowerCase())}</option>)}
+      </select>
+      <select className={"lp-ptx-groupby" + (subBy !== "none" ? " lp-ptx-sub-select is-on" : "")} value={subBy} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksSubBy: e.target.value })} aria-label="Sous-groupes sous chaque groupe" title="Sous-groupes « Rameaux » : chaque groupe devient un petit arbre">
+        {PIXEL_TASKS_SUB_BY.map(([k, label]) => <option key={k} value={k} disabled={k !== "none" && k === groupBy}>{k === "none" ? "Sans sous-groupes" : "Sous-groupes : " + label.toLowerCase()}</option>)}
       </select>
       {view === "day" && (
         <label className={"lp-ptx-ghost-toggle lp-ptx-base-toggle" + (baseOn ? " is-on" : "")} title="Affiche les tâches du jour (date de jalon ou de fin, retards compris) — décocher pour ne garder que fantômes et futur">
@@ -14092,6 +14137,136 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
     const left = Math.max(4, Math.min(r.left - base.left + (root ? root.scrollLeft : 0) - 90, rootW - 244));
     setRing({ taskId: it.task.id, x: left, y: r.bottom - base.top + (root ? root.scrollTop : 0) + 8 });
   };
+  const groupCounts = (g) => (
+    <>
+      {g.items.some((i) => i.ghost) && <span className="lp-hpx-muted lp-ptx-ghost-count" title="Tâches en cours ce jour-là (fantômes)">+{g.items.filter((i) => i.ghost).length} en cours</span>}
+      {g.items.some((i) => i.future) && <span className="lp-ptx-future-count" title="Tâches à venir (futur)">✦ {g.items.filter((i) => i.future).length} à venir</span>}
+    </>
+  );
+  /* Un bloc = un en-tête (head(headH, folded)), ses lignes et sa rangée de
+     cases reliée par les liaisons. Sert aux groupes simples comme à chaque
+     sous-groupe d'un arbre. uid : suffixe unique des identifiants SVG. */
+  const blockHeight = (b, folded) => pxGeom(b).headH + (folded ? 0 : b.items.length * HPX_ROW_H);
+  const renderBlock = (b, uid, folded, head, key, cls) => {
+    const geom = pxGeom(b);
+    const headH = geom.headH;
+    const blockH = headH + (folded ? 0 : b.items.length * HPX_ROW_H);
+    const pxX = (i) => geom.xs[i];
+    const pxBottom = geom.bottom;
+    return (
+      <div key={key} className={"lp-hpx-theme" + (folded ? " is-folded" : "") + (cls || "")} style={{ height: blockH, "--hpx-rows": folded ? 0 : b.items.length }}>
+        <div className="lp-hpx-list" style={{ width: listW }}>
+          {head(headH, folded)}
+          {!folded && b.items.map((it) => {
+            const t = it.task;
+            const active = hover === t.id;
+            const badge = ptxBadge(it);
+            const color = ptxStatusColor(t, ctx);
+            return (
+              <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "") + (isTaskFocus(t) ? " lp-ptx-flag-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
+                <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} futureWindow={futureWindow} clickHint={it.future ? "Clic : ouvrir la fiche" : t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
+                <button type="button" className={"lp-hpx-row-name lp-ptx-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
+                {badge && <span className={"lp-ptx-badge" + badge.cls}>{badge.text}</span>}
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={it.done}
+                  aria-label={(it.done ? "Rouvrir " : "Terminer ") + (t.title || "la tâche")}
+                  title={it.done ? "Rouvrir la tâche" : "Terminer la tâche"}
+                  className={"lp-hpx-check" + (it.done ? " is-on" : "")}
+                  style={{ "--c": color }}
+                  disabled={!onToggleDone}
+                  onClick={() => onToggleDone && onToggleDone(t.id)}
+                  onFocus={() => setHover(t.id)}
+                  onBlur={() => setHover(null)}
+                >{it.done && <Check size={11} strokeWidth={3.2} />}</button>
+                <span className="lp-hpx-anchor" style={{ background: color }} aria-hidden="true" />
+              </div>
+            );
+          })}
+        </div>
+        <div className="lp-hpx-wires">
+          <svg className="lp-hpx-wires-svg" aria-hidden="true">
+            <defs><linearGradient id={`${svgIdRef.current}-aurore-${uid}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#6366f1" /><stop offset=".6" stopColor="#06b6d4" /><stop offset="1" stopColor="#a855f7" /></linearGradient></defs>
+            {!folded && b.items.map((it, i) => (
+              <path
+                key={it.task.id}
+                d={habitPixelWirePath(headH + i * HPX_ROW_H + HPX_ROW_H / 2, pxX(i), pxBottom + 4, 6)}
+                className={"lp-hpx-wire" + (it.done ? " is-on" : "") + (it.ghost ? " lp-ptx-ghost-wire" : "") + (it.future ? " lp-ptx-future-wire" : "") + (hover === it.task.id ? " is-focus" : "")}
+                style={{ stroke: it.ghost ? undefined : it.future ? `url(#${svgIdRef.current}-aurore-${uid})` : ptxStatusColor(it.task, ctx) }}
+              />
+            ))}
+          </svg>
+          <div className={"lp-hpx-pixels" + (geom.tinted ? " lp-ptx-packed" : "")} style={{ left: HPX_LEFT, top: geom.top, padding: HPX_PAD, gap: PACK_GAP, "--tc": b.color }}>
+            {geom.packs.map((pk) => (
+              <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "") + (pk.id === "ghost" ? " is-ghost" : "") + (pk.id === "future" ? " is-horizon" : "")} style={{ gap: geom.gap, padding: geom.tinted ? `${geom.pp - 1 + PACK_LABEL}px ${geom.pp - 1}px ${geom.pp - 1}px` : 0, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
+                {b.items.slice(pk.start, pk.start + pk.count).map((it) => (
+                  <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} futureWindow={futureWindow} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.future ? "Clic : ouvrir la fiche" : it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
+                ))}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+  /* « Rameaux » (#546) : un groupe à sous-groupes devient un petit arbre. Le
+     tronc, à la couleur du groupe, descend de sa pastille ; chaque sous-
+     groupe s'en détache par un rameau en dégradé jusqu'à son bourgeon, et
+     garde sa propre rangée de cases, repliable à part. TRUNK_X = centre de
+     la pastille du groupe, BUD_X = bord gauche du bourgeon (cf. CSS). */
+  const TRUNK_X = 23.5, BUD_X = 33;
+  const renderTree = (g, gi) => {
+    const folded = collapsed.has(g.id);
+    const subs = g.subgroups;
+    const ys = [];
+    let y = HPX_HEAD_H;
+    for (const sg of subs) {
+      const sgFolded = collapsed.has(sg.key);
+      ys.push(y + pxGeom(sg).headH / 2);
+      y += blockHeight(sg, sgFolded);
+    }
+    return (
+      <div key={g.id} className={"lp-ptx-tree" + (folded ? " is-folded" : "")}>
+        {!folded && subs.length > 0 && (
+          <svg className="lp-ptx-tree-svg" width={listW} height={y} aria-hidden="true">
+            <defs>
+              {subs.map((sg, si) => (
+                <linearGradient key={sg.key} id={`${svgIdRef.current}-rameau-${gi}-${si}`} gradientUnits="userSpaceOnUse" x1={TRUNK_X} y1="0" x2={BUD_X} y2="0">
+                  <stop offset="0" stopColor={g.color} /><stop offset="1" stopColor={sg.color} />
+                </linearGradient>
+              ))}
+            </defs>
+            <path className="lp-ptx-trunk" d={`M ${TRUNK_X} ${HPX_HEAD_H / 2 + 7} V ${ys[ys.length - 1] - 12}`} style={{ stroke: g.color }} />
+            {subs.map((sg, si) => (
+              <path key={sg.key} className="lp-ptx-rameau" d={`M ${TRUNK_X} ${ys[si] - 12} Q ${TRUNK_X} ${ys[si]} ${TRUNK_X + 8} ${ys[si]} L ${BUD_X} ${ys[si]}`} stroke={`url(#${svgIdRef.current}-rameau-${gi}-${si})`} />
+            ))}
+          </svg>
+        )}
+        <div className={"lp-hpx-theme" + (folded ? " is-folded" : "")} style={{ height: HPX_HEAD_H }}>
+          <div className="lp-hpx-list" style={{ width: listW }}>
+            <button type="button" className="lp-hpx-theme-head lp-ptx-group-head" style={{ height: HPX_HEAD_H }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={(folded ? "Déplier le groupe " : "Replier le groupe ") + g.name}>
+              <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
+              <span className="lp-hpx-dot is-big" style={{ background: g.color }} /><span className="lp-ptx-group-name">{g.name}</span>
+              <TaskPixelSpectrum subgroups={subs} />
+              {baseOn && <span className="lp-hpx-muted">{g.done} / {g.total}</span>}
+              {groupCounts(g)}
+              {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{subs.length} sous-groupe{subs.length > 1 ? "s" : ""} · {g.total} tâche{g.total > 1 ? "s" : ""}</span>}
+            </button>
+          </div>
+        </div>
+        {!folded && subs.map((sg, si) => renderBlock(sg, `${gi}-${si}`, collapsed.has(sg.key), (headH, sgFolded) => (
+          <button type="button" className="lp-hpx-theme-head lp-ptx-group-head lp-ptx-sub-head" style={{ height: headH }} onClick={() => toggleGroup(sg.key)} aria-expanded={!sgFolded} title={(sgFolded ? "Déplier le sous-groupe " : "Replier le sous-groupe ") + sg.name}>
+            <TaskPixelBud sg={sg} />
+            <span className="lp-ptx-group-name">{sg.name}</span>{baseOn && <span className="lp-hpx-muted">{sg.done} / {sg.total}</span>}
+            {groupCounts(sg)}
+            <ChevronRight size={12} className="lp-hpx-theme-chevron lp-ptx-sub-chevron" aria-hidden="true" />
+            {sgFolded && <span className="lp-hpx-muted lp-hpx-theme-hint">{sg.total} tâche{sg.total > 1 ? "s" : ""}</span>}
+          </button>
+        ), sg.key, " lp-ptx-sub"))}
+      </div>
+    );
+  };
   const ringItem = ring ? day.items.find((i) => i.task.id === ring.taskId) : null;
   const validateRing = (value) => {
     const it = ringItem;
@@ -14143,76 +14318,14 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
             </div>
           )}
           {!groups.length && <div className="lp-empty lp-ptx-empty">{baseOn ? "Aucune tâche à cette date pour ce filtre." : "Tâches du jour masquées (case « Base ») — cocher Fantômes ou Futur pour afficher les autres couches."}</div>}
-          {groups.map((g, gi) => {
-            const folded = collapsed.has(g.id);
-            const geom = pxGeom(g);
-            const headH = geom.headH;
-            const blockH = headH + (folded ? 0 : g.items.length * HPX_ROW_H);
-            const pxX = (i) => geom.xs[i];
-            const pxBottom = geom.bottom;
-            return (
-              <div key={g.id} className={"lp-hpx-theme" + (folded ? " is-folded" : "")} style={{ height: blockH, "--hpx-rows": folded ? 0 : g.items.length }}>
-                <div className="lp-hpx-list" style={{ width: listW }}>
-                  <button type="button" className="lp-hpx-theme-head lp-ptx-group-head" style={{ height: headH }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={(folded ? "Déplier le groupe " : "Replier le groupe ") + g.name}>
-                    <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
-                    <span className="lp-hpx-dot is-big" style={{ background: g.color }} /><span className="lp-ptx-group-name">{g.name}</span>{baseOn && <span className="lp-hpx-muted">{g.done} / {g.total}</span>}
-                    {g.items.some((i) => i.ghost) && <span className="lp-hpx-muted lp-ptx-ghost-count" title="Tâches en cours ce jour-là (fantômes)">+{g.items.filter((i) => i.ghost).length} en cours</span>}
-                    {g.items.some((i) => i.future) && <span className="lp-ptx-future-count" title="Tâches à venir (futur)">✦ {g.items.filter((i) => i.future).length} à venir</span>}
-                    {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{g.total} tâche{g.total > 1 ? "s" : ""}</span>}
-                  </button>
-                  {!folded && g.items.map((it) => {
-                    const t = it.task;
-                    const active = hover === t.id;
-                    const badge = ptxBadge(it);
-                    const color = ptxStatusColor(t, ctx);
-                    return (
-                      <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "") + (isTaskFocus(t) ? " lp-ptx-flag-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
-                        <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} futureWindow={futureWindow} clickHint={it.future ? "Clic : ouvrir la fiche" : t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
-                        <button type="button" className={"lp-hpx-row-name lp-ptx-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
-                        {badge && <span className={"lp-ptx-badge" + badge.cls}>{badge.text}</span>}
-                        <button
-                          type="button"
-                          role="checkbox"
-                          aria-checked={it.done}
-                          aria-label={(it.done ? "Rouvrir " : "Terminer ") + (t.title || "la tâche")}
-                          title={it.done ? "Rouvrir la tâche" : "Terminer la tâche"}
-                          className={"lp-hpx-check" + (it.done ? " is-on" : "")}
-                          style={{ "--c": color }}
-                          disabled={!onToggleDone}
-                          onClick={() => onToggleDone && onToggleDone(t.id)}
-                          onFocus={() => setHover(t.id)}
-                          onBlur={() => setHover(null)}
-                        >{it.done && <Check size={11} strokeWidth={3.2} />}</button>
-                        <span className="lp-hpx-anchor" style={{ background: color }} aria-hidden="true" />
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="lp-hpx-wires">
-                  <svg className="lp-hpx-wires-svg" aria-hidden="true">
-                    <defs><linearGradient id={`ptx-aurore-${gi}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#6366f1" /><stop offset=".6" stopColor="#06b6d4" /><stop offset="1" stopColor="#a855f7" /></linearGradient></defs>
-                    {!folded && g.items.map((it, i) => (
-                      <path
-                        key={it.task.id}
-                        d={habitPixelWirePath(headH + i * HPX_ROW_H + HPX_ROW_H / 2, pxX(i), pxBottom + 4, 6)}
-                        className={"lp-hpx-wire" + (it.done ? " is-on" : "") + (it.ghost ? " lp-ptx-ghost-wire" : "") + (it.future ? " lp-ptx-future-wire" : "") + (hover === it.task.id ? " is-focus" : "")}
-                        style={{ stroke: it.ghost ? undefined : it.future ? `url(#ptx-aurore-${gi})` : ptxStatusColor(it.task, ctx) }}
-                      />
-                    ))}
-                  </svg>
-                  <div className={"lp-hpx-pixels" + (geom.tinted ? " lp-ptx-packed" : "")} style={{ left: HPX_LEFT, top: geom.top, padding: HPX_PAD, gap: PACK_GAP, "--tc": g.color }}>
-                    {geom.packs.map((pk) => (
-                      <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "") + (pk.id === "ghost" ? " is-ghost" : "") + (pk.id === "future" ? " is-horizon" : "")} style={{ gap: geom.gap, padding: geom.tinted ? `${geom.pp - 1 + PACK_LABEL}px ${geom.pp - 1}px ${geom.pp - 1}px` : 0, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
-                        {g.items.slice(pk.start, pk.start + pk.count).map((it) => (
-                          <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} futureWindow={futureWindow} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.future ? "Clic : ouvrir la fiche" : it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
-                        ))}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {groups.map((g, gi) => (g.subgroups ? renderTree(g, gi) : renderBlock(g, String(gi), collapsed.has(g.id), (headH, folded) => (
+            <button type="button" className="lp-hpx-theme-head lp-ptx-group-head" style={{ height: headH }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={(folded ? "Déplier le groupe " : "Replier le groupe ") + g.name}>
+              <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
+              <span className="lp-hpx-dot is-big" style={{ background: g.color }} /><span className="lp-ptx-group-name">{g.name}</span>{baseOn && <span className="lp-hpx-muted">{g.done} / {g.total}</span>}
+              {groupCounts(g)}
+              {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{g.total} tâche{g.total > 1 ? "s" : ""}</span>}
+            </button>
+          ), g.id)))}
         </section>
         <TaskPixelSide date={next} day={stateOf(next)} groups={stateOf(next).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="next" folded={!!sidesFolded.next} onToggleFold={() => toggleSide("next")} />
       </div>
