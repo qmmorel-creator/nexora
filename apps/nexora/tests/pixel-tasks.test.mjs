@@ -20,6 +20,7 @@ function slice(name) {
 const P = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("PIXEL-TASKS")}\n;return {
     pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue, pixelTaskOutlinePath, PIXEL_TASKS_FUTURE_WINDOWS,
+    PIXEL_TASKS_SUB_BY, pixelTaskSpectrum, pixelTaskBud,
   };\n})`
 )();
 
@@ -117,6 +118,55 @@ test("pixelTaskGroupsFor : packages de cases dans une rangée, lignes dans le m�
   const [n] = P.pixelTaskGroupsFor(items, "project", ctx, "none");
   assert.deepEqual(n.packages, [{ id: "all", name: "", color: n.color, start: 0, count: 3 }]);
   assert.ok(P.PIXEL_TASKS_PACKAGE_BY.some(([key]) => key === "kind"));
+});
+
+test("pixelTaskGroupsFor : sous-groupes « Rameaux » sous chaque groupe (#546)", () => {
+  const ctx = {
+    projects: [{ id: "p1", name: "Lot 1", color: "#111111" }, { id: "p2", name: "Lot 2", color: "#222222" }],
+    statuses: [{ id: "s1", name: "À planifier", color: "#64748B" }, { id: "s3", name: "En cours", color: "#0EA5E9" }],
+    taskTypes: [], teamMembers: [{ name: "Quentin Morel", color: "#abcdef" }],
+  };
+  const items = [
+    { task: T("a", { projectId: "p1", assignee: "Quentin Morel" }), done: true },
+    { task: T("b", { projectId: "p1" }), done: false },
+    { task: T("c", { projectId: "p1", assignee: "Quentin Morel", milestone: true }), done: false },
+    { task: T("d", { projectId: "p2", assignee: "Quentin Morel" }), done: true },
+    { task: T("g", { projectId: "p1" }), done: false, ghost: true },
+  ];
+  const [g1, g2] = P.pixelTaskGroupsFor(items, "project", ctx, "kind", "assignee");
+  assert.deepEqual(g1.subgroups.map((s) => [s.name, s.key, s.done, s.total, s.items.length]), [
+    ["Quentin Morel", "p:p1›a:Quentin Morel", 1, 2, 2],
+    ["Non attribuée", "p:p1›none", 0, 1, 2],
+  ]);
+  assert.equal(g1.subgroups[0].color, "#abcdef");
+  // Chaque sous-groupe garde ses packages ; le groupe les met bout à bout.
+  assert.deepEqual(g1.subgroups[0].packages.map((p) => [p.name, p.start, p.count]), [["Jalons", 0, 1], ["Tâches avec durée", 1, 1]]);
+  assert.deepEqual(g1.subgroups[1].packages.map((p) => [p.id, p.start, p.count]), [["k:task", 0, 1], ["ghost", 1, 1]]);
+  assert.deepEqual(g1.items.map((i) => i.task.id), ["c", "a", "b", "g"]);
+  assert.deepEqual(g1.packages.map((p) => [p.start, p.count]), [[0, 1], [1, 1], [2, 1], [3, 1]]);
+  assert.equal(new Set(g1.packages.map((p) => p.id)).size, 4);
+  assert.deepEqual([g1.done, g1.total], [1, 3]);
+  assert.deepEqual(g2.subgroups.map((s) => s.name), ["Quentin Morel"]);
+  // Aucun sous-groupe : « none », absent, ou même clé que les groupes.
+  for (const sub of ["none", undefined, "project"]) {
+    const [g] = P.pixelTaskGroupsFor(items, "project", ctx, "none", sub);
+    assert.equal(g.subgroups, undefined);
+  }
+  assert.deepEqual(P.PIXEL_TASKS_SUB_BY.map(([k]) => k), ["none", "project", "folder", "status", "assignee", "taskType", "kind"]);
+});
+
+test("pixelTaskSpectrum et pixelTaskBud : ruban proportionnel et bourgeon qui éclôt", () => {
+  const subs = [
+    { key: "x", name: "A", color: "#f00", done: 3, total: 3, items: [1, 2, 3] },
+    { key: "y", name: "B", color: "#0f0", done: 0, total: 1, items: [1] },
+    { key: "z", name: "C", color: "#00f", done: 0, total: 0, items: [1, 2] },
+  ];
+  const sp = P.pixelTaskSpectrum(subs);
+  assert.deepEqual(sp.map((s) => [s.id, +s.weight.toFixed(3), s.done]), [["x", 0.5, 1], ["y", 0.167, 0], ["z", 0.333, 0]]);
+  assert.deepEqual(P.pixelTaskSpectrum([]), []);
+  assert.deepEqual(P.pixelTaskBud(subs[0]), { share: 1, bloom: true, empty: false });
+  assert.deepEqual(P.pixelTaskBud({ done: 1, total: 4 }), { share: 0.25, bloom: false, empty: false });
+  assert.deepEqual(P.pixelTaskBud(subs[2]), { share: 0, bloom: false, empty: true });
 });
 
 test("pixelTaskRingValue : 0 en haut, sens horaire, pas de 5 %", () => {

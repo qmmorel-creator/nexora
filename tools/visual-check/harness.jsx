@@ -1065,8 +1065,9 @@ if (benchApp) {
     { id: "banc-chart-completed", type: "chart", title: "chart completedPerWeek", chartStyle: "completedPerWeek", layout: { x: 6, y: 110, w: 4, h: 4 } },
     // #353 : Pixel des habitudes, pleine largeur (trois jours + semaine).
     { id: "banc-habitPixel", type: "habitPixel", title: "Pixel des habitudes", layout: { x: 0, y: 120, w: 12, h: 13 } },
-    // #524 : Pixel Tasks, pleine largeur, mêmes gabarits que le précédent.
-    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", pixelTasksPackageBy: "kind", pixelTasksGhost: true, pixelTasksFuture: 14, layout: { x: 0, y: 134, w: 12, h: 13 } },
+    // #524 : Pixel Tasks, pleine largeur, mêmes gabarits que le précédent ;
+    // #546 : sous-groupes « Rameaux » par statut sous chaque projet.
+    { id: "banc-pixelTasks", type: "pixelTasks", title: "Pixel Tasks", pixelTasksPackageBy: "kind", pixelTasksSubBy: "status", pixelTasksGhost: true, pixelTasksFuture: 14, layout: { x: 0, y: 134, w: 12, h: 13 } },
   );
   const benchHabitThemes = [
     { id: "theme-job", name: "Job", color: "#2C6BE0", selectionMode: "single", habits: [
