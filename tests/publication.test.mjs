@@ -298,13 +298,13 @@ test("retour : republie le Deploy ID connu sans reconstruction et l'inscrit au r
   await assert.rejects(commandes.retour(d, { version: "9.9.9", sites: "application" }), /aucune publication connue/);
 });
 
-test("garde : lit, arrête ; ne rétablit les builds Git que sur restauration explicite", async () => {
+test("garde : lit, arrête ; ne rétablit les builds Git que sur demande explicite", async () => {
   const depot = depotTemporaire();
   const api = apiFactice({ stopBuilds: false });
   const d = dependances(depot, { api });
   assert.deepEqual((await commandes.garde(d)).map((g) => g.buildsGitArretes), [false, false]);
   assert.deepEqual((await commandes.garde(d, { arreter: true })).map((g) => g.buildsGitArretes), [true, true]);
-  await assert.rejects(commandes.garde(d, { retablir: true }), /retour explicitement demandé/);
+  await assert.rejects(commandes.garde(d, { retablir: true }), /demande explicite de Quentin/);
   api.sites[APP].name = "autre-site";
   await assert.rejects(commandes.garde(d), /Cible incohérente/);
 });

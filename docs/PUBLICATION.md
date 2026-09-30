@@ -1,26 +1,40 @@
 # Versions, environnements et publication — Nexora
 
-Mis en place par l'issue #544 (29/09/2026). Ce guide est la référence ; `CLAUDE.md` et
-`.github/PROCESS.md` y renvoient.
+Mis en place par l'issue #544 (29/09/2026), simplifié par #549 (abandon de `develop`) et
+**#553 (30/09/2026) : retour à la publication systématique**. Ce guide est la référence ;
+`CLAUDE.md` et `.github/PROCESS.md` y renvoient.
 
-## En bref
+## En bref (depuis #553)
 
 | Niveau | Code | Publication | Données |
 |---|---|---|---|
 | **Local** | branche de travail `claude/…` | aucune — `npm run local`, `http://127.0.0.1:8888`, bandeau LOCAL | fictives, dans le navigateur |
-| **Préproduction** | `main` (ou un SHA précis) | brouillon Netlify, alias stable `preprod`, déposé par `outils/publier preproduction` | fictives, dans le navigateur ; aucune fonction |
-| **Production** | commit de `origin/main` associé à `vX.Y.Z` | `outils/publier production`, **après feu vert explicite de Quentin** sur version, SHA et composants | Firebase `nexora-cb20d` |
+| **Production** | `main` | **chaque fusion dans `main`** : build Git Netlify, site par site, si ses fichiers ont changé | Firebase `nexora-cb20d` |
 
-Une fusion dans `main` **ne publie rien**. Elle fournit le SHA définitif à présenter pour
-la publication. Le registre `publication/registre.json` dit ce qui est réellement en ligne ;
-`main` peut contenir du code non publié.
+**Une fusion dans `main` publie la production.** Il n'y a plus de préproduction ni de feu vert
+par version : la PR vers `main`, fusionnée quand son `verdict` est vert, *est* la publication.
 
-Cycle (depuis le 30/09/2026, la branche `develop` est abandonnée, #549) : branche de travail →
-PR vers `main` → `verdict` vert → fusion (ne publie rien) → préproduction depuis `main` →
-`preparer --version X.Y.Z` par PR vers `main` → `verdict` du commit final → feu vert pour ce
-commit → `outils/publier production` → registre committé sur `main`. Un correctif urgent part
-du déploiement réellement servi (tag, ou provenance du registre tant qu'aucun tag n'existe)
-dans `hotfix/<prochaine-version>`, puis rejoint `main` par PR.
+Cycle : branche de travail → `npm run install:all && npm run verify` → PR vers `main` →
+`verdict` vert → fusion → build Netlify de production (≈ 1 à 3 min) → vérification de la
+production → commentaire sur l'issue (URL, SHA, Deploy ID) → `statut:à-tester`.
+
+- La commande `ignore` (`scripts/netlify-ignore.mjs`) décide : production construite si le
+  dossier du site ou un fichier partagé (`config/environnements.mjs`, `publication/version.json`)
+  a changé ; Deploy Previews et branch deploys **toujours sautés** (les deux projets servent les
+  secrets de production à tous les contextes).
+- Une modification de l'interface seule ne republie pas le MCP, et inversement ; une PR purement
+  documentaire ou d'outillage ne publie rien.
+- Arrêt d'urgence sans commit : variable Netlify `NEXORA_BUILDS_GIT_PRODUCTION=arret`, ou
+  `outils/publier garde --arreter` (builds Git arrêtés).
+- Retour arrière : dans Netlify, *Deploys* → déploiement précédent → *Publish deploy* (aucune
+  reconstruction), ou `git revert` fusionné dans `main`. Un retour Netlify ne restaure ni
+  Firebase ni les jetons MCP.
+- `publication/version.json`, `CHANGELOG.md` et `publication/registre.json` ne sont plus tenus
+  à chaque publication : le registre reste figé à l'état du 29/09/2026 (`outils/publier etat`
+  signalera donc un écart dès la première publication par Git ; c'est attendu).
+
+Les sections suivantes décrivent l'outillage de #544. **`preproduction`, `preparer` et
+`production` sont hors usage depuis #553** ; `etat` et `garde` restent utiles.
 
 ## Commandes
 
@@ -184,35 +198,30 @@ est refusé et une publication du MCP exige `--sans-recette "raison"`.
 
 ## Garde-fous de publication automatique
 
-| Garde-fou | État au 29/09/2026 |
+| Garde-fou | État depuis #553 |
 |---|---|
-| Builds Git Netlify arrêtés (`stop_builds`) sur les deux projets | **à appliquer au moment de la fusion du dispositif** : `outils/publier garde --arreter`, puis contrôle par `garde` |
-| Commande `ignore` versionnée (`scripts/netlify-ignore.mjs`) | active dès la fusion : tout build Git de production, d'aperçu ou de branche est sauté |
-| Deploy Previews | désactivées (`skip_prs: true`), vérifié par l'API |
-| Build hooks | aucun, vérifié par l'API |
-| CI sans secret ni étape de publication | active dès la fusion |
+| Builds Git Netlify (`stop_builds`) | **actifs** sur les deux projets (`outils/publier garde --retablir` avec `NEXORA_RESTAURER_ANCIEN_FONCTIONNEMENT=oui`) ; branche de production `main` |
+| Commande `ignore` versionnée (`scripts/netlify-ignore.mjs`) | production construite si le site a changé ; aperçus et branches sautés ; arrêt par `NEXORA_BUILDS_GIT_PRODUCTION=arret` |
+| Deploy Previews | désactivées (`skip_prs: true`) |
+| Build hooks | aucun |
+| CI sans secret ni étape de publication | `verdict` exigé avant fusion |
 
-Arrêter les builds via l'interface, si l'API est refusée :
-`Project configuration → Developer settings (ou Build & deploy) → Continuous deployment →
-Build settings → Configure → Build status → Stopped builds → Save`, sur **chacun** des deux
-projets. Ne jamais déconnecter/reconnecter le dépôt (cela peut réactiver les builds).
-L'arrêt ne touche pas le site publié. Retour à l'ancien fonctionnement (réservé à une
-restauration explicitement demandée) : variable Netlify
-`NEXORA_BUILDS_GIT_PRODUCTION=ancien-fonctionnement` **et** `garde --retablir` avec
-`NEXORA_RESTAURER_ANCIEN_FONCTIONNEMENT=oui`.
+Arrêter les builds via l'interface : `Project configuration → Build & deploy → Continuous
+deployment → Build settings → Configure → Build status → Stopped builds → Save`, sur chacun des
+deux projets. Ne jamais déconnecter/reconnecter le dépôt.
 
 ## Protections GitHub (rulesets)
 
-Dépôt **public** : les rulesets de branches et de tags sont disponibles avec GitHub Free.
-À appliquer par Quentin (`Settings → Rules → Rulesets → New ruleset`), puis à vérifier :
+Dépôt **public** : rulesets disponibles avec GitHub Free. Depuis #553, `main` **est** la
+production ; le ruleset suivant est donc recommandé (`Settings → Rules → Rulesets → New branch
+ruleset`) :
 
 | Ruleset | Cible | Règles |
 |---|---|---|
-| `branches-officielles` | Branch targeting : `main` ; Enforcement : Active ; aucun bypass | **Restrict deletions**, **Block force pushes** — rien d'autre (pas de PR ni de statut obligatoires : l'outil écrit le registre directement sur `main`) |
-| `tags-de-version` | Tag targeting : `v*` ; Enforcement : Active | **Restrict updates**, **Restrict deletions** — laisser la création possible |
+| `main-production` | Branch targeting : `main` (Include default branch) ; Enforcement : Active | **Restrict deletions**, **Block force pushes** |
 
-Les protections d'environnement GitHub ne sont pas le verrou de publication : l'outil
-s'exécute hors Actions.
+Ne pas cocher *Require a pull request* ni *Require status checks* sans ajuster les outils. Le
+ruleset `v*` prévu par #544 n'est plus nécessaire tant qu'aucun tag de version n'est créé.
 
 ## CI et preuves
 
@@ -246,20 +255,14 @@ par semaine environ, sauf urgence. Aucun changement d'abonnement.
 
 | Demande de Quentin | Comportement |
 |---|---|
-| « Développe cette fonctionnalité » | issue, branche, commits `Ref #N`, tests locaux, PR vers `main`, fusion après `verdict` vert, préproduction, URL et SHA testés, `statut:à-tester` — sans nouvelle autorisation pour ces étapes |
-| « Mets ce lot en préproduction » | `outils/publier preproduction`, vérifier, donner liens et SHA |
-| « Publie la version X validée » | un seul message : version, SHA définitif, changelog, composants, recette, retour arrière ; publier après le « oui » applicable, sans redemander s'il a déjà été donné pour ce candidat exact |
-| « Reviens à la version Y » | `outils/publier retour --version Y`, vérifier, registre à jour |
+| « Développe cette fonctionnalité » | issue, branche, commits `Ref #N`, `verify` local, PR vers `main`, fusion après `verdict` vert (= publication), vérification de la production, commentaire (URL, SHA, Deploy ID), `statut:à-tester` |
+| « Reviens en arrière » | republier le déploiement précédent dans Netlify (ou `git revert` par PR), vérifier, informer |
 
-Si le candidat change après accord : le dire, renouveler la préproduction, demander un
-accord pour le nouveau candidat. Seule exception à l'accord préalable : une régression avérée
-qui casse la production autorise le **retour** au déploiement précédent connu et compatible,
-puis information de Quentin — ni correctif non validé, ni restauration ou destruction de
-données.
+Exception toujours valable : une régression avérée qui casse la production autorise le retour
+immédiat au déploiement précédent, puis information de Quentin — ni restauration ni
+destruction de données.
 
 ## Versions en ligne
 
-`outils/publier etat` est la vue de référence (lue depuis l'API Netlify et le registre).
-Le board de suivi, lorsqu'il est resynchronisé, reprend une section « Versions en ligne »
-lue depuis `publication/registre.json` (version, commit, Deploy ID, date, précédent) et la
-préproduction depuis l'historique Netlify — jamais d'une copie tenue à la main.
+`outils/publier etat` lit les déploiements servis depuis l'API Netlify (commit, Deploy ID,
+date). Le registre `publication/registre.json` est figé depuis #553.

@@ -41,7 +41,7 @@ export async function garde(d, { arreter = false, retablir = false } = {}) {
       site = await d.api.site(def.netlifyId);
     }
     if (retablir) {
-      if (d.env.NEXORA_RESTAURER_ANCIEN_FONCTIONNEMENT !== "oui") throw new Refus("Rétablir les builds Git n'est permis que pour un retour explicitement demandé à l'ancien fonctionnement (NEXORA_RESTAURER_ANCIEN_FONCTIONNEMENT=oui).");
+      if (d.env.NEXORA_RESTAURER_ANCIEN_FONCTIONNEMENT !== "oui") throw new Refus("Rétablir les builds Git (publication systématique de main, #553) exige une demande explicite de Quentin (NEXORA_RESTAURER_ANCIEN_FONCTIONNEMENT=oui).");
       await d.api.modifierSite(def.netlifyId, { build_settings: { stop_builds: false } });
       site = await d.api.site(def.netlifyId);
     }
