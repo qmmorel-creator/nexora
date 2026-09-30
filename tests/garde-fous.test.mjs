@@ -35,7 +35,7 @@ test("netlify.toml : les deux sites passent par la commande ignore commune", () 
 
 test("CI : pas de push de branche de travail, verdict final, runs de main jamais annulés", () => {
   const ci = readFileSync(path.join(REPO, ".github/workflows/ci.yml"), "utf8");
-  assert.match(ci, /branches: \[main, develop\]/);
+  assert.match(ci, /branches: \[main\]/);
   assert.doesNotMatch(ci, /claude\/\*\*'|codex\/\*\*'/);
   assert.match(ci, /workflow_dispatch:/);
   assert.match(ci, /cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}/);
