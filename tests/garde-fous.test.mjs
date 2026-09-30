@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { decider, RESTAURATION } from "../scripts/netlify-ignore.mjs";
+import { decider, ARRET } from "../scripts/netlify-ignore.mjs";
 import { classer, empreinteSocle } from "../scripts/ci-perimetre.mjs";
 import { resoudre, creerServeur } from "../scripts/serveur-local.mjs";
 import { fumer } from "../scripts/smoke-environnement.mjs";
@@ -13,16 +13,16 @@ import { validerRegistre } from "../outils/publication/lib/registre.mjs";
 
 const REPO = path.resolve(import.meta.dirname, "..");
 
-test("ignore Netlify : aucun build Git de production, de preview ni de branche par défaut", () => {
-  assert.equal(decider({ contexte: "production" }).construire, false);
-  assert.equal(decider({ contexte: "production", restauration: "oui" }).construire, false, "seule la valeur exacte restaure");
+test("ignore Netlify : production construite à chaque fusion, jamais de preview ni de branche", () => {
+  assert.equal(decider({ contexte: "production", diffVide: false }).construire, true);
+  assert.equal(decider({ contexte: "production", diffVide: null }).construire, true, "diff inconnu : repli = construire");
+  assert.equal(decider({ contexte: "production", diffVide: true }).construire, false, "site inchangé : pas de reconstruction");
+  assert.equal(decider({ contexte: "production", arret: ARRET, diffVide: false }).construire, false, "arrêt d'urgence");
+  assert.equal(decider({ contexte: "production", arret: "oui", diffVide: false }).construire, true, "seule la valeur exacte arrête");
   assert.equal(decider({ contexte: "deploy-preview" }).construire, false);
   assert.equal(decider({ contexte: "deploy-preview", messageCommit: "x [apercu]" }).construire, false, "[apercu] ne donne jamais accès aux secrets");
   assert.equal(decider({ contexte: "branch-deploy" }).construire, false);
   assert.equal(decider({ contexte: undefined }).construire, false);
-  assert.equal(decider({ contexte: "production", restauration: RESTAURATION, diffVide: false }).construire, true);
-  assert.equal(decider({ contexte: "production", restauration: RESTAURATION, diffVide: true }).construire, false);
-  assert.equal(decider({ contexte: "production", restauration: RESTAURATION, diffVide: null }).construire, true, "diff inconnu : repli sûr = construire, uniquement en restauration");
 });
 
 test("netlify.toml : les deux sites passent par la commande ignore commune", () => {

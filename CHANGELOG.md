@@ -17,6 +17,12 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Incompatibilités
 
+## À venir
+
+### Incompatibilités
+
+- Retour à la publication systématique : chaque fusion dans `main` publie la production (builds Git Netlify) ; préproduction abandonnée (Ref #553).
+
 ## [0.1.1] — 2026-09-30
 
 ### Nouveautés

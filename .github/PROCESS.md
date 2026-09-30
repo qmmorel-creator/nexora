@@ -65,13 +65,11 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
    `npm run install:all && npm run verify` avant chaque push. Pousser sur une branche de
    travail ne déclenche ni CI ni déploiement.
 4. Livrer par **pull request vers `main`**, fusionnée quand son `verdict` est terminé et
-   vert (une fusion dans `main` ne publie rien), puis mettre le lot en préproduction (`outils/publier preproduction`). Ces étapes ne
-   publient rien en production et ne demandent pas de nouvelle autorisation. Commenter chaque
-   issue concernée avec l'environnement, l'URL et le SHA testés, puis passer en
-   `statut:à-tester`.
-5. La **production** ne se publie que par `outils/publier production`, après un feu vert
-   explicite de Quentin portant sur la version, le SHA et les composants (voir
-   « Déploiement : validation explicite » et [`docs/PUBLICATION.md`](../docs/PUBLICATION.md)).
+   vert. **La fusion publie la production** (builds Git Netlify, depuis #553) : vérifier
+   ensuite la production, commenter chaque issue concernée avec l'URL, le SHA et le Deploy ID,
+   puis passer en `statut:à-tester`.
+5. Pas de préproduction ni de feu vert par version : la PR fusionnée est la publication.
+   Retour arrière décrit dans [`docs/PUBLICATION.md`](../docs/PUBLICATION.md).
 6. Ne fermer une issue et passer en `statut:fait` qu'après validation explicite de Quentin
    dans un commentaire.
 7. Un commit qui répond à une issue doit le mentionner dans son message
@@ -89,8 +87,8 @@ consignée ici, pour être rétablie à l'identique si elle se perd :
 Ces contraintes s'ajoutent aux règles de suivi et priment sur toute demande d'issue :
 
 - exécuter `npm run install:all && npm run verify` avant de pousser ;
-- ne jamais publier la production autrement que par `outils/publier production` après feu
-  vert, ni rétablir les builds Git Netlify hors d'une restauration explicitement demandée ;
+- ne fusionner dans `main` (donc publier) qu'une PR dont le `verdict` est vert ; jamais de
+  push direct sur `main` ;
 - ne jamais committer de secret (compte de service Firebase, `NEXORA_ASSISTANT_API_KEY`,
   token Todoist personnel, clés Supabase) — les variables restent dans Netlify ;
 - ne pas changer les URL publiques, les identifiants de projets Netlify/Firebase ni les
@@ -98,82 +96,36 @@ Ces contraintes s'ajoutent aux règles de suivi et priment sur toute demande d'i
   l'inventaire figé est dans [`../docs/MIGRATION_GITHUB.md`](../docs/MIGRATION_GITHUB.md) et
   [`../docs/AUTOMATIONS_BASELINE.md`](../docs/AUTOMATIONS_BASELINE.md).
 
-## Déploiement : validation explicite
+## Déploiement : publication systématique
 
-**Les publications de production Netlify sont facturées ; elles sont volontaires, tracées et
-réversibles.** Référence complète : [`docs/PUBLICATION.md`](../docs/PUBLICATION.md).
+**Depuis #553 (30/09/2026), chaque fusion dans `main` publie la production** par les builds
+Git Netlify. Référence complète : [`docs/PUBLICATION.md`](../docs/PUBLICATION.md).
 
-| Projet Netlify | Composant | Base directory |
-|---|---|---|
-| `nexora-project` | `application` | `apps/nexora` |
-| `nexora-chatgpt-mcp` | `mcp` | `apps/nexora-mcp` |
+| Projet Netlify | Composant | Base directory | Reconstruit quand |
+|---|---|---|---|
+| `nexora-project` | `application` | `apps/nexora` | `apps/nexora`, `config/environnements.mjs` ou `publication/version.json` change |
+| `nexora-chatgpt-mcp` | `mcp` | `apps/nexora-mcp` | `apps/nexora-mcp`, `config/environnements.mjs` ou `publication/version.json` change |
 
-Depuis l'issue #544, **une fusion dans `main` ne publie plus rien** : la commande `ignore`
-versionnée saute tout build Git de production (`scripts/netlify-ignore.mjs`) et les builds Git
-sont arrêtés dans Netlify. Une PR de développement vers `main` n'est donc **pas** une
-demande de publication.
+Chaque publication de production coûte 15 crédits Netlify par site reconstruit (forfait à
+crédits, relevé du 29/09/2026) : regrouper les petites modifications dans une même PR plutôt
+que d'en fusionner plusieurs à la suite. GitHub Actions ne coûte rien (dépôt public).
 
-### Ce qui coûte, et ce qui ne coûte rien
+`Nexora CI` tourne sur les pull requests, sur `main` et à la demande ; son statut `verdict`
+doit être vert avant fusion. Le banc visuel (`tools/visual-check`) reste local :
+`npm run visual:affected` quand l'interface bouge ; une suite non exécutée est annoncée comme
+telle, jamais comme réussie.
 
-Le compte est sur un forfait Netlify **à crédits** (vérifié le 29/09/2026) : chaque
-**publication de production réussie** coûte (15 crédits), ainsi que le trafic et le calcul des
-fonctions. Source : [How credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/)
-et [netlify.com/pricing](https://www.netlify.com/pricing/), consultés le 29/09/2026.
-
-| Action | Effet Netlify | Crédits |
-|---|---|---|
-| Commit et push sur la branche de travail | aucun (et plus de CI) | 0 |
-| PR vers `main`, fusion dans `main` | aucun | 0 |
-| `outils/publier preproduction` | brouillon non publié, alias `preprod` | aucun crédit de publication annoncé ; trafic compté |
-| `outils/publier production` (après feu vert) | une publication **par composant modifié** | 15 par site publié |
-| `outils/publier retour` | republication d'un Deploy ID existant | selon Netlify, sans construction |
-| Visites, appels d'API, rapports planifiés | trafic et calcul des fonctions | selon l'usage |
-
-GitHub Actions ne coûte rien sur ce dépôt public (runners standard `ubuntu-latest`).
-
-### La règle
-
-1. L'assistant accumule le travail en commits sur sa branche, livre par PR vers `main`
-   après `verdict` vert, et met le lot en préproduction : tout cela sans nouvelle autorisation.
-2. Il **ne publie pas la production** de sa propre initiative. Il présente en un seul message
-   la version, le SHA définitif, le changelog, les composants, la recette et le retour arrière,
-   et **demande le feu vert**.
-3. Le feu vert vaut pour **ce candidat-là** (version, SHA, contenu, composants). S'il change,
-   nouvelle préproduction et nouvel accord.
-4. Viser une version officielle par semaine environ : un lot de cinq correctifs coûte autant
-   qu'un seul.
-5. Exception, et elle seule : une régression avérée qui casse la production autorise le
-   **retour** au dernier déploiement connu et compatible (`outils/publier retour`), puis
-   information de Quentin.
-
-### Vérification continue
-
-`Nexora CI` tourne sur les pull requests, sur `main` et à la demande ; son statut
-final `verdict` est exigé par l'outil sur le SHA exact publié. `npm run install:all && npm run
-verify` reste obligatoire avant chaque push. Le banc visuel (`tools/visual-check`) ne tourne
-ni dans la CI ni sur Netlify ; il suit la matrice de
-[`tools/visual-check/README.md`](../tools/visual-check/README.md#ne-lancer-que-ce-qui-est-concerné) :
-
-- quand l'interface bouge, avant de pousser : `npm run visual:affected` ;
-- la campagne complète `npm run visual:check` se passe **une fois, sur le lot stabilisé qui sera
-  livré**, quand le sélecteur la réclame.
-
-Une suite visuelle non exécutée est annoncée comme telle, jamais comme réussie.
-
-### En cas de problème de production
-
-`outils/publier retour --version <précédente>` republie les Deploy IDs connus du registre, sans
-reconstruction. Un retour Netlify ne restaure ni Firebase, ni les fonctions Todoist, ni les
-jetons MCP.
+En cas de problème de production : republier le déploiement précédent dans Netlify
+(*Deploys* → *Publish deploy*), puis corriger par PR. Arrêt d'urgence de toute publication :
+variable Netlify `NEXORA_BUILDS_GIT_PRODUCTION=arret`.
 
 ## Suivi visuel
 
 En plus du tableau Projects, un board en lecture seule (Kanban par statut, filtrable par
 zone) peut être publié en artefact Claude : il se synchronise sur demande
 (« resynchronise le roadmap ») à partir des issues GitHub, pas en continu. Il comporte une
-section **« Versions en ligne »** lue depuis `publication/registre.json` (version, commit,
-Deploy ID, date par site) et la préproduction depuis l'historique Netlify
-(`outils/publier etat`), jamais d'une copie tenue à la main.
+section **« Versions en ligne »** lue depuis l'API Netlify (`outils/publier etat`), jamais
+d'une copie tenue à la main.
 
 ## Pourquoi GitHub plutôt qu'un outil propriétaire
 
