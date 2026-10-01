@@ -21,6 +21,8 @@ const P = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("PIXEL-TASKS")}\n;return {
     pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue, pixelTaskOutlinePath, PIXEL_TASKS_FUTURE_WINDOWS,
     PIXEL_TASKS_SUB_BY, pixelTaskSpectrum, pixelTaskBud, pixelTaskVisibleGroups,
+    pixelTaskParseQuickAdd, pixelTaskReschedule, pixelTaskNextMonday, pixelTaskMatches, pixelTaskFilterActive,
+    pixelTaskLoad, pixelTaskOverflowCandidates, pixelTaskMinutesLabel, pixelTaskClosureList,
   };\n})`
 )();
 
@@ -246,4 +248,87 @@ test("pixelTaskVisibleGroups : terminées masquées, compteurs de la journée co
   const fullSub = P.pixelTaskGroupsFor(d.items, "project", ctx, "none", "status");
   const visSub = P.pixelTaskVisibleGroups(d.items, fullSub, { hideDone: true }, "project", ctx, "none", "status");
   assert.deepEqual(visSub[0].subgroups.map((sg) => [sg.name, sg.items.length, sg.done, sg.total]), [["À planifier", 1, 0, 1]]);
+});
+
+// 2026-09-30 est un mercredi.
+test("pixelTaskParseQuickAdd : titre, !jalon, @responsable, >date (#557)", () => {
+  const team = [{ name: "Carla" }, { name: "Quentin Morel" }, { name: "Quentin" }];
+  const d = "2026-09-30";
+  assert.deepEqual(P.pixelTaskParseQuickAdd("Relancer Maia", d, team), { title: "Relancer Maia", milestone: false, assignee: "", date: d });
+  const a = P.pixelTaskParseQuickAdd("Relancer Maia @quentin morel >ven !jalon", d, team);
+  assert.deepEqual(a, { title: "Relancer Maia", milestone: true, assignee: "Quentin Morel", date: "2026-10-02" });
+  assert.equal(P.pixelTaskParseQuickAdd("x @Cârla", d, team).assignee, "Carla");
+  assert.equal(P.pixelTaskParseQuickAdd("x @Inconnu suite", d, team).assignee, "Inconnu");
+  assert.equal(P.pixelTaskParseQuickAdd("x @Inconnu suite", d, team).title, "x suite");
+  assert.equal(P.pixelTaskParseQuickAdd("x >demain", d, team).date, "2026-10-01");
+  assert.equal(P.pixelTaskParseQuickAdd("x >mer", d, team).date, "2026-10-07", "jamais le jour même");
+  assert.equal(P.pixelTaskParseQuickAdd("x >+3", d, team).date, "2026-10-03");
+  assert.equal(P.pixelTaskParseQuickAdd("x >12/10", d, team).date, "2026-10-12");
+  assert.equal(P.pixelTaskParseQuickAdd("x >02/01", d, team).date, "2027-01-02", "date passée : année suivante");
+  // Un « > » non reconnu reste dans le titre.
+  assert.equal(P.pixelTaskParseQuickAdd("A >B", d, team).title, "A >B");
+  assert.equal(P.pixelTaskParseQuickAdd("A >31/02", d, team).date, d);
+});
+
+test("pixelTaskReschedule et pixelTaskNextMonday (#558, #559)", () => {
+  assert.deepEqual(P.pixelTaskReschedule({ start: "2026-09-01", end: "2026-09-30" }, "2026-10-01"), { end: "2026-10-01" });
+  assert.deepEqual(P.pixelTaskReschedule({ start: "2026-09-29", end: "2026-09-30" }, "2026-09-28"), { end: "2026-09-28", start: "2026-09-28" });
+  assert.deepEqual(P.pixelTaskReschedule({ milestone: true, start: "2026-09-30", end: "2026-09-30" }, "2026-10-02"), { start: "2026-10-02", end: "2026-10-02" });
+  assert.equal(P.pixelTaskReschedule({ start: "2026-09-30", end: "2026-09-30" }, "2026-09-30"), null);
+  assert.equal(P.pixelTaskReschedule({ end: "2026-09-30" }, "pas une date"), null);
+  assert.equal(P.pixelTaskNextMonday("2026-09-30"), "2026-10-05");
+  assert.equal(P.pixelTaskNextMonday("2026-10-05"), "2026-10-12");
+});
+
+test("pixelTaskMatches : recherche et puces combinables (#563)", () => {
+  const it = (task, extra) => ({ task: { title: "", ...task }, done: false, lateDays: 0, ...extra });
+  const a = it({ title: "Audit SOCOTEC béton", assignee: "Carla", focus: true }, { lateDays: 2 });
+  const b = it({ title: "Jalon PV", milestone: true });
+  assert.equal(P.pixelTaskMatches(a, { query: "socotec beton" }), true);
+  assert.equal(P.pixelTaskMatches(b, { query: "socotec" }), false);
+  assert.equal(P.pixelTaskMatches(a, { late: true, focus: true, assignee: "Carla" }), true);
+  assert.equal(P.pixelTaskMatches({ ...a, done: true }, { late: true }), false);
+  assert.equal(P.pixelTaskMatches(b, { milestone: true }), true);
+  assert.equal(P.pixelTaskMatches(a, { milestone: true }), false);
+  assert.equal(P.pixelTaskFilterActive({ query: "  " }), false);
+  assert.equal(P.pixelTaskFilterActive({ late: true }), true);
+});
+
+test("pixelTaskLoad : estimations, réunions horodatées, dépassement et report proposé (#561)", () => {
+  const d = "2026-09-30";
+  const it = (id, est, extra) => ({ task: { id, title: id, estimateMinutes: est, start: d, end: d, ...(extra && extra.task) }, done: false, lateDays: 0, ...(extra && extra.item) });
+  const items = [
+    it("a", 120), it("b", 90), it("c", 60, { task: { focus: true } }), it("d", 0), it("e", 240, { item: { done: true } }),
+    it("f", 30, { item: { lateDays: 3 } }), it("g", 45, { item: { ghost: true } }),
+  ];
+  const meetings = [{ start: d, end: d, startTime: "09:00", endTime: "11:00" }, { start: d, end: d, startTime: "14:00", endTime: "14:30" }, { start: "2026-09-29", end: d, startTime: "09:00", endTime: "10:00" }];
+  const l = P.pixelTaskLoad(items, meetings, d, 420, (x) => ({ id: x.task.id === "a" ? "p1" : "p2", name: "", color: "" }));
+  assert.equal(l.busy, 150);
+  assert.equal(l.free, 270);
+  assert.equal(l.planned, 300);
+  assert.equal(l.unestimated, 1);
+  assert.equal(l.over, 30);
+  assert.deepEqual(l.parts.map((p) => [p.id, p.minutes]), [["p1", 120], ["p2", 180]]);
+  // Ni Focus, ni retard : « a » (2 h) suffit à couvrir 30 min.
+  assert.deepEqual(P.pixelTaskOverflowCandidates(items, l.over, d).map((x) => x.task.id), ["a"]);
+  assert.deepEqual(P.pixelTaskOverflowCandidates(items, 0, d), []);
+  assert.equal(P.pixelTaskMinutesLabel(90), "1 h 30");
+  assert.equal(P.pixelTaskMinutesLabel(45), "45 min");
+  assert.equal(P.pixelTaskMinutesLabel(120), "2 h");
+});
+
+test("pixelTaskClosureList : non terminées, retards les plus anciens d'abord (#562)", () => {
+  const it = (id, extra) => ({ task: { id }, done: false, lateDays: 0, ...extra });
+  const list = P.pixelTaskClosureList([it("a"), it("b", { lateDays: 2 }), it("c", { done: true }), it("d", { lateDays: 9 }), it("e", { ghost: true }), it("f")]);
+  assert.deepEqual(list.map((x) => x.task.id), ["d", "b", "a", "f"]);
+});
+
+test("pixelTaskVisibleGroups : filtre keep (#560, #563), compteurs conservés", () => {
+  const today = "2026-09-29";
+  const ctx = { statuses, projects: [{ id: "p1", name: "Alpha" }] };
+  const tasks = [T("a", { projectId: "p1", end: today, focus: true }), T("b", { projectId: "p1", end: today })];
+  const d = P.pixelTasksForDay(tasks, today, today, statuses);
+  const full = P.pixelTaskGroupsFor(d.items, "project", ctx, "none", "none");
+  const vis = P.pixelTaskVisibleGroups(d.items, full, { keep: (i) => i.task.focus !== true }, "project", ctx, "none", "none");
+  assert.deepEqual(vis.map((g) => [g.items.map((i) => i.task.id), g.done, g.total]), [[["b"], 0, 2]]);
 });

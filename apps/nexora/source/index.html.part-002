@@ -4795,10 +4795,12 @@ function pixelTaskGroupsFor(items, groupBy, ctx, packageBy, subBy) {
 function pixelTaskVisibleGroups(items, fullGroups, opts, groupBy, ctx, packageBy, subBy) {
   const base = !(opts && opts.base === false);
   const hideDone = !!(opts && opts.hideDone);
-  if (base && !hideDone) return fullGroups;
-  const kept = (items || []).filter((i) => (base || i.ghost || i.future) && !(hideDone && i.done));
+  // keep (#560, #563) : filtre supplémentaire (recherche, puces, bandeau Focus).
+  const keep = opts && typeof opts.keep === "function" ? opts.keep : null;
+  if (base && !hideDone && !keep) return fullGroups;
+  const kept = (items || []).filter((i) => (base || i.ghost || i.future) && !(hideDone && i.done) && (!keep || keep(i)));
   const groups = pixelTaskGroupsFor(kept, groupBy, ctx, packageBy, subBy);
-  if (!hideDone) return groups;
+  if (!hideDone && !keep) return groups;
   const counts = new Map();
   for (const g of fullGroups || []) {
     counts.set(g.id, g);
@@ -4809,6 +4811,151 @@ function pixelTaskVisibleGroups(items, fullGroups, opts, groupBy, ctx, packageBy
     const out = restore(g, g.id);
     return g.subgroups ? { ...out, subgroups: g.subgroups.map((sg) => restore(sg, sg.key)) } : out;
   });
+}
+
+/* Saisie rapide (#557) : « titre !jalon @Nom >ven ». Renvoie le titre
+   nettoyé et ce que la syntaxe courte fixe ; date = jour affiché à défaut.
+   @Nom : membre de l'équipe dont le nom commence par le texte (accents et
+   casse ignorés ; le nom le plus long l'emporte), sinon le mot tel quel.
+   >demain, >lun…>dim (prochain jour de ce nom, jamais le jour même), >+3,
+   >12/10 ou >12/10/2026 (l'année suit si la date est déjà passée). */
+const PIXEL_TASKS_WEEKDAYS = { dim: 0, lun: 1, mar: 2, mer: 3, jeu: 4, ven: 5, sam: 6 };
+function pixelTaskFold(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+function pixelTaskQuickDate(token, dayIso) {
+  const t = pixelTaskFold(token);
+  if (t === "auj" || t === "aujourdhui") return dayIso;
+  if (t === "demain") return addDays(dayIso, 1);
+  let m = /^\+(\d{1,3})j?$/.exec(t);
+  if (m) return addDays(dayIso, Number(m[1]));
+  const wd = PIXEL_TASKS_WEEKDAYS[t.slice(0, 3)];
+  if (wd !== undefined && /^[a-z]+$/.test(t)) {
+    const cur = new Date(dayIso + "T00:00:00").getDay();
+    return addDays(dayIso, ((wd - cur + 7) % 7) || 7);
+  }
+  m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/.exec(t);
+  if (m) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const y = m[3] ? Number(m[3]) : Number(dayIso.slice(0, 4));
+    const d = new Date(y, Number(m[2]) - 1, Number(m[1]));
+    if (d.getMonth() !== Number(m[2]) - 1) return null;
+    let out = `${y}-${pad(m[2])}-${pad(m[1])}`;
+    if (!m[3] && out < dayIso) out = `${y + 1}-${pad(m[2])}-${pad(m[1])}`;
+    return out;
+  }
+  return null;
+}
+function pixelTaskParseQuickAdd(text, dayIso, teamMembers) {
+  let rest = " " + String(text || "") + " ";
+  const out = { title: "", milestone: false, assignee: "", date: dayIso };
+  rest = rest.replace(/\s!(jalon|j)(?=\s)/gi, () => { out.milestone = true; return " "; });
+  rest = rest.replace(/\s>(\S+)(?=\s)/g, (all, tok) => { const d = pixelTaskQuickDate(tok, dayIso); if (!d) return all; out.date = d; return " "; });
+  const at = rest.indexOf(" @");
+  if (at !== -1) {
+    const after = rest.slice(at + 2);
+    const folded = pixelTaskFold(after);
+    const member = (teamMembers || [])
+      .filter((u) => u && u.name && folded.startsWith(pixelTaskFold(u.name)) && /^(\s|$)/.test(after.slice(String(u.name).length)))
+      .sort((a, b) => b.name.length - a.name.length)[0];
+    const word = member ? member.name : (/^\S+/.exec(after) || [""])[0];
+    if (word) { out.assignee = member ? member.name : word; rest = rest.slice(0, at) + " " + after.slice(word.length); }
+  }
+  out.title = rest.replace(/\s+/g, " ").trim();
+  return out;
+}
+
+/* Replanifier (#558, #559) : la date de fin passe au jour visé ; un jalon y
+   met début et fin ; un début postérieur au jour visé y est ramené. Renvoie
+   le patch, ou null si rien ne change. */
+function pixelTaskReschedule(task, targetIso) {
+  if (!task || !PIXEL_TASKS_DATE_RE.test(String(targetIso || ""))) return null;
+  if (task.milestone) return task.start === targetIso && task.end === targetIso ? null : { start: targetIso, end: targetIso };
+  const patch = {};
+  if (task.end !== targetIso) patch.end = targetIso;
+  if (!task.start || task.start > targetIso) patch.start = targetIso;
+  return Object.keys(patch).length ? patch : null;
+}
+// Prochain lundi strictement après le jour donné.
+function pixelTaskNextMonday(dayIso) {
+  const cur = new Date(dayIso + "T00:00:00").getDay();
+  return addDays(dayIso, ((1 - cur + 7) % 7) || 7);
+}
+
+/* Filtres éclair (#563) : recherche dans le titre (accents et casse
+   ignorés) et puces combinables. lateDays > 0 et non terminée = retard. */
+function pixelTaskMatches(item, f) {
+  if (!f) return true;
+  const t = item.task || {};
+  if (f.query && !pixelTaskFold(t.title).includes(pixelTaskFold(f.query).trim())) return false;
+  if (f.late && !(item.lateDays > 0 && !item.done)) return false;
+  if (f.milestone && !t.milestone) return false;
+  if (f.focus && t.focus !== true) return false;
+  if (f.assignee && String(t.assignee || "") !== f.assignee) return false;
+  return true;
+}
+function pixelTaskFilterActive(f) {
+  return !!(f && ((f.query && f.query.trim()) || f.late || f.milestone || f.focus || f.assignee));
+}
+
+/* Charge du jour (#561). estimateMinutes : champ optionnel de la tâche.
+   Prévu = estimations des tâches du jour non terminées (hors fantômes et
+   futur, hors réunions horodatées). Occupé = réunions horodatées de ce jour
+   (startTime / endTime, début = fin = ce jour), toutes tâches confondues.
+   Disponible = capacité − occupé. */
+function pixelTaskEstimate(task) {
+  const n = Number(task && task.estimateMinutes);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+function pixelTaskMeetingMinutes(task, dayIso) {
+  if (!task || task.start !== dayIso || task.end !== dayIso) return 0;
+  const m = (v) => { const r = /^(\d{2}):(\d{2})$/.exec(String(v || "")); return r ? Number(r[1]) * 60 + Number(r[2]) : null; };
+  const a = m(task.startTime), b = m(task.endTime);
+  return a != null && b != null && b > a ? b - a : 0;
+}
+function pixelTaskLoad(items, allTasks, dayIso, capacityMinutes, groupOf) {
+  const capacity = Math.max(0, Number(capacityMinutes) || 0);
+  let busy = 0;
+  for (const t of allTasks || []) busy += pixelTaskMeetingMinutes(t, dayIso);
+  const parts = new Map();
+  let planned = 0, unestimated = 0;
+  for (const it of items || []) {
+    if (it.ghost || it.future || it.done || pixelTaskMeetingMinutes(it.task, dayIso)) continue;
+    const e = pixelTaskEstimate(it.task);
+    if (!e) { unestimated += 1; continue; }
+    planned += e;
+    const g = groupOf ? groupOf(it) : { id: "all", name: "", color: "#94A3B8" };
+    if (!parts.has(g.id)) parts.set(g.id, { ...g, minutes: 0 });
+    parts.get(g.id).minutes += e;
+  }
+  const free = Math.max(0, capacity - busy);
+  return { capacity, busy, free, planned, unestimated, over: Math.max(0, planned - free), parts: [...parts.values()] };
+}
+/* Report proposé : parmi les tâches estimées non terminées, ni Focus, ni en
+   retard, ni jalon, les plus grosses d'abord jusqu'à couvrir le surplus. */
+function pixelTaskOverflowCandidates(items, overMinutes, dayIso) {
+  if (!(overMinutes > 0)) return [];
+  const pool = (items || []).filter((it) => !it.ghost && !it.future && !it.done && !(it.lateDays > 0) && !it.task.milestone && it.task.focus !== true && pixelTaskEstimate(it.task) && !pixelTaskMeetingMinutes(it.task, dayIso))
+    .sort((a, b) => pixelTaskEstimate(b.task) - pixelTaskEstimate(a.task));
+  const out = [];
+  let covered = 0;
+  for (const it of pool) { if (covered >= overMinutes) break; out.push(it); covered += pixelTaskEstimate(it.task); }
+  return out;
+}
+function pixelTaskMinutesLabel(min) {
+  const n = Math.max(0, Math.round(Number(min) || 0));
+  const h = Math.floor(n / 60), m = n % 60;
+  return h ? (m ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`) : `${m} min`;
+}
+const PIXEL_TASKS_ESTIMATES = [15, 30, 60, 90, 120, 180, 240, 480];
+
+/* Clôture de la journée (#562) : tâches du jour non terminées, retards
+   d'abord (les plus anciens en tête), puis dans l'ordre d'affichage. */
+function pixelTaskClosureList(items) {
+  return (items || []).filter((it) => !it.ghost && !it.future && !it.done)
+    .map((it, i) => ({ it, i }))
+    .sort((a, b) => (b.it.lateDays || 0) - (a.it.lateDays || 0) || a.i - b.i)
+    .map((x) => x.it);
 }
 
 /* Ruban spectral d'un groupe (#546) : un segment par sous-groupe, largeur =
