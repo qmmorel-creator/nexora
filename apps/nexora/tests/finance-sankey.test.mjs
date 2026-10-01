@@ -54,7 +54,7 @@ test("deux types de widget, rattachés au catalogue et au rendu", () => {
   for (const type of S.FINANCE_SANKEY_TYPES) assert.match(html, new RegExp(`key: "${type}"`), `${type} absent de WIDGET_TYPE_META`);
   assert.match(html, /FINANCE_SANKEY_TYPES\.includes\(w\.type\) && \(\s*<WidgetFinanceSankey widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\} onUpdateWidget=/);
   // Réglages en en-tête (retour de test #569) : la barre d'outils du cadre est ouverte pour les deux types.
-  assert.match(html, /\|\| FINANCE_SANKEY_TYPES\.includes\(w\.type\)\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| FINANCE_SANKEY_TYPES\.includes\(w\.type\)/);
   for (const label of ["Aujourd’hui", "Ce mois", "Mois précédent", "Choisir le mois", "Variante du Sankey", "Étiquetage des valeurs", "Arrondi des valeurs", "Nombre de décimales", "Opacité des flux (0,1 à 1)"]) {
     assert.ok(html.includes(label), `contrôle d'en-tête manquant : ${label}`);
   }
@@ -159,13 +159,15 @@ test("mise en page : échelle commune, piliers proportionnels, aucun ruban hors 
 
 test("fonction serveur : lecture seule, jeton Firebase vérifié, propriétaire unique, colonnes limitées", async () => {
   const source = await readFile(new URL("../netlify/functions/finance-sankey-data.ts", import.meta.url), "utf8");
+  const owner = await readFile(new URL("../netlify/functions/_shared/finance-owner.ts", import.meta.url), "utf8");
   assert.match(source, /path: "\/api\/nexora\/finance-sankey-data", method: \["GET"\]/);
   assert.match(source, /if \(req\.method !== "GET"\)/);
-  assert.match(source, /getAuth\(\)\.verifyIdToken\(token\)/);
-  assert.match(source, /decoded\.uid !== ownerUid/);
-  assert.match(source, /Netlify\.env\.get\("NEXORA_USER_UID"\)/);
-  assert.doesNotMatch(source, /select=\*/);
-  assert.doesNotMatch(source, /method: "(POST|PATCH|PUT|DELETE)"|rpc\//);
-  assert.doesNotMatch(source, /merchant|description|raw/);
-  assert.match(source, /finance_volume_limit/);
+  assert.match(source, /await requireOwnerFinance\(req\)/);
+  assert.match(owner, /getAuth\(\)\.verifyIdToken\(token\)/);
+  assert.match(owner, /decoded\.uid !== ownerUid/);
+  assert.match(owner, /Netlify\.env\.get\("NEXORA_USER_UID"\)/);
+  assert.match(owner, /finance_volume_limit/);
+  assert.doesNotMatch(source + owner, /method: "(POST|PATCH|PUT|DELETE)"|rpc\//);
+  // Le Sankey ne lit que ses colonnes : ni libellé, ni description, ni données brutes.
+  assert.doesNotMatch(source, /select: "\*"|merchant|description|raw/);
 });

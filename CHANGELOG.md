@@ -15,6 +15,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 - Tableau de bord : widgets « Sankey mensuel (flux) » et « Structure du patrimoine (Sankey) » repris d'OS360 à l'identique (calcul, mise en page, infobulles, données), alimentés en lecture seule par KDM360 via `/api/nexora/finance-sankey-data` (session du propriétaire vérifiée) (Ref #569).
 - Widgets Sankey : tous les réglages en en-tête (variante, barre de période « Aujourd'hui · Ce mois · Mois précédent · mois » d'OS360, montants, étiquetage, arrondi, décimales, opacité, Données) (Ref #569).
+- Tableau de bord : widget « Transactions (Budget) » — 100 % des transactions KDM360 (annulées et annulations signalées), tous les champs, colonnes affichables au choix, recherche dans tous les champs, tri, export CSV, en lecture seule via `/api/nexora/finance-transactions-data` (Ref #572).
 
 ### Corrections
 

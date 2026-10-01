@@ -2147,6 +2147,7 @@ function defaultLayoutForType(type) {
   // Sankey Budget (#569) : tailles d'OS360 (8 × 7 et 7 × 7).
   if (type === "financeSankeyMonthly") return { w: 8, h: 7 };
   if (type === "financeSankeyWealth") return { w: 7, h: 7 };
+  if (type === "financeTransactions") return { w: 12, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3689,7 +3690,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type)}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3749,6 +3750,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "financeProSynthese" && (
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
+                )}
+                {w.type === "financeTransactions" && (
+                  <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
                   <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -17074,6 +17078,8 @@ const WIDGET_TYPE_META = [
   // Sankey Budget (#569) : repris d'OS360, données KDM360 en lecture seule.
   { key: "financeSankeyMonthly", label: "Sankey mensuel (flux)", icon: GitBranch, group: "Suivi" },
   { key: "financeSankeyWealth", label: "Structure du patrimoine (Sankey)", icon: Wallet, group: "Suivi" },
+  // Transactions Budget (#572) : 100 % des transactions KDM360, lecture seule.
+  { key: "financeTransactions", label: "Transactions (Budget)", icon: List, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -17477,6 +17483,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   });
   const [budgetMetric, setBudgetMetric] = useState(widget?.budgetMetric || "engaged");
   const [sankeyConfig, setSankeyConfig] = useState({ ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(widget?.sankeyConfig || {}) });
+  const [txColumns, setTxColumns] = useState(Array.isArray(widget?.txColumns) && widget.txColumns.length ? widget.txColumns : FINANCE_TX_DEFAULT_COLUMNS);
   const [titleColor, setTitleColor] = useState(widget?.titleColor || "");
   const [onlyMine, setOnlyMine] = useState(widget?.onlyMine || false);
   const [showAppearance, setShowAppearance] = useState(!!(widget?.titleEmoji || widget?.titleColor || widget?.bandColor || widget?.bgColor));
@@ -17610,6 +17617,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "budget") { data.budgetProjectId = budgetProjectId; data.budgetMetric = budgetMetric; }
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (FINANCE_SANKEY_TYPES.includes(type)) data.sankeyConfig = { ...sankeyConfig };
+    if (type === "financeTransactions") data.txColumns = txColumns.length ? [...txColumns] : [...FINANCE_TX_DEFAULT_COLUMNS];
     if (type === "heatmapGrid") {
       data.heatmapRowField = heatmapRowField;
       data.heatmapColField = heatmapColField;
@@ -18466,6 +18474,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
 
 
+
+      {type === "financeTransactions" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            100 % des transactions Budget (KDM360), annulées et annulations comprises, en lecture seule. Colonnes, recherche,
+            tri et export CSV sont aussi disponibles directement dans l’en-tête du widget.
+          </p>
+          <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
+          <style>{FINANCE_TX_CSS}</style>
+          <div className="nx-tx"><FinanceTxColumnPicker columns={FINANCE_TX_COLUMNS} visible={txColumns} onChange={(keys) => setTxColumns(keys.length ? keys : FINANCE_TX_DEFAULT_COLUMNS)} /></div>
+        </>
+      )}
 
       {FINANCE_SANKEY_TYPES.includes(type) && (
         <>
@@ -36589,6 +36609,304 @@ function FinanceSankeySettings({ value, onChange }) {
         <input type="number" min="0.1" max="1" step="0.02" value={cfg.flowOpacity} onChange={(e) => set({ flowOpacity: e.target.value === "" ? "" : Number(e.target.value) })} />
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Widget Transactions Budget (#572) : 100 % des transactions KDM360, tous
+// leurs champs, colonnes affichables au choix, tri, recherche, export CSV.
+// Lecture seule : rien n'est écrit dans Supabase. Données servies par
+// /api/nexora/finance-transactions-data (session du propriétaire vérifiée).
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-TRANSACTIONS:START ===
+// Colonnes connues de finance_transactions_current, plus trois colonnes
+// calculées (préfixe « __ ») : nom du compte, banque, état d'annulation. Une
+// colonne ajoutée plus tard dans Supabase apparaît d'elle-même, sous son nom brut.
+const FINANCE_TX_COLUMNS = [
+  { key: "effective_date", label: "Date effective" },
+  { key: "bank_date", label: "Date bancaire" },
+  { key: "__account", label: "Compte" },
+  { key: "__bank", label: "Banque" },
+  { key: "transaction_type", label: "Type" },
+  { key: "merchant", label: "Libellé" },
+  { key: "category", label: "Catégorie" },
+  { key: "subcategory", label: "Sous-catégorie" },
+  { key: "signed_amount", label: "Montant · €", numeric: true },
+  { key: "description", label: "Description" },
+  { key: "reconciled", label: "Pointé" },
+  { key: "reconciliation_date", label: "Date de pointage" },
+  { key: "reconciliation_id", label: "Référence de pointage" },
+  { key: "__state", label: "État" },
+  { key: "status", label: "Statut" },
+  { key: "payment_method_id", label: "Moyen de paiement" },
+  { key: "tag", label: "Étiquette" },
+  { key: "currency", label: "Devise" },
+  { key: "category_confidence", label: "Confiance catégorie", numeric: true },
+  { key: "transfer_id", label: "Virement lié" },
+  { key: "cancels_transaction_id", label: "Annule la transaction" },
+  { key: "source", label: "Source" },
+  { key: "source_id", label: "Identifiant source" },
+  { key: "external_transaction_id", label: "Identifiant externe" },
+  { key: "account_id", label: "Compte (identifiant)" },
+  { key: "transaction_id", label: "Identifiant" },
+  { key: "revision", label: "Révision", numeric: true },
+  { key: "created_at", label: "Créée le" },
+  { key: "updated_at", label: "Modifiée le" },
+  { key: "raw", label: "Données brutes" },
+];
+const FINANCE_TX_DEFAULT_COLUMNS = ["effective_date", "__account", "merchant", "category", "subcategory", "signed_amount", "reconciled", "__state"];
+const FINANCE_TX_PAGE_SIZE = 100;
+
+// Toutes les colonnes : les connues, puis celles que la base renvoie en plus.
+function financeTxAllColumns(rows) {
+  const known = new Set(FINANCE_TX_COLUMNS.map((c) => c.key));
+  const extra = new Set();
+  for (const row of rows || []) for (const key of Object.keys(row)) if (!known.has(key) && !key.startsWith("__")) extra.add(key);
+  return [...FINANCE_TX_COLUMNS, ...[...extra].sort().map((key) => ({ key, label: key }))];
+}
+
+// Lignes brutes -> lignes affichables. Toutes les transactions sont gardées,
+// y compris annulées et annulations : l'état le dit au lieu de les cacher.
+function financeTxRows(raw) {
+  if (!Array.isArray(raw?.transactions) || !Array.isArray(raw?.accounts)) throw new Error("Réponse Budget invalide.");
+  const accounts = new Map(raw.accounts.map((a) => [a.account_id, a]));
+  const cancelled = new Set(raw.transactions.map((t) => t.cancels_transaction_id).filter(Boolean));
+  return raw.transactions.map((t) => ({
+    ...t,
+    __account: accounts.get(t.account_id)?.name || t.account_id || "",
+    __bank: accounts.get(t.account_id)?.bank || "",
+    __state: t.cancels_transaction_id ? "Annulation" : cancelled.has(t.transaction_id) ? "Annulée" : "",
+  }));
+}
+
+// Valeur affichée d'une cellule (et exportée en CSV).
+function financeTxText(key, value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "boolean") return value ? "Oui" : "Non";
+  if (key === "signed_amount") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(value);
+  }
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+// Recherche plein texte sur TOUS les champs, affichés ou non.
+function financeTxSearch(rows, query) {
+  const q = String(query || "").trim().toLocaleLowerCase("fr");
+  if (!q) return rows;
+  return rows.filter((row) => Object.entries(row).some(([key, value]) => financeTxText(key, value).toLocaleLowerCase("fr").includes(q)));
+}
+
+// Tri stable : nombres comparés en nombres, le reste en texte français ;
+// les valeurs vides vont toujours en fin de liste.
+function financeTxSort(rows, key, asc) {
+  const numeric = FINANCE_TX_COLUMNS.find((c) => c.key === key)?.numeric;
+  return rows.map((row, index) => ({ row, index })).sort((a, b) => {
+    const va = a.row[key];
+    const vb = b.row[key];
+    const ea = va === null || va === undefined || va === "";
+    const eb = vb === null || vb === undefined || vb === "";
+    if (ea || eb) return ea === eb ? a.index - b.index : ea ? 1 : -1;
+    const cmp = numeric ? Number(va) - Number(vb) : financeTxText(key, va).localeCompare(financeTxText(key, vb), "fr", { numeric: true });
+    return (asc ? cmp : -cmp) || a.index - b.index;
+  }).map((x) => x.row);
+}
+
+// CSV pour Excel français : « ; », guillemets doublés, montants à virgule
+// sans séparateur de milliers, BOM UTF-8 ajouté au téléchargement.
+function financeTxCsv(rows, columns) {
+  const cell = (value) => {
+    const text = String(value);
+    return /[";\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  };
+  const value = (key, v) => {
+    if (key === "signed_amount" && v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v))) return String(Number(v)).replace(".", ",");
+    return financeTxText(key, v);
+  };
+  return [columns.map((c) => cell(c.label)).join(";"), ...rows.map((row) => columns.map((c) => cell(value(c.key, row[c.key]))).join(";"))].join("\r\n");
+}
+// === NEXORA:FINANCE-TRANSACTIONS:END ===
+
+const FINANCE_TX_CSS = `
+.lp-widget-head-toolbar:has(.nx-tx-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
+.lp-widget-head:has(.nx-tx-tools){align-items:flex-start}
+.lp-widget-head:has(.nx-tx-tools) .lp-widget-title{flex:0 0 auto;max-width:40%;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-tx-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;font-size:11px;color:#203246}
+.nx-tx-tools button,.nx-tx-tools input{height:24px;padding:0 7px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246}
+.nx-tx-tools button{cursor:pointer}
+.nx-tx-tools button.active{background:#e7efff;border-color:#24569a;color:#24569a;font-weight:600}
+.nx-tx-tools input[type=search]{width:170px}
+.nx-tx-count{color:#60717c;white-space:nowrap}
+.nx-tx{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12px;color:#203246}
+.nx-tx-columns{display:flex;flex-wrap:wrap;gap:4px 12px;padding:8px 10px;border-bottom:1px solid #edf1f4;background:#f9fbfc}
+.nx-tx-columns label{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer}
+.nx-tx-columns .nx-tx-columns-actions{flex-basis:100%;display:flex;gap:6px}
+.nx-tx-columns .nx-tx-columns-actions button{height:22px;padding:0 7px;font:inherit;font-size:11px;border:1px solid #d8e1eb;border-radius:5px;background:#fff;cursor:pointer}
+.nx-tx-scroll{flex:1;min-height:0;overflow:auto}
+.nx-tx table{border-collapse:collapse;width:max-content;min-width:100%}
+.nx-tx th{position:sticky;top:0;z-index:1;background:#f3f6f9;text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid #d8e1eb;white-space:nowrap;cursor:pointer;user-select:none}
+.nx-tx td{padding:5px 8px;border-bottom:1px solid #edf1f4;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+.nx-tx td.numeric,.nx-tx th.numeric{text-align:right;font-variant-numeric:tabular-nums}
+.nx-tx td.negative{color:#a33135}
+.nx-tx tr.is-cancelled td{color:#94a3b8;text-decoration:line-through}
+.nx-tx tr.is-cancelled td.nx-tx-state{text-decoration:none}
+.nx-tx tbody tr:hover{background:#f6f9fc}
+.nx-tx-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-top:1px solid #edf1f4;color:#60717c;font-size:11px}
+.nx-tx-footer button{height:22px;min-width:24px;padding:0 6px;border:1px solid #d8e1eb;border-radius:5px;background:#fff;cursor:pointer}
+.nx-tx-footer button:disabled{opacity:.4;cursor:default}
+`;
+
+// Chargement partagé : une requête pour tous les widgets Transactions de la page.
+const financeTxStore = { promise: null, rows: null, error: null, listeners: new Set() };
+function financeTxLoad(force = false) {
+  if (financeTxStore.promise && !force) return financeTxStore.promise;
+  const notify = () => financeTxStore.listeners.forEach((fn) => fn());
+  financeTxStore.error = null;
+  notify();
+  financeTxStore.promise = (async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Budget.");
+      const token = await user.getIdToken();
+      const response = await fetch("/api/nexora/finance-transactions-data", { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        const reasons = {
+          unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Budget.",
+          finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
+          configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+        };
+        throw new Error(reasons[payload.error] || payload.detail || payload.error || `Lecture Budget impossible (HTTP ${response.status}).`);
+      }
+      financeTxStore.rows = financeTxRows(payload.data);
+    } catch (error) {
+      financeTxStore.error = error instanceof Error ? error.message : String(error);
+      financeTxStore.promise = null;
+    }
+    notify();
+  })();
+  return financeTxStore.promise;
+}
+function useFinanceTxData() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    financeTxStore.listeners.add(listener);
+    financeTxLoad();
+    return () => { financeTxStore.listeners.delete(listener); };
+  }, []);
+  return { rows: financeTxStore.rows, error: financeTxStore.error, reload: () => financeTxLoad(true) };
+}
+
+function financeTxVisibleKeys(widget) {
+  return Array.isArray(widget.txColumns) && widget.txColumns.length ? widget.txColumns : FINANCE_TX_DEFAULT_COLUMNS;
+}
+
+// Choix des colonnes, partagé par le widget (en-tête) et la fiche de réglages.
+function FinanceTxColumnPicker({ columns, visible, onChange }) {
+  const toggle = (key) => onChange(visible.includes(key) ? visible.filter((k) => k !== key) : columns.map((c) => c.key).filter((k) => k === key || visible.includes(k)));
+  return (
+    <div className="nx-tx-columns">
+      {columns.map((c) => (
+        <label key={c.key}><input type="checkbox" checked={visible.includes(c.key)} onChange={() => toggle(c.key)} /> {c.label}</label>
+      ))}
+      <span className="nx-tx-columns-actions">
+        <button type="button" onClick={() => onChange(columns.map((c) => c.key))}>Toutes</button>
+        <button type="button" onClick={() => onChange(FINANCE_TX_DEFAULT_COLUMNS)}>Par défaut</button>
+      </span>
+    </div>
+  );
+}
+
+function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useFinanceTxData();
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState({ key: "effective_date", asc: false });
+  const [page, setPage] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const columns = useMemo(() => financeTxAllColumns(rows), [rows]);
+  const visibleKeys = financeTxVisibleKeys(widget);
+  const visible = columns.filter((c) => visibleKeys.includes(c.key));
+  const shown = useMemo(() => (rows ? financeTxSort(financeTxSearch(rows, query), sort.key, sort.asc) : []), [rows, query, sort]);
+  const pages = Math.max(1, Math.ceil(shown.length / FINANCE_TX_PAGE_SIZE));
+  const current = Math.min(page, pages - 1);
+  useEffect(() => { setPage(0); }, [query, sort.key, sort.asc]);
+  const setColumns = (keys) => onUpdateWidget && onUpdateWidget({ txColumns: keys.length ? keys : FINANCE_TX_DEFAULT_COLUMNS });
+  const exportCsv = () => {
+    const blob = new Blob(["﻿" + financeTxCsv(shown, visible)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" className={pickerOpen ? "active" : ""} aria-pressed={pickerOpen} onClick={() => setPickerOpen((v) => !v)} title="Choisir les colonnes affichées">
+          Colonnes ({visible.length}/{columns.length})
+        </button>
+        <input type="search" placeholder="Rechercher dans tous les champs…" aria-label="Rechercher dans les transactions" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <button type="button" onClick={exportCsv} disabled={!rows} title="Exporter les lignes filtrées et les colonnes affichées">Export CSV</button>
+        <button type="button" onClick={reload} title="Relire les transactions dans Supabase">Actualiser</button>
+        {rows && <span className="nx-tx-count">{shown.length === rows.length ? `${rows.length} transactions` : `${shown.length} / ${rows.length} transactions`}</span>}
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!rows) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des transactions…</div>;
+  const pageRows = shown.slice(current * FINANCE_TX_PAGE_SIZE, (current + 1) * FINANCE_TX_PAGE_SIZE);
+  return (
+    <div className="nx-tx">
+      {tools}
+      {pickerOpen && <FinanceTxColumnPicker columns={columns} visible={visibleKeys} onChange={setColumns} />}
+      <div className="nx-tx-scroll">
+        <table>
+          <thead>
+            <tr>
+              {visible.map((c) => (
+                <th key={c.key} className={c.numeric ? "numeric" : ""} aria-sort={sort.key === c.key ? (sort.asc ? "ascending" : "descending") : "none"}
+                  onClick={() => setSort((s) => ({ key: c.key, asc: s.key === c.key ? !s.asc : true }))}>
+                  {c.label}{sort.key === c.key ? (sort.asc ? " ↑" : " ↓") : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row) => (
+              <tr key={row.transaction_id} className={row.__state === "Annulée" ? "is-cancelled" : ""}>
+                {visible.map((c) => {
+                  const text = financeTxText(c.key, row[c.key]);
+                  const negative = c.key === "signed_amount" && Number(row[c.key]) < 0;
+                  return <td key={c.key} title={text} className={[c.numeric ? "numeric" : "", negative ? "negative" : "", c.key === "__state" ? "nx-tx-state" : ""].join(" ").trim()}>{text}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!shown.length && <div className="lp-empty" style={{ padding: 16 }}>Aucune transaction ne correspond à « {query} ».</div>}
+      </div>
+      <div className="nx-tx-footer">
+        <span>{shown.length} ligne{shown.length > 1 ? "s" : ""} · lecture seule</span>
+        <span>
+          <button type="button" disabled={current === 0} onClick={() => setPage(current - 1)} aria-label="Page précédente">‹</button>
+          {" "}{current + 1} / {pages}{" "}
+          <button type="button" disabled={current >= pages - 1} onClick={() => setPage(current + 1)} aria-label="Page suivante">›</button>
+        </span>
+      </div>
+    </div>
   );
 }
 
