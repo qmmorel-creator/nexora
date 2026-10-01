@@ -2144,6 +2144,9 @@ function defaultLayoutForType(type) {
   // Réunions 3D (#514) : même place que les autres vues 3D.
   if (type === "embedReunions3d") return { w: 12, h: 12 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
+  // Sankey Budget (#569) : tailles d'OS360 (8 × 7 et 7 × 7).
+  if (type === "financeSankeyMonthly") return { w: 8, h: 7 };
+  if (type === "financeSankeyWealth") return { w: 7, h: 7 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3746,6 +3749,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "financeProSynthese" && (
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
+                )}
+                {FINANCE_SANKEY_TYPES.includes(w.type) && (
+                  <WidgetFinanceSankey widget={w} />
                 )}
                 {w.type === "financeProEcheances" && (
                   <WidgetFinanceProEcheances proBillingSchedule={financeProBillingSchedule} proMissions={financeProMissions} projects={ctx.projects} quoteClients={financeProClients} />
@@ -17065,6 +17071,9 @@ const WIDGET_TYPE_META = [
   // existant — aucun second système de tableau de bord créé.
   { key: "financeProSynthese", label: "Finance PRO — Synthèse", icon: Wallet, group: "Suivi" },
   { key: "financeProEcheances", label: "Finance PRO — Échéances de facturation", icon: CalendarClock, group: "Suivi" },
+  // Sankey Budget (#569) : repris d'OS360, données KDM360 en lecture seule.
+  { key: "financeSankeyMonthly", label: "Sankey mensuel (flux)", icon: GitBranch, group: "Suivi" },
+  { key: "financeSankeyWealth", label: "Structure du patrimoine (Sankey)", icon: Wallet, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -17467,6 +17476,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     return next;
   });
   const [budgetMetric, setBudgetMetric] = useState(widget?.budgetMetric || "engaged");
+  const [sankeyConfig, setSankeyConfig] = useState({ ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(widget?.sankeyConfig || {}) });
   const [titleColor, setTitleColor] = useState(widget?.titleColor || "");
   const [onlyMine, setOnlyMine] = useState(widget?.onlyMine || false);
   const [showAppearance, setShowAppearance] = useState(!!(widget?.titleEmoji || widget?.titleColor || widget?.bandColor || widget?.bgColor));
@@ -17599,6 +17609,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "note") data.content = content;
     if (type === "budget") { data.budgetProjectId = budgetProjectId; data.budgetMetric = budgetMetric; }
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
+    if (FINANCE_SANKEY_TYPES.includes(type)) data.sankeyConfig = { ...sankeyConfig };
     if (type === "heatmapGrid") {
       data.heatmapRowField = heatmapRowField;
       data.heatmapColField = heatmapColField;
@@ -18455,6 +18466,17 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
 
 
+
+      {FINANCE_SANKEY_TYPES.includes(type) && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            {type === "financeSankeyWealth"
+              ? "Soldes positifs des comptes à la fin de la période : type de compte → banque → compte. Repris d’OS360, données Budget (KDM360) en lecture seule."
+              : "Flux de la période : revenus → comptes → catégories de dépenses (hors transferts internes et ajustements). Repris d’OS360, données Budget (KDM360) en lecture seule."}
+          </p>
+          <FinanceSankeySettings value={sankeyConfig} onChange={setSankeyConfig} />
+        </>
+      )}
 
       {type === "budgetBurnRate" && (
         <div className="lp-field">
@@ -35719,6 +35741,764 @@ function FinanceProView(props) {
         <FinanceProTreasuryView financeProSettings={financeProSettings} setFinanceProSettings={setFinanceProSettings} proBillingSchedule={proBillingSchedule} proExpenses={proExpenses} proPayments={proPayments} proObligations={proObligations} setProObligations={setProObligations} />
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Widgets Sankey Finance (#569) — « Sankey mensuel (flux) » et « Structure du
+// patrimoine (Sankey) », repris d'OS360 (budget.chart_sankey_monthly et
+// budget.chart_wealth_sankey). Le GRAPHIQUE est celui d'OS360, traduit
+// fidèlement de son bundle : mêmes calculs (Ef, Df, soldes), même ordonnancement
+// des nœuds (Jf), même mise en page (Yf), même rendu SVG, mêmes infobulles,
+// même tableau de données. Seul le cadre (WidgetFrame, fiche de réglages) est
+// celui de Nexora. Toute divergence avec OS360 est un défaut : corriger ici en
+// relisant la fonction d'origine nommée en commentaire, jamais « améliorer ».
+//
+// Les données viennent de KDM360 (même base Supabase qu'OS360) par
+// /api/nexora/finance-sankey-data, en lecture seule, côté serveur.
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-SANKEY:START ===
+const FINANCE_SANKEY_TYPES = ["financeSankeyMonthly", "financeSankeyWealth"];
+const FINANCE_SANKEY_INCOME_PALETTE = ["#3f806f", "#4e8577", "#6fa99b", "#7fb8a5", "#5b9483", "#8fc4b0", "#9ccdb9"];
+const FINANCE_SANKEY_DEFAULT_CONFIG = {
+  periodMode: "month", periodValue: "current", from: "", to: "", range: "",
+  flowOpacity: 0.52, sankeyShowValues: true, labelMode: "auto", decimals: 2, rounding: "auto",
+};
+
+// Lecture des réglages — `_`, `v` d'OS360.
+function financeSankeyText(config, key, fallback = "") {
+  return typeof config[key] === "string" ? config[key] : fallback;
+}
+function financeSankeyNumber(config, key, fallback = 0) {
+  return config[key] !== "" && config[key] != null && Number.isFinite(Number(config[key])) ? Number(config[key]) : fallback;
+}
+// Couleur hexadécimale à 6 chiffres, sinon repli — `C` d'OS360.
+function financeSankeyColor(value, fallback = "#24569a") {
+  return typeof value === "string" && /^#[\da-f]{6}$/i.test(value) ? value : fallback;
+}
+function financeSankeyIsDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(value + "T12:00:00Z");
+  return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+function financeSankeyAddDays(date, days) {
+  const d = new Date(date + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// Date civile de Paris — `k` d'OS360.
+function financeSankeyToday(now = new Date()) {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(now);
+}
+
+// Période du widget — `te` d'OS360, sans le mode « Suivre la période de
+// l'onglet » qui n'existe pas dans Nexora (repli : mois courant).
+function financeSankeyPeriod(config, today = financeSankeyToday()) {
+  const monthOf = (ym) => {
+    const next = new Date(ym + "-01T12:00:00Z");
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    return { from: ym + "-01", to: financeSankeyAddDays(next.toISOString().slice(0, 10), -1) };
+  };
+  const fallback = monthOf(today.slice(0, 7));
+  if (financeSankeyIsDate(config.from) && financeSankeyIsDate(config.to)) return { from: config.from, to: config.to };
+  if (financeSankeyIsDate(config.from) || financeSankeyIsDate(config.to)) {
+    const { from, to, ...rest } = config;
+    const base = financeSankeyPeriod(rest, today);
+    return { from: financeSankeyIsDate(from) ? from : base.from, to: financeSankeyIsDate(to) ? to : base.to };
+  }
+  if (config.range === "all") return { from: "1900-01-01", to: today };
+  if (config.range) return { from: financeSankeyAddDays(today, 1 - financeSankeyNumber(config, "range", 30)), to: today };
+  const mode = financeSankeyText(config, "periodMode", "month");
+  const value = financeSankeyText(config, "periodValue", "current");
+  if (mode === "year" || config.year) {
+    const year = String(config.year || (value === "current" ? today.slice(0, 4) : value));
+    return { from: year + "-01-01", to: year + "-12-31" };
+  }
+  const ym = value === "current" ? today.slice(0, 7) : value.slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(ym)) return fallback;
+  return monthOf(ym);
+}
+
+// Date courte française — `Vf` d'OS360.
+function financeSankeyDateLabel(value, short = false) {
+  const text = String(value ?? "");
+  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(text)) return text;
+  const d = new Date(text + (text.length === 7 ? "-01" : "") + "T12:00:00Z");
+  return Number.isFinite(d.getTime())
+    ? new Intl.DateTimeFormat("fr-FR", { timeZone: "UTC", ...(text.length === 10 ? { day: "numeric" } : {}), month: "short", ...(!short || text.length === 7 ? { year: "numeric" } : {}) }).format(d)
+    : text;
+}
+
+// Nombre arrondi selon le réglage « Arrondi des valeurs » — `Ff` d'OS360.
+function financeSankeyRound(value, unit = "", decimals = 2, rounding = "auto") {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  const counted = /^(pas|steps|transactions|activités|observations)$/i.test(unit);
+  const digits = rounding === "fixed" ? decimals
+    : counted || abs === 0 ? 0
+    : abs < 1 ? Math.min(6, Math.max(decimals, Math.ceil(-Math.log10(abs)) + 1))
+    : abs < 10 ? 2
+    : +(abs < 100);
+  return value.toLocaleString("fr-FR", {
+    maximumFractionDigits: Math.max(0, Math.min(6, digits)),
+    ...(rounding === "compact" ? { notation: "compact", maximumFractionDigits: 1 } : {}),
+  });
+}
+// Montant avec unité — `Bf` d'OS360.
+function financeSankeyFormat(value, unit = "", decimals = 2, compact = false) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value == null || value === "-" ? "—" : String(value);
+  return value.toLocaleString("fr-FR", { maximumFractionDigits: Math.max(0, Math.min(6, decimals)), ...(compact ? { notation: "compact" } : {}) })
+    + (unit ? "\u00A0" + unit : "");
+}
+
+// Lignes brutes KDM360 -> modèle Budget d'OS360 — `Fc` et `jc` d'OS360,
+// limités aux champs que lisent les deux Sankey. Une transaction sans
+// identifiant ou sans dates valides refuse TOUT le jeu, comme OS360 : un
+// graphique calculé sur un résultat partiel serait faux sans le dire.
+function financeSankeyNormalize(raw) {
+  const rows = (key) => {
+    if (!Array.isArray(raw?.[key])) throw new Error("Réponse Budget invalide.");
+    return raw[key].map((row) => (row && typeof row === "object" && !Array.isArray(row) ? row : {}));
+  };
+  const text = (row, key, fallback = "") => (typeof row[key] === "string" ? row[key] : fallback);
+  const amount = (value, fallback = 0) => {
+    if (value == null || value === "") return fallback;
+    const n = Number(value);
+    if (!Number.isFinite(n)) throw new Error("Montant Budget invalide.");
+    return n;
+  };
+  const transactions = rows("transactions");
+  const cancelled = new Set(transactions.map((row) => row.cancels_transaction_id).filter(Boolean));
+  const toTransaction = (row) => {
+    const effectiveDate = text(row, "effective_date");
+    const bankDate = text(row, "bank_date", effectiveDate);
+    if (!financeSankeyIsDate(effectiveDate) || !financeSankeyIsDate(bankDate) || !row.transaction_id) {
+      throw new Error("Transaction reçue sans identifiant ou dates valides.");
+    }
+    return {
+      id: String(row.transaction_id), effectiveDate, bankDate,
+      amount: amount(row.signed_amount), type: text(row, "transaction_type"), accountId: text(row, "account_id"),
+      category: text(row, "category", "À classer"), subcategory: text(row, "subcategory"),
+    };
+  };
+  const reference = (row, nameKey) => ({ name: text(row, nameKey), color: financeSankeyColor(row.color, "#536477") });
+  return {
+    ledger: transactions
+      .filter((row) => !["Budget", "Annulation", "Ouverture"].includes(text(row, "transaction_type")) && !cancelled.has(row.transaction_id))
+      .map(toTransaction),
+    transactions: transactions.filter((row) => !cancelled.has(row.transaction_id)).map(toTransaction),
+    accounts: rows("accounts").filter((row) => row.active !== false).map((row) => ({
+      id: text(row, "account_id"), name: text(row, "name"), bank: text(row, "bank"), type: text(row, "account_type"),
+      opening: amount(row.opening_balance), color: financeSankeyColor(row.color, "#536477"),
+    })),
+    categories: rows("categories").map((row) => reference(row, "category")),
+    banks: rows("banks").map((row) => reference(row, "name")),
+    accountTypes: rows("accountTypes").map((row) => reference(row, "name")),
+    balances: rows("balances").map((row) => ({
+      accountId: text(row, "account_id"),
+      date: text(row, "as_of_date") || text(row, "balance_date") || text(row, "date"),
+      balance: amount(row.balance),
+    })),
+  };
+}
+
+// Transactions de la période (date effective) — `af` d'OS360 sans filtre de widget.
+function financeSankeyPeriodTransactions(data, period) {
+  return data.transactions.filter((t) => t.effectiveDate >= period.from && t.effectiveDate <= period.to);
+}
+
+// Solde de chaque compte à une date : dernier relevé connu, puis mouvements du
+// grand livre postérieurs — `of` d'OS360 (date bornée à aujourd'hui, en UTC
+// comme l'original).
+function financeSankeyAccountBalances(data, date, now = new Date()) {
+  const today = now.toISOString().slice(0, 10);
+  const until = date > today ? today : date;
+  return data.accounts.map((account) => {
+    const snapshot = data.balances
+      .filter((b) => b.accountId === account.id && b.date <= until)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    const base = snapshot ? snapshot.balance : account.opening;
+    const after = snapshot?.date || "";
+    return {
+      ...account,
+      balance: base + (data.ledger ?? data.transactions)
+        .filter((t) => t.accountId === account.id && t.effectiveDate > after && t.effectiveDate <= until)
+        .reduce((sum, t) => sum + t.amount, 0),
+    };
+  });
+}
+
+const financeSankeySum = (list, pick) => list.reduce((sum, item) => sum + pick(item), 0);
+
+// Sankey mensuel : revenus -> comptes -> catégories de dépenses — `Ef` d'OS360.
+function financeSankeyMonthlyGraph(data, periodTransactions) {
+  const flows = periodTransactions.filter((t) => Number.isFinite(t.amount) && t.amount !== 0
+    && ["Dépense", "Revenu", "Remboursement"].includes(t.type)
+    && t.category !== "Transferts internes" && t.category !== "Ajustement");
+  const accounts = data.accounts
+    .filter((a) => flows.some((t) => t.accountId === a.id))
+    .sort((a, b) => financeSankeySum(flows.filter((t) => t.accountId === b.id), (t) => Math.abs(t.amount))
+      - financeSankeySum(flows.filter((t) => t.accountId === a.id), (t) => Math.abs(t.amount))
+      || a.name.localeCompare(b.name, "fr"));
+  const accountRank = new Map(accounts.map((a, i) => [a.id, i]));
+  const incomes = flows.filter((t) => t.type === "Revenu" || t.type === "Remboursement");
+  const expenses = flows.filter((t) => t.type === "Dépense");
+  const incomeKey = (t) => t.subcategory || t.type;
+  const orderKeys = (list, keyOf, valueOf) => [...new Set(list.map(keyOf))].sort((a, b) => {
+    const firstAccount = (k) => Math.min(...list.filter((t) => keyOf(t) === k).map((t) => accountRank.get(t.accountId) ?? 999));
+    return firstAccount(a) - firstAccount(b)
+      || financeSankeySum(list.filter((t) => keyOf(t) === b), valueOf) - financeSankeySum(list.filter((t) => keyOf(t) === a), valueOf)
+      || a.localeCompare(b, "fr");
+  });
+  const incomeKeys = orderKeys(incomes, incomeKey, (t) => Math.max(0, t.amount));
+  const categoryKeys = orderKeys(expenses, (t) => t.category, (t) => Math.abs(t.amount));
+  const nodes = [
+    ...incomeKeys.map((name, i) => ({ id: "income:" + name, name, col: 0, order: i, color: FINANCE_SANKEY_INCOME_PALETTE[i % FINANCE_SANKEY_INCOME_PALETTE.length] })),
+    ...accounts.map((a, i) => ({ id: "account:" + a.id, name: a.name, col: 1, order: i, color: financeSankeyColor(a.color) })),
+    ...categoryKeys.map((name, i) => ({ id: "category:" + name, name, col: 2, order: i, color: financeSankeyColor(data.categories.find((c) => c.name === name)?.color, "#587894") })),
+  ];
+  const links = [];
+  for (const account of accounts) {
+    const own = flows.filter((t) => t.accountId === account.id);
+    for (const key of incomeKeys) {
+      const value = financeSankeySum(own.filter((t) => ["Revenu", "Remboursement"].includes(t.type) && incomeKey(t) === key), (t) => Math.max(0, t.amount));
+      if (value > 0.005) links.push({ source: "income:" + key, target: "account:" + account.id, value });
+    }
+    for (const key of categoryKeys) {
+      const value = financeSankeySum(own.filter((t) => t.type === "Dépense" && t.category === key), (t) => Math.abs(t.amount));
+      if (value > 0.005) links.push({ source: "account:" + account.id, target: "category:" + key, value });
+    }
+  }
+  return { nodes, links, columns: ["ORIGINE", "COMPTES", "DESTINATION"] };
+}
+
+// Structure du patrimoine : type de compte -> banque -> compte (soldes positifs
+// à la fin de la période) — `Df` d'OS360.
+function financeSankeyWealthGraph(data, date, now = new Date()) {
+  const accounts = financeSankeyAccountBalances(data, date, now).filter((a) => a.balance > 0);
+  const types = [...new Set(accounts.map((a) => a.type))];
+  const banks = [...new Set(accounts.map((a) => a.bank))];
+  const nodes = [
+    ...types.map((name, i) => ({ id: "type:" + name, name, col: 0, order: i, color: financeSankeyColor(data.accountTypes.find((t) => t.name === name)?.color, ["#607d9b", "#3f806f"][i % 2]) })),
+    ...banks.map((name, i) => ({ id: "bank:" + name, name, col: 1, order: i, color: financeSankeyColor(data.banks.find((b) => b.name === name)?.color, ["#256d85", "#cf7856", "#73927e"][i % 3]) })),
+    ...accounts.map((a, i) => ({ id: "account:" + a.id, name: a.name, col: 2, order: i, color: financeSankeyColor(a.color) })),
+  ];
+  const links = [];
+  for (const type of types) for (const bank of banks) {
+    const value = accounts.filter((a) => a.type === type && a.bank === bank).reduce((sum, a) => sum + a.balance, 0);
+    if (value > 0) links.push({ source: "type:" + type, target: "bank:" + bank, value });
+  }
+  for (const a of accounts) links.push({ source: "bank:" + a.bank, target: "account:" + a.id, value: a.balance });
+  return { nodes, links, columns: ["TYPE", "BANQUE", "COMPTE"] };
+}
+
+// Graphe et libellé de période d'un widget — `Nf` (branche sankey) et `Kf` d'OS360.
+function financeSankeyBuild(type, data, config, today = financeSankeyToday(), now = new Date()) {
+  const period = financeSankeyPeriod(config, today);
+  const effective = period.from === "1900-01-01"
+    ? { from: data.transactions.reduce((min, t) => (t.effectiveDate < min ? t.effectiveDate : min), period.to), to: period.to }
+    : period;
+  const graph = type === "financeSankeyWealth"
+    ? financeSankeyWealthGraph(data, effective.to, now)
+    : financeSankeyMonthlyGraph(data, financeSankeyPeriodTransactions(data, effective));
+  return { graph, period: financeSankeyDateLabel(period.from) + " → " + financeSankeyDateLabel(period.to) };
+}
+
+// Ordre des nœuds dans chaque colonne : balayages barycentre/médiane puis
+// échanges voisins qui réduisent les croisements pondérés — `Jf` d'OS360.
+function financeSankeyOrderNodes(nodes, links) {
+  const list = nodes.map((n, i) => ({ ...n, seed: n.order ?? i, score: 0, weight: 0 }));
+  const byId = new Map(list.map((n) => [n.id, n]));
+  const cols = [...new Set(list.map((n) => n.col))].sort((a, b) => a - b);
+  const columns = new Map(cols.map((c) => [c, list.filter((n) => n.col === c).sort((a, b) => a.seed - b.seed)]));
+  const incoming = new Map(list.map((n) => [n.id, []]));
+  const outgoing = new Map(list.map((n) => [n.id, []]));
+  for (const l of links) {
+    if (byId.has(l.source) && byId.has(l.target) && l.value > 0) {
+      outgoing.get(l.source).push({ id: l.target, value: l.value });
+      incoming.get(l.target).push({ id: l.source, value: l.value });
+    }
+  }
+  const positions = () => new Map([...columns.values()].flatMap((col) => col.map((n, i) => [n.id, i])));
+  const sweep = (forward) => {
+    const pos = positions();
+    for (const c of forward ? cols.slice(1) : cols.slice(0, -1).reverse()) {
+      const col = columns.get(c);
+      col.forEach((node, idx) => {
+        const neighbours = (forward ? incoming : outgoing).get(node.id);
+        const total = neighbours.reduce((s, x) => s + x.value, 0);
+        const mean = total ? neighbours.reduce((s, x) => s + (pos.get(x.id) ?? idx) * x.value, 0) / total : idx;
+        let median = idx;
+        let acc = 0;
+        for (const x of [...neighbours].sort((a, b) => (pos.get(a.id) ?? idx) - (pos.get(b.id) ?? idx))) {
+          acc += x.value;
+          if (acc >= total / 2) { median = pos.get(x.id) ?? idx; break; }
+        }
+        node.score = median * 0.7 + mean * 0.3;
+        node.weight = total;
+      });
+      col.sort((a, b) => a.score - b.score || b.weight - a.weight || a.seed - b.seed);
+    }
+  };
+  for (let i = 0; i < 14; i++) { sweep(true); sweep(false); }
+  const crossings = () => {
+    const pos = positions();
+    let total = 0;
+    for (let i = 0; i < links.length; i++) for (let j = i + 1; j < links.length; j++) {
+      const a = links[i];
+      const b = links[j];
+      if (byId.get(a.source)?.col === byId.get(b.source)?.col && byId.get(a.target)?.col === byId.get(b.target)?.col
+        && (pos.get(a.source) - pos.get(b.source)) * (pos.get(a.target) - pos.get(b.target)) < 0) total += Math.sqrt(a.value * b.value);
+    }
+    return total;
+  };
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    for (const col of columns.values()) for (let i = 0; i < col.length - 1; i++) {
+      const before = crossings();
+      [col[i], col[i + 1]] = [col[i + 1], col[i]];
+      if (crossings() + 0.001 < before) changed = true;
+      else [col[i], col[i + 1]] = [col[i + 1], col[i]];
+    }
+    if (!changed) break;
+  }
+  for (const col of columns.values()) col.forEach((n, i) => { n.order = i; });
+  return list.map((n) => ({ id: n.id, name: n.name, col: n.col, order: n.order, color: n.color }));
+}
+
+// Géométrie : échelle monétaire commune à toutes les colonnes, piliers,
+// rubans et étiquettes anti-chevauchement — `Yf` d'OS360.
+function financeSankeyLayout(graph, width, height) {
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  const links = graph.links.filter((l) => Number.isFinite(l.value) && l.value > 0 && ids.has(l.source) && ids.has(l.target));
+  const used = new Set(links.flatMap((l) => [l.source, l.target]));
+  // Copie mise à l'échelle des seules sorties des comptes, pour l'ordonnancement.
+  const scaled = links.map((l) => ({ ...l }));
+  for (const node of graph.nodes.filter((n) => n.col === 1)) {
+    const inValue = links.filter((l) => l.target === node.id).reduce((s, l) => s + l.value, 0);
+    const outValue = links.filter((l) => l.source === node.id).reduce((s, l) => s + l.value, 0);
+    if (inValue > 0 && outValue > 0) scaled.filter((l) => l.source === node.id).forEach((l) => { l.value *= inValue / outValue; });
+  }
+  const ordered = financeSankeyOrderNodes(graph.nodes.filter((n) => used.has(n.id)), scaled);
+  const maxCount = Math.max(1, ...graph.columns.map((_, c) => ordered.filter((n) => n.col === c).length));
+  const W = Math.max(420, width || 900);
+  const compact = W < 620;
+  const minHeight = (compact ? 27 : 29) * maxCount + 90;
+  const H = Math.max(minHeight, Math.min(920, Math.max(280, height || 470, 44 + maxCount * 29)));
+  const left = Math.min(196, Math.max(compact ? 104 : 128, W * 0.23));
+  const right = Math.min(226, Math.max(compact ? 116 : 138, W * 0.26));
+  const usable = H - 58 - 24;
+  const nodeWidth = Math.max(11, Math.min(17, W / 52));
+  const font = Math.max(9.5, Math.min(12, compact ? 10.5 : 11.5));
+  const valueFont = Math.max(8.5, font - 1);
+  const labelGap = font + valueFont + 7;
+  const span = Math.max(1, graph.columns.length - 1);
+  const nodes = ordered.map((n) => ({
+    ...n,
+    value: Math.max(links.filter((l) => l.target === n.id).reduce((s, l) => s + l.value, 0), links.filter((l) => l.source === n.id).reduce((s, l) => s + l.value, 0)),
+    x0: left + n.col * (W - right - left - nodeWidth) / span, x1: 0, y0: 0, y1: 0, labelY: 0,
+  }));
+  const total = Math.max(0, ...graph.columns.map((_, c) => nodes.filter((n) => n.col === c).reduce((s, n) => s + n.value, 0)));
+  const scale = total > 0 ? usable / total : 0;
+  const columns = graph.columns.map((name, c) => {
+    const col = nodes.filter((n) => n.col === c).sort((a, b) => a.order - b.order);
+    const value = col.reduce((s, n) => s + n.value, 0);
+    let y = 58;
+    col.forEach((n) => {
+      n.x1 = n.x0 + nodeWidth;
+      n.y0 = y;
+      n.y1 = y + n.value * scale;
+      n.labelY = (n.y0 + n.y1) / 2;
+      y = n.y1;
+    });
+    for (let i = 1; i < col.length; i++) col[i].labelY = Math.max(col[i].labelY, col[i - 1].labelY + labelGap);
+    if (col.length && col.at(-1).labelY > H - 24 - labelGap / 2) {
+      col.at(-1).labelY = H - 24 - labelGap / 2;
+      for (let i = col.length - 2; i >= 0; i--) col[i].labelY = Math.min(col[i].labelY, col[i + 1].labelY - labelGap);
+    }
+    if (col.length && col[0].labelY < 58 + labelGap / 2) {
+      const shift = 58 + labelGap / 2 - col[0].labelY;
+      col.forEach((n) => { n.labelY += shift; });
+    }
+    return { name, value, x: left + c * (W - right - left - nodeWidth) / span };
+  });
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const ribbons = links.map((l) => ({ ...l, sourceY0: 0, sourceY1: 0, targetY0: 0, targetY1: 0, path: "" }));
+  for (const node of nodes) for (const asSource of [true, false]) {
+    let y = node.y0;
+    ribbons
+      .filter((l) => (asSource ? l.source : l.target) === node.id)
+      .sort((a, b) => byId.get(asSource ? a.target : a.source).order - byId.get(asSource ? b.target : b.source).order)
+      .forEach((l) => {
+        const h = l.value * scale;
+        if (asSource) { l.sourceY0 = y; l.sourceY1 = y + h; } else { l.targetY0 = y; l.targetY1 = y + h; }
+        y += h;
+      });
+  }
+  for (const l of ribbons) {
+    const x0 = byId.get(l.source).x1;
+    const x1 = byId.get(l.target).x0;
+    const mid = (x0 + x1) / 2;
+    l.path = `M${x0},${l.sourceY0}C${mid},${l.sourceY0} ${mid},${l.targetY0} ${x1},${l.targetY0}L${x1},${l.targetY1}C${mid},${l.targetY1} ${mid},${l.sourceY1} ${x0},${l.sourceY1}Z`;
+  }
+  return { width: W, height: H, font, valueFont, nodes, links: ribbons, columns };
+}
+
+// Largeur d'un texte, mesurée comme OS360 (canvas, sinon estimation) — `z9`.
+let financeSankeyCanvas;
+function financeSankeyMeasure(text, size, weight = 600) {
+  if (financeSankeyCanvas === undefined) {
+    try { financeSankeyCanvas = document.createElement("canvas").getContext("2d"); } catch { financeSankeyCanvas = null; }
+  }
+  if (!financeSankeyCanvas) return Array.from(text).length * size * 0.75;
+  financeSankeyCanvas.font = `${weight} ${size}px "Segoe UI",Arial,sans-serif`;
+  return financeSankeyCanvas.measureText(text).width;
+}
+// Libellé tronqué par dichotomie avec « … » — `iCe` d'OS360.
+function financeSankeyTruncate(text, maxWidth, size) {
+  if (financeSankeyMeasure(text, size) <= maxWidth) return text;
+  if (maxWidth < financeSankeyMeasure("…", size)) return "";
+  const chars = Array.from(text);
+  let lo = 0;
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (financeSankeyMeasure(chars.slice(0, mid).join("") + "…", size) <= maxWidth) lo = mid; else hi = mid - 1;
+  }
+  return chars.slice(0, lo).join("") + "…";
+}
+// === NEXORA:FINANCE-SANKEY:END ===
+
+// Feuille de style du graphique — `rCe` et les règles .sankey-* d'OS360
+// (police réelle d'OS360 : Inter, via var(--os-font)).
+const FINANCE_SANKEY_SVG_CSS = ".b360-flow-label{paint-order:stroke fill;stroke:rgba(255,255,255,.96);stroke-linejoin:round;pointer-events:none;font-family:Segoe UI,Arial,sans-serif}.b360-flow-name{stroke-width:4px;fill:#14232d;font-weight:600}.b360-flow-value{stroke-width:3px;fill:#60717c;font-weight:500}.b360-flow-node:focus{outline:none}.b360-flow-node:focus>rect{stroke:#14232d;stroke-width:2}.b360-flow-ribbon:focus{outline:none;stroke:#14232d;stroke-width:1.5}";
+const FINANCE_SANKEY_CSS = `
+.nx-sankey{--health:#176655;--danger:#a33135;flex-direction:column;height:100%;min-height:0;display:flex}
+.nx-sankey .sankey-figure{flex:1;min-height:0;position:relative;overflow:hidden}
+.nx-sankey .sankey-svg{width:100%;height:100%;display:block;overflow:hidden}
+.nx-sankey text{font-family:Inter,'Segoe UI',Arial,sans-serif!important;font-variant-numeric:lining-nums tabular-nums}
+.nx-sankey .sankey-footer{color:#60717c;justify-content:space-between;align-items:center;gap:8px;padding:3px 7px;font-size:10px;display:flex}
+.nx-sankey .sankey-footer button{min-height:22px;padding:2px 7px;font-size:10px;border:1px solid #d8e1eb;border-radius:4px;background:#fff;color:#203246;cursor:pointer}
+.nx-sankey .sankey-footer span{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+.nx-sankey .sankey-tooltip{z-index:5;pointer-events:none;max-width:min(285px,100% - 8px);position:absolute}
+.nx-sankey .sankey-data{position:absolute;inset:0;overflow:auto;font-size:12px}
+.nx-sankey .sankey-data table{width:100%;border-collapse:collapse}
+.nx-sankey .sankey-data th,.nx-sankey .sankey-data td{padding:4px 8px;border-bottom:1px solid #edf1f4;text-align:left}
+.nx-sankey .sankey-data th{background:#fff;position:sticky;top:0}
+.nx-sankey .sankey-data td.numeric{text-align:right;font-variant-numeric:tabular-nums}
+.nx-sankey .b360-flow-node,.nx-sankey .b360-flow-ribbon{cursor:pointer}
+.nx-sankey .os-tooltip{color:#203246;overflow-wrap:anywhere;background:#fffffffa;border:1px solid #d8e1eb;border-radius:8px;min-width:160px;max-width:320px;padding:12px 14px;font:400 12px/1.5 Inter,'Segoe UI',Arial,sans-serif;box-shadow:0 10px 24px rgba(24,47,72,.18)}
+.nx-sankey .os-tooltip-title{color:#24569a;margin-bottom:3px;font-size:12px;font-weight:500}
+.nx-sankey .os-tooltip-context{color:#536477;margin-bottom:8px;font-size:11px}
+.nx-sankey .os-tooltip-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:baseline;gap:12px;display:grid}
+.nx-sankey .os-tooltip-value{font-variant-numeric:tabular-nums;text-align:right;font-weight:500}
+.nx-sankey .os-tooltip-foot{color:#536477;border-top:1px solid #edf1f4;margin-top:7px;padding-top:7px;font-size:10px}
+`;
+
+// Rendu SVG — composant `nCe` d'OS360.
+function FinanceSankeyChart({ graph, config, title, period }) {
+  const figureRef = useRef(null);
+  const uid = React.useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const [size, setSize] = useState({ width: 900, height: 470 });
+  const [hover, setHover] = useState(null);
+  const [tip, setTip] = useState(null);
+  const [showData, setShowData] = useState(false);
+  useEffect(() => {
+    const el = figureRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width && r.height) setSize((s) => (s.width === r.width && s.height === r.height ? s : { width: r.width, height: r.height }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const m = useMemo(() => financeSankeyLayout(graph, size.width, size.height), [graph, size]);
+  const byId = new Map(m.nodes.map((n) => [n.id, n]));
+  const opacity = Math.min(1, Math.max(0.1, financeSankeyNumber(config, "flowOpacity", 0.52)));
+  const showValues = config.sankeyShowValues !== false && config.labelMode !== "none";
+  const lastCol = graph.columns.length - 1;
+  const link = hover?.kind === "link" ? m.links[Number(hover.id)] : undefined;
+  const node = hover?.kind === "node" ? byId.get(hover.id) : undefined;
+  const related = new Set(link ? [link.source, link.target]
+    : node ? [node.id, ...m.links.flatMap((l) => (l.source === node.id ? [l.target] : l.target === node.id ? [l.source] : []))] : []);
+  const show = (kind, id, event) => {
+    const box = figureRef.current.getBoundingClientRect();
+    const target = event.currentTarget.getBoundingClientRect();
+    const tw = Math.min(285, size.width - 8);
+    const th = 150;
+    const gap = 16;
+    const px = typeof event.clientX === "number" ? event.clientX - box.x : target.x - box.x + 15;
+    const py = typeof event.clientY === "number" ? event.clientY - box.y : target.y - box.y + 18;
+    const fx = px + gap + tw > size.width - 4 ? px - gap - tw : px + gap;
+    const fy = py + gap + th > size.height - 4 ? py - gap - th : py + gap;
+    setHover({ kind, id });
+    setTip({ x: Math.max(4, Math.min(size.width - tw - 4, fx)), y: Math.max(4, Math.min(size.height - th, fy)) });
+  };
+  const hide = () => { setHover(null); setTip(null); };
+  const money = (value, maxWidth = 120, fontSize = m.valueFont) => {
+    const full = financeSankeyRound(value, "€", financeSankeyNumber(config, "decimals", 2), financeSankeyText(config, "rounding", "auto")) + " €";
+    if (financeSankeyMeasure(full, fontSize, 500) <= maxWidth) return full;
+    const short = financeSankeyRound(value, "€", 2, "compact") + " €";
+    return financeSankeyMeasure(short, fontSize, 500) <= maxWidth ? short : "";
+  };
+  return (
+    <div className="nx-sankey">
+      <style>{FINANCE_SANKEY_CSS}</style>
+      <div ref={figureRef} className="sankey-figure" onKeyDown={(e) => { if (e.key === "Escape") hide(); }}>
+        <svg viewBox={`0 0 ${m.width} ${m.height}`} preserveAspectRatio="xMidYMid meet" className="sankey-svg sankey-svg-v3" role="group"
+          aria-label={title + " · " + graph.columns.join(" → ")} style={{ display: showData ? "none" : undefined }}>
+          <style>{FINANCE_SANKEY_SVG_CSS}</style>
+          <desc>Échelle monétaire commune aux colonnes. Les hauteurs des piliers et des rubans sont proportionnelles aux montants réels.</desc>
+          <defs>
+            {m.links.map((l, i) => (
+              <linearGradient key={i} id={`${uid}-flow-${i}`} gradientUnits="userSpaceOnUse" x1={byId.get(l.source).x1} x2={byId.get(l.target).x0}>
+                <stop stopColor={byId.get(l.source).color} />
+                <stop offset="100%" stopColor={byId.get(l.target).color} />
+              </linearGradient>
+            ))}
+          </defs>
+          <g className="sankey-column-totals">
+            {m.columns.map((col, i) => {
+              const room = (m.columns[i + 1]?.x ?? m.width) - col.x - 8;
+              const label = money(col.value, room, 15);
+              const wrap = col.name.length * 6 + 10 + financeSankeyMeasure(label, 15, 700) > room;
+              return (
+                <g key={col.name} transform={`translate(${col.x},17)`}>
+                  <text fill="#60717c" fontFamily="Segoe UI,Arial,sans-serif" fontSize="9" fontWeight="700" letterSpacing=".08em">{col.name}</text>
+                  {showValues && <text x={wrap ? 0 : col.name.length * 6 + 10} y={wrap ? 19 : 1} fill="#14232d" fontFamily="Segoe UI,Arial,sans-serif" fontSize="15" fontWeight="700">{label}</text>}
+                  {i === lastCol && (
+                    <text x={0} y={wrap ? 34 : 19} fill={m.columns[0].value - col.value > 0 ? "var(--health)" : "var(--danger)"} fontFamily="Segoe UI,Arial,sans-serif" fontSize="10" fontWeight="700">
+                      {"Solde du mois : " + financeSankeyFormat(m.columns[0].value - col.value, "€", 2)}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </g>
+          <g className="sankey-ribbons">
+            {m.links.map((l, i) => {
+              const active = link === l || node?.id === l.source || node?.id === l.target;
+              const label = byId.get(l.source).name + " → " + byId.get(l.target).name + " · " + financeSankeyFormat(l.value, "€", 2);
+              return (
+                <path key={i} className="b360-flow-ribbon" d={l.path} fill={`url(#${uid}-flow-${i})`} fillOpacity={hover ? (active ? 0.9 : 0.1) : opacity}
+                  style={{ mixBlendMode: "multiply" }} tabIndex={0} role="button" aria-label={label}
+                  onMouseEnter={(e) => show("link", String(i), e)} onMouseLeave={hide} onFocus={(e) => show("link", String(i), e)} onBlur={hide} onClick={(e) => show("link", String(i), e)}>
+                  <title>{label}</title>
+                </path>
+              );
+            })}
+          </g>
+          <g className="sankey-nodes">
+            {m.nodes.map((n) => {
+              const last = n.col === lastCol;
+              const mid = (n.y0 + n.y1) / 2;
+              const ly = n.labelY;
+              const elbowX = last ? n.x1 + 10 : n.x0 - 10;
+              const textX = last ? elbowX + 12 : elbowX - 12;
+              const swatchX = last ? elbowX : elbowX - 7;
+              const anchor = last ? "start" : "end";
+              const leftBound = n.col ? m.columns[n.col - 1].x + (n.x1 - n.x0) + 10 : 0;
+              const room = last ? m.width - textX - 6 : textX - leftBound - 6;
+              const label = n.name + " · " + financeSankeyFormat(n.value, "€", 2);
+              return (
+                <g key={n.id} className="b360-flow-node" data-node-id={n.id} opacity={hover && !related.has(n.id) ? 0.14 : 1} tabIndex={0} role="button" aria-label={label}
+                  onMouseEnter={(e) => show("node", n.id, e)} onMouseLeave={hide} onFocus={(e) => show("node", n.id, e)} onBlur={hide} onClick={(e) => show("node", n.id, e)}>
+                  <rect x={n.x0} y={n.y0} width={n.x1 - n.x0} height={Math.max(0, n.y1 - n.y0)} rx="2" fill={n.color} stroke="#fff" strokeWidth=".7" />
+                  <title>{label}</title>
+                  <g className="sankey-label-group">
+                    {Math.abs(ly - mid) > 1 && <path d={`M${last ? n.x1 : n.x0},${mid} H${elbowX + (last ? -3 : 3)} V${ly}`} fill="none" stroke={n.color} strokeWidth=".9" opacity=".75" />}
+                    <rect x={swatchX} y={ly - 6} width="7" height="7" rx="2" fill={n.color} />
+                    <text className="b360-flow-label b360-flow-name" x={textX} y={ly - 2} textAnchor={anchor} fontSize={m.font}>{financeSankeyTruncate(n.name, room, m.font)}</text>
+                    {showValues && <text className="b360-flow-label b360-flow-value" x={textX} y={ly + m.valueFont + 2} textAnchor={anchor} fontSize={m.valueFont}>{money(n.value, room)}</text>}
+                  </g>
+                </g>
+              );
+            })}
+          </g>
+        </svg>
+        {showData && (
+          <div className="sankey-data">
+            <table>
+              <thead><tr><th>Origine</th><th>Destination</th><th>Montant · €</th></tr></thead>
+              <tbody>
+                {m.links.map((l, i) => (
+                  <tr key={i}><td>{byId.get(l.source).name}</td><td>{byId.get(l.target).name}</td><td className="numeric">{financeSankeyFormat(l.value, "", 2)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {tip && (node || link) && !showData && (
+          <div className="sankey-tooltip os-tooltip" role="tooltip" style={{ left: tip.x, top: tip.y }}>
+            <div className="os-tooltip-title">{title}</div>
+            <div className="os-tooltip-context">{node?.name || byId.get(link.source).name + " → " + byId.get(link.target).name}</div>
+            <div className="os-tooltip-row"><span>Montant réel</span><span className="os-tooltip-value">{financeSankeyFormat(node?.value ?? link.value, "€", 2)}</span></div>
+            {link && <div className="os-tooltip-row"><span>Part du nœud d’origine</span><span>{financeSankeyFormat(100 * link.value / byId.get(link.source).value, "%", 1)}</span></div>}
+            <div className="os-tooltip-foot">{period}</div>
+          </div>
+        )}
+      </div>
+      <div className="sankey-footer">
+        <span title="Même échelle pour les revenus, les comptes et les dépenses. Les comptes représentent le maximum des entrées et sorties ; les espaces libres indiquent leur différence.">Échelle commune · hauteurs proportionnelles aux montants</span>
+        <button type="button" onClick={() => { setShowData((v) => !v); hide(); }} aria-pressed={showData}>{showData ? "Graphique" : "Données"}</button>
+      </div>
+    </div>
+  );
+}
+
+// Chargement partagé des données KDM360 : une requête pour tous les widgets
+// Sankey de la page, relancée seulement sur « Actualiser ». La session Nexora
+// (jeton Firebase) est vérifiée côté serveur ; aucune clé n'arrive ici.
+const financeSankeyStore = { promise: null, data: null, error: null, at: null, listeners: new Set() };
+function financeSankeyLoad(force = false) {
+  if (financeSankeyStore.promise && !force) return financeSankeyStore.promise;
+  const notify = () => financeSankeyStore.listeners.forEach((fn) => fn());
+  financeSankeyStore.error = null;
+  notify();
+  financeSankeyStore.promise = (async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Budget.");
+      const token = await user.getIdToken();
+      const response = await fetch("/api/nexora/finance-sankey-data", { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        const reasons = {
+          unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Budget.",
+          finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
+          configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+        };
+        throw new Error(reasons[payload.error] || payload.detail || payload.error || `Lecture Budget impossible (HTTP ${response.status}).`);
+      }
+      financeSankeyStore.data = financeSankeyNormalize(payload.data);
+      financeSankeyStore.at = new Date();
+    } catch (error) {
+      financeSankeyStore.error = error instanceof Error ? error.message : String(error);
+      financeSankeyStore.promise = null;
+    }
+    notify();
+  })();
+  return financeSankeyStore.promise;
+}
+function useFinanceSankeyData() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    financeSankeyStore.listeners.add(listener);
+    financeSankeyLoad();
+    return () => { financeSankeyStore.listeners.delete(listener); };
+  }, []);
+  return { data: financeSankeyStore.data, error: financeSankeyStore.error, at: financeSankeyStore.at, reload: () => financeSankeyLoad(true) };
+}
+
+function WidgetFinanceSankey({ widget }) {
+  const { data, error, reload } = useFinanceSankeyData();
+  const config = { ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(widget.sankeyConfig || {}) };
+  const built = useMemo(() => {
+    if (!data) return null;
+    try { return { ...financeSankeyBuild(widget.type, data, config) }; } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, widget.type, JSON.stringify(config)]);
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!data) return <div className="lp-empty" style={{ padding: 16 }}>Chargement des données Budget…</div>;
+  if (built?.error) return <div className="lp-empty" style={{ padding: 16 }}>{built.error}</div>;
+  if (!built.graph.links.length) {
+    return <div className="lp-empty" style={{ padding: 16 }}>Aucun flux à représenter sur cette période ({built.period}).</div>;
+  }
+  return <FinanceSankeyChart graph={built.graph} config={config} title={widget.title || "Sankey"} period={built.period} />;
+}
+
+// Réglages repris d'OS360 (période, opacité des rubans, montants, étiquetage,
+// décimales, arrondi), présentés dans la fiche de widget Nexora.
+function FinanceSankeySettings({ value, onChange }) {
+  const cfg = { ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(value || {}) };
+  const set = (patch) => onChange({ ...cfg, ...patch });
+  const periodKind = cfg.from || cfg.to ? "custom" : cfg.range === "all" ? "all" : cfg.range ? "range" : cfg.periodMode === "year" ? "year" : "month";
+  const setKind = (kind) => {
+    const base = { from: "", to: "", range: "", periodValue: "current" };
+    if (kind === "month") set({ ...base, periodMode: "month" });
+    else if (kind === "year") set({ ...base, periodMode: "year" });
+    else if (kind === "range") set({ ...base, periodMode: "month", range: "30" });
+    else if (kind === "all") set({ ...base, periodMode: "month", range: "all" });
+    else set({ ...base, periodMode: "month", from: financeSankeyPeriod(cfg).from, to: financeSankeyPeriod(cfg).to });
+  };
+  return (
+    <>
+      <div className="lp-widget-config-title" style={{ marginTop: 4 }}><CalendarDays size={12} /> Période</div>
+      <div className="lp-field">
+        <label>Période représentée</label>
+        <select value={periodKind} onChange={(e) => setKind(e.target.value)}>
+          <option value="month">Mois</option>
+          <option value="year">Année</option>
+          <option value="range">Derniers jours (fenêtre glissante)</option>
+          <option value="custom">Dates personnalisées</option>
+          <option value="all">Tout l’historique</option>
+        </select>
+      </div>
+      {periodKind === "month" && (
+        <div className="lp-field">
+          <label>Mois <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(vide = mois courant)</span></label>
+          <input type="month" value={cfg.periodValue === "current" ? "" : cfg.periodValue} onChange={(e) => set({ periodValue: e.target.value || "current" })} />
+        </div>
+      )}
+      {periodKind === "year" && (
+        <div className="lp-field">
+          <label>Année <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(vide = année courante)</span></label>
+          <input type="number" min="1990" max="2100" value={cfg.periodValue === "current" ? "" : cfg.periodValue} onChange={(e) => set({ periodValue: e.target.value || "current" })} />
+        </div>
+      )}
+      {periodKind === "range" && (
+        <div className="lp-field">
+          <label>Fenêtre temporelle (jours, jusqu’à aujourd’hui)</label>
+          <input type="number" min="1" max="3660" value={cfg.range} onChange={(e) => set({ range: e.target.value || "30" })} />
+        </div>
+      )}
+      {periodKind === "custom" && (
+        <div className="lp-field" style={{ display: "flex", gap: 8 }}>
+          <div style={{ flex: 1 }}><label>Du</label><input type="date" value={cfg.from} onChange={(e) => set({ from: e.target.value })} /></div>
+          <div style={{ flex: 1 }}><label>Au</label><input type="date" value={cfg.to} onChange={(e) => set({ to: e.target.value })} /></div>
+        </div>
+      )}
+      <div className="lp-widget-config-title" style={{ marginTop: 10 }}><Palette size={12} /> Étiquettes et apparence</div>
+      <label className="lp-checkbox-line">
+        <input type="checkbox" checked={cfg.sankeyShowValues !== false} onChange={(e) => set({ sankeyShowValues: e.target.checked })} /> Afficher les montants
+      </label>
+      <div className="lp-field">
+        <label>Étiquetage des valeurs</label>
+        <select value={cfg.labelMode} onChange={(e) => set({ labelMode: e.target.value })}>
+          <option value="auto">Intelligent · espace disponible</option>
+          <option value="sparse">Essentiel · dernière valeur et extrêmes</option>
+          <option value="none">Aucune valeur sur le graphique</option>
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Arrondi des valeurs</label>
+        <select value={cfg.rounding} onChange={(e) => set({ rounding: e.target.value })}>
+          <option value="auto">Intelligent · selon valeur et unité</option>
+          <option value="fixed">Décimales configurées</option>
+          <option value="compact">Compact · k / M</option>
+        </select>
+      </div>
+      <div className="lp-field">
+        <label>Nombre de décimales</label>
+        <input type="number" min="0" max="6" value={cfg.decimals} onChange={(e) => set({ decimals: e.target.value === "" ? "" : Number(e.target.value) })} />
+      </div>
+      <div className="lp-field">
+        <label>Opacité des flux (0,1 à 1)</label>
+        <input type="number" min="0.1" max="1" step="0.02" value={cfg.flowOpacity} onChange={(e) => set({ flowOpacity: e.target.value === "" ? "" : Number(e.target.value) })} />
+      </div>
+    </>
   );
 }
 
