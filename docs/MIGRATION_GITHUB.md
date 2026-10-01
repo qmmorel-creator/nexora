@@ -23,7 +23,8 @@ Faire de GitHub la source canonique du code sans changer les URLs publiques, le 
 - `NEXORA_USER_UID` — secret ;
 - `NEXORA_ASSISTANT_API_KEY` — secret ;
 - `KDM360_SUPABASE_SECRET_KEY` — secret si les fonctions finance sont conservées ;
-- `NEXORA_SPORT_CSV_URL` — secret, URL du CSV publié de la feuille « Activités Strava » lue par `/api/nexora/sport-activities` (nexora#578) ; sans elle, les widgets sport affichent « Source Sport non configurée » ;
+- `NEXORA_SPORT_CSV_URL` — URL du CSV publié de la feuille « Activités Strava » lue par `/api/nexora/sport-activities` (nexora#578), contexte production ; sans elle, les widgets sport affichent « Source Sport non configurée ». **Non secrète** : la même URL figure déjà dans le moteur OS360 publié (`/os360-moteur/`, bundle OS360 copié tel quel, voir nexora#582) ; le compte Netlify ne permet pas de restreindre sa portée aux fonctions ;
+- `SECRETS_SCAN_OMIT_KEYS=NEXORA_SPORT_CSV_URL` — sans elle, le scanner de secrets de Netlify trouverait cette URL dans `os360-moteur/index.html` et ferait échouer le build ;
 - `QME_INTAKE_SIGNING_KEY` — secret, endpoint d'ingestion prospect QME (nexora#279) — distinct de `NEXORA_ASSISTANT_API_KEY`, jamais partagé avec le site `qme-engineering` autrement que via cette variable ;
 - `QME_SITE_ORIGIN` — configuration publique, origine attendue du site QME (ex. `https://qme-engineering.netlify.app` ou le domaine personnalisé une fois branché) ;
 - `SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES` — valeur publique Firebase uniquement.

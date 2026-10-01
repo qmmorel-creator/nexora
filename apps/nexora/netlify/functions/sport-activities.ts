@@ -7,8 +7,12 @@ declare const Netlify: { env: { get(name: string): string | undefined } };
 
 // Widgets sport (#578) : toutes les activités du journal « Activités Strava »,
 // en LECTURE SEULE, pour la session Nexora du propriétaire. Le CSV publié est
-// lu côté serveur : son URL (variable NEXORA_SPORT_CSV_URL) n'est jamais
-// envoyée au navigateur. Il est lu comme OS360 (_shared/sport.ts).
+// lu côté serveur : son URL (variable NEXORA_SPORT_CSV_URL, contexte
+// production) n'est jamais envoyée au navigateur par ce code. Il est lu comme
+// OS360 (_shared/sport.ts). La variable n'est pas « secrète » dans Netlify :
+// la même URL est dans le moteur OS360 publié (#582), d'où
+// SECRETS_SCAN_OMIT_KEYS=NEXORA_SPORT_CSV_URL pour le scanner de secrets.
+// Une variable modifiée ne vaut qu'après un nouveau déploiement.
 export default async (req: Request) => {
   if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
   const denied = await requireOwner(req);
