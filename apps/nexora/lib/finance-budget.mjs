@@ -217,6 +217,95 @@ function shiftDays(date, days) {
   return d.toISOString().slice(0, 10);
 }
 
+// Montants absolus par clé, dans l'ordre de première apparition — `lf` d'OS360.
+function sumBy(list, key) {
+  const map = new Map();
+  for (const t of list) {
+    const k = t[key] || "Non renseigné";
+    map.set(k, (map.get(k) || 0) + Math.abs(t.amount));
+  }
+  return map;
+}
+
+// Répartition entière de `total` cases selon des poids, au plus fort reste —
+// `jd` d'OS360.
+export function apportion(weights, total) {
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (!sum) return weights.map(() => 0);
+  const exact = weights.map((w) => (w / sum) * total);
+  const counts = exact.map(Math.floor);
+  const missing = total - counts.reduce((a, b) => a + b, 0);
+  exact.map((v, i) => ({ i, remainder: v - counts[i] }))
+    .sort((a, b) => b.remainder - a.remainder || weights[b.i] - weights[a.i] || a.i - b.i)
+    .slice(0, missing)
+    .forEach(({ i }) => counts[i]++);
+  return counts;
+}
+
+// Waffle : unité = plus grosse catégorie / 20 ; une catégorie au-dessus d'une
+// unité a min(20, ⌊montant / unité⌋) cases, réparties entre ses comptes — `jf`.
+export function waffle(periodRows, data) {
+  const expenses = expensesOf(periodRows);
+  const sorted = [...sumBy(expenses, "category")].sort((a, b) => b[1] - a[1]);
+  const unit = (sorted[0]?.[1] || 0) / 20;
+  if (!unit) return { unit: 0, categories: [] };
+  return {
+    unit: round2(unit),
+    categories: sorted.filter(([, value]) => value > unit).map(([name, value]) => {
+      const count = Math.min(20, Math.floor(value / unit + 1e-9));
+      const rows = expenses.filter((t) => t.category === name);
+      const accounts = [...sumBy(rows, "accountId")].sort((a, b) => b[1] - a[1]);
+      const cells = apportion(accounts.map(([, v]) => v), count);
+      const total = sumAbs(rows);
+      return {
+        name, value: round2(value), count,
+        cells: accounts.flatMap(([id, v], i) => Array.from({ length: cells[i] }, () => {
+          const account = data.accounts.find((a) => a.id === id);
+          return { account: account?.name || id, color: account?.color || "#536477", share: v / total };
+        })),
+      };
+    }),
+  };
+}
+
+// Graphiques du mois et des 12 derniers mois, avec les règles d'OS360 :
+// donut (`chart_donut`), waterfall (`chart_waterfall`), dépenses cumulées par
+// catégorie et par jour (`chart_cumulative`), small multiples avec budget
+// (`osSmallMultiples`), waffle (`osWaffleCompact`), barres périodiques des
+// dépenses par mois (`generic_periodic`, granularité mois, sur 12 mois).
+export function budgetCharts(data, period, tracking) {
+  const rows = inPeriod(data.transactions, period);
+  const expenses = expensesOf(rows);
+  const income = sumAbs(incomeOf(rows));
+  const color = (name) => data.categories.find((c) => c.name === name)?.color || "#536477";
+  const byCategory = [...sumBy(expenses, "category")].sort((a, b) => b[1] - a[1])
+    .map(([category, amount]) => ({ category, amount: round2(amount), color: color(category) }));
+  let level = income;
+  const waterfall = [
+    { label: "Revenus", from: 0, to: round2(income), absolute: true },
+    ...byCategory.map((c) => { const from = level; level -= c.amount; return { label: c.category, from: round2(from), to: round2(level) }; }),
+    { label: "Solde net", from: 0, to: round2(level), absolute: true },
+  ];
+  const days = enumerateDays(period.from, period.to);
+  const cumulative = byCategory.map((c) => {
+    let acc = 0;
+    const daily = new Map();
+    for (const t of expenses.filter((x) => x.category === c.category)) daily.set(t.effectiveDate, (daily.get(t.effectiveDate) || 0) + Math.abs(t.amount));
+    return {
+      category: c.category, color: c.color, total: c.amount,
+      budget: tracking.find((x) => x.category === c.category)?.budget || 0,
+      values: days.map((d) => round2(acc += daily.get(d) || 0)),
+    };
+  });
+  const lastMonth = period.to.slice(0, 7);
+  const periodic = [];
+  for (let i = 11; i >= 0; i--) {
+    const month = shiftMonth(lastMonth, -i);
+    periodic.push({ month, expenses: round2(sumAbs(expensesOf(inPeriod(data.transactions, monthBounds(month))))) });
+  }
+  return { days, byCategory, waterfall, cumulative, waffle: waffle(rows, data), periodic };
+}
+
 // Synthèse d'un mois : carte, suivi, file à catégoriser, patrimoine.
 export function buildBudgetSummary(raw, month, now = new Date()) {
   const data = normalizeBudget(raw);
@@ -272,6 +361,7 @@ export function buildBudgetSummary(raw, month, now = new Date()) {
       remaining: round2(budgetTotal - budgetedSpent),
     },
     tracking,
+    charts: budgetCharts(data, period, tracking),
     overBudget: tracking.filter((c) => c.over && c.budget > 0).map((c) => c.category),
     toCategorize: toCategorize(data, today),
     wealth: {
@@ -290,6 +380,38 @@ export function buildBudgetSummary(raw, month, now = new Date()) {
       })).sort((a, b) => a.name.localeCompare(b.name, "fr")),
     },
   };
+}
+
+// Recherche de transactions pour l'assistant (#587) : opérations non annulées
+// (lignes Budget exclues), plus récentes d'abord, paginées. `query` cherche,
+// sans tenir compte de la casse ni des accents, dans le libellé, la
+// description, la catégorie, la sous-catégorie et le compte.
+export function searchTransactions(raw, filters = {}) {
+  const data = normalizeBudget(raw);
+  const fold = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const accounts = new Map(data.accounts.map((a) => [a.id, a]));
+  const q = fold(filters.query).trim();
+  const limit = Math.min(200, Math.max(1, Number(filters.limit) || 50));
+  const offset = Math.max(0, Number(filters.offset) || 0);
+  const min = filters.minAmount == null ? null : Number(filters.minAmount);
+  const max = filters.maxAmount == null ? null : Number(filters.maxAmount);
+  const matches = data.transactions
+    .filter((t) => t.type !== "Budget")
+    .filter((t) => !filters.dateFrom || t.effectiveDate >= filters.dateFrom)
+    .filter((t) => !filters.dateTo || t.effectiveDate <= filters.dateTo)
+    .filter((t) => !filters.category || t.category === filters.category)
+    .filter((t) => !filters.accountId || t.accountId === filters.accountId)
+    .filter((t) => !filters.type || t.type === filters.type)
+    .filter((t) => min == null || Math.abs(t.amount) >= min)
+    .filter((t) => max == null || Math.abs(t.amount) <= max)
+    .filter((t) => !q || fold([t.label, t.description, t.category, t.subcategory, accounts.get(t.accountId)?.name].join(" ")).includes(q))
+    .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate) || a.id.localeCompare(b.id));
+  const items = matches.slice(offset, offset + limit).map((t) => ({
+    transactionId: t.id, effectiveDate: t.effectiveDate, bankDate: t.bankDate, type: t.type, amount: t.amount,
+    label: t.label, description: t.description, category: t.category, subcategory: t.subcategory,
+    accountId: t.accountId, account: accounts.get(t.accountId)?.name || t.accountId, categoryConfidence: t.confidence,
+  }));
+  return { total: matches.length, offset, limit, nextOffset: offset + items.length < matches.length ? offset + items.length : null, items };
 }
 
 // Partie Budget du rapport du matin : reste à dépenser, alertes, file.
