@@ -18,7 +18,7 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const W = vm.runInThisContext(`(function () {\n${slice("OS360-WIDGET")}\n;return { os360CatalogueGroups, os360WidgetSpec, os360MessageFrom, os360PeriodConfig, os360PeriodOnly, OS360_WIDGET_DEFAULT_TYPE, OS360_SPORT_DEFAULT, os360SportActivities };\n})`)();
+const W = vm.runInThisContext(`(function () {\n${slice("OS360-WIDGET")}\n;return { os360CatalogueGroups, os360WidgetSpec, os360MessageFrom, os360PeriodConfig, os360PeriodOnly, OS360_WIDGET_DEFAULT_TYPE };\n})`)();
 
 test("moteur généré : intact, issu du générateur et de moteur.js tels que versionnés", async () => {
   const moteur = await read("../public/os360-moteur/index.html");
@@ -99,17 +99,16 @@ test("moteur : journal sportif reçu par nx-sport, données d'exemple OS360 jama
   assert.match(entree, /if \(widget\.variant\) base = osChangeConfig\(base, "financeVariant", widget\.variant\);/);
 });
 
-test("graphique sport : rattaché, données sport seulement, défaut « Sport par semaine »", () => {
-  assert.match(html, /key: "sportOs360Chart", label: "Graphique sport \(OS360\)"/);
-  assert.match(html, /w\.type === "sportOs360Chart" && \(\s*<WidgetSportOs360Chart widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
-  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "sportOs360Chart"/);
-  assert.match(html, /function WidgetSportOs360Chart\([^)]*\) \{\n  const \{ rows, error, reload \} = useSportData\(\);/, "jamais de lecture Budget pour le sport");
-  assert.match(html, /\{ type: "nx-sport", activities: os360SportActivities\(rows\) \}/);
-  const spec = W.os360WidgetSpec({}, W.OS360_SPORT_DEFAULT);
-  assert.deepEqual(JSON.parse(JSON.stringify(spec)), { type: "health.timeSeries", title: "", config: {}, variant: "health.sportWeekly" });
+test("graphique sport OS360 retiré (#590) : plus créable, anciens widgets rendus en natif", () => {
+  assert.doesNotMatch(html, /label: "Graphique sport \(OS360\)"/);
+  assert.doesNotMatch(html, /WidgetSportOs360Chart|os360SportActivities|OS360_SPORT_DEFAULT|catalogueSante/);
+  assert.match(html, /w\.type === LEGACY_SPORT_OS360_TYPE && \(\s*<WidgetSportChart widget=\{migrateLegacySportOs360Widget\(w\)\}/);
+  // Le moteur ne sert plus que le Budget.
+  assert.match(html, /setCatalogue\(data\.catalogue \|\| \[\]\);/);
+  // Repli générique de os360WidgetSpec (variante comprise) : jamais modifié.
+  const fallback = { type: "x.y", config: {}, variant: "x.z" };
+  const spec = W.os360WidgetSpec({}, fallback);
+  assert.deepEqual(JSON.parse(JSON.stringify(spec)), { type: "x.y", title: "", config: {}, variant: "x.z" });
   spec.config.x = 1;
-  assert.equal(W.OS360_SPORT_DEFAULT.config.x, undefined, "le défaut n'est jamais modifié");
-  assert.equal(W.os360WidgetSpec({ os360: { type: "health.sharedSportPie" } }, W.OS360_SPORT_DEFAULT).type, "health.sharedSportPie");
-  const [a] = W.os360SportActivities([{ id: "c|1", date: "2026-09-28", sport: "Course à pied", title: "x", total: 45, moving: null, distance: 8, elevation: 1, hr: 140, maxHr: 160, url: null, start: "s", end: "e", eventId: "1", calendarId: "c", "x:Sport Strava d'origine": "Run" }]);
-  assert.deepEqual(Object.keys(a), ["id", "date", "sport", "title", "total", "moving", "distance", "elevation", "hr", "maxHr", "url"], "champs de `Jc`, rien de plus");
+  assert.equal(fallback.config.x, undefined, "le défaut n'est jamais modifié");
 });

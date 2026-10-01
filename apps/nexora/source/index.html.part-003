@@ -2159,7 +2159,6 @@ function defaultLayoutForType(type) {
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
   if (type === "sportActivities") return { w: 12, h: 9 };
   if (type === "sportChart") return { w: 10, h: 7 };
-  if (type === "sportOs360Chart") return { w: 8, h: 8 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -2229,12 +2228,34 @@ function migrateLegacySingleBlockCardWidget(widget) {
     }],
   };
 }
+// #590 : le « Graphique sport (OS360) » migre vers le « Graphique sport »
+// natif, sur la vue équivalente au graphique OS360 choisi (variante comprise).
+// Graphiques OS360 sans équivalent : barres empilées par semaine, le défaut
+// du widget OS360 (« Sport par semaine »). Le réglage `os360` est conservé.
+const LEGACY_SPORT_OS360_TYPE = "sportOs360Chart";
+function migrateLegacySportOs360Widget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_SPORT_OS360_TYPE) return widget;
+  const os = widget.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
+  const config = os.config && typeof os.config === "object" ? os.config : {};
+  const chart = String(config.financeVariant || os.variant || os.type || "health.sportWeekly").replace(/^health\./, "");
+  const view = chart === "sportWaffle" ? "waffle"
+    : chart === "sportCalendar" || chart === "calendar" ? "calendar"
+    : chart === "cumulative" || chart === "stacked" ? "cumul"
+    : chart === "summarySeries" || chart === "line" || chart === "timeSeries" || chart === "sharedLine" || chart === "sharedMasterLine" ? "series"
+    : "stack";
+  const range = Math.round(Number(config.range));
+  const period = !(range >= 1) ? "365" : [7, 30, 90, 365].includes(range) ? String(range) : "rolling";
+  const sport = { sports: [], period, from: "", to: "", days: range >= 1 ? Math.min(3660, range) : 30, measure: "total", bucket: view === "series" ? "day" : "week", view, mean: chart !== "line" && chart !== "timeSeries" && chart !== "sharedLine" && chart !== "sharedMasterLine" };
+  if (view === "calendar" && /^\d{4}$/.test(String(config.year || ""))) sport.year = String(config.year);
+  return { ...widget, type: "sportChart", sport: { ...sport, ...(widget.sport && typeof widget.sport === "object" ? widget.sport : {}) } };
+}
 function migrateLegacyMiniGanttData(value) {
   if (Array.isArray(value)) return value.filter((v) => !isRemovedEcheancesWidget(v)).map(migrateLegacyMiniGanttData);
   if (!value || typeof value !== "object") return value;
   if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
   if (value.type === LEGACY_BLOCKERS_TYPE) return migrateLegacyBlockersWidget(value);
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
+  if (value.type === LEGACY_SPORT_OS360_TYPE) return migrateLegacySportOs360Widget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
   return next;
@@ -3702,7 +3723,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportOs360Chart"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3781,8 +3802,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "sportChart" && (
                   <WidgetSportChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
-                {w.type === "sportOs360Chart" && (
-                  <WidgetSportOs360Chart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                {w.type === LEGACY_SPORT_OS360_TYPE && (
+                  <WidgetSportChart widget={migrateLegacySportOs360Widget(w)} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacySportOs360Widget(w), ...patch })} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
                   <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -17122,8 +17143,7 @@ const WIDGET_TYPE_META = [
   { key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Suivi" },
   // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
-  { key: "sportChart", label: "Sport par activité (barres empilées)", icon: BarChart3, group: "Suivi" },
-  { key: "sportOs360Chart", label: "Graphique sport (OS360)", icon: Activity, group: "Suivi" },
+  { key: "sportChart", label: "Graphique sport", icon: BarChart3, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -18576,21 +18596,19 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         </>
       )}
 
-      {type === "sportOs360Chart" && (
-        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-          Les widgets Santé et Sport d’OS360 (évolution, calendriers sportifs, répartitions, tableaux, analyses…), rendus par
-          le moteur d’OS360 lui-même sur le journal « Activités Strava ». Nexora ne lui envoie que le sport : les métriques
-          Santé (poids, sommeil…) restent vides, seules les séries « Strava » ont des valeurs. Le graphique se choisit dans
-          l’en-tête ; « Options » y ouvre tous ses réglages OS360.
-        </p>
-      )}
-
       {type === "sportChart" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-            Une barre par jour, semaine (lundi à dimanche) ou mois, une couleur par sport, sur le journal « Activités Strava ».
-            Mesure, agrégation, sports et période se règlent aussi dans l’en-tête du widget.
+            Le journal « Activités Strava », une couleur par sport : barres empilées, série temporelle avec moyenne
+            périodique, cumul empilé, répartition (1 carré = 1 heure) ou calendrier annuel. Semaines du lundi au dimanche.
+            Tous les réglages sont aussi dans l’en-tête du widget.
           </p>
+          <div className="lp-field">
+            <label>Visualisation</label>
+            <select value={sportChartConfig.view} onChange={(e) => setSportChartConfig((c) => ({ ...c, view: e.target.value }))}>
+              {SPORT_VIEWS.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+            </select>
+          </div>
           <div className="lp-field">
             <label>Mesure</label>
             <select value={sportChartConfig.measure} onChange={(e) => setSportChartConfig((c) => ({ ...c, measure: e.target.value }))}>
@@ -38023,10 +38041,6 @@ function BudgetCategoriesSettings({ pushToast }) {
 // === NEXORA:OS360-WIDGET:START ===
 const OS360_WIDGET_DEFAULT_TYPE = "budget.chart_donut";
 const OS360_MOTEUR_URL = "/os360-moteur/index.html";
-// Graphique sport (#579) : par défaut, la variante « Sport par semaine »
-// (health.sportWeekly) du groupe « Évolution des métriques » d'OS360, que le
-// moteur applique comme son sélecteur de visualisation (osChangeConfig).
-const OS360_SPORT_DEFAULT = { type: "health.timeSeries", config: {}, variant: "health.sportWeekly" };
 
 // Catalogue reçu du moteur -> groupes triés pour le sélecteur d'en-tête.
 function os360CatalogueGroups(catalogue) {
@@ -38048,11 +38062,6 @@ function os360WidgetSpec(widget, fallback = { type: OS360_WIDGET_DEFAULT_TYPE, c
     return { type: fallback.type, title: spec.title || "", config: { ...fallback.config }, ...(fallback.variant ? { variant: fallback.variant } : {}) };
   }
   return { type: spec.type, title: spec.title || "", config: spec.config && typeof spec.config === "object" ? spec.config : {} };
-}
-
-// Activités envoyées au moteur : exactement les champs produits par `Jc`.
-function os360SportActivities(rows) {
-  return (rows || []).map((r) => ({ id: r.id, date: r.date, sport: r.sport, title: r.title, total: r.total, moving: r.moving, distance: r.distance, elevation: r.elevation, hr: r.hr, maxHr: r.maxHr, url: r.url }));
 }
 
 // Barre de période d'OS360 (`osPeriodBar`) : même écriture dans la
@@ -38136,23 +38145,15 @@ const OS360_WIDGET_CSS = `
 function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
   const { rows, error, reload } = useOs360Data();
   const message = useMemo(() => (rows ? { type: "nx-data", rows } : null), [rows]);
-  return <Os360EngineWidget widget={widget} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} domain="budget"
+  return <Os360EngineWidget widget={widget} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget}
     message={message} error={error} reload={reload} loading="Chargement des données Budget…" reloadTitle="Relire les données Budget" />;
 }
 
-// Graphique sport (#579) : widgets Santé/Sport d'OS360, journal sportif.
-function WidgetSportOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
-  const { rows, error, reload } = useSportData();
-  const message = useMemo(() => (rows ? { type: "nx-sport", activities: os360SportActivities(rows) } : null), [rows]);
-  return <Os360EngineWidget widget={widget} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} domain="health"
-    message={message} error={error} reload={reload} loading="Chargement des activités sport…" reloadTitle="Relire le journal sportif" />;
-}
-
 // Cœur commun : iframe du moteur, catalogue du domaine, période, Options.
-function Os360EngineWidget({ widget, externalToolbarSlot, onUpdateWidget, domain, message: dataMessage, error, reload, loading, reloadTitle }) {
+function Os360EngineWidget({ widget, externalToolbarSlot, onUpdateWidget, message: dataMessage, error, reload, loading, reloadTitle }) {
   const frameRef = useRef(null);
   const [catalogue, setCatalogue] = useState(null);
-  const spec = os360WidgetSpec(widget, domain === "health" ? OS360_SPORT_DEFAULT : undefined);
+  const spec = os360WidgetSpec(widget);
   const specKey = JSON.stringify(spec);
   const lastSent = useRef("");
   const send = (message) => frameRef.current?.contentWindow?.postMessage(message, "*");
@@ -38162,13 +38163,13 @@ function Os360EngineWidget({ widget, externalToolbarSlot, onUpdateWidget, domain
       const data = os360MessageFrom(event, frameRef.current?.contentWindow);
       if (!data) return;
       if (data.type === "nx-ready") {
-        setCatalogue((domain === "health" ? data.catalogueSante : data.catalogue) || []);
+        setCatalogue(data.catalogue || []);
         lastSent.current = "";
       } else if (data.type === "nx-widget-change" && data.widget && onUpdateWidget) {
         // Réglage modifié dans OS360 (période, Options…) : enregistré dans le widget Nexora.
         const next = { type: data.widget.type, title: data.widget.title || "", config: data.widget.config || {} };
         const key = JSON.stringify(next);
-        if (key !== JSON.stringify(os360WidgetSpec(widget, domain === "health" ? OS360_SPORT_DEFAULT : undefined))) { lastSent.current = key; onUpdateWidget({ os360: next }); }
+        if (key !== JSON.stringify(os360WidgetSpec(widget))) { lastSent.current = key; onUpdateWidget({ os360: next }); }
       }
     };
     window.addEventListener("message", onMessage);
@@ -38425,6 +38426,9 @@ function sportChartSpec(widget) {
     period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "365",
     measure: SPORT_MEASURES.some((m) => m.value === s.measure) ? s.measure : "total",
     bucket: SPORT_BUCKETS.some((b) => b.value === s.bucket) ? s.bucket : "week",
+    view: SPORT_VIEWS.some((v) => v.value === s.view) ? s.view : "stack",
+    mean: s.mean !== false,
+    year: /^\d{4}$/.test(String(s.year || "")) ? String(s.year) : "",
   };
 }
 
@@ -38506,13 +38510,9 @@ function sportStackSeries(rows, spec, today, order = []) {
       keys.push(k);
     }
   }
-  const rank = new Map(order.map((name, i) => [name, i]));
   const sports = [...totals.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"))
-    .map(([name, total]) => {
-      const i = rank.has(name) ? rank.get(name) : order.length + [...totals.keys()].indexOf(name);
-      return { name, total, color: SPORT_PALETTE[i % SPORT_PALETTE.length] };
-    });
+    .map(([name, total]) => ({ name, total, color: sportColor(name, order, [...totals.keys()]) }));
   const buckets = keys.map((key) => {
     const m = sums.get(key) || new Map();
     const values = Object.fromEntries(sports.map((s) => [s.name, m.get(s.name) || 0]));
@@ -38537,6 +38537,145 @@ function sportFormatValue(value, unit) {
   const digits = unit === "séances" || unit === "m" || unit === "bpm" ? 0 : value < 10 ? 2 : 1;
   const text = value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
   return unit === "séances" ? `${text} séance${value > 1 ? "s" : ""}` : `${text} ${unit}`;
+}
+// Couleur d'un sport : son rang dans `order` (tout l'historique), sinon après
+// les sports connus, dans l'ordre où `others` le cite.
+function sportColor(name, order, others = []) {
+  const i = order.indexOf(name);
+  return SPORT_PALETTE[(i !== -1 ? i : order.length + Math.max(0, others.indexOf(name))) % SPORT_PALETTE.length];
+}
+
+// --- Graphiques sport natifs (#590) ------------------------------------------
+// Les visualisations d'OS360 retenues (#589), sans son moteur. Une vue par
+// réglage du même widget, plutôt qu'un widget par graphique.
+const SPORT_VIEWS = [
+  { value: "stack", label: "Barres empilées" },
+  { value: "series", label: "Série temporelle" },
+  { value: "cumul", label: "Cumul empilé" },
+  { value: "waffle", label: "Répartition (1 carré = 1 h)" },
+  { value: "calendar", label: "Calendrier annuel" },
+];
+// Moyenne périodique d'une série : la semaine pour des jours, le mois pour
+// des semaines (celui de leur jeudi, règle ISO), l'année pour des mois.
+const SPORT_MEAN_LABELS = { day: "semaine", week: "mois", month: "année" };
+function sportMeanKey(key, bucket) {
+  if (bucket === "day") return sportBucketKey(key, "week");
+  if (bucket === "week") {
+    const d = new Date(key + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 3);
+    return d.toISOString().slice(0, 7);
+  }
+  return key.slice(0, 4);
+}
+// Série temporelle : total de la mesure par jour, semaine ou mois, sports
+// choisis confondus, et moyenne de la semaine, du mois ou de l'année. Seules
+// les périodes déjà commencées comptent : les jours à venir, vides, ne sont
+// ni tracés ni comptés dans la moyenne (comme OS360, qui s'arrête au jour).
+function sportTimeSeries(rows, spec, today, order = []) {
+  const stack = sportStackSeries(rows, spec, today, order);
+  const current = sportBucketKey(today, spec.bucket);
+  const groups = new Map();
+  for (const b of stack.buckets) {
+    if (b.key > current) continue;
+    const key = sportMeanKey(b.key, spec.bucket);
+    const g = groups.get(key) || { sum: 0, n: 0 };
+    g.sum += b.total;
+    g.n += 1;
+    groups.set(key, g);
+  }
+  const points = stack.buckets.filter((b) => b.key <= current).map((b) => {
+    const g = groups.get(sportMeanKey(b.key, spec.bucket));
+    return { key: b.key, label: b.label, value: b.total, mean: g.sum / g.n };
+  });
+  return { ...stack, points, meanLabel: SPORT_MEAN_LABELS[spec.bucket] };
+}
+// Cumul empilé : pour chaque sport, la somme depuis le début de la période,
+// jusqu'à aujourd'hui.
+function sportCumulSeries(rows, spec, today, order = []) {
+  const stack = sportStackSeries(rows, spec, today, order);
+  const current = sportBucketKey(today, spec.bucket);
+  const run = Object.fromEntries(stack.sports.map((s) => [s.name, 0]));
+  const buckets = stack.buckets.filter((b) => b.key <= current).map((b) => {
+    for (const s of stack.sports) run[s.name] += b.values[s.name];
+    const values = { ...run };
+    return { key: b.key, label: b.label, values, total: stack.sports.reduce((t, s) => t + values[s.name], 0) };
+  });
+  return { ...stack, buckets };
+}
+// Répartition, comme `osSportWaffle` d'OS360 mais pour tous les sports :
+// heures de durée totale par sport, 1 carré = 1 heure, le dernier carré
+// rempli en proportion. Activités sans durée comptées dans `missing`.
+const SPORT_WAFFLE_MAX = 2000;
+function sportWaffle(rows, spec, today, order = []) {
+  const hours = new Map();
+  let missing = 0;
+  for (const row of sportFilter(rows, spec, today)) {
+    const v = sportMeasureValue(row, "total");
+    if (v === null) { missing++; continue; }
+    hours.set(row.sport, (hours.get(row.sport) || 0) + v);
+  }
+  const sports = [...hours.entries()]
+    .filter(([, h]) => h > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"))
+    .map(([name, h]) => ({ name, hours: h, cells: Math.ceil(h), last: h - Math.ceil(h) + 1, color: sportColor(name, order, [...hours.keys()]) }));
+  const total = sports.reduce((t, s) => t + s.hours, 0);
+  return { sports, total, missing, tooMany: sports.some((s) => s.cells > SPORT_WAFFLE_MAX) };
+}
+// Années proposées au calendrier : celles du journal, et l'année en cours.
+function sportYears(rows, today) {
+  const years = new Set([today.slice(0, 4)]);
+  for (const row of rows || []) if (/^\d{4}/.test(row.date || "")) years.add(row.date.slice(0, 4));
+  return [...years].sort().reverse();
+}
+// Calendrier annuel : une case par jour, une colonne par semaine (lundi en
+// haut), comme le « Calendrier sportif annuel » d'OS360. Couleur : le sport
+// dominant du jour (le plus de durée totale, puis de séances) ; teinte plus
+// soutenue avec la durée du jour (pleine à 2 h).
+function sportCalendar(rows, spec, year, order = []) {
+  const sports = new Set(spec.sports || []);
+  const from = `${year}-01-01`;
+  const to = `${year}-12-31`;
+  const byDay = new Map();
+  for (const row of rows || []) {
+    if (row.date < from || row.date > to || (sports.size && !sports.has(row.sport))) continue;
+    if (!byDay.has(row.date)) byDay.set(row.date, []);
+    byDay.get(row.date).push(row);
+  }
+  const others = [...new Set([...byDay.values()].flat().map((a) => a.sport))];
+  const first = new Date(from + "T12:00:00Z");
+  const offset = (first.getUTCDay() + 6) % 7;
+  const legend = new Map();
+  const days = [];
+  for (let d = new Date(first), i = 0; d.getUTCFullYear() === Number(year); d.setUTCDate(d.getUTCDate() + 1), i++) {
+    const date = d.toISOString().slice(0, 10);
+    const activities = byDay.get(date) || [];
+    const per = new Map();
+    for (const a of activities) {
+      const p = per.get(a.sport) || { minutes: 0, count: 0 };
+      p.minutes += typeof a.total === "number" && Number.isFinite(a.total) ? a.total : 0;
+      p.count += 1;
+      per.set(a.sport, p);
+    }
+    const ranked = [...per.entries()].sort((a, b) => b[1].minutes - a[1].minutes || b[1].count - a[1].count || a[0].localeCompare(b[0], "fr"));
+    const main = ranked.length ? ranked[0][0] : "";
+    if (main) legend.set(main, (legend.get(main) || 0) + 1);
+    const minutes = [...per.values()].reduce((t, p) => t + p.minutes, 0);
+    days.push({ date, week: Math.floor((i + offset) / 7), dow: (i + offset) % 7, activities, minutes, main, color: main ? sportColor(main, order, others) : "", shade: sportCalendarShade(minutes, activities.length) });
+  }
+  const months = [];
+  for (const day of days) if (day.date.endsWith("-01")) months.push({ week: day.week, label: SPORT_MONTHS[+day.date.slice(5, 7) - 1] });
+  return {
+    year: String(year), days, months, weeks: days.length ? days[days.length - 1].week + 1 : 0,
+    activeDays: days.filter((d) => d.activities.length).length,
+    count: days.reduce((t, d) => t + d.activities.length, 0),
+    sports: [...legend.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr")).map(([name, n]) => ({ name, days: n, color: sportColor(name, order, others) })),
+  };
+}
+// Opacité d'une case : 0 sans séance ; 0,35 à 1 selon la durée (pleine à
+// 120 min) ; 0,35 pour une séance sans durée renseignée.
+function sportCalendarShade(minutes, count) {
+  if (!count) return 0;
+  return Math.round((0.35 + 0.65 * Math.min(1, Math.max(0, minutes) / 120)) * 100) / 100;
 }
 
 // --- Bloc de carte « Total sport » (#580) ------------------------------------
@@ -38639,7 +38778,7 @@ function useSportData() {
 }
 
 // Filtres d'en-tête communs aux widgets sport : sports et période.
-function SportFilterTools({ spec, rows, onChange }) {
+function SportFilterTools({ spec, rows, onChange, hidePeriod = false }) {
   const [open, setOpen] = useState(false);
   const names = useMemo(() => sportNames(rows), [rows]);
   const toggle = (name) => onChange({ sports: spec.sports.includes(name) ? spec.sports.filter((s) => s !== name) : [...spec.sports, name] });
@@ -38662,14 +38801,16 @@ function SportFilterTools({ spec, rows, onChange }) {
           </span>
         )}
       </span>
-      <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période" title="Période">
-        {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-      </select>
-      {spec.period === "rolling" && (
+      {!hidePeriod && (
+        <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période" title="Période">
+          {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+      )}
+      {!hidePeriod && spec.period === "rolling" && (
         <input type="number" min="1" max="3660" step="1" aria-label="Nombre de jours" title="Nombre de jours" style={{ width: 64 }}
           value={spec.days} onChange={(e) => onChange({ days: sportDays(e.target.value) })} />
       )}
-      {spec.period === "custom" && (
+      {!hidePeriod && spec.period === "custom" && (
         <>
           <input type="date" aria-label="Du" title="Du" value={spec.from} onChange={(e) => onChange({ from: e.target.value })} />
           <input type="date" aria-label="Au" title="Au" value={spec.to} onChange={(e) => onChange({ to: e.target.value })} />
@@ -38708,7 +38849,7 @@ function WidgetSportActivities({ widget, externalToolbarSlot, onUpdateWidget }) 
   const update = (patch) => onUpdateWidget && onUpdateWidget({ sport: { ...spec, ...patch } });
   const columns = useMemo(() => sportAllColumns(rows), [rows]);
   const visible = columns.filter((c) => spec.columns.includes(c.key));
-  const filtered = useMemo(() => (rows ? sportFilter(rows, spec, financeSankeyToday()) : []), [rows, spec.sports.join("\n"), spec.period, spec.from, spec.to]);
+  const filtered = useMemo(() => (rows ? sportFilter(rows, spec, financeSankeyToday()) : []), [rows, spec.sports.join("\n"), spec.period, spec.from, spec.to, spec.days]);
   const shown = useMemo(() => sportSort(sportSearch(filtered, query), sort.key, sort.asc), [filtered, query, sort]);
   const pages = Math.max(1, Math.ceil(shown.length / SPORT_PAGE_SIZE));
   const current = Math.min(page, pages - 1);
@@ -38804,13 +38945,21 @@ const SPORT_CHART_CSS = `
 .nx-sport-tip{display:flex;flex-direction:column;gap:2px;min-width:160px}
 .nx-sport-tip div{display:flex;justify-content:space-between;gap:12px}
 .nx-sport-tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+.nx-sport-chart-legend i.nx-sport-dash{width:14px;height:0;border-radius:0;border-top:2px dashed #d9822b}
+.nx-sport-waffle{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px 18px;padding:8px 10px;align-content:start}
+.nx-sport-waffle-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px}
+.nx-sport-waffle-head span:first-child{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.nx-sport-waffle-head i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.nx-sport-waffle-head span:last-child{color:#60717c;white-space:nowrap;font-variant-numeric:tabular-nums}
+.nx-sport-waffle-grid{display:flex;flex-wrap:wrap;gap:2px}
+.nx-sport-waffle-grid span{width:10px;height:10px;border-radius:2px}
+.nx-sport-cal{padding:6px 10px 0}
+.nx-sport-cal-empty{fill:#eef2f6}
 `;
 
-// Diagramme en barres empilées par sport (#579) : SVG, une barre par période.
-function SportStackedChart({ series }) {
-  const boxRef = useRef(null);
+// Taille disponible pour un tracé sport (suit le redimensionnement du widget).
+function useSportPlotSize(boxRef) {
   const [size, setSize] = useState({ w: 600, h: 260 });
-  const [hover, setHover] = useState(null);
   useEffect(() => {
     const node = boxRef.current;
     if (!node || typeof ResizeObserver === "undefined") return undefined;
@@ -38820,6 +38969,14 @@ function SportStackedChart({ series }) {
     ro.observe(node);
     return () => ro.disconnect();
   }, []);
+  return size;
+}
+
+// Diagramme en barres empilées par sport (#579) : SVG, une barre par période.
+function SportStackedChart({ series }) {
+  const boxRef = useRef(null);
+  const size = useSportPlotSize(boxRef);
+  const [hover, setHover] = useState(null);
   const { buckets, sports, unit } = series;
   const n = buckets.length;
   const M = { left: 48, right: 10, top: 10, bottom: 30 };
@@ -38878,29 +39035,263 @@ function SportStackedChart({ series }) {
   );
 }
 
+// Axe vertical commun aux graphiques sport à barres, courbes et aires.
+function SportYAxis({ ticks, y, M, plotW, unit }) {
+  return (
+    <>
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={M.left} x2={M.left + plotW} y1={y(t)} y2={y(t)} stroke="#e6ebf0" />
+          <text x={M.left - 6} y={y(t) + 3} textAnchor="end">{t.toLocaleString("fr-FR")}</text>
+        </g>
+      ))}
+      <text x={4} y={M.top + 2} dominantBaseline="hanging" style={{ fontWeight: 600 }}>{unit}</text>
+    </>
+  );
+}
+
+// Série temporelle (#590) : total par période (aire), moyenne périodique en
+// pointillés, dernier point mis en évidence.
+function SportSeriesChart({ series, showMean }) {
+  const boxRef = useRef(null);
+  const size = useSportPlotSize(boxRef);
+  const [hover, setHover] = useState(null);
+  const { points, unit } = series;
+  const n = points.length;
+  const M = { left: 48, right: 12, top: 10, bottom: 30 };
+  const plotW = Math.max(size.w - M.left - M.right, n * 3);
+  const plotH = Math.max(40, size.h - M.top - M.bottom - 4);
+  const ticks = sportNiceTicks(Math.max(0, ...points.map((p) => p.value)));
+  const top = ticks[ticks.length - 1] || 1;
+  const step = plotW / Math.max(1, n);
+  const x = (i) => M.left + i * step + step / 2;
+  const y = (v) => M.top + plotH - (v / top) * plotH;
+  const line = (get) => points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(get(p)).toFixed(1)}`).join("");
+  const base = M.top + plotH;
+  const every = Math.max(1, Math.ceil(70 / step));
+  const last = points[n - 1];
+  return (
+    <div className="nx-sport-chart-plot" ref={boxRef}>
+      <svg width={plotW + M.left + M.right} height={plotH + M.top + M.bottom} role="img" aria-label="Série temporelle sport">
+        <SportYAxis ticks={ticks} y={y} M={M} plotW={plotW} unit={unit} />
+        {n > 0 && <path d={`${line((p) => p.value)}L${x(n - 1).toFixed(1)},${base}L${x(0).toFixed(1)},${base}Z`} fill="rgba(36,86,154,.12)" />}
+        {n > 0 && <path d={line((p) => p.value)} fill="none" stroke="#24569a" strokeWidth="1.6" strokeLinejoin="round" />}
+        {showMean && n > 0 && <path d={line((p) => p.mean)} fill="none" stroke="#d9822b" strokeWidth="2" strokeDasharray="5 4" />}
+        {last && <circle cx={x(n - 1)} cy={y(last.value)} r="3.5" fill="#24569a" stroke="#fff" strokeWidth="1.5" />}
+        {points.map((p, i) => (
+          <g key={p.key}
+            onMouseEnter={(e) => setHover({ p, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setHover({ p, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setHover(null)}>
+            <rect x={M.left + i * step} y={M.top} width={step} height={plotH} fill={hover?.p.key === p.key ? "rgba(36,86,154,.06)" : "transparent"} />
+            {i % every === 0 && <text x={x(i)} y={base + 14} textAnchor="middle">{p.label}</text>}
+          </g>
+        ))}
+        <line x1={M.left} x2={M.left + plotW} y1={base} y2={base} stroke="#b8c4cf" />
+      </svg>
+      {hover && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-sport-tip">
+            <strong>{hover.p.label}</strong>
+            <div><span>Total</span><strong>{sportFormatValue(hover.p.value, unit)}</strong></div>
+            {showMean && <div><span>Moyenne de la {series.meanLabel}</span><span>{sportFormatValue(hover.p.mean, unit)}</span></div>}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+    </div>
+  );
+}
+
+// Cumul empilé (#590) : une aire par sport, empilées dans l'ordre de la légende.
+function SportCumulChart({ series }) {
+  const boxRef = useRef(null);
+  const size = useSportPlotSize(boxRef);
+  const [hover, setHover] = useState(null);
+  const { buckets, sports, unit } = series;
+  const n = buckets.length;
+  const M = { left: 48, right: 12, top: 10, bottom: 30 };
+  const plotW = Math.max(size.w - M.left - M.right, n * 3);
+  const plotH = Math.max(40, size.h - M.top - M.bottom - 4);
+  const ticks = sportNiceTicks(Math.max(0, ...buckets.map((b) => b.total)));
+  const top = ticks[ticks.length - 1] || 1;
+  const step = plotW / Math.max(1, n);
+  const x = (i) => M.left + i * step + step / 2;
+  const y = (v) => M.top + plotH - (v / top) * plotH;
+  const base = M.top + plotH;
+  const every = Math.max(1, Math.ceil(70 / step));
+  // Bornes basse et haute de chaque sport, barre par barre.
+  const lower = buckets.map(() => 0);
+  const areas = sports.map((s) => {
+    const low = lower.slice();
+    const high = buckets.map((b, i) => (lower[i] += b.values[s.name]));
+    const up = high.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const down = low.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).reverse().join("");
+    return { s, d: `${up}${down}Z` };
+  });
+  return (
+    <div className="nx-sport-chart-plot" ref={boxRef}>
+      <svg width={plotW + M.left + M.right} height={plotH + M.top + M.bottom} role="img" aria-label="Cumul empilé par sport">
+        <SportYAxis ticks={ticks} y={y} M={M} plotW={plotW} unit={unit} />
+        {n > 1 && areas.map(({ s, d }) => <path key={s.name} d={d} fill={s.color} fillOpacity="0.85" stroke={s.color} strokeWidth="0.5" />)}
+        {n === 1 && (() => {
+          let acc = 0;
+          const w = Math.min(48, step * 0.6);
+          return sports.map((s) => {
+            const v = buckets[0].values[s.name];
+            const y0 = y(acc), y1 = y(acc + v);
+            acc += v;
+            return v ? <rect key={s.name} x={x(0) - w / 2} y={y1} width={w} height={Math.max(0.5, y0 - y1)} fill={s.color} /> : null;
+          });
+        })()}
+        {hover && <line x1={x(hover.i)} x2={x(hover.i)} y1={M.top} y2={base} stroke="#203246" strokeOpacity=".35" />}
+        {buckets.map((b, i) => (
+          <g key={b.key}
+            onMouseEnter={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setHover(null)}>
+            <rect x={M.left + i * step} y={M.top} width={step} height={plotH} fill="transparent" />
+            {i % every === 0 && <text x={x(i)} y={base + 14} textAnchor="middle">{b.label}</text>}
+          </g>
+        ))}
+        <line x1={M.left} x2={M.left + plotW} y1={base} y2={base} stroke="#b8c4cf" />
+      </svg>
+      {hover && buckets[hover.i] && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-sport-tip">
+            <strong>Cumul au {buckets[hover.i].label}</strong>
+            {sports.filter((s) => buckets[hover.i].values[s.name]).map((s) => (
+              <div key={s.name}><span><i style={{ background: s.color }} />{s.name}</span><span>{sportFormatValue(buckets[hover.i].values[s.name], unit)}</span></div>
+            ))}
+            <div><strong>Total</strong><strong>{sportFormatValue(buckets[hover.i].total, unit)}</strong></div>
+          </div>
+        </WidgetPointerTooltip>
+      )}
+    </div>
+  );
+}
+
+// Répartition (#590) : 1 carré = 1 heure, un bloc par sport.
+function SportWaffleView({ data }) {
+  return (
+    <div className="nx-sport-waffle">
+      {data.sports.map((s) => {
+        const shown = Math.min(s.cells, SPORT_WAFFLE_MAX);
+        const share = data.total ? Math.round((s.hours / data.total) * 100) : 0;
+        return (
+          <div key={s.name} className="nx-sport-waffle-sport">
+            <div className="nx-sport-waffle-head">
+              <span><i style={{ background: s.color }} /><strong>{s.name}</strong></span>
+              <span>{sportFormatValue(s.hours, "h")} · {share} %</span>
+            </div>
+            <div className="nx-sport-waffle-grid" role="img" aria-label={`${s.name} : ${sportFormatValue(s.hours, "h")}`}>
+              {Array.from({ length: shown }, (_, k) => (
+                <span key={k} style={{ background: k === s.cells - 1 && s.last < 1 ? `linear-gradient(to top, ${s.color} ${Math.round(s.last * 100)}%, #e8edf5 0)` : s.color }} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Calendrier annuel (#590) : une case par jour, semaines en colonnes.
+const SPORT_WEEKDAYS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."];
+function SportCalendarView({ data }) {
+  const boxRef = useRef(null);
+  const size = useSportPlotSize(boxRef);
+  const [hover, setHover] = useState(null);
+  const L = 30, T = 16, gap = 2;
+  const cell = Math.max(6, Math.min(18, Math.floor((size.w - L - 8) / Math.max(1, data.weeks)) - gap));
+  const pitch = cell + gap;
+  return (
+    <div className="nx-sport-chart-plot nx-sport-cal" ref={boxRef}>
+      <svg width={L + data.weeks * pitch} height={T + 7 * pitch} role="img" aria-label={`Calendrier sportif ${data.year}`}>
+        {data.months.map((m) => <text key={m.label} x={L + m.week * pitch} y={10}>{m.label}</text>)}
+        {[0, 2, 4].map((d) => <text key={d} x={0} y={T + d * pitch + cell - 1}>{SPORT_WEEKDAYS[d]}</text>)}
+        {data.days.map((d) => (
+          <rect key={d.date} x={L + d.week * pitch} y={T + d.dow * pitch} width={cell} height={cell} rx="2"
+            className={d.main ? "" : "nx-sport-cal-empty"} fill={d.main ? d.color : undefined} fillOpacity={d.main ? d.shade : undefined}
+            stroke={hover?.d.date === d.date ? "#203246" : "none"}
+            onMouseEnter={(e) => setHover({ d, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setHover({ d, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setHover(null)} />
+        ))}
+      </svg>
+      {hover && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-sport-tip">
+            <strong>{SPORT_WEEKDAYS[hover.d.dow]} {sportBucketLabel(hover.d.date, "day")}</strong>
+            {!hover.d.activities.length && <span>Aucune séance</span>}
+            {hover.d.activities.map((a) => (
+              <div key={a.id}><span>{a.sport}{a.title ? ` · ${a.title}` : ""}</span><span>{typeof a.total === "number" ? sportFormatValue(a.total / 60, "h") : "—"}</span></div>
+            ))}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+    </div>
+  );
+}
+
+// Graphique sport (#579, #590) : barres empilées, série temporelle, cumul
+// empilé, répartition et calendrier annuel, sur le journal sportif.
 function WidgetSportChart({ widget, externalToolbarSlot, onUpdateWidget }) {
   const { rows, error, reload } = useSportData();
   const spec = sportChartSpec(widget);
   const update = (patch) => onUpdateWidget && onUpdateWidget({ sport: { ...spec, ...patch } });
+  const today = financeSankeyToday();
   const order = useMemo(() => sportNames(rows).map((s) => s.name), [rows]);
-  const series = useMemo(() => (rows ? sportStackSeries(rows, spec, financeSankeyToday(), order) : null),
-    [rows, order, spec.sports.join("\n"), spec.period, spec.from, spec.to, spec.measure, spec.bucket]);
+  const years = useMemo(() => sportYears(rows, today), [rows, today]);
+  const year = spec.year || today.slice(0, 4);
+  const view = spec.view;
+  const timed = view === "stack" || view === "series" || view === "cumul";
+  const key = [view, spec.sports.join("\n"), spec.period, spec.from, spec.to, spec.days, spec.measure, spec.bucket, year].join("|");
+  const data = useMemo(() => {
+    if (!rows) return null;
+    if (view === "series") return sportTimeSeries(rows, spec, today, order);
+    if (view === "cumul") return sportCumulSeries(rows, spec, today, order);
+    if (view === "waffle") return sportWaffle(rows, spec, today, order);
+    if (view === "calendar") return sportCalendar(rows, spec, year, order);
+    return sportStackSeries(rows, spec, today, order);
+  }, [rows, order, today, key]);
+  const summary = !data ? ""
+    : view === "calendar" ? `${data.activeDays} jour${data.activeDays > 1 ? "s" : ""} actif${data.activeDays > 1 ? "s" : ""} · ${data.count} séance${data.count > 1 ? "s" : ""}`
+    : view === "waffle" ? sportFormatValue(data.total, "h")
+    : sportFormatValue(data.sports.reduce((t, s) => t + s.total, 0), data.unit);
   const tools = (
     <ViewToolbarPortal slot={externalToolbarSlot}>
       <style>{SPORT_CSS + SPORT_CHART_CSS}</style>
       <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
-        <select value={spec.measure} onChange={(e) => update({ measure: e.target.value })} aria-label="Mesure" title="Mesure" style={{ fontWeight: 600 }}>
-          {SPORT_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        <select value={view} onChange={(e) => update({ view: e.target.value })} aria-label="Visualisation" title="Visualisation" style={{ fontWeight: 600 }}>
+          {SPORT_VIEWS.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
         </select>
-        <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
-          {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-        </select>
-        <SportFilterTools spec={spec} rows={rows} onChange={update} />
+        {timed && (
+          <select value={spec.measure} onChange={(e) => update({ measure: e.target.value })} aria-label="Mesure" title="Mesure">
+            {SPORT_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        )}
+        {timed && (
+          <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
+            {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </select>
+        )}
+        {view === "series" && (
+          <button type="button" className={spec.mean ? "active" : ""} aria-pressed={spec.mean} onClick={() => update({ mean: !spec.mean })} title="Afficher la moyenne périodique">
+            Moyenne par {SPORT_MEAN_LABELS[spec.bucket]}
+          </button>
+        )}
+        <SportFilterTools spec={spec} rows={rows} onChange={update} hidePeriod={view === "calendar"} />
+        {view === "calendar" && (
+          <select value={year} onChange={(e) => update({ year: e.target.value })} aria-label="Année" title="Année">
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        )}
         <button type="button" onClick={reload} title="Relire le journal sportif">Actualiser</button>
-        {series && <span className="nx-sport-count">{sportFormatValue(series.sports.reduce((t, s) => t + s.total, 0), series.unit)}</span>}
+        {summary && <span className="nx-sport-count">{summary}</span>}
       </div>
     </ViewToolbarPortal>
   );
+  const empty = (text) => <div className="lp-empty" style={{ padding: 16 }}>{tools}{text}</div>;
   if (error) {
     return (
       <div className="lp-empty" style={{ padding: 16 }}>
@@ -38910,19 +39301,33 @@ function WidgetSportChart({ widget, externalToolbarSlot, onUpdateWidget }) {
       </div>
     );
   }
-  if (!series) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des activités sport…</div>;
-  if (series.tooMany) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Plus de {SPORT_MAX_BUCKETS} barres : choisis la semaine ou le mois, ou une période plus courte.</div>;
-  if (!series.sports.length) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucune activité pour ces filtres.</div>;
+  if (!data) return empty("Chargement des activités sport…");
+  if (data.tooMany && timed) return empty(`Plus de ${SPORT_MAX_BUCKETS} points : choisis la semaine ou le mois, ou une période plus courte.`);
+  if (view !== "calendar" && !data.sports.length) return empty("Aucune activité pour ces filtres.");
+  const missing = view !== "calendar" && data.missing > 0 && (
+    <div className="nx-sport-chart-note">{data.missing} activité{data.missing > 1 ? "s" : ""} sans {view === "waffle" ? "durée totale" : "valeur pour cette mesure"}, exclue{data.missing > 1 ? "s" : ""}.</div>
+  );
+  const legend = (items) => <div className="nx-sport-chart-legend">{items}</div>;
   return (
     <div className="nx-sport-chart">
       {tools}
-      <SportStackedChart series={series} />
-      <div className="nx-sport-chart-legend">
-        {series.sports.map((s) => (
-          <span key={s.name}><i style={{ background: s.color }} />{s.name} · {sportFormatValue(s.total, series.unit)}</span>
-        ))}
-      </div>
-      {series.missing > 0 && <div className="nx-sport-chart-note">{series.missing} activité{series.missing > 1 ? "s" : ""} sans valeur pour cette mesure, exclue{series.missing > 1 ? "s" : ""}.</div>}
+      {view === "stack" && <SportStackedChart series={data} />}
+      {view === "series" && <SportSeriesChart series={data} showMean={spec.mean} />}
+      {view === "cumul" && <SportCumulChart series={data} />}
+      {view === "waffle" && <SportWaffleView data={data} />}
+      {view === "calendar" && <SportCalendarView data={data} />}
+      {(view === "stack" || view === "cumul") && legend(data.sports.map((s) => (
+        <span key={s.name}><i style={{ background: s.color }} />{s.name} · {sportFormatValue(s.total, data.unit)}</span>
+      )))}
+      {view === "series" && legend(<>
+        <span><i style={{ background: "#24569a" }} />{SPORT_MEASURES.find((m) => m.value === spec.measure)?.label}{spec.sports.length ? ` · ${spec.sports.join(", ")}` : " · tous les sports"}</span>
+        {spec.mean && <span><i className="nx-sport-dash" />Moyenne par {data.meanLabel}</span>}
+      </>)}
+      {view === "calendar" && legend(data.sports.length
+        ? data.sports.map((s) => <span key={s.name}><i style={{ background: s.color }} />{s.name} · {s.days} j</span>)
+        : <span>Aucune activité en {data.year}.</span>)}
+      {view === "waffle" && data.tooMany && <div className="nx-sport-chart-note">Plus de {SPORT_WAFFLE_MAX} heures pour un sport : seuls les {SPORT_WAFFLE_MAX} premiers carrés sont dessinés. Choisis une période plus courte.</div>}
+      {missing}
     </div>
   );
 }
