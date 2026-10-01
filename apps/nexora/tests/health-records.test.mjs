@@ -58,6 +58,7 @@ function slice(name) {
 }
 const H = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n${slice("HEALTH")}\n;return {
   HEALTH_METRICS, HEALTH_GROUPS, healthMetric, healthChartSpec, healthRows, healthMean, healthSeries, healthFormat, healthTicks,
+  healthSportSpec, healthPearson, healthSportSeries, healthPearsonLabel, HEALTH_SPORT_BUCKETS,
 };\n})`)();
 
 const records = [
@@ -130,4 +131,56 @@ test("route serveur : lecture seule, session du propriétaire, URL jamais renvoy
   assert.match(source, /json\(\{ ok: true, data: \{ records, readAt: new Date\(\)\.toISOString\(\) \} \}\)/);
   assert.doesNotMatch(source, /detail: [^}]*\burl\b/);
   assert.doesNotMatch(source + await read("../netlify/functions/_shared/health.ts"), /docs\.google\.com|output=csv/, "aucune URL de source dans le code");
+});
+
+// --- Croisement santé × sport (#595) ---
+
+const acts = [
+  { id: "1", date: "2026-09-21", sport: "CrossFit", total: 60, distance: null },
+  { id: "2", date: "2026-09-22", sport: "Course à pied", total: 30, distance: 6 },
+  { id: "3", date: "2026-09-22", sport: "CrossFit", total: 60, distance: null },
+  { id: "4", date: "2026-09-29", sport: "Course à pied", total: 90, distance: 15 },
+  { id: "5", date: "2026-10-02", sport: "Trail", total: 300, distance: 30 },
+];
+
+test("croisement : réglages, coefficient de Pearson et sa lecture", () => {
+  assert.deepEqual(H.healthSportSpec(undefined), { metric: "recovery", measure: "total", sports: [], period: "90", from: "", to: "", days: 30, bucket: "day", lag: 0 });
+  assert.equal(H.healthSportSpec({ cross: { bucket: "month", lag: 2 } }).bucket, "day", "pas de mois : trop peu de paires");
+  assert.equal(H.healthSportSpec({ cross: { lag: 2 } }).lag, 0);
+  assert.deepEqual(H.HEALTH_SPORT_BUCKETS.map((b) => b.value), ["day", "week"]);
+  assert.equal(H.healthPearson([[1, 2], [2, 4], [3, 6]]), 1);
+  assert.equal(H.healthPearson([[1, 3], [2, 2], [3, 1]]), -1);
+  assert.equal(H.healthPearson([[1, 2], [2, 4]]), null, "moins de 3 paires");
+  assert.equal(H.healthPearson([[1, 2], [1, 3], [1, 4]]), null, "sans variation");
+  assert.equal(H.healthPearson([[1, null], [2, 4], [3, 6], [4, 8]]), 1, "paires incomplètes ignorées");
+  assert.equal(H.healthPearsonLabel(null), "pas assez de jours renseignés");
+  assert.equal(H.healthPearsonLabel(0.05), "aucun lien");
+  assert.equal(H.healthPearsonLabel(-0.6), "lien fort, sens opposé");
+  assert.equal(H.healthPearsonLabel(0.35), "lien modéré, même sens");
+});
+
+test("croisement : paires par jour (0 sans séance), santé du lendemain, semaines, rien après aujourd'hui", () => {
+  const spec = (patch) => ({ ...H.healthSportSpec(undefined), period: "custom", from: "2026-09-21", to: "2026-09-30", ...patch });
+  const day = H.healthSportSeries(records, acts, spec(), "2026-09-30");
+  assert.equal(day.points.length, 10);
+  assert.deepEqual(day.points.slice(0, 4).map((p) => [p.key, p.a, p.b]), [["2026-09-21", 60, 1], ["2026-09-22", 40, 1.5], ["2026-09-23", null, 0], ["2026-09-24", null, 0]]);
+  assert.equal(day.unit, "h");
+  assert.equal(day.pairs, 3, "jours avec une mesure santé");
+  const lag = H.healthSportSeries(records, acts, spec({ lag: 1 }), "2026-09-30");
+  assert.deepEqual(lag.points.slice(0, 2).map((p) => [p.key, p.a, p.b]), [["2026-09-21", 40, 1], ["2026-09-22", null, 1.5]], "séance du 21, récupération du 22");
+  assert.equal(lag.points.at(-1).key, "2026-09-29", "la santé de demain n'existe pas encore");
+  assert.equal(lag.lag, 1);
+  const week = H.healthSportSeries(records, acts, spec({ bucket: "week", lag: 1, measure: "distance", sports: ["Course à pied"] }), "2026-10-04");
+  assert.equal(week.lag, 0, "décalage : jours seulement");
+  assert.deepEqual(week.points.map((p) => [p.key, p.a, p.b]), [["2026-09-21", 50, 6], ["2026-09-28", 90, 15]]);
+  assert.equal(week.unit, "km");
+});
+
+test("croisement : rattaché au catalogue, au rendu, à l'en-tête et à la fiche ; lit les deux sources", () => {
+  assert.match(html, /key: "healthSportChart", label: "Santé × sport"/);
+  assert.match(html, /w\.type === "healthSportChart" && \(\s*<WidgetHealthSportChart widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "healthSportChart"/);
+  assert.match(html, /if \(type === "healthSportChart"\) data\.cross = \{ \.\.\.crossConfig \};/);
+  assert.match(html, /function WidgetHealthSportChart\([^)]*\) \{\n  const health = useHealthData\(\);\n  const sport = useSportData\(\);/);
+  assert.match(html, /pas une cause/);
 });
