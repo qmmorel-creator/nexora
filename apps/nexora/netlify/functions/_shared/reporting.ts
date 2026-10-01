@@ -1,4 +1,7 @@
 import { readAuditEvents, reportPeriod } from "./nexora.js";
+import { requireFinanceConfig } from "./finance.js";
+import { readBudgetTables } from "./finance-owner.js";
+import { buildBudgetReport } from "../../../lib/finance-budget.mjs";
 
 function uniqueMessages(events: any[], eventType: string) {
   return new Set(events.filter(event => event.eventType === eventType && event.sourceMessageId).map(event => event.sourceMessageId)).size;
@@ -7,6 +10,20 @@ function uniqueMessages(events: any[], eventType: string) {
 function count(events: any[], ...types: string[]) {
   const allowed = new Set(types);
   return events.filter(event => allowed.has(event.eventType)).length;
+}
+
+// Budget du rapport du matin (#586) : reste à dépenser, catégories proches ou
+// au-dessus du budget, opérations à catégoriser. Une erreur Budget ne bloque
+// jamais le rapport : elle y est signalée.
+async function budgetSection(at: Date) {
+  const finance = requireFinanceConfig();
+  if (finance.missing.length || !finance.secretKey) return { ok: false, error: "finance_configuration_missing" };
+  try {
+    const raw = await readBudgetTables({ url: finance.url, secretKey: finance.secretKey });
+    return { ok: true, ...buildBudgetReport(raw, at) };
+  } catch (error) {
+    return { ok: false, error: "finance_read_failed", detail: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function reportRows(events: any[]) {
@@ -53,6 +70,7 @@ export async function buildAssistantReport(uid: string, kind: "morning" | "eveni
       errors: count(events, "processing_error")
     },
     rowCount: rows.length,
-    rows
+    rows,
+    ...(kind === "morning" ? { budget: await budgetSection(at) } : {})
   };
 }

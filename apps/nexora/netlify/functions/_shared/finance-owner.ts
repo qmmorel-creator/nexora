@@ -38,3 +38,20 @@ export async function readAllRows(config: FinanceReadConfig, spec: { table: stri
   }
   throw new Error("finance_volume_limit");
 }
+
+// Tables lues par les widgets Budget natifs et le rapport du matin (#586) :
+// seules les colonnes utilisées par lib/finance-budget.mjs.
+export const BUDGET_TABLES = {
+  transactions: { table: "finance_transactions_current", select: "transaction_id,effective_date,bank_date,transaction_type,account_id,signed_amount,merchant,category,subcategory,description,category_confidence,cancels_transaction_id,raw", order: "transaction_id" },
+  accounts: { table: "finance_accounts_current", select: "account_id,name,bank,account_type,opening_balance,color,active", order: "account_id" },
+  categories: { table: "finance_categories_current", select: "category,color,active", order: "category" },
+  subcategories: { table: "finance_subcategories_current", select: "category,subcategory,active", order: "category,subcategory" },
+  banks: { table: "finance_banks", select: "bank_id,name,color", order: "bank_id" },
+  accountTypes: { table: "finance_account_types", select: "id,name,color", order: "id" },
+  balances: { table: "finance_account_balances", select: "account_id,as_of_date,balance", order: "account_id,as_of_date" },
+} as const;
+
+export async function readBudgetTables(config: FinanceReadConfig) {
+  const entries = await Promise.all(Object.entries(BUDGET_TABLES).map(async ([key, spec]) => [key, await readAllRows(config, spec)] as const));
+  return Object.fromEntries(entries);
+}

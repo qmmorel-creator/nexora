@@ -1,0 +1,16 @@
+export const CATEGORIZE_CONFIDENCE: number;
+export const CATEGORIZE_RECENT_DAYS: number;
+export function parisToday(now?: Date): string;
+export function monthBounds(month: string): { from: string; to: string };
+export function shiftMonth(month: string, delta: number): string;
+export function normalizeBudget(raw: Record<string, unknown>): any;
+export function budgetMonthsOf(transaction: any): number[];
+export function budgetTracking(data: any, period: { from: string; to: string }): any[];
+export function accountBalances(data: any, date: string, now?: Date): any[];
+export function wealthAt(data: any, date: string, now?: Date): number;
+export function toCategorize(data: any, today: string): any[];
+export function expensesOf(list: any[]): any[];
+export function incomeOf(list: any[]): any[];
+export function sumAbs(list: any[]): number;
+export function buildBudgetSummary(raw: Record<string, unknown>, month: string | null, now?: Date): any;
+export function buildBudgetReport(raw: Record<string, unknown>, now?: Date): any;

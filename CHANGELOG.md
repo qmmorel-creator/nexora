@@ -23,6 +23,8 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Tableau de bord : widget « Graphique sport (OS360) » — les widgets Santé et Sport d'OS360 rendus par son moteur sur le journal sportif (message `nx-sport`), par défaut « Temps de sport par semaine » ; données d'exemple du bundle OS360 jamais affichées (Ref #579).
 - Cartes personnalisables : bloc « Total sport » — sports, période (dont « N derniers jours » et dates libres), mesure (séances, durées, distance, dénivelé, FC) et agrégation (somme, moyenne, maximum, minimum, nombre) ; moyenne de FC pondérée par la durée comme OS360 (Ref #580).
 - Widgets sport : période « N derniers jours » au nombre libre (Ref #580).
+- Budget natif, sans réglage : widgets « Budget du mois » (dépenses, revenus, solde net et reste à dépenser dans une carte unique, suivi par catégorie dépassements en tête, navigation par mois), « Budget — À catégoriser » (opérations sans catégorie, à sous-catégorie à préciser ou classées par l'IA avec une confiance < 85 % sur 60 jours ; correction en un clic et saisie manuelle d'une opération) et « Patrimoine par banque » (total, évolution sur 12 mois, barres empilées par banque et type de compte). Calculs d'OS360 traduits dans `lib/finance-budget.mjs`, servis par `/api/nexora/finance-budget-summary` ; écritures du propriétaire par `/api/nexora/finance-owner-transactions` (fonction SQL `finance_apply_transaction_write`, idempotente) (Ref #586).
+- Rapport du matin : champ `budget` (reste à dépenser, catégories au-dessus ou à 90 % de leur budget, opérations à catégoriser), calculé avec les mêmes règles (Ref #586).
 
 ### Corrections
 
