@@ -41,6 +41,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 ### Incompatibilités
 
 - Widget « Graphique sport (OS360) » retiré : les widgets existants deviennent, à la lecture, le « Graphique sport » natif sur la vue équivalente (Ref #590).
+- Widget « Graphique financier (OS360) » retiré : les widgets existants deviennent, à la lecture, le widget Budget natif équivalent — « Graphique Budget » (Sankey, waterfall, cumul, small multiples, donut, waffle, dépenses par mois), « Budget du mois », « Patrimoine par banque », « Transactions » ou « Structure du patrimoine (Sankey) » ; sans équivalent : « Graphique Budget », donut (Ref #596).
 
 ## À venir
 

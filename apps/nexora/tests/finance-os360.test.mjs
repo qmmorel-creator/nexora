@@ -18,7 +18,6 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const W = vm.runInThisContext(`(function () {\n${slice("OS360-WIDGET")}\n;return { os360CatalogueGroups, os360WidgetSpec, os360MessageFrom, os360PeriodConfig, os360PeriodOnly, OS360_WIDGET_DEFAULT_TYPE };\n})`)();
 
 test("moteur généré : intact, issu du générateur et de moteur.js tels que versionnés", async () => {
   const moteur = await read("../public/os360-moteur/index.html");
@@ -39,40 +38,6 @@ test("moteur : montage OS360 remplacé, stockage en mémoire posé avant le modu
   const shim = moteur.indexOf('Object.defineProperty(window, "localStorage"');
   assert.ok(shim > 0 && shim < moteur.indexOf('<script type="module"'), "le stockage en mémoire précède le module OS360");
   assert.equal(moteur.split('<script type="module"').length - 1, 1);
-});
-
-test("widget rattaché : catalogue, rendu, en-tête, iframe isolé SANS même origine", () => {
-  assert.match(html, /key: "financeOs360Chart"/);
-  assert.match(html, /w\.type === "financeOs360Chart" && \(\s*<WidgetOs360Chart widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
-  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "financeOs360Chart"/);
-  const iframe = html.match(/<iframe ref=\{frameRef\}[^>]*>/)?.[0] || "";
-  assert.match(iframe, /sandbox="allow-scripts"/);
-  assert.doesNotMatch(iframe, /allow-same-origin/);
-  assert.match(html, /fetch\("\/api\/nexora\/finance-budget-data"/);
-});
-
-test("catalogue groupé et trié, spécification par défaut, messages filtrés", () => {
-  const groups = W.os360CatalogueGroups([
-    { type: "b", label: "Zèbre", category: "Patrimoine" }, { type: "a", label: "Donut", category: "Répartitions" },
-    { type: "c", label: "Actif", category: "Patrimoine" }, { type: "d", label: "Sans catégorie" },
-  ]);
-  assert.deepEqual(groups.map((g) => g.category), ["Autres", "Patrimoine", "Répartitions"]);
-  assert.deepEqual(groups[1].items.map((i) => i.label), ["Actif", "Zèbre"]);
-  assert.deepEqual(JSON.parse(JSON.stringify(W.os360WidgetSpec({}))), { type: W.OS360_WIDGET_DEFAULT_TYPE, title: "", config: {} });
-  assert.equal(W.os360WidgetSpec({ os360: { type: "budget.chart_radar_monthly", config: { a: 1 } } }).config.a, 1);
-  const frame = {};
-  assert.ok(W.os360MessageFrom({ source: frame, data: { source: "nx-os360-moteur", type: "nx-ready" } }, frame));
-  assert.equal(W.os360MessageFrom({ source: {}, data: { source: "nx-os360-moteur" } }, frame), null, "autre fenêtre ignorée");
-  assert.equal(W.os360MessageFrom({ source: frame, data: { type: "nx-ready" } }, frame), null, "message non signé ignoré");
-});
-
-test("barre de période : écrit la configuration comme osPeriodBar d'OS360", () => {
-  const before = { metric: "expense", range: 30, from: "2026-01-01", to: "2026-01-31", year: 2025, linked: true };
-  assert.deepEqual(JSON.parse(JSON.stringify(W.os360PeriodConfig(before, "previous"))), { metric: "expense", linked: false, periodMode: "month", periodValue: "previous", quickPeriod: "previous" });
-  assert.equal(W.os360PeriodConfig({}, "2026-09").quickPeriod, "");
-  assert.equal(W.os360PeriodConfig({}, "2026-09").periodValue, "2026-09");
-  // Changer de graphique garde la période, rien d'autre.
-  assert.deepEqual(JSON.parse(JSON.stringify(W.os360PeriodOnly({ metric: "x", color: "#fff", quickPeriod: "previous", periodValue: "previous", periodMode: "month", linked: false }))), { linked: false, periodMode: "month", periodValue: "previous", quickPeriod: "previous" });
 });
 
 test("route : lecture seule des tables OS360, session du propriétaire", async () => {
@@ -99,16 +64,3 @@ test("moteur : journal sportif reçu par nx-sport, données d'exemple OS360 jama
   assert.match(entree, /if \(widget\.variant\) base = osChangeConfig\(base, "financeVariant", widget\.variant\);/);
 });
 
-test("graphique sport OS360 retiré (#590) : plus créable, anciens widgets rendus en natif", () => {
-  assert.doesNotMatch(html, /label: "Graphique sport \(OS360\)"/);
-  assert.doesNotMatch(html, /WidgetSportOs360Chart|os360SportActivities|OS360_SPORT_DEFAULT|catalogueSante/);
-  assert.match(html, /w\.type === LEGACY_SPORT_OS360_TYPE && \(\s*<WidgetSportChart widget=\{migrateLegacySportOs360Widget\(w\)\}/);
-  // Le moteur ne sert plus que le Budget.
-  assert.match(html, /setCatalogue\(data\.catalogue \|\| \[\]\);/);
-  // Repli générique de os360WidgetSpec (variante comprise) : jamais modifié.
-  const fallback = { type: "x.y", config: {}, variant: "x.z" };
-  const spec = W.os360WidgetSpec({}, fallback);
-  assert.deepEqual(JSON.parse(JSON.stringify(spec)), { type: "x.y", title: "", config: {}, variant: "x.z" });
-  spec.config.x = 1;
-  assert.equal(fallback.config.x, undefined, "le défaut n'est jamais modifié");
-});
