@@ -1,8 +1,8 @@
 /* Widget « Activités sport » (issue #578).
-   1. Parité du parseur serveur (_shared/sport.ts) avec OS360 : les fonctions
-      d'origine (`_e`, `Jc`, `Kc`, `ve`, `S`, `A`) sont extraites de la copie
-      du bundle OS360 versionnée dans public/os360-moteur/ (commit 13197da) et
-      comparées sur un jeu de données fictif conséquent.
+   1. Parité du parseur serveur (_shared/sport.ts) avec OS360 : résultats des
+      fonctions d'origine (`_e`, `Jc`, `Kc`, `ve`, `S`, `A`, commit 13197da)
+      figés dans fixtures/os360-parite-sport.json avant le retrait du moteur
+      (#597) — empreintes du jeu fictif conséquent, petits cas et refus.
    2. Fonctions pures du widget, extraites du bundle RÉELLEMENT construit.
    3. Raccordements (catalogue, rendu, en-tête, fiche) et route serveur. */
 
@@ -16,29 +16,9 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 // --- 1. Parité avec OS360 -------------------------------------------------
 
-const bundle = await read("../public/os360-moteur/index.html");
-// Le bundle redéfinit des noms (React a aussi son `Jc`, son `_e`…) : on garde
-// la définition qui porte la marque de la fonction OS360 voulue.
-function os360Function(name, marker) {
-  const found = [];
-  for (let from = bundle.indexOf(`function ${name}(`); from !== -1; from = bundle.indexOf(`function ${name}(`, from + 1)) {
-    if (/[\w$.]/.test(bundle[from - 1])) continue;
-    const end = bundle.slice(from).search(/\}(function |var |async function |let |const )/);
-    const body = bundle.slice(from, from + end + 1);
-    if (body.includes(marker)) found.push(body);
-  }
-  assert.equal(found.length, 1, `fonction OS360 ${name} introuvable ou ambiguë`);
-  return found[0];
-}
-const OS360 = vm.runInThisContext(`(function () {
-${os360Function("A", "T12:00:00Z")}
-${os360Function("S", "protocol===`https:`")}
-${os360Function("ve", "n\\/a")}
-${os360Function("Kc", "Date civile invalide")}
-${os360Function("_e", "CSV incomplet")}
-${os360Function("Jc", "Colonnes du journal sportif incompatibles")}
-return { csv: _e, activities: Jc };
-})`)();
+import { createHash } from "node:crypto";
+const parity = JSON.parse(await read("./fixtures/os360-parite-sport.json"));
+const digest = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 
 const compiled = await transform(await read("../netlify/functions/_shared/sport.ts"), { loader: "ts", format: "esm" });
 const N = await import("data:text/javascript;base64," + Buffer.from(compiled.code).toString("base64"));
@@ -80,43 +60,32 @@ const JC_FIELDS = ["id", "date", "sport", "title", "total", "moving", "distance"
 const pick = (a) => Object.fromEntries(JC_FIELDS.map((k) => [k, a[k]]));
 
 test("parité OS360 : découpage CSV identique à `_e`", () => {
-  const csv = fixture();
-  assert.deepStrictEqual(N.sportCsvRows(csv), OS360.csv(csv));
-  for (const text of ['a,"b\r\nc",d\r\n\r\n', 'x,"y ""z"""\n', ",,\n,\n", ""]) assert.deepStrictEqual(N.sportCsvRows(text), OS360.csv(text), JSON.stringify(text));
+  assert.equal(digest(N.sportCsvRows(fixture())), parity.csvFull.sha256, `jeu fictif : ${parity.csvFull.count} lignes`);
+  for (const c of parity.csvSmall) {
+    if (c.error) assert.throws(() => N.sportCsvRows(c.text), { message: c.error }, JSON.stringify(c.text));
+    else assert.deepStrictEqual(N.sportCsvRows(c.text), c.ok, JSON.stringify(c.text));
+  }
 });
 
 test("parité OS360 : activités identiques à `Jc` sur ~900 lignes", () => {
-  const rows = OS360.csv(fixture());
-  const expected = OS360.activities(rows);
-  const actual = N.sportActivities(rows);
-  assert.ok(expected.length > 600, `jeu trop petit : ${expected.length}`);
-  assert.ok(expected.some((a) => a.id.startsWith("manual-")) && expected.some((a) => !a.id.startsWith("manual-")));
-  assert.ok(expected.some((a) => a.url === null) && expected.some((a) => a.url));
-  assert.deepStrictEqual(actual.map(pick), expected);
+  const actual = N.sportActivities(N.sportCsvRows(fixture())).map(pick);
+  const expected = parity.activitiesFull;
+  assert.ok(expected.count > 600, `jeu trop petit : ${expected.count}`);
+  assert.ok(expected.manual > 0 && expected.manual < expected.count, "identifiants présents et absents");
+  assert.ok(expected.withUrl > 0 && expected.withUrl < expected.count, "liens présents et absents");
+  assert.equal(actual.length, expected.count);
+  assert.deepStrictEqual(actual.slice(0, 3), expected.sample);
+  assert.equal(digest(actual), expected.sha256);
 });
 
 test("parité OS360 : mêmes refus (colonnes, HTML, guillemet, date)", () => {
-  const cases = [
-    [],
-    [["Date", "Sport", "Titre"]],
-    [HEADER.replace("Calendrier ID", "Calendrier").split(",")],
-    [HEADER.split(","), ["31/02/2026", "Course à pied", "x", "1", "", "", "", "", "", "", "", "e", "c", ""]],
-  ];
-  for (const rows of cases) {
-    let message = "";
-    try { OS360.activities(rows); } catch (e) { message = e.message; }
-    assert.ok(message, "OS360 aurait dû refuser");
-    assert.throws(() => N.sportActivities(rows), { message });
-  }
-  for (const text of ["<!doctype html><html>", 'a,"b\n']) {
-    let message = "";
-    try { OS360.csv(text); } catch (e) { message = e.message; }
-    assert.throws(() => N.sportCsvRows(text), { message });
-  }
+  assert.equal(parity.refusals.length, 4);
+  for (const c of parity.refusals) assert.throws(() => N.sportActivities(c.rows), { message: c.error });
+  assert.ok(parity.csvSmall.filter((c) => c.error).length >= 2, "HTML et guillemet non fermé");
 });
 
 test("tous les champs : début, fin, identifiants et colonnes Strava en plus", () => {
-  const rows = OS360.csv(`${HEADER}\n01/08/2026,Course à pied,Sortie,61,55,"10,2",120,140,171,2026-08-01T08:00:00+02:00,2026-08-01T09:01:00+02:00,_e1,cal@x,https://www.google.com/calendar/event?eid=1,123456,Run\n`);
+  const rows = N.sportCsvRows(`${HEADER}\n01/08/2026,Course à pied,Sortie,61,55,"10,2",120,140,171,2026-08-01T08:00:00+02:00,2026-08-01T09:01:00+02:00,_e1,cal@x,https://www.google.com/calendar/event?eid=1,123456,Run\n`);
   const [a] = N.sportActivities(rows);
   assert.deepEqual(a, {
     id: "cal@x|_e1", date: "2026-08-01", sport: "Course à pied", title: "Sortie", total: 61, moving: 55, distance: 10.2, elevation: 120, hr: 140, maxHr: 171,

@@ -1,8 +1,8 @@
 // Budget natif Nexora (#586) : calculs du mois, du suivi budgétaire, de la file
 // « à catégoriser » et du patrimoine, à partir des tables brutes KDM360.
 //
-// Les règles de calcul sont celles d'OS360, traduites de son bundle (copie dans
-// apps/nexora/public/os360-moteur) ; le nom de la fonction d'origine est donné
+// Les règles de calcul sont celles d'OS360, traduites de son bundle (commit
+// 13197da, copie retirée de Nexora par #597) ; le nom de la fonction d'origine est donné
 // en commentaire. Toute divergence avec OS360 est un défaut : corriger ici en
 // relisant la fonction d'origine, jamais « améliorer ».
 //

@@ -1,8 +1,8 @@
 // Mesures santé (#594) : le CSV publié de l'onglet Santé de la feuille
 // (Whoop, balance, nutrition), lu comme OS360 (commit 13197da). Fonctions
-// PURES, sans import : le test de parité les compare aux fonctions d'origine
-// (`qc`, `osHealthHeader`, `osHealthImportNumber`, `Kc`, `A`) tant que le
-// bundle est versionné, puis à des cas figés.
+// PURES, sans import : le test de parité les compare aux résultats des
+// fonctions d'origine (`qc`, `osHealthHeader`, `osHealthImportNumber`, `Kc`,
+// `A`), figés dans tests/fixtures/os360-parite-sante.json.
 
 export type HealthRecord = { date: string; [metric: string]: number | null | string };
 

@@ -42,6 +42,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 - Widget « Graphique sport (OS360) » retiré : les widgets existants deviennent, à la lecture, le « Graphique sport » natif sur la vue équivalente (Ref #590).
 - Widget « Graphique financier (OS360) » retiré : les widgets existants deviennent, à la lecture, le widget Budget natif équivalent — « Graphique Budget » (Sankey, waterfall, cumul, small multiples, donut, waffle, dépenses par mois), « Budget du mois », « Patrimoine par banque », « Transactions » ou « Structure du patrimoine (Sankey) » ; sans équivalent : « Graphique Budget », donut (Ref #596).
+- Moteur de graphiques OS360 retiré de Nexora : `public/os360-moteur/` (copie du bundle OS360, avec ses données d'exemple réelles, #582) et `outils/os360-moteur/` supprimés, ainsi que la route `/api/nexora/finance-budget-data` qui ne servait que lui ; `/os360-moteur/` n'est plus publié. Les tests de parité sport et santé s'appuient désormais sur des résultats d'OS360 figés (`tests/fixtures/os360-parite-*.json`) (Ref #597).
 
 ## À venir
 
