@@ -13943,6 +13943,65 @@ function PixelQuickAdd({ x, y, label, date, ctx, onSubmit, onClose }) {
   );
 }
 
+/* Capacité de travail (#565) : une valeur par jour de la semaine et une
+   exception pour le jour affiché. Chaque choix est enregistré aussitôt. */
+const PIXEL_TASKS_CAP_HOURS = Array.from({ length: 25 }, (_, i) => i / 2);
+const PIXEL_TASKS_WEEK = [[1, "Lundi"], [2, "Mardi"], [3, "Mercredi"], [4, "Jeudi"], [5, "Vendredi"], [6, "Samedi"], [0, "Dimanche"]];
+function PixelCapacityPanel({ x, y, date, todayIso, prefs, onClose, onUpdate }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: x, top: y, visibility: "hidden" });
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target) && !(e.target.closest && e.target.closest(".lp-ptx-cap-btn"))) onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setPos({ left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)), visibility: "visible" });
+  }, [x, y]);
+  const label = (h) => (h ? pixelTaskMinutesLabel(h * 60) : "0 h — non travaillé");
+  const weekdayValue = (wd) => {
+    const v = prefs.byDay && prefs.byDay[wd];
+    return pixelTaskCapacityValid(v) ? Number(v) : (pixelTaskCapacityValid(prefs.base) && Number(prefs.base) > 0 ? Number(prefs.base) : PIXEL_TASKS_DEFAULT_CAPACITY);
+  };
+  const setWeekday = (wd, h) => {
+    const next = {};
+    for (const [d] of PIXEL_TASKS_WEEK) next[d] = weekdayValue(d);
+    next[wd] = h;
+    onUpdate({ pixelTasksCapacityByDay: next });
+  };
+  const dayWd = new Date(date + "T00:00:00").getDay();
+  const exception = prefs.dates && pixelTaskCapacityValid(prefs.dates[date]) ? Number(prefs.dates[date]) : null;
+  const when = new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  return createPortal(
+    <div ref={ref} className="lp-quick-context-menu lp-ptx-cap" style={{ left: pos.left, top: pos.top, visibility: pos.visibility }} role="dialog" aria-label="Capacité de travail">
+      <div className="lp-ptx-menu-title">Capacité de travail</div>
+      <label className="lp-ptx-cap-row is-day">
+        <span>Ce jour : <b>{when}</b></span>
+        <select className="lp-input" value={exception == null ? "" : String(exception)}
+          onChange={(e) => onUpdate({ pixelTasksCapacityDates: pixelTaskCapacityDates(prefs.dates, date, e.target.value === "" ? null : Number(e.target.value), todayIso) })}>
+          <option value="">Comme d'habitude ({label(weekdayValue(dayWd))})</option>
+          {PIXEL_TASKS_CAP_HOURS.map((h) => <option key={h} value={String(h)}>{label(h)}</option>)}
+        </select>
+      </label>
+      <div className="lp-ptx-cap-sub">Par jour de la semaine</div>
+      {PIXEL_TASKS_WEEK.map(([wd, name]) => (
+        <label key={wd} className={"lp-ptx-cap-row" + (wd === dayWd ? " is-current" : "")}>
+          <span>{name}</span>
+          <select className="lp-input" value={String(weekdayValue(wd))} onChange={(e) => setWeekday(wd, Number(e.target.value))}>
+            {PIXEL_TASKS_CAP_HOURS.map((h) => <option key={h} value={String(h)}>{label(h)}</option>)}
+          </select>
+        </label>
+      ))}
+      <div className="lp-ptx-cap-hint">Aucune réunion n'est déduite : estime-la (clic droit → Estimation) si elle doit compter.</div>
+    </div>,
+    document.body
+  );
+}
+
 /* Menu d'actions (#559) : clic droit sur une ligne ou une case, ou « ⋯ ».
    Panneaux : principal, statut, avancement, estimation, date. */
 function PixelTaskMenu({ item, ctx, x, y, todayIso, onClose, onReschedule, onPatch, onProgress, onToggleDone, onOpen }) {
@@ -14145,7 +14204,9 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   // Bandeau Focus (#560, actif par défaut) et jauge de charge (#561).
   const bandPref = !(widget && widget.pixelTasksFocusBand === false);
   const loadOn = !!(widget && widget.pixelTasksLoad);
-  const capacityH = Number(widget && widget.pixelTasksCapacity) > 0 ? Number(widget.pixelTasksCapacity) : 7;
+  // Capacité du jour affiché (#565) : exception datée, jour de la semaine, puis capacité unique.
+  const capPrefs = { base: widget && widget.pixelTasksCapacity, byDay: widget && widget.pixelTasksCapacityByDay, dates: widget && widget.pixelTasksCapacityDates };
+  const [capOpen, setCapOpen] = useState(null); // { x, y } — panneau de capacité
   const rootRef = useRef(null);
   // Préfixe des identifiants SVG (dégradés) propre à ce widget : deux Pixel
   // Tasks sur une même page ne se prêtent pas leurs couleurs.
@@ -14188,6 +14249,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   // cases et lignes cochées quittent la vue Jour, score et compteurs restent.
   const hideDone = !!(widget && widget.pixelTasksHideDone);
   const hiddenDone = hideDone ? day.items.filter((i) => i.done && (baseOn || i.ghost || i.future)).length : 0;
+  const capacityH = pixelTaskCapacityFor(date, capPrefs);
+  const capException = !!(capPrefs.dates && pixelTaskCapacityValid(capPrefs.dates[date]));
   const fltOn = pixelTaskFilterActive(flt);
   // Bandeau « Mes 3 du jour » (#560) : les trois premières tâches Focus du
   // jour quittent leurs groupes ; au-delà, elles y restent.
@@ -14216,8 +14279,8 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
     if (!loadOn || view !== "day") return null;
     const groupOfItem = new Map();
     for (const g of day.groups) for (const it of g.items) groupOfItem.set(it, g);
-    return pixelTaskLoad(day.items, ctx.tasks || tasks, date, capacityH * 60, (it) => { const g = groupOfItem.get(it); return g ? { id: g.id, name: g.name, color: g.color } : { id: "none", name: "Autres", color: "#94A3B8" }; });
-  }, [loadOn, view, day, ctx.tasks, tasks, date, capacityH]);
+    return pixelTaskLoad(day.items, capacityH * 60, (it) => { const g = groupOfItem.get(it); return g ? { id: g.id, name: g.name, color: g.color } : { id: "none", name: "Autres", color: "#94A3B8" }; });
+  }, [loadOn, view, day, capacityH]);
   const findDayItem = (id) => day.items.find((i) => i.task.id === id) || null;
   const taskById = (id) => (tasks || []).find((t) => t.id === id) || (ctx.tasks || []).find((t) => t.id === id) || null;
   const reschedule = (task, target) => { const patch = pixelTaskReschedule(task, target); if (patch && onUpdateTask) onUpdateTask(task.id, patch); };
@@ -14326,9 +14389,11 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
         </label>
       )}
       {view === "day" && loadOn && (
-        <select className="lp-ptx-groupby is-on" value={capacityH} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksCapacity: Number(e.target.value) })} aria-label="Capacité de travail par jour" title="Capacité de travail par jour, avant déduction des réunions">
-          {[3, 4, 5, 6, 7, 8, 9, 10].map((h) => <option key={h} value={h}>Capacité {h} h</option>)}
-        </select>
+        <button type="button" className={"lp-tool-btn lp-ptx-cap-btn" + (capOpen ? " is-on" : "")} aria-expanded={!!capOpen} aria-haspopup="dialog"
+          onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setCapOpen(capOpen ? null : { x: r.left, y: r.bottom + 6 }); }}
+          title="Capacité de travail : par jour de la semaine, avec exception pour une date">
+          ⏱ Capacité {capacityH ? pixelTaskMinutesLabel(capacityH * 60) : "0 h"}{capException ? " *" : ""}
+        </button>
       )}
       {view === "day" && (onUpdateTask || onToggleDone) && (
         <button type="button" className="lp-tool-btn lp-ptx-closure-btn" onClick={() => setClosure({ title: "Clôturer " + hpxLongDate(date), ids: closureIds })} title="Passer en revue les tâches non terminées du jour : terminer, reporter ou laisser">
@@ -14677,6 +14742,10 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
           onReschedule={reschedule} onPatch={(id, patch) => onUpdateTask && onUpdateTask(id, patch)} onProgress={applyProgress}
           onToggleDone={(id) => onToggleDone && onToggleDone(id)} onOpen={onOpen} />
       )}
+      {capOpen && (
+        <PixelCapacityPanel x={capOpen.x} y={capOpen.y} date={date} todayIso={todayIso} prefs={capPrefs} onClose={() => setCapOpen(null)}
+          onUpdate={(patch) => onUpdateWidget && onUpdateWidget(patch)} />
+      )}
       {adding && <PixelQuickAdd key={adding.key} x={adding.x} y={adding.y} label={adding.label} date={date} ctx={ctx} onSubmit={createQuick} onClose={() => setAdding(null)} />}
       {closure && (
         <PixelClosure title={closure.title} ids={closure.ids} findItem={findDayItem} ctx={ctx} date={date} todayIso={todayIso} onClose={() => setClosure(null)}
@@ -14747,10 +14816,10 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
               })()}
               <div className="lp-ptx-load-legend">
                 {load.parts.map((p) => <span key={p.id}><i style={{ background: p.color }} />{p.name} {pixelTaskMinutesLabel(p.minutes)}</span>)}
-                <span className="lp-hpx-muted">Réunions : {pixelTaskMinutesLabel(load.busy)} · capacité {capacityH} h</span>
+                <span className="lp-hpx-muted">{capacityH ? "Capacité ce jour : " + pixelTaskMinutesLabel(capacityH * 60) : "Jour non travaillé (capacité 0 h)"}{capException ? " (exception)" : ""}</span>
                 {load.unestimated > 0 && <span className="lp-hpx-muted">{load.unestimated} tâche{load.unestimated > 1 ? "s" : ""} sans estimation (clic droit → Estimation)</span>}
                 {load.over > 0 && onUpdateTask && (
-                  <button type="button" className="lp-tool-btn" onClick={() => setClosure({ title: "Reporter le surplus (" + pixelTaskMinutesLabel(load.over) + ")", ids: pixelTaskOverflowCandidates(day.items, load.over, date).map((i) => i.task.id) })}>Proposer un report</button>
+                  <button type="button" className="lp-tool-btn" onClick={() => setClosure({ title: "Reporter le surplus (" + pixelTaskMinutesLabel(load.over) + ")", ids: pixelTaskOverflowCandidates(day.items, load.over).map((i) => i.task.id) })}>Proposer un report</button>
                 )}
               </div>
             </div>
