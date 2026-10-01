@@ -29,6 +29,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Assistant : routes `/api/finance/budget-summary` et `/api/finance/transactions/search` (clé de l'assistant, lecture seule) et outils MCP `get_budget_summary`, `search_budget_transactions`, `categorize_budget_transaction` (politique de confirmation de `/api/finance/transactions` conservée) (Ref #587).
 - Widget « Graphique sport » (ex-« Sport par activité ») : sélecteur de visualisation — barres empilées, série temporelle avec moyenne périodique (semaine, mois ou année), cumul empilé, répartition (1 carré = 1 heure) et calendrier annuel, tous sports séparés, sans le moteur OS360 (Ref #590).
 - Tableau de bord : widget « Résumé sport » — dernière séance (sport, durée, distance, dénivelé, ancienneté), semaine en cours comparée à la semaine dernière au même jour, mois en cours, heures par sport sur la semaine, le mois ou l'année ; modèle de tableau de bord « Sport » (résumé, graphiques, calendrier et liste des activités déjà placés) dans « Nouveau tableau de bord » (Ref #591).
+- Réglages → « Objectifs sport » : heures par semaine (tous sports) et objectifs de km par an sur un ou plusieurs sports (clé `nexora:sportGoals`) ; avancement dans le « Résumé sport » (jauge de la semaine, carte par objectif annuel avec l'écart au rythme régulier) et, au choix, dans le bloc « Total sport » (valeur / cible · %) (Ref #592).
 
 ### Corrections
 

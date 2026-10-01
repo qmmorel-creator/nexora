@@ -37814,6 +37814,69 @@ function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget 
 }
 
 // ---------------------------------------------------------------------------
+// Réglages → Objectifs sport (#592).
+function SportGoalsSettings({ value, onChange }) {
+  const { rows } = useSportData();
+  const goals = sportGoalsNormalize(value);
+  const names = sportNames(rows).map((s) => s.name);
+  const set = (patch) => onChange && onChange({ ...goals, ...patch });
+  const setKm = (id, patch) => set({ yearlyKm: goals.yearlyKm.map((g) => (g.id === id ? { ...g, ...patch } : g)) });
+  const progress = sportGoalProgress(rows || [], goals, financeSankeyToday());
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
+      <p style={{ fontSize: 13, color: "var(--text-600)", margin: 0, lineHeight: 1.5 }}>
+        Objectifs suivis dans le widget « Résumé sport » et, au choix, dans le bloc « Total sport » des cartes.
+        Ils se comparent au journal « Activités Strava » ; une valeur vide désactive l’objectif.
+      </p>
+      <div className="lp-field">
+        <label htmlFor="sport-goal-weekly">Heures de sport par semaine (tous sports)</label>
+        <input id="sport-goal-weekly" type="number" min="0" step="0.5" style={{ maxWidth: 140 }}
+          value={goals.weeklyHours ?? ""} onChange={(e) => set({ weeklyHours: sportGoalNumber(e.target.value) })} />
+        {progress.weekly && (
+          <small style={{ color: "var(--text-600)" }}>Cette semaine : {sportFormatValue(progress.weekly.done, "h")} sur {sportFormatValue(progress.weekly.target, "h")}.</small>
+        )}
+      </div>
+      <div className="lp-settings-fold-title" style={{ fontWeight: 600 }}>Kilomètres par an</div>
+      {!goals.yearlyKm.length && <div style={{ fontSize: 13, color: "var(--text-600)" }}>Aucun objectif de distance.</div>}
+      {goals.yearlyKm.map((g) => {
+        const p = progress.yearly.find((x) => x.id === g.id);
+        const choices = [...new Set([...names, ...g.sports])];
+        return (
+          <div key={g.id} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, border: "1px solid var(--border, #d8e1eb)", borderRadius: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+              <div className="lp-field" style={{ flex: "1 1 200px", margin: 0 }}>
+                <label htmlFor={`sport-goal-label-${g.id}`}>Nom (facultatif)</label>
+                <input id={`sport-goal-label-${g.id}`} type="text" placeholder={sportGoalLabel({ ...g, label: "" })} value={g.label} onChange={(e) => setKm(g.id, { label: e.target.value })} />
+              </div>
+              <div className="lp-field" style={{ flex: "0 0 130px", margin: 0 }}>
+                <label htmlFor={`sport-goal-km-${g.id}`}>Km sur l’année</label>
+                <input id={`sport-goal-km-${g.id}`} type="number" min="0" step="10" value={g.km ?? ""} onChange={(e) => setKm(g.id, { km: sportGoalNumber(e.target.value) })} />
+              </div>
+              <button type="button" className="lp-btn" onClick={() => set({ yearlyKm: goals.yearlyKm.filter((x) => x.id !== g.id) })}>Supprimer</button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 13 }} role="group" aria-label="Sports comptés">
+              {choices.map((name) => (
+                <label key={name} style={{ display: "inline-flex", gap: 5, alignItems: "center", cursor: "pointer" }}>
+                  <input type="checkbox" checked={g.sports.includes(name)}
+                    onChange={() => setKm(g.id, { sports: g.sports.includes(name) ? g.sports.filter((x) => x !== name) : [...g.sports, name] })} />
+                  {name}
+                </label>
+              ))}
+              {!choices.length && <small style={{ color: "var(--text-600)" }}>Aucun sport chargé : l’objectif compte tous les sports.</small>}
+            </div>
+            {p && <small style={{ color: "var(--text-600)" }}>Depuis le 1er janvier : {sportFormatValue(p.done, "km")} sur {sportFormatValue(p.target, "km")} ({Math.round(p.ratio * 100)} %).</small>}
+          </div>
+        );
+      })}
+      <div>
+        <button type="button" className="lp-btn" onClick={() => set({ yearlyKm: [...goals.yearlyKm, { id: uid(), label: "", sports: names.filter((n) => /course|trail/i.test(n)), km: null }] })}>
+          Ajouter un objectif de distance
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Réglages → Catégories Budget (#574) : catégories et sous-catégories KDM360
 // modifiables depuis Nexora. Toutes les écritures passent par
 // /api/nexora/finance-references (session du propriétaire), qui appelle les
@@ -38767,6 +38830,66 @@ function sportSummary(rows, today, period = "year", order = []) {
     totalHours,
   };
 }
+// --- Objectifs sport (#592) --------------------------------------------------
+// Réglage `nexora:sportGoals` : heures par semaine (tous sports) et objectifs
+// de km par an, chacun sur un ou plusieurs sports (aucun = tous).
+const SPORT_GOALS_DEFAULT = { weeklyHours: null, yearlyKm: [] };
+function sportGoalNumber(value) {
+  const n = Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+}
+function sportGoalsNormalize(value) {
+  const v = value && typeof value === "object" ? value : {};
+  return {
+    weeklyHours: sportGoalNumber(v.weeklyHours),
+    yearlyKm: (Array.isArray(v.yearlyKm) ? v.yearlyKm : [])
+      .filter((g) => g && typeof g === "object" && typeof g.id === "string" && g.id)
+      .map((g) => ({
+        id: g.id,
+        label: typeof g.label === "string" ? g.label : "",
+        sports: Array.isArray(g.sports) ? g.sports.filter((s) => typeof s === "string") : [],
+        km: sportGoalNumber(g.km),
+      })),
+  };
+}
+function sportGoalLabel(goal) {
+  return goal.label.trim() || (goal.sports.length ? goal.sports.join(" + ") : "Tous les sports");
+}
+// Avancement : semaine en cours vs heures visées ; pour chaque objectif de km,
+// réalisé depuis le 1er janvier, part de l'objectif et écart au rythme
+// régulier (objectif × jours écoulés ÷ jours de l'année).
+function sportGoalProgress(rows, goals, today) {
+  const g = sportGoalsNormalize(goals);
+  const past = (rows || []).filter((r) => r.date <= today);
+  const year = today.slice(0, 4);
+  const daysInYear = (Date.UTC(+year + 1, 0, 1) - Date.UTC(+year, 0, 1)) / 864e5;
+  const dayOfYear = Math.round((Date.parse(today + "T12:00:00Z") - Date.parse(year + "-01-01T12:00:00Z")) / 864e5) + 1;
+  const weekHours = sportTotals(sportFilter(past, { sports: [], period: "week" }, today)).hours;
+  const weekly = g.weeklyHours ? { target: g.weeklyHours, done: weekHours, ratio: weekHours / g.weeklyHours, remaining: Math.max(0, g.weeklyHours - weekHours) } : null;
+  const yearly = g.yearlyKm.filter((x) => x.km).map((x) => {
+    const done = sportTotals(sportFilter(past, { sports: x.sports, period: "year" }, today)).km;
+    const expected = (x.km * dayOfYear) / daysInYear;
+    return { id: x.id, label: sportGoalLabel(x), sports: x.sports, target: x.km, done, ratio: done / x.km, expected, gap: done - expected };
+  });
+  return { weekly, yearly };
+}
+// Bloc « Total sport » réglé sur un objectif : mesure, période et sports
+// cohérents avec la cible (#592).
+function sportBlockGoalPatch(goalKey, goals) {
+  const g = sportGoalsNormalize(goals);
+  if (goalKey === "weeklyHours") return { sportGoal: goalKey, sportMeasure: "total", sportPeriod: "week", sportAgg: "sum", sportSports: [] };
+  const km = g.yearlyKm.find((x) => "yearlyKm:" + x.id === goalKey);
+  if (km) return { sportGoal: goalKey, sportMeasure: "distance", sportPeriod: "year", sportAgg: "sum", sportSports: [...km.sports] };
+  return { sportGoal: "" };
+}
+function sportBlockGoalTarget(block, goals) {
+  const key = block?.sportGoal || "";
+  const g = sportGoalsNormalize(goals);
+  if (key === "weeklyHours") return g.weeklyHours ? { target: g.weeklyHours, unit: "h" } : null;
+  const km = g.yearlyKm.find((x) => "yearlyKm:" + x.id === key);
+  return km && km.km ? { target: km.km, unit: "km" } : null;
+}
+
 // Modèle de tableau de bord « Sport » (#591) : la page Sport, faite de widgets
 // ordinaires que l'on peut ensuite déplacer, régler ou retirer.
 function sportDashboardWidgets(makeId) {
@@ -38836,6 +38959,23 @@ function sportBlockLabel(block) {
   return `${measure} · ${agg}`;
 }
 // === NEXORA:SPORT:END ===
+
+// Objectifs sport (#592) : réglage de LePlan (`nexora:sportGoals`), publié ici
+// pour que les widgets et les blocs de carte le lisent sans prop dédiée.
+const sportGoalsStore = { value: SPORT_GOALS_DEFAULT, listeners: new Set() };
+function publishSportGoals(value) {
+  sportGoalsStore.value = sportGoalsNormalize(value);
+  sportGoalsStore.listeners.forEach((fn) => fn());
+}
+function useSportGoals() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    sportGoalsStore.listeners.add(listener);
+    return () => { sportGoalsStore.listeners.delete(listener); };
+  }, []);
+  return sportGoalsStore.value;
+}
 
 // Chargement partagé : une requête pour tous les widgets sport de la page.
 const sportStore = { promise: null, rows: null, readAt: "", error: null, listeners: new Set() };
@@ -39453,7 +39593,19 @@ const SPORT_SUMMARY_CSS = `
 .nx-sport-sum-track{height:10px;border-radius:3px;background:#eef2f6;overflow:hidden}
 .nx-sport-sum-track b{display:block;height:100%;border-radius:3px}
 .nx-sport-sum-bar small{color:#60717c}
+.nx-sport-goal{display:flex;flex-direction:column;gap:3px;margin-top:2px}
 `;
+
+// Jauge d'objectif : barre pleine à 100 %, verte une fois l'objectif atteint.
+function SportGoalMeter({ ratio, text }) {
+  const pct = Math.max(0, Math.min(1, ratio));
+  return (
+    <span className="nx-sport-goal" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)} aria-label={text}>
+      <span className="nx-sport-sum-track"><b style={{ width: `${pct * 100}%`, background: ratio >= 1 ? "#1f7a4d" : "#24569a" }} /></span>
+      <span className="nx-sport-sum-line">{text}</span>
+    </span>
+  );
+}
 
 // Écart signé avec la semaine précédente au même jour (« +1,5 h »).
 function SportSummaryDelta({ value, previous }) {
@@ -39475,6 +39627,8 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
   const today = financeSankeyToday();
   const order = useMemo(() => sportNames(rows).map((s) => s.name), [rows]);
   const data = useMemo(() => (rows ? sportSummary(rows, today, spec.period, order) : null), [rows, today, spec.period, order]);
+  const goals = useSportGoals();
+  const progress = useMemo(() => (rows ? sportGoalProgress(rows, goals, today) : null), [rows, goals, today]);
   const tools = (
     <ViewToolbarPortal slot={externalToolbarSlot}>
       <style>{SPORT_CSS + SPORT_SUMMARY_CSS}</style>
@@ -39526,6 +39680,7 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
             {week.elevation > 0 && <span>{sportFormatValue(week.elevation, "m")} D+</span>}
           </span>
           <span className="nx-sport-sum-line"><SportSummaryDelta value={week.hours} previous={previousWeek.hours} /></span>
+          {progress?.weekly && <SportGoalMeter ratio={progress.weekly.ratio} text={`Objectif ${sportFormatValue(progress.weekly.target, "h")} · ${Math.round(progress.weekly.ratio * 100)} %${progress.weekly.remaining > 0 ? ` · reste ${sportFormatValue(progress.weekly.remaining, "h")}` : ""}`} />}
         </div>
         <div className="nx-sport-sum-card">
           <span className="nx-sport-sum-label">Mois en cours</span>
@@ -39536,6 +39691,17 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
             {month.elevation > 0 && <span>{sportFormatValue(month.elevation, "m")} D+</span>}
           </span>
         </div>
+        {(progress?.yearly || []).map((g) => (
+          <div key={g.id} className="nx-sport-sum-card">
+            <span className="nx-sport-sum-label" title={g.label}>Objectif annuel · {g.label}</span>
+            <span className="nx-sport-sum-big">{sportFormatValue(g.done, "km")}</span>
+            <SportGoalMeter ratio={g.ratio} text={`sur ${sportFormatValue(g.target, "km")} · ${Math.round(g.ratio * 100)} %`} />
+            <span className="nx-sport-sum-line">
+              <span className={g.gap >= 0 ? "nx-sport-sum-up" : "nx-sport-sum-down"}>{g.gap >= 0 ? "En avance" : "En retard"} de {sportFormatValue(Math.abs(g.gap), "km")}</span>
+              <span>sur le rythme régulier</span>
+            </span>
+          </div>
+        ))}
       </div>
       <div className="nx-sport-sum-bars" role="list" aria-label={`Heures par sport, ${periodLabel}`}>
         <span className="nx-sport-sum-label">Heures par sport · {periodLabel} · {sportFormatValue(data.totalHours, "h")}</span>
@@ -39556,21 +39722,35 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
 // composant à part : seule une carte qui en contient lit le journal sportif.
 function SportAggregateValue({ block }) {
   const { rows, error } = useSportData();
+  const goals = useSportGoals();
   if (error) return <span title={error}>—</span>;
   if (!rows) return <span title="Chargement du journal sportif…">…</span>;
   const { value, unit, activities } = sportAggregate(rows, sportBlockSpec(block), financeSankeyToday());
   const text = value === null ? "—" : sportFormatValue(value, unit);
-  return <span title={`${activities} activité${activities > 1 ? "s" : ""} dans la sélection`}>{text}</span>;
+  // Objectif (#592) : cible affichée seulement si l'unité concorde avec la mesure.
+  const goal = sportBlockGoalTarget(block, goals);
+  const withGoal = goal && goal.unit === unit ? `${text} / ${sportFormatValue(goal.target, goal.unit)} · ${Math.round(((value || 0) / goal.target) * 100)} %` : text;
+  return <span title={`${activities} activité${activities > 1 ? "s" : ""} dans la sélection`}>{withGoal}</span>;
 }
 
 // Réglages d'un bloc « Total sport » : sports, période, mesure, agrégation.
 function SportBlockEditor({ block, onChange }) {
   const { rows } = useSportData();
+  const goals = useSportGoals();
   const spec = sportBlockSpec(block);
   const names = sportNames(rows);
   const toggle = (name) => onChange({ sportSports: spec.sports.includes(name) ? spec.sports.filter((x) => x !== name) : [...spec.sports, name] });
   return (
     <>
+      <div className="lp-field">
+        <label>Objectif</label>
+        <select value={block?.sportGoal || ""} onChange={(e) => onChange(sportBlockGoalPatch(e.target.value, goals))}>
+          <option value="">Aucun</option>
+          {goals.weeklyHours && <option value="weeklyHours">Heures par semaine ({sportFormatValue(goals.weeklyHours, "h")})</option>}
+          {goals.yearlyKm.filter((g) => g.km).map((g) => <option key={g.id} value={"yearlyKm:" + g.id}>{sportGoalLabel(g)} ({sportFormatValue(g.km, "km")} par an)</option>)}
+        </select>
+        <small style={{ color: "var(--text-600)" }}>Choisir un objectif règle la mesure, la période et les sports ; la cible s’affiche à côté de la valeur. Objectifs : Réglages → Objectifs sport.</small>
+      </div>
       <div className="lp-row3">
         <div className="lp-field">
           <label>Mesure</label>

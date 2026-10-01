@@ -140,7 +140,8 @@ const EXPORTS = ["SPORT_COLUMNS", "SPORT_DEFAULT_COLUMNS", "SPORT_PERIODS", "spo
   "SPORT_MEASURES", "SPORT_BUCKETS", "SPORT_PALETTE", "SPORT_MAX_BUCKETS", "sportChartSpec", "sportMeasureValue", "sportBucketKey", "sportIsoWeek", "sportBucketLabel", "sportStackSeries", "sportNiceTicks", "sportFormatValue",
   "SPORT_CARD_MEASURES", "SPORT_AGGS", "sportDays", "sportBlockSpec", "sportAggregate", "sportBlockLabel",
   "SPORT_VIEWS", "SPORT_MEAN_LABELS", "SPORT_WAFFLE_MAX", "sportColor", "sportMeanKey", "sportTimeSeries", "sportCumulSeries", "sportWaffle", "sportYears", "sportCalendar", "sportCalendarShade",
-  "SPORT_SUMMARY_PERIODS", "sportSummarySpec", "sportTotals", "sportShiftDate", "sportDaysAgoLabel", "sportDurationLabel", "sportSummary", "sportDashboardWidgets"];
+  "SPORT_SUMMARY_PERIODS", "sportSummarySpec", "sportTotals", "sportShiftDate", "sportDaysAgoLabel", "sportDurationLabel", "sportSummary", "sportDashboardWidgets",
+  "SPORT_GOALS_DEFAULT", "sportGoalNumber", "sportGoalsNormalize", "sportGoalLabel", "sportGoalProgress", "sportBlockGoalPatch", "sportBlockGoalTarget"];
 const W = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n;return { ${EXPORTS.join(", ")} };\n})`)();
 
 const payload = {
@@ -546,4 +547,61 @@ test("page Sport : modèle de tableau de bord, widgets valides, sans chevaucheme
   assert.match(html, /widgets: template === "sport" \? sportDashboardWidgets\(uid\) : \[\]/);
   assert.match(html, /<option value="sport">Sport<\/option>/);
   assert.match(html, /onCreate\(name, folderId, template\)/);
+});
+
+// --- Objectifs sport (#592) ---
+
+test("objectifs : réglage persisté comme les autres objets-cartes, onglet Réglages, publié aux widgets", async () => {
+  const part001 = await read("../source/index.html.part-001");
+  assert.match(part001, /useState\(SPORT_GOALS_DEFAULT\)/);
+  assert.match(part001, /useEffect\(\(\) => \{ publishSportGoals\(sportGoals\); \}, \[sportGoals\]\);/);
+  assert.match(part001, /"nexora:sportGoals",\n  \]\);/, "clé fusionnable (objet-carte)");
+  assert.match(part001, /\["sportGoals", "nexora:sportGoals", setSportGoals\]/, "chargée");
+  assert.match(part001, /"nexora:sportGoals": sportGoals,/, "sauvegardée");
+  assert.match(part001, /persistKey\("nexora:sportGoals", sportGoals\)/, "persistée");
+  assert.match(part001, /sportGoals=\{sportGoals\} setSportGoals=\{setSportGoals\}/);
+  assert.match(html, /key: "sportGoals", label: "Objectifs sport"/);
+  assert.match(html, /activeTab === "sportGoals" && <SportGoalsSettings value=\{sportGoals\} onChange=\{setSportGoals\} \/>/);
+  assert.match(html, /const goals = useSportGoals\(\);\n  const progress = useMemo/, "résumé");
+});
+
+test("objectifs : normalisation (nombres à virgule, vides, objectifs sans identifiant)", () => {
+  assert.deepEqual(W.sportGoalsNormalize(undefined), { weeklyHours: null, yearlyKm: [] });
+  assert.deepEqual(W.sportGoalsNormalize({ weeklyHours: "7,5", yearlyKm: [{ id: "a", km: "1200", sports: ["Trail", 3] }, { km: 5 }, null] }),
+    { weeklyHours: 7.5, yearlyKm: [{ id: "a", label: "", sports: ["Trail"], km: 1200 }] });
+  assert.equal(W.sportGoalNumber("0"), null);
+  assert.equal(W.sportGoalNumber("-3"), null);
+  assert.equal(W.sportGoalNumber(""), null);
+  assert.equal(W.sportGoalLabel({ label: "", sports: ["Course à pied", "Trail"] }), "Course à pied + Trail");
+  assert.equal(W.sportGoalLabel({ label: "  ", sports: [] }), "Tous les sports");
+  assert.equal(W.sportGoalLabel({ label: "Course", sports: ["Trail"] }), "Course");
+});
+
+test("objectifs : avancement de la semaine et des km de l'année, écart au rythme régulier", () => {
+  const rows = [...W.sportRows(payload), { id: "f", date: "2026-10-03", sport: "Course à pied", total: 60, distance: 50 }];
+  const p = W.sportGoalProgress(rows, { weeklyHours: 10, yearlyKm: [{ id: "run", sports: ["Course à pied"], km: 1000 }, { id: "vide", sports: [], km: null }] }, "2026-10-01");
+  close(p.weekly.done, (45 + 60 + 1234.5) / 60);
+  close(p.weekly.ratio, (45 + 60 + 1234.5) / 600);
+  assert.equal(p.weekly.remaining, 0);
+  assert.equal(p.yearly.length, 1, "objectif sans km ignoré");
+  assert.equal(p.yearly[0].done, 18.5, "2025 et séance future exclus");
+  close(p.yearly[0].expected, (1000 * 274) / 365);
+  close(p.yearly[0].gap, 18.5 - (1000 * 274) / 365);
+  assert.equal(p.yearly[0].label, "Course à pied");
+  assert.equal(W.sportGoalProgress(rows, {}, "2026-10-01").weekly, null);
+  assert.equal(W.sportGoalProgress([], { weeklyHours: 4 }, "2026-10-01").weekly.remaining, 4);
+  const all = W.sportGoalProgress(rows, { yearlyKm: [{ id: "x", sports: [], km: 100 }] }, "2026-10-01");
+  assert.equal(all.yearly[0].done, 18.5, "aucun sport = tous (CrossFit sans distance)");
+});
+
+test("objectifs : bloc « Total sport » réglé sur un objectif, cible affichée si l'unité concorde", () => {
+  const goals = { weeklyHours: 8, yearlyKm: [{ id: "run", sports: ["Course à pied", "Trail"], km: 1500 }] };
+  assert.deepEqual(W.sportBlockGoalPatch("weeklyHours", goals), { sportGoal: "weeklyHours", sportMeasure: "total", sportPeriod: "week", sportAgg: "sum", sportSports: [] });
+  assert.deepEqual(W.sportBlockGoalPatch("yearlyKm:run", goals), { sportGoal: "yearlyKm:run", sportMeasure: "distance", sportPeriod: "year", sportAgg: "sum", sportSports: ["Course à pied", "Trail"] });
+  assert.deepEqual(W.sportBlockGoalPatch("", goals), { sportGoal: "" });
+  assert.deepEqual(W.sportBlockGoalTarget({ sportGoal: "weeklyHours" }, goals), { target: 8, unit: "h" });
+  assert.deepEqual(W.sportBlockGoalTarget({ sportGoal: "yearlyKm:run" }, goals), { target: 1500, unit: "km" });
+  assert.equal(W.sportBlockGoalTarget({ sportGoal: "yearlyKm:supprime" }, goals), null, "objectif supprimé : plus de cible");
+  assert.equal(W.sportBlockGoalTarget({}, goals), null);
+  assert.match(html, /goal && goal\.unit === unit \?/);
 });
