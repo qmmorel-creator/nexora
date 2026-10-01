@@ -28,6 +28,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Tableau de bord : widget « Graphique Budget » — Sankey mensuel et annuel (portage natif #569), waterfall, dépenses cumulées par catégorie, small multiples avec budget, donut, waffle et dépenses par mois sur 12 mois, calculés avec les règles d'OS360 (`lib/finance-budget.mjs`, vérifiés contre les fonctions d'origine) ; graphique et période choisis dans l'en-tête, aucun autre réglage (Ref #587).
 - Assistant : routes `/api/finance/budget-summary` et `/api/finance/transactions/search` (clé de l'assistant, lecture seule) et outils MCP `get_budget_summary`, `search_budget_transactions`, `categorize_budget_transaction` (politique de confirmation de `/api/finance/transactions` conservée) (Ref #587).
 - Widget « Graphique sport » (ex-« Sport par activité ») : sélecteur de visualisation — barres empilées, série temporelle avec moyenne périodique (semaine, mois ou année), cumul empilé, répartition (1 carré = 1 heure) et calendrier annuel, tous sports séparés, sans le moteur OS360 (Ref #590).
+- Tableau de bord : widget « Résumé sport » — dernière séance (sport, durée, distance, dénivelé, ancienneté), semaine en cours comparée à la semaine dernière au même jour, mois en cours, heures par sport sur la semaine, le mois ou l'année ; modèle de tableau de bord « Sport » (résumé, graphiques, calendrier et liste des activités déjà placés) dans « Nouveau tableau de bord » (Ref #591).
 
 ### Corrections
 
