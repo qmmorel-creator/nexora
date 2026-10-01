@@ -4244,6 +4244,9 @@ function normalizeHabits(list) {
     // Pas du bouton « + » (retour de test, #353) : habitudes chiffrées
     // seulement, strictement positif, 1 par défaut.
     if (kind === "numeric") habit.step = Number.isFinite(raw.step) && raw.step > 0 ? raw.step : 1;
+    // Liaison Strava (#593), habitudes à cocher seulement.
+    const strava = kind === "check" ? normalizeHabitStrava(raw.strava) : null;
+    if (strava) habit.strava = strava;
     out.push(habit);
   });
   return out;
@@ -4637,6 +4640,64 @@ function habitYearWeeks(theme, log, year) {
     cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 7);
   }
   return weeks;
+}
+
+// --- Habitudes cochées par Strava (#593) -------------------------------------
+/* Une habitude « à cocher » peut être liée à des sports du journal « Activités
+   Strava » : chaque jour, depuis `since`, où une séance d'un de ces sports
+   dure au moins `minMinutes`, l'habitude est cochée automatiquement.
+   La synchronisation AJOUTE seulement : elle ne retire jamais une coche (une
+   coche manuelle reste), ne coche pas un thème « choix unique » où une autre
+   habitude l'est déjà ce jour-là, et ne coche jamais un jour « non
+   applicable ». Le journal garde son contrat (MCP) : rien n'y marque une
+   coche automatique ; elle se reconnaît à la séance correspondante. */
+function normalizeHabitStrava(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const sports = Array.isArray(raw.sports) ? [...new Set(raw.sports.filter((s) => typeof s === "string" && s.trim()))] : [];
+  if (!sports.length) return null;
+  const min = Number(raw.minMinutes);
+  const since = String(raw.since || "");
+  return { sports, minMinutes: Number.isFinite(min) && min > 0 ? Math.round(min) : 0, since: HABIT_LOG_ISO_RE.test(since) ? since : "" };
+}
+// Séances qui justifient la coche d'une habitude liée, pour un jour donné.
+function habitStravaActivities(habit, activities, date) {
+  const link = normalizeHabitStrava(habit && habit.strava);
+  if (!link || (link.since && date < link.since)) return [];
+  return (activities || []).filter((a) => a && a.date === date && link.sports.includes(a.sport)
+    && (!link.minMinutes || (typeof a.total === "number" && a.total >= link.minMinutes)));
+}
+// Entrées à AJOUTER au journal : jours passés (≤ today) avec une séance
+// correspondante, ni déjà cochés, ni bloqués par une sœur « choix unique »,
+// ni « non applicables ».
+function habitStravaEntries(themes, log, skips, activities, today) {
+  const catalogue = normalizeHabitThemes(themes);
+  const current = normalizeHabitLog(log);
+  const has = new Set(current.map((e) => e.id));
+  const skipped = new Set(normalizeHabitSkips(skips).map((e) => e.id));
+  const byDate = new Map();
+  for (const a of activities || []) {
+    if (!a || !HABIT_LOG_ISO_RE.test(String(a.date || "")) || a.date > today) continue;
+    if (!byDate.has(a.date)) byDate.set(a.date, []);
+    byDate.get(a.date).push(a);
+  }
+  const added = [];
+  const addedIds = new Set();
+  for (const theme of catalogue) {
+    for (const habit of theme.habits) {
+      if (!habit.strava) continue;
+      for (const [date, list] of byDate) {
+        const id = habitLogCellId(habit.id, date);
+        if (has.has(id) || skipped.has(id) || !habitStravaActivities(habit, list, date).length) continue;
+        if (theme.selectionMode === "single") {
+          const taken = theme.habits.some((h) => h.id !== habit.id && (has.has(habitLogCellId(h.id, date)) || addedIds.has(habitLogCellId(h.id, date))));
+          if (taken) continue;
+        }
+        added.push({ id, habitId: habit.id, date });
+        addedIds.add(id);
+      }
+    }
+  }
+  return added.sort((a, b) => (a.date === b.date ? a.habitId.localeCompare(b.habitId) : a.date.localeCompare(b.date)));
 }
 // === NEXORA:HABITS:END ===
 
@@ -16070,6 +16131,41 @@ function HabitStepInput({ value, onCommit }) {
   );
 }
 
+// Liaison Strava d'une habitude à cocher (#593) : sports, durée minimale,
+// date de départ. Le journal sportif n'est lu qu'à l'ouverture du réglage.
+function HabitStravaLink({ habit, onChange }) {
+  const { rows, error } = useSportData();
+  const link = habit.strava || null;
+  const names = [...new Set([...sportNames(rows).map((s) => s.name), ...(link ? link.sports : [])])];
+  const update = (patch) => {
+    const next = { sports: [], minMinutes: 0, since: financeSankeyToday(), ...(link || {}), ...patch };
+    onChange(next.sports.length ? next : null);
+  };
+  const toggle = (name) => {
+    const sports = link ? link.sports : [];
+    update({ sports: sports.includes(name) ? sports.filter((x) => x !== name) : [...sports, name] });
+  };
+  return (
+    <div className="lp-habit-strava">
+      <div className="lp-habit-strava-title">Cocher automatiquement d’après Strava</div>
+      {error && <small>{error}</small>}
+      {!rows && !error && <small>Chargement des sports…</small>}
+      <div className="lp-habit-strava-sports" role="group" aria-label="Sports qui cochent l’habitude">
+        {names.map((name) => (
+          <label key={name}><input type="checkbox" checked={!!link && link.sports.includes(name)} onChange={() => toggle(name)} /> {name}</label>
+        ))}
+      </div>
+      {link && (
+        <div className="lp-habit-kindpop-range">
+          <label title="Une séance plus courte ne coche pas l’habitude">Durée min. (min) <input type="number" min="0" step="5" value={link.minMinutes || ""} onChange={(e) => update({ minMinutes: Math.max(0, Math.round(Number(e.target.value) || 0)) })} /></label>
+          <label title="Aucun jour antérieur n’est coché">À partir du <input type="date" value={link.since} onChange={(e) => update({ since: e.target.value })} /></label>
+        </div>
+      )}
+      <small>Les coches s’ajoutent au journal, jamais ne s’effacent ; une coche manuelle reste.</small>
+    </div>
+  );
+}
+
 function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog, pushToast, onClose, embedded }) {
   const catalogue = normalizeHabitThemes(habitThemes);
   const [editingId, setEditingId] = useState(null);
@@ -16172,6 +16268,17 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
     )));
   };
 
+  // #593 : liaison Strava (null la retire).
+  const setHabitStrava = (theme, habit, strava) => {
+    setHabitThemes(catalogue.map((t) => (
+      t.id !== theme.id ? t : { ...t, habits: t.habits.map((h) => {
+        if (h.id !== habit.id) return h;
+        const { strava: _old, ...rest } = h;
+        return strava ? { ...rest, strava } : rest;
+      }) }
+    )));
+  };
+
   const removeHabit = (theme, habit) => {
     const next = catalogue.map((t) => (
       t.id !== theme.id ? t : { ...t, habits: t.habits.filter((h) => h.id !== habit.id) }
@@ -16222,6 +16329,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
                     value={habit.name}
                     onChange={(e) => renameHabit(theme, habit, e.target.value)}
                   />
+                  {habit.strava && <span className="lp-habit-chip-strava" title={`Cochée d’après Strava : ${habit.strava.sports.join(", ")}`}>Strava</span>}
                   <button
                     type="button"
                     className={"lp-icon-btn lp-habit-chip-kind" + (habit.kind === "numeric" ? " active" : "")}
@@ -16248,6 +16356,7 @@ function HabitThemeManager({ habitThemes, setHabitThemes, habitLog, setHabitLog,
                         <label title="Valeur ajoutée à chaque clic sur « + » (et retirée par « − »)">Pas <HabitStepInput value={habit.step} onCommit={(num) => setHabitRange(theme, habit, "step", num)} /></label>
                       </div>
                     )}
+                    {habit.kind !== "numeric" && <HabitStravaLink habit={habit} onChange={(strava) => setHabitStrava(theme, habit, strava)} />}
                   </div>
                 )}
               </span>

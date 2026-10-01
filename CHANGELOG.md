@@ -30,6 +30,9 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Widget « Graphique sport » (ex-« Sport par activité ») : sélecteur de visualisation — barres empilées, série temporelle avec moyenne périodique (semaine, mois ou année), cumul empilé, répartition (1 carré = 1 heure) et calendrier annuel, tous sports séparés, sans le moteur OS360 (Ref #590).
 - Tableau de bord : widget « Résumé sport » — dernière séance (sport, durée, distance, dénivelé, ancienneté), semaine en cours comparée à la semaine dernière au même jour, mois en cours, heures par sport sur la semaine, le mois ou l'année ; modèle de tableau de bord « Sport » (résumé, graphiques, calendrier et liste des activités déjà placés) dans « Nouveau tableau de bord » (Ref #591).
 - Réglages → « Objectifs sport » : heures par semaine (tous sports) et objectifs de km par an sur un ou plusieurs sports (clé `nexora:sportGoals`) ; avancement dans le « Résumé sport » (jauge de la semaine, carte par objectif annuel avec l'écart au rythme régulier) et, au choix, dans le bloc « Total sport » (valeur / cible · %) (Ref #592).
+- Habitudes : une habitude « à cocher » peut être liée à des sports Strava (Réglages → Thèmes d'habitudes → « # » de l'habitude : sports, durée minimale, « à partir du ») ; chaque jour avec une séance correspondante est coché automatiquement à la lecture du journal sportif. Les coches s'ajoutent sans jamais en retirer, respectent les thèmes « choix unique » et les jours « non applicables » ; le contrat de `nexora:habitLog` est inchangé. Infobulle « Cochée d'après Strava » dans Quick Habit (Ref #593).
+- Tableau de bord : widget « Graphique santé » — les 25 mesures de l'onglet Santé (Whoop, balance, nutrition) groupées par famille, par jour, semaine ou mois (moyenne des jours renseignés), moyenne mobile sur 7 jours, seconde mesure sur l'axe de droite ; lecture seule via `/api/nexora/health-records` (session du propriétaire, URL de la source dans la variable Netlify `NEXORA_HEALTH_CSV_URL`, parseur à parité avec OS360, cas de parité figés) (Ref #594).
+- Tableau de bord : widget « Santé × sport » — une mesure santé (courbe) face à une mesure sport (barres, sports au choix), par jour ou par semaine, avec le coefficient de corrélation de Pearson et sa lecture ; option « Santé du lendemain » pour comparer une séance à la mesure du jour suivant ; un jour sans séance compte pour 0 (Ref #595).
 
 ### Corrections
 
@@ -38,6 +41,8 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 ### Incompatibilités
 
 - Widget « Graphique sport (OS360) » retiré : les widgets existants deviennent, à la lecture, le « Graphique sport » natif sur la vue équivalente (Ref #590).
+- Widget « Graphique financier (OS360) » retiré : les widgets existants deviennent, à la lecture, le widget Budget natif équivalent — « Graphique Budget » (Sankey, waterfall, cumul, small multiples, donut, waffle, dépenses par mois), « Budget du mois », « Patrimoine par banque », « Transactions » ou « Structure du patrimoine (Sankey) » ; sans équivalent : « Graphique Budget », donut (Ref #596).
+- Moteur de graphiques OS360 retiré de Nexora : `public/os360-moteur/` (copie du bundle OS360, avec ses données d'exemple réelles, #582) et `outils/os360-moteur/` supprimés, ainsi que la route `/api/nexora/finance-budget-data` qui ne servait que lui ; `/os360-moteur/` n'est plus publié. Les tests de parité sport et santé s'appuient désormais sur des résultats d'OS360 figés (`tests/fixtures/os360-parite-*.json`) (Ref #597).
 
 ## À venir
 

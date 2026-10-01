@@ -2151,7 +2151,6 @@ function defaultLayoutForType(type) {
   if (type === "financeSankeyMonthly") return { w: 8, h: 7 };
   if (type === "financeSankeyWealth") return { w: 7, h: 7 };
   if (type === "financeTransactions") return { w: 12, h: 9 };
-  if (type === "financeOs360Chart") return { w: 8, h: 8 };
   // Budget natif (#586).
   if (type === "financeBudgetMonth") return { w: 6, h: 8 };
   if (type === "financeToCategorize") return { w: 6, h: 9 };
@@ -2160,6 +2159,8 @@ function defaultLayoutForType(type) {
   if (type === "sportActivities") return { w: 12, h: 9 };
   if (type === "sportChart") return { w: 10, h: 7 };
   if (type === "sportSummary") return { w: 12, h: 6 };
+  if (type === "healthChart") return { w: 8, h: 7 };
+  if (type === "healthSportChart") return { w: 10, h: 7 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -2250,6 +2251,36 @@ function migrateLegacySportOs360Widget(widget) {
   if (view === "calendar" && /^\d{4}$/.test(String(config.year || ""))) sport.year = String(config.year);
   return { ...widget, type: "sportChart", sport: { ...sport, ...(widget.sport && typeof widget.sport === "object" ? widget.sport : {}) } };
 }
+// #596 : le « Graphique financier (OS360) » migre vers le widget Budget natif
+// qui montre la même chose — Graphique Budget (#587, 8 graphiques), Budget du
+// mois, Patrimoine par banque, Transactions ou Sankey du patrimoine. Sans
+// équivalent : Graphique Budget, donut (le défaut du widget OS360). Titre,
+// identité et disposition conservés ; le réglage `os360` aussi.
+const LEGACY_FINANCE_OS360_TYPE = "financeOs360Chart";
+const LEGACY_FINANCE_OS360_CHARTS = {
+  chart_sankey_monthly: "sankeyMonthly", sankey: "sankeyMonthly", massifFlux: "sankeyMonthly",
+  chart_annual_sankey: "sankeyAnnual",
+  cascadeWaterfall: "waterfall",
+  chart_cumulative: "cumulative", generic_cumulative: "cumulative",
+  chart_small_multiples: "smallMultiples",
+  chart_donut: "donut", sharedPie: "donut", chart_monthly_sunburst: "donut",
+  chart_waffle: "waffle",
+  chart_annual_categories: "periodic", generic_periodic: "periodic", stackedBars: "periodic", stackedBars100: "periodic", timeSeries: "periodic", generic_time: "periodic",
+};
+const LEGACY_FINANCE_OS360_WIDGETS = [
+  [/^chart_wealth_sankey$/, "financeSankeyWealth"],
+  [/^(chart_wealth_|wealth|massifPatrimoine|accountsTreemap|card_wealth_change)/, "financeWealth"],
+  [/^(card_|budget|category_progress|chart_budget_|list_month_budget_tracking|list_over_budget|remainingCounter|progressBar)/, "financeBudgetMonth"],
+  [/^(list_all_transactions|list_recent|list_unreconciled|transactions|transactionsPro)$/, "financeTransactions"],
+];
+function migrateLegacyFinanceOs360Widget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_FINANCE_OS360_TYPE) return widget;
+  const os = widget.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
+  const chart = String(os.type || "budget.chart_donut").replace(/^budget\./, "");
+  const target = LEGACY_FINANCE_OS360_WIDGETS.find(([re]) => re.test(chart));
+  if (target) return { ...widget, type: target[1] };
+  return { ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_OS360_CHARTS[chart] || "donut" };
+}
 function migrateLegacyMiniGanttData(value) {
   if (Array.isArray(value)) return value.filter((v) => !isRemovedEcheancesWidget(v)).map(migrateLegacyMiniGanttData);
   if (!value || typeof value !== "object") return value;
@@ -2257,6 +2288,7 @@ function migrateLegacyMiniGanttData(value) {
   if (value.type === LEGACY_BLOCKERS_TYPE) return migrateLegacyBlockersWidget(value);
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
   if (value.type === LEGACY_SPORT_OS360_TYPE) return migrateLegacySportOs360Widget(value);
+  if (value.type === LEGACY_FINANCE_OS360_TYPE) return migrateLegacyFinanceOs360Widget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
   return next;
@@ -3724,7 +3756,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === LEGACY_SPORT_OS360_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_OS360_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3785,8 +3817,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeProSynthese" && (
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
                 )}
-                {w.type === "financeOs360Chart" && (
-                  <WidgetOs360Chart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                {w.type === LEGACY_FINANCE_OS360_TYPE && (
+                  <WidgetFinanceLegacyOs360 widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacyFinanceOs360Widget(w), ...patch })} />
                 )}
                 {w.type === "financeTransactions" && (
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -3805,6 +3837,12 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "sportSummary" && (
                   <WidgetSportSummary widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "healthChart" && (
+                  <WidgetHealthChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "healthSportChart" && (
+                  <WidgetHealthSportChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === LEGACY_SPORT_OS360_TYPE && (
                   <WidgetSportChart widget={migrateLegacySportOs360Widget(w)} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacySportOs360Widget(w), ...patch })} />
@@ -13058,6 +13096,7 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
                   type="button"
                   className={"lp-widget-habit-chip" + (active ? " active" : "")}
                   style={active ? { borderColor: habit.color, background: habit.color + "1f", color: "var(--text-900)" } : undefined}
+                  title={habitStravaTitle(habit, date)}
                   onClick={() => toggle(habit.id)}
                 >
                   {active ? <Check size={11} color={habit.color} /> : <span className="lp-widget-habit-chip-empty" />}
@@ -13071,6 +13110,7 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
                 type="button"
                 className={"lp-widget-habit-pill" + (active ? " active" : "")}
                 style={active ? { background: habit.color, borderColor: habit.color, color: textOn(habit.color) } : undefined}
+                title={habitStravaTitle(habit, date)}
                 onClick={() => toggle(habit.id)}
               >
                 {habit.name}
@@ -17138,7 +17178,6 @@ const WIDGET_TYPE_META = [
   // Transactions Budget (#572) : 100 % des transactions KDM360, lecture seule.
   { key: "financeTransactions", label: "Transactions (Budget)", icon: List, group: "Suivi" },
   // Graphique financier (#573) : tous les widgets Budget d'OS360, par son moteur.
-  { key: "financeOs360Chart", label: "Graphique financier (OS360)", icon: BarChart3, group: "Suivi" },
   // Budget natif (#586) : sans réglage, calculs d'OS360 faits côté serveur.
   { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Suivi" },
   { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Suivi" },
@@ -17149,6 +17188,8 @@ const WIDGET_TYPE_META = [
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
   { key: "sportChart", label: "Graphique sport", icon: BarChart3, group: "Suivi" },
   { key: "sportSummary", label: "Résumé sport", icon: Activity, group: "Suivi" },
+  { key: "healthChart", label: "Graphique santé", icon: Activity, group: "Suivi" },
+  { key: "healthSportChart", label: "Santé × sport", icon: Activity, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -17556,6 +17597,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [sportConfig, setSportConfig] = useState(() => sportSpec(widget));
   const [sportChartConfig, setSportChartConfig] = useState(() => sportChartSpec(widget));
   const [sportSummaryConfig, setSportSummaryConfig] = useState(() => sportSummarySpec(widget));
+  const [healthConfig, setHealthConfig] = useState(() => healthChartSpec(widget));
+  const [crossConfig, setCrossConfig] = useState(() => healthSportSpec(widget));
   const [titleColor, setTitleColor] = useState(widget?.titleColor || "");
   const [onlyMine, setOnlyMine] = useState(widget?.onlyMine || false);
   const [showAppearance, setShowAppearance] = useState(!!(widget?.titleEmoji || widget?.titleColor || widget?.bandColor || widget?.bgColor));
@@ -17693,6 +17736,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "sportActivities") data.sport = { ...sportConfig };
     if (type === "sportChart") data.sport = { ...sportChartConfig };
     if (type === "sportSummary") data.sport = { ...sportSummaryConfig };
+    if (type === "healthChart") data.health = { ...healthConfig };
+    if (type === "healthSportChart") data.cross = { ...crossConfig };
     if (type === "heatmapGrid") {
       data.heatmapRowField = heatmapRowField;
       data.heatmapColField = heatmapColField;
@@ -18554,14 +18599,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
 
 
-      {type === "financeOs360Chart" && (
-        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-          Tous les widgets Budget d’OS360 — graphiques du mois, patrimoine, annuels, analyses personnalisées (métrique,
-          agrégation, granularité…), cartes et listes — rendus par le moteur d’OS360 lui-même, sur les données KDM360.
-          Le graphique se choisit dans l’en-tête du widget ; « Options » y ouvre tous ses réglages OS360.
-        </p>
-      )}
-
       {type === "financeBudgetChart" && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           Graphiques Budget natifs, calculés avec les règles d’OS360 : Sankey mensuel et annuel, waterfall, dépenses cumulées,
@@ -18600,6 +18637,50 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
           <style>{FINANCE_TX_CSS}</style>
           <div className="nx-tx"><FinanceTxColumnPicker columns={sportAllColumns(sportStore.rows)} visible={sportConfig.columns} defaults={SPORT_DEFAULT_COLUMNS} onChange={(keys) => setSportConfig((c) => ({ ...c, columns: keys.length ? keys : SPORT_DEFAULT_COLUMNS }))} /></div>
+        </>
+      )}
+
+      {type === "healthSportChart" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Une mesure santé (courbe) face au sport (barres), par jour ou par semaine, avec le coefficient de corrélation
+            sur la période. « Santé du lendemain » compare la séance à la mesure du jour suivant (récupération, HRV…).
+            Sports et période se règlent dans l’en-tête.
+          </p>
+          <div className="lp-field">
+            <label>Mesure santé</label>
+            <HealthMetricSelect value={crossConfig.metric} onChange={(v) => setCrossConfig((c) => ({ ...c, metric: v }))} label="Mesure santé" />
+          </div>
+          <div className="lp-field">
+            <label>Mesure sport</label>
+            <select value={crossConfig.measure} onChange={(e) => setCrossConfig((c) => ({ ...c, measure: e.target.value }))}>
+              {SPORT_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
+        </>
+      )}
+
+      {type === "healthChart" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Les mesures de l’onglet Santé (Whoop, balance, nutrition) : une mesure par jour, semaine ou mois (moyenne des
+            jours renseignés), sa moyenne sur 7 jours, et une seconde mesure au choix sur l’axe de droite. Tout se règle
+            aussi dans l’en-tête.
+          </p>
+          <div className="lp-field">
+            <label>Mesure</label>
+            <HealthMetricSelect value={healthConfig.metric} onChange={(v) => setHealthConfig((c) => ({ ...c, metric: v }))} label="Mesure" />
+          </div>
+          <div className="lp-field">
+            <label>Seconde mesure (axe de droite)</label>
+            <HealthMetricSelect value={healthConfig.metricB} onChange={(v) => setHealthConfig((c) => ({ ...c, metricB: v }))} label="Seconde mesure" allowEmpty />
+          </div>
+          <div className="lp-field">
+            <label>Période</label>
+            <select value={healthConfig.period} onChange={(e) => setHealthConfig((c) => ({ ...c, period: e.target.value }))}>
+              {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
         </>
       )}
 
@@ -37760,6 +37841,17 @@ function FinanceChartPeriodic({ months }) {
   );
 }
 
+// Ancien « Graphique financier (OS360) » reçu sans migration (#596) : rendu
+// par le widget natif équivalent.
+function WidgetFinanceLegacyOs360({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const w = migrateLegacyFinanceOs360Widget(widget);
+  if (w.type === "financeSankeyWealth") return <WidgetFinanceSankey widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
+  if (w.type === "financeWealth") return <WidgetFinanceWealth externalToolbarSlot={externalToolbarSlot} />;
+  if (w.type === "financeBudgetMonth") return <WidgetFinanceBudgetMonth externalToolbarSlot={externalToolbarSlot} />;
+  if (w.type === "financeTransactions") return <WidgetFinanceTransactions widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
+  return <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
+}
+
 function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget }) {
   const chart = FINANCE_BUDGET_CHARTS.some((c) => c.key === widget.budgetChart) ? widget.budgetChart : "sankeyMonthly";
   const thisMonth = financeBudgetToday().slice(0, 7);
@@ -38108,212 +38200,6 @@ function BudgetCategoriesSettings({ pushToast }) {
         </div>
       ))}
       {!tree.length && <div className="lp-empty" style={{ padding: 12 }}>Aucune catégorie ne correspond.</div>}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Widget « Graphique financier » (#573) : tous les widgets Budget d'OS360
-// (graphiques, cartes, listes, analyses personnalisées), rendus par le moteur
-// OS360 lui-même — une copie de son bundle générée par
-// outils/os360-moteur/generer.mjs et servie sous /os360-moteur/. Le widget
-// l'affiche dans un iframe isolé (sandbox="allow-scripts" : pas d'origine, ni
-// stockage ni cookies partagés) et lui envoie les données et la configuration
-// par postMessage. Le cadre et l'en-tête sont ceux de Nexora ; le contenu, y
-// compris les barres de période et les Options d'OS360, est celui d'OS360.
-// ---------------------------------------------------------------------------
-
-// === NEXORA:OS360-WIDGET:START ===
-const OS360_WIDGET_DEFAULT_TYPE = "budget.chart_donut";
-const OS360_MOTEUR_URL = "/os360-moteur/index.html";
-
-// Catalogue reçu du moteur -> groupes triés pour le sélecteur d'en-tête.
-function os360CatalogueGroups(catalogue) {
-  const groups = new Map();
-  for (const item of catalogue || []) {
-    const key = item.category || "Autres";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(item);
-  }
-  return [...groups.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0], "fr"))
-    .map(([category, items]) => ({ category, items: items.slice().sort((a, b) => a.label.localeCompare(b.label, "fr")) }));
-}
-
-// Configuration persistée du widget OS360 (type, titre, config OS360).
-function os360WidgetSpec(widget, fallback = { type: OS360_WIDGET_DEFAULT_TYPE, config: {} }) {
-  const spec = widget?.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
-  if (!(typeof spec.type === "string" && spec.type)) {
-    return { type: fallback.type, title: spec.title || "", config: { ...fallback.config }, ...(fallback.variant ? { variant: fallback.variant } : {}) };
-  }
-  return { type: spec.type, title: spec.title || "", config: spec.config && typeof spec.config === "object" ? spec.config : {} };
-}
-
-// Barre de période d'OS360 (`osPeriodBar`) : même écriture dans la
-// configuration du widget — mode mois, sélection rapide, et effacement de la
-// fenêtre glissante, des dates libres et de l'année.
-function os360PeriodConfig(config, value) {
-  const { range, from, to, year, ...rest } = config || {};
-  return { ...rest, linked: false, periodMode: "month", periodValue: value, quickPeriod: ["today", "current", "previous"].includes(value) ? value : "" };
-}
-
-// Champs de période conservés quand on change de graphique.
-const OS360_PERIOD_KEYS = ["linked", "periodMode", "periodValue", "quickPeriod", "range", "from", "to", "year"];
-function os360PeriodOnly(config) {
-  return Object.fromEntries(OS360_PERIOD_KEYS.filter((k) => config && config[k] !== undefined).map((k) => [k, config[k]]));
-}
-
-// Seuls les messages de NOTRE iframe, signés par le moteur, sont pris en compte.
-function os360MessageFrom(event, frameWindow) {
-  return !!frameWindow && event.source === frameWindow && event.data && event.data.source === "nx-os360-moteur" ? event.data : null;
-}
-// === NEXORA:OS360-WIDGET:END ===
-
-// Données Budget brutes (tables OS360), une requête pour tous les widgets.
-const os360DataStore = { promise: null, rows: null, error: null, listeners: new Set() };
-function os360DataLoad(force = false) {
-  if (os360DataStore.promise && !force) return os360DataStore.promise;
-  const notify = () => os360DataStore.listeners.forEach((fn) => fn());
-  os360DataStore.error = null;
-  notify();
-  os360DataStore.promise = (async () => {
-    try {
-      const user = auth.currentUser;
-      if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Budget.");
-      const token = await user.getIdToken();
-      const response = await fetch("/api/nexora/finance-budget-data", { headers: { authorization: `Bearer ${token}` } });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) {
-        const reasons = {
-          unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Budget.",
-          finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
-          configuration_missing: "Configuration Nexora incomplète sur le serveur.",
-        };
-        throw new Error(reasons[payload.error] || payload.detail || payload.error || `Lecture Budget impossible (HTTP ${response.status}).`);
-      }
-      os360DataStore.rows = payload.data;
-    } catch (error) {
-      os360DataStore.error = error instanceof Error ? error.message : String(error);
-      os360DataStore.promise = null;
-    }
-    notify();
-  })();
-  return os360DataStore.promise;
-}
-function useOs360Data() {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const listener = () => setTick((t) => t + 1);
-    os360DataStore.listeners.add(listener);
-    os360DataLoad();
-    return () => { os360DataStore.listeners.delete(listener); };
-  }, []);
-  return { rows: os360DataStore.rows, error: os360DataStore.error, reload: () => os360DataLoad(true) };
-}
-
-const OS360_WIDGET_CSS = `
-.lp-widget-head-toolbar:has(.nx-os360-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
-.lp-widget-head:has(.nx-os360-tools){align-items:flex-start}
-.lp-widget-head:has(.nx-os360-tools) .lp-widget-title{flex:0 0 auto;max-width:40%;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nx-os360-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;font-size:11px;color:#203246}
-.nx-os360-tools select,.nx-os360-tools button{height:24px;padding:0 7px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246;cursor:pointer;max-width:100%}
-.nx-os360-tools select{font-weight:600}
-.nx-os360-tools input[type=month]{height:24px;padding:0 6px;font:inherit;border:1px solid #d8e1eb;border-radius:5px}
-.nx-os360-tools button.active{background:#e7efff;border-color:#24569a;color:#24569a;font-weight:600}
-.nx-os360-group{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;padding-left:6px;border-left:1px solid var(--border,#d8e1eb)}
-.nx-os360-frame{width:100%;height:100%;border:0;display:block;background:transparent}
-.nx-os360{position:relative;height:100%;min-height:0}
-.nx-os360 .lp-empty{position:absolute;inset:0}
-`;
-
-// Graphique financier (#573) : widgets Budget d'OS360, tables KDM360.
-function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
-  const { rows, error, reload } = useOs360Data();
-  const message = useMemo(() => (rows ? { type: "nx-data", rows } : null), [rows]);
-  return <Os360EngineWidget widget={widget} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget}
-    message={message} error={error} reload={reload} loading="Chargement des données Budget…" reloadTitle="Relire les données Budget" />;
-}
-
-// Cœur commun : iframe du moteur, catalogue du domaine, période, Options.
-function Os360EngineWidget({ widget, externalToolbarSlot, onUpdateWidget, message: dataMessage, error, reload, loading, reloadTitle }) {
-  const frameRef = useRef(null);
-  const [catalogue, setCatalogue] = useState(null);
-  const spec = os360WidgetSpec(widget);
-  const specKey = JSON.stringify(spec);
-  const lastSent = useRef("");
-  const send = (message) => frameRef.current?.contentWindow?.postMessage(message, "*");
-
-  useEffect(() => {
-    const onMessage = (event) => {
-      const data = os360MessageFrom(event, frameRef.current?.contentWindow);
-      if (!data) return;
-      if (data.type === "nx-ready") {
-        setCatalogue(data.catalogue || []);
-        lastSent.current = "";
-      } else if (data.type === "nx-widget-change" && data.widget && onUpdateWidget) {
-        // Réglage modifié dans OS360 (période, Options…) : enregistré dans le widget Nexora.
-        const next = { type: data.widget.type, title: data.widget.title || "", config: data.widget.config || {} };
-        const key = JSON.stringify(next);
-        if (key !== JSON.stringify(os360WidgetSpec(widget))) { lastSent.current = key; onUpdateWidget({ os360: next }); }
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  });
-
-  // Données puis configuration, dès que le moteur est prêt (et à chaque changement).
-  useEffect(() => { if (catalogue && dataMessage) send(dataMessage); }, [catalogue, dataMessage]);
-  useEffect(() => {
-    if (!catalogue || !dataMessage || lastSent.current === specKey) return;
-    lastSent.current = specKey;
-    send({ type: "nx-widget", widget: { ...spec, title: spec.title || widget.title || "" } });
-  }, [catalogue, dataMessage, specKey]);
-
-  const groups = os360CatalogueGroups(catalogue);
-  const setType = (type) => {
-    const label = (catalogue || []).find((c) => c.type === type)?.label || "";
-    // Seule la période suit le changement de graphique : le reste est propre à chaque type.
-    onUpdateWidget && onUpdateWidget({ os360: { type, title: label, config: os360PeriodOnly(spec.config) }, title: label || widget.title });
-  };
-  const setPeriod = (value) => onUpdateWidget && onUpdateWidget({ os360: { ...spec, config: os360PeriodConfig(spec.config, value) } });
-  // Mois affiché par le sélecteur : celui de la sélection rapide, ou le mois choisi.
-  const periodMonth = spec.config.quickPeriod
-    ? financeSankeyQuickPeriod(spec.config.quickPeriod).from.slice(0, 7)
-    : /^\d{4}-\d{2}$/.test(String(spec.config.periodValue || "")) ? spec.config.periodValue : "";
-  const tools = (
-    <ViewToolbarPortal slot={externalToolbarSlot}>
-      <style>{OS360_WIDGET_CSS}</style>
-      <div className="nx-os360-tools" onPointerDown={(e) => e.stopPropagation()}>
-        <select value={spec.type} onChange={(e) => setType(e.target.value)} disabled={!catalogue} title="Graphique OS360" aria-label="Graphique OS360">
-          {!catalogue && <option value={spec.type}>Chargement du catalogue…</option>}
-          {groups.map((g) => (
-            <optgroup key={g.category} label={g.category}>
-              {g.items.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
-            </optgroup>
-          ))}
-        </select>
-        <span className="nx-os360-group" role="group" aria-label="Période">
-          <button type="button" className={spec.config.quickPeriod === "today" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "today"} onClick={() => setPeriod("today")}>Aujourd’hui</button>
-          <button type="button" className={spec.config.quickPeriod === "current" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "current"} onClick={() => setPeriod("current")}>Ce mois</button>
-          <button type="button" className={spec.config.quickPeriod === "previous" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "previous"} onClick={() => setPeriod("previous")}>Mois précédent</button>
-          <input type="month" aria-label="Choisir le mois" title="Choisir le mois" value={periodMonth} onChange={(e) => { if (e.target.value) setPeriod(e.target.value); }} />
-        </span>
-        <button type="button" disabled={!catalogue || !dataMessage} onClick={() => send({ type: "nx-options" })} title="Tous les réglages OS360 de ce graphique (métriques, agrégations, période, apparence…)">Options</button>
-        <button type="button" onClick={reload} title={reloadTitle}>Actualiser</button>
-      </div>
-    </ViewToolbarPortal>
-  );
-  return (
-    <div className="nx-os360">
-      {tools}
-      <iframe ref={frameRef} className="nx-os360-frame" title={widget.title || "Graphique financier"} src={OS360_MOTEUR_URL} sandbox="allow-scripts" referrerPolicy="no-referrer" />
-      {error && (
-        <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>
-          <div>{error}</div>
-          <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
-        </div>
-      )}
-      {!error && !dataMessage && <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>{loading}</div>}
     </div>
   );
 }
@@ -39009,6 +38895,37 @@ function sportLoad(force = false) {
   })();
   return sportStore.promise;
 }
+// Infobulle d'une habitude liée à Strava (#593) : la séance qui la coche.
+function habitStravaTitle(habit, date) {
+  if (!habit || !habit.strava) return undefined;
+  const acts = habitStravaActivities(habit, sportStore.rows || [], date);
+  return acts.length
+    ? `Cochée d’après Strava : ${acts.map((a) => `${a.sport} ${sportDurationLabel(a.total)}`).join(", ")}`
+    : `Liée à Strava (${habit.strava.sports.join(", ")}) : aucune séance ce jour-là`;
+}
+
+// Habitudes cochées par Strava (#593) : quand une habitude est liée à des
+// sports, le journal sportif est lu au démarrage et les coches manquantes sont
+// AJOUTÉES au journal (habitStravaEntries) — jamais retirées.
+function useSportHabitSync(habitThemes, habitSkips, setHabitLog, ready) {
+  const [, setTick] = useState(0);
+  const linked = useMemo(() => normalizeHabitThemes(habitThemes).some((t) => t.habits.some((h) => h.strava)), [habitThemes]);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    sportStore.listeners.add(listener);
+    return () => { sportStore.listeners.delete(listener); };
+  }, []);
+  useEffect(() => { if (ready && linked) sportLoad(); }, [ready, linked]);
+  const rows = sportStore.rows;
+  useEffect(() => {
+    if (!ready || !linked || !rows) return;
+    const today = financeSankeyToday();
+    setHabitLog((prev) => {
+      const added = habitStravaEntries(habitThemes, prev, habitSkips, rows, today);
+      return added.length ? normalizeHabitLog([...normalizeHabitLog(prev), ...added]) : prev;
+    });
+  }, [ready, linked, rows, habitThemes, habitSkips]);
+}
 function useSportData() {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -39021,13 +38938,13 @@ function useSportData() {
 }
 
 // Filtres d'en-tête communs aux widgets sport : sports et période.
-function SportFilterTools({ spec, rows, onChange, hidePeriod = false }) {
+function SportFilterTools({ spec, rows, onChange, hidePeriod = false, hideSports = false }) {
   const [open, setOpen] = useState(false);
   const names = useMemo(() => sportNames(rows), [rows]);
   const toggle = (name) => onChange({ sports: spec.sports.includes(name) ? spec.sports.filter((s) => s !== name) : [...spec.sports, name] });
   return (
     <span className="nx-sport-group" role="group" aria-label="Filtres sport">
-      <span className="nx-sport-pop">
+      {!hideSports && <span className="nx-sport-pop">
         <button type="button" className={spec.sports.length ? "active" : ""} aria-expanded={open} onClick={() => setOpen((v) => !v)} title="Choisir les sports affichés">
           {spec.sports.length ? `Sports (${spec.sports.length})` : "Tous les sports"}
         </button>
@@ -39043,7 +38960,7 @@ function SportFilterTools({ spec, rows, onChange, hidePeriod = false }) {
             </span>
           </span>
         )}
-      </span>
+      </span>}
       {!hidePeriod && (
         <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période" title="Période">
           {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -39713,6 +39630,444 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
             <span>{sportFormatValue(s.hours, "h")} <small>· {Math.round(s.share * 100)} % · {sportFormatValue(s.count, "séances")}</small></span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Santé (#594) : l'onglet Santé de la feuille (Whoop, balance, nutrition),
+// lu par /api/nexora/health-records (session du propriétaire, URL de la
+// source dans NEXORA_HEALTH_CSV_URL, lecture à parité avec OS360). Un widget
+// « Graphique santé » : une mesure (et une seconde au choix, axe de droite),
+// par jour, semaine ou mois, avec la moyenne mobile sur 7 jours.
+// ---------------------------------------------------------------------------
+
+// === NEXORA:HEALTH:START ===
+// Libellés, unités et décimales d'OS360 (`Zc`), par famille.
+const HEALTH_METRICS = [
+  { key: "weight", label: "Poids", unit: "kg", decimals: 1, group: "Corps" },
+  { key: "bodyFat", label: "Masse grasse", unit: "%", decimals: 1, group: "Corps" },
+  { key: "muscleMass", label: "Masse musculaire", unit: "kg", decimals: 1, group: "Corps" },
+  { key: "muscleRate", label: "Masse musculaire (%)", unit: "%", decimals: 1, group: "Corps" },
+  { key: "sleepHours", label: "Sommeil réel", unit: "h", decimals: 1, group: "Sommeil" },
+  { key: "sleepPerf", label: "Performance sommeil", unit: "%", decimals: 0, group: "Sommeil" },
+  { key: "sleepEff", label: "Efficacité sommeil", unit: "%", decimals: 0, group: "Sommeil" },
+  { key: "deepSleep", label: "Sommeil profond", unit: "h", decimals: 1, group: "Sommeil" },
+  { key: "remSleep", label: "Sommeil REM", unit: "h", decimals: 1, group: "Sommeil" },
+  { key: "recovery", label: "Récupération", unit: "%", decimals: 0, group: "Récupération" },
+  { key: "hrv", label: "HRV", unit: "ms", decimals: 0, group: "Récupération" },
+  { key: "restingHr", label: "FC repos", unit: "bpm", decimals: 0, group: "Récupération" },
+  { key: "respRate", label: "Fréq. respiratoire", unit: "rpm", decimals: 1, group: "Récupération" },
+  { key: "spo2", label: "SpO₂", unit: "%", decimals: 1, group: "Récupération" },
+  { key: "skinTemp", label: "Température cutanée", unit: "°C", decimals: 1, group: "Récupération" },
+  { key: "strain", label: "Day Strain", unit: "", decimals: 1, group: "Activité" },
+  { key: "calories", label: "Calories dépensées", unit: "kcal", decimals: 0, group: "Activité" },
+  { key: "steps", label: "Pas", unit: "", decimals: 0, group: "Activité" },
+  { key: "stress", label: "Stress moyen", unit: "/3", decimals: 2, group: "Activité" },
+  { key: "hrZone45", label: "Temps en zones FC 4–5", unit: "h", decimals: 2, group: "Activité" },
+  { key: "vo2max", label: "VO₂ max", unit: "ml/kg/min", decimals: 1, group: "Activité" },
+  { key: "sportDuration", label: "Durée sport (Whoop)", unit: "h", decimals: 1, group: "Activité" },
+  { key: "caloriesIn", label: "Calories consommées", unit: "kcal", decimals: 0, group: "Nutrition" },
+  { key: "proteins", label: "Protéines consommées", unit: "g", decimals: 0, group: "Nutrition" },
+  { key: "carbs", label: "Glucides consommés", unit: "g", decimals: 0, group: "Nutrition" },
+];
+const HEALTH_GROUPS = ["Corps", "Sommeil", "Récupération", "Activité", "Nutrition"];
+function healthMetric(key) {
+  return HEALTH_METRICS.find((m) => m.key === key) || null;
+}
+// Réglages du widget, complétés par les valeurs par défaut.
+function healthChartSpec(widget) {
+  const s = widget?.health && typeof widget.health === "object" ? widget.health : {};
+  return {
+    metric: healthMetric(s.metric) ? s.metric : "sleepHours",
+    metricB: healthMetric(s.metricB) ? s.metricB : "",
+    period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "90",
+    from: typeof s.from === "string" ? s.from : "",
+    to: typeof s.to === "string" ? s.to : "",
+    days: sportDays(s.days),
+    bucket: SPORT_BUCKETS.some((b) => b.value === s.bucket) ? s.bucket : "day",
+    mean: s.mean !== false,
+  };
+}
+function healthRows(data) {
+  if (!Array.isArray(data?.records)) throw new Error("Réponse Santé invalide.");
+  return data.records.filter((r) => r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || "")));
+}
+function healthValue(record, key) {
+  const v = record ? record[key] : null;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+// Moyenne des valeurs renseignées (null si aucune).
+function healthMean(values) {
+  const known = values.filter((v) => typeof v === "number" && Number.isFinite(v));
+  return known.length ? known.reduce((t, v) => t + v, 0) / known.length : null;
+}
+// Série : une valeur par jour, semaine ou mois (moyenne des jours renseignés
+// — une mesure santé est un état quotidien, jamais une somme), périodes
+// vides gardées (null : trou dans la courbe), rien après aujourd'hui.
+// `rolling` : moyenne mobile sur 7 jours (jours renseignés de la fenêtre),
+// calculée sur les jours seulement.
+function healthSeries(records, spec, today) {
+  const range = sportPeriodRange(spec, today);
+  const byDate = new Map((records || []).map((r) => [r.date, r]));
+  const dates = [...byDate.keys()].sort();
+  const first = range.from || dates[0] || "";
+  const last = [range.to || today, today].sort()[0];
+  const bucket = spec.bucket;
+  const groups = new Map();
+  let tooMany = false;
+  if (first && last && first <= last) {
+    const end = sportBucketKey(last, bucket);
+    for (let k = sportBucketKey(first, bucket); k <= end; k = sportNextBucket(k, bucket)) {
+      if (groups.size >= SPORT_MAX_BUCKETS) { tooMany = true; break; }
+      groups.set(k, []);
+    }
+    for (let d = first; d <= last; d = sportShiftDate(d, 1)) {
+      const key = sportBucketKey(d, bucket);
+      if (groups.has(key)) groups.get(key).push(d);
+    }
+  }
+  const metricB = spec.metricB && spec.metricB !== spec.metric ? spec.metricB : "";
+  const windowMean = (date, key) => {
+    const vals = [];
+    for (let i = 0; i < 7; i++) vals.push(healthValue(byDate.get(sportShiftDate(date, -i)), key));
+    return healthMean(vals);
+  };
+  const points = [...groups.entries()].map(([key, days]) => {
+    const a = healthMean(days.map((d) => healthValue(byDate.get(d), spec.metric)));
+    const b = metricB ? healthMean(days.map((d) => healthValue(byDate.get(d), metricB))) : null;
+    return { key, label: sportBucketLabel(key, bucket), a, b, rolling: bucket === "day" ? windowMean(key, spec.metric) : null };
+  });
+  const known = points.filter((p) => p.a !== null);
+  return {
+    points, tooMany, metricA: healthMetric(spec.metric), metricB: metricB ? healthMetric(metricB) : null,
+    average: healthMean(points.map((p) => p.a)), last: known.length ? known[known.length - 1] : null, count: known.length,
+  };
+}
+function healthFormat(value, metric) {
+  if (value === null || value === undefined || !metric) return "—";
+  const text = value.toLocaleString("fr-FR", { maximumFractionDigits: metric.decimals, minimumFractionDigits: 0 });
+  return metric.unit ? `${text} ${metric.unit}` : text;
+}
+// Graduations d'un axe dont les valeurs ne partent pas de zéro (poids,
+// FC repos…) : bornes « rondes » encadrant [min, max].
+function healthTicks(min, max, count = 5) {
+  if (!(Number.isFinite(min) && Number.isFinite(max))) return [0, 1];
+  if (min === max) { min -= 1; max += 1; }
+  const raw = (max - min) / count;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * pow).find((s) => s >= raw);
+  const lo = Math.floor(min / step) * step;
+  const ticks = [];
+  for (let v = lo; v < max + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  if (ticks[ticks.length - 1] < max) ticks.push(Math.round((ticks[ticks.length - 1] + step) * 1e6) / 1e6);
+  return ticks;
+}
+
+// --- Croisement santé × sport (#595) -----------------------------------------
+const HEALTH_SPORT_BUCKETS = SPORT_BUCKETS.filter((b) => b.value !== "month");
+function healthSportSpec(widget) {
+  const s = widget?.cross && typeof widget.cross === "object" ? widget.cross : {};
+  return {
+    metric: healthMetric(s.metric) ? s.metric : "recovery",
+    measure: SPORT_MEASURES.some((m) => m.value === s.measure) ? s.measure : "total",
+    sports: Array.isArray(s.sports) ? s.sports.filter((x) => typeof x === "string") : [],
+    period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "90",
+    from: typeof s.from === "string" ? s.from : "",
+    to: typeof s.to === "string" ? s.to : "",
+    days: sportDays(s.days),
+    bucket: HEALTH_SPORT_BUCKETS.some((b) => b.value === s.bucket) ? s.bucket : "day",
+    lag: s.lag === 1 ? 1 : 0,
+  };
+}
+// Coefficient de corrélation de Pearson sur les paires complètes ; null sous
+// 3 paires ou sans variation.
+function healthPearson(pairs) {
+  const ok = pairs.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  const n = ok.length;
+  if (n < 3) return null;
+  const mx = ok.reduce((t, [x]) => t + x, 0) / n;
+  const my = ok.reduce((t, [, y]) => t + y, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (const [x, y] of ok) { sxy += (x - mx) * (y - my); sxx += (x - mx) ** 2; syy += (y - my) ** 2; }
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : null;
+}
+// Paires par jour ou semaine : santé (moyenne des jours renseignés) et sport
+// (total de la mesure, 0 sans séance — un jour sans sport est une donnée).
+// `lag` = 1 (jours seulement) : la santé du LENDEMAIN de la séance, p. ex.
+// la récupération après l'effort. Rien après aujourd'hui.
+function healthSportSeries(records, activities, spec, today) {
+  const lag = spec.bucket === "day" ? spec.lag : 0;
+  const shifted = lag ? (records || []).map((r) => ({ ...r, date: sportShiftDate(r.date, -lag) })) : records || [];
+  const health = healthSeries(shifted, { ...spec, metricB: "" }, lag ? sportShiftDate(today, -lag) : today);
+  const sport = sportStackSeries(activities || [], spec, today);
+  const sportByKey = new Map(sport.buckets.map((b) => [b.key, b.total]));
+  const points = health.points.map((p) => ({ ...p, b: sportByKey.has(p.key) ? sportByKey.get(p.key) : 0, rolling: null }));
+  const r = healthPearson(points.map((p) => [p.b, p.a]));
+  return {
+    points, tooMany: health.tooMany || sport.tooMany, metric: health.metricA, unit: sport.unit, lag,
+    r, pairs: points.filter((p) => p.a !== null).length, missing: sport.missing,
+  };
+}
+// Lecture du coefficient, en mots.
+function healthPearsonLabel(r) {
+  if (r === null) return "pas assez de jours renseignés";
+  const a = Math.abs(r);
+  const force = a < 0.1 ? "aucun lien" : a < 0.3 ? "lien faible" : a < 0.5 ? "lien modéré" : "lien fort";
+  return a < 0.1 ? force : `${force}, ${r > 0 ? "même sens" : "sens opposé"}`;
+}
+// === NEXORA:HEALTH:END ===
+
+const healthStore = { promise: null, rows: null, readAt: "", error: null, listeners: new Set() };
+function healthLoad(force = false) {
+  if (healthStore.promise && !force) return healthStore.promise;
+  const notify = () => healthStore.listeners.forEach((fn) => fn());
+  healthStore.error = null;
+  notify();
+  healthStore.promise = (async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Santé.");
+      const token = await user.getIdToken();
+      const response = await fetch("/api/nexora/health-records", { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        const reasons = {
+          unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Santé.",
+          health_configuration_missing: "Source Santé non configurée sur le serveur (variable NEXORA_HEALTH_CSV_URL absente).",
+          configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+        };
+        throw new Error(reasons[payload.error] || payload.detail || payload.error || `Lecture Santé impossible (HTTP ${response.status}).`);
+      }
+      healthStore.rows = healthRows(payload.data);
+      healthStore.readAt = payload.data.readAt || "";
+    } catch (error) {
+      healthStore.error = error instanceof Error ? error.message : String(error);
+      healthStore.promise = null;
+    }
+    notify();
+  })();
+  return healthStore.promise;
+}
+function useHealthData() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    healthStore.listeners.add(listener);
+    healthLoad();
+    return () => { healthStore.listeners.delete(listener); };
+  }, []);
+  return { rows: healthStore.rows, readAt: healthStore.readAt, error: healthStore.error, reload: () => healthLoad(true) };
+}
+
+// Courbe à un ou deux axes (#594, #595) : série A (aire + ligne) sur l'axe de
+// gauche, série B (ligne, ou barres) sur l'axe de droite, moyenne mobile en
+// pointillés. Les valeurs null font un trou, jamais un zéro inventé.
+function HealthDualChart({ points, seriesA, seriesB, rollingKey = "rolling", formatA, formatB, barsB = false, zeroA = false }) {
+  const boxRef = useRef(null);
+  const size = useSportPlotSize(boxRef);
+  const [hover, setHover] = useState(null);
+  const n = points.length;
+  const M = { left: 52, right: seriesB ? 52 : 12, top: 12, bottom: 30 };
+  const plotW = Math.max(size.w - M.left - M.right, n * 3);
+  const plotH = Math.max(40, size.h - M.top - M.bottom - 4);
+  const valsA = points.flatMap((p) => [p.a, p[rollingKey]]).filter((v) => v !== null && v !== undefined);
+  const valsB = seriesB ? points.map((p) => p.b).filter((v) => v !== null && v !== undefined) : [];
+  const ticksA = zeroA ? sportNiceTicks(Math.max(0, ...valsA)) : healthTicks(Math.min(...valsA), Math.max(...valsA));
+  const ticksB = seriesB ? (barsB ? sportNiceTicks(Math.max(0, ...valsB)) : healthTicks(Math.min(...valsB), Math.max(...valsB))) : [];
+  const scale = (ticks) => (v) => M.top + plotH - ((v - ticks[0]) / ((ticks[ticks.length - 1] - ticks[0]) || 1)) * plotH;
+  const yA = scale(ticksA);
+  const yB = seriesB ? scale(ticksB) : null;
+  const step = plotW / Math.max(1, n);
+  const x = (i) => M.left + i * step + step / 2;
+  const base = M.top + plotH;
+  const every = Math.max(1, Math.ceil(70 / step));
+  // Ligne brisée aux valeurs manquantes.
+  const path = (get, y) => {
+    let d = "", open = false;
+    points.forEach((p, i) => {
+      const v = get(p);
+      if (v === null || v === undefined) { open = false; return; }
+      d += `${open ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+      open = true;
+    });
+    return d;
+  };
+  const barW = Math.max(1.5, Math.min(24, step * 0.6));
+  return (
+    <div className="nx-sport-chart-plot" ref={boxRef}>
+      <svg width={plotW + M.left + M.right} height={plotH + M.top + M.bottom} role="img" aria-label={seriesB ? `${seriesA.label} et ${seriesB.label}` : seriesA.label}>
+        {ticksA.map((t) => (
+          <g key={"a" + t}>
+            <line x1={M.left} x2={M.left + plotW} y1={yA(t)} y2={yA(t)} stroke="#e6ebf0" />
+            <text x={M.left - 6} y={yA(t) + 3} textAnchor="end">{t.toLocaleString("fr-FR")}</text>
+          </g>
+        ))}
+        {seriesB && ticksB.map((t) => <text key={"b" + t} x={M.left + plotW + 6} y={yB(t) + 3} style={{ fill: seriesB.color }}>{t.toLocaleString("fr-FR")}</text>)}
+        <text x={4} y={M.top - 2} dominantBaseline="hanging" style={{ fontWeight: 600, fill: seriesA.color }}>{seriesA.unit}</text>
+        {seriesB && <text x={M.left + plotW + M.right - 4} y={M.top - 2} dominantBaseline="hanging" textAnchor="end" style={{ fontWeight: 600, fill: seriesB.color }}>{seriesB.unit}</text>}
+        {seriesB && barsB && points.map((p, i) => (p.b ? <rect key={"bar" + p.key} x={x(i) - barW / 2} y={yB(p.b)} width={barW} height={Math.max(0.5, base - yB(p.b))} fill={seriesB.color} fillOpacity="0.35" /> : null))}
+        <path d={path((p) => p.a, yA)} fill="none" stroke={seriesA.color} strokeWidth="1.6" strokeLinejoin="round" />
+        {points.some((p) => p[rollingKey] !== null && p[rollingKey] !== undefined) && <path d={path((p) => p[rollingKey], yA)} fill="none" stroke={seriesA.color} strokeOpacity=".75" strokeWidth="2" strokeDasharray="5 4" />}
+        {seriesB && !barsB && <path d={path((p) => p.b, yB)} fill="none" stroke={seriesB.color} strokeWidth="1.6" strokeLinejoin="round" />}
+        {/* Valeur isolée (jours voisins vides) : un point, sinon invisible. */}
+        {points.map((p, i) => {
+          const lone = (get) => get(p) !== null && get(p) !== undefined && [points[i - 1], points[i + 1]].every((q) => !q || get(q) === null || get(q) === undefined);
+          return (
+            <g key={"dot" + p.key}>
+              {lone((q) => q.a) && <circle cx={x(i)} cy={yA(p.a)} r="2.2" fill={seriesA.color} />}
+              {seriesB && !barsB && lone((q) => q.b) && <circle cx={x(i)} cy={yB(p.b)} r="2.2" fill={seriesB.color} />}
+            </g>
+          );
+        })}
+        {points.map((p, i) => (
+          <g key={p.key}
+            onMouseEnter={(e) => setHover({ p, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setHover({ p, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setHover(null)}>
+            <rect x={M.left + i * step} y={M.top} width={step} height={plotH} fill={hover?.p.key === p.key ? "rgba(36,86,154,.06)" : "transparent"} />
+            {i % every === 0 && <text x={x(i)} y={base + 14} textAnchor="middle">{p.label}</text>}
+          </g>
+        ))}
+        <line x1={M.left} x2={M.left + plotW} y1={base} y2={base} stroke="#b8c4cf" />
+      </svg>
+      {hover && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-sport-tip">
+            <strong>{hover.p.label}</strong>
+            <div><span><i style={{ background: seriesA.color }} />{seriesA.label}</span><span>{formatA(hover.p.a)}</span></div>
+            {hover.p[rollingKey] !== null && hover.p[rollingKey] !== undefined && <div><span>Moyenne 7 jours</span><span>{formatA(hover.p[rollingKey])}</span></div>}
+            {seriesB && <div><span><i style={{ background: seriesB.color }} />{seriesB.label}</span><span>{formatB(hover.p.b)}</span></div>}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+    </div>
+  );
+}
+
+// Santé × sport (#595) : une mesure santé (courbe, axe de gauche) face à une
+// mesure sport (barres, axe de droite), avec le coefficient de corrélation.
+function WidgetHealthSportChart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const health = useHealthData();
+  const sport = useSportData();
+  const spec = healthSportSpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ cross: { ...spec, ...patch } });
+  const today = financeSankeyToday();
+  const key = [spec.metric, spec.measure, spec.sports.join("\n"), spec.period, spec.from, spec.to, spec.days, spec.bucket, spec.lag].join("|");
+  const data = useMemo(() => (health.rows && sport.rows ? healthSportSeries(health.rows, sport.rows, spec, today) : null), [health.rows, sport.rows, today, key]);
+  const measure = SPORT_MEASURES.find((m) => m.value === spec.measure);
+  const reload = () => { health.reload(); sport.reload(); };
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{SPORT_CSS + SPORT_CHART_CSS}</style>
+      <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <HealthMetricSelect value={spec.metric} onChange={(v) => update({ metric: v })} label="Mesure santé" />
+        <select value={spec.measure} onChange={(e) => update({ measure: e.target.value })} aria-label="Mesure sport" title="Mesure sport">
+          {SPORT_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
+          {HEALTH_SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+        </select>
+        {spec.bucket === "day" && (
+          <button type="button" className={spec.lag ? "active" : ""} aria-pressed={!!spec.lag} onClick={() => update({ lag: spec.lag ? 0 : 1 })} title="Comparer la séance à la mesure santé du lendemain">Santé du lendemain</button>
+        )}
+        <SportFilterTools spec={spec} rows={sport.rows} onChange={update} />
+        <button type="button" onClick={reload} title="Relire les mesures santé et le journal sportif">Actualiser</button>
+        {data && <span className="nx-sport-count">Corrélation r = {data.r === null ? "—" : (Math.round(data.r * 100) / 100 || 0).toLocaleString("fr-FR")} ({healthPearsonLabel(data.r)}, {data.pairs} {spec.bucket === "day" ? "jours" : "semaines"})</span>}
+      </div>
+    </ViewToolbarPortal>
+  );
+  const error = health.error || sport.error;
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des mesures santé et du journal sportif…</div>;
+  if (data.tooMany) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Plus de {SPORT_MAX_BUCKETS} points : choisis la semaine ou une période plus courte.</div>;
+  if (!data.pairs) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucune valeur de « {data.metric.label} » sur cette période.</div>;
+  const A = { label: data.metric.label + (data.lag ? " (lendemain)" : ""), unit: data.metric.unit, color: "#24569a" };
+  const B = { label: `${measure.label}${spec.sports.length ? ` · ${spec.sports.join(", ")}` : ""}`, unit: data.unit, color: "#d9822b" };
+  return (
+    <div className="nx-sport-chart">
+      {tools}
+      <HealthDualChart points={data.points} seriesA={A} seriesB={B} barsB formatA={(v) => healthFormat(v, data.metric)} formatB={(v) => sportFormatValue(v || 0, data.unit)} />
+      <div className="nx-sport-chart-legend">
+        <span><i style={{ background: A.color }} />{A.label}</span>
+        <span><i style={{ background: B.color, opacity: 0.5 }} />{B.label} (axe de droite)</span>
+      </div>
+      <div className="nx-sport-chart-note">Une corrélation décrit un lien sur la période, pas une cause. Un jour sans séance compte pour 0.</div>
+    </div>
+  );
+}
+
+// Sélecteur de mesure santé, groupé par famille.
+function HealthMetricSelect({ value, onChange, label, allowEmpty = false }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} title={label}>
+      {allowEmpty && <option value="">Aucune</option>}
+      {HEALTH_GROUPS.map((g) => (
+        <optgroup key={g} label={g}>
+          {HEALTH_METRICS.filter((m) => m.group === g).map((m) => <option key={m.key} value={m.key}>{m.label}{m.unit ? ` (${m.unit})` : ""}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+function WidgetHealthChart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useHealthData();
+  const spec = healthChartSpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ health: { ...spec, ...patch } });
+  const today = financeSankeyToday();
+  const key = [spec.metric, spec.metricB, spec.period, spec.from, spec.to, spec.days, spec.bucket].join("|");
+  const data = useMemo(() => (rows ? healthSeries(rows, spec, today) : null), [rows, today, key]);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{SPORT_CSS + SPORT_CHART_CSS}</style>
+      <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <HealthMetricSelect value={spec.metric} onChange={(v) => update({ metric: v })} label="Mesure" />
+        <HealthMetricSelect value={spec.metricB} onChange={(v) => update({ metricB: v })} label="Seconde mesure (axe de droite)" allowEmpty />
+        <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
+          {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+        </select>
+        {spec.bucket === "day" && (
+          <button type="button" className={spec.mean ? "active" : ""} aria-pressed={spec.mean} onClick={() => update({ mean: !spec.mean })} title="Moyenne mobile sur 7 jours">Moyenne 7 j</button>
+        )}
+        <SportFilterTools spec={{ ...spec, sports: [] }} rows={null} onChange={update} hideSports />
+        <button type="button" onClick={reload} title="Relire les mesures santé">Actualiser</button>
+        {data?.last && <span className="nx-sport-count">Dernière : {healthFormat(data.last.a, data.metricA)} · moyenne {healthFormat(data.average, data.metricA)}</span>}
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des mesures santé…</div>;
+  if (data.tooMany) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Plus de {SPORT_MAX_BUCKETS} points : choisis la semaine ou le mois, ou une période plus courte.</div>;
+  if (!data.count) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucune valeur de « {data.metricA.label} » sur cette période.</div>;
+  const A = { label: data.metricA.label, unit: data.metricA.unit, color: "#24569a" };
+  const B = data.metricB ? { label: data.metricB.label, unit: data.metricB.unit, color: "#d9822b" } : null;
+  const points = spec.mean ? data.points : data.points.map((p) => ({ ...p, rolling: null }));
+  return (
+    <div className="nx-sport-chart">
+      {tools}
+      <HealthDualChart points={points} seriesA={A} seriesB={B} formatA={(v) => healthFormat(v, data.metricA)} formatB={(v) => healthFormat(v, data.metricB)} />
+      <div className="nx-sport-chart-legend">
+        <span><i style={{ background: A.color }} />{A.label}</span>
+        {spec.mean && spec.bucket === "day" && <span><i className="nx-sport-dash" style={{ borderTopColor: A.color }} />Moyenne 7 jours</span>}
+        {B && <span><i style={{ background: B.color }} />{B.label} (axe de droite)</span>}
       </div>
     </div>
   );

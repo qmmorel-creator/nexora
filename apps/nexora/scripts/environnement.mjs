@@ -22,7 +22,7 @@ const ENTETES_HORS_PRODUCTION = [
     ["X-Robots-Tag", "noindex, nofollow"],
     // Seconde barrière : même si une référence réelle échappait au contrôle du
     // build, le navigateur refuserait de joindre Firebase ou Google.
-    // frame-ancestors 'self' : seul Nexora encadre ses pages (moteur OS360, #573).
+    // frame-ancestors 'self' : seul Nexora peut encadrer ses pages (protection contre l'intégration par un autre site).
     ["Content-Security-Policy", "connect-src 'self' https://esm.sh; frame-ancestors 'self'"],
   ]],
 ];

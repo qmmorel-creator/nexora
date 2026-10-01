@@ -1,7 +1,8 @@
 // Journal sportif (#578) : le CSV publié de la feuille « Activités Strava »,
 // lu comme OS360 (commit 13197da). Fonctions PURES, sans import : le test de
-// parité les compare aux fonctions d'origine extraites du bundle OS360
-// (`_e`, `Jc`, `Kc`, `ve`, `S`, `A`, copie dans public/os360-moteur/).
+// parité les compare aux résultats des fonctions d'origine d'OS360 (`_e`,
+// `Jc`, `Kc`, `ve`, `S`, `A`), figés dans tests/fixtures/os360-parite-sport.json
+// avant le retrait du moteur (#597).
 
 export type SportActivity = {
   // Champs produits par `Jc` d'OS360, à l'identique.
