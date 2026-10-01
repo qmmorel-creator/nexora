@@ -23,7 +23,7 @@ function slice(name) {
 const EXPORTS = [
   "FINANCE_SANKEY_TYPES", "financeSankeyPeriod", "financeSankeyRound", "financeSankeyFormat", "financeSankeyNormalize",
   "financeSankeyAccountBalances", "financeSankeyMonthlyGraph", "financeSankeyWealthGraph", "financeSankeyBuild",
-  "financeSankeyLayout", "financeSankeyDateLabel",
+  "financeSankeyLayout", "financeSankeyDateLabel", "financeSankeyQuickPeriod",
 ];
 const S = vm.runInThisContext(`(function () {\n${slice("FINANCE-SANKEY")}\n;return { ${EXPORTS.join(", ")} };\n})`)();
 
@@ -52,7 +52,12 @@ const raw = {
 test("deux types de widget, rattachés au catalogue et au rendu", () => {
   assert.deepEqual([...S.FINANCE_SANKEY_TYPES], ["financeSankeyMonthly", "financeSankeyWealth"]);
   for (const type of S.FINANCE_SANKEY_TYPES) assert.match(html, new RegExp(`key: "${type}"`), `${type} absent de WIDGET_TYPE_META`);
-  assert.match(html, /FINANCE_SANKEY_TYPES\.includes\(w\.type\) && \(\s*<WidgetFinanceSankey widget=\{w\} \/>/);
+  assert.match(html, /FINANCE_SANKEY_TYPES\.includes\(w\.type\) && \(\s*<WidgetFinanceSankey widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\} onUpdateWidget=/);
+  // Réglages en en-tête (retour de test #569) : la barre d'outils du cadre est ouverte pour les deux types.
+  assert.match(html, /\|\| FINANCE_SANKEY_TYPES\.includes\(w\.type\)\}/);
+  for (const label of ["Aujourd’hui", "Ce mois", "Mois précédent", "Choisir le mois", "Variante du Sankey", "Étiquetage des valeurs", "Arrondi des valeurs", "Nombre de décimales", "Opacité des flux (0,1 à 1)"]) {
+    assert.ok(html.includes(label), `contrôle d'en-tête manquant : ${label}`);
+  }
   assert.match(html, /if \(FINANCE_SANKEY_TYPES\.includes\(type\)\) data\.sankeyConfig = \{ \.\.\.sankeyConfig \};/);
 });
 
@@ -112,6 +117,17 @@ test("périodes : mois, année, fenêtre glissante, dates libres, tout l'histori
   const data = S.financeSankeyNormalize(raw);
   const all = S.financeSankeyBuild("financeSankeyMonthly", data, { range: "all" }, today);
   assert.ok(all.graph.links.some((l) => l.target === "category:Loisirs" && l.value === 42));
+});
+
+test("barre de période d'OS360 : aujourd'hui, ce mois, mois précédent, mois choisi", () => {
+  const today = "2026-10-01";
+  assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "today" }, today), { from: today, to: today });
+  assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "current" }, today), { from: "2026-10-01", to: "2026-10-31" });
+  assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "previous" }, today), { from: "2026-09-01", to: "2026-09-30" });
+  assert.deepEqual(S.financeSankeyPeriod({ periodMode: "month", periodValue: "previous" }, "2026-03-15"), { from: "2026-02-01", to: "2026-02-28" });
+  // La sélection rapide prime, comme le correctif de `te` dans OS360.
+  assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "previous", from: "2025-01-01", to: "2025-01-31" }, today), { from: "2026-09-01", to: "2026-09-30" });
+  assert.deepEqual(S.financeSankeyPeriod({ periodMode: "month", periodValue: "2026-06", quickPeriod: "" }, today), { from: "2026-06-01", to: "2026-06-30" });
 });
 
 test("formats : arrondi intelligent, compact et espace insécable comme OS360", () => {

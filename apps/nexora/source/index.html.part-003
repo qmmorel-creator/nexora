@@ -3689,7 +3689,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type)}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3751,7 +3751,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
-                  <WidgetFinanceSankey widget={w} />
+                  <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "financeProEcheances" && (
                   <WidgetFinanceProEcheances proBillingSchedule={financeProBillingSchedule} proMissions={financeProMissions} projects={ctx.projects} quoteClients={financeProClients} />
@@ -35792,9 +35792,22 @@ function financeSankeyToday(now = new Date()) {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(now);
 }
 
-// Période du widget — `te` d'OS360, sans le mode « Suivre la période de
-// l'onglet » qui n'existe pas dans Nexora (repli : mois courant).
+// Sélection rapide de la barre de période — `osPeriod` d'OS360.
+function financeSankeyQuickPeriod(value, today = financeSankeyToday()) {
+  if (value === "today") return { from: today, to: today };
+  if (value === "previous") {
+    const last = financeSankeyAddDays(today.slice(0, 7) + "-01", -1);
+    return { from: last.slice(0, 7) + "-01", to: last };
+  }
+  const month = /^\d{4}-\d{2}$/.test(value) ? value : today.slice(0, 7);
+  return { from: month + "-01", to: new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 0, 12)).toISOString().slice(0, 10) };
+}
+
+// Période du widget — `te` d'OS360 avec son correctif de sélection rapide
+// (quickPeriod), sans le mode « Suivre la période de l'onglet » qui n'existe
+// pas dans Nexora (repli : mois courant).
 function financeSankeyPeriod(config, today = financeSankeyToday()) {
+  if (config.quickPeriod || config.periodValue === "previous") return financeSankeyQuickPeriod(config.quickPeriod || "previous", today);
   const monthOf = (ym) => {
     const next = new Date(ym + "-01T12:00:00Z");
     next.setUTCMonth(next.getUTCMonth() + 1);
@@ -36174,6 +36187,16 @@ function financeSankeyTruncate(text, maxWidth, size) {
 // (police réelle d'OS360 : Inter, via var(--os-font)).
 const FINANCE_SANKEY_SVG_CSS = ".b360-flow-label{paint-order:stroke fill;stroke:rgba(255,255,255,.96);stroke-linejoin:round;pointer-events:none;font-family:Segoe UI,Arial,sans-serif}.b360-flow-name{stroke-width:4px;fill:#14232d;font-weight:600}.b360-flow-value{stroke-width:3px;fill:#60717c;font-weight:500}.b360-flow-node:focus{outline:none}.b360-flow-node:focus>rect{stroke:#14232d;stroke-width:2}.b360-flow-ribbon:focus{outline:none;stroke:#14232d;stroke-width:1.5}";
 const FINANCE_SANKEY_CSS = `
+.lp-widget-head-toolbar:has(.nx-sankey-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
+.lp-widget-head:has(.nx-sankey-tools){align-items:flex-start}
+.lp-widget-head:has(.nx-sankey-tools) .lp-widget-title{flex:0 0 auto;max-width:40%;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-sankey-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;font-size:11px;color:#203246}
+.nx-sankey-group{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;row-gap:5px;min-width:0;max-width:100%;padding-left:6px;border-left:1px solid var(--border,#d8e1eb)}
+.nx-sankey-tools button,.nx-sankey-tools select,.nx-sankey-tools input[type=month],.nx-sankey-tools input[type=number]{height:24px;padding:0 7px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246;cursor:pointer}
+.nx-sankey-tools button.active{background:#e7efff;border-color:#24569a;color:#24569a;font-weight:600}
+.nx-sankey-tools input[type=number]{width:60px;cursor:text}
+.nx-sankey-tools label{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer}
+.nx-sankey-tools .nx-sankey-variant{font-weight:600}
 .nx-sankey{--health:#176655;--danger:#a33135;flex-direction:column;height:100%;min-height:0;display:flex}
 .nx-sankey .sankey-figure{flex:1;min-height:0;position:relative;overflow:hidden}
 .nx-sankey .sankey-svg{width:100%;height:100%;display:block;overflow:hidden}
@@ -36197,13 +36220,15 @@ const FINANCE_SANKEY_CSS = `
 `;
 
 // Rendu SVG — composant `nCe` d'OS360.
-function FinanceSankeyChart({ graph, config, title, period }) {
+function FinanceSankeyChart({ graph, config, title, period, showData: showDataProp, onToggleData }) {
   const figureRef = useRef(null);
   const uid = React.useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [size, setSize] = useState({ width: 900, height: 470 });
   const [hover, setHover] = useState(null);
   const [tip, setTip] = useState(null);
-  const [showData, setShowData] = useState(false);
+  const [showDataOwn, setShowDataOwn] = useState(false);
+  const showData = showDataProp ?? showDataOwn;
+  const toggleData = onToggleData || (() => setShowDataOwn((v) => !v));
   useEffect(() => {
     const el = figureRef.current;
     if (!el) return undefined;
@@ -36344,7 +36369,7 @@ function FinanceSankeyChart({ graph, config, title, period }) {
       </div>
       <div className="sankey-footer">
         <span title="Même échelle pour les revenus, les comptes et les dépenses. Les comptes représentent le maximum des entrées et sorties ; les espaces libres indiquent leur différence.">Échelle commune · hauteurs proportionnelles aux montants</span>
-        <button type="button" onClick={() => { setShowData((v) => !v); hide(); }} aria-pressed={showData}>{showData ? "Graphique" : "Données"}</button>
+        <button type="button" onClick={() => { toggleData(); hide(); }} aria-pressed={showData}>{showData ? "Graphique" : "Données"}</button>
       </div>
     </div>
   );
@@ -36395,9 +36420,68 @@ function useFinanceSankeyData() {
   return { data: financeSankeyStore.data, error: financeSankeyStore.error, at: financeSankeyStore.at, reload: () => financeSankeyLoad(true) };
 }
 
-function WidgetFinanceSankey({ widget }) {
+// Réglages du Sankey en en-tête de widget (#569, retour de test) : la bande
+// d'OS360 (variante, barre de période « Aujourd'hui · Ce mois · Mois
+// précédent · mois ») complétée des réglages d'affichage, pour tout changer
+// sans ouvrir la fiche. Chaque contrôle écrit dans widget.sankeyConfig, comme
+// la fiche : une seule source.
+function FinanceSankeyHeaderTools({ widget, config, onUpdateWidget, showData, onToggleData }) {
+  const set = (patch) => onUpdateWidget({ sankeyConfig: { ...config, ...patch } });
+  // `osPeriodBar` d'OS360 : toute sélection repasse en mode mois et efface
+  // fenêtre glissante, dates libres et année.
+  const setPeriod = (value) => set({ range: "", from: "", to: "", year: undefined, periodMode: "month", periodValue: value, quickPeriod: ["today", "current", "previous"].includes(value) ? value : "" });
+  const period = financeSankeyPeriod(config);
+  const switchVariant = (type) => {
+    if (type === widget.type) return;
+    const label = (key) => WIDGET_TYPE_META.find((m) => m.key === key)?.label || "";
+    const oldLabel = label(widget.type);
+    // Un titre généré (« Sankey mensuel (flux) 2 ») suit la variante ; un titre saisi reste.
+    const title = widget.title && oldLabel && widget.title.startsWith(oldLabel) ? label(type) + widget.title.slice(oldLabel.length) : widget.title;
+    onUpdateWidget({ type, title });
+  };
+  const stop = (e) => e.stopPropagation();
+  return (
+    <div className="nx-sankey-tools" onPointerDown={stop}>
+      <select className="nx-sankey-variant" value={widget.type} onChange={(e) => switchVariant(e.target.value)} title="Variante du Sankey" aria-label="Variante du Sankey">
+        <option value="financeSankeyMonthly">Sankey mensuel (flux)</option>
+        <option value="financeSankeyWealth">Structure du patrimoine (Sankey)</option>
+      </select>
+      <span className="nx-sankey-group" role="group" aria-label="Période">
+        <button type="button" className={config.quickPeriod === "today" ? "active" : ""} aria-pressed={config.quickPeriod === "today"} onClick={() => setPeriod("today")}>Aujourd’hui</button>
+        <button type="button" className={config.quickPeriod === "current" ? "active" : ""} aria-pressed={config.quickPeriod === "current"} onClick={() => setPeriod("current")}>Ce mois</button>
+        <button type="button" className={config.quickPeriod === "previous" ? "active" : ""} aria-pressed={config.quickPeriod === "previous"} onClick={() => setPeriod("previous")}>Mois précédent</button>
+        <input type="month" aria-label="Choisir le mois" title="Choisir le mois" value={period.from.slice(0, 7)} onChange={(e) => { if (e.target.value) setPeriod(e.target.value); }} />
+      </span>
+      <span className="nx-sankey-group" role="group" aria-label="Affichage">
+        <label title="Afficher les montants"><input type="checkbox" checked={config.sankeyShowValues !== false} onChange={(e) => set({ sankeyShowValues: e.target.checked })} /> Montants</label>
+        <select value={config.labelMode} onChange={(e) => set({ labelMode: e.target.value })} title="Étiquetage des valeurs" aria-label="Étiquetage des valeurs">
+          <option value="auto">Étiquettes · intelligent</option>
+          <option value="sparse">Étiquettes · essentiel</option>
+          <option value="none">Étiquettes · aucune</option>
+        </select>
+        <select value={config.rounding} onChange={(e) => set({ rounding: e.target.value })} title="Arrondi des valeurs" aria-label="Arrondi des valeurs">
+          <option value="auto">Arrondi · intelligent</option>
+          <option value="fixed">Arrondi · décimales</option>
+          <option value="compact">Arrondi · k / M</option>
+        </select>
+        <label title="Nombre de décimales">Déc. <input type="number" min="0" max="6" value={config.decimals} onChange={(e) => set({ decimals: e.target.value === "" ? "" : Number(e.target.value) })} /></label>
+        <label title="Opacité des flux (0,1 à 1)">Opacité <input type="number" min="0.1" max="1" step="0.02" value={config.flowOpacity} onChange={(e) => set({ flowOpacity: e.target.value === "" ? "" : Number(e.target.value) })} /></label>
+      </span>
+      <button type="button" className={showData ? "active" : ""} aria-pressed={showData} onClick={onToggleData}>{showData ? "Graphique" : "Données"}</button>
+    </div>
+  );
+}
+
+function WidgetFinanceSankey({ widget, externalToolbarSlot, onUpdateWidget }) {
   const { data, error, reload } = useFinanceSankeyData();
+  const [showData, setShowData] = useState(false);
+  const toggleData = () => setShowData((v) => !v);
   const config = { ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(widget.sankeyConfig || {}) };
+  const tools = onUpdateWidget && (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <FinanceSankeyHeaderTools widget={widget} config={config} onUpdateWidget={onUpdateWidget} showData={showData} onToggleData={toggleData} />
+    </ViewToolbarPortal>
+  );
   const built = useMemo(() => {
     if (!data) return null;
     try { return { ...financeSankeyBuild(widget.type, data, config) }; } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
@@ -36406,17 +36490,23 @@ function WidgetFinanceSankey({ widget }) {
   if (error) {
     return (
       <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
         <div>{error}</div>
         <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
       </div>
     );
   }
-  if (!data) return <div className="lp-empty" style={{ padding: 16 }}>Chargement des données Budget…</div>;
-  if (built?.error) return <div className="lp-empty" style={{ padding: 16 }}>{built.error}</div>;
+  if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des données Budget…</div>;
+  if (built?.error) return <div className="lp-empty" style={{ padding: 16 }}>{tools}{built.error}</div>;
   if (!built.graph.links.length) {
-    return <div className="lp-empty" style={{ padding: 16 }}>Aucun flux à représenter sur cette période ({built.period}).</div>;
+    return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucun flux à représenter sur cette période ({built.period}).</div>;
   }
-  return <FinanceSankeyChart graph={built.graph} config={config} title={widget.title || "Sankey"} period={built.period} />;
+  return (
+    <>
+      {tools}
+      <FinanceSankeyChart graph={built.graph} config={config} title={widget.title || "Sankey"} period={built.period} showData={showData} onToggleData={toggleData} />
+    </>
+  );
 }
 
 // Réglages repris d'OS360 (période, opacité des rubans, montants, étiquetage,
@@ -36424,9 +36514,9 @@ function WidgetFinanceSankey({ widget }) {
 function FinanceSankeySettings({ value, onChange }) {
   const cfg = { ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(value || {}) };
   const set = (patch) => onChange({ ...cfg, ...patch });
-  const periodKind = cfg.from || cfg.to ? "custom" : cfg.range === "all" ? "all" : cfg.range ? "range" : cfg.periodMode === "year" ? "year" : "month";
+  const periodKind = cfg.quickPeriod ? "month" : cfg.from || cfg.to ? "custom" : cfg.range === "all" ? "all" : cfg.range ? "range" : cfg.periodMode === "year" ? "year" : "month";
   const setKind = (kind) => {
-    const base = { from: "", to: "", range: "", periodValue: "current" };
+    const base = { from: "", to: "", range: "", periodValue: "current", quickPeriod: "" };
     if (kind === "month") set({ ...base, periodMode: "month" });
     else if (kind === "year") set({ ...base, periodMode: "year" });
     else if (kind === "range") set({ ...base, periodMode: "month", range: "30" });
@@ -36449,7 +36539,7 @@ function FinanceSankeySettings({ value, onChange }) {
       {periodKind === "month" && (
         <div className="lp-field">
           <label>Mois <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-600)" }}>(vide = mois courant)</span></label>
-          <input type="month" value={cfg.periodValue === "current" ? "" : cfg.periodValue} onChange={(e) => set({ periodValue: e.target.value || "current" })} />
+          <input type="month" value={cfg.quickPeriod ? (cfg.quickPeriod === "current" ? "" : financeSankeyPeriod(cfg).from.slice(0, 7)) : cfg.periodValue === "current" ? "" : cfg.periodValue} onChange={(e) => set({ periodValue: e.target.value || "current", quickPeriod: "" })} />
         </div>
       )}
       {periodKind === "year" && (
