@@ -14,7 +14,7 @@ export function requireFinanceConfig() {
   return { url, secretKey, missing: secretKey ? [] : ["KDM360_SUPABASE_SECRET_KEY"] };
 }
 
-async function financeFetch(config: { url: string; secretKey: string }, path: string, init: RequestInit = {}) {
+export async function financeFetch(config: { url: string; secretKey: string }, path: string, init: RequestInit = {}) {
   const response = await fetch(`${config.url}${path}`, {
     ...init,
     headers: {

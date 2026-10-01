@@ -13,6 +13,8 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Nouveautés
 
+- Tableau de bord : widgets « Sankey mensuel (flux) » et « Structure du patrimoine (Sankey) » repris d'OS360 à l'identique (calcul, mise en page, infobulles, données), alimentés en lecture seule par KDM360 via `/api/nexora/finance-sankey-data` (session du propriétaire vérifiée) (Ref #569).
+
 ### Corrections
 
 ### Incompatibilités
