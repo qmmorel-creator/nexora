@@ -159,7 +159,10 @@ test("mise en page : échelle commune, piliers proportionnels, aucun ruban hors 
 
 test("fonction serveur : lecture seule, jeton Firebase vérifié, propriétaire unique, colonnes limitées", async () => {
   const source = await readFile(new URL("../netlify/functions/finance-sankey-data.ts", import.meta.url), "utf8");
-  const owner = await readFile(new URL("../netlify/functions/_shared/finance-owner.ts", import.meta.url), "utf8");
+  const financeOwner = await readFile(new URL("../netlify/functions/_shared/finance-owner.ts", import.meta.url), "utf8");
+  // Contrôle du propriétaire partagé avec les données sport (#578) : _shared/owner.ts.
+  assert.match(financeOwner, /const denied = await requireOwner\(req\);\n  if \(denied\) return \{ response: denied \};/);
+  const owner = financeOwner + await readFile(new URL("../netlify/functions/_shared/owner.ts", import.meta.url), "utf8");
   assert.match(source, /path: "\/api\/nexora\/finance-sankey-data", method: \["GET"\]/);
   assert.match(source, /if \(req\.method !== "GET"\)/);
   assert.match(source, /await requireOwnerFinance\(req\)/);

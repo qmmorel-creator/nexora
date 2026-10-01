@@ -7964,12 +7964,20 @@ function osHorizonPurgeUpgrade(){
 
    Protocole (postMessage, page isolée par sandbox="allow-scripts") :
      parent → moteur  { type: "nx-data", rows }          lignes brutes KDM360
-                      { type: "nx-widget", widget }      { type, title, config }
+                      { type: "nx-sport", activities }   journal sportif (#579)
+                      { type: "nx-widget", widget }      { type, title, config, variant? }
                       { type: "nx-options" }             ouvre les Options OS360
-     moteur → parent  { source, type: "nx-ready", catalogue }
+     moteur → parent  { source, type: "nx-ready", catalogue, catalogueSante }
                       { source, type: "nx-widget-change", widget }
    Tables attendues dans `rows` : celles que lit OS360 (transactions, accounts,
-   categories, subcategories, banks, accountTypes, budgets, balances). */
+   categories, subcategories, banks, accountTypes, budgets, balances).
+   `variant` : visualisation d'un groupe OS360 (financeVariant) à appliquer
+   comme le sélecteur d'OS360, par osChangeConfig, avec ses propres réglages.
+   `activities` : activités au format de `Jc` (route /api/nexora/sport-activities).
+   Les stores Santé (nl) et Sport (rl) sont vidés au démarrage : le bundle
+   OS360 y embarque des données d'exemple, qui ne doivent jamais s'afficher.
+   Nexora n'envoie pas de mesures Santé : seules les séries `strava_*`,
+   calculées par OS360 à partir du sport, ont des valeurs. */
 
 var nxMoteurSource = "nx-os360-moteur";
 var nxMoteurWidgetId = "nx-widget";
@@ -7979,9 +7987,12 @@ function nxMoteurPost(message) {
   window.parent.postMessage(Object.assign({ source: nxMoteurSource }, message), "*");
 }
 
-// Widgets Budget du catalogue OS360, tel que ses surcouches l'ont arrangé.
-function nxMoteurCatalogue() {
-  return gl.filter(function (d) { return d.domain === "budget"; }).map(function (d) {
+// Widgets d'un domaine (budget, health) du catalogue OS360, tel que ses
+// surcouches l'ont arrangé. Côté Santé, ni la mise en page OS360 (layout.*)
+// ni les photos corporelles (sante.photo*, qui stockent des images) : Nexora
+// a les siennes ou n'en a pas l'usage.
+function nxMoteurCatalogue(domain) {
+  return gl.filter(function (d) { return d.domain === domain && !/^(layout\.|sante\.photo)/.test(d.type); }).map(function (d) {
     return { type: d.type, label: d.label, category: d.category || "", description: d.description || "" };
   });
 }
@@ -7999,6 +8010,7 @@ function nxMoteurPoseWidget(widget) {
       nodes = nodes.concat([node]);
     }
     var base = ul(widget.type, node.id, state.settings);
+    if (widget.variant) base = osChangeConfig(base, "financeVariant", widget.variant);
     var next = Object.assign({}, base, {
       id: nxMoteurWidgetId, dashboardId: node.id, x: 0, y: 0,
       title: widget.title || base.title,
@@ -8017,6 +8029,7 @@ function nxMoteur() {
   var budgetState = R.useState(null), budget = budgetState[0], setBudget = budgetState[1];
   var errorState = R.useState(""), error = errorState[0], setError = errorState[1];
   var optionsState = R.useState(false), options = optionsState[0], setOptions = optionsState[1];
+  var sportState = R.useState(0), sportVersion = sportState[0], setSportVersion = sportState[1];
   var last = R.useRef("");
 
   R.useEffect(function () {
@@ -8025,12 +8038,15 @@ function nxMoteur() {
       var d = event.data || {};
       try {
         if (d.type === "nx-data") { setBudget(osBudgetCategoryColors(Fc(d.rows))); setError(""); }
+        else if (d.type === "nx-sport") { rl.replace(d.activities, "remote"); setSportVersion(function (v) { return v + 1; }); setError(""); }
         else if (d.type === "nx-widget" && d.widget && d.widget.type) { last.current = JSON.stringify(d.widget); nxMoteurPoseWidget(d.widget); }
         else if (d.type === "nx-options") setOptions(true);
       } catch (e) { setError(D(e)); }
     }
     addEventListener("message", on);
-    nxMoteurPost({ type: "nx-ready", catalogue: nxMoteurCatalogue() });
+    nl.replace([], "empty");
+    rl.replace([], "empty");
+    nxMoteurPost({ type: "nx-ready", catalogue: nxMoteurCatalogue("budget"), catalogueSante: nxMoteurCatalogue("health") });
     return function () { removeEventListener("message", on); };
   }, []);
 
@@ -8047,7 +8063,9 @@ function nxMoteur() {
   }, [widget]);
 
   if (error) return J.jsx("div", { className: "nx-moteur-message", role: "alert", children: error });
-  if (!budget || !widget) return J.jsx("div", { className: "nx-moteur-message", children: "Chargement…" });
+  // Un widget Santé/Sport attend le journal sportif, un widget Budget ses tables.
+  var ready = widget && (widget.domain === "health" ? sportVersion > 0 : !!budget);
+  if (!ready) return J.jsx("div", { className: "nx-moteur-message", children: "Chargement…" });
 
   var health = nl.snapshot(), sport = rl.snapshot();
   var data = {

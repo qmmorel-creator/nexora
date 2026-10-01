@@ -23,6 +23,16 @@ Nexora. Le widget lui envoie par `postMessage` les tables Budget brutes
 du widget. Les réglages modifiés dans OS360 (barre de période, panneau de
 réglages) repartent vers Nexora, qui les enregistre dans `widget.os360`.
 
+Le widget « Graphique sport (OS360) » (#579) utilise le même moteur pour les
+widgets Santé et Sport d'OS360. Il envoie `nx-sport` avec les activités du
+journal sportif (`/api/nexora/sport-activities`, champs de `Jc`) et reçoit le
+catalogue `catalogueSante` (sans la mise en page `layout.*` ni les photos
+`sante.photo*`). Au démarrage, le moteur vide les stores Santé (`nl`) et Sport
+(`rl`), que le bundle OS360 initialise avec ses données embarquées. Nexora
+n'envoie aucune mesure Santé : seules les séries `strava_*` ont des valeurs.
+Un champ `variant` du widget envoyé choisit une visualisation de groupe par
+`osChangeConfig`, exactement comme le sélecteur d'OS360.
+
 ## Mettre à jour après un changement d'OS360
 
 ```

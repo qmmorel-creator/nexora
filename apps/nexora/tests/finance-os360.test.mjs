@@ -18,7 +18,7 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const W = vm.runInThisContext(`(function () {\n${slice("OS360-WIDGET")}\n;return { os360CatalogueGroups, os360WidgetSpec, os360MessageFrom, os360PeriodConfig, os360PeriodOnly, OS360_WIDGET_DEFAULT_TYPE };\n})`)();
+const W = vm.runInThisContext(`(function () {\n${slice("OS360-WIDGET")}\n;return { os360CatalogueGroups, os360WidgetSpec, os360MessageFrom, os360PeriodConfig, os360PeriodOnly, OS360_WIDGET_DEFAULT_TYPE, OS360_SPORT_DEFAULT, os360SportActivities };\n})`)();
 
 test("moteur généré : intact, issu du générateur et de moteur.js tels que versionnés", async () => {
   const moteur = await read("../public/os360-moteur/index.html");
@@ -83,4 +83,33 @@ test("route : lecture seule des tables OS360, session du propriétaire", async (
     assert.match(source, new RegExp(`table: "${t}"`));
   }
   assert.doesNotMatch(source, /method: "(POST|PATCH|PUT|DELETE)"|rpc\//);
+});
+
+// --- Graphique sport (#579) : le même moteur, sur le journal sportif ---------
+
+test("moteur : journal sportif reçu par nx-sport, données d'exemple OS360 jamais affichées", async () => {
+  const entree = await read("../../../outils/os360-moteur/moteur.js");
+  assert.match(entree, /d\.type === "nx-sport"\) \{ rl\.replace\(d\.activities, "remote"\)/);
+  // Le bundle OS360 initialise les stores avec ses données embarquées : vidés avant tout rendu.
+  assert.match(entree, /nl\.replace\(\[\], "empty"\);\n    rl\.replace\(\[\], "empty"\);\n    nxMoteurPost\(\{ type: "nx-ready"/);
+  assert.match(entree, /catalogue: nxMoteurCatalogue\("budget"\), catalogueSante: nxMoteurCatalogue\("health"\)/);
+  assert.match(entree, /!\/\^\(layout\\\.\|sante\\\.photo\)\/\.test\(d\.type\)/, "ni mise en page OS360 ni photos corporelles");
+  assert.match(entree, /widget\.domain === "health" \? sportVersion > 0 : !!budget/, "un widget Sport attend le journal");
+  // Variante appliquée comme le sélecteur d'OS360, avec ses propres réglages (sinon : unités de la 1re variante).
+  assert.match(entree, /if \(widget\.variant\) base = osChangeConfig\(base, "financeVariant", widget\.variant\);/);
+});
+
+test("graphique sport : rattaché, données sport seulement, défaut « Sport par semaine »", () => {
+  assert.match(html, /key: "sportOs360Chart", label: "Graphique sport \(OS360\)"/);
+  assert.match(html, /w\.type === "sportOs360Chart" && \(\s*<WidgetSportOs360Chart widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "sportOs360Chart"/);
+  assert.match(html, /function WidgetSportOs360Chart\([^)]*\) \{\n  const \{ rows, error, reload \} = useSportData\(\);/, "jamais de lecture Budget pour le sport");
+  assert.match(html, /\{ type: "nx-sport", activities: os360SportActivities\(rows\) \}/);
+  const spec = W.os360WidgetSpec({}, W.OS360_SPORT_DEFAULT);
+  assert.deepEqual(JSON.parse(JSON.stringify(spec)), { type: "health.timeSeries", title: "", config: {}, variant: "health.sportWeekly" });
+  spec.config.x = 1;
+  assert.equal(W.OS360_SPORT_DEFAULT.config.x, undefined, "le défaut n'est jamais modifié");
+  assert.equal(W.os360WidgetSpec({ os360: { type: "health.sharedSportPie" } }, W.OS360_SPORT_DEFAULT).type, "health.sharedSportPie");
+  const [a] = W.os360SportActivities([{ id: "c|1", date: "2026-09-28", sport: "Course à pied", title: "x", total: 45, moving: null, distance: 8, elevation: 1, hr: 140, maxHr: 160, url: null, start: "s", end: "e", eventId: "1", calendarId: "c", "x:Sport Strava d'origine": "Run" }]);
+  assert.deepEqual(Object.keys(a), ["id", "date", "sport", "title", "total", "moving", "distance", "elevation", "hr", "maxHr", "url"], "champs de `Jc`, rien de plus");
 });

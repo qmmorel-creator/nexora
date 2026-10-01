@@ -1,35 +1,19 @@
-import { getAuth } from "firebase-admin/auth";
-import { getDb, json } from "./nexora.js";
+import { json } from "./nexora.js";
 import { financeFetch, requireFinanceConfig } from "./finance.js";
-
-declare const Netlify: { env: { get(name: string): string | undefined } };
+import { requireOwner } from "./owner.js";
 
 // Accès aux données Budget KDM360 depuis la session Nexora du NAVIGATEUR
 // (#569, #572). Contrairement à drive-archive, la simple présence d'un jeton ne
-// suffit pas : ce sont les finances personnelles du propriétaire. Le jeton
-// d'identité Firebase est vérifié (signature, expiration, projet) et son uid
-// doit être NEXORA_USER_UID. La clé KDM360 reste côté serveur.
+// suffit pas : ce sont les finances personnelles du propriétaire (vérification
+// dans owner.ts). La clé KDM360 reste côté serveur.
 
 export type FinanceReadConfig = { url: string; secretKey: string };
 
 // Renvoie la configuration KDM360 si la requête vient de la session du
 // propriétaire, sinon la réponse d'erreur à retourner telle quelle.
 export async function requireOwnerFinance(req: Request): Promise<{ config: FinanceReadConfig } | { response: Response }> {
-  const ownerUid = Netlify.env.get("NEXORA_USER_UID");
-  const serviceAccount = Netlify.env.get("FIREBASE_SERVICE_ACCOUNT_JSON");
-  const missing = [!ownerUid && "NEXORA_USER_UID", !serviceAccount && "FIREBASE_SERVICE_ACCOUNT_JSON"].filter(Boolean) as string[];
-  if (missing.length) return { response: json({ ok: false, error: "configuration_missing", missing }, 503) };
-
-  const authorization = req.headers.get("authorization") || "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
-  if (!token) return { response: json({ ok: false, error: "unauthorized" }, 401) };
-  try {
-    getDb(); // initialise l'application firebase-admin (compte de service, projet nexora-cb20d)
-    const decoded = await getAuth().verifyIdToken(token);
-    if (decoded.uid !== ownerUid) return { response: json({ ok: false, error: "unauthorized" }, 401) };
-  } catch {
-    return { response: json({ ok: false, error: "unauthorized" }, 401) };
-  }
+  const denied = await requireOwner(req);
+  if (denied) return { response: denied };
 
   const finance = requireFinanceConfig();
   if (finance.missing.length || !finance.secretKey) {
