@@ -2148,6 +2148,7 @@ function defaultLayoutForType(type) {
   if (type === "financeSankeyMonthly") return { w: 8, h: 7 };
   if (type === "financeSankeyWealth") return { w: 7, h: 7 };
   if (type === "financeTransactions") return { w: 12, h: 9 };
+  if (type === "financeOs360Chart") return { w: 8, h: 8 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3690,7 +3691,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3750,6 +3751,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "financeProSynthese" && (
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
+                )}
+                {w.type === "financeOs360Chart" && (
+                  <WidgetOs360Chart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "financeTransactions" && (
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -17080,6 +17084,8 @@ const WIDGET_TYPE_META = [
   { key: "financeSankeyWealth", label: "Structure du patrimoine (Sankey)", icon: Wallet, group: "Suivi" },
   // Transactions Budget (#572) : 100 % des transactions KDM360, lecture seule.
   { key: "financeTransactions", label: "Transactions (Budget)", icon: List, group: "Suivi" },
+  // Graphique financier (#573) : tous les widgets Budget d'OS360, par son moteur.
+  { key: "financeOs360Chart", label: "Graphique financier (OS360)", icon: BarChart3, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -18474,6 +18480,14 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
 
 
+
+      {type === "financeOs360Chart" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Tous les widgets Budget d’OS360 — graphiques du mois, patrimoine, annuels, analyses personnalisées (métrique,
+          agrégation, granularité…), cartes et listes — rendus par le moteur d’OS360 lui-même, sur les données KDM360.
+          Le graphique se choisit dans l’en-tête du widget ; « Options » y ouvre tous ses réglages OS360.
+        </p>
+      )}
 
       {type === "financeTransactions" && (
         <>
@@ -37142,6 +37156,201 @@ function BudgetCategoriesSettings({ pushToast }) {
         </div>
       ))}
       {!tree.length && <div className="lp-empty" style={{ padding: 12 }}>Aucune catégorie ne correspond.</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Widget « Graphique financier » (#573) : tous les widgets Budget d'OS360
+// (graphiques, cartes, listes, analyses personnalisées), rendus par le moteur
+// OS360 lui-même — une copie de son bundle générée par
+// outils/os360-moteur/generer.mjs et servie sous /os360-moteur/. Le widget
+// l'affiche dans un iframe isolé (sandbox="allow-scripts" : pas d'origine, ni
+// stockage ni cookies partagés) et lui envoie les données et la configuration
+// par postMessage. Le cadre et l'en-tête sont ceux de Nexora ; le contenu, y
+// compris les barres de période et les Options d'OS360, est celui d'OS360.
+// ---------------------------------------------------------------------------
+
+// === NEXORA:OS360-WIDGET:START ===
+const OS360_WIDGET_DEFAULT_TYPE = "budget.chart_donut";
+const OS360_MOTEUR_URL = "/os360-moteur/index.html";
+
+// Catalogue reçu du moteur -> groupes triés pour le sélecteur d'en-tête.
+function os360CatalogueGroups(catalogue) {
+  const groups = new Map();
+  for (const item of catalogue || []) {
+    const key = item.category || "Autres";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], "fr"))
+    .map(([category, items]) => ({ category, items: items.slice().sort((a, b) => a.label.localeCompare(b.label, "fr")) }));
+}
+
+// Configuration persistée du widget OS360 (type, titre, config OS360).
+function os360WidgetSpec(widget) {
+  const spec = widget?.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
+  return { type: typeof spec.type === "string" && spec.type ? spec.type : OS360_WIDGET_DEFAULT_TYPE, title: spec.title || "", config: spec.config && typeof spec.config === "object" ? spec.config : {} };
+}
+
+// Barre de période d'OS360 (`osPeriodBar`) : même écriture dans la
+// configuration du widget — mode mois, sélection rapide, et effacement de la
+// fenêtre glissante, des dates libres et de l'année.
+function os360PeriodConfig(config, value) {
+  const { range, from, to, year, ...rest } = config || {};
+  return { ...rest, linked: false, periodMode: "month", periodValue: value, quickPeriod: ["today", "current", "previous"].includes(value) ? value : "" };
+}
+
+// Champs de période conservés quand on change de graphique.
+const OS360_PERIOD_KEYS = ["linked", "periodMode", "periodValue", "quickPeriod", "range", "from", "to", "year"];
+function os360PeriodOnly(config) {
+  return Object.fromEntries(OS360_PERIOD_KEYS.filter((k) => config && config[k] !== undefined).map((k) => [k, config[k]]));
+}
+
+// Seuls les messages de NOTRE iframe, signés par le moteur, sont pris en compte.
+function os360MessageFrom(event, frameWindow) {
+  return !!frameWindow && event.source === frameWindow && event.data && event.data.source === "nx-os360-moteur" ? event.data : null;
+}
+// === NEXORA:OS360-WIDGET:END ===
+
+// Données Budget brutes (tables OS360), une requête pour tous les widgets.
+const os360DataStore = { promise: null, rows: null, error: null, listeners: new Set() };
+function os360DataLoad(force = false) {
+  if (os360DataStore.promise && !force) return os360DataStore.promise;
+  const notify = () => os360DataStore.listeners.forEach((fn) => fn());
+  os360DataStore.error = null;
+  notify();
+  os360DataStore.promise = (async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Budget.");
+      const token = await user.getIdToken();
+      const response = await fetch("/api/nexora/finance-budget-data", { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        const reasons = {
+          unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Budget.",
+          finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
+          configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+        };
+        throw new Error(reasons[payload.error] || payload.detail || payload.error || `Lecture Budget impossible (HTTP ${response.status}).`);
+      }
+      os360DataStore.rows = payload.data;
+    } catch (error) {
+      os360DataStore.error = error instanceof Error ? error.message : String(error);
+      os360DataStore.promise = null;
+    }
+    notify();
+  })();
+  return os360DataStore.promise;
+}
+function useOs360Data() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    os360DataStore.listeners.add(listener);
+    os360DataLoad();
+    return () => { os360DataStore.listeners.delete(listener); };
+  }, []);
+  return { rows: os360DataStore.rows, error: os360DataStore.error, reload: () => os360DataLoad(true) };
+}
+
+const OS360_WIDGET_CSS = `
+.lp-widget-head-toolbar:has(.nx-os360-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
+.lp-widget-head:has(.nx-os360-tools){align-items:flex-start}
+.lp-widget-head:has(.nx-os360-tools) .lp-widget-title{flex:0 0 auto;max-width:40%;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-os360-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;font-size:11px;color:#203246}
+.nx-os360-tools select,.nx-os360-tools button{height:24px;padding:0 7px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246;cursor:pointer;max-width:100%}
+.nx-os360-tools select{font-weight:600}
+.nx-os360-tools input[type=month]{height:24px;padding:0 6px;font:inherit;border:1px solid #d8e1eb;border-radius:5px}
+.nx-os360-tools button.active{background:#e7efff;border-color:#24569a;color:#24569a;font-weight:600}
+.nx-os360-group{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;padding-left:6px;border-left:1px solid var(--border,#d8e1eb)}
+.nx-os360-frame{width:100%;height:100%;border:0;display:block;background:transparent}
+.nx-os360{position:relative;height:100%;min-height:0}
+.nx-os360 .lp-empty{position:absolute;inset:0}
+`;
+
+function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useOs360Data();
+  const frameRef = useRef(null);
+  const [catalogue, setCatalogue] = useState(null);
+  const spec = os360WidgetSpec(widget);
+  const specKey = JSON.stringify(spec);
+  const lastSent = useRef("");
+  const send = (message) => frameRef.current?.contentWindow?.postMessage(message, "*");
+
+  useEffect(() => {
+    const onMessage = (event) => {
+      const data = os360MessageFrom(event, frameRef.current?.contentWindow);
+      if (!data) return;
+      if (data.type === "nx-ready") {
+        setCatalogue(data.catalogue || []);
+        lastSent.current = "";
+      } else if (data.type === "nx-widget-change" && data.widget && onUpdateWidget) {
+        // Réglage modifié dans OS360 (période, Options…) : enregistré dans le widget Nexora.
+        const next = { type: data.widget.type, title: data.widget.title || "", config: data.widget.config || {} };
+        const key = JSON.stringify(next);
+        if (key !== JSON.stringify(os360WidgetSpec(widget))) { lastSent.current = key; onUpdateWidget({ os360: next }); }
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  });
+
+  // Données puis configuration, dès que le moteur est prêt (et à chaque changement).
+  useEffect(() => { if (catalogue && rows) send({ type: "nx-data", rows }); }, [catalogue, rows]);
+  useEffect(() => {
+    if (!catalogue || !rows || lastSent.current === specKey) return;
+    lastSent.current = specKey;
+    send({ type: "nx-widget", widget: { ...spec, title: spec.title || widget.title || "" } });
+  }, [catalogue, rows, specKey]);
+
+  const groups = os360CatalogueGroups(catalogue);
+  const setType = (type) => {
+    const label = (catalogue || []).find((c) => c.type === type)?.label || "";
+    // Seule la période suit le changement de graphique : le reste est propre à chaque type.
+    onUpdateWidget && onUpdateWidget({ os360: { type, title: label, config: os360PeriodOnly(spec.config) }, title: label || widget.title });
+  };
+  const setPeriod = (value) => onUpdateWidget && onUpdateWidget({ os360: { ...spec, config: os360PeriodConfig(spec.config, value) } });
+  // Mois affiché par le sélecteur : celui de la sélection rapide, ou le mois choisi.
+  const periodMonth = spec.config.quickPeriod
+    ? financeSankeyQuickPeriod(spec.config.quickPeriod).from.slice(0, 7)
+    : /^\d{4}-\d{2}$/.test(String(spec.config.periodValue || "")) ? spec.config.periodValue : "";
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{OS360_WIDGET_CSS}</style>
+      <div className="nx-os360-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <select value={spec.type} onChange={(e) => setType(e.target.value)} disabled={!catalogue} title="Graphique OS360" aria-label="Graphique OS360">
+          {!catalogue && <option value={spec.type}>Chargement du catalogue…</option>}
+          {groups.map((g) => (
+            <optgroup key={g.category} label={g.category}>
+              {g.items.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <span className="nx-os360-group" role="group" aria-label="Période">
+          <button type="button" className={spec.config.quickPeriod === "today" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "today"} onClick={() => setPeriod("today")}>Aujourd’hui</button>
+          <button type="button" className={spec.config.quickPeriod === "current" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "current"} onClick={() => setPeriod("current")}>Ce mois</button>
+          <button type="button" className={spec.config.quickPeriod === "previous" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "previous"} onClick={() => setPeriod("previous")}>Mois précédent</button>
+          <input type="month" aria-label="Choisir le mois" title="Choisir le mois" value={periodMonth} onChange={(e) => { if (e.target.value) setPeriod(e.target.value); }} />
+        </span>
+        <button type="button" disabled={!catalogue || !rows} onClick={() => send({ type: "nx-options" })} title="Tous les réglages OS360 de ce graphique (métriques, agrégations, période, apparence…)">Options</button>
+        <button type="button" onClick={reload} title="Relire les données Budget">Actualiser</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  return (
+    <div className="nx-os360">
+      {tools}
+      <iframe ref={frameRef} className="nx-os360-frame" title={widget.title || "Graphique financier"} src={OS360_MOTEUR_URL} sandbox="allow-scripts" referrerPolicy="no-referrer" />
+      {error && (
+        <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>
+          <div>{error}</div>
+          <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+        </div>
+      )}
+      {!error && !rows && <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>Chargement des données Budget…</div>}
     </div>
   );
 }

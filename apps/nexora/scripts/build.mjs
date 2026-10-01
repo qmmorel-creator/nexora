@@ -45,6 +45,8 @@ await writeFile(path.join(outputDir, "index.html"), html);
 await copyFile(path.join(root, "public", "openapi.yaml"), path.join(outputDir, "openapi.yaml"));
 // Modèles 3D de la vue Carte (#499, Kenney, CC0) : servis tels quels sous /carte/.
 await cp(path.join(root, "public", "carte"), path.join(outputDir, "carte"), { recursive: true });
+// Moteur de graphiques OS360 (#573), généré par outils/os360-moteur/generer.mjs.
+await cp(path.join(root, "public", "os360-moteur"), path.join(outputDir, "os360-moteur"), { recursive: true });
 await writeFile(path.join(outputDir, "version.json"), JSON.stringify(meta, null, 2) + "\n");
 await writeFile(path.join(outputDir, "_headers"), entetes(env.nom));
 if (env.donnees === "demo") {

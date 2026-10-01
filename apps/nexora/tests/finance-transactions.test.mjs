@@ -34,7 +34,7 @@ const raw = {
 test("widget rattaché au catalogue, au rendu, à l'en-tête et à la fiche", () => {
   assert.match(html, /key: "financeTransactions"/);
   assert.match(html, /w\.type === "financeTransactions" && \(\s*<WidgetFinanceTransactions widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
-  assert.match(html, /\|\| w\.type === "financeTransactions"\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "financeTransactions"/);
   assert.match(html, /if \(type === "financeTransactions"\) data\.txColumns = /);
   assert.match(html, /fetch\("\/api\/nexora\/finance-transactions-data"/);
 });

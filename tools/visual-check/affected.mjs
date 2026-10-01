@@ -257,6 +257,8 @@ export const PATH_RULES = [
   // préproduction (le banc a son propre bouchon Firebase).
   [/^config\//, { scenarios: ALL }],
   [/^apps\/nexora\/environnement-demo\//, null],
+  // Moteur OS360 généré (#573) : servi dans un iframe isolé, testé par son propre test.
+  [/^apps\/nexora\/public\/os360-moteur\//, null],
   // Fonctions SQL versionnées (#574) : appliquées dans Supabase, sans rendu.
   [/^apps\/nexora\/(netlify|lib|tests|supabase)\//, null],
   [/^apps\/nexora\/(openapi\.yaml|public\/openapi\.yaml|tsconfig\.json|netlify\.toml|[^/]+\.md)$/, null],
