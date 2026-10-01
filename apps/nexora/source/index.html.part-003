@@ -2152,6 +2152,10 @@ function defaultLayoutForType(type) {
   if (type === "financeSankeyWealth") return { w: 7, h: 7 };
   if (type === "financeTransactions") return { w: 12, h: 9 };
   if (type === "financeOs360Chart") return { w: 8, h: 8 };
+  // Budget natif (#586).
+  if (type === "financeBudgetMonth") return { w: 6, h: 8 };
+  if (type === "financeToCategorize") return { w: 6, h: 9 };
+  if (type === "financeWealth") return { w: 6, h: 6 };
   if (type === "sportActivities") return { w: 12, h: 9 };
   if (type === "sportChart") return { w: 10, h: 7 };
   if (type === "sportOs360Chart") return { w: 8, h: 8 };
@@ -3697,7 +3701,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportOs360Chart"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportOs360Chart"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3764,6 +3768,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeTransactions" && (
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
+                {w.type === "financeBudgetMonth" && <WidgetFinanceBudgetMonth externalToolbarSlot={headerToolbarSlot} />}
+                {w.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot={headerToolbarSlot} />}
+                {w.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "sportActivities" && (
                   <WidgetSportActivities widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
@@ -17103,6 +17110,10 @@ const WIDGET_TYPE_META = [
   { key: "financeTransactions", label: "Transactions (Budget)", icon: List, group: "Suivi" },
   // Graphique financier (#573) : tous les widgets Budget d'OS360, par son moteur.
   { key: "financeOs360Chart", label: "Graphique financier (OS360)", icon: BarChart3, group: "Suivi" },
+  // Budget natif (#586) : sans réglage, calculs d'OS360 faits côté serveur.
+  { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Suivi" },
+  { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Suivi" },
+  { key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Suivi" },
   // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
   { key: "sportChart", label: "Sport par activité (barres empilées)", icon: BarChart3, group: "Suivi" },
@@ -18515,6 +18526,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           Tous les widgets Budget d’OS360 — graphiques du mois, patrimoine, annuels, analyses personnalisées (métrique,
           agrégation, granularité…), cartes et listes — rendus par le moteur d’OS360 lui-même, sur les données KDM360.
           Le graphique se choisit dans l’en-tête du widget ; « Options » y ouvre tous ses réglages OS360.
+        </p>
+      )}
+
+      {FINANCE_BUDGET_TYPES.includes(type) && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          {type === "financeBudgetMonth" && "Dépenses, revenus, solde net et reste à dépenser du mois, puis le suivi du budget par catégorie, dépassements en tête. Le mois se change dans l’en-tête du widget."}
+          {type === "financeToCategorize" && "Opérations sans catégorie, à sous-catégorie à préciser, ou classées par l’IA avec une confiance inférieure à 85 % ces 60 derniers jours. « + Saisir une opération » ajoute une opération à la main."}
+          {type === "financeWealth" && "Patrimoine total, son évolution sur 12 mois et sa répartition par banque et par type de compte."}
+          {" "}Aucun réglage : les chiffres suivent les règles de calcul d’OS360 (données KDM360).
         </p>
       )}
 
@@ -36997,6 +37017,447 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
           {" "}{current + 1} / {pages}{" "}
           <button type="button" disabled={current >= pages - 1} onClick={() => setPage(current + 1)} aria-label="Page suivante">›</button>
         </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Budget natif (#586) : « Budget du mois », « À catégoriser » et « Patrimoine »,
+// sans réglage. Les chiffres viennent de /api/nexora/finance-budget-summary,
+// calculés côté serveur avec les règles d'OS360 (lib/finance-budget.mjs) : ces
+// widgets ne refont aucun calcul financier, ils mettent en forme. Catégoriser et
+// saisir passent par /api/nexora/finance-owner-transactions (session du
+// propriétaire).
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-BUDGET:START ===
+const FINANCE_BUDGET_TYPES = ["financeBudgetMonth", "financeToCategorize", "financeWealth"];
+const FINANCE_BUDGET_REASONS = { sans_categorie: "Sans catégorie", sous_categorie: "Sous-catégorie à préciser", confiance: "IA peu sûre" };
+
+function financeBudgetEuro(value, decimals = 0) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function financeBudgetMonthLabel(month) {
+  if (!/^\d{4}-\d{2}$/.test(month || "")) return "";
+  const label = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(month + "-01T12:00:00Z"));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+function financeBudgetShiftMonth(month, delta) {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1 + delta, 1, 12)).toISOString().slice(0, 7);
+}
+function financeBudgetToday(now = new Date()) {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(now);
+}
+// Ordre d'affichage du suivi : dépassements d'abord (du plus fort au plus
+// faible), puis catégories budgétées par taux de consommation, puis catégories
+// sans budget par montant. Les montants restent ceux du serveur.
+function financeBudgetSortTracking(rows) {
+  const rank = (r) => (r.budget > 0 && r.over ? 0 : r.budget > 0 ? 1 : 2);
+  const ratio = (r) => (r.budget > 0 ? r.actual / r.budget : 0);
+  return [...rows].sort((a, b) => rank(a) - rank(b)
+    || (rank(a) === 0 ? (b.actual - b.budget) - (a.actual - a.budget) : 0)
+    || (rank(a) === 1 ? ratio(b) - ratio(a) : 0)
+    || b.actual - a.actual
+    || a.category.localeCompare(b.category, "fr"));
+}
+// Largeurs (en %) des segments positifs de chaque banque, à l'échelle de la
+// banque la plus riche ; les soldes négatifs ne sont pas dessinés (comme la
+// répartition d'OS360) mais restent dans le total affiché.
+function financeBudgetBankBars(banks) {
+  const positive = (bank) => bank.segments.reduce((s, seg) => s + Math.max(0, seg.value), 0);
+  const max = Math.max(1, ...banks.map(positive));
+  return banks.map((bank) => ({
+    ...bank,
+    segments: bank.segments.filter((seg) => seg.value > 0).map((seg) => ({ ...seg, width: (seg.value / max) * 100 })),
+  }));
+}
+// Montant signé d'une saisie : dépense négative, revenu et remboursement positifs.
+function financeBudgetSignedAmount(type, input) {
+  const n = Math.abs(Number(String(input).replace(/\s/g, "").replace(",", ".")));
+  if (!Number.isFinite(n) || n === 0) return null;
+  return type === "Dépense" ? -n : n;
+}
+function financeBudgetReason(item) {
+  const label = FINANCE_BUDGET_REASONS[item.reason] || item.reason;
+  return item.reason === "confiance" && item.confidence != null ? `${label} (${Math.round(item.confidence * 100)} %)` : label;
+}
+// Courbe du patrimoine sur 12 mois, en coordonnées d'un viewBox 0 0 width height.
+function financeBudgetSparkline(history, width = 240, height = 48, pad = 4) {
+  const values = history.map((h) => h.total);
+  if (values.length < 2) return "";
+  const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+  return values.map((v, i) => `${(pad + (i / (values.length - 1)) * (width - 2 * pad)).toFixed(1)},${(height - pad - ((v - min) / span) * (height - 2 * pad)).toFixed(1)}`).join(" ");
+}
+// === NEXORA:FINANCE-BUDGET:END ===
+
+const FINANCE_BUDGET_CSS = `
+.nx-bud{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;overflow:auto;padding:10px 12px;font-size:12px;color:#203246}
+.nx-bud-card{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 12px;border:1px solid #d8e1eb;border-radius:8px;background:#f9fbfc}
+.nx-bud-card div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.nx-bud-card span{color:#60717c;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nx-bud-card strong{font-size:17px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nx-bud-card .neg{color:#a33135}.nx-bud-card .pos{color:#1f6b52}
+@container (max-width:420px){.nx-bud-card{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.nx-bud-cats{display:flex;flex-direction:column;gap:6px}
+.nx-bud-cat{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center}
+.nx-bud-cat b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bud-cat small{font-variant-numeric:tabular-nums;color:#60717c;white-space:nowrap}
+.nx-bud-cat.over small{color:#a33135;font-weight:600}
+.nx-bud-bar{grid-column:1/-1;height:6px;border-radius:3px;background:#edf1f4;overflow:hidden}
+.nx-bud-bar i{display:block;height:100%;border-radius:3px;background:#43a58e}
+.nx-bud-cat.over .nx-bud-bar i{background:#d5798d}
+.nx-bud-cat.nobudget .nx-bud-bar i{background:#b8c4cf}
+.nx-bud-section{font-size:11px;font-weight:600;color:#60717c;text-transform:uppercase;letter-spacing:.04em}
+.nx-bud-empty{color:#60717c;padding:12px 0}
+.nx-bud-list{display:flex;flex-direction:column;gap:6px}
+.nx-bud-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;padding:8px 10px;border:1px solid #edf1f4;border-radius:6px}
+.nx-bud-item .lbl{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bud-item .amt{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.nx-bud-item .amt.neg{color:#a33135}
+.nx-bud-item .meta{color:#60717c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bud-chip{justify-self:end;padding:1px 7px;border-radius:9px;background:#fff4e5;color:#8a5a12;font-size:10.5px;white-space:nowrap}
+.nx-bud-edit{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.nx-bud select,.nx-bud input{height:26px;padding:0 6px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246;min-width:0}
+.nx-bud-edit select{flex:1 1 140px}
+.nx-bud button.nx-bud-ok{height:26px;padding:0 10px;font:inherit;font-weight:600;border:1px solid #24569a;border-radius:5px;background:#24569a;color:#fff;cursor:pointer}
+.nx-bud button.nx-bud-ok:disabled{opacity:.5;cursor:default}
+.nx-bud-err{grid-column:1/-1;color:#a33135}
+.nx-bud-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:10px;border:1px solid #d8e1eb;border-radius:8px;background:#f9fbfc}
+.nx-bud-form label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:#60717c;min-width:0}
+.nx-bud-form .wide{grid-column:1/-1}
+.nx-bud-form .actions{grid-column:1/-1;display:flex;gap:8px;align-items:center}
+.nx-bud-wealth{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px}
+.nx-bud-wealth strong{font-size:22px;font-variant-numeric:tabular-nums}
+.nx-bud-wealth small{display:block;color:#60717c}
+.nx-bud-wealth svg{width:240px;max-width:100%;height:48px}
+.nx-bud-banks{display:flex;flex-direction:column;gap:8px}
+.nx-bud-bank{display:grid;grid-template-columns:minmax(70px,120px) minmax(0,1fr) auto;gap:8px;align-items:center}
+.nx-bud-bank b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bud-bank small{font-variant-numeric:tabular-nums;white-space:nowrap}
+.nx-bud-stack{display:flex;height:16px;border-radius:4px;overflow:hidden;background:#edf1f4}
+.nx-bud-stack i{display:block;height:100%}
+.nx-bud-legend{display:flex;flex-wrap:wrap;gap:4px 12px;color:#60717c}
+.nx-bud-legend span{display:inline-flex;align-items:center;gap:4px}
+.nx-bud-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+`;
+
+// Chargement partagé par mois ("" = mois en cours) : une requête pour tous les
+// widgets Budget de la page qui regardent le même mois.
+const financeBudgetStore = { entries: new Map(), listeners: new Set() };
+function financeBudgetNotify() { financeBudgetStore.listeners.forEach((fn) => fn()); }
+async function financeBudgetToken() {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Budget.");
+  return user.getIdToken();
+}
+function financeBudgetError(payload, status) {
+  const reasons = {
+    unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Budget.",
+    finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
+    configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+    category_not_found: "Catégorie inconnue ou désactivée.",
+    subcategory_not_found_for_category: "Cette sous-catégorie n'appartient pas à la catégorie choisie.",
+    account_not_found: "Compte inconnu ou désactivé.",
+    invalid_signed_amount: "Montant invalide.",
+    invalid_dates: "Date invalide.",
+  };
+  return reasons[payload?.error] || payload?.detail || payload?.error || `Opération Budget impossible (HTTP ${status}).`;
+}
+function financeBudgetLoad(month = "", force = false) {
+  const current = financeBudgetStore.entries.get(month);
+  if (current?.promise && !force) return current.promise;
+  const entry = { data: current?.data || null, error: null, promise: null, loading: true };
+  financeBudgetStore.entries.set(month, entry);
+  financeBudgetNotify();
+  entry.promise = (async () => {
+    try {
+      const token = await financeBudgetToken();
+      const response = await fetch(`/api/nexora/finance-budget-summary${month ? `?month=${month}` : ""}`, { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(financeBudgetError(payload, response.status));
+      entry.data = payload.data;
+    } catch (error) {
+      entry.error = error instanceof Error ? error.message : String(error);
+      entry.promise = null;
+    }
+    entry.loading = false;
+    financeBudgetNotify();
+  })();
+  return entry.promise;
+}
+function financeBudgetReloadAll() {
+  for (const month of [...financeBudgetStore.entries.keys()]) financeBudgetLoad(month, true);
+  if (financeTxStore.rows) financeTxLoad(true);
+}
+function useFinanceBudget(month = "") {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    financeBudgetStore.listeners.add(listener);
+    financeBudgetLoad(month);
+    return () => { financeBudgetStore.listeners.delete(listener); };
+  }, [month]);
+  const entry = financeBudgetStore.entries.get(month) || {};
+  return { data: entry.data || null, error: entry.error || null, loading: !!entry.loading, reload: financeBudgetReloadAll };
+}
+async function financeBudgetWrite(method, body) {
+  const token = await financeBudgetToken();
+  const response = await fetch("/api/nexora/finance-owner-transactions", {
+    method,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ ...body, idempotencyKey: crypto.randomUUID() }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) throw new Error(financeBudgetError(payload, response.status));
+  financeBudgetReloadAll();
+  return payload;
+}
+
+function FinanceBudgetState({ error, onRetry, children }) {
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={onRetry}>Réessayer</button>
+      </div>
+    );
+  }
+  return children || <div className="lp-empty" style={{ padding: 16 }}>Chargement du budget…</div>;
+}
+
+function WidgetFinanceBudgetMonth({ externalToolbarSlot }) {
+  const thisMonth = financeBudgetToday().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const key = month === thisMonth ? "" : month;
+  const { data, error, loading, reload } = useFinanceBudget(key);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, -1))} aria-label="Mois précédent">‹</button>
+        <strong style={{ minWidth: 104, textAlign: "center" }}>{financeBudgetMonthLabel(month)}</strong>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, 1))} aria-label="Mois suivant">›</button>
+        {month !== thisMonth && <button type="button" onClick={() => setMonth(thisMonth)}>Mois en cours</button>}
+        <button type="button" onClick={reload} disabled={loading} title="Relire les données dans Supabase">{loading ? "Lecture…" : "Actualiser"}</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (!data) return <>{tools}<FinanceBudgetState error={error} onRetry={reload} /></>;
+  const t = data.totals;
+  const rows = financeBudgetSortTracking(data.tracking);
+  return (
+    <div className="nx-bud" style={{ containerType: "inline-size" }}>
+      {tools}
+      <style>{FINANCE_BUDGET_CSS}</style>
+      {error && <div className="nx-bud-err">{error}</div>}
+      <div className="nx-bud-card">
+        <div><span>Dépenses</span><strong>{financeBudgetEuro(t.expenses)}</strong></div>
+        <div><span>Revenus</span><strong>{financeBudgetEuro(t.income)}</strong></div>
+        <div><span>Solde net</span><strong className={t.net < 0 ? "neg" : "pos"}>{financeBudgetEuro(t.net)}</strong></div>
+        <div title="Budget du mois des catégories budgétées, moins leurs dépenses">
+          <span>Reste à dépenser</span><strong className={t.remaining < 0 ? "neg" : ""}>{financeBudgetEuro(t.remaining)}</strong>
+        </div>
+      </div>
+      <div className="nx-bud-section">
+        Suivi par catégorie{data.overBudget.length ? ` · ${data.overBudget.length} en dépassement` : ""}
+      </div>
+      {!rows.length && <div className="nx-bud-empty">Aucune dépense ni budget ce mois-ci.</div>}
+      <div className="nx-bud-cats">
+        {rows.map((r) => {
+          const over = r.budget > 0 && r.over;
+          const width = r.budget > 0 ? Math.min(100, (r.actual / r.budget) * 100) : 100;
+          return (
+            <div key={r.category} className={`nx-bud-cat${over ? " over" : ""}${r.budget > 0 ? "" : " nobudget"}`}>
+              <b title={r.category}>{r.category}</b>
+              <small>
+                {financeBudgetEuro(r.actual)}{r.budget > 0 ? ` / ${financeBudgetEuro(r.budget)}` : " · sans budget"}
+                {over ? ` · +${financeBudgetEuro(r.actual - r.budget)}` : ""}
+              </small>
+              <div className="nx-bud-bar"><i style={{ width: `${width}%` }} /></div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FinanceBudgetCategoryPicker({ categories, category, subcategory, onChange, idPrefix }) {
+  const subs = categories.find((c) => c.name === category)?.subcategories || [];
+  return (
+    <>
+      <select id={`${idPrefix}-cat`} aria-label="Catégorie" value={category}
+        onChange={(e) => {
+          const next = categories.find((c) => c.name === e.target.value);
+          onChange(e.target.value, next?.subcategories.length === 1 ? next.subcategories[0] : "");
+        }}>
+        <option value="">Catégorie…</option>
+        {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+      </select>
+      <select id={`${idPrefix}-sub`} aria-label="Sous-catégorie" value={subcategory} disabled={!subs.length}
+        onChange={(e) => onChange(category, e.target.value)}>
+        <option value="">{subs.length ? "Sous-catégorie…" : "Aucune sous-catégorie"}</option>
+        {subs.map((s) => <option key={s} value={s}>{s}</option>)}
+      </select>
+    </>
+  );
+}
+
+function FinanceToCategorizeRow({ item, categories }) {
+  const known = categories.some((c) => c.name === item.category);
+  const [category, setCategory] = useState(known ? item.category : "");
+  const [subcategory, setSubcategory] = useState(known && categories.find((c) => c.name === item.category)?.subcategories.includes(item.subcategory) ? item.subcategory : "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const subs = categories.find((c) => c.name === category)?.subcategories || [];
+  const ready = category && (subcategory || !subs.length);
+  const save = async () => {
+    setBusy(true); setError(null);
+    try { await financeBudgetWrite("PATCH", { transactionId: item.id, category, subcategory: subcategory || null }); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
+  };
+  return (
+    <div className="nx-bud-item">
+      <span className="lbl" title={item.label}>{item.label || "(sans libellé)"}</span>
+      <span className={`amt${item.amount < 0 ? " neg" : ""}`}>{financeBudgetEuro(item.amount, 2)}</span>
+      <span className="meta">{new Date(item.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })} · {item.account}{item.category ? ` · ${item.category}${item.subcategory ? " / " + item.subcategory : ""}` : ""}</span>
+      <span className="nx-bud-chip">{financeBudgetReason(item)}</span>
+      <div className="nx-bud-edit">
+        <FinanceBudgetCategoryPicker categories={categories} category={category} subcategory={subcategory} idPrefix={`nx-bud-${item.id}`}
+          onChange={(c, s) => { setCategory(c); setSubcategory(s); }} />
+        <button type="button" className="nx-bud-ok" disabled={!ready || busy} onClick={save}>{busy ? "…" : "Valider"}</button>
+      </div>
+      {error && <div className="nx-bud-err">{error}</div>}
+    </div>
+  );
+}
+
+function FinanceBudgetEntryForm({ catalogs, onDone }) {
+  const [form, setForm] = useState({ type: "Dépense", date: financeBudgetToday(), accountId: catalogs.accounts[0]?.id || "", amount: "", merchant: "", category: "", subcategory: "", description: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const subs = catalogs.categories.find((c) => c.name === form.category)?.subcategories || [];
+  const signed = financeBudgetSignedAmount(form.type, form.amount);
+  const ready = form.accountId && form.date && signed != null && form.category && (form.subcategory || !subs.length);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!ready) return;
+    setBusy(true); setError(null);
+    try {
+      await financeBudgetWrite("POST", {
+        transactionType: form.type, bankDate: form.date, effectiveDate: form.date, accountId: form.accountId,
+        signedAmount: signed, merchant: form.merchant, category: form.category, subcategory: form.subcategory || null,
+        description: form.description,
+      });
+      onDone();
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); setBusy(false); }
+  };
+  return (
+    <form className="nx-bud-form" onSubmit={submit}>
+      <label>Type<select id="nx-bud-new-type" value={form.type} onChange={(e) => set({ type: e.target.value })}>
+        <option>Dépense</option><option>Revenu</option><option>Remboursement</option>
+      </select></label>
+      <label>Date<input id="nx-bud-new-date" type="date" value={form.date} onChange={(e) => set({ date: e.target.value })} /></label>
+      <label>Compte<select id="nx-bud-new-account" value={form.accountId} onChange={(e) => set({ accountId: e.target.value })}>
+        {catalogs.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.bank ? ` · ${a.bank}` : ""}</option>)}
+      </select></label>
+      <label>Montant (€)<input id="nx-bud-new-amount" inputMode="decimal" placeholder="12,50" value={form.amount} onChange={(e) => set({ amount: e.target.value })} /></label>
+      <label className="wide">Libellé<input id="nx-bud-new-merchant" value={form.merchant} onChange={(e) => set({ merchant: e.target.value })} placeholder="Marchand ou objet" /></label>
+      <div className="wide nx-bud-edit">
+        <FinanceBudgetCategoryPicker categories={catalogs.categories} category={form.category} subcategory={form.subcategory} idPrefix="nx-bud-new"
+          onChange={(c, s) => set({ category: c, subcategory: s })} />
+      </div>
+      <label className="wide">Description (facultatif)<input id="nx-bud-new-desc" value={form.description} onChange={(e) => set({ description: e.target.value })} /></label>
+      <div className="actions">
+        <button type="submit" className="nx-bud-ok" disabled={!ready || busy}>{busy ? "Enregistrement…" : "Enregistrer"}</button>
+        <button type="button" className="lp-btn" onClick={onDone}>Annuler</button>
+        {error && <span className="nx-bud-err">{error}</span>}
+      </div>
+    </form>
+  );
+}
+
+function WidgetFinanceToCategorize({ externalToolbarSlot }) {
+  const { data, error, loading, reload } = useFinanceBudget("");
+  const [adding, setAdding] = useState(false);
+  const items = data?.toCategorize || [];
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" className={adding ? "active" : ""} aria-pressed={adding} disabled={!data} onClick={() => setAdding((v) => !v)}>+ Saisir une opération</button>
+        <button type="button" onClick={reload} disabled={loading} title="Relire les données dans Supabase">{loading ? "Lecture…" : "Actualiser"}</button>
+        {data && <span className="nx-tx-count">{items.length} à catégoriser</span>}
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (!data) return <>{tools}<FinanceBudgetState error={error} onRetry={reload} /></>;
+  return (
+    <div className="nx-bud">
+      {tools}
+      <style>{FINANCE_BUDGET_CSS}</style>
+      {error && <div className="nx-bud-err">{error}</div>}
+      {adding && <FinanceBudgetEntryForm catalogs={data.catalogs} onDone={() => setAdding(false)} />}
+      {!items.length && <div className="nx-bud-empty">Rien à catégoriser : toutes les opérations ont une catégorie sûre.</div>}
+      <div className="nx-bud-list">
+        {items.map((item) => <FinanceToCategorizeRow key={item.id} item={item} categories={data.catalogs.categories} />)}
+      </div>
+    </div>
+  );
+}
+
+function WidgetFinanceWealth({ externalToolbarSlot }) {
+  const { data, error, loading, reload } = useFinanceBudget("");
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" onClick={reload} disabled={loading} title="Relire les données dans Supabase">{loading ? "Lecture…" : "Actualiser"}</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (!data) return <>{tools}<FinanceBudgetState error={error} onRetry={reload} /></>;
+  const w = data.wealth;
+  const previous = w.history.length > 1 ? w.history[w.history.length - 2].total : null;
+  const delta = previous == null ? null : w.total - previous;
+  const bars = financeBudgetBankBars(w.banks);
+  const points = financeBudgetSparkline(w.history);
+  const usedTypes = w.types.filter((t) => bars.some((b) => b.segments.some((s) => s.type === t.name)));
+  return (
+    <div className="nx-bud">
+      {tools}
+      <style>{FINANCE_BUDGET_CSS}</style>
+      {error && <div className="nx-bud-err">{error}</div>}
+      <div className="nx-bud-wealth">
+        <div>
+          <small>Patrimoine au {new Date(w.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })}</small>
+          <strong>{financeBudgetEuro(w.total)}</strong>
+          {delta != null && <small>{delta >= 0 ? "+" : ""}{financeBudgetEuro(delta)} depuis fin {financeBudgetMonthLabel(w.history[w.history.length - 2].month).toLowerCase()}</small>}
+        </div>
+        {points && (
+          <svg viewBox="0 0 240 48" role="img" aria-label="Évolution du patrimoine sur 12 mois">
+            <polyline points={points} fill="none" stroke="#24569a" strokeWidth="2" strokeLinejoin="round" />
+          </svg>
+        )}
+      </div>
+      <div className="nx-bud-section">Par banque et type de compte</div>
+      <div className="nx-bud-banks">
+        {bars.map((b) => (
+          <div key={b.bank} className="nx-bud-bank">
+            <b title={b.bank}>{b.bank}</b>
+            <div className="nx-bud-stack">
+              {b.segments.map((s) => <i key={s.type} title={`${s.type} : ${financeBudgetEuro(s.value)}`} style={{ width: `${s.width}%`, background: s.color }} />)}
+            </div>
+            <small>{financeBudgetEuro(b.total)}</small>
+          </div>
+        ))}
+      </div>
+      <div className="nx-bud-legend">
+        {usedTypes.map((t) => <span key={t.name}><i style={{ background: t.color }} />{t.name}</span>)}
       </div>
     </div>
   );

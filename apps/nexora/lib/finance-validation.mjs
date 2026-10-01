@@ -16,10 +16,13 @@ function optionalText(value, max = 1000) {
   return result || null;
 }
 
-export function validateCategoryPair(catalogs, category, subcategory) {
+// `allowEmptySubcategory` (saisie Nexora, #586) : une sous-catégorie vide est
+// acceptée pour une catégorie qui n'en a aucune au catalogue (ex. Vacances).
+export function validateCategoryPair(catalogs, category, subcategory, { allowEmptySubcategory = false } = {}) {
   const activeCategory = catalogs.categories.some(item => item.category === category);
-  const activePair = catalogs.subcategories.some(item => item.category === category && item.subcategory === subcategory);
   if (!activeCategory) throw new Error("category_not_found");
+  if (allowEmptySubcategory && !subcategory && !catalogs.subcategories.some(item => item.category === category)) return;
+  const activePair = catalogs.subcategories.some(item => item.category === category && item.subcategory === subcategory);
   if (!activePair) throw new Error("subcategory_not_found_for_category");
 }
 
@@ -27,7 +30,7 @@ export function validateAccount(catalogs, accountId) {
   if (!catalogs.accounts.some(item => item.account_id === accountId)) throw new Error("account_not_found");
 }
 
-export function buildCreateTransaction(input, transactionId) {
+export function buildCreateTransaction(input, transactionId, { source = "assistant_personnel", allowEmptySubcategory = false } = {}) {
   const transactionType = requiredText(input.transactionType, "transaction_type", 100);
   if (!TYPES.has(transactionType)) throw new Error("unsupported_transaction_type");
   const bankDate = requiredText(input.bankDate, "bank_date", 10);
@@ -53,17 +56,17 @@ export function buildCreateTransaction(input, transactionId) {
     signed_amount: amount,
     merchant: optionalText(input.merchant, 500),
     category: requiredText(input.category, "category", 200),
-    subcategory: requiredText(input.subcategory, "subcategory", 200),
+    subcategory: allowEmptySubcategory ? optionalText(input.subcategory, 200) : requiredText(input.subcategory, "subcategory", 200),
     category_confidence: categoryConfidence,
     description: optionalText(input.description, 2000),
     status: "Réalisé",
-    source: "assistant_personnel",
+    source,
     source_id: optionalText(input.sourceId, 500),
     tag: optionalText(input.tag, 200)
   };
 }
 
-export function buildCategorizedTransaction(existing, input) {
+export function buildCategorizedTransaction(existing, input, { allowEmptySubcategory = false } = {}) {
   if (!existing || typeof existing !== "object") throw new Error("transaction_not_found");
   const categoryConfidence = input.categoryConfidence == null ? existing.category_confidence : Number(input.categoryConfidence);
   if (categoryConfidence != null && (!Number.isFinite(categoryConfidence) || categoryConfidence < 0 || categoryConfidence > 1)) {
@@ -80,7 +83,7 @@ export function buildCategorizedTransaction(existing, input) {
     signed_amount: existing.signed_amount,
     merchant: existing.merchant,
     category: requiredText(input.category, "category", 200),
-    subcategory: requiredText(input.subcategory, "subcategory", 200),
+    subcategory: allowEmptySubcategory ? optionalText(input.subcategory, 200) : requiredText(input.subcategory, "subcategory", 200),
     description: existing.description,
     status: existing.status,
     source: existing.source,
