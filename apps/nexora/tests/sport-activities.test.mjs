@@ -139,7 +139,8 @@ function slice(name) {
 const EXPORTS = ["SPORT_COLUMNS", "SPORT_DEFAULT_COLUMNS", "SPORT_PERIODS", "sportSpec", "sportPeriodRange", "sportRows", "sportAllColumns", "sportNames", "sportFilter", "sportText", "sportSearch", "sportSort", "sportCsv",
   "SPORT_MEASURES", "SPORT_BUCKETS", "SPORT_PALETTE", "SPORT_MAX_BUCKETS", "sportChartSpec", "sportMeasureValue", "sportBucketKey", "sportIsoWeek", "sportBucketLabel", "sportStackSeries", "sportNiceTicks", "sportFormatValue",
   "SPORT_CARD_MEASURES", "SPORT_AGGS", "sportDays", "sportBlockSpec", "sportAggregate", "sportBlockLabel",
-  "SPORT_VIEWS", "SPORT_MEAN_LABELS", "SPORT_WAFFLE_MAX", "sportColor", "sportMeanKey", "sportTimeSeries", "sportCumulSeries", "sportWaffle", "sportYears", "sportCalendar", "sportCalendarShade"];
+  "SPORT_VIEWS", "SPORT_MEAN_LABELS", "SPORT_WAFFLE_MAX", "sportColor", "sportMeanKey", "sportTimeSeries", "sportCumulSeries", "sportWaffle", "sportYears", "sportCalendar", "sportCalendarShade",
+  "SPORT_SUMMARY_PERIODS", "sportSummarySpec", "sportTotals", "sportShiftDate", "sportDaysAgoLabel", "sportDurationLabel", "sportSummary", "sportDashboardWidgets"];
 const W = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n;return { ${EXPORTS.join(", ")} };\n})`)();
 
 const payload = {
@@ -477,4 +478,72 @@ test("migration : le Graphique sport (OS360) devient le Graphique sport natif é
   assert.equal(MIG.migrateLegacySportOs360Widget(other), other, "autres widgets intacts");
   const data = MIG.migrateLegacyMiniGanttData({ d1: { widgets: [{ id: "a", type: "sportOs360Chart" }, { id: "b", type: "sportChart" }] } });
   assert.deepEqual(data.d1.widgets.map((w) => w.type), ["sportChart", "sportChart"], "migration à la lecture des tableaux de bord");
+});
+
+// --- Résumé sport et page Sport (#591) ---
+
+test("résumé : rattaché au catalogue, au rendu, à l'en-tête et à la fiche", () => {
+  assert.match(html, /key: "sportSummary", label: "Résumé sport"/);
+  assert.match(html, /w\.type === "sportSummary" && \(\s*<WidgetSportSummary widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "sportSummary"/);
+  assert.match(html, /if \(type === "sportSummary"\) data\.sport = \{ \.\.\.sportSummaryConfig \};/);
+  assert.match(html, /function WidgetSportSummary\([^)]*\) \{\n  const \{ rows, error, reload \} = useSportData\(\);/, "même magasin que les autres widgets sport");
+  assert.deepEqual(W.SPORT_SUMMARY_PERIODS.map((p) => p.value), ["week", "month", "year"]);
+  assert.deepEqual(W.sportSummarySpec(undefined), { period: "year" }, "heures par sport : l’année, le mois a sa carte");
+  assert.deepEqual(W.sportSummarySpec({ sport: { period: "month" } }), { period: "month" });
+  assert.deepEqual(W.sportSummarySpec({ sport: { period: "365" } }), { period: "year" });
+});
+
+test("résumé : dernière séance, semaine comparée au même jour, mois, heures par sport", () => {
+  const rows = [...W.sportRows(payload),
+    { id: "f", date: "2026-10-03", sport: "Trail", title: "Prévue", total: 300, distance: 30, elevation: 2000 },
+    { id: "p", date: "2026-09-22", sport: "CrossFit", title: "", total: 50, distance: null, elevation: null },
+    { id: "q", date: "2026-09-26", sport: "CrossFit", title: "", total: 999, distance: null, elevation: null }];
+  const order = W.sportNames(rows).map((s) => s.name);
+  const r = W.sportSummary(rows, "2026-10-01", "month", order);
+  assert.equal(r.last.id, "c|3", "jamais une séance future");
+  assert.equal(r.lastDaysAgo, 0);
+  assert.equal(r.week.count, 3);
+  close(r.week.hours, (45 + 60 + 1234.5) / 60);
+  assert.equal(r.week.km, 18.5);
+  assert.equal(r.week.elevation, 80);
+  // Jeudi 1er octobre : semaine précédente du lundi 21 au jeudi 24 septembre (le samedi 26 est exclu).
+  assert.deepEqual([r.previousWeek.count, r.previousWeek.hours], [1, 50 / 60]);
+  assert.equal(r.month.count, 1);
+  assert.deepEqual(r.bySport.map((s) => [s.name, s.count]), [["Course à pied", 1]]);
+  assert.equal(r.bySport[0].share, 1);
+  const year = W.sportSummary(rows, "2026-10-01", "year", order);
+  assert.deepEqual(year.bySport.map((s) => s.name), ["Course à pied", "CrossFit"], "2025 et futur exclus, tri par heures");
+  close(year.totalHours, (45 + 1234.5 + 60 + 50 + 999) / 60);
+  close(year.bySport.reduce((t, s) => t + s.share, 0), 1);
+  const empty = W.sportSummary([], "2026-10-01", "week", []);
+  assert.deepEqual([empty.last, empty.lastDaysAgo, empty.week.hours, empty.bySport.length], [null, null, 0, 0]);
+  assert.equal(W.sportSummary(rows, "2026-10-03", "week", order).lastDaysAgo, 0, "la séance du jour devient la dernière");
+});
+
+test("résumé : libellés de durée et d'ancienneté", () => {
+  assert.equal(W.sportDurationLabel(45), "45 min");
+  assert.equal(W.sportDurationLabel(65), "1 h 05");
+  assert.equal(W.sportDurationLabel(120), "2 h 00");
+  assert.equal(W.sportDurationLabel(null), "—");
+  assert.deepEqual([0, 1, 4].map(W.sportDaysAgoLabel), ["aujourd’hui", "hier", "il y a 4 jours"]);
+  assert.equal(W.sportShiftDate("2026-03-01", -1), "2026-02-28");
+  assert.deepEqual(W.sportTotals([{ total: 30, distance: 5, elevation: null }, { total: null, distance: 2.5 }]), { count: 2, hours: 0.5, km: 7.5, elevation: 0 });
+});
+
+test("page Sport : modèle de tableau de bord, widgets valides, sans chevauchement", () => {
+  let n = 0;
+  const widgets = W.sportDashboardWidgets(() => `w${++n}`);
+  assert.deepEqual(widgets.map((w) => w.type), ["sportSummary", "sportChart", "sportChart", "sportChart", "sportChart", "sportChart", "sportActivities"]);
+  assert.equal(new Set(widgets.map((w) => w.id)).size, widgets.length);
+  assert.deepEqual(widgets.filter((w) => w.type === "sportChart").map((w) => W.sportChartSpec(w).view), ["stack", "waffle", "series", "cumul", "calendar"]);
+  for (const w of widgets) assert.ok(w.layout.x >= 0 && w.layout.x + w.layout.w <= 12, `${w.title} dans la grille`);
+  for (const a of widgets) for (const b of widgets) {
+    if (a === b) continue;
+    const overlap = a.layout.x < b.layout.x + b.layout.w && b.layout.x < a.layout.x + a.layout.w && a.layout.y < b.layout.y + b.layout.h && b.layout.y < a.layout.y + a.layout.h;
+    assert.ok(!overlap, `${a.title} / ${b.title}`);
+  }
+  assert.match(html, /widgets: template === "sport" \? sportDashboardWidgets\(uid\) : \[\]/);
+  assert.match(html, /<option value="sport">Sport<\/option>/);
+  assert.match(html, /onCreate\(name, folderId, template\)/);
 });

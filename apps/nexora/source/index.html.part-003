@@ -2159,6 +2159,7 @@ function defaultLayoutForType(type) {
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
   if (type === "sportActivities") return { w: 12, h: 9 };
   if (type === "sportChart") return { w: 10, h: 7 };
+  if (type === "sportSummary") return { w: 12, h: 6 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3723,7 +3724,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === LEGACY_SPORT_OS360_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3801,6 +3802,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "sportChart" && (
                   <WidgetSportChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "sportSummary" && (
+                  <WidgetSportSummary widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === LEGACY_SPORT_OS360_TYPE && (
                   <WidgetSportChart widget={migrateLegacySportOs360Widget(w)} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacySportOs360Widget(w), ...patch })} />
@@ -17144,6 +17148,7 @@ const WIDGET_TYPE_META = [
   // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
   { key: "sportChart", label: "Graphique sport", icon: BarChart3, group: "Suivi" },
+  { key: "sportSummary", label: "Résumé sport", icon: Activity, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -17550,6 +17555,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [txColumns, setTxColumns] = useState(Array.isArray(widget?.txColumns) && widget.txColumns.length ? widget.txColumns : FINANCE_TX_DEFAULT_COLUMNS);
   const [sportConfig, setSportConfig] = useState(() => sportSpec(widget));
   const [sportChartConfig, setSportChartConfig] = useState(() => sportChartSpec(widget));
+  const [sportSummaryConfig, setSportSummaryConfig] = useState(() => sportSummarySpec(widget));
   const [titleColor, setTitleColor] = useState(widget?.titleColor || "");
   const [onlyMine, setOnlyMine] = useState(widget?.onlyMine || false);
   const [showAppearance, setShowAppearance] = useState(!!(widget?.titleEmoji || widget?.titleColor || widget?.bandColor || widget?.bgColor));
@@ -17686,6 +17692,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "financeTransactions") data.txColumns = txColumns.length ? [...txColumns] : [...FINANCE_TX_DEFAULT_COLUMNS];
     if (type === "sportActivities") data.sport = { ...sportConfig };
     if (type === "sportChart") data.sport = { ...sportChartConfig };
+    if (type === "sportSummary") data.sport = { ...sportSummaryConfig };
     if (type === "heatmapGrid") {
       data.heatmapRowField = heatmapRowField;
       data.heatmapColField = heatmapColField;
@@ -18593,6 +18600,21 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
           <style>{FINANCE_TX_CSS}</style>
           <div className="nx-tx"><FinanceTxColumnPicker columns={sportAllColumns(sportStore.rows)} visible={sportConfig.columns} defaults={SPORT_DEFAULT_COLUMNS} onChange={(keys) => setSportConfig((c) => ({ ...c, columns: keys.length ? keys : SPORT_DEFAULT_COLUMNS }))} /></div>
+        </>
+      )}
+
+      {type === "sportSummary" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            L’essentiel du journal « Activités Strava » : dernière séance, semaine en cours comparée à la semaine dernière
+            au même jour, mois en cours et heures par sport. La période des heures par sport se règle aussi dans l’en-tête.
+          </p>
+          <div className="lp-field">
+            <label>Heures par sport</label>
+            <select value={sportSummaryConfig.period} onChange={(e) => setSportSummaryConfig({ period: e.target.value })}>
+              {SPORT_SUMMARY_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
         </>
       )}
 
@@ -38678,6 +38700,87 @@ function sportCalendarShade(minutes, count) {
   return Math.round((0.35 + 0.65 * Math.min(1, Math.max(0, minutes) / 120)) * 100) / 100;
 }
 
+// --- Résumé sport (#591) -----------------------------------------------------
+// Ce que Quentin veut voir en 10 secondes : dernière séance, semaine en cours
+// (comparée à la précédente au même jour), mois en cours, heures par sport.
+const SPORT_SUMMARY_PERIODS = [
+  { value: "week", label: "Cette semaine" },
+  { value: "month", label: "Ce mois" },
+  { value: "year", label: "Cette année" },
+];
+function sportSummarySpec(widget) {
+  const s = widget?.sport && typeof widget.sport === "object" ? widget.sport : {};
+  return { period: SPORT_SUMMARY_PERIODS.some((p) => p.value === s.period) ? s.period : "year" };
+}
+// Totaux d'une liste d'activités ; les valeurs non renseignées ne comptent pas.
+function sportTotals(rows) {
+  const add = (key) => rows.reduce((t, r) => t + (typeof r[key] === "number" && Number.isFinite(r[key]) ? r[key] : 0), 0);
+  return { count: rows.length, hours: add("total") / 60, km: add("distance"), elevation: add("elevation") };
+}
+function sportShiftDate(date, days) {
+  const d = new Date(date + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// « aujourd'hui », « hier », « il y a 3 jours ».
+function sportDaysAgoLabel(days) {
+  if (days <= 0) return "aujourd’hui";
+  if (days === 1) return "hier";
+  return `il y a ${days} jours`;
+}
+// Durée d'une séance : « 45 min », « 1 h 05 ».
+function sportDurationLabel(minutes) {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes)) return "—";
+  const m = Math.round(minutes);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`;
+}
+function sportSummary(rows, today, period = "year", order = []) {
+  const past = (rows || []).filter((r) => r.date <= today);
+  const all = { sports: [] };
+  const last = past.slice().sort((a, b) => b.date.localeCompare(a.date) || String(b.start || "").localeCompare(String(a.start || "")))[0] || null;
+  const monday = sportPeriodRange({ period: "week" }, today).from;
+  const elapsed = Math.round((Date.parse(today + "T12:00:00Z") - Date.parse(monday + "T12:00:00Z")) / 864e5);
+  const previousMonday = sportShiftDate(monday, -7);
+  const between = (from, to) => past.filter((r) => r.date >= from && r.date <= to);
+  const chosen = sportFilter(past, { ...all, period }, today);
+  const hours = new Map();
+  const counts = new Map();
+  for (const r of chosen) {
+    counts.set(r.sport, (counts.get(r.sport) || 0) + 1);
+    if (typeof r.total === "number" && Number.isFinite(r.total)) hours.set(r.sport, (hours.get(r.sport) || 0) + r.total / 60);
+  }
+  const names = [...counts.keys()];
+  const totalHours = [...hours.values()].reduce((t, h) => t + h, 0);
+  const bySport = names
+    .map((name) => ({ name, hours: hours.get(name) || 0, count: counts.get(name), color: sportColor(name, order, names) }))
+    .sort((a, b) => b.hours - a.hours || b.count - a.count || a.name.localeCompare(b.name, "fr"))
+    .map((s) => ({ ...s, share: totalHours ? s.hours / totalHours : 0 }));
+  return {
+    last,
+    lastDaysAgo: last ? Math.round((Date.parse(today + "T12:00:00Z") - Date.parse(last.date + "T12:00:00Z")) / 864e5) : null,
+    week: sportTotals(between(monday, today)),
+    // Semaine précédente arrêtée au même jour de la semaine : comparaison à durée égale.
+    previousWeek: sportTotals(between(previousMonday, sportShiftDate(previousMonday, elapsed))),
+    month: sportTotals(sportFilter(past, { ...all, period: "month" }, today)),
+    period,
+    bySport,
+    totalHours,
+  };
+}
+// Modèle de tableau de bord « Sport » (#591) : la page Sport, faite de widgets
+// ordinaires que l'on peut ensuite déplacer, régler ou retirer.
+function sportDashboardWidgets(makeId) {
+  return [
+    { type: "sportSummary", title: "Résumé sport", sport: { period: "year" }, layout: { x: 0, y: 0, w: 12, h: 6 } },
+    { type: "sportChart", title: "Heures par semaine", sport: { view: "stack", measure: "total", bucket: "week", period: "year" }, layout: { x: 0, y: 6, w: 8, h: 7 } },
+    { type: "sportChart", title: "Répartition de l’année", sport: { view: "waffle", period: "year" }, layout: { x: 8, y: 6, w: 4, h: 7 } },
+    { type: "sportChart", title: "Heures par jour et moyenne", sport: { view: "series", measure: "total", bucket: "day", period: "90", mean: true }, layout: { x: 0, y: 13, w: 6, h: 7 } },
+    { type: "sportChart", title: "Cumul de l’année", sport: { view: "cumul", measure: "total", bucket: "week", period: "year" }, layout: { x: 6, y: 13, w: 6, h: 7 } },
+    { type: "sportChart", title: "Calendrier sportif", sport: { view: "calendar" }, layout: { x: 0, y: 20, w: 12, h: 6 } },
+    { type: "sportActivities", title: "Activités", sport: { period: "month" }, layout: { x: 0, y: 26, w: 12, h: 9 } },
+  ].map((w) => ({ id: makeId(), ...w }));
+}
+
 // --- Bloc de carte « Total sport » (#580) ------------------------------------
 const SPORT_CARD_MEASURES = [
   ...SPORT_MEASURES,
@@ -39328,6 +39431,123 @@ function WidgetSportChart({ widget, externalToolbarSlot, onUpdateWidget }) {
         : <span>Aucune activité en {data.year}.</span>)}
       {view === "waffle" && data.tooMany && <div className="nx-sport-chart-note">Plus de {SPORT_WAFFLE_MAX} heures pour un sport : seuls les {SPORT_WAFFLE_MAX} premiers carrés sont dessinés. Choisis une période plus courte.</div>}
       {missing}
+    </div>
+  );
+}
+
+const SPORT_SUMMARY_CSS = `
+.nx-sport-sum{display:flex;flex-direction:column;gap:12px;height:100%;min-height:0;overflow:auto;padding:10px 12px;font-size:12px;color:#203246}
+.nx-sport-sum-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.nx-sport-sum-card{display:flex;flex-direction:column;gap:4px;min-width:0;padding:10px 12px;border:1px solid #e1e8ef;border-radius:8px;background:#fbfcfd}
+.nx-sport-sum-label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#60717c}
+.nx-sport-sum-big{font-size:22px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.nx-sport-sum-line{display:flex;flex-wrap:wrap;gap:4px 10px;color:#3b4b57;font-variant-numeric:tabular-nums}
+.nx-sport-sum-title{display:flex;align-items:center;gap:6px;font-weight:600;min-width:0}
+.nx-sport-sum-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-sport-sum-title i,.nx-sport-sum-bar i{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none}
+.nx-sport-sum-up{color:#1f7a4d;font-weight:600}
+.nx-sport-sum-down{color:#a33135;font-weight:600}
+.nx-sport-sum-bars{display:flex;flex-direction:column;gap:6px}
+.nx-sport-sum-bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+.nx-sport-sum-bar > span:first-child{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-sport-sum-track{height:10px;border-radius:3px;background:#eef2f6;overflow:hidden}
+.nx-sport-sum-track b{display:block;height:100%;border-radius:3px}
+.nx-sport-sum-bar small{color:#60717c}
+`;
+
+// Écart signé avec la semaine précédente au même jour (« +1,5 h »).
+function SportSummaryDelta({ value, previous }) {
+  const d = value - previous;
+  if (Math.abs(d) < 0.005) return <span>comme la semaine dernière à ce jour</span>;
+  return (
+    <span>
+      <span className={d > 0 ? "nx-sport-sum-up" : "nx-sport-sum-down"}>{d > 0 ? "+" : "−"}{sportFormatValue(Math.abs(d), "h")}</span>
+      {" "}vs semaine dernière à ce jour
+    </span>
+  );
+}
+
+// Résumé sport (#591) : dernière séance, semaine, mois, heures par sport.
+function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useSportData();
+  const spec = sportSummarySpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ sport: { ...spec, ...patch } });
+  const today = financeSankeyToday();
+  const order = useMemo(() => sportNames(rows).map((s) => s.name), [rows]);
+  const data = useMemo(() => (rows ? sportSummary(rows, today, spec.period, order) : null), [rows, today, spec.period, order]);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{SPORT_CSS + SPORT_SUMMARY_CSS}</style>
+      <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <select value={spec.period} onChange={(e) => update({ period: e.target.value })} aria-label="Période des heures par sport" title="Période des heures par sport">
+          {SPORT_SUMMARY_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+        <button type="button" onClick={reload} title="Relire le journal sportif">Actualiser</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des activités sport…</div>;
+  const { last, week, previousWeek, month } = data;
+  const periodLabel = SPORT_SUMMARY_PERIODS.find((p) => p.value === spec.period)?.label.toLocaleLowerCase("fr");
+  const maxHours = Math.max(0, ...data.bySport.map((s) => s.hours));
+  return (
+    <div className="nx-sport-sum">
+      {tools}
+      <div className="nx-sport-sum-cards">
+        <div className="nx-sport-sum-card">
+          <span className="nx-sport-sum-label">Dernière séance</span>
+          {last ? (
+            <>
+              <span className="nx-sport-sum-title"><i style={{ background: sportColor(last.sport, order) }} /><span title={last.title || last.sport}>{last.sport}{last.title ? ` · ${last.title}` : ""}</span></span>
+              <span className="nx-sport-sum-big">{sportDurationLabel(last.total)}</span>
+              <span className="nx-sport-sum-line">
+                <span>{sportBucketLabel(last.date, "day")}, {sportDaysAgoLabel(data.lastDaysAgo)}</span>
+                {typeof last.distance === "number" && last.distance > 0 && <span>{sportFormatValue(last.distance, "km")}</span>}
+                {typeof last.elevation === "number" && last.elevation > 0 && <span>{sportFormatValue(last.elevation, "m")} D+</span>}
+              </span>
+            </>
+          ) : <span className="nx-sport-sum-line">Aucune séance dans le journal.</span>}
+        </div>
+        <div className="nx-sport-sum-card">
+          <span className="nx-sport-sum-label">Semaine en cours</span>
+          <span className="nx-sport-sum-big">{sportFormatValue(week.hours, "h")}</span>
+          <span className="nx-sport-sum-line">
+            <span>{sportFormatValue(week.count, "séances")}</span>
+            {week.km > 0 && <span>{sportFormatValue(week.km, "km")}</span>}
+            {week.elevation > 0 && <span>{sportFormatValue(week.elevation, "m")} D+</span>}
+          </span>
+          <span className="nx-sport-sum-line"><SportSummaryDelta value={week.hours} previous={previousWeek.hours} /></span>
+        </div>
+        <div className="nx-sport-sum-card">
+          <span className="nx-sport-sum-label">Mois en cours</span>
+          <span className="nx-sport-sum-big">{sportFormatValue(month.hours, "h")}</span>
+          <span className="nx-sport-sum-line">
+            <span>{sportFormatValue(month.count, "séances")}</span>
+            {month.km > 0 && <span>{sportFormatValue(month.km, "km")}</span>}
+            {month.elevation > 0 && <span>{sportFormatValue(month.elevation, "m")} D+</span>}
+          </span>
+        </div>
+      </div>
+      <div className="nx-sport-sum-bars" role="list" aria-label={`Heures par sport, ${periodLabel}`}>
+        <span className="nx-sport-sum-label">Heures par sport · {periodLabel} · {sportFormatValue(data.totalHours, "h")}</span>
+        {!data.bySport.length && <span className="nx-sport-sum-line">Aucune séance sur la période.</span>}
+        {data.bySport.map((s) => (
+          <div key={s.name} className="nx-sport-sum-bar" role="listitem">
+            <span title={s.name}><i style={{ background: s.color }} />{s.name}</span>
+            <span className="nx-sport-sum-track"><b style={{ width: `${maxHours ? (s.hours / maxHours) * 100 : 0}%`, background: s.color }} /></span>
+            <span>{sportFormatValue(s.hours, "h")} <small>· {Math.round(s.share * 100)} % · {sportFormatValue(s.count, "séances")}</small></span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
