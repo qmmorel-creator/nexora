@@ -3869,7 +3869,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetHabitPixel widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} habitSkips={habitSkips} setHabitSkips={setHabitSkips} externalToolbarSlot={headerToolbarSlot} onOpenHabitThemes={onOpenHabitThemes} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "pixelTasks" && !showEmptyFunnel && (
-                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onToggleDone={(id) => pixelTaskUndoable(id, () => onToggleDoneFromCosmos && onToggleDoneFromCosmos(id), (t) => (isTaskDoneGlobal(t, ctx) ? "rouverte" : "terminée"))} onUpdateTask={(id, patch) => pixelTaskUndoable(id, () => onUpdateTaskFromCosmos && onUpdateTaskFromCosmos(id, patch), () => ("progress" in patch && patch.progress >= 100 && patch.statusId ? "terminée" : "avancement " + Math.round(Number(patch.progress) || 0) + " %"))} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
+                  <WidgetPixelTasks widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} onCreateTask={makePixelTaskCreator(setTasks, pushToast)} onToggleDone={(id) => pixelTaskUndoable(id, () => onToggleDoneFromCosmos && onToggleDoneFromCosmos(id), (t) => (isTaskDoneGlobal(t, ctx) ? "rouverte" : "terminée"))} onUpdateTask={(id, patch) => pixelTaskUndoable(id, () => onUpdateTaskFromCosmos && onUpdateTaskFromCosmos(id, patch), pixelTaskUpdateLabel(patch))} onUpdateWidget={(patch) => updateWidget(w.id, patch)} onEditWidget={() => setEditingWidget(w)} externalToolbarSlot={headerToolbarSlot} />
                 )}
                 {w.type === "habitHeatmap" && (
                   <WidgetHabitHeatmap widget={w} ctx={ctx} habitLog={habitLog} setHabitLog={setHabitLog} onUpdateWidget={(patch) => updateWidget(w.id, patch)} selectedDate={hasHabitQuickWidget ? habitQuickSelectedDate : null} />
@@ -13594,7 +13594,7 @@ function ptxLabel(item, ctx) {
   return bits.join(" — ") + ". Clic : ouvrir la fiche";
 }
 
-function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futureWindow }) {
+function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futureWindow, extra }) {
   const t = item.task;
   const progress = Math.max(0, Math.min(100, Number(t.progress) || 0));
   // Jalon = pixel rond, tâche avec durée = pixel carré ; futur = « horizon ».
@@ -13650,6 +13650,7 @@ function TaskPixel({ item, ctx, size, focused, onClick, onHover, clickHint, futu
       onBlur={onHover ? () => onHover(null) : undefined}
       aria-label={label}
       title={label}
+      {...(extra || {})}
     >{inner}{ring}{spark}</button>
   );
 }
@@ -13717,7 +13718,9 @@ function TaskPixelSpectrum({ subgroups }) {
   );
 }
 
-function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, onOpen, collapsed, side, folded, onToggleFold }) {
+function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, onOpen, collapsed, side, folded, onToggleFold, drop, dropOver }) {
+  const dropCls = dropOver ? " is-drop" : "";
+  const dropHint = dropOver ? <div className="lp-ptx-drop-hint">Déposer : fin → {new Date(date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}</div> : null;
   const groups = allGroups.map((g) => ({ ...g, items: g.items.filter((i) => !i.ghost && !i.future) })).filter((g) => g.items.length);
   const label = hpxDayLabel(date, todayIso);
   /* Volet plié : une fine colonne (chevron, jour en vertical, compteur) ;
@@ -13732,7 +13735,7 @@ function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, 
   ) : null;
   if (folded) {
     return (
-      <section className="lp-hpx-side lp-ptx-side is-folded" aria-label={label + " — " + hpxLongDate(date) + " (plié)"}>
+      <section className={"lp-hpx-side lp-ptx-side is-folded" + dropCls} aria-label={label + " — " + hpxLongDate(date) + " (plié)"} {...(drop || {})}>
         {fold}
         <button type="button" className="lp-ptx-side-strip" onClick={onToggleFold} title={`Déplier — ${label} : ${day.done} / ${day.total}`} tabIndex={-1}>
           <span className="lp-ptx-side-vlabel">{label}</span>
@@ -13742,7 +13745,8 @@ function TaskPixelSide({ date, day, groups: allGroups, ctx, todayIso, onSelect, 
     );
   }
   return (
-    <section className="lp-hpx-side lp-ptx-side" aria-label={label + " — " + hpxLongDate(date)}>
+    <section className={"lp-hpx-side lp-ptx-side" + dropCls} aria-label={label + " — " + hpxLongDate(date)} {...(drop || {})}>
+      {dropHint}
       <div className="lp-ptx-side-top">
         <button type="button" className="lp-hpx-side-head" onClick={() => onSelect(date)} title="Afficher ce jour au premier plan">
           <span className="lp-hpx-side-title"><b>{label}</b><span>{hpxSubDate(date, todayIso)}</span></span>
@@ -13853,12 +13857,253 @@ function makePixelTaskUndoable(ctx, pushToast, setTasks) {
   };
 }
 const pixelTaskDoneLabel = (ctx) => (t) => (isTaskDoneGlobal(t, ctx) ? "rouverte" : "terminée");
-const pixelTaskUpdateLabel = (patch) => () => ("progress" in patch && patch.progress >= 100 && patch.statusId ? "terminée" : "avancement " + Math.round(Number(patch.progress) || 0) + " %");
+const pixelTaskUpdateLabel = (patch) => () => {
+  if ("progress" in patch && patch.progress >= 100 && patch.statusId) return "terminée";
+  if ("end" in patch) return "replanifiée au " + new Date(patch.end + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }).replace(/\.$/, "");
+  if ("statusId" in patch) return "statut modifié";
+  if ("focus" in patch) return patch.focus ? "marquée Focus" : "retirée du Focus";
+  if ("estimateMinutes" in patch) return patch.estimateMinutes ? "estimée à " + pixelTaskMinutesLabel(patch.estimateMinutes) : "sans estimation";
+  return "avancement " + Math.round(Number(patch.progress) || 0) + " %";
+};
+
+/* Glisser-déposer (#558) : une case ou une ligne se dépose sur le volet
+   Hier / Demain ou sur un jour de la barre semaine pour y être replanifiée. */
+const PTX_DND_TYPE = "application/x-nexora-task";
+function ptxDragSource(taskId) {
+  return {
+    draggable: true,
+    onDragStart: (e) => { e.dataTransfer.setData(PTX_DND_TYPE, taskId); e.dataTransfer.setData("text/plain", taskId); e.dataTransfer.effectAllowed = "move"; },
+  };
+}
+function ptxDropTarget(onDropTask, date, setOver) {
+  if (!onDropTask) return {};
+  const ok = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes(PTX_DND_TYPE);
+  return {
+    onDragOver: (e) => { if (!ok(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOver(date); },
+    // Chromium envoie souvent dragleave sans relatedTarget en passant sur un
+    // enfant : seule la position du pointeur dit si l'on a quitté la cible.
+    onDragLeave: (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      if (e.clientX <= r.left || e.clientX >= r.right || e.clientY <= r.top || e.clientY >= r.bottom) setOver((v) => (v === date ? null : v));
+    },
+    onDrop: (e) => { if (!ok(e)) return; e.preventDefault(); setOver(null); const id = e.dataTransfer.getData(PTX_DND_TYPE); if (id) onDropTask(id, date); },
+  };
+}
+
+// Valeurs que la saisie rapide (#557) déduit du groupe : projet, statut,
+// responsable, type, jalon ; projet le plus fréquent du groupe à défaut.
+function ptxGroupDefaults(ids, items) {
+  const d = {};
+  for (const id of ids) {
+    if (!id) continue;
+    const v = String(id).slice(2);
+    if (id.startsWith("p:")) d.projectId = v;
+    else if (id.startsWith("s:")) d.statusId = v;
+    else if (id.startsWith("a:")) d.assignee = v;
+    else if (id.startsWith("t:")) d.taskTypeId = v;
+    else if (id === "k:milestone") d.milestone = true;
+  }
+  if (!d.projectId) {
+    const n = new Map();
+    for (const it of items || []) if (it.task.projectId) n.set(it.task.projectId, (n.get(it.task.projectId) || 0) + 1);
+    const best = [...n.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (best) d.projectId = best[0];
+  }
+  return d;
+}
+
+/* Saisie rapide (#557) : bulle flottante sous l'en-tête de groupe. Entrée
+   crée et vide le champ (on enchaîne), Échap ou clic ailleurs ferme. */
+function PixelQuickAdd({ x, y, label, date, ctx, onSubmit, onClose }) {
+  const [text, setText] = useState("");
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [onClose]);
+  const q = pixelTaskParseQuickAdd(text, date, ctx.teamMembers);
+  const when = new Date(q.date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  return (
+    <div ref={ref} className="lp-ptx-quickadd" style={{ left: x, top: y }} role="dialog" aria-label={"Nouvelle tâche — " + label}>
+      <div className="lp-ptx-quickadd-head"><Plus size={13} /> Nouvelle tâche · <b>{label}</b></div>
+      <input
+        autoFocus className="lp-input" value={text} placeholder="Titre…  !jalon  @Nom  >ven  >+3  >12/10"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { e.preventDefault(); onClose(); }
+          if (e.key === "Enter") { e.preventDefault(); if (onSubmit(text)) setText(""); }
+        }}
+        aria-label="Titre de la nouvelle tâche"
+      />
+      <div className="lp-ptx-quickadd-hint">
+        {q.title ? <>fin <b>{when}</b>{q.milestone ? " · jalon" : ""}{q.assignee ? <> · <b>@{q.assignee}</b></> : null}</> : "Entrée ↵ créer · Échap fermer"}
+      </div>
+    </div>
+  );
+}
+
+/* Menu d'actions (#559) : clic droit sur une ligne ou une case, ou « ⋯ ».
+   Panneaux : principal, statut, avancement, estimation, date. */
+function PixelTaskMenu({ item, ctx, x, y, todayIso, onClose, onReschedule, onPatch, onProgress, onToggleDone, onOpen }) {
+  const t = item.task;
+  const [panel, setPanel] = useState("main");
+  const [pick, setPick] = useState(addDays(todayIso, 1));
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: x, top: y, visibility: "hidden" });
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setPos({ left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)), visibility: "visible" });
+  }, [x, y, panel]);
+  const run = (fn) => () => { onClose(); fn(); };
+  const fmt = (d) => new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  const tomorrow = addDays(todayIso, 1);
+  const monday = pixelTaskNextMonday(todayIso);
+  const plusWeek = addDays(t.end || t.start || todayIso, 7);
+  const est = pixelTaskEstimate(t);
+  const statusesAllowed = getStatusesForTask(ctx.statuses || [], ctx.projects || [], ctx.taskTypes || [], t.projectId, t.taskTypeId, t.statusId);
+  const restricted = restrictedStatusForType(ctx.taskTypes || [], ctx.statuses || [], t.taskTypeId);
+  const Item = ({ icon, label, hint, onClick, active, danger }) => (
+    <button type="button" className={"lp-quick-context-item" + (active ? " is-active" : "") + (danger ? " lp-quick-context-item-danger" : "")} onClick={onClick}>
+      <span className="lp-ptx-menu-icon" aria-hidden="true">{icon}</span><span className="lp-ptx-menu-label">{label}</span>{hint ? <span className="lp-ptx-menu-hint">{hint}</span> : null}
+    </button>
+  );
+  const back = <Item icon="←" label="Retour" onClick={() => setPanel("main")} />;
+  return createPortal(
+    <div ref={ref} className="lp-quick-context-menu lp-ptx-menu" style={{ left: pos.left, top: pos.top, visibility: pos.visibility }} role="menu" aria-label={"Actions — " + (t.title || "tâche")}>
+      <div className="lp-ptx-menu-title" title={t.title}>{t.title || "Sans titre"}</div>
+      {panel === "main" && (
+        <>
+          {!item.future && <Item icon={item.done ? "↺" : "✓"} label={item.done ? "Rouvrir" : t.milestone ? "Terminer le jalon" : "Terminer"} onClick={run(() => onToggleDone(t.id))} />}
+          <hr />
+          <Item icon="⏭" label="Reporter à demain" hint={fmt(tomorrow)} onClick={run(() => onReschedule(t, tomorrow))} />
+          <Item icon="📅" label="Reporter à lundi" hint={fmt(monday)} onClick={run(() => onReschedule(t, monday))} />
+          <Item icon="↔" label="Décaler d'une semaine" hint={fmt(plusWeek)} onClick={run(() => onReschedule(t, plusWeek))} />
+          <Item icon="🗓" label="Choisir une date…" hint="▸" onClick={() => setPanel("date")} />
+          <hr />
+          {!restricted && <Item icon="●" label="Statut" hint={((ctx.statuses || []).find((st) => st.id === t.statusId) || {}).name || "▸"} onClick={() => setPanel("status")} />}
+          {!t.milestone && !item.future && <Item icon="◔" label="Avancement" hint={Math.round(Number(t.progress) || 0) + " %"} onClick={() => setPanel("progress")} />}
+          <Item icon="⏱" label="Estimation" hint={est ? pixelTaskMinutesLabel(est) : "aucune"} onClick={() => setPanel("estimate")} />
+          <Item icon="⭐" label={isTaskFocus(t) ? "Retirer du Focus" : "Marquer Focus"} onClick={run(() => onPatch(t.id, { focus: !isTaskFocus(t) }))} />
+          <hr />
+          {onOpen && <Item icon="↗" label="Ouvrir la fiche" onClick={run(() => onOpen(t))} />}
+        </>
+      )}
+      {panel === "date" && (
+        <>
+          {back}
+          <div className="lp-ptx-menu-date">
+            <input type="date" className="lp-input" value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Nouvelle date de fin" autoFocus />
+            <button type="button" className="lp-btn lp-btn-primary" disabled={!pick} onClick={run(() => onReschedule(t, pick))}>Reporter</button>
+          </div>
+        </>
+      )}
+      {panel === "status" && (
+        <>
+          {back}
+          {statusesAllowed.map((st) => (
+            <Item key={st.id} icon={<i className="lp-ptx-menu-dot" style={{ background: st.color || "#94A3B8" }} />} label={st.name} active={st.id === t.statusId}
+              onClick={run(() => { if (st.id !== t.statusId) onPatch(t.id, /termin/i.test(st.name || "") ? { statusId: st.id, progress: 100 } : { statusId: st.id }); })} />
+          ))}
+        </>
+      )}
+      {panel === "progress" && (
+        <>
+          {back}
+          {[0, 25, 50, 75, 100].map((v) => <Item key={v} icon="◔" label={v + " %"} active={Math.round(Number(t.progress) || 0) === v} onClick={run(() => onProgress(item, v))} />)}
+        </>
+      )}
+      {panel === "estimate" && (
+        <>
+          {back}
+          {PIXEL_TASKS_ESTIMATES.map((m) => <Item key={m} icon="⏱" label={pixelTaskMinutesLabel(m)} active={est === m} onClick={run(() => onPatch(t.id, { estimateMinutes: m }))} />)}
+          {est > 0 && <Item icon="×" label="Sans estimation" onClick={run(() => onPatch(t.id, { estimateMinutes: null }))} />}
+        </>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+/* Clôturer la journée (#562) : revue, une à une, des tâches du jour non
+   terminées. La liste est figée à l'ouverture ; chaque tâche est relue en
+   direct (une action faite ailleurs est prise en compte). */
+function PixelClosure({ title, ids, findItem, ctx, date, todayIso, onClose, onDone, onReschedule }) {
+  const [handled, setHandled] = useState([]); // { id, text }
+  const [pickOpen, setPickOpen] = useState(false);
+  const nextDay = addDays(date > todayIso ? date : todayIso, 1);
+  const [pick, setPick] = useState(nextDay);
+  const seen = new Set(handled.map((h) => h.id));
+  const currentId = ids.find((id) => !seen.has(id));
+  const it = currentId ? findItem(currentId) : null;
+  const t = it ? it.task : null;
+  const fmt = (d) => new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  const mark = (text) => { setHandled((h) => [...h, { id: currentId, title: (t && t.title) || "Tâche", text }]); setPickOpen(false); setPick(nextDay); };
+  const project = t && (ctx.projects || []).find((p) => p.id === t.projectId);
+  return (
+    <Modal title={title} onClose={onClose} className="lp-ptx-closure" footer={<button type="button" className="lp-btn lp-btn-primary" onClick={onClose}>{currentId ? "Terminer plus tard" : "Fermer"}</button>}>
+      <div className="lp-ptx-closure-top"><span>{handled.length} / {ids.length} traitée{handled.length > 1 ? "s" : ""}</span></div>
+      <div className="lp-ptx-closure-bar" aria-hidden="true"><span style={{ width: (ids.length ? Math.round((handled.length / ids.length) * 100) : 100) + "%" }} /></div>
+      {currentId && !t && (
+        <div className="lp-ptx-closure-card"><div className="lp-hpx-muted">Cette tâche n'est plus dans la journée.</div><button type="button" className="lp-tool-btn" onClick={() => mark("ignorée")}>Suivante</button></div>
+      )}
+      {t && (
+        <div className="lp-ptx-closure-card" style={{ "--c": ptxStatusColor(t, ctx) }}>
+          <TaskPixel item={it} ctx={ctx} size={18} />
+          <div className="lp-ptx-closure-what">
+            <b>{t.title || "Sans titre"}</b>
+            <span className="lp-hpx-muted">{project ? project.name + " · " : ""}{it.lateDays > 0 ? `retard ${it.lateDays} j` : "fin " + fmt(t.end || t.start || date)}{!t.milestone ? ` · avancement ${Math.round(Number(t.progress) || 0)} %` : " · jalon"}{pixelTaskEstimate(t) ? " · ⏱ " + pixelTaskMinutesLabel(pixelTaskEstimate(t)) : ""}</span>
+          </div>
+          <div className="lp-ptx-closure-actions">
+            {it.done
+              ? <span className="lp-ptx-closure-ok">✓ déjà terminée</span>
+              : <button type="button" className="lp-tool-btn lp-ptx-closure-do" onClick={() => { onDone(t.id); mark("terminée"); }}>✓ Terminer</button>}
+            <button type="button" className="lp-tool-btn lp-ptx-closure-next" autoFocus onClick={() => { onReschedule(t, nextDay); mark("reportée au " + fmt(nextDay)); }}>→ {date >= todayIso ? "Demain" : "Demain (" + fmt(nextDay) + ")"}</button>
+            <button type="button" className="lp-tool-btn" onClick={() => setPickOpen((v) => !v)} aria-expanded={pickOpen}>🗓 Date…</button>
+            <button type="button" className="lp-tool-btn" onClick={() => mark(it.done ? "terminée" : "laissée")}>Laisser</button>
+          </div>
+          {pickOpen && (
+            <div className="lp-ptx-closure-pick">
+              <input type="date" className="lp-input" value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Nouvelle date de fin" />
+              <button type="button" className="lp-btn lp-btn-primary" disabled={!pick} onClick={() => { onReschedule(t, pick); mark("reportée au " + fmt(pick)); }}>Reporter</button>
+            </div>
+          )}
+        </div>
+      )}
+      {!currentId && <div className="lp-ptx-closure-end">{ids.length ? "Journée clôturée. Plus rien ne traîne." : "Rien à clôturer : toutes les tâches du jour sont terminées."}</div>}
+      {handled.length > 0 && (
+        <ul className="lp-ptx-closure-log">
+          {handled.slice().reverse().map((h) => <li key={h.id}><b>{h.title}</b> — {h.text}</li>)}
+        </ul>
+      )}
+    </Modal>
+  );
+}
 
 /* Vue de projet Pixel Tasks (#542) : le widget sur les tâches filtrées de la
    vue (projet / dossier sélectionné, filtres). Ses réglages vivent dans les
    préférences de vue au lieu du widget ; la barre d'outils va dans celle de
    l'application. */
+/* Création directe (#557) : même forme que la fiche (id, lastInteraction),
+   annulable quelques secondes. */
+function makePixelTaskCreator(setTasks, pushToast) {
+  if (!setTasks) return null;
+  return (data) => {
+    const task = { ...data, id: uid(), lastInteraction: new Date().toISOString() };
+    setTasks((prev) => [...prev, task]);
+    if (pushToast) pushToast({ message: `Tâche « ${task.title} » créée.`, actionLabel: "Annuler", duration: 7000, onAction: () => setTasks((prev) => prev.filter((t) => t.id !== task.id)) });
+    return task;
+  };
+}
+
 function PixelTasksView({ tasks, ctx, onOpen, prefs, setPrefs, onToggleDone, onUpdateTask, setTasks, pushToast, toolbarSlot }) {
   const undoable = makePixelTaskUndoable(ctx, pushToast, setTasks);
   return (
@@ -13866,12 +14111,13 @@ function PixelTasksView({ tasks, ctx, onOpen, prefs, setPrefs, onToggleDone, onU
       <WidgetPixelTasks widget={prefs || {}} tasks={tasks} ctx={ctx} onOpen={onOpen}
         onToggleDone={(id) => undoable(id, () => onToggleDone && onToggleDone(id), pixelTaskDoneLabel(ctx))}
         onUpdateTask={(id, patch) => undoable(id, () => onUpdateTask && onUpdateTask(id, patch), pixelTaskUpdateLabel(patch))}
+        onCreateTask={makePixelTaskCreator(setTasks, pushToast)}
         onUpdateWidget={setPrefs} externalToolbarSlot={toolbarSlot} />
     </div>
   );
 }
 
-function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTask, onUpdateWidget, onEditWidget, externalToolbarSlot }) {
+function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTask, onCreateTask, onUpdateWidget, onEditWidget, externalToolbarSlot }) {
   const todayIso = iso(new Date());
   const [date, setDate] = useState(todayIso);
   const [hover, setHover] = useState(null);
@@ -13890,6 +14136,16 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   // Futur : tâches entièrement à venir dans la fenêtre choisie (0 = désactivé).
   const futureWindow = PIXEL_TASKS_FUTURE_WINDOWS.includes(Number(widget && widget.pixelTasksFuture)) ? Number(widget.pixelTasksFuture) : 0;
   const [ring, setRing] = useState(null); // { taskId, x, y } — anneau de progression ouvert
+  const [menu, setMenu] = useState(null); // { taskId, x, y } — menu d'actions (#559)
+  const [adding, setAdding] = useState(null); // { key, label, defaults, x, y } — saisie rapide (#557)
+  const [closure, setClosure] = useState(null); // { title, ids } — revue de fin de journée (#562)
+  const [dropOver, setDropOver] = useState(null); // jour survolé pendant un glisser (#558)
+  // Filtres éclair (#563) : propres à l'écran, non mémorisés.
+  const [flt, setFlt] = useState({ query: "", late: false, milestone: false, focus: false, assignee: "" });
+  // Bandeau Focus (#560, actif par défaut) et jauge de charge (#561).
+  const bandPref = !(widget && widget.pixelTasksFocusBand === false);
+  const loadOn = !!(widget && widget.pixelTasksLoad);
+  const capacityH = Number(widget && widget.pixelTasksCapacity) > 0 ? Number(widget.pixelTasksCapacity) : 7;
   const rootRef = useRef(null);
   // Préfixe des identifiants SVG (dégradés) propre à ce widget : deux Pixel
   // Tasks sur une même page ne se prêtent pas leurs couleurs.
@@ -13932,10 +14188,79 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
   // cases et lignes cochées quittent la vue Jour, score et compteurs restent.
   const hideDone = !!(widget && widget.pixelTasksHideDone);
   const hiddenDone = hideDone ? day.items.filter((i) => i.done && (baseOn || i.ghost || i.future)).length : 0;
-  const groups = useMemo(
-    () => pixelTaskVisibleGroups(day.items, day.groups, { base: baseOn, hideDone }, groupBy, ctx, packageBy, subBy),
-    [baseOn, hideDone, day, groupBy, ctx, packageBy, subBy]
+  const fltOn = pixelTaskFilterActive(flt);
+  // Bandeau « Mes 3 du jour » (#560) : les trois premières tâches Focus du
+  // jour quittent leurs groupes ; au-delà, elles y restent.
+  const focusAll = useMemo(
+    () => (bandPref && baseOn && view === "day" ? day.items.filter((i) => !i.ghost && !i.future && isTaskFocus(i.task) && !(hideDone && i.done) && pixelTaskMatches(i, flt)) : []),
+    [bandPref, baseOn, view, day, hideDone, flt]
   );
+  const bandItems = focusAll.slice(0, 3);
+  const bandIds = useMemo(() => new Set(focusAll.slice(0, 3).map((i) => i.task.id)), [focusAll]);
+  const groups = useMemo(
+    () => pixelTaskVisibleGroups(day.items, day.groups, { base: baseOn, hideDone, keep: fltOn || bandIds.size ? (i) => !bandIds.has(i.task.id) && pixelTaskMatches(i, flt) : null }, groupBy, ctx, packageBy, subBy),
+    [baseOn, hideDone, day, groupBy, ctx, packageBy, subBy, flt, fltOn, bandIds]
+  );
+  // Compteurs des puces (#563) et revue (#562), sur la journée complète.
+  const baseItems = useMemo(() => day.items.filter((i) => !i.ghost && !i.future), [day]);
+  const chipCount = {
+    late: baseItems.filter((i) => i.lateDays > 0 && !i.done).length,
+    milestone: baseItems.filter((i) => i.task.milestone).length,
+    focus: baseItems.filter((i) => isTaskFocus(i.task)).length,
+  };
+  const assignees = useMemo(() => [...new Set(day.items.map((i) => String(i.task.assignee || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr")), [day]);
+  const shownCount = groups.reduce((n, g) => n + g.items.length, 0) + bandItems.length;
+  const closureIds = useMemo(() => pixelTaskClosureList(day.items).map((i) => i.task.id), [day]);
+  // Jauge de charge (#561) : réunions horodatées lues sur toutes les tâches.
+  const load = useMemo(() => {
+    if (!loadOn || view !== "day") return null;
+    const groupOfItem = new Map();
+    for (const g of day.groups) for (const it of g.items) groupOfItem.set(it, g);
+    return pixelTaskLoad(day.items, ctx.tasks || tasks, date, capacityH * 60, (it) => { const g = groupOfItem.get(it); return g ? { id: g.id, name: g.name, color: g.color } : { id: "none", name: "Autres", color: "#94A3B8" }; });
+  }, [loadOn, view, day, ctx.tasks, tasks, date, capacityH]);
+  const findDayItem = (id) => day.items.find((i) => i.task.id === id) || null;
+  const taskById = (id) => (tasks || []).find((t) => t.id === id) || (ctx.tasks || []).find((t) => t.id === id) || null;
+  const reschedule = (task, target) => { const patch = pixelTaskReschedule(task, target); if (patch && onUpdateTask) onUpdateTask(task.id, patch); };
+  const onDropTask = onUpdateTask ? (id, target) => { const t = taskById(id); if (t) reschedule(t, target); } : null;
+  const dropOn = (d) => ptxDropTarget(onDropTask, d, setDropOver);
+  const dragSrc = (it) => (onDropTask ? { ...ptxDragSource(it.task.id), onDragEnd: () => setDropOver(null) } : {});
+  const openMenu = (it, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setRing(null);
+    setMenu({ taskId: it.task.id, x: e.type === "contextmenu" ? e.clientX : r.left, y: e.type === "contextmenu" ? e.clientY : r.bottom + 4 });
+  };
+  const menuProps = (it) => ({ ...dragSrc(it), onContextMenu: (e) => openMenu(it, e) });
+  // Bulle de saisie rapide sous le bouton « + » du groupe (#557).
+  const openAdd = (key, label, ids, items, e) => {
+    e.stopPropagation();
+    const root = rootRef.current;
+    const r = e.currentTarget.getBoundingClientRect();
+    const base = root ? root.getBoundingClientRect() : { left: 0, top: 0 };
+    const rootW = root ? root.clientWidth : 0;
+    setRing(null);
+    setAdding({ key, label, defaults: ptxGroupDefaults(ids, items), x: Math.max(4, Math.min(r.right - base.left + (root ? root.scrollLeft : 0) - 360, rootW - 384)), y: r.bottom - base.top + (root ? root.scrollTop : 0) + 6 });
+  };
+  const addBtn = (key, label, ids, items) => (onCreateTask && view === "day" ? (
+    <button type="button" className={"lp-ptx-add" + (adding && adding.key === key ? " is-on" : "")} onClick={(e) => openAdd(key, label, ids, items, e)} title={"Ajouter une tâche — " + label} aria-label={"Ajouter une tâche dans " + label}><Plus size={12} strokeWidth={2.6} /> Tâche</button>
+  ) : null);
+  const createQuick = (text) => {
+    if (!adding || !onCreateTask) return false;
+    const q = pixelTaskParseQuickAdd(text, date, ctx.teamMembers);
+    if (!q.title) return false;
+    const d = adding.defaults;
+    const projects = ctx.projects || [];
+    const projectId = d.projectId || (projects[0] && projects[0].id) || "";
+    const types = getTaskTypesForProject(ctx.taskTypes || [], projects, projectId, d.taskTypeId || null);
+    const taskTypeId = d.taskTypeId && types.some((x) => x.id === d.taskTypeId) ? d.taskTypeId : ((types[0] && types[0].id) || "");
+    const allowed = getStatusesForTask(ctx.statuses || [], projects, ctx.taskTypes || [], projectId, taskTypeId);
+    const fallback = getDefaultStatusForTask(ctx.statuses || [], projects, ctx.taskTypes || [], projectId, taskTypeId);
+    const statusId = d.statusId && allowed.some((x) => x.id === d.statusId) ? d.statusId : ((fallback && fallback.id) || "");
+    const assignee = q.assignee || d.assignee || "";
+    onCreateTask({ title: q.title, projectId, taskTypeId, statusId, start: q.date, end: q.date, milestone: q.milestone || !!d.milestone, progress: 0, desc: "", ...(assignee ? { assignee } : {}) });
+    return true;
+  };
   // Largeur de la carte centrale, pour dimensionner les rangées de pixels.
   const mainRef = useRef(null);
   const [mainW, setMainW] = useState(0);
@@ -13986,6 +14311,28 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
       {view === "day" && (
         <button type="button" className={"lp-tool-btn lp-ptx-done-toggle" + (hideDone ? " is-on" : "")} aria-pressed={hideDone} onClick={() => onUpdateWidget && onUpdateWidget({ pixelTasksHideDone: !hideDone })} title={hideDone ? "Afficher les tâches terminées" : "Cacher les tâches terminées (le score les compte toujours)"}>
           {hideDone ? <Eye size={13} /> : <EyeOff size={13} />} {hideDone ? "Afficher terminées" + (hiddenDone ? " (" + hiddenDone + ")" : "") : "Cacher terminées"}
+        </button>
+      )}
+      {view === "day" && (
+        <label className={"lp-ptx-ghost-toggle" + (bandPref ? " is-on" : "")} title="Bandeau « Mes 3 du jour » : les tâches Focus du jour en tête du widget">
+          <input type="checkbox" checked={bandPref} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksFocusBand: e.target.checked })} />
+          Mes 3
+        </label>
+      )}
+      {view === "day" && (
+        <label className={"lp-ptx-ghost-toggle" + (loadOn ? " is-on" : "")} title="Jauge de charge : estimations des tâches du jour face au temps disponible (réunions déduites)">
+          <input type="checkbox" checked={loadOn} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksLoad: e.target.checked })} />
+          Charge
+        </label>
+      )}
+      {view === "day" && loadOn && (
+        <select className="lp-ptx-groupby is-on" value={capacityH} onChange={(e) => onUpdateWidget && onUpdateWidget({ pixelTasksCapacity: Number(e.target.value) })} aria-label="Capacité de travail par jour" title="Capacité de travail par jour, avant déduction des réunions">
+          {[3, 4, 5, 6, 7, 8, 9, 10].map((h) => <option key={h} value={h}>Capacité {h} h</option>)}
+        </select>
+      )}
+      {view === "day" && (onUpdateTask || onToggleDone) && (
+        <button type="button" className="lp-tool-btn lp-ptx-closure-btn" onClick={() => setClosure({ title: "Clôturer " + hpxLongDate(date), ids: closureIds })} title="Passer en revue les tâches non terminées du jour : terminer, reporter ou laisser">
+          <CheckCircle2 size={13} /> Clôturer{closureIds.length ? " (" + closureIds.length + ")" : ""}
         </button>
       )}
       {view === "day" && (
@@ -14172,10 +14519,12 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
             const badge = ptxBadge(it);
             const color = ptxStatusColor(t, ctx);
             return (
-              <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "") + (isTaskFocus(t) ? " lp-ptx-flag-row" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)}>
+              <div key={t.id} className={"lp-hpx-row" + (active ? " is-focus" : "") + (it.ghost ? " lp-ptx-ghost-row" : "") + (it.future ? " lp-ptx-future-row" : "") + (isTaskFocus(t) ? " lp-ptx-flag-row" : "") + (menu && menu.taskId === t.id ? " is-menu" : "")} style={{ height: HPX_ROW_H }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)} {...menuProps(it)}>
                 <TaskPixel item={it} ctx={ctx} size={16} focused={active} onClick={(e) => pixelClick(it, e)} onHover={setHover} futureWindow={futureWindow} clickHint={it.future ? "Clic : ouvrir la fiche" : t.milestone ? "Clic : terminer / rouvrir le jalon" : "Clic : faire avancer"} />
                 <button type="button" className={"lp-hpx-row-name lp-ptx-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
+                {loadOn && pixelTaskEstimate(t) > 0 && <span className="lp-ptx-est" title="Estimation">⏱ {pixelTaskMinutesLabel(pixelTaskEstimate(t))}</span>}
                 {badge && <span className={"lp-ptx-badge" + badge.cls}>{badge.text}</span>}
+                <button type="button" className="lp-ptx-more" onClick={(e) => openMenu(it, e)} aria-label={"Actions — " + (t.title || "tâche")} title="Actions (ou clic droit)" aria-haspopup="menu">⋯</button>
                 <button
                   type="button"
                   role="checkbox"
@@ -14210,7 +14559,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
             {geom.packs.map((pk) => (
               <span key={pk.id} className={"lp-ptx-pack" + (geom.tinted ? " is-tinted" : "") + (pk.id === "ghost" ? " is-ghost" : "") + (pk.id === "future" ? " is-horizon" : "")} style={{ gap: geom.gap, padding: geom.tinted ? `${geom.pp - 1 + PACK_LABEL}px ${geom.pp - 1}px ${geom.pp - 1}px` : 0, "--pc": pk.color }} title={pk.name ? pk.name + " — " + pk.count + " tâche" + (pk.count > 1 ? "s" : "") : undefined}>
                 {b.items.slice(pk.start, pk.start + pk.count).map((it) => (
-                  <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} futureWindow={futureWindow} focused={hover === it.task.id || (ring && ring.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.future ? "Clic : ouvrir la fiche" : it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
+                  <TaskPixel key={it.task.id} item={it} ctx={ctx} size={geom.size} futureWindow={futureWindow} extra={menuProps(it)} focused={hover === it.task.id || (ring && ring.taskId === it.task.id) || (menu && menu.taskId === it.task.id)} onClick={(e) => pixelClick(it, e)} onHover={setHover} clickHint={it.future ? "Clic : ouvrir la fiche" : it.task.milestone ? (it.done ? "Clic : rouvrir le jalon" : "Clic : terminer le jalon (100 %)") : "Clic : faire avancer"} />
                 ))}
               </span>
             ))}
@@ -14269,6 +14618,7 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
         )}
         <div className={"lp-hpx-theme" + (folded ? " is-folded" : "")} style={{ height: HPX_HEAD_H }}>
           <div className="lp-hpx-list" style={{ width: listW }}>
+            <div className="lp-ptx-head-wrap" style={{ height: HPX_HEAD_H }}>
             <button type="button" className="lp-hpx-theme-head lp-ptx-group-head" style={{ height: HPX_HEAD_H }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={(folded ? "Déplier le groupe " : "Replier le groupe ") + g.name}>
               <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
               <span className="lp-hpx-dot is-big" style={{ background: g.color }} /><span className="lp-ptx-group-name">{g.name}</span>
@@ -14277,9 +14627,12 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
               {groupCounts(g)}
               {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{subs.length} sous-groupe{subs.length > 1 ? "s" : ""} · {g.total} tâche{g.total > 1 ? "s" : ""}</span>}
             </button>
+            {addBtn(g.id, g.name, [g.id], g.items)}
+            </div>
           </div>
         </div>
         {!folded && subs.map((sg, si) => renderBlock(sg, `${gi}-${si}`, collapsed.has(sg.key), (headH, sgFolded) => (
+          <div className="lp-ptx-head-wrap" style={{ height: headH }}>
           <button type="button" className="lp-hpx-theme-head lp-ptx-group-head lp-ptx-sub-head" style={{ height: headH }} onClick={() => toggleGroup(sg.key)} aria-expanded={!sgFolded} title={(sgFolded ? "Déplier le sous-groupe " : "Replier le sous-groupe ") + sg.name}>
             <TaskPixelBud sg={sg} />
             <span className="lp-ptx-group-name">{sg.name}</span>{baseOn && <span className="lp-hpx-muted">{sg.done} / {sg.total}</span>}
@@ -14287,14 +14640,15 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
             <ChevronRight size={12} className="lp-hpx-theme-chevron lp-ptx-sub-chevron" aria-hidden="true" />
             {sgFolded && <span className="lp-hpx-muted lp-hpx-theme-hint">{sg.total} tâche{sg.total > 1 ? "s" : ""}</span>}
           </button>
+          {addBtn(sg.key, g.name + " › " + sg.name, [g.id, sg.id], sg.items)}
+          </div>
         ), sg.key, " lp-ptx-sub"))}
       </div>
     );
   };
   const ringItem = ring ? day.items.find((i) => i.task.id === ring.taskId) : null;
-  const validateRing = (value) => {
-    const it = ringItem;
-    setRing(null);
+  const validateRing = (value) => { setRing(null); applyProgress(ringItem, value); };
+  const applyProgress = (it, value) => {
     if (!it) return;
     const t = it.task;
     const allowed = getStatusesForProject(ctx.statuses || [], ctx.projects || [], t.projectId, t.statusId);
@@ -14318,8 +14672,18 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
     <div ref={rootRef} className="lp-hpx lp-ptx" onKeyDown={onKeyDown}>
       {toolbar}
       {ringItem && <TaskProgressRing key={ringItem.task.id} item={ringItem} ctx={ctx} x={ring.x} y={ring.y} onClose={() => setRing(null)} onValidate={validateRing} onOpen={onOpen} />}
+      {menu && findDayItem(menu.taskId) && (
+        <PixelTaskMenu key={menu.taskId + ":" + menu.x + ":" + menu.y} item={findDayItem(menu.taskId)} ctx={ctx} x={menu.x} y={menu.y} todayIso={todayIso} onClose={() => setMenu(null)}
+          onReschedule={reschedule} onPatch={(id, patch) => onUpdateTask && onUpdateTask(id, patch)} onProgress={applyProgress}
+          onToggleDone={(id) => onToggleDone && onToggleDone(id)} onOpen={onOpen} />
+      )}
+      {adding && <PixelQuickAdd key={adding.key} x={adding.x} y={adding.y} label={adding.label} date={date} ctx={ctx} onSubmit={createQuick} onClose={() => setAdding(null)} />}
+      {closure && (
+        <PixelClosure title={closure.title} ids={closure.ids} findItem={findDayItem} ctx={ctx} date={date} todayIso={todayIso} onClose={() => setClosure(null)}
+          onDone={(id) => onToggleDone && onToggleDone(id)} onReschedule={reschedule} />
+      )}
       <div className={"lp-hpx-days lp-ptx-days" + (sidesFolded.prev ? " is-prev-folded" : "") + (sidesFolded.next ? " is-next-folded" : "")}>
-        <TaskPixelSide date={prev} day={stateOf(prev)} groups={stateOf(prev).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="prev" folded={!!sidesFolded.prev} onToggleFold={() => toggleSide("prev")} />
+        <TaskPixelSide date={prev} day={stateOf(prev)} groups={stateOf(prev).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="prev" folded={!!sidesFolded.prev} onToggleFold={() => toggleSide("prev")} drop={dropOn(prev)} dropOver={dropOver === prev} />
         <section ref={mainRef} className="lp-hpx-main" aria-label={hpxDayLabel(date, todayIso) + " — " + hpxLongDate(date)}>
           <div className="lp-hpx-main-head">
             <div className="lp-hpx-main-title"><b>{hpxDayLabel(date, todayIso)}</b><span>{hpxSubDate(date, todayIso)}</span></div>
@@ -14341,23 +14705,102 @@ function WidgetPixelTasks({ widget, tasks, ctx, onOpen, onToggleDone, onUpdateTa
               {futureWindow > 0 && <span className="lp-ptx-legend-shape"><i className="is-horizon" />Futur : à venir sous {futureWindow} j (J+N)</span>}
             </div>
           )}
-          {!groups.length && <div className="lp-empty lp-ptx-empty">{baseOn ? (hiddenDone ? "Toutes les tâches de ce jour sont terminées (" + hiddenDone + " masquée" + (hiddenDone > 1 ? "s" : "") + ")." : "Aucune tâche à cette date pour ce filtre.") : "Tâches du jour masquées (case « Base ») — cocher Fantômes ou Futur pour afficher les autres couches."}</div>}
+          {day.items.length > 0 && (
+            <div className="lp-ptx-filters" role="search" aria-label="Filtres éclair">
+              <label className="lp-ptx-search">
+                <Search size={13} aria-hidden="true" />
+                <input value={flt.query} onChange={(e) => setFlt((f) => ({ ...f, query: e.target.value }))} placeholder="Rechercher…" aria-label="Rechercher une tâche du jour" onKeyDown={(e) => { if (e.key === "Escape") setFlt((f) => ({ ...f, query: "" })); }} />
+                {flt.query && <button type="button" onClick={() => setFlt((f) => ({ ...f, query: "" }))} aria-label="Effacer la recherche"><X size={12} /></button>}
+              </label>
+              <button type="button" className={"lp-ptx-chip is-late" + (flt.late ? " is-on" : "")} aria-pressed={flt.late} onClick={() => setFlt((f) => ({ ...f, late: !f.late }))}>● Retards <b>{chipCount.late}</b></button>
+              <button type="button" className={"lp-ptx-chip" + (flt.milestone ? " is-on" : "")} aria-pressed={flt.milestone} onClick={() => setFlt((f) => ({ ...f, milestone: !f.milestone }))}>◆ Jalons <b>{chipCount.milestone}</b></button>
+              <button type="button" className={"lp-ptx-chip is-focus" + (flt.focus ? " is-on" : "")} aria-pressed={flt.focus} onClick={() => setFlt((f) => ({ ...f, focus: !f.focus }))}>⭐ Focus <b>{chipCount.focus}</b></button>
+              {assignees.length > 0 && (
+                <select className={"lp-ptx-chip" + (flt.assignee ? " is-on" : "")} value={flt.assignee} onChange={(e) => setFlt((f) => ({ ...f, assignee: e.target.value }))} aria-label="Responsable">
+                  <option value="">Tous responsables</option>
+                  {assignees.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              )}
+              {fltOn && (
+                <>
+                  <span className="lp-hpx-muted lp-ptx-filter-count">{shownCount} tâche{shownCount > 1 ? "s" : ""} affichée{shownCount > 1 ? "s" : ""} sur {day.items.length}</span>
+                  <button type="button" className="lp-tool-btn" onClick={() => setFlt({ query: "", late: false, milestone: false, focus: false, assignee: "" })}>Effacer</button>
+                </>
+              )}
+            </div>
+          )}
+          {load && (
+            <div className={"lp-ptx-load" + (load.over ? " is-over" : "")} aria-label="Charge du jour">
+              <div className="lp-ptx-load-top">
+                <b>Charge : {pixelTaskMinutesLabel(load.planned)} / {pixelTaskMinutesLabel(load.free)} disponible{load.free >= 120 ? "s" : ""}</b>
+                <span className={load.over ? "lp-ptx-late" : "lp-ptx-ok"}>{load.over ? "+" + pixelTaskMinutesLabel(load.over) + " de trop" : pixelTaskMinutesLabel(load.free - load.planned) + " de marge"}</span>
+              </div>
+              {(() => {
+                const scale = Math.max(load.free, load.planned, 1);
+                return (
+                  <div className="lp-ptx-load-bar" role="img" aria-label={`${pixelTaskMinutesLabel(load.planned)} prévues pour ${pixelTaskMinutesLabel(load.free)} disponibles`}>
+                    {load.parts.map((p) => <span key={p.id} style={{ width: (p.minutes / scale) * 100 + "%", background: p.color }} title={`${p.name} — ${pixelTaskMinutesLabel(p.minutes)}`} />)}
+                    {load.over > 0 && <i className="lp-ptx-load-over" style={{ left: (load.free / scale) * 100 + "%", width: (load.over / scale) * 100 + "%" }} />}
+                    {load.over > 0 && <i className="lp-ptx-load-cap" style={{ left: (load.free / scale) * 100 + "%" }} title="Temps disponible" />}
+                  </div>
+                );
+              })()}
+              <div className="lp-ptx-load-legend">
+                {load.parts.map((p) => <span key={p.id}><i style={{ background: p.color }} />{p.name} {pixelTaskMinutesLabel(p.minutes)}</span>)}
+                <span className="lp-hpx-muted">Réunions : {pixelTaskMinutesLabel(load.busy)} · capacité {capacityH} h</span>
+                {load.unestimated > 0 && <span className="lp-hpx-muted">{load.unestimated} tâche{load.unestimated > 1 ? "s" : ""} sans estimation (clic droit → Estimation)</span>}
+                {load.over > 0 && onUpdateTask && (
+                  <button type="button" className="lp-tool-btn" onClick={() => setClosure({ title: "Reporter le surplus (" + pixelTaskMinutesLabel(load.over) + ")", ids: pixelTaskOverflowCandidates(day.items, load.over, date).map((i) => i.task.id) })}>Proposer un report</button>
+                )}
+              </div>
+            </div>
+          )}
+          {bandItems.length > 0 && (
+            <div className="lp-ptx-band" aria-label="Mes tâches Focus du jour">
+              {bandItems.map((it, n) => {
+                const t = it.task;
+                const project = (ctx.projects || []).find((x) => x.id === t.projectId);
+                const pr = Math.max(0, Math.min(100, Number(t.progress) || 0));
+                return (
+                  <div key={t.id} className={"lp-ptx-band-card" + (it.done ? " is-done" : "") + (it.lateDays > 0 && !it.done ? " is-late" : "")} style={{ "--c": ptxStatusColor(t, ctx) }} onMouseEnter={() => setHover(t.id)} onMouseLeave={() => setHover(null)} {...menuProps(it)}>
+                    <div className="lp-ptx-band-meta"><span aria-hidden="true">⭐ {n + 1}</span>{project ? " · " + project.name : ""}</div>
+                    <button type="button" className={"lp-ptx-band-title" + (it.done ? " lp-ptx-done" : "")} onClick={() => onOpen && onOpen(t)} title={ptxLabel(it, ctx)}>{t.title || "Sans titre"}</button>
+                    <div className="lp-ptx-band-foot">
+                      {it.done ? <span className="lp-ptx-ok">✓ terminée</span>
+                        : it.lateDays > 0 ? <span className="lp-ptx-badge is-late">retard {it.lateDays} j</span>
+                        : t.milestone ? <span className="lp-ptx-badge is-milestone">jalon</span>
+                        : <span className="lp-ptx-band-progress" aria-label={"Avancement " + pr + " %"}><b style={{ width: pr + "%" }} /></span>}
+                      <span style={{ flex: 1 }} />
+                      <button type="button" className="lp-ptx-more" onClick={(e) => openMenu(it, e)} aria-label={"Actions — " + (t.title || "tâche")} title="Actions">⋯</button>
+                      <button type="button" role="checkbox" aria-checked={it.done} aria-label={(it.done ? "Rouvrir " : "Terminer ") + (t.title || "la tâche")} className={"lp-hpx-check" + (it.done ? " is-on" : "")} style={{ "--c": ptxStatusColor(t, ctx) }} disabled={!onToggleDone} onClick={() => onToggleDone && onToggleDone(t.id)}>{it.done && <Check size={11} strokeWidth={3.2} />}</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {focusAll.length > 3 && <div className="lp-hpx-muted lp-ptx-band-more">+{focusAll.length - 3} autre{focusAll.length - 3 > 1 ? "s" : ""} Focus dans les groupes</div>}
+            </div>
+          )}
+          {!groups.length && fltOn && <div className="lp-empty lp-ptx-empty">{bandItems.length ? "Aucune autre tâche ne correspond aux filtres." : "Aucune tâche ne correspond aux filtres."}</div>}
+          {!groups.length && !fltOn && !bandItems.length && <div className="lp-empty lp-ptx-empty">{baseOn ? (hiddenDone ? "Toutes les tâches de ce jour sont terminées (" + hiddenDone + " masquée" + (hiddenDone > 1 ? "s" : "") + ")." : "Aucune tâche à cette date pour ce filtre.") : "Tâches du jour masquées (case « Base ») — cocher Fantômes ou Futur pour afficher les autres couches."}</div>}
           {groups.map((g, gi) => (g.subgroups ? renderTree(g, gi) : renderBlock(g, String(gi), collapsed.has(g.id), (headH, folded) => (
+            <div className="lp-ptx-head-wrap" style={{ height: headH }}>
             <button type="button" className="lp-hpx-theme-head lp-ptx-group-head" style={{ height: headH }} onClick={() => toggleGroup(g.id)} aria-expanded={!folded} title={(folded ? "Déplier le groupe " : "Replier le groupe ") + g.name}>
               <ChevronRight size={14} className="lp-hpx-theme-chevron" aria-hidden="true" />
               <span className="lp-hpx-dot is-big" style={{ background: g.color }} /><span className="lp-ptx-group-name">{g.name}</span>{baseOn && <span className="lp-hpx-muted">{g.done} / {g.total}</span>}
               {groupCounts(g)}
               {folded && <span className="lp-hpx-muted lp-hpx-theme-hint">{g.total} tâche{g.total > 1 ? "s" : ""}</span>}
             </button>
+            {addBtn(g.id, g.name, [g.id], g.items)}
+            </div>
           ), g.id)))}
         </section>
-        <TaskPixelSide date={next} day={stateOf(next)} groups={stateOf(next).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="next" folded={!!sidesFolded.next} onToggleFold={() => toggleSide("next")} />
+        <TaskPixelSide date={next} day={stateOf(next)} groups={stateOf(next).groups} ctx={ctx} todayIso={todayIso} onSelect={setDate} onOpen={onOpen} collapsed={collapsed} side="next" folded={!!sidesFolded.next} onToggleFold={() => toggleSide("next")} drop={dropOn(next)} dropOver={dropOver === next} />
       </div>
       <div className="lp-hpx-week" role="group" aria-label="Semaine">
         {week.map((d) => {
           const k = stateOf(d);
           return (
-            <button key={d} type="button" className={"lp-hpx-week-day" + (d === date ? " is-active" : "") + (d === todayIso ? " is-today" : "")} onClick={() => setDate(d)} aria-pressed={d === date} aria-label={`${hpxLongDate(d)} : ${k.done} sur ${k.total}`}>
+            <button key={d} type="button" className={"lp-hpx-week-day" + (d === date ? " is-active" : "") + (d === todayIso ? " is-today" : "") + (dropOver === d ? " is-drop" : "")} onClick={() => setDate(d)} aria-pressed={d === date} aria-label={`${hpxLongDate(d)} : ${k.done} sur ${k.total}`} {...(d !== date ? dropOn(d) : {})}>
               {miniOf(d, 6, 2)}
               <span><b>{new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric" })}</b><span className="lp-hpx-muted">{k.done} / {k.total}</span></span>
             </button>
