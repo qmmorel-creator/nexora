@@ -36911,6 +36911,242 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
 }
 
 // ---------------------------------------------------------------------------
+// Réglages → Catégories Budget (#574) : catégories et sous-catégories KDM360
+// modifiables depuis Nexora. Toutes les écritures passent par
+// /api/nexora/finance-references (session du propriétaire), qui appelle les
+// fonctions d'administration de la base : rien n'est écrit ici directement.
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-REFERENCES:START ===
+// Noms lus par les calculs (Sankey, agrégats d'OS360) : pas de renommage.
+const FINANCE_REF_PROTECTED = ["epargne", "transferts internes", "ajustement"];
+function financeRefIsProtected(name) {
+  const n = String(name || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  return FINANCE_REF_PROTECTED.includes(n);
+}
+// Arbre catégories -> sous-catégories, trié en français, avec filtre texte et
+// option d'afficher les références inactives.
+function financeRefTree(data, query = "", showInactive = true) {
+  const q = String(query || "").trim().toLocaleLowerCase("fr");
+  const subs = new Map();
+  for (const s of data?.subcategories || []) {
+    if (!subs.has(s.category)) subs.set(s.category, []);
+    subs.get(s.category).push(s);
+  }
+  return (data?.categories || [])
+    .filter((c) => showInactive || c.active !== false)
+    .map((c) => ({ ...c, subcategories: (subs.get(c.category) || []).filter((s) => showInactive || s.active !== false).sort((a, b) => a.subcategory.localeCompare(b.subcategory, "fr")) }))
+    .filter((c) => !q || c.category.toLocaleLowerCase("fr").includes(q) || c.subcategories.some((s) => s.subcategory.toLocaleLowerCase("fr").includes(q)))
+    .sort((a, b) => a.category.localeCompare(b.category, "fr"));
+}
+// Phrase de confirmation d'un renommage : dit exactement ce qui va changer.
+function financeRefRenameMessage(kind, oldName, newName, usage) {
+  const what = kind === "category" ? "la catégorie" : "la sous-catégorie";
+  const tx = usage ? `${usage} transaction${usage > 1 ? "s" : ""} ${usage > 1 ? "seront renommées" : "sera renommée"}` : "aucune transaction ne l'utilise";
+  return `Renommer ${what} « ${oldName} » en « ${newName} » ?\n\n${tx}, ainsi que les règles qui la citent. L'opération est tracée et se fait en une seule fois (tout ou rien).`;
+}
+// === NEXORA:FINANCE-REFERENCES:END ===
+
+async function financeRefCall(method, body) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Session Nexora absente : reconnecte-toi.");
+  const token = await user.getIdToken();
+  const response = await fetch("/api/nexora/finance-references", {
+    method,
+    headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) {
+    const reasons = {
+      unauthorized: "Accès refusé : seule la session du propriétaire Nexora modifie les données Budget.",
+      finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
+    };
+    throw new Error(payload.message || reasons[payload.error] || payload.detail || payload.error || `Erreur HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+const FINANCE_REF_CSS = `
+.nx-ref{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.nx-ref-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.nx-ref-bar input[type=search]{flex:1;min-width:180px}
+.nx-ref-new{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px;border:1px dashed var(--border,#d8e1eb);border-radius:8px}
+.nx-ref-orphans{padding:8px 10px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px;font-size:12px}
+.nx-ref-cat{border:1px solid var(--border,#d8e1eb);border-radius:8px;overflow:hidden}
+.nx-ref-row{display:flex;align-items:center;gap:8px;padding:6px 10px;flex-wrap:wrap}
+.nx-ref-cat>.nx-ref-row{background:var(--surface-2,#f7f9fc)}
+.nx-ref-row.is-inactive{opacity:.55}
+.nx-ref-name{flex:1;min-width:140px;font-weight:600}
+.nx-ref-sub .nx-ref-name{font-weight:400;padding-left:18px}
+.nx-ref-edit{flex:1 1 100%;order:-1;display:flex;gap:4px;align-items:center}
+.nx-ref-edit input{flex:1;min-width:120px}
+.nx-ref-row input[type=color]{width:28px;height:24px;padding:0;border:1px solid var(--border,#d8e1eb);border-radius:4px;background:none;cursor:pointer}
+.nx-ref-row input[type=text],.nx-ref-row input[type=number]{height:26px}
+.nx-ref-usage{color:var(--text-600,#60717c);font-size:12px;white-space:nowrap;min-width:110px}
+.nx-ref-actions{display:flex;gap:4px;align-items:center}
+.nx-ref-actions button,.nx-ref-new button,.nx-ref-bar button{height:26px;padding:0 8px;font-size:12px;border:1px solid var(--border,#d8e1eb);border-radius:5px;background:#fff;cursor:pointer}
+.nx-ref-actions button:disabled{opacity:.4;cursor:not-allowed}
+.nx-ref-actions button.danger{color:#a33135}
+.nx-ref-budget{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-600,#60717c)}
+.nx-ref-budget input{width:90px}
+.nx-ref-addsub{display:flex;gap:6px;padding:6px 10px 8px 28px}
+`;
+
+function FinanceRefRow({ kind, item, busy, onRename, onColor, onToggle, onDelete, extra }) {
+  const name = kind === "category" ? item.category : item.subcategory;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const protectedName = kind === "category" && financeRefIsProtected(name);
+  const submit = () => {
+    const next = draft.trim();
+    if (!next || next === name) { setEditing(false); setDraft(name); return; }
+    onRename(next).then((ok) => { if (ok) setEditing(false); });
+  };
+  return (
+    <div className={"nx-ref-row" + (item.active === false ? " is-inactive" : "")}>
+      <input type="color" value={/^#[0-9a-f]{6}$/i.test(item.color || "") ? item.color : "#8899a6"} disabled={busy} title="Couleur" aria-label={`Couleur de ${name}`}
+        onChange={(e) => onColor(e.target.value)} />
+      {editing ? (
+        <span className="nx-ref-name nx-ref-edit">
+          <input type="text" value={draft} autoFocus maxLength={80} onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") { setEditing(false); setDraft(name); } }} aria-label={`Nouveau nom de ${name}`} />
+          <button type="button" disabled={busy} onClick={submit}>Enregistrer</button>
+          <button type="button" onClick={() => { setEditing(false); setDraft(name); }}>Annuler</button>
+        </span>
+      ) : (
+        <span className="nx-ref-name">{name}{item.active === false ? " · inactive" : ""}</span>
+      )}
+      {extra}
+      <span className="nx-ref-usage">{item.usage ? `${item.usage} transaction${item.usage > 1 ? "s" : ""}` : "inutilisée"}</span>
+      <span className="nx-ref-actions">
+        {!editing && <button type="button" disabled={busy || protectedName} title={protectedName ? "Nom protégé : lu par les calculs d'OS360 et de Nexora" : "Renommer (répercuté sur les transactions)"} onClick={() => { setDraft(name); setEditing(true); }}>Renommer</button>}
+        <button type="button" disabled={busy} onClick={onToggle}>{item.active === false ? "Activer" : "Désactiver"}</button>
+        <button type="button" className="danger" disabled={busy || item.usage > 0} title={item.usage > 0 ? "Impossible : des transactions l'utilisent. Renommez-la ou désactivez-la." : "Supprimer"} onClick={onDelete}>Supprimer</button>
+      </span>
+    </div>
+  );
+}
+
+function BudgetCategoriesSettings({ pushToast }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [showInactive, setShowInactive] = useState(true);
+  const [newCat, setNewCat] = useState({ name: "", color: "#587894", budget: "" });
+  const [newSub, setNewSub] = useState({});
+  const load = useCallback(() => {
+    setError(null);
+    financeRefCall("GET").then((p) => setData(p.data)).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const toast = (message) => { if (pushToast) pushToast({ message }); };
+  const run = async (body, success) => {
+    setBusy(true);
+    try {
+      const p = await financeRefCall("POST", body);
+      setData(p.data);
+      // Les widgets Budget relisent leurs données au prochain affichage.
+      if (typeof financeSankeyStore !== "undefined") financeSankeyStore.promise = null;
+      if (typeof financeTxStore !== "undefined") financeTxStore.promise = null;
+      toast(typeof success === "function" ? success(p.result) : success);
+      return true;
+    } catch (e) {
+      toast(e.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const key = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+  const renameCategory = (c, next) => {
+    if (!window.confirm(financeRefRenameMessage("category", c.category, next, c.usage))) return Promise.resolve(false);
+    return run({ action: "edit", entity: "category", category: c.category, name: next, idempotencyKey: key() }, (r) => `« ${c.category} » renommée en « ${next} » · ${r?.renamedTransactions ?? 0} transaction(s) mises à jour.`);
+  };
+  const renameSub = (c, s, next) => {
+    if (!window.confirm(financeRefRenameMessage("subcategory", s.subcategory, next, s.usage))) return Promise.resolve(false);
+    return run({ action: "edit", entity: "subcategory", category: c.category, subcategory: s.subcategory, name: next, idempotencyKey: key() }, (r) => `« ${s.subcategory} » renommée en « ${next} » · ${r?.renamedTransactions ?? 0} transaction(s) mises à jour.`);
+  };
+  const tree = useMemo(() => financeRefTree(data, query, showInactive), [data, query, showInactive]);
+  if (error && !data) {
+    return (
+      <div className="nx-ref">
+        <style>{FINANCE_REF_CSS}</style>
+        <div className="lp-empty" style={{ padding: 12 }}>{error}</div>
+        <div><button type="button" className="lp-btn" onClick={load}>Réessayer</button></div>
+      </div>
+    );
+  }
+  if (!data) return <div className="lp-empty" style={{ padding: 12 }}>Chargement des catégories Budget…</div>;
+  return (
+    <div className="nx-ref">
+      <style>{FINANCE_REF_CSS}</style>
+      <p style={{ margin: 0, fontSize: 12, color: "var(--text-600)" }}>
+        Catégories et sous-catégories du Budget (KDM360), partagées avec OS360. Un renommage est répercuté sur les transactions
+        et les règles, en une seule fois ; une référence encore utilisée ne peut pas être supprimée (désactivez-la).
+        Chaque modification est tracée dans la base.
+      </p>
+      <div className="nx-ref-bar">
+        <input type="search" placeholder="Rechercher une catégorie ou sous-catégorie…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher une catégorie" />
+        <label className="lp-checkbox-line" style={{ margin: 0 }}><input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Afficher les inactives</label>
+        <button type="button" onClick={load} disabled={busy}>Actualiser</button>
+      </div>
+      <div className="nx-ref-new">
+        <strong style={{ fontSize: 12 }}>Nouvelle catégorie</strong>
+        <input type="color" value={newCat.color} onChange={(e) => setNewCat((v) => ({ ...v, color: e.target.value }))} aria-label="Couleur de la nouvelle catégorie" />
+        <input type="text" placeholder="Nom" maxLength={80} value={newCat.name} onChange={(e) => setNewCat((v) => ({ ...v, name: e.target.value }))} aria-label="Nom de la nouvelle catégorie" />
+        <input type="number" min="0" step="1" placeholder="Budget mensuel €" value={newCat.budget} onChange={(e) => setNewCat((v) => ({ ...v, budget: e.target.value }))} aria-label="Budget mensuel de la nouvelle catégorie" style={{ width: 140 }} />
+        <button type="button" disabled={busy || !newCat.name.trim()} onClick={() => run({ action: "create", entity: "category", category: newCat.name.trim(), color: newCat.color, monthlyBudget: newCat.budget === "" ? null : Number(newCat.budget) }, `Catégorie « ${newCat.name.trim()} » créée.`).then((ok) => { if (ok) setNewCat({ name: "", color: "#587894", budget: "" }); })}>Ajouter</button>
+      </div>
+      {data.orphans?.length > 0 && (
+        <div className="nx-ref-orphans">
+          <strong>Catégories utilisées par des transactions mais absentes du référentiel</strong> (héritage d'anciens renommages) :{" "}
+          {data.orphans.map((o) => (
+            <span key={o.category} style={{ marginRight: 10 }}>
+              « {o.category} » ({o.usage}){" "}
+              <button type="button" disabled={busy} onClick={() => run({ action: "create", entity: "category", category: o.category }, `Catégorie « ${o.category} » ajoutée au référentiel.`)}>Ajouter au référentiel</button>
+            </span>
+          ))}
+        </div>
+      )}
+      {tree.map((c) => (
+        <div className="nx-ref-cat" key={c.category}>
+          <FinanceRefRow kind="category" item={c} busy={busy}
+            onRename={(next) => renameCategory(c, next)}
+            onColor={(color) => run({ action: "edit", entity: "category", category: c.category, color, idempotencyKey: key() }, `Couleur de « ${c.category} » enregistrée.`)}
+            onToggle={() => run({ action: c.active === false ? "activate" : "deactivate", entity: "category", category: c.category }, `« ${c.category} » ${c.active === false ? "activée" : "désactivée"}.`)}
+            onDelete={() => { if (window.confirm(`Supprimer définitivement la catégorie « ${c.category} » ?`)) run({ action: "delete", entity: "category", category: c.category }, `« ${c.category} » supprimée.`); }}
+            extra={(
+              <label className="nx-ref-budget" title="Budget mensuel">
+                Budget
+                <input type="number" min="0" step="1" defaultValue={c.monthly_budget ?? ""} key={`${c.category}:${c.monthly_budget}`} disabled={busy} aria-label={`Budget mensuel de ${c.category}`}
+                  onBlur={(e) => { const v = e.target.value; if (v === "" || Number(v) === Number(c.monthly_budget ?? NaN)) return; run({ action: "update", entity: "category", category: c.category, monthlyBudget: Number(v) }, `Budget de « ${c.category} » enregistré.`); }} /> €
+              </label>
+            )}
+          />
+          {c.subcategories.map((s) => (
+            <div className="nx-ref-sub" key={s.subcategory}>
+              <FinanceRefRow kind="subcategory" item={s} busy={busy}
+                onRename={(next) => renameSub(c, s, next)}
+                onColor={(color) => run({ action: "edit", entity: "subcategory", category: c.category, subcategory: s.subcategory, color, idempotencyKey: key() }, `Couleur de « ${s.subcategory} » enregistrée.`)}
+                onToggle={() => run({ action: s.active === false ? "activate" : "deactivate", entity: "subcategory", category: c.category, subcategory: s.subcategory }, `« ${s.subcategory} » ${s.active === false ? "activée" : "désactivée"}.`)}
+                onDelete={() => { if (window.confirm(`Supprimer définitivement la sous-catégorie « ${s.subcategory} » de « ${c.category} » ?`)) run({ action: "delete", entity: "subcategory", category: c.category, subcategory: s.subcategory }, `« ${s.subcategory} » supprimée.`); }}
+              />
+            </div>
+          ))}
+          <div className="nx-ref-addsub">
+            <input type="text" placeholder={`Nouvelle sous-catégorie de ${c.category}`} maxLength={80} value={newSub[c.category] || ""} onChange={(e) => setNewSub((v) => ({ ...v, [c.category]: e.target.value }))} aria-label={`Nouvelle sous-catégorie de ${c.category}`} />
+            <button type="button" disabled={busy || !(newSub[c.category] || "").trim()} onClick={() => run({ action: "create", entity: "subcategory", category: c.category, subcategory: newSub[c.category].trim() }, `Sous-catégorie « ${newSub[c.category].trim()} » ajoutée.`).then((ok) => { if (ok) setNewSub((v) => ({ ...v, [c.category]: "" })); })}>Ajouter</button>
+          </div>
+        </div>
+      ))}
+      {!tree.length && <div className="lp-empty" style={{ padding: 12 }}>Aucune catégorie ne correspond.</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Widget de tableau de bord — synthèse Finance PRO dans le moteur existant
 // (WIDGET_TYPE_META, part-003), sans créer de second système de dashboard.
 // ---------------------------------------------------------------------------
