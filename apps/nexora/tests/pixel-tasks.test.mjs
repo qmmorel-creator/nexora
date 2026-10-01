@@ -22,7 +22,7 @@ const P = vm.runInThisContext(
     pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue, pixelTaskOutlinePath, PIXEL_TASKS_FUTURE_WINDOWS,
     PIXEL_TASKS_SUB_BY, pixelTaskSpectrum, pixelTaskBud, pixelTaskVisibleGroups,
     pixelTaskParseQuickAdd, pixelTaskReschedule, pixelTaskNextMonday, pixelTaskMatches, pixelTaskFilterActive,
-    pixelTaskLoad, pixelTaskOverflowCandidates, pixelTaskMinutesLabel, pixelTaskClosureList,
+    pixelTaskLoad, pixelTaskOverflowCandidates, pixelTaskMinutesLabel, pixelTaskClosureList, pixelTaskCapacityFor, pixelTaskCapacityDates,
   };\n})`
 )();
 
@@ -294,27 +294,43 @@ test("pixelTaskMatches : recherche et puces combinables (#563)", () => {
   assert.equal(P.pixelTaskFilterActive({ late: true }), true);
 });
 
-test("pixelTaskLoad : estimations, réunions horodatées, dépassement et report proposé (#561)", () => {
+test("pixelTaskLoad : estimations seules, aucune réunion déduite, dépassement et report proposé (#561, #565)", () => {
   const d = "2026-09-30";
   const it = (id, est, extra) => ({ task: { id, title: id, estimateMinutes: est, start: d, end: d, ...(extra && extra.task) }, done: false, lateDays: 0, ...(extra && extra.item) });
   const items = [
     it("a", 120), it("b", 90), it("c", 60, { task: { focus: true } }), it("d", 0), it("e", 240, { item: { done: true } }),
     it("f", 30, { item: { lateDays: 3 } }), it("g", 45, { item: { ghost: true } }),
+    // Réunion horodatée : comptée seulement parce qu'elle est estimée ; jamais proposée au report.
+    it("m", 90, { task: { startTime: "09:00", endTime: "11:00" } }), it("n", 0, { task: { startTime: "14:00", endTime: "14:30" } }),
   ];
-  const meetings = [{ start: d, end: d, startTime: "09:00", endTime: "11:00" }, { start: d, end: d, startTime: "14:00", endTime: "14:30" }, { start: "2026-09-29", end: d, startTime: "09:00", endTime: "10:00" }];
-  const l = P.pixelTaskLoad(items, meetings, d, 420, (x) => ({ id: x.task.id === "a" ? "p1" : "p2", name: "", color: "" }));
-  assert.equal(l.busy, 150);
-  assert.equal(l.free, 270);
-  assert.equal(l.planned, 300);
-  assert.equal(l.unestimated, 1);
-  assert.equal(l.over, 30);
-  assert.deepEqual(l.parts.map((p) => [p.id, p.minutes]), [["p1", 120], ["p2", 180]]);
-  // Ni Focus, ni retard : « a » (2 h) suffit à couvrir 30 min.
-  assert.deepEqual(P.pixelTaskOverflowCandidates(items, l.over, d).map((x) => x.task.id), ["a"]);
-  assert.deepEqual(P.pixelTaskOverflowCandidates(items, 0, d), []);
+  const l = P.pixelTaskLoad(items, 300, (x) => ({ id: x.task.id === "a" ? "p1" : "p2", name: "", color: "" }));
+  assert.equal(l.free, 300, "disponible = capacité, rien de déduit");
+  assert.equal(l.planned, 120 + 90 + 60 + 30 + 90);
+  assert.equal(l.unestimated, 2);
+  assert.equal(l.over, 90);
+  assert.deepEqual(l.parts.map((p) => [p.id, p.minutes]), [["p1", 120], ["p2", 270]]);
+  // Ni Focus, ni retard, ni réunion : « a » (2 h) couvre 1 h 30.
+  assert.deepEqual(P.pixelTaskOverflowCandidates(items, l.over).map((x) => x.task.id), ["a"]);
+  assert.deepEqual(P.pixelTaskOverflowCandidates(items, 200).map((x) => x.task.id), ["a", "b"]);
+  assert.deepEqual(P.pixelTaskOverflowCandidates(items, 0), []);
   assert.equal(P.pixelTaskMinutesLabel(90), "1 h 30");
   assert.equal(P.pixelTaskMinutesLabel(45), "45 min");
   assert.equal(P.pixelTaskMinutesLabel(120), "2 h");
+});
+
+test("pixelTaskCapacityFor : exception datée, jour de la semaine, capacité unique, 7 h (#565)", () => {
+  // 2026-09-30 mercredi (3), 2026-10-03 samedi (6).
+  assert.equal(P.pixelTaskCapacityFor("2026-09-30", {}), 7);
+  assert.equal(P.pixelTaskCapacityFor("2026-09-30", { base: 6 }), 6);
+  const prefs = { base: 6, byDay: { 3: 4.5, 6: 0 }, dates: { "2026-10-07": 2 } };
+  assert.equal(P.pixelTaskCapacityFor("2026-09-30", prefs), 4.5);
+  assert.equal(P.pixelTaskCapacityFor("2026-10-03", prefs), 0, "0 = jour non travaillé");
+  assert.equal(P.pixelTaskCapacityFor("2026-10-01", prefs), 6, "jour non réglé : capacité unique");
+  assert.equal(P.pixelTaskCapacityFor("2026-10-07", prefs), 2, "l'exception datée l'emporte");
+  assert.equal(P.pixelTaskCapacityFor("2026-09-30", { byDay: { 3: "x" } }), 7);
+  const dates = P.pixelTaskCapacityDates({ "2026-01-01": 3, "2026-09-20": 5 }, "2026-10-02", 0, "2026-09-30");
+  assert.deepEqual(dates, { "2026-09-20": 5, "2026-10-02": 0 }, "anciennes exceptions oubliées");
+  assert.deepEqual(P.pixelTaskCapacityDates(dates, "2026-10-02", null, "2026-09-30"), { "2026-09-20": 5 }, "null retire l'exception");
 });
 
 test("pixelTaskClosureList : non terminées, retards les plus anciens d'abord (#562)", () => {

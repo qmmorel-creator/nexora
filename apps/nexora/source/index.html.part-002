@@ -4898,29 +4898,21 @@ function pixelTaskFilterActive(f) {
   return !!(f && ((f.query && f.query.trim()) || f.late || f.milestone || f.focus || f.assignee));
 }
 
-/* Charge du jour (#561). estimateMinutes : champ optionnel de la tâche.
-   Prévu = estimations des tâches du jour non terminées (hors fantômes et
-   futur, hors réunions horodatées). Occupé = réunions horodatées de ce jour
-   (startTime / endTime, début = fin = ce jour), toutes tâches confondues.
-   Disponible = capacité − occupé. */
+/* Charge du jour (#561, #565). estimateMinutes : champ optionnel de la
+   tâche. Prévu = estimations des tâches du jour non terminées (hors fantômes
+   et futur) ; une réunion n'y entre que si on l'a estimée, comme toute
+   tâche — aucune durée n'est déduite automatiquement. Disponible = capacité
+   du jour (pixelTaskCapacityFor). */
 function pixelTaskEstimate(task) {
   const n = Number(task && task.estimateMinutes);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
-function pixelTaskMeetingMinutes(task, dayIso) {
-  if (!task || task.start !== dayIso || task.end !== dayIso) return 0;
-  const m = (v) => { const r = /^(\d{2}):(\d{2})$/.exec(String(v || "")); return r ? Number(r[1]) * 60 + Number(r[2]) : null; };
-  const a = m(task.startTime), b = m(task.endTime);
-  return a != null && b != null && b > a ? b - a : 0;
-}
-function pixelTaskLoad(items, allTasks, dayIso, capacityMinutes, groupOf) {
+function pixelTaskLoad(items, capacityMinutes, groupOf) {
   const capacity = Math.max(0, Number(capacityMinutes) || 0);
-  let busy = 0;
-  for (const t of allTasks || []) busy += pixelTaskMeetingMinutes(t, dayIso);
   const parts = new Map();
   let planned = 0, unestimated = 0;
   for (const it of items || []) {
-    if (it.ghost || it.future || it.done || pixelTaskMeetingMinutes(it.task, dayIso)) continue;
+    if (it.ghost || it.future || it.done) continue;
     const e = pixelTaskEstimate(it.task);
     if (!e) { unestimated += 1; continue; }
     planned += e;
@@ -4928,14 +4920,36 @@ function pixelTaskLoad(items, allTasks, dayIso, capacityMinutes, groupOf) {
     if (!parts.has(g.id)) parts.set(g.id, { ...g, minutes: 0 });
     parts.get(g.id).minutes += e;
   }
-  const free = Math.max(0, capacity - busy);
-  return { capacity, busy, free, planned, unestimated, over: Math.max(0, planned - free), parts: [...parts.values()] };
+  return { capacity, free: capacity, planned, unestimated, over: Math.max(0, planned - capacity), parts: [...parts.values()] };
+}
+/* Capacité d'un jour, en heures (#565) : exception datée, sinon valeur du
+   jour de la semaine (0 = dimanche … 6 = samedi), sinon capacité unique
+   d'avant #565, sinon 7 h. 0 = jour non travaillé. */
+const PIXEL_TASKS_DEFAULT_CAPACITY = 7;
+function pixelTaskCapacityValid(v) {
+  return v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 24;
+}
+function pixelTaskCapacityFor(dayIso, prefs) {
+  const p = prefs || {};
+  if (p.dates && pixelTaskCapacityValid(p.dates[dayIso])) return Number(p.dates[dayIso]);
+  const wd = new Date(dayIso + "T00:00:00").getDay();
+  if (p.byDay && pixelTaskCapacityValid(p.byDay[wd])) return Number(p.byDay[wd]);
+  return pixelTaskCapacityValid(p.base) && Number(p.base) > 0 ? Number(p.base) : PIXEL_TASKS_DEFAULT_CAPACITY;
+}
+// Exceptions datées : on oublie celles de plus de 60 jours.
+function pixelTaskCapacityDates(dates, dayIso, hours, todayIso) {
+  const out = {};
+  const limit = addDays(todayIso, -60);
+  for (const [d, v] of Object.entries(dates || {})) if (d >= limit && d !== dayIso && pixelTaskCapacityValid(v)) out[d] = Number(v);
+  if (pixelTaskCapacityValid(hours)) out[dayIso] = Number(hours);
+  return out;
 }
 /* Report proposé : parmi les tâches estimées non terminées, ni Focus, ni en
-   retard, ni jalon, les plus grosses d'abord jusqu'à couvrir le surplus. */
-function pixelTaskOverflowCandidates(items, overMinutes, dayIso) {
+   retard, ni jalon, ni à heure fixe, les plus grosses d'abord jusqu'à
+   couvrir le surplus. */
+function pixelTaskOverflowCandidates(items, overMinutes) {
   if (!(overMinutes > 0)) return [];
-  const pool = (items || []).filter((it) => !it.ghost && !it.future && !it.done && !(it.lateDays > 0) && !it.task.milestone && it.task.focus !== true && pixelTaskEstimate(it.task) && !pixelTaskMeetingMinutes(it.task, dayIso))
+  const pool = (items || []).filter((it) => !it.ghost && !it.future && !it.done && !(it.lateDays > 0) && !it.task.milestone && it.task.focus !== true && !it.task.startTime && pixelTaskEstimate(it.task))
     .sort((a, b) => pixelTaskEstimate(b.task) - pixelTaskEstimate(a.task));
   const out = [];
   let covered = 0;
