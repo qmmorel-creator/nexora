@@ -257,7 +257,8 @@ export const PATH_RULES = [
   // préproduction (le banc a son propre bouchon Firebase).
   [/^config\//, { scenarios: ALL }],
   [/^apps\/nexora\/environnement-demo\//, null],
-  [/^apps\/nexora\/(netlify|lib|tests)\//, null],
+  // Fonctions SQL versionnées (#574) : appliquées dans Supabase, sans rendu.
+  [/^apps\/nexora\/(netlify|lib|tests|supabase)\//, null],
   [/^apps\/nexora\/(openapi\.yaml|public\/openapi\.yaml|tsconfig\.json|netlify\.toml|[^/]+\.md)$/, null],
   [/^apps\/nexora-mcp\//, null],
   [/^tools\/visual-check\/(affected|scope)(\.test)?\.mjs$/, { scenarios: [], tests: ["selection"] }],
