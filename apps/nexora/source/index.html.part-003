@@ -2149,6 +2149,7 @@ function defaultLayoutForType(type) {
   if (type === "financeSankeyWealth") return { w: 7, h: 7 };
   if (type === "financeTransactions") return { w: 12, h: 9 };
   if (type === "financeOs360Chart") return { w: 8, h: 8 };
+  if (type === "sportActivities") return { w: 12, h: 9 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3691,7 +3692,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || w.type === "sportActivities"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3757,6 +3758,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "financeTransactions" && (
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "sportActivities" && (
+                  <WidgetSportActivities widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
                   <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -17086,6 +17090,8 @@ const WIDGET_TYPE_META = [
   { key: "financeTransactions", label: "Transactions (Budget)", icon: List, group: "Suivi" },
   // Graphique financier (#573) : tous les widgets Budget d'OS360, par son moteur.
   { key: "financeOs360Chart", label: "Graphique financier (OS360)", icon: BarChart3, group: "Suivi" },
+  // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
+  { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -17490,6 +17496,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [budgetMetric, setBudgetMetric] = useState(widget?.budgetMetric || "engaged");
   const [sankeyConfig, setSankeyConfig] = useState({ ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(widget?.sankeyConfig || {}) });
   const [txColumns, setTxColumns] = useState(Array.isArray(widget?.txColumns) && widget.txColumns.length ? widget.txColumns : FINANCE_TX_DEFAULT_COLUMNS);
+  const [sportConfig, setSportConfig] = useState(() => sportSpec(widget));
   const [titleColor, setTitleColor] = useState(widget?.titleColor || "");
   const [onlyMine, setOnlyMine] = useState(widget?.onlyMine || false);
   const [showAppearance, setShowAppearance] = useState(!!(widget?.titleEmoji || widget?.titleColor || widget?.bandColor || widget?.bgColor));
@@ -17624,6 +17631,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "budgetBurnRate") data.burnRateProjectId = burnRateProjectId;
     if (FINANCE_SANKEY_TYPES.includes(type)) data.sankeyConfig = { ...sankeyConfig };
     if (type === "financeTransactions") data.txColumns = txColumns.length ? [...txColumns] : [...FINANCE_TX_DEFAULT_COLUMNS];
+    if (type === "sportActivities") data.sport = { ...sportConfig };
     if (type === "heatmapGrid") {
       data.heatmapRowField = heatmapRowField;
       data.heatmapColField = heatmapColField;
@@ -18498,6 +18506,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
           <style>{FINANCE_TX_CSS}</style>
           <div className="nx-tx"><FinanceTxColumnPicker columns={FINANCE_TX_COLUMNS} visible={txColumns} onChange={(keys) => setTxColumns(keys.length ? keys : FINANCE_TX_DEFAULT_COLUMNS)} /></div>
+        </>
+      )}
+
+      {type === "sportActivities" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Toutes les activités du journal « Activités Strava » (le même qu’OS360), tous leurs champs, en lecture seule.
+            Sports, période, recherche, tri et export CSV se règlent directement dans l’en-tête du widget.
+          </p>
+          <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
+          <style>{FINANCE_TX_CSS}</style>
+          <div className="nx-tx"><FinanceTxColumnPicker columns={sportAllColumns(sportStore.rows)} visible={sportConfig.columns} defaults={SPORT_DEFAULT_COLUMNS} onChange={(keys) => setSportConfig((c) => ({ ...c, columns: keys.length ? keys : SPORT_DEFAULT_COLUMNS }))} /></div>
         </>
       )}
 
@@ -36818,8 +36838,9 @@ function financeTxVisibleKeys(widget) {
   return Array.isArray(widget.txColumns) && widget.txColumns.length ? widget.txColumns : FINANCE_TX_DEFAULT_COLUMNS;
 }
 
-// Choix des colonnes, partagé par le widget (en-tête) et la fiche de réglages.
-function FinanceTxColumnPicker({ columns, visible, onChange }) {
+// Choix des colonnes, partagé par le widget (en-tête) et la fiche de réglages,
+// et par le widget « Activités sport » (#578).
+function FinanceTxColumnPicker({ columns, visible, onChange, defaults = FINANCE_TX_DEFAULT_COLUMNS }) {
   const toggle = (key) => onChange(visible.includes(key) ? visible.filter((k) => k !== key) : columns.map((c) => c.key).filter((k) => k === key || visible.includes(k)));
   return (
     <div className="nx-tx-columns">
@@ -36828,7 +36849,7 @@ function FinanceTxColumnPicker({ columns, visible, onChange }) {
       ))}
       <span className="nx-tx-columns-actions">
         <button type="button" onClick={() => onChange(columns.map((c) => c.key))}>Toutes</button>
-        <button type="button" onClick={() => onChange(FINANCE_TX_DEFAULT_COLUMNS)}>Par défaut</button>
+        <button type="button" onClick={() => onChange(defaults)}>Par défaut</button>
       </span>
     </div>
   );
@@ -37351,6 +37372,359 @@ function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
         </div>
       )}
       {!error && !rows && <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>Chargement des données Budget…</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Widgets Sport (#578) : le journal « Activités Strava » d'OS360, lu par
+// /api/nexora/sport-activities (session du propriétaire vérifiée, URL de la
+// source gardée côté serveur, parseur à parité avec `Jc` d'OS360). Lecture
+// seule. Le widget « Activités sport » liste tous les champs de toutes les
+// activités, avec colonnes au choix, filtres sport et période, recherche, tri
+// et export CSV, tous les réglages dans l'en-tête.
+// ---------------------------------------------------------------------------
+
+// === NEXORA:SPORT:START ===
+// Champs produits par la route (ceux de `Jc` d'OS360, puis ceux qu'il ignore).
+// Les colonnes que la feuille ajoute après les 14 exigées arrivent dans
+// `extra` et s'affichent sous leur en-tête (préfixe « x: » dans la clé).
+const SPORT_COLUMNS = [
+  { key: "date", label: "Date" },
+  { key: "sport", label: "Sport" },
+  { key: "title", label: "Titre" },
+  { key: "total", label: "Durée totale (min)", numeric: true },
+  { key: "moving", label: "Durée en mouvement (min)", numeric: true },
+  { key: "distance", label: "Distance (km)", numeric: true },
+  { key: "elevation", label: "Dénivelé positif (m)", numeric: true },
+  { key: "hr", label: "FC moyenne (bpm)", numeric: true },
+  { key: "maxHr", label: "FC maximale (bpm)", numeric: true },
+  { key: "start", label: "Début ISO" },
+  { key: "end", label: "Fin ISO" },
+  { key: "eventId", label: "ID événement" },
+  { key: "calendarId", label: "Calendrier ID" },
+  { key: "url", label: "Lien événement", link: true },
+  { key: "id", label: "Clé de dédoublonnage" },
+];
+const SPORT_DEFAULT_COLUMNS = ["date", "sport", "title", "total", "moving", "distance", "elevation", "hr"];
+const SPORT_PAGE_SIZE = 100;
+
+// Périodes proposées par tous les widgets sport. « Semaine » : lundi à
+// dimanche (semaine ISO), dates civiles de Paris.
+const SPORT_PERIODS = [
+  { value: "all", label: "Tout l’historique" },
+  { value: "today", label: "Aujourd’hui" },
+  { value: "week", label: "Cette semaine" },
+  { value: "month", label: "Ce mois" },
+  { value: "previousMonth", label: "Mois précédent" },
+  { value: "year", label: "Cette année" },
+  { value: "7", label: "7 derniers jours" },
+  { value: "30", label: "30 derniers jours" },
+  { value: "90", label: "90 derniers jours" },
+  { value: "365", label: "365 derniers jours" },
+  { value: "custom", label: "Dates libres" },
+];
+
+// Réglages d'un widget sport, complétés par les valeurs par défaut.
+function sportSpec(widget) {
+  const s = widget?.sport && typeof widget.sport === "object" ? widget.sport : {};
+  return {
+    columns: Array.isArray(s.columns) && s.columns.length ? s.columns : SPORT_DEFAULT_COLUMNS,
+    sports: Array.isArray(s.sports) ? s.sports.filter((x) => typeof x === "string") : [],
+    period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "all",
+    from: typeof s.from === "string" ? s.from : "",
+    to: typeof s.to === "string" ? s.to : "",
+  };
+}
+
+// Bornes { from, to } (incluses, "" = sans borne) d'une période.
+function sportPeriodRange(spec, today) {
+  const shift = (date, days) => {
+    const d = new Date(date + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const monthEnd = (ym) => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0, 12)).toISOString().slice(0, 10);
+  const p = spec.period;
+  if (p === "today") return { from: today, to: today };
+  if (p === "week") {
+    const monday = shift(today, -((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7));
+    return { from: monday, to: shift(monday, 6) };
+  }
+  if (p === "month") return { from: today.slice(0, 7) + "-01", to: monthEnd(today.slice(0, 7)) };
+  if (p === "previousMonth") {
+    const last = shift(today.slice(0, 7) + "-01", -1);
+    return { from: last.slice(0, 7) + "-01", to: last };
+  }
+  if (p === "year") return { from: today.slice(0, 4) + "-01-01", to: today.slice(0, 4) + "-12-31" };
+  if (/^\d+$/.test(p)) return { from: shift(today, 1 - Number(p)), to: today };
+  if (p === "custom") {
+    const ok = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
+    return { from: ok(spec.from) ? spec.from : "", to: ok(spec.to) ? spec.to : "" };
+  }
+  return { from: "", to: "" };
+}
+
+// Réponse de la route -> lignes affichables (colonnes en plus aplaties).
+function sportRows(data) {
+  if (!Array.isArray(data?.activities)) throw new Error("Réponse Sport invalide.");
+  return data.activities.map((a) => {
+    const { extra, ...row } = a;
+    for (const [header, value] of Object.entries(extra || {})) row["x:" + header] = value;
+    return row;
+  });
+}
+
+// Toutes les colonnes : les connues, puis celles que la feuille ajoute.
+function sportAllColumns(rows) {
+  const extra = new Set();
+  for (const row of rows || []) for (const key of Object.keys(row)) if (key.startsWith("x:")) extra.add(key);
+  return [...SPORT_COLUMNS, ...[...extra].map((key) => ({ key, label: key.slice(2) }))];
+}
+
+// Sports présents, du plus pratiqué au moins pratiqué.
+function sportNames(rows) {
+  const counts = new Map();
+  for (const row of rows || []) counts.set(row.sport, (counts.get(row.sport) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr")).map(([name, count]) => ({ name, count }));
+}
+
+// Filtre sport(s) et période. Aucun sport choisi = tous.
+function sportFilter(rows, spec, today) {
+  const { from, to } = sportPeriodRange(spec, today);
+  const sports = new Set(spec.sports || []);
+  return rows.filter((r) => (!sports.size || sports.has(r.sport)) && (!from || r.date >= from) && (!to || r.date <= to));
+}
+
+// Valeur affichée d'une cellule (et exportée en CSV).
+function sportText(key, value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "number") return value.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+  return String(value);
+}
+
+// Recherche plein texte sur TOUS les champs, affichés ou non.
+function sportSearch(rows, query) {
+  const q = String(query || "").trim().toLocaleLowerCase("fr");
+  if (!q) return rows;
+  return rows.filter((row) => Object.entries(row).some(([key, value]) => sportText(key, value).toLocaleLowerCase("fr").includes(q)));
+}
+
+// Tri stable : nombres en nombres, le reste en texte français ; vides en fin.
+function sportSort(rows, key, asc) {
+  const numeric = SPORT_COLUMNS.find((c) => c.key === key)?.numeric;
+  return rows.map((row, index) => ({ row, index })).sort((a, b) => {
+    const va = a.row[key];
+    const vb = b.row[key];
+    const ea = va === null || va === undefined || va === "";
+    const eb = vb === null || vb === undefined || vb === "";
+    if (ea || eb) return ea === eb ? a.index - b.index : ea ? 1 : -1;
+    const cmp = numeric ? Number(va) - Number(vb) : sportText(key, va).localeCompare(sportText(key, vb), "fr", { numeric: true });
+    return (asc ? cmp : -cmp) || a.index - b.index;
+  }).map((x) => x.row);
+}
+
+// CSV pour Excel français : « ; », guillemets doublés, nombres à virgule sans
+// séparateur de milliers (BOM UTF-8 ajouté au téléchargement).
+function sportCsv(rows, columns) {
+  const cell = (value) => {
+    const text = String(value);
+    return /[";\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  };
+  const value = (key, v) => (typeof v === "number" ? String(v).replace(".", ",") : sportText(key, v));
+  return [columns.map((c) => cell(c.label)).join(";"), ...rows.map((row) => columns.map((c) => cell(value(c.key, row[c.key]))).join(";"))].join("\r\n");
+}
+// === NEXORA:SPORT:END ===
+
+// Chargement partagé : une requête pour tous les widgets sport de la page.
+const sportStore = { promise: null, rows: null, readAt: "", error: null, listeners: new Set() };
+function sportLoad(force = false) {
+  if (sportStore.promise && !force) return sportStore.promise;
+  const notify = () => sportStore.listeners.forEach((fn) => fn());
+  sportStore.error = null;
+  notify();
+  sportStore.promise = (async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour lire les données Sport.");
+      const token = await user.getIdToken();
+      const response = await fetch("/api/nexora/sport-activities", { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        const reasons = {
+          unauthorized: "Accès refusé : seule la session du propriétaire Nexora lit les données Sport.",
+          sport_configuration_missing: "Source Sport non configurée sur le serveur (variable NEXORA_SPORT_CSV_URL absente).",
+          configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+        };
+        throw new Error(reasons[payload.error] || payload.detail || payload.error || `Lecture Sport impossible (HTTP ${response.status}).`);
+      }
+      sportStore.rows = sportRows(payload.data);
+      sportStore.readAt = payload.data.readAt || "";
+    } catch (error) {
+      sportStore.error = error instanceof Error ? error.message : String(error);
+      sportStore.promise = null;
+    }
+    notify();
+  })();
+  return sportStore.promise;
+}
+function useSportData() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    sportStore.listeners.add(listener);
+    sportLoad();
+    return () => { sportStore.listeners.delete(listener); };
+  }, []);
+  return { rows: sportStore.rows, readAt: sportStore.readAt, error: sportStore.error, reload: () => sportLoad(true) };
+}
+
+// Filtres d'en-tête communs aux widgets sport : sports et période.
+function SportFilterTools({ spec, rows, onChange }) {
+  const [open, setOpen] = useState(false);
+  const names = useMemo(() => sportNames(rows), [rows]);
+  const toggle = (name) => onChange({ sports: spec.sports.includes(name) ? spec.sports.filter((s) => s !== name) : [...spec.sports, name] });
+  return (
+    <span className="nx-sport-group" role="group" aria-label="Filtres sport">
+      <span className="nx-sport-pop">
+        <button type="button" className={spec.sports.length ? "active" : ""} aria-expanded={open} onClick={() => setOpen((v) => !v)} title="Choisir les sports affichés">
+          {spec.sports.length ? `Sports (${spec.sports.length})` : "Tous les sports"}
+        </button>
+        {open && (
+          <span className="nx-sport-menu" role="dialog" aria-label="Sports">
+            {names.map((s) => (
+              <label key={s.name}><input type="checkbox" checked={spec.sports.includes(s.name)} onChange={() => toggle(s.name)} /> {s.name} <small>{s.count}</small></label>
+            ))}
+            {!names.length && <small>Aucune activité chargée.</small>}
+            <span className="nx-sport-menu-actions">
+              <button type="button" onClick={() => onChange({ sports: [] })}>Tous</button>
+              <button type="button" onClick={() => setOpen(false)}>Fermer</button>
+            </span>
+          </span>
+        )}
+      </span>
+      <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période" title="Période">
+        {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+      </select>
+      {spec.period === "custom" && (
+        <>
+          <input type="date" aria-label="Du" title="Du" value={spec.from} onChange={(e) => onChange({ from: e.target.value })} />
+          <input type="date" aria-label="Au" title="Au" value={spec.to} onChange={(e) => onChange({ to: e.target.value })} />
+        </>
+      )}
+    </span>
+  );
+}
+
+const SPORT_CSS = `
+.lp-widget-head-toolbar:has(.nx-sport-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
+.lp-widget-head:has(.nx-sport-tools){align-items:flex-start}
+.lp-widget-head:has(.nx-sport-tools) .lp-widget-title{flex:0 0 auto;max-width:40%;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-sport-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%;font-size:11px;color:#203246}
+.nx-sport-tools button,.nx-sport-tools input,.nx-sport-tools select{height:24px;padding:0 7px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246}
+.nx-sport-tools button,.nx-sport-tools select{cursor:pointer}
+.nx-sport-tools button.active{background:#e7efff;border-color:#24569a;color:#24569a;font-weight:600}
+.nx-sport-tools input[type=search]{width:160px}
+.nx-sport-group{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;padding-left:6px;border-left:1px solid var(--border,#d8e1eb)}
+.nx-sport-pop{position:relative;display:inline-flex}
+.nx-sport-menu{position:absolute;top:28px;left:0;z-index:30;display:flex;flex-direction:column;gap:3px;min-width:200px;max-height:260px;overflow:auto;padding:8px 10px;background:#fff;border:1px solid #d8e1eb;border-radius:8px;box-shadow:0 8px 24px rgba(20,40,60,.14)}
+.nx-sport-menu label{display:flex;align-items:center;gap:6px;white-space:nowrap;cursor:pointer}
+.nx-sport-menu label small{margin-left:auto;color:#60717c}
+.nx-sport-menu-actions{display:flex;gap:6px;margin-top:4px}
+.nx-sport-count{color:#60717c;white-space:nowrap}
+.nx-sport-list td a{color:#24569a}
+`;
+
+function WidgetSportActivities({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useSportData();
+  const spec = sportSpec(widget);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState({ key: "date", asc: false });
+  const [page, setPage] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ sport: { ...spec, ...patch } });
+  const columns = useMemo(() => sportAllColumns(rows), [rows]);
+  const visible = columns.filter((c) => spec.columns.includes(c.key));
+  const filtered = useMemo(() => (rows ? sportFilter(rows, spec, financeSankeyToday()) : []), [rows, spec.sports.join("\n"), spec.period, spec.from, spec.to]);
+  const shown = useMemo(() => sportSort(sportSearch(filtered, query), sort.key, sort.asc), [filtered, query, sort]);
+  const pages = Math.max(1, Math.ceil(shown.length / SPORT_PAGE_SIZE));
+  const current = Math.min(page, pages - 1);
+  useEffect(() => { setPage(0); }, [query, sort.key, sort.asc, filtered]);
+  const exportCsv = () => {
+    const blob = new Blob(["﻿" + sportCsv(shown, visible)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `activites-sport-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS + SPORT_CSS}</style>
+      <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" className={pickerOpen ? "active" : ""} aria-pressed={pickerOpen} onClick={() => setPickerOpen((v) => !v)} title="Choisir les colonnes affichées">
+          Colonnes ({visible.length}/{columns.length})
+        </button>
+        <SportFilterTools spec={spec} rows={rows} onChange={update} />
+        <input type="search" placeholder="Rechercher dans tous les champs…" aria-label="Rechercher dans les activités" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <button type="button" onClick={exportCsv} disabled={!rows} title="Exporter les lignes filtrées et les colonnes affichées">Export CSV</button>
+        <button type="button" onClick={reload} title="Relire le journal sportif">Actualiser</button>
+        {rows && <span className="nx-sport-count">{shown.length === rows.length ? `${rows.length} activités` : `${shown.length} / ${rows.length} activités`}</span>}
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!rows) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des activités sport…</div>;
+  const pageRows = shown.slice(current * SPORT_PAGE_SIZE, (current + 1) * SPORT_PAGE_SIZE);
+  return (
+    <div className="nx-tx nx-sport-list">
+      {tools}
+      {pickerOpen && (
+        <FinanceTxColumnPicker columns={columns} visible={spec.columns} defaults={SPORT_DEFAULT_COLUMNS} onChange={(keys) => update({ columns: keys.length ? keys : SPORT_DEFAULT_COLUMNS })} />
+      )}
+      <div className="nx-tx-scroll">
+        <table>
+          <thead>
+            <tr>
+              {visible.map((c) => (
+                <th key={c.key} className={c.numeric ? "numeric" : ""} aria-sort={sort.key === c.key ? (sort.asc ? "ascending" : "descending") : "none"}
+                  onClick={() => setSort((s) => ({ key: c.key, asc: s.key === c.key ? !s.asc : true }))}>
+                  {c.label}{sort.key === c.key ? (sort.asc ? " ↑" : " ↓") : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row) => (
+              <tr key={row.id}>
+                {visible.map((c) => {
+                  const text = sportText(c.key, row[c.key]);
+                  if (c.link && /^https:\/\//.test(text)) return <td key={c.key} title={text}><a href={text} target="_blank" rel="noopener noreferrer">Ouvrir</a></td>;
+                  return <td key={c.key} title={text} className={c.numeric ? "numeric" : ""}>{text}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!shown.length && <div className="lp-empty" style={{ padding: 16 }}>Aucune activité ne correspond aux filtres{query ? ` et à « ${query} »` : ""}.</div>}
+      </div>
+      <div className="nx-tx-footer">
+        <span>{shown.length} activité{shown.length > 1 ? "s" : ""} · lecture seule</span>
+        <span>
+          <button type="button" disabled={current === 0} onClick={() => setPage(current - 1)} aria-label="Page précédente">‹</button>
+          {" "}{current + 1} / {pages}{" "}
+          <button type="button" disabled={current >= pages - 1} onClick={() => setPage(current + 1)} aria-label="Page suivante">›</button>
+        </span>
+      </div>
     </div>
   );
 }
