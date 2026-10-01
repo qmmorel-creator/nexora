@@ -13058,6 +13058,7 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
                   type="button"
                   className={"lp-widget-habit-chip" + (active ? " active" : "")}
                   style={active ? { borderColor: habit.color, background: habit.color + "1f", color: "var(--text-900)" } : undefined}
+                  title={habitStravaTitle(habit, date)}
                   onClick={() => toggle(habit.id)}
                 >
                   {active ? <Check size={11} color={habit.color} /> : <span className="lp-widget-habit-chip-empty" />}
@@ -13071,6 +13072,7 @@ function HabitThemeGroup({ theme, allThemes, date, habitLog, setHabitLog }) {
                 type="button"
                 className={"lp-widget-habit-pill" + (active ? " active" : "")}
                 style={active ? { background: habit.color, borderColor: habit.color, color: textOn(habit.color) } : undefined}
+                title={habitStravaTitle(habit, date)}
                 onClick={() => toggle(habit.id)}
               >
                 {habit.name}
@@ -39008,6 +39010,37 @@ function sportLoad(force = false) {
     notify();
   })();
   return sportStore.promise;
+}
+// Infobulle d'une habitude liée à Strava (#593) : la séance qui la coche.
+function habitStravaTitle(habit, date) {
+  if (!habit || !habit.strava) return undefined;
+  const acts = habitStravaActivities(habit, sportStore.rows || [], date);
+  return acts.length
+    ? `Cochée d’après Strava : ${acts.map((a) => `${a.sport} ${sportDurationLabel(a.total)}`).join(", ")}`
+    : `Liée à Strava (${habit.strava.sports.join(", ")}) : aucune séance ce jour-là`;
+}
+
+// Habitudes cochées par Strava (#593) : quand une habitude est liée à des
+// sports, le journal sportif est lu au démarrage et les coches manquantes sont
+// AJOUTÉES au journal (habitStravaEntries) — jamais retirées.
+function useSportHabitSync(habitThemes, habitSkips, setHabitLog, ready) {
+  const [, setTick] = useState(0);
+  const linked = useMemo(() => normalizeHabitThemes(habitThemes).some((t) => t.habits.some((h) => h.strava)), [habitThemes]);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    sportStore.listeners.add(listener);
+    return () => { sportStore.listeners.delete(listener); };
+  }, []);
+  useEffect(() => { if (ready && linked) sportLoad(); }, [ready, linked]);
+  const rows = sportStore.rows;
+  useEffect(() => {
+    if (!ready || !linked || !rows) return;
+    const today = financeSankeyToday();
+    setHabitLog((prev) => {
+      const added = habitStravaEntries(habitThemes, prev, habitSkips, rows, today);
+      return added.length ? normalizeHabitLog([...normalizeHabitLog(prev), ...added]) : prev;
+    });
+  }, [ready, linked, rows, habitThemes, habitSkips]);
 }
 function useSportData() {
   const [, setTick] = useState(0);
