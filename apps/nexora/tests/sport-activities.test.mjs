@@ -138,7 +138,8 @@ function slice(name) {
 }
 const EXPORTS = ["SPORT_COLUMNS", "SPORT_DEFAULT_COLUMNS", "SPORT_PERIODS", "sportSpec", "sportPeriodRange", "sportRows", "sportAllColumns", "sportNames", "sportFilter", "sportText", "sportSearch", "sportSort", "sportCsv",
   "SPORT_MEASURES", "SPORT_BUCKETS", "SPORT_PALETTE", "SPORT_MAX_BUCKETS", "sportChartSpec", "sportMeasureValue", "sportBucketKey", "sportIsoWeek", "sportBucketLabel", "sportStackSeries", "sportNiceTicks", "sportFormatValue",
-  "SPORT_CARD_MEASURES", "SPORT_AGGS", "sportDays", "sportBlockSpec", "sportAggregate", "sportBlockLabel"];
+  "SPORT_CARD_MEASURES", "SPORT_AGGS", "sportDays", "sportBlockSpec", "sportAggregate", "sportBlockLabel",
+  "SPORT_VIEWS", "SPORT_MEAN_LABELS", "SPORT_WAFFLE_MAX", "sportColor", "sportMeanKey", "sportTimeSeries", "sportCumulSeries", "sportWaffle", "sportYears", "sportCalendar", "sportCalendarShade"];
 const W = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n;return { ${EXPORTS.join(", ")} };\n})`)();
 
 const payload = {
@@ -227,7 +228,7 @@ test("affichage et CSV pour Excel : virgule décimale, « ; », guillemets", () 
 // --- Diagramme empilé par sport (#579) ---
 
 test("diagramme : rattaché au catalogue, au rendu, à l'en-tête et à la fiche", () => {
-  assert.match(html, /key: "sportChart", label: "Sport par activité \(barres empilées\)"/);
+  assert.match(html, /key: "sportChart", label: "Graphique sport"/);
   assert.match(html, /w\.type === "sportChart" && \(\s*<WidgetSportChart widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
   assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "sportChart"/);
   assert.match(html, /if \(type === "sportChart"\) data\.sport = \{ \.\.\.sportChartConfig \};/);
@@ -235,7 +236,7 @@ test("diagramme : rattaché au catalogue, au rendu, à l'en-tête et à la fiche
   assert.match(html, /aria-label="Agrégation"/);
   assert.deepEqual(W.SPORT_MEASURES.map((m) => m.value), ["count", "total", "moving", "distance", "elevation"]);
   assert.deepEqual(W.SPORT_BUCKETS.map((b) => b.value), ["day", "week", "month"]);
-  assert.deepEqual({ ...W.sportChartSpec(undefined), columns: undefined }, { columns: undefined, sports: [], period: "365", from: "", to: "", days: 30, measure: "total", bucket: "week" });
+  assert.deepEqual({ ...W.sportChartSpec(undefined), columns: undefined }, { columns: undefined, sports: [], period: "365", from: "", to: "", days: 30, measure: "total", bucket: "week", view: "stack", mean: true, year: "" });
 });
 
 test("semaines ISO : lundi, numéro, années à 53 semaines", () => {
@@ -366,4 +367,114 @@ test("route serveur : lecture seule, session du propriétaire, URL jamais renvoy
   assert.match(source, /json\(\{ ok: true, data: \{ activities, readAt: new Date\(\)\.toISOString\(\) \} \}\)/);
   assert.doesNotMatch(source, /detail: [^}]*\burl\b/);
   assert.doesNotMatch(source, /docs\.google\.com|output=csv/, "aucune URL de source dans le code");
+});
+
+// --- Graphiques sport natifs (#590) ---
+
+const MIG = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacySportOs360Widget, migrateLegacyMiniGanttData };`)();
+const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≠ ${b}`);
+
+test("vues : sélecteur d'en-tête et fiche, réglages par défaut et invalides", () => {
+  assert.deepEqual(W.SPORT_VIEWS.map((v) => v.value), ["stack", "series", "cumul", "waffle", "calendar"]);
+  assert.match(html, /aria-label="Visualisation"/);
+  assert.match(html, /<label>Visualisation<\/label>/);
+  assert.match(html, /aria-label="Année"/);
+  const spec = W.sportChartSpec({ sport: { view: "radar", mean: false, year: "26" } });
+  assert.equal(spec.view, "stack");
+  assert.equal(spec.mean, false);
+  assert.equal(spec.year, "");
+  assert.equal(W.sportChartSpec({ sport: { view: "calendar", year: "2025" } }).year, "2025");
+});
+
+test("série temporelle : total par période, moyenne périodique, rien après aujourd'hui", () => {
+  const rows = W.sportRows(payload);
+  const order = W.sportNames(rows).map((s) => s.name);
+  const spec = (patch) => ({ sports: [], period: "custom", from: "2026-09-28", to: "2026-10-04", measure: "total", bucket: "day", ...patch });
+  const day = W.sportTimeSeries(rows, spec(), "2026-10-01", order);
+  assert.deepEqual(day.points.map((p) => p.key), ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01"], "jours à venir ni tracés ni comptés");
+  assert.deepEqual(day.points.map((p) => p.value), [0.75, 0, 1, 1234.5 / 60]);
+  for (const p of day.points) close(p.mean, (0.75 + 0 + 1 + 1234.5 / 60) / 4);
+  assert.equal(day.meanLabel, "semaine");
+  assert.equal(W.sportMeanKey("2026-09-30", "day"), "2026-09-28");
+  assert.equal(W.sportMeanKey("2026-09-28", "week"), "2026-10", "semaine du jeudi 1er octobre");
+  assert.equal(W.sportMeanKey("2026-08-31", "week"), "2026-09");
+  assert.equal(W.sportMeanKey("2026-10", "month"), "2026");
+  const km = W.sportTimeSeries(rows, spec({ measure: "distance", sports: ["Course à pied"] }), "2026-10-01", order);
+  assert.deepEqual(km.points.map((p) => p.value), [8.5, 0, 0, 10]);
+  assert.equal(km.unit, "km");
+});
+
+test("cumul empilé : somme courante par sport, jusqu'à aujourd'hui", () => {
+  const rows = W.sportRows(payload);
+  const order = W.sportNames(rows).map((s) => s.name);
+  const cumul = W.sportCumulSeries(rows, { sports: [], period: "custom", from: "2026-09-28", to: "2026-10-04", measure: "total", bucket: "day" }, "2026-10-01", order);
+  assert.deepEqual(cumul.buckets.map((b) => b.key), ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01"]);
+  assert.deepEqual(cumul.buckets.map((b) => b.values.CrossFit), [0, 0, 1, 1]);
+  close(cumul.buckets.at(-1).values["Course à pied"], (45 + 1234.5) / 60);
+  close(cumul.buckets.at(-1).total, (45 + 1234.5 + 60) / 60);
+  assert.deepEqual(cumul.sports.map((s) => s.name), ["Course à pied", "CrossFit"], "légende : totaux de la période");
+});
+
+test("répartition : 1 carré = 1 heure, dernier carré partiel, durées manquantes signalées", () => {
+  const rows = [...W.sportRows(payload), { id: "z", date: "2026-09-29", sport: "Yoga", title: "", total: null }];
+  const order = W.sportNames(rows).map((s) => s.name);
+  const w = W.sportWaffle(rows, { sports: [], period: "all" }, "2026-10-01", order);
+  assert.deepEqual(w.sports.map((s) => [s.name, s.cells]), [["Course à pied", 22], ["Vélo", 2], ["CrossFit", 1]]);
+  close(w.sports[0].last, (45 + 1234.5) / 60 - 21);
+  assert.equal(w.sports[1].last, 0.5);
+  assert.equal(w.sports[2].last, 1, "heure pleine : carré plein");
+  close(w.total, (45 + 1234.5 + 60 + 90) / 60);
+  assert.equal(w.missing, 1);
+  assert.equal(w.tooMany, false);
+  assert.equal(w.sports.find((s) => s.name === "Vélo").color, W.sportColor("Vélo", order));
+  assert.equal(W.sportWaffle(rows, { sports: [], period: "week" }, "2026-10-01", order).sports.length, 2, "filtre de période");
+  assert.equal(W.SPORT_WAFFLE_MAX, 2000);
+});
+
+test("calendrier annuel : une case par jour, lundi en haut, sport dominant, teinte selon la durée", () => {
+  const rows = W.sportRows(payload);
+  const order = W.sportNames(rows).map((s) => s.name);
+  const cal = W.sportCalendar(rows, { sports: [] }, "2026", order);
+  assert.equal(cal.days.length, 365);
+  assert.deepEqual([cal.days[0].date, cal.days[0].week, cal.days[0].dow], ["2026-01-01", 0, 3], "1er janvier 2026 : un jeudi");
+  assert.equal(cal.weeks, 53);
+  assert.deepEqual(cal.months.map((m) => m.week).slice(0, 2), [0, 4]);
+  assert.equal(cal.months.length, 12);
+  assert.equal(cal.activeDays, 3);
+  assert.equal(cal.count, 3, "l'activité de 2025 n'est pas comptée");
+  const sept28 = cal.days.find((d) => d.date === "2026-09-28");
+  assert.deepEqual([sept28.dow, sept28.main, sept28.color], [0, "Course à pied", W.SPORT_PALETTE[0]]);
+  assert.equal(cal.days.find((d) => d.date === "2026-10-01").shade, 1, "pleine dès 2 h");
+  assert.deepEqual(cal.sports.map((s) => [s.name, s.days]), [["Course à pied", 2], ["CrossFit", 1]]);
+  assert.equal(W.sportCalendar(rows, { sports: ["CrossFit"] }, "2026", order).activeDays, 1);
+  assert.equal(W.sportCalendar(rows, { sports: [] }, "2024", order).days.length, 366, "année bissextile");
+  assert.deepEqual(W.sportYears(rows, "2026-10-01"), ["2026", "2025"]);
+  assert.equal(W.sportCalendarShade(0, 0), 0);
+  assert.equal(W.sportCalendarShade(0, 1), 0.35, "séance sans durée : visible");
+  assert.equal(W.sportCalendarShade(240, 1), 1);
+  // Jour à deux sports : le plus long l'emporte.
+  const mixed = W.sportCalendar([...rows, { id: "m", date: "2026-09-28", sport: "CrossFit", title: "", total: 60 }], { sports: [] }, "2026", order);
+  assert.equal(mixed.days.find((d) => d.date === "2026-09-28").main, "CrossFit");
+});
+
+test("migration : le Graphique sport (OS360) devient le Graphique sport natif équivalent", () => {
+  const m = (os360, extra = {}) => MIG.migrateLegacySportOs360Widget({ id: "w1", type: "sportOs360Chart", title: "Mon sport", x: 3, ...(os360 ? { os360 } : {}), ...extra });
+  const def = m();
+  assert.deepEqual([def.id, def.type, def.title, def.x], ["w1", "sportChart", "Mon sport", 3], "identité et champs inconnus conservés");
+  assert.deepEqual([def.sport.view, def.sport.bucket, def.sport.period, def.sport.measure], ["stack", "week", "365", "total"], "défaut OS360 : sport par semaine");
+  assert.equal(m({ type: "health.timeSeries", config: { financeVariant: "health.sportWeekly" } }).sport.view, "stack");
+  assert.deepEqual([m({ type: "health.sportWaffle", config: { range: 90 } }).sport.view, m({ type: "health.sportWaffle", config: { range: 90 } }).sport.period], ["waffle", "90"]);
+  const summary = m({ type: "health.summarySeries", config: { range: 180 } }).sport;
+  assert.deepEqual([summary.view, summary.mean, summary.bucket, summary.period, summary.days], ["series", true, "day", "rolling", 180]);
+  assert.equal(m({ type: "health.line" }).sport.mean, false, "série seule, sans moyenne");
+  assert.equal(m({ type: "health.cumulative" }).sport.view, "cumul");
+  assert.equal(m({ type: "health.stacked", config: { cumulative: true } }).sport.view, "cumul");
+  assert.deepEqual([m({ type: "health.sportCalendar", config: { year: 2025 } }).sport.view, m({ type: "health.sportCalendar", config: { year: 2025 } }).sport.year], ["calendar", "2025"]);
+  assert.equal(m({ type: "health.rings" }).sport.view, "stack", "sans équivalent : barres empilées");
+  assert.deepEqual(m({ type: "health.sportWaffle" }).os360, { type: "health.sportWaffle" }, "réglage OS360 conservé");
+  assert.equal(W.sportChartSpec(m({ type: "health.summarySeries", config: { range: 180 } })).view, "series", "lu par le widget natif");
+  const other = { id: "w2", type: "sportChart", sport: { view: "waffle" } };
+  assert.equal(MIG.migrateLegacySportOs360Widget(other), other, "autres widgets intacts");
+  const data = MIG.migrateLegacyMiniGanttData({ d1: { widgets: [{ id: "a", type: "sportOs360Chart" }, { id: "b", type: "sportChart" }] } });
+  assert.deepEqual(data.d1.widgets.map((w) => w.type), ["sportChart", "sportChart"], "migration à la lecture des tableaux de bord");
 });
