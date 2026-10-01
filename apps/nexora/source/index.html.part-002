@@ -4813,7 +4813,7 @@ function pixelTaskVisibleGroups(items, fullGroups, opts, groupBy, ctx, packageBy
   });
 }
 
-/* Saisie rapide (#557) : « titre !jalon @Nom >ven ». Renvoie le titre
+/* Saisie rapide (#557, #567) : « titre !jalon @Nom >ven ~2h ». Renvoie le titre
    nettoyé et ce que la syntaxe courte fixe ; date = jour affiché à défaut.
    @Nom : membre de l'équipe dont le nom commence par le texte (accents et
    casse ignorés ; le nom le plus long l'emporte), sinon le mot tel quel.
@@ -4846,10 +4846,25 @@ function pixelTaskQuickDate(token, dayIso) {
   }
   return null;
 }
+/* Durée (#567) : « 2h », « 1h30 », « 1,5h », « 45m », « 45min », « 90 ».
+   Nombre seul : heures jusqu'à 12, minutes au-delà. Renvoie des minutes
+   (entières, > 0, au plus 24 h) ou null. */
+function pixelTaskParseDuration(token) {
+  const t = String(token || "").trim().toLowerCase().replace(",", ".");
+  let m = /^(\d+(?:\.\d+)?)\s*h(?:\s*(\d{1,2})\s*(?:m|min)?)?$/.exec(t);
+  let min = null;
+  if (m) min = Number(m[1]) * 60 + (m[2] ? Number(m[2]) : 0);
+  else if ((m = /^(\d+)\s*(?:m|mn|min)$/.exec(t))) min = Number(m[1]);
+  else if ((m = /^(\d+(?:\.\d+)?)$/.exec(t))) min = Number(m[1]) <= 12 ? Number(m[1]) * 60 : Number(m[1]);
+  if (min == null || !Number.isFinite(min)) return null;
+  min = Math.round(min);
+  return min > 0 && min <= 24 * 60 ? min : null;
+}
 function pixelTaskParseQuickAdd(text, dayIso, teamMembers) {
   let rest = " " + String(text || "") + " ";
-  const out = { title: "", milestone: false, assignee: "", date: dayIso };
+  const out = { title: "", milestone: false, assignee: "", date: dayIso, estimate: 0 };
   rest = rest.replace(/\s!(jalon|j)(?=\s)/gi, () => { out.milestone = true; return " "; });
+  rest = rest.replace(/\s~(\S+)(?=\s)/g, (all, tok) => { const d = pixelTaskParseDuration(tok); if (!d) return all; out.estimate = d; return " "; });
   rest = rest.replace(/\s>(\S+)(?=\s)/g, (all, tok) => { const d = pixelTaskQuickDate(tok, dayIso); if (!d) return all; out.date = d; return " "; });
   const at = rest.indexOf(" @");
   if (at !== -1) {
@@ -12513,6 +12528,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
     if (computed && computed !== statusId) setStatusId(computed);
   }, [isGoogleCalendarTask, projectId, start, end, milestone, statuses, projects]);
   const [progress, setProgress] = useState(base.progress ?? 0);
+  // Estimation (#561, #567) : minutes, 0 = aucune. Lue par la jauge de charge de Pixel Tasks.
+  const [estimate, setEstimate] = useState(() => pixelTaskEstimate(base));
   const [desc, setDesc] = useState(base.desc || "");
   const [descPreview, setDescPreview] = useState(true);
   const [writingMode, setWritingMode] = useState(false);
@@ -12591,7 +12608,7 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
   };
 
   // Détecter si des modifications ont été faites depuis l'ouverture
-  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
+  const hasChanged = isNew || title !== (base.title || "") || projectId !== (base.projectId || projects[0]?.id || "") || statusId !== (base.statusId || statuses[0]?.id || "") || taskTypeId !== (base.taskTypeId || taskTypes[0]?.id || "") || milestone !== (base.milestone || false) || start !== (base.start || iso(new Date())) || end !== (base.end || addDays(iso(new Date()), 5)) || progress !== (base.progress ?? 0) || estimate !== pixelTaskEstimate(base) || desc !== (base.desc || "") || assignee !== (base.assignee || "") || JSON.stringify(checklist) !== JSON.stringify(base.checklist || []) || JSON.stringify(dependsOn) !== JSON.stringify(base.dependsOn || []) || JSON.stringify(recurrence) !== JSON.stringify(base.recurrence || null) || JSON.stringify(attachments) !== JSON.stringify(base.attachments || []) || JSON.stringify(metaBlock) !== JSON.stringify(base.metaBlock && base.metaBlock.enabled ? base.metaBlock : null) || JSON.stringify(delayRisks) !== JSON.stringify(base.delayRisks || []) || JSON.stringify(normalizeTaskComparison(comparison)) !== JSON.stringify(normalizeTaskComparison(base.comparison)) || normalizeTaskFrameIcon(ganttFrameIcon) !== normalizeTaskFrameIcon(base.ganttFrameIcon);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -12764,6 +12781,8 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
         return times.startTime || base.startTime || base.endTime ? times : {};
       })(),
       progress,
+      // Une tâche jamais estimée ne gagne pas de champ ; null efface une estimation.
+      ...(estimate ? { estimateMinutes: estimate } : base.estimateMinutes != null ? { estimateMinutes: null } : {}),
       desc,
       // Jamais effacé par un changement de type : le champ n'est qu'ATTÉNUÉ
       // hors des tâches « Réunion » (visible seulement là), comme customFields
@@ -13457,6 +13476,13 @@ function TaskModal({ task, defaults, projects, dashboards, statuses, taskTypes, 
       {activeTab === "main" && (
       <>
       <div className="lp-field"><label>Avancement — {progress}%</label><input type="range" min="0" max="100" value={progress} onChange={(e) => setProgress(Number(e.target.value))} className="lp-gradient-slider" style={{ width: "100%", background: sliderGradientBg(progress, statuses.find((s) => s.id === statusId)?.color) }} /></div>
+      <div className="lp-field lp-task-estimate">
+        <label htmlFor="lp-task-estimate">Estimation <span style={{ fontWeight: 400, color: "var(--text-600)", fontSize: 11 }}>(temps de travail prévu — jauge de charge de Pixel Tasks)</span></label>
+        <select id="lp-task-estimate" value={String(estimate)} onChange={(e) => setEstimate(Number(e.target.value))}>
+          <option value="0">Aucune</option>
+          {(PIXEL_TASKS_ESTIMATES.includes(estimate) || !estimate ? PIXEL_TASKS_ESTIMATES : [...PIXEL_TASKS_ESTIMATES, estimate].sort((a, b) => a - b)).map((m) => <option key={m} value={String(m)}>{pixelTaskMinutesLabel(m)}</option>)}
+        </select>
+      </div>
       <div className="lp-field">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
           <label style={{ margin: 0 }}>Description <span style={{ fontWeight: 400, color: "var(--text-600)", fontSize: 11 }}>(Markdown pris en charge)</span></label>

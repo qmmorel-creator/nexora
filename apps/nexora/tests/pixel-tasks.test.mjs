@@ -22,7 +22,7 @@ const P = vm.runInThisContext(
     pixelTaskDate, pixelTaskIsDone, pixelTasksForDay, pixelTaskGroupsFor, pixelTasksSquareSize, PIXEL_TASKS_GROUP_BY, PIXEL_TASKS_PACKAGE_BY, pixelTaskRingValue, pixelTaskOutlinePath, PIXEL_TASKS_FUTURE_WINDOWS,
     PIXEL_TASKS_SUB_BY, pixelTaskSpectrum, pixelTaskBud, pixelTaskVisibleGroups,
     pixelTaskParseQuickAdd, pixelTaskReschedule, pixelTaskNextMonday, pixelTaskMatches, pixelTaskFilterActive,
-    pixelTaskLoad, pixelTaskOverflowCandidates, pixelTaskMinutesLabel, pixelTaskClosureList, pixelTaskCapacityFor, pixelTaskCapacityDates,
+    pixelTaskLoad, pixelTaskOverflowCandidates, pixelTaskMinutesLabel, pixelTaskClosureList, pixelTaskCapacityFor, pixelTaskCapacityDates, pixelTaskParseDuration,
   };\n})`
 )();
 
@@ -254,9 +254,9 @@ test("pixelTaskVisibleGroups : terminées masquées, compteurs de la journée co
 test("pixelTaskParseQuickAdd : titre, !jalon, @responsable, >date (#557)", () => {
   const team = [{ name: "Carla" }, { name: "Quentin Morel" }, { name: "Quentin" }];
   const d = "2026-09-30";
-  assert.deepEqual(P.pixelTaskParseQuickAdd("Relancer Maia", d, team), { title: "Relancer Maia", milestone: false, assignee: "", date: d });
+  assert.deepEqual(P.pixelTaskParseQuickAdd("Relancer Maia", d, team), { title: "Relancer Maia", milestone: false, assignee: "", date: d, estimate: 0 });
   const a = P.pixelTaskParseQuickAdd("Relancer Maia @quentin morel >ven !jalon", d, team);
-  assert.deepEqual(a, { title: "Relancer Maia", milestone: true, assignee: "Quentin Morel", date: "2026-10-02" });
+  assert.deepEqual(a, { title: "Relancer Maia", milestone: true, assignee: "Quentin Morel", date: "2026-10-02", estimate: 0 });
   assert.equal(P.pixelTaskParseQuickAdd("x @Cârla", d, team).assignee, "Carla");
   assert.equal(P.pixelTaskParseQuickAdd("x @Inconnu suite", d, team).assignee, "Inconnu");
   assert.equal(P.pixelTaskParseQuickAdd("x @Inconnu suite", d, team).title, "x suite");
@@ -347,4 +347,29 @@ test("pixelTaskVisibleGroups : filtre keep (#560, #563), compteurs conservés", 
   const full = P.pixelTaskGroupsFor(d.items, "project", ctx, "none", "none");
   const vis = P.pixelTaskVisibleGroups(d.items, full, { keep: (i) => i.task.focus !== true }, "project", ctx, "none", "none");
   assert.deepEqual(vis.map((g) => [g.items.map((i) => i.task.id), g.done, g.total]), [[["b"], 0, 2]]);
+});
+
+test("pixelTaskParseDuration et syntaxe ~ de la saisie rapide (#567)", () => {
+  const D = P.pixelTaskParseDuration;
+  assert.equal(D("2h"), 120);
+  assert.equal(D("1h30"), 90);
+  assert.equal(D("1h30m"), 90);
+  assert.equal(D("1,5h"), 90);
+  assert.equal(D("1.5H"), 90);
+  assert.equal(D("45m"), 45);
+  assert.equal(D("45min"), 45);
+  assert.equal(D("2"), 120, "nombre seul ≤ 12 : heures");
+  assert.equal(D("90"), 90, "nombre seul > 12 : minutes");
+  assert.equal(D("0h"), null);
+  assert.equal(D("25h"), null);
+  assert.equal(D("abc"), null);
+  const d = "2026-09-30";
+  const q = P.pixelTaskParseQuickAdd("Rapport CNR ~1h30 >ven", d, []);
+  assert.equal(q.title, "Rapport CNR");
+  assert.equal(q.estimate, 90);
+  assert.equal(q.date, "2026-10-02");
+  // « ~ » non reconnu : reste dans le titre, pas d'estimation.
+  const r = P.pixelTaskParseQuickAdd("Voir ~demain", d, []);
+  assert.equal(r.title, "Voir ~demain");
+  assert.equal(r.estimate, 0);
 });
