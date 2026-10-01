@@ -40,7 +40,7 @@ function unique(texte, motif, quoi) {
 }
 
 // Noms du module OS360 dont dépend moteur.js : déclarés au niveau du module.
-const NOMS = ["Z9", "X9", "\\$9", "W9", "lCe", "ul", "gl", "Fc", "osBudgetCategoryColors", "osTabNode", "osSidebarSettings", "D", "nl", "rl"];
+const NOMS = ["Z9", "X9", "\\$9", "W9", "lCe", "ul", "gl", "Fc", "osBudgetCategoryColors", "osTabNode", "osSidebarSettings", "D", "nl", "rl", "osChangeConfig"];
 const debutModule = html.indexOf('<script type="module"');
 const finModule = html.indexOf("</script>", debutModule);
 if (debutModule < 0 || finModule < 0) throw new Error("Module OS360 introuvable.");

@@ -136,7 +136,9 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const EXPORTS = ["SPORT_COLUMNS", "SPORT_DEFAULT_COLUMNS", "SPORT_PERIODS", "sportSpec", "sportPeriodRange", "sportRows", "sportAllColumns", "sportNames", "sportFilter", "sportText", "sportSearch", "sportSort", "sportCsv"];
+const EXPORTS = ["SPORT_COLUMNS", "SPORT_DEFAULT_COLUMNS", "SPORT_PERIODS", "sportSpec", "sportPeriodRange", "sportRows", "sportAllColumns", "sportNames", "sportFilter", "sportText", "sportSearch", "sportSort", "sportCsv",
+  "SPORT_MEASURES", "SPORT_BUCKETS", "SPORT_PALETTE", "SPORT_MAX_BUCKETS", "sportChartSpec", "sportMeasureValue", "sportBucketKey", "sportIsoWeek", "sportBucketLabel", "sportStackSeries", "sportNiceTicks", "sportFormatValue",
+  "SPORT_CARD_MEASURES", "SPORT_AGGS", "sportDays", "sportBlockSpec", "sportAggregate", "sportBlockLabel"];
 const W = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n;return { ${EXPORTS.join(", ")} };\n})`)();
 
 const payload = {
@@ -220,6 +222,133 @@ test("affichage et CSV pour Excel : virgule décimale, « ; », guillemets", () 
   assert.equal(csv[1], '2026-09-28;"Footing; léger";45;8,5');
   assert.equal(csv[2], '2026-09-30;"WOD ""Fran""";60;');
   assert.equal(csv[3], "2026-10-01;Fractionné;1234,5;10");
+});
+
+// --- Diagramme empilé par sport (#579) ---
+
+test("diagramme : rattaché au catalogue, au rendu, à l'en-tête et à la fiche", () => {
+  assert.match(html, /key: "sportChart", label: "Sport par activité \(barres empilées\)"/);
+  assert.match(html, /w\.type === "sportChart" && \(\s*<WidgetSportChart widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "sportChart"/);
+  assert.match(html, /if \(type === "sportChart"\) data\.sport = \{ \.\.\.sportChartConfig \};/);
+  assert.match(html, /aria-label="Mesure"/);
+  assert.match(html, /aria-label="Agrégation"/);
+  assert.deepEqual(W.SPORT_MEASURES.map((m) => m.value), ["count", "total", "moving", "distance", "elevation"]);
+  assert.deepEqual(W.SPORT_BUCKETS.map((b) => b.value), ["day", "week", "month"]);
+  assert.deepEqual({ ...W.sportChartSpec(undefined), columns: undefined }, { columns: undefined, sports: [], period: "365", from: "", to: "", days: 30, measure: "total", bucket: "week" });
+});
+
+test("semaines ISO : lundi, numéro, années à 53 semaines", () => {
+  assert.equal(W.sportBucketKey("2026-10-01", "week"), "2026-09-28");
+  assert.equal(W.sportBucketKey("2026-10-04", "week"), "2026-09-28", "dimanche → lundi précédent");
+  assert.equal(W.sportBucketKey("2026-09-28", "week"), "2026-09-28");
+  assert.equal(W.sportBucketKey("2026-10-01", "month"), "2026-10");
+  assert.equal(W.sportBucketKey("2026-10-01", "day"), "2026-10-01");
+  assert.deepEqual(W.sportIsoWeek("2026-09-28"), { year: 2026, week: 40 });
+  assert.deepEqual(W.sportIsoWeek("2020-12-28"), { year: 2020, week: 53 });
+  assert.deepEqual(W.sportIsoWeek("2021-01-04"), { year: 2021, week: 1 });
+  assert.deepEqual(W.sportIsoWeek("2024-12-30"), { year: 2025, week: 1 });
+  assert.deepEqual(W.sportIsoWeek("2026-01-05"), { year: 2026, week: 2 });
+  assert.deepEqual(W.sportIsoWeek("2025-12-29"), { year: 2026, week: 1 });
+  assert.equal(W.sportBucketLabel("2024-12-30", "week"), "S01 2025");
+  assert.equal(W.sportBucketLabel("2026-09", "month"), "sept. 2026");
+  assert.equal(W.sportBucketLabel("2026-09-03", "day"), "03/09/2026");
+});
+
+test("séries : piles par sport, périodes vides remplies, heures, valeurs manquantes signalées", () => {
+  const rows = W.sportRows(payload);
+  const order = W.sportNames(rows).map((s) => s.name);
+  const spec = (patch) => ({ sports: [], period: "custom", from: "2026-09-21", to: "2026-10-04", measure: "total", bucket: "week", ...patch });
+  const week = W.sportStackSeries(rows, spec(), "2026-10-01", order);
+  assert.deepEqual(week.buckets.map((b) => b.key), ["2026-09-21", "2026-09-28"], "semaine vide gardée");
+  assert.equal(week.buckets[0].total, 0);
+  assert.deepEqual(week.buckets[1].values, { "Course à pied": (45 + 1234.5) / 60, CrossFit: 1 });
+  assert.equal(week.unit, "h");
+  assert.deepEqual(week.sports.map((s) => s.name), ["Course à pied", "CrossFit"]);
+  assert.deepEqual(week.sports.map((s) => s.color), [W.SPORT_PALETTE[0], W.SPORT_PALETTE[1]]);
+
+  const moving = W.sportStackSeries(rows, spec({ measure: "moving" }), "2026-10-01", order);
+  assert.equal(moving.missing, 1, "CrossFit sans durée en mouvement");
+  assert.deepEqual(moving.sports.map((s) => s.name), ["Course à pied"]);
+
+  const count = W.sportStackSeries(rows, spec({ measure: "count", bucket: "day", from: "2026-09-28", to: "2026-10-01" }), "2026-10-01", order);
+  assert.deepEqual(count.buckets.map((b) => [b.key, b.total]), [["2026-09-28", 1], ["2026-09-29", 0], ["2026-09-30", 1], ["2026-10-01", 1]]);
+
+  const month = W.sportStackSeries(rows, spec({ measure: "elevation", bucket: "month", period: "all" }), "2026-10-01", order);
+  assert.equal(month.buckets[0].key, "2025-12");
+  assert.equal(month.buckets.at(-1).key, "2026-10", "jusqu'à aujourd'hui");
+  assert.equal(month.buckets.length, 11);
+  assert.equal(month.buckets[0].values["Vélo"], 400);
+  assert.equal(month.sports.find((s) => s.name === "Vélo").color, W.SPORT_PALETTE[2], "couleur stable, même filtrée");
+
+  const filtered = W.sportStackSeries(rows, spec({ sports: ["Vélo"], period: "all", bucket: "month" }), "2026-10-01", order);
+  assert.deepEqual(filtered.sports.map((s) => [s.name, s.color]), [["Vélo", W.SPORT_PALETTE[2]]]);
+
+  const many = W.sportStackSeries(rows, spec({ period: "custom", from: "2000-01-01", to: "2026-10-01", bucket: "day" }), "2026-10-01", order);
+  assert.equal(many.tooMany, true);
+  assert.equal(many.buckets.length, W.SPORT_MAX_BUCKETS);
+});
+
+test("axe et formats", () => {
+  assert.deepEqual(W.sportNiceTicks(0), [0, 1]);
+  assert.deepEqual(W.sportNiceTicks(9.3), [0, 2, 4, 6, 8, 10]);
+  assert.deepEqual(W.sportNiceTicks(100), [0, 20, 40, 60, 80, 100]);
+  assert.deepEqual(W.sportNiceTicks(12), [0, 2.5, 5, 7.5, 10, 12.5]);
+  assert.equal(W.sportFormatValue(1, "séances"), "1 séance");
+  assert.equal(W.sportFormatValue(3, "séances"), "3 séances");
+  assert.equal(W.sportFormatValue(1.256, "h"), "1,26 h");
+  assert.equal(W.sportFormatValue(1234.56, "km"), "1 234,6 km");
+  assert.equal(W.sportFormatValue(2100.4, "m"), "2 100 m");
+});
+
+// --- Bloc de carte « Total sport » (#580) ---
+
+test("bloc de carte : type, icône, valeur, libellé, éditeur, validité sans tâche", () => {
+  assert.match(html, /\{ key:"sportAggregate", label:"Total sport" \}/);
+  assert.match(html, /sportAggregate:"tabler:run"/);
+  assert.match(html, /if \(b\.kind==="sportAggregate"\) return <SportAggregateValue block=\{b\} \/>;/);
+  assert.match(html, /if \(b\.kind==="sportAggregate"\) return sportBlockLabel\(b\);/);
+  assert.match(html, /b\.kind === "sportAggregate" && \(\s*<SportBlockEditor block=\{b\}/);
+  // Passer un bloc en « Total sport » : libellé automatique et icône sport, pas ceux de l'ancien type.
+  assert.match(html, /\.\.\.\(e\.target\.value==="sportAggregate" \? \{label:"",icon:CUSTOM_CARD_DEFAULT_ICONS\.sportAggregate\} : \{\}\)/);
+  // Ni l'avertissement « aucune tâche de référence » ni le refus d'enregistrer pour ce bloc.
+  assert.equal(html.split('["aggregate","staticText","daysRemaining","sportAggregate"].includes(b.kind)').length - 1, 2);
+  assert.doesNotMatch(html, /\["aggregate","staticText","daysRemaining"\]\.includes/);
+  // La lecture du journal ne se fait que dans le composant du bloc, pas dans la carte.
+  assert.match(html, /function SportAggregateValue\(\{ block \}\) \{\n  const \{ rows, error \} = useSportData\(\);/);
+});
+
+test("bloc de carte : réglages par défaut et période glissante libre", () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(W.sportBlockSpec({}))), { sports: [], period: "month", from: "", to: "", days: 30, measure: "total", agg: "sum" });
+  assert.equal(W.sportBlockSpec({ sportMeasure: "inconnue", sportAgg: "x" }).measure, "total");
+  assert.equal(W.sportDays("abc"), 30);
+  assert.equal(W.sportDays(0), 30);
+  assert.equal(W.sportDays(12.4), 12);
+  assert.equal(W.sportDays(99999), 3660);
+  assert.deepEqual(W.sportPeriodRange({ period: "rolling", days: 3 }, "2026-10-01"), { from: "2026-09-29", to: "2026-10-01" });
+  assert.equal(W.sportSpec({ sport: { period: "rolling", days: "14" } }).days, 14);
+  assert.equal(W.sportBlockLabel({ sportMeasure: "distance", sportAgg: "max" }), "Distance · maximum");
+  assert.deepEqual(W.SPORT_AGGS.map((a) => a.value), ["sum", "avg", "max", "min", "count"]);
+  assert.deepEqual(W.SPORT_CARD_MEASURES.map((m) => m.value), ["count", "total", "moving", "distance", "elevation", "hr", "maxHr"]);
+});
+
+test("bloc de carte : somme, moyenne, extrêmes, nombre ; FC pondérée par la durée comme OS360", () => {
+  const rows = W.sportRows(payload);
+  const today = "2026-10-01";
+  const agg = (b) => W.sportAggregate(rows, W.sportBlockSpec({ sportPeriod: "all", ...b }), today);
+  assert.deepEqual(agg({}), { value: (45 + 60 + 1234.5 + 90) / 60, unit: "h", activities: 4 });
+  assert.deepEqual(agg({ sportMeasure: "count" }), { value: 4, unit: "séances", activities: 4 });
+  assert.deepEqual(agg({ sportMeasure: "moving", sportAgg: "count" }), { value: 3, unit: "séances", activities: 4 }, "valeurs renseignées seulement");
+  assert.equal(agg({ sportMeasure: "distance", sportAgg: "avg" }).value, (8.5 + 10 + 30) / 3);
+  assert.equal(agg({ sportMeasure: "elevation", sportAgg: "max" }).value, 400);
+  assert.equal(agg({ sportMeasure: "elevation", sportAgg: "min" }).value, 20);
+  assert.equal(agg({ sportMeasure: "hr", sportAgg: "avg" }).value, (140 * 45 + 130 * 60 + 120 * 90) / (45 + 60 + 90));
+  assert.equal(agg({ sportMeasure: "maxHr", sportAgg: "max" }).unit, "bpm");
+  assert.deepEqual(agg({ sportSports: ["CrossFit"], sportMeasure: "distance" }), { value: null, unit: "km", activities: 1 }, "aucune valeur : vide, jamais 0");
+  assert.equal(agg({ sportPeriod: "week", sportSports: ["Course à pied"], sportMeasure: "distance" }).value, 18.5);
+  assert.equal(agg({ sportPeriod: "rolling", sportDays: 2, sportMeasure: "count" }).value, 2);
+  assert.equal(agg({ sportPeriod: "custom", sportFrom: "2025-01-01", sportTo: "2025-12-31", sportMeasure: "elevation" }).value, 400);
+  assert.equal(W.sportFormatValue(141.7, "bpm"), "142 bpm");
 });
 
 // --- 3. Route serveur -----------------------------------------------------

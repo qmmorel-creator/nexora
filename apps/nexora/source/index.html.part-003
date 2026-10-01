@@ -1960,6 +1960,8 @@ const CUSTOM_CARD_BLOCK_TYPES = [
   { key:"staticText", label:"Texte libre" },
   // #140 : reprend l'ancien widget « Compte à rebours » comme bloc.
   { key:"daysRemaining", label:"Jours restants" },
+  // #580 : total sport, sur le journal « Activités Strava » (pas sur les tâches).
+  { key:"sportAggregate", label:"Total sport" },
 ];
 
 const CUSTOM_CARD_DEFAULT_ICONS = {
@@ -1974,6 +1976,7 @@ const CUSTOM_CARD_DEFAULT_ICONS = {
   description:"tabler:align-left",
   staticText:"tabler:text-size",
   daysRemaining:"tabler:hourglass",
+  sportAggregate:"tabler:run",
 };
 
 const customCardDefaultBlocks = () => ([
@@ -2150,6 +2153,8 @@ function defaultLayoutForType(type) {
   if (type === "financeTransactions") return { w: 12, h: 9 };
   if (type === "financeOs360Chart") return { w: 8, h: 8 };
   if (type === "sportActivities") return { w: 12, h: 9 };
+  if (type === "sportChart") return { w: 10, h: 7 };
+  if (type === "sportOs360Chart") return { w: 8, h: 8 };
   return { w: 6, h: 4 }; // chart / list / minigantt
 }
 
@@ -3692,7 +3697,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || w.type === "sportActivities"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportOs360Chart"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3761,6 +3766,12 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "sportActivities" && (
                   <WidgetSportActivities widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "sportChart" && (
+                  <WidgetSportChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "sportOs360Chart" && (
+                  <WidgetSportOs360Chart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
                   <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -4367,6 +4378,7 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen, taskBaselines 
   const valueFor = (b) => {
     if (b.kind==="aggregate") return computeKpiValue(tasks || [],b.metric || "count",ctx,taskBaselines);
     if (b.kind==="staticText") return b.text || "—";
+    if (b.kind==="sportAggregate") return <SportAggregateValue block={b} />;
     if (b.kind==="daysRemaining") {
       const { targetDate } = daysRemainingInfo(b);
       if (!targetDate) return "—";
@@ -4387,6 +4399,7 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen, taskBaselines 
 
   const defaultLabel = (b) => {
     if (b.kind==="aggregate") return WIDGET_METRICS.find((m)=>m.key===(b.metric||"count"))?.label || "Agrégation";
+    if (b.kind==="sportAggregate") return sportBlockLabel(b);
     return ({
       taskTitle:"Tâche", project:"Projet", status:"Statut", start:"Début", end:"Fin",
       assignee:"Responsable", progress:"Avancement", description:"Description", staticText:"",
@@ -4396,7 +4409,7 @@ function WidgetCustomCard({ widget, tasks, allTasks, ctx, onOpen, taskBaselines 
 
   return (
     <div className={"lp-custom-card surface-"+cardSurface} style={{"--custom-card-cols":columns,...cardShellStyle}}>
-      {!refTask && blocks.some((b)=>!["aggregate","staticText","daysRemaining"].includes(b.kind)) && (
+      {!refTask && blocks.some((b)=>!["aggregate","staticText","daysRemaining","sportAggregate"].includes(b.kind)) && (
         <div className="lp-custom-card-warning">Aucune tâche de référence disponible pour les blocs individuels.</div>
       )}
       <div className="lp-custom-card-grid">
@@ -17092,6 +17105,8 @@ const WIDGET_TYPE_META = [
   { key: "financeOs360Chart", label: "Graphique financier (OS360)", icon: BarChart3, group: "Suivi" },
   // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
+  { key: "sportChart", label: "Sport par activité (barres empilées)", icon: BarChart3, group: "Suivi" },
+  { key: "sportOs360Chart", label: "Graphique sport (OS360)", icon: Activity, group: "Suivi" },
 ];
 
 // Champs de filtre de tâches réutilisables — mêmes réglages (projets, statuts,
@@ -17497,6 +17512,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [sankeyConfig, setSankeyConfig] = useState({ ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(widget?.sankeyConfig || {}) });
   const [txColumns, setTxColumns] = useState(Array.isArray(widget?.txColumns) && widget.txColumns.length ? widget.txColumns : FINANCE_TX_DEFAULT_COLUMNS);
   const [sportConfig, setSportConfig] = useState(() => sportSpec(widget));
+  const [sportChartConfig, setSportChartConfig] = useState(() => sportChartSpec(widget));
   const [titleColor, setTitleColor] = useState(widget?.titleColor || "");
   const [onlyMine, setOnlyMine] = useState(widget?.onlyMine || false);
   const [showAppearance, setShowAppearance] = useState(!!(widget?.titleEmoji || widget?.titleColor || widget?.bandColor || widget?.bgColor));
@@ -17572,7 +17588,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "userProfile") return !!userProfileMember;
     if (type === "customCard") {
       if (!cardBlocks.length) return false;
-      if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText","daysRemaining"].includes(b.kind))) return false;
+      if (cardTaskMode === "fixed" && !cardTaskId && cardBlocks.some((b)=>!["aggregate","staticText","daysRemaining","sportAggregate"].includes(b.kind))) return false;
       return true;
     }
     if (type === "budget") return !!budgetProjectId;
@@ -17632,6 +17648,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (FINANCE_SANKEY_TYPES.includes(type)) data.sankeyConfig = { ...sankeyConfig };
     if (type === "financeTransactions") data.txColumns = txColumns.length ? [...txColumns] : [...FINANCE_TX_DEFAULT_COLUMNS];
     if (type === "sportActivities") data.sport = { ...sportConfig };
+    if (type === "sportChart") data.sport = { ...sportChartConfig };
     if (type === "heatmapGrid") {
       data.heatmapRowField = heatmapRowField;
       data.heatmapColField = heatmapColField;
@@ -18222,7 +18239,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
               <div key={b.id} className="lp-custom-card-block-editor">
                 <div className="lp-custom-card-block-editor-top">
                   <span className="lp-custom-card-block-index">{i+1}</span>
-                  <select value={b.kind} onChange={(e)=>updateCardBlock(b.id,{kind:e.target.value})}>
+                  <select value={b.kind} onChange={(e)=>updateCardBlock(b.id,{kind:e.target.value,...(e.target.value==="sportAggregate" ? {label:"",icon:CUSTOM_CARD_DEFAULT_ICONS.sportAggregate} : {})})}>
                     {CUSTOM_CARD_BLOCK_TYPES.map((o)=><option key={o.key} value={o.key}>{o.label}</option>)}
                   </select>
                   <button type="button" className="lp-icon-btn" disabled={i===0} onClick={()=>moveCardBlock(b.id,-1)} title="Monter"><ChevronUp size={13}/></button>
@@ -18320,6 +18337,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
                 )}
 
 
+
+                {b.kind === "sportAggregate" && (
+                  <SportBlockEditor block={b} onChange={(patch)=>updateCardBlock(b.id,patch)} />
+                )}
 
                 {b.kind === "staticText" && (
                   <div className="lp-field">
@@ -18518,6 +18539,42 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
           <style>{FINANCE_TX_CSS}</style>
           <div className="nx-tx"><FinanceTxColumnPicker columns={sportAllColumns(sportStore.rows)} visible={sportConfig.columns} defaults={SPORT_DEFAULT_COLUMNS} onChange={(keys) => setSportConfig((c) => ({ ...c, columns: keys.length ? keys : SPORT_DEFAULT_COLUMNS }))} /></div>
+        </>
+      )}
+
+      {type === "sportOs360Chart" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Les widgets Santé et Sport d’OS360 (évolution, calendriers sportifs, répartitions, tableaux, analyses…), rendus par
+          le moteur d’OS360 lui-même sur le journal « Activités Strava ». Nexora ne lui envoie que le sport : les métriques
+          Santé (poids, sommeil…) restent vides, seules les séries « Strava » ont des valeurs. Le graphique se choisit dans
+          l’en-tête ; « Options » y ouvre tous ses réglages OS360.
+        </p>
+      )}
+
+      {type === "sportChart" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Une barre par jour, semaine (lundi à dimanche) ou mois, une couleur par sport, sur le journal « Activités Strava ».
+            Mesure, agrégation, sports et période se règlent aussi dans l’en-tête du widget.
+          </p>
+          <div className="lp-field">
+            <label>Mesure</label>
+            <select value={sportChartConfig.measure} onChange={(e) => setSportChartConfig((c) => ({ ...c, measure: e.target.value }))}>
+              {SPORT_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
+          <div className="lp-field">
+            <label>Agrégation</label>
+            <select value={sportChartConfig.bucket} onChange={(e) => setSportChartConfig((c) => ({ ...c, bucket: e.target.value }))}>
+              {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+            </select>
+          </div>
+          <div className="lp-field">
+            <label>Période</label>
+            <select value={sportChartConfig.period} onChange={(e) => setSportChartConfig((c) => ({ ...c, period: e.target.value }))}>
+              {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
         </>
       )}
 
@@ -37195,6 +37252,10 @@ function BudgetCategoriesSettings({ pushToast }) {
 // === NEXORA:OS360-WIDGET:START ===
 const OS360_WIDGET_DEFAULT_TYPE = "budget.chart_donut";
 const OS360_MOTEUR_URL = "/os360-moteur/index.html";
+// Graphique sport (#579) : par défaut, la variante « Sport par semaine »
+// (health.sportWeekly) du groupe « Évolution des métriques » d'OS360, que le
+// moteur applique comme son sélecteur de visualisation (osChangeConfig).
+const OS360_SPORT_DEFAULT = { type: "health.timeSeries", config: {}, variant: "health.sportWeekly" };
 
 // Catalogue reçu du moteur -> groupes triés pour le sélecteur d'en-tête.
 function os360CatalogueGroups(catalogue) {
@@ -37210,9 +37271,17 @@ function os360CatalogueGroups(catalogue) {
 }
 
 // Configuration persistée du widget OS360 (type, titre, config OS360).
-function os360WidgetSpec(widget) {
+function os360WidgetSpec(widget, fallback = { type: OS360_WIDGET_DEFAULT_TYPE, config: {} }) {
   const spec = widget?.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
-  return { type: typeof spec.type === "string" && spec.type ? spec.type : OS360_WIDGET_DEFAULT_TYPE, title: spec.title || "", config: spec.config && typeof spec.config === "object" ? spec.config : {} };
+  if (!(typeof spec.type === "string" && spec.type)) {
+    return { type: fallback.type, title: spec.title || "", config: { ...fallback.config }, ...(fallback.variant ? { variant: fallback.variant } : {}) };
+  }
+  return { type: spec.type, title: spec.title || "", config: spec.config && typeof spec.config === "object" ? spec.config : {} };
+}
+
+// Activités envoyées au moteur : exactement les champs produits par `Jc`.
+function os360SportActivities(rows) {
+  return (rows || []).map((r) => ({ id: r.id, date: r.date, sport: r.sport, title: r.title, total: r.total, moving: r.moving, distance: r.distance, elevation: r.elevation, hr: r.hr, maxHr: r.maxHr, url: r.url }));
 }
 
 // Barre de période d'OS360 (`osPeriodBar`) : même écriture dans la
@@ -37292,11 +37361,27 @@ const OS360_WIDGET_CSS = `
 .nx-os360 .lp-empty{position:absolute;inset:0}
 `;
 
+// Graphique financier (#573) : widgets Budget d'OS360, tables KDM360.
 function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
   const { rows, error, reload } = useOs360Data();
+  const message = useMemo(() => (rows ? { type: "nx-data", rows } : null), [rows]);
+  return <Os360EngineWidget widget={widget} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} domain="budget"
+    message={message} error={error} reload={reload} loading="Chargement des données Budget…" reloadTitle="Relire les données Budget" />;
+}
+
+// Graphique sport (#579) : widgets Santé/Sport d'OS360, journal sportif.
+function WidgetSportOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useSportData();
+  const message = useMemo(() => (rows ? { type: "nx-sport", activities: os360SportActivities(rows) } : null), [rows]);
+  return <Os360EngineWidget widget={widget} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} domain="health"
+    message={message} error={error} reload={reload} loading="Chargement des activités sport…" reloadTitle="Relire le journal sportif" />;
+}
+
+// Cœur commun : iframe du moteur, catalogue du domaine, période, Options.
+function Os360EngineWidget({ widget, externalToolbarSlot, onUpdateWidget, domain, message: dataMessage, error, reload, loading, reloadTitle }) {
   const frameRef = useRef(null);
   const [catalogue, setCatalogue] = useState(null);
-  const spec = os360WidgetSpec(widget);
+  const spec = os360WidgetSpec(widget, domain === "health" ? OS360_SPORT_DEFAULT : undefined);
   const specKey = JSON.stringify(spec);
   const lastSent = useRef("");
   const send = (message) => frameRef.current?.contentWindow?.postMessage(message, "*");
@@ -37306,13 +37391,13 @@ function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
       const data = os360MessageFrom(event, frameRef.current?.contentWindow);
       if (!data) return;
       if (data.type === "nx-ready") {
-        setCatalogue(data.catalogue || []);
+        setCatalogue((domain === "health" ? data.catalogueSante : data.catalogue) || []);
         lastSent.current = "";
       } else if (data.type === "nx-widget-change" && data.widget && onUpdateWidget) {
         // Réglage modifié dans OS360 (période, Options…) : enregistré dans le widget Nexora.
         const next = { type: data.widget.type, title: data.widget.title || "", config: data.widget.config || {} };
         const key = JSON.stringify(next);
-        if (key !== JSON.stringify(os360WidgetSpec(widget))) { lastSent.current = key; onUpdateWidget({ os360: next }); }
+        if (key !== JSON.stringify(os360WidgetSpec(widget, domain === "health" ? OS360_SPORT_DEFAULT : undefined))) { lastSent.current = key; onUpdateWidget({ os360: next }); }
       }
     };
     window.addEventListener("message", onMessage);
@@ -37320,12 +37405,12 @@ function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
   });
 
   // Données puis configuration, dès que le moteur est prêt (et à chaque changement).
-  useEffect(() => { if (catalogue && rows) send({ type: "nx-data", rows }); }, [catalogue, rows]);
+  useEffect(() => { if (catalogue && dataMessage) send(dataMessage); }, [catalogue, dataMessage]);
   useEffect(() => {
-    if (!catalogue || !rows || lastSent.current === specKey) return;
+    if (!catalogue || !dataMessage || lastSent.current === specKey) return;
     lastSent.current = specKey;
     send({ type: "nx-widget", widget: { ...spec, title: spec.title || widget.title || "" } });
-  }, [catalogue, rows, specKey]);
+  }, [catalogue, dataMessage, specKey]);
 
   const groups = os360CatalogueGroups(catalogue);
   const setType = (type) => {
@@ -37356,8 +37441,8 @@ function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
           <button type="button" className={spec.config.quickPeriod === "previous" ? "active" : ""} aria-pressed={spec.config.quickPeriod === "previous"} onClick={() => setPeriod("previous")}>Mois précédent</button>
           <input type="month" aria-label="Choisir le mois" title="Choisir le mois" value={periodMonth} onChange={(e) => { if (e.target.value) setPeriod(e.target.value); }} />
         </span>
-        <button type="button" disabled={!catalogue || !rows} onClick={() => send({ type: "nx-options" })} title="Tous les réglages OS360 de ce graphique (métriques, agrégations, période, apparence…)">Options</button>
-        <button type="button" onClick={reload} title="Relire les données Budget">Actualiser</button>
+        <button type="button" disabled={!catalogue || !dataMessage} onClick={() => send({ type: "nx-options" })} title="Tous les réglages OS360 de ce graphique (métriques, agrégations, période, apparence…)">Options</button>
+        <button type="button" onClick={reload} title={reloadTitle}>Actualiser</button>
       </div>
     </ViewToolbarPortal>
   );
@@ -37371,7 +37456,7 @@ function WidgetOs360Chart({ widget, externalToolbarSlot, onUpdateWidget }) {
           <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
         </div>
       )}
-      {!error && !rows && <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>Chargement des données Budget…</div>}
+      {!error && !dataMessage && <div className="lp-empty" style={{ padding: 16, background: "var(--surface)" }}>{loading}</div>}
     </div>
   );
 }
@@ -37422,6 +37507,7 @@ const SPORT_PERIODS = [
   { value: "30", label: "30 derniers jours" },
   { value: "90", label: "90 derniers jours" },
   { value: "365", label: "365 derniers jours" },
+  { value: "rolling", label: "N derniers jours…" },
   { value: "custom", label: "Dates libres" },
 ];
 
@@ -37434,7 +37520,13 @@ function sportSpec(widget) {
     period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "all",
     from: typeof s.from === "string" ? s.from : "",
     to: typeof s.to === "string" ? s.to : "",
+    days: sportDays(s.days),
   };
+}
+// Nombre de jours d'une période glissante libre (1 à 3660, 30 par défaut).
+function sportDays(value) {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) && n >= 1 ? Math.min(3660, n) : 30;
 }
 
 // Bornes { from, to } (incluses, "" = sans borne) d'une période.
@@ -37458,6 +37550,7 @@ function sportPeriodRange(spec, today) {
   }
   if (p === "year") return { from: today.slice(0, 4) + "-01-01", to: today.slice(0, 4) + "-12-31" };
   if (/^\d+$/.test(p)) return { from: shift(today, 1 - Number(p)), to: today };
+  if (p === "rolling") return { from: shift(today, 1 - sportDays(spec.days)), to: today };
   if (p === "custom") {
     const ok = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
     return { from: ok(spec.from) ? spec.from : "", to: ok(spec.to) ? spec.to : "" };
@@ -37534,6 +37627,201 @@ function sportCsv(rows, columns) {
   const value = (key, v) => (typeof v === "number" ? String(v).replace(".", ",") : sportText(key, v));
   return [columns.map((c) => cell(c.label)).join(";"), ...rows.map((row) => columns.map((c) => cell(value(c.key, row[c.key]))).join(";"))].join("\r\n");
 }
+// --- Diagramme empilé par sport (#579) ---------------------------------------
+// Mesures : les durées sont en minutes dans la feuille et affichées en heures,
+// comme les séries `strava_*_total` d'OS360 (`Yc` divise par 60).
+const SPORT_MEASURES = [
+  { value: "count", label: "Séances", unit: "séances" },
+  { value: "total", label: "Durée totale", unit: "h" },
+  { value: "moving", label: "Durée en mouvement", unit: "h" },
+  { value: "distance", label: "Distance", unit: "km" },
+  { value: "elevation", label: "Dénivelé positif", unit: "m" },
+];
+const SPORT_BUCKETS = [
+  { value: "day", label: "Jour" },
+  { value: "week", label: "Semaine" },
+  { value: "month", label: "Mois" },
+];
+const SPORT_MAX_BUCKETS = 1500;
+// Couleurs attribuées par ordre de pratique sur tout l'historique : un sport
+// garde sa couleur quels que soient les filtres.
+const SPORT_PALETTE = ["#2f6f9f", "#d9822b", "#3f806f", "#a23b72", "#6c5fc7", "#c9a227", "#5b8c2a", "#c0504d", "#2aa3b8", "#8a6d3b", "#7f8c99", "#e377c2"];
+
+function sportChartSpec(widget) {
+  const s = widget?.sport && typeof widget.sport === "object" ? widget.sport : {};
+  return {
+    ...sportSpec(widget),
+    period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "365",
+    measure: SPORT_MEASURES.some((m) => m.value === s.measure) ? s.measure : "total",
+    bucket: SPORT_BUCKETS.some((b) => b.value === s.bucket) ? s.bucket : "week",
+  };
+}
+
+// Valeur d'une activité pour une mesure (null = non renseignée).
+function sportMeasureValue(row, measure) {
+  if (measure === "count") return 1;
+  const v = row[measure];
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return measure === "total" || measure === "moving" ? v / 60 : v;
+}
+
+// Clé de regroupement d'une date : jour, lundi de la semaine ISO, mois.
+function sportBucketKey(date, bucket) {
+  if (bucket === "month") return date.slice(0, 7);
+  if (bucket === "week") {
+    const d = new Date(date + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    return d.toISOString().slice(0, 10);
+  }
+  return date;
+}
+// Clé suivante (pour remplir les périodes sans activité).
+function sportNextBucket(key, bucket) {
+  if (bucket === "month") {
+    const y = +key.slice(0, 4), m = +key.slice(5, 7);
+    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  }
+  const d = new Date(key + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + (bucket === "week" ? 7 : 1));
+  return d.toISOString().slice(0, 10);
+}
+// Numéro de semaine ISO 8601 d'un lundi.
+function sportIsoWeek(monday) {
+  const d = new Date(monday + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 3); // jeudi de la même semaine
+  const year = d.getUTCFullYear();
+  const week = 1 + Math.floor((d - Date.UTC(year, 0, 1, 12)) / 6048e5);
+  return { year, week };
+}
+const SPORT_MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+function sportBucketLabel(key, bucket) {
+  if (bucket === "month") return `${SPORT_MONTHS[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}`;
+  if (bucket === "week") {
+    const { year, week } = sportIsoWeek(key);
+    return `S${String(week).padStart(2, "0")} ${year}`;
+  }
+  return `${key.slice(8, 10)}/${key.slice(5, 7)}/${key.slice(0, 4)}`;
+}
+
+// Séries du diagramme : une barre par jour, semaine ou mois (périodes vides
+// comprises), une pile par sport. `order` : sports de tout l'historique, pour
+// des couleurs stables. Les activités sans valeur pour la mesure sont
+// comptées dans `missing`, jamais comptées pour zéro en silence.
+function sportStackSeries(rows, spec, today, order = []) {
+  const filtered = sportFilter(rows, spec, today);
+  const range = sportPeriodRange(spec, today);
+  const bucket = spec.bucket;
+  const sums = new Map();
+  const totals = new Map();
+  let missing = 0;
+  for (const row of filtered) {
+    const v = sportMeasureValue(row, spec.measure);
+    if (v === null) { missing++; continue; }
+    const key = sportBucketKey(row.date, bucket);
+    if (!sums.has(key)) sums.set(key, new Map());
+    const m = sums.get(key);
+    m.set(row.sport, (m.get(row.sport) || 0) + v);
+    totals.set(row.sport, (totals.get(row.sport) || 0) + v);
+  }
+  const dates = filtered.map((r) => r.date).sort();
+  const first = range.from || dates[0];
+  const last = range.to || (dates.length ? (dates[dates.length - 1] > today ? dates[dates.length - 1] : today) : "");
+  const keys = [];
+  let tooMany = false;
+  if (first && last && first <= last) {
+    const end = sportBucketKey(last, bucket);
+    for (let k = sportBucketKey(first, bucket); k <= end; k = sportNextBucket(k, bucket)) {
+      if (keys.length >= SPORT_MAX_BUCKETS) { tooMany = true; break; }
+      keys.push(k);
+    }
+  }
+  const rank = new Map(order.map((name, i) => [name, i]));
+  const sports = [...totals.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"))
+    .map(([name, total]) => {
+      const i = rank.has(name) ? rank.get(name) : order.length + [...totals.keys()].indexOf(name);
+      return { name, total, color: SPORT_PALETTE[i % SPORT_PALETTE.length] };
+    });
+  const buckets = keys.map((key) => {
+    const m = sums.get(key) || new Map();
+    const values = Object.fromEntries(sports.map((s) => [s.name, m.get(s.name) || 0]));
+    return { key, label: sportBucketLabel(key, bucket), values, total: sports.reduce((t, s) => t + values[s.name], 0) };
+  });
+  const unit = SPORT_MEASURES.find((m) => m.value === spec.measure)?.unit || "";
+  return { buckets, sports, unit, missing, tooMany, count: filtered.length };
+}
+
+// Graduations « rondes » de l'axe vertical (1, 2, 2,5, 5 × 10^n).
+function sportNiceTicks(max, count = 5) {
+  if (!(max > 0)) return [0, 1];
+  const raw = max / count;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * pow).find((s) => s >= raw);
+  const ticks = [];
+  for (let v = 0; v < max + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  if (ticks[ticks.length - 1] < max) ticks.push(Math.round((ticks[ticks.length - 1] + step) * 1e6) / 1e6);
+  return ticks;
+}
+function sportFormatValue(value, unit) {
+  const digits = unit === "séances" || unit === "m" || unit === "bpm" ? 0 : value < 10 ? 2 : 1;
+  const text = value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
+  return unit === "séances" ? `${text} séance${value > 1 ? "s" : ""}` : `${text} ${unit}`;
+}
+
+// --- Bloc de carte « Total sport » (#580) ------------------------------------
+const SPORT_CARD_MEASURES = [
+  ...SPORT_MEASURES,
+  { value: "hr", label: "FC moyenne", unit: "bpm" },
+  { value: "maxHr", label: "FC maximale", unit: "bpm" },
+];
+const SPORT_AGGS = [
+  { value: "sum", label: "Somme" },
+  { value: "avg", label: "Moyenne" },
+  { value: "max", label: "Maximum" },
+  { value: "min", label: "Minimum" },
+  { value: "count", label: "Nombre" },
+];
+// Réglages d'un bloc sport, complétés par les valeurs par défaut.
+function sportBlockSpec(block) {
+  const b = block || {};
+  return {
+    sports: Array.isArray(b.sportSports) ? b.sportSports.filter((x) => typeof x === "string") : [],
+    period: SPORT_PERIODS.some((p) => p.value === b.sportPeriod) ? b.sportPeriod : "month",
+    from: typeof b.sportFrom === "string" ? b.sportFrom : "",
+    to: typeof b.sportTo === "string" ? b.sportTo : "",
+    days: sportDays(b.sportDays),
+    measure: SPORT_CARD_MEASURES.some((m) => m.value === b.sportMeasure) ? b.sportMeasure : "total",
+    agg: SPORT_AGGS.some((a) => a.value === b.sportAgg) ? b.sportAgg : "sum",
+  };
+}
+// Valeur d'un bloc : agrégation, sur les activités filtrées, des valeurs
+// renseignées de la mesure. La moyenne de la FC moyenne est pondérée par la
+// durée totale, comme les séries `strava_*_hr` d'OS360 (`Yc`). null = aucune
+// valeur (affiché « — », jamais 0).
+function sportAggregate(rows, spec, today) {
+  const filtered = sportFilter(rows || [], spec, today);
+  const values = filtered.map((r) => sportMeasureValue(r, spec.measure)).filter((v) => v !== null);
+  const unit = spec.agg === "count" ? "séances" : SPORT_CARD_MEASURES.find((m) => m.value === spec.measure)?.unit || "";
+  let value = null;
+  if (spec.agg === "count") value = values.length;
+  else if (values.length) {
+    if (spec.agg === "sum") value = values.reduce((t, v) => t + v, 0);
+    else if (spec.agg === "max") value = Math.max(...values);
+    else if (spec.agg === "min") value = Math.min(...values);
+    else if (spec.measure === "hr") {
+      const weighted = filtered.filter((r) => typeof r.hr === "number" && typeof r.total === "number" && r.total > 0);
+      const minutes = weighted.reduce((t, r) => t + r.total, 0);
+      value = minutes ? weighted.reduce((t, r) => t + r.hr * r.total, 0) / minutes : null;
+    } else value = values.reduce((t, v) => t + v, 0) / values.length;
+  }
+  return { value, unit, activities: filtered.length };
+}
+function sportBlockLabel(block) {
+  const spec = sportBlockSpec(block);
+  const measure = SPORT_CARD_MEASURES.find((m) => m.value === spec.measure)?.label || "Sport";
+  const agg = SPORT_AGGS.find((a) => a.value === spec.agg)?.label.toLocaleLowerCase("fr") || "";
+  return `${measure} · ${agg}`;
+}
 // === NEXORA:SPORT:END ===
 
 // Chargement partagé : une requête pour tous les widgets sport de la page.
@@ -37606,6 +37894,10 @@ function SportFilterTools({ spec, rows, onChange }) {
       <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période" title="Période">
         {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
       </select>
+      {spec.period === "rolling" && (
+        <input type="number" min="1" max="3660" step="1" aria-label="Nombre de jours" title="Nombre de jours" style={{ width: 64 }}
+          value={spec.days} onChange={(e) => onChange({ days: sportDays(e.target.value) })} />
+      )}
       {spec.period === "custom" && (
         <>
           <input type="date" aria-label="Du" title="Du" value={spec.from} onChange={(e) => onChange({ from: e.target.value })} />
@@ -37726,6 +38018,210 @@ function WidgetSportActivities({ widget, externalToolbarSlot, onUpdateWidget }) 
         </span>
       </div>
     </div>
+  );
+}
+
+const SPORT_CHART_CSS = `
+.nx-sport-chart{display:flex;flex-direction:column;height:100%;min-height:0;font-size:11px;color:#203246}
+.nx-sport-chart-plot{flex:1;min-height:120px;overflow-x:auto;overflow-y:hidden}
+.nx-sport-chart-plot svg{display:block}
+.nx-sport-chart-plot text{font-size:10px;fill:#60717c}
+.nx-sport-chart-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 10px 2px}
+.nx-sport-chart-legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.nx-sport-chart-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.nx-sport-chart-note{padding:2px 10px 6px;color:#60717c}
+.nx-sport-tip{display:flex;flex-direction:column;gap:2px;min-width:160px}
+.nx-sport-tip div{display:flex;justify-content:space-between;gap:12px}
+.nx-sport-tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+`;
+
+// Diagramme en barres empilées par sport (#579) : SVG, une barre par période.
+function SportStackedChart({ series }) {
+  const boxRef = useRef(null);
+  const [size, setSize] = useState({ w: 600, h: 260 });
+  const [hover, setHover] = useState(null);
+  useEffect(() => {
+    const node = boxRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+    const measure = () => setSize({ w: Math.max(200, node.clientWidth), h: Math.max(120, node.clientHeight) });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, []);
+  const { buckets, sports, unit } = series;
+  const n = buckets.length;
+  const M = { left: 48, right: 10, top: 10, bottom: 30 };
+  const plotW = Math.max(size.w - M.left - M.right, n * 5);
+  const plotH = Math.max(40, size.h - M.top - M.bottom - 4);
+  const ticks = sportNiceTicks(Math.max(0, ...buckets.map((b) => b.total)));
+  const top = ticks[ticks.length - 1] || 1;
+  const step = plotW / Math.max(1, n);
+  const barW = Math.max(2, Math.min(48, step * 0.72));
+  const y = (v) => M.top + plotH - (v / top) * plotH;
+  const every = Math.max(1, Math.ceil(70 / step));
+  return (
+    <div className="nx-sport-chart-plot" ref={boxRef}>
+      <svg width={plotW + M.left + M.right} height={plotH + M.top + M.bottom} role="img" aria-label="Barres empilées par sport">
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={M.left} x2={M.left + plotW} y1={y(t)} y2={y(t)} stroke="#e6ebf0" />
+            <text x={M.left - 6} y={y(t) + 3} textAnchor="end">{t.toLocaleString("fr-FR")}</text>
+          </g>
+        ))}
+        <text x={4} y={M.top + 2} dominantBaseline="hanging" style={{ fontWeight: 600 }}>{unit}</text>
+        {buckets.map((b, i) => {
+          const x = M.left + i * step + (step - barW) / 2;
+          let acc = 0;
+          return (
+            <g key={b.key}
+              onMouseEnter={(e) => setHover({ b, x: e.clientX, y: e.clientY })}
+              onMouseMove={(e) => setHover({ b, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setHover(null)}>
+              <rect x={M.left + i * step} y={M.top} width={step} height={plotH} fill={hover?.b.key === b.key ? "rgba(36,86,154,.06)" : "transparent"} />
+              {sports.map((s) => {
+                const v = b.values[s.name];
+                if (!v) return null;
+                const y0 = y(acc), y1 = y(acc + v);
+                acc += v;
+                return <rect key={s.name} x={x} y={y1} width={barW} height={Math.max(0.5, y0 - y1)} fill={s.color} />;
+              })}
+              {i % every === 0 && <text x={M.left + i * step + step / 2} y={M.top + plotH + 14} textAnchor="middle">{b.label}</text>}
+            </g>
+          );
+        })}
+        <line x1={M.left} x2={M.left + plotW} y1={M.top + plotH} y2={M.top + plotH} stroke="#b8c4cf" />
+      </svg>
+      {hover && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-sport-tip">
+            <strong>{hover.b.label}</strong>
+            {sports.filter((s) => hover.b.values[s.name]).map((s) => (
+              <div key={s.name}><span><i style={{ background: s.color }} />{s.name}</span><span>{sportFormatValue(hover.b.values[s.name], unit)}</span></div>
+            ))}
+            <div><strong>Total</strong><strong>{sportFormatValue(hover.b.total, unit)}</strong></div>
+          </div>
+        </WidgetPointerTooltip>
+      )}
+    </div>
+  );
+}
+
+function WidgetSportChart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { rows, error, reload } = useSportData();
+  const spec = sportChartSpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ sport: { ...spec, ...patch } });
+  const order = useMemo(() => sportNames(rows).map((s) => s.name), [rows]);
+  const series = useMemo(() => (rows ? sportStackSeries(rows, spec, financeSankeyToday(), order) : null),
+    [rows, order, spec.sports.join("\n"), spec.period, spec.from, spec.to, spec.measure, spec.bucket]);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{SPORT_CSS + SPORT_CHART_CSS}</style>
+      <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <select value={spec.measure} onChange={(e) => update({ measure: e.target.value })} aria-label="Mesure" title="Mesure" style={{ fontWeight: 600 }}>
+          {SPORT_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
+          {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+        </select>
+        <SportFilterTools spec={spec} rows={rows} onChange={update} />
+        <button type="button" onClick={reload} title="Relire le journal sportif">Actualiser</button>
+        {series && <span className="nx-sport-count">{sportFormatValue(series.sports.reduce((t, s) => t + s.total, 0), series.unit)}</span>}
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (error) {
+    return (
+      <div className="lp-empty" style={{ padding: 16 }}>
+        {tools}
+        <div>{error}</div>
+        <button type="button" className="lp-btn" style={{ marginTop: 8 }} onClick={reload}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!series) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des activités sport…</div>;
+  if (series.tooMany) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Plus de {SPORT_MAX_BUCKETS} barres : choisis la semaine ou le mois, ou une période plus courte.</div>;
+  if (!series.sports.length) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucune activité pour ces filtres.</div>;
+  return (
+    <div className="nx-sport-chart">
+      {tools}
+      <SportStackedChart series={series} />
+      <div className="nx-sport-chart-legend">
+        {series.sports.map((s) => (
+          <span key={s.name}><i style={{ background: s.color }} />{s.name} · {sportFormatValue(s.total, series.unit)}</span>
+        ))}
+      </div>
+      {series.missing > 0 && <div className="nx-sport-chart-note">{series.missing} activité{series.missing > 1 ? "s" : ""} sans valeur pour cette mesure, exclue{series.missing > 1 ? "s" : ""}.</div>}
+    </div>
+  );
+}
+
+// Valeur d'un bloc « Total sport » d'une carte personnalisable (#580). Un
+// composant à part : seule une carte qui en contient lit le journal sportif.
+function SportAggregateValue({ block }) {
+  const { rows, error } = useSportData();
+  if (error) return <span title={error}>—</span>;
+  if (!rows) return <span title="Chargement du journal sportif…">…</span>;
+  const { value, unit, activities } = sportAggregate(rows, sportBlockSpec(block), financeSankeyToday());
+  const text = value === null ? "—" : sportFormatValue(value, unit);
+  return <span title={`${activities} activité${activities > 1 ? "s" : ""} dans la sélection`}>{text}</span>;
+}
+
+// Réglages d'un bloc « Total sport » : sports, période, mesure, agrégation.
+function SportBlockEditor({ block, onChange }) {
+  const { rows } = useSportData();
+  const spec = sportBlockSpec(block);
+  const names = sportNames(rows);
+  const toggle = (name) => onChange({ sportSports: spec.sports.includes(name) ? spec.sports.filter((x) => x !== name) : [...spec.sports, name] });
+  return (
+    <>
+      <div className="lp-row3">
+        <div className="lp-field">
+          <label>Mesure</label>
+          <select value={spec.measure} onChange={(e) => onChange({ sportMeasure: e.target.value })}>
+            {SPORT_CARD_MEASURES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </div>
+        <div className="lp-field">
+          <label>Agrégation</label>
+          <select value={spec.agg} onChange={(e) => onChange({ sportAgg: e.target.value })}>
+            {SPORT_AGGS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+          </select>
+        </div>
+        <div className="lp-field">
+          <label>Période</label>
+          <select value={spec.period} onChange={(e) => onChange({ sportPeriod: e.target.value })}>
+            {SPORT_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </div>
+      </div>
+      {spec.period === "rolling" && (
+        <div className="lp-field"><label>Nombre de jours</label><input type="number" min="1" max="3660" value={spec.days} onChange={(e) => onChange({ sportDays: sportDays(e.target.value) })} /></div>
+      )}
+      {spec.period === "custom" && (
+        <div className="lp-row3">
+          <div className="lp-field"><label>Du</label><input type="date" value={spec.from} onChange={(e) => onChange({ sportFrom: e.target.value })} /></div>
+          <div className="lp-field"><label>Au</label><input type="date" value={spec.to} onChange={(e) => onChange({ sportTo: e.target.value })} /></div>
+        </div>
+      )}
+      <div className="lp-field">
+        <label>Sports {spec.sports.length ? `(${spec.sports.length})` : "(tous)"}</label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", fontSize: 12 }}>
+          {names.map((s) => (
+            <label key={s.name} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 400, textTransform: "none" }}>
+              <input type="checkbox" checked={spec.sports.includes(s.name)} onChange={() => toggle(s.name)} /> {s.name}
+            </label>
+          ))}
+          {/* Sports choisis absents du journal chargé : gardés et décochables. */}
+          {spec.sports.filter((x) => !names.some((s) => s.name === x)).map((x) => (
+            <label key={x} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 400, textTransform: "none" }}>
+              <input type="checkbox" checked onChange={() => toggle(x)} /> {x}
+            </label>
+          ))}
+          {!rows && <span style={{ color: "var(--text-600)" }}>Chargement du journal sportif…</span>}
+        </div>
+      </div>
+    </>
   );
 }
 
