@@ -233,3 +233,76 @@ test("validation : sous-catégorie vide acceptée seulement à la demande, et po
   assert.equal(updated.subcategory, null);
   assert.equal(updated.source_id, "bankin_screenshot:f:1");
 });
+
+// --- #587 : graphiques natifs, recherche et routes de l'assistant ----------
+
+test("graphiques identiques à OS360 : donut (lf), waterfall, waffle (jf, jd)", () => {
+  const c = B.buildBudgetSummary(raw, "2026-09", NOW).charts;
+  assert.deepEqual(c.byCategory.map((x) => [x.category, x.amount]), [["Logement", 950], ["Épargne", 500], ["Alimentation", 123.45], ["À classer", 80]]);
+  assert.deepEqual(c.waterfall.map((x) => [x.label, x.from, x.to]), [
+    ["Revenus", 0, 3240.5], ["Logement", 3240.5, 2290.5], ["Épargne", 2290.5, 1790.5],
+    ["Alimentation", 1790.5, 1667.05], ["À classer", 1667.05, 1587.05], ["Solde net", 0, 1587.05],
+  ]);
+  assert.equal(c.waffle.unit, 47.5);
+  assert.deepEqual(c.waffle.categories.map((x) => [x.name, x.value, x.count, [...new Set(x.cells.map((y) => y.account))]]),
+    [["Logement", 950, 20, ["Courant"]], ["Épargne", 500, 10, ["Courant"]], ["Alimentation", 123.45, 2, ["Carte"]], ["À classer", 80, 1, ["Courant"]]]);
+  assert.deepEqual(B.apportion([5, 3, 2], 7), [4, 2, 1]);
+  assert.deepEqual(B.apportion([1, 1, 1], 2), [1, 1, 0]);
+});
+
+test("graphiques : cumuls journaliers avec budget, dépenses des 12 derniers mois", () => {
+  const c = B.buildBudgetSummary(raw, "2026-09", NOW).charts;
+  assert.equal(c.days.length, 30);
+  const logement = c.cumulative.find((x) => x.category === "Logement");
+  assert.equal(logement.values[1], 0);
+  assert.equal(logement.values[2], 950);
+  assert.equal(logement.values.at(-1), 950);
+  assert.equal(logement.budget, 1000);
+  assert.equal(c.periodic.length, 12);
+  assert.deepEqual(c.periodic.slice(-2), [{ month: "2026-08", expenses: 42 }, { month: "2026-09", expenses: 1653.45 }]);
+  assert.equal(c.periodic[0].month, "2025-10");
+});
+
+test("recherche de transactions : sans accents ni casse, annulées et budgets exclus, filtres, pagination", () => {
+  const ids = (f) => B.searchTransactions(raw, f).items.map((t) => t.transactionId);
+  assert.deepEqual(ids({ query: "SANTE" }), ["r2"]);
+  assert.deepEqual(ids({ query: "logement" }), ["d1"]);
+  assert.ok(!ids({}).includes("d5"), "transaction annulée exclue");
+  assert.ok(!ids({}).some((id) => id.startsWith("b")), "lignes Budget exclues");
+  assert.deepEqual(ids({ minAmount: 900 }), ["d1", "r1"]);
+  assert.deepEqual(ids({ dateFrom: "2026-09-10", dateTo: "2026-09-11", type: "Dépense" }), ["d6"]);
+  const page = B.searchTransactions(raw, { limit: 2 });
+  assert.equal(page.items.length, 2);
+  assert.equal(page.nextOffset, 2);
+  assert.equal(page.items[0].transactionId, "f1");
+  assert.equal(B.searchTransactions(raw, { limit: 2, offset: page.total - 1 }).nextOffset, null);
+});
+
+test("interface graphique : échelles, donut, empilement, waterfall", () => {
+  const C = vm.runInThisContext(`(function () {\n${slice("FINANCE-BUDGET-CHART")}\n;return { FINANCE_BUDGET_CHARTS, financeChartTicks, financeChartDonutArcs, financeChartStack, financeChartWaterfallScale, financeChartMonthShort };\n})`)();
+  assert.deepEqual(C.FINANCE_BUDGET_CHARTS.map((c) => c.key), ["sankeyMonthly", "sankeyAnnual", "waterfall", "cumulative", "smallMultiples", "donut", "waffle", "periodic"]);
+  assert.deepEqual(C.financeChartTicks(1653.45), { max: 2000, ticks: [0, 500, 1000, 1500, 2000] });
+  assert.deepEqual(C.financeChartTicks(0), { max: 1, ticks: [0, 1] });
+  assert.deepEqual(["2026-06", "2026-07"].map(C.financeChartMonthShort), ["juin", "juil."]);
+  const arcs = C.financeChartDonutArcs([{ category: "A", amount: 75 }, { category: "B", amount: 25 }, { category: "C", amount: 0 }]);
+  assert.deepEqual(arcs.map((a) => [a.category, a.share]), [["A", 0.75], ["B", 0.25]]);
+  assert.match(arcs[0].d, /^M 0\.0000 -1\.0000 A 1 1 0 1 1 /);
+  assert.deepEqual(C.financeChartStack([{ values: [1, 2] }, { values: [3, 4] }]).map((s) => [s.lower, s.upper]), [[[0, 0], [1, 2]], [[1, 2], [4, 6]]]);
+  const sc = C.financeChartWaterfallScale([{ from: 0, to: 100 }, { from: 100, to: -50 }]);
+  assert.equal(sc.x(-50), 0);
+  assert.equal(sc.x(100), 100);
+});
+
+test("widget Graphique Budget et routes de l'assistant rattachés", async () => {
+  assert.match(html, /\{ key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Suivi" \}/);
+  assert.match(html, /w\.type === "financeBudgetChart" && \(\s*<WidgetFinanceBudgetChart widget=\{w\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeBudgetChart"/);
+  assert.match(html, /financeSankeyBuild\("financeSankeyMonthly", sankeyData\.data, config\)/);
+  const summary = await read("../netlify/functions/finance-budget-assistant.ts");
+  assert.match(summary, /path: "\/api\/finance\/budget-summary", method: \["GET"\]/);
+  assert.match(summary, /isAuthorized\(req, assistant\.apiKey\)/);
+  const search = await read("../netlify/functions/finance-transactions-search.ts");
+  assert.match(search, /path: "\/api\/finance\/transactions\/search", method: \["GET"\]/);
+  assert.match(search, /isAuthorized\(req, assistant\.apiKey\)/);
+  for (const source of [summary, search]) assert.doesNotMatch(source, /rpc\/|method: \["(POST|PATCH|PUT|DELETE)/);
+});

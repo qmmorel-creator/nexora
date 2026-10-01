@@ -14,3 +14,7 @@ export function incomeOf(list: any[]): any[];
 export function sumAbs(list: any[]): number;
 export function buildBudgetSummary(raw: Record<string, unknown>, month: string | null, now?: Date): any;
 export function buildBudgetReport(raw: Record<string, unknown>, now?: Date): any;
+export function apportion(weights: number[], total: number): number[];
+export function waffle(periodRows: any[], data: any): any;
+export function budgetCharts(data: any, period: { from: string; to: string }, tracking: any[]): any;
+export function searchTransactions(raw: Record<string, unknown>, filters?: Record<string, unknown>): { total: number; offset: number; limit: number; nextOffset: number | null; items: any[] };

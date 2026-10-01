@@ -2156,6 +2156,7 @@ function defaultLayoutForType(type) {
   if (type === "financeBudgetMonth") return { w: 6, h: 8 };
   if (type === "financeToCategorize") return { w: 6, h: 9 };
   if (type === "financeWealth") return { w: 6, h: 6 };
+  if (type === "financeBudgetChart") return { w: 8, h: 8 };
   if (type === "sportActivities") return { w: 12, h: 9 };
   if (type === "sportChart") return { w: 10, h: 7 };
   return { w: 6, h: 4 }; // chart / list / minigantt
@@ -3722,7 +3723,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "sportActivities" || w.type === "sportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === "financeOs360Chart" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3792,6 +3793,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeBudgetMonth" && <WidgetFinanceBudgetMonth externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot={headerToolbarSlot} />}
+                {w.type === "financeBudgetChart" && (
+                  <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
                 {w.type === "sportActivities" && (
                   <WidgetSportActivities widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
@@ -17135,6 +17139,8 @@ const WIDGET_TYPE_META = [
   { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Suivi" },
   { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Suivi" },
   { key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Suivi" },
+  // Graphiques Budget natifs (#587) : graphique et période choisis dans l'en-tête.
+  { key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Suivi" },
   // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
   { key: "sportChart", label: "Graphique sport", icon: BarChart3, group: "Suivi" },
@@ -18546,6 +18552,14 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           Tous les widgets Budget d’OS360 — graphiques du mois, patrimoine, annuels, analyses personnalisées (métrique,
           agrégation, granularité…), cartes et listes — rendus par le moteur d’OS360 lui-même, sur les données KDM360.
           Le graphique se choisit dans l’en-tête du widget ; « Options » y ouvre tous ses réglages OS360.
+        </p>
+      )}
+
+      {type === "financeBudgetChart" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Graphiques Budget natifs, calculés avec les règles d’OS360 : Sankey mensuel et annuel, waterfall, dépenses cumulées,
+          small multiples avec budget, donut, waffle et dépenses par mois sur 12 mois. Le graphique et la période se choisissent
+          dans l’en-tête du widget ; aucun autre réglage.
         </p>
       )}
 
@@ -37477,6 +37491,302 @@ function WidgetFinanceWealth({ externalToolbarSlot }) {
       <div className="nx-bud-legend">
         {usedTypes.map((t) => <span key={t.name}><i style={{ background: t.color }} />{t.name}</span>)}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Graphique Budget natif (#587) : les graphiques d'OS360 retenus par Quentin,
+// sans réglage hormis le choix du graphique et de la période (en-tête). Les
+// Sankey réutilisent le portage natif (#569, financeSankeyBuild) ; les autres
+// graphiques mettent en forme `charts` de /api/nexora/finance-budget-summary,
+// calculé côté serveur avec les règles d'OS360 (lib/finance-budget.mjs).
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-BUDGET-CHART:START ===
+const FINANCE_BUDGET_CHARTS = [
+  { key: "sankeyMonthly", label: "Sankey mensuel (flux)" },
+  { key: "sankeyAnnual", label: "Sankey annuel (flux)" },
+  { key: "waterfall", label: "Waterfall mensuel" },
+  { key: "cumulative", label: "Dépenses cumulées par catégorie" },
+  { key: "smallMultiples", label: "Small multiples — cumul et budget" },
+  { key: "donut", label: "Répartition par catégorie (donut)" },
+  { key: "waffle", label: "Waffle des dépenses" },
+  { key: "periodic", label: "Dépenses par mois (12 mois)" },
+];
+// Maximum « rond » d'un axe et ses graduations (1, 2, 2,5 ou 5 × 10^n).
+function financeChartTicks(max, count = 4) {
+  if (!(max > 0)) return { max: 1, ticks: [0, 1] };
+  const raw = max / count;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((s) => s >= raw);
+  const top = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= top + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
+  return { max: top, ticks };
+}
+// Arcs SVG d'un donut (centre 0,0) : une part par montant positif.
+function financeChartDonutArcs(items, outer = 1, inner = 0.6) {
+  const total = items.reduce((s, it) => s + Math.max(0, it.amount), 0);
+  if (!total) return [];
+  let angle = -Math.PI / 2;
+  const pt = (r, a) => `${(r * Math.cos(a)).toFixed(4)} ${(r * Math.sin(a)).toFixed(4)}`;
+  return items.filter((it) => it.amount > 0).map((it) => {
+    const share = it.amount / total;
+    const start = angle;
+    const end = angle + share * 2 * Math.PI - (share >= 1 ? 1e-6 : 0);
+    angle = start + share * 2 * Math.PI;
+    const large = end - start > Math.PI ? 1 : 0;
+    return {
+      ...it, share,
+      d: `M ${pt(outer, start)} A ${outer} ${outer} 0 ${large} 1 ${pt(outer, end)} L ${pt(inner, end)} A ${inner} ${inner} 0 ${large} 0 ${pt(inner, start)} Z`,
+    };
+  });
+}
+// Aires empilées : pour chaque série, la base et le sommet à chaque point.
+function financeChartStack(series) {
+  const length = series[0]?.values.length || 0;
+  const base = Array(length).fill(0);
+  return series.map((s) => {
+    const lower = [...base];
+    const upper = s.values.map((v, i) => (base[i] += v));
+    return { ...s, lower, upper };
+  });
+}
+// Échelle horizontale du waterfall : couvre 0 et toutes les bornes des marches.
+function financeChartWaterfallScale(steps) {
+  const values = steps.flatMap((s) => [s.from, s.to, 0]);
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min || 1;
+  return { min, max, x: (v) => ((v - min) / span) * 100 };
+}
+function financeChartShortEuro(value) {
+  const abs = Math.abs(value);
+  const text = abs >= 1000 ? `${(value / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} k€` : `${Math.round(value).toLocaleString("fr-FR")} €`;
+  return text;
+}
+// Mois abrégé à la française, sans ambiguïté (« juin », « juil. »).
+function financeChartMonthShort(month) {
+  return new Intl.DateTimeFormat("fr-FR", { month: "short", timeZone: "UTC" }).format(new Date(month + "-01T12:00:00Z"));
+}
+// === NEXORA:FINANCE-BUDGET-CHART:END ===
+
+const FINANCE_BUDGET_CHART_CSS = `
+.nx-bch{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;overflow:auto;padding:10px 12px;font-size:12px;color:#203246}
+.nx-bch svg{display:block;width:100%;height:auto;overflow:visible}
+.nx-bch svg text{font-size:10px;fill:#60717c;font-family:inherit}
+.nx-bch-legend{display:flex;flex-wrap:wrap;gap:4px 12px;color:#60717c}
+.nx-bch-legend span{display:inline-flex;align-items:center;gap:4px}
+.nx-bch-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.nx-bch-donut{display:grid;grid-template-columns:minmax(120px,200px) minmax(0,1fr);gap:12px;align-items:center}
+.nx-bch-rows{display:flex;flex-direction:column;gap:3px;min-width:0}
+.nx-bch-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto auto;gap:6px;align-items:center}
+.nx-bch-row i{width:10px;height:10px;border-radius:2px}
+.nx-bch-row b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bch-row small{font-variant-numeric:tabular-nums;color:#60717c;white-space:nowrap}
+.nx-bch-wf{display:flex;flex-direction:column;gap:4px}
+.nx-bch-wf-row{display:grid;grid-template-columns:minmax(80px,140px) minmax(0,1fr) auto;gap:8px;align-items:center}
+.nx-bch-wf-row b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bch-wf-row small{font-variant-numeric:tabular-nums;white-space:nowrap}
+.nx-bch-wf-track{position:relative;height:14px;background:#f3f6f9;border-radius:3px}
+.nx-bch-wf-track i{position:absolute;top:0;bottom:0;border-radius:3px}
+.nx-bch-sm{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.nx-bch-sm article{border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}
+.nx-bch-sm h4{margin:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bch-sm small{font-variant-numeric:tabular-nums;color:#60717c}
+.nx-bch-sm .over{color:#a33135;font-weight:600}
+.nx-bch-waffle{display:flex;flex-direction:column;gap:6px}
+.nx-bch-waffle-row{display:grid;grid-template-columns:minmax(80px,140px) minmax(0,1fr) auto;gap:8px;align-items:center}
+.nx-bch-waffle-row b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bch-waffle-row small{font-variant-numeric:tabular-nums;white-space:nowrap}
+.nx-bch-cells{display:flex;flex-wrap:wrap;gap:2px}
+.nx-bch-cells i{width:11px;height:11px;border-radius:2px;display:inline-block}
+.nx-bch-empty{color:#60717c;padding:16px 0}
+.nx-bch-note{color:#60717c;font-size:11px}
+`;
+
+function FinanceChartDonut({ items }) {
+  const arcs = financeChartDonutArcs(items);
+  const total = items.reduce((s, it) => s + it.amount, 0);
+  return (
+    <div className="nx-bch-donut">
+      <svg viewBox="-1.05 -1.05 2.1 2.1" role="img" aria-label="Répartition des dépenses par catégorie">
+        {arcs.map((a) => <path key={a.category} d={a.d} fill={a.color}><title>{`${a.category} : ${financeBudgetEuro(a.amount, 2)} (${Math.round(a.share * 100)} %)`}</title></path>)}
+        <text x="0" y="0.08" textAnchor="middle" style={{ fontSize: 0.2, fill: "#203246", fontWeight: 600 }}>{financeChartShortEuro(total)}</text>
+      </svg>
+      <div className="nx-bch-rows">
+        {arcs.map((a) => (
+          <div key={a.category} className="nx-bch-row">
+            <i style={{ background: a.color }} /><b title={a.category}>{a.category}</b>
+            <small>{financeBudgetEuro(a.amount)}</small><small>{Math.round(a.share * 100)} %</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FinanceChartWaterfall({ steps }) {
+  const scale = financeChartWaterfallScale(steps);
+  return (
+    <div className="nx-bch-wf">
+      {steps.map((s, i) => {
+        const left = scale.x(Math.min(s.from, s.to)), right = scale.x(Math.max(s.from, s.to));
+        const color = s.absolute ? (s.to < 0 ? "#a33135" : s.label === "Revenus" ? "#3f806f" : "#24569a") : "#d5798d";
+        const value = s.absolute ? s.to : s.to - s.from;
+        return (
+          <div key={s.label + i} className="nx-bch-wf-row">
+            <b title={s.label}>{s.label}</b>
+            <div className="nx-bch-wf-track">
+              <i style={{ left: `${left}%`, width: `${Math.max(0.4, right - left)}%`, background: color }} title={`${s.label} : ${financeBudgetEuro(value, 2)}`} />
+            </div>
+            <small>{financeBudgetEuro(value)}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FinanceChartCumulative({ days, series }) {
+  const stacked = financeChartStack(series);
+  const top = stacked.length ? Math.max(...stacked[stacked.length - 1].upper) : 0;
+  const { max, ticks } = financeChartTicks(top);
+  const W = 600, H = 220, L = 48, R = 8, T = 8, B = 22;
+  const x = (i) => L + (days.length > 1 ? (i / (days.length - 1)) * (W - L - R) : 0);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const labels = days.map((d, i) => ({ i, d })).filter(({ d }, i) => i === 0 || i === days.length - 1 || Number(d.slice(8)) % 7 === 1);
+  return (
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Dépenses cumulées par catégorie">
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#edf1f4" /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
+        {stacked.map((s) => (
+          <path key={s.category} fill={s.color} fillOpacity="0.85" stroke="#fff" strokeWidth="0.5"
+            d={`M ${s.upper.map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} L ${[...s.lower].map((v, i) => [i, v]).reverse().map(([i, v]) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} Z`}>
+            <title>{`${s.category} : ${financeBudgetEuro(s.total, 2)}`}</title>
+          </path>
+        ))}
+        {labels.map(({ i, d }) => <text key={d} x={x(i)} y={H - 6} textAnchor="middle">{Number(d.slice(8))}</text>)}
+      </svg>
+      <div className="nx-bch-legend">{series.map((s) => <span key={s.category}><i style={{ background: s.color }} />{s.category} · {financeBudgetEuro(s.total)}</span>)}</div>
+    </>
+  );
+}
+
+function FinanceChartSmallMultiples({ series }) {
+  return (
+    <div className="nx-bch-sm">
+      {series.map((s) => {
+        const W = 160, H = 60;
+        const top = Math.max(s.total, s.budget, 1);
+        const x = (i) => (s.values.length > 1 ? (i / (s.values.length - 1)) * W : 0);
+        const y = (v) => H - (v / top) * (H - 4);
+        const over = s.budget > 0 && s.total > s.budget;
+        return (
+          <article key={s.category}>
+            <h4 title={s.category}>{s.category}</h4>
+            <small className={over ? "over" : ""}>{financeBudgetEuro(s.total)}{s.budget > 0 ? ` / ${financeBudgetEuro(s.budget)}` : " · sans budget"}</small>
+            <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${s.category} : dépenses cumulées et budget`}>
+              <path d={`M 0 ${H} L ${s.values.map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} L ${W} ${H} Z`} fill={over ? "#f5d5dc" : "#dcefe8"} />
+              <polyline points={s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")} fill="none" stroke={over ? "#a33135" : "#3f806f"} strokeWidth="1.6" />
+              {s.budget > 0 && <line x1="0" x2={W} y1={y(s.budget)} y2={y(s.budget)} stroke="#203246" strokeDasharray="3 3" strokeWidth="1" />}
+            </svg>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function FinanceChartWaffle({ waffle }) {
+  const accounts = new Map();
+  for (const c of waffle.categories) for (const cell of c.cells) accounts.set(cell.account, cell.color);
+  return (
+    <>
+      <div className="nx-bch-note">1 carré ≈ {financeBudgetEuro(waffle.unit)} (plus grosse catégorie ÷ 20), couleur = compte</div>
+      <div className="nx-bch-waffle">
+        {waffle.categories.map((c) => (
+          <div key={c.name} className="nx-bch-waffle-row">
+            <b title={c.name}>{c.name}</b>
+            <div className="nx-bch-cells">{c.cells.map((cell, i) => <i key={i} style={{ background: cell.color }} title={`${cell.account} · ${Math.round(cell.share * 100)} %`} />)}</div>
+            <small>{financeBudgetEuro(c.value)}</small>
+          </div>
+        ))}
+      </div>
+      <div className="nx-bch-legend">{[...accounts].map(([name, color]) => <span key={name}><i style={{ background: color }} />{name}</span>)}</div>
+    </>
+  );
+}
+
+function FinanceChartPeriodic({ months }) {
+  const { max, ticks } = financeChartTicks(Math.max(0, ...months.map((m) => m.expenses)));
+  const W = 600, H = 220, L = 48, R = 8, T = 8, B = 22;
+  const band = (W - L - R) / Math.max(1, months.length);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Dépenses par mois sur 12 mois">
+      {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#edf1f4" /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
+      {months.map((m, i) => (
+        <g key={m.month}>
+          <rect x={L + i * band + band * 0.15} width={band * 0.7} y={y(m.expenses)} height={Math.max(0, y(0) - y(m.expenses))} fill={i === months.length - 1 ? "#24569a" : "#8fb0d6"} rx="2">
+            <title>{`${financeBudgetMonthLabel(m.month)} : ${financeBudgetEuro(m.expenses, 2)}`}</title>
+          </rect>
+          <text x={L + i * band + band / 2} y={H - 6} textAnchor="middle">{financeChartMonthShort(m.month)}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const chart = FINANCE_BUDGET_CHARTS.some((c) => c.key === widget.budgetChart) ? widget.budgetChart : "sankeyMonthly";
+  const thisMonth = financeBudgetToday().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const annual = chart === "sankeyAnnual";
+  const sankey = chart === "sankeyMonthly" || annual;
+  const budget = useFinanceBudget(month === thisMonth ? "" : month);
+  const sankeyData = useFinanceSankeyData();
+  const step = (delta) => setMonth(financeBudgetShiftMonth(month, annual ? 12 * delta : delta));
+  const reload = () => { budget.reload(); sankeyData.reload(); };
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <select aria-label="Graphique" value={chart} onChange={(e) => onUpdateWidget && onUpdateWidget({ budgetChart: e.target.value })}
+          style={{ height: 24, font: "inherit", border: "1px solid #d8e1eb", borderRadius: 5 }}>
+          {FINANCE_BUDGET_CHARTS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+        <button type="button" onClick={() => step(-1)} aria-label={annual ? "Année précédente" : "Mois précédent"}>‹</button>
+        <strong style={{ minWidth: annual ? 40 : 104, textAlign: "center" }}>{annual ? month.slice(0, 4) : financeBudgetMonthLabel(month)}</strong>
+        <button type="button" onClick={() => step(1)} aria-label={annual ? "Année suivante" : "Mois suivant"}>›</button>
+        {month !== thisMonth && <button type="button" onClick={() => setMonth(thisMonth)}>{annual ? "Année en cours" : "Mois en cours"}</button>}
+        <button type="button" onClick={reload} title="Relire les données dans Supabase">Actualiser</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (sankey) {
+    const config = { ...FINANCE_SANKEY_DEFAULT_CONFIG, periodMode: annual ? "year" : "month", periodValue: annual ? month.slice(0, 4) : month };
+    if (!sankeyData.data) return <>{tools}<FinanceBudgetState error={sankeyData.error} onRetry={sankeyData.reload} /></>;
+    let built;
+    try { built = financeSankeyBuild("financeSankeyMonthly", sankeyData.data, config); } catch (e) { built = { error: e instanceof Error ? e.message : String(e) }; }
+    if (built.error) return <div className="lp-empty" style={{ padding: 16 }}>{tools}{built.error}</div>;
+    if (!built.graph.links.length) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucun flux à représenter sur cette période ({built.period}).</div>;
+    return <>{tools}<FinanceSankeyChart graph={built.graph} config={config} title={widget.title || "Sankey"} period={built.period} /></>;
+  }
+  if (!budget.data) return <>{tools}<FinanceBudgetState error={budget.error} onRetry={budget.reload} /></>;
+  const c = budget.data.charts;
+  const empty = !c.byCategory.length && chart !== "periodic" && chart !== "waterfall";
+  return (
+    <div className="nx-bch">
+      {tools}
+      <style>{FINANCE_BUDGET_CHART_CSS}</style>
+      {empty && <div className="nx-bch-empty">Aucune dépense sur {financeBudgetMonthLabel(month).toLowerCase()}.</div>}
+      {!empty && chart === "donut" && <FinanceChartDonut items={c.byCategory} />}
+      {chart === "waterfall" && <FinanceChartWaterfall steps={c.waterfall} />}
+      {!empty && chart === "cumulative" && <FinanceChartCumulative days={c.days} series={c.cumulative} />}
+      {!empty && chart === "smallMultiples" && <FinanceChartSmallMultiples series={c.cumulative} />}
+      {!empty && chart === "waffle" && <FinanceChartWaffle waffle={c.waffle} />}
+      {chart === "periodic" && <FinanceChartPeriodic months={c.periodic} />}
     </div>
   );
 }
