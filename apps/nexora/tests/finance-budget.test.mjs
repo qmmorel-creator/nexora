@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import * as B from "../lib/finance-budget.mjs";
-import { buildCategorizedTransaction, buildCreateTransaction, validateCategoryPair } from "../lib/finance-validation.mjs";
+import { buildCategorizedTransaction, buildCreateTransaction, buildEditedTransaction, validateCategoryPair } from "../lib/finance-validation.mjs";
 
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
@@ -326,4 +326,99 @@ test("widget Graphique Budget et routes de l'assistant rattachés", async () => 
   assert.match(search, /path: "\/api\/finance\/transactions\/search", method: \["GET"\]/);
   assert.match(search, /isAuthorized\(req, assistant\.apiKey\)/);
   for (const source of [summary, search]) assert.doesNotMatch(source, /rpc\/|method: \["(POST|PATCH|PUT|DELETE)/);
+});
+
+// --- #617 : répartition du patrimoine -------------------------------------
+
+test("synthèse : soldes par compte avec banque, type et couleurs (#617)", () => {
+  const w = B.buildBudgetSummary(raw, "2026-09", NOW).wealth;
+  assert.deepEqual(w.accounts.map((a) => [a.id, a.bank, a.type, a.balance]), [
+    ["av", "Conservateur", "Epargne Longue", 20000], ["liv", "Caisse", "Épargne Courte", 6512],
+    ["cc", "Caisse", "Comptes Cartes Bleues", 2368.5], ["cb", "Revolut", "Comptes Cartes Bleues", -123.45],
+  ]);
+  for (const a of w.accounts) assert.match(a.color + a.bankColor + a.typeColor, /^(#[0-9a-f]{6}){3}$/i);
+  assert.equal(w.accounts.reduce((t, a) => t + a.balance, 0).toFixed(2), String(w.total.toFixed(2)), "même total que le patrimoine");
+});
+
+test("barre de patrimoine : regroupement, parts des actifs, soldes négatifs à part (#617)", () => {
+  const W = vm.runInThisContext(`(function () {\n${slice("FINANCE-WEALTH-BAR")}\n;return { FINANCE_WEALTH_BAR_GROUPS, financeWealthBarModel };\n})`)();
+  assert.deepEqual(W.FINANCE_WEALTH_BAR_GROUPS.map((g) => g.key), ["account", "bank", "type"]);
+  const accounts = [
+    { id: "a", name: "Courant", bank: "B1", type: "Courant", balance: 1000, color: "#111111", bankColor: "#aa0000", typeColor: "#00aa00" },
+    { id: "b", name: "Livret", bank: "B1", type: "Épargne", balance: 3000, color: "#222222", bankColor: "#aa0000", typeColor: "#0000aa" },
+    { id: "c", name: "Carte", bank: "B2", type: "Courant", balance: -200, color: "#333333", bankColor: "#bb0000", typeColor: "#00aa00" },
+    { id: "d", name: "Vide", bank: "B3", type: "Épargne", balance: 0, color: "#444444", bankColor: "#cc0000", typeColor: "#0000aa" },
+  ];
+  const byAccount = W.financeWealthBarModel(accounts, "account");
+  assert.deepEqual(byAccount.segments.map((s) => [s.label, s.value, s.share, s.color]), [["Livret", 3000, 0.75, "#222222"], ["Courant", 1000, 0.25, "#111111"]]);
+  assert.deepEqual(byAccount.negatives.map((s) => [s.label, s.value]), [["Carte", -200]]);
+  assert.deepEqual([byAccount.positiveTotal, byAccount.negativeTotal, byAccount.net], [4000, -200, 3800]);
+  const byBank = W.financeWealthBarModel(accounts, "bank");
+  assert.deepEqual(byBank.segments.map((s) => [s.label, s.value, s.accounts]), [["B1", 4000, ["Courant", "Livret"]]]);
+  assert.deepEqual(byBank.negatives.map((s) => s.label), ["B2"], "banque à solde nul ignorée");
+  const byType = W.financeWealthBarModel(accounts, "type");
+  assert.deepEqual(byType.segments.map((s) => [s.label, s.value, s.color]), [["Épargne", 3000, "#0000aa"], ["Courant", 800, "#00aa00"]], "soldes compensés dans le groupe");
+  assert.deepEqual(W.financeWealthBarModel([], "type"), { segments: [], negatives: [], positiveTotal: 0, negativeTotal: 0, net: 0 });
+});
+
+test("widget Répartition du patrimoine rattaché : catalogue, rendu, en-tête, bascule et regroupement (#617)", () => {
+  assert.match(html, /\{ key: "financeWealthBar", label: "Répartition du patrimoine", icon: Banknote, group: "Budget" \}/);
+  assert.match(html, /w\.type === "financeWealthBar" && \(\s*<WidgetFinanceWealthBar widget=\{w\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeWealthBar"/);
+  assert.match(html, /if \(type === "financeWealthBar"\) return \{ w: 8, h: 6 \};/);
+  assert.match(html, /onClick=\{\(\) => update\(\{ wealthBarPercent: true \}\)\}/);
+  assert.match(html, /onClick=\{\(\) => update\(\{ wealthBarPercent: false \}\)\}/);
+  assert.match(html, /onChange=\{\(e\) => update\(\{ wealthBarBy: e\.target\.value \}\)\}/);
+});
+
+// --- #618 : modification de toutes les transactions ------------------------
+
+test("modification complète : champs modifiables, le reste conservé, contrôles (#618)", () => {
+  const existing = {
+    transaction_id: "t1", bank_date: "2026-09-01", effective_date: "2026-09-02", created_at: "2026-09-01T10:00:00Z",
+    transaction_type: "Dépense", account_id: "cc", payment_method_id: "pm", signed_amount: "-12.5", merchant: "Boulangerie",
+    category: "Alimentation", subcategory: "Courses", description: null, status: "Réalisé", source: "import",
+    transfer_id: null, cancels_transaction_id: null, category_confidence: 0.6, tag: null, source_id: "bankin_screenshot:f:1", revision: 4,
+  };
+  const same = buildEditedTransaction(existing, {});
+  assert.equal(same.categoryChanged, false);
+  const { revision, ...unchanged } = existing;
+  assert.deepEqual(same.transaction, { ...unchanged, signed_amount: -12.5 }, "sans changement : tout est conservé (montant en nombre)");
+  const edited = buildEditedTransaction(existing, { effectiveDate: "2026-09-05", signedAmount: -20, merchant: "  Marché ", tag: "", accountId: "liv" });
+  assert.deepEqual([edited.transaction.effective_date, edited.transaction.bank_date, edited.transaction.signed_amount, edited.transaction.merchant, edited.transaction.tag, edited.transaction.account_id], ["2026-09-05", "2026-09-01", -20, "Marché", null, "liv"]);
+  assert.deepEqual([edited.transaction.source_id, edited.transaction.source, edited.transaction.status, edited.transaction.payment_method_id, edited.transaction.category_confidence], ["bankin_screenshot:f:1", "import", "Réalisé", "pm", 0.6], "conservés");
+  const recat = buildEditedTransaction(existing, { category: "Loisirs", subcategory: null });
+  assert.deepEqual([recat.categoryChanged, recat.transaction.category, recat.transaction.subcategory, recat.transaction.category_confidence], [true, "Loisirs", null, 1]);
+  assert.throws(() => buildEditedTransaction(existing, { signedAmount: 5 }), /expense_amount_must_be_negative/);
+  assert.equal(buildEditedTransaction(existing, { transactionType: "Revenu", signedAmount: 5 }).transaction.transaction_type, "Revenu");
+  assert.throws(() => buildEditedTransaction(existing, { transactionType: "Transfert" }), /unsupported_transaction_type/);
+  assert.throws(() => buildEditedTransaction(existing, { effectiveDate: "2026-02-30" }), /invalid_dates/);
+  assert.throws(() => buildEditedTransaction(existing, { signedAmount: 0 }), /invalid_signed_amount/);
+  assert.throws(() => buildEditedTransaction(existing, { category: "" }), /category_required/);
+  // Un type hors des trois (Transfert, Ajustement…) reste modifiable sur ses autres champs, sans règle de signe.
+  const transfer = buildEditedTransaction({ ...existing, transaction_type: "Transfert", transfer_id: "v1", signed_amount: 300 }, { merchant: "Virement épargne" });
+  assert.deepEqual([transfer.transaction.transaction_type, transfer.transaction.transfer_id, transfer.transaction.signed_amount], ["Transfert", "v1", 300]);
+  assert.throws(() => buildEditedTransaction(null, {}), /transaction_not_found/);
+});
+
+test("fiche de modification : seuls les champs changés partent, catégorie et sous-catégorie ensemble (#618)", () => {
+  const E = vm.runInThisContext(`(function () {\n${slice("FINANCE-TX-EDIT")}\n;return { FINANCE_TX_EDIT_TYPES, financeTxEditInitial, financeTxEditChanges };\n})`)();
+  const row = { effective_date: "2026-09-02", bank_date: "2026-09-01", transaction_type: "Dépense", account_id: "cc", signed_amount: -12.5, merchant: "Boulangerie", category: "Alimentation", subcategory: "Courses", description: null, tag: null };
+  const init = E.financeTxEditInitial(row);
+  assert.equal(init.signedAmount, "-12,5");
+  assert.deepEqual(E.financeTxEditChanges(init, init), {});
+  assert.deepEqual(E.financeTxEditChanges(init, { ...init, signedAmount: "-1 234,56", merchant: " " }), { signedAmount: -1234.56, merchant: null });
+  assert.deepEqual(E.financeTxEditChanges(init, { ...init, subcategory: "Boulangerie" }), { category: "Alimentation", subcategory: "Boulangerie" });
+});
+
+test("route : modification par la fonction SQL, révision attendue, propriétaire seul (#618)", async () => {
+  const write = await read("../netlify/functions/finance-owner-transactions.ts");
+  assert.match(write, /if \(body\.operation === "edit"\) \{/);
+  assert.match(write, /Number\(body\.expectedRevision\) !== Number\(existing\.revision\)/);
+  assert.match(write, /error: "transaction_modified_elsewhere", revision: existing\.revision \}, 409\)/);
+  assert.match(write, /const \{ transaction, categoryChanged \} = buildEditedTransaction\(existing, body\);/);
+  assert.match(write, /if \(categoryChanged\) validateCategoryPair\(/);
+  assert.match(write, /return json\(\{ ok: true, operation: "edit", result, transaction \}\);/);
+  assert.match(html, /financeBudgetWrite\("PATCH", \{ operation: "edit", transactionId: row\.transaction_id, expectedRevision: row\.revision, \.\.\.changes \}\)/);
+  assert.match(html, /\{editing && <FinanceTxEditor row=\{editing\} onClose=\{\(\) => setEditing\(null\)\} \/>\}/);
 });

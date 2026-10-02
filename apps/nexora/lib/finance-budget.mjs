@@ -377,6 +377,11 @@ export function buildBudgetSummary(raw, month, now = new Date()) {
       total: round2(balances.reduce((s, a) => s + a.balance, 0)),
       banks,
       types: [...new Set(balances.map((a) => a.type || "Sans type"))].map((name) => ({ name, color: typeColor(name) })),
+      // Soldes par compte (#617), pour la barre « Répartition du patrimoine ».
+      accounts: balances.map((a) => ({
+        id: a.id, name: a.name || a.id, bank: a.bank || "Sans banque", type: a.type || "Sans type",
+        balance: round2(a.balance), color: a.color, bankColor: bankColor(a.bank || "Sans banque"), typeColor: typeColor(a.type || "Sans type"),
+      })).sort((x, y) => y.balance - x.balance),
       history,
     },
     catalogs: {
