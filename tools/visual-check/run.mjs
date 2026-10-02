@@ -2888,6 +2888,45 @@ if (RUN("2d")) await timed("2d", async () => {
     await bp.mouse.up();
     const afterDrag = Number(await bp.getAttribute('[role="slider"]', "aria-valuenow"));
     const clip = await bp.$eval(".nx-bp-layer", (l) => l.style.clipPath);
+    // Rognage (#633) : deux poignées glissées à la souris, puis enregistrement ;
+    // le cadre prend la proportion de la zone gardée et les repères restent
+    // superposés. « Tout afficher » rend ensuite le cadre entier.
+    await bp.click('.nx-bp-tools button:has-text("Rogner")');
+    await bp.waitForSelector('[data-testid="body-photo-crop"] .nx-bp-crop');
+    const cb = await bp.$eval('[data-testid="body-photo-crop"]', (f) => { const r = f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+    // Chaque poignée est saisie par son centre réel, puis déplacée de (dx, dy) en fraction du cadre.
+    const dragHandle = async (h, dx, dy) => {
+      const hb = await bp.$eval(`.nx-bp-crop-handle.${h}`, (e) => { const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await bp.mouse.move(hb.x, hb.y);
+      await bp.mouse.down();
+      await bp.mouse.move(hb.x + dx * cb.w, hb.y + dy * cb.h, { steps: 5 });
+      await bp.mouse.up();
+    };
+    await dragHandle("nw", 0.2, 0.1);
+    await dragHandle("se", -0.2, -0.3);
+    const cropBox = await bp.$eval(".nx-bp-crop", (c) => ({ left: parseFloat(c.style.left), top: parseFloat(c.style.top), width: parseFloat(c.style.width), height: parseFloat(c.style.height) }));
+    await bp.screenshot({ path: path.join(dir, "body-photos-crop.png") });
+    await bp.click('.nx-bp-bar button.primary:has-text("Enregistrer")');
+    await bp.waitForSelector('[data-testid="body-photo-frame"] img[data-role="photo"]');
+    const cropped = await bp.evaluate(() => {
+      const frame = document.querySelector('[data-testid="body-photo-frame"]');
+      const fr = frame.getBoundingClientRect();
+      const centre = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+      const gaps = {};
+      for (const g of frame.querySelectorAll("svg g[data-landmark]")) {
+        const a = g.querySelector('[data-role="reference"]'), b = g.querySelector('[data-role="photo"]');
+        if (a && b) { const p = centre(a), q = centre(b); gaps[g.dataset.landmark] = Math.hypot(p.x - q.x, p.y - q.y); }
+      }
+      const btn = [...document.querySelectorAll(".nx-bp-tools button")].find((b) => /Rogner/.test(b.textContent));
+      return { frame: { w: fr.width, h: fr.height }, gaps, active: btn?.getAttribute("aria-pressed") };
+    });
+    await bp.screenshot({ path: path.join(dir, "body-photos-cropped.png") });
+    await bp.click('.nx-bp-tools button:has-text("Rogner")');
+    await bp.waitForSelector('[data-testid="body-photo-crop"]');
+    await bp.click('.nx-bp-bar button:has-text("Tout afficher")');
+    await bp.click('.nx-bp-bar button.primary:has-text("Enregistrer")');
+    await bp.waitForSelector('[data-testid="body-photo-frame"]');
+    const uncropped = await bp.$eval('[data-testid="body-photo-frame"]', (f) => { const r = f.getBoundingClientRect(); return { w: r.width, h: r.height }; });
     // Mode Repères sur la photo qui n'en a pas : trois clics, trois points.
     await bp.click('.nx-bp-thumb[data-photo-id="banc-photo-0003"] [aria-label="Placer les repères"]');
     await bp.waitForSelector('[data-testid="body-photo-landmarks"] img');
@@ -2915,6 +2954,13 @@ if (RUN("2d")) await timed("2d", async () => {
     expect(compare.thumbs === 3 && compare.badge === "Référence", `Photos corporelles : galerie (${compare.thumbs} vignettes, badge « ${compare.badge} »)`);
     expect(atEnd === "100" && afterArrow === "1", `Photos corporelles : curseur au clavier (Fin ${atEnd}, Origine puis → ${afterArrow})`);
     expect(afterDrag > 20 && afterDrag < 30 && /inset\(0(px)? 0(px)? 0(px)? 2\d/.test(clip), `Photos corporelles : glisser le curseur (${afterDrag}, ${clip})`);
+    // Zone gardée : 60 % × 60 % du cadre 600 × 900, soit 360 × 540 → même proportion 2/3 ;
+    // les deux poignées ont bien bougé (20 %/10 % puis 80 %/70 %).
+    const near = (a, b) => Math.abs(a - b) < 0.5;
+    expect(near(cropBox.left, 20) && near(cropBox.top, 10) && near(cropBox.width, 60) && near(cropBox.height, 60), `Photos corporelles : poignées de rognage (${JSON.stringify(cropBox)})`);
+    expect(cropped.frame.w > 300 && Math.abs(cropped.frame.w / cropped.frame.h - 360 / 540) < 0.01 && cropped.active === "true", `Photos corporelles : cadre rogné (${JSON.stringify(cropped)})`);
+    expect(Object.keys(cropped.gaps).length >= 2 && Object.values(cropped.gaps).every((g) => g < 1.5), `Photos corporelles : repères non superposés après rognage (${JSON.stringify(cropped.gaps)})`);
+    expect(Math.abs(uncropped.w / uncropped.h - 600 / 900) < 0.01, `Photos corporelles : « Tout afficher » ne rend pas le cadre entier (${JSON.stringify(uncropped)})`);
     expect(/Étape 1\/3/.test(hints[0]) && /Étape 2\/3/.test(hints[1]) && /Étape 3\/3/.test(hints[2]) && /trois repères sont placés/.test(hints[3]), `Photos corporelles : consignes du mode Repères ${JSON.stringify(hints)}`);
     expect(editor.points === 3 && editor.loupe && editor.save, `Photos corporelles : mode Repères (${JSON.stringify(editor)})`);
     expect(calls.includes("PATCH /api/nexora/body-photos/banc-photo-0003") && calls.every((c) => c.startsWith("GET /api/nexora/body-photos") || c.startsWith("PATCH /api/nexora/body-photos/")), `Photos corporelles : appels ${JSON.stringify(calls)}`);
