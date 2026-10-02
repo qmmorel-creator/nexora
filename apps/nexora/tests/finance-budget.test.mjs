@@ -138,6 +138,68 @@ test("Synthèse Budget : périodes, bornes et rattachements (#644)", async () =>
   assert.match(route, /buildBudgetSummary\(raw, month\)/, "sans from / to : réponse du mois inchangée");
 });
 
+test("évolution du patrimoine : chaque point = accountBalances, une passe, pas jour / semaine / mois (#645)", () => {
+  const data = B.normalizeBudget(raw);
+  const daily = B.buildWealthSeries(raw, "2025-12-25", null, "day", NOW);
+  assert.deepEqual([daily.from, daily.to, daily.step, daily.points.length], ["2025-12-25", "2026-09-20", "day", 270], "fin par défaut : aujourd'hui");
+  assert.deepEqual(daily.accounts.map((a) => a.id), ["cc", "cb", "liv", "av"], "comptes actifs seulement");
+  for (const p of daily.points) {
+    const ref = B.accountBalances(data, p.date, NOW).map((a) => Math.round(a.balance * 100) / 100);
+    assert.deepEqual(p.balances, ref, `soldes au ${p.date}`);
+    assert.equal(p.total, Math.round(B.wealthAt(data, p.date, NOW) * 100) / 100, `total au ${p.date}`);
+  }
+  // Mois : fins de mois, dernier point ramené à aujourd'hui ; début par défaut = premier relevé ou mouvement.
+  const monthly = B.buildWealthSeries(raw, null, null, "month", NOW);
+  assert.deepEqual(monthly.points.map((p) => [p.date, p.total]), [["2026-06-30", 7000], ["2026-07-31", 7000], ["2026-08-31", 26958], ["2026-09-20", 28757.05]]);
+  assert.equal(monthly.accounts.find((a) => a.id === "liv").typeColor, "#654321");
+  assert.deepEqual(B.wealthSeriesDates("2026-09-01", "2026-09-20", "week"), ["2026-09-06", "2026-09-13", "2026-09-20"], "semaines lundi–dimanche");
+  assert.deepEqual(B.wealthSeriesDates("2026-01-15", "2026-04-10", "month"), ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-10"]);
+  assert.deepEqual(B.buildWealthSeries(raw, "2026-09-01", "2026-12-31", "week", NOW).to, "2026-09-20", "rien après aujourd'hui");
+  assert.throws(() => B.buildWealthSeries(raw, "2026-10-01", null, "day", NOW), /invalid_period/, "début dans le futur");
+  assert.throws(() => B.buildWealthSeries(raw, "2026-02-31", null, "day", NOW), /invalid_period/);
+  assert.throws(() => B.buildWealthSeries(raw, null, null, "year", NOW), /invalid_step/);
+  assert.throws(() => B.buildWealthSeries(raw, "2020-01-01", null, "day", NOW), /too_many_points/, `au plus ${B.WEALTH_SERIES_MAX_POINTS} points`);
+  assert.equal(B.buildWealthSeries(raw, "2020-01-01", null, "week", NOW).points.length, 351);
+});
+
+test("Évolution du patrimoine : modèle, graduations et rattachements (#645)", async () => {
+  const C = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n${slice("FINANCE-BUDGET-PERIOD")}\n${slice("FINANCE-WEALTH-CURVE")}\n;return { FINANCE_WEALTH_STEPS, FINANCE_WEALTH_DETAILS, financeWealthCurveSpec, financeWealthTicks, financeWealthCurveModel, financeWealthPointLabel };\n})`)();
+  assert.deepEqual(C.financeWealthCurveSpec(undefined), { period: "365", from: "", to: "", days: 30, step: "week", detail: "none" });
+  assert.deepEqual(C.financeWealthCurveSpec({ wealthCurve: { period: "year", step: "day", detail: "bank" } }), { period: "year", from: "", to: "", days: 30, step: "day", detail: "bank" });
+  assert.deepEqual(C.financeWealthCurveSpec({ wealthCurve: { step: "an", detail: "x" } }), { period: "365", from: "", to: "", days: 30, step: "week", detail: "none" });
+  assert.deepEqual(C.financeWealthTicks(7000, 28757.05), { min: 0, max: 30000, ticks: [0, 10000, 20000, 30000] }, "l'axe part de zéro");
+  assert.deepEqual(C.financeWealthTicks(-1500, 3000).ticks, [-2000, 0, 2000, 4000], "net négatif : zéro reste une graduation");
+  const series = B.buildWealthSeries(raw, null, null, "month", NOW);
+  const net = C.financeWealthCurveModel(series, "none");
+  assert.deepEqual([net.groups, net.points.map((p) => p.net), net.min, net.max], [[], [7000, 7000, 26958, 28757.05], 7000, 28757.05]);
+  const byType = C.financeWealthCurveModel(series, "type");
+  assert.deepEqual(byType.groups.map((g) => [g.label, g.last, g.color]), [
+    ["Epargne Longue", 20000, series.accounts.find((a) => a.id === "av").typeColor],
+    ["Épargne Courte", 6512, "#654321"],
+    ["Comptes Cartes Bleues", 2245.05, series.accounts.find((a) => a.id === "cc").typeColor],
+  ], "par valeur au dernier point, couleur de l'entité");
+  const lastType = byType.points.at(-1);
+  assert.deepEqual(lastType.stack.map((x) => [x.lower, x.upper]), [[0, 20000], [20000, 26512], [26512, 28757.05]], "empilement des positifs");
+  assert.deepEqual([lastType.positive, lastType.negative, lastType.net], [28757.05, 0, 28757.05]);
+  const byAccount = C.financeWealthCurveModel(series, "account").points.at(-1);
+  assert.deepEqual([byAccount.positive, byAccount.negative, byAccount.net], [28880.5, -123.45, 28757.05], "carte négative : hors pile, déduite du net");
+  assert.equal(C.financeWealthPointLabel("2026-09-20", "week"), "20/09");
+  assert.equal(C.financeWealthPointLabel("2026-09-30", "month"), "sept. 2026");
+  // Rattachements.
+  assert.match(html, /\{ key: "financeWealthCurve", label: "Évolution du patrimoine", icon: TrendingUp, group: "Budget" \}/);
+  assert.match(html, /if \(type === "financeWealthCurve"\) return \{ w: 8, h: 7 \};/);
+  assert.match(html, /w\.type === "financeWealthCurve" && \(\s*<WidgetFinanceWealthCurve widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeWealthCurve"/);
+  assert.match(html, /if \(type === "financeWealthCurve"\) data\.wealthCurve = \{ \.\.\.wealthCurveConfig \};/);
+  assert.match(html, /fetch\(`\/api\/nexora\/finance-wealth-series\?\$\{query\}`/);
+  assert.match(html, /for \(const key of \[\.\.\.financeWealthStore\.entries\.keys\(\)\]\) financeWealthLoad\(key, true\);/);
+  const route = await read("../netlify/functions/finance-wealth-series.ts");
+  assert.match(route, /path: "\/api\/nexora\/finance-wealth-series", method: \["GET"\]/);
+  assert.match(route, /await requireOwnerFinance\(req\)/);
+  assert.match(route, /buildWealthSeries\(raw, from, to, step\)/);
+  assert.doesNotMatch(route, /rpc\/|method: "(POST|PATCH|PUT|DELETE)"/, "lecture seule");
+});
+
 test("suivi budgétaire identique à l'origine : budgets par préfixe ou raw.budget_months, année de la période seulement", () => {
   const s = B.buildBudgetSummary(raw, "2026-09", NOW);
   assert.deepEqual(s.tracking.map(({ category, budget, actual }) => ({ category, budget, actual })), [

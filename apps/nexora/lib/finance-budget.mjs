@@ -180,6 +180,81 @@ export function accountBalances(data, date, now = new Date()) {
 // Patrimoine total à une date.
 export const wealthAt = (data, date, now = new Date()) => accountBalances(data, date, now).reduce((sum, a) => sum + a.balance, 0);
 
+// Évolution du patrimoine (#645) : solde de chaque compte en fin de jour, de
+// semaine (lundi–dimanche) ou de mois, de `from` à `to`. Mêmes règles que
+// accountBalances (dernier relevé au plus tard à la date, sinon solde
+// d'ouverture, puis mouvements du grand livre postérieurs ; rien après
+// aujourd'hui en UTC), calculées en une passe : mouvements triés et cumulés
+// par compte, recherche dichotomique pour chaque point. Sans début : premier
+// mouvement ou relevé ; sans fin : aujourd'hui.
+export const WEALTH_SERIES_MAX_POINTS = 1500;
+export const WEALTH_SERIES_STEPS = ["day", "week", "month"];
+// Dernier indice i tel que list[i] <= value (-1 si aucun).
+function lastAtOrBefore(list, value) {
+  let lo = 0, hi = list.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid] <= value) { found = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return found;
+}
+export function wealthSeriesDates(from, to, step) {
+  const dates = [];
+  const d = new Date(from + "T12:00:00Z");
+  const end = new Date(to + "T12:00:00Z");
+  while (d <= end) {
+    if (step === "week") d.setUTCDate(d.getUTCDate() + ((7 - d.getUTCDay()) % 7));
+    else if (step === "month") d.setUTCDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 12)).getUTCDate());
+    const day = d <= end ? d.toISOString().slice(0, 10) : to;
+    dates.push(day);
+    if (dates.length > WEALTH_SERIES_MAX_POINTS) throw new Error("too_many_points");
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return dates;
+}
+export function buildWealthSeries(raw, from, to, step = "month", now = new Date()) {
+  if (!WEALTH_SERIES_STEPS.includes(step)) throw new Error("invalid_step");
+  if ((from && !isDate(from)) || (to && !isDate(to)) || (from && to && from > to)) throw new Error("invalid_period");
+  const data = normalizeBudget(raw);
+  const today = now.toISOString().slice(0, 10);
+  const first = [...data.ledger.map((t) => t.effectiveDate), ...data.balances.map((b) => b.date).filter(isDate)]
+    .reduce((min, d) => (!min || d < min ? d : min), "");
+  const end = !to || to > today ? today : to;
+  const start = from || (first && first < end ? first : end);
+  if (start > end) throw new Error("invalid_period");
+  const dates = wealthSeriesDates(start, end, step);
+  const typeNames = [...new Set(data.accounts.map((a) => a.type || "Sans type"))].sort();
+  const typeColor = (name) => data.accountTypes.find((t) => t.name === name)?.color
+    || FALLBACK_COLORS[typeNames.indexOf(name) % FALLBACK_COLORS.length];
+  const bankColor = (name) => data.banks.find((b) => b.name === name)?.color || "#8899a6";
+  const columns = data.accounts.map((account) => {
+    const moves = data.ledger.filter((t) => t.accountId === account.id).sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+    const moveDates = moves.map((t) => t.effectiveDate);
+    const cumul = [];
+    moves.reduce((sum, t, i) => (cumul[i] = sum + t.amount), 0);
+    const upTo = (date) => { const i = lastAtOrBefore(moveDates, date); return i < 0 ? 0 : cumul[i]; };
+    const snaps = data.balances.filter((b) => b.accountId === account.id).sort((a, b) => a.date.localeCompare(b.date));
+    const snapDates = snaps.map((b) => b.date);
+    return dates.map((date) => {
+      const k = lastAtOrBefore(snapDates, date);
+      const value = k < 0 ? account.opening + upTo(date) : snaps[k].balance + upTo(date) - upTo(snaps[k].date);
+      return round2(value);
+    });
+  });
+  return {
+    from: start, to: end, step, today,
+    accounts: data.accounts.map((a) => ({
+      id: a.id, name: a.name || a.id, bank: a.bank || "Sans banque", type: a.type || "Sans type",
+      color: a.color, bankColor: bankColor(a.bank || "Sans banque"), typeColor: typeColor(a.type || "Sans type"),
+    })),
+    points: dates.map((date, i) => ({
+      date,
+      balances: columns.map((c) => c[i]),
+      total: round2(columns.reduce((sum, c) => sum + c[i], 0)),
+    })),
+  };
+}
+
 // Opérations à catégoriser : catégorie absente ou « À classer », sous-catégorie
 // hors du catalogue actif (vide acceptée seulement pour une catégorie qui n'a
 // aucune sous-catégorie, comme Vacances), ou catégorie proposée par l'IA avec

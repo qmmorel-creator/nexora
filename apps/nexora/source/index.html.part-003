@@ -2153,6 +2153,7 @@ function defaultLayoutForType(type) {
   if (type === "financeBudgetPeriod") return { w: 6, h: 4 };
   if (type === "financeToCategorize") return { w: 6, h: 9 };
   if (type === "financeWealthBar") return { w: 8, h: 6 };
+  if (type === "financeWealthCurve") return { w: 8, h: 7 };
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
   if (type === "financeBudgetCumul") return { w: 10, h: 9 };
   if (type === "sportActivities") return { w: 12, h: 9 };
@@ -3732,7 +3733,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetPeriod" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetPeriod" || w.type === "financeWealthCurve" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3803,6 +3804,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeBudgetChart" && (
                   <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "financeWealthCurve" && (
+                  <WidgetFinanceWealthCurve widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "financeWealthBar" && (
                   <WidgetFinanceWealthBar widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -16769,6 +16773,8 @@ const WIDGET_TYPE_META = [
   { key: "financeBudgetPeriod", label: "Synthèse Budget (période)", icon: Wallet, group: "Budget" },
   // Répartition du patrimoine (#617) : une barre, 100 % ou valeur absolue, par compte, banque ou type.
   { key: "financeWealthBar", label: "Répartition du patrimoine", icon: Banknote, group: "Budget" },
+  // Évolution du patrimoine (#645) : courbe du net par jour, semaine ou mois, détail en option.
+  { key: "financeWealthCurve", label: "Évolution du patrimoine", icon: TrendingUp, group: "Budget" },
   // Graphiques Budget natifs (#587) : graphique et période choisis dans l'en-tête.
   { key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Budget" },
   // Budget cumulé par mois (#606) : 5 lectures du cumul, choisies dans l'en-tête.
@@ -17202,6 +17208,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [sportChartConfig, setSportChartConfig] = useState(() => sportChartSpec(widget));
   const [sportSummaryConfig, setSportSummaryConfig] = useState(() => sportSummarySpec(widget));
   const [budgetPeriodConfig, setBudgetPeriodConfig] = useState(() => financePeriodSpec(widget));
+  const [wealthCurveConfig, setWealthCurveConfig] = useState(() => financeWealthCurveSpec(widget));
   const [healthConfig, setHealthConfig] = useState(() => healthChartSpec(widget));
   const [crossConfig, setCrossConfig] = useState(() => healthSportSpec(widget));
   const [bodyPhotoConfig, setBodyPhotoConfig] = useState(() => bodyPhotoSpec(widget));
@@ -17343,6 +17350,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "sportChart") data.sport = { ...sportChartConfig };
     if (type === "sportSummary") data.sport = { ...sportSummaryConfig };
     if (type === "financeBudgetPeriod") data.budgetPeriod = { ...budgetPeriodConfig };
+    if (type === "financeWealthCurve") data.wealthCurve = { ...wealthCurveConfig };
     if (type === "healthChart") data.health = { ...healthConfig };
     if (type === "healthSportChart") data.cross = { ...crossConfig };
     if (type === "bodyPhotos") data.bodyPhotos = { ...bodyPhotoConfig };
@@ -18249,6 +18257,34 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <FinancePeriodFields spec={budgetPeriodConfig} onChange={(patch) => setBudgetPeriodConfig((c) => ({ ...c, ...patch }))} />
             </div>
+          </div>
+        </>
+      )}
+
+      {type === "financeWealthCurve" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Courbe du patrimoine net (soldes de tous les comptes actifs, négatifs déduits) en fin de jour, de semaine ou de
+            mois, sur la période choisie. En option, le détail empilé des soldes positifs par compte, banque ou type. Tout se
+            règle aussi dans l’en-tête.
+          </p>
+          <div className="lp-field">
+            <label>Période</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <FinancePeriodFields spec={wealthCurveConfig} onChange={(patch) => setWealthCurveConfig((c) => ({ ...c, ...patch }))} />
+            </div>
+          </div>
+          <div className="lp-field">
+            <label>Pas</label>
+            <select value={wealthCurveConfig.step} onChange={(e) => setWealthCurveConfig((c) => ({ ...c, step: e.target.value }))}>
+              {FINANCE_WEALTH_STEPS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+            </select>
+          </div>
+          <div className="lp-field">
+            <label>Détail</label>
+            <select value={wealthCurveConfig.detail} onChange={(e) => setWealthCurveConfig((c) => ({ ...c, detail: e.target.value }))}>
+              {FINANCE_WEALTH_DETAILS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+            </select>
           </div>
         </>
       )}
@@ -37205,6 +37241,8 @@ function financeBudgetReloadAll() {
   for (const month of [...financeBudgetStore.entries.keys()]) financeBudgetLoad(month, true);
   // Synthèse Budget (#644) : déclarée plus bas, lue à l'exécution.
   for (const key of [...financeBudgetPeriodStore.entries.keys()]) financeBudgetPeriodLoad(key, true);
+  // Évolution du patrimoine (#645).
+  for (const key of [...financeWealthStore.entries.keys()]) financeWealthLoad(key, true);
   if (financeTxStore.rows) financeTxLoad(true);
 }
 function useFinanceBudget(month = "") {
@@ -37639,6 +37677,157 @@ const FINANCE_WEALTH_BAR_CSS = `
 .nx-wb-note{color:#60717c;font-size:11px}
 `;
 
+// Chargement par réglage ("step|from|to"), partagé entre widgets ; relu par
+// « Actualiser » et après toute écriture Budget (financeBudgetReloadAll).
+const financeWealthStore = { entries: new Map(), listeners: new Set() };
+function financeWealthLoad(key, force = false) {
+  const current = financeWealthStore.entries.get(key);
+  if (current?.promise && !force) return current.promise;
+  const entry = { data: current?.data || null, error: null, promise: null, loading: true };
+  financeWealthStore.entries.set(key, entry);
+  const notify = () => financeWealthStore.listeners.forEach((fn) => fn());
+  notify();
+  entry.promise = (async () => {
+    try {
+      const [step, from, to] = key.split("|");
+      const token = await financeBudgetToken();
+      const query = new URLSearchParams({ step, from, to }).toString();
+      const response = await fetch(`/api/nexora/finance-wealth-series?${query}`, { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      const reasons = {
+        too_many_points: "Trop de points : choisis « Par semaine » ou « Par mois », ou une période plus courte.",
+        invalid_period: "Période invalide : la date de début doit précéder la date de fin et ne pas être dans le futur.",
+      };
+      if (!response.ok || !payload.ok) throw new Error(reasons[payload?.error] || financeBudgetError(payload, response.status));
+      entry.data = payload.data;
+    } catch (error) {
+      entry.error = error instanceof Error ? error.message : String(error);
+      entry.promise = null;
+    }
+    entry.loading = false;
+    notify();
+  })();
+  return entry.promise;
+}
+function useFinanceWealthSeries(step, from, to, enabled = true) {
+  const key = `${step}|${from}|${to}`;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    financeWealthStore.listeners.add(listener);
+    if (enabled) financeWealthLoad(key);
+    return () => { financeWealthStore.listeners.delete(listener); };
+  }, [key, enabled]);
+  const entry = (enabled && financeWealthStore.entries.get(key)) || {};
+  return { data: entry.data || null, error: entry.error || null, loading: !!entry.loading, reload: financeBudgetReloadAll };
+}
+
+function FinanceWealthCurveChart({ series, detail }) {
+  const [hover, setHover] = useState(null);
+  const model = financeWealthCurveModel(series, detail);
+  const pts = model.points;
+  const W = 640, H = 240, L = 54, R = 10, T = 12, B = 24;
+  const scale = financeWealthTicks(model.min, model.max);
+  const y = (v) => T + (1 - (v - scale.min) / ((scale.max - scale.min) || 1)) * (H - T - B);
+  const n = pts.length;
+  const x = (i) => L + (n > 1 ? (i / (n - 1)) * (W - L - R) : (W - L - R) / 2);
+  const line = (get) => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(get(p)).toFixed(1)}`).join("");
+  const area = (upper, lower) => `${pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(upper(p)).toFixed(1)}`).join("")}${pts.map((p, i) => [i, p]).reverse().map(([i, p]) => `L${x(i).toFixed(1)},${y(lower(p)).toFixed(1)}`).join("")}Z`;
+  const every = Math.max(1, Math.ceil(n / 6));
+  const h = hover ? pts[hover.i] : null;
+  const pick = (e) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round(n > 1 ? ((px - L) / (W - L - R)) * (n - 1) : 0)));
+    setHover({ i, x: e.clientX, y: e.clientY });
+  };
+  return (
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Évolution du patrimoine net, ${n} points`}
+        onMouseMove={pick} onMouseEnter={pick} onMouseLeave={() => setHover(null)}>
+        {scale.ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke={t === 0 ? "#b8c4cf" : "#edf1f4"} /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
+        {model.groups.map((g, k) => (
+          <path key={g.key} d={area((p) => p.stack[k].upper, (p) => p.stack[k].lower)} fill={g.color} fillOpacity=".55" stroke="#fff" strokeWidth="1" />
+        ))}
+        {!model.groups.length && n > 1 && <path d={area((p) => p.net, () => 0)} fill="#24569a" fillOpacity=".12" />}
+        <path d={line((p) => p.net)} fill="none" stroke="#203246" strokeWidth="2" strokeLinejoin="round" />
+        {n === 1 && <circle cx={x(0)} cy={y(pts[0].net)} r="4" fill="#203246" />}
+        {pts.map((p, i) => (i % every === 0 || i === n - 1) && (i === n - 1 || n - 1 - i >= every / 2) ? <text key={p.date} x={x(i)} y={H - 8} textAnchor="middle">{financeWealthPointLabel(p.date, series.step)}</text> : null)}
+        {h && (
+          <g pointerEvents="none">
+            <line x1={x(hover.i)} x2={x(hover.i)} y1={T} y2={H - B} stroke="#203246" strokeOpacity=".35" />
+            <circle cx={x(hover.i)} cy={y(h.net)} r="4" fill="#203246" stroke="#fff" strokeWidth="2" />
+          </g>
+        )}
+      </svg>
+      {h && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-bch-tip">
+            <strong>{new Date(h.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })}</strong>
+            <div><strong>Patrimoine net</strong><strong>{financeBudgetEuro(h.net)}</strong></div>
+            {model.groups.map((g, k) => ({ g, v: h.stack[k].value })).filter((r) => r.v !== 0).sort((a, b) => b.v - a.v).map(({ g, v }) => (
+              <div key={g.key}><span><i style={{ background: g.color }} />{g.label}</span><span>{financeBudgetEuro(v)}</span></div>
+            ))}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+      {model.groups.length > 0 && (
+        <div className="nx-bch-legend">
+          <span><i style={{ background: "#203246", height: 2, borderRadius: 0 }} />Patrimoine net</span>
+          {model.groups.map((g) => <span key={g.key}><i style={{ background: g.color }} />{g.label}</span>)}
+        </div>
+      )}
+    </>
+  );
+}
+
+function WidgetFinanceWealthCurve({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const spec = financeWealthCurveSpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ wealthCurve: { ...spec, ...patch } });
+  const today = financeBudgetToday();
+  const range = financePeriodRange(spec, today);
+  const invalid = (range.from && range.to && range.from > range.to) || (range.from && range.from > today);
+  const { data, error, loading, reload } = useFinanceWealthSeries(spec.step, range.from, range.to, !invalid);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <FinancePeriodFields spec={spec} onChange={update} />
+        <select value={spec.step} onChange={(e) => update({ step: e.target.value })} aria-label="Pas" title="Pas">
+          {FINANCE_WEALTH_STEPS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+        </select>
+        <select value={spec.detail} onChange={(e) => update({ detail: e.target.value })} aria-label="Détail" title="Détail">
+          {FINANCE_WEALTH_DETAILS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+        </select>
+        <button type="button" onClick={reload} disabled={loading} title="Relire les données dans Supabase">{loading ? "Lecture…" : "Actualiser"}</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (invalid) return <>{tools}<FinanceBudgetState error="Période invalide : la date de début doit précéder la date de fin et ne pas être dans le futur." onRetry={reload} /></>;
+  if (!data) return <>{tools}<FinanceBudgetState error={error} onRetry={reload} /></>;
+  const pts = data.points || [];
+  const first = pts[0], last = pts[pts.length - 1];
+  const change = first && last ? Math.round((last.total - first.total) * 100) / 100 : 0;
+  return (
+    <div className="nx-bch">
+      {tools}
+      <style>{FINANCE_BUDGET_CHART_CSS}</style>
+      {error && <div className="nx-bud-err">{error}</div>}
+      {last ? (
+        <>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+            <strong style={{ fontSize: 18 }}>{financeBudgetEuro(last.total)}</strong>
+            <small style={{ color: "#60717c" }}>
+              patrimoine net au {new Date(last.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })} · {change >= 0 ? "+" : "−"}{financeBudgetEuro(Math.abs(change))} depuis le {new Date(first.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })}
+            </small>
+          </div>
+          <FinanceWealthCurveChart series={data} detail={spec.detail} />
+        </>
+      ) : <div className="nx-bch-empty">Aucun point sur cette période.</div>}
+    </div>
+  );
+}
+
 function WidgetFinanceWealthBar({ widget, externalToolbarSlot, onUpdateWidget }) {
   const by = FINANCE_WEALTH_BAR_GROUPS.some((g) => g.key === widget.wealthBarBy) ? widget.wealthBarBy : "type";
   const percent = widget.wealthBarPercent === true;
@@ -37810,6 +37999,85 @@ function financeChartMonthShort(month) {
   return new Intl.DateTimeFormat("fr-FR", { month: "short", timeZone: "UTC" }).format(new Date(month + "-01T12:00:00Z"));
 }
 // === NEXORA:FINANCE-BUDGET-CHART:END ===
+
+// Évolution du patrimoine (#645) : courbe du patrimoine net en fin de jour, de
+// semaine ou de mois (/api/nexora/finance-wealth-series), avec en option le
+// détail empilé des soldes positifs par compte, banque ou type ; les soldes
+// négatifs sont déduits du net et listés dans l'infobulle. Un seul axe, qui
+// part de zéro.
+// === NEXORA:FINANCE-WEALTH-CURVE:START ===
+const FINANCE_WEALTH_STEPS = [
+  { value: "day", label: "Par jour" },
+  { value: "week", label: "Par semaine" },
+  { value: "month", label: "Par mois" },
+];
+const FINANCE_WEALTH_DETAILS = [
+  { value: "none", label: "Total net" },
+  { value: "account", label: "Par compte" },
+  { value: "bank", label: "Par banque" },
+  { value: "type", label: "Par type" },
+];
+function financeWealthCurveSpec(widget) {
+  const s = widget?.wealthCurve && typeof widget.wealthCurve === "object" ? widget.wealthCurve : {};
+  return {
+    ...financePeriodSpec({ budgetPeriod: { period: "365", ...s } }),
+    step: FINANCE_WEALTH_STEPS.some((x) => x.value === s.step) ? s.step : "week",
+    detail: FINANCE_WEALTH_DETAILS.some((x) => x.value === s.detail) ? s.detail : "none",
+  };
+}
+// Graduations « rondes » couvrant [min, max] et toujours zéro.
+function financeWealthTicks(min, max, count = 4) {
+  const lo0 = Math.min(0, min), hi0 = Math.max(0, max);
+  if (!(hi0 > lo0)) return { min: 0, max: 1, ticks: [0, 1] };
+  const raw = (hi0 - lo0) / count;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((x) => x >= raw);
+  const lo = Math.floor(lo0 / step) * step, hi = Math.ceil(hi0 / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
+  return { min: lo, max: hi, ticks };
+}
+// Modèle du graphique : net par point ; avec un détail, groupes (couleur de
+// l'entité, ordre par valeur au dernier point), empilement des parts positives
+// et somme des négatives par point.
+function financeWealthCurveModel(series, detail) {
+  const accounts = series?.accounts || [];
+  const points = series?.points || [];
+  const by = FINANCE_WEALTH_DETAILS.some((x) => x.value === detail) && detail !== "none" ? detail : null;
+  const round = (v) => Math.round(v * 100) / 100;
+  const keyOf = (a) => (by === "bank" ? a.bank : by === "type" ? a.type : a.id);
+  const meta = new Map();
+  if (by) for (const a of accounts) if (!meta.has(keyOf(a))) meta.set(keyOf(a), { key: keyOf(a), label: by === "account" ? a.name : keyOf(a), color: by === "bank" ? a.bankColor : by === "type" ? a.typeColor : a.color });
+  const rows = points.map((p) => {
+    const values = new Map();
+    if (by) accounts.forEach((a, i) => values.set(keyOf(a), (values.get(keyOf(a)) || 0) + (Number(p.balances?.[i]) || 0)));
+    return { date: p.date, net: round(Number(p.total) || 0), values };
+  });
+  const last = rows[rows.length - 1];
+  const groups = [...meta.values()]
+    .map((g) => ({ ...g, last: round(last?.values.get(g.key) || 0) }))
+    .sort((a, b) => b.last - a.last || a.label.localeCompare(b.label, "fr"));
+  const out = rows.map((r) => {
+    let acc = 0;
+    const stack = groups.map((g) => {
+      const v = round(r.values.get(g.key) || 0);
+      const lower = acc;
+      if (v > 0) acc += v;
+      return { key: g.key, value: v, lower: round(lower), upper: round(acc) };
+    });
+    const negative = round(stack.filter((x) => x.value < 0).reduce((t, x) => t + x.value, 0));
+    return { date: r.date, net: r.net, stack, positive: round(acc), negative };
+  });
+  const values = out.flatMap((p) => (groups.length ? [p.net, p.positive] : [p.net]));
+  return { groups, points: out, min: values.length ? Math.min(...values) : 0, max: values.length ? Math.max(...values) : 0 };
+}
+// Libellé d'un point : « 12/09 » (fin de jour ou de semaine), « sept. 2026 ».
+function financeWealthPointLabel(date, step) {
+  const d = new Date(date + "T12:00:00Z");
+  if (step === "month") return new Intl.DateTimeFormat("fr-FR", { month: "short", year: "numeric", timeZone: "UTC" }).format(d);
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+}
+// === NEXORA:FINANCE-WEALTH-CURVE:END ===
 
 const FINANCE_BUDGET_CHART_CSS = `
 .nx-bch{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;overflow:auto;padding:10px 12px;font-size:12px;color:#203246}
