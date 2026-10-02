@@ -119,3 +119,10 @@ test("couche CSS à jour avec son générateur", async () => {
   const bloc = source.slice(source.indexOf(debut) + debut.length, source.indexOf("</style><!-- /nexora-themes -->"));
   assert.equal(bloc, genererCouche(), "relancer : node docs/chartes-graphiques/outils/integration.mjs");
 });
+
+test("couche CSS : aucune couleur invalide (rgba à cinq composantes, ignorée par le navigateur)", () => {
+  const debut = html.indexOf('<style id="nexora-themes">');
+  const css = html.slice(debut, html.indexOf("</style>", debut));
+  const invalides = css.match(/rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*\)/g) || [];
+  assert.deepEqual(invalides, [], `${invalides.length} couleur(s) invalide(s)`);
+});

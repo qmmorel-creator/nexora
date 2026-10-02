@@ -36,15 +36,15 @@ for (const ch of CHARTES) {
     }
     // Attributs SVG fill/stroke et styles en ligne récurrents.
     for (const k of Object.keys(harvest.attr)) {
-      const [a, v] = k.split('='); const r = mapColor(v, a === 'fill' ? 'fill' : 'border', t);
+      const [a, v] = k.split('='); const r = mapColor(v, a === 'fill' ? 'fill' : 'border', t, true);
       if (r) css += `${S} [${a}="${v}"] { ${a}: ${fmt(r[0], r[1])}; }\n`;
     }
     for (const k of Object.keys(harvest.inl)) {
       const m = k.match(/^([a-z-]+): ((?:rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}))$/); if (!m) continue;
       const [, prop, v] = m; if (kindOfProp(prop) === 'text') continue; // couleurs de texte calculées par contraste : intactes
-      const r = mapColor(v, kindOfProp(prop), t); if (!r) continue;
+      const r = mapColor(v, kindOfProp(prop), t, true); if (!r) continue;
       const lp = prop === 'background' ? 'background-color' : prop === 'border' ? 'border-color' : prop;
-      css += `${S} :is([style^="${prop}: ${v}"], [style*="; ${prop}: ${v}"]):not(.lp-widget-treemap-tile) { ${lp}: ${fmt(r[0], r[1])} !important; }\n`;
+      css += `${S} :is([style^="${prop}: ${v}"], [style*="; ${prop}: ${v}"]):not(.lp-widget-treemap-tile, .lp-heatmap-cell, .lp-heatmap-top *) { ${lp}: ${fmt(r[0], r[1])} !important; }\n`;
     }
     // Aplats « encre » : actifs/primaires → accent ; autres → aplat d'info-bulle en sombre.
     for (const [media, sel, , , prio] of inkDecls) {

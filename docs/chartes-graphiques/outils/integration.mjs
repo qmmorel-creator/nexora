@@ -46,17 +46,17 @@ export function genererCouche(ids = THEMES_APP) {
   let regles = '';
   for (const { media, sel, d } of groupes.values()) { const r = `${scope(sel, ANY)} { ${d.join('; ')}; }`; regles += media ? `@media ${media} { ${r} }\n` : r + '\n'; }
   for (const k of Object.keys(harvest.attr)) {
-    const [a, v] = k.split('='); const valeurs = modes.map(({ t }) => { const r = mapColor(v, a === 'fill' ? 'fill' : 'border', t); return r ? fmt(r[0], r[1]) : null; });
+    const [a, v] = k.split('='); const valeurs = modes.map(({ t }) => { const r = mapColor(v, a === 'fill' ? 'fill' : 'border', t, true); return r ? fmt(r[0], r[1]) : null; });
     if (valeurs.every((x) => x === null)) continue;
     regles += `${ANY} [${a}="${v}"] { ${a}: ${variable(a, v, false, valeurs.map((x) => x ?? v))}; }\n`;
   }
   for (const k of Object.keys(harvest.inl)) {
     const m = k.match(/^([a-z-]+): ((?:rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}))$/); if (!m) continue;
     const [, prop, v] = m; if (kindOfProp(prop) === 'text') continue;
-    const valeurs = modes.map(({ t }) => { const r = mapColor(v, kindOfProp(prop), t); return r ? fmt(r[0], r[1]) : null; });
+    const valeurs = modes.map(({ t }) => { const r = mapColor(v, kindOfProp(prop), t, true); return r ? fmt(r[0], r[1]) : null; });
     if (valeurs.every((x) => x === null)) continue;
     const lp = prop === 'background' ? 'background-color' : prop === 'border' ? 'border-color' : prop;
-    regles += `${ANY} :is([style^="${prop}: ${v}"], [style*="; ${prop}: ${v}"]):not(.lp-widget-treemap-tile) { ${lp}: ${variable(prop, v, true, valeurs.map((x) => x ?? v))}; }\n`;
+    regles += `${ANY} :is([style^="${prop}: ${v}"], [style*="; ${prop}: ${v}"]):not(.lp-widget-treemap-tile, .lp-heatmap-cell, .lp-heatmap-top *) { ${lp}: ${variable(prop, v, true, valeurs.map((x) => x ?? v))}; }\n`;
   }
   for (const [media, sel] of inkDecls) {
     if (/weekend|legend-line|auth|landing/.test(sel)) continue;
