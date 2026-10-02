@@ -1,0 +1,197 @@
+// Génère docs/chartes-graphiques/index.html : galerie des cinq chartes (captures réelles).
+import { writeFileSync } from 'node:fs';
+import { CHARTES } from './palettes.mjs';
+import { CONTENU } from './contenu.mjs';
+import { contrast } from './color.mjs';
+
+const VUES = [
+  ['01-dashboard-pilotage', 'Tableau de bord · Pilotage'], ['02-dashboard-planning-equipe', 'Tableau de bord · Planning & équipe'], ['03-dashboard-suivi', 'Tableau de bord · Suivi'],
+  ['04-planning-projets', 'Planning Projets'], ['05-gantt', 'Gantt'], ['06-aujourdhui', "Aujourd'hui"], ['07-calendrier', 'Calendrier'], ['08-tableur', 'Tableur'], ['09-fiche-tache', 'Fiche tâche'],
+];
+const WIDGETS = [
+  ['taches-actives', 'Indicateur'], ['avancement-moyen', 'Indicateur %'], ['taches-par-projet', 'Barres'], ['repartition-par-statut', 'Secteurs'], ['prochaines-echeances', 'Liste'],
+  ['mini-gantt-chantiers', 'Mini-Gantt'], ['calendrier', 'Calendrier'], ['charge-personnel', 'Charge personnel'], ['heat-map-mensuelle', 'Heat map'], ['chemin-critique', 'Chemin critique'],
+  ['priorite-du-moment', 'Next Best Action'], ['taches-bloquantes', 'Domino Effect'], ['note-de-chantier', 'Note'], ['treemap-projets', 'Treemap'], ['bulles', 'Bulles'],
+];
+const SW = ['bg', 'surface', 'border', 'text', 'secondary', 'accent', 'accentSoft', 'signal', 'sidebar'];
+const data = CHARTES.map((ch) => ({
+  id: ch.id, num: ch.num, nom: ch.nom, devise: ch.devise, dossier: `${ch.num}-${ch.id}`, modes: Object.keys(ch.modes),
+  personnalite: CONTENU[ch.id].personnalite, pour: CONTENU[ch.id].pour, principes: CONTENU[ch.id].principes,
+  polices: CONTENU[ch.id].typo.map((t) => t[0]), googleFonts: ch.googleFonts,
+  display: ch.fonts.display, body: ch.fonts.body,
+  palettes: Object.fromEntries(Object.entries(ch.modes).map(([m, t]) => [m, SW.map((k) => [k, t[k]])])),
+  contrastes: Object.fromEntries(Object.entries(ch.modes).map(([m, t]) => [m, { texte: contrast(t.text, t.surface).toFixed(1), discret: contrast(t.muted, t.surface).toFixed(1), action: contrast(t.onAccent, t.accent).toFixed(1) }])),
+}));
+const fontsHref = 'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&' +
+  CHARTES.map((c) => c.googleFonts).join('&').replace(/&?family=JetBrains\+Mono[^&]*/g, '') + '&display=swap';
+
+const html = `<title>Chartes graphiques Nexora</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta charset="utf-8">
+<link rel="stylesheet" href="${fontsHref}">
+<style>
+/* Mise en page : colonne de lecture + visionneuse par charte (vue principale, bandeau de vues, grille de widgets). */
+:root {
+  --bg: #F3F4F2; --panel: #FFFFFF; --ink: #16181C; --ink-2: #4B5058; --line: #DADDD8; --focus: #2F5BD3;
+  --display: 'Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif; --body: 'Public Sans', system-ui, sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #121315; --panel: #1A1C1F; --ink: #ECEDEA; --ink-2: #A9ADB3; --line: #2E3135; --focus: #8EA9FF; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #121315; --panel: #1A1C1F; --ink: #ECEDEA; --ink-2: #A9ADB3; --line: #2E3135; --focus: #8EA9FF; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); padding-inline: 16px; padding-block: 0 64px; }
+.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 56px; }
+header { padding-top: 40px; display: grid; gap: 14px; max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.02em; }
+h1 { font-size: clamp(30px, 4vw, 44px); font-weight: 800; line-height: 1.05; }
+h2 { font-size: 28px; font-weight: 700; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); font-weight: 600; }
+p { margin: 0; }
+.lead { color: var(--ink-2); font-size: 16.5px; }
+.eyebrow { font: 500 12px var(--mono); letter-spacing: .04em; color: var(--ink-2); }
+a { color: var(--ink); }
+.sommaire { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.sommaire a { display: grid; gap: 6px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; text-decoration: none; min-width: 0; }
+.sommaire a:hover { border-color: var(--ink-2); }
+.sommaire strong { font: 700 18px var(--display); }
+.sommaire span { color: var(--ink-2); font-size: 13px; }
+.mini-pal { display: flex; height: 10px; border-radius: 2px; overflow: hidden; }
+.mini-pal i { flex: 1; }
+.constats { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.constat { padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 4px; min-width: 0; }
+.constat b { font: 700 22px var(--display); font-variant-numeric: tabular-nums; }
+.constat span { color: var(--ink-2); font-size: 13.5px; }
+section.charte { display: grid; gap: 20px; scroll-margin-top: 16px; border-top: 1px solid var(--line); padding-top: 32px; }
+.tete { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 32px; align-items: end; }
+.tete .titre { display: grid; gap: 8px; min-width: 0; }
+.tete .nom { font-size: clamp(34px, 5vw, 54px); font-weight: 800; line-height: 1; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tags span { font: 500 12px var(--mono); padding: 3px 8px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink-2); }
+.controles { display: flex; flex-wrap: wrap; gap: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.seg button { font: 600 13px var(--body); color: var(--ink-2); background: none; border: 0; padding: 8px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.scene { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+.ecran { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: grid; gap: 8px; min-width: 0; }
+.ecran img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; border-radius: 3px; cursor: zoom-in; background: var(--bg); }
+.legende { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
+.fiche { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.pal { display: grid; grid-template-columns: repeat(9, 1fr); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.pal i { aspect-ratio: 1 / 1.4; }
+.pal-label { display: flex; justify-content: space-between; font: 500 11.5px var(--mono); color: var(--ink-2); margin-top: 6px; }
+.specimen { padding: 14px; border-radius: 4px; display: grid; gap: 4px; }
+.specimen .s1 { font-size: 26px; font-weight: 700; line-height: 1.1; }
+.specimen .s2 { font-size: 13px; }
+.specimen .s3 { font-size: 30px; font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.03em; }
+.mesures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mesures div { border: 1px solid var(--line); border-radius: 4px; padding: 8px; background: var(--panel); }
+.mesures b { display: block; font: 600 17px var(--mono); font-variant-numeric: tabular-nums; }
+.mesures span { font-size: 11.5px; color: var(--ink-2); }
+ul.princ { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
+.vues { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 8px; }
+.vues button, .widgets button { padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); cursor: pointer; overflow: hidden; display: grid; text-align: left; min-width: 0; }
+.vues button[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.vues img { width: 100%; aspect-ratio: 16/10; object-fit: cover; object-position: top left; display: block; }
+.vues span, .widgets span { font-size: 11.5px; padding: 5px 6px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.widgets { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.widgets img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top left; display: block; background: var(--bg); }
+details.w > summary { cursor: pointer; font: 600 14px var(--body); }
+details.w[open] > summary { margin-bottom: 12px; }
+dialog { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 94vh; }
+dialog::backdrop { background: rgba(0, 0, 0, .78); }
+dialog img { max-width: 96vw; max-height: 90vh; display: block; border-radius: 4px; }
+dialog p { color: #fff; font-size: 13px; padding-top: 6px; }
+.reco { display: grid; gap: 10px; max-width: 75ch; }
+footer { color: var(--ink-2); font-size: 13px; max-width: 75ch; }
+@media (max-width: 900px) { .scene { grid-template-columns: 1fr; } .vues { grid-template-columns: repeat(3, minmax(0, 1fr)); } .tete { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">NEXORA · ÉTUDE ESTHÉTIQUE · OCTOBRE 2026</p>
+    <h1>Cinq chartes graphiques pour Nexora</h1>
+    <p class="lead">Cinq identités complètes appliquées à l'application réelle, chacune en thème clair et sombre, sans toucher au moteur : une feuille CSS posée par-dessus l'existant. Toutes les images sont des captures du build local avec des données de démonstration.</p>
+  </header>
+  <nav class="sommaire" aria-label="Chartes" id="sommaire"></nav>
+  <section style="display:grid;gap:14px">
+    <h3>Ce que l'étude de la charte actuelle a montré</h3>
+    <div class="constats">
+      <div class="constat"><b>1 206</b><span>déclarations CSS à couleur codée en dur malgré les tokens : un thème sombre est impossible sans remappage.</span></div>
+      <div class="constat"><b>2 accents</b><span>bleu #245EDB pour l'action, orange #FF7A3D pour le focus, l'onglet actif et « aujourd'hui ».</span></div>
+      <div class="constat"><b>1,8 à 4,0:1</b><span>contraste des puces (statut, projet, personne) : aucune n'atteint le seuil AA de 4,5:1.</span></div>
+      <div class="constat"><b>5 icônes</b><span>d'action toujours visibles sur chaque widget, et un double cadre autour des chiffres clés.</span></div>
+    </div>
+  </section>
+  <div id="chartes" style="display:grid;gap:56px"></div>
+  <section class="reco">
+    <h2>Recommandation</h2>
+    <p><b>Atlas</b> comme charte principale : l'évolution la plus directe de l'existant, un seul accent au lieu de deux, une identité nette et des chiffres plus lisibles. <b>Nocturne</b> comme thème sombre de référence. <b>Clarté</b> en option d'accessibilité. <b>Signal</b> et <b>Édition</b> sont des ruptures assumées, l'une pour la densité et l'impression, l'autre pour la lecture.</p>
+    <p>Deux corrections valent pour toutes les chartes, actuelle comprise : des puces lisibles et des actions de widget masquées hors survol.</p>
+  </section>
+  <footer>Hors périmètre : vues 3D (Carte, Cosmos, Fleuve du temps, Réunions 3D), connexion, Devis, Factures et Finance PRO. Les dossiers détaillés (palettes, contrastes WCAG, typographie, règles par composant) sont dans <code>docs/chartes-graphiques/&lt;charte&gt;/CHARTE.md</code>.</footer>
+</div>
+<dialog id="zoom" aria-label="Capture agrandie"><img alt=""><p></p></dialog>
+<script>
+const CHARTES = ${JSON.stringify(data)};
+const VUES = ${JSON.stringify(VUES)};
+const WIDGETS = ${JSON.stringify(WIDGETS)};
+const src = (c, mode, f) => mode === 'actuelle' ? 'reference/' + f + '.webp' : c.dossier + '/captures/' + mode + '-' + f + '.webp';
+const el = (t, a = {}, ...k) => { const e = document.createElement(t); for (const x in a) { if (x === 'text') e.textContent = a[x]; else e.setAttribute(x, a[x]); } k.forEach((y) => y && e.append(y)); return e; };
+const sommaire = document.getElementById('sommaire');
+const zoom = document.getElementById('zoom');
+const ouvrir = (s, l) => { zoom.querySelector('img').src = s; zoom.querySelector('img').alt = l; zoom.querySelector('p').textContent = l; zoom.showModal(); };
+zoom.addEventListener('click', () => zoom.close());
+for (const c of CHARTES) {
+  const p0 = c.palettes[c.modes[0]];
+  const pal = el('span', { class: 'mini-pal' }); p0.forEach(([, v]) => pal.append(el('i', { style: 'background:' + v })));
+  sommaire.append(el('a', { href: '#' + c.id }, el('span', { class: 'eyebrow', text: c.num }), el('strong', { text: c.nom }), el('span', { text: c.devise }), pal));
+  const etat = { mode: c.modes[0], vue: VUES[0][0] };
+  const s = el('section', { class: 'charte', id: c.id });
+  const segMode = el('div', { class: 'seg', role: 'group', 'aria-label': 'Thème' });
+  [...c.modes, 'actuelle'].forEach((m) => segMode.append(el('button', { type: 'button', 'data-m': m, 'aria-pressed': String(m === etat.mode), text: m === 'actuelle' ? 'Charte actuelle' : 'Thème ' + m })));
+  s.append(el('div', { class: 'tete' },
+    el('div', { class: 'titre' }, el('span', { class: 'eyebrow', text: 'CHARTE ' + c.num }), el('h2', { class: 'nom', style: 'font-family:' + c.display, text: c.nom }), el('p', { class: 'lead', text: c.devise }),
+      (() => { const t = el('div', { class: 'tags' }); c.personnalite.forEach((x) => t.append(el('span', { text: x }))); return t; })()),
+    el('div', { class: 'controles' }, segMode)));
+  const img = el('img', { alt: '', loading: 'lazy', width: '1600', height: '1000' });
+  const leg = el('div', { class: 'legende' });
+  const fiche = el('div', { class: 'fiche' });
+  s.append(el('div', { class: 'scene' }, el('div', { class: 'ecran' }, img, leg), fiche));
+  const vues = el('div', { class: 'vues', role: 'group', 'aria-label': 'Vues' });
+  s.append(vues);
+  const wgrid = el('div', { class: 'widgets' });
+  s.append(el('details', { class: 'w' }, el('summary', { text: 'Widgets (15) dans le thème choisi' }), wgrid));
+  const lien = el('p', {}, el('a', { href: c.dossier + '/CHARTE.md', text: 'Dossier de charte complet' }), document.createTextNode(' · '), el('a', { href: c.dossier + '/nexora-' + c.id + '.css', text: 'feuille nexora-' + c.id + '.css' }));
+  s.append(lien);
+  const rendre = () => {
+    const label = VUES.find((v) => v[0] === etat.vue)[1];
+    img.src = src(c, etat.mode, etat.vue); img.alt = c.nom + ' — ' + label + ' — ' + etat.mode;
+    leg.replaceChildren(el('span', { text: label }), el('span', { text: etat.mode === 'actuelle' ? 'Charte actuelle (référence)' : c.nom + ' · thème ' + etat.mode }));
+    segMode.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === etat.mode)));
+    vues.replaceChildren(...VUES.map(([f, l]) => { const b = el('button', { type: 'button', 'aria-pressed': String(f === etat.vue), title: l }, el('img', { src: src(c, etat.mode, f), alt: '', loading: 'lazy' }), el('span', { text: l })); b.onclick = () => { etat.vue = f; rendre(); }; return b; }));
+    wgrid.replaceChildren(...WIDGETS.map(([f, l]) => { const s2 = src(c, etat.mode, 'widget-' + f); const b = el('button', { type: 'button', title: l }, el('img', { src: s2, alt: l, loading: 'lazy' }), el('span', { text: l })); b.onclick = () => ouvrir(s2, l); return b; }));
+    const m = etat.mode === 'actuelle' ? c.modes[0] : etat.mode;
+    const P = Object.fromEntries(c.palettes[m]);
+    const pal = el('div', { class: 'pal' }); c.palettes[m].forEach(([k, v]) => pal.append(el('i', { style: 'background:' + v, title: k + ' ' + v })));
+    const k = c.contrastes[m];
+    fiche.replaceChildren(
+      el('div', {}, el('h3', { text: 'Palette · thème ' + m }), pal, el('div', { class: 'pal-label' }, el('span', { text: 'fond → navigation' }), el('span', { text: P.accent }))),
+      el('div', { class: 'specimen', style: 'background:' + P.surface + ';color:' + P.text + ';border:1px solid ' + P.border },
+        el('div', { class: 's1', style: 'font-family:' + c.display, text: 'Planning & équipe' }),
+        el('div', { class: 's2', style: 'font-family:' + c.body + ';color:' + P.secondary, text: 'Revue DOE · Lot 2B · échéance 17/10/2026' }),
+        el('div', { class: 's3', style: 'font-family:' + c.display + ';color:' + P.accent, text: '33 · 23 %' })),
+      el('div', {}, el('h3', { text: 'Contrastes · ' + m }), el('div', { class: 'mesures' },
+        el('div', {}, el('b', { text: k.texte + ':1' }), el('span', { text: 'texte' })), el('div', {}, el('b', { text: k.discret + ':1' }), el('span', { text: 'texte discret' })), el('div', {}, el('b', { text: k.action + ':1' }), el('span', { text: 'bouton principal' })))),
+      el('div', {}, el('h3', { text: 'Polices' }), el('p', { style: 'font-size:14px', text: c.polices.join(' · ') })),
+      el('div', {}, el('h3', { text: 'Principes' }), (() => { const u = el('ul', { class: 'princ' }); c.principes.slice(0, 3).forEach((x) => u.append(el('li', { text: x }))); return u; })()));
+  };
+  segMode.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { etat.mode = b.dataset.m; rendre(); } });
+  img.addEventListener('click', () => ouvrir(img.src, img.alt));
+  rendre();
+  document.getElementById('chartes').append(s);
+}
+</script>
+`;
+writeFileSync(new URL('../index.html', import.meta.url), '<!doctype html>\n<html lang="fr">\n' + html + '</html>\n');
+if (process.argv[2]) writeFileSync(process.argv[2], html); // version Artifact (squelette ajouté à la publication)
+console.log('index.html écrit', html.length);
