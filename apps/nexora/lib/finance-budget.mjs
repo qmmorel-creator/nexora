@@ -1,10 +1,8 @@
 // Budget natif Nexora (#586) : calculs du mois, du suivi budgétaire, de la file
 // « à catégoriser » et du patrimoine, à partir des tables brutes KDM360.
 //
-// Les règles de calcul sont celles d'OS360, traduites de son bundle (commit
-// 13197da, copie retirée de Nexora par #597) ; le nom de la fonction d'origine est donné
-// en commentaire. Toute divergence avec OS360 est un défaut : corriger ici en
-// relisant la fonction d'origine, jamais « améliorer ».
+// Les règles de calcul sont figées par tests/finance-budget.test.mjs : toute
+// divergence avec ces résultats est un défaut, à corriger ici sans « améliorer ».
 //
 // Module unique, utilisé par /api/nexora/finance-budget-summary (widgets) et
 // par le rapport du matin : les deux affichent donc les mêmes chiffres.
@@ -12,7 +10,7 @@
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const BUDGET_PREFIX = /^\[B360:BUDGET_V2:([0-9,]+)\]/;
-// Catégories hors dépenses et revenus — `_f` d'OS360.
+// Catégories hors dépenses et revenus.
 const NEUTRAL_CATEGORIES = new Set(["Transferts internes", "Ajustement"]);
 const UNCLASSIFIED = "À classer";
 const FALLBACK_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#9c755f"];
@@ -56,9 +54,9 @@ export function shiftMonth(month, delta) {
   return d.toISOString().slice(0, 7);
 }
 
-// Lignes brutes KDM360 -> modèle Budget d'OS360 — `Fc` et `jc` d'OS360.
+// Lignes brutes KDM360 -> modèle Budget.
 // Une transaction sans identifiant ou sans dates valides refuse tout le jeu,
-// comme OS360 : un total calculé sur un résultat partiel serait faux.
+// car un total calculé sur un résultat partiel serait faux.
 export function normalizeBudget(raw) {
   const transactions = rows(raw, "transactions");
   const cancelled = new Set(transactions.map((row) => row.cancels_transaction_id).filter(Boolean));
@@ -104,22 +102,22 @@ export function normalizeBudget(raw) {
   };
 }
 
-// Dépenses, revenus, somme des valeurs absolues — `vf`, `yf`, `bf` d'OS360.
+// Dépenses, revenus, somme des valeurs absolues.
 const isNeutral = (t) => NEUTRAL_CATEGORIES.has(t.category);
 export const expensesOf = (list) => list.filter((t) => t.type === "Dépense" && !isNeutral(t));
 export const incomeOf = (list) => list.filter((t) => ["Revenu", "Remboursement"].includes(t.type) && !isNeutral(t));
 export const sumAbs = (list) => list.reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
-// Transactions de la période, date effective — `af` d'OS360 sans filtre de widget.
+// Transactions de la période, date effective sans filtre de widget.
 const inPeriod = (list, period) => list.filter((t) => t.effectiveDate >= period.from && t.effectiveDate <= period.to);
 
-// Mois couverts par une ligne Budget — `pf` d'OS360.
+// Mois couverts par une ligne Budget.
 export function budgetMonthsOf(t) {
   const months = t.budgetMonths?.map(Number) || t.description.match(BUDGET_PREFIX)?.[1].split(",").map(Number) || [];
   return [...new Set(months.filter((m) => Number.isInteger(m) && m >= 1 && m <= 12))];
 }
 
-// Budget d'une catégorie pour un mois aaaa-mm — `mf` d'OS360.
+// Budget d'une catégorie pour un mois aaaa-mm.
 function categoryBudget(budgets, category, month) {
   return budgets
     .filter((t) => t.category === category && t.effectiveDate.slice(0, 4) === month.slice(0, 4))
@@ -127,7 +125,7 @@ function categoryBudget(budgets, category, month) {
     .reduce((sum, t) => sum + Math.abs(t.amount), 0);
 }
 
-// Suivi budgétaire d'une période — `osBudgetGroups` + `hf` d'OS360 : catégories
+// Suivi budgétaire d'une période : catégories
 // ayant une dépense dans la période ou une ligne Budget sur ses années, triées.
 export function budgetTracking(data, period) {
   const months = [...new Set(enumerateDays(period.from, period.to).map((d) => d.slice(0, 7)))];
@@ -149,7 +147,7 @@ export function budgetTracking(data, period) {
   });
 }
 
-// Jours d'une période — `ne` d'OS360.
+// Jours d'une période.
 function enumerateDays(from, to) {
   const days = [];
   const d = new Date(from + "T12:00:00Z");
@@ -159,7 +157,7 @@ function enumerateDays(from, to) {
 }
 
 // Solde de chaque compte à une date : dernier relevé connu, puis mouvements du
-// grand livre postérieurs — `of` d'OS360 (date bornée à aujourd'hui en UTC,
+// grand livre postérieurs (date bornée à aujourd'hui en UTC,
 // comme l'original).
 export function accountBalances(data, date, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
@@ -179,7 +177,7 @@ export function accountBalances(data, date, now = new Date()) {
   });
 }
 
-// Patrimoine total à une date — `sf` d'OS360.
+// Patrimoine total à une date.
 export const wealthAt = (data, date, now = new Date()) => accountBalances(data, date, now).reduce((sum, a) => sum + a.balance, 0);
 
 // Opérations à catégoriser : catégorie absente ou « À classer », sous-catégorie
@@ -217,7 +215,7 @@ function shiftDays(date, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Montants absolus par clé, dans l'ordre de première apparition — `lf` d'OS360.
+// Montants absolus par clé, dans l'ordre de première apparition.
 function sumBy(list, key) {
   const map = new Map();
   for (const t of list) {
@@ -227,8 +225,7 @@ function sumBy(list, key) {
   return map;
 }
 
-// Répartition entière de `total` cases selon des poids, au plus fort reste —
-// `jd` d'OS360.
+// Répartition entière de `total` cases selon des poids, au plus fort reste.
 export function apportion(weights, total) {
   const sum = weights.reduce((a, b) => a + b, 0);
   if (!sum) return weights.map(() => 0);
@@ -268,7 +265,7 @@ export function waffle(periodRows, data) {
   };
 }
 
-// Graphiques du mois et des 12 derniers mois, avec les règles d'OS360 :
+// Graphiques du mois et des 12 derniers mois :
 // donut (`chart_donut`), waterfall (`chart_waterfall`), dépenses cumulées par
 // catégorie et par jour (`chart_cumulative`), small multiples avec budget
 // (`osSmallMultiples`), waffle (`osWaffleCompact`), barres périodiques des

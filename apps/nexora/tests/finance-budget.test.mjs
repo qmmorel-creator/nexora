@@ -1,8 +1,8 @@
 /* Budget natif (issue #586).
    Les valeurs attendues des calculs ont été établies en exécutant, sur les
-   mêmes données, les fonctions d'origine du bundle OS360 (vf, yf, bf, _f, pf,
+   mêmes données, les fonctions d'origine (vf, yf, bf, _f, pf,
    mf, hf, osBudgetGroups, of, sf) : toute divergence ici signale un écart avec
-   OS360. Les blocs d'interface sont extraits du bundle RÉELLEMENT construit. */
+   l'origine. Les blocs d'interface sont extraits du bundle RÉELLEMENT construit. */
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -79,7 +79,7 @@ const raw = {
 };
 const NOW = new Date("2026-09-20T10:00:00Z");
 
-test("totaux du mois identiques à OS360 : Épargne comptée, transferts internes et ajustements exclus, annulations retirées", () => {
+test("totaux du mois identiques à l'origine : Épargne comptée, transferts internes et ajustements exclus, annulations retirées", () => {
   const s = B.buildBudgetSummary(raw, "2026-09", NOW);
   assert.deepEqual(s.period, { from: "2026-09-01", to: "2026-09-30" });
   assert.equal(s.totals.expenses, 1653.45);
@@ -87,7 +87,7 @@ test("totaux du mois identiques à OS360 : Épargne comptée, transferts interne
   assert.equal(s.totals.net, 1587.05);
 });
 
-test("suivi budgétaire identique à OS360 : budgets par préfixe ou raw.budget_months, année de la période seulement", () => {
+test("suivi budgétaire identique à l'origine : budgets par préfixe ou raw.budget_months, année de la période seulement", () => {
   const s = B.buildBudgetSummary(raw, "2026-09", NOW);
   assert.deepEqual(s.tracking.map(({ category, budget, actual }) => ({ category, budget, actual })), [
     { category: "Alimentation", budget: 100, actual: 123.45 },
@@ -105,7 +105,7 @@ test("suivi budgétaire identique à OS360 : budgets par préfixe ou raw.budget_
   assert.deepEqual(oct.tracking.map((c) => [c.category, c.budget]), [["Alimentation", 100], ["Logement", 1000], ["Loisirs", 0]]);
 });
 
-test("soldes et patrimoine identiques à OS360 : dernier relevé puis mouvements, date bornée à aujourd'hui", () => {
+test("soldes et patrimoine identiques à l'origine : dernier relevé puis mouvements, date bornée à aujourd'hui", () => {
   const data = B.normalizeBudget(raw);
   assert.deepEqual(B.accountBalances(data, "2026-09-30", NOW).map((a) => [a.id, a.balance]), [["cc", 2368.5], ["cb", -123.45], ["liv", 6512], ["av", 20000]]);
   const s = B.buildBudgetSummary(raw, "2026-09", NOW);
@@ -236,7 +236,7 @@ test("validation : sous-catégorie vide acceptée seulement à la demande, et po
 
 // --- #587 : graphiques natifs, recherche et routes de l'assistant ----------
 
-test("graphiques identiques à OS360 : donut (lf), waterfall, waffle (jf, jd)", () => {
+test("graphiques identiques à l'origine : donut (lf), waterfall, waffle (jf, jd)", () => {
   const c = B.buildBudgetSummary(raw, "2026-09", NOW).charts;
   assert.deepEqual(c.byCategory.map((x) => [x.category, x.amount]), [["Logement", 950], ["Épargne", 500], ["Alimentation", 123.45], ["À classer", 80]]);
   assert.deepEqual(c.waterfall.map((x) => [x.label, x.from, x.to]), [

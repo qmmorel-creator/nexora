@@ -10,7 +10,7 @@ declare const Netlify: { env: { get(name: string): string | undefined } };
 // nutrition), en LECTURE SEULE, pour la session Nexora du propriétaire. Même
 // modèle que /api/nexora/sport-activities : CSV publié lu côté serveur, URL
 // dans la variable NEXORA_HEALTH_CSV_URL (contexte production), jamais
-// renvoyée au navigateur ; lecture à parité avec OS360 (_shared/health.ts).
+// renvoyée au navigateur ; lecture figée par les tests de parité (_shared/health.ts).
 // Une variable modifiée ne vaut qu'après un nouveau déploiement.
 export default async (req: Request) => {
   if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -25,7 +25,7 @@ export default async (req: Request) => {
     const records = healthRecords(sportCsvRows(await response.text()));
     return json({ ok: true, data: { records, readAt: new Date().toISOString() } });
   } catch (error) {
-    // Message d'OS360 (colonne, date, valeur), jamais l'URL de la source.
+    // Message du parseur (colonne, date, valeur), jamais l'URL de la source.
     return json({ ok: false, error: "health_source_failed", detail: error instanceof Error ? error.message : String(error) }, 502);
   }
 };

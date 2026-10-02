@@ -2144,7 +2144,7 @@ function defaultLayoutForType(type) {
   // Réunions 3D (#514) : même place que les autres vues 3D.
   if (type === "embedReunions3d") return { w: 12, h: 12 };
   if (type === "teamCatalog") return { w: 8, h: 9 };
-  // Sankey Budget (#569) : tailles d'OS360 (8 × 7 et 7 × 7).
+  // Sankey Budget (#569) : 8 × 7 et 7 × 7.
   if (type === "financeSankeyMonthly") return { w: 8, h: 7 };
   if (type === "financeSankeyWealth") return { w: 7, h: 7 };
   if (type === "financeTransactions") return { w: 12, h: 9 };
@@ -2225,14 +2225,19 @@ function migrateLegacySingleBlockCardWidget(widget) {
     }],
   };
 }
-// #590 : le « Graphique sport (OS360) » migre vers le « Graphique sport »
-// natif, sur la vue équivalente au graphique OS360 choisi (variante comprise).
-// Graphiques OS360 sans équivalent : barres empilées par semaine, le défaut
-// du widget OS360 (« Sport par semaine »). Le réglage `os360` est conservé.
-const LEGACY_SPORT_OS360_TYPE = "sportOs360Chart";
-function migrateLegacySportOs360Widget(widget) {
-  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_SPORT_OS360_TYPE) return widget;
-  const os = widget.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
+// #590 : l'ancien widget de graphique sport externe migre vers le « Graphique
+// sport » natif, sur la vue équivalente au graphique choisi (variante comprise).
+// Graphiques sans équivalent : barres empilées par semaine, le défaut de
+// l'ancien widget (« Sport par semaine »). Son réglage d'origine est conservé.
+// Les deux types et le champ de réglage ci-dessous sont des valeurs
+// enregistrées dans les tableaux de bord : elles restent telles quelles pour
+// que la migration les reconnaisse, et ne figurent nulle part ailleurs.
+const LEGACY_SPORT_CHART_TYPE = "sportOs360Chart";
+const LEGACY_FINANCE_CHART_TYPE = "financeOs360Chart";
+const LEGACY_SETTINGS_KEY = "os360";
+function migrateLegacySportChartWidget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_SPORT_CHART_TYPE) return widget;
+  const os = widget[LEGACY_SETTINGS_KEY] && typeof widget[LEGACY_SETTINGS_KEY] === "object" ? widget[LEGACY_SETTINGS_KEY] : {};
   const config = os.config && typeof os.config === "object" ? os.config : {};
   const chart = String(config.financeVariant || os.variant || os.type || "health.sportWeekly").replace(/^health\./, "");
   const view = chart === "sportWaffle" ? "waffle"
@@ -2246,13 +2251,12 @@ function migrateLegacySportOs360Widget(widget) {
   if (view === "calendar" && /^\d{4}$/.test(String(config.year || ""))) sport.year = String(config.year);
   return { ...widget, type: "sportChart", sport: { ...sport, ...(widget.sport && typeof widget.sport === "object" ? widget.sport : {}) } };
 }
-// #596 : le « Graphique financier (OS360) » migre vers le widget Budget natif
+// #596 : l'ancien widget de graphique financier externe migre vers le widget Budget natif
 // qui montre la même chose — Graphique Budget (#587, 8 graphiques), Budget du
 // mois, Patrimoine par banque, Transactions ou Sankey du patrimoine. Sans
-// équivalent : Graphique Budget, donut (le défaut du widget OS360). Titre,
-// identité et disposition conservés ; le réglage `os360` aussi.
-const LEGACY_FINANCE_OS360_TYPE = "financeOs360Chart";
-const LEGACY_FINANCE_OS360_CHARTS = {
+// équivalent : Graphique Budget, donut (le défaut de l'ancien widget). Titre,
+// identité et disposition conservés ; son réglage d'origine aussi.
+const LEGACY_FINANCE_CHARTS = {
   chart_sankey_monthly: "sankeyMonthly", sankey: "sankeyMonthly", massifFlux: "sankeyMonthly",
   chart_annual_sankey: "sankeyAnnual",
   cascadeWaterfall: "waterfall",
@@ -2262,19 +2266,19 @@ const LEGACY_FINANCE_OS360_CHARTS = {
   chart_waffle: "waffle",
   chart_annual_categories: "periodic", generic_periodic: "periodic", stackedBars: "periodic", stackedBars100: "periodic", timeSeries: "periodic", generic_time: "periodic",
 };
-const LEGACY_FINANCE_OS360_WIDGETS = [
+const LEGACY_FINANCE_WIDGETS = [
   [/^chart_wealth_sankey$/, "financeSankeyWealth"],
   [/^(chart_wealth_|wealth|massifPatrimoine|accountsTreemap|card_wealth_change)/, "financeWealth"],
   [/^(card_|budget|category_progress|chart_budget_|list_month_budget_tracking|list_over_budget|remainingCounter|progressBar)/, "financeBudgetMonth"],
   [/^(list_all_transactions|list_recent|list_unreconciled|transactions|transactionsPro)$/, "financeTransactions"],
 ];
-function migrateLegacyFinanceOs360Widget(widget) {
-  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_FINANCE_OS360_TYPE) return widget;
-  const os = widget.os360 && typeof widget.os360 === "object" ? widget.os360 : {};
+function migrateLegacyFinanceChartWidget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_FINANCE_CHART_TYPE) return widget;
+  const os = widget[LEGACY_SETTINGS_KEY] && typeof widget[LEGACY_SETTINGS_KEY] === "object" ? widget[LEGACY_SETTINGS_KEY] : {};
   const chart = String(os.type || "budget.chart_donut").replace(/^budget\./, "");
-  const target = LEGACY_FINANCE_OS360_WIDGETS.find(([re]) => re.test(chart));
+  const target = LEGACY_FINANCE_WIDGETS.find(([re]) => re.test(chart));
   if (target) return { ...widget, type: target[1] };
-  return migrateBudgetChartWidget({ ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_OS360_CHARTS[chart] || "donut" });
+  return migrateBudgetChartWidget({ ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_CHARTS[chart] || "donut" });
 }
 // #604 : le « Graphique Budget » ne propose plus les deux Sankey, qui ont leur
 // propre widget. Un Graphique Budget réglé sur un Sankey devient le widget
@@ -2305,8 +2309,8 @@ function migrateLegacyMiniGanttData(value) {
   if (!value || typeof value !== "object") return value;
   if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
-  if (value.type === LEGACY_SPORT_OS360_TYPE) return migrateLegacySportOs360Widget(value);
-  if (value.type === LEGACY_FINANCE_OS360_TYPE) return migrateLegacyFinanceOs360Widget(value);
+  if (value.type === LEGACY_SPORT_CHART_TYPE) return migrateLegacySportChartWidget(value);
+  if (value.type === LEGACY_FINANCE_CHART_TYPE) return migrateLegacyFinanceChartWidget(value);
   if (value.type === "financeBudgetChart") return migrateBudgetChartWidget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
@@ -3776,7 +3780,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_OS360_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_CHART_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === LEGACY_SPORT_CHART_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3837,8 +3841,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeProSynthese" && (
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
                 )}
-                {w.type === LEGACY_FINANCE_OS360_TYPE && (
-                  <WidgetFinanceLegacyOs360 widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacyFinanceOs360Widget(w), ...patch })} />
+                {w.type === LEGACY_FINANCE_CHART_TYPE && (
+                  <WidgetFinanceLegacyChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacyFinanceChartWidget(w), ...patch })} />
                 )}
                 {w.type === "financeTransactions" && (
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -3867,8 +3871,8 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "healthSportChart" && (
                   <WidgetHealthSportChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
-                {w.type === LEGACY_SPORT_OS360_TYPE && (
-                  <WidgetSportChart widget={migrateLegacySportOs360Widget(w)} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacySportOs360Widget(w), ...patch })} />
+                {w.type === LEGACY_SPORT_CHART_TYPE && (
+                  <WidgetSportChart widget={migrateLegacySportChartWidget(w)} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacySportChartWidget(w), ...patch })} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
                   <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -16817,13 +16821,12 @@ const WIDGET_TYPE_META = [
   // existant — aucun second système de tableau de bord créé.
   { key: "financeProSynthese", label: "Finance PRO — Synthèse", icon: Wallet, group: "Budget" },
   { key: "financeProEcheances", label: "Finance PRO — Échéances de facturation", icon: CalendarClock, group: "Budget" },
-  // Sankey Budget (#569) : repris d'OS360, données KDM360 en lecture seule.
+  // Sankey Budget (#569) : données KDM360 en lecture seule.
   { key: "financeSankeyMonthly", label: "Sankey mensuel (flux)", icon: GitBranch, group: "Budget" },
   { key: "financeSankeyWealth", label: "Structure du patrimoine (Sankey)", icon: Wallet, group: "Budget" },
   // Transactions Budget (#572) : 100 % des transactions KDM360, lecture seule.
   { key: "financeTransactions", label: "Transactions (Budget)", icon: List, group: "Budget" },
-  // Graphique financier (#573) : tous les widgets Budget d'OS360, par son moteur.
-  // Budget natif (#586) : sans réglage, calculs d'OS360 faits côté serveur.
+  // Budget natif (#586) : sans réglage, calculs faits côté serveur.
   { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Budget" },
   { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Budget" },
   { key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Budget" },
@@ -16831,7 +16834,7 @@ const WIDGET_TYPE_META = [
   { key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Budget" },
   // Budget cumulé par mois (#606) : 5 lectures du cumul, choisies dans l'en-tête.
   { key: "financeBudgetCumul", label: "Budget cumulé par mois", icon: TrendingUp, group: "Budget" },
-  // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
+  // Sport (#578) : journal « Activités Strava », lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Santé & sport" },
   { key: "sportChart", label: "Graphique sport", icon: BarChart3, group: "Santé & sport" },
   { key: "sportSummary", label: "Résumé sport", icon: Activity, group: "Santé & sport" },
@@ -18276,7 +18279,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
       {type === "financeBudgetChart" && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-          Graphiques Budget natifs, calculés avec les règles d’OS360 : waterfall, donut, waffle et dépenses par mois sur
+          Graphiques Budget natifs, calculés côté serveur : waterfall, donut, waffle et dépenses par mois sur
           12 mois (empilables par catégorie). Le graphique et le mois se choisissent dans l’en-tête du widget. Les Sankey et
           les dépenses cumulées ont leur propre widget.
         </p>
@@ -18296,7 +18299,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           {type === "financeBudgetMonth" && "Dépenses, revenus, solde net et reste à dépenser du mois, puis le suivi du budget par catégorie, dépassements en tête. Le mois se change dans l’en-tête du widget."}
           {type === "financeToCategorize" && "Opérations sans catégorie, à sous-catégorie à préciser, ou classées par l’IA avec une confiance inférieure à 85 % ces 60 derniers jours. « + Saisir une opération » ajoute une opération à la main."}
           {type === "financeWealth" && "Patrimoine total, son évolution sur 12 mois et sa répartition par banque et par type de compte."}
-          {" "}Aucun réglage : les chiffres suivent les règles de calcul d’OS360 (données KDM360).
+          {" "}Aucun réglage : les chiffres sont calculés côté serveur (données KDM360).
         </p>
       )}
 
@@ -18315,7 +18318,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       {type === "sportActivities" && (
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-            Toutes les activités du journal « Activités Strava » (le même qu’OS360), tous leurs champs, en lecture seule.
+            Toutes les activités du journal « Activités Strava », tous leurs champs, en lecture seule.
             Sports, période, recherche, tri et export CSV se règlent directement dans l’en-tête du widget.
           </p>
           <div className="lp-widget-config-title" style={{ marginTop: 4 }}><List size={12} /> Colonnes affichées</div>
@@ -18421,8 +18424,8 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
             {type === "financeSankeyWealth"
-              ? "Soldes positifs des comptes à la fin de la période : type de compte → banque → compte. Repris d’OS360, données Budget (KDM360) en lecture seule."
-              : "Flux de la période : revenus → comptes → catégories de dépenses (hors transferts internes et ajustements). Repris d’OS360, données Budget (KDM360) en lecture seule."}
+              ? "Soldes positifs des comptes à la fin de la période : type de compte → banque → compte. Données Budget (KDM360) en lecture seule."
+              : "Flux de la période : revenus → comptes → catégories de dépenses (hors transferts internes et ajustements). Données Budget (KDM360) en lecture seule."}
           </p>
           <FinanceSankeySettings value={sankeyConfig} onChange={setSankeyConfig} />
         </>
@@ -35692,15 +35695,12 @@ function FinanceProView(props) {
 
 // ---------------------------------------------------------------------------
 // Widgets Sankey Finance (#569) — « Sankey mensuel (flux) » et « Structure du
-// patrimoine (Sankey) », repris d'OS360 (budget.chart_sankey_monthly et
-// budget.chart_wealth_sankey). Le GRAPHIQUE est celui d'OS360, traduit
-// fidèlement de son bundle : mêmes calculs (Ef, Df, soldes), même ordonnancement
-// des nœuds (Jf), même mise en page (Yf), même rendu SVG, mêmes infobulles,
-// même tableau de données. Seul le cadre (WidgetFrame, fiche de réglages) est
-// celui de Nexora. Toute divergence avec OS360 est un défaut : corriger ici en
-// relisant la fonction d'origine nommée en commentaire, jamais « améliorer ».
+// patrimoine (Sankey) ». Calculs (flux, soldes), ordonnancement des nœuds,
+// mise en page, rendu SVG, infobulles et tableau de données sont figés par les
+// tests de tests/finance-sankey.test.mjs : toute divergence avec ces résultats
+// est un défaut, à corriger ici sans « améliorer » le rendu.
 //
-// Les données viennent de KDM360 (même base Supabase qu'OS360) par
+// Les données viennent de KDM360 par
 // /api/nexora/finance-sankey-data, en lecture seule, côté serveur.
 // ---------------------------------------------------------------------------
 
@@ -35712,14 +35712,14 @@ const FINANCE_SANKEY_DEFAULT_CONFIG = {
   flowOpacity: 0.52, sankeyShowValues: true, labelMode: "auto", decimals: 2, rounding: "auto",
 };
 
-// Lecture des réglages — `_`, `v` d'OS360.
+// Lecture des réglages.
 function financeSankeyText(config, key, fallback = "") {
   return typeof config[key] === "string" ? config[key] : fallback;
 }
 function financeSankeyNumber(config, key, fallback = 0) {
   return config[key] !== "" && config[key] != null && Number.isFinite(Number(config[key])) ? Number(config[key]) : fallback;
 }
-// Couleur hexadécimale à 6 chiffres, sinon repli — `C` d'OS360.
+// Couleur hexadécimale à 6 chiffres, sinon repli.
 function financeSankeyColor(value, fallback = "#24569a") {
   return typeof value === "string" && /^#[\da-f]{6}$/i.test(value) ? value : fallback;
 }
@@ -35733,12 +35733,12 @@ function financeSankeyAddDays(date, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
-// Date civile de Paris — `k` d'OS360.
+// Date civile de Paris.
 function financeSankeyToday(now = new Date()) {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(now);
 }
 
-// Sélection rapide de la barre de période — `osPeriod` d'OS360.
+// Sélection rapide de la barre de période.
 function financeSankeyQuickPeriod(value, today = financeSankeyToday()) {
   if (value === "today") return { from: today, to: today };
   if (value === "previous") {
@@ -35749,7 +35749,7 @@ function financeSankeyQuickPeriod(value, today = financeSankeyToday()) {
   return { from: month + "-01", to: new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 0, 12)).toISOString().slice(0, 10) };
 }
 
-// Période du widget — `te` d'OS360 avec son correctif de sélection rapide
+// Période du widget avec son correctif de sélection rapide
 // (quickPeriod), sans le mode « Suivre la période de l'onglet » qui n'existe
 // pas dans Nexora (repli : mois courant).
 function financeSankeyPeriod(config, today = financeSankeyToday()) {
@@ -35779,7 +35779,7 @@ function financeSankeyPeriod(config, today = financeSankeyToday()) {
   return monthOf(ym);
 }
 
-// Date courte française — `Vf` d'OS360.
+// Date courte française.
 function financeSankeyDateLabel(value, short = false) {
   const text = String(value ?? "");
   if (!/^\d{4}-\d{2}(-\d{2})?$/.test(text)) return text;
@@ -35789,7 +35789,7 @@ function financeSankeyDateLabel(value, short = false) {
     : text;
 }
 
-// Nombre arrondi selon le réglage « Arrondi des valeurs » — `Ff` d'OS360.
+// Nombre arrondi selon le réglage « Arrondi des valeurs ».
 function financeSankeyRound(value, unit = "", decimals = 2, rounding = "auto") {
   if (value === null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
@@ -35804,16 +35804,16 @@ function financeSankeyRound(value, unit = "", decimals = 2, rounding = "auto") {
     ...(rounding === "compact" ? { notation: "compact", maximumFractionDigits: 1 } : {}),
   });
 }
-// Montant avec unité — `Bf` d'OS360.
+// Montant avec unité.
 function financeSankeyFormat(value, unit = "", decimals = 2, compact = false) {
   if (typeof value !== "number" || !Number.isFinite(value)) return value == null || value === "-" ? "—" : String(value);
   return value.toLocaleString("fr-FR", { maximumFractionDigits: Math.max(0, Math.min(6, decimals)), ...(compact ? { notation: "compact" } : {}) })
     + (unit ? "\u00A0" + unit : "");
 }
 
-// Lignes brutes KDM360 -> modèle Budget d'OS360 — `Fc` et `jc` d'OS360,
+// Lignes brutes KDM360 -> modèle Budget,
 // limités aux champs que lisent les deux Sankey. Une transaction sans
-// identifiant ou sans dates valides refuse TOUT le jeu, comme OS360 : un
+// identifiant ou sans dates valides refuse TOUT le jeu : un
 // graphique calculé sur un résultat partiel serait faux sans le dire.
 function financeSankeyNormalize(raw) {
   const rows = (key) => {
@@ -35862,13 +35862,13 @@ function financeSankeyNormalize(raw) {
   };
 }
 
-// Transactions de la période (date effective) — `af` d'OS360 sans filtre de widget.
+// Transactions de la période (date effective) sans filtre de widget.
 function financeSankeyPeriodTransactions(data, period) {
   return data.transactions.filter((t) => t.effectiveDate >= period.from && t.effectiveDate <= period.to);
 }
 
 // Solde de chaque compte à une date : dernier relevé connu, puis mouvements du
-// grand livre postérieurs — `of` d'OS360 (date bornée à aujourd'hui, en UTC
+// grand livre postérieurs (date bornée à aujourd'hui, en UTC
 // comme l'original).
 function financeSankeyAccountBalances(data, date, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
@@ -35890,7 +35890,7 @@ function financeSankeyAccountBalances(data, date, now = new Date()) {
 
 const financeSankeySum = (list, pick) => list.reduce((sum, item) => sum + pick(item), 0);
 
-// Sankey mensuel : revenus -> comptes -> catégories de dépenses — `Ef` d'OS360.
+// Sankey mensuel : revenus -> comptes -> catégories de dépenses.
 function financeSankeyMonthlyGraph(data, periodTransactions) {
   const flows = periodTransactions.filter((t) => Number.isFinite(t.amount) && t.amount !== 0
     && ["Dépense", "Revenu", "Remboursement"].includes(t.type)
@@ -35933,7 +35933,7 @@ function financeSankeyMonthlyGraph(data, periodTransactions) {
 }
 
 // Structure du patrimoine : type de compte -> banque -> compte (soldes positifs
-// à la fin de la période) — `Df` d'OS360.
+// à la fin de la période).
 function financeSankeyWealthGraph(data, date, now = new Date()) {
   const accounts = financeSankeyAccountBalances(data, date, now).filter((a) => a.balance > 0);
   const types = [...new Set(accounts.map((a) => a.type))];
@@ -35952,7 +35952,7 @@ function financeSankeyWealthGraph(data, date, now = new Date()) {
   return { nodes, links, columns: ["TYPE", "BANQUE", "COMPTE"] };
 }
 
-// Graphe et libellé de période d'un widget — `Nf` (branche sankey) et `Kf` d'OS360.
+// Graphe et libellé de période d'un widget.
 function financeSankeyBuild(type, data, config, today = financeSankeyToday(), now = new Date()) {
   const period = financeSankeyPeriod(config, today);
   const effective = period.from === "1900-01-01"
@@ -35965,7 +35965,7 @@ function financeSankeyBuild(type, data, config, today = financeSankeyToday(), no
 }
 
 // Ordre des nœuds dans chaque colonne : balayages barycentre/médiane puis
-// échanges voisins qui réduisent les croisements pondérés — `Jf` d'OS360.
+// échanges voisins qui réduisent les croisements pondérés.
 function financeSankeyOrderNodes(nodes, links) {
   const list = nodes.map((n, i) => ({ ...n, seed: n.order ?? i, score: 0, weight: 0 }));
   const byId = new Map(list.map((n) => [n.id, n]));
@@ -36027,7 +36027,7 @@ function financeSankeyOrderNodes(nodes, links) {
 }
 
 // Géométrie : échelle monétaire commune à toutes les colonnes, piliers,
-// rubans et étiquettes anti-chevauchement — `Yf` d'OS360.
+// rubans et étiquettes anti-chevauchement.
 function financeSankeyLayout(graph, width, height) {
   const ids = new Set(graph.nodes.map((n) => n.id));
   const links = graph.links.filter((l) => Number.isFinite(l.value) && l.value > 0 && ids.has(l.source) && ids.has(l.target));
@@ -36104,7 +36104,7 @@ function financeSankeyLayout(graph, width, height) {
   return { width: W, height: H, font, valueFont, nodes, links: ribbons, columns };
 }
 
-// Largeur d'un texte, mesurée comme OS360 (canvas, sinon estimation) — `z9`.
+// Largeur d'un texte, mesurée par canvas, sinon estimée.
 let financeSankeyCanvas;
 function financeSankeyMeasure(text, size, weight = 600) {
   if (financeSankeyCanvas === undefined) {
@@ -36114,7 +36114,7 @@ function financeSankeyMeasure(text, size, weight = 600) {
   financeSankeyCanvas.font = `${weight} ${size}px "Segoe UI",Arial,sans-serif`;
   return financeSankeyCanvas.measureText(text).width;
 }
-// Libellé tronqué par dichotomie avec « … » — `iCe` d'OS360.
+// Libellé tronqué par dichotomie avec « … ».
 function financeSankeyTruncate(text, maxWidth, size) {
   if (financeSankeyMeasure(text, size) <= maxWidth) return text;
   if (maxWidth < financeSankeyMeasure("…", size)) return "";
@@ -36129,8 +36129,7 @@ function financeSankeyTruncate(text, maxWidth, size) {
 }
 // === NEXORA:FINANCE-SANKEY:END ===
 
-// Feuille de style du graphique — `rCe` et les règles .sankey-* d'OS360
-// (police réelle d'OS360 : Inter, via var(--os-font)).
+// Feuille de style du graphique (police Inter, via var(--os-font)).
 const FINANCE_SANKEY_SVG_CSS = ".b360-flow-label{paint-order:stroke fill;stroke:rgba(255,255,255,.96);stroke-linejoin:round;pointer-events:none;font-family:Segoe UI,Arial,sans-serif}.b360-flow-name{stroke-width:4px;fill:#14232d;font-weight:600}.b360-flow-value{stroke-width:3px;fill:#60717c;font-weight:500}.b360-flow-node:focus{outline:none}.b360-flow-node:focus>rect{stroke:#14232d;stroke-width:2}.b360-flow-ribbon:focus{outline:none;stroke:#14232d;stroke-width:1.5}";
 const FINANCE_SANKEY_CSS = `
 .lp-widget-head-toolbar:has(.nx-sankey-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
@@ -36165,7 +36164,7 @@ const FINANCE_SANKEY_CSS = `
 .nx-sankey .os-tooltip-foot{color:#536477;border-top:1px solid #edf1f4;margin-top:7px;padding-top:7px;font-size:10px}
 `;
 
-// Rendu SVG — composant `nCe` d'OS360.
+// Rendu SVG du Sankey.
 function FinanceSankeyChart({ graph, config, title, period, showData: showDataProp, onToggleData }) {
   const figureRef = useRef(null);
   const uid = React.useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -36367,13 +36366,13 @@ function useFinanceSankeyData() {
 }
 
 // Réglages du Sankey en en-tête de widget (#569, retour de test) : la bande
-// d'OS360 (variante, barre de période « Aujourd'hui · Ce mois · Mois
+// (variante, barre de période « Aujourd'hui · Ce mois · Mois
 // précédent · mois ») complétée des réglages d'affichage, pour tout changer
 // sans ouvrir la fiche. Chaque contrôle écrit dans widget.sankeyConfig, comme
 // la fiche : une seule source.
 function FinanceSankeyHeaderTools({ widget, config, onUpdateWidget, showData, onToggleData }) {
   const set = (patch) => onUpdateWidget({ sankeyConfig: { ...config, ...patch } });
-  // `osPeriodBar` d'OS360 : toute sélection repasse en mode mois et efface
+  // Barre de période : toute sélection repasse en mode mois et efface
   // fenêtre glissante, dates libres et année.
   const setPeriod = (value) => set({ range: "", from: "", to: "", year: undefined, periodMode: "month", periodValue: value, quickPeriod: ["today", "current", "previous"].includes(value) ? value : "" });
   const period = financeSankeyPeriod(config);
@@ -36455,7 +36454,7 @@ function WidgetFinanceSankey({ widget, externalToolbarSlot, onUpdateWidget }) {
   );
 }
 
-// Réglages repris d'OS360 (période, opacité des rubans, montants, étiquetage,
+// Réglages du Sankey (période, opacité des rubans, montants, étiquetage,
 // décimales, arrondi), présentés dans la fiche de widget Nexora.
 function FinanceSankeySettings({ value, onChange }) {
   const cfg = { ...FINANCE_SANKEY_DEFAULT_CONFIG, ...(value || {}) };
@@ -36841,7 +36840,7 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
 // ---------------------------------------------------------------------------
 // Budget natif (#586) : « Budget du mois », « À catégoriser » et « Patrimoine »,
 // sans réglage. Les chiffres viennent de /api/nexora/finance-budget-summary,
-// calculés côté serveur avec les règles d'OS360 (lib/finance-budget.mjs) : ces
+// calculés côté serveur (lib/finance-budget.mjs) : ces
 // widgets ne refont aucun calcul financier, ils mettent en forme. Catégoriser et
 // saisir passent par /api/nexora/finance-owner-transactions (session du
 // propriétaire).
@@ -36880,8 +36879,8 @@ function financeBudgetSortTracking(rows) {
     || a.category.localeCompare(b.category, "fr"));
 }
 // Largeurs (en %) des segments positifs de chaque banque, à l'échelle de la
-// banque la plus riche ; les soldes négatifs ne sont pas dessinés (comme la
-// répartition d'OS360) mais restent dans le total affiché.
+// banque la plus riche ; les soldes négatifs ne sont pas dessinés mais
+// restent dans le total affiché.
 function financeBudgetBankBars(banks) {
   const positive = (bank) => bank.segments.reduce((s, seg) => s + Math.max(0, seg.value), 0);
   const max = Math.max(1, ...banks.map(positive));
@@ -37280,11 +37279,11 @@ function WidgetFinanceWealth({ externalToolbarSlot }) {
 }
 
 // ---------------------------------------------------------------------------
-// Graphique Budget natif (#587) : les graphiques d'OS360 retenus par Quentin,
+// Graphique Budget natif (#587) : les graphiques retenus par Quentin,
 // sans réglage hormis le choix du graphique et de la période (en-tête). Les
 // Sankey réutilisent le portage natif (#569, financeSankeyBuild) ; les autres
 // graphiques mettent en forme `charts` de /api/nexora/finance-budget-summary,
-// calculé côté serveur avec les règles d'OS360 (lib/finance-budget.mjs).
+// calculé côté serveur (lib/finance-budget.mjs).
 // ---------------------------------------------------------------------------
 
 // === NEXORA:FINANCE-BUDGET-CHART:START ===
@@ -37511,10 +37510,10 @@ function FinanceChartPeriodic({ months, stacked = false }) {
   );
 }
 
-// Ancien « Graphique financier (OS360) » reçu sans migration (#596) : rendu
+// Ancien widget de graphique financier externe reçu sans migration (#596) : rendu
 // par le widget natif équivalent.
-function WidgetFinanceLegacyOs360({ widget, externalToolbarSlot, onUpdateWidget }) {
-  const w = migrateLegacyFinanceOs360Widget(widget);
+function WidgetFinanceLegacyChart({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const w = migrateLegacyFinanceChartWidget(widget);
   if (w.type === "financeSankeyWealth") return <WidgetFinanceSankey widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
   if (w.type === "financeWealth") return <WidgetFinanceWealth externalToolbarSlot={externalToolbarSlot} />;
   if (w.type === "financeBudgetMonth") return <WidgetFinanceBudgetMonth externalToolbarSlot={externalToolbarSlot} />;
@@ -37576,7 +37575,7 @@ function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget 
 // Budget cumulé par mois (#606) : les dépenses cumulées jour par jour d'un
 // mois, séparées du Graphique Budget, en cinq lectures choisies dans l'en-tête
 // (maquettes 1, 2, 3, 4 et 6 validées par Quentin). Données : `charts` de
-// /api/nexora/finance-budget-summary (lib/finance-budget.mjs, règles d'OS360).
+// /api/nexora/finance-budget-summary (lib/finance-budget.mjs).
 // ---------------------------------------------------------------------------
 
 // === NEXORA:FINANCE-BUDGET-CUMUL:START ===
@@ -38069,7 +38068,7 @@ function SportGoalsSettings({ value, onChange }) {
 // ---------------------------------------------------------------------------
 
 // === NEXORA:FINANCE-REFERENCES:START ===
-// Noms lus par les calculs (Sankey, agrégats d'OS360) : pas de renommage.
+// Noms lus par les calculs (Sankey, agrégats) : pas de renommage.
 const FINANCE_REF_PROTECTED = ["epargne", "transferts internes", "ajustement"];
 function financeRefIsProtected(name) {
   const n = String(name || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -38171,7 +38170,7 @@ function FinanceRefRow({ kind, item, busy, onRename, onColor, onToggle, onDelete
       {extra}
       <span className="nx-ref-usage">{item.usage ? `${item.usage} transaction${item.usage > 1 ? "s" : ""}` : "inutilisée"}</span>
       <span className="nx-ref-actions">
-        {!editing && <button type="button" disabled={busy || protectedName} title={protectedName ? "Nom protégé : lu par les calculs d'OS360 et de Nexora" : "Renommer (répercuté sur les transactions)"} onClick={() => { setDraft(name); setEditing(true); }}>Renommer</button>}
+        {!editing && <button type="button" disabled={busy || protectedName} title={protectedName ? "Nom protégé : lu par les calculs de Nexora" : "Renommer (répercuté sur les transactions)"} onClick={() => { setDraft(name); setEditing(true); }}>Renommer</button>}
         <button type="button" disabled={busy} onClick={onToggle}>{item.active === false ? "Activer" : "Désactiver"}</button>
         <button type="button" className="danger" disabled={busy || item.usage > 0} title={item.usage > 0 ? "Impossible : des transactions l'utilisent. Renommez-la ou désactivez-la." : "Supprimer"} onClick={onDelete}>Supprimer</button>
       </span>
@@ -38234,7 +38233,7 @@ function BudgetCategoriesSettings({ pushToast }) {
     <div className="nx-ref">
       <style>{FINANCE_REF_CSS}</style>
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-600)" }}>
-        Catégories et sous-catégories du Budget (KDM360), partagées avec OS360. Un renommage est répercuté sur les transactions
+        Catégories et sous-catégories du Budget (KDM360). Un renommage est répercuté sur les transactions
         et les règles, en une seule fois ; une référence encore utilisée ne peut pas être supprimée (désactivez-la).
         Chaque modification est tracée dans la base.
       </p>
@@ -38298,16 +38297,16 @@ function BudgetCategoriesSettings({ pushToast }) {
 }
 
 // ---------------------------------------------------------------------------
-// Widgets Sport (#578) : le journal « Activités Strava » d'OS360, lu par
+// Widgets Sport (#578) : le journal « Activités Strava », lu par
 // /api/nexora/sport-activities (session du propriétaire vérifiée, URL de la
-// source gardée côté serveur, parseur à parité avec `Jc` d'OS360). Lecture
+// source gardée côté serveur, parseur figé par les tests de parité). Lecture
 // seule. Le widget « Activités sport » liste tous les champs de toutes les
 // activités, avec colonnes au choix, filtres sport et période, recherche, tri
 // et export CSV, tous les réglages dans l'en-tête.
 // ---------------------------------------------------------------------------
 
 // === NEXORA:SPORT:START ===
-// Champs produits par la route (ceux de `Jc` d'OS360, puis ceux qu'il ignore).
+// Champs produits par la route (les 14 colonnes exigées, puis les autres).
 // Les colonnes que la feuille ajoute après les 14 exigées arrivent dans
 // `extra` et s'affichent sous leur en-tête (préfixe « x: » dans la clé).
 const SPORT_COLUMNS = [
@@ -38465,7 +38464,7 @@ function sportCsv(rows, columns) {
 }
 // --- Diagramme empilé par sport (#579) ---------------------------------------
 // Mesures : les durées sont en minutes dans la feuille et affichées en heures,
-// comme les séries `strava_*_total` d'OS360 (`Yc` divise par 60).
+// (minutes divisées par 60).
 const SPORT_MEASURES = [
   { value: "count", label: "Séances", unit: "séances" },
   { value: "total", label: "Durée totale", unit: "h" },
@@ -38610,7 +38609,7 @@ function sportColor(name, order, others = []) {
 }
 
 // --- Graphiques sport natifs (#590) ------------------------------------------
-// Les visualisations d'OS360 retenues (#589), sans son moteur. Une vue par
+// Les visualisations retenues (#589). Une vue par
 // réglage du même widget, plutôt qu'un widget par graphique.
 const SPORT_VIEWS = [
   { value: "stack", label: "Barres empilées" },
@@ -38634,7 +38633,7 @@ function sportMeanKey(key, bucket) {
 // Série temporelle : total de la mesure par jour, semaine ou mois, sports
 // choisis confondus, et moyenne de la semaine, du mois ou de l'année. Seules
 // les périodes déjà commencées comptent : les jours à venir, vides, ne sont
-// ni tracés ni comptés dans la moyenne (comme OS360, qui s'arrête au jour).
+// ni tracés ni comptés dans la moyenne (arrêt au jour).
 function sportTimeSeries(rows, spec, today, order = []) {
   const stack = sportStackSeries(rows, spec, today, order);
   const current = sportBucketKey(today, spec.bucket);
@@ -38666,7 +38665,7 @@ function sportCumulSeries(rows, spec, today, order = []) {
   });
   return { ...stack, buckets };
 }
-// Répartition, comme `osSportWaffle` d'OS360 mais pour tous les sports :
+// Répartition pour tous les sports :
 // heures de durée totale par sport, 1 carré = 1 heure, le dernier carré
 // rempli en proportion. Activités sans durée comptées dans `missing`.
 const SPORT_WAFFLE_MAX = 2000;
@@ -38692,7 +38691,7 @@ function sportYears(rows, today) {
   return [...years].sort().reverse();
 }
 // Calendrier annuel : une case par jour, une colonne par semaine (lundi en
-// haut), comme le « Calendrier sportif annuel » d'OS360. Couleur : le sport
+// haut). Couleur : le sport
 // dominant du jour (le plus de durée totale, puis de séances) ; teinte plus
 // soutenue avec la durée du jour (pleine à 2 h).
 function sportCalendar(rows, spec, year, order = []) {
@@ -38911,7 +38910,7 @@ function sportBlockSpec(block) {
 }
 // Valeur d'un bloc : agrégation, sur les activités filtrées, des valeurs
 // renseignées de la mesure. La moyenne de la FC moyenne est pondérée par la
-// durée totale, comme les séries `strava_*_hr` d'OS360 (`Yc`). null = aucune
+// durée totale. null = aucune
 // valeur (affiché « — », jamais 0).
 function sportAggregate(rows, spec, today) {
   const filtered = sportFilter(rows || [], spec, today);
@@ -39737,14 +39736,14 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
 // ---------------------------------------------------------------------------
 // Santé (#594) : l'onglet Santé de la feuille (Whoop, balance, nutrition),
 // lu par /api/nexora/health-records (session du propriétaire, URL de la
-// source dans NEXORA_HEALTH_CSV_URL, lecture à parité avec OS360). Un widget
+// source dans NEXORA_HEALTH_CSV_URL, lecture figée par les tests de parité). Un widget
 // « Graphique santé » : une mesure (et une seconde au choix, dans ses propres
 // panneaux), par jour, semaine ou mois, avec la moyenne mobile sur X jours, la
 // plage min–max de la période (#608) et l'écart à la moyenne (#611).
 // ---------------------------------------------------------------------------
 
 // === NEXORA:HEALTH:START ===
-// Libellés, unités et décimales d'OS360 (`Zc`), par famille.
+// Libellés, unités et décimales des mesures, par famille.
 const HEALTH_METRICS = [
   { key: "weight", label: "Poids", unit: "kg", decimals: 1, group: "Corps" },
   { key: "bodyFat", label: "Masse grasse", unit: "%", decimals: 1, group: "Corps" },

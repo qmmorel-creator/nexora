@@ -16,7 +16,7 @@
 -- Une ligne de finance_reference_audit trace l'opération (action `rename`
 -- ou `style`), clé d'idempotence comprise : rejouer la même clé ne refait rien.
 --
--- Noms protégés (lus par les calculs d'OS360 et de Nexora : Sankey,
+-- Noms protégés (lus par les calculs de Nexora : Sankey,
 -- agrégats) : « Épargne », « Transferts internes », « Ajustement ». On peut
 -- changer leur couleur, pas leur nom, ni donner leur nom à une autre catégorie.
 --

@@ -1,7 +1,7 @@
 /* Mesures santé (#594).
-   1. Parité du parseur serveur (_shared/health.ts) avec OS360 : cas figés
-      dans fixtures/os360-parite-sante.json, produits par les fonctions
-      d'origine d'OS360 (`qc`, `osHealthHeader`, `osHealthImportNumber`, `Kc`,
+   1. Parité du parseur serveur (_shared/health.ts) avec l'origine : cas figés
+      dans fixtures/parite-sante.json, produits par les fonctions
+      d'origine (`qc`, `osHealthHeader`, `osHealthImportNumber`, `Kc`,
       `A`, `_e`, commit 13197da) avant le retrait du moteur (#597).
    2. Fonctions pures du widget, extraites du bundle RÉELLEMENT construit.
    3. Raccordements et route serveur. */
@@ -14,7 +14,7 @@ import { transform } from "esbuild";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-// --- 1. Parité avec OS360 -------------------------------------------------
+// --- 1. Parité avec l'origine ----------------------------------------------
 
 const ts = async (path) => {
   const compiled = await transform(await read(path), { loader: "ts", format: "esm" });
@@ -22,9 +22,9 @@ const ts = async (path) => {
 };
 const N = await ts("../netlify/functions/_shared/health.ts");
 const S = await ts("../netlify/functions/_shared/sport.ts");
-const parity = JSON.parse(await read("./fixtures/os360-parite-sante.json"));
+const parity = JSON.parse(await read("./fixtures/parite-sante.json"));
 
-test("parité OS360 : mêmes mesures et mêmes refus que `qc`, sur les cas figés", () => {
+test("parité : mêmes mesures et mêmes refus que `qc`, sur les cas figés", () => {
   assert.ok(parity.cases.length >= 10);
   for (const c of parity.cases) {
     if (c.error) {
@@ -36,7 +36,7 @@ test("parité OS360 : mêmes mesures et mêmes refus que `qc`, sur les cas figé
   assert.ok(parity.cases.find((c) => c.name === "valide").records.length > 100, "jeu conséquent");
 });
 
-test("colonnes et en-têtes : 26, dans l'ordre d'OS360", () => {
+test("colonnes et en-têtes : 26, dans l'ordre d'origine", () => {
   assert.equal(N.HEALTH_COLUMNS.length, 26);
   assert.equal(N.HEALTH_HEADERS.length, 26);
   assert.equal(N.HEALTH_COLUMNS[0], "date");
@@ -69,7 +69,7 @@ const records = [
   { date: "2026-10-02", sleepHours: 9, weight: 78, recovery: 50 },
 ];
 
-test("mesures : 25 mesures d'OS360 en 5 familles, réglages par défaut", () => {
+test("mesures : 25 mesures en 5 familles, réglages par défaut", () => {
   assert.equal(H.HEALTH_METRICS.length, 25);
   assert.deepEqual(H.HEALTH_GROUPS, ["Corps", "Sommeil", "Récupération", "Activité", "Nutrition"]);
   for (const m of H.HEALTH_METRICS) assert.ok(H.HEALTH_GROUPS.includes(m.group), m.key);
