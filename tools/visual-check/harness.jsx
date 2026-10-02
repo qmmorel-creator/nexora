@@ -10,7 +10,7 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
   "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-  "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
+  "projectTreemap",
   "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte", "embedCosmos",
   "customCard",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
@@ -1041,7 +1041,7 @@ if (benchApp) {
   ];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-    "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
+    "projectTreemap",
     "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte", "embedCosmos",
     "customCard",
     // #193 : monter la VRAIE DashboardView avec ces deux types placés est ce

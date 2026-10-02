@@ -65,7 +65,7 @@ test("étiquettes de fin sans chevauchement", () => {
 });
 
 test("widget rattaché : catalogue, en-tête, rendu, taille, sélecteur des modes", () => {
-  assert.match(html, /\{ key: "financeBudgetCumul", label: "Budget cumulé par mois", icon: TrendingUp, group: "Suivi" \}/);
+  assert.match(html, /\{ key: "financeBudgetCumul", label: "Budget cumulé par mois", icon: TrendingUp, group: "Budget" \}/);
   assert.match(html, /w\.type === "financeBudgetCumul" && \(\s*<WidgetFinanceBudgetCumul widget=\{w\}/);
   assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeBudgetCumul"/);
   assert.match(html, /if \(type === "financeBudgetCumul"\) return \{ w: 10, h: 9 \};/);
