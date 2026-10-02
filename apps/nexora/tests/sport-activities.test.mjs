@@ -1,7 +1,7 @@
 /* Widget « Activités sport » (issue #578).
-   1. Parité du parseur serveur (_shared/sport.ts) avec OS360 : résultats des
+   1. Parité du parseur serveur (_shared/sport.ts) avec l'origine : résultats des
       fonctions d'origine (`_e`, `Jc`, `Kc`, `ve`, `S`, `A`, commit 13197da)
-      figés dans fixtures/os360-parite-sport.json avant le retrait du moteur
+      figés dans fixtures/parite-sport.json avant le retrait du moteur
       (#597) — empreintes du jeu fictif conséquent, petits cas et refus.
    2. Fonctions pures du widget, extraites du bundle RÉELLEMENT construit.
    3. Raccordements (catalogue, rendu, en-tête, fiche) et route serveur. */
@@ -14,10 +14,10 @@ import { transform } from "esbuild";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-// --- 1. Parité avec OS360 -------------------------------------------------
+// --- 1. Parité avec l'origine ----------------------------------------------
 
 import { createHash } from "node:crypto";
-const parity = JSON.parse(await read("./fixtures/os360-parite-sport.json"));
+const parity = JSON.parse(await read("./fixtures/parite-sport.json"));
 const digest = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 
 const compiled = await transform(await read("../netlify/functions/_shared/sport.ts"), { loader: "ts", format: "esm" });
@@ -59,7 +59,7 @@ function fixture() {
 const JC_FIELDS = ["id", "date", "sport", "title", "total", "moving", "distance", "elevation", "hr", "maxHr", "url"];
 const pick = (a) => Object.fromEntries(JC_FIELDS.map((k) => [k, a[k]]));
 
-test("parité OS360 : découpage CSV identique à `_e`", () => {
+test("parité : découpage CSV identique à `_e`", () => {
   assert.equal(digest(N.sportCsvRows(fixture())), parity.csvFull.sha256, `jeu fictif : ${parity.csvFull.count} lignes`);
   for (const c of parity.csvSmall) {
     if (c.error) assert.throws(() => N.sportCsvRows(c.text), { message: c.error }, JSON.stringify(c.text));
@@ -67,7 +67,7 @@ test("parité OS360 : découpage CSV identique à `_e`", () => {
   }
 });
 
-test("parité OS360 : activités identiques à `Jc` sur ~900 lignes", () => {
+test("parité : activités identiques à `Jc` sur ~900 lignes", () => {
   const actual = N.sportActivities(N.sportCsvRows(fixture())).map(pick);
   const expected = parity.activitiesFull;
   assert.ok(expected.count > 600, `jeu trop petit : ${expected.count}`);
@@ -78,7 +78,7 @@ test("parité OS360 : activités identiques à `Jc` sur ~900 lignes", () => {
   assert.equal(digest(actual), expected.sha256);
 });
 
-test("parité OS360 : mêmes refus (colonnes, HTML, guillemet, date)", () => {
+test("parité : mêmes refus (colonnes, HTML, guillemet, date)", () => {
   assert.equal(parity.refusals.length, 4);
   for (const c of parity.refusals) assert.throws(() => N.sportActivities(c.rows), { message: c.error });
   assert.ok(parity.csvSmall.filter((c) => c.error).length >= 2, "HTML et guillemet non fermé");
@@ -304,7 +304,7 @@ test("bloc de carte : réglages par défaut et période glissante libre", () => 
   assert.deepEqual(W.SPORT_CARD_MEASURES.map((m) => m.value), ["count", "total", "moving", "distance", "elevation", "hr", "maxHr"]);
 });
 
-test("bloc de carte : somme, moyenne, extrêmes, nombre ; FC pondérée par la durée comme OS360", () => {
+test("bloc de carte : somme, moyenne, extrêmes, nombre ; FC pondérée par la durée", () => {
   const rows = W.sportRows(payload);
   const today = "2026-10-01";
   const agg = (b) => W.sportAggregate(rows, W.sportBlockSpec({ sportPeriod: "all", ...b }), today);
@@ -342,7 +342,7 @@ test("route serveur : lecture seule, session du propriétaire, URL jamais renvoy
 
 // --- Graphiques sport natifs (#590) ---
 
-const MIG = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacySportOs360Widget, migrateLegacyMiniGanttData };`)();
+const MIG = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacySportChartWidget, migrateLegacyMiniGanttData, LEGACY_SPORT_CHART_TYPE, LEGACY_SETTINGS_KEY };`)();
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≠ ${b}`);
 
 test("vues : sélecteur d'en-tête et fiche, réglages par défaut et invalides", () => {
@@ -428,11 +428,11 @@ test("calendrier annuel : une case par jour, lundi en haut, sport dominant, tein
   assert.equal(mixed.days.find((d) => d.date === "2026-09-28").main, "CrossFit");
 });
 
-test("migration : le Graphique sport (OS360) devient le Graphique sport natif équivalent", () => {
-  const m = (os360, extra = {}) => MIG.migrateLegacySportOs360Widget({ id: "w1", type: "sportOs360Chart", title: "Mon sport", x: 3, ...(os360 ? { os360 } : {}), ...extra });
+test("migration : l'ancien graphique sport externe devient le Graphique sport natif équivalent", () => {
+  const m = (settings, extra = {}) => MIG.migrateLegacySportChartWidget({ id: "w1", type: MIG.LEGACY_SPORT_CHART_TYPE, title: "Mon sport", x: 3, ...(settings ? { [MIG.LEGACY_SETTINGS_KEY]: settings } : {}), ...extra });
   const def = m();
   assert.deepEqual([def.id, def.type, def.title, def.x], ["w1", "sportChart", "Mon sport", 3], "identité et champs inconnus conservés");
-  assert.deepEqual([def.sport.view, def.sport.bucket, def.sport.period, def.sport.measure], ["stack", "week", "365", "total"], "défaut OS360 : sport par semaine");
+  assert.deepEqual([def.sport.view, def.sport.bucket, def.sport.period, def.sport.measure], ["stack", "week", "365", "total"], "défaut de l'ancien widget : sport par semaine");
   assert.equal(m({ type: "health.timeSeries", config: { financeVariant: "health.sportWeekly" } }).sport.view, "stack");
   assert.deepEqual([m({ type: "health.sportWaffle", config: { range: 90 } }).sport.view, m({ type: "health.sportWaffle", config: { range: 90 } }).sport.period], ["waffle", "90"]);
   const summary = m({ type: "health.summarySeries", config: { range: 180 } }).sport;
@@ -442,11 +442,11 @@ test("migration : le Graphique sport (OS360) devient le Graphique sport natif é
   assert.equal(m({ type: "health.stacked", config: { cumulative: true } }).sport.view, "cumul");
   assert.deepEqual([m({ type: "health.sportCalendar", config: { year: 2025 } }).sport.view, m({ type: "health.sportCalendar", config: { year: 2025 } }).sport.year], ["calendar", "2025"]);
   assert.equal(m({ type: "health.rings" }).sport.view, "stack", "sans équivalent : barres empilées");
-  assert.deepEqual(m({ type: "health.sportWaffle" }).os360, { type: "health.sportWaffle" }, "réglage OS360 conservé");
+  assert.deepEqual(m({ type: "health.sportWaffle" })[MIG.LEGACY_SETTINGS_KEY], { type: "health.sportWaffle" }, "réglage d'origine conservé");
   assert.equal(W.sportChartSpec(m({ type: "health.summarySeries", config: { range: 180 } })).view, "series", "lu par le widget natif");
   const other = { id: "w2", type: "sportChart", sport: { view: "waffle" } };
-  assert.equal(MIG.migrateLegacySportOs360Widget(other), other, "autres widgets intacts");
-  const data = MIG.migrateLegacyMiniGanttData({ d1: { widgets: [{ id: "a", type: "sportOs360Chart" }, { id: "b", type: "sportChart" }] } });
+  assert.equal(MIG.migrateLegacySportChartWidget(other), other, "autres widgets intacts");
+  const data = MIG.migrateLegacyMiniGanttData({ d1: { widgets: [{ id: "a", type: MIG.LEGACY_SPORT_CHART_TYPE }, { id: "b", type: "sportChart" }] } });
   assert.deepEqual(data.d1.widgets.map((w) => w.type), ["sportChart", "sportChart"], "migration à la lecture des tableaux de bord");
 });
 

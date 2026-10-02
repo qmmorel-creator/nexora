@@ -2,7 +2,7 @@
 
 Ce dépôt centralise toutes les demandes d'amélioration et de nouvelles fonctionnalités
 pour Nexora et son connecteur MCP, qu'elles soient traitées avec Claude ou avec ChatGPT.
-Les règles sont identiques à celles d'OS360 : une demande = une issue, un label de statut,
+Règles : une demande = une issue, un label de statut,
 aucune fermeture sans validation explicite.
 
 ## Déposer une demande
@@ -16,8 +16,7 @@ aucune fermeture sans validation explicite.
 ## Suivre l'avancement
 
 - Tableau : **https://github.com/users/qmmorel-creator/projects/2** — board dédié à
-  Nexora, distinct de celui d'OS360 : là-bas `zone:nexora` désigne l'intégration Nexora
-  *dans* OS360, ce qui n'a pas le même sens que les `zone:*` de ce dépôt.
+  Nexora.
 - Chaque issue porte un label `statut:*` :
   - `statut:backlog` — collectée, pas encore commencée
   - `statut:en-cours` — en cours de développement

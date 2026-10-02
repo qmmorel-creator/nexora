@@ -1,8 +1,8 @@
-/* Widgets Sankey Budget repris d'OS360 (issue #569).
+/* Widgets Sankey Budget (issue #569).
    La tranche testée est extraite du bundle RÉELLEMENT construit, comme les
    autres blocs. Les valeurs attendues ont été établies en exécutant, sur les
-   mêmes données, les fonctions d'origine du bundle OS360 (Ef, Df, of, te, Ff,
-   Yf) : toute divergence ici signale un écart avec OS360. */
+   mêmes données, les fonctions d'origine (Ef, Df, of, te, Ff,
+   Yf) : toute divergence ici signale un écart avec l'origine. */
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -61,7 +61,7 @@ test("deux types de widget, rattachés au catalogue et au rendu", () => {
   assert.match(html, /if \(FINANCE_SANKEY_TYPES\.includes\(type\)\) data\.sankeyConfig = \{ \.\.\.sankeyConfig \};/);
 });
 
-test("normalisation : annulées, comptes inactifs et grand livre comme OS360", () => {
+test("normalisation : annulées, comptes inactifs et grand livre comme à l'origine", () => {
   const data = S.financeSankeyNormalize(raw);
   assert.deepEqual(data.transactions.map((t) => t.id), ["t1", "t2", "t3", "t4", "t5", "t7", "t8"]);
   assert.deepEqual(data.ledger.map((t) => t.id), ["t1", "t2", "t3", "t4", "t5", "t8"]);
@@ -119,18 +119,18 @@ test("périodes : mois, année, fenêtre glissante, dates libres, tout l'histori
   assert.ok(all.graph.links.some((l) => l.target === "category:Loisirs" && l.value === 42));
 });
 
-test("barre de période d'OS360 : aujourd'hui, ce mois, mois précédent, mois choisi", () => {
+test("barre de période : aujourd'hui, ce mois, mois précédent, mois choisi", () => {
   const today = "2026-10-01";
   assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "today" }, today), { from: today, to: today });
   assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "current" }, today), { from: "2026-10-01", to: "2026-10-31" });
   assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "previous" }, today), { from: "2026-09-01", to: "2026-09-30" });
   assert.deepEqual(S.financeSankeyPeriod({ periodMode: "month", periodValue: "previous" }, "2026-03-15"), { from: "2026-02-01", to: "2026-02-28" });
-  // La sélection rapide prime, comme le correctif de `te` dans OS360.
+  // La sélection rapide prime, comme le correctif de `te` d'origine.
   assert.deepEqual(S.financeSankeyPeriod({ quickPeriod: "previous", from: "2025-01-01", to: "2025-01-31" }, today), { from: "2026-09-01", to: "2026-09-30" });
   assert.deepEqual(S.financeSankeyPeriod({ periodMode: "month", periodValue: "2026-06", quickPeriod: "" }, today), { from: "2026-06-01", to: "2026-06-30" });
 });
 
-test("formats : arrondi intelligent, compact et espace insécable comme OS360", () => {
+test("formats : arrondi intelligent, compact et espace insécable comme à l'origine", () => {
   assert.equal(S.financeSankeyRound(1234.567, "€", 2, "auto"), "1\u202F235");
   assert.equal(S.financeSankeyRound(3.14159, "€", 2, "auto"), "3,14");
   assert.equal(S.financeSankeyRound(1234.567, "€", 2, "fixed"), "1\u202F234,57");

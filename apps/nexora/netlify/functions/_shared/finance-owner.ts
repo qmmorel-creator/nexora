@@ -25,7 +25,7 @@ export async function requireOwnerFinance(req: Request): Promise<{ config: Finan
 const PAGE = 1000;
 const MAX_ROWS = 1_000_000;
 
-// Toutes les lignes, par pages de 1000 comme OS360. Au-delà de la limite de
+// Toutes les lignes, par pages de 1000. Au-delà de la limite de
 // sécurité : erreur, jamais un résultat partiel qui fausserait les montants.
 export async function readAllRows(config: FinanceReadConfig, spec: { table: string; select: string; order: string }) {
   const rows: unknown[] = [];
