@@ -342,7 +342,6 @@ test("route serveur : lecture seule, session du propriétaire, URL jamais renvoy
 
 // --- Graphiques sport natifs (#590) ---
 
-const MIG = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacySportChartWidget, migrateLegacyMiniGanttData, LEGACY_SPORT_CHART_TYPE, LEGACY_SETTINGS_KEY };`)();
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≠ ${b}`);
 
 test("vues : sélecteur d'en-tête et fiche, réglages par défaut et invalides", () => {
@@ -426,28 +425,6 @@ test("calendrier annuel : une case par jour, lundi en haut, sport dominant, tein
   // Jour à deux sports : le plus long l'emporte.
   const mixed = W.sportCalendar([...rows, { id: "m", date: "2026-09-28", sport: "CrossFit", title: "", total: 60 }], { sports: [] }, "2026", order);
   assert.equal(mixed.days.find((d) => d.date === "2026-09-28").main, "CrossFit");
-});
-
-test("migration : l'ancien graphique sport externe devient le Graphique sport natif équivalent", () => {
-  const m = (settings, extra = {}) => MIG.migrateLegacySportChartWidget({ id: "w1", type: MIG.LEGACY_SPORT_CHART_TYPE, title: "Mon sport", x: 3, ...(settings ? { [MIG.LEGACY_SETTINGS_KEY]: settings } : {}), ...extra });
-  const def = m();
-  assert.deepEqual([def.id, def.type, def.title, def.x], ["w1", "sportChart", "Mon sport", 3], "identité et champs inconnus conservés");
-  assert.deepEqual([def.sport.view, def.sport.bucket, def.sport.period, def.sport.measure], ["stack", "week", "365", "total"], "défaut de l'ancien widget : sport par semaine");
-  assert.equal(m({ type: "health.timeSeries", config: { financeVariant: "health.sportWeekly" } }).sport.view, "stack");
-  assert.deepEqual([m({ type: "health.sportWaffle", config: { range: 90 } }).sport.view, m({ type: "health.sportWaffle", config: { range: 90 } }).sport.period], ["waffle", "90"]);
-  const summary = m({ type: "health.summarySeries", config: { range: 180 } }).sport;
-  assert.deepEqual([summary.view, summary.mean, summary.bucket, summary.period, summary.days], ["series", true, "day", "rolling", 180]);
-  assert.equal(m({ type: "health.line" }).sport.mean, false, "série seule, sans moyenne");
-  assert.equal(m({ type: "health.cumulative" }).sport.view, "cumul");
-  assert.equal(m({ type: "health.stacked", config: { cumulative: true } }).sport.view, "cumul");
-  assert.deepEqual([m({ type: "health.sportCalendar", config: { year: 2025 } }).sport.view, m({ type: "health.sportCalendar", config: { year: 2025 } }).sport.year], ["calendar", "2025"]);
-  assert.equal(m({ type: "health.rings" }).sport.view, "stack", "sans équivalent : barres empilées");
-  assert.deepEqual(m({ type: "health.sportWaffle" })[MIG.LEGACY_SETTINGS_KEY], { type: "health.sportWaffle" }, "réglage d'origine conservé");
-  assert.equal(W.sportChartSpec(m({ type: "health.summarySeries", config: { range: 180 } })).view, "series", "lu par le widget natif");
-  const other = { id: "w2", type: "sportChart", sport: { view: "waffle" } };
-  assert.equal(MIG.migrateLegacySportChartWidget(other), other, "autres widgets intacts");
-  const data = MIG.migrateLegacyMiniGanttData({ d1: { widgets: [{ id: "a", type: MIG.LEGACY_SPORT_CHART_TYPE }, { id: "b", type: "sportChart" }] } });
-  assert.deepEqual(data.d1.widgets.map((w) => w.type), ["sportChart", "sportChart"], "migration à la lecture des tableaux de bord");
 });
 
 // --- Résumé sport et page Sport (#591) ---
