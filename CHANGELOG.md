@@ -45,6 +45,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Calendrier annuel sport : un jour à plusieurs sports est découpé en facettes, une par sport, comme la heat map mensuelle ; la légende compte les jours où chaque sport est présent (Ref #647).
 - Graphique santé : jusqu'à 10 mesures, chacune dans ses panneaux empilés sur le même axe des dates, choisies dans l'en-tête (« + Mesures ») ou la fenêtre de réglages ; widgets existants relus sans perte (Ref #648).
 - Tableau de bord : widget « Synthèse Budget (période) » — dépenses, revenus et solde net sur une période au choix (mois, trimestre, année et leurs précédents, 30 / 90 / 365 derniers jours, N derniers jours, dates libres, tout l'historique), avec les règles de « Budget du mois » ; `/api/nexora/finance-budget-summary` accepte `from` / `to` (aaaa-mm-jj), réponse sans ces paramètres inchangée (Ref #644).
+- Tableau de bord : widget « Évolution du patrimoine » — courbe du patrimoine net (soldes de tous les comptes actifs, négatifs déduits) en fin de jour, de semaine ou de mois sur la période choisie, détail empilé en option par compte, banque ou type, survol daté ; série calculée en une passe par `/api/nexora/finance-wealth-series` (session du propriétaire, lecture seule), identique point par point aux soldes de « Répartition du patrimoine » (Ref #645).
 
 ### Corrections
 
