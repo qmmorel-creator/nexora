@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   buildCategorizedTransaction,
   buildCreateTransaction,
+  buildEditedTransaction,
   validateAccount,
   validateCategoryPair
 } from "../../lib/finance-validation.mjs";
@@ -16,6 +17,10 @@ import { json } from "./_shared/nexora.js";
 // (finance_apply_transaction_write, avec file d'écriture et idempotence) que
 // l'API de l'assistant (/api/finance/transactions). Le propriétaire décide
 // lui-même : pas d'aperçu à confirmer, et sa catégorie vaut confiance 1.
+// #618 : `operation: "edit"` (PATCH) modifie n'importe quelle transaction —
+// dates, type, compte, montant, libellé, catégorie, description, étiquette —
+// par la même fonction SQL (opération `update`). `expectedRevision` refuse la
+// modification si la ligne a changé depuis son affichage.
 const OPTIONS = { allowEmptySubcategory: true };
 
 function idempotencyKeyOf(body: Record<string, unknown>) {
@@ -49,6 +54,16 @@ export default async (req: Request) => {
     if (!transactionId) return json({ ok: false, error: "transaction_id_required" }, 400);
     const existing = await getFinanceTransaction(access.config, transactionId);
     if (!existing) return json({ ok: false, error: "transaction_not_found" }, 404);
+    if (body.operation === "edit") {
+      if (body.expectedRevision != null && Number(body.expectedRevision) !== Number(existing.revision)) {
+        return json({ ok: false, error: "transaction_modified_elsewhere", revision: existing.revision }, 409);
+      }
+      const { transaction, categoryChanged } = buildEditedTransaction(existing, body);
+      validateAccount(catalogs, String(transaction.account_id));
+      if (categoryChanged) validateCategoryPair(catalogs, String(transaction.category), transaction.subcategory as string | null, OPTIONS);
+      const result = await applyFinanceTransactionWrite(access.config, "update", transaction, idempotencyKey);
+      return json({ ok: true, operation: "edit", result, transaction });
+    }
     const transaction = buildCategorizedTransaction(existing, { ...body, categoryConfidence: 1 }, OPTIONS);
     validateAccount(catalogs, String(transaction.account_id));
     validateCategoryPair(catalogs, String(transaction.category), transaction.subcategory as string | null, OPTIONS);
