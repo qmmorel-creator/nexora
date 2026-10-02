@@ -41124,6 +41124,48 @@ function bodyPhotoExifInfo(buffer) {
   } catch { /* EXIF illisible : date d'import */ }
   return out;
 }
+// Taille d'en-tête lue pour l'EXIF et les dimensions : jamais le fichier
+// entier en mémoire (une photo de téléphone pèse 3 à 20 Mo).
+const BODY_PHOTO_HEAD_BYTES = 256 * 1024;
+
+// Dimensions d'un JPEG lues dans son segment SOF (en-tête seulement) ; null
+// si ce n'en est pas un ou si le segment n'est pas dans l'en-tête fourni.
+function bodyPhotoJpegSize(buffer) {
+  try {
+    const v = new DataView(buffer);
+    if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return null;
+    let i = 2;
+    while (i + 9 < v.byteLength) {
+      if (v.getUint8(i) !== 0xff) return null;
+      const marker = v.getUint8(i + 1);
+      if (marker === 0xff) { i++; continue; }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      const length = v.getUint16(i + 2);
+      if (length < 2) return null;
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        const height = v.getUint16(i + 5), width = v.getUint16(i + 7);
+        return width > 0 && height > 0 ? { width, height } : null;
+      }
+      if (marker === 0xda || marker === 0xd9) return null;
+      i += 2 + length;
+    }
+  } catch { /* en-tête illisible */ }
+  return null;
+}
+
+// Dimensions affichées après orientation EXIF : 5 à 8 = quart de tour.
+function bodyPhotoOrientedSize(width, height, orientation) {
+  return orientation >= 5 && orientation <= 8 ? { width: height, height: width } : { width, height };
+}
+
+// Décodage réduit demandé au navigateur : seulement si l'image dépasse le
+// côté long cible et que ses dimensions sont connues ; null sinon.
+function bodyPhotoDecodePlan(size, orientation) {
+  if (!size) return null;
+  const oriented = bodyPhotoOrientedSize(size.width, size.height, orientation);
+  if (Math.max(oriented.width, oriented.height) <= BODY_PHOTO_MAX_SIDE) return null;
+  return bodyPhotoFitSize(oriented.width, oriented.height);
+}
 // === NEXORA:BODY-PHOTOS:END ===
 
 const BODY_PHOTO_ERRORS = {
@@ -41251,12 +41293,30 @@ function useBodyPhotoUrl(id, enabled = true) {
 // Préparation dans le navigateur : date EXIF lue, image décodée AVEC son
 // orientation EXIF appliquée, réduite au côté long 2 400 px, ré-encodée en
 // JPEG 0,9 par un canvas — ce qui retire toutes les métadonnées (GPS compris).
+// Mémoire (#616, plantage « Out of Memory » à l'import de trois photos) :
+// seul l'en-tête est lu ; l'image est décodée DIRECTEMENT à la taille
+// d'envoi quand le navigateur sait le faire (une photo de 48 Mpx décodée en
+// entier occupe ~190 Mo) ; canevas et image décodée sont libérés aussitôt.
+async function bodyPhotoDecode(file, plan) {
+  if (plan) {
+    try {
+      const small = await createImageBitmap(file, { imageOrientation: "from-image", resizeWidth: plan.width, resizeHeight: plan.height, resizeQuality: "high" });
+      // Contrôle : un navigateur qui réduirait AVANT d'orienter rendrait une
+      // image déformée ; on la jette et on décode en entier.
+      if (Math.abs(small.width - plan.width) <= 1 && Math.abs(small.height - plan.height) <= 1) return small;
+      small.close();
+    } catch { /* option non prise en charge : décodage complet */ }
+  }
+  return createImageBitmap(file, { imageOrientation: "from-image" });
+}
+
 async function bodyPhotoPrepare(file, today) {
-  const buffer = await file.arrayBuffer();
-  const exif = bodyPhotoExifInfo(buffer);
+  const head = await file.slice(0, BODY_PHOTO_HEAD_BYTES).arrayBuffer();
+  const exif = bodyPhotoExifInfo(head);
+  const plan = bodyPhotoDecodePlan(bodyPhotoJpegSize(head), exif.orientation);
   let source;
   try {
-    source = await createImageBitmap(file, { imageOrientation: "from-image" });
+    source = await bodyPhotoDecode(file, plan);
   } catch {
     source = await new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
@@ -41275,7 +41335,15 @@ async function bodyPhotoPrepare(file, today) {
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(source, 0, 0, width, height);
   if (source.close) source.close();
-  const blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Conversion JPEG impossible."))), "image/jpeg", BODY_PHOTO_QUALITY));
+  else source.src = "";
+  let blob;
+  try {
+    blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Conversion JPEG impossible."))), "image/jpeg", BODY_PHOTO_QUALITY));
+  } finally {
+    // Libère tout de suite la mémoire du canevas, sans attendre le ramasse-miettes.
+    canvas.width = 0;
+    canvas.height = 0;
+  }
   const { date, source: dateSource } = bodyPhotoDefaultDate(exif.date, today);
   return { blob, width, height, date, dateSource };
 }
