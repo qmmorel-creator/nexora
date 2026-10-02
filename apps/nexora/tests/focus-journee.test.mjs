@@ -25,6 +25,7 @@ function slice(name) {
 const C = vm.runInThisContext(
   `(function () {\n${slice("DATE-UTILS")}\n${slice("TEXT-MATCH")}\n${slice("TASK-STATUS")}\n${slice("FIXED-PAGES")}\n${slice("CALENDAR")}\n;return {
     iso, addDays, normalizeFocusDayDate, calendarDayModel,
+    normalizeCalendarDayHours, calendarDayHourWindow, normalizeCalendarViewPrefs,
   };\n})`
 )();
 
@@ -120,7 +121,7 @@ test("sélecteur de date : une saisie vide ou invalide ne casse pas le widget (r
 test("Focus Journée appelle CalendarDayTimeline sans `compact` (même esthétique que le Calendrier plein écran)", () => {
   assert.match(
     html,
-    /<CalendarDayTimeline dateIso=\{dateIso\} tasks=\{tasks\} ctx=\{ctx\} onOpen=\{onOpen\} fit \/>/,
+    /<CalendarDayTimeline dateIso=\{dateIso\} tasks=\{tasks\} ctx=\{ctx\} onOpen=\{onOpen\} fit hourRange=\{widget\} \/>/,
     "WidgetFocusDay doit réutiliser CalendarDayTimeline sans compact (hachures et ligne statut/échéance à conserver)"
   );
   assert.doesNotMatch(
@@ -187,4 +188,50 @@ test("le corps du widget ne défile plus jamais par-dessus Focus Journée (une s
     /\.lp-widget-body:has\(\.lp-cal-day-fit\)\{ overflow:hidden; \}/,
     "le corps générique du widget (.lp-widget-body) doit passer en overflow:hidden quand il porte Focus Journée (.lp-cal-day-fit), comme pour le Treemap (#332)"
   );
+});
+
+/* Heure minimale / maximale de la frise du jour (#635) : réglées dans la fiche
+   du widget (Focus Journée, Calendrier) et dans les réglages de la vue
+   Calendrier. null = automatique, c'est-à-dire le comportement d'origine. */
+test("normalizeCalendarDayHours : absentes, vides ou invalides = automatique (null)", () => {
+  for (const bad of [undefined, null, {}, { dayStartHour: "", dayEndHour: "" }, { dayStartHour: "abc", dayEndHour: NaN }]) {
+    assert.deepEqual(C.normalizeCalendarDayHours(bad), { dayStartHour: null, dayEndHour: null });
+  }
+});
+
+test("normalizeCalendarDayHours : bornes ramenées à 0–23 h (début) et 1–24 h (fin), valeurs arrondies", () => {
+  assert.deepEqual(C.normalizeCalendarDayHours({ dayStartHour: "7", dayEndHour: 20 }), { dayStartHour: 7, dayEndHour: 20 });
+  assert.deepEqual(C.normalizeCalendarDayHours({ dayStartHour: -3, dayEndHour: 99 }), { dayStartHour: 0, dayEndHour: 24 });
+  assert.deepEqual(C.normalizeCalendarDayHours({ dayStartHour: 30 }), { dayStartHour: 23, dayEndHour: null });
+  assert.deepEqual(C.normalizeCalendarDayHours({ dayStartHour: 8.4, dayEndHour: 17.6 }), { dayStartHour: 8, dayEndHour: 18 });
+});
+
+test("normalizeCalendarDayHours : une fin qui ne dépasse pas le début est ignorée (retour à 24 h)", () => {
+  assert.deepEqual(C.normalizeCalendarDayHours({ dayStartHour: 18, dayEndHour: 9 }), { dayStartHour: 18, dayEndHour: null });
+  assert.deepEqual(C.normalizeCalendarDayHours({ dayStartHour: 10, dayEndHour: 10 }), { dayStartHour: 10, dayEndHour: null });
+});
+
+test("calendarDayHourWindow : sans réglage, comportement d'origine (vue 0–24 h, widget compact dès 6 h ou plus tôt)", () => {
+  assert.deepEqual(C.calendarDayHourWindow(null, 9 * 60, false), { startHour: 0, endHour: 24 });
+  assert.deepEqual(C.calendarDayHourWindow(null, 9 * 60, true), { startHour: 6, endHour: 24 });
+  assert.deepEqual(C.calendarDayHourWindow(null, 4 * 60 + 30, true), { startHour: 4, endHour: 24 });
+  assert.deepEqual(C.calendarDayHourWindow(null, null, true), { startHour: 6, endHour: 24 });
+});
+
+test("calendarDayHourWindow : les heures choisies s'imposent, y compris au widget compact", () => {
+  assert.deepEqual(C.calendarDayHourWindow({ dayStartHour: 7, dayEndHour: 20 }, 9 * 60, false), { startHour: 7, endHour: 20 });
+  assert.deepEqual(C.calendarDayHourWindow({ dayStartHour: 8, dayEndHour: 18 }, 4 * 60, true), { startHour: 8, endHour: 18 });
+  assert.deepEqual(C.calendarDayHourWindow({ dayEndHour: 19 }, null, false), { startHour: 0, endHour: 19 });
+  assert.deepEqual(C.calendarDayHourWindow({ dayStartHour: 9 }, null, false), { startHour: 9, endHour: 24 });
+});
+
+test("vue Calendrier : les réglages conservent l'heure minimale et maximale", () => {
+  const prefs = C.normalizeCalendarViewPrefs({ rowsPerCell: 3, dayStartHour: 7, dayEndHour: 21 });
+  assert.equal(prefs.dayStartHour, 7);
+  assert.equal(prefs.dayEndHour, 21);
+  assert.equal(C.normalizeCalendarViewPrefs({}).dayStartHour, null);
+});
+
+test("la fiche du widget enregistre les heures pour Calendrier et Focus Journée", () => {
+  assert.match(html, /if \(type === "calendar" \|\| type === "focusDay"\) \{\s*data\.dayStartHour = dayHours\.dayStartHour;\s*data\.dayEndHour = dayHours\.dayEndHour;/);
 });
