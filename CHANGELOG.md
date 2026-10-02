@@ -44,7 +44,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Corrections
 
-- Budget cumulé par mois : le graphique remplit la hauteur du widget et suit son redimensionnement (deux graphiques qui se partagent la hauteur en « Cumul + journalier ») ; « Petits multiples » inchangé. Contrôlé par le banc visuel (Ref #641).
+- Budget cumulé par mois : le graphique remplit le widget en largeur et en hauteur et suit son redimensionnement, sans barre de défilement tant que le tracé dispose de 120 px ; textes à taille bornée (deux graphiques qui se partagent la hauteur en « Cumul + journalier ») ; « Petits multiples » inchangé. Contrôlé par le banc visuel (Ref #641).
 - Widgets Budget et finance : montants arrondis à l'euro, sans centimes — Budget du mois, À catégoriser, Répartition du patrimoine, Graphique Budget, Budget cumulé, Transactions et les deux Sankey (réglage « Déc. » et arrondi « décimales » retirés du Sankey). L'export CSV des Transactions garde le montant exact (Ref #639).
 - Graphique Budget : le sélecteur de graphique de l'en-tête n'est plus tronqué (marge intérieure du style général des listes) (Ref #604).
 - Widgets sport : changer le nombre de jours d'une période « N derniers jours » recalcule la liste et le graphique (Ref #590).

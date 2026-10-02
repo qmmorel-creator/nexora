@@ -2972,8 +2972,10 @@ if (RUN("2d")) await timed("2d", async () => {
 
   // --- Budget cumulé par mois : le graphique remplit le widget (#641) --------
   // Données servies par la vraie fonction serveur (buildBudgetSummary). Pour
-  // chaque mode tracé, à deux hauteurs : aucun vide sous la légende, pas de
-  // défilement, et le tracé grandit avec le widget. Montants sans centimes (#639).
+  // chaque mode tracé, en trois formats (haut, bas, très large et bas comme un
+  // widget pleine largeur) : aucun vide sous la légende, pas de défilement,
+  // tracé qui grandit avec le widget, textes de taille bornée. Montants sans
+  // centimes (#639).
   const { buildBudgetSummary, parisToday } = await import("../../apps/nexora/lib/finance-budget.mjs");
   const cumulRaw = (month) => {
     const year = month.slice(0, 4);
@@ -2996,7 +2998,7 @@ if (RUN("2d")) await timed("2d", async () => {
       subcategories: [], banks: [], accountTypes: [], balances: [],
     };
   };
-  const cumul = await browser.newPage({ viewport: { width: 1120, height: 1100 } });
+  const cumul = await browser.newPage({ viewport: { width: 1820, height: 1100 } });
   cumul.on("pageerror", (e) => pageErrors.push("budget cumulé : " + e.message));
   await cumul.route("**/api/nexora/finance-budget-summary*", (route) => {
     const month = new URL(route.request().url()).searchParams.get("month") || parisToday().slice(0, 7);
@@ -3005,20 +3007,23 @@ if (RUN("2d")) await timed("2d", async () => {
   try {
     for (const mode of ["categories", "budget", "trajectories", "daily"]) {
       const measures = [];
-      for (const h of [520, 1000]) {
-        await cumul.goto(`http://127.0.0.1:${port}/index.html?budgetCumul=1&mode=${mode}&h=${h}`, { waitUntil: "load", timeout: 90000 });
+      for (const [w, h] of [[1080, 520], [1080, 1000], [1760, 430]]) {
+        await cumul.goto(`http://127.0.0.1:${port}/index.html?budgetCumul=1&mode=${mode}&w=${w}&h=${h}`, { waitUntil: "load", timeout: 90000 });
         await cumul.waitForSelector('[data-testid="bench-budget-cumul"] .nx-bcu-plot svg', { timeout: 30000 });
         await cumul.waitForTimeout(150);
         const m = await cumul.$eval('[data-testid="bench-budget-cumul"] .nx-bch', (box) => {
           const r = box.getBoundingClientRect();
           const plots = [...box.querySelectorAll(".nx-bcu-plot svg")].map((svg) => svg.getBoundingClientRect().height);
           const bottom = Math.max(...[...box.children].filter((c) => c.tagName !== "STYLE").map((c) => c.getBoundingClientRect().bottom));
-          return { plots, gap: r.bottom - bottom, scroll: box.scrollHeight - box.clientHeight, text: box.textContent };
+          const font = Math.max(...[...box.querySelectorAll(".nx-bcu-plot svg text")].map((t) => t.getBoundingClientRect().height));
+          return { plots, gap: r.bottom - bottom, scroll: box.scrollHeight - box.clientHeight, font, text: box.textContent };
         });
         measures.push(m);
-        expect(m.gap < 16 && m.scroll <= 1, `Budget cumulé (${mode}, ${h} px) : le contenu ne remplit pas le widget (vide ${Math.round(m.gap)} px, défilement ${m.scroll} px)`);
-        expect(!/\d,\d{2}\s€/.test(m.text), `Budget cumulé (${mode}, ${h} px) : montant affiché avec des centimes`);
+        expect(m.gap < 16 && m.scroll <= 1, `Budget cumulé (${mode}, ${w} × ${h} px) : le contenu ne remplit pas le widget (vide ${Math.round(m.gap)} px, défilement ${m.scroll} px)`);
+        expect(m.font < 24, `Budget cumulé (${mode}, ${w} × ${h} px) : textes trop grands (${Math.round(m.font)} px)`);
+        expect(!/\d,\d{2}\s€/.test(m.text), `Budget cumulé (${mode}, ${w} × ${h} px) : montant affiché avec des centimes`);
         if (mode === "categories" && h === 1000) await cumul.screenshot({ path: path.join(dir, "budget-cumul.png") });
+        if (mode === "trajectories" && w === 1760) await cumul.screenshot({ path: path.join(dir, "budget-cumul-large.png") });
       }
       const total = (m) => m.plots.reduce((a, b) => a + b, 0);
       expect(total(measures[1]) - total(measures[0]) > 400, `Budget cumulé (${mode}) : le tracé ne grandit pas avec le widget (${measures.map(total).map(Math.round).join(" → ")} px)`);

@@ -1480,17 +1480,18 @@ if (benchBodyPhotos) {
 }
 
 // Budget cumulé par mois (#641) : le widget seul, dans un cadre de la taille
-// demandée (?budgetCumul=1&mode=…&h=…). Les données viennent de run.mjs, qui
+// demandée (?budgetCumul=1&mode=…&w=…&h=…). Les données viennent de run.mjs, qui
 // sert /api/nexora/finance-budget-summary avec la vraie fonction serveur.
 const benchParams = new URLSearchParams(location.search);
 const benchBudgetCumul = benchParams.get("budgetCumul") === "1";
 function BudgetCumulBench() {
   const [widget, setWidget] = useState({ id: "banc-cumul", type: "financeBudgetCumul", title: "Budget cumulé par mois", budgetCumulMode: benchParams.get("mode") || "categories" });
   const height = Number(benchParams.get("h")) || 900;
+  const width = Number(benchParams.get("w")) || 1080;
   return (
     <>
       <GlobalStyles />
-      <div style={{ width: 1080, height, margin: 16, border: "1px solid #dce3ed", display: "flex", flexDirection: "column" }} data-testid="bench-budget-cumul">
+      <div style={{ width, height, margin: 16, border: "1px solid #dce3ed", display: "flex", flexDirection: "column" }} data-testid="bench-budget-cumul">
         <WidgetFinanceBudgetCumul widget={widget} externalToolbarSlot={null} onUpdateWidget={(patch) => setWidget((w) => ({ ...w, ...patch }))} />
       </div>
     </>
