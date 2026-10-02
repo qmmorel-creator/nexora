@@ -315,6 +315,7 @@ test("widget Graphique Budget et routes de l'assistant rattachés", async () => 
   assert.match(html, /<FinanceChartCumulative days=\{c\.days\} series=\{c\.cumulative\} income=\{c\.incomeCumulative \|\| \[\]\} budgetTotal=\{c\.budgetTotal \|\| 0\} \/>/);
   assert.match(html, /<FinanceChartPeriodic months=\{c\.periodic\} stacked=\{stacked\} \/>/);
   assert.match(html, /onUpdateWidget\(\{ budgetPeriodicStacked: !stacked \}\)/);
+  assert.match(html, /fill: textOn\(c\.color\), fontWeight: 600 \}\}>\{financeChartShortEuro\(c\.amount\)\}/, "montant lisible sur une catégorie claire (jaune, blanc cassé)");
   assert.match(html, /\.nx-tx-tools select\{height:24px;padding:0 24px 0 7px;[^}]*flex:0 0 auto;max-width:none;width:auto\}/, "sélecteur jamais tronqué");
   const summary = await read("../netlify/functions/finance-budget-assistant.ts");
   assert.match(summary, /path: "\/api\/finance\/budget-summary", method: \["GET"\]/);
