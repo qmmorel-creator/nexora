@@ -18316,16 +18316,16 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
             Les mesures de l’onglet Santé (Whoop, balance, nutrition) : une mesure par jour, semaine ou mois (moyenne des
-            jours renseignés), dans la plage min–max de la période, avec sa moyenne mobile et l’écart à la moyenne ; une
-            seconde mesure au choix a ses propres panneaux. Tout se règle aussi dans l’en-tête.
+            jours renseignés), dans la plage min–max de la période, avec sa moyenne mobile et l’écart à la moyenne ; jusqu’à
+            neuf autres mesures, chacune dans ses propres panneaux. Tout se règle aussi dans l’en-tête.
           </p>
           <div className="lp-field">
             <label>Mesure</label>
-            <HealthMetricSelect value={healthConfig.metric} onChange={(v) => setHealthConfig((c) => ({ ...c, metric: v }))} label="Mesure" />
+            <HealthMetricSelect value={healthConfig.metric} onChange={(v) => setHealthConfig((c) => ({ ...c, ...healthMetricsPatch([v, ...c.metrics.slice(1).filter((m) => m !== v)]) }))} label="Mesure" />
           </div>
           <div className="lp-field">
-            <label>Seconde mesure</label>
-            <HealthMetricSelect value={healthConfig.metricB} onChange={(v) => setHealthConfig((c) => ({ ...c, metricB: v }))} label="Seconde mesure" allowEmpty />
+            <label>Autres mesures (panneaux dessous, {HEALTH_MAX_METRICS} au plus)</label>
+            <HealthMoreMetrics metrics={healthConfig.metrics} onChange={(list) => setHealthConfig((c) => ({ ...c, ...healthMetricsPatch(list) }))} />
           </div>
           <div className="lp-field">
             <label>Période</label>
@@ -18344,10 +18344,26 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           </p>
           <div className="lp-field">
             <label>Heures par sport</label>
-            <select value={sportSummaryConfig.period} onChange={(e) => setSportSummaryConfig({ period: e.target.value })}>
+            <select value={sportSummaryConfig.period} onChange={(e) => setSportSummaryConfig((c) => ({ ...c, period: e.target.value }))}>
               {SPORT_SUMMARY_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </div>
+          {sportSummaryConfig.period === "rolling" && (
+            <div className="lp-field">
+              <label>Nombre de jours</label>
+              <input type="number" min="1" max="3660" step="1" value={sportSummaryConfig.days}
+                onChange={(e) => setSportSummaryConfig((c) => ({ ...c, days: sportDays(e.target.value) }))} />
+            </div>
+          )}
+          {sportSummaryConfig.period === "custom" && (
+            <div className="lp-field">
+              <label>Du / au</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input type="date" aria-label="Du" value={sportSummaryConfig.from} onChange={(e) => setSportSummaryConfig((c) => ({ ...c, from: e.target.value }))} />
+                <input type="date" aria-label="Au" value={sportSummaryConfig.to} onChange={(e) => setSportSummaryConfig((c) => ({ ...c, to: e.target.value }))} />
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -38948,9 +38964,10 @@ function sportYears(rows, today) {
   return [...years].sort().reverse();
 }
 // Calendrier annuel : une case par jour, une colonne par semaine (lundi en
-// haut). Couleur : le sport
-// dominant du jour (le plus de durée totale, puis de séances) ; teinte plus
-// soutenue avec la durée du jour (pleine à 2 h).
+// haut). Couleur : un sport → aplat ; plusieurs → une facette par sport, du
+// plus long au plus court (durée totale, puis séances), comme la heat map
+// mensuelle (#647). `main` reste le sport dominant. Teinte plus soutenue avec
+// la durée du jour (pleine à 2 h). Légende : jours où le sport est présent.
 function sportCalendar(rows, spec, year, order = []) {
   const sports = new Set(spec.sports || []);
   const from = `${year}-01-01`;
@@ -38978,9 +38995,10 @@ function sportCalendar(rows, spec, year, order = []) {
     }
     const ranked = [...per.entries()].sort((a, b) => b[1].minutes - a[1].minutes || b[1].count - a[1].count || a[0].localeCompare(b[0], "fr"));
     const main = ranked.length ? ranked[0][0] : "";
-    if (main) legend.set(main, (legend.get(main) || 0) + 1);
+    for (const [name] of ranked) legend.set(name, (legend.get(name) || 0) + 1);
     const minutes = [...per.values()].reduce((t, p) => t + p.minutes, 0);
-    days.push({ date, week: Math.floor((i + offset) / 7), dow: (i + offset) % 7, activities, minutes, main, color: main ? sportColor(main, order, others) : "", shade: sportCalendarShade(minutes, activities.length) });
+    const facets = sportCalendarFacets(ranked.map(([name]) => sportColor(name, order, others)));
+    days.push({ date, week: Math.floor((i + offset) / 7), dow: (i + offset) % 7, activities, minutes, main, color: main ? sportColor(main, order, others) : "", facets, shade: sportCalendarShade(minutes, activities.length) });
   }
   const months = [];
   for (const day of days) if (day.date.endsWith("-01")) months.push({ week: day.week, label: SPORT_MONTHS[+day.date.slice(5, 7) - 1] });
@@ -38990,6 +39008,28 @@ function sportCalendar(rows, spec, year, order = []) {
     count: days.reduce((t, d) => t + d.activities.length, 0),
     sports: [...legend.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr")).map(([name, n]) => ({ name, days: n, color: sportColor(name, order, others) })),
   };
+}
+// Facettes d'une case à plusieurs sports : l'équivalent SVG du
+// `conic-gradient(from 45deg, …)` de la heat map mensuelle (cellBackground).
+// Parts égales, angles CSS (0° en haut, sens horaire) à partir de 45°, chaque
+// part en polygone dans le carré unité : centre, bord de départ, coins
+// traversés, bord d'arrivée. Une seule couleur : aucune facette (aplat).
+function sportCalendarFacets(colors) {
+  if (colors.length < 2) return [];
+  const edge = (deg) => {
+    const r = (deg * Math.PI) / 180;
+    const dx = Math.sin(r), dy = -Math.cos(r);
+    const k = 0.5 / Math.max(Math.abs(dx), Math.abs(dy));
+    return [Math.round((0.5 + dx * k) * 1e4) / 1e4, Math.round((0.5 + dy * k) * 1e4) / 1e4];
+  };
+  const seg = 360 / colors.length;
+  return colors.map((color, i) => {
+    const a = 45 + i * seg, b = 45 + (i + 1) * seg;
+    const pts = [[0.5, 0.5], edge(a)];
+    for (const c of [135, 225, 315]) if (c > a && c < b) pts.push(edge(c));
+    pts.push(edge(b));
+    return { color, points: pts.map((p) => p.join(",")).join(" ") };
+  });
 }
 // Opacité d'une case : 0 sans séance ; 0,35 à 1 selon la durée (pleine à
 // 120 min) ; 0,35 pour une séance sans durée renseignée.
@@ -39001,14 +39041,27 @@ function sportCalendarShade(minutes, count) {
 // --- Résumé sport (#591) -----------------------------------------------------
 // Ce que Quentin veut voir en 10 secondes : dernière séance, semaine en cours
 // (comparée à la précédente au même jour), mois en cours, heures par sport.
-const SPORT_SUMMARY_PERIODS = [
-  { value: "week", label: "Cette semaine" },
-  { value: "month", label: "Ce mois" },
-  { value: "year", label: "Cette année" },
-];
+// Heures par sport : toutes les périodes des widgets sport (#646).
+const SPORT_SUMMARY_PERIODS = SPORT_PERIODS;
 function sportSummarySpec(widget) {
   const s = widget?.sport && typeof widget.sport === "object" ? widget.sport : {};
-  return { period: SPORT_SUMMARY_PERIODS.some((p) => p.value === s.period) ? s.period : "year" };
+  return {
+    period: SPORT_SUMMARY_PERIODS.some((p) => p.value === s.period) ? s.period : "year",
+    from: typeof s.from === "string" ? s.from : "",
+    to: typeof s.to === "string" ? s.to : "",
+    days: sportDays(s.days),
+  };
+}
+// Libellé de la période du résumé : « 45 derniers jours », « du 01/09/2026 au 30/09/2026 ».
+function sportSummaryPeriodLabel(spec) {
+  if (spec.period === "rolling") return `${spec.days} derniers jours`;
+  if (spec.period === "custom") {
+    const d = (x) => new Date(x + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" });
+    if (spec.from && spec.to) return `du ${d(spec.from)} au ${d(spec.to)}`;
+    if (spec.from) return `depuis le ${d(spec.from)}`;
+    if (spec.to) return `jusqu’au ${d(spec.to)}`;
+  }
+  return (SPORT_SUMMARY_PERIODS.find((p) => p.value === spec.period)?.label || "").toLocaleLowerCase("fr");
 }
 // Totaux d'une liste d'activités ; les valeurs non renseignées ne comptent pas.
 function sportTotals(rows) {
@@ -39032,7 +39085,9 @@ function sportDurationLabel(minutes) {
   const m = Math.round(minutes);
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`;
 }
+// `period` : valeur de SPORT_SUMMARY_PERIODS ou réglage complet { period, from, to, days }.
 function sportSummary(rows, today, period = "year", order = []) {
+  const spec = typeof period === "string" ? { period } : period;
   const past = (rows || []).filter((r) => r.date <= today);
   const all = { sports: [] };
   const last = past.slice().sort((a, b) => b.date.localeCompare(a.date) || String(b.start || "").localeCompare(String(a.start || "")))[0] || null;
@@ -39040,7 +39095,7 @@ function sportSummary(rows, today, period = "year", order = []) {
   const elapsed = Math.round((Date.parse(today + "T12:00:00Z") - Date.parse(monday + "T12:00:00Z")) / 864e5);
   const previousMonday = sportShiftDate(monday, -7);
   const between = (from, to) => past.filter((r) => r.date >= from && r.date <= to);
-  const chosen = sportFilter(past, { ...all, period }, today);
+  const chosen = sportFilter(past, { ...all, ...spec }, today);
   const hours = new Map();
   const counts = new Map();
   for (const r of chosen) {
@@ -39060,7 +39115,7 @@ function sportSummary(rows, today, period = "year", order = []) {
     // Semaine précédente arrêtée au même jour de la semaine : comparaison à durée égale.
     previousWeek: sportTotals(between(previousMonday, sportShiftDate(previousMonday, elapsed))),
     month: sportTotals(sportFilter(past, { ...all, period: "month" }, today)),
-    period,
+    period: spec.period,
     bySport,
     totalHours,
   };
@@ -39451,6 +39506,8 @@ function WidgetSportActivities({ widget, externalToolbarSlot, onUpdateWidget }) 
 const SPORT_CHART_CSS = `
 .nx-sport-chart{display:flex;flex-direction:column;height:100%;min-height:0;font-size:11px;color:#203246}
 .nx-sport-chart-plot{flex:1;min-height:120px;overflow-x:auto;overflow-y:hidden}
+/* Graphique santé : jusqu’à 10 mesures empilées (#648), la hauteur peut dépasser le widget. */
+.nx-health-band-plot{overflow-y:auto}
 .nx-sport-chart-plot svg{display:block}
 .nx-sport-chart-plot text{font-size:10px;fill:#60717c}
 .nx-sport-chart-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 10px 2px}
@@ -39724,14 +39781,33 @@ function SportCalendarView({ data }) {
       <svg width={L + data.weeks * pitch} height={T + 7 * pitch} role="img" aria-label={`Calendrier sportif ${data.year}`}>
         {data.months.map((m) => <text key={m.label} x={L + m.week * pitch} y={10}>{m.label}</text>)}
         {[0, 2, 4].map((d) => <text key={d} x={0} y={T + d * pitch + cell - 1}>{SPORT_WEEKDAYS[d]}</text>)}
-        {data.days.map((d) => (
-          <rect key={d.date} x={L + d.week * pitch} y={T + d.dow * pitch} width={cell} height={cell} rx="2"
-            className={d.main ? "" : "nx-sport-cal-empty"} fill={d.main ? d.color : undefined} fillOpacity={d.main ? d.shade : undefined}
-            stroke={hover?.d.date === d.date ? "#203246" : "none"}
-            onMouseEnter={(e) => setHover({ d, x: e.clientX, y: e.clientY })}
-            onMouseMove={(e) => setHover({ d, x: e.clientX, y: e.clientY })}
-            onMouseLeave={() => setHover(null)} />
-        ))}
+        <defs>
+          <clipPath id="nx-sport-cal-clip" clipPathUnits="objectBoundingBox"><rect width="1" height="1" rx="0.15" /></clipPath>
+        </defs>
+        {data.days.map((d) => {
+          const x = L + d.week * pitch, y = T + d.dow * pitch;
+          const events = {
+            onMouseEnter: (e) => setHover({ d, x: e.clientX, y: e.clientY }),
+            onMouseMove: (e) => setHover({ d, x: e.clientX, y: e.clientY }),
+            onMouseLeave: () => setHover(null),
+          };
+          const stroke = hover?.d.date === d.date ? "#203246" : "none";
+          if (!d.facets?.length) {
+            return (
+              <rect key={d.date} x={x} y={y} width={cell} height={cell} rx="2"
+                className={d.main ? "" : "nx-sport-cal-empty"} fill={d.main ? d.color : undefined} fillOpacity={d.main ? d.shade : undefined}
+                stroke={stroke} {...events} />
+            );
+          }
+          return (
+            <g key={d.date} {...events}>
+              <g transform={`translate(${x} ${y}) scale(${cell})`} clipPath="url(#nx-sport-cal-clip)" fillOpacity={d.shade}>
+                {d.facets.map((f, i) => <polygon key={i} points={f.points} fill={f.color} />)}
+              </g>
+              <rect x={x} y={y} width={cell} height={cell} rx="2" fill="transparent" stroke={stroke} />
+            </g>
+          );
+        })}
       </svg>
       {hover && (
         <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
@@ -39898,7 +39974,7 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
   const update = (patch) => onUpdateWidget && onUpdateWidget({ sport: { ...spec, ...patch } });
   const today = financeSankeyToday();
   const order = useMemo(() => sportNames(rows).map((s) => s.name), [rows]);
-  const data = useMemo(() => (rows ? sportSummary(rows, today, spec.period, order) : null), [rows, today, spec.period, order]);
+  const data = useMemo(() => (rows ? sportSummary(rows, today, spec, order) : null), [rows, today, spec.period, spec.from, spec.to, spec.days, order]);
   const goals = useSportGoals();
   const progress = useMemo(() => (rows ? sportGoalProgress(rows, goals, today) : null), [rows, goals, today]);
   const tools = (
@@ -39908,6 +39984,16 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
         <select value={spec.period} onChange={(e) => update({ period: e.target.value })} aria-label="Période des heures par sport" title="Période des heures par sport">
           {SPORT_SUMMARY_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
+        {spec.period === "rolling" && (
+          <input type="number" min="1" max="3660" step="1" aria-label="Nombre de jours" title="Nombre de jours" style={{ width: 64 }}
+            value={spec.days} onChange={(e) => update({ days: sportDays(e.target.value) })} />
+        )}
+        {spec.period === "custom" && (
+          <>
+            <input type="date" aria-label="Du" title="Du" value={spec.from} onChange={(e) => update({ from: e.target.value })} />
+            <input type="date" aria-label="Au" title="Au" value={spec.to} onChange={(e) => update({ to: e.target.value })} />
+          </>
+        )}
         <button type="button" onClick={reload} title="Relire le journal sportif">Actualiser</button>
       </div>
     </ViewToolbarPortal>
@@ -39923,7 +40009,7 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
   }
   if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des activités sport…</div>;
   const { last, week, previousWeek, month } = data;
-  const periodLabel = SPORT_SUMMARY_PERIODS.find((p) => p.value === spec.period)?.label.toLocaleLowerCase("fr");
+  const periodLabel = sportSummaryPeriodLabel(spec);
   const maxHours = Math.max(0, ...data.bySport.map((s) => s.hours));
   return (
     <div className="nx-sport-sum">
@@ -40037,12 +40123,34 @@ function healthMeanDays(value) {
   const n = Math.round(Number(value));
   return Number.isFinite(n) && n >= 2 ? Math.min(365, n) : 7;
 }
-// Réglages du widget, complétés par les valeurs par défaut.
+// Jusqu'à 10 mesures, chacune dans ses panneaux (#648) : liste sans doublon
+// ni clé inconnue, dans l'ordre de sélection, jamais vide.
+const HEALTH_MAX_METRICS = 10;
+// Couleur pleine et claire (écart sous la moyenne) de chaque mesure, dans l'ordre.
+const HEALTH_SERIES_COLORS = [
+  ["#2a78d6", "#a9c7ee"], ["#eb6834", "#f6c3ad"], ["#1f9e89", "#a6dcd2"], ["#8e5bd0", "#d3bff0"], ["#c9971a", "#efdca6"],
+  ["#c23b7a", "#ecb6cf"], ["#5a7d2a", "#c7d8a8"], ["#3b4cc0", "#b8bff0"], ["#b5532d", "#e6bfae"], ["#4f6d7a", "#bccbd2"],
+];
+function healthMetricList(list) {
+  const out = [];
+  for (const key of Array.isArray(list) ? list : []) if (healthMetric(key) && !out.includes(key) && out.length < HEALTH_MAX_METRICS) out.push(key);
+  return out;
+}
+// Réglage enregistré pour une liste de mesures : `metric` / `metricB` restent
+// alignés sur les deux premières pour les lecteurs d'avant #648.
+function healthMetricsPatch(list) {
+  const metrics = healthMetricList(list);
+  const safe = metrics.length ? metrics : ["sleepHours"];
+  return { metrics: safe, metric: safe[0], metricB: safe[1] || "" };
+}
+// Réglages du widget, complétés par les valeurs par défaut. Sans `metrics`
+// (widget d'avant #648) : la mesure et la seconde mesure.
 function healthChartSpec(widget) {
   const s = widget?.health && typeof widget.health === "object" ? widget.health : {};
+  const listed = healthMetricList(s.metrics);
+  const legacy = [healthMetric(s.metric) ? s.metric : "sleepHours", healthMetric(s.metricB) ? s.metricB : ""];
   return {
-    metric: healthMetric(s.metric) ? s.metric : "sleepHours",
-    metricB: healthMetric(s.metricB) ? s.metricB : "",
+    ...healthMetricsPatch(listed.length ? listed : legacy),
     period: SPORT_PERIODS.some((p) => p.value === s.period) ? s.period : "90",
     from: typeof s.from === "string" ? s.from : "",
     to: typeof s.to === "string" ? s.to : "",
@@ -40095,22 +40203,30 @@ function healthSeries(records, spec, today) {
       if (groups.has(key)) groups.get(key).push(d);
     }
   }
-  const metricB = spec.metricB && spec.metricB !== spec.metric ? spec.metricB : "";
+  // #648 : `metrics` (1 à 10 mesures), sinon la mesure et la seconde mesure.
+  const listed = healthMetricList(spec.metrics);
+  const keys = listed.length ? listed : healthMetricList([spec.metric, spec.metricB]);
+  const metricB = keys[1] || "";
   const meanDays = healthMeanDays(spec.meanDays);
   const windowMean = (date, key) => {
     const vals = [];
     for (let i = 0; i < meanDays; i++) vals.push(healthValue(byDate.get(sportShiftDate(date, -i)), key));
     return healthMean(vals);
   };
+  // Valeur de la k-ième mesure : `v0`…`v9` ; `a` et `b` = les deux premières.
   const points = [...groups.entries()].map(([key, days]) => {
-    const a = healthMean(days.map((d) => healthValue(byDate.get(d), spec.metric)));
-    const b = metricB ? healthMean(days.map((d) => healthValue(byDate.get(d), metricB))) : null;
-    return { key, label: sportBucketLabel(key, bucket), a, b, rolling: days.length ? windowMean(days[days.length - 1], spec.metric) : null };
+    const p = { key, label: sportBucketLabel(key, bucket) };
+    keys.forEach((m, k) => { p["v" + k] = healthMean(days.map((d) => healthValue(byDate.get(d), m))); });
+    return { ...p, a: p.v0 ?? null, b: metricB ? p.v1 : null, rolling: days.length && keys[0] ? windowMean(days[days.length - 1], keys[0]) : null };
   });
   const known = points.filter((p) => p.a !== null);
-  const extreme = (field, pick) => points.reduce((best, p) => (p[field] !== null && (!best || pick(p[field], best.value)) ? { value: p[field], key: p.key, label: p.label } : best), null);
+  const extreme = (field, pick) => points.reduce((best, p) => (p[field] !== null && p[field] !== undefined && (!best || pick(p[field], best.value)) ? { value: p[field], key: p.key, label: p.label } : best), null);
+  const series = keys.map((m, k) => ({
+    key: "v" + k, metric: healthMetric(m), average: healthMean(points.map((p) => p["v" + k])),
+    min: extreme("v" + k, (v, x) => v < x), max: extreme("v" + k, (v, x) => v > x),
+  }));
   return {
-    points, tooMany, metricA: healthMetric(spec.metric), metricB: metricB ? healthMetric(metricB) : null, meanDays,
+    points, tooMany, series, metricA: healthMetric(keys[0]), metricB: metricB ? healthMetric(metricB) : null, meanDays,
     average: healthMean(points.map((p) => p.a)), averageB: metricB ? healthMean(points.map((p) => p.b)) : null,
     last: known.length ? known[known.length - 1] : null, count: known.length,
     min: { a: extreme("a", (v, m) => v < m), b: metricB ? extreme("b", (v, m) => v < m) : null },
@@ -40397,7 +40513,7 @@ function HealthMetricSelect({ value, onChange, label, allowEmpty = false }) {
 // panneau « valeurs » (plage min–max de la période en bande, bornes en
 // pointillés nommées en marge, moyenne de la période, courbe, moyenne mobile)
 // et, collé dessous sur le même axe des dates, l'écart à la moyenne en barres
-// (pleines au-dessus, claires en dessous). Une seconde mesure a ses propres
+// (pleines au-dessus, claires en dessous). Chaque mesure suivante (10 au plus, #648) a ses propres
 // panneaux : jamais deux échelles sur un même graphe. Trous gardés (null).
 function HealthBandChart({ points, series, showDev, rollingLabel }) {
   const boxRef = useRef(null);
@@ -40451,7 +40567,7 @@ function HealthBandChart({ points, series, showDev, rollingLabel }) {
   const barW = Math.max(1.5, Math.min(24, step * 0.66));
   const h = hover ? points[hover.i] : null;
   return (
-    <div className="nx-sport-chart-plot" ref={boxRef}>
+    <div className="nx-sport-chart-plot nx-health-band-plot" ref={boxRef}>
       <svg width={plotW + M.left + M.right} height={totalH} role="img" aria-label={series.map((s) => s.metric.label).join(" et ")}>
         {blocks.map(({ s, get, top, ticks, y, y0, y1, devs, da, yd, d0, d1 }) => {
           const lo = s.min ? s.min.value : s.average, hi = s.max ? s.max.value : s.average;
@@ -40531,6 +40647,41 @@ function HealthBandChart({ points, series, showDev, rollingLabel }) {
   );
 }
 
+// Mesures suivantes (#648) : menu à cases, groupé par famille, ordre de
+// sélection conservé, 10 mesures au plus en comptant la première.
+function HealthMoreMetrics({ metrics, onChange }) {
+  const [open, setOpen] = useState(false);
+  const extra = metrics.slice(1);
+  const full = metrics.length >= HEALTH_MAX_METRICS;
+  const toggle = (key) => onChange(extra.includes(key) ? metrics.filter((m) => m !== key) : [...metrics, key]);
+  return (
+    <span className="nx-sport-pop">
+      <button type="button" className={extra.length ? "active" : ""} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`Autres mesures, en panneaux dessous (${HEALTH_MAX_METRICS} au plus)`}>
+        {extra.length ? `+ ${extra.length} mesure${extra.length > 1 ? "s" : ""}` : "+ Mesures"}
+      </button>
+      {open && (
+        <span className="nx-sport-menu" role="dialog" aria-label="Autres mesures">
+          <small>{metrics.length} / {HEALTH_MAX_METRICS} mesures</small>
+          {HEALTH_GROUPS.map((g) => (
+            <React.Fragment key={g}>
+              <small style={{ fontWeight: 700, marginTop: 4 }}>{g}</small>
+              {HEALTH_METRICS.filter((m) => m.group === g && m.key !== metrics[0]).map((m) => (
+                <label key={m.key}>
+                  <input type="checkbox" checked={extra.includes(m.key)} disabled={full && !extra.includes(m.key)} onChange={() => toggle(m.key)} /> {m.label}
+                </label>
+              ))}
+            </React.Fragment>
+          ))}
+          <span className="nx-sport-menu-actions">
+            <button type="button" onClick={() => onChange(metrics.slice(0, 1))}>Aucune</button>
+            <button type="button" onClick={() => setOpen(false)}>Fermer</button>
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Nombre de jours de la moyenne mobile (#608) : saisie libre, validée en
 // quittant le champ ou avec Entrée (2 à 365 jours).
 function HealthDaysInput({ value, disabled, onChange }) {
@@ -40555,14 +40706,15 @@ function WidgetHealthChart({ widget, externalToolbarSlot, onUpdateWidget }) {
   const spec = healthChartSpec(widget);
   const update = (patch) => onUpdateWidget && onUpdateWidget({ health: { ...spec, ...patch } });
   const today = financeSankeyToday();
-  const key = [spec.metric, spec.metricB, spec.period, spec.from, spec.to, spec.days, spec.bucket, spec.meanDays].join("|");
+  const key = [spec.metrics.join(","), spec.period, spec.from, spec.to, spec.days, spec.bucket, spec.meanDays].join("|");
   const data = useMemo(() => (rows ? healthSeries(rows, spec, today) : null), [rows, today, key]);
+  const setMetrics = (list) => update(healthMetricsPatch(list));
   const tools = (
     <ViewToolbarPortal slot={externalToolbarSlot}>
       <style>{SPORT_CSS + SPORT_CHART_CSS}</style>
       <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
-        <HealthMetricSelect value={spec.metric} onChange={(v) => update({ metric: v })} label="Mesure" />
-        <HealthMetricSelect value={spec.metricB} onChange={(v) => update({ metricB: v })} label="Seconde mesure (panneaux dessous)" allowEmpty />
+        <HealthMetricSelect value={spec.metric} onChange={(v) => setMetrics([v, ...spec.metrics.slice(1).filter((m) => m !== v)])} label="Mesure" />
+        <HealthMoreMetrics metrics={spec.metrics} onChange={setMetrics} />
         <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
           {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
         </select>
@@ -40598,9 +40750,11 @@ function WidgetHealthChart({ widget, externalToolbarSlot, onUpdateWidget }) {
   if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des mesures santé…</div>;
   if (data.tooMany) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Plus de {SPORT_MAX_BUCKETS} points : choisis la semaine ou le mois, ou une période plus courte.</div>;
   if (!data.count) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucune valeur de « {data.metricA.label} » sur cette période.</div>;
-  const ext = (side) => ({ min: spec.showMin ? data.min[side] : null, max: spec.showMax ? data.max[side] : null });
-  const series = [{ key: "a", metric: data.metricA, color: "#2a78d6", light: "#a9c7ee", average: data.average, ...ext("a"), rolling: spec.mean }];
-  if (data.metricB && data.averageB !== null) series.push({ key: "b", metric: data.metricB, color: "#eb6834", light: "#f6c3ad", average: data.averageB, ...ext("b"), rolling: false });
+  // Une mesure sans aucune valeur sur la période n'a pas de panneau (la première est garantie par `count`).
+  const series = data.series.map((s, k) => ({
+    ...s, color: HEALTH_SERIES_COLORS[k][0], light: HEALTH_SERIES_COLORS[k][1],
+    min: spec.showMin ? s.min : null, max: spec.showMax ? s.max : null, rolling: k === 0 && spec.mean,
+  })).filter((s) => s.average !== null);
   const rollingLabel = `Moyenne mobile ${data.meanDays} jours`;
   return (
     <div className="nx-sport-chart">

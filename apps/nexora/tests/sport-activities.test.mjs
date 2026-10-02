@@ -108,8 +108,8 @@ function slice(name) {
 const EXPORTS = ["SPORT_COLUMNS", "SPORT_DEFAULT_COLUMNS", "SPORT_PERIODS", "sportSpec", "sportPeriodRange", "sportRows", "sportAllColumns", "sportNames", "sportFilter", "sportText", "sportSearch", "sportSort", "sportCsv",
   "SPORT_MEASURES", "SPORT_BUCKETS", "SPORT_PALETTE", "SPORT_MAX_BUCKETS", "sportChartSpec", "sportMeasureValue", "sportBucketKey", "sportIsoWeek", "sportBucketLabel", "sportStackSeries", "sportNiceTicks", "sportFormatValue",
   "SPORT_CARD_MEASURES", "SPORT_AGGS", "sportDays", "sportBlockSpec", "sportAggregate", "sportBlockLabel",
-  "SPORT_VIEWS", "SPORT_MEAN_LABELS", "SPORT_WAFFLE_MAX", "sportColor", "sportMeanKey", "sportTimeSeries", "sportCumulSeries", "sportWaffle", "sportYears", "sportCalendar", "sportCalendarShade",
-  "SPORT_SUMMARY_PERIODS", "sportSummarySpec", "sportTotals", "sportShiftDate", "sportDaysAgoLabel", "sportDurationLabel", "sportSummary", "sportDashboardWidgets",
+  "SPORT_VIEWS", "SPORT_MEAN_LABELS", "SPORT_WAFFLE_MAX", "sportColor", "sportMeanKey", "sportTimeSeries", "sportCumulSeries", "sportWaffle", "sportYears", "sportCalendar", "sportCalendarFacets", "sportCalendarShade",
+  "SPORT_SUMMARY_PERIODS", "sportSummarySpec", "sportSummaryPeriodLabel", "sportTotals", "sportShiftDate", "sportDaysAgoLabel", "sportDurationLabel", "sportSummary", "sportDashboardWidgets",
   "SPORT_GOALS_DEFAULT", "sportGoalNumber", "sportGoalsNormalize", "sportGoalLabel", "sportGoalProgress", "sportBlockGoalPatch", "sportBlockGoalTarget"];
 const W = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n;return { ${EXPORTS.join(", ")} };\n})`)();
 
@@ -422,9 +422,26 @@ test("calendrier annuel : une case par jour, lundi en haut, sport dominant, tein
   assert.equal(W.sportCalendarShade(0, 0), 0);
   assert.equal(W.sportCalendarShade(0, 1), 0.35, "séance sans durée : visible");
   assert.equal(W.sportCalendarShade(240, 1), 1);
-  // Jour à deux sports : le plus long l'emporte.
+  assert.deepEqual(sept28.facets, [], "un seul sport : aplat");
+  // Jour à deux sports : le plus long est dominant, chaque sport a sa facette (#647).
   const mixed = W.sportCalendar([...rows, { id: "m", date: "2026-09-28", sport: "CrossFit", title: "", total: 60 }], { sports: [] }, "2026", order);
-  assert.equal(mixed.days.find((d) => d.date === "2026-09-28").main, "CrossFit");
+  const day = mixed.days.find((d) => d.date === "2026-09-28");
+  assert.equal(day.main, "CrossFit");
+  assert.deepEqual(day.facets.map((f) => f.color), [W.sportColor("CrossFit", order), W.sportColor("Course à pied", order)], "du plus long au plus court");
+  assert.deepEqual(mixed.sports.map((s) => [s.name, s.days]), [["Course à pied", 2], ["CrossFit", 2]], "légende : jours où le sport est présent");
+});
+
+test("calendrier annuel : facettes = conic-gradient(from 45deg) de la heat map mensuelle", () => {
+  assert.deepEqual(W.sportCalendarFacets([]), []);
+  assert.deepEqual(W.sportCalendarFacets(["#a"]), []);
+  // Deux sports : coupe sur la diagonale haut-droite → bas-gauche.
+  assert.deepEqual(W.sportCalendarFacets(["#a", "#b"]).map((f) => f.points), ["0.5,0.5 1,0 1,1 0,1", "0.5,0.5 0,1 0,0 1,0"]);
+  // Quatre sports : quatre triangles droite, bas, gauche, haut.
+  assert.deepEqual(W.sportCalendarFacets(["#a", "#b", "#c", "#d"]).map((f) => f.points),
+    ["0.5,0.5 1,0 1,1", "0.5,0.5 1,1 0,1", "0.5,0.5 0,1 0,0", "0.5,0.5 0,0 1,0"]);
+  const three = W.sportCalendarFacets(["#a", "#b", "#c"]);
+  assert.deepEqual(three.map((f) => f.color), ["#a", "#b", "#c"]);
+  assert.equal(three[0].points, "0.5,0.5 1,0 1,1 0.634,1", "165° : bas, à droite du centre");
 });
 
 // --- Résumé sport et page Sport (#591) ---
@@ -435,10 +452,18 @@ test("résumé : rattaché au catalogue, au rendu, à l'en-tête et à la fiche"
   assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| w\.type === "sportSummary"/);
   assert.match(html, /if \(type === "sportSummary"\) data\.sport = \{ \.\.\.sportSummaryConfig \};/);
   assert.match(html, /function WidgetSportSummary\([^)]*\) \{\n  const \{ rows, error, reload \} = useSportData\(\);/, "même magasin que les autres widgets sport");
-  assert.deepEqual(W.SPORT_SUMMARY_PERIODS.map((p) => p.value), ["week", "month", "year"]);
-  assert.deepEqual(W.sportSummarySpec(undefined), { period: "year" }, "heures par sport : l’année, le mois a sa carte");
-  assert.deepEqual(W.sportSummarySpec({ sport: { period: "month" } }), { period: "month" });
-  assert.deepEqual(W.sportSummarySpec({ sport: { period: "365" } }), { period: "year" });
+  // #646 : toutes les périodes des widgets sport, dates libres et N derniers jours compris.
+  assert.equal(W.SPORT_SUMMARY_PERIODS, W.SPORT_PERIODS);
+  assert.deepEqual(W.sportSummarySpec(undefined), { period: "year", from: "", to: "", days: 30 }, "heures par sport : l’année, le mois a sa carte");
+  assert.deepEqual(W.sportSummarySpec({ sport: { period: "month" } }), { period: "month", from: "", to: "", days: 30 });
+  assert.deepEqual(W.sportSummarySpec({ sport: { period: "365" } }), { period: "365", from: "", to: "", days: 30 });
+  assert.deepEqual(W.sportSummarySpec({ sport: { period: "inconnu" } }).period, "year");
+  assert.deepEqual(W.sportSummarySpec({ sport: { period: "custom", from: "2026-09-01", to: "2026-09-30", days: "45" } }), { period: "custom", from: "2026-09-01", to: "2026-09-30", days: 45 });
+  assert.equal(W.sportSummaryPeriodLabel({ period: "previousMonth" }), "mois précédent");
+  assert.equal(W.sportSummaryPeriodLabel({ period: "rolling", days: 45 }), "45 derniers jours");
+  assert.equal(W.sportSummaryPeriodLabel({ period: "custom", from: "2026-09-01", to: "2026-09-30" }), "du 01/09/2026 au 30/09/2026");
+  assert.equal(W.sportSummaryPeriodLabel({ period: "custom", from: "2026-09-01", to: "" }), "depuis le 01/09/2026");
+  assert.equal(W.sportSummaryPeriodLabel({ period: "custom", from: "", to: "" }), "dates libres");
 });
 
 test("résumé : dernière séance, semaine comparée au même jour, mois, heures par sport", () => {
@@ -466,6 +491,15 @@ test("résumé : dernière séance, semaine comparée au même jour, mois, heure
   const empty = W.sportSummary([], "2026-10-01", "week", []);
   assert.deepEqual([empty.last, empty.lastDaysAgo, empty.week.hours, empty.bySport.length], [null, null, 0, 0]);
   assert.equal(W.sportSummary(rows, "2026-10-03", "week", order).lastDaysAgo, 0, "la séance du jour devient la dernière");
+  // #646 : réglage complet — dates libres, N derniers jours, mois précédent.
+  const custom = W.sportSummary(rows, "2026-10-01", { period: "custom", from: "2026-09-22", to: "2026-09-28" }, order);
+  assert.equal(custom.period, "custom");
+  assert.deepEqual(custom.bySport.map((s) => [s.name, s.count]), [["CrossFit", 2], ["Course à pied", 1]]);
+  const rolling = W.sportSummary(rows, "2026-10-01", { period: "rolling", days: 2 }, order);
+  assert.deepEqual(rolling.bySport.map((s) => s.name), ["Course à pied", "CrossFit"], "30 septembre et 1er octobre");
+  const previous = W.sportSummary(rows, "2026-10-01", { period: "previousMonth" }, order);
+  assert.equal(previous.bySport.reduce((t, s) => t + s.count, 0), 4, "22, 26, 28 et 30 septembre");
+  assert.equal(previous.month.count, 1, "la carte du mois reste le mois en cours");
 });
 
 test("résumé : libellés de durée et d'ancienneté", () => {

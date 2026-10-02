@@ -41,6 +41,9 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Plus aucune mention de l'ancienne application externe dans les textes de Nexora (interface, API, MCP, documentation, code) ; seules restent, dans le bloc de migration, les trois valeurs enregistrées dans les anciens tableaux de bord (Ref #613).
 - Tableau de bord : widget « Répartition du patrimoine » — une seule barre empilée du patrimoine à la fin du mois choisi, en 100 % ou en valeur absolue (bascule dans l'en-tête), par compte, par banque ou par type de compte (liste dans l'en-tête), couleurs du référentiel, montant ou part dans les segments, infobulle, légende détaillée ; soldes négatifs listés à part et déduits du total net ; soldes par compte ajoutés à `/api/nexora/finance-budget-summary` (`wealth.accounts`) (Ref #617).
 - Transactions (Budget) : un clic sur une ligne ouvre sa fiche de modification — dates, type, compte, montant, libellé, catégorie, sous-catégorie, description, étiquette — écrite dans Supabase par la fonction SQL des transactions (`PATCH /api/nexora/finance-owner-transactions`, `operation: "edit"`, révision attendue pour refuser une modification concurrente) ; identifiant, source, clé d'import, virement et annulation liés conservés (Ref #618).
+- Résumé sport : la période des heures par sport propose toutes les périodes des widgets sport (dont mois précédent, N derniers jours et dates libres), dans l'en-tête et la fenêtre de réglages (Ref #646).
+- Calendrier annuel sport : un jour à plusieurs sports est découpé en facettes, une par sport, comme la heat map mensuelle ; la légende compte les jours où chaque sport est présent (Ref #647).
+- Graphique santé : jusqu'à 10 mesures, chacune dans ses panneaux empilés sur le même axe des dates, choisies dans l'en-tête (« + Mesures ») ou la fenêtre de réglages ; widgets existants relus sans perte (Ref #648).
 
 ### Corrections
 
