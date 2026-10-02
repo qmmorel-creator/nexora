@@ -32,6 +32,7 @@ const B = vm.runInThisContext(`(function () {\n${slice("BODY-PHOTOS")}\n;return 
   bodyPhotoParams, bodyPhotoFit, bodyPhotoResidual, bodyPhotoToPixels, bodyPhotoToUnit, bodyPhotoPairs, bodyPhotoAdjustTransform,
   bodyPhotoNudge, bodyPhotoAlignment, bodyPhotoCssMatrix, bodyPhotoDefaultDate, bodyPhotoDaysBetween, bodyPhotoDeltaLabel,
   bodyPhotoSorted, bodyPhotoSpec, bodyPhotoRightPhoto, bodyPhotoFitSize, bodyPhotoExifInfo, bodyPhotoIsNeutral, bodyPhotoFormatDate,
+  bodyPhotoJpegSize, bodyPhotoOrientedSize, bodyPhotoDecodePlan, BODY_PHOTO_HEAD_BYTES,
 };\n})`)();
 
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg} : ${a} ≠ ${b} (± ${tol})`);
@@ -245,6 +246,21 @@ test("EXIF : date de prise de vue et orientation lues, entrée illisible tolér�
   assert.deepEqual({ ...B.bodyPhotoExifInfo(exifJpeg("2024:06:01 07:00:00", false)) }, { date: "2024:06:01 07:00:00", orientation: 6 }, "grand-boutiste");
   assert.deepEqual({ ...B.bodyPhotoExifInfo(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer) }, { date: null, orientation: 1 }, "PNG");
   assert.deepEqual({ ...B.bodyPhotoExifInfo(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, 40]).buffer) }, { date: null, orientation: 1 }, "segment tronqué");
+});
+
+test("mémoire : en-tête seul, dimensions JPEG, décodage réduit selon l'orientation", () => {
+  assert.equal(B.BODY_PHOTO_HEAD_BYTES, 262144);
+  // SOI, APP0 (16 o), SOF0 de 8064 × 6048 (48 Mpx), EOI.
+  const sof = (w, h) => new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, ...new Array(14).fill(0), 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]).buffer;
+  assert.deepEqual({ ...B.bodyPhotoJpegSize(sof(8064, 6048)) }, { width: 8064, height: 6048 });
+  assert.equal(B.bodyPhotoJpegSize(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]).buffer), null, "PNG : pas de plan réduit");
+  assert.equal(B.bodyPhotoJpegSize(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff, 0, 0, 0, 0, 0]).buffer), null, "SOF hors de l'en-tête");
+  assert.deepEqual({ ...B.bodyPhotoOrientedSize(8064, 6048, 6) }, { width: 6048, height: 8064 }, "quart de tour");
+  assert.deepEqual({ ...B.bodyPhotoOrientedSize(8064, 6048, 3) }, { width: 8064, height: 6048 }, "demi-tour");
+  assert.deepEqual({ ...B.bodyPhotoDecodePlan({ width: 8064, height: 6048 }, 6) }, { width: 1800, height: 2400 }, "portrait après orientation");
+  assert.deepEqual({ ...B.bodyPhotoDecodePlan({ width: 8064, height: 6048 }, 1) }, { width: 2400, height: 1800 });
+  assert.equal(B.bodyPhotoDecodePlan({ width: 2000, height: 1500 }, 1), null, "déjà assez petite : décodage normal");
+  assert.equal(B.bodyPhotoDecodePlan(null, 1), null);
 });
 
 test("réglage du widget, tri de la galerie et photo de droite", () => {
