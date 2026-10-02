@@ -57,7 +57,7 @@ function slice(name) {
   return html.slice(from + start.length, to);
 }
 const H = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n${slice("HEALTH")}\n;return {
-  HEALTH_METRICS, HEALTH_GROUPS, healthMetric, healthChartSpec, healthRows, healthMean, healthSeries, healthFormat, healthTicks,
+  HEALTH_METRICS, HEALTH_GROUPS, healthMetric, HEALTH_MAX_METRICS, HEALTH_SERIES_COLORS, healthMetricList, healthMetricsPatch, healthChartSpec, healthRows, healthMean, healthSeries, healthFormat, healthTicks,
   healthSportSpec, healthPearson, healthSportSeries, healthPearsonLabel, HEALTH_SPORT_BUCKETS,
 };\n})`)();
 
@@ -74,12 +74,25 @@ test("mesures : 25 mesures en 5 familles, réglages par défaut", () => {
   assert.deepEqual(H.HEALTH_GROUPS, ["Corps", "Sommeil", "Récupération", "Activité", "Nutrition"]);
   for (const m of H.HEALTH_METRICS) assert.ok(H.HEALTH_GROUPS.includes(m.group), m.key);
   assert.deepEqual(H.HEALTH_METRICS.map((m) => m.key).sort(), N.HEALTH_COLUMNS.slice(1).sort(), "toutes les colonnes de la source, aucune autre");
-  assert.deepEqual(H.healthChartSpec(undefined), { metric: "sleepHours", metricB: "", period: "90", from: "", to: "", days: 30, bucket: "day", mean: true, meanDays: 7, showMin: false, showMax: false, showDev: true });
+  assert.deepEqual(H.healthChartSpec(undefined), { metrics: ["sleepHours"], metric: "sleepHours", metricB: "", period: "90", from: "", to: "", days: 30, bucket: "day", mean: true, meanDays: 7, showMin: false, showMax: false, showDev: true });
   assert.equal(H.healthChartSpec({ health: { showDev: false } }).showDev, false, "écart à la moyenne décochable (#611)");
   assert.deepEqual(["3", 1, "abc", 400, 14.6].map((v) => H.healthChartSpec({ health: { meanDays: v } }).meanDays), [3, 7, 7, 365, 15], "moyenne mobile : 2 à 365 jours (#608)");
   assert.deepEqual([H.healthChartSpec({ health: { showMin: true } }).showMin, H.healthChartSpec({ health: { showMax: "oui" } }).showMax], [true, false]);
   assert.equal(H.healthChartSpec({ health: { metric: "inconnue", metricB: "weight" } }).metric, "sleepHours");
   assert.equal(H.healthChartSpec({ health: { metricB: "weight" } }).metricB, "weight");
+  // #648 : jusqu'à 10 mesures ; un widget d'avant relit `metric` / `metricB`.
+  assert.deepEqual(H.healthChartSpec({ health: { metric: "weight", metricB: "recovery" } }).metrics, ["weight", "recovery"]);
+  assert.deepEqual(H.healthChartSpec({ health: { metric: "weight", metricB: "weight" } }).metrics, ["weight"], "même mesure : une seule");
+  const all = H.HEALTH_METRICS.map((m) => m.key);
+  const ten = H.healthChartSpec({ health: { metrics: ["inconnue", ...all, "hrv"] } });
+  assert.equal(H.HEALTH_MAX_METRICS, 10);
+  assert.deepEqual(ten.metrics, all.slice(0, 10), "clés inconnues et doublons écartés, 10 au plus");
+  assert.deepEqual([ten.metric, ten.metricB], [all[0], all[1]]);
+  assert.deepEqual(H.healthChartSpec({ health: { metrics: [], metric: "hrv" } }).metrics, ["hrv"], "liste vide : réglage d'avant");
+  assert.deepEqual(H.healthMetricsPatch([]), { metrics: ["sleepHours"], metric: "sleepHours", metricB: "" }, "jamais vide");
+  assert.deepEqual(H.healthMetricsPatch(["hrv", "steps", "weight"]), { metrics: ["hrv", "steps", "weight"], metric: "hrv", metricB: "steps" });
+  assert.equal(H.HEALTH_SERIES_COLORS.length, 10);
+  assert.equal(new Set(H.HEALTH_SERIES_COLORS.map(([c]) => c)).size, 10, "une couleur par mesure");
   assert.throws(() => H.healthRows({}), /Réponse Santé invalide/);
 });
 
@@ -92,7 +105,7 @@ test("série : moyenne des jours renseignés, trous gardés, moyenne 7 jours, ri
   assert.equal(day.points.at(-1).rolling, 6.5, "24 et 29 dans la fenêtre du 30");
   assert.equal(day.last.a, 5);
   assert.equal(day.count, 4);
-  const week = H.healthSeries(records, spec({ bucket: "week", metric: "weight", metricB: "recovery" }), "2026-10-04");
+  const week = H.healthSeries(records, spec({ bucket: "week", ...H.healthMetricsPatch(["weight", "recovery"]) }), "2026-10-04");
   assert.deepEqual(week.points.map((p) => p.key), ["2026-09-21", "2026-09-28"]);
   assert.deepEqual(week.points.map((p) => p.a), [79.75, 78.5], "moyenne, jamais somme ; null ignoré");
   assert.deepEqual(week.points.map((p) => p.b), [50, 70]);
@@ -105,7 +118,15 @@ test("série : moyenne des jours renseignés, trous gardés, moyenne 7 jours, ri
   assert.deepEqual([day3.min.a.value, day3.max.a.value, day3.min.b], [5, 8, null]);
   assert.deepEqual([week.average, week.averageB, day3.averageB], [79.125, 60, null], "moyenne de la période, par mesure");
   assert.equal(week.metricB.key, "recovery");
-  assert.equal(H.healthSeries(records, spec({ metricB: "sleepHours" }), "2026-09-30").metricB, null, "même mesure : pas de seconde courbe");
+  assert.equal(H.healthSeries(records, spec(H.healthMetricsPatch(["sleepHours", "sleepHours"])), "2026-09-30").metricB, null, "même mesure : pas de seconde courbe");
+  assert.equal(H.healthSeries(records, { ...spec(), metrics: undefined, metric: "weight", metricB: "recovery" }, "2026-09-30").metricB.key, "recovery", "sans liste : mesure et seconde mesure");
+  // #648 : trois mesures, chacune sa série (moyenne, min, max), valeurs v0…v2.
+  const three = H.healthSeries(records, spec({ bucket: "week", ...H.healthMetricsPatch(["weight", "recovery", "sleepHours"]) }), "2026-10-04");
+  assert.deepEqual(three.series.map((x) => [x.key, x.metric.key, x.average]), [["v0", "weight", 79.125], ["v1", "recovery", 60], ["v2", "sleepHours", 7]]);
+  assert.deepEqual(three.points.map((p) => [p.v0, p.v1, p.v2]), [[79.75, 50, 7], [78.5, 70, 7]]);
+  assert.deepEqual(three.points.map((p) => [p.a, p.b]), [[79.75, 50], [78.5, 70]], "a et b = les deux premières");
+  assert.deepEqual([three.series[2].min.value, three.series[2].max.value], [7, 7]);
+  assert.deepEqual([three.min.b.value, three.max.b.value], [50, 70]);
   assert.equal(H.healthSeries([], spec(), "2026-09-30").count, 0);
 });
 
