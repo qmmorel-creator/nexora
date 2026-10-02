@@ -1,30 +1,30 @@
-# Chartes graphiques Nexora — cinq propositions
+# Chartes graphiques Nexora — famille Bauhaus
 
-Étude de l'esthétique de Nexora et cinq chartes graphiques complètes, toutes appliquées à
-l'application réelle **sans modifier le moteur** : ni composant, ni donnée, ni comportement.
-Chaque charte est une feuille CSS autonome qui se pose par-dessus l'existant et propose deux
-thèmes (clair et sombre).
+Le thème **Bauhaus** de la page « Budget prévisionnel » adapté à Nexora, et quatre variantes de la
+même famille (modernisme graphique). Chaque charte est une feuille CSS autonome qui se pose sur
+l'application **sans modifier le moteur** et propose deux thèmes, clair et sombre.
 
 Galerie : [`index.html`](index.html) (ouvrir localement) · captures de la charte actuelle :
-[`reference/`](reference/).
+[`reference/`](reference/). Une première série de cinq propositions (Signal, Atlas, Nocturne,
+Édition, Clarté) a été écartée ; elle reste dans l'historique git.
 
-| | Charte | Idée directrice | Accent | Typographie | Défaut | Dossier |
-|---|---|---|---|---|---|---|
-| 01 | **Signal** | Rigueur suisse : encre, papier, un seul signal rouge | encre `#111111` + rouge `#E2231A` | Archivo · JetBrains Mono | clair | [CHARTE.md](01-signal/CHARTE.md) |
-| 02 | **Atlas** | Cartographie marine : rail marine, sarcelle, balise ambre | sarcelle `#0A7A76` | IBM Plex Sans / Condensed / Mono | clair | [CHARTE.md](02-atlas/CHARTE.md) |
-| 03 | **Nocturne** | Console de pilotage sombre, violet électrique, chrome effacé | violet `#6A5AE0` | Geist · Geist Mono | **sombre** | [CHARTE.md](03-nocturne/CHARTE.md) |
-| 04 | **Édition** | Registre éditorial : ivoire, serif, filets doubles, vert forêt | vert `#1E5E44` | Source Serif 4 · Source Sans 3 | clair | [CHARTE.md](04-edition/CHARTE.md) |
-| 05 | **Clarté** | Lisibilité maximale : Atkinson, AAA, focus jaune, haut contraste | cobalt `#0040C8` / jaune `#FFD60A` | Atkinson Hyperlegible Next | clair | [CHARTE.md](05-clarte/CHARTE.md) |
+| | Charte | Idée directrice | Couleurs d'aplat | Typographie | Dossier |
+|---|---|---|---|---|---|
+| 01 | **Bauhaus** | La page budget : papier, cadres noirs 2 px, tuiles rouge / jaune / bleu | `#D9302A` `#F5B400` `#1D4E89` | Outfit | [CHARTE.md](01-bauhaus/CHARTE.md) |
+| 02 | **De Stijl** | Toile de Mondrian : grille noire épaisse entre les widgets, aplats primaires | `#DD1D21` `#FFD02A` `#1F4FA3` | Archivo élargie | [CHARTE.md](02-destijl/CHARTE.md) |
+| 03 | **Ulm** | Appareil Braun : gris chaud, noir, un seul orange, pilules et cercles | `#E8590C` | Hanken Grotesk | [CHARTE.md](03-ulm/CHARTE.md) |
+| 04 | **Constructiviste** | Affiche de Rodtchenko : crème, noir, rouge, bandeaux d'encre et diagonales | `#C8102E` | Oswald + Archivo | [CHARTE.md](04-constructiviste/CHARTE.md) |
+| 05 | **Dessau** | Bauhaus tempéré : ocre, brique, ardoise, filets 1,5 px, Futura | `#C9922E` `#B5462E` `#34506E` | Jost | [CHARTE.md](05-dessau/CHARTE.md) |
 
-| Signal | Atlas | Nocturne | Édition | Clarté |
+| Bauhaus | De Stijl | Ulm | Constructiviste | Dessau |
 |---|---|---|---|---|
-| ![](01-signal/captures/clair-01-dashboard-pilotage.webp) | ![](02-atlas/captures/clair-01-dashboard-pilotage.webp) | ![](03-nocturne/captures/sombre-01-dashboard-pilotage.webp) | ![](04-edition/captures/clair-01-dashboard-pilotage.webp) | ![](05-clarte/captures/clair-01-dashboard-pilotage.webp) |
-| ![](01-signal/captures/sombre-05-gantt.webp) | ![](02-atlas/captures/sombre-05-gantt.webp) | ![](03-nocturne/captures/clair-05-gantt.webp) | ![](04-edition/captures/sombre-05-gantt.webp) | ![](05-clarte/captures/sombre-05-gantt.webp) |
+| ![](01-bauhaus/captures/clair-01-dashboard-pilotage.webp) | ![](02-destijl/captures/clair-01-dashboard-pilotage.webp) | ![](03-ulm/captures/clair-01-dashboard-pilotage.webp) | ![](04-constructiviste/captures/clair-01-dashboard-pilotage.webp) | ![](05-dessau/captures/clair-01-dashboard-pilotage.webp) |
+| ![](01-bauhaus/captures/sombre-05-gantt.webp) | ![](02-destijl/captures/sombre-05-gantt.webp) | ![](03-ulm/captures/sombre-05-gantt.webp) | ![](04-constructiviste/captures/sombre-05-gantt.webp) | ![](05-dessau/captures/sombre-05-gantt.webp) |
 
-Chaque dossier contient : intention, principes, palette (SVG + tableau des tokens, deux
-thèmes), contrastes WCAG mesurés, typographie et échelle, formes et profondeur, règles par
-composant, à faire / à éviter, limites, 9 vues et 15 widgets capturés dans chaque thème,
-mise en œuvre.
+Chaque dossier contient : source et intention, principes, palette (SVG et tableau des tokens,
+deux thèmes, aplats propres), contrastes WCAG mesurés, typographie et échelle, formes, règles par
+composant, à faire / à éviter, limites, 9 vues et 15 widgets capturés dans chaque thème, mise en
+œuvre.
 
 ## 1. Étude de la charte actuelle
 
@@ -68,18 +68,15 @@ comprend quatre couches, toutes limitées à `:root[data-charte="…"]` :
 4. **Signature** de la charte ([`outils/signatures/`](outils/signatures/)) : typographie,
    traitement des puces, des KPI et des en-têtes de widgets, formes.
 
-Activation : `<html data-charte="atlas" data-mode="sombre">` + feuille + polices.
+Activation : `<html data-charte="bauhaus" data-mode="sombre">` + feuille + polices.
 
 Le traitement des puces illustre la méthode : sans toucher au JSX, la propriété
 `-webkit-text-fill-color` donne l'encre du texte tandis que `currentColor` garde la couleur
 de donnée pour le repère (barre, contour ou teinte de fond).
 
-| Contraste des puces (7 couleurs de données de la démo) | min. | max. |
-|---|---|---|
-| Actuel | 1,8:1 | 4,0:1 |
-| Atlas (teinte + encre à parts égales) | 5,2:1 | 7,9:1 |
-| Nocturne sombre / clair | 7,3:1 / 6,2:1 | 9,9:1 / 10,0:1 |
-| Signal, Édition, Clarté (texte en encre) | ≥ 15:1 | — |
+Contraste des puces sur les 7 couleurs de données de la démo : aujourd'hui 1,8 à 4,0:1 ;
+Bauhaus, De Stijl et Constructiviste posent le texte en couleur d’encre ; Ulm 5,7 à 8,4:1 et
+Dessau 5,8 à 7,9:1 (teinte de donnée mélangée à l'encre).
 
 ## 3. Captures — protocole
 
@@ -89,20 +86,16 @@ démonstration enrichi (6 projets en 2 dossiers, 35 tâches, 6 personnes, dépen
 15 widgets par thème, soit 52 captures par charte et 26 pour la référence actuelle.
 Banc : [`outils/capture.mjs`](outils/capture.mjs), données : [`outils/seed.mjs`](outils/seed.mjs).
 
-## 4. Recommandation
+## 4. Comment choisir
 
-- **Atlas** comme charte principale : c'est l'évolution la plus directe de l'existant (même
-  structure claire, un seul accent au lieu de deux), avec une identité nette (rail marine)
-  et une lecture des chiffres améliorée (mono).
-- **Nocturne** comme thème sombre de référence si un mode sombre est souhaité : c'est la
-  seule charte conçue d'abord pour le sombre.
-- **Clarté** en option d'accessibilité, indépendante de la charte principale.
-- **Signal** et **Édition** sont des directions plus affirmées : à retenir si l'on veut
-  rompre avec l'existant (Signal pour la densité et l'impression, Édition pour un usage de
-  lecture et de direction).
+- **Bauhaus** : identique à la page budget, pour l'unité entre vos outils.
+- **Dessau** : le même esprit en plus doux, pour un usage de toute la journée.
+- **Ulm** : la plus calme et la plus classique des cinq.
+- **De Stijl** et **Constructiviste** : les plus spectaculaires, pour les tableaux de bord de
+  direction et l'affichage mural.
 
-Deux corrections valent pour n'importe quelle charte, y compris l'actuelle : le traitement
-lisible des puces et le masquage des actions de widget hors survol.
+Les tuiles colorées des indicateurs (Bauhaus, De Stijl, Dessau) suivent l'ordre des widgets
+dans le tableau de bord : 1er, 2e, 3e, 4e indicateur.
 
 ## Limites communes
 

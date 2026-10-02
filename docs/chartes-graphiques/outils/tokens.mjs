@@ -32,6 +32,7 @@ export function tokenBlock(ch, mode, t) {
     '--blueprint': 'var(--c-secondary)', '--blueprint-line': 'color-mix(in srgb, var(--c-text) 10%, transparent)', '--text-900': 'var(--c-text)', '--text-600': 'var(--c-secondary)',
     '--radius': 'var(--c-r-card)', '--radius-sm': 'var(--c-r-control)', '--radius-lg': 'var(--c-r-card)',
   };
+  for (const [k, x] of Object.entries(t.extra || {})) v['--c-' + k] = x; // couleurs propres à la charte (aplats)
   const S = `:root[data-charte="${ch.id}"][data-mode="${mode}"]`;
   return `${S},\n${S} body,\n${S} body[data-life-app],\n${S} body[data-life-app="nexora"] :is(.lp-theme, .lp-app),\n${S} :is(.lp-theme, .lp-app) {\n` +
     Object.entries(v).map(([k, x]) => `  ${k}: ${x};`).join('\n') + `\n}\n${S} { color-scheme: ${t.dark ? 'dark' : 'light'}; }\n`;

@@ -108,9 +108,9 @@ footer { color: var(--ink-2); font-size: 13px; max-width: 75ch; }
 </style>
 <div class="wrap">
   <header>
-    <p class="eyebrow">NEXORA · ÉTUDE ESTHÉTIQUE · OCTOBRE 2026</p>
-    <h1>Cinq chartes graphiques pour Nexora</h1>
-    <p class="lead">Cinq identités complètes appliquées à l'application réelle, chacune en thème clair et sombre, sans toucher au moteur : une feuille CSS posée par-dessus l'existant. Toutes les images sont des captures du build local avec des données de démonstration.</p>
+    <p class="eyebrow">NEXORA · CHARTES DE LA FAMILLE BAUHAUS · OCTOBRE 2026</p>
+    <h1>Nexora, version Bauhaus</h1>
+    <p class="lead">Le thème Bauhaus de la page « Budget prévisionnel » adapté à Nexora, et quatre variantes de la même famille : De Stijl, Ulm, Constructiviste et Dessau. Chacune existe en thème clair et sombre et se pose sur l'application sans toucher au moteur : une feuille CSS. Toutes les images sont des captures du build local avec des données de démonstration.</p>
   </header>
   <nav class="sommaire" aria-label="Chartes" id="sommaire"></nav>
   <section style="display:grid;gap:14px">
@@ -124,9 +124,9 @@ footer { color: var(--ink-2); font-size: 13px; max-width: 75ch; }
   </section>
   <div id="chartes" style="display:grid;gap:56px"></div>
   <section class="reco">
-    <h2>Recommandation</h2>
-    <p><b>Atlas</b> comme charte principale : l'évolution la plus directe de l'existant, un seul accent au lieu de deux, une identité nette et des chiffres plus lisibles. <b>Nocturne</b> comme thème sombre de référence. <b>Clarté</b> en option d'accessibilité. <b>Signal</b> et <b>Édition</b> sont des ruptures assumées, l'une pour la densité et l'impression, l'autre pour la lecture.</p>
-    <p>Deux corrections valent pour toutes les chartes, actuelle comprise : des puces lisibles et des actions de widget masquées hors survol.</p>
+    <h2>Comment choisir</h2>
+    <p><b>Bauhaus</b> reprend votre page budget à l'identique : à retenir pour l'unité entre vos outils. <b>Dessau</b> en est la version douce, pour la journée entière. <b>Ulm</b> est la plus calme et la plus classique. <b>De Stijl</b> et <b>Constructiviste</b> sont les plus spectaculaires, adaptées aux tableaux de bord de direction et à l'affichage mural.</p>
+    <p>Dans les cinq, les puces de statut, projet et personne sont rendues lisibles (texte d'encre), alors qu'elles n'atteignent aujourd'hui que 1,8 à 4,0:1 de contraste.</p>
   </section>
   <footer>Hors périmètre : vues 3D (Carte, Cosmos, Fleuve du temps, Réunions 3D), connexion, Devis, Factures et Finance PRO. Les dossiers détaillés (palettes, contrastes WCAG, typographie, règles par composant) sont dans <code>docs/chartes-graphiques/&lt;charte&gt;/CHARTE.md</code>.</footer>
 </div>

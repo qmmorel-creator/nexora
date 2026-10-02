@@ -61,12 +61,15 @@ for (const ch of CHARTES) {
   let md = `# Charte ${ch.num} — ${ch.nom}\n\n> ${ch.devise}\n\n`;
   md += `![${ch.nom} — tableau de bord, thème ${modes[0]}](captures/${modes[0]}-01-dashboard-pilotage.webp)\n\n`;
   md += `**Personnalité :** ${c.personnalite.join(' · ')}  \n**Thème par défaut :** ${modes[0]} · **Déclinaison :** ${modes[1]}  \n**Fichier :** [\`nexora-${ch.id}.css\`](nexora-${ch.id}.css)\n\n`;
-  md += `## 1. Intention\n\n${c.intention}\n\n**Pour qui, pour quoi :** ${c.pour}\n\n`;
+  md += `## 1. Intention\n\n*${c.source}*\n\n${c.intention}\n\n**Pour qui, pour quoi :** ${c.pour}\n\n`;
   md += `## 2. Principes\n\n${c.principes.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\n`;
   md += `## 3. Couleurs\n\nLes couleurs de **données** (projets, statuts, personnes, types de tâches) ne sont jamais remplacées : elles appartiennent aux réglages de l'utilisateur. La charte ne fixe que les couleurs d'interface ci-dessous.\n\n`;
   for (const m of modes) md += `### Thème ${m}\n\n![Palette ${m}](palette-${m}.svg)\n\n`;
   md += `| Rôle | Token | ${modes.map((m) => `Thème ${m}`).join(' | ')} |\n|---|---|${modes.map(() => '---').join('|')}|\n`;
-  md += ROLES.map(([k, label]) => `| ${label} | \`--c-${k.replace(/[A-Z]/g, (x) => '-' + x.toLowerCase())}\` | ${modes.map((m) => `\`${ch.modes[m][k]}\``).join(' | ')} |`).join('\n') + '\n\n';
+  md += ROLES.map(([k, label]) => `| ${label} | \`--c-${k.replace(/[A-Z]/g, (x) => '-' + x.toLowerCase())}\` | ${modes.map((m) => `\`${ch.modes[m][k]}\``).join(' | ')} |`).join('\n') + '\n';
+  md += Object.keys(t0.extra || {}).map((k) => `| Aplat propre à la charte : ${k} | \`--c-${k}\` | ${modes.map((m) => `\`${ch.modes[m].extra[k]}\``).join(' | ')} |`).join('\n') + '\n\n';
+  const aplats = Object.keys(t0.extra || {}).filter((k) => t0.extra['on-' + k]);
+  if (aplats.length) md += `**Aplats et texte posé dessus :** ${modes.map((m) => `thème ${m} : ` + aplats.map((k) => `${k} ${contrast(ch.modes[m].extra['on-' + k], ch.modes[m].extra[k]).toFixed(1)}:1`).join(', ')).join(' · ')}.\n\n`;
   md += `### Contrastes mesurés (WCAG 2.2)\n\n| Couple | ${modes.map((m) => `Thème ${m}`).join(' | ')} |\n|---|${modes.map(() => '---').join('|')}|\n`;
   md += PAIRES.map(([label, a, b]) => `| ${label} | ${modes.map((m) => { const r = contrast(ch.modes[m][a], ch.modes[m][b]); return `${r.toFixed(2)}:1 — ${note(r)}`; }).join(' | ')} |`).join('\n') + '\n';
   md += `| Bordure / surface (composant, seuil 3:1) | ${modes.map((m) => { const r = contrast(ch.modes[m].border, ch.modes[m].surface); return `${r.toFixed(2)}:1${r >= 3 ? ' — conforme 1.4.11' : ' — décorative, doublée par l\'écart de surface'}`; }).join(' | ')} |\n`;
