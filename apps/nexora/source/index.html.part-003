@@ -2152,6 +2152,7 @@ function defaultLayoutForType(type) {
   if (type === "financeBudgetMonth") return { w: 6, h: 8 };
   if (type === "financeToCategorize") return { w: 6, h: 9 };
   if (type === "financeWealth") return { w: 6, h: 6 };
+  if (type === "financeWealthBar") return { w: 8, h: 6 };
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
   if (type === "financeBudgetCumul") return { w: 10, h: 9 };
   if (type === "sportActivities") return { w: 12, h: 9 };
@@ -3782,7 +3783,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_CHART_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos" || w.type === LEGACY_SPORT_CHART_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_CHART_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos" || w.type === LEGACY_SPORT_CHART_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3854,6 +3855,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeBudgetChart" && (
                   <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "financeWealthBar" && (
+                  <WidgetFinanceWealthBar widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "financeBudgetCumul" && (
                   <WidgetFinanceBudgetCumul widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -16835,6 +16839,8 @@ const WIDGET_TYPE_META = [
   { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Budget" },
   { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Budget" },
   { key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Budget" },
+  // Répartition du patrimoine (#617) : une barre, 100 % ou valeur absolue, par compte, banque ou type.
+  { key: "financeWealthBar", label: "Répartition du patrimoine", icon: Banknote, group: "Budget" },
   // Graphiques Budget natifs (#587) : graphique et période choisis dans l'en-tête.
   { key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Budget" },
   // Budget cumulé par mois (#606) : 5 lectures du cumul, choisies dans l'en-tête.
@@ -18291,6 +18297,14 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           Graphiques Budget natifs, calculés côté serveur : waterfall, donut, waffle et dépenses par mois sur
           12 mois (empilables par catégorie). Le graphique et le mois se choisissent dans l’en-tête du widget. Les Sankey et
           les dépenses cumulées ont leur propre widget.
+        </p>
+      )}
+
+      {type === "financeWealthBar" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Une seule barre empilée du patrimoine à la fin du mois choisi, en 100 % ou en valeur absolue (bascule dans
+          l’en-tête), par compte, par banque ou par type de compte (liste dans l’en-tête). Les soldes négatifs sont listés à
+          part et déduits du total net.
         </p>
       )}
 
@@ -36563,7 +36577,8 @@ function FinanceSankeySettings({ value, onChange }) {
 // ---------------------------------------------------------------------------
 // Widget Transactions Budget (#572) : 100 % des transactions KDM360, tous
 // leurs champs, colonnes affichables au choix, tri, recherche, export CSV.
-// Lecture seule : rien n'est écrit dans Supabase. Données servies par
+// Un clic sur une ligne ouvre sa fiche de modification (#618), écrite dans
+// Supabase par la fonction SQL des transactions. Données servies par
 // /api/nexora/finance-transactions-data (session du propriétaire vérifiée).
 // ---------------------------------------------------------------------------
 
@@ -36702,6 +36717,8 @@ const FINANCE_TX_CSS = `
 .nx-tx tr.is-cancelled td{color:#94a3b8;text-decoration:line-through}
 .nx-tx tr.is-cancelled td.nx-tx-state{text-decoration:none}
 .nx-tx tbody tr:hover{background:#f6f9fc}
+.nx-tx tbody tr.nx-tx-editable{cursor:pointer}
+.nx-tx tbody tr.nx-tx-editable:focus-visible{outline:2px solid #24569a;outline-offset:-2px}
 .nx-tx-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-top:1px solid #edf1f4;color:#60717c;font-size:11px}
 .nx-tx-footer button{height:22px;min-width:24px;padding:0 6px;border:1px solid #d8e1eb;border-radius:5px;background:#fff;cursor:pointer}
 .nx-tx-footer button:disabled{opacity:.4;cursor:default}
@@ -36770,12 +36787,155 @@ function FinanceTxColumnPicker({ columns, visible, onChange, defaults = FINANCE_
   );
 }
 
+// Modification d'une transaction (#618) : fiche ouverte par un clic sur une
+// ligne. Seuls les champs changés sont envoyés ; la révision affichée est
+// transmise pour refuser une modification si la ligne a changé entre-temps.
+// Écriture par /api/nexora/finance-owner-transactions (PATCH, operation
+// « edit »), donc par la fonction SQL de Supabase, avec file et révision.
+// === NEXORA:FINANCE-TX-EDIT:START ===
+const FINANCE_TX_EDIT_TYPES = ["Dépense", "Revenu", "Remboursement"];
+function financeTxEditInitial(row) {
+  const amount = Number(row.signed_amount);
+  return {
+    effectiveDate: String(row.effective_date || "").slice(0, 10),
+    bankDate: String(row.bank_date || "").slice(0, 10),
+    transactionType: row.transaction_type || "",
+    accountId: row.account_id || "",
+    signedAmount: Number.isFinite(amount) ? String(amount).replace(".", ",") : "",
+    merchant: row.merchant || "",
+    category: row.category || "",
+    subcategory: row.subcategory || "",
+    description: row.description || "",
+    tag: row.tag || "",
+  };
+}
+// Champs modifiés, au format de l'API (montant en nombre, vides en null).
+function financeTxEditChanges(initial, form) {
+  const out = {};
+  for (const key of Object.keys(initial)) {
+    if (form[key] === initial[key]) continue;
+    if (key === "signedAmount") out[key] = Number(String(form[key]).replace(/\s/g, "").replace(",", "."));
+    else if (["merchant", "description", "tag", "subcategory"].includes(key)) out[key] = form[key].trim() || null;
+    else out[key] = form[key];
+  }
+  // Catégorie et sous-catégorie vont ensemble : le couple est contrôlé au référentiel.
+  if ("category" in out || "subcategory" in out) { out.category = form.category; out.subcategory = form.subcategory.trim() || null; }
+  return out;
+}
+// === NEXORA:FINANCE-TX-EDIT:END ===
+
+function FinanceTxEditor({ row, onClose }) {
+  const budget = useFinanceBudget("");
+  const catalogs = budget.data?.catalogs || null;
+  const initial = useMemo(() => financeTxEditInitial(row), [row]);
+  const [form, setForm] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const changes = financeTxEditChanges(initial, form);
+  const dirty = Object.keys(changes).length > 0;
+  const accounts = catalogs?.accounts || [];
+  const categories = catalogs?.categories || [];
+  const subs = categories.find((c) => c.name === form.category)?.subcategories || [];
+  const types = [...new Set([...(FINANCE_TX_EDIT_TYPES.includes(initial.transactionType) ? [] : [initial.transactionType]), ...FINANCE_TX_EDIT_TYPES])].filter(Boolean);
+  const save = async (e) => {
+    e.preventDefault();
+    if (!dirty || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await financeBudgetWrite("PATCH", { operation: "edit", transactionId: row.transaction_id, expectedRevision: row.revision, ...changes });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSaving(false);
+    }
+  };
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="nx-txe-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <form className="nx-txe" onSubmit={save} role="dialog" aria-modal="true" aria-labelledby="nx-txe-title" onPointerDown={(e) => e.stopPropagation()}>
+        <style>{FINANCE_TX_EDIT_CSS}</style>
+        <h3 id="nx-txe-title">Modifier la transaction</h3>
+        <small className="nx-txe-id">{row.transaction_id} · révision {row.revision ?? "—"}{row.source ? ` · source ${row.source}` : ""}</small>
+        {row.transfer_id && <div className="nx-txe-warn">Virement lié ({row.transfer_id}) : l’autre ligne du virement n’est pas modifiée.</div>}
+        {row.__state && <div className="nx-txe-warn">Ligne {row.__state === "Annulée" ? "annulée" : "d’annulation"} : elle reste hors des totaux après modification.</div>}
+        <div className="nx-txe-grid">
+          <label>Date effective<input type="date" required value={form.effectiveDate} onChange={(e) => set({ effectiveDate: e.target.value })} /></label>
+          <label>Date bancaire<input type="date" required value={form.bankDate} onChange={(e) => set({ bankDate: e.target.value })} /></label>
+          <label>Type
+            <select value={form.transactionType} onChange={(e) => set({ transactionType: e.target.value })}>
+              {types.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </label>
+          <label>Montant · €<input inputMode="decimal" required value={form.signedAmount} onChange={(e) => set({ signedAmount: e.target.value })} placeholder="-12,50" /></label>
+          <label className="wide">Compte
+            <select value={form.accountId} onChange={(e) => set({ accountId: e.target.value })}>
+              {!accounts.some((a) => a.id === initial.accountId) && <option value={initial.accountId}>{row.__account || initial.accountId} (inactif)</option>}
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.bank ? ` · ${a.bank}` : ""}</option>)}
+            </select>
+          </label>
+          <label className="wide">Libellé<input value={form.merchant} maxLength={500} onChange={(e) => set({ merchant: e.target.value })} /></label>
+          <label>Catégorie
+            <select value={form.category} onChange={(e) => set({ category: e.target.value, subcategory: "" })}>
+              {!categories.some((c) => c.name === initial.category) && <option value={initial.category}>{initial.category || "(aucune)"}</option>}
+              {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+          </label>
+          <label>Sous-catégorie
+            <select value={form.subcategory} onChange={(e) => set({ subcategory: e.target.value })}>
+              <option value="">(aucune)</option>
+              {form.category === initial.category && initial.subcategory && !subs.includes(initial.subcategory) && <option value={initial.subcategory}>{initial.subcategory}</option>}
+              {subs.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="wide">Description<textarea rows={2} maxLength={2000} value={form.description} onChange={(e) => set({ description: e.target.value })} /></label>
+          <label className="wide">Étiquette<input value={form.tag} maxLength={200} onChange={(e) => set({ tag: e.target.value })} /></label>
+        </div>
+        {!catalogs && <div className="nx-txe-note">{budget.error || "Chargement des comptes et catégories…"}</div>}
+        {error && <div className="nx-txe-err" role="alert">{error}</div>}
+        <div className="nx-txe-actions">
+          <small>{dirty ? `${Object.keys(changes).length} champ${Object.keys(changes).length > 1 ? "s" : ""} modifié${Object.keys(changes).length > 1 ? "s" : ""} · enregistré dans Supabase` : "Aucune modification"}</small>
+          <button type="button" onClick={onClose}>Annuler</button>
+          <button type="submit" className="primary" disabled={!dirty || saving || !catalogs}>{saving ? "Enregistrement…" : "Enregistrer"}</button>
+        </div>
+      </form>
+    </div>,
+    document.body
+  );
+}
+const FINANCE_TX_EDIT_CSS = `
+.nx-txe-backdrop{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,32,.35)}
+.nx-txe{width:min(560px,100%);max-height:calc(100vh - 32px);overflow:auto;background:#fff;border-radius:10px;box-shadow:0 18px 48px rgba(15,23,32,.25);padding:16px 18px;font-size:12.5px;color:#203246}
+.nx-txe h3{margin:0;font-size:15px}
+.nx-txe-id{display:block;color:#60717c;margin:2px 0 10px;word-break:break-all}
+.nx-txe-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+.nx-txe-grid label{display:flex;flex-direction:column;gap:3px;font-weight:600;font-size:11.5px}
+.nx-txe-grid label.wide{grid-column:1/-1}
+.nx-txe-grid input,.nx-txe-grid select,.nx-txe-grid textarea{font:inherit;font-weight:400;font-size:12.5px;padding:5px 7px;border:1px solid #d8e1eb;border-radius:6px;background:#fff;color:#203246}
+.nx-txe-grid input,.nx-txe-grid select{box-sizing:border-box;height:32px;min-height:0;margin:0}
+.nx-txe-warn{margin:0 0 8px;padding:6px 8px;border-radius:6px;background:#fff7e6;color:#7a4b00}
+.nx-txe-err{margin-top:8px;padding:6px 8px;border-radius:6px;background:#fdecec;color:#a33135}
+.nx-txe-note{margin-top:8px;color:#60717c}
+.nx-txe-actions{display:flex;align-items:center;gap:8px;margin-top:12px}
+.nx-txe-actions small{margin-right:auto;color:#60717c}
+.nx-txe-actions button{height:28px;padding:0 12px;font:inherit;border:1px solid #d8e1eb;border-radius:6px;background:#fff;cursor:pointer}
+.nx-txe-actions button.primary{background:#24569a;border-color:#24569a;color:#fff;font-weight:600}
+.nx-txe-actions button:disabled{opacity:.5;cursor:default}
+@media (max-width:520px){.nx-txe-grid{grid-template-columns:1fr}}
+`;
+
 function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget }) {
   const { rows, error, reload } = useFinanceTxData();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState({ key: "effective_date", asc: false });
   const [page, setPage] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
   const columns = useMemo(() => financeTxAllColumns(rows), [rows]);
   const visibleKeys = financeTxVisibleKeys(widget);
   const visible = columns.filter((c) => visibleKeys.includes(c.key));
@@ -36836,7 +36996,9 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
           </thead>
           <tbody>
             {pageRows.map((row) => (
-              <tr key={row.transaction_id} className={row.__state === "Annulée" ? "is-cancelled" : ""}>
+              <tr key={row.transaction_id} className={(row.__state === "Annulée" ? "is-cancelled " : "") + "nx-tx-editable"} tabIndex={0}
+                title="Modifier cette transaction" onClick={() => setEditing(row)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setEditing(row); } }}>
                 {visible.map((c) => {
                   const text = financeTxText(c.key, row[c.key]);
                   const negative = c.key === "signed_amount" && Number(row[c.key]) < 0;
@@ -36849,13 +37011,14 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
         {!shown.length && <div className="lp-empty" style={{ padding: 16 }}>Aucune transaction ne correspond à « {query} ».</div>}
       </div>
       <div className="nx-tx-footer">
-        <span>{shown.length} ligne{shown.length > 1 ? "s" : ""} · lecture seule</span>
+        <span>{shown.length} ligne{shown.length > 1 ? "s" : ""} · clic sur une ligne pour la modifier</span>
         <span>
           <button type="button" disabled={current === 0} onClick={() => setPage(current - 1)} aria-label="Page précédente">‹</button>
           {" "}{current + 1} / {pages}{" "}
           <button type="button" disabled={current >= pages - 1} onClick={() => setPage(current + 1)} aria-label="Page suivante">›</button>
         </span>
       </div>
+      {editing && <FinanceTxEditor row={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
@@ -37001,6 +37164,13 @@ function financeBudgetError(payload, status) {
     account_not_found: "Compte inconnu ou désactivé.",
     invalid_signed_amount: "Montant invalide.",
     invalid_dates: "Date invalide.",
+    // Modification d'une transaction (#618).
+    transaction_modified_elsewhere: "Cette transaction a été modifiée entre-temps : actualise, puis recommence.",
+    transaction_not_found: "Transaction introuvable : elle a peut-être été supprimée.",
+    unsupported_transaction_type: "Type non autorisé : choisis Dépense, Revenu ou Remboursement.",
+    expense_amount_must_be_negative: "Une dépense doit avoir un montant négatif.",
+    income_amount_must_be_positive: "Un revenu ou un remboursement doit avoir un montant positif.",
+    category_required: "Choisis une catégorie.",
   };
   return reasons[payload?.error] || payload?.detail || payload?.error || `Opération Budget impossible (HTTP ${status}).`;
 }
@@ -37297,6 +37467,168 @@ function WidgetFinanceWealth({ externalToolbarSlot }) {
       <div className="nx-bud-legend">
         {usedTypes.map((t) => <span key={t.name}><i style={{ background: t.color }} />{t.name}</span>)}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Répartition du patrimoine (#617) : une seule barre empilée, en 100 % ou en
+// valeur absolue, par compte, par banque ou par type de compte. Soldes à la fin
+// du mois choisi (bornés à aujourd'hui), servis par
+// /api/nexora/finance-budget-summary (`wealth.accounts`).
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-WEALTH-BAR:START ===
+const FINANCE_WEALTH_BAR_GROUPS = [
+  { key: "account", label: "Par compte" },
+  { key: "bank", label: "Par banque" },
+  { key: "type", label: "Par type" },
+];
+// Segments de la barre : soldes regroupés, positifs seulement (une barre
+// empilée ne peut pas montrer un solde négatif), du plus grand au plus petit,
+// avec leur part du total positif. Les soldes négatifs (cartes, prêts) sont
+// rendus à part et déduits du total net. Les soldes nuls sont ignorés.
+function financeWealthBarModel(accounts, by) {
+  const groups = new Map();
+  for (const a of accounts || []) {
+    const key = by === "bank" ? a.bank : by === "type" ? a.type : a.id;
+    const label = by === "bank" ? a.bank : by === "type" ? a.type : a.name;
+    const color = by === "bank" ? a.bankColor : by === "type" ? a.typeColor : a.color;
+    const g = groups.get(key) || { key, label, color, value: 0, accounts: [] };
+    g.value += Number(a.balance) || 0;
+    g.accounts.push(a.name);
+    groups.set(key, g);
+  }
+  const round = (v) => Math.round(v * 100) / 100;
+  const all = [...groups.values()].map((g) => ({ ...g, value: round(g.value) })).filter((g) => g.value !== 0);
+  const positive = all.filter((g) => g.value > 0).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "fr"));
+  const negative = all.filter((g) => g.value < 0).sort((a, b) => a.value - b.value || a.label.localeCompare(b.label, "fr"));
+  const positiveTotal = round(positive.reduce((s, g) => s + g.value, 0));
+  const negativeTotal = round(negative.reduce((s, g) => s + g.value, 0));
+  return {
+    segments: positive.map((g) => ({ ...g, share: positiveTotal ? g.value / positiveTotal : 0 })),
+    negatives: negative,
+    positiveTotal, negativeTotal, net: round(positiveTotal + negativeTotal),
+  };
+}
+// === NEXORA:FINANCE-WEALTH-BAR:END ===
+
+const FINANCE_WEALTH_BAR_CSS = `
+.nx-wb{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;overflow:auto;padding:12px 14px;font-size:12px;color:#203246}
+.nx-wb-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px}
+.nx-wb-head strong{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+.nx-wb-head small{color:#60717c}
+.nx-wb-bar{position:relative;display:flex;height:40px;gap:2px;border-radius:6px;overflow:hidden;background:#f3f6f9}
+.nx-wb-bar i{display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden;font-style:normal;font-size:11px;font-weight:600;white-space:nowrap;cursor:default}
+.nx-wb-bar i:focus-visible{outline:2px solid #203246;outline-offset:-2px}
+.nx-wb-axis{position:relative;height:16px;color:#60717c;font-size:10.5px;font-variant-numeric:tabular-nums}
+.nx-wb-axis span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+.nx-wb-axis span:first-child{transform:none}
+.nx-wb-axis span:last-child{transform:translateX(-100%)}
+.nx-wb-rows{display:flex;flex-direction:column;gap:3px}
+.nx-wb-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto 48px;gap:8px;align-items:center}
+.nx-wb-row i{width:10px;height:10px;border-radius:2px}
+.nx-wb-row b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-wb-row small{font-variant-numeric:tabular-nums;color:#60717c;text-align:right;white-space:nowrap}
+.nx-wb-row .neg{color:#a33135}
+.nx-wb-sep{border-top:1px solid #edf1f4;margin:2px 0}
+.nx-wb-note{color:#60717c;font-size:11px}
+`;
+
+function WidgetFinanceWealthBar({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const by = FINANCE_WEALTH_BAR_GROUPS.some((g) => g.key === widget.wealthBarBy) ? widget.wealthBarBy : "type";
+  const percent = widget.wealthBarPercent === true;
+  const thisMonth = financeBudgetToday().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const [hover, setHover] = useState(null);
+  const budget = useFinanceBudget(month === thisMonth ? "" : month);
+  const update = (patch) => onUpdateWidget && onUpdateWidget(patch);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <span role="group" aria-label="Échelle" style={{ display: "inline-flex", gap: 0 }}>
+          <button type="button" className={percent ? "active" : ""} aria-pressed={percent} onClick={() => update({ wealthBarPercent: true })} style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}>100 %</button>
+          <button type="button" className={!percent ? "active" : ""} aria-pressed={!percent} onClick={() => update({ wealthBarPercent: false })} style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, marginLeft: -1 }}>Valeur absolue</button>
+        </span>
+        <select aria-label="Regroupement" title="Regroupement" value={by} onChange={(e) => update({ wealthBarBy: e.target.value })} style={{ fontWeight: 600 }}>
+          {FINANCE_WEALTH_BAR_GROUPS.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+        </select>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, -1))} aria-label="Mois précédent">‹</button>
+        <strong style={{ minWidth: 104, textAlign: "center" }}>{financeBudgetMonthLabel(month)}</strong>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, 1))} aria-label="Mois suivant">›</button>
+        {month !== thisMonth && <button type="button" onClick={() => setMonth(thisMonth)}>Mois en cours</button>}
+        <button type="button" onClick={budget.reload} title="Relire les données dans Supabase">Actualiser</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (!budget.data) return <>{tools}<FinanceBudgetState error={budget.error} onRetry={budget.reload} /></>;
+  const w = budget.data.wealth;
+  const model = financeWealthBarModel(w.accounts || [], by);
+  // Valeur absolue : la barre occupe la part de l'échelle (graduations rondes)
+  // que représente le total positif ; en 100 %, toute la largeur.
+  const scale = financeChartTicks(model.positiveTotal, 4);
+  const fill = percent ? 1 : (scale.max ? model.positiveTotal / scale.max : 0);
+  const ticks = percent ? [0, 0.25, 0.5, 0.75, 1] : scale.ticks;
+  const tickLabel = (t) => (percent ? `${Math.round(t * 100)} %` : financeChartShortEuro(t));
+  const tickPos = (t) => (percent ? t : t / (scale.max || 1)) * 100;
+  const segText = (s) => (percent ? `${Math.round(s.share * 100)} %` : financeChartShortEuro(s.value));
+  const h = hover ? model.segments.find((s) => s.key === hover.key) : null;
+  return (
+    <div className="nx-wb">
+      {tools}
+      <style>{FINANCE_WEALTH_BAR_CSS}</style>
+      <div className="nx-wb-head">
+        <strong>{financeBudgetEuro(model.net)}</strong>
+        <small>patrimoine net au {new Date(w.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })}</small>
+        {model.negatives.length > 0 && <small>{financeBudgetEuro(model.positiveTotal)} d'actifs · {financeBudgetEuro(model.negativeTotal)} de soldes négatifs</small>}
+      </div>
+      {model.segments.length ? (
+        <>
+          <div style={{ width: `${Math.max(0, Math.min(1, fill)) * 100}%` }}>
+            <div className="nx-wb-bar" role="img" aria-label={`Répartition du patrimoine ${FINANCE_WEALTH_BAR_GROUPS.find((g) => g.key === by).label.toLowerCase()}`}>
+              {model.segments.map((s) => (
+                <i key={s.key} tabIndex={0} style={{ flex: `${s.value} 0 0`, background: s.color, color: textOn(s.color) }}
+                  aria-label={`${s.label} : ${financeBudgetEuro(s.value)}, ${Math.round(s.share * 100)} %`}
+                  onMouseEnter={(e) => setHover({ key: s.key, x: e.clientX, y: e.clientY })}
+                  onMouseMove={(e) => setHover({ key: s.key, x: e.clientX, y: e.clientY })}
+                  onMouseLeave={() => setHover(null)}
+                  onFocus={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover({ key: s.key, x: r.left + r.width / 2, y: r.top }); }}
+                  onBlur={() => setHover(null)}>
+                  {s.share >= 0.07 ? segText(s) : ""}
+                </i>
+              ))}
+            </div>
+          </div>
+          <div className="nx-wb-axis" aria-hidden="true">
+            {ticks.map((t) => <span key={t} style={{ left: `${tickPos(t)}%` }}>{tickLabel(t)}</span>)}
+          </div>
+        </>
+      ) : <div className="nx-bch-empty">Aucun solde positif à cette date.</div>}
+      {h && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-bch-tip">
+            <strong>{h.label}</strong>
+            <div><span>Solde</span><span>{financeBudgetEuro(h.value, 2)}</span></div>
+            <div><span>Part des actifs</span><span>{(h.share * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %</span></div>
+            {by !== "account" && <div><span>Comptes</span><span>{h.accounts.length}</span></div>}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+      <div className="nx-wb-rows">
+        {model.segments.map((s) => (
+          <div key={s.key} className="nx-wb-row" title={by !== "account" ? s.accounts.join(", ") : undefined}>
+            <i style={{ background: s.color }} /><b>{s.label}</b><small>{financeBudgetEuro(s.value)}</small><small>{Math.round(s.share * 100)} %</small>
+          </div>
+        ))}
+        {model.negatives.length > 0 && <div className="nx-wb-sep" />}
+        {model.negatives.map((s) => (
+          <div key={s.key} className="nx-wb-row" title={by !== "account" ? s.accounts.join(", ") : undefined}>
+            <i style={{ background: s.color }} /><b>{s.label}</b><small className="neg">{financeBudgetEuro(s.value)}</small><small>—</small>
+          </div>
+        ))}
+      </div>
+      {model.negatives.length > 0 && <div className="nx-wb-note">Les soldes négatifs ne peuvent pas figurer dans une barre empilée : ils sont listés à part et déduits du total net.</div>}
     </div>
   );
 }
