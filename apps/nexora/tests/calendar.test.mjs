@@ -157,7 +157,7 @@ test("calendarDayModel : la frise montre aussi les tâches terminées du jour", 
 });
 
 test("normalizeCalendarViewPrefs : valeurs par défaut et bornes", () => {
-  assert.deepEqual(C.normalizeCalendarViewPrefs(undefined), { rowsPerCell: 4, showTimes: true, filter: null });
+  assert.deepEqual(C.normalizeCalendarViewPrefs(undefined), { rowsPerCell: 4, showTimes: true, filter: null, dayStartHour: null, dayEndHour: null });
   assert.equal(C.normalizeCalendarViewPrefs({ rowsPerCell: 42 }).rowsPerCell, 8);
   assert.equal(C.normalizeCalendarViewPrefs({ rowsPerCell: 0 }).rowsPerCell, 2);
   assert.equal(C.normalizeCalendarViewPrefs({ rowsPerCell: "abc" }).rowsPerCell, 4);

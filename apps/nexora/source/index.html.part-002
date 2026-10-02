@@ -5367,6 +5367,7 @@ function normalizeCalendarViewPrefs(prefs) {
     rowsPerCell: normalizeCalendarRows(p.rowsPerCell),
     showTimes: p.showTimes !== false,
     filter: p.filter && typeof p.filter === "object" ? p.filter : null,
+    ...normalizeCalendarDayHours(p),
   };
 }
 
@@ -5470,6 +5471,37 @@ function calendarShortDate(dateIso) {
 // telle quelle de CalendarDayTimeline.
 function normalizeFocusDayDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : iso(new Date());
+}
+
+/* Plage horaire de la frise du jour (#635) : heure minimale et heure maximale
+   choisies dans les réglages (widget Focus Journée, widget Calendrier, vue
+   Calendrier). `null` = automatique, c'est-à-dire le comportement d'origine :
+   0 h dans la vue, 6 h (ou plus tôt si une tâche commence avant) dans le
+   widget Calendrier compact, et 24 h en fin. Une fin qui ne dépasse pas le
+   début est ignorée (retour à 24 h) plutôt que de produire une frise vide. */
+function normalizeCalendarHour(value, lo, hi) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return null;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function normalizeCalendarDayHours(prefs) {
+  const p = prefs && typeof prefs === "object" ? prefs : {};
+  const dayStartHour = normalizeCalendarHour(p.dayStartHour, 0, 23);
+  let dayEndHour = normalizeCalendarHour(p.dayEndHour, 1, 24);
+  if (dayEndHour != null && dayEndHour <= (dayStartHour ?? 0)) dayEndHour = null;
+  return { dayStartHour, dayEndHour };
+}
+
+// Fenêtre effectivement affichée : { startHour, endHour } en heures entières.
+// `firstMin` = début (en minutes) de la première tâche horodatée, ou null.
+function calendarDayHourWindow(prefs, firstMin, compact = false) {
+  const { dayStartHour, dayEndHour } = normalizeCalendarDayHours(prefs);
+  const autoStart = compact ? Math.min(6, firstMin == null ? 6 : Math.floor(firstMin / 60)) : 0;
+  const startHour = dayStartHour ?? autoStart;
+  const endHour = dayEndHour != null && dayEndHour > startHour ? dayEndHour : 24;
+  return { startHour, endHour };
 }
 // === NEXORA:CALENDAR:END ===
 

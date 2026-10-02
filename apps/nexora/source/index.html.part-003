@@ -3920,7 +3920,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   />
                 )}
                 {w.type === "calendar" && (
-                  <WidgetCalendar tasks={scoped} ctx={ctx} onOpen={onOpen} />
+                  <WidgetCalendar widget={w} tasks={scoped} ctx={ctx} onOpen={onOpen} />
                 )}
                 {w.type === "focusDay" && (
                   <WidgetFocusDay
@@ -17039,6 +17039,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
      pas des tâches, il montre des personnes. */
   const [staffingSettings, setStaffingSettings] = useState(() => normalizeStaffingWidget(widget || {}));
   const applyStaffingPatch = (patch) => setStaffingSettings((prev) => normalizeStaffingWidget({ ...prev, ...patch }));
+  // Heure minimale / maximale de la frise du jour (#635) : widgets Calendrier
+  // et Focus Journée. null = automatique.
+  const [dayHours, setDayHours] = useState(() => normalizeCalendarDayHours(widget || {}));
   const applyBubblePatch = (patch) => {
     applyMiniGanttPatch(patch);
     if (Object.keys(patch).some((key) => key.startsWith("bubble"))) {
@@ -17423,6 +17426,10 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
       data.bubbleTruncateTitles = bubbles.bubbleTruncateTitles;
       data.bubbleMacroGrouping = bubbles.bubbleMacroGrouping;
       data.bubbleMacros = bubbles.bubbleMacros;
+    }
+    if (type === "calendar" || type === "focusDay") {
+      data.dayStartHour = dayHours.dayStartHour;
+      data.dayEndHour = dayHours.dayEndHour;
     }
     if (type === "staffing") {
       const st = normalizeStaffingWidget(staffingSettings);
@@ -18687,6 +18694,17 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <StaffingDisplayFields value={staffingSettings} onChange={applyStaffingPatch} ctx={ctx} />
       )}
 
+      {(type === "calendar" || type === "focusDay") && (
+        <div style={{ marginTop: 10 }}>
+          <div className="lp-widget-config-title"><CalendarClock size={12} /> Frise du jour</div>
+          <CalendarDayHoursFields
+            value={dayHours}
+            onChange={setDayHours}
+            autoStartLabel={type === "calendar" ? "06 h ou plus tôt" : "00 h"}
+          />
+        </div>
+      )}
+
       {type === "bubbles" && (
         /* Même contrat que le Mini-Gantt : un formulaire partagé, qui ne
            connaît que des clés, et la fiche qui les range dans son état local
@@ -19669,7 +19687,7 @@ function calendarNowMinutes() {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, compact = false, caretCol = null, fit = false }) {
+function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, compact = false, caretCol = null, fit = false, hourRange = null }) {
   const model = useMemo(() => calendarDayModel(tasks, ctx, dateIso), [tasks, ctx, dateIso]);
   const isToday = dateIso === iso(new Date());
   const [nowMin, setNowMin] = useState(calendarNowMinutes);
@@ -19681,15 +19699,18 @@ function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, comp
   }, [isToday]);
 
   const firstMin = model.timed.length ? model.timed[0].startMin : null;
-  // La vue montre toute la journée ; le widget, plus étroit, part au plus tard
-  // de 6 h (plus tôt si une tâche commence avant).
-  const h0 = compact ? Math.min(6, firstMin == null ? 6 : Math.floor(firstMin / 60)) : 0;
+  // Par défaut la vue montre toute la journée ; le widget, plus étroit, part
+  // au plus tard de 6 h (plus tôt si une tâche commence avant). Les réglages
+  // peuvent imposer une heure minimale et maximale (#635) : une tâche hors de
+  // cette plage reste visible, ramenée en bord de frise avec ses horaires.
+  const { startHour: h0, endHour: h1 } = calendarDayHourWindow(hourRange, firstMin, compact);
   const winStart = h0 * 60;
-  const winLen = CALENDAR_DAY_MINUTES - winStart;
+  const winEnd = h1 * 60;
+  const winLen = winEnd - winStart;
   const pct = (m) => Math.max(0, Math.min(100, ((m - winStart) / winLen) * 100));
-  const step = compact ? 3 : 1;
+  const step = compact && h1 - h0 > 8 ? 3 : 1;
   const hours = [];
-  for (let h = h0; h < 24; h += step) hours.push(h);
+  for (let h = h0; h < h1; h += step) hours.push(h);
   const rowPx = compact ? CALENDAR_ROW_PX_COMPACT : CALENDAR_ROW_PX;
   const topPad = compact ? 4 : 24;
   const lanesHeight = model.timed.length * rowPx + topPad + (compact ? 4 : 8);
@@ -19701,9 +19722,9 @@ function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, comp
     const el = scrollRef.current;
     if (!el || compact || el.scrollWidth <= el.clientWidth) return;
     const target = firstMin != null ? firstMin : (isToday ? nowMin : 8 * 60);
-    el.scrollLeft = Math.max(0, (target / CALENDAR_DAY_MINUTES) * el.scrollWidth - 24);
+    el.scrollLeft = Math.max(0, (pct(target) / 100) * el.scrollWidth - 24);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateIso, compact]);
+  }, [dateIso, compact, h0, h1]);
 
   const stats = model.total === 0 ? "Aucune tâche" : [
     `${model.total} tâche${model.total > 1 ? "s" : ""}`,
@@ -19831,7 +19852,7 @@ function CalendarDayTimeline({ dateIso, tasks, ctx, onOpen, onAdd, onClose, comp
                   </button>
                 );
               })}
-              {isToday && nowMin >= winStart && (
+              {isToday && nowMin >= winStart && nowMin <= winEnd && (
                 <>
                   <span className="lp-cal-now" style={{ left: pct(nowMin) + "%" }} aria-hidden="true" />
                   {!compact && <span className="lp-cal-now-pill" style={{ left: pct(nowMin) + "%" }}>{calendarMinutesToLabel(nowMin)}</span>}
@@ -20107,6 +20128,7 @@ function CalendarBoard({ tasks, ctx, onOpen, onAdd, prefs, compact = false, head
                     onClose={() => setSelected(null)}
                     compact={compact}
                     caretCol={calendarDayOfWeek(selected)}
+                    hourRange={cfg}
                   />
                 </div>
               )}
@@ -30470,6 +30492,49 @@ function Reunions3DView({ tasks, tasksWithDone, ctx, onOpen, prefs, setPrefs, to
   );
 }
 
+/* Heure minimale / maximale de la frise du jour (#635), partagée par la vue
+   Calendrier et les fiches des widgets Calendrier et Focus Journée. Rend un
+   correctif { dayStartHour, dayEndHour } (null = automatique) ; la logique de
+   plage vit dans normalizeCalendarDayHours (NEXORA:CALENDAR). */
+function CalendarDayHoursFields({ value, onChange, autoStartLabel }) {
+  const { dayStartHour, dayEndHour } = normalizeCalendarDayHours(value);
+  const hourLabel = (h) => String(h).padStart(2, "0") + " h";
+  const toHour = (v) => (v === "" ? null : Number(v));
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="lp-field" style={{ flex: "1 1 140px", maxWidth: 200 }}>
+          <label htmlFor="lp-cal-day-start">Heure minimale</label>
+          <select
+            id="lp-cal-day-start"
+            value={dayStartHour == null ? "" : String(dayStartHour)}
+            onChange={(e) => onChange(normalizeCalendarDayHours({ dayStartHour: toHour(e.target.value), dayEndHour }))}
+          >
+            <option value="">Automatique ({autoStartLabel})</option>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hourLabel(h)}</option>)}
+          </select>
+        </div>
+        <div className="lp-field" style={{ flex: "1 1 140px", maxWidth: 200 }}>
+          <label htmlFor="lp-cal-day-end">Heure maximale</label>
+          <select
+            id="lp-cal-day-end"
+            value={dayEndHour == null ? "" : String(dayEndHour)}
+            onChange={(e) => onChange(normalizeCalendarDayHours({ dayStartHour, dayEndHour: toHour(e.target.value) }))}
+          >
+            <option value="">Automatique (24 h)</option>
+            {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+              <option key={h} value={h} disabled={h <= (dayStartHour ?? 0)}>{hourLabel(h)}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <p style={{ fontSize: 11.5, color: "var(--text-600)", marginTop: 2, marginBottom: 0 }}>
+        Plage affichée par la frise du jour. Une tâche hors de cette plage reste visible, ramenée en bord de frise avec ses horaires.
+      </p>
+    </>
+  );
+}
+
 function CalendarViewSettings({ prefs, setPrefs, ctx, onClose }) {
   const filter = { ...widgetDefaultFilter(), ...(prefs.filter || {}) };
   return (
@@ -30491,6 +30556,10 @@ function CalendarViewSettings({ prefs, setPrefs, ctx, onClose }) {
           <input type="checkbox" checked={prefs.showTimes} onChange={(e) => setPrefs({ showTimes: e.target.checked })} />
           <span style={{ textTransform: "none", fontWeight: 500 }}>Afficher l'heure devant les tâches dans la grille</span>
         </label>
+      </div>
+      <div className="lp-widget-config-section">
+        <div className="lp-widget-config-title"><CalendarClock size={12} /> Frise du jour</div>
+        <CalendarDayHoursFields value={prefs} onChange={setPrefs} autoStartLabel="00 h" />
       </div>
       <div className="lp-widget-config-section">
         <div className="lp-widget-config-title"><Search size={12} /> Filtrer les tâches prises en compte</div>
@@ -30548,8 +30617,9 @@ function CalendarView({ tasks, ctx, onOpen, onAdd, prefs, setPrefs, toolbarSlot 
 
 // Widget : la même grille en version dense (pastilles par jour) et une frise
 // compacte, dans la hauteur de son cadre.
-function WidgetCalendar({ tasks, ctx, onOpen }) {
-  return <CalendarBoard tasks={tasks} ctx={ctx} onOpen={onOpen} compact />;
+function WidgetCalendar({ widget, tasks, ctx, onOpen }) {
+  const prefs = { dayStartHour: widget?.dayStartHour, dayEndHour: widget?.dayEndHour };
+  return <CalendarBoard tasks={tasks} ctx={ctx} onOpen={onOpen} prefs={prefs} compact />;
 }
 
 /* Focus Journée (#333) : le panneau détaillé d'UN SEUL jour, sans la grille
@@ -30598,7 +30668,7 @@ function WidgetFocusDay({ widget, tasks, ctx, onOpen, onUpdateWidget, externalTo
           <ChevronRight size={14} />
         </button>
       </ViewToolbarPortal>
-      <CalendarDayTimeline dateIso={dateIso} tasks={tasks} ctx={ctx} onOpen={onOpen} fit />
+      <CalendarDayTimeline dateIso={dateIso} tasks={tasks} ctx={ctx} onOpen={onOpen} fit hourRange={widget} />
     </>
   );
 }
