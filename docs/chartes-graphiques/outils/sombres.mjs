@@ -1,6 +1,6 @@
 // Dix thèmes sombres pour Nexora — mode sombre uniquement.
 // Principes communs (voir sombres-socle.css) : jamais de noir ni de blanc purs en grandes
-// surfaces, texte entre 12 et 16:1 (pas 20:1, qui éblouit), profondeur par la lumière des
+// surfaces, texte entre 12 et 17:1 (pas 20:1, qui éblouit), profondeur par la lumière des
 // surfaces, accents clairs et désaturés, texte courant légèrement plus gras et plus aéré.
 const S = (o) => ({ dark: true, shadow: '0 1px 0 rgba(255,255,255,.035) inset, 0 10px 28px rgba(0,0,0,.32)', menuShadow: '0 0 0 1px rgba(255,255,255,.06), 0 24px 60px rgba(0,0,0,.6)', ...o });
 export const CHARTES = [

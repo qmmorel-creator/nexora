@@ -4,6 +4,9 @@ Le thème **Bauhaus** de la page « Budget prévisionnel » adapté à Nexora, e
 même famille (modernisme graphique). Chaque charte est une feuille CSS autonome qui se pose sur
 l'application **sans modifier le moteur** et propose deux thèmes, clair et sombre.
 
+**Thèmes sombres (Ref #625) : [`sombres/`](sombres/README.md)** — dix propositions, audit de contraste des graphiques.
+**Intégration (Ref #621) :** Bauhaus et Dessau sont activables dans Réglages → Apparence ; couche générée par [`outils/integration.mjs`](outils/integration.mjs).
+
 Galerie : [`index.html`](index.html) (ouvrir localement) · captures de la charte actuelle :
 [`reference/`](reference/). Une première série de cinq propositions (Signal, Atlas, Nocturne,
 Édition, Clarté) a été écartée ; elle reste dans l'historique git.
