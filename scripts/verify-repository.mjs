@@ -464,6 +464,17 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Le filet de sécurité qui ramène une vue inconnue sur « Projets » a disparu.");
 }
 
+/* Widget « Patrimoine par banque » — supprimé (issue #637). Une sauvegarde qui
+   le contient encore le perd à la lecture. */
+{
+  assert.doesNotMatch(builtSource, /key: "financeWealth"|function WidgetFinanceWealth\(|w\.type === "financeWealth"/,
+    "Le widget Patrimoine par banque est revenu alors qu'il a été supprimé.");
+  assert.match(builtSource, /const REMOVED_FINANCE_TYPES = new Set\(\["financeWealth"\]\);/,
+    "La liste des widgets Budget à retirer à la lecture a changé ou disparu.");
+  assert.match(builtSource, /REMOVED_RADAR_TYPES\.has\(value\.type\) \|\| REMOVED_FINANCE_TYPES\.has\(value\.type\)/,
+    "Le widget Patrimoine par banque n'est plus retiré des sauvegardes à la lecture.");
+}
+
 /* Treemap : le champ qui porte les tuiles (issue #47).
    Une tuile n'est plus forcément un projet. Trois maillons peuvent se défaire
    sans qu'aucune erreur ne se produise : le widget continue alors d'afficher

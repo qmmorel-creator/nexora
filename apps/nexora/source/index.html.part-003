@@ -2151,7 +2151,6 @@ function defaultLayoutForType(type) {
   // Budget natif (#586).
   if (type === "financeBudgetMonth") return { w: 6, h: 8 };
   if (type === "financeToCategorize") return { w: 6, h: 9 };
-  if (type === "financeWealth") return { w: 6, h: 6 };
   if (type === "financeWealthBar") return { w: 8, h: 6 };
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
   if (type === "financeBudgetCumul") return { w: 10, h: 9 };
@@ -2204,8 +2203,11 @@ const REMOVED_INTELLIGENCE_TYPES = new Set(["nextBestAction", "dailyBriefing", "
 // #631 : la vue Radar est supprimée, avec son widget « Radar (complet) ». Même
 // traitement : retiré de sa liste à la lecture d'une sauvegarde.
 const REMOVED_RADAR_TYPES = new Set(["embedRadar"]);
+// #637 : le widget « Patrimoine par banque » (#586) est supprimé. Même
+// traitement : retiré de sa liste à la lecture d'une sauvegarde.
+const REMOVED_FINANCE_TYPES = new Set(["financeWealth"]);
 function isRemovedEcheancesWidget(value) {
-  return !!value && typeof value === "object" && (REMOVED_ECHEANCES_TYPES.has(value.type) || REMOVED_INTELLIGENCE_TYPES.has(value.type) || REMOVED_RADAR_TYPES.has(value.type));
+  return !!value && typeof value === "object" && (REMOVED_ECHEANCES_TYPES.has(value.type) || REMOVED_INTELLIGENCE_TYPES.has(value.type) || REMOVED_RADAR_TYPES.has(value.type) || REMOVED_FINANCE_TYPES.has(value.type));
 }
 // #140 : « Chiffre clé » et « Compte à rebours » migrent vers la Carte
 // personnalisable, chacun comme un unique bloc en emphase Grande, sans
@@ -3795,7 +3797,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "financeBudgetMonth" && <WidgetFinanceBudgetMonth externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot={headerToolbarSlot} />}
-                {w.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeBudgetChart" && (
                   <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
@@ -16760,7 +16761,6 @@ const WIDGET_TYPE_META = [
   // Budget natif (#586) : sans réglage, calculs faits côté serveur.
   { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Budget" },
   { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Budget" },
-  { key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Budget" },
   // Répartition du patrimoine (#617) : une barre, 100 % ou valeur absolue, par compte, banque ou type.
   { key: "financeWealthBar", label: "Répartition du patrimoine", icon: Banknote, group: "Budget" },
   // Graphiques Budget natifs (#587) : graphique et période choisis dans l'en-tête.
@@ -18250,7 +18250,6 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
           {type === "financeBudgetMonth" && "Dépenses, revenus, solde net et reste à dépenser du mois, puis le suivi du budget par catégorie, dépassements en tête. Le mois se change dans l’en-tête du widget."}
           {type === "financeToCategorize" && "Opérations sans catégorie, à sous-catégorie à préciser, ou classées par l’IA avec une confiance inférieure à 85 % ces 60 derniers jours. « + Saisir une opération » ajoute une opération à la main."}
-          {type === "financeWealth" && "Patrimoine total, son évolution sur 12 mois et sa répartition par banque et par type de compte."}
           {" "}Aucun réglage : les chiffres sont calculés côté serveur (données KDM360).
         </p>
       )}
@@ -37031,7 +37030,7 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
 // ---------------------------------------------------------------------------
 
 // === NEXORA:FINANCE-BUDGET:START ===
-const FINANCE_BUDGET_TYPES = ["financeBudgetMonth", "financeToCategorize", "financeWealth"];
+const FINANCE_BUDGET_TYPES = ["financeBudgetMonth", "financeToCategorize"];
 const FINANCE_BUDGET_REASONS = { sans_categorie: "Sans catégorie", sous_categorie: "Sous-catégorie à préciser", confiance: "IA peu sûre" };
 
 function financeBudgetEuro(value, decimals = 0) {
@@ -37062,17 +37061,6 @@ function financeBudgetSortTracking(rows) {
     || b.actual - a.actual
     || a.category.localeCompare(b.category, "fr"));
 }
-// Largeurs (en %) des segments positifs de chaque banque, à l'échelle de la
-// banque la plus riche ; les soldes négatifs ne sont pas dessinés mais
-// restent dans le total affiché.
-function financeBudgetBankBars(banks) {
-  const positive = (bank) => bank.segments.reduce((s, seg) => s + Math.max(0, seg.value), 0);
-  const max = Math.max(1, ...banks.map(positive));
-  return banks.map((bank) => ({
-    ...bank,
-    segments: bank.segments.filter((seg) => seg.value > 0).map((seg) => ({ ...seg, width: (seg.value / max) * 100 })),
-  }));
-}
 // Montant signé d'une saisie : dépense négative, revenu et remboursement positifs.
 function financeBudgetSignedAmount(type, input) {
   const n = Math.abs(Number(String(input).replace(/\s/g, "").replace(",", ".")));
@@ -37082,13 +37070,6 @@ function financeBudgetSignedAmount(type, input) {
 function financeBudgetReason(item) {
   const label = FINANCE_BUDGET_REASONS[item.reason] || item.reason;
   return item.reason === "confiance" && item.confidence != null ? `${label} (${Math.round(item.confidence * 100)} %)` : label;
-}
-// Courbe du patrimoine sur 12 mois, en coordonnées d'un viewBox 0 0 width height.
-function financeBudgetSparkline(history, width = 240, height = 48, pad = 4) {
-  const values = history.map((h) => h.total);
-  if (values.length < 2) return "";
-  const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
-  return values.map((v, i) => `${(pad + (i / (values.length - 1)) * (width - 2 * pad)).toFixed(1)},${(height - pad - ((v - min) / span) * (height - 2 * pad)).toFixed(1)}`).join(" ");
 }
 // === NEXORA:FINANCE-BUDGET:END ===
 
@@ -37128,19 +37109,6 @@ const FINANCE_BUDGET_CSS = `
 .nx-bud-form label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:#60717c;min-width:0}
 .nx-bud-form .wide{grid-column:1/-1}
 .nx-bud-form .actions{grid-column:1/-1;display:flex;gap:8px;align-items:center}
-.nx-bud-wealth{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px}
-.nx-bud-wealth strong{font-size:22px;font-variant-numeric:tabular-nums}
-.nx-bud-wealth small{display:block;color:#60717c}
-.nx-bud-wealth svg{width:240px;max-width:100%;height:48px}
-.nx-bud-banks{display:flex;flex-direction:column;gap:8px}
-.nx-bud-bank{display:grid;grid-template-columns:minmax(70px,120px) minmax(0,1fr) auto;gap:8px;align-items:center}
-.nx-bud-bank b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nx-bud-bank small{font-variant-numeric:tabular-nums;white-space:nowrap}
-.nx-bud-stack{display:flex;height:16px;border-radius:4px;overflow:hidden;background:#edf1f4}
-.nx-bud-stack i{display:block;height:100%}
-.nx-bud-legend{display:flex;flex-wrap:wrap;gap:4px 12px;color:#60717c}
-.nx-bud-legend span{display:inline-flex;align-items:center;gap:4px}
-.nx-bud-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
 `;
 
 // Chargement partagé par mois ("" = mois en cours) : une requête pour tous les
@@ -37411,59 +37379,6 @@ function WidgetFinanceToCategorize({ externalToolbarSlot }) {
       {!items.length && <div className="nx-bud-empty">Rien à catégoriser : toutes les opérations ont une catégorie sûre.</div>}
       <div className="nx-bud-list">
         {items.map((item) => <FinanceToCategorizeRow key={item.id} item={item} categories={data.catalogs.categories} />)}
-      </div>
-    </div>
-  );
-}
-
-function WidgetFinanceWealth({ externalToolbarSlot }) {
-  const { data, error, loading, reload } = useFinanceBudget("");
-  const tools = (
-    <ViewToolbarPortal slot={externalToolbarSlot}>
-      <style>{FINANCE_TX_CSS}</style>
-      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
-        <button type="button" onClick={reload} disabled={loading} title="Relire les données dans Supabase">{loading ? "Lecture…" : "Actualiser"}</button>
-      </div>
-    </ViewToolbarPortal>
-  );
-  if (!data) return <>{tools}<FinanceBudgetState error={error} onRetry={reload} /></>;
-  const w = data.wealth;
-  const previous = w.history.length > 1 ? w.history[w.history.length - 2].total : null;
-  const delta = previous == null ? null : w.total - previous;
-  const bars = financeBudgetBankBars(w.banks);
-  const points = financeBudgetSparkline(w.history);
-  const usedTypes = w.types.filter((t) => bars.some((b) => b.segments.some((s) => s.type === t.name)));
-  return (
-    <div className="nx-bud">
-      {tools}
-      <style>{FINANCE_BUDGET_CSS}</style>
-      {error && <div className="nx-bud-err">{error}</div>}
-      <div className="nx-bud-wealth">
-        <div>
-          <small>Patrimoine au {new Date(w.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })}</small>
-          <strong>{financeBudgetEuro(w.total)}</strong>
-          {delta != null && <small>{delta >= 0 ? "+" : ""}{financeBudgetEuro(delta)} depuis fin {financeBudgetMonthLabel(w.history[w.history.length - 2].month).toLowerCase()}</small>}
-        </div>
-        {points && (
-          <svg viewBox="0 0 240 48" role="img" aria-label="Évolution du patrimoine sur 12 mois">
-            <polyline points={points} fill="none" stroke="#24569a" strokeWidth="2" strokeLinejoin="round" />
-          </svg>
-        )}
-      </div>
-      <div className="nx-bud-section">Par banque et type de compte</div>
-      <div className="nx-bud-banks">
-        {bars.map((b) => (
-          <div key={b.bank} className="nx-bud-bank">
-            <b title={b.bank}>{b.bank}</b>
-            <div className="nx-bud-stack">
-              {b.segments.map((s) => <i key={s.type} title={`${s.type} : ${financeBudgetEuro(s.value)}`} style={{ width: `${s.width}%`, background: s.color }} />)}
-            </div>
-            <small>{financeBudgetEuro(b.total)}</small>
-          </div>
-        ))}
-      </div>
-      <div className="nx-bud-legend">
-        {usedTypes.map((t) => <span key={t.name}><i style={{ background: t.color }} />{t.name}</span>)}
       </div>
     </div>
   );
