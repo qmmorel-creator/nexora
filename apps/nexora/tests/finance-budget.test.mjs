@@ -157,7 +157,11 @@ test("interface : formats, ordre du suivi, saisie", () => {
   assert.equal(UI.financeBudgetMonthLabel("2026-09"), "Septembre 2026");
   assert.equal(UI.financeBudgetShiftMonth("2026-01", -1), "2025-12");
   assert.equal(UI.financeBudgetShiftMonth("2026-12", 1), "2027-01");
-  assert.match(UI.financeBudgetEuro(1234.5, 2), /^1\s234,50\s€$/);
+  // Arrondi à l'euro, sans centimes (#639).
+  assert.match(UI.financeBudgetEuro(1234.5), /^1\s235\s€$/);
+  assert.match(UI.financeBudgetEuro(-1234.5), /^-1\s235\s€$/);
+  assert.match(UI.financeBudgetEuro(-0.4), /^0\s€$/);
+  assert.doesNotMatch(html, /financeBudgetEuro\([^()]*(\([^()]*\))?[^()]*, \d\)/, "un montant Budget est encore affiché avec des décimales");
   const sorted = UI.financeBudgetSortTracking([
     { category: "A", budget: 100, actual: 50, over: false }, { category: "B", budget: 0, actual: 300, over: true },
     { category: "C", budget: 100, actual: 130, over: true }, { category: "D", budget: 100, actual: 90, over: false },

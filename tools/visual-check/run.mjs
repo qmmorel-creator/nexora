@@ -2969,6 +2969,70 @@ if (RUN("2d")) await timed("2d", async () => {
   } finally {
     await bp.close().catch(() => {});
   }
+
+  // --- Budget cumulé par mois : le graphique remplit le widget (#641) --------
+  // Données servies par la vraie fonction serveur (buildBudgetSummary). Pour
+  // chaque mode tracé, en trois formats (haut, bas, très large et bas comme un
+  // widget pleine largeur) : aucun vide sous la légende, pas de défilement,
+  // tracé qui grandit avec le widget, textes de taille bornée. Montants sans
+  // centimes (#639).
+  const { buildBudgetSummary, parisToday } = await import("../../apps/nexora/lib/finance-budget.mjs");
+  const cumulRaw = (month) => {
+    const year = month.slice(0, 4);
+    const tx = (id, day, type, amount, category, extra = {}) => ({
+      transaction_id: id, effective_date: `${month}-${day}`, bank_date: `${month}-${day}`, transaction_type: type,
+      account_id: "cc", signed_amount: amount, category, subcategory: "", ...extra,
+    });
+    return {
+      transactions: [
+        tx("r1", "01", "Revenu", 3720, "Revenus"),
+        tx("d1", "01", "Dépense", -1240.4, "Aloïs"),
+        tx("d2", "01", "Dépense", -1250, "Logement"),
+        tx("d3", "02", "Dépense", -96.55, "Alimentation"),
+        tx("d4", "05", "Dépense", -199.6, "Loisirs"),
+        ...["Aloïs", "Logement", "Alimentation", "Loisirs"].map((c, i) => tx("b" + i, "01", "Budget", -[1300, 1250, 900, 816][i], c,
+          { effective_date: `${year}-01-01`, bank_date: `${year}-01-01`, description: "[B360:BUDGET_V2:1,2,3,4,5,6,7,8,9,10,11,12] Prévision" })),
+      ],
+      accounts: [{ account_id: "cc", name: "Courant", bank: "Banque", account_type: "Comptes Cartes Bleues", opening_balance: 1000, active: true }],
+      categories: ["Aloïs", "Logement", "Alimentation", "Loisirs", "Revenus"].map((category) => ({ category, active: true })),
+      subcategories: [], banks: [], accountTypes: [], balances: [],
+    };
+  };
+  const cumul = await browser.newPage({ viewport: { width: 1820, height: 1100 } });
+  cumul.on("pageerror", (e) => pageErrors.push("budget cumulé : " + e.message));
+  await cumul.route("**/api/nexora/finance-budget-summary*", (route) => {
+    const month = new URL(route.request().url()).searchParams.get("month") || parisToday().slice(0, 7);
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, data: buildBudgetSummary(cumulRaw(month), month) }) });
+  });
+  try {
+    for (const mode of ["categories", "budget", "trajectories", "daily"]) {
+      const measures = [];
+      for (const [w, h] of [[1080, 520], [1080, 1000], [1760, 430]]) {
+        await cumul.goto(`http://127.0.0.1:${port}/index.html?budgetCumul=1&mode=${mode}&w=${w}&h=${h}`, { waitUntil: "load", timeout: 90000 });
+        await cumul.waitForSelector('[data-testid="bench-budget-cumul"] .nx-bcu-plot svg', { timeout: 30000 });
+        await cumul.waitForTimeout(150);
+        const m = await cumul.$eval('[data-testid="bench-budget-cumul"] .nx-bch', (box) => {
+          const r = box.getBoundingClientRect();
+          const plots = [...box.querySelectorAll(".nx-bcu-plot svg")].map((svg) => svg.getBoundingClientRect().height);
+          const bottom = Math.max(...[...box.children].filter((c) => c.tagName !== "STYLE").map((c) => c.getBoundingClientRect().bottom));
+          const font = Math.max(...[...box.querySelectorAll(".nx-bcu-plot svg text")].map((t) => t.getBoundingClientRect().height));
+          return { plots, gap: r.bottom - bottom, scroll: box.scrollHeight - box.clientHeight, font, text: box.textContent };
+        });
+        measures.push(m);
+        expect(m.gap < 16 && m.scroll <= 1, `Budget cumulé (${mode}, ${w} × ${h} px) : le contenu ne remplit pas le widget (vide ${Math.round(m.gap)} px, défilement ${m.scroll} px)`);
+        expect(m.font < 24, `Budget cumulé (${mode}, ${w} × ${h} px) : textes trop grands (${Math.round(m.font)} px)`);
+        expect(!/\d,\d{2}\s€/.test(m.text), `Budget cumulé (${mode}, ${w} × ${h} px) : montant affiché avec des centimes`);
+        if (mode === "categories" && h === 1000) await cumul.screenshot({ path: path.join(dir, "budget-cumul.png") });
+        if (mode === "trajectories" && w === 1760) await cumul.screenshot({ path: path.join(dir, "budget-cumul-large.png") });
+      }
+      const total = (m) => m.plots.reduce((a, b) => a + b, 0);
+      expect(total(measures[1]) - total(measures[0]) > 400, `Budget cumulé (${mode}) : le tracé ne grandit pas avec le widget (${measures.map(total).map(Math.round).join(" → ")} px)`);
+    }
+  } catch (e) {
+    expect(false, `Budget cumulé : scénario en échec (${String(e).split("\n")[0]})`);
+  } finally {
+    await cumul.close().catch(() => {});
+  }
 });
 
 const carte = {};

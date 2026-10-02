@@ -35743,7 +35743,7 @@ const FINANCE_SANKEY_TYPES = ["financeSankeyMonthly", "financeSankeyWealth"];
 const FINANCE_SANKEY_INCOME_PALETTE = ["#3f806f", "#4e8577", "#6fa99b", "#7fb8a5", "#5b9483", "#8fc4b0", "#9ccdb9"];
 const FINANCE_SANKEY_DEFAULT_CONFIG = {
   periodMode: "month", periodValue: "current", from: "", to: "", range: "",
-  flowOpacity: 0.52, sankeyShowValues: true, labelMode: "auto", decimals: 2, rounding: "auto",
+  flowOpacity: 0.52, sankeyShowValues: true, labelMode: "auto", rounding: "auto",
 };
 
 // Lecture des réglages.
@@ -35828,12 +35828,14 @@ function financeSankeyRound(value, unit = "", decimals = 2, rounding = "auto") {
   if (value === null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
   const counted = /^(pas|steps|transactions|activités|observations)$/i.test(unit);
-  const digits = rounding === "fixed" ? decimals
+  // Montants en euros : arrondis à l'euro (#639), sauf l'arrondi compact k / M.
+  const digits = unit === "€" ? 0
+    : rounding === "fixed" ? decimals
     : counted || abs === 0 ? 0
     : abs < 1 ? Math.min(6, Math.max(decimals, Math.ceil(-Math.log10(abs)) + 1))
     : abs < 10 ? 2
     : +(abs < 100);
-  return value.toLocaleString("fr-FR", {
+  return (Math.sign(value) * Math.round(Math.abs(value) * 10 ** digits) / 10 ** digits || 0).toLocaleString("fr-FR", {
     maximumFractionDigits: Math.max(0, Math.min(6, digits)),
     ...(rounding === "compact" ? { notation: "compact", maximumFractionDigits: 1 } : {}),
   });
@@ -35841,7 +35843,8 @@ function financeSankeyRound(value, unit = "", decimals = 2, rounding = "auto") {
 // Montant avec unité.
 function financeSankeyFormat(value, unit = "", decimals = 2, compact = false) {
   if (typeof value !== "number" || !Number.isFinite(value)) return value == null || value === "-" ? "—" : String(value);
-  return value.toLocaleString("fr-FR", { maximumFractionDigits: Math.max(0, Math.min(6, decimals)), ...(compact ? { notation: "compact" } : {}) })
+  const digits = Math.max(0, Math.min(6, decimals));
+  return (Math.sign(value) * Math.round(Math.abs(value) * 10 ** digits) / 10 ** digits || 0).toLocaleString("fr-FR", { maximumFractionDigits: digits, ...(compact ? { notation: "compact" } : {}) })
     + (unit ? "\u00A0" + unit : "");
 }
 
@@ -36244,9 +36247,9 @@ function FinanceSankeyChart({ graph, config, title, period, showData: showDataPr
   };
   const hide = () => { setHover(null); setTip(null); };
   const money = (value, maxWidth = 120, fontSize = m.valueFont) => {
-    const full = financeSankeyRound(value, "€", financeSankeyNumber(config, "decimals", 2), financeSankeyText(config, "rounding", "auto")) + " €";
+    const full = financeSankeyRound(value, "€", 0, financeSankeyText(config, "rounding", "auto")) + " €";
     if (financeSankeyMeasure(full, fontSize, 500) <= maxWidth) return full;
-    const short = financeSankeyRound(value, "€", 2, "compact") + " €";
+    const short = financeSankeyRound(value, "€", 0, "compact") + " €";
     return financeSankeyMeasure(short, fontSize, 500) <= maxWidth ? short : "";
   };
   return (
@@ -36276,7 +36279,7 @@ function FinanceSankeyChart({ graph, config, title, period, showData: showDataPr
                   {showValues && <text x={wrap ? 0 : col.name.length * 6 + 10} y={wrap ? 19 : 1} fill="#14232d" fontFamily="Segoe UI,Arial,sans-serif" fontSize="15" fontWeight="700">{label}</text>}
                   {i === lastCol && (
                     <text x={0} y={wrap ? 34 : 19} fill={m.columns[0].value - col.value > 0 ? "var(--health)" : "var(--danger)"} fontFamily="Segoe UI,Arial,sans-serif" fontSize="10" fontWeight="700">
-                      {"Solde du mois : " + financeSankeyFormat(m.columns[0].value - col.value, "€", 2)}
+                      {"Solde du mois : " + financeSankeyFormat(m.columns[0].value - col.value, "€", 0)}
                     </text>
                   )}
                 </g>
@@ -36286,7 +36289,7 @@ function FinanceSankeyChart({ graph, config, title, period, showData: showDataPr
           <g className="sankey-ribbons">
             {m.links.map((l, i) => {
               const active = link === l || node?.id === l.source || node?.id === l.target;
-              const label = byId.get(l.source).name + " → " + byId.get(l.target).name + " · " + financeSankeyFormat(l.value, "€", 2);
+              const label = byId.get(l.source).name + " → " + byId.get(l.target).name + " · " + financeSankeyFormat(l.value, "€", 0);
               return (
                 <path key={i} className="b360-flow-ribbon" d={l.path} fill={`url(#${uid}-flow-${i})`} fillOpacity={hover ? (active ? 0.9 : 0.1) : opacity}
                   style={{ mixBlendMode: "multiply" }} tabIndex={0} role="button" aria-label={label}
@@ -36307,7 +36310,7 @@ function FinanceSankeyChart({ graph, config, title, period, showData: showDataPr
               const anchor = last ? "start" : "end";
               const leftBound = n.col ? m.columns[n.col - 1].x + (n.x1 - n.x0) + 10 : 0;
               const room = last ? m.width - textX - 6 : textX - leftBound - 6;
-              const label = n.name + " · " + financeSankeyFormat(n.value, "€", 2);
+              const label = n.name + " · " + financeSankeyFormat(n.value, "€", 0);
               return (
                 <g key={n.id} className="b360-flow-node" data-node-id={n.id} opacity={hover && !related.has(n.id) ? 0.14 : 1} tabIndex={0} role="button" aria-label={label}
                   onMouseEnter={(e) => show("node", n.id, e)} onMouseLeave={hide} onFocus={(e) => show("node", n.id, e)} onBlur={hide} onClick={(e) => show("node", n.id, e)}>
@@ -36330,7 +36333,7 @@ function FinanceSankeyChart({ graph, config, title, period, showData: showDataPr
               <thead><tr><th>Origine</th><th>Destination</th><th>Montant · €</th></tr></thead>
               <tbody>
                 {m.links.map((l, i) => (
-                  <tr key={i}><td>{byId.get(l.source).name}</td><td>{byId.get(l.target).name}</td><td className="numeric">{financeSankeyFormat(l.value, "", 2)}</td></tr>
+                  <tr key={i}><td>{byId.get(l.source).name}</td><td>{byId.get(l.target).name}</td><td className="numeric">{financeSankeyFormat(l.value, "", 0)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -36340,7 +36343,7 @@ function FinanceSankeyChart({ graph, config, title, period, showData: showDataPr
           <div className="sankey-tooltip os-tooltip" role="tooltip" style={{ left: tip.x, top: tip.y }}>
             <div className="os-tooltip-title">{title}</div>
             <div className="os-tooltip-context">{node?.name || byId.get(link.source).name + " → " + byId.get(link.target).name}</div>
-            <div className="os-tooltip-row"><span>Montant réel</span><span className="os-tooltip-value">{financeSankeyFormat(node?.value ?? link.value, "€", 2)}</span></div>
+            <div className="os-tooltip-row"><span>Montant réel</span><span className="os-tooltip-value">{financeSankeyFormat(node?.value ?? link.value, "€", 0)}</span></div>
             {link && <div className="os-tooltip-row"><span>Part du nœud d’origine</span><span>{financeSankeyFormat(100 * link.value / byId.get(link.source).value, "%", 1)}</span></div>}
             <div className="os-tooltip-foot">{period}</div>
           </div>
@@ -36439,11 +36442,9 @@ function FinanceSankeyHeaderTools({ widget, config, onUpdateWidget, showData, on
           <option value="none">Étiquettes · aucune</option>
         </select>
         <select value={config.rounding} onChange={(e) => set({ rounding: e.target.value })} title="Arrondi des valeurs" aria-label="Arrondi des valeurs">
-          <option value="auto">Arrondi · intelligent</option>
-          <option value="fixed">Arrondi · décimales</option>
+          <option value="auto">Arrondi · à l’euro</option>
           <option value="compact">Arrondi · k / M</option>
         </select>
-        <label title="Nombre de décimales">Déc. <input type="number" min="0" max="6" value={config.decimals} onChange={(e) => set({ decimals: e.target.value === "" ? "" : Number(e.target.value) })} /></label>
         <label title="Opacité des flux (0,1 à 1)">Opacité <input type="number" min="0.1" max="1" step="0.02" value={config.flowOpacity} onChange={(e) => set({ flowOpacity: e.target.value === "" ? "" : Number(e.target.value) })} /></label>
       </span>
       <button type="button" className={showData ? "active" : ""} aria-pressed={showData} onClick={onToggleData}>{showData ? "Graphique" : "Données"}</button>
@@ -36554,14 +36555,9 @@ function FinanceSankeySettings({ value, onChange }) {
       <div className="lp-field">
         <label>Arrondi des valeurs</label>
         <select value={cfg.rounding} onChange={(e) => set({ rounding: e.target.value })}>
-          <option value="auto">Intelligent · selon valeur et unité</option>
-          <option value="fixed">Décimales configurées</option>
+          <option value="auto">À l’euro</option>
           <option value="compact">Compact · k / M</option>
         </select>
-      </div>
-      <div className="lp-field">
-        <label>Nombre de décimales</label>
-        <input type="number" min="0" max="6" value={cfg.decimals} onChange={(e) => set({ decimals: e.target.value === "" ? "" : Number(e.target.value) })} />
       </div>
       <div className="lp-field">
         <label>Opacité des flux (0,1 à 1)</label>
@@ -36646,7 +36642,8 @@ function financeTxText(key, value) {
   if (typeof value === "boolean") return value ? "Oui" : "Non";
   if (key === "signed_amount") {
     const n = Number(value);
-    return Number.isFinite(n) ? n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(value);
+    // Arrondi à l'euro (#639) ; l'export CSV garde le montant exact (financeTxCsv).
+    return Number.isFinite(n) ? (Math.sign(n) * Math.round(Math.abs(n)) || 0).toLocaleString("fr-FR") : String(value);
   }
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
@@ -37033,9 +37030,11 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
 const FINANCE_BUDGET_TYPES = ["financeBudgetMonth", "financeToCategorize"];
 const FINANCE_BUDGET_REASONS = { sans_categorie: "Sans catégorie", sous_categorie: "Sous-catégorie à préciser", confiance: "IA peu sûre" };
 
-function financeBudgetEuro(value, decimals = 0) {
+// Montant arrondi à l'euro, sans centimes (#639) ; « -0 € » devient « 0 € ».
+function financeBudgetEuro(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
-  return value.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  const rounded = Math.sign(value) * Math.round(Math.abs(value)) || 0;
+  return rounded.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 function financeBudgetMonthLabel(month) {
   if (!/^\d{4}-\d{2}$/.test(month || "")) return "";
@@ -37296,7 +37295,7 @@ function FinanceToCategorizeRow({ item, categories }) {
   return (
     <div className="nx-bud-item">
       <span className="lbl" title={item.label}>{item.label || "(sans libellé)"}</span>
-      <span className={`amt${item.amount < 0 ? " neg" : ""}`}>{financeBudgetEuro(item.amount, 2)}</span>
+      <span className={`amt${item.amount < 0 ? " neg" : ""}`}>{financeBudgetEuro(item.amount)}</span>
       <span className="meta">{new Date(item.date + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" })} · {item.account}{item.category ? ` · ${item.category}${item.subcategory ? " / " + item.subcategory : ""}` : ""}</span>
       <span className="nx-bud-chip">{financeBudgetReason(item)}</span>
       <div className="nx-bud-edit">
@@ -37522,7 +37521,7 @@ function WidgetFinanceWealthBar({ widget, externalToolbarSlot, onUpdateWidget })
         <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
           <div className="nx-bch-tip">
             <strong>{h.label}</strong>
-            <div><span>Solde</span><span>{financeBudgetEuro(h.value, 2)}</span></div>
+            <div><span>Solde</span><span>{financeBudgetEuro(h.value)}</span></div>
             <div><span>Part des actifs</span><span>{(h.share * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %</span></div>
             {by !== "account" && <div><span>Comptes</span><span>{h.accounts.length}</span></div>}
           </div>
@@ -37660,7 +37659,7 @@ function FinanceChartDonut({ items }) {
   return (
     <div className="nx-bch-donut">
       <svg viewBox="-1.05 -1.05 2.1 2.1" role="img" aria-label="Répartition des dépenses par catégorie">
-        {arcs.map((a) => <path key={a.category} d={a.d} fill={a.color}><title>{`${a.category} : ${financeBudgetEuro(a.amount, 2)} (${Math.round(a.share * 100)} %)`}</title></path>)}
+        {arcs.map((a) => <path key={a.category} d={a.d} fill={a.color}><title>{`${a.category} : ${financeBudgetEuro(a.amount)} (${Math.round(a.share * 100)} %)`}</title></path>)}
         <text x="0" y="0.08" textAnchor="middle" style={{ fontSize: 0.2, fill: "#203246", fontWeight: 600 }}>{financeChartShortEuro(total)}</text>
       </svg>
       <div className="nx-bch-rows">
@@ -37687,7 +37686,7 @@ function FinanceChartWaterfall({ steps }) {
           <div key={s.label + i} className="nx-bch-wf-row">
             <b title={s.label}>{s.label}</b>
             <div className="nx-bch-wf-track">
-              <i style={{ left: `${left}%`, width: `${Math.max(0.4, right - left)}%`, background: color }} title={`${s.label} : ${financeBudgetEuro(value, 2)}`} />
+              <i style={{ left: `${left}%`, width: `${Math.max(0.4, right - left)}%`, background: color }} title={`${s.label} : ${financeBudgetEuro(value)}`} />
             </div>
             <small>{financeBudgetEuro(value)}</small>
           </div>
@@ -37767,9 +37766,9 @@ function FinanceChartPeriodic({ months, stacked = false }) {
           <div className="nx-bch-tip">
             <strong>{financeBudgetMonthLabel(hm.month)}</strong>
             {(hm.categories || []).map((c) => (
-              <div key={c.category}><span><i style={{ background: c.color }} />{c.category}</span><span>{financeBudgetEuro(c.amount, 2)}</span></div>
+              <div key={c.category}><span><i style={{ background: c.color }} />{c.category}</span><span>{financeBudgetEuro(c.amount)}</span></div>
             ))}
-            <div><strong>Total</strong><strong>{financeBudgetEuro(hm.expenses, 2)}</strong></div>
+            <div><strong>Total</strong><strong>{financeBudgetEuro(hm.expenses)}</strong></div>
           </div>
         </WidgetPointerTooltip>
       )}
@@ -37910,6 +37909,7 @@ const FINANCE_BUDGET_CUMUL_CSS = `
 .nx-bcu-sm header small{font-variant-numeric:tabular-nums;color:#52514e;white-space:nowrap}
 .nx-bcu-sm header small.over{color:#c0392b;font-weight:650}
 .nx-bcu-panel{font-size:10px;font-weight:600;letter-spacing:.04em;color:#52514e;text-transform:uppercase}
+.nx-bcu-plot{flex:1 1 0;min-height:120px;overflow:hidden}
 `;
 
 // Cadre commun : y en euros (graduations rondes, quadrillage fin), x un repère
@@ -37921,6 +37921,34 @@ function financeCumulFrame({ W, H, L = 50, R, T = 12, B = 24, top, days }) {
   const y = (v) => T + (1 - v / max) * (H - T - B);
   const step = n > 1 ? (W - L - R) / (n - 1) : W - L - R;
   return { W, H, L, R, T, B, max, ticks, x, y, step, days };
+}
+// Le graphique remplit le widget en largeur ET en hauteur (#641) : le cadre
+// logique prend la taille mesurée divisée par un zoom borné (×1 à ×1,5,
+// selon la plus petite des deux proportions par rapport au cadre de
+// référence 720 × 280), si bien que les textes restent lisibles sans grossir
+// démesurément. Aucun défilement tant que le tracé dispose de
+// FINANCE_CUMUL_MIN_H pixels ; en deçà seulement, le widget défile.
+const FINANCE_CUMUL_REF = { w: 720, h: 280 };
+const FINANCE_CUMUL_MIN_H = 120;
+const FINANCE_CUMUL_MIN_W = 360;
+function financeCumulPlotSize(box, fallbackH) {
+  if (!box || !(box.w > 0) || !(box.h > 0)) return { W: FINANCE_CUMUL_REF.w, H: fallbackH };
+  const zoom = Math.min(1.5, Math.max(1, Math.min(box.w / FINANCE_CUMUL_REF.w, box.h / FINANCE_CUMUL_REF.h)));
+  return { W: Math.max(FINANCE_CUMUL_MIN_W, box.w / zoom), H: Math.max(FINANCE_CUMUL_MIN_H, box.h / zoom) };
+}
+function FinanceCumulPlot({ fallback, grow = 1, children }) {
+  const ref = useRef(null);
+  const [box, setBox] = useState(null);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+    const measure = () => setBox({ w: node.clientWidth, h: node.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, []);
+  return <div className="nx-bcu-plot" ref={ref} style={{ flexGrow: grow }}>{children(financeCumulPlotSize(box, fallback))}</div>;
 }
 function financeCumulPath(values, f) {
   return values.map((v, k) => `${k ? "L" : "M"} ${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" ");
@@ -37970,17 +37998,17 @@ function FinanceCumulTip({ model, hover, series = model.series, totals = true })
         <strong>Au {financeCumulDayLabel(model.days[k])}</strong>
         {series.filter((s) => s.values[k] > 0).map((s) => (
           <div key={s.category}>
-            <span><i style={{ background: s.color }} />{s.category}{s.daily[k] > 0 ? ` (+${financeBudgetEuro(s.daily[k], 2)} ce jour)` : ""}</span>
-            <span>{financeBudgetEuro(s.values[k], 2)}{!totals && s.budget > 0 ? ` / ${financeBudgetEuro(s.budget)}` : ""}</span>
+            <span><i style={{ background: s.color }} />{s.category}{s.daily[k] > 0 ? ` (+${financeBudgetEuro(s.daily[k])} ce jour)` : ""}</span>
+            <span>{financeBudgetEuro(s.values[k])}{!totals && s.budget > 0 ? ` / ${financeBudgetEuro(s.budget)}` : ""}</span>
           </div>
         ))}
-        {totals && <div><strong>Dépenses cumulées</strong><strong>{financeBudgetEuro(spent, 2)}</strong></div>}
-        {totals && model.dailyTotal[k] > 0 && <div><span>Dépensé ce jour</span><span>{financeBudgetEuro(model.dailyTotal[k], 2)}</span></div>}
-        {totals && <div><span><i className="dash" style={{ borderColor: FINANCE_CUMUL_INK.income }} />Revenus cumulés</span><span>{financeBudgetEuro(model.income[k], 2)}</span></div>}
-        {totals && budgetTotal > 0 && <div><span><i className="dash" style={{ borderColor: FINANCE_CUMUL_INK.over }} />Budget total</span><span>{financeBudgetEuro(budgetTotal, 2)}</span></div>}
+        {totals && <div><strong>Dépenses cumulées</strong><strong>{financeBudgetEuro(spent)}</strong></div>}
+        {totals && model.dailyTotal[k] > 0 && <div><span>Dépensé ce jour</span><span>{financeBudgetEuro(model.dailyTotal[k])}</span></div>}
+        {totals && <div><span><i className="dash" style={{ borderColor: FINANCE_CUMUL_INK.income }} />Revenus cumulés</span><span>{financeBudgetEuro(model.income[k])}</span></div>}
+        {totals && budgetTotal > 0 && <div><span><i className="dash" style={{ borderColor: FINANCE_CUMUL_INK.over }} />Budget total</span><span>{financeBudgetEuro(budgetTotal)}</span></div>}
         {totals && budgetTotal > 0 && (budgetTotal >= spent
-          ? <div><span>Reste sur le budget</span><span>{financeBudgetEuro(budgetTotal - spent, 2)}</span></div>
-          : <div><span style={{ color: "#f3a3a6" }}>Dépassement du budget</span><span style={{ color: "#f3a3a6" }}>{financeBudgetEuro(spent - budgetTotal, 2)}</span></div>)}
+          ? <div><span>Reste sur le budget</span><span>{financeBudgetEuro(budgetTotal - spent)}</span></div>
+          : <div><span style={{ color: "#f3a3a6" }}>Dépassement du budget</span><span style={{ color: "#f3a3a6" }}>{financeBudgetEuro(spent - budgetTotal)}</span></div>)}
       </div>
     </WidgetPointerTooltip>
   );
@@ -38027,7 +38055,6 @@ function FinanceCumulRefLines({ f, model, named = true }) {
 // 1 · Par catégorie : aires empilées, liseré blanc entre les couches.
 function FinanceCumulCategories({ model }) {
   const [hover, setHover] = useState(null);
-  const f = financeCumulFrame({ W: 720, H: 280, R: 150, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.04, days: model.days });
   const last = model.days.length - 1;
   const base = model.days.map(() => 0);
   const layers = model.series.map((s) => {
@@ -38037,6 +38064,9 @@ function FinanceCumulCategories({ model }) {
   });
   return (
     <>
+      <FinanceCumulPlot fallback={280}>{({ W, H }) => {
+      const f = financeCumulFrame({ W, H, R: 150, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.04, days: model.days });
+      return (
       <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées par catégorie, revenus cumulés et budget total">
         <FinanceCumulAxes f={f} />
         {layers.map((s) => (
@@ -38048,6 +38078,8 @@ function FinanceCumulCategories({ model }) {
         <FinanceCumulEndLabels f={f} items={layers.map((s) => ({ key: s.category, y: f.y(s.upper[last] - s.total / 2), value: financeBudgetEuro(s.total), label: s.category, swatch: s.color }))} />
         <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
       <FinanceCumulLegend model={model} />
     </>
@@ -38059,11 +38091,9 @@ function FinanceCumulCategories({ model }) {
 function FinanceCumulBudget({ model }) {
   const [hover, setHover] = useState(null);
   const I = FINANCE_CUMUL_INK;
-  const f = financeCumulFrame({ W: 720, H: 260, R: 120, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
   const last = model.days.length - 1;
   const { budgetTotal, spent, crossDay } = model;
   const gap = spent - budgetTotal;
-  const area = `M ${f.x(0)} ${f.y(0)} L ${model.total.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${f.x(last)} ${f.y(0)} Z`;
   const mid = Math.round(last * 0.6);
   return (
     <>
@@ -38073,6 +38103,10 @@ function FinanceCumulBudget({ model }) {
         {budgetTotal > 0 && <div><small>{gap > 0 ? "Dépassement" : "Reste"}</small><span style={{ color: gap > 0 ? I.over : I.income }}>{gap > 0 ? "+" : ""}{financeBudgetEuro(Math.abs(gap))} · {Math.round((spent / budgetTotal) * 100)} %</span></div>}
         {budgetTotal > 0 && <div><small>Budget dépassé le</small><span>{crossDay >= 0 ? financeCumulDayLabel(model.days[crossDay]) : "—"}</span></div>}
       </div>
+      <FinanceCumulPlot fallback={260}>{({ W, H }) => {
+      const f = financeCumulFrame({ W, H, R: 120, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
+      const area = `M ${f.x(0)} ${f.y(0)} L ${model.total.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${f.x(last)} ${f.y(0)} Z`;
+      return (
       <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées du mois face au budget">
         {budgetTotal > 0 && <rect x={f.L} y={f.T} width={f.W - f.R - f.L} height={Math.max(0, f.y(budgetTotal) - f.T)} fill={I.over} fillOpacity=".05" />}
         <FinanceCumulAxes f={f} />
@@ -38095,6 +38129,8 @@ function FinanceCumulBudget({ model }) {
         ]} />
         <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
     </>
   );
@@ -38103,10 +38139,12 @@ function FinanceCumulBudget({ model }) {
 // 3 · Trajectoires : une ligne cumulée par catégorie, non empilées.
 function FinanceCumulTrajectories({ model }) {
   const [hover, setHover] = useState(null);
-  const f = financeCumulFrame({ W: 720, H: 280, R: 150, top: Math.max(0, ...model.series.map((s) => s.total)), days: model.days });
   const last = model.days.length - 1;
   return (
     <>
+      <FinanceCumulPlot fallback={280}>{({ W, H }) => {
+      const f = financeCumulFrame({ W, H, R: 150, top: Math.max(0, ...model.series.map((s) => s.total)), days: model.days });
+      return (
       <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées, une ligne par catégorie">
         <FinanceCumulAxes f={f} />
         {[...model.series].reverse().map((s) => (
@@ -38118,6 +38156,8 @@ function FinanceCumulTrajectories({ model }) {
         <FinanceCumulEndLabels f={f} items={model.series.map((s) => ({ key: s.category, y: f.y(s.total), value: financeBudgetEuro(s.total), label: s.category }))} />
         <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
       <FinanceCumulLegend model={model} lines={false} />
     </>
@@ -38169,13 +38209,13 @@ function FinanceCumulDaily({ model }) {
   const [hover, setHover] = useState(null);
   const I = FINANCE_CUMUL_INK;
   const last = model.days.length - 1;
-  const top = financeCumulFrame({ W: 720, H: 190, R: 120, T: 16, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
   const maxDay = Math.max(0, ...model.dailyTotal);
-  const bot = financeCumulFrame({ W: 720, H: 170, R: 120, T: 22, top: maxDay * 1.08, days: model.days });
-  const bw = Math.max(2, bot.step * 0.62);
-  const area = `M ${top.x(0)} ${top.y(0)} L ${model.total.map((v, k) => `${top.x(k).toFixed(1)} ${top.y(v).toFixed(1)}`).join(" L ")} L ${top.x(last)} ${top.y(0)} Z`;
   return (
     <>
+      <FinanceCumulPlot fallback={190} grow={19}>{({ W, H }) => {
+      const top = financeCumulFrame({ W, H, R: 120, T: 16, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
+      const area = `M ${top.x(0)} ${top.y(0)} L ${model.total.map((v, k) => `${top.x(k).toFixed(1)} ${top.y(v).toFixed(1)}`).join(" L ")} L ${top.x(last)} ${top.y(0)} Z`;
+      return (
       <svg viewBox={`0 0 ${top.W} ${top.H}`} role="img" aria-label="Cumul des dépenses du mois face au budget et aux revenus">
         <text className="nx-bcu-panel" x={top.L} y="9" style={{ fontWeight: 600, fill: I.muted }}>CUMUL DU MOIS</text>
         <FinanceCumulAxes f={top} />
@@ -38189,6 +38229,12 @@ function FinanceCumulDaily({ model }) {
         ]} />
         <FinanceCumulHit f={top} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
+      <FinanceCumulPlot fallback={170} grow={17}>{({ W, H }) => {
+      const bot = financeCumulFrame({ W, H, R: 120, T: 22, top: maxDay * 1.08, days: model.days });
+      const bw = Math.max(2, bot.step * 0.62);
+      return (
       <svg viewBox={`0 0 ${bot.W} ${bot.H}`} role="img" aria-label="Dépenses de chaque jour, par catégorie">
         <text x={bot.L} y="9" style={{ fontWeight: 600, fill: I.muted }}>DÉPENSES DU JOUR, PAR CATÉGORIE</text>
         <FinanceCumulAxes f={bot} />
@@ -38211,6 +38257,8 @@ function FinanceCumulDaily({ model }) {
         })}
         <FinanceCumulHit f={bot} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
       <FinanceCumulLegend model={model} />
     </>

@@ -57,7 +57,10 @@ test("toutes les colonnes : les connues, puis celles que la base ajoute", () => 
 });
 
 test("affichage des valeurs : montants, booléens, objets, vides", () => {
-  assert.equal(T.financeTxText("signed_amount", -1234.5), "-1\u202F234,50");
+  // Arrondi à l'euro à l'affichage (#639) ; le CSV garde le montant exact.
+  assert.equal(T.financeTxText("signed_amount", -1234.5), "-1\u202F235");
+  assert.equal(T.financeTxText("signed_amount", -0.4), "0");
+  assert.equal(T.financeTxText("signed_amount", 12.49), "12");
   assert.equal(T.financeTxText("reconciled", true), "Oui");
   assert.equal(T.financeTxText("reconciled", false), "Non");
   assert.equal(T.financeTxText("reconciled", null), "");
