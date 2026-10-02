@@ -6,11 +6,11 @@ export function ensureContrast(col, bg, min = 4.5) {
   return hex(fromLch([L, C, H]));
 }
 export function tokenBlock(ch, mode, t) {
-  const txt = (k) => ensureContrast(ensureContrast(t[k], t.surface), t.bg);
+  const txt = (k) => ensureContrast(ensureContrast(ensureContrast(t[k], t.surface), t.bg), t.soft);
   const v = {
     '--c-bg': t.bg, '--c-surface': t.surface, '--c-soft': t.soft, '--c-border': t.border, '--c-border-strong': t.borderStrong,
     '--c-text': t.text, '--c-secondary': t.secondary, '--c-muted': t.muted,
-    '--c-accent': t.accent, '--c-accent-hover': t.accentHover, '--c-accent-soft': t.accentSoft, '--c-on-accent': t.onAccent, '--c-accent-text': t.accentText,
+    '--c-accent': t.accent, '--c-accent-hover': t.accentHover, '--c-accent-soft': t.accentSoft, '--c-on-accent': t.onAccent, '--c-accent-text': txt('accentText'),
     '--c-signal': t.signal, '--c-signal-text': t.signalText, '--c-success': t.success, '--c-warning': t.warning, '--c-danger': t.danger,
     '--c-success-text': txt('success'), '--c-warning-text': txt('warning'), '--c-danger-text': txt('danger'),
     '--c-sidebar': t.sidebar, '--c-sidebar-text': t.sidebarText, '--c-sidebar-muted': t.sidebarMuted, '--c-sidebar-active': t.sidebarActive, '--c-sidebar-active-text': t.sidebarActiveText, '--c-sidebar-border': t.sidebarBorder,
