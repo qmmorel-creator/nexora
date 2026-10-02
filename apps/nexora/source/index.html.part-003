@@ -41051,11 +41051,60 @@ function bodyPhotoSorted(photos) {
 function bodyPhotoSpec(widget) {
   const s = widget?.bodyPhotos && typeof widget.bodyPhotos === "object" ? widget.bodyPhotos : {};
   const split = Number(s.split);
+  const crops = {};
+  if (s.crops && typeof s.crops === "object") {
+    for (const [id, c] of Object.entries(s.crops)) { const n = bodyPhotoNormalizeCrop(c); if (n) crops[id] = n; }
+  }
   return {
     rightId: typeof s.rightId === "string" ? s.rightId : "",
     split: Number.isFinite(split) ? Math.min(100, Math.max(0, split)) : 50,
     showLandmarks: s.showLandmarks === true,
+    crops,
   };
+}
+
+// Rognage (#633) : UN rectangle commun, dans le cadre de la référence, en
+// unités (0–1 de sa largeur et de sa hauteur). Les deux photos comparées et
+// les repères sont rognés pareil : l'alignement est conservé. Rangé par
+// référence (`crops[referenceId]`) : changer de référence change de cadre.
+// Non destructif : les originaux ne sont jamais modifiés.
+const BODY_PHOTO_CROP_MIN = 0.1;
+const BODY_PHOTO_CROP_FULL = { x: 0, y: 0, w: 1, h: 1 };
+// Rectangle valide, borné et arrondi, ou null (absent, abîmé, ou plein cadre).
+function bodyPhotoNormalizeCrop(c) {
+  if (!c || typeof c !== "object") return null;
+  const v = [c.x, c.y, c.w, c.h];
+  if (!v.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  const r = (n) => Math.round(n * 10000) / 10000;
+  const w = Math.min(1, Math.max(BODY_PHOTO_CROP_MIN, c.w));
+  const h = Math.min(1, Math.max(BODY_PHOTO_CROP_MIN, c.h));
+  const x = Math.min(1 - w, Math.max(0, c.x));
+  const y = Math.min(1 - h, Math.max(0, c.y));
+  if (w >= 0.9999 && h >= 0.9999) return null;
+  return { x: r(x), y: r(y), w: r(w), h: r(h) };
+}
+// Zone affichée, en pixels de la référence : origine, taille, proportion.
+function bodyPhotoCropView(crop, width, height) {
+  const c = bodyPhotoNormalizeCrop(crop) || BODY_PHOTO_CROP_FULL;
+  return { x: c.x * width, y: c.y * height, w: c.w * width, h: c.h * height, ratio: (c.w * width) / (c.h * height) };
+}
+// Glisser le cadre (`move`) ou une poignée (n, s, e, w, ne, nw, se, sw) de
+// (dx, dy) unités depuis le rectangle `start`. Le côté opposé reste fixe, la
+// taille ne descend pas sous le minimum, le cadre ne sort jamais de l'image.
+function bodyPhotoCropDrag(start, handle, dx, dy) {
+  const s = bodyPhotoNormalizeCrop(start) || BODY_PHOTO_CROP_FULL;
+  const min = BODY_PHOTO_CROP_MIN;
+  let x0 = s.x, y0 = s.y, x1 = s.x + s.w, y1 = s.y + s.h;
+  if (handle === "move") {
+    const nx = Math.min(1 - s.w, Math.max(0, s.x + dx));
+    const ny = Math.min(1 - s.h, Math.max(0, s.y + dy));
+    return { x: nx, y: ny, w: s.w, h: s.h };
+  }
+  if (handle.includes("w")) x0 = Math.min(x1 - min, Math.max(0, x0 + dx));
+  if (handle.includes("e")) x1 = Math.max(x0 + min, Math.min(1, x1 + dx));
+  if (handle.includes("n")) y0 = Math.min(y1 - min, Math.max(0, y0 + dy));
+  if (handle.includes("s")) y1 = Math.max(y0 + min, Math.min(1, y1 + dy));
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 // Photo de droite effective : celle choisie si elle existe encore et n'est
@@ -41373,6 +41422,11 @@ const BODY_PHOTO_CSS = `
 .nx-bp-knob{position:absolute;top:50%;left:-1px;box-sizing:border-box;width:32px;height:32px;margin:-16px 0 0 -16px;border-radius:50%;background:#fff;border:2px solid var(--life-blue,#245edb);box-shadow:0 2px 8px rgba(15,23,36,.35);display:flex;align-items:center;justify-content:center;color:var(--life-blue,#245edb);font-weight:700;font-size:13px;cursor:ew-resize;pointer-events:auto;touch-action:none}
 .nx-bp-knob:focus-visible{outline:3px solid #9cc0ff;outline-offset:2px}
 .nx-bp-overlay{position:absolute;inset:0;pointer-events:none}
+.nx-bp-crop{position:absolute;box-sizing:border-box;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,36,.6),0 0 0 9999px rgba(15,23,36,.55);cursor:move;touch-action:none}
+.nx-bp-crop:focus-visible{outline:3px solid #9cc0ff;outline-offset:2px}
+.nx-bp-crop-handle{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;box-sizing:border-box;background:#fff;border:2px solid var(--life-blue,#245edb);border-radius:3px;touch-action:none}
+.nx-bp-crop-handle.nw{left:0;top:0;cursor:nwse-resize}.nx-bp-crop-handle.n{left:50%;top:0;cursor:ns-resize}.nx-bp-crop-handle.ne{left:100%;top:0;cursor:nesw-resize}.nx-bp-crop-handle.e{left:100%;top:50%;cursor:ew-resize}
+.nx-bp-crop-handle.se{left:100%;top:100%;cursor:nwse-resize}.nx-bp-crop-handle.s{left:50%;top:100%;cursor:ns-resize}.nx-bp-crop-handle.sw{left:0;top:100%;cursor:nesw-resize}.nx-bp-crop-handle.w{left:0;top:50%;cursor:ew-resize}
 .nx-bp-gallery{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;flex:0 0 auto}
 .nx-bp-thumb{position:relative;flex:0 0 auto;width:92px;border:1px solid var(--life-border,#dce3ed);border-radius:9px;background:var(--life-soft,#f7f9fc);overflow:hidden}
 .nx-bp-thumb.is-ref{border-color:#c48a00;box-shadow:0 0 0 1px #c48a00}
@@ -41438,15 +41492,17 @@ function useBodyPhotoFrame(boxRef, ratio) {
 // Repères et lignes de contrôle dessinés dans le cadre de la référence :
 // ronds = référence, croix = photo de droite transformée. Ligne des yeux et
 // verticale du nombril de la référence pour juger l'alignement d'un coup d'œil.
-function BodyPhotoMarks({ reference, photo, transform, width, height }) {
-  const k = width / reference.width;
+function BodyPhotoMarks({ reference, photo, transform, width, height, view }) {
+  // `view` : zone rognée (pixels de la référence) ; sans rognage, tout le cadre.
+  const v = view || { x: 0, y: 0, w: reference.width };
+  const k = width / v.w;
   const pt = (p, ph, t) => {
     const px = bodyPhotoToPixels(p, ph.width, ph.height);
     return px ? bodyPhotoApply(t, px) : null;
   };
   const refPts = Object.fromEntries(BODY_PHOTO_LANDMARKS.map(({ key }) => [key, pt(reference.landmarks?.[key], reference, BODY_PHOTO_IDENTITY)]));
   const phPts = photo && transform ? Object.fromEntries(BODY_PHOTO_LANDMARKS.map(({ key }) => [key, pt(photo.landmarks?.[key], photo, transform)])) : {};
-  const s = (p) => ({ x: p.x * k, y: p.y * k });
+  const s = (p) => ({ x: (p.x - v.x) * k, y: (p.y - v.y) * k });
   const L = refPts.leftEye && s(refPts.leftEye), R = refPts.rightEye && s(refPts.rightEye), N = refPts.navel && s(refPts.navel);
   return (
     <svg className="nx-bp-overlay" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
@@ -41472,14 +41528,18 @@ function BodyPhotoMarks({ reference, photo, transform, width, height }) {
 // droite reçoit sa similarité en CSS `transform: matrix(...)` : composée par
 // le GPU, sans redessiner l'image quand le curseur bouge — seul le
 // `clip-path` du calque change.
-function BodyPhotoCompare({ reference, photo, alignment, split, onSplit, onSplitCommit, showLandmarks }) {
+function BodyPhotoCompare({ reference, photo, alignment, split, onSplit, onSplitCommit, showLandmarks, crop }) {
   const boxRef = useRef(null);
   const frameRef = useRef(null);
-  const frame = useBodyPhotoFrame(boxRef, reference.width / reference.height);
+  // Rognage (#633) : le cadre prend la proportion de la zone gardée ; les deux
+  // images et les repères reçoivent le même zoom et le même décalage.
+  const view = bodyPhotoCropView(crop, reference.width, reference.height);
+  const frame = useBodyPhotoFrame(boxRef, view.ratio);
   const refImg = useBodyPhotoUrl(reference.id);
   const phImg = useBodyPhotoUrl(photo.id);
   const drag = useRef(false);
-  const k = frame.w / reference.width;
+  const k = frame.w / view.w;
+  const shift = `translate(${-(view.x * k).toFixed(3)}px, ${-(view.y * k).toFixed(3)}px)`;
   const setFromEvent = (e) => {
     const rect = frameRef.current.getBoundingClientRect();
     onSplit(Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)));
@@ -41507,12 +41567,12 @@ function BodyPhotoCompare({ reference, photo, alignment, split, onSplit, onSplit
       {frame.w > 0 && (
         <div className="nx-bp-frame" ref={frameRef} data-testid="body-photo-frame" style={{ width: frame.w, height: frame.h }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-          {refImg.url && <img src={refImg.url} alt={`Référence du ${bodyPhotoFormatDate(reference.date)}`} data-role="reference" style={{ width: frame.w, height: frame.h }} />}
+          {refImg.url && <img src={refImg.url} alt={`Référence du ${bodyPhotoFormatDate(reference.date)}`} data-role="reference" style={{ width: reference.width * k, height: reference.height * k, transform: shift }} />}
           <div className="nx-bp-layer" style={{ clipPath: `inset(0 0 0 ${split}%)` }}>
             {phImg.url && <img src={phImg.url} alt={`Photo du ${bodyPhotoFormatDate(photo.date)}, alignée sur la référence`} data-role="photo"
-              style={{ width: photo.width, height: photo.height, transform: bodyPhotoCssMatrix(alignment.transform, k) }} />}
+              style={{ width: photo.width, height: photo.height, transform: `${shift} ${bodyPhotoCssMatrix(alignment.transform, k)}` }} />}
           </div>
-          {showLandmarks && <BodyPhotoMarks reference={reference} photo={photo} transform={alignment.transform} width={frame.w} height={frame.h} />}
+          {showLandmarks && <BodyPhotoMarks reference={reference} photo={photo} transform={alignment.transform} width={frame.w} height={frame.h} view={view} />}
           <span className="nx-bp-label" style={{ left: 8 }}>Référence · {bodyPhotoFormatDate(reference.date)}</span>
           <span className="nx-bp-label" style={{ right: 8 }}>{deltaLabel}</span>
           <div className="nx-bp-handle" style={{ left: `${split}%` }}>
@@ -41708,6 +41768,77 @@ function BodyPhotoRefine({ reference, photo, onClose }) {
   );
 }
 
+// Mode « Rogner » (#633) : tout le cadre de la référence, la photo alignée
+// superposée en transparence, et le cadre gardé — déplaçable par son centre,
+// redimensionnable par ses huit poignées (souris, doigt), au clavier par les
+// flèches (Maj : pas de 5 %) ; Alt + flèches agrandit ou réduit.
+const BODY_PHOTO_CROP_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+function BodyPhotoCrop({ reference, photo, alignment, crop, onSave, onClose }) {
+  const boxRef = useRef(null);
+  const frame = useBodyPhotoFrame(boxRef, reference.width / reference.height);
+  const refImg = useBodyPhotoUrl(reference.id);
+  const phImg = useBodyPhotoUrl(photo.id);
+  const [rect, setRect] = useState(() => bodyPhotoNormalizeCrop(crop) || { ...BODY_PHOTO_CROP_FULL });
+  const drag = useRef(null);
+  const k = frame.w / reference.width;
+  const pct = (v) => `${(v * 100).toFixed(3)}%`;
+  const onPointerDown = (handle) => (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    drag.current = { handle, start: rect, x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d || !frame.w) return;
+    setRect(bodyPhotoCropDrag(d.start, d.handle, (e.clientX - d.x) / frame.w, (e.clientY - d.y) / frame.h));
+  };
+  const onPointerUp = () => { drag.current = null; };
+  const onKeyDown = (e) => {
+    const dirs = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    const d = dirs[e.key];
+    if (!d) return;
+    e.preventDefault();
+    const step = e.shiftKey ? 0.05 : 0.01;
+    setRect((r) => (e.altKey ? bodyPhotoCropDrag(r, "se", d[0] * step, d[1] * step) : bodyPhotoCropDrag(r, "move", d[0] * step, d[1] * step)));
+  };
+  const full = !bodyPhotoNormalizeCrop(rect);
+  const sizeLabel = `${Math.round(rect.w * reference.width)} × ${Math.round(rect.h * reference.height)} px`;
+  return (
+    <>
+      <div className="nx-bp-bar">
+        <span className="nx-bp-hint grow">Glisse le cadre ou ses poignées. Le rognage s’applique aux deux photos de la comparaison ; les originaux ne sont pas modifiés.</span>
+        <span className="nx-bp-hint">{full ? "Image entière" : sizeLabel}</span>
+      </div>
+      <div className="nx-bp-stage" ref={boxRef}>
+        {frame.w > 0 && (
+          <div className="nx-bp-frame" data-testid="body-photo-crop" style={{ width: frame.w, height: frame.h }}
+            onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+            {refImg.url && <img src={refImg.url} alt="" style={{ width: frame.w, height: frame.h }} />}
+            {phImg.url && alignment?.ok && <img src={phImg.url} alt="" data-role="photo"
+              style={{ width: photo.width, height: photo.height, transform: bodyPhotoCssMatrix(alignment.transform, k), opacity: 0.5 }} />}
+            <div className="nx-bp-crop" role="group" tabIndex={0}
+              aria-label="Cadre de rognage : flèches pour déplacer, Alt + flèches pour redimensionner, Maj pour aller plus vite"
+              style={{ left: pct(rect.x), top: pct(rect.y), width: pct(rect.w), height: pct(rect.h) }}
+              onPointerDown={onPointerDown("move")} onKeyDown={onKeyDown}>
+              {BODY_PHOTO_CROP_HANDLES.map((h) => (
+                <span key={h} className={`nx-bp-crop-handle ${h}`} data-handle={h} onPointerDown={onPointerDown(h)} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="nx-bp-bar">
+        <button type="button" disabled={full} onClick={() => setRect({ ...BODY_PHOTO_CROP_FULL })} title="Retirer le rognage">Tout afficher</button>
+        <span className="grow" />
+        <button type="button" onClick={onClose}>Annuler</button>
+        <button type="button" className="primary" onClick={() => onSave(bodyPhotoNormalizeCrop(rect))}>Enregistrer</button>
+      </div>
+    </>
+  );
+}
+
 // Vignette de la galerie : image chargée seulement quand elle est visible.
 function BodyPhotoThumb({ photo, isReference, isRight, busy, onAction }) {
   const ref = useRef(null);
@@ -41774,6 +41905,13 @@ function WidgetBodyPhotos({ widget, externalToolbarSlot, onUpdateWidget }) {
   const rightIndex = right ? candidates.findIndex((p) => p.id === right.id) : -1;
   const alignment = reference && right ? bodyPhotoAlignment(right, reference) : null;
   const editing = mode ? sorted.find((p) => p.id === mode.id) : null;
+  const crop = reference ? spec.crops[reference.id] || null : null;
+  const saveCrop = (value) => {
+    const crops = { ...spec.crops };
+    if (value) crops[reference.id] = value; else delete crops[reference.id];
+    update({ crops });
+    setMode(null);
+  };
 
   // Import multiple : séquentiel, l'échec d'un fichier ne bloque pas les
   // autres ; chaque fichier garde sa clé d'idempotence pour être relancé.
@@ -41835,6 +41973,7 @@ function WidgetBodyPhotos({ widget, externalToolbarSlot, onUpdateWidget }) {
         <button type="button" onClick={() => step(1)} disabled={rightIndex < 0 || rightIndex >= candidates.length - 1} aria-label="Photo suivante">›</button>
         <button type="button" className={spec.showLandmarks ? "active" : ""} aria-pressed={spec.showLandmarks} onClick={() => update({ showLandmarks: !spec.showLandmarks })}>Repères visibles</button>
         {reference && right && alignment?.ok && <button type="button" onClick={() => setMode({ kind: "refine", id: right.id })}>Affiner</button>}
+        {reference && right && alignment?.ok && <button type="button" className={crop ? "active" : ""} aria-pressed={!!crop} title={crop ? "Modifier le rognage" : "Rogner la comparaison"} onClick={() => setMode({ kind: "crop", id: reference.id })}><Crop size={12} style={{ verticalAlign: -2 }} /> Rogner</button>}
         <button type="button" onClick={() => inputRef.current?.click()} title="Importer des photos (JPEG, PNG, HEIC)"><Upload size={12} style={{ verticalAlign: -2 }} /> Importer</button>
         <button type="button" onClick={toggleFullscreen} aria-pressed={fullscreen} title={fullscreen ? "Quitter le plein écran" : "Plein écran"}><Maximize2 size={12} style={{ verticalAlign: -2 }} /> {fullscreen ? "Quitter" : "Plein écran"}</button>
         <span className="count">{ready.length} photo{ready.length > 1 ? "s" : ""}</span>
@@ -41851,6 +41990,8 @@ function WidgetBodyPhotos({ widget, externalToolbarSlot, onUpdateWidget }) {
     main = <div className="nx-bp-empty">Chargement des photos…</div>;
   } else if (editing && mode.kind === "landmarks") {
     main = <BodyPhotoLandmarkEditor key={editing.id} photo={editing} onClose={() => setMode(null)} />;
+  } else if (editing && mode.kind === "crop" && reference && right) {
+    main = <BodyPhotoCrop key={reference.id} reference={reference} photo={right} alignment={alignment} crop={crop} onSave={saveCrop} onClose={() => setMode(null)} />;
   } else if (editing && mode.kind === "refine" && reference) {
     main = <BodyPhotoRefine key={`${editing.id}:${reference.id}`} reference={reference} photo={editing} onClose={() => setMode(null)} />;
   } else if (!sorted.length) {
@@ -41876,7 +42017,7 @@ function WidgetBodyPhotos({ widget, externalToolbarSlot, onUpdateWidget }) {
     );
   } else {
     main = (
-      <BodyPhotoCompare reference={reference} photo={right} alignment={alignment} split={split} showLandmarks={spec.showLandmarks}
+      <BodyPhotoCompare reference={reference} photo={right} alignment={alignment} split={split} showLandmarks={spec.showLandmarks} crop={crop}
         onSplit={setSplit} onSplitCommit={(v) => update({ split: Math.round((v ?? split) * 10) / 10 })} />
     );
   }

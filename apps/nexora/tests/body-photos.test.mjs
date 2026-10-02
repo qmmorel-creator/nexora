@@ -33,6 +33,7 @@ const B = vm.runInThisContext(`(function () {\n${slice("BODY-PHOTOS")}\n;return 
   bodyPhotoNudge, bodyPhotoAlignment, bodyPhotoCssMatrix, bodyPhotoDefaultDate, bodyPhotoDaysBetween, bodyPhotoDeltaLabel,
   bodyPhotoSorted, bodyPhotoSpec, bodyPhotoRightPhoto, bodyPhotoFitSize, bodyPhotoExifInfo, bodyPhotoIsNeutral, bodyPhotoFormatDate,
   bodyPhotoJpegSize, bodyPhotoOrientedSize, bodyPhotoDecodePlan, BODY_PHOTO_HEAD_BYTES,
+  BODY_PHOTO_CROP_MIN, bodyPhotoNormalizeCrop, bodyPhotoCropView, bodyPhotoCropDrag,
 };\n})`)();
 
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg} : ${a} ≠ ${b} (± ${tol})`);
@@ -264,8 +265,8 @@ test("mémoire : en-tête seul, dimensions JPEG, décodage réduit selon l'orien
 });
 
 test("réglage du widget, tri de la galerie et photo de droite", () => {
-  assert.deepEqual({ ...B.bodyPhotoSpec(undefined) }, { rightId: "", split: 50, showLandmarks: false });
-  assert.deepEqual({ ...B.bodyPhotoSpec({ bodyPhotos: { rightId: "x", split: 140, showLandmarks: true } }) }, { rightId: "x", split: 100, showLandmarks: true });
+  assert.deepEqual({ ...B.bodyPhotoSpec(undefined) }, { rightId: "", split: 50, showLandmarks: false, crops: {} });
+  assert.deepEqual({ ...B.bodyPhotoSpec({ bodyPhotos: { rightId: "x", split: 140, showLandmarks: true } }) }, { rightId: "x", split: 100, showLandmarks: true, crops: {} });
   const photos = [
     { id: "c", date: "2026-05-01", createdAt: "1", status: "ready" },
     { id: "a", date: "2026-01-01", createdAt: "1", status: "ready" },
@@ -277,6 +278,43 @@ test("réglage du widget, tri de la galerie et photo de droite", () => {
   assert.equal(B.bodyPhotoRightPhoto(photos, "a", "b").id, "b");
   assert.equal(B.bodyPhotoRightPhoto(photos, "a", "a").id, "c", "jamais la référence");
   assert.equal(B.bodyPhotoRightPhoto([photos[1]], "a", ""), null);
+});
+
+// Rognage (#633) ---------------------------------------------------------------
+
+test("rognage : rectangle valide, borné, arrondi ; absent, abîmé ou plein cadre → aucun rognage", () => {
+  for (const c of [undefined, null, "x", {}, { x: 0, y: 0, w: "1", h: 1 }, { x: NaN, y: 0, w: 0.5, h: 0.5 }]) assert.equal(B.bodyPhotoNormalizeCrop(c), null);
+  assert.equal(B.bodyPhotoNormalizeCrop({ x: 0, y: 0, w: 1, h: 1 }), null, "plein cadre = pas de rognage");
+  assert.deepEqual(B.bodyPhotoNormalizeCrop({ x: 0.1, y: 0.2, w: 0.5, h: 0.6 }), { x: 0.1, y: 0.2, w: 0.5, h: 0.6 });
+  assert.deepEqual(B.bodyPhotoNormalizeCrop({ x: 0.9, y: -0.2, w: 0.5, h: 2 }), { x: 0.5, y: 0, w: 0.5, h: 1 }, "ramené dans l'image");
+  assert.deepEqual(B.bodyPhotoNormalizeCrop({ x: 0, y: 0, w: 0.01, h: 0.5 }), { x: 0, y: 0, w: B.BODY_PHOTO_CROP_MIN, h: 0.5 }, "taille minimale");
+  assert.deepEqual(B.bodyPhotoNormalizeCrop({ x: 0.123456789, y: 0, w: 0.5, h: 0.5 }), { x: 0.1235, y: 0, w: 0.5, h: 0.5 });
+});
+
+test("rognage : zone affichée en pixels de la référence, proportion du cadre", () => {
+  assert.deepEqual(B.bodyPhotoCropView(null, 600, 900), { x: 0, y: 0, w: 600, h: 900, ratio: 600 / 900 });
+  const v = B.bodyPhotoCropView({ x: 0.25, y: 0.1, w: 0.5, h: 0.4 }, 600, 900);
+  assert.deepEqual([v.x, v.y, v.w, v.h], [150, 90, 300, 360]);
+  close(v.ratio, 300 / 360, 1e-12, "proportion");
+});
+
+test("rognage : poignées — côté opposé fixe, taille minimale, jamais hors de l'image", () => {
+  const r = { x: 0.2, y: 0.2, w: 0.5, h: 0.5 };
+  const near = (a, b) => ["x", "y", "w", "h"].forEach((k) => close(a[k], b[k], 1e-9, k));
+  near(B.bodyPhotoCropDrag(r, "move", 0.1, -0.1), { x: 0.3, y: 0.1, w: 0.5, h: 0.5 });
+  near(B.bodyPhotoCropDrag(r, "move", 0.9, 0.9), { x: 0.5, y: 0.5, w: 0.5, h: 0.5 });
+  near(B.bodyPhotoCropDrag(r, "se", 0.1, 0.2), { x: 0.2, y: 0.2, w: 0.6, h: 0.7 });
+  near(B.bodyPhotoCropDrag(r, "nw", 0.1, 0.1), { x: 0.3, y: 0.3, w: 0.4, h: 0.4 });
+  near(B.bodyPhotoCropDrag(r, "e", 1, 0), { x: 0.2, y: 0.2, w: 0.8, h: 0.5 });
+  near(B.bodyPhotoCropDrag(r, "w", 0.9, 0), { x: 0.7 - B.BODY_PHOTO_CROP_MIN, y: 0.2, w: B.BODY_PHOTO_CROP_MIN, h: 0.5 });
+  near(B.bodyPhotoCropDrag(r, "n", 0, -1), { x: 0.2, y: 0, w: 0.5, h: 0.7 });
+  near(B.bodyPhotoCropDrag(null, "s", 0, -0.95), { x: 0, y: 0, w: 1, h: B.BODY_PHOTO_CROP_MIN });
+});
+
+test("rognage : relu depuis les réglages du widget, rangé par référence, entrées abîmées ignorées", () => {
+  const spec = B.bodyPhotoSpec({ bodyPhotos: { crops: { ref1: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 }, ref2: { x: 0, y: 0, w: 1, h: 1 }, ref3: "abîmé" } } });
+  assert.deepEqual(spec.crops, { ref1: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 } });
+  assert.deepEqual(B.bodyPhotoSpec({}).crops, {});
 });
 
 // --- 2. Routes -----------------------------------------------------------------
