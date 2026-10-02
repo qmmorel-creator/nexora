@@ -778,6 +778,108 @@ function GlobalMetaSearchModal({ tasks, taskArchive = [], ctx, onOpenTask, onRes
 }
 
 // ============================================================================
+// Thèmes activables (Ref #621)
+// ============================================================================
+// Choix du thème dans Réglages → Apparence. La feuille de chaque thème est
+// GÉNÉRÉE dans part-004 (style#nexora-themes) par
+// docs/chartes-graphiques/outils/integration.mjs : couche de présentation
+// seule, activée par les attributs data-nexora-theme / data-nexora-mode posés
+// sur <html> (donc aussi sur les menus en portail). « nexora » = thème
+// d'origine, sans attribut. Le dernier choix est recopié dans localStorage
+// pour être appliqué dès le <head>, avant le chargement des préférences.
+// === NEXORA:THEMES:START ===
+const NEXORA_THEMES = [
+  { key: "nexora", label: "Nexora", description: "Le thème d'origine : surfaces claires, bleu d'action.", fonts: "", modes: false,
+    swatches: { clair: ["#f3f5f9", "#ffffff", "#245edb", "#18263d"] } },
+  { key: "bauhaus", label: "Bauhaus", description: "Fond papier, cadres noirs, aplats rouge, jaune et bleu, angles droits.", fonts: "family=Outfit:wght@400;500;600;700;800", modes: true,
+    swatches: { clair: ["#F0EDE6", "#D9302A", "#F5B400", "#1D4E89", "#141414"], sombre: ["#16150F", "#EF5A4C", "#F5C242", "#2B5F9E", "#F0EDE6"] } },
+  { key: "dessau", label: "Dessau", description: "Le Bauhaus tempéré : ocre, brique et ardoise, filets fins, Jost.", fonts: "family=Jost:wght@400;500;600;700", modes: true,
+    swatches: { clair: ["#ECE6DA", "#C9922E", "#B5462E", "#34506E", "#23201C"], sombre: ["#191714", "#D7A445", "#B84A33", "#4A6A8F", "#EEE7DA"] } },
+];
+const NEXORA_THEME_MODES = [["clair", "Clair"], ["sombre", "Sombre"], ["systeme", "Selon le système"]];
+const NEXORA_THEME_STORAGE_KEY = "nexora:theme-local";
+
+// Préférence normalisée : thème inconnu → « nexora », mode inconnu → « clair ».
+function nexoraThemeChoice(appearance) {
+  const a = appearance && typeof appearance === "object" ? appearance : {};
+  const theme = NEXORA_THEMES.some((t) => t.key === a.theme) ? a.theme : "nexora";
+  const mode = NEXORA_THEME_MODES.some(([k]) => k === a.themeMode) ? a.themeMode : "clair";
+  return { theme, mode };
+}
+
+// Attributs à poser sur <html>, ou null pour le thème d'origine. « systeme »
+// suit prefers-color-scheme.
+function nexoraThemeAttributes(appearance, prefersDark) {
+  const { theme, mode } = nexoraThemeChoice(appearance);
+  if (theme === "nexora") return null;
+  return { theme, mode: mode === "systeme" ? (prefersDark ? "sombre" : "clair") : mode };
+}
+
+function nexoraThemeFontsHref(theme) {
+  const t = NEXORA_THEMES.find((x) => x.key === theme);
+  return t && t.fonts ? "https://fonts.googleapis.com/css2?" + t.fonts + "&display=swap" : "";
+}
+
+// Applique (ou retire) le thème sur le document : attributs, polices, copie locale.
+function applyNexoraTheme(doc, attrs, storage) {
+  if (!doc || !doc.documentElement) return;
+  const root = doc.documentElement;
+  if (attrs) {
+    root.setAttribute("data-nexora-theme", attrs.theme);
+    root.setAttribute("data-nexora-mode", attrs.mode);
+  } else {
+    root.removeAttribute("data-nexora-theme");
+    root.removeAttribute("data-nexora-mode");
+  }
+  const href = attrs ? nexoraThemeFontsHref(attrs.theme) : "";
+  let link = doc.getElementById("nexora-theme-fonts");
+  if (href && !link) {
+    link = doc.createElement("link");
+    link.id = "nexora-theme-fonts";
+    link.rel = "stylesheet";
+    doc.head.appendChild(link);
+  }
+  if (link) { if (href) { if (link.getAttribute("href") !== href) link.setAttribute("href", href); } else link.remove(); }
+  try { if (storage) { if (attrs) storage.setItem(NEXORA_THEME_STORAGE_KEY, JSON.stringify(attrs)); else storage.removeItem(NEXORA_THEME_STORAGE_KEY); } } catch (_) { /* stockage indisponible */ }
+}
+// === NEXORA:THEMES:END ===
+
+function ThemePicker({ appearance, setAppearance }) {
+  const { theme, mode } = nexoraThemeChoice(appearance);
+  const current = NEXORA_THEMES.find((t) => t.key === theme);
+  return (
+    <>
+      <div className="lp-section-title">Thème</div>
+      <div className="lp-theme-cards" role="radiogroup" aria-label="Thème">
+        {NEXORA_THEMES.map((t) => {
+          const shown = t.swatches[t.modes && mode === "sombre" ? "sombre" : "clair"] || t.swatches.clair;
+          return (
+            <button key={t.key} type="button" role="radio" aria-checked={theme === t.key}
+              className={"lp-theme-card" + (theme === t.key ? " active" : "")}
+              onClick={() => setAppearance((a) => ({ ...a, theme: t.key }))}>
+              <span className="lp-theme-card-swatches" aria-hidden="true">
+                {shown.map((c, i) => <i key={i} style={{ background: c }} />)}
+              </span>
+              <span className="lp-theme-card-label">{t.label}</span>
+              <span className="lp-theme-card-desc">{t.description}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="lp-section-title" style={{ marginTop: 14 }}>Mode</div>
+      <div className="lp-density-row" role="radiogroup" aria-label="Mode">
+        {NEXORA_THEME_MODES.map(([k, l]) => (
+          <button key={k} type="button" role="radio" aria-checked={mode === k} disabled={!current.modes}
+            className={"lp-density-btn" + (current.modes && mode === k ? " active" : "")}
+            onClick={() => setAppearance((a) => ({ ...a, themeMode: k }))}>{l}</button>
+        ))}
+      </div>
+      {!current.modes && <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: 6 }}>Le thème Nexora n'existe qu'en clair. Les modes s'appliquent à Bauhaus et Dessau.</p>}
+    </>
+  );
+}
+
+// ============================================================================
 // Modale Apparence
 // ============================================================================
 
@@ -810,7 +912,11 @@ function AppearanceModal({ appearance, setAppearance, saveStatus, saveError, pus
       </div>
 
       <hr className="lp-divider" />
+      <ThemePicker appearance={appearance} setAppearance={setAppearance} />
+
+      <hr className="lp-divider" />
       <div className="lp-section-title">Rayon des angles</div>
+      {nexoraThemeChoice(appearance).theme !== "nexora" && <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6 }}>Les thèmes Bauhaus et Dessau fixent leurs propres angles ; ce réglage vaut pour le thème Nexora.</p>}
       <div className="lp-density-row">
         {[["sharp", "Anguleux"], ["normal", "Normal"], ["round", "Arrondi"]].map(([k, l]) => (
           <button key={k} className={"lp-density-btn" + ((appearance.radiusStyle || "sharp") === k ? " active" : "")} onClick={() => setAppearance((a) => ({ ...a, radiusStyle: k }))} style={{ borderRadius: RADIUS_SCALES[k].sm }}>{l}</button>
