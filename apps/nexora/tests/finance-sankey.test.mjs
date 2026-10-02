@@ -55,7 +55,7 @@ test("deux types de widget, rattachés au catalogue et au rendu", () => {
   assert.match(html, /FINANCE_SANKEY_TYPES\.includes\(w\.type\) && \(\s*<WidgetFinanceSankey widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\} onUpdateWidget=/);
   // Réglages en en-tête (retour de test #569) : la barre d'outils du cadre est ouverte pour les deux types.
   assert.match(html, /hasHeaderToolbar=\{[^}]*\|\| FINANCE_SANKEY_TYPES\.includes\(w\.type\)/);
-  for (const label of ["Aujourd’hui", "Ce mois", "Mois précédent", "Choisir le mois", "Variante du Sankey", "Étiquetage des valeurs", "Arrondi des valeurs", "Nombre de décimales", "Opacité des flux (0,1 à 1)"]) {
+  for (const label of ["Aujourd’hui", "Ce mois", "Mois précédent", "Choisir le mois", "Variante du Sankey", "Étiquetage des valeurs", "Arrondi des valeurs", "Opacité des flux (0,1 à 1)"]) {
     assert.ok(html.includes(label), `contrôle d'en-tête manquant : ${label}`);
   }
   assert.match(html, /if \(FINANCE_SANKEY_TYPES\.includes\(type\)\) data\.sankeyConfig = \{ \.\.\.sankeyConfig \};/);
@@ -130,13 +130,20 @@ test("barre de période : aujourd'hui, ce mois, mois précédent, mois choisi", 
   assert.deepEqual(S.financeSankeyPeriod({ periodMode: "month", periodValue: "2026-06", quickPeriod: "" }, today), { from: "2026-06-01", to: "2026-06-30" });
 });
 
-test("formats : arrondi intelligent, compact et espace insécable comme à l'origine", () => {
+test("formats : montants arrondis à l'euro (#639), compact et espace insécable", () => {
   assert.equal(S.financeSankeyRound(1234.567, "€", 2, "auto"), "1\u202F235");
-  assert.equal(S.financeSankeyRound(3.14159, "€", 2, "auto"), "3,14");
-  assert.equal(S.financeSankeyRound(1234.567, "€", 2, "fixed"), "1\u202F234,57");
-  assert.equal(S.financeSankeyRound(1234567, "€", 2, "compact"), "1,2\u00A0M");
-  assert.equal(S.financeSankeyFormat(-1500.5, "€", 2), "-1\u202F500,5\u00A0€");
-  assert.equal(S.financeSankeyFormat(null, "€", 2), "—");
+  assert.equal(S.financeSankeyRound(3.14159, "€", 2, "auto"), "3");
+  // Une ancienne configuration « décimales » n'affiche plus de centimes.
+  assert.equal(S.financeSankeyRound(1234.567, "€", 2, "fixed"), "1\u202F235");
+  assert.equal(S.financeSankeyRound(-0.4, "€", 0, "auto"), "0");
+  assert.equal(S.financeSankeyRound(1234567, "€", 0, "compact"), "1,2\u00A0M");
+  assert.equal(S.financeSankeyFormat(-1500.5, "€", 0), "-1\u202F501\u00A0€");
+  assert.equal(S.financeSankeyFormat(-0.4, "€", 0), "0\u00A0€");
+  assert.equal(S.financeSankeyFormat(12.5, "%", 1), "12,5\u00A0%");
+  assert.equal(S.financeSankeyFormat(null, "€", 0), "—");
+  // Aucun montant du widget n'est formaté avec des décimales ; plus de réglage « Déc. ».
+  assert.doesNotMatch(html, /financeSankeyFormat\([^;]*?, "(€)?", [1-9]\)/);
+  assert.doesNotMatch(html, /financeSankeyNumber\(config, "decimals"|Nombre de décimales|Arrondi · décimales|Décimales configurées/);
 });
 
 test("mise en page : échelle commune, piliers proportionnels, aucun ruban hors des nœuds", () => {
