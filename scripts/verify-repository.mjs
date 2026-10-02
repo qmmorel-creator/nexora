@@ -446,6 +446,24 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Les catégories du catalogue des widgets ont changé.");
 }
 
+/* Vue Radar — supprimée (issue #631), avec son widget « Radar (complet) ».
+   Une sauvegarde qui contient encore le widget le perd à la lecture ; une vue
+   par défaut « radar » mémorisée sur un projet ou un dossier est ignorée. */
+{
+  assert.doesNotMatch(builtSource, /key: "radar"|function RadarView|\.lp-radar-|RADAR_TOOLTIP_FIELDS/,
+    "La vue Radar est revenue alors qu'elle a été supprimée.");
+  assert.doesNotMatch(builtSource, /key: "embedRadar"|function WidgetEmbedRadar/,
+    "Le widget Radar (complet) est revenu au catalogue alors qu'il a été supprimé.");
+  assert.match(builtSource, /const REMOVED_RADAR_TYPES = new Set\(\["embedRadar"\]\);/,
+    "La liste des widgets Radar à retirer à la lecture a changé ou disparu.");
+  assert.match(builtSource, /view: normalizeProjectDefaultView\(projectPrefs\.view\) \|\| normalizeProjectDefaultView\(folderPrefs\.view\)/,
+    "La vue par défaut d'un projet ou d'un dossier n'est plus normalisée : une vue retirée ouvrirait un écran vide.");
+  assert.match(builtSource, /view: normalizeProjectDefaultView\(folder\?\.navigationDefaults\?\.view\)/,
+    "La vue par défaut d'un dossier ouvert seul n'est plus normalisée.");
+  assert.match(builtSource, /useEffect\(\(\) => \{ if \(!isKnownViewKey\(view\)\) setView\("projects"\); \}, \[view\]\);/,
+    "Le filet de sécurité qui ramène une vue inconnue sur « Projets » a disparu.");
+}
+
 /* Treemap : le champ qui porte les tuiles (issue #47).
    Une tuile n'est plus forcément un projet. Trois maillons peuvent se défaire
    sans qu'aucune erreur ne se produise : le widget continue alors d'afficher
