@@ -2156,6 +2156,7 @@ function defaultLayoutForType(type) {
   if (type === "financeToCategorize") return { w: 6, h: 9 };
   if (type === "financeWealth") return { w: 6, h: 6 };
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
+  if (type === "financeBudgetCumul") return { w: 10, h: 9 };
   if (type === "sportActivities") return { w: 12, h: 9 };
   if (type === "sportChart") return { w: 10, h: 7 };
   if (type === "sportSummary") return { w: 12, h: 6 };
@@ -2279,7 +2280,7 @@ function migrateLegacyFinanceOs360Widget(widget) {
   const chart = String(os.type || "budget.chart_donut").replace(/^budget\./, "");
   const target = LEGACY_FINANCE_OS360_WIDGETS.find(([re]) => re.test(chart));
   if (target) return { ...widget, type: target[1] };
-  return migrateBudgetChartSankeyWidget({ ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_OS360_CHARTS[chart] || "donut" });
+  return migrateBudgetChartWidget({ ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_OS360_CHARTS[chart] || "donut" });
 }
 // #604 : le « Graphique Budget » ne propose plus les deux Sankey, qui ont leur
 // propre widget. Un Graphique Budget réglé sur un Sankey devient le widget
@@ -2291,6 +2292,20 @@ function migrateBudgetChartSankeyWidget(widget) {
   const annual = budgetChart === "sankeyAnnual" ? { sankeyConfig: { ...(widget.sankeyConfig || {}), periodMode: "year", periodValue: "current" } } : {};
   return { ...rest, type: "financeSankeyMonthly", ...annual };
 }
+// #606 : les dépenses cumulées (et leurs small multiples) ont leur widget
+// « Budget cumulé par mois ». Un Graphique Budget réglé sur l'un d'eux devient
+// ce widget, dans le mode équivalent ; titre, identité et disposition gardés.
+const FINANCE_BUDGET_CUMUL_FROM_CHART = { cumulative: "categories", smallMultiples: "multiples" };
+function migrateBudgetChartCumulWidget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== "financeBudgetChart") return widget;
+  const mode = FINANCE_BUDGET_CUMUL_FROM_CHART[widget.budgetChart];
+  if (!mode) return widget;
+  const { budgetChart, ...rest } = widget;
+  return { ...rest, type: "financeBudgetCumul", budgetCumulMode: mode };
+}
+function migrateBudgetChartWidget(widget) {
+  return migrateBudgetChartCumulWidget(migrateBudgetChartSankeyWidget(widget));
+}
 function migrateLegacyMiniGanttData(value) {
   if (Array.isArray(value)) return value.filter((v) => !isRemovedEcheancesWidget(v)).map(migrateLegacyMiniGanttData);
   if (!value || typeof value !== "object") return value;
@@ -2299,7 +2314,7 @@ function migrateLegacyMiniGanttData(value) {
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
   if (value.type === LEGACY_SPORT_OS360_TYPE) return migrateLegacySportOs360Widget(value);
   if (value.type === LEGACY_FINANCE_OS360_TYPE) return migrateLegacyFinanceOs360Widget(value);
-  if (value.type === "financeBudgetChart") return migrateBudgetChartSankeyWidget(value);
+  if (value.type === "financeBudgetChart") return migrateBudgetChartWidget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
   return next;
@@ -3767,7 +3782,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_OS360_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "embedRadar" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_OS360_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === LEGACY_SPORT_OS360_TYPE}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3839,6 +3854,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeBudgetChart" && (
                   <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
+                {w.type === "financeBudgetCumul" && (
+                  <WidgetFinanceBudgetCumul widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "sportActivities" && (
                   <WidgetSportActivities widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -17195,6 +17213,8 @@ const WIDGET_TYPE_META = [
   { key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Suivi" },
   // Graphiques Budget natifs (#587) : graphique et période choisis dans l'en-tête.
   { key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Suivi" },
+  // Budget cumulé par mois (#606) : 5 lectures du cumul, choisies dans l'en-tête.
+  { key: "financeBudgetCumul", label: "Budget cumulé par mois", icon: TrendingUp, group: "Suivi" },
   // Sport (#578) : journal « Activités Strava » d'OS360, lecture seule.
   { key: "sportActivities", label: "Activités sport", icon: Activity, group: "Suivi" },
   { key: "sportChart", label: "Graphique sport", icon: BarChart3, group: "Suivi" },
@@ -18612,9 +18632,18 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
       {type === "financeBudgetChart" && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-          Graphiques Budget natifs, calculés avec les règles d’OS360 : waterfall, dépenses cumulées (avec revenus cumulés et
-          budget total), small multiples avec budget, donut, waffle et dépenses par mois sur 12 mois (empilables par catégorie).
-          Le graphique et le mois se choisissent dans l’en-tête du widget. Les Sankey ont leur propre widget.
+          Graphiques Budget natifs, calculés avec les règles d’OS360 : waterfall, donut, waffle et dépenses par mois sur
+          12 mois (empilables par catégorie). Le graphique et le mois se choisissent dans l’en-tête du widget. Les Sankey et
+          les dépenses cumulées ont leur propre widget.
+        </p>
+      )}
+
+      {type === "financeBudgetCumul" && (
+        <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+          Dépenses cumulées jour par jour sur un mois, face au budget total et aux revenus cumulés, en cinq lectures choisies
+          dans l’en-tête : par catégorie (aires empilées), face au budget, trajectoires par catégorie, petits multiples avec le
+          budget de chaque catégorie, cumul + dépenses du jour. Les 7 plus grosses catégories des 12 derniers mois gardent
+          leur couleur, les autres sont regroupées dans « Autres ».
         </p>
       )}
 
@@ -37619,11 +37648,10 @@ function WidgetFinanceWealth({ externalToolbarSlot }) {
 // ---------------------------------------------------------------------------
 
 // === NEXORA:FINANCE-BUDGET-CHART:START ===
-// Les Sankey ont leur propre widget (#604) : plus proposés ici.
+// Les Sankey (#604) et les dépenses cumulées (#606, widget « Budget cumulé
+// par mois ») ont leur propre widget : plus proposés ici.
 const FINANCE_BUDGET_CHARTS = [
   { key: "waterfall", label: "Waterfall mensuel" },
-  { key: "cumulative", label: "Dépenses cumulées par catégorie" },
-  { key: "smallMultiples", label: "Small multiples — cumul et budget" },
   { key: "donut", label: "Répartition par catégorie (donut)" },
   { key: "waffle", label: "Waffle des dépenses" },
   { key: "periodic", label: "Dépenses par mois (12 mois)" },
@@ -37704,11 +37732,6 @@ const FINANCE_BUDGET_CHART_CSS = `
 .nx-bch-wf-row small{font-variant-numeric:tabular-nums;white-space:nowrap}
 .nx-bch-wf-track{position:relative;height:14px;background:#f3f6f9;border-radius:3px}
 .nx-bch-wf-track i{position:absolute;top:0;bottom:0;border-radius:3px}
-.nx-bch-sm{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-.nx-bch-sm article{border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}
-.nx-bch-sm h4{margin:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nx-bch-sm small{font-variant-numeric:tabular-nums;color:#60717c}
-.nx-bch-sm .over{color:#a33135;font-weight:600}
 .nx-bch-waffle{display:flex;flex-direction:column;gap:6px}
 .nx-bch-waffle-row{display:grid;grid-template-columns:minmax(80px,140px) minmax(0,1fr) auto;gap:8px;align-items:center}
 .nx-bch-waffle-row b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -37761,103 +37784,6 @@ function FinanceChartWaterfall({ steps }) {
             </div>
             <small>{financeBudgetEuro(value)}</small>
           </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Dépenses cumulées par catégorie (#587, #604) : aires empilées par jour,
-// revenus cumulés et budget total du mois en pointillés sur la même échelle,
-// un repère par jour, infobulle au survol avec les valeurs à la date.
-function FinanceChartCumulative({ days, series, income = [], budgetTotal = 0 }) {
-  const [hover, setHover] = useState(null);
-  const stacked = financeChartStack(series);
-  const spent = stacked.length ? stacked[stacked.length - 1].upper : days.map(() => 0);
-  const top = Math.max(0, ...spent, ...income, budgetTotal);
-  const { max, ticks } = financeChartTicks(top);
-  const W = 640, H = 240, L = 50, R = 64, T = 10, B = 24;
-  const x = (i) => L + (days.length > 1 ? (i / (days.length - 1)) * (W - L - R) : 0);
-  const y = (v) => T + (1 - v / max) * (H - T - B);
-  const step = days.length > 1 ? (W - L - R) / (days.length - 1) : W - L - R;
-  const line = (values) => values.map((v, i) => `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
-  const last = days.length - 1;
-  const h = hover ? hover.i : null;
-  const dayLabel = (d) => new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "UTC" }).format(new Date(d + "T12:00:00Z"));
-  return (
-    <>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Dépenses cumulées par catégorie, revenus cumulés et budget total">
-        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#edf1f4" /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
-        {stacked.map((s) => (
-          <path key={s.category} fill={s.color} fillOpacity="0.85" stroke="#fff" strokeWidth="0.5"
-            d={`M ${s.upper.map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} L ${[...s.lower].map((v, i) => [i, v]).reverse().map(([i, v]) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} Z`} />
-        ))}
-        {income.length > 0 && <path d={line(income)} fill="none" stroke="#3f806f" strokeWidth="1.8" strokeDasharray="5 4" />}
-        {budgetTotal > 0 && <line x1={L} x2={W - R} y1={y(budgetTotal)} y2={y(budgetTotal)} stroke="#a33135" strokeWidth="1.4" strokeDasharray="6 4" />}
-        {/* Étiquettes de fin : dépenses, revenus et budget du mois. */}
-        {last >= 0 && <text x={x(last) + 4} y={y(spent[last]) + 3} style={{ fill: "#203246", fontWeight: 600 }}>{financeChartShortEuro(spent[last])}</text>}
-        {income.length > 0 && <text x={x(last) + 4} y={y(income[last]) + 3} style={{ fill: "#3f806f", fontWeight: 600 }}>{financeChartShortEuro(income[last])}</text>}
-        {budgetTotal > 0 && <text x={x(last) + 4} y={y(budgetTotal) - 3} style={{ fill: "#a33135", fontWeight: 600 }}>{financeChartShortEuro(budgetTotal)}</text>}
-        {/* Un repère par jour, chaque numéro de jour affiché. */}
-        {days.map((d, i) => (
-          <g key={d}>
-            <line x1={x(i)} x2={x(i)} y1={H - B} y2={H - B + 3} stroke="#b8c4cf" />
-            <text x={x(i)} y={H - 8} textAnchor="middle" style={{ fontSize: days.length > 31 ? 7 : 9 }}>{Number(d.slice(8))}</text>
-          </g>
-        ))}
-        <line x1={L} x2={W - R} y1={H - B} y2={H - B} stroke="#b8c4cf" />
-        {h !== null && <line x1={x(h)} x2={x(h)} y1={T} y2={H - B} stroke="#203246" strokeOpacity=".35" />}
-        {days.map((d, i) => (
-          <rect key={"hit" + d} x={x(i) - step / 2} y={T} width={step} height={H - T - B} fill="transparent"
-            onMouseEnter={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
-            onMouseMove={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
-            onMouseLeave={() => setHover(null)} />
-        ))}
-      </svg>
-      {hover && (
-        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
-          <div className="nx-bch-tip">
-            <strong>Au {dayLabel(days[h])}</strong>
-            {series.filter((s) => s.values[h] > 0).map((s) => (
-              <div key={s.category}><span><i style={{ background: s.color }} />{s.category}</span><span>{financeBudgetEuro(s.values[h], 2)}</span></div>
-            ))}
-            <div><strong>Dépenses cumulées</strong><strong>{financeBudgetEuro(spent[h], 2)}</strong></div>
-            {income.length > 0 && <div><span><i className="dash" style={{ borderColor: "#3f806f" }} />Revenus cumulés</span><span>{financeBudgetEuro(income[h], 2)}</span></div>}
-            {budgetTotal > 0 && <div><span><i className="dash" style={{ borderColor: "#a33135" }} />Budget total</span><span>{financeBudgetEuro(budgetTotal, 2)}</span></div>}
-            {budgetTotal > 0 && (budgetTotal >= spent[h]
-              ? <div><span>Reste sur le budget</span><span>{financeBudgetEuro(budgetTotal - spent[h], 2)}</span></div>
-              : <div><span style={{ color: "#f3a3a6" }}>Dépassement du budget</span><span style={{ color: "#f3a3a6" }}>{financeBudgetEuro(spent[h] - budgetTotal, 2)}</span></div>)}
-          </div>
-        </WidgetPointerTooltip>
-      )}
-      <div className="nx-bch-legend">
-        {series.map((s) => <span key={s.category}><i style={{ background: s.color }} />{s.category} · {financeBudgetEuro(s.total)}</span>)}
-        {income.length > 0 && <span><i className="dash" style={{ borderColor: "#3f806f" }} />Revenus cumulés · {financeBudgetEuro(income[last] || 0)}</span>}
-        {budgetTotal > 0 && <span><i className="dash" style={{ borderColor: "#a33135" }} />Budget total · {financeBudgetEuro(budgetTotal)}</span>}
-      </div>
-    </>
-  );
-}
-
-function FinanceChartSmallMultiples({ series }) {
-  return (
-    <div className="nx-bch-sm">
-      {series.map((s) => {
-        const W = 160, H = 60;
-        const top = Math.max(s.total, s.budget, 1);
-        const x = (i) => (s.values.length > 1 ? (i / (s.values.length - 1)) * W : 0);
-        const y = (v) => H - (v / top) * (H - 4);
-        const over = s.budget > 0 && s.total > s.budget;
-        return (
-          <article key={s.category}>
-            <h4 title={s.category}>{s.category}</h4>
-            <small className={over ? "over" : ""}>{financeBudgetEuro(s.total)}{s.budget > 0 ? ` / ${financeBudgetEuro(s.budget)}` : " · sans budget"}</small>
-            <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${s.category} : dépenses cumulées et budget`}>
-              <path d={`M 0 ${H} L ${s.values.map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} L ${W} ${H} Z`} fill={over ? "#f5d5dc" : "#dcefe8"} />
-              <polyline points={s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")} fill="none" stroke={over ? "#a33135" : "#3f806f"} strokeWidth="1.6" />
-              {s.budget > 0 && <line x1="0" x2={W} y1={y(s.budget)} y2={y(s.budget)} stroke="#203246" strokeDasharray="3 3" strokeWidth="1" />}
-            </svg>
-          </article>
         );
       })}
     </div>
@@ -37962,7 +37888,12 @@ function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget 
     const w = migrateBudgetChartSankeyWidget(widget);
     return <WidgetFinanceSankey widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={(patch) => onUpdateWidget && onUpdateWidget({ ...w, ...patch })} />;
   }
-  const chart = FINANCE_BUDGET_CHARTS.some((c) => c.key === widget.budgetChart) ? widget.budgetChart : "cumulative";
+  // Ancien réglage cumul / small multiples (#606) : rendu par le widget dédié.
+  if (FINANCE_BUDGET_CUMUL_FROM_CHART[widget.budgetChart]) {
+    const w = migrateBudgetChartCumulWidget(widget);
+    return <WidgetFinanceBudgetCumul widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={(patch) => onUpdateWidget && onUpdateWidget({ ...w, ...patch })} />;
+  }
+  const chart = FINANCE_BUDGET_CHARTS.some((c) => c.key === widget.budgetChart) ? widget.budgetChart : "waterfall";
   const stacked = widget.budgetPeriodicStacked === true;
   const thisMonth = financeBudgetToday().slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
@@ -37995,10 +37926,434 @@ function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget 
       {empty && <div className="nx-bch-empty">Aucune dépense sur {financeBudgetMonthLabel(month).toLowerCase()}.</div>}
       {!empty && chart === "donut" && <FinanceChartDonut items={c.byCategory} />}
       {chart === "waterfall" && <FinanceChartWaterfall steps={c.waterfall} />}
-      {!empty && chart === "cumulative" && <FinanceChartCumulative days={c.days} series={c.cumulative} income={c.incomeCumulative || []} budgetTotal={c.budgetTotal || 0} />}
-      {!empty && chart === "smallMultiples" && <FinanceChartSmallMultiples series={c.cumulative} />}
       {!empty && chart === "waffle" && <FinanceChartWaffle waffle={c.waffle} />}
       {chart === "periodic" && <FinanceChartPeriodic months={c.periodic} stacked={stacked} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Budget cumulé par mois (#606) : les dépenses cumulées jour par jour d'un
+// mois, séparées du Graphique Budget, en cinq lectures choisies dans l'en-tête
+// (maquettes 1, 2, 3, 4 et 6 validées par Quentin). Données : `charts` de
+// /api/nexora/finance-budget-summary (lib/finance-budget.mjs, règles d'OS360).
+// ---------------------------------------------------------------------------
+
+// === NEXORA:FINANCE-BUDGET-CUMUL:START ===
+const FINANCE_BUDGET_CUMUL_MODES = [
+  { key: "categories", label: "Par catégorie (aires empilées)" },
+  { key: "budget", label: "Face au budget" },
+  { key: "trajectories", label: "Trajectoires par catégorie" },
+  { key: "multiples", label: "Petits multiples avec budget" },
+  { key: "daily", label: "Cumul + dépenses du jour" },
+];
+// Palette catégorielle validée (contrôle daltonisme, fond clair) : 7 teintes
+// dans un ordre fixe, puis « Autres » en gris. Les couleurs du référentiel
+// Budget ne passent pas ce contrôle (Épargne/Achats, Sports/Impôts).
+const FINANCE_CUMUL_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7"];
+const FINANCE_CUMUL_OTHER = "#a3a7ad";
+const FINANCE_CUMUL_INK = { ink: "#0b0b0b", muted: "#52514e", grid: "#ebecee", axis: "#c9ccd1", over: "#c0392b", income: "#1f7a52", pace: "#52514e" };
+
+function financeCumulRound(v) { return Math.round(v * 100) / 100; }
+
+// Modèle d'un mois : séries par catégorie (cumul et montant du jour), total,
+// revenus, budget, rythme prévu du budget et jour du dépassement. La couleur
+// suit la catégorie, jamais son rang du mois : elle vient du rang de la
+// catégorie sur les 12 mois du graphique périodique ; les catégories au-delà
+// de la 7e sont regroupées dans « Autres ».
+function financeCumulModel(charts) {
+  const days = (charts && charts.days) || [];
+  const cumulative = (charts && charts.cumulative) || [];
+  const totals = new Map();
+  for (const m of (charts && charts.periodic) || []) for (const c of m.categories || []) totals.set(c.category, (totals.get(c.category) || 0) + c.amount);
+  for (const s of cumulative) if (!totals.has(s.category)) totals.set(s.category, s.total);
+  const rank = [...totals].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr")).map(([name]) => name);
+  const top = rank.slice(0, FINANCE_CUMUL_PALETTE.length);
+  const daily = (values) => values.map((v, i) => financeCumulRound(v - (i ? values[i - 1] : 0)));
+  const series = [];
+  top.forEach((name, i) => {
+    const s = cumulative.find((x) => x.category === name);
+    if (s && s.total > 0) series.push({ category: name, color: FINANCE_CUMUL_PALETTE[i], values: s.values, daily: daily(s.values), total: s.total, budget: s.budget || 0, members: [name] });
+  });
+  const rest = cumulative.filter((s) => !top.includes(s.category) && s.total > 0);
+  if (rest.length) {
+    const values = days.map((_, k) => financeCumulRound(rest.reduce((t, s) => t + (s.values[k] || 0), 0)));
+    series.push({
+      category: "Autres", color: FINANCE_CUMUL_OTHER, other: true, values, daily: daily(values),
+      total: financeCumulRound(rest.reduce((t, s) => t + s.total, 0)),
+      budget: financeCumulRound(rest.reduce((t, s) => t + (s.budget || 0), 0)),
+      members: rest.map((s) => s.category),
+    });
+  }
+  const total = days.map((_, k) => financeCumulRound(series.reduce((t, s) => t + (s.values[k] || 0), 0)));
+  const income = days.map((_, k) => (charts && charts.incomeCumulative && charts.incomeCumulative[k]) || 0);
+  const budgetTotal = (charts && charts.budgetTotal) || 0;
+  const pace = days.map((_, k) => (budgetTotal > 0 ? financeCumulRound((budgetTotal * (k + 1)) / days.length) : 0));
+  const crossDay = budgetTotal > 0 ? total.findIndex((v) => v > budgetTotal) : -1;
+  const dailyTotal = daily(total);
+  return { days, series, total, income, budgetTotal, pace, crossDay, dailyTotal, spent: total.length ? total[total.length - 1] : 0 };
+}
+
+// Étiquettes de fin de courbe sans chevauchement : triées de haut en bas,
+// chacune au moins `gap` sous la précédente.
+function financeCumulSpread(items, gap) {
+  const sorted = [...items].sort((a, b) => a.y - b.y);
+  for (let k = 1; k < sorted.length; k++) if (sorted[k].y - sorted[k - 1].y < gap) sorted[k] = { ...sorted[k], y: sorted[k - 1].y + gap };
+  return sorted;
+}
+// === NEXORA:FINANCE-BUDGET-CUMUL:END ===
+
+const FINANCE_BUDGET_CUMUL_CSS = `
+.nx-bcu-tiles{display:flex;flex-wrap:wrap;gap:6px 24px}
+.nx-bcu-tiles small{display:block;color:#52514e;font-size:11px}
+.nx-bcu-tiles span{font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;color:#0b0b0b}
+.nx-bcu-sm{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.nx-bcu-sm article{border:1px solid #e3e7eb;border-radius:8px;padding:6px 8px 2px}
+.nx-bcu-sm header{display:flex;justify-content:space-between;gap:6px;font-size:11.5px}
+.nx-bcu-sm header b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nx-bcu-sm header small{font-variant-numeric:tabular-nums;color:#52514e;white-space:nowrap}
+.nx-bcu-sm header small.over{color:#c0392b;font-weight:650}
+.nx-bcu-panel{font-size:10px;font-weight:600;letter-spacing:.04em;color:#52514e;text-transform:uppercase}
+`;
+
+// Cadre commun : y en euros (graduations rondes, quadrillage fin), x un repère
+// par jour et chaque numéro de jour.
+function financeCumulFrame({ W, H, L = 50, R, T = 12, B = 24, top, days }) {
+  const { max, ticks } = financeChartTicks(top);
+  const n = days.length;
+  const x = (k) => L + (n > 1 ? (k / (n - 1)) * (W - L - R) : 0);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const step = n > 1 ? (W - L - R) / (n - 1) : W - L - R;
+  return { W, H, L, R, T, B, max, ticks, x, y, step, days };
+}
+function financeCumulPath(values, f) {
+  return values.map((v, k) => `${k ? "L" : "M"} ${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" ");
+}
+function financeCumulDayLabel(d) {
+  return new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "UTC" }).format(new Date(d + "T12:00:00Z"));
+}
+function FinanceCumulAxes({ f }) {
+  const I = FINANCE_CUMUL_INK;
+  return (
+    <>
+      {f.ticks.map((t) => <g key={t}><line x1={f.L} x2={f.W - f.R} y1={f.y(t)} y2={f.y(t)} stroke={I.grid} /><text x={f.L - 5} y={f.y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
+      {f.days.map((d, k) => (
+        <g key={d}>
+          <line x1={f.x(k)} x2={f.x(k)} y1={f.H - f.B} y2={f.H - f.B + 3} stroke={I.axis} />
+          <text x={f.x(k)} y={f.H - f.B + 13} textAnchor="middle" style={{ fontSize: f.days.length > 31 ? 7 : 8.5 }}>{Number(d.slice(8))}</text>
+        </g>
+      ))}
+      <line x1={f.L} x2={f.W - f.R} y1={f.H - f.B} y2={f.H - f.B} stroke={I.axis} />
+    </>
+  );
+}
+// Survol : une zone par jour, plus large que la marque ; repère vertical.
+function FinanceCumulHit({ f, hover, setHover }) {
+  return (
+    <>
+      {hover && <line x1={f.x(hover.i)} x2={f.x(hover.i)} y1={f.T} y2={f.H - f.B} stroke="#0b0b0b" strokeOpacity=".3" />}
+      {f.days.map((d, k) => (
+        <rect key={"hit" + d} x={f.x(k) - f.step / 2} y={f.T} width={f.step} height={f.H - f.T - f.B} fill="transparent"
+          onMouseEnter={(e) => setHover({ i: k, x: e.clientX, y: e.clientY })}
+          onMouseMove={(e) => setHover({ i: k, x: e.clientX, y: e.clientY })}
+          onMouseLeave={() => setHover(null)} />
+      ))}
+    </>
+  );
+}
+// Infobulle : valeurs à la date (cumul de chaque catégorie et dépense du
+// jour), puis total, revenus, budget et reste ou dépassement.
+function FinanceCumulTip({ model, hover, series = model.series, totals = true }) {
+  if (!hover) return null;
+  const k = hover.i;
+  const { budgetTotal } = model;
+  const spent = model.total[k];
+  return (
+    <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+      <div className="nx-bch-tip">
+        <strong>Au {financeCumulDayLabel(model.days[k])}</strong>
+        {series.filter((s) => s.values[k] > 0).map((s) => (
+          <div key={s.category}>
+            <span><i style={{ background: s.color }} />{s.category}{s.daily[k] > 0 ? ` (+${financeBudgetEuro(s.daily[k], 2)} ce jour)` : ""}</span>
+            <span>{financeBudgetEuro(s.values[k], 2)}{!totals && s.budget > 0 ? ` / ${financeBudgetEuro(s.budget)}` : ""}</span>
+          </div>
+        ))}
+        {totals && <div><strong>Dépenses cumulées</strong><strong>{financeBudgetEuro(spent, 2)}</strong></div>}
+        {totals && model.dailyTotal[k] > 0 && <div><span>Dépensé ce jour</span><span>{financeBudgetEuro(model.dailyTotal[k], 2)}</span></div>}
+        {totals && <div><span><i className="dash" style={{ borderColor: FINANCE_CUMUL_INK.income }} />Revenus cumulés</span><span>{financeBudgetEuro(model.income[k], 2)}</span></div>}
+        {totals && budgetTotal > 0 && <div><span><i className="dash" style={{ borderColor: FINANCE_CUMUL_INK.over }} />Budget total</span><span>{financeBudgetEuro(budgetTotal, 2)}</span></div>}
+        {totals && budgetTotal > 0 && (budgetTotal >= spent
+          ? <div><span>Reste sur le budget</span><span>{financeBudgetEuro(budgetTotal - spent, 2)}</span></div>
+          : <div><span style={{ color: "#f3a3a6" }}>Dépassement du budget</span><span style={{ color: "#f3a3a6" }}>{financeBudgetEuro(spent - budgetTotal, 2)}</span></div>)}
+      </div>
+    </WidgetPointerTooltip>
+  );
+}
+function FinanceCumulLegend({ model, lines = true }) {
+  const I = FINANCE_CUMUL_INK;
+  return (
+    <div className="nx-bch-legend">
+      {model.series.map((s) => (
+        <span key={s.category} title={s.other ? s.members.join(", ") : undefined}>
+          <i style={{ background: s.color }} />{s.category}{s.other ? ` (${s.members.length})` : ""} · {financeBudgetEuro(s.total)}
+        </span>
+      ))}
+      {lines && <span><i className="dash" style={{ borderColor: I.income }} />Revenus cumulés</span>}
+      {lines && model.budgetTotal > 0 && <span><i className="dash" style={{ borderColor: I.over }} />Budget total</span>}
+    </div>
+  );
+}
+// Étiquettes à droite du graphe (valeur en gras, puis libellé).
+function FinanceCumulEndLabels({ f, items, gap = 12 }) {
+  return financeCumulSpread(items, gap).map((it) => (
+    <g key={it.key}>
+      {it.swatch && <rect x={f.W - f.R + 4} y={it.y - 3} width="4" height="6" rx="1" fill={it.swatch} />}
+      <text x={f.W - f.R + (it.swatch ? 11 : 6)} y={it.y + 3} style={{ fill: it.ink || FINANCE_CUMUL_INK.muted }}>
+        <tspan style={{ fontWeight: 650 }}>{it.value}</tspan> {it.label}
+      </text>
+    </g>
+  ));
+}
+// Budget total et revenus cumulés, en pointillés nommés sur leur ligne.
+function FinanceCumulRefLines({ f, model, named = true }) {
+  const I = FINANCE_CUMUL_INK;
+  const last = model.days.length - 1;
+  return (
+    <>
+      <path d={financeCumulPath(model.income, f)} fill="none" stroke={I.income} strokeWidth="1.6" strokeDasharray="5 4" />
+      {model.budgetTotal > 0 && <line x1={f.L} x2={f.W - f.R} y1={f.y(model.budgetTotal)} y2={f.y(model.budgetTotal)} stroke={I.over} strokeWidth="1.6" strokeDasharray="6 4" />}
+      {named && model.budgetTotal > 0 && <text x={f.L + 4} y={f.y(model.budgetTotal) - 4} style={{ fill: I.over, fontWeight: 600 }}>Budget {financeBudgetEuro(model.budgetTotal)}</text>}
+      {named && last >= 0 && <text x={f.L + 4} y={f.y(model.income[last]) - 4} style={{ fill: I.income, fontWeight: 600 }}>Revenus {financeBudgetEuro(model.income[last])}</text>}
+    </>
+  );
+}
+
+// 1 · Par catégorie : aires empilées, liseré blanc entre les couches.
+function FinanceCumulCategories({ model }) {
+  const [hover, setHover] = useState(null);
+  const f = financeCumulFrame({ W: 720, H: 280, R: 150, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.04, days: model.days });
+  const last = model.days.length - 1;
+  const base = model.days.map(() => 0);
+  const layers = model.series.map((s) => {
+    const lower = [...base];
+    const upper = s.values.map((v, k) => (base[k] += v));
+    return { ...s, lower, upper };
+  });
+  return (
+    <>
+      <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées par catégorie, revenus cumulés et budget total">
+        <FinanceCumulAxes f={f} />
+        {layers.map((s) => (
+          <path key={s.category} fill={s.color} stroke="#fff" strokeWidth="1.5" strokeLinejoin="round"
+            d={`M ${s.upper.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${s.lower.map((v, k) => [k, v]).reverse().map(([k, v]) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} Z`} />
+        ))}
+        <FinanceCumulRefLines f={f} model={model} />
+        {last >= 0 && <text x={f.x(last) - 3} y={f.y(model.spent) - 5} textAnchor="end" style={{ fill: FINANCE_CUMUL_INK.ink, fontWeight: 700, fontSize: 11 }}>{financeBudgetEuro(model.spent)}</text>}
+        <FinanceCumulEndLabels f={f} items={layers.map((s) => ({ key: s.category, y: f.y(s.upper[last] - s.total / 2), value: financeBudgetEuro(s.total), label: s.category, swatch: s.color }))} />
+        <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
+      </svg>
+      <FinanceCumulTip model={model} hover={hover} />
+      <FinanceCumulLegend model={model} />
+    </>
+  );
+}
+
+// 2 · Face au budget : une aire pour le total, le rythme prévu du budget, la
+// zone au-dessus du budget teintée, le jour du dépassement ; 4 chiffres clés.
+function FinanceCumulBudget({ model }) {
+  const [hover, setHover] = useState(null);
+  const I = FINANCE_CUMUL_INK;
+  const f = financeCumulFrame({ W: 720, H: 260, R: 120, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
+  const last = model.days.length - 1;
+  const { budgetTotal, spent, crossDay } = model;
+  const gap = spent - budgetTotal;
+  const area = `M ${f.x(0)} ${f.y(0)} L ${model.total.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${f.x(last)} ${f.y(0)} Z`;
+  const mid = Math.round(last * 0.6);
+  return (
+    <>
+      <div className="nx-bcu-tiles">
+        <div><small>Dépensé</small><span>{financeBudgetEuro(spent)}</span></div>
+        <div><small>Budget</small><span>{budgetTotal > 0 ? financeBudgetEuro(budgetTotal) : "—"}</span></div>
+        {budgetTotal > 0 && <div><small>{gap > 0 ? "Dépassement" : "Reste"}</small><span style={{ color: gap > 0 ? I.over : I.income }}>{gap > 0 ? "+" : ""}{financeBudgetEuro(Math.abs(gap))} · {Math.round((spent / budgetTotal) * 100)} %</span></div>}
+        {budgetTotal > 0 && <div><small>Budget dépassé le</small><span>{crossDay >= 0 ? financeCumulDayLabel(model.days[crossDay]) : "—"}</span></div>}
+      </div>
+      <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées du mois face au budget">
+        {budgetTotal > 0 && <rect x={f.L} y={f.T} width={f.W - f.R - f.L} height={Math.max(0, f.y(budgetTotal) - f.T)} fill={I.over} fillOpacity=".05" />}
+        <FinanceCumulAxes f={f} />
+        <path d={area} fill={FINANCE_CUMUL_PALETTE[0]} fillOpacity=".14" />
+        <path d={financeCumulPath(model.total, f)} fill="none" stroke={FINANCE_CUMUL_PALETTE[0]} strokeWidth="2.2" strokeLinejoin="round" />
+        {budgetTotal > 0 && <path d={financeCumulPath(model.pace, f)} fill="none" stroke={I.pace} strokeWidth="1.2" strokeDasharray="3 3" />}
+        {budgetTotal > 0 && <text x={f.x(mid) + 4} y={f.y(model.pace[mid]) + 12} style={{ fill: I.muted }}>rythme prévu du budget</text>}
+        <path d={financeCumulPath(model.income, f)} fill="none" stroke={I.income} strokeWidth="1.6" strokeDasharray="5 4" />
+        {budgetTotal > 0 && <line x1={f.L} x2={f.W - f.R} y1={f.y(budgetTotal)} y2={f.y(budgetTotal)} stroke={I.over} strokeWidth="1.6" />}
+        {crossDay >= 0 && (
+          <g>
+            <circle cx={f.x(crossDay)} cy={f.y(model.total[crossDay])} r="4" fill={I.over} stroke="#fff" strokeWidth="1.5" />
+            <text x={f.x(crossDay) + 7} y={f.y(model.total[crossDay]) + 13} style={{ fill: I.over, fontWeight: 600 }}>dépassement le {Number(model.days[crossDay].slice(8))}</text>
+          </g>
+        )}
+        <FinanceCumulEndLabels f={f} gap={13} items={[
+          { key: "spent", y: f.y(spent), value: financeBudgetEuro(spent), label: "dépensé", ink: I.ink },
+          ...(budgetTotal > 0 ? [{ key: "budget", y: f.y(budgetTotal), value: financeBudgetEuro(budgetTotal), label: "budget", ink: I.over }] : []),
+          { key: "income", y: f.y(model.income[last] || 0), value: financeBudgetEuro(model.income[last] || 0), label: "revenus", ink: I.income },
+        ]} />
+        <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
+      </svg>
+      <FinanceCumulTip model={model} hover={hover} />
+    </>
+  );
+}
+
+// 3 · Trajectoires : une ligne cumulée par catégorie, non empilées.
+function FinanceCumulTrajectories({ model }) {
+  const [hover, setHover] = useState(null);
+  const f = financeCumulFrame({ W: 720, H: 280, R: 150, top: Math.max(0, ...model.series.map((s) => s.total)), days: model.days });
+  const last = model.days.length - 1;
+  return (
+    <>
+      <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées, une ligne par catégorie">
+        <FinanceCumulAxes f={f} />
+        {[...model.series].reverse().map((s) => (
+          <g key={s.category}>
+            <path d={financeCumulPath(s.values, f)} fill="none" stroke={s.color} strokeWidth="1.8" strokeLinejoin="round" />
+            {last >= 0 && <circle cx={f.x(last)} cy={f.y(s.total)} r="3" fill={s.color} stroke="#fff" strokeWidth="1.5" />}
+          </g>
+        ))}
+        <FinanceCumulEndLabels f={f} items={model.series.map((s) => ({ key: s.category, y: f.y(s.total), value: financeBudgetEuro(s.total), label: s.category }))} />
+        <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
+      </svg>
+      <FinanceCumulTip model={model} hover={hover} />
+      <FinanceCumulLegend model={model} lines={false} />
+    </>
+  );
+}
+
+// 4 · Petits multiples : une carte par catégorie, sa propre échelle et son
+// budget du mois en pointillés ; au-dessus du budget, rouge et ▲.
+function FinanceCumulMultiples({ model }) {
+  return (
+    <div className="nx-bcu-sm">
+      {model.series.map((s) => <FinanceCumulCard key={s.category} s={s} model={model} />)}
+    </div>
+  );
+}
+function FinanceCumulCard({ s, model }) {
+  const I = FINANCE_CUMUL_INK;
+  const [hover, setHover] = useState(null);
+  const over = s.budget > 0 && s.total > s.budget;
+  const color = over ? I.over : s.color;
+  const f = financeCumulFrame({ W: 240, H: 104, L: 6, R: 6, T: 8, B: 16, top: Math.max(s.total, s.budget) * 1.12, days: model.days });
+  const last = model.days.length - 1;
+  const area = `M ${f.x(0)} ${f.y(0)} L ${s.values.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${f.x(last)} ${f.y(0)} Z`;
+  return (
+    <article>
+      <header>
+        <b title={s.other ? s.members.join(", ") : s.category}>{s.category}</b>
+        <small className={over ? "over" : ""}>{financeBudgetEuro(s.total)}{s.budget > 0 ? ` / ${financeBudgetEuro(s.budget)}` : " · sans budget"}{over ? " ▲" : ""}</small>
+      </header>
+      <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label={`${s.category} : dépenses cumulées${s.budget > 0 ? " et budget" : ""}${over ? ", budget dépassé" : ""}`}>
+        <line x1={f.L} x2={f.W - f.R} y1={f.y(0)} y2={f.y(0)} stroke={I.axis} />
+        <path d={area} fill={color} fillOpacity=".14" />
+        <path d={financeCumulPath(s.values, f)} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+        {s.budget > 0 && <line x1={f.L} x2={f.W - f.R} y1={f.y(s.budget)} y2={f.y(s.budget)} stroke={I.muted} strokeDasharray="4 4" />}
+        <text x={f.L} y={f.H - 3}>{last >= 0 ? Number(model.days[0].slice(8)) : ""}</text>
+        <text x={f.W - f.R} y={f.H - 3} textAnchor="end">{last >= 0 ? Number(model.days[last].slice(8)) : ""}</text>
+        <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
+      </svg>
+      <FinanceCumulTip model={model} hover={hover} series={[s]} totals={false} />
+    </article>
+  );
+}
+
+// 6 · Cumul + journalier : en haut le cumul face au budget et aux revenus,
+// en bas les dépenses de chaque jour empilées par catégorie, sur leur propre
+// échelle (jamais deux axes sur un même graphe). Seuls les gros jours portent
+// leur montant.
+function FinanceCumulDaily({ model }) {
+  const [hover, setHover] = useState(null);
+  const I = FINANCE_CUMUL_INK;
+  const last = model.days.length - 1;
+  const top = financeCumulFrame({ W: 720, H: 190, R: 120, T: 16, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
+  const maxDay = Math.max(0, ...model.dailyTotal);
+  const bot = financeCumulFrame({ W: 720, H: 170, R: 120, T: 22, top: maxDay * 1.08, days: model.days });
+  const bw = Math.max(2, bot.step * 0.62);
+  const area = `M ${top.x(0)} ${top.y(0)} L ${model.total.map((v, k) => `${top.x(k).toFixed(1)} ${top.y(v).toFixed(1)}`).join(" L ")} L ${top.x(last)} ${top.y(0)} Z`;
+  return (
+    <>
+      <svg viewBox={`0 0 ${top.W} ${top.H}`} role="img" aria-label="Cumul des dépenses du mois face au budget et aux revenus">
+        <text className="nx-bcu-panel" x={top.L} y="9" style={{ fontWeight: 600, fill: I.muted }}>CUMUL DU MOIS</text>
+        <FinanceCumulAxes f={top} />
+        <path d={area} fill={FINANCE_CUMUL_PALETTE[0]} fillOpacity=".12" />
+        <path d={financeCumulPath(model.total, top)} fill="none" stroke={FINANCE_CUMUL_PALETTE[0]} strokeWidth="2.2" strokeLinejoin="round" />
+        <FinanceCumulRefLines f={top} model={model} named={false} />
+        <FinanceCumulEndLabels f={top} gap={13} items={[
+          { key: "spent", y: top.y(model.spent), value: financeBudgetEuro(model.spent), label: "cumulé", ink: I.ink },
+          ...(model.budgetTotal > 0 ? [{ key: "budget", y: top.y(model.budgetTotal), value: financeBudgetEuro(model.budgetTotal), label: "budget", ink: I.over }] : []),
+          { key: "income", y: top.y(model.income[last] || 0), value: financeBudgetEuro(model.income[last] || 0), label: "revenus", ink: I.income },
+        ]} />
+        <FinanceCumulHit f={top} hover={hover} setHover={setHover} />
+      </svg>
+      <svg viewBox={`0 0 ${bot.W} ${bot.H}`} role="img" aria-label="Dépenses de chaque jour, par catégorie">
+        <text x={bot.L} y="9" style={{ fontWeight: 600, fill: I.muted }}>DÉPENSES DU JOUR, PAR CATÉGORIE</text>
+        <FinanceCumulAxes f={bot} />
+        {model.days.map((d, k) => {
+          let acc = 0;
+          return (
+            <g key={d}>
+              {model.series.map((s) => {
+                const v = s.daily[k];
+                if (!(v > 0)) return null;
+                const y1 = bot.y(acc + v), y0 = bot.y(acc);
+                acc += v;
+                return <rect key={s.category} x={bot.x(k) - bw / 2} y={y1} width={bw} height={Math.max(0.5, y0 - y1 - 1)} fill={s.color} />;
+              })}
+              {model.dailyTotal[k] >= maxDay * 0.25 && model.dailyTotal[k] > 0 && (
+                <text x={bot.x(k)} y={bot.y(model.dailyTotal[k]) - 4} textAnchor="middle" style={{ fill: I.ink, fontWeight: 600, fontSize: 8.5 }}>{financeChartShortEuro(model.dailyTotal[k])}</text>
+              )}
+            </g>
+          );
+        })}
+        <FinanceCumulHit f={bot} hover={hover} setHover={setHover} />
+      </svg>
+      <FinanceCumulTip model={model} hover={hover} />
+      <FinanceCumulLegend model={model} />
+    </>
+  );
+}
+
+function WidgetFinanceBudgetCumul({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const mode = FINANCE_BUDGET_CUMUL_MODES.some((m) => m.key === widget.budgetCumulMode) ? widget.budgetCumulMode : "categories";
+  const thisMonth = financeBudgetToday().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const budget = useFinanceBudget(month === thisMonth ? "" : month);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <select aria-label="Mode d’affichage" title="Mode d’affichage" value={mode} onChange={(e) => onUpdateWidget && onUpdateWidget({ budgetCumulMode: e.target.value })} style={{ fontWeight: 600 }}>
+          {FINANCE_BUDGET_CUMUL_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, -1))} aria-label="Mois précédent">‹</button>
+        <strong style={{ minWidth: 104, textAlign: "center" }}>{financeBudgetMonthLabel(month)}</strong>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, 1))} aria-label="Mois suivant">›</button>
+        {month !== thisMonth && <button type="button" onClick={() => setMonth(thisMonth)}>Mois en cours</button>}
+        <button type="button" onClick={budget.reload} title="Relire les données dans Supabase">Actualiser</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (!budget.data) return <>{tools}<FinanceBudgetState error={budget.error} onRetry={budget.reload} /></>;
+  const model = financeCumulModel(budget.data.charts);
+  const empty = !model.series.length;
+  return (
+    <div className="nx-bch">
+      {tools}
+      <style>{FINANCE_BUDGET_CHART_CSS + FINANCE_BUDGET_CUMUL_CSS}</style>
+      {empty && <div className="nx-bch-empty">Aucune dépense sur {financeBudgetMonthLabel(month).toLowerCase()}.</div>}
+      {!empty && mode === "categories" && <FinanceCumulCategories model={model} />}
+      {!empty && mode === "budget" && <FinanceCumulBudget model={model} />}
+      {!empty && mode === "trajectories" && <FinanceCumulTrajectories model={model} />}
+      {!empty && mode === "multiples" && <FinanceCumulMultiples model={model} />}
+      {!empty && mode === "daily" && <FinanceCumulDaily model={model} />}
     </div>
   );
 }

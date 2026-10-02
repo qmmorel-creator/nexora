@@ -293,7 +293,7 @@ test("recherche de transactions : sans accents ni casse, annulées et budgets ex
 
 test("interface graphique : échelles, donut, empilement, waterfall", () => {
   const C = vm.runInThisContext(`(function () {\n${slice("FINANCE-BUDGET-CHART")}\n;return { FINANCE_BUDGET_CHARTS, financeChartTicks, financeChartDonutArcs, financeChartStack, financeChartWaterfallScale, financeChartMonthShort };\n})`)();
-  assert.deepEqual(C.FINANCE_BUDGET_CHARTS.map((c) => c.key), ["waterfall", "cumulative", "smallMultiples", "donut", "waffle", "periodic"], "sans les Sankey, qui ont leur widget (#604)");
+  assert.deepEqual(C.FINANCE_BUDGET_CHARTS.map((c) => c.key), ["waterfall", "donut", "waffle", "periodic"], "sans les Sankey (#604) ni le cumul (#606), qui ont leur widget");
   assert.deepEqual(C.financeChartTicks(1653.45), { max: 2000, ticks: [0, 500, 1000, 1500, 2000] });
   assert.deepEqual(C.financeChartTicks(0), { max: 1, ticks: [0, 1] });
   assert.deepEqual(["2026-06", "2026-07"].map(C.financeChartMonthShort), ["juin", "juil."]);
@@ -312,7 +312,9 @@ test("widget Graphique Budget et routes de l'assistant rattachés", async () => 
   assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeBudgetChart"/);
   // #604 : un Graphique Budget encore réglé sur un Sankey est rendu par le widget Sankey.
   assert.match(html, /if \(widget\.budgetChart === "sankeyMonthly" \|\| widget\.budgetChart === "sankeyAnnual"\) \{\n    const w = migrateBudgetChartSankeyWidget\(widget\);\n    return <WidgetFinanceSankey widget=\{w\}/);
-  assert.match(html, /<FinanceChartCumulative days=\{c\.days\} series=\{c\.cumulative\} income=\{c\.incomeCumulative \|\| \[\]\} budgetTotal=\{c\.budgetTotal \|\| 0\} \/>/);
+  // #606 : un Graphique Budget encore réglé sur le cumul est rendu par le widget dédié.
+  assert.match(html, /if \(FINANCE_BUDGET_CUMUL_FROM_CHART\[widget\.budgetChart\]\) \{\n    const w = migrateBudgetChartCumulWidget\(widget\);\n    return <WidgetFinanceBudgetCumul widget=\{w\}/);
+  assert.doesNotMatch(html, /FinanceChartCumulative|FinanceChartSmallMultiples/);
   assert.match(html, /<FinanceChartPeriodic months=\{c\.periodic\} stacked=\{stacked\} \/>/);
   assert.match(html, /onUpdateWidget\(\{ budgetPeriodicStacked: !stacked \}\)/);
   assert.match(html, /fill: textOn\(c\.color\), fontWeight: 600 \}\}>\{financeChartShortEuro\(c\.amount\)\}/, "montant lisible sur une catégorie claire (jaune, blanc cassé)");
