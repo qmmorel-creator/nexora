@@ -2844,6 +2844,85 @@ if (RUN("2d")) await timed("2d", async () => {
   expect(!cosmosWidget.error && cosmosWidget.canvas >= 1 && cosmosWidget.toolbar >= 1 && cosmosWidget.rail >= 1 && cosmosWidget.crumbs >= 1, `Widget Cosmos (complet) : l'univers ne monte pas dans le tableau de bord (${JSON.stringify(cosmosWidget)})`);
   expect(cosmosWidget.hint >= 1, `Widget Cosmos (complet) : pas d'invitation à agrandir un widget de 3 × 4 (${JSON.stringify(cosmosWidget)})`);
   expect(cosmosWidget.largeHint && cosmosWidget.largeHint.length >= 1 && cosmosWidget.largeHint.every((n) => n === 0), `Widget Cosmos (complet) : un widget de 12 × 14 ne doit pas inviter à l'agrandir (${JSON.stringify(cosmosWidget)})`);
+
+  // --- Photos corporelles — avant / après (#616) ------------------------------
+  // Deux images de synthèse au décalage connu (harness.jsx) : la photo de
+  // droite, une fois transformée, doit poser ses repères EXACTEMENT sur ceux
+  // de la référence ; curseur au milieu, au clavier ; mode Repères.
+  const bp = await browser.newPage({ viewport: { width: 820, height: 960 } });
+  bp.on("pageerror", (e) => pageErrors.push("photos corporelles : " + e.message));
+  try {
+    await bp.goto(`http://127.0.0.1:${port}/index.html?bodyPhotos=1`, { waitUntil: "load", timeout: 90000 });
+    await bp.waitForSelector('[data-testid="body-photo-frame"] img[data-role="photo"]', { timeout: 30000 });
+    await bp.waitForFunction(() => [...document.querySelectorAll('[data-testid="body-photo-frame"] img')].every((i) => i.complete && i.naturalWidth > 0));
+    const compare = await bp.evaluate(() => {
+      const frame = document.querySelector('[data-testid="body-photo-frame"]');
+      const fr = frame.getBoundingClientRect();
+      const centre = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2 - fr.left, y: r.top + r.height / 2 - fr.top }; };
+      const gaps = {};
+      for (const g of frame.querySelectorAll("svg g[data-landmark]")) {
+        const a = g.querySelector('[data-role="reference"]'), b = g.querySelector('[data-role="photo"]');
+        if (a && b) { const p = centre(a), q = centre(b); gaps[g.dataset.landmark] = Math.hypot(p.x - q.x, p.y - q.y); }
+      }
+      const knob = frame.querySelector('[role="slider"]');
+      const kr = knob.getBoundingClientRect();
+      const photo = frame.querySelector('img[data-role="photo"]');
+      return {
+        frame: { w: fr.width, h: fr.height }, gaps, transform: getComputedStyle(photo).transform,
+        valuenow: knob.getAttribute("aria-valuenow"), knobX: kr.left + kr.width / 2 - fr.left,
+        labels: [...frame.querySelectorAll(".nx-bp-label")].map((l) => l.textContent),
+        thumbs: document.querySelectorAll(".nx-bp-thumb").length, badge: document.querySelector(".nx-bp-thumb.is-ref .nx-bp-badge")?.textContent,
+      };
+    });
+    await bp.screenshot({ path: path.join(dir, "body-photos-compare.png") });
+    await bp.focus('[role="slider"]');
+    await bp.keyboard.press("End");
+    const atEnd = await bp.getAttribute('[role="slider"]', "aria-valuenow");
+    await bp.keyboard.press("Home");
+    await bp.keyboard.press("ArrowRight");
+    const afterArrow = await bp.getAttribute('[role="slider"]', "aria-valuenow");
+    const fb = await bp.$eval('[data-testid="body-photo-frame"]', (f) => { const r = f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+    await bp.mouse.move(fb.x + fb.w * 0.5, fb.y + fb.h * 0.5);
+    await bp.mouse.down();
+    await bp.mouse.move(fb.x + fb.w * 0.25, fb.y + fb.h * 0.5, { steps: 4 });
+    await bp.mouse.up();
+    const afterDrag = Number(await bp.getAttribute('[role="slider"]', "aria-valuenow"));
+    const clip = await bp.$eval(".nx-bp-layer", (l) => l.style.clipPath);
+    // Mode Repères sur la photo qui n'en a pas : trois clics, trois points.
+    await bp.click('.nx-bp-thumb[data-photo-id="banc-photo-0003"] [aria-label="Placer les repères"]');
+    await bp.waitForSelector('[data-testid="body-photo-landmarks"] img');
+    await bp.waitForFunction(() => document.querySelector('[data-testid="body-photo-landmarks"] img').complete);
+    const lb = await bp.$eval('[data-testid="body-photo-landmarks"]', (f) => { const r = f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+    const hints = [await bp.textContent(".nx-bp-hint")];
+    for (const [ux, uy] of [[268 / 600, 172 / 900], [332 / 600, 170 / 900], [300 / 600, 540 / 900]]) {
+      await bp.mouse.click(lb.x + ux * lb.w, lb.y + uy * lb.h);
+      hints.push(await bp.textContent(".nx-bp-hint"));
+    }
+    await bp.mouse.move(lb.x + 0.45 * lb.w, lb.y + 0.2 * lb.h);
+    const editor = await bp.evaluate(() => ({ points: document.querySelectorAll('[data-testid="body-photo-landmarks"] .nx-bp-point').length, loupe: !!document.querySelector(".nx-bp-loupe"), save: !document.querySelector(".nx-bp-bar button.primary").disabled }));
+    await bp.screenshot({ path: path.join(dir, "body-photos-landmarks.png") });
+    await bp.focus('[data-landmark="navel"]');
+    await bp.keyboard.press("ArrowDown");
+    await bp.click(".nx-bp-bar button.primary");
+    await bp.waitForSelector('[data-testid="body-photo-frame"]');
+    const calls = await bp.evaluate(() => window.__benchBodyCalls);
+
+    expect(compare.frame.w > 300 && Math.abs(compare.frame.w / compare.frame.h - 600 / 900) < 0.01, `Photos corporelles : cadre au format de la référence (${JSON.stringify(compare.frame)})`);
+    expect(Object.keys(compare.gaps).length === 3 && Object.values(compare.gaps).every((g) => g < 1.5), `Photos corporelles : repères non superposés après alignement (${JSON.stringify(compare.gaps)})`);
+    expect(/^matrix\(/.test(compare.transform), `Photos corporelles : transformation absente (${compare.transform})`);
+    expect(compare.valuenow === "50" && Math.abs(compare.knobX - compare.frame.w / 2) < 2, `Photos corporelles : curseur pas au milieu (${compare.valuenow}, ${compare.knobX})`);
+    expect(/Référence · 01\/06\/2026/.test(compare.labels[0] || "") && /15\/09\/2026 · \+106 jours/.test(compare.labels[1] || ""), `Photos corporelles : libellés ${JSON.stringify(compare.labels)}`);
+    expect(compare.thumbs === 3 && compare.badge === "Référence", `Photos corporelles : galerie (${compare.thumbs} vignettes, badge « ${compare.badge} »)`);
+    expect(atEnd === "100" && afterArrow === "1", `Photos corporelles : curseur au clavier (Fin ${atEnd}, Origine puis → ${afterArrow})`);
+    expect(afterDrag > 20 && afterDrag < 30 && /inset\(0(px)? 0(px)? 0(px)? 2\d/.test(clip), `Photos corporelles : glisser le curseur (${afterDrag}, ${clip})`);
+    expect(/Étape 1\/3/.test(hints[0]) && /Étape 2\/3/.test(hints[1]) && /Étape 3\/3/.test(hints[2]) && /trois repères sont placés/.test(hints[3]), `Photos corporelles : consignes du mode Repères ${JSON.stringify(hints)}`);
+    expect(editor.points === 3 && editor.loupe && editor.save, `Photos corporelles : mode Repères (${JSON.stringify(editor)})`);
+    expect(calls.includes("PATCH /api/nexora/body-photos/banc-photo-0003") && calls.every((c) => c.startsWith("GET /api/nexora/body-photos") || c.startsWith("PATCH /api/nexora/body-photos/")), `Photos corporelles : appels ${JSON.stringify(calls)}`);
+  } catch (e) {
+    expect(false, `Photos corporelles : scénario en échec (${String(e).split("\n")[0]})`);
+  } finally {
+    await bp.close().catch(() => {});
+  }
 });
 
 const carte = {};
