@@ -49,6 +49,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Incompatibilités
 
+- Tableau de bord : widget « Patrimoine par banque » supprimé ; une sauvegarde qui le contient encore le perd à la lecture. « Répartition du patrimoine » et « Structure du patrimoine (Sankey) » restent ; les données `wealth` de `/api/nexora/finance-budget-summary` sont inchangées (Ref #637).
 - Ancien widget de graphique sport externe retiré : les widgets existants deviennent, à la lecture, le « Graphique sport » natif sur la vue équivalente (Ref #590).
 - Ancien widget de graphique financier externe retiré : les widgets existants deviennent, à la lecture, le widget Budget natif équivalent — « Graphique Budget » (Sankey, waterfall, cumul, small multiples, donut, waffle, dépenses par mois), « Budget du mois », « Patrimoine par banque », « Transactions » ou « Structure du patrimoine (Sankey) » ; sans équivalent : « Graphique Budget », donut (Ref #596).
 - Moteur de graphiques externe retiré de Nexora : sa copie publiée (avec ses données d'exemple réelles, #582) et son outil de génération supprimés, ainsi que la route `/api/nexora/finance-budget-data` qui ne servait que lui ; il n'est plus publié. Les tests de parité sport et santé s'appuient désormais sur des résultats d'origine figés (`tests/fixtures/parite-*.json`) (Ref #597).

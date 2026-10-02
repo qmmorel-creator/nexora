@@ -24,7 +24,7 @@ function slice(name) {
 }
 const UI_EXPORTS = [
   "FINANCE_BUDGET_TYPES", "financeBudgetEuro", "financeBudgetMonthLabel", "financeBudgetShiftMonth", "financeBudgetSortTracking",
-  "financeBudgetBankBars", "financeBudgetSignedAmount", "financeBudgetReason", "financeBudgetSparkline",
+  "financeBudgetSignedAmount", "financeBudgetReason",
 ];
 const UI = vm.runInThisContext(`(function () {\n${slice("FINANCE-BUDGET")}\n;return { ${UI_EXPORTS.join(", ")} };\n})`)();
 
@@ -152,8 +152,8 @@ test("rapport du matin : mois en cours à Paris, reste à dépenser, alertes et 
   assert.equal(B.buildBudgetReport(raw, new Date("2026-09-30T22:30:00Z")).month, "2026-10");
 });
 
-test("interface : formats, ordre du suivi, barres, saisie", () => {
-  assert.deepEqual([...UI.FINANCE_BUDGET_TYPES], ["financeBudgetMonth", "financeToCategorize", "financeWealth"]);
+test("interface : formats, ordre du suivi, saisie", () => {
+  assert.deepEqual([...UI.FINANCE_BUDGET_TYPES], ["financeBudgetMonth", "financeToCategorize"]);
   assert.equal(UI.financeBudgetMonthLabel("2026-09"), "Septembre 2026");
   assert.equal(UI.financeBudgetShiftMonth("2026-01", -1), "2025-12");
   assert.equal(UI.financeBudgetShiftMonth("2026-12", 1), "2027-01");
@@ -164,26 +164,17 @@ test("interface : formats, ordre du suivi, barres, saisie", () => {
     { category: "E", budget: 50, actual: 200, over: true },
   ]);
   assert.deepEqual(sorted.map((r) => r.category), ["E", "C", "D", "A", "B"]);
-  const bars = UI.financeBudgetBankBars([
-    { bank: "X", total: 150, segments: [{ type: "a", value: 100 }, { type: "b", value: 50 }] },
-    { bank: "Y", total: -20, segments: [{ type: "a", value: 30 }, { type: "c", value: -50 }] },
-  ]);
-  assert.deepEqual(bars.map((b) => b.segments.map((s) => [s.type, Math.round(s.width)])), [[["a", 67], ["b", 33]], [["a", 20]]]);
   assert.equal(UI.financeBudgetSignedAmount("Dépense", "12,50"), -12.5);
   assert.equal(UI.financeBudgetSignedAmount("Revenu", "-1 000"), 1000);
   assert.equal(UI.financeBudgetSignedAmount("Dépense", "0"), null);
   assert.equal(UI.financeBudgetReason({ reason: "confiance", confidence: 0.62 }), "IA peu sûre (62 %)");
-  assert.equal(UI.financeBudgetSparkline([{ total: 1 }]), "");
-  assert.equal(UI.financeBudgetSparkline([{ total: 0 }, { total: 10 }], 100, 20, 0), "0.0,20.0 100.0,0.0");
 });
 
 test("widgets rattachés au catalogue, au rendu, à l'en-tête et à la fiche, sans réglage", () => {
   assert.match(html, /\{ key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Budget" \}/);
   assert.match(html, /\{ key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Budget" \}/);
-  assert.match(html, /\{ key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Budget" \}/);
   assert.match(html, /w\.type === "financeBudgetMonth" && <WidgetFinanceBudgetMonth externalToolbarSlot=\{headerToolbarSlot\} \/>/);
   assert.match(html, /w\.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot=\{headerToolbarSlot\} \/>/);
-  assert.match(html, /w\.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot=\{headerToolbarSlot\} \/>/);
   assert.match(html, /hasHeaderToolbar=\{[^}]*FINANCE_BUDGET_TYPES\.includes\(w\.type\)/);
   assert.match(html, /if \(type === "financeBudgetMonth"\) return \{ w: 6, h: 8 \};/);
   assert.match(html, /fetch\(`\/api\/nexora\/finance-budget-summary\$\{month \? `\?month=\$\{month\}` : ""\}`/);
