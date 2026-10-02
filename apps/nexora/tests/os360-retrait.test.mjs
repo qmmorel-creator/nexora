@@ -16,7 +16,7 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const M = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacyFinanceOs360Widget, migrateLegacySportOs360Widget, migrateLegacyMiniGanttData };`)();
+const M = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacyFinanceOs360Widget, migrateLegacySportOs360Widget, migrateLegacyMiniGanttData, migrateBudgetChartSankeyWidget };`)();
 
 test("aucun widget « (OS360) » au catalogue ; les anciens types sont rendus par les widgets natifs", () => {
   assert.doesNotMatch(html, /label: "Graphique financier \(OS360\)"/);
@@ -31,7 +31,7 @@ test("finance : chaque graphique OS360 devient le widget Budget natif qui montre
   const def = m();
   assert.deepEqual([def.id, def.title, def.layout.w, def.type, def.budgetChart], ["f1", "Mon budget", 8, "financeBudgetChart", "donut"], "défaut du widget OS360 : donut");
   const charts = {
-    "budget.chart_sankey_monthly": "sankeyMonthly", "budget.chart_annual_sankey": "sankeyAnnual", "budget.cascadeWaterfall": "waterfall",
+    "budget.cascadeWaterfall": "waterfall",
     "budget.chart_cumulative": "cumulative", "budget.chart_small_multiples": "smallMultiples", "budget.chart_donut": "donut",
     "budget.chart_waffle": "waffle", "budget.chart_annual_categories": "periodic", "budget.generic_periodic": "periodic",
   };
@@ -40,6 +40,9 @@ test("finance : chaque graphique OS360 devient le widget Budget natif qui montre
     assert.deepEqual([w.type, w.budgetChart], ["financeBudgetChart", native], os);
   }
   assert.equal(m("budget.chart_wealth_sankey").type, "financeSankeyWealth");
+  // #604 : les Sankey de flux vont au widget Sankey (annuel : période année).
+  assert.deepEqual([m("budget.chart_sankey_monthly").type, m("budget.chart_sankey_monthly").budgetChart, m("budget.chart_sankey_monthly").sankeyConfig], ["financeSankeyMonthly", undefined, undefined]);
+  assert.deepEqual([m("budget.chart_annual_sankey").type, m("budget.chart_annual_sankey").sankeyConfig], ["financeSankeyMonthly", { periodMode: "year", periodValue: "current" }]);
   for (const os of ["budget.chart_wealth_by_bank", "budget.chart_wealth_by_type_abs", "budget.wealthHistory", "budget.accountsTreemap", "budget.card_wealth_change"]) assert.equal(m(os).type, "financeWealth", os);
   for (const os of ["budget.card_expense", "budget.card_net", "budget.budgetTracking", "budget.chart_budget_vs_actual", "budget.list_over_budget", "budget.category_progress"]) assert.equal(m(os).type, "financeBudgetMonth", os);
   for (const os of ["budget.list_all_transactions", "budget.list_recent", "budget.transactions"]) assert.equal(m(os).type, "financeTransactions", os);
@@ -58,4 +61,14 @@ test("migration à la lecture des tableaux de bord (finance et sport ensemble)",
     { id: "c", type: "financeBudgetMonth" },
   ] }] } });
   assert.deepEqual(data.d.pages[0].widgets.map((w) => [w.type, w.budgetChart || w.sport?.view || ""]), [["financeBudgetChart", "waffle"], ["sportChart", "waffle"], ["financeBudgetMonth", ""]]);
+});
+
+test("Graphique Budget réglé sur un Sankey (#604) : devient le widget Sankey, le reste intact", () => {
+  const base = { id: "g", type: "financeBudgetChart", title: "Flux", layout: { x: 0, y: 0, w: 8, h: 8 } };
+  assert.deepEqual(M.migrateBudgetChartSankeyWidget({ ...base, budgetChart: "sankeyMonthly" }), { id: "g", type: "financeSankeyMonthly", title: "Flux", layout: base.layout });
+  assert.deepEqual(M.migrateBudgetChartSankeyWidget({ ...base, budgetChart: "sankeyAnnual", sankeyConfig: { decimals: 0 } }).sankeyConfig, { decimals: 0, periodMode: "year", periodValue: "current" });
+  const waffle = { ...base, budgetChart: "waffle" };
+  assert.equal(M.migrateBudgetChartSankeyWidget(waffle), waffle);
+  const data = M.migrateLegacyMiniGanttData({ w: [{ ...base, budgetChart: "sankeyAnnual" }, waffle] });
+  assert.deepEqual(data.w.map((w) => w.type), ["financeSankeyMonthly", "financeBudgetChart"], "migration à la lecture");
 });

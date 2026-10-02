@@ -297,13 +297,24 @@ export function budgetCharts(data, period, tracking) {
       values: days.map((d) => round2(acc += daily.get(d) || 0)),
     };
   });
+  // Revenus cumulés jour par jour et budget total du mois (#604) : mêmes
+  // règles que la carte du mois (`incomeOf`, budgets > 0 du suivi).
+  const dailyIncome = new Map();
+  for (const t of incomeOf(rows)) dailyIncome.set(t.effectiveDate, (dailyIncome.get(t.effectiveDate) || 0) + Math.abs(t.amount));
+  let incomeAcc = 0;
+  const incomeCumulative = days.map((d) => round2(incomeAcc += dailyIncome.get(d) || 0));
+  const budgetTotal = round2(tracking.filter((c) => c.budget > 0).reduce((sum, c) => sum + c.budget, 0));
+  // Dépenses par mois, avec le détail par catégorie pour l'affichage empilé (#604).
   const lastMonth = period.to.slice(0, 7);
   const periodic = [];
   for (let i = 11; i >= 0; i--) {
     const month = shiftMonth(lastMonth, -i);
-    periodic.push({ month, expenses: round2(sumAbs(expensesOf(inPeriod(data.transactions, monthBounds(month))))) });
+    const monthExpenses = expensesOf(inPeriod(data.transactions, monthBounds(month)));
+    const categories = [...sumBy(monthExpenses, "category")].sort((a, b) => b[1] - a[1])
+      .map(([category, amount]) => ({ category, amount: round2(amount), color: color(category) }));
+    periodic.push({ month, expenses: round2(sumAbs(monthExpenses)), categories });
   }
-  return { days, byCategory, waterfall, cumulative, waffle: waffle(rows, data), periodic };
+  return { days, byCategory, waterfall, cumulative, incomeCumulative, budgetTotal, waffle: waffle(rows, data), periodic };
 }
 
 // Synthèse d'un mois : carte, suivi, file à catégoriser, patrimoine.

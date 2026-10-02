@@ -259,8 +259,21 @@ test("graphiques : cumuls journaliers avec budget, dépenses des 12 derniers moi
   assert.equal(logement.values.at(-1), 950);
   assert.equal(logement.budget, 1000);
   assert.equal(c.periodic.length, 12);
-  assert.deepEqual(c.periodic.slice(-2), [{ month: "2026-08", expenses: 42 }, { month: "2026-09", expenses: 1653.45 }]);
+  assert.deepEqual(c.periodic.slice(-2).map(({ month, expenses }) => ({ month, expenses })), [{ month: "2026-08", expenses: 42 }, { month: "2026-09", expenses: 1653.45 }]);
   assert.equal(c.periodic[0].month, "2025-10");
+  // #604 : détail par catégorie (empilé), même total que la barre.
+  for (const m of c.periodic) assert.equal(Math.round(m.categories.reduce((t, x) => t + x.amount, 0) * 100) / 100, m.expenses, m.month);
+  assert.deepEqual(c.periodic.at(-2).categories, [{ category: "Loisirs", amount: 42, color: "#536477" }]);
+  assert.ok(c.periodic.at(-1).categories.every((x, i, a) => !i || a[i - 1].amount >= x.amount), "plus grosse catégorie en bas de la pile");
+});
+
+test("graphiques : revenus cumulés jour par jour et budget total du mois (#604)", () => {
+  const summary = B.buildBudgetSummary(raw, "2026-09", NOW);
+  const c = summary.charts;
+  assert.equal(c.incomeCumulative.length, c.days.length);
+  assert.equal(c.incomeCumulative.at(-1), summary.totals.income, "même règle que la carte du mois");
+  assert.ok(c.incomeCumulative.every((v, i, a) => !i || v >= a[i - 1]), "cumul croissant");
+  assert.equal(c.budgetTotal, summary.totals.budget);
 });
 
 test("recherche de transactions : sans accents ni casse, annulées et budgets exclus, filtres, pagination", () => {
@@ -280,7 +293,7 @@ test("recherche de transactions : sans accents ni casse, annulées et budgets ex
 
 test("interface graphique : échelles, donut, empilement, waterfall", () => {
   const C = vm.runInThisContext(`(function () {\n${slice("FINANCE-BUDGET-CHART")}\n;return { FINANCE_BUDGET_CHARTS, financeChartTicks, financeChartDonutArcs, financeChartStack, financeChartWaterfallScale, financeChartMonthShort };\n})`)();
-  assert.deepEqual(C.FINANCE_BUDGET_CHARTS.map((c) => c.key), ["sankeyMonthly", "sankeyAnnual", "waterfall", "cumulative", "smallMultiples", "donut", "waffle", "periodic"]);
+  assert.deepEqual(C.FINANCE_BUDGET_CHARTS.map((c) => c.key), ["waterfall", "cumulative", "smallMultiples", "donut", "waffle", "periodic"], "sans les Sankey, qui ont leur widget (#604)");
   assert.deepEqual(C.financeChartTicks(1653.45), { max: 2000, ticks: [0, 500, 1000, 1500, 2000] });
   assert.deepEqual(C.financeChartTicks(0), { max: 1, ticks: [0, 1] });
   assert.deepEqual(["2026-06", "2026-07"].map(C.financeChartMonthShort), ["juin", "juil."]);
@@ -297,7 +310,12 @@ test("widget Graphique Budget et routes de l'assistant rattachés", async () => 
   assert.match(html, /\{ key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Suivi" \}/);
   assert.match(html, /w\.type === "financeBudgetChart" && \(\s*<WidgetFinanceBudgetChart widget=\{w\}/);
   assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeBudgetChart"/);
-  assert.match(html, /financeSankeyBuild\("financeSankeyMonthly", sankeyData\.data, config\)/);
+  // #604 : un Graphique Budget encore réglé sur un Sankey est rendu par le widget Sankey.
+  assert.match(html, /if \(widget\.budgetChart === "sankeyMonthly" \|\| widget\.budgetChart === "sankeyAnnual"\) \{\n    const w = migrateBudgetChartSankeyWidget\(widget\);\n    return <WidgetFinanceSankey widget=\{w\}/);
+  assert.match(html, /<FinanceChartCumulative days=\{c\.days\} series=\{c\.cumulative\} income=\{c\.incomeCumulative \|\| \[\]\} budgetTotal=\{c\.budgetTotal \|\| 0\} \/>/);
+  assert.match(html, /<FinanceChartPeriodic months=\{c\.periodic\} stacked=\{stacked\} \/>/);
+  assert.match(html, /onUpdateWidget\(\{ budgetPeriodicStacked: !stacked \}\)/);
+  assert.match(html, /\.nx-tx-tools select\{height:24px;padding:0 24px 0 7px;[^}]*flex:0 0 auto;max-width:none;width:auto\}/, "sélecteur jamais tronqué");
   const summary = await read("../netlify/functions/finance-budget-assistant.ts");
   assert.match(summary, /path: "\/api\/finance\/budget-summary", method: \["GET"\]/);
   assert.match(summary, /isAuthorized\(req, assistant\.apiKey\)/);

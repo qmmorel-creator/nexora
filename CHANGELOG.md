@@ -36,6 +36,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 
 ### Corrections
 
+- Graphique Budget : le sélecteur de graphique de l'en-tête n'est plus tronqué (marge intérieure du style général des listes) (Ref #604).
 - Widgets sport : changer le nombre de jours d'une période « N derniers jours » recalcule la liste et le graphique (Ref #590).
 
 ### Incompatibilités
@@ -43,6 +44,7 @@ transforme cette section en `[X.Y.Z] — date` au moment de préparer la version
 - Widget « Graphique sport (OS360) » retiré : les widgets existants deviennent, à la lecture, le « Graphique sport » natif sur la vue équivalente (Ref #590).
 - Widget « Graphique financier (OS360) » retiré : les widgets existants deviennent, à la lecture, le widget Budget natif équivalent — « Graphique Budget » (Sankey, waterfall, cumul, small multiples, donut, waffle, dépenses par mois), « Budget du mois », « Patrimoine par banque », « Transactions » ou « Structure du patrimoine (Sankey) » ; sans équivalent : « Graphique Budget », donut (Ref #596).
 - Moteur de graphiques OS360 retiré de Nexora : `public/os360-moteur/` (copie du bundle OS360, avec ses données d'exemple réelles, #582) et `outils/os360-moteur/` supprimés, ainsi que la route `/api/nexora/finance-budget-data` qui ne servait que lui ; `/os360-moteur/` n'est plus publié. Les tests de parité sport et santé s'appuient désormais sur des résultats d'OS360 figés (`tests/fixtures/os360-parite-*.json`) (Ref #597).
+- Graphique Budget : les deux Sankey ne sont plus proposés (ils ont leur widget « Sankey mensuel (flux) ») — un widget réglé sur un Sankey devient ce widget, sur l'année pour l'ancien Sankey annuel ; « Dépenses cumulées par catégorie » : un repère et un numéro par jour, infobulle au survol (valeur de chaque catégorie à la date, total, revenus cumulés, budget, reste ou dépassement), revenus cumulés et budget total du mois en pointillés sur la même échelle, valeurs de fin affichées ; « Dépenses par mois » : option « Par catégorie » (barres empilées aux couleurs des catégories), total au-dessus de chaque barre, montant dans chaque segment lisible, détail au survol (Ref #604).
 
 ## À venir
 
