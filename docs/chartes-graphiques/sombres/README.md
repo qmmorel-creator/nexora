@@ -1,6 +1,6 @@
 # Dix thèmes sombres pour Nexora — Ref #625
 
-Propositions, non activées en production. Chacune est une feuille CSS posée sur l'application (même mécanisme que les thèmes Bauhaus et Dessau de #621) : un thème retenu s'ajoute au sélecteur de Réglages → Apparence.
+Propositions. **Observatoire (S07) est activable** dans Réglages → Apparence ; les neuf autres ne sont pas activées. Chacune est une feuille CSS posée sur l'application (même mécanisme que les thèmes Bauhaus et Dessau de #621) : un thème retenu s'ajoute au sélecteur de Réglages → Apparence.
 
 Galerie : [`index.html`](index.html).
 

@@ -26,7 +26,7 @@ export const toLch = (rgb) => { const [L, a, b] = toOklab(rgb); return [L, Math.
 export const fromLch = ([L, C, h]) => fromOklab([L, C * Math.cos((h * Math.PI) / 180), C * Math.sin((h * Math.PI) / 180)]);
 export const mix = (c1, c2, t) => { const a = toOklab(c1), b = toOklab(c2); return fromOklab(a.map((v, i) => v + (b[i] - v) * t)); };
 export const hex = ([r, g, b]) => '#' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
-export const fmt = (rgb, a = 1) => (a >= 0.999 ? hex(rgb) : `rgba(${rgb.map(Math.round).join(', ')}, ${+a.toFixed(3)})`);
+export const fmt = (rgb, a = 1) => (a >= 0.999 ? hex(rgb.slice(0, 3)) : `rgba(${rgb.slice(0, 3).map(Math.round).join(', ')}, ${+a.toFixed(3)})`);
 const relLum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 export const contrast = (c1, c2) => { const a = relLum(typeof c1 === 'string' ? parse(c1) : c1), b = relLum(typeof c2 === 'string' ? parse(c2) : c2); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
 export const COLOR_RE = /#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|\b(?:white|black)\b/g;

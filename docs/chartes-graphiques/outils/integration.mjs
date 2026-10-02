@@ -8,12 +8,15 @@
 // Le remappage des couleurs codées en dur est PARTAGÉ : une règle par déclaration, dont la
 // valeur est une variable --nx-rm-N ; chaque thème × mode ne fait que définir ces variables.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { CHARTES } from './palettes.mjs';
+import { CHARTES as FAMILLE } from './palettes.mjs';
+import { CHARTES as SOMBRES } from './sombres.mjs';
 import { tokenBlock } from './tokens.mjs';
 import { mapValue, mapColor, splitSelectors, kindOfProp } from './remap.mjs';
 import { fmt } from './color.mjs';
 
-export const THEMES_APP = ['bauhaus', 'dessau'];
+// Thèmes proposés dans Réglages → Apparence. Observatoire (série sombre, #625) n'existe qu'en sombre.
+export const THEMES_APP = ['bauhaus', 'dessau', 'observatoire'];
+const CHARTES = [...FAMILLE.map((c) => ({ ...c, serie: '' })), ...SOMBRES.map((c) => ({ ...c, serie: 'sombres' }))];
 const here = (f) => new URL(f, import.meta.url);
 const SOURCE = new URL('../../../apps/nexora/source/index.html.part-004', import.meta.url);
 const DEBUT = '<style id="nexora-themes">', FIN = '</style><!-- /nexora-themes -->';
@@ -46,17 +49,17 @@ export function genererCouche(ids = THEMES_APP) {
   let regles = '';
   for (const { media, sel, d } of groupes.values()) { const r = `${scope(sel, ANY)} { ${d.join('; ')}; }`; regles += media ? `@media ${media} { ${r} }\n` : r + '\n'; }
   for (const k of Object.keys(harvest.attr)) {
-    const [a, v] = k.split('='); const valeurs = modes.map(({ t }) => { const r = mapColor(v, a === 'fill' ? 'fill' : 'border', t); return r ? fmt(r[0], r[1]) : null; });
+    const [a, v] = k.split('='); const valeurs = modes.map(({ t }) => { const r = mapColor(v, a === 'fill' ? 'fill' : 'border', t, true); return r ? fmt(r[0], r[1]) : null; });
     if (valeurs.every((x) => x === null)) continue;
     regles += `${ANY} [${a}="${v}"] { ${a}: ${variable(a, v, false, valeurs.map((x) => x ?? v))}; }\n`;
   }
   for (const k of Object.keys(harvest.inl)) {
     const m = k.match(/^([a-z-]+): ((?:rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}))$/); if (!m) continue;
     const [, prop, v] = m; if (kindOfProp(prop) === 'text') continue;
-    const valeurs = modes.map(({ t }) => { const r = mapColor(v, kindOfProp(prop), t); return r ? fmt(r[0], r[1]) : null; });
+    const valeurs = modes.map(({ t }) => { const r = mapColor(v, kindOfProp(prop), t, true); return r ? fmt(r[0], r[1]) : null; });
     if (valeurs.every((x) => x === null)) continue;
     const lp = prop === 'background' ? 'background-color' : prop === 'border' ? 'border-color' : prop;
-    regles += `${ANY} :is([style^="${prop}: ${v}"], [style*="; ${prop}: ${v}"]):not(.lp-widget-treemap-tile) { ${lp}: ${variable(prop, v, true, valeurs.map((x) => x ?? v))}; }\n`;
+    regles += `${ANY} :is([style^="${prop}: ${v}"], [style*="; ${prop}: ${v}"]):not(.lp-widget-treemap-tile, .lp-heatmap-cell, .lp-heatmap-top *) { ${lp}: ${variable(prop, v, true, valeurs.map((x) => x ?? v))}; }\n`;
   }
   for (const [media, sel] of inkDecls) {
     if (/weekend|legend-line|auth|landing/.test(sel)) continue;
@@ -79,9 +82,10 @@ export function genererCouche(ids = THEMES_APP) {
   for (const ch of chartes) {
     const S0 = `:root[data-nexora-theme="${ch.id}"]`;
     const conv = (css) => css.replaceAll('§[data-mode=', `${S0}[data-nexora-mode=`).replaceAll('§', S0);
-    composants += conv(base) + '\n' + conv(readFileSync(here(`./signatures/${ch.id}.css`), 'utf8'));
+    const socle = ch.serie ? '\n' + conv(readFileSync(here(`./${ch.serie}-socle.css`), 'utf8')) : '';
+    composants += conv(base) + socle + '\n' + conv(readFileSync(here(`./signatures${ch.serie ? '-' + ch.serie : ''}/${ch.id}.css`), 'utf8'));
   }
-  const entete = `/* Thèmes Nexora (Ref #621) — GÉNÉRÉ par docs/chartes-graphiques/outils/integration.mjs, ne pas éditer à la main.\n   Thèmes : ${chartes.map((c) => c.nom).join(', ')}. Activation : <html data-nexora-theme="…" data-nexora-mode="clair|sombre">.\n   ${groupes.size} règles de remappage partagées, ${vars.size} variables par thème × mode. */\n`;
+  const entete = `/* Thèmes Nexora (Ref #621) — GÉNÉRÉ par docs/chartes-graphiques/outils/integration.mjs, ne pas éditer à la main.\n   Thèmes : ${chartes.map((c) => c.nom).join(', ')}. Activation : <html data-nexora-theme="…" data-nexora-mode="clair|sombre">.\n   Modes : ${chartes.map((c) => c.nom + ' (' + Object.keys(c.modes).join(', ') + ')').join(', ')}.\n   ${groupes.size} règles de remappage partagées, ${vars.size} variables par thème × mode. */\n`;
   return entete + valeurs + regles + composants;
 }
 

@@ -37,9 +37,9 @@ test("le réglage général n'accepte qu'une vue réellement proposée", () => {
 
 test("le projet prime sur le dossier, qui prime sur le réglage général", () => {
   const projet = { navigationDefaults: { view: "table" } };
-  const dossier = { navigationDefaults: { view: "radar" } };
+  const dossier = { navigationDefaults: { view: "heatmap" } };
   assert.equal(mergeProjectNavigationDefaults(projet, dossier, "gantt").view, "table");
-  assert.equal(mergeProjectNavigationDefaults(null, dossier, "gantt").view, "radar");
+  assert.equal(mergeProjectNavigationDefaults(null, dossier, "gantt").view, "heatmap");
   assert.equal(mergeProjectNavigationDefaults(null, null, "gantt").view, "gantt");
 });
 
@@ -67,6 +67,16 @@ test("les vues proposées sont toutes des vues qui existent encore", () => {
   // #137 : "dashboard" (Tableau de bord contextuel) s'ajoute aux vues de
   // tâches déjà proposées — utile avec une page dont le filtre porte sur
   // "Projet courant". #542 : Pixel Tasks devient une vue de projet.
-  assert.deepEqual(keys, ["projects", "gantt", "heatmap", "radar", "pixelTasks", "table", "dashboard"]);
+  // #631 : la vue Radar est supprimée.
+  assert.deepEqual(keys, ["projects", "gantt", "heatmap", "pixelTasks", "table", "dashboard"]);
   keys.forEach((k) => assert.equal(normalizeProjectDefaultView(k), k));
+});
+
+test("vue retirée (Radar, #631) mémorisée sur un projet ou un dossier : le niveau suivant prend la main", () => {
+  assert.equal(normalizeProjectDefaultView("radar"), "");
+  const radar = { navigationDefaults: { view: "radar" } };
+  assert.equal(mergeProjectNavigationDefaults(radar, null, "gantt").view, "gantt");
+  assert.equal(mergeProjectNavigationDefaults(null, radar, "gantt").view, "gantt");
+  assert.equal(mergeProjectNavigationDefaults(radar, { navigationDefaults: { view: "table" } }, "gantt").view, "table");
+  assert.equal(mergeProjectNavigationDefaults(radar, radar, "").view, "", "rien d'imposé plutôt qu'un écran vide");
 });

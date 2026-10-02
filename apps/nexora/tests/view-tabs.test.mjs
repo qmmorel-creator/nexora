@@ -11,7 +11,7 @@ const end = "// === NEXORA:VIEW-TABS:END ===";
 assert.ok(html.includes(start) && html.includes(end), "bloc VIEW-TABS introuvable");
 const code = html.slice(html.indexOf(start) + start.length, html.indexOf(end));
 
-const META = ["dashboard", "projects", "gantt", "heatmap", "timeline", "radar", "today", "calendar", "table", "quotes"].map((key) => ({ key }));
+const META = ["dashboard", "projects", "gantt", "heatmap", "timeline", "pixelTasks", "today", "calendar", "table", "quotes"].map((key) => ({ key }));
 const tabBarViewKeysFor = vm.runInNewContext(`${code}\n;tabBarViewKeysFor`, { ALL_VIEWS_META: META });
 
 test("toutes les vues cochées apparaissent, pas seulement les vues projet", () => {
@@ -27,10 +27,10 @@ test("l'ordre choisi est respecté, les vues ajoutées depuis viennent à la sui
 });
 
 test("une vue décochée ou inconnue n'apparaît pas", () => {
-  const keys = tabBarViewKeysFor(["timeline", "ancienneVue", "radar", "radar"], { timeline: false });
+  const keys = tabBarViewKeysFor(["timeline", "ancienneVue", "pixelTasks", "pixelTasks"], { timeline: false });
   assert.equal(keys.includes("timeline"), false);
   assert.equal(keys.includes("ancienneVue"), false);
-  assert.equal(keys.filter((k) => k === "radar").length, 1);
+  assert.equal(keys.filter((k) => k === "pixelTasks").length, 1);
 });
 
 test("la barre d'onglets est branchée sur cette liste", () => {
