@@ -2231,61 +2231,6 @@ function migrateLegacySingleBlockCardWidget(widget) {
     }],
   };
 }
-// #590 : l'ancien widget de graphique sport externe migre vers le « Graphique
-// sport » natif, sur la vue équivalente au graphique choisi (variante comprise).
-// Graphiques sans équivalent : barres empilées par semaine, le défaut de
-// l'ancien widget (« Sport par semaine »). Son réglage d'origine est conservé.
-// Les deux types et le champ de réglage ci-dessous sont des valeurs
-// enregistrées dans les tableaux de bord : elles restent telles quelles pour
-// que la migration les reconnaisse, et ne figurent nulle part ailleurs.
-const LEGACY_SPORT_CHART_TYPE = "sportOs360Chart";
-const LEGACY_FINANCE_CHART_TYPE = "financeOs360Chart";
-const LEGACY_SETTINGS_KEY = "os360";
-function migrateLegacySportChartWidget(widget) {
-  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_SPORT_CHART_TYPE) return widget;
-  const os = widget[LEGACY_SETTINGS_KEY] && typeof widget[LEGACY_SETTINGS_KEY] === "object" ? widget[LEGACY_SETTINGS_KEY] : {};
-  const config = os.config && typeof os.config === "object" ? os.config : {};
-  const chart = String(config.financeVariant || os.variant || os.type || "health.sportWeekly").replace(/^health\./, "");
-  const view = chart === "sportWaffle" ? "waffle"
-    : chart === "sportCalendar" || chart === "calendar" ? "calendar"
-    : chart === "cumulative" || chart === "stacked" ? "cumul"
-    : chart === "summarySeries" || chart === "line" || chart === "timeSeries" || chart === "sharedLine" || chart === "sharedMasterLine" ? "series"
-    : "stack";
-  const range = Math.round(Number(config.range));
-  const period = !(range >= 1) ? "365" : [7, 30, 90, 365].includes(range) ? String(range) : "rolling";
-  const sport = { sports: [], period, from: "", to: "", days: range >= 1 ? Math.min(3660, range) : 30, measure: "total", bucket: view === "series" ? "day" : "week", view, mean: chart !== "line" && chart !== "timeSeries" && chart !== "sharedLine" && chart !== "sharedMasterLine" };
-  if (view === "calendar" && /^\d{4}$/.test(String(config.year || ""))) sport.year = String(config.year);
-  return { ...widget, type: "sportChart", sport: { ...sport, ...(widget.sport && typeof widget.sport === "object" ? widget.sport : {}) } };
-}
-// #596 : l'ancien widget de graphique financier externe migre vers le widget Budget natif
-// qui montre la même chose — Graphique Budget (#587, 8 graphiques), Budget du
-// mois, Patrimoine par banque, Transactions ou Sankey du patrimoine. Sans
-// équivalent : Graphique Budget, donut (le défaut de l'ancien widget). Titre,
-// identité et disposition conservés ; son réglage d'origine aussi.
-const LEGACY_FINANCE_CHARTS = {
-  chart_sankey_monthly: "sankeyMonthly", sankey: "sankeyMonthly", massifFlux: "sankeyMonthly",
-  chart_annual_sankey: "sankeyAnnual",
-  cascadeWaterfall: "waterfall",
-  chart_cumulative: "cumulative", generic_cumulative: "cumulative",
-  chart_small_multiples: "smallMultiples",
-  chart_donut: "donut", sharedPie: "donut", chart_monthly_sunburst: "donut",
-  chart_waffle: "waffle",
-  chart_annual_categories: "periodic", generic_periodic: "periodic", stackedBars: "periodic", stackedBars100: "periodic", timeSeries: "periodic", generic_time: "periodic",
-};
-const LEGACY_FINANCE_WIDGETS = [
-  [/^chart_wealth_sankey$/, "financeSankeyWealth"],
-  [/^(chart_wealth_|wealth|massifPatrimoine|accountsTreemap|card_wealth_change)/, "financeWealth"],
-  [/^(card_|budget|category_progress|chart_budget_|list_month_budget_tracking|list_over_budget|remainingCounter|progressBar)/, "financeBudgetMonth"],
-  [/^(list_all_transactions|list_recent|list_unreconciled|transactions|transactionsPro)$/, "financeTransactions"],
-];
-function migrateLegacyFinanceChartWidget(widget) {
-  if (!widget || typeof widget !== "object" || widget.type !== LEGACY_FINANCE_CHART_TYPE) return widget;
-  const os = widget[LEGACY_SETTINGS_KEY] && typeof widget[LEGACY_SETTINGS_KEY] === "object" ? widget[LEGACY_SETTINGS_KEY] : {};
-  const chart = String(os.type || "budget.chart_donut").replace(/^budget\./, "");
-  const target = LEGACY_FINANCE_WIDGETS.find(([re]) => re.test(chart));
-  if (target) return { ...widget, type: target[1] };
-  return migrateBudgetChartWidget({ ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_CHARTS[chart] || "donut" });
-}
 // #604 : le « Graphique Budget » ne propose plus les deux Sankey, qui ont leur
 // propre widget. Un Graphique Budget réglé sur un Sankey devient le widget
 // « Sankey mensuel (flux) », sur l'année pour l'ancien Sankey annuel.
@@ -2315,8 +2260,6 @@ function migrateLegacyMiniGanttData(value) {
   if (!value || typeof value !== "object") return value;
   if (value.type === LEGACY_EMBED_GANTT_TYPE) return migrateLegacyMiniGanttWidget(value);
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
-  if (value.type === LEGACY_SPORT_CHART_TYPE) return migrateLegacySportChartWidget(value);
-  if (value.type === LEGACY_FINANCE_CHART_TYPE) return migrateLegacyFinanceChartWidget(value);
   if (value.type === "financeBudgetChart") return migrateBudgetChartWidget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
@@ -3786,7 +3729,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || w.type === LEGACY_FINANCE_CHART_TYPE || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos" || w.type === LEGACY_SPORT_CHART_TYPE}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3847,9 +3790,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 {w.type === "financeProSynthese" && (
                   <WidgetFinanceProSynthese quotes={financeProQuotes} proBillingSchedule={financeProBillingSchedule} proPayments={financeProPayments} />
                 )}
-                {w.type === LEGACY_FINANCE_CHART_TYPE && (
-                  <WidgetFinanceLegacyChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacyFinanceChartWidget(w), ...patch })} />
-                )}
                 {w.type === "financeTransactions" && (
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
@@ -3882,9 +3822,6 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 )}
                 {w.type === "healthSportChart" && (
                   <WidgetHealthSportChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
-                )}
-                {w.type === LEGACY_SPORT_CHART_TYPE && (
-                  <WidgetSportChart widget={migrateLegacySportChartWidget(w)} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, { ...migrateLegacySportChartWidget(w), ...patch })} />
                 )}
                 {FINANCE_SANKEY_TYPES.includes(w.type) && (
                   <WidgetFinanceSankey widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -37854,17 +37791,6 @@ function FinanceChartPeriodic({ months, stacked = false }) {
       {stacked && <div className="nx-bch-legend">{[...legend].map(([name, color]) => <span key={name}><i style={{ background: color }} />{name}</span>)}</div>}
     </>
   );
-}
-
-// Ancien widget de graphique financier externe reçu sans migration (#596) : rendu
-// par le widget natif équivalent.
-function WidgetFinanceLegacyChart({ widget, externalToolbarSlot, onUpdateWidget }) {
-  const w = migrateLegacyFinanceChartWidget(widget);
-  if (w.type === "financeSankeyWealth") return <WidgetFinanceSankey widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
-  if (w.type === "financeWealth") return <WidgetFinanceWealth externalToolbarSlot={externalToolbarSlot} />;
-  if (w.type === "financeBudgetMonth") return <WidgetFinanceBudgetMonth externalToolbarSlot={externalToolbarSlot} />;
-  if (w.type === "financeTransactions") return <WidgetFinanceTransactions widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
-  return <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={onUpdateWidget} />;
 }
 
 function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget }) {
