@@ -18704,15 +18704,15 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
         <>
           <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
             Les mesures de l’onglet Santé (Whoop, balance, nutrition) : une mesure par jour, semaine ou mois (moyenne des
-            jours renseignés), sa moyenne sur 7 jours, et une seconde mesure au choix sur l’axe de droite. Tout se règle
-            aussi dans l’en-tête.
+            jours renseignés), dans la plage min–max de la période, avec sa moyenne mobile et l’écart à la moyenne ; une
+            seconde mesure au choix a ses propres panneaux. Tout se règle aussi dans l’en-tête.
           </p>
           <div className="lp-field">
             <label>Mesure</label>
             <HealthMetricSelect value={healthConfig.metric} onChange={(v) => setHealthConfig((c) => ({ ...c, metric: v }))} label="Mesure" />
           </div>
           <div className="lp-field">
-            <label>Seconde mesure (axe de droite)</label>
+            <label>Seconde mesure</label>
             <HealthMetricSelect value={healthConfig.metricB} onChange={(v) => setHealthConfig((c) => ({ ...c, metricB: v }))} label="Seconde mesure" allowEmpty />
           </div>
           <div className="lp-field">
@@ -39447,6 +39447,7 @@ const SPORT_CSS = `
 .nx-sport-tools input.nx-health-days{width:52px;padding:0 4px}
 .nx-sport-tools input.nx-health-days:disabled{opacity:.5}
 .nx-sport-chart-legend i.nx-health-dot{width:14px;height:0;border-radius:0;background:none;border-top:2px dotted}
+.nx-sport-chart-legend i.nx-health-band{width:14px;height:10px;border-radius:2px;background:rgba(42,120,214,.12);border:1px dotted #2a78d6}
 .nx-sport-group{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;padding-left:6px;border-left:1px solid var(--border,#d8e1eb)}
 .nx-sport-pop{position:relative;display:inline-flex}
 .nx-sport-menu{position:absolute;top:28px;left:0;z-index:30;display:flex;flex-direction:column;gap:3px;min-width:200px;max-height:260px;overflow:auto;padding:8px 10px;background:#fff;border:1px solid #d8e1eb;border-radius:8px;box-shadow:0 8px 24px rgba(20,40,60,.14)}
@@ -40097,9 +40098,9 @@ function WidgetSportSummary({ widget, externalToolbarSlot, onUpdateWidget }) {
 // Santé (#594) : l'onglet Santé de la feuille (Whoop, balance, nutrition),
 // lu par /api/nexora/health-records (session du propriétaire, URL de la
 // source dans NEXORA_HEALTH_CSV_URL, lecture à parité avec OS360). Un widget
-// « Graphique santé » : une mesure (et une seconde au choix, axe de droite),
-// par jour, semaine ou mois, avec la moyenne mobile sur X jours et, au choix,
-// le minimum et le maximum de la période en pointillés (#608).
+// « Graphique santé » : une mesure (et une seconde au choix, dans ses propres
+// panneaux), par jour, semaine ou mois, avec la moyenne mobile sur X jours, la
+// plage min–max de la période (#608) et l'écart à la moyenne (#611).
 // ---------------------------------------------------------------------------
 
 // === NEXORA:HEALTH:START ===
@@ -40155,6 +40156,7 @@ function healthChartSpec(widget) {
     meanDays: healthMeanDays(s.meanDays),
     showMin: s.showMin === true,
     showMax: s.showMax === true,
+    showDev: s.showDev !== false,
   };
 }
 function healthRows(data) {
@@ -40213,7 +40215,8 @@ function healthSeries(records, spec, today) {
   const extreme = (field, pick) => points.reduce((best, p) => (p[field] !== null && (!best || pick(p[field], best.value)) ? { value: p[field], key: p.key, label: p.label } : best), null);
   return {
     points, tooMany, metricA: healthMetric(spec.metric), metricB: metricB ? healthMetric(metricB) : null, meanDays,
-    average: healthMean(points.map((p) => p.a)), last: known.length ? known[known.length - 1] : null, count: known.length,
+    average: healthMean(points.map((p) => p.a)), averageB: metricB ? healthMean(points.map((p) => p.b)) : null,
+    last: known.length ? known[known.length - 1] : null, count: known.length,
     min: { a: extreme("a", (v, m) => v < m), b: metricB ? extreme("b", (v, m) => v < m) : null },
     max: { a: extreme("a", (v, m) => v > m), b: metricB ? extreme("b", (v, m) => v > m) : null },
   };
@@ -40337,9 +40340,8 @@ function useHealthData() {
 // Courbe à un ou deux axes (#594, #595) : série A (aire + ligne) sur l'axe de
 // gauche, série B (ligne, ou barres) sur l'axe de droite, moyenne mobile en
 // pointillés. Les valeurs null font un trou, jamais un zéro inventé.
-// `refs` (#608) : lignes horizontales en pointillés fins (minimum, maximum de
-// la période), chacune sur l'axe de sa mesure, nommée avec sa valeur.
-function HealthDualChart({ points, seriesA, seriesB, rollingKey = "rolling", rollingLabel = "Moyenne 7 jours", refs = [], formatA, formatB, barsB = false, zeroA = false }) {
+// Utilisée par « Santé × sport » ; le « Graphique santé » a HealthBandChart (#611).
+function HealthDualChart({ points, seriesA, seriesB, rollingKey = "rolling", rollingLabel = "Moyenne 7 jours", formatA, formatB, barsB = false, zeroA = false }) {
   const boxRef = useRef(null);
   const size = useSportPlotSize(boxRef);
   const [hover, setHover] = useState(null);
@@ -40386,17 +40388,6 @@ function HealthDualChart({ points, seriesA, seriesB, rollingKey = "rolling", rol
         <path d={path((p) => p.a, yA)} fill="none" stroke={seriesA.color} strokeWidth="1.6" strokeLinejoin="round" />
         {points.some((p) => p[rollingKey] !== null && p[rollingKey] !== undefined) && <path d={path((p) => p[rollingKey], yA)} fill="none" stroke={seriesA.color} strokeOpacity=".75" strokeWidth="2" strokeDasharray="5 4" />}
         {seriesB && !barsB && <path d={path((p) => p.b, yB)} fill="none" stroke={seriesB.color} strokeWidth="1.6" strokeLinejoin="round" />}
-        {refs.map((r) => {
-          const y = r.axis === "b" && yB ? yB(r.value) : yA(r.value);
-          const color = r.axis === "b" && seriesB ? seriesB.color : seriesA.color;
-          return (
-            <g key={r.id}>
-              <line x1={M.left} x2={M.left + plotW} y1={y} y2={y} stroke={color} strokeWidth="1.2" strokeDasharray="2 3" />
-              <text x={r.axis === "b" ? M.left + 4 : M.left + plotW - 4} y={r.kind === "max" ? y - 4 : y + 11} textAnchor={r.axis === "b" ? "start" : "end"}
-                style={{ fill: color, fontWeight: 600, paintOrder: "stroke", stroke: "#fff", strokeWidth: 3 }}>{r.label}</text>
-            </g>
-          );
-        })}
         {/* Valeur isolée (jours voisins vides) : un point, sinon invisible. */}
         {points.map((p, i) => {
           const lone = (get) => get(p) !== null && get(p) !== undefined && [points[i - 1], points[i + 1]].every((q) => !q || get(q) === null || get(q) === undefined);
@@ -40506,6 +40497,144 @@ function HealthMetricSelect({ value, onChange, label, allowEmpty = false }) {
   );
 }
 
+// Graphique santé (#611, mix des maquettes 4 et 5) : pour chaque mesure, un
+// panneau « valeurs » (plage min–max de la période en bande, bornes en
+// pointillés nommées en marge, moyenne de la période, courbe, moyenne mobile)
+// et, collé dessous sur le même axe des dates, l'écart à la moyenne en barres
+// (pleines au-dessus, claires en dessous). Une seconde mesure a ses propres
+// panneaux : jamais deux échelles sur un même graphe. Trous gardés (null).
+function HealthBandChart({ points, series, showDev, rollingLabel }) {
+  const boxRef = useRef(null);
+  const size = useSportPlotSize(boxRef);
+  const [hover, setHover] = useState(null);
+  const n = points.length;
+  const M = { left: 52, right: 156, top: 4, bottom: 24 };
+  const plotW = Math.max(size.w - M.left - M.right, n * 3);
+  const step = plotW / Math.max(1, n);
+  const x = (i) => M.left + i * step + step / 2;
+  const titleH = 16, gap = 12;
+  const blockMin = showDev ? 170 : 110;
+  const avail = Math.max(series.length * blockMin + (series.length - 1) * gap, size.h - M.top - M.bottom - 6);
+  const blockH = (avail - (series.length - 1) * gap) / series.length;
+  const valH = (showDev ? blockH * 0.68 : blockH) - titleH;
+  const devH = showDev ? blockH * 0.32 : 0;
+  const totalH = M.top + avail + M.bottom;
+  const every = Math.max(1, Math.ceil(70 / step));
+  const fmtTick = (t) => t.toLocaleString("fr-FR");
+  const path = (get, y) => {
+    let d = "", open = false;
+    points.forEach((p, i) => {
+      const v = get(p);
+      if (v === null || v === undefined) { open = false; return; }
+      d += `${open ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+      open = true;
+    });
+    return d;
+  };
+  const spread = (items, minGap = 12) => {
+    const out = [...items].sort((a, b) => a.y - b.y);
+    for (let k = 1; k < out.length; k++) if (out[k].y - out[k - 1].y < minGap) out[k] = { ...out[k], y: out[k - 1].y + minGap };
+    return out;
+  };
+  const blocks = series.map((s, k) => {
+    const get = (p) => p[s.key];
+    const top = M.top + k * (blockH + gap);
+    const known = points.flatMap((p) => [get(p), s.rolling ? p.rolling : null]).filter((v) => v !== null && v !== undefined);
+    const ticks = healthTicks(Math.min(...known), Math.max(...known), 4);
+    const y0 = top + titleH, y1 = y0 + valH;
+    const y = (v) => y1 - ((v - ticks[0]) / ((ticks[ticks.length - 1] - ticks[0]) || 1)) * valH;
+    const devs = points.map((p) => (get(p) === null || get(p) === undefined ? null : get(p) - s.average));
+    const amp = Math.max(0, ...devs.filter((d) => d !== null).map(Math.abs)) || 1;
+    const dt = healthTicks(-amp, amp, 2);
+    const da = Math.max(Math.abs(dt[0]), Math.abs(dt[dt.length - 1]));
+    const d0 = y1 + 18, d1 = y1 + devH;
+    const yd = (v) => d0 + (1 - (v + da) / (2 * da)) * (d1 - d0);
+    return { s, get, top, ticks, y, y0, y1, devs, da, yd, d0, d1 };
+  });
+  const base = M.top + avail;
+  const barW = Math.max(1.5, Math.min(24, step * 0.66));
+  const h = hover ? points[hover.i] : null;
+  return (
+    <div className="nx-sport-chart-plot" ref={boxRef}>
+      <svg width={plotW + M.left + M.right} height={totalH} role="img" aria-label={series.map((s) => s.metric.label).join(" et ")}>
+        {blocks.map(({ s, get, top, ticks, y, y0, y1, devs, da, yd, d0, d1 }) => {
+          const lo = s.min ? s.min.value : s.average, hi = s.max ? s.max.value : s.average;
+          const labels = [
+            ...(s.max ? [{ key: "max", y: y(s.max.value), text: `${healthFormat(s.max.value, s.metric)} max · ${s.max.label}`, color: s.color }] : []),
+            { key: "moy", y: y(s.average), text: `${healthFormat(s.average, s.metric)} moyenne`, color: "#52514e" },
+            ...(s.min ? [{ key: "min", y: y(s.min.value), text: `${healthFormat(s.min.value, s.metric)} min · ${s.min.label}`, color: s.color }] : []),
+          ];
+          return (
+            <g key={s.key}>
+              <text x={M.left} y={top + 10} style={{ fontWeight: 650, fill: "#52514e", letterSpacing: ".04em" }}>{s.metric.label.toUpperCase()}</text>
+              <text x={M.left - 6} y={top + 10} textAnchor="end" style={{ fontWeight: 600, fill: s.color }}>{s.metric.unit}</text>
+              {(s.min || s.max) && <rect x={M.left} y={y(hi)} width={plotW} height={Math.max(0, y(lo) - y(hi))} fill={s.color} fillOpacity=".08" />}
+              {ticks.map((t) => (
+                <g key={"t" + t}>
+                  <line x1={M.left} x2={M.left + plotW} y1={y(t)} y2={y(t)} stroke="#ebecee" />
+                  <text x={M.left - 6} y={y(t) + 3} textAnchor="end">{fmtTick(t)}</text>
+                </g>
+              ))}
+              {s.max && <line x1={M.left} x2={M.left + plotW} y1={y(s.max.value)} y2={y(s.max.value)} stroke={s.color} strokeDasharray="2 3" />}
+              {s.min && <line x1={M.left} x2={M.left + plotW} y1={y(s.min.value)} y2={y(s.min.value)} stroke={s.color} strokeDasharray="2 3" />}
+              <line x1={M.left} x2={M.left + plotW} y1={y(s.average)} y2={y(s.average)} stroke="#52514e" />
+              <path d={path(get, y)} fill="none" stroke={s.color} strokeWidth="1.7" strokeLinejoin="round" />
+              {points.map((p, i) => {
+                const v = get(p);
+                const lone = v !== null && v !== undefined && [points[i - 1], points[i + 1]].every((q) => !q || get(q) === null || get(q) === undefined);
+                return (v !== null && v !== undefined && (lone || step >= 14)) ? <circle key={"pt" + p.key} cx={x(i)} cy={y(v)} r="2.6" fill={s.color} /> : null;
+              })}
+              {s.rolling && <path d={path((p) => p.rolling, y)} fill="none" stroke="#1b5fae" strokeWidth="2" strokeDasharray="5 4" />}
+              {spread(labels).map((l) => (
+                <text key={l.key} x={M.left + plotW + 8} y={l.y + 3} style={{ fill: l.color, fontWeight: 600 }}>{l.text}</text>
+              ))}
+              {showDev && (
+                <g>
+                  {[-da, 0, da].map((t) => <text key={"d" + t} x={M.left - 6} y={yd(t) + 3} textAnchor="end">{t > 0 ? "+" : ""}{fmtTick(t)}</text>)}
+                  <line x1={M.left} x2={M.left + plotW} y1={yd(da)} y2={yd(da)} stroke="#ebecee" />
+                  <line x1={M.left} x2={M.left + plotW} y1={yd(-da)} y2={yd(-da)} stroke="#ebecee" />
+                  {devs.map((d, i) => (d === null ? null : (
+                    <rect key={"dev" + points[i].key} x={x(i) - barW / 2} y={Math.min(yd(0), yd(d))} width={barW} height={Math.max(0.5, Math.abs(yd(d) - yd(0)))} fill={d >= 0 ? s.color : s.light} />
+                  )))}
+                  <line x1={M.left} x2={M.left + plotW} y1={yd(0)} y2={yd(0)} stroke="#52514e" />
+                  <text x={M.left + plotW + 8} y={yd(0) + 3} style={{ fill: "#52514e" }}>écart à {healthFormat(s.average, s.metric)}</text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+        {points.map((p, i) => (
+          <g key={p.key}
+            onMouseEnter={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setHover(null)}>
+            <rect x={M.left + i * step} y={M.top} width={step} height={avail} fill={hover?.i === i ? "rgba(36,86,154,.06)" : "transparent"} />
+            {i % every === 0 && <text x={x(i)} y={base + 15} textAnchor="middle">{p.label}</text>}
+          </g>
+        ))}
+        <line x1={M.left} x2={M.left + plotW} y1={base} y2={base} stroke="#b8c4cf" />
+      </svg>
+      {h && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-sport-tip">
+            <strong>{h.label}</strong>
+            {series.map((s) => {
+              const v = h[s.key];
+              return (
+                <React.Fragment key={s.key}>
+                  <div><span><i style={{ background: s.color }} />{s.metric.label}</span><span>{healthFormat(v, s.metric)}</span></div>
+                  {s.rolling && h.rolling !== null && h.rolling !== undefined && <div><span>{rollingLabel}</span><span>{healthFormat(h.rolling, s.metric)}</span></div>}
+                  {v !== null && v !== undefined && <div><span>Écart à la moyenne ({healthFormat(s.average, s.metric)})</span><span>{v - s.average >= 0 ? "+" : "−"}{healthFormat(Math.abs(v - s.average), s.metric)}</span></div>}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+    </div>
+  );
+}
+
 // Nombre de jours de la moyenne mobile (#608) : saisie libre, validée en
 // quittant le champ ou avec Entrée (2 à 365 jours).
 function HealthDaysInput({ value, disabled, onChange }) {
@@ -40537,7 +40666,7 @@ function WidgetHealthChart({ widget, externalToolbarSlot, onUpdateWidget }) {
       <style>{SPORT_CSS + SPORT_CHART_CSS}</style>
       <div className="nx-sport-tools" onPointerDown={(e) => e.stopPropagation()}>
         <HealthMetricSelect value={spec.metric} onChange={(v) => update({ metric: v })} label="Mesure" />
-        <HealthMetricSelect value={spec.metricB} onChange={(v) => update({ metricB: v })} label="Seconde mesure (axe de droite)" allowEmpty />
+        <HealthMetricSelect value={spec.metricB} onChange={(v) => update({ metricB: v })} label="Seconde mesure (panneaux dessous)" allowEmpty />
         <select value={spec.bucket} onChange={(e) => update({ bucket: e.target.value })} aria-label="Agrégation" title="Agrégation">
           {SPORT_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
         </select>
@@ -40552,6 +40681,9 @@ function WidgetHealthChart({ widget, externalToolbarSlot, onUpdateWidget }) {
           <input type="checkbox" checked={spec.mean} onChange={() => update({ mean: !spec.mean })} />Moyenne mobile
         </label>
         <HealthDaysInput value={spec.meanDays} disabled={!spec.mean} onChange={(v) => update({ meanDays: v })} />
+        <label className="nx-health-check" title="Écart de chaque point à la moyenne de la période, en barres sous la courbe">
+          <input type="checkbox" checked={spec.showDev} onChange={() => update({ showDev: !spec.showDev })} />Écart à la moyenne
+        </label>
         <SportFilterTools spec={{ ...spec, sports: [] }} rows={null} onChange={update} hideSports />
         <button type="button" onClick={reload} title="Relire les mesures santé">Actualiser</button>
         {data?.last && <span className="nx-sport-count">Dernière : {healthFormat(data.last.a, data.metricA)} · moyenne {healthFormat(data.average, data.metricA)}</span>}
@@ -40570,26 +40702,20 @@ function WidgetHealthChart({ widget, externalToolbarSlot, onUpdateWidget }) {
   if (!data) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Chargement des mesures santé…</div>;
   if (data.tooMany) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Plus de {SPORT_MAX_BUCKETS} points : choisis la semaine ou le mois, ou une période plus courte.</div>;
   if (!data.count) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucune valeur de « {data.metricA.label} » sur cette période.</div>;
-  const A = { label: data.metricA.label, unit: data.metricA.unit, color: "#24569a" };
-  const B = data.metricB ? { label: data.metricB.label, unit: data.metricB.unit, color: "#d9822b" } : null;
-  const points = spec.mean ? data.points : data.points.map((p) => ({ ...p, rolling: null }));
+  const ext = (side) => ({ min: spec.showMin ? data.min[side] : null, max: spec.showMax ? data.max[side] : null });
+  const series = [{ key: "a", metric: data.metricA, color: "#2a78d6", light: "#a9c7ee", average: data.average, ...ext("a"), rolling: spec.mean }];
+  if (data.metricB && data.averageB !== null) series.push({ key: "b", metric: data.metricB, color: "#eb6834", light: "#f6c3ad", average: data.averageB, ...ext("b"), rolling: false });
   const rollingLabel = `Moyenne mobile ${data.meanDays} jours`;
-  const refs = [];
-  for (const [kind, on, word] of [["min", spec.showMin, "min"], ["max", spec.showMax, "max"]]) {
-    if (!on) continue;
-    const ext = data[kind];
-    if (ext.a) refs.push({ id: kind + "a", kind, axis: "a", value: ext.a.value, label: `${word} ${healthFormat(ext.a.value, data.metricA)} · ${ext.a.label}` });
-    if (B && ext.b) refs.push({ id: kind + "b", kind, axis: "b", value: ext.b.value, label: `${word} ${healthFormat(ext.b.value, data.metricB)} · ${ext.b.label}` });
-  }
   return (
     <div className="nx-sport-chart">
       {tools}
-      <HealthDualChart points={points} seriesA={A} seriesB={B} rollingLabel={rollingLabel} refs={refs} formatA={(v) => healthFormat(v, data.metricA)} formatB={(v) => healthFormat(v, data.metricB)} />
+      <HealthBandChart points={data.points} series={series} showDev={spec.showDev} rollingLabel={rollingLabel} />
       <div className="nx-sport-chart-legend">
-        <span><i style={{ background: A.color }} />{A.label}</span>
-        {spec.mean && <span><i className="nx-sport-dash" style={{ borderTopColor: A.color }} />{rollingLabel}{spec.bucket !== "day" ? ` (au dernier jour de chaque ${spec.bucket === "week" ? "semaine" : "mois"})` : ""}</span>}
-        {(spec.showMin || spec.showMax) && <span><i className="nx-health-dot" style={{ borderTopColor: A.color }} />{spec.showMin && spec.showMax ? "Minimum et maximum" : spec.showMin ? "Minimum" : "Maximum"} de la période</span>}
-        {B && <span><i style={{ background: B.color }} />{B.label} (axe de droite)</span>}
+        {series.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.metric.label}</span>)}
+        {(spec.showMin || spec.showMax) && <span><i className="nx-health-band" />{spec.showMin && spec.showMax ? "Plage min–max" : spec.showMin ? "Plage min – moyenne" : "Plage moyenne – max"} de la période</span>}
+        <span><i style={{ background: "#52514e", height: 2, borderRadius: 0 }} />Moyenne de la période</span>
+        {spec.mean && <span><i className="nx-sport-dash" style={{ borderTopColor: "#1b5fae" }} />{rollingLabel}{spec.bucket !== "day" ? ` (au dernier jour de chaque ${spec.bucket === "week" ? "semaine" : "mois"})` : ""}</span>}
+        {spec.showDev && <span>Écart : <i style={{ background: series[0].color, marginLeft: 4 }} />au-dessus <i style={{ background: series[0].light, marginLeft: 4 }} />en dessous</span>}
       </div>
     </div>
   );

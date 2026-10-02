@@ -74,7 +74,8 @@ test("mesures : 25 mesures d'OS360 en 5 familles, réglages par défaut", () => 
   assert.deepEqual(H.HEALTH_GROUPS, ["Corps", "Sommeil", "Récupération", "Activité", "Nutrition"]);
   for (const m of H.HEALTH_METRICS) assert.ok(H.HEALTH_GROUPS.includes(m.group), m.key);
   assert.deepEqual(H.HEALTH_METRICS.map((m) => m.key).sort(), N.HEALTH_COLUMNS.slice(1).sort(), "toutes les colonnes de la source, aucune autre");
-  assert.deepEqual(H.healthChartSpec(undefined), { metric: "sleepHours", metricB: "", period: "90", from: "", to: "", days: 30, bucket: "day", mean: true, meanDays: 7, showMin: false, showMax: false });
+  assert.deepEqual(H.healthChartSpec(undefined), { metric: "sleepHours", metricB: "", period: "90", from: "", to: "", days: 30, bucket: "day", mean: true, meanDays: 7, showMin: false, showMax: false, showDev: true });
+  assert.equal(H.healthChartSpec({ health: { showDev: false } }).showDev, false, "écart à la moyenne décochable (#611)");
   assert.deepEqual(["3", 1, "abc", 400, 14.6].map((v) => H.healthChartSpec({ health: { meanDays: v } }).meanDays), [3, 7, 7, 365, 15], "moyenne mobile : 2 à 365 jours (#608)");
   assert.deepEqual([H.healthChartSpec({ health: { showMin: true } }).showMin, H.healthChartSpec({ health: { showMax: "oui" } }).showMax], [true, false]);
   assert.equal(H.healthChartSpec({ health: { metric: "inconnue", metricB: "weight" } }).metric, "sleepHours");
@@ -102,6 +103,7 @@ test("série : moyenne des jours renseignés, trous gardés, moyenne 7 jours, ri
   assert.deepEqual(day3.points.slice(0, 4).map((p) => p.rolling), [7, 6.5, 6.5, 7], "moyenne mobile sur 3 jours");
   assert.equal(day3.meanDays, 3);
   assert.deepEqual([day3.min.a.value, day3.max.a.value, day3.min.b], [5, 8, null]);
+  assert.deepEqual([week.average, week.averageB, day3.averageB], [79.125, 60, null], "moyenne de la période, par mesure");
   assert.equal(week.metricB.key, "recovery");
   assert.equal(H.healthSeries(records, spec({ metricB: "sleepHours" }), "2026-09-30").metricB, null, "même mesure : pas de seconde courbe");
   assert.equal(H.healthSeries([], spec(), "2026-09-30").count, 0);
@@ -125,7 +127,10 @@ test("en-tête : min, max et moyenne mobile sur X jours à cocher (#608)", () =>
   assert.match(html, /checked=\{spec\.showMin\} onChange=\{\(\) => update\(\{ showMin: !spec\.showMin \}\)\}/);
   assert.match(html, /checked=\{spec\.showMax\} onChange=\{\(\) => update\(\{ showMax: !spec\.showMax \}\)\}/);
   assert.match(html, /<HealthDaysInput value=\{spec\.meanDays\} disabled=\{!spec\.mean\} onChange=\{\(v\) => update\(\{ meanDays: v \}\)\} \/>/);
-  assert.match(html, /rollingLabel=\{rollingLabel\} refs=\{refs\}/);
+  // #611 : panneaux par mesure (bande min–max, moyenne, écart), plus de second axe.
+  assert.match(html, /checked=\{spec\.showDev\} onChange=\{\(\) => update\(\{ showDev: !spec\.showDev \}\)\}/);
+  assert.match(html, /<HealthBandChart points=\{data\.points\} series=\{series\} showDev=\{spec\.showDev\} rollingLabel=\{rollingLabel\} \/>/);
+  assert.doesNotMatch(html.slice(html.indexOf("function WidgetHealthChart("), html.indexOf("function WidgetHealthChart(") + 6000), /<HealthDualChart/);
 });
 
 test("widget rattaché au catalogue, au rendu, à l'en-tête et à la fiche", () => {
