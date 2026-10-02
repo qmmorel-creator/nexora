@@ -13,6 +13,7 @@ export function expensesOf(list: any[]): any[];
 export function incomeOf(list: any[]): any[];
 export function sumAbs(list: any[]): number;
 export function buildBudgetSummary(raw: Record<string, unknown>, month: string | null, now?: Date): any;
+export function buildBudgetPeriodTotals(raw: Record<string, unknown>, from: string | null, to: string | null, now?: Date): any;
 export function buildBudgetReport(raw: Record<string, unknown>, now?: Date): any;
 export function apportion(weights: number[], total: number): number[];
 export function waffle(periodRows: any[], data: any): any;

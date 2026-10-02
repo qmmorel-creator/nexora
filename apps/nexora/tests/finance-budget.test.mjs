@@ -87,6 +87,57 @@ test("totaux du mois identiques à l'origine : Épargne comptée, transferts int
   assert.equal(s.totals.net, 1587.05);
 });
 
+test("période libre : mêmes règles que le mois, bornes par défaut, dates refusées (#644)", () => {
+  const month = B.buildBudgetSummary(raw, "2026-09", NOW);
+  const sept = B.buildBudgetPeriodTotals(raw, "2026-09-01", "2026-09-30", NOW);
+  const { expenses, income, net } = month.totals;
+  assert.deepEqual(sept.totals, { expenses, income, net }, "un mois = la carte du mois");
+  assert.deepEqual(sept.totals, { expenses: 1653.45, income: 3240.5, net: 1587.05 });
+  assert.deepEqual(sept.counts, { expenses: 4, income: 2 }, "annulée, transferts internes et ajustements exclus");
+  const across = B.buildBudgetPeriodTotals(raw, "2026-08-28", "2026-09-03", NOW);
+  assert.deepEqual([across.period, across.totals], [{ from: "2026-08-28", to: "2026-09-03" }, { expenses: 992, income: 3200, net: 2208 }], "à cheval sur deux mois");
+  // Sans bornes : de la première opération (budgets et ouvertures exclus) à aujourd'hui ; le futur est exclu.
+  const all = B.buildBudgetPeriodTotals(raw, null, null, NOW);
+  assert.deepEqual([all.period, all.today, all.totals], [{ from: "2026-08-28", to: "2026-09-20" }, "2026-09-20", { expenses: 1695.45, income: 3240.5, net: 1545.05 }]);
+  assert.deepEqual(B.buildBudgetPeriodTotals(raw, "2026-09-15", null, NOW).totals, { expenses: 0, income: 0, net: 0 });
+  assert.deepEqual(B.buildBudgetPeriodTotals(raw, null, "2026-01-05", NOW).period, { from: "2026-01-05", to: "2026-01-05" }, "fin avant la première opération : période d'un jour");
+  assert.throws(() => B.buildBudgetPeriodTotals(raw, "2026-02-31", null, NOW), /invalid_period/);
+  assert.throws(() => B.buildBudgetPeriodTotals(raw, "2026-09-30", "2026-09-01", NOW), /invalid_period/);
+});
+
+test("Synthèse Budget : périodes, bornes et rattachements (#644)", async () => {
+  const P = vm.runInThisContext(`(function () {\n${slice("SPORT")}\n${slice("FINANCE-BUDGET-PERIOD")}\n;return { FINANCE_PERIODS, financePeriodSpec, financePeriodRange, financePeriodDates };\n})`)();
+  assert.deepEqual(P.financePeriodSpec(undefined), { period: "month", from: "", to: "", days: 30 });
+  assert.equal(P.financePeriodSpec({ budgetPeriod: { period: "inconnue" } }).period, "month");
+  assert.deepEqual(P.financePeriodSpec({ budgetPeriod: { period: "custom", from: "2026-01-01", to: "2026-06-30" } }), { period: "custom", from: "2026-01-01", to: "2026-06-30", days: 30 });
+  const r = (period, today, extra = {}) => P.financePeriodRange({ period, from: "", to: "", days: 30, ...extra }, today);
+  assert.deepEqual(r("quarter", "2026-02-15"), { from: "2026-01-01", to: "2026-03-31" });
+  assert.deepEqual(r("previousQuarter", "2026-02-15"), { from: "2025-10-01", to: "2025-12-31" }, "T1 → T4 de l'année précédente");
+  assert.deepEqual(r("quarter", "2026-11-30"), { from: "2026-10-01", to: "2026-12-31" });
+  assert.deepEqual(r("previousQuarter", "2026-11-30"), { from: "2026-07-01", to: "2026-09-30" });
+  assert.deepEqual(r("previousYear", "2026-02-15"), { from: "2025-01-01", to: "2025-12-31" });
+  assert.deepEqual(r("month", "2026-02-15"), { from: "2026-02-01", to: "2026-02-28" }, "les autres périodes : celles du sport");
+  assert.deepEqual(r("previousMonth", "2026-03-10"), { from: "2026-02-01", to: "2026-02-28" });
+  assert.deepEqual(r("rolling", "2026-02-15", { days: 10 }), { from: "2026-02-06", to: "2026-02-15" });
+  assert.deepEqual(r("custom", "2026-02-15", { from: "2025-12-01", to: "" }), { from: "2025-12-01", to: "" });
+  assert.deepEqual(r("all", "2026-02-15"), { from: "", to: "" }, "sans bornes : le serveur choisit");
+  assert.ok(P.FINANCE_PERIODS.every((p) => r(p.value, "2026-02-15") !== undefined));
+  assert.equal(P.financePeriodDates({ from: "2026-07-01", to: "2026-09-30" }), "du 01/07/2026 au 30/09/2026");
+  assert.equal(P.financePeriodDates({ from: "2026-07-01", to: "2026-07-01" }), "le 01/07/2026");
+  // Rattachements : catalogue, taille, rendu, en-tête, fenêtre de réglages, route.
+  assert.match(html, /\{ key: "financeBudgetPeriod", label: "Synthèse Budget \(période\)", icon: Wallet, group: "Budget" \}/);
+  assert.match(html, /if \(type === "financeBudgetPeriod"\) return \{ w: 6, h: 4 \};/);
+  assert.match(html, /w\.type === "financeBudgetPeriod" && \(\s*<WidgetFinanceBudgetPeriod widget=\{w\} externalToolbarSlot=\{headerToolbarSlot\}/);
+  assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeBudgetPeriod"/);
+  assert.match(html, /if \(type === "financeBudgetPeriod"\) data\.budgetPeriod = \{ \.\.\.budgetPeriodConfig \};/);
+  assert.match(html, /fetch\(`\/api\/nexora\/finance-budget-summary\?\$\{query\}`/);
+  assert.match(html, /for \(const key of \[\.\.\.financeBudgetPeriodStore\.entries\.keys\(\)\]\) financeBudgetPeriodLoad\(key, true\);/, "Actualiser et les écritures relisent la synthèse");
+  const route = await read("../netlify/functions/finance-budget-summary.ts");
+  assert.match(route, /if \(isPeriod\) return json\(\{ ok: true, data: buildBudgetPeriodTotals\(raw, from, to\) \}\);/);
+  assert.match(route, /error: "invalid_period" \}, 400\)/);
+  assert.match(route, /buildBudgetSummary\(raw, month\)/, "sans from / to : réponse du mois inchangée");
+});
+
 test("suivi budgétaire identique à l'origine : budgets par préfixe ou raw.budget_months, année de la période seulement", () => {
   const s = B.buildBudgetSummary(raw, "2026-09", NOW);
   assert.deepEqual(s.tracking.map(({ category, budget, actual }) => ({ category, budget, actual })), [

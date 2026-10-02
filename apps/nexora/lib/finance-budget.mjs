@@ -395,6 +395,33 @@ export function buildBudgetSummary(raw, month, now = new Date()) {
   };
 }
 
+// Totaux d'une période libre (#644) : dépenses, revenus et solde net avec
+// EXACTEMENT les règles de la carte du mois (`expensesOf`, `incomeOf`, date
+// effective, annulations retirées, transferts internes et ajustements exclus).
+// Bornes incluses, aaaa-mm-jj ; sans début : première opération ; sans fin :
+// aujourd'hui (Paris).
+export function buildBudgetPeriodTotals(raw, from, to, now = new Date()) {
+  if ((from && !isDate(from)) || (to && !isDate(to)) || (from && to && from > to)) throw new Error("invalid_period");
+  const data = normalizeBudget(raw);
+  const today = parisToday(now);
+  const first = data.ledger.reduce((min, t) => (!min || t.effectiveDate < min ? t.effectiveDate : min), "");
+  const end = to || today;
+  const period = { from: from || (first && first < end ? first : end), to: end };
+  const periodRows = inPeriod(data.transactions, period);
+  const expenses = expensesOf(periodRows);
+  const income = incomeOf(periodRows);
+  return {
+    period,
+    today,
+    totals: {
+      expenses: round2(sumAbs(expenses)),
+      income: round2(sumAbs(income)),
+      net: round2(sumAbs(income) - sumAbs(expenses)),
+    },
+    counts: { expenses: expenses.length, income: income.length },
+  };
+}
+
 // Recherche de transactions pour l'assistant (#587) : opérations non annulées
 // (lignes Budget exclues), plus récentes d'abord, paginées. `query` cherche,
 // sans tenir compte de la casse ni des accents, dans le libellé, la
