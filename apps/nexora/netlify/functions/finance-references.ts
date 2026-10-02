@@ -47,7 +47,7 @@ function budget(value: unknown) {
 // Codes d'erreur des fonctions SQL -> messages lisibles.
 const MESSAGES: Record<string, string> = {
   reference_in_use: "Suppression refusée : des transactions utilisent encore cette référence.",
-  reference_protected: "Ce nom est protégé (Épargne, Transferts internes, Ajustement) : il est lu par les calculs d'OS360 et de Nexora.",
+  reference_protected: "Ce nom est protégé (Épargne, Transferts internes, Ajustement) : il est lu par les calculs de Nexora.",
   category_exists: "Une catégorie porte déjà ce nom.",
   subcategory_exists: "Cette catégorie a déjà une sous-catégorie de ce nom.",
   category_not_found: "Catégorie introuvable : elle a peut-être été modifiée ailleurs. Actualisez.",
@@ -82,7 +82,7 @@ async function listReferences(config: { url: string; secretKey: string }) {
     categories: categories.map((c) => ({ ...c, usage: byCategory.get(c.category) || 0 })),
     subcategories: subcategories.map((s) => ({ ...s, usage: bySub.get(s.category + "\u0000" + s.subcategory) || 0 })),
     // Noms portés par des transactions sans entrée au référentiel (héritage
-    // des renommages d'OS360) : affichés pour être recréés ou corrigés.
+    // d'anciens renommages) : affichés pour être recréés ou corrigés.
     orphans: [...byCategory.entries()].filter(([name]) => !known.has(name)).map(([category, usage]) => ({ category, usage })),
   };
 }

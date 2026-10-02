@@ -412,8 +412,8 @@ assert.match(builtSource, /lp-pm-risk is-/);
    APPARTENANCE et non par voisinage : sinon, ajouter un widget entre deux
    autres casserait la garde sans qu'aucune propriété n'ait changé. */
 const usesTaskFilterExpr = builtSource.slice(
-  builtSource.indexOf("const usesTaskFilter = "),
-  builtSource.indexOf(";", builtSource.indexOf("const usesTaskFilter = ")),
+  builtSource.indexOf("function widgetUsesTaskFilter(type) {"),
+  builtSource.indexOf(";", builtSource.indexOf("function widgetUsesTaskFilter(type) {")),
 );
 assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvable");
 
@@ -430,6 +430,20 @@ assert.ok(usesTaskFilterExpr.length > 100, "expression usesTaskFilter introuvabl
     "Les anciens widgets d'échéances ne sont plus retirés à la lecture d'une sauvegarde.");
   assert.doesNotMatch(builtSource, /key: "toggleDeadlineMode"|shortcutPrefs\.toggleDeadlineMode|nexora:metro-deadline-toggle/,
     "Le raccourci de bascule Métro normal ↔ Échéances est revenu.");
+}
+
+/* Next Best Action, Daily Briefing et Domino Effect — supprimés (issue #610).
+   Même règle que les Échéances : une sauvegarde qui en contient encore les perd
+   à la lecture. Le catalogue est rangé en catégories Budget, Santé & sport et 3D. */
+{
+  for (const key of ["nextBestAction", "dailyBriefing", "dominoEffect"]) {
+    assert.doesNotMatch(builtSource, new RegExp(`key: "${key}"`),
+      `Le widget ${key} est revenu au catalogue alors qu'il a été supprimé.`);
+  }
+  assert.match(builtSource, /const REMOVED_INTELLIGENCE_TYPES = new Set\(\["nextBestAction", "dailyBriefing", "dominoEffect", "blockers"\]\);/,
+    "La liste des widgets supprimés en #610 à retirer à la lecture a changé ou disparu.");
+  assert.match(builtSource, /const WIDGET_TYPE_GROUPS = \["Indicateurs", "Planning", "3D", "Budget", "Santé & sport", "Ressources Humaines", "Suivi"\];/,
+    "Les catégories du catalogue des widgets ont changé.");
 }
 
 /* Treemap : le champ qui porte les tuiles (issue #47).

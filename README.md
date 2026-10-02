@@ -19,8 +19,7 @@ L'interface monofichier est versionnée sous `apps/nexora/source/index.html.part
 ## Suivi des demandes
 
 Les demandes d'amélioration et de correction sont suivies en issues GitHub : modèle guidé,
-labels `statut:*` et `zone:*`, board Projects. Le processus complet, identique à celui
-d'OS360, est décrit dans [.github/PROCESS.md](.github/PROCESS.md).
+labels `statut:*` et `zone:*`, board Projects. Le processus complet est décrit dans [.github/PROCESS.md](.github/PROCESS.md).
 
 ## Développement, préproduction et versions
 

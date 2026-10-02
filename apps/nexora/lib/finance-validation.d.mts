@@ -7,3 +7,4 @@ export function validateCategoryPair(catalogs: FinanceCatalogs, category: string
 export function validateAccount(catalogs: FinanceCatalogs, accountId: string): void;
 export function buildCreateTransaction(input: Record<string, unknown>, transactionId: string, options?: { source?: string; allowEmptySubcategory?: boolean }): Record<string, unknown>;
 export function buildCategorizedTransaction(existing: Record<string, unknown>, input: Record<string, unknown>, options?: { allowEmptySubcategory?: boolean }): Record<string, unknown>;
+export function buildEditedTransaction(existing: Record<string, unknown>, input: Record<string, unknown>): { categoryChanged: boolean; transaction: Record<string, unknown> };

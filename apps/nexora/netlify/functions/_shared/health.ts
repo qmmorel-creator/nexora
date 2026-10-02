@@ -1,12 +1,12 @@
 // Mesures santé (#594) : le CSV publié de l'onglet Santé de la feuille
-// (Whoop, balance, nutrition), lu comme OS360 (commit 13197da). Fonctions
+// (Whoop, balance, nutrition). Fonctions
 // PURES, sans import : le test de parité les compare aux résultats des
 // fonctions d'origine (`qc`, `osHealthHeader`, `osHealthImportNumber`, `Kc`,
-// `A`), figés dans tests/fixtures/os360-parite-sante.json.
+// `A`), figés dans tests/fixtures/parite-sante.json.
 
 export type HealthRecord = { date: string; [metric: string]: number | null | string };
 
-// Clés des mesures, dans l'ordre des colonnes — `De.columns` d'OS360.
+// Clés des mesures, dans l'ordre des colonnes.
 export const HEALTH_COLUMNS = [
   "date", "weight", "bodyFat", "muscleMass", "muscleRate", "recovery", "sleepHours", "strain", "calories", "hrv", "restingHr",
   "respRate", "spo2", "skinTemp", "sleepPerf", "sleepEff", "deepSleep", "remSleep", "steps", "stress", "hrZone45", "vo2max",
@@ -31,13 +31,13 @@ export function healthHeader(value: unknown): string {
   return String(value ?? "").normalize("NFKC").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-// Date civile ISO valide — `A` d'OS360.
+// Date civile ISO valide.
 function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const d = new Date(value + "T12:00:00Z");
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
-// JJ/MM/AAAA -> AAAA-MM-JJ, sinon refus — `Kc` d'OS360.
+// JJ/MM/AAAA -> AAAA-MM-JJ, sinon refus.
 function healthDate(value: string): string {
   const m = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   const iso = m ? `${m[3]}-${m[2]}-${m[1]}` : value;
@@ -59,7 +59,7 @@ export function healthNumber(value: unknown, metric: string, date: string, heade
   return Number(cleaned);
 }
 
-// Lignes du CSV -> mesures par jour — `qc` d'OS360 : colonnes retrouvées par
+// Lignes du CSV -> mesures par jour : colonnes retrouvées par
 // en-tête (ordre libre), colonne manquante ou dupliquée refusée, date
 // dupliquée refusée, lignes vides sautées, tri par date.
 export function healthRecords(rows: unknown[][]): HealthRecord[] {

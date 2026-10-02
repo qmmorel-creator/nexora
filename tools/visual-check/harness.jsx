@@ -10,7 +10,7 @@ const HARNESS_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAA
    avant. */
 const EMPTY_DASHBOARD_WIDGETS = [
   "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-  "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
+  "projectTreemap",
   "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte", "embedCosmos",
   "customCard",
 ].map((type, i) => ({ id: `vide-${type}`, type, title: type, layout: { x: (i % 4) * 3, y: Math.floor(i / 4) * 4, w: 3, h: 4 } }))
@@ -1041,7 +1041,7 @@ if (benchApp) {
   ];
   const benchWidgets = [
     "chart", "list", "minigantt", "bubbles", "criticalPath", "heatmapMonth",
-    "nextBestAction", "dailyBriefing", "dominoEffect", "projectTreemap",
+    "projectTreemap",
     "heatmapGrid", "embedMetro", "embedTimeline", "embedRadar", "embedCarte", "embedCosmos",
     "customCard",
     // #193 : monter la VRAIE DashboardView avec ces deux types placés est ce
@@ -1398,4 +1398,85 @@ function BenchApp() {
     </>
   );
 }
-root.render(React.createElement(benchApp ? BenchApp : AnnotationsHarness));
+/* Photos corporelles (#616) : « ?bodyPhotos=1 » monte le widget seul, sur
+   DEUX IMAGES DE SYNTHÈSE dessinées ici (aucune vraie photo dans le dépôt).
+   La seconde est la même scène passée par une similarité CONNUE (échelle
+   0,9, rotation 4°, décalage 80 / 60 px) : ses repères s'en déduisent, et le
+   banc vérifie qu'une fois alignée elle retombe exactement sur la référence.
+   La route et la session sont bouchonnées ; aucune requête ne sort. */
+const benchBodyPhotos = new URLSearchParams(location.search).get("bodyPhotos") === "1";
+const BENCH_BODY = (() => {
+  const ref = { leftEye: { x: 268, y: 172 }, rightEye: { x: 332, y: 170 }, navel: { x: 300, y: 540 } };
+  const k = 0.9, r = (4 * Math.PI) / 180;
+  const M = { a: k * Math.cos(r), b: k * Math.sin(r), tx: 80, ty: 60 }; // référence -> photo
+  const map = (p) => ({ x: M.a * p.x - M.b * p.y + M.tx, y: M.b * p.x + M.a * p.y + M.ty });
+  const unit = (pts, w, h) => Object.fromEntries(Object.entries(pts).map(([key, p]) => [key, { x: p.x / w, y: p.y / h }]));
+  const photos = [
+    { id: "banc-reference-1", status: "ready", date: "2026-06-01", dateSource: "exif", width: 600, height: 900, bytes: 1, createdAt: "1", updatedAt: "1", landmarks: unit(ref, 600, 900), adjust: {} },
+    { id: "banc-photo-0002", status: "ready", date: "2026-09-15", dateSource: "import", width: 700, height: 1000, bytes: 1, createdAt: "2", updatedAt: "2",
+      landmarks: unit(Object.fromEntries(Object.entries(ref).map(([key, p]) => [key, map(p)])), 700, 1000), adjust: {} },
+    { id: "banc-photo-0003", status: "ready", date: "2026-10-01", dateSource: "manual", width: 600, height: 900, bytes: 1, createdAt: "3", updatedAt: "3", landmarks: { leftEye: null, rightEye: null, navel: null }, adjust: {} },
+  ];
+  // Scène dessinée dans le repère de la référence (600 × 900).
+  const scene = (ctx, tint) => {
+    ctx.fillStyle = tint; ctx.fillRect(-400, -400, 1600, 1800);
+    ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 1;
+    for (let x = 0; x <= 600; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 900); ctx.stroke(); }
+    for (let y = 0; y <= 900; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(600, y); ctx.stroke(); }
+    ctx.fillStyle = "#e8c4a2";
+    ctx.beginPath(); ctx.ellipse(300, 180, 70, 90, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(190, 300, 220, 420, 60); ctx.fill();
+    ctx.fillStyle = "#1d2433";
+    for (const p of [ref.leftEye, ref.rightEye]) { ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = "#7a4b2a"; ctx.beginPath(); ctx.arc(ref.navel.x, ref.navel.y, 6, 0, Math.PI * 2); ctx.fill();
+  };
+  const draw = (w, h, t, tint) => {
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.setTransform(t.a, t.b, -t.b, t.a, t.tx, t.ty);
+    scene(ctx, tint);
+    return new Promise((resolve) => c.toBlob(resolve, "image/jpeg", 0.92));
+  };
+  const blobs = {
+    "banc-reference-1": draw(600, 900, { a: 1, b: 0, tx: 0, ty: 0 }, "#30557f"),
+    "banc-photo-0002": draw(700, 1000, M, "#7f3f30"),
+    "banc-photo-0003": draw(600, 900, { a: 1, b: 0, tx: 0, ty: 0 }, "#3f7f45"),
+  };
+  return { photos, blobs, ref, M };
+})();
+
+function BodyPhotosBench() {
+  const [widget, setWidget] = useState({ id: "banc-body", type: "bodyPhotos", title: "Photos corporelles", bodyPhotos: { rightId: "banc-photo-0002", split: 50, showLandmarks: true } });
+  return (
+    <>
+      <GlobalStyles />
+      <div style={{ width: 760, height: 900, margin: 16, border: "1px solid #dce3ed", borderRadius: 14 }} data-testid="bench-body-photos">
+        <WidgetBodyPhotos widget={widget} externalToolbarSlot={null} onUpdateWidget={(patch) => setWidget((w) => ({ ...w, ...patch }))} />
+      </div>
+    </>
+  );
+}
+
+if (benchBodyPhotos) {
+  auth.currentUser = { uid: "banc", getIdToken: async () => "jeton-banc" };
+  const realFetch = window.fetch.bind(window);
+  const reply = (data, status = 200) => new Response(JSON.stringify({ ok: status < 400, data }), { status, headers: { "content-type": "application/json" } });
+  window.__benchBodyCalls = [];
+  window.fetch = async (input, init = {}) => {
+    const url = new URL(typeof input === "string" ? input : input.url, location.href);
+    if (!url.pathname.startsWith("/api/nexora/body-photos")) return realFetch(input, init);
+    const method = (init.method || "GET").toUpperCase();
+    window.__benchBodyCalls.push(`${method} ${url.pathname}`);
+    const parts = url.pathname.split("/").slice(4);
+    if (!parts.length && method === "GET") return reply({ photos: BENCH_BODY.photos, referenceId: "banc-reference-1" });
+    if (parts[1] === "image") return new Response(await BENCH_BODY.blobs[parts[0]], { headers: { "content-type": "image/jpeg" } });
+    if (method === "PATCH") {
+      const photo = BENCH_BODY.photos.find((p) => p.id === parts[0]);
+      Object.assign(photo, JSON.parse(init.body));
+      return reply({ photo });
+    }
+    return reply({}, 404);
+  };
+}
+
+root.render(React.createElement(benchBodyPhotos ? BodyPhotosBench : benchApp ? BenchApp : AnnotationsHarness));

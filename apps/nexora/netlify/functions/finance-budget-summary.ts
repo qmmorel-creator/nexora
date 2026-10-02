@@ -3,8 +3,8 @@ import { json } from "./_shared/nexora.js";
 import { readBudgetTables, requireOwnerFinance } from "./_shared/finance-owner.js";
 import { buildBudgetSummary } from "../../lib/finance-budget.mjs";
 
-// Widgets Budget natifs (#586) : synthèse d'un mois calculée côté serveur avec
-// les règles d'OS360 (lib/finance-budget.mjs), pour la session Nexora du
+// Widgets Budget natifs (#586) : synthèse d'un mois calculée côté serveur
+// (lib/finance-budget.mjs), pour la session Nexora du
 // propriétaire. LECTURE SEULE : les écritures passent par
 // /api/nexora/finance-owner-transactions.
 export default async (req: Request) => {

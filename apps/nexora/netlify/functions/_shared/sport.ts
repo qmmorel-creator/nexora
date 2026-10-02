@@ -1,11 +1,10 @@
 // Journal sportif (#578) : le CSV publié de la feuille « Activités Strava »,
-// lu comme OS360 (commit 13197da). Fonctions PURES, sans import : le test de
-// parité les compare aux résultats des fonctions d'origine d'OS360 (`_e`,
-// `Jc`, `Kc`, `ve`, `S`, `A`), figés dans tests/fixtures/os360-parite-sport.json
+// Fonctions PURES, sans import : le test de parité les compare aux résultats
+// des fonctions d'origine (`_e`, `Jc`, `Kc`, `ve`, `S`, `A`), figés dans tests/fixtures/parite-sport.json
 // avant le retrait du moteur (#597).
 
 export type SportActivity = {
-  // Champs produits par `Jc` d'OS360, à l'identique.
+  // Champs produits par `Jc`, à l'identique.
   id: string;
   date: string;
   sport: string;
@@ -31,7 +30,7 @@ export const SPORT_HEADERS = [
   "FC moyenne (bpm)", "FC maximale (bpm)", "Début ISO", "Fin ISO", "ID événement", "Calendrier ID", "Lien événement",
 ];
 
-// CSV -> lignes de cellules — `_e` d'OS360.
+// CSV -> lignes de cellules.
 export function sportCsvRows(text: string): string[][] {
   if (/^\s*</.test(text)) throw new Error("La source a renvoyé du HTML au lieu du CSV.");
   const rows: string[][] = [];
@@ -59,14 +58,14 @@ export function sportCsvRows(text: string): string[][] {
   return rows;
 }
 
-// Date civile ISO valide — `A` d'OS360.
+// Date civile ISO valide.
 function isIsoDate(value: string): boolean {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const d = new Date(value + "T12:00:00Z");
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
-// JJ/MM/AAAA -> AAAA-MM-JJ, sinon refus du fichier — `Kc` d'OS360.
+// JJ/MM/AAAA -> AAAA-MM-JJ, sinon refus du fichier.
 function sportDate(value: string): string {
   const m = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   const iso = m ? `${m[3]}-${m[2]}-${m[1]}` : value;
@@ -74,14 +73,14 @@ function sportDate(value: string): string {
   return iso;
 }
 
-// Nombre à la française ou vide — `ve` d'OS360.
+// Nombre à la française ou vide.
 function sportNumber(value: unknown): number | null {
   if (value == null || String(value).trim() === "" || /^(—|-|n\/a|null)$/i.test(String(value).trim())) return null;
   const n = Number(String(value).replace(/[\s  ]/g, "").replace(",", "."));
   return Number.isFinite(n) ? n : null;
 }
 
-// Lien HTTPS sans identifiants, sinon vide — `S` d'OS360.
+// Lien HTTPS sans identifiants, sinon vide.
 export function sportUrl(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) return "";
   try {
@@ -92,7 +91,7 @@ export function sportUrl(value: unknown): string {
   }
 }
 
-// Lignes du CSV -> activités — `Jc` d'OS360 : mêmes refus, même saut des
+// Lignes du CSV -> activités : mêmes refus, même saut des
 // lignes vides, même clé de dédoublonnage, mêmes conversions.
 export function sportActivities(rows: unknown[][]): SportActivity[] {
   if (!rows.length || SPORT_HEADERS.some((h, i) => String(rows[0][i] ?? "").trim() !== h)) {
