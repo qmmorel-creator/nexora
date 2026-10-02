@@ -653,6 +653,13 @@ if (RUN("2d")) await timed("2d", async () => {
     };
     mois.large = await mesure("#harness-heatmap-month-large");
     mois.etroit = await mesure("#harness-heatmap-month-etroit");
+    /* Le widget ne colore que les dates de FIN et s'ouvre sur le mois courant :
+       du 1er au ~10 du mois, l'échéance passée du banc (J−10) tombe dans le
+       mois précédent, hors champ, et le contrôle échouait sans que l'appli
+       soit en cause (#640). Reculer d'un mois montre toujours J−10 (mois
+       précédent) ET l'échéance à venir J+5 (mois courant ou suivant). */
+    await page.locator('#harness-heatmap-month-large .lp-widget-heatmap-head button[title="Mois précédent"]').click();
+    await page.waitForTimeout(200);
     mois.passe = await page.evaluate((sel) => {
       const passees = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-cell-past`)];
       const colorees = [...document.querySelectorAll(`${sel} .lp-widget-heatmap-cell`)]
