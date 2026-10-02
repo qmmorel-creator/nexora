@@ -2279,7 +2279,17 @@ function migrateLegacyFinanceOs360Widget(widget) {
   const chart = String(os.type || "budget.chart_donut").replace(/^budget\./, "");
   const target = LEGACY_FINANCE_OS360_WIDGETS.find(([re]) => re.test(chart));
   if (target) return { ...widget, type: target[1] };
-  return { ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_OS360_CHARTS[chart] || "donut" };
+  return migrateBudgetChartSankeyWidget({ ...widget, type: "financeBudgetChart", budgetChart: LEGACY_FINANCE_OS360_CHARTS[chart] || "donut" });
+}
+// #604 : le « Graphique Budget » ne propose plus les deux Sankey, qui ont leur
+// propre widget. Un Graphique Budget réglé sur un Sankey devient le widget
+// « Sankey mensuel (flux) », sur l'année pour l'ancien Sankey annuel.
+function migrateBudgetChartSankeyWidget(widget) {
+  if (!widget || typeof widget !== "object" || widget.type !== "financeBudgetChart") return widget;
+  if (widget.budgetChart !== "sankeyMonthly" && widget.budgetChart !== "sankeyAnnual") return widget;
+  const { budgetChart, ...rest } = widget;
+  const annual = budgetChart === "sankeyAnnual" ? { sankeyConfig: { ...(widget.sankeyConfig || {}), periodMode: "year", periodValue: "current" } } : {};
+  return { ...rest, type: "financeSankeyMonthly", ...annual };
 }
 function migrateLegacyMiniGanttData(value) {
   if (Array.isArray(value)) return value.filter((v) => !isRemovedEcheancesWidget(v)).map(migrateLegacyMiniGanttData);
@@ -2289,6 +2299,7 @@ function migrateLegacyMiniGanttData(value) {
   if (value.type === LEGACY_KPI_TYPE || value.type === LEGACY_COUNTDOWN_TYPE) return migrateLegacySingleBlockCardWidget(value);
   if (value.type === LEGACY_SPORT_OS360_TYPE) return migrateLegacySportOs360Widget(value);
   if (value.type === LEGACY_FINANCE_OS360_TYPE) return migrateLegacyFinanceOs360Widget(value);
+  if (value.type === "financeBudgetChart") return migrateBudgetChartSankeyWidget(value);
   const next = {};
   Object.entries(value).forEach(([key, child]) => { next[key] = migrateLegacyMiniGanttData(child); });
   return next;
@@ -18601,9 +18612,9 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
 
       {type === "financeBudgetChart" && (
         <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
-          Graphiques Budget natifs, calculés avec les règles d’OS360 : Sankey mensuel et annuel, waterfall, dépenses cumulées,
-          small multiples avec budget, donut, waffle et dépenses par mois sur 12 mois. Le graphique et la période se choisissent
-          dans l’en-tête du widget ; aucun autre réglage.
+          Graphiques Budget natifs, calculés avec les règles d’OS360 : waterfall, dépenses cumulées (avec revenus cumulés et
+          budget total), small multiples avec budget, donut, waffle et dépenses par mois sur 12 mois (empilables par catégorie).
+          Le graphique et le mois se choisissent dans l’en-tête du widget. Les Sankey ont leur propre widget.
         </p>
       )}
 
@@ -36984,6 +36995,7 @@ const FINANCE_TX_CSS = `
 .nx-tx-tools button{cursor:pointer}
 .nx-tx-tools button.active{background:#e7efff;border-color:#24569a;color:#24569a;font-weight:600}
 .nx-tx-tools input[type=search]{width:170px}
+.nx-tx-tools select{height:24px;padding:0 24px 0 7px;font:inherit;line-height:22px;border:1px solid #d8e1eb;border-radius:5px;background-color:#fff;color:#203246;background-position:right 7px center;flex:0 0 auto;max-width:none;width:auto}
 .nx-tx-count{color:#60717c;white-space:nowrap}
 .nx-tx{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12px;color:#203246}
 .nx-tx-columns{display:flex;flex-wrap:wrap;gap:4px 12px;padding:8px 10px;border-bottom:1px solid #edf1f4;background:#f9fbfc}
@@ -37607,9 +37619,8 @@ function WidgetFinanceWealth({ externalToolbarSlot }) {
 // ---------------------------------------------------------------------------
 
 // === NEXORA:FINANCE-BUDGET-CHART:START ===
+// Les Sankey ont leur propre widget (#604) : plus proposés ici.
 const FINANCE_BUDGET_CHARTS = [
-  { key: "sankeyMonthly", label: "Sankey mensuel (flux)" },
-  { key: "sankeyAnnual", label: "Sankey annuel (flux)" },
   { key: "waterfall", label: "Waterfall mensuel" },
   { key: "cumulative", label: "Dépenses cumulées par catégorie" },
   { key: "smallMultiples", label: "Small multiples — cumul et budget" },
@@ -37706,6 +37717,11 @@ const FINANCE_BUDGET_CHART_CSS = `
 .nx-bch-cells i{width:11px;height:11px;border-radius:2px;display:inline-block}
 .nx-bch-empty{color:#60717c;padding:16px 0}
 .nx-bch-note{color:#60717c;font-size:11px}
+.nx-bch-legend i.dash,.nx-bch-tip i.dash{width:14px;height:0;border-radius:0;border-top:2px dashed;background:none}
+.nx-bch-tip{display:flex;flex-direction:column;gap:2px;min-width:200px}
+.nx-bch-tip div{display:flex;justify-content:space-between;gap:12px;font-variant-numeric:tabular-nums}
+.nx-bch-tip span{display:inline-flex;align-items:center;gap:5px}
+.nx-bch-tip i{width:8px;height:8px;border-radius:2px;display:inline-block}
 `;
 
 function FinanceChartDonut({ items }) {
@@ -37751,27 +37767,74 @@ function FinanceChartWaterfall({ steps }) {
   );
 }
 
-function FinanceChartCumulative({ days, series }) {
+// Dépenses cumulées par catégorie (#587, #604) : aires empilées par jour,
+// revenus cumulés et budget total du mois en pointillés sur la même échelle,
+// un repère par jour, infobulle au survol avec les valeurs à la date.
+function FinanceChartCumulative({ days, series, income = [], budgetTotal = 0 }) {
+  const [hover, setHover] = useState(null);
   const stacked = financeChartStack(series);
-  const top = stacked.length ? Math.max(...stacked[stacked.length - 1].upper) : 0;
+  const spent = stacked.length ? stacked[stacked.length - 1].upper : days.map(() => 0);
+  const top = Math.max(0, ...spent, ...income, budgetTotal);
   const { max, ticks } = financeChartTicks(top);
-  const W = 600, H = 220, L = 48, R = 8, T = 8, B = 22;
+  const W = 640, H = 240, L = 50, R = 64, T = 10, B = 24;
   const x = (i) => L + (days.length > 1 ? (i / (days.length - 1)) * (W - L - R) : 0);
   const y = (v) => T + (1 - v / max) * (H - T - B);
-  const labels = days.map((d, i) => ({ i, d })).filter(({ d }, i) => i === 0 || i === days.length - 1 || Number(d.slice(8)) % 7 === 1);
+  const step = days.length > 1 ? (W - L - R) / (days.length - 1) : W - L - R;
+  const line = (values) => values.map((v, i) => `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const last = days.length - 1;
+  const h = hover ? hover.i : null;
+  const dayLabel = (d) => new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "UTC" }).format(new Date(d + "T12:00:00Z"));
   return (
     <>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Dépenses cumulées par catégorie">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Dépenses cumulées par catégorie, revenus cumulés et budget total">
         {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#edf1f4" /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
         {stacked.map((s) => (
           <path key={s.category} fill={s.color} fillOpacity="0.85" stroke="#fff" strokeWidth="0.5"
-            d={`M ${s.upper.map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} L ${[...s.lower].map((v, i) => [i, v]).reverse().map(([i, v]) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} Z`}>
-            <title>{`${s.category} : ${financeBudgetEuro(s.total, 2)}`}</title>
-          </path>
+            d={`M ${s.upper.map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} L ${[...s.lower].map((v, i) => [i, v]).reverse().map(([i, v]) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" L ")} Z`} />
         ))}
-        {labels.map(({ i, d }) => <text key={d} x={x(i)} y={H - 6} textAnchor="middle">{Number(d.slice(8))}</text>)}
+        {income.length > 0 && <path d={line(income)} fill="none" stroke="#3f806f" strokeWidth="1.8" strokeDasharray="5 4" />}
+        {budgetTotal > 0 && <line x1={L} x2={W - R} y1={y(budgetTotal)} y2={y(budgetTotal)} stroke="#a33135" strokeWidth="1.4" strokeDasharray="6 4" />}
+        {/* Étiquettes de fin : dépenses, revenus et budget du mois. */}
+        {last >= 0 && <text x={x(last) + 4} y={y(spent[last]) + 3} style={{ fill: "#203246", fontWeight: 600 }}>{financeChartShortEuro(spent[last])}</text>}
+        {income.length > 0 && <text x={x(last) + 4} y={y(income[last]) + 3} style={{ fill: "#3f806f", fontWeight: 600 }}>{financeChartShortEuro(income[last])}</text>}
+        {budgetTotal > 0 && <text x={x(last) + 4} y={y(budgetTotal) - 3} style={{ fill: "#a33135", fontWeight: 600 }}>{financeChartShortEuro(budgetTotal)}</text>}
+        {/* Un repère par jour, chaque numéro de jour affiché. */}
+        {days.map((d, i) => (
+          <g key={d}>
+            <line x1={x(i)} x2={x(i)} y1={H - B} y2={H - B + 3} stroke="#b8c4cf" />
+            <text x={x(i)} y={H - 8} textAnchor="middle" style={{ fontSize: days.length > 31 ? 7 : 9 }}>{Number(d.slice(8))}</text>
+          </g>
+        ))}
+        <line x1={L} x2={W - R} y1={H - B} y2={H - B} stroke="#b8c4cf" />
+        {h !== null && <line x1={x(h)} x2={x(h)} y1={T} y2={H - B} stroke="#203246" strokeOpacity=".35" />}
+        {days.map((d, i) => (
+          <rect key={"hit" + d} x={x(i) - step / 2} y={T} width={step} height={H - T - B} fill="transparent"
+            onMouseEnter={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setHover(null)} />
+        ))}
       </svg>
-      <div className="nx-bch-legend">{series.map((s) => <span key={s.category}><i style={{ background: s.color }} />{s.category} · {financeBudgetEuro(s.total)}</span>)}</div>
+      {hover && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-bch-tip">
+            <strong>Au {dayLabel(days[h])}</strong>
+            {series.filter((s) => s.values[h] > 0).map((s) => (
+              <div key={s.category}><span><i style={{ background: s.color }} />{s.category}</span><span>{financeBudgetEuro(s.values[h], 2)}</span></div>
+            ))}
+            <div><strong>Dépenses cumulées</strong><strong>{financeBudgetEuro(spent[h], 2)}</strong></div>
+            {income.length > 0 && <div><span><i className="dash" style={{ borderColor: "#3f806f" }} />Revenus cumulés</span><span>{financeBudgetEuro(income[h], 2)}</span></div>}
+            {budgetTotal > 0 && <div><span><i className="dash" style={{ borderColor: "#a33135" }} />Budget total</span><span>{financeBudgetEuro(budgetTotal, 2)}</span></div>}
+            {budgetTotal > 0 && (budgetTotal >= spent[h]
+              ? <div><span>Reste sur le budget</span><span>{financeBudgetEuro(budgetTotal - spent[h], 2)}</span></div>
+              : <div><span style={{ color: "#f3a3a6" }}>Dépassement du budget</span><span style={{ color: "#f3a3a6" }}>{financeBudgetEuro(spent[h] - budgetTotal, 2)}</span></div>)}
+          </div>
+        </WidgetPointerTooltip>
+      )}
+      <div className="nx-bch-legend">
+        {series.map((s) => <span key={s.category}><i style={{ background: s.color }} />{s.category} · {financeBudgetEuro(s.total)}</span>)}
+        {income.length > 0 && <span><i className="dash" style={{ borderColor: "#3f806f" }} />Revenus cumulés · {financeBudgetEuro(income[last] || 0)}</span>}
+        {budgetTotal > 0 && <span><i className="dash" style={{ borderColor: "#a33135" }} />Budget total · {financeBudgetEuro(budgetTotal)}</span>}
+      </div>
     </>
   );
 }
@@ -37821,23 +37884,64 @@ function FinanceChartWaffle({ waffle }) {
   );
 }
 
-function FinanceChartPeriodic({ months }) {
+// Dépenses par mois sur 12 mois (#587, #604) : total au-dessus de chaque
+// barre ; « empilé » : une pile par catégorie (couleurs du référentiel), le
+// montant dans chaque segment assez haut pour être lu, tout le détail au survol.
+function FinanceChartPeriodic({ months, stacked = false }) {
+  const [hover, setHover] = useState(null);
   const { max, ticks } = financeChartTicks(Math.max(0, ...months.map((m) => m.expenses)));
-  const W = 600, H = 220, L = 48, R = 8, T = 8, B = 22;
+  const W = 640, H = 240, L = 50, R = 8, T = 18, B = 24;
   const band = (W - L - R) / Math.max(1, months.length);
   const y = (v) => T + (1 - v / max) * (H - T - B);
+  const legend = new Map();
+  if (stacked) for (const m of months) for (const c of m.categories || []) if (!legend.has(c.category)) legend.set(c.category, c.color);
+  const hm = hover ? months[hover.i] : null;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Dépenses par mois sur 12 mois">
-      {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#edf1f4" /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
-      {months.map((m, i) => (
-        <g key={m.month}>
-          <rect x={L + i * band + band * 0.15} width={band * 0.7} y={y(m.expenses)} height={Math.max(0, y(0) - y(m.expenses))} fill={i === months.length - 1 ? "#24569a" : "#8fb0d6"} rx="2">
-            <title>{`${financeBudgetMonthLabel(m.month)} : ${financeBudgetEuro(m.expenses, 2)}`}</title>
-          </rect>
-          <text x={L + i * band + band / 2} y={H - 6} textAnchor="middle">{financeChartMonthShort(m.month)}</text>
-        </g>
-      ))}
-    </svg>
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={stacked ? "Dépenses par mois sur 12 mois, par catégorie" : "Dépenses par mois sur 12 mois"}>
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#edf1f4" /><text x={L - 4} y={y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
+        {months.map((m, i) => {
+          const x0 = L + i * band + band * 0.12, bw = band * 0.76, cx = L + i * band + band / 2;
+          let acc = 0;
+          return (
+            <g key={m.month}
+              onMouseEnter={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+              onMouseMove={(e) => setHover({ i, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setHover(null)}>
+              <rect x={L + i * band} y={T} width={band} height={H - T - B} fill={hover?.i === i ? "rgba(36,86,154,.06)" : "transparent"} />
+              {stacked
+                ? (m.categories || []).map((c) => {
+                  const y1 = y(acc + c.amount), y0 = y(acc);
+                  acc += c.amount;
+                  const tall = y0 - y1;
+                  return (
+                    <g key={c.category}>
+                      <rect x={x0} width={bw} y={y1} height={Math.max(0, tall)} fill={c.color} stroke="#fff" strokeWidth="0.5" />
+                      {tall >= 11 && bw >= 30 && <text x={cx} y={(y0 + y1) / 2 + 3} textAnchor="middle" style={{ fontSize: 8, fill: textOn(c.color), fontWeight: 600 }}>{financeChartShortEuro(c.amount)}</text>}
+                    </g>
+                  );
+                })
+                : <rect x={x0} width={bw} y={y(m.expenses)} height={Math.max(0, y(0) - y(m.expenses))} fill={i === months.length - 1 ? "#24569a" : "#8fb0d6"} rx="2" />}
+              <text x={cx} y={y(m.expenses) - 4} textAnchor="middle" style={{ fill: "#203246", fontWeight: 600, fontSize: 9 }}>{financeChartShortEuro(m.expenses)}</text>
+              <text x={cx} y={H - 8} textAnchor="middle">{financeChartMonthShort(m.month)}</text>
+            </g>
+          );
+        })}
+        <line x1={L} x2={W - R} y1={H - B} y2={H - B} stroke="#b8c4cf" />
+      </svg>
+      {hm && (
+        <WidgetPointerTooltip x={hover.x} y={hover.y} className="lp-pie-tooltip">
+          <div className="nx-bch-tip">
+            <strong>{financeBudgetMonthLabel(hm.month)}</strong>
+            {(hm.categories || []).map((c) => (
+              <div key={c.category}><span><i style={{ background: c.color }} />{c.category}</span><span>{financeBudgetEuro(c.amount, 2)}</span></div>
+            ))}
+            <div><strong>Total</strong><strong>{financeBudgetEuro(hm.expenses, 2)}</strong></div>
+          </div>
+        </WidgetPointerTooltip>
+      )}
+      {stacked && <div className="nx-bch-legend">{[...legend].map(([name, color]) => <span key={name}><i style={{ background: color }} />{name}</span>)}</div>}
+    </>
   );
 }
 
@@ -37853,40 +37957,34 @@ function WidgetFinanceLegacyOs360({ widget, externalToolbarSlot, onUpdateWidget 
 }
 
 function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget }) {
-  const chart = FINANCE_BUDGET_CHARTS.some((c) => c.key === widget.budgetChart) ? widget.budgetChart : "sankeyMonthly";
+  // Ancien réglage Sankey (#604) : rendu par le widget Sankey dédié.
+  if (widget.budgetChart === "sankeyMonthly" || widget.budgetChart === "sankeyAnnual") {
+    const w = migrateBudgetChartSankeyWidget(widget);
+    return <WidgetFinanceSankey widget={w} externalToolbarSlot={externalToolbarSlot} onUpdateWidget={(patch) => onUpdateWidget && onUpdateWidget({ ...w, ...patch })} />;
+  }
+  const chart = FINANCE_BUDGET_CHARTS.some((c) => c.key === widget.budgetChart) ? widget.budgetChart : "cumulative";
+  const stacked = widget.budgetPeriodicStacked === true;
   const thisMonth = financeBudgetToday().slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
-  const annual = chart === "sankeyAnnual";
-  const sankey = chart === "sankeyMonthly" || annual;
   const budget = useFinanceBudget(month === thisMonth ? "" : month);
-  const sankeyData = useFinanceSankeyData();
-  const step = (delta) => setMonth(financeBudgetShiftMonth(month, annual ? 12 * delta : delta));
-  const reload = () => { budget.reload(); sankeyData.reload(); };
   const tools = (
     <ViewToolbarPortal slot={externalToolbarSlot}>
       <style>{FINANCE_TX_CSS}</style>
       <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
-        <select aria-label="Graphique" value={chart} onChange={(e) => onUpdateWidget && onUpdateWidget({ budgetChart: e.target.value })}
-          style={{ height: 24, font: "inherit", border: "1px solid #d8e1eb", borderRadius: 5 }}>
+        <select aria-label="Graphique" title="Graphique" value={chart} onChange={(e) => onUpdateWidget && onUpdateWidget({ budgetChart: e.target.value })} style={{ fontWeight: 600 }}>
           {FINANCE_BUDGET_CHARTS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
-        <button type="button" onClick={() => step(-1)} aria-label={annual ? "Année précédente" : "Mois précédent"}>‹</button>
-        <strong style={{ minWidth: annual ? 40 : 104, textAlign: "center" }}>{annual ? month.slice(0, 4) : financeBudgetMonthLabel(month)}</strong>
-        <button type="button" onClick={() => step(1)} aria-label={annual ? "Année suivante" : "Mois suivant"}>›</button>
-        {month !== thisMonth && <button type="button" onClick={() => setMonth(thisMonth)}>{annual ? "Année en cours" : "Mois en cours"}</button>}
-        <button type="button" onClick={reload} title="Relire les données dans Supabase">Actualiser</button>
+        {chart === "periodic" && (
+          <button type="button" className={stacked ? "active" : ""} aria-pressed={stacked} onClick={() => onUpdateWidget && onUpdateWidget({ budgetPeriodicStacked: !stacked })} title="Empiler les dépenses par catégorie">Par catégorie</button>
+        )}
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, -1))} aria-label="Mois précédent">‹</button>
+        <strong style={{ minWidth: 104, textAlign: "center" }}>{financeBudgetMonthLabel(month)}</strong>
+        <button type="button" onClick={() => setMonth(financeBudgetShiftMonth(month, 1))} aria-label="Mois suivant">›</button>
+        {month !== thisMonth && <button type="button" onClick={() => setMonth(thisMonth)}>Mois en cours</button>}
+        <button type="button" onClick={budget.reload} title="Relire les données dans Supabase">Actualiser</button>
       </div>
     </ViewToolbarPortal>
   );
-  if (sankey) {
-    const config = { ...FINANCE_SANKEY_DEFAULT_CONFIG, periodMode: annual ? "year" : "month", periodValue: annual ? month.slice(0, 4) : month };
-    if (!sankeyData.data) return <>{tools}<FinanceBudgetState error={sankeyData.error} onRetry={sankeyData.reload} /></>;
-    let built;
-    try { built = financeSankeyBuild("financeSankeyMonthly", sankeyData.data, config); } catch (e) { built = { error: e instanceof Error ? e.message : String(e) }; }
-    if (built.error) return <div className="lp-empty" style={{ padding: 16 }}>{tools}{built.error}</div>;
-    if (!built.graph.links.length) return <div className="lp-empty" style={{ padding: 16 }}>{tools}Aucun flux à représenter sur cette période ({built.period}).</div>;
-    return <>{tools}<FinanceSankeyChart graph={built.graph} config={config} title={widget.title || "Sankey"} period={built.period} /></>;
-  }
   if (!budget.data) return <>{tools}<FinanceBudgetState error={budget.error} onRetry={budget.reload} /></>;
   const c = budget.data.charts;
   const empty = !c.byCategory.length && chart !== "periodic" && chart !== "waterfall";
@@ -37897,10 +37995,10 @@ function WidgetFinanceBudgetChart({ widget, externalToolbarSlot, onUpdateWidget 
       {empty && <div className="nx-bch-empty">Aucune dépense sur {financeBudgetMonthLabel(month).toLowerCase()}.</div>}
       {!empty && chart === "donut" && <FinanceChartDonut items={c.byCategory} />}
       {chart === "waterfall" && <FinanceChartWaterfall steps={c.waterfall} />}
-      {!empty && chart === "cumulative" && <FinanceChartCumulative days={c.days} series={c.cumulative} />}
+      {!empty && chart === "cumulative" && <FinanceChartCumulative days={c.days} series={c.cumulative} income={c.incomeCumulative || []} budgetTotal={c.budgetTotal || 0} />}
       {!empty && chart === "smallMultiples" && <FinanceChartSmallMultiples series={c.cumulative} />}
       {!empty && chart === "waffle" && <FinanceChartWaffle waffle={c.waffle} />}
-      {chart === "periodic" && <FinanceChartPeriodic months={c.periodic} />}
+      {chart === "periodic" && <FinanceChartPeriodic months={c.periodic} stacked={stacked} />}
     </div>
   );
 }
