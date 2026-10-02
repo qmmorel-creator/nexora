@@ -2150,6 +2150,7 @@ function defaultLayoutForType(type) {
   if (type === "financeTransactions") return { w: 12, h: 9 };
   // Budget natif (#586).
   if (type === "financeBudgetMonth") return { w: 6, h: 8 };
+  if (type === "financeBudgetPeriod") return { w: 6, h: 4 };
   if (type === "financeToCategorize") return { w: 6, h: 9 };
   if (type === "financeWealthBar") return { w: 8, h: 6 };
   if (type === "financeBudgetChart") return { w: 8, h: 8 };
@@ -3731,7 +3732,7 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                 printing={printWidgetId === w.id}
                 onHeaderMouseDown={startMoveGesture(w)}
                 onResizeMouseDown={(corner) => startResizeGesture(corner,w)}
-                hasHeaderToolbar={w.type === "embedMetro" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos"}
+                hasHeaderToolbar={w.type === "embedMetro" || w.type === "focusDay" || w.type === "habitPixel" || w.type === "pixelTasks" || FINANCE_SANKEY_TYPES.includes(w.type) || w.type === "financeTransactions" || FINANCE_BUDGET_TYPES.includes(w.type) || w.type === "financeBudgetChart" || w.type === "financeBudgetPeriod" || w.type === "financeBudgetCumul" || w.type === "financeWealthBar" || w.type === "sportActivities" || w.type === "sportChart" || w.type === "sportSummary" || w.type === "healthChart" || w.type === "healthSportChart" || w.type === "bodyPhotos"}
               >
                 {(headerToolbarSlot) => (
                 <>
@@ -3796,6 +3797,9 @@ function DashboardView({ tasks, ctx, widgets, setWidgets, onOpen, toolbarSlot, t
                   <WidgetFinanceTransactions widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
                 )}
                 {w.type === "financeBudgetMonth" && <WidgetFinanceBudgetMonth externalToolbarSlot={headerToolbarSlot} />}
+                {w.type === "financeBudgetPeriod" && (
+                  <WidgetFinanceBudgetPeriod widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
+                )}
                 {w.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot={headerToolbarSlot} />}
                 {w.type === "financeBudgetChart" && (
                   <WidgetFinanceBudgetChart widget={w} externalToolbarSlot={headerToolbarSlot} onUpdateWidget={(patch) => updateWidget(w.id, patch)} />
@@ -16761,6 +16765,8 @@ const WIDGET_TYPE_META = [
   // Budget natif (#586) : sans réglage, calculs faits côté serveur.
   { key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Budget" },
   { key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Budget" },
+  // Synthèse Budget (#644) : dépenses, revenus et solde net sur une période au choix.
+  { key: "financeBudgetPeriod", label: "Synthèse Budget (période)", icon: Wallet, group: "Budget" },
   // Répartition du patrimoine (#617) : une barre, 100 % ou valeur absolue, par compte, banque ou type.
   { key: "financeWealthBar", label: "Répartition du patrimoine", icon: Banknote, group: "Budget" },
   // Graphiques Budget natifs (#587) : graphique et période choisis dans l'en-tête.
@@ -17195,6 +17201,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
   const [sportConfig, setSportConfig] = useState(() => sportSpec(widget));
   const [sportChartConfig, setSportChartConfig] = useState(() => sportChartSpec(widget));
   const [sportSummaryConfig, setSportSummaryConfig] = useState(() => sportSummarySpec(widget));
+  const [budgetPeriodConfig, setBudgetPeriodConfig] = useState(() => financePeriodSpec(widget));
   const [healthConfig, setHealthConfig] = useState(() => healthChartSpec(widget));
   const [crossConfig, setCrossConfig] = useState(() => healthSportSpec(widget));
   const [bodyPhotoConfig, setBodyPhotoConfig] = useState(() => bodyPhotoSpec(widget));
@@ -17335,6 +17342,7 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
     if (type === "sportActivities") data.sport = { ...sportConfig };
     if (type === "sportChart") data.sport = { ...sportChartConfig };
     if (type === "sportSummary") data.sport = { ...sportSummaryConfig };
+    if (type === "financeBudgetPeriod") data.budgetPeriod = { ...budgetPeriodConfig };
     if (type === "healthChart") data.health = { ...healthConfig };
     if (type === "healthSportChart") data.cross = { ...crossConfig };
     if (type === "bodyPhotos") data.bodyPhotos = { ...bodyPhotoConfig };
@@ -18227,6 +18235,22 @@ function WidgetFormModal({ widget, existingWidgets, ctx, pageFilter, onSave, onC
           12 mois (empilables par catégorie). Le graphique et le mois se choisissent dans l’en-tête du widget. Les Sankey et
           les dépenses cumulées ont leur propre widget.
         </p>
+      )}
+
+      {type === "financeBudgetPeriod" && (
+        <>
+          <p style={{ fontSize: 12, color: "var(--text-600)", marginTop: -6, marginBottom: 10 }}>
+            Dépenses, revenus et solde net sur la période choisie (mois, trimestre, année, N derniers jours, dates libres…),
+            avec les règles de « Budget du mois » : transferts internes et ajustements exclus, annulations retirées. La période
+            se change aussi dans l’en-tête.
+          </p>
+          <div className="lp-field">
+            <label>Période</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <FinancePeriodFields spec={budgetPeriodConfig} onChange={(patch) => setBudgetPeriodConfig((c) => ({ ...c, ...patch }))} />
+            </div>
+          </div>
+        </>
       )}
 
       {type === "financeWealthBar" && (
@@ -37179,6 +37203,8 @@ function financeBudgetLoad(month = "", force = false) {
 }
 function financeBudgetReloadAll() {
   for (const month of [...financeBudgetStore.entries.keys()]) financeBudgetLoad(month, true);
+  // Synthèse Budget (#644) : déclarée plus bas, lue à l'exécution.
+  for (const key of [...financeBudgetPeriodStore.entries.keys()]) financeBudgetPeriodLoad(key, true);
   if (financeTxStore.rows) financeTxLoad(true);
 }
 function useFinanceBudget(month = "") {
@@ -37269,6 +37295,156 @@ function WidgetFinanceBudgetMonth({ externalToolbarSlot }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Synthèse Budget (#644) : dépenses, revenus et solde net sur une période au
+// choix — les périodes des widgets sport (sportPeriodRange) plus trimestres et
+// année précédente. Totaux calculés côté serveur avec les règles de « Budget du
+// mois » : /api/nexora/finance-budget-summary?from=&to=.
+// === NEXORA:FINANCE-BUDGET-PERIOD:START ===
+const FINANCE_PERIODS = [
+  { value: "month", label: "Ce mois" },
+  { value: "previousMonth", label: "Mois précédent" },
+  { value: "quarter", label: "Ce trimestre" },
+  { value: "previousQuarter", label: "Trimestre précédent" },
+  { value: "year", label: "Cette année" },
+  { value: "previousYear", label: "Année précédente" },
+  { value: "week", label: "Cette semaine" },
+  { value: "30", label: "30 derniers jours" },
+  { value: "90", label: "90 derniers jours" },
+  { value: "365", label: "365 derniers jours" },
+  { value: "rolling", label: "N derniers jours…" },
+  { value: "custom", label: "Dates libres" },
+  { value: "all", label: "Tout l’historique" },
+];
+function financePeriodSpec(widget) {
+  const s = widget?.budgetPeriod && typeof widget.budgetPeriod === "object" ? widget.budgetPeriod : {};
+  return {
+    period: FINANCE_PERIODS.some((p) => p.value === s.period) ? s.period : "month",
+    from: typeof s.from === "string" ? s.from : "",
+    to: typeof s.to === "string" ? s.to : "",
+    days: sportDays(s.days),
+  };
+}
+// Bornes { from, to } envoyées au serveur ("" = sans borne : première
+// opération au début, aujourd'hui à la fin).
+function financePeriodRange(spec, today) {
+  const y = Number(today.slice(0, 4));
+  const q = Math.floor((Number(today.slice(5, 7)) - 1) / 3);
+  const quarter = (year, index) => {
+    const yy = year + Math.floor(index / 4), qq = ((index % 4) + 4) % 4;
+    const first = String(qq * 3 + 1).padStart(2, "0");
+    const last = new Date(Date.UTC(yy, qq * 3 + 3, 0, 12)).toISOString().slice(0, 10);
+    return { from: `${yy}-${first}-01`, to: last };
+  };
+  if (spec.period === "quarter") return quarter(y, q);
+  if (spec.period === "previousQuarter") return quarter(y, q - 1);
+  if (spec.period === "previousYear") return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31` };
+  return sportPeriodRange(spec, today);
+}
+// « du 01/07/2026 au 30/09/2026 », sur les bornes retenues par le serveur.
+function financePeriodDates(period) {
+  const d = (x) => new Date(x + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" });
+  return period?.from && period?.to ? (period.from === period.to ? `le ${d(period.from)}` : `du ${d(period.from)} au ${d(period.to)}`) : "";
+}
+// === NEXORA:FINANCE-BUDGET-PERIOD:END ===
+
+// Chargement par période ("from|to"), partagé entre widgets ; « Actualiser »
+// et toute écriture Budget relisent aussi ces totaux (financeBudgetReloadAll).
+const financeBudgetPeriodStore = { entries: new Map(), listeners: new Set() };
+function financeBudgetPeriodLoad(key, force = false) {
+  const current = financeBudgetPeriodStore.entries.get(key);
+  if (current?.promise && !force) return current.promise;
+  const entry = { data: current?.data || null, error: null, promise: null, loading: true };
+  financeBudgetPeriodStore.entries.set(key, entry);
+  const notify = () => financeBudgetPeriodStore.listeners.forEach((fn) => fn());
+  notify();
+  entry.promise = (async () => {
+    try {
+      const [from, to] = key.split("|");
+      const token = await financeBudgetToken();
+      const query = new URLSearchParams({ from, to }).toString();
+      const response = await fetch(`/api/nexora/finance-budget-summary?${query}`, { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload?.error === "invalid_period" ? "Période invalide : la date de début doit précéder la date de fin." : financeBudgetError(payload, response.status));
+      entry.data = payload.data;
+    } catch (error) {
+      entry.error = error instanceof Error ? error.message : String(error);
+      entry.promise = null;
+    }
+    entry.loading = false;
+    notify();
+  })();
+  return entry.promise;
+}
+// `enabled` faux (période invalide) : aucune requête.
+function useFinanceBudgetPeriod(from, to, enabled = true) {
+  const key = `${from}|${to}`;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    financeBudgetPeriodStore.listeners.add(listener);
+    if (enabled) financeBudgetPeriodLoad(key);
+    return () => { financeBudgetPeriodStore.listeners.delete(listener); };
+  }, [key, enabled]);
+  const entry = (enabled && financeBudgetPeriodStore.entries.get(key)) || {};
+  return { data: entry.data || null, error: entry.error || null, loading: !!entry.loading, reload: financeBudgetReloadAll };
+}
+
+// Choix de la période, partagé par l'en-tête du widget et sa fenêtre de réglages.
+function FinancePeriodFields({ spec, onChange }) {
+  return (
+    <>
+      <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période" title="Période" style={{ fontWeight: 600 }}>
+        {FINANCE_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+      </select>
+      {spec.period === "rolling" && (
+        <input type="number" min="1" max="3660" step="1" aria-label="Nombre de jours" title="Nombre de jours" style={{ width: 64 }}
+          value={spec.days} onChange={(e) => onChange({ days: sportDays(e.target.value) })} />
+      )}
+      {spec.period === "custom" && (
+        <>
+          <input type="date" aria-label="Du" title="Du" value={spec.from} onChange={(e) => onChange({ from: e.target.value })} />
+          <input type="date" aria-label="Au" title="Au" value={spec.to} onChange={(e) => onChange({ to: e.target.value })} />
+        </>
+      )}
+    </>
+  );
+}
+
+function WidgetFinanceBudgetPeriod({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const spec = financePeriodSpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ budgetPeriod: { ...spec, ...patch } });
+  const range = financePeriodRange(spec, financeBudgetToday());
+  const invalid = range.from && range.to && range.from > range.to;
+  const { data, error, loading, reload } = useFinanceBudgetPeriod(range.from, range.to, !invalid);
+  const tools = (
+    <ViewToolbarPortal slot={externalToolbarSlot}>
+      <style>{FINANCE_TX_CSS}</style>
+      <div className="nx-tx-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <FinancePeriodFields spec={spec} onChange={update} />
+        <button type="button" onClick={reload} disabled={loading} title="Relire les données dans Supabase">{loading ? "Lecture…" : "Actualiser"}</button>
+      </div>
+    </ViewToolbarPortal>
+  );
+  if (invalid) return <>{tools}<FinanceBudgetState error="Période invalide : la date de début doit précéder la date de fin." onRetry={reload} /></>;
+  if (!data) return <>{tools}<FinanceBudgetState error={error} onRetry={reload} /></>;
+  const t = data.totals;
+  return (
+    <div className="nx-bud" style={{ containerType: "inline-size" }}>
+      {tools}
+      <style>{FINANCE_BUDGET_CSS}</style>
+      {error && <div className="nx-bud-err">{error}</div>}
+      <div className="nx-bud-card">
+        <div><span>Dépenses</span><strong>{financeBudgetEuro(t.expenses)}</strong></div>
+        <div><span>Revenus</span><strong>{financeBudgetEuro(t.income)}</strong></div>
+        <div><span>Solde net</span><strong className={t.net < 0 ? "neg" : "pos"}>{financeBudgetEuro(t.net)}</strong></div>
+      </div>
+      <div className="nx-bud-section">
+        {financePeriodDates(data.period)} · {data.counts.expenses} dépense{data.counts.expenses > 1 ? "s" : ""}, {data.counts.income} revenu{data.counts.income > 1 ? "s" : ""}
       </div>
     </div>
   );
