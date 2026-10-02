@@ -8,12 +8,15 @@
 // Le remappage des couleurs codées en dur est PARTAGÉ : une règle par déclaration, dont la
 // valeur est une variable --nx-rm-N ; chaque thème × mode ne fait que définir ces variables.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { CHARTES } from './palettes.mjs';
+import { CHARTES as FAMILLE } from './palettes.mjs';
+import { CHARTES as SOMBRES } from './sombres.mjs';
 import { tokenBlock } from './tokens.mjs';
 import { mapValue, mapColor, splitSelectors, kindOfProp } from './remap.mjs';
 import { fmt } from './color.mjs';
 
-export const THEMES_APP = ['bauhaus', 'dessau'];
+// Thèmes proposés dans Réglages → Apparence. Observatoire (série sombre, #625) n'existe qu'en sombre.
+export const THEMES_APP = ['bauhaus', 'dessau', 'observatoire'];
+const CHARTES = [...FAMILLE.map((c) => ({ ...c, serie: '' })), ...SOMBRES.map((c) => ({ ...c, serie: 'sombres' }))];
 const here = (f) => new URL(f, import.meta.url);
 const SOURCE = new URL('../../../apps/nexora/source/index.html.part-004', import.meta.url);
 const DEBUT = '<style id="nexora-themes">', FIN = '</style><!-- /nexora-themes -->';
@@ -79,9 +82,10 @@ export function genererCouche(ids = THEMES_APP) {
   for (const ch of chartes) {
     const S0 = `:root[data-nexora-theme="${ch.id}"]`;
     const conv = (css) => css.replaceAll('§[data-mode=', `${S0}[data-nexora-mode=`).replaceAll('§', S0);
-    composants += conv(base) + '\n' + conv(readFileSync(here(`./signatures/${ch.id}.css`), 'utf8'));
+    const socle = ch.serie ? '\n' + conv(readFileSync(here(`./${ch.serie}-socle.css`), 'utf8')) : '';
+    composants += conv(base) + socle + '\n' + conv(readFileSync(here(`./signatures${ch.serie ? '-' + ch.serie : ''}/${ch.id}.css`), 'utf8'));
   }
-  const entete = `/* Thèmes Nexora (Ref #621) — GÉNÉRÉ par docs/chartes-graphiques/outils/integration.mjs, ne pas éditer à la main.\n   Thèmes : ${chartes.map((c) => c.nom).join(', ')}. Activation : <html data-nexora-theme="…" data-nexora-mode="clair|sombre">.\n   ${groupes.size} règles de remappage partagées, ${vars.size} variables par thème × mode. */\n`;
+  const entete = `/* Thèmes Nexora (Ref #621) — GÉNÉRÉ par docs/chartes-graphiques/outils/integration.mjs, ne pas éditer à la main.\n   Thèmes : ${chartes.map((c) => c.nom).join(', ')}. Activation : <html data-nexora-theme="…" data-nexora-mode="clair|sombre">.\n   Modes : ${chartes.map((c) => c.nom + ' (' + Object.keys(c.modes).join(', ') + ')').join(', ')}.\n   ${groupes.size} règles de remappage partagées, ${vars.size} variables par thème × mode. */\n`;
   return entete + valeurs + regles + composants;
 }
 

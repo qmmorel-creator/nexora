@@ -101,12 +101,27 @@ test("script du <head> : mêmes thèmes et mêmes polices que le catalogue", () 
   assert.ok(head.includes(`localStorage.getItem("${T.NEXORA_THEME_STORAGE_KEY}")`), "le <head> lit la même clé locale");
 });
 
-test("couche CSS : chaque thème activable est défini en clair et en sombre", () => {
+test("Observatoire : sombre imposé, quel que soit le mode enregistré", () => {
+  for (const themeMode of [undefined, "clair", "sombre", "systeme", "nuit"]) {
+    for (const prefersDark of [false, true]) {
+      assert.deepEqual(T.nexoraThemeAttributes({ theme: "observatoire", themeMode }, prefersDark), { theme: "observatoire", mode: "sombre" });
+    }
+  }
+  assert.match(T.nexoraThemeFontsHref("observatoire"), /family=Sora:/);
+  const head = html.slice(0, html.indexOf("</head>"));
+  const m = head.match(/var modeFixe = (\{[^}]*\});/);
+  assert.ok(m, "le <head> impose aussi le mode des thèmes à mode unique");
+  const modeFixe = vm.runInThisContext(`(${m[1]})`);
+  const fixes = Object.fromEntries(T.NEXORA_THEMES.filter((t) => t.fixedMode).map((t) => [t.key, t.fixedMode]));
+  assert.deepEqual(modeFixe, fixes);
+});
+
+test("couche CSS : chaque thème activable est défini dans chacun de ses modes", () => {
   const debut = html.indexOf('<style id="nexora-themes">');
   assert.ok(debut !== -1, "style#nexora-themes absent du bundle");
   const css = html.slice(debut, html.indexOf("</style>", debut));
   for (const t of T.NEXORA_THEMES.filter((x) => x.key !== "nexora")) {
-    for (const mode of ["clair", "sombre"]) {
+    for (const mode of t.fixedMode ? [t.fixedMode] : ["clair", "sombre"]) {
       assert.ok(css.includes(`:root[data-nexora-theme="${t.key}"][data-nexora-mode="${mode}"]`), `${t.key} ${mode} absent`);
     }
   }
