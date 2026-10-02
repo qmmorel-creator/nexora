@@ -1,16 +1,20 @@
 // Photos corporelles — avant / après (#616). Module PUR, sans import : la
-// validation des entrées et la logique des routes, avec le stockage, Drive et
-// le contrôle de session INJECTÉS. Les tests exécutent ce même code avec des
+// validation des entrées et la logique des routes, avec le stockage des
+// métadonnées, celui des octets et le contrôle de session INJECTÉS. Les tests exécutent ce même code avec des
 // faux (tests/body-photos.test.mjs) ; netlify/functions/body-photos.ts le
 // raccorde aux vrais services (_shared/body-photos-store.ts, requireOwner).
 //
 // Confidentialité :
 //   - chaque route passe par `requireOwner` avant toute lecture ou écriture ;
-//   - le navigateur ne reçoit JAMAIS l'identifiant ni une URL du fichier
-//     Drive (`publicPhoto` les retire) : les octets passent par
+//   - le navigateur ne reçoit JAMAIS l'identifiant de stockage des octets
+//     (`publicPhoto` le retire) : les octets passent par
 //     GET /api/nexora/body-photos/:id/image, en `Cache-Control: private, no-store` ;
-//   - une erreur Drive est traduite en message générique (statut HTTP seul),
-//     jamais en message brut de l'API qui pourrait citer un identifiant.
+//   - une erreur de stockage est traduite en message générique, jamais en
+//     message brut qui pourrait citer un chemin ou un identifiant.
+//
+// Stockage des octets (#616, 02/10/2026) : d'abord un dossier Drive dédié,
+// abandonné car Google refuse tout quota Drive au compte de service ; depuis,
+// Firestore dédié (_shared/body-photos-store.ts), choix de Quentin.
 
 export const BODY_PHOTOS_BASE = "/api/nexora/body-photos";
 // Corps binaire d'un JPEG ré-encodé par le navigateur (côté long 2 400 px,
@@ -30,7 +34,7 @@ export type Adjust = { dx: number; dy: number; rot: number; scale: number };
 export type BodyPhotoMeta = {
   id: string;
   status: "pending" | "ready";
-  fileId: string | null;
+  blobId: string | null;
   date: string;
   dateSource: (typeof BODY_PHOTO_DATE_SOURCES)[number];
   width: number;
@@ -55,19 +59,20 @@ export type BodyPhotoStore = {
   setReference(id: string | null): Promise<void>;
 };
 
-export type BodyPhotoDrive = {
-  findByPhotoId(folderId: string, photoId: string): Promise<string | null>;
-  upload(folderId: string, photoId: string, bytes: Uint8Array): Promise<string>;
-  download(fileId: string): Promise<Uint8Array>;
-  // Un fichier déjà absent (404) est un succès : la suppression est rejouable.
-  remove(fileId: string): Promise<void>;
+// Octets d'une photo, rangés sous l'identifiant de la photo.
+export type BodyPhotoBlobs = {
+  // Identifiant des octets s'ils sont déjà entièrement écrits (reprise).
+  find(photoId: string): Promise<string | null>;
+  put(photoId: string, bytes: Uint8Array): Promise<string>;
+  get(blobId: string): Promise<Uint8Array | null>;
+  // Des octets déjà absents sont un succès : la suppression est rejouable.
+  remove(blobId: string): Promise<void>;
 };
 
 export type BodyPhotoDeps = {
   requireOwner(req: Request): Promise<Response | null>;
-  folderId(): string | undefined;
   store: BodyPhotoStore;
-  drive: BodyPhotoDrive;
+  blobs: BodyPhotoBlobs;
   now?: () => Date;
 };
 
@@ -149,7 +154,7 @@ export function jpegSize(bytes: Uint8Array): { width: number; height: number } |
   return null;
 }
 
-// Ce que le navigateur reçoit : jamais `fileId`.
+// Ce que le navigateur reçoit : jamais `blobId`.
 export function publicPhoto(meta: BodyPhotoMeta) {
   return {
     id: meta.id,
@@ -166,16 +171,8 @@ export function publicPhoto(meta: BodyPhotoMeta) {
   };
 }
 
-function driveFailure(error: unknown) {
-  const status = Number((error as any)?.status) || 0;
-  const quota = (error as any)?.reason === "storageQuotaExceeded";
-  return json({
-    ok: false,
-    error: "body_photos_storage_failed",
-    detail: quota
-      ? "Le compte de service n'a pas de quota Drive pour écrire dans ce dossier."
-      : `Le stockage Drive a refusé l'opération${status ? ` (HTTP ${status})` : ""}.`,
-  }, 502);
+function storageFailure() {
+  return json({ ok: false, error: "body_photos_storage_failed", detail: "Le stockage des photos a refusé l'opération. Réessaie." }, 502);
 }
 
 // --- Routes ----------------------------------------------------------------
@@ -219,7 +216,7 @@ export function createBodyPhotosHandler(deps: BodyPhotoDeps) {
     return json({ ok: true, data: { photos: photos.map(publicPhoto), referenceId: ref, maxBytes: BODY_PHOTO_MAX_BYTES } });
   }
 
-  async function upload(req: Request, folderId: string) {
+  async function upload(req: Request) {
     const type = (req.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
     if (type !== "image/jpeg") return json({ ok: false, error: "unsupported_media_type", detail: "Seul un JPEG ré-encodé par Nexora est accepté." }, 415);
     const id = req.headers.get("x-idempotency-key");
@@ -238,23 +235,23 @@ export function createBodyPhotosHandler(deps: BodyPhotoDeps) {
 
     const stamp = now().toISOString();
     const { meta: existing, created } = await deps.store.createPending({
-      id, status: "pending", fileId: null, date, dateSource: dateSource as BodyPhotoMeta["dateSource"],
+      id, status: "pending", blobId: null, date, dateSource: dateSource as BodyPhotoMeta["dateSource"],
       width: size.width, height: size.height, bytes: bytes.length, createdAt: stamp, updatedAt: stamp,
       landmarks: { leftEye: null, rightEye: null, navel: null }, adjust: {},
     });
     // Reprise d'un import déjà abouti : même réponse, rien de dupliqué.
     if (!created && existing.status === "ready") return json({ ok: true, data: { photo: publicPhoto(existing), duplicate: true } });
     try {
-      // Reprise d'un import interrompu : le fichier Drive porte l'identifiant
-      // de la photo (appProperties) et est retrouvé au lieu d'être renvoyé.
-      const fileId = existing.fileId || (await deps.drive.findByPhotoId(folderId, id)) || (await deps.drive.upload(folderId, id, bytes));
-      await deps.store.update(id, { status: "ready", fileId, updatedAt: now().toISOString() });
-      return json({ ok: true, data: { photo: publicPhoto({ ...existing, status: "ready", fileId }), duplicate: !created } }, created ? 201 : 200);
-    } catch (error) {
-      // Aucun fichier n'a pu être déposé : la métadonnée en attente créée par
+      // Reprise d'un import interrompu : des octets déjà entièrement écrits
+      // sont retrouvés au lieu d'être réécrits.
+      const blobId = existing.blobId || (await deps.blobs.find(id)) || (await deps.blobs.put(id, bytes));
+      await deps.store.update(id, { status: "ready", blobId, updatedAt: now().toISOString() });
+      return json({ ok: true, data: { photo: publicPhoto({ ...existing, status: "ready", blobId }), duplicate: !created } }, created ? 201 : 200);
+    } catch {
+      // Aucun octet n'a pu être écrit : la métadonnée en attente créée par
       // CET appel est retirée, pour ne laisser aucune entrée orpheline.
       if (created) await deps.store.remove(id).catch(() => {});
-      return driveFailure(error);
+      return storageFailure();
     }
   }
 
@@ -296,17 +293,18 @@ export function createBodyPhotosHandler(deps: BodyPhotoDeps) {
     return json({ ok: true, data: { photo: publicPhoto({ ...meta, ...changes }) } });
   }
 
-  async function remove(id: string, folderId: string) {
+  async function remove(id: string) {
     const meta = await deps.store.get(id);
     if (!meta) return json({ ok: false, error: "not_found" }, 404);
-    // Fichier d'abord : si Drive échoue, la photo reste entière (métadonnée
-    // comprise) et la suppression peut être relancée. Fichier déjà absent =
-    // succès, donc une métadonnée restée après une coupure se supprime aussi.
+    // Octets d'abord : si leur suppression échoue, la photo reste entière
+    // (métadonnée comprise) et la suppression peut être relancée. Octets déjà
+    // absents = succès, donc une métadonnée restée après une coupure se
+    // supprime aussi.
     try {
-      const fileId = meta.fileId || (await deps.drive.findByPhotoId(folderId, id));
-      if (fileId) await deps.drive.remove(fileId);
-    } catch (error) {
-      return driveFailure(error);
+      const blobId = meta.blobId || (await deps.blobs.find(id));
+      if (blobId) await deps.blobs.remove(blobId);
+    } catch {
+      return storageFailure();
     }
     await deps.store.remove(id);
     return json({ ok: true, data: { id } });
@@ -314,13 +312,14 @@ export function createBodyPhotosHandler(deps: BodyPhotoDeps) {
 
   async function image(id: string) {
     const meta = await deps.store.get(id);
-    if (!meta || meta.status !== "ready" || !meta.fileId) return json({ ok: false, error: "not_found" }, 404);
-    let bytes: Uint8Array;
+    if (!meta || meta.status !== "ready" || !meta.blobId) return json({ ok: false, error: "not_found" }, 404);
+    let bytes: Uint8Array | null;
     try {
-      bytes = await deps.drive.download(meta.fileId);
-    } catch (error) {
-      return driveFailure(error);
+      bytes = await deps.blobs.get(meta.blobId);
+    } catch {
+      return storageFailure();
     }
+    if (!bytes) return json({ ok: false, error: "not_found" }, 404);
     return new Response(bytes as unknown as BodyInit, {
       status: 200,
       headers: {
@@ -353,13 +352,11 @@ export function createBodyPhotosHandler(deps: BodyPhotoDeps) {
     if (!allowed.includes(req.method)) return json({ ok: false, error: "method_not_allowed" }, 405, { allow: allowed.join(", ") });
     const denied = await deps.requireOwner(req);
     if (denied) return denied;
-    const folderId = deps.folderId();
-    if (!folderId) return json({ ok: false, error: "body_photos_configuration_missing", missing: ["NEXORA_BODY_PHOTOS_FOLDER_ID"] }, 503);
     try {
-      if (target.kind === "collection") return req.method === "GET" ? await list() : await upload(req, folderId);
+      if (target.kind === "collection") return req.method === "GET" ? await list() : await upload(req);
       if (target.kind === "reference") return await setReference(req);
       if (target.kind === "image") return await image(target.id!);
-      return req.method === "PATCH" ? await patch(req, target.id!) : await remove(target.id!, folderId);
+      return req.method === "PATCH" ? await patch(req, target.id!) : await remove(target.id!);
     } catch {
       // Erreur Firestore ou inattendue : jamais de détail brut renvoyé.
       return json({ ok: false, error: "body_photos_failed", detail: "Opération impossible pour le moment. Réessaie." }, 500);

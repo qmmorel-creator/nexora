@@ -1,20 +1,17 @@
 import type { Config } from "@netlify/functions";
 import { requireOwner } from "./_shared/owner.js";
 import { createBodyPhotosHandler } from "./_shared/body-photos.js";
-import { firestoreBodyPhotoStore, googleDriveBodyPhotos } from "./_shared/body-photos-store.js";
-
-declare const Netlify: { env: { get(name: string): string | undefined } };
+import { firestoreBodyPhotoBlobs, firestoreBodyPhotoStore } from "./_shared/body-photos-store.js";
 
 // Photos corporelles — avant / après (#616). Toutes les routes (liste, import,
 // image, date, repères, ajustements, référence, suppression) exigent la
 // session Nexora du PROPRIÉTAIRE (requireOwner). Logique et validation dans
-// _shared/body-photos.ts ; stockage dans _shared/body-photos-store.ts.
-// Dossier Drive dédié : variable NEXORA_BODY_PHOTOS_FOLDER_ID (production).
+// _shared/body-photos.ts ; métadonnées et octets dans Firestore, collections
+// dédiées (_shared/body-photos-store.ts).
 const handler = createBodyPhotosHandler({
   requireOwner,
-  folderId: () => Netlify.env.get("NEXORA_BODY_PHOTOS_FOLDER_ID"),
   store: firestoreBodyPhotoStore(),
-  drive: googleDriveBodyPhotos(),
+  blobs: firestoreBodyPhotoBlobs(),
 });
 
 export default handler;

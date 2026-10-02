@@ -2,7 +2,7 @@
    1. Bloc pur NEXORA:BODY-PHOTOS, extrait du bundle RÉELLEMENT construit :
       similarité (Umeyama/Procrustes 2D), ajustements, conversions, dates, EXIF.
    2. Routes : la VRAIE logique (_shared/body-photos.ts) exécutée avec une
-      session, un Firestore et un Drive factices — refus sans propriétaire,
+      session, des métadonnées et un stockage d'octets factices — refus sans propriétaire,
       méthodes interdites, validation, idempotence, aucune URL de stockage.
    3. Raccordements du widget dans le bundle (catalogue, taille, rendu,
       en-tête, fiche) et de la route. */
@@ -273,7 +273,7 @@ const OWNER = "Bearer jeton-proprietaire";
 // JPEG minimal : SOI, SOF0 (200 × 100), EOI.
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x64, 0x00, 0xc8, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]);
 
-function setup({ folder = "dossier-prive-xyz", driveFails = null } = {}) {
+function setup({ blobsFail = null } = {}) {
   const docs = new Map();
   const files = new Map();
   let reference = null;
@@ -287,18 +287,18 @@ function setup({ folder = "dossier-prive-xyz", driveFails = null } = {}) {
     async getReference() { return reference; },
     async setReference(id) { reference = id; },
   };
-  const fail = (op) => { if (driveFails === op) { const e = new Error("File not found: drive-file-secret https://www.googleapis.com/drive/v3/files/x"); e.status = 500; throw e; } };
-  const drive = {
-    async findByPhotoId(folderId, photoId) { fail("find"); for (const [id, f] of files) if (f.photoId === photoId && f.folderId === folderId) return id; return null; },
-    async upload(folderId, photoId, bytes) { fail("upload"); calls.uploads++; const id = `drive-file-${files.size + 1}`; files.set(id, { folderId, photoId, bytes }); return id; },
-    async download(fileId) { fail("download"); return files.get(fileId).bytes; },
-    async remove(fileId) { fail("remove"); files.delete(fileId); },
+  // Message d'erreur volontairement indiscret : il ne doit jamais ressortir.
+  const fail = (op) => { if (blobsFail === op) throw new Error("9 FAILED_PRECONDITION: projects/nexora-cb20d/databases/(default)/documents/bodyPhotoBlobs/blob-secret"); };
+  const blobs = {
+    async find(photoId) { fail("find"); for (const [id, f] of files) if (f.photoId === photoId) return id; return null; },
+    async put(photoId, bytes) { fail("put"); calls.uploads++; const id = `blob-secret-${files.size + 1}`; files.set(id, { photoId, bytes }); return id; },
+    async get(blobId) { fail("get"); return files.get(blobId)?.bytes || null; },
+    async remove(blobId) { fail("remove"); files.delete(blobId); },
   };
   const handler = R.createBodyPhotosHandler({
     requireOwner: async (req) => { calls.owner++; return req.headers.get("authorization") === OWNER ? null : R.json({ ok: false, error: "unauthorized" }, 401); },
-    folderId: () => folder,
     store,
-    drive,
+    blobs,
     now: () => NOW,
   });
   const call = (method, path = "", { auth = OWNER, headers = {}, body } = {}) => handler(new Request(`https://nexora.test/api/nexora/body-photos${path}`, {
@@ -310,7 +310,7 @@ function setup({ folder = "dossier-prive-xyz", driveFails = null } = {}) {
   return { call, upload, docs, files, calls, getReference: () => reference };
 }
 
-const LEAKS = /fileId|drive-file|googleapis|drive\.google|dossier-prive/;
+const LEAKS = /blobId|blob-secret|nexora-cb20d|projects\/|FAILED_PRECONDITION/;
 
 test("routes : refus sans session du propriétaire, avant toute lecture", async () => {
   const s = setup();
@@ -341,14 +341,6 @@ test("routes : méthodes interdites et chemins inconnus", async () => {
   }
   for (const path of ["/a", "/cle-import-0001/autre", "/../x", "/cle-import-0001/image/x"]) assert.equal((await s.call("GET", path)).status, 404, path);
   assert.equal(s.calls.owner, 0, "méthode ou chemin refusés sans consulter la session");
-});
-
-test("routes : stockage non configuré -> 503, après le contrôle de session", async () => {
-  const s = setup({ folder: "" });
-  assert.equal((await s.call("GET", "", { auth: null })).status, 401);
-  const res = await s.call("GET");
-  assert.equal(res.status, 503);
-  assert.deepEqual((await res.json()).missing, ["NEXORA_BODY_PHOTOS_FOLDER_ID"]);
 });
 
 test("import : validation du type, de la clé, de la date, de la taille et du contenu", async () => {
@@ -386,27 +378,27 @@ test("import : idempotent, dimensions lues dans le JPEG, aucune URL de stockage 
   const again = await s.upload();
   assert.equal(again.status, 200);
   assert.equal((await again.json()).data.duplicate, true);
-  assert.equal(s.calls.uploads, 1, "un seul envoi Drive pour la même clé");
+  assert.equal(s.calls.uploads, 1, "une seule écriture des octets pour la même clé");
   assert.equal(s.files.size, 1);
   // Reprise après coupure : métadonnée « en attente » et fichier déjà déposé.
-  s.docs.set("cle-import-0009", { ...s.docs.get("cle-import-0001"), id: "cle-import-0009", status: "pending", fileId: null });
-  s.files.set("drive-file-99", { folderId: "dossier-prive-xyz", photoId: "cle-import-0009", bytes: JPEG });
+  s.docs.set("cle-import-0009", { ...s.docs.get("cle-import-0001"), id: "cle-import-0009", status: "pending", blobId: null });
+  s.files.set("blob-secret-99", { photoId: "cle-import-0009", bytes: JPEG });
   const resumed = await s.upload("cle-import-0009");
   assert.equal(resumed.status, 200);
   assert.equal(s.calls.uploads, 1, "le fichier existant est retrouvé, pas renvoyé");
-  assert.equal(s.docs.get("cle-import-0009").fileId, "drive-file-99");
+  assert.equal(s.docs.get("cle-import-0009").blobId, "blob-secret-99");
 });
 
-test("import : échec Drive -> 502 générique, aucune métadonnée orpheline", async () => {
-  const s = setup({ driveFails: "upload" });
+test("import : échec du stockage -> 502 générique, aucune métadonnée orpheline", async () => {
+  const s = setup({ blobsFail: "put" });
   const res = await s.upload();
   assert.equal(res.status, 502);
   const text = await res.text();
-  assert.doesNotMatch(text, LEAKS, "message brut de l'API jamais renvoyé");
+  assert.doesNotMatch(text, LEAKS, "message brut du stockage jamais renvoyé");
   assert.equal(s.docs.size, 0);
 });
 
-test("liste et image : sans identifiant Drive, en-têtes privés et sans cache", async () => {
+test("liste et image : sans identifiant de stockage, en-têtes privés et sans cache", async () => {
   const s = setup();
   await s.upload("cle-import-0001");
   await s.upload("cle-import-0002", { "x-photo-date": "2026-01-15" });
@@ -429,7 +421,7 @@ test("modification : date, repères et ajustements validés", async () => {
   await s.upload();
   const patch = (body) => s.call("PATCH", "/cle-import-0001", { body: JSON.stringify(body), headers: { "content-type": "application/json" } });
   assert.equal((await patch({ date: "2026-13-01" })).status, 400);
-  assert.equal((await patch({ fileId: "x" })).status, 400, "champ inconnu refusé");
+  assert.equal((await patch({ blobId: "x" })).status, 400, "champ inconnu refusé");
   assert.equal((await patch({ landmarks: { leftEye: { x: 1.2, y: 0.5 } } })).status, 400);
   assert.equal((await patch({ landmarks: { forehead: { x: 0.2, y: 0.5 } } })).status, 400);
   assert.equal((await patch({ adjust: { referenceId: "cle-import-0002", value: { dx: 1, rot: 90 } } })).status, 400, "rotation hors bornes");
@@ -454,8 +446,8 @@ test("référence unique et suppression sans orphelin", async () => {
   assert.equal((await put("cle-import-0001")).status, 200);
   assert.equal(s.getReference(), "cle-import-0001");
 
-  // Drive en panne : rien n'est effacé, ni fichier ni métadonnée.
-  const broken = setup({ driveFails: "remove" });
+  // Stockage des octets en panne : rien n'est effacé, ni octets ni métadonnée.
+  const broken = setup({ blobsFail: "remove" });
   await broken.upload();
   const failed = await broken.call("DELETE", "/cle-import-0001");
   assert.equal(failed.status, 502);
@@ -466,11 +458,11 @@ test("référence unique et suppression sans orphelin", async () => {
   const res = await s.call("DELETE", "/cle-import-0001");
   assert.equal(res.status, 200);
   assert.equal(s.docs.size, 0, "métadonnée supprimée");
-  assert.equal(s.files.size, 0, "fichier supprimé");
+  assert.equal(s.files.size, 0, "octets supprimés");
   assert.equal(s.getReference(), null, "référence libérée");
   assert.equal((await s.call("DELETE", "/cle-import-0001")).status, 404);
   // Métadonnée restée après une coupure (fichier déjà absent) : supprimable.
-  s.docs.set("cle-import-0005", { id: "cle-import-0005", status: "ready", fileId: "drive-file-disparu", date: "2026-01-01", createdAt: "", landmarks: {}, adjust: {} });
+  s.docs.set("cle-import-0005", { id: "cle-import-0005", status: "ready", blobId: "blob-disparu", date: "2026-01-01", createdAt: "", landmarks: {}, adjust: {} });
   assert.equal((await s.call("DELETE", "/cle-import-0005")).status, 200);
   assert.equal(s.docs.size, 0);
 });
@@ -487,20 +479,128 @@ test("bundle : widget au catalogue, taille, rendu, en-tête et fiche", () => {
   assert.match(html, /function WidgetBodyPhotos\(\{ widget, externalToolbarSlot, onUpdateWidget \}\)/);
   assert.match(html, /role="slider"[^>]*aria-valuenow=/);
   assert.match(html, /Aucune photo : importe ta première photo/);
-  // Le navigateur ne parle qu'à la route Nexora, jamais à Drive.
+  // Le navigateur ne parle qu'à la route Nexora, jamais à un stockage Google.
   const ui = html.slice(html.indexOf("// --- Photos corporelles"), html.indexOf("function WidgetBodyPhotos"));
   assert.doesNotMatch(ui, /googleapis|drive\.google|googleusercontent/);
   assert.match(ui, /fetch\(`\/api\/nexora\/body-photos/);
 });
 
-test("route : requireOwner, dossier dédié, chemins", async () => {
+test("route : requireOwner, Firestore dédié, chemins", async () => {
   const source = await read("../netlify/functions/body-photos.ts");
   assert.match(source, /requireOwner,/);
-  assert.match(source, /Netlify\.env\.get\("NEXORA_BODY_PHOTOS_FOLDER_ID"\)/);
+  assert.match(source, /blobs: firestoreBodyPhotoBlobs\(\)/);
   assert.match(source, /path: \["\/api\/nexora\/body-photos", "\/api\/nexora\/body-photos\/\*"\]/);
   const storeSource = await read("../netlify/functions/_shared/body-photos-store.ts");
-  assert.doesNotMatch(storeSource, /permissions|webViewLink|webContentLink|anyoneWithLink|NEXORA_DRIVE_ROOT_FOLDER_ID/, "aucun partage, aucun lien, pas le dossier Clients");
+  assert.doesNotMatch(storeSource, /googleapis|getStorage|getSignedUrl|makePublic|NEXORA_DRIVE_ROOT_FOLDER_ID/, "aucun lien public, aucun autre stockage");
   assert.match(storeSource, /collection\(PHOTOS\)/);
   const code = storeSource.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
   assert.doesNotMatch(code, /kv_store/, "hors du stockage synchronisé de l'application");
+});
+
+// --- 4. Stockage Firestore réel, sur un faux Firestore en mémoire -------------
+
+import { build } from "esbuild";
+
+// Faux Firestore : juste ce que _shared/body-photos-store.ts utilise.
+function memoryFirestore() {
+  const docs = new Map();
+  let commits = 0;
+  const snap = (path) => ({ id: path.split("/").pop(), exists: docs.has(path), data: () => docs.get(path) });
+  const docRef = (path) => ({
+    path, id: path.split("/").pop(),
+    get: async () => snap(path),
+    set: async (v, o) => { docs.set(path, o?.merge ? { ...(docs.get(path) || {}), ...v } : v); },
+    update: async (v) => { docs.set(path, { ...docs.get(path), ...v }); },
+    collection: (name) => colRef(`${path}/${name}`),
+  });
+  const colRef = (path) => ({
+    doc: (id) => docRef(`${path}/${id}`),
+    get: async () => ({ docs: [...docs.keys()].filter((k) => k.startsWith(path + "/") && !k.slice(path.length + 1).includes("/")).map(snap) }),
+    listDocuments: async () => [...docs.keys()].filter((k) => k.startsWith(path + "/") && !k.slice(path.length + 1).includes("/")).map(docRef),
+  });
+  const db = {
+    docs, get commits() { return commits; },
+    collection: (name) => colRef(name),
+    getAll: async (...refs) => refs.map((r) => snap(r.path)),
+    batch: () => {
+      const ops = [];
+      return {
+        set: (r, v) => ops.push(() => docs.set(r.path, v)),
+        delete: (r) => ops.push(() => docs.delete(r.path)),
+        commit: async () => { commits++; ops.forEach((op) => op()); },
+      };
+    },
+    runTransaction: async (fn) => fn({
+      get: async (r) => snap(r.path),
+      create: (r, v) => docs.set(r.path, v),
+      set: (r, v, o) => docs.set(r.path, o?.merge ? { ...(docs.get(r.path) || {}), ...v } : v),
+      delete: (r) => docs.delete(r.path),
+    }),
+  };
+  return db;
+}
+
+const storeBundle = await build({
+  entryPoints: [new URL("../netlify/functions/_shared/body-photos-store.ts", import.meta.url).pathname],
+  bundle: true, write: false, format: "esm", platform: "node", logLevel: "silent",
+  plugins: [{
+    name: "faux-firestore",
+    setup(b) {
+      b.onResolve({ filter: /^\.\/nexora\.js$/ }, () => ({ path: "faux-nexora", namespace: "faux" }));
+      b.onLoad({ filter: /.*/, namespace: "faux" }, () => ({ contents: "export const getDb = () => globalThis.__fauxFirestore;", loader: "js" }));
+    },
+  }],
+});
+const S = await import("data:text/javascript;base64," + Buffer.from(storeBundle.outputFiles[0].text).toString("base64"));
+
+test("stockage Firestore : découpage en morceaux < 1 Mio, relecture identique, suppression complète", async () => {
+  const db = (globalThis.__fauxFirestore = memoryFirestore());
+  const blobs = S.firestoreBodyPhotoBlobs();
+  assert.equal(S.BODY_PHOTO_CHUNK_BYTES, 900_000);
+  const big = new Uint8Array(R.BODY_PHOTO_MAX_BYTES).map((_, i) => (i * 31 + 7) % 256);
+  assert.equal(await blobs.find("cle-import-0001"), null);
+  assert.equal(await blobs.put("cle-import-0001", big), "cle-import-0001");
+  assert.equal(db.commits, 1, "morceaux et manifeste en un seul lot atomique");
+  const chunks = [...db.docs.keys()].filter((k) => k.startsWith("bodyPhotoBlobs/cle-import-0001/chunks/"));
+  assert.equal(chunks.length, 6, "5 Mo -> 6 morceaux");
+  for (const k of chunks) assert.ok(db.docs.get(k).data.length <= 900_000, "chaque document sous 1 Mio");
+  assert.deepEqual(db.docs.get("bodyPhotoBlobs/cle-import-0001"), { ...db.docs.get("bodyPhotoBlobs/cle-import-0001"), chunks: 6, bytes: big.length });
+  assert.equal(await blobs.find("cle-import-0001"), "cle-import-0001", "reprise : octets retrouvés");
+  assert.deepEqual(await blobs.get("cle-import-0001"), big, "relecture octet pour octet");
+  const small = new Uint8Array([1, 2, 3]);
+  await blobs.put("cle-import-0002", small);
+  assert.deepEqual(await blobs.get("cle-import-0002"), small);
+  await blobs.remove("cle-import-0001");
+  assert.equal([...db.docs.keys()].filter((k) => k.startsWith("bodyPhotoBlobs/cle-import-0001")).length, 0, "aucun morceau orphelin");
+  assert.equal(await blobs.get("cle-import-0001"), null);
+  await blobs.remove("cle-import-0001"); // rejouable
+  // Morceau resté sans manifeste (écriture interrompue) : supprimé aussi.
+  db.docs.set("bodyPhotoBlobs/cle-import-0003/chunks/0", { data: Buffer.from([9]) });
+  assert.equal(await blobs.find("cle-import-0003"), null, "sans manifeste, rien n'est considéré comme écrit");
+  await blobs.remove("cle-import-0003");
+  assert.equal(db.docs.has("bodyPhotoBlobs/cle-import-0003/chunks/0"), false);
+  assert.ok([...db.docs.keys()].every((k) => !k.startsWith("users/")), "rien sous users/{uid}/kv_store");
+});
+
+test("stockage Firestore + route : parcours complet import, image, suppression", async () => {
+  const db = (globalThis.__fauxFirestore = memoryFirestore());
+  const handler = R.createBodyPhotosHandler({
+    requireOwner: async (req) => (req.headers.get("authorization") === OWNER ? null : R.json({ ok: false, error: "unauthorized" }, 401)),
+    store: S.firestoreBodyPhotoStore(),
+    blobs: S.firestoreBodyPhotoBlobs(),
+    now: () => NOW,
+  });
+  const call = (method, path = "", init = {}) => handler(new Request(`https://nexora.test/api/nexora/body-photos${path}`, { method, ...init, headers: { authorization: OWNER, ...(init.headers || {}) } }));
+  const up = await call("POST", "", { body: JPEG, headers: { "content-type": "image/jpeg", "x-idempotency-key": "cle-import-0001", "x-photo-date": "2026-09-30" } });
+  assert.equal(up.status, 201);
+  assert.equal(db.docs.get("bodyPhotos/cle-import-0001").status, "ready");
+  assert.equal((await call("PUT", "/reference", { body: JSON.stringify({ id: "cle-import-0001" }) })).status, 200);
+  const img = await call("GET", "/cle-import-0001/image");
+  assert.deepEqual(new Uint8Array(await img.arrayBuffer()), JPEG);
+  const list = await (await call("GET")).text();
+  assert.doesNotMatch(list, /blobId/);
+  assert.equal(JSON.parse(list).data.referenceId, "cle-import-0001");
+  assert.equal((await call("DELETE", "/cle-import-0001")).status, 200);
+  assert.deepEqual([...db.docs.keys()].filter((k) => !k.startsWith("bodyPhotoSettings")), [], "ni métadonnée ni octet restant");
+  assert.equal(db.docs.get("bodyPhotoSettings/main").referenceId, null);
 });
