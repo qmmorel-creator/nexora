@@ -16,7 +16,7 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const M = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacyFinanceOs360Widget, migrateLegacySportOs360Widget, migrateLegacyMiniGanttData, migrateBudgetChartSankeyWidget };`)();
+const M = new Function(`${slice("MINIGANTT-MIGRATION")}; return { migrateLegacyFinanceOs360Widget, migrateLegacySportOs360Widget, migrateLegacyMiniGanttData, migrateBudgetChartSankeyWidget, migrateBudgetChartCumulWidget };`)();
 
 test("aucun widget « (OS360) » au catalogue ; les anciens types sont rendus par les widgets natifs", () => {
   assert.doesNotMatch(html, /label: "Graphique financier \(OS360\)"/);
@@ -32,13 +32,16 @@ test("finance : chaque graphique OS360 devient le widget Budget natif qui montre
   assert.deepEqual([def.id, def.title, def.layout.w, def.type, def.budgetChart], ["f1", "Mon budget", 8, "financeBudgetChart", "donut"], "défaut du widget OS360 : donut");
   const charts = {
     "budget.cascadeWaterfall": "waterfall",
-    "budget.chart_cumulative": "cumulative", "budget.chart_small_multiples": "smallMultiples", "budget.chart_donut": "donut",
+    "budget.chart_donut": "donut",
     "budget.chart_waffle": "waffle", "budget.chart_annual_categories": "periodic", "budget.generic_periodic": "periodic",
   };
   for (const [os, native] of Object.entries(charts)) {
     const w = m(os);
     assert.deepEqual([w.type, w.budgetChart], ["financeBudgetChart", native], os);
   }
+  // #606 : les dépenses cumulées vont au widget « Budget cumulé par mois ».
+  assert.deepEqual([m("budget.chart_cumulative").type, m("budget.chart_cumulative").budgetCumulMode, m("budget.chart_cumulative").budgetChart], ["financeBudgetCumul", "categories", undefined]);
+  assert.deepEqual([m("budget.generic_cumulative").type, m("budget.chart_small_multiples").type, m("budget.chart_small_multiples").budgetCumulMode], ["financeBudgetCumul", "financeBudgetCumul", "multiples"]);
   assert.equal(m("budget.chart_wealth_sankey").type, "financeSankeyWealth");
   // #604 : les Sankey de flux vont au widget Sankey (annuel : période année).
   assert.deepEqual([m("budget.chart_sankey_monthly").type, m("budget.chart_sankey_monthly").budgetChart, m("budget.chart_sankey_monthly").sankeyConfig], ["financeSankeyMonthly", undefined, undefined]);
@@ -50,7 +53,7 @@ test("finance : chaque graphique OS360 devient le widget Budget natif qui montre
   assert.equal(m("budget.chart_donut").os360.type, "budget.chart_donut", "réglage OS360 conservé");
   const other = { id: "x", type: "financeBudgetChart", budgetChart: "waffle" };
   assert.equal(M.migrateLegacyFinanceOs360Widget(other), other);
-  // Le native « Graphique Budget » ne connaît que ses 8 graphiques.
+  // Le native « Graphique Budget » connaît chacun des graphiques visés.
   for (const native of new Set(Object.values(charts))) assert.match(slice("FINANCE-BUDGET-CHART"), new RegExp(`key: "${native}"`));
 });
 
@@ -71,4 +74,14 @@ test("Graphique Budget réglé sur un Sankey (#604) : devient le widget Sankey, 
   assert.equal(M.migrateBudgetChartSankeyWidget(waffle), waffle);
   const data = M.migrateLegacyMiniGanttData({ w: [{ ...base, budgetChart: "sankeyAnnual" }, waffle] });
   assert.deepEqual(data.w.map((w) => w.type), ["financeSankeyMonthly", "financeBudgetChart"], "migration à la lecture");
+});
+
+test("Graphique Budget réglé sur le cumul ou les small multiples (#606) : devient « Budget cumulé par mois »", () => {
+  const base = { id: "g", type: "financeBudgetChart", title: "Cumul", layout: { x: 0, y: 0, w: 8, h: 8 } };
+  assert.deepEqual(M.migrateBudgetChartCumulWidget({ ...base, budgetChart: "cumulative" }), { id: "g", type: "financeBudgetCumul", title: "Cumul", layout: base.layout, budgetCumulMode: "categories" });
+  assert.equal(M.migrateBudgetChartCumulWidget({ ...base, budgetChart: "smallMultiples" }).budgetCumulMode, "multiples");
+  const donut = { ...base, budgetChart: "donut" };
+  assert.equal(M.migrateBudgetChartCumulWidget(donut), donut);
+  const data = M.migrateLegacyMiniGanttData({ w: [{ ...base, budgetChart: "cumulative" }, { ...base, budgetChart: "sankeyMonthly" }, donut] });
+  assert.deepEqual(data.w.map((w) => w.type), ["financeBudgetCumul", "financeSankeyMonthly", "financeBudgetChart"], "migration à la lecture");
 });
