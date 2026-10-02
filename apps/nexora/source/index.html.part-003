@@ -37909,6 +37909,7 @@ const FINANCE_BUDGET_CUMUL_CSS = `
 .nx-bcu-sm header small{font-variant-numeric:tabular-nums;color:#52514e;white-space:nowrap}
 .nx-bcu-sm header small.over{color:#c0392b;font-weight:650}
 .nx-bcu-panel{font-size:10px;font-weight:600;letter-spacing:.04em;color:#52514e;text-transform:uppercase}
+.nx-bcu-plot{flex:1 1 0;min-height:0}
 `;
 
 // Cadre commun : y en euros (graduations rondes, quadrillage fin), x un repère
@@ -37920,6 +37921,31 @@ function financeCumulFrame({ W, H, L = 50, R, T = 12, B = 24, top, days }) {
   const y = (v) => T + (1 - v / max) * (H - T - B);
   const step = n > 1 ? (W - L - R) / (n - 1) : W - L - R;
   return { W, H, L, R, T, B, max, ticks, x, y, step, days };
+}
+// Le graphique remplit la hauteur libre du widget (#641) : largeur logique
+// fixe (720, textes à taille constante), hauteur logique au rapport du cadre
+// mesuré. En dessous de FINANCE_CUMUL_MIN_H, le cadre garde cette hauteur
+// minimale et le widget défile.
+const FINANCE_CUMUL_W = 720;
+const FINANCE_CUMUL_MIN_H = 140;
+function financeCumulPlotHeight(box, fallback) {
+  if (!box || !(box.w > 0) || !(box.h > 0)) return fallback;
+  return Math.max(FINANCE_CUMUL_MIN_H, Math.floor((FINANCE_CUMUL_W * box.h) / box.w));
+}
+function FinanceCumulPlot({ fallback, grow = 1, children }) {
+  const ref = useRef(null);
+  const [box, setBox] = useState(null);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+    const measure = () => setBox({ w: node.clientWidth, h: node.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, []);
+  const minHeight = box && box.w > 0 ? (box.w * FINANCE_CUMUL_MIN_H) / FINANCE_CUMUL_W : undefined;
+  return <div className="nx-bcu-plot" ref={ref} style={{ flexGrow: grow, minHeight }}>{children(financeCumulPlotHeight(box, fallback))}</div>;
 }
 function financeCumulPath(values, f) {
   return values.map((v, k) => `${k ? "L" : "M"} ${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" ");
@@ -38026,7 +38052,6 @@ function FinanceCumulRefLines({ f, model, named = true }) {
 // 1 · Par catégorie : aires empilées, liseré blanc entre les couches.
 function FinanceCumulCategories({ model }) {
   const [hover, setHover] = useState(null);
-  const f = financeCumulFrame({ W: 720, H: 280, R: 150, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.04, days: model.days });
   const last = model.days.length - 1;
   const base = model.days.map(() => 0);
   const layers = model.series.map((s) => {
@@ -38036,6 +38061,9 @@ function FinanceCumulCategories({ model }) {
   });
   return (
     <>
+      <FinanceCumulPlot fallback={280}>{(H) => {
+      const f = financeCumulFrame({ W: FINANCE_CUMUL_W, H, R: 150, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.04, days: model.days });
+      return (
       <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées par catégorie, revenus cumulés et budget total">
         <FinanceCumulAxes f={f} />
         {layers.map((s) => (
@@ -38047,6 +38075,8 @@ function FinanceCumulCategories({ model }) {
         <FinanceCumulEndLabels f={f} items={layers.map((s) => ({ key: s.category, y: f.y(s.upper[last] - s.total / 2), value: financeBudgetEuro(s.total), label: s.category, swatch: s.color }))} />
         <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
       <FinanceCumulLegend model={model} />
     </>
@@ -38058,11 +38088,9 @@ function FinanceCumulCategories({ model }) {
 function FinanceCumulBudget({ model }) {
   const [hover, setHover] = useState(null);
   const I = FINANCE_CUMUL_INK;
-  const f = financeCumulFrame({ W: 720, H: 260, R: 120, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
   const last = model.days.length - 1;
   const { budgetTotal, spent, crossDay } = model;
   const gap = spent - budgetTotal;
-  const area = `M ${f.x(0)} ${f.y(0)} L ${model.total.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${f.x(last)} ${f.y(0)} Z`;
   const mid = Math.round(last * 0.6);
   return (
     <>
@@ -38072,6 +38100,10 @@ function FinanceCumulBudget({ model }) {
         {budgetTotal > 0 && <div><small>{gap > 0 ? "Dépassement" : "Reste"}</small><span style={{ color: gap > 0 ? I.over : I.income }}>{gap > 0 ? "+" : ""}{financeBudgetEuro(Math.abs(gap))} · {Math.round((spent / budgetTotal) * 100)} %</span></div>}
         {budgetTotal > 0 && <div><small>Budget dépassé le</small><span>{crossDay >= 0 ? financeCumulDayLabel(model.days[crossDay]) : "—"}</span></div>}
       </div>
+      <FinanceCumulPlot fallback={260}>{(H) => {
+      const f = financeCumulFrame({ W: FINANCE_CUMUL_W, H, R: 120, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
+      const area = `M ${f.x(0)} ${f.y(0)} L ${model.total.map((v, k) => `${f.x(k).toFixed(1)} ${f.y(v).toFixed(1)}`).join(" L ")} L ${f.x(last)} ${f.y(0)} Z`;
+      return (
       <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées du mois face au budget">
         {budgetTotal > 0 && <rect x={f.L} y={f.T} width={f.W - f.R - f.L} height={Math.max(0, f.y(budgetTotal) - f.T)} fill={I.over} fillOpacity=".05" />}
         <FinanceCumulAxes f={f} />
@@ -38094,6 +38126,8 @@ function FinanceCumulBudget({ model }) {
         ]} />
         <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
     </>
   );
@@ -38102,10 +38136,12 @@ function FinanceCumulBudget({ model }) {
 // 3 · Trajectoires : une ligne cumulée par catégorie, non empilées.
 function FinanceCumulTrajectories({ model }) {
   const [hover, setHover] = useState(null);
-  const f = financeCumulFrame({ W: 720, H: 280, R: 150, top: Math.max(0, ...model.series.map((s) => s.total)), days: model.days });
   const last = model.days.length - 1;
   return (
     <>
+      <FinanceCumulPlot fallback={280}>{(H) => {
+      const f = financeCumulFrame({ W: FINANCE_CUMUL_W, H, R: 150, top: Math.max(0, ...model.series.map((s) => s.total)), days: model.days });
+      return (
       <svg viewBox={`0 0 ${f.W} ${f.H}`} role="img" aria-label="Dépenses cumulées, une ligne par catégorie">
         <FinanceCumulAxes f={f} />
         {[...model.series].reverse().map((s) => (
@@ -38117,6 +38153,8 @@ function FinanceCumulTrajectories({ model }) {
         <FinanceCumulEndLabels f={f} items={model.series.map((s) => ({ key: s.category, y: f.y(s.total), value: financeBudgetEuro(s.total), label: s.category }))} />
         <FinanceCumulHit f={f} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
       <FinanceCumulLegend model={model} lines={false} />
     </>
@@ -38168,13 +38206,13 @@ function FinanceCumulDaily({ model }) {
   const [hover, setHover] = useState(null);
   const I = FINANCE_CUMUL_INK;
   const last = model.days.length - 1;
-  const top = financeCumulFrame({ W: 720, H: 190, R: 120, T: 16, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
   const maxDay = Math.max(0, ...model.dailyTotal);
-  const bot = financeCumulFrame({ W: 720, H: 170, R: 120, T: 22, top: maxDay * 1.08, days: model.days });
-  const bw = Math.max(2, bot.step * 0.62);
-  const area = `M ${top.x(0)} ${top.y(0)} L ${model.total.map((v, k) => `${top.x(k).toFixed(1)} ${top.y(v).toFixed(1)}`).join(" L ")} L ${top.x(last)} ${top.y(0)} Z`;
   return (
     <>
+      <FinanceCumulPlot fallback={190} grow={19}>{(H) => {
+      const top = financeCumulFrame({ W: FINANCE_CUMUL_W, H, R: 120, T: 16, top: Math.max(model.spent, model.budgetTotal, ...model.income) * 1.06, days: model.days });
+      const area = `M ${top.x(0)} ${top.y(0)} L ${model.total.map((v, k) => `${top.x(k).toFixed(1)} ${top.y(v).toFixed(1)}`).join(" L ")} L ${top.x(last)} ${top.y(0)} Z`;
+      return (
       <svg viewBox={`0 0 ${top.W} ${top.H}`} role="img" aria-label="Cumul des dépenses du mois face au budget et aux revenus">
         <text className="nx-bcu-panel" x={top.L} y="9" style={{ fontWeight: 600, fill: I.muted }}>CUMUL DU MOIS</text>
         <FinanceCumulAxes f={top} />
@@ -38188,6 +38226,12 @@ function FinanceCumulDaily({ model }) {
         ]} />
         <FinanceCumulHit f={top} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
+      <FinanceCumulPlot fallback={170} grow={17}>{(H) => {
+      const bot = financeCumulFrame({ W: FINANCE_CUMUL_W, H, R: 120, T: 22, top: maxDay * 1.08, days: model.days });
+      const bw = Math.max(2, bot.step * 0.62);
+      return (
       <svg viewBox={`0 0 ${bot.W} ${bot.H}`} role="img" aria-label="Dépenses de chaque jour, par catégorie">
         <text x={bot.L} y="9" style={{ fontWeight: 600, fill: I.muted }}>DÉPENSES DU JOUR, PAR CATÉGORIE</text>
         <FinanceCumulAxes f={bot} />
@@ -38210,6 +38254,8 @@ function FinanceCumulDaily({ model }) {
         })}
         <FinanceCumulHit f={bot} hover={hover} setHover={setHover} />
       </svg>
+      );
+      }}</FinanceCumulPlot>
       <FinanceCumulTip model={model} hover={hover} />
       <FinanceCumulLegend model={model} />
     </>

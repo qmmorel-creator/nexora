@@ -1479,4 +1479,23 @@ if (benchBodyPhotos) {
   };
 }
 
-root.render(React.createElement(benchBodyPhotos ? BodyPhotosBench : benchApp ? BenchApp : AnnotationsHarness));
+// Budget cumulé par mois (#641) : le widget seul, dans un cadre de la taille
+// demandée (?budgetCumul=1&mode=…&h=…). Les données viennent de run.mjs, qui
+// sert /api/nexora/finance-budget-summary avec la vraie fonction serveur.
+const benchParams = new URLSearchParams(location.search);
+const benchBudgetCumul = benchParams.get("budgetCumul") === "1";
+function BudgetCumulBench() {
+  const [widget, setWidget] = useState({ id: "banc-cumul", type: "financeBudgetCumul", title: "Budget cumulé par mois", budgetCumulMode: benchParams.get("mode") || "categories" });
+  const height = Number(benchParams.get("h")) || 900;
+  return (
+    <>
+      <GlobalStyles />
+      <div style={{ width: 1080, height, margin: 16, border: "1px solid #dce3ed", display: "flex", flexDirection: "column" }} data-testid="bench-budget-cumul">
+        <WidgetFinanceBudgetCumul widget={widget} externalToolbarSlot={null} onUpdateWidget={(patch) => setWidget((w) => ({ ...w, ...patch }))} />
+      </div>
+    </>
+  );
+}
+if (benchBudgetCumul) auth.currentUser = { uid: "banc", getIdToken: async () => "jeton-banc" };
+
+root.render(React.createElement(benchBudgetCumul ? BudgetCumulBench : benchBodyPhotos ? BodyPhotosBench : benchApp ? BenchApp : AnnotationsHarness));
