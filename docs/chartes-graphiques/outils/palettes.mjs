@@ -15,10 +15,10 @@ export const CHARTES = [
         tooltip: '#141414', shadow: 'none', menuShadow: '0 0 0 2px #141414, 6px 6px 0 2px #141414', focus: '#1D4E89', selection: '#F5B400',
         extra: { red: '#D9302A', 'on-red': '#FFFFFF', yellow: '#F5B400', 'on-yellow': '#141414', blue: '#1D4E89', 'on-blue': '#FFFFFF', frame: '#141414' } },
       sombre: { dark: true, bg: '#16150F', surface: '#1F1E19', soft: '#2A2822', border: '#3D3A32', borderStrong: '#E8E4DA', text: '#F0EDE6', secondary: '#C9C3B6', muted: '#A8A296',
-        accent: '#EF5A4C', accentHover: '#F47B70', accentSoft: '#3A3218', onAccent: '#141414', accentText: '#F27B6F', signal: '#EF5A4C', signalText: '#F27B6F',
-        success: '#6CC28A', warning: '#E0B45C', danger: '#EF5A4C', sidebar: '#16150F', sidebarText: '#F0EDE6', sidebarMuted: '#A8A296', sidebarActive: '#F0EDE6', sidebarActiveText: '#16150F', sidebarBorder: '#E8E4DA',
+        accent: '#F26A5D', accentHover: '#F58579', accentSoft: '#3A3218', onAccent: '#141414', accentText: '#F27B6F', signal: '#F26A5D', signalText: '#F27B6F',
+        success: '#6CC28A', warning: '#E0B45C', danger: '#F26A5D', sidebar: '#16150F', sidebarText: '#F0EDE6', sidebarMuted: '#A8A296', sidebarActive: '#F0EDE6', sidebarActiveText: '#16150F', sidebarBorder: '#E8E4DA',
         tooltip: '#2A2822', shadow: 'none', menuShadow: '0 0 0 2px #E8E4DA, 6px 6px 0 2px #000000', focus: '#F5C242', selection: '#5A4A10',
-        extra: { red: '#EF5A4C', 'on-red': '#141414', yellow: '#F5C242', 'on-yellow': '#141414', blue: '#2B5F9E', 'on-blue': '#FFFFFF', frame: '#E8E4DA' } },
+        extra: { red: '#F26A5D', 'on-red': '#141414', yellow: '#F5C242', 'on-yellow': '#141414', blue: '#2B5F9E', 'on-blue': '#FFFFFF', frame: '#E8E4DA' } },
     },
   },
   {

@@ -1,9 +1,13 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { CHARTES } from './palettes.mjs';
 import { tokenBlock } from './tokens.mjs';
 import { mapValue, mapColor, scopeSelector, kindOfProp } from './remap.mjs';
 import { parse, fmt } from './color.mjs';
 const here = (f) => new URL(f, import.meta.url);
+// Série à générer : palettes.mjs (famille Bauhaus) par défaut, ou SERIE=sombres (dix thèmes sombres).
+const SERIE = process.env.SERIE || '';
+const { CHARTES } = await import(SERIE ? `./${SERIE}.mjs` : './palettes.mjs');
+const SIG = SERIE ? `./signatures-${SERIE}/` : './signatures/';
+const EXTRA = SERIE ? readFileSync(here(`./${SERIE}-socle.css`), 'utf8') : '';
 const decls = JSON.parse(readFileSync(here('./donnees/css-colors.json')));
 const harvest = JSON.parse(readFileSync(here('./donnees/harvest.json')));
 const inkDecls = JSON.parse(readFileSync(here('./donnees/css-inkvars.json'))).filter((x) => /^(background|background-color)$/.test(x[2]) && /var\(--(ink|text-primary|text-900|craie|life-text)\b/.test(x[3]));
@@ -57,7 +61,8 @@ for (const ch of CHARTES) {
   }
   const S0 = `:root[data-charte="${ch.id}"]`;
   parts.push('\n' + base.replaceAll('§', S0));
-  parts.push('\n' + readFileSync(here(`./signatures/${ch.id}.css`), 'utf8').replaceAll('§', S0));
+  if (EXTRA) parts.push('\n' + EXTRA.replaceAll('§', S0));
+  parts.push('\n' + readFileSync(here(`${SIG}${ch.id}.css`), 'utf8').replaceAll('§', S0));
   writeFileSync(here(`./sortie/${ch.id}.css`), parts.join(''));
 }
 writeFileSync(here('./sortie/stats.json'), JSON.stringify(stats, null, 1));

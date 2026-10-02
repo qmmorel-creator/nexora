@@ -46,22 +46,22 @@ Les couleurs de **données** (projets, statuts, personnes, types de tâches) ne 
 | Encre (texte principal) | `--c-text` | `#141414` | `#F0EDE6` |
 | Texte secondaire | `--c-secondary` | `#45413A` | `#C9C3B6` |
 | Texte discret | `--c-muted` | `#5E5A52` | `#A8A296` |
-| Accent (action, sélection) | `--c-accent` | `#D9302A` | `#EF5A4C` |
-| Accent survolé | `--c-accent-hover` | `#B5231E` | `#F47B70` |
+| Accent (action, sélection) | `--c-accent` | `#D9302A` | `#F26A5D` |
+| Accent survolé | `--c-accent-hover` | `#B5231E` | `#F58579` |
 | Accent doux (fond sélectionné) | `--c-accent-soft` | `#FBE7A6` | `#3A3218` |
 | Texte sur accent | `--c-on-accent` | `#FFFFFF` | `#141414` |
 | Accent en texte | `--c-accent-text` | `#B5231E` | `#F27B6F` |
-| Signal (aujourd'hui, alerte) | `--c-signal` | `#D9302A` | `#EF5A4C` |
+| Signal (aujourd'hui, alerte) | `--c-signal` | `#D9302A` | `#F26A5D` |
 | Succès | `--c-success` | `#2F7D4A` | `#6CC28A` |
 | Avertissement | `--c-warning` | `#A8741A` | `#E0B45C` |
-| Danger | `--c-danger` | `#D9302A` | `#EF5A4C` |
+| Danger | `--c-danger` | `#D9302A` | `#F26A5D` |
 | Navigation — fond | `--c-sidebar` | `#F0EDE6` | `#16150F` |
 | Navigation — texte | `--c-sidebar-text` | `#141414` | `#F0EDE6` |
 | Navigation — actif | `--c-sidebar-active` | `#141414` | `#F0EDE6` |
 | Info-bulle, aplat d'encre | `--c-tooltip` | `#141414` | `#2A2822` |
 | Anneau de focus | `--c-focus` | `#1D4E89` | `#F5C242` |
 | Sélection de texte | `--c-selection` | `#F5B400` | `#5A4A10` |
-| Aplat propre à la charte : red | `--c-red` | `#D9302A` | `#EF5A4C` |
+| Aplat propre à la charte : red | `--c-red` | `#D9302A` | `#F26A5D` |
 | Aplat propre à la charte : on-red | `--c-on-red` | `#FFFFFF` | `#141414` |
 | Aplat propre à la charte : yellow | `--c-yellow` | `#F5B400` | `#F5C242` |
 | Aplat propre à la charte : on-yellow | `--c-on-yellow` | `#141414` | `#141414` |
@@ -69,7 +69,7 @@ Les couleurs de **données** (projets, statuts, personnes, types de tâches) ne 
 | Aplat propre à la charte : on-blue | `--c-on-blue` | `#FFFFFF` | `#FFFFFF` |
 | Aplat propre à la charte : frame | `--c-frame` | `#141414` | `#E8E4DA` |
 
-**Aplats et texte posé dessus :** thème clair : red 4.8:1, yellow 10.0:1, blue 8.4:1 · thème sombre : red 5.5:1, yellow 11.1:1, blue 6.5:1.
+**Aplats et texte posé dessus :** thème clair : red 4.8:1, yellow 10.0:1, blue 8.4:1 · thème sombre : red 6.1:1, yellow 11.1:1, blue 6.5:1.
 
 ### Contrastes mesurés (WCAG 2.2)
 
@@ -81,13 +81,13 @@ Les couleurs de **données** (projets, statuts, personnes, types de tâches) ne 
 | Discret / surface | 6.57:1 — AA | 6.58:1 — AA |
 | Discret / fond | 5.87:1 — AA | 7.21:1 — AAA |
 | Accent en texte / surface | 6.24:1 — AA | 6.23:1 — AA |
-| Texte sur accent / accent | 4.77:1 — AA | 5.47:1 — AA |
+| Texte sur accent / accent | 4.77:1 — AA | 6.14:1 — AA |
 | Signal texte / surface | 6.24:1 — AA | 6.23:1 — AA |
 | Navigation texte / fond | 15.76:1 — AAA | 15.64:1 — AAA |
 | Navigation discret / fond | 5.87:1 — AA | 7.21:1 — AAA |
 | Navigation active | 15.76:1 — AAA | 15.64:1 — AAA |
 | Bordure / surface (composant, seuil 3:1) | 1.59:1 — décorative, doublée par l'écart de surface | 1.47:1 — décorative, doublée par l'écart de surface |
-| Statuts en texte (succès / avert. / danger, ajustés auto.) | 5.0 / 5.2 / 5.2 :1 | 7.7 / 8.6 / 5.0 :1 |
+| Statuts en texte (succès / avert. / danger, ajustés auto.) | 5.0 / 5.2 / 5.2 :1 | 7.7 / 8.6 / 5.6 :1 |
 
 ## 4. Typographie
 
