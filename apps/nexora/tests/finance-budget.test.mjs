@@ -178,9 +178,9 @@ test("interface : formats, ordre du suivi, barres, saisie", () => {
 });
 
 test("widgets rattachés au catalogue, au rendu, à l'en-tête et à la fiche, sans réglage", () => {
-  assert.match(html, /\{ key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Suivi" \}/);
-  assert.match(html, /\{ key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Suivi" \}/);
-  assert.match(html, /\{ key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Suivi" \}/);
+  assert.match(html, /\{ key: "financeBudgetMonth", label: "Budget du mois", icon: Wallet, group: "Budget" \}/);
+  assert.match(html, /\{ key: "financeToCategorize", label: "Budget — À catégoriser", icon: Tag, group: "Budget" \}/);
+  assert.match(html, /\{ key: "financeWealth", label: "Patrimoine par banque", icon: Banknote, group: "Budget" \}/);
   assert.match(html, /w\.type === "financeBudgetMonth" && <WidgetFinanceBudgetMonth externalToolbarSlot=\{headerToolbarSlot\} \/>/);
   assert.match(html, /w\.type === "financeToCategorize" && <WidgetFinanceToCategorize externalToolbarSlot=\{headerToolbarSlot\} \/>/);
   assert.match(html, /w\.type === "financeWealth" && <WidgetFinanceWealth externalToolbarSlot=\{headerToolbarSlot\} \/>/);
@@ -307,7 +307,7 @@ test("interface graphique : échelles, donut, empilement, waterfall", () => {
 });
 
 test("widget Graphique Budget et routes de l'assistant rattachés", async () => {
-  assert.match(html, /\{ key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Suivi" \}/);
+  assert.match(html, /\{ key: "financeBudgetChart", label: "Graphique Budget", icon: BarChart3, group: "Budget" \}/);
   assert.match(html, /w\.type === "financeBudgetChart" && \(\s*<WidgetFinanceBudgetChart widget=\{w\}/);
   assert.match(html, /hasHeaderToolbar=\{[^}]*w\.type === "financeBudgetChart"/);
   // #604 : un Graphique Budget encore réglé sur un Sankey est rendu par le widget Sankey.
