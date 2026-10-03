@@ -3,7 +3,7 @@
 // clé NOUVELLE que ni nexora-project, ni le MCP, ni nexora-futur ne lisent.
 // Toute valeur inconnue ou invalide retombe sur la valeur par défaut.
 
-export const STYLES_GANTT = ["ruban", "pixels", "comete", "ecart", "pont", "compte"] as const;
+export const STYLES_GANTT = ["ruban", "pixels", "comete", "ecart", "pont", "compte", "jauge"] as const;
 export type StyleGantt = (typeof STYLES_GANTT)[number];
 export const ZOOMS = ["semaine", "mois", "trimestre", "annee", "pluri"] as const;
 export type Zoom = (typeof ZOOMS)[number];
@@ -46,7 +46,9 @@ export const TUILE_CORPS_DEFAUT = ["recovery", "sleepHours", "hrv", "sport"];
 // Sport (retour du 03/10/2026) : sports masqués et grandeur affichée.
 export const GRANDEURS_SPORT = ["duree", "distance", "denivele"] as const;
 export type GrandeurSport = (typeof GRANDEURS_SPORT)[number];
-export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; sportsMasques: string[]; grandeurSport: GrandeurSport; }
+export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; sportsMasques: string[]; grandeurSport: GrandeurSport;
+  // Comparaison des photos (module de Nexora) : réglages d'affichage, comme la config du widget Nexora (bodyPhotos).
+  photos: Record<string, unknown>; }
 
 // Argent (#690) : onglet ouvert et durée N de l'évolution du patrimoine.
 export const ONGLETS_ARGENT = ["mois", "patrimoine", "pro", "operations"] as const;
@@ -74,7 +76,7 @@ export const PREFS_VIDES: PrefsOptim = {
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL], journee: JOURNEE_ACCUEIL_DEFAUT, semaine: SEMAINE_ACCUEIL_DEFAUT },
-  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree" },
+  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree", photos: {} },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   vues: [],
 };
@@ -122,7 +124,7 @@ export function normaliserCorps(v: unknown): PrefsCorps {
     return { id: d.id, titre, mesures: Array.isArray(c.mesures) ? mesuresValides(c.mesures) : d.mesures };
   });
   const periode = (PERIODES_CORPS as readonly number[]).includes(b.periode as number) ? (b.periode as PeriodeCorps) : 30;
-  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 60), sportsMasques: chaines(b.sportsMasques, 40).map((x) => x.slice(0, 60)), grandeurSport: parmi(b.grandeurSport, GRANDEURS_SPORT, "duree") };
+  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 60), sportsMasques: chaines(b.sportsMasques, 40).map((x) => x.slice(0, 60)), grandeurSport: parmi(b.grandeurSport, GRANDEURS_SPORT, "duree"), photos: objet(b.photos) };
 }
 
 export function normaliserJourneeAccueil(v: unknown): BlocJourneeAccueil {

@@ -91,3 +91,33 @@ SHA_LIB = subprocess.run(["git", "-C", str(RACINE), "log", "-1", "--format=%h", 
 cible2 = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/finance-budget.mjs"
 cible2.write_text("/* eslint-disable */\n// @ts-nocheck\n// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (Ref #690).\n" + f"// Copie de apps/nexora/lib/finance-budget.mjs (commit {SHA_LIB}).\n" + lib, encoding="utf-8")
 print("écrit", cible2)
+
+# Comparaison des photos corporelles (retour du 03/10/2026) : bloc pur
+# NEXORA:BODY-PHOTOS (alignement, rognage, dates) et composants d'affichage
+# repris tels quels. Le chargement des images passe par photos-adaptateur.tsx
+# (relais corps d'Optim, lecture seule) au lieu de l'API de nexora-project.
+src3 = SOURCES[P3]
+debut_pur = src3.index("// === NEXORA:BODY-PHOTOS:START ===")
+fin_pur = src3.index("// === NEXORA:BODY-PHOTOS:END ===") + len("// === NEXORA:BODY-PHOTOS:END ===")
+ELEMENTS_PHOTOS = [(P3, "const BODY_PHOTO_CSS"), (P3, "const BODY_PHOTO_COLORS"), (P3, "function useBodyPhotoFrame("), (P3, "function BodyPhotoMarks("),
+  (P3, "function BodyPhotoCompare("), (P3, "const BODY_PHOTO_CROP_HANDLES"), (P3, "function BodyPhotoCrop(")]
+photos = [
+  "/* eslint-disable */",
+  "// @ts-nocheck",
+  "// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (retour du 03/10/2026).",
+  f"// Comparaison des photos corporelles de Nexora (dernier commit du dossier source : {SHA}), reprise telle quelle.",
+  'import React, { useEffect, useMemo, useRef, useState } from "react";',
+  'import { useBodyPhotoUrl } from "./photos-adaptateur";',
+  "",
+  f"// — {P3}, ligne {src3.count(chr(10), 0, debut_pur) + 1}",
+  src3[debut_pur:fin_pur],
+]
+for part, debut in ELEMENTS_PHOTOS:
+    ligne, code = bloc(part, debut)
+    photos.append(f"// — {part}, ligne {ligne}")
+    photos.append(code)
+photos.append("")
+photos.append("export { BODY_PHOTO_CSS, bodyPhotoSpec, bodyPhotoSorted, bodyPhotoRightPhoto, bodyPhotoAlignment, bodyPhotoFormatDate, bodyPhotoDeltaLabel, bodyPhotoNormalizeCrop, BodyPhotoCompare, BodyPhotoCrop };")
+cible3 = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/photos-nexora.jsx"
+cible3.write_text("\n".join(photos) + "\n", encoding="utf-8")
+print("écrit", cible3)
