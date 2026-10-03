@@ -1,4 +1,4 @@
-// Page de référence de l'identité « Plan » (Ref #654) : /reference.
+// Page de référence de l'identité « Clarté » (Ref #654) : /reference.
 import { useState } from "react";
 import { COULEURS, COUPLES_AA, ECHELLE, contraste, type Mode } from "../theme/jetons";
 import { Bouton, Cartouche, Champ, Etat, Kbd, Puce, Segment, Surtitre } from "../composants";
@@ -12,14 +12,14 @@ export function Reference() {
     <div className="page">
       <header className="entete">
         <span className="logo" aria-hidden="true">N</span>
-        <strong className="entete-titre">Référence · Plan</strong>
+        <strong className="entete-titre">Référence · Clarté</strong>
         <span className="marge-auto" />
         <ReglagesApparence />
       </header>
       <main className="contenu quadrillage">
         <div className="feuille">
-          <Cartouche surtitre="Identité visuelle · piste A" titre="Plan"
-            meta={<><span>IBM Plex Sans Condensed</span><span>IBM Plex Sans</span><span>IBM Plex Mono</span><span>r 3 px · trait 1 px</span></>}
+          <Cartouche surtitre="Identité visuelle · piste D" titre="Clarté"
+            meta={<><span>Inter Tight</span><span>Inter</span><span>JetBrains Mono</span><span>r 8 px · trait 1 px</span></>}
             actions={<Bouton variante="principal" raccourci="⌘↵">Action principale</Bouton>} />
 
           <section className="panneau ref-bloc">

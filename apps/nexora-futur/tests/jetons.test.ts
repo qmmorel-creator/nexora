@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { COULEURS, COUPLES_AA, COUPLES_CONTOUR, contraste, feuilleJetons } from "../src/theme/jetons";
 import { normaliser } from "../src/theme/apparence";
 
-describe("jetons Plan", () => {
+describe("jetons Clarté", () => {
   for (const mode of ["clair", "sombre"] as const) {
     it(`contrastes AA en ${mode}`, () => {
       const c = COULEURS[mode];
@@ -19,7 +19,8 @@ describe("jetons Plan", () => {
   });
   it("la feuille générée couvre clair, auto, sombre et densité", () => {
     const f = feuilleJetons();
-    expect(f).toContain("--accent:#c2410c");
+    expect(f).toContain("--accent:#4f46e5");
+    expect(f).toContain("--libelle-casse:none");
     expect(f).toContain('prefers-color-scheme: dark){:root[data-mode="auto"]');
     expect(f).toContain(':root[data-mode="sombre"]');
     expect(f).toContain(':root[data-densite="confortable"]');
