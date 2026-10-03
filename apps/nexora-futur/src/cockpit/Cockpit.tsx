@@ -273,7 +273,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} />
         : vue === "equipe" ? <PageEquipe d={d} />
         : vue === "corps" ? <PageCorps d={d} />
-        : vue === "finances" ? <PageFinancesKdm finance={source.finance} jour={d.aujourdhui} />
+        : vue === "finances" ? <PageFinancesKdm finance={source.finance} jour={d.aujourdhui} pro={d.pro} projets={d.projets} />
         : vue === "projet" && lentille === "page" && projet ? <PageProjet d={d} projet={projet} selection={selection} onOuvrir={ouvrir} onBasculer={actionBasculer} lentilles={segmentLentilles} />
         : <>
         <div className="zone-tete">

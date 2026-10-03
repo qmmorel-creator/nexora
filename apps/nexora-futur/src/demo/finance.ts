@@ -60,7 +60,25 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
       const r = !t.category ? "sans_categorie" : (t.subcategory ? !pairs.has(`${t.category}|${t.subcategory}`) : (cat?.subcategories.length ?? 0) > 0) ? "sous_categorie" : t.confidence != null && t.confidence < 0.85 ? "confiance" : null;
       return r && { id: t.id, date: t.date, label: t.label, amount: t.amount, type: t.type, account: COMPTES.find((c) => c.id === t.accountId)!.name, category: t.category, subcategory: t.subcategory, confidence: t.confidence, reason: r };
     }).filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => b.date.localeCompare(a.date));
+    // Graphiques : mêmes formes que budgetCharts (lib/finance-budget.mjs).
+    const couleurCat = (c: string) => CATEGORIES.find((x) => x.name === c)?.color || "#536477";
+    // Comme normalizeBudget : une catégorie vide devient « À classer ».
+    const nomCat = (t: Tx) => t.category || "À classer";
+    const parCat = [...new Set(depenses.map(nomCat))].map((c) => ({ category: c, amount: somme(depenses.filter((t) => nomCat(t) === c)), color: couleurCat(c) })).sort((a, b) => b.amount - a.amount);
+    let niveau = somme(revenus);
+    const waterfall = [{ label: "Revenus", from: 0, to: somme(revenus), absolute: true }, ...parCat.map((c) => { const f = niveau; niveau -= c.amount; return { label: c.category, from: f, to: Math.round(niveau * 100) / 100 }; }), { label: "Solde net", from: 0, to: Math.round(niveau * 100) / 100, absolute: true }];
+    const days: string[] = []; for (let d = from; d <= to; d = new Date(Date.parse(`${d}T12:00:00Z`) + 86400000).toISOString().slice(0, 10)) days.push(d);
+    const cumul = (l: Tx[]) => { let acc = 0; return days.map((d) => Math.round((acc += l.filter((t) => t.date === d).reduce((x, t) => x + Math.abs(t.amount), 0)) * 100) / 100); };
+    const unite = (parCat[0]?.amount || 0) / 20;
+    const charts = {
+      days, byCategory: parCat, waterfall,
+      cumulative: parCat.map((c) => ({ category: c.category, color: c.color, total: c.amount, budget: CATEGORIES.find((x) => x.name === c.category)?.budget || 0, values: cumul(depenses.filter((t) => nomCat(t) === c.category)) })),
+      incomeCumulative: cumul(revenus), budgetTotal: budget,
+      waffle: { unit: Math.round(unite * 100) / 100, categories: unite ? parCat.filter((c) => c.amount > unite).map((c) => ({ name: c.category, value: c.amount, count: Math.min(20, Math.floor(c.amount / unite + 1e-9)), cells: Array.from({ length: Math.min(20, Math.floor(c.amount / unite + 1e-9)) }, () => ({ account: "Compte courant", color: "#4F6AF5", share: 1 })) })) : [] },
+      periodic: Array.from({ length: 12 }, (_, i) => { const m = mois(from, i - 11); const dm = tx.filter((t) => t.date.startsWith(m) && t.type === "Dépense" && t.category !== "Transferts internes"); return { month: m, expenses: somme(dm), categories: [...new Set(dm.map((t) => t.category))].map((c) => ({ category: c, amount: somme(dm.filter((t) => t.category === c)), color: couleurCat(c) })).sort((a, b) => b.amount - a.amount) }; }),
+    };
     return {
+      charts,
       month, period: { from, to }, today: aujourdhui,
       totals: { expenses: somme(depenses), income: somme(revenus), net: Math.round((somme(revenus) - somme(depenses)) * 100) / 100, budget, remaining: budget - tracking.filter((c) => c.budget > 0).reduce((s, c) => s + c.actual, 0) },
       tracking, overBudget: tracking.filter((c) => c.over && c.budget > 0).map((c) => c.category), toCategorize,
@@ -92,6 +110,12 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
         }
         return { from: params.from, to: params.to, step: params.step || "week", today: aujourdhui, accounts: COMPTES.map(({ id, name, bank, type, color, bankColor, typeColor }) => ({ id, name, bank, type, color, bankColor, typeColor })), points };
       }
+      if (ressource === "sankey-data") return {
+        transactions: tx.map((t) => ({ transaction_id: t.id, effective_date: t.date, bank_date: t.date, transaction_type: t.type, account_id: t.accountId, signed_amount: t.amount, category: t.category || "À classer", subcategory: t.subcategory || "" })),
+        accounts: COMPTES.map((c) => ({ account_id: c.id, name: c.name, bank: c.bank, account_type: c.type, opening_balance: c.ouverture, color: c.color, active: true })),
+        categories: CATEGORIES.map((c) => ({ category: c.name, color: c.color, active: true })), banks: [{ bank_id: "a", name: "Banque A", color: "#203246" }, { bank_id: "b", name: "Banque B", color: "#8899a6" }],
+        accountTypes: [], balances: [],
+      };
       if (ressource === "transactions-data") return { transactions: tx.map((t) => ({ transaction_id: t.id, effective_date: t.date, bank_date: t.date, transaction_type: t.type, account_id: t.accountId, signed_amount: t.amount, merchant: t.label, category: t.category, subcategory: t.subcategory, category_confidence: t.confidence })), accounts: COMPTES.map((c) => ({ account_id: c.id, name: c.name, bank: c.bank })) };
       throw new ErreurFinance("not_found");
     },

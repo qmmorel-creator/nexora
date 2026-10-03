@@ -16,7 +16,26 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
     "nexora:taskTypes": [{ id: "tt1", name: "Tâches", locked: true }, { id: "tt2", name: "Planning", locked: true }, { id: "tt3", name: "Réunions", locked: true }, { id: "tt4", name: "Information", locked: true, restrictedStatusId: "s6" }],
     "nexora:teamMembers": [{ id: "m1", name: "Quentin Morel", teamIds: ["eq1"] }, { id: "m2", name: "Vincent Bernard", teamIds: ["eq1"] }, { id: "m3", name: "Maïa Sonnier", teamIds: ["eq1"] }, { id: "m4", name: "Anne-Laure Masson", teamIds: ["eq2"] }],
     "nexora:teams": [{ id: "eq1", name: "Travaux" }, { id: "eq2", name: "Communication" }],
-    "nexora:expenses": [{ id: "x1", projectId: "p-ctex6", amount: 22500, status: "payee" }, { id: "x2", projectId: "p-ctex6", amount: 8700, status: "facturee" }],
+    "nexora:expenses": [{ id: "x1", projectId: "p-ctex6", amount: 22500, status: "payee", date: J(-60) }, { id: "x2", projectId: "p-ctex6", amount: 8700, status: "facturee", date: J(-20) }],
+    "nexora:quoteClients": [{ id: "cl1", name: "Mairie de Valence" }, { id: "cl2", name: "SCI Les Tilleuls" }],
+    "nexora:quotes": [
+      { id: "q1", number: "2026-004", status: "accepted", clientId: "cl1", title: "Mission AMO bâtiment", issueDate: J(-80), validUntil: J(-50), lines: [{ id: "l1", kind: "forfait", description: "Phase études", amount: 8000 }, { id: "l2", kind: "regie", description: "Suivi", quantity: 10, unit: "day", unitRate: 550 }] },
+      { id: "q2", number: "2026-005", status: "sent", clientId: "cl2", title: "Diagnostic", issueDate: J(-40), validUntil: J(-10), lines: [{ id: "l3", kind: "forfait", amount: 1800 }] },
+      { id: "q3", number: "2026-006", status: "draft", clientId: "cl2", title: "Extension", issueDate: J(-2), validUntil: J(28), lines: [{ id: "l4", kind: "forfait", amount: 4200 }] },
+    ],
+    "nexora:invoices": [
+      { id: "f1", number: "F-2026-007", quoteId: "q1", clientId: "cl1", title: "Acompte AMO", issueDate: J(-60), dueDate: J(-30), status: "paid", paidAt: new Date(Date.now() - 35 * 86400000).toISOString(), lines: [{ kind: "forfait", amount: 4000 }] },
+      { id: "f2", number: "F-2026-008", quoteId: "q1", clientId: "cl1", title: "Phase études", issueDate: J(-20), dueDate: J(-5), status: "issued", lines: [{ kind: "forfait", amount: 4000 }] },
+    ],
+    "nexora:proMissions": [{ id: "m1", clientId: "cl1", projectId: "p-ctex6", quoteId: "q1", billingMode: "forfait", status: "en_cours" }],
+    "nexora:proBillingSchedule": [
+      { id: "b1", missionId: "m1", type: "acompte", libelle: "Acompte 30 %", montantPrevu: 4000, dateCible: J(-60), statut: "encaisse" },
+      { id: "b2", missionId: "m1", type: "jalon", libelle: "Fin des études", montantPrevu: 4000, dateCible: J(-20), statut: "facture" },
+      { id: "b3", missionId: "m1", type: "solde", libelle: "Solde du suivi", montantPrevu: 5500, dateCible: J(25), statut: "prevu" },
+    ],
+    "nexora:proPayments": [{ id: "pa1", billingScheduleId: "b1", montant: 4000, date: J(-35), statutRapprochement: "rapproche" }],
+    "nexora:proTimeEntries": [{ id: "te1", missionId: "m1", billable: true, status: "validee", durationMinutes: 480, rateApplied: 550, rateType: "journalier" }],
+    "nexora:financeProSettings": { tresorerieDisponible: 12000, tauxProvisionSocialesFiscales: 0.22 },
     "nexora:activityLog": [{ id: "l1", type: "reassigned", taskId: "t1", taskTitle: "Documents FOR-0129", projectId: "p-ctex6", to: "Vincent Bernard", at: new Date(Date.now() - 86400000).toISOString() }, { id: "l2", type: "deadlineChanged", taskId: "t3", taskTitle: "Visite DREAL", projectId: "p-ctex6", toDate: J(4), at: new Date(Date.now() - 3 * 86400000).toISOString() }],
     "nexora:habitThemes": [
       { id: "th1", name: "Santé", color: "#16a34a", selectionMode: "multi", habits: [{ id: "h1", name: "Eau 2 L" }, { id: "h2", name: "Lecture" }, { id: "h3", name: "Méditation" }, { id: "h4", name: "Pas (milliers)", kind: "numeric", min: 0, max: 10, step: 2 }] },
