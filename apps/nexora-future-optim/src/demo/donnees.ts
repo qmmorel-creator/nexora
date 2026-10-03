@@ -57,6 +57,8 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
     "nexora:habitSkips": [],
     "nexora:habitLog": Array.from({ length: 60 }, (_, i) => ({ habitId: ["h1", "h2", "h3"][i % 3], date: J(-Math.floor(i / 2)) })).filter((e, i, a) => a.findIndex((x) => x.habitId === e.habitId && x.date === e.date) === i),
     "nexora:tasks": [
+      // Cas réel (#688) : date corrompue venue d'un import Todoist ; aucun écran ne doit tomber.
+      { id: "t-nan", title: "Informations centre aéré", projectId: "p-ctex6", statusId: "s1", taskTypeId: "tt1", start: "", end: "NaN-NaN-NaN" },
       { id: "t1", title: "Documents FOR-0129", projectId: "p-ctex6", statusId: "s3", taskTypeId: "tt1", start: J(-70), end: J(-44), assignee: "Vincent Bernard", criticality: "urgent", progress: 60, checklist: [{ id: "c1", text: "Plan de contrôle", done: true }, { id: "c2", text: "Notes de calcul", done: false }] },
       { id: "t2", title: "PV Contrôles DREAL", projectId: "p-ctex6", statusId: "s1", taskTypeId: "tt1", start: J(-44), end: J(-30), assignee: "Vincent Bernard", criticality: "urgent", dependsOn: ["t1"], desc: "Compiler les PV des contrôles réglementaires avant la visite DREAL." },
       { id: "t3", title: "Visite DREAL", projectId: "p-ctex6", statusId: "s1", taskTypeId: "tt3", start: J(4), end: J(4), milestone: true, assignee: "Quentin Morel", startTime: "09:00", endTime: "11:00" },
