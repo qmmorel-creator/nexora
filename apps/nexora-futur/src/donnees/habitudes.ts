@@ -154,3 +154,31 @@ export function etatsDuJour(themes: ThemeHabitudes[], journal: unknown, nonAppli
   }));
   return { parTheme, faites, total };
 }
+
+// --- Couleurs (Ref #660) : port de habitValueIntensity, habitIntensityColor,
+// habitCellColors et habitCellBackground (part-002:4649-4697).
+export function intensite(h: Habitude, v: number | undefined) {
+  const min = fini(h.min) ? h.min : 0;
+  const max = fini(h.max) && h.max > min ? h.max : min + 10;
+  return Math.max(0, Math.min(1, ((fini(v) ? v : min) - min) / (max - min)));
+}
+// Mélange avec le blanc : plancher 0,22 pour qu'une valeur posée reste visible.
+export function couleurIntensite(hex: string, t: number) {
+  const c = String(hex || "").replace("#", "");
+  if (c.length !== 6) return hex;
+  const k = 0.22 + Math.max(0, Math.min(1, t)) * 0.78;
+  const m = (i: number) => Math.round(255 - (255 - parseInt(c.slice(i, i + 2), 16)) * k).toString(16).padStart(2, "0");
+  return `#${m(0)}${m(2)}${m(4)}`;
+}
+// Couleurs des habitudes d'un thème posées un jour : aplat (à cocher) ou intensité (chiffrée).
+export function couleursCase(theme: ThemeHabitudes, journal: EntreeHabitude[], date: string) {
+  const parId = new Map(journal.filter((e) => e.date === date).map((e) => [e.habitId, e]));
+  return theme.habits.flatMap((h) => { const e = parId.get(h.id); if (!e) return []; return [h.kind === "numeric" ? couleurIntensite(h.color, intensite(h, e.value)) : h.color]; });
+}
+// Une couleur : aplat ; plusieurs : quartiers coniques égaux à partir de 45°.
+export function fondCase(couleurs: string[], vide = "transparent") {
+  if (!couleurs.length) return vide;
+  if (couleurs.length === 1) return couleurs[0];
+  const seg = 360 / couleurs.length;
+  return `conic-gradient(from 45deg, ${couleurs.map((c, i) => `${c} ${i * seg}deg ${(i + 1) * seg}deg`).join(", ")})`;
+}

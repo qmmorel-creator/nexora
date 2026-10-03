@@ -1499,4 +1499,40 @@ function BudgetCumulBench() {
 }
 if (benchBudgetCumul) auth.currentUser = { uid: "banc", getIdToken: async () => "jeton-banc" };
 
-root.render(React.createElement(benchBudgetCumul ? BudgetCumulBench : benchBodyPhotos ? BodyPhotosBench : benchApp ? BenchApp : AnnotationsHarness));
+// Transactions (#683) : le widget seul et son moteur de filtres
+// (?transactions=1&w=…&h=…), sur des transactions de démonstration servies ici.
+const benchTransactions = benchParams.get("transactions") === "1";
+function TransactionsBench() {
+  const [widget, setWidget] = useState({ id: "banc-tx", type: "financeTransactions", title: "Transactions", txFilters: { period: "previousMonth", categories: ["Alimentation"], amountMin: "10" } });
+  const [slot, setSlot] = useState(null);
+  return (
+    <>
+      <GlobalStyles />
+      <div style={{ width: Number(benchParams.get("w")) || 1080, height: Number(benchParams.get("h")) || 900, margin: 16, border: "1px solid #dce3ed", display: "flex", flexDirection: "column" }} data-testid="bench-transactions">
+        <div className="lp-widget-head"><span className="lp-widget-title">Transactions</span><div className="lp-widget-head-toolbar"><span className="lp-view-toolbar-slot" ref={setSlot} /></div></div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <WidgetFinanceTransactions widget={widget} externalToolbarSlot={slot} onUpdateWidget={(patch) => setWidget((w) => ({ ...w, ...patch }))} />
+        </div>
+      </div>
+    </>
+  );
+}
+if (benchTransactions) {
+  auth.currentUser = { uid: "banc", getIdToken: async () => "jeton-banc" };
+  const realFetch = window.fetch.bind(window);
+  const cats = [["Alimentation", "Courses"], ["Alimentation", "Restaurant"], ["Logement", "Loyer"], ["Transport", "Carburant"], ["Loisirs", ""], ["", ""]];
+  const transactions = Array.from({ length: 60 }, (_, i) => {
+    const [category, subcategory] = cats[i % cats.length];
+    const date = new Date(Date.UTC(2026, 9, 3 - i * 2, 12)).toISOString().slice(0, 10);
+    return { transaction_id: `tx${i}`, effective_date: date, bank_date: date, transaction_type: i % 9 === 0 ? "Revenu" : "Dépense", account_id: i % 4 ? "cc" : "livret",
+      signed_amount: i % 9 === 0 ? 2500 : -Math.round(5 + (i * 37) % 180), merchant: ["Carrefour", "Boulangerie", "Agence", "Total", "Cinéma", "Virement"][i % 6], category, subcategory: subcategory || null, reconciled: i % 3 === 0 };
+  });
+  const accounts = [{ account_id: "cc", name: "Compte courant", bank: "Banque A" }, { account_id: "livret", name: "Livret", bank: "Banque B" }];
+  window.fetch = async (input, init = {}) => {
+    const url = new URL(typeof input === "string" ? input : input.url, location.href);
+    if (url.pathname !== "/api/nexora/finance-transactions-data") return realFetch(input, init);
+    return new Response(JSON.stringify({ ok: true, data: { transactions, accounts } }), { headers: { "content-type": "application/json" } });
+  };
+}
+
+root.render(React.createElement(benchTransactions ? TransactionsBench : benchBudgetCumul ? BudgetCumulBench : benchBodyPhotos ? BodyPhotosBench : benchApp ? BenchApp : AnnotationsHarness));

@@ -1,6 +1,6 @@
 import { auth, ecouterCle } from "./firebase";
 import { modifierCle } from "./ecriture-firebase";
-import { ErreurFinance, type AccesFinance, type RapportsJour, type Source } from "./source";
+import { ErreurCorps, ErreurFinance, type AccesCorps, type AccesFinance, type RapportsJour, type Source } from "./source";
 
 async function rapports(jour: string): Promise<RapportsJour> {
   const jeton = await auth.currentUser?.getIdToken();
@@ -24,4 +24,23 @@ const finance: AccesFinance = {
   categoriser: async (c) => { await appelFinance("categoriser", { method: "PATCH", body: JSON.stringify(c) }); },
 };
 
-export const sourceFirebase: Source = { ecouter: ecouterCle, modifier: modifierCle, rapports, finance };
+async function appelCorps(chemin: string): Promise<Response> {
+  const jeton = await auth.currentUser?.getIdToken();
+  if (!jeton) throw new ErreurCorps("unauthorized");
+  return fetch(`/api/futur/corps/${chemin}`, { headers: { authorization: `Bearer ${jeton}` } });
+}
+const corps: AccesCorps = {
+  async lire(ressource) {
+    const r = await appelCorps(ressource);
+    const d = await r.json().catch(() => ({})) as { ok?: boolean; error?: string; data?: unknown };
+    if (!r.ok || d.ok === false) throw new ErreurCorps(d.error || `http_${r.status}`);
+    return d.data ?? d;
+  },
+  async image(id) {
+    const r = await appelCorps(`body-photos/${encodeURIComponent(id)}/image`);
+    if (!r.ok) { const d = await r.json().catch(() => ({})) as { error?: string }; throw new ErreurCorps(d.error || `http_${r.status}`); }
+    return r.blob();
+  },
+};
+
+export const sourceFirebase: Source = { ecouter: ecouterCle, modifier: modifierCle, rapports, finance, corps };

@@ -36762,6 +36762,292 @@ function financeTxCsv(rows, columns) {
 }
 // === NEXORA:FINANCE-TRANSACTIONS:END ===
 
+// Moteur de filtres du widget Transactions (#683) : période sur une date au
+// choix, catégories et sous-catégories, comptes, banques, types, sens, montant
+// absolu, pointage, état, puis règles libres sur n'importe quelle colonne.
+// Réglage enregistré dans le widget (`txFilters`), normalisé à la lecture.
+// === NEXORA:FINANCE-TX-FILTERS:START ===
+const FINANCE_TX_PERIODS = [
+  { value: "all", label: "Toutes les dates" },
+  { value: "today", label: "Aujourd’hui" },
+  { value: "yesterday", label: "Hier" },
+  { value: "week", label: "Cette semaine" },
+  { value: "previousWeek", label: "Semaine dernière" },
+  { value: "month", label: "Ce mois" },
+  { value: "previousMonth", label: "Mois dernier" },
+  { value: "quarter", label: "Ce trimestre" },
+  { value: "previousQuarter", label: "Trimestre dernier" },
+  { value: "year", label: "Cette année" },
+  { value: "previousYear", label: "Année dernière" },
+  { value: "last7", label: "7 derniers jours" },
+  { value: "last30", label: "30 derniers jours" },
+  { value: "last90", label: "90 derniers jours" },
+  { value: "last365", label: "365 derniers jours" },
+  { value: "rolling", label: "N derniers jours…" },
+  { value: "custom", label: "Dates libres…" },
+];
+const FINANCE_TX_DATE_FIELDS = [
+  { key: "effective_date", label: "Date effective" },
+  { key: "bank_date", label: "Date bancaire" },
+  { key: "reconciliation_date", label: "Date de pointage" },
+  { key: "created_at", label: "Créée le" },
+  { key: "updated_at", label: "Modifiée le" },
+];
+// Opérateurs des règles libres, selon la nature du champ.
+const FINANCE_TX_RULE_OPS = [
+  { value: "contains", label: "contient", kinds: ["text"] },
+  { value: "notContains", label: "ne contient pas", kinds: ["text"] },
+  { value: "equals", label: "est", kinds: ["text", "number", "date"], labels: { number: "=", date: "le" } },
+  { value: "notEquals", label: "n’est pas", kinds: ["text", "number", "date"], labels: { number: "≠" } },
+  { value: "startsWith", label: "commence par", kinds: ["text"] },
+  { value: "gt", label: ">", kinds: ["number", "date"], labels: { date: "après le" } },
+  { value: "gte", label: "≥", kinds: ["number", "date"], labels: { date: "à partir du" } },
+  { value: "lt", label: "<", kinds: ["number", "date"], labels: { date: "avant le" } },
+  { value: "lte", label: "≤", kinds: ["number", "date"], labels: { date: "jusqu’au" } },
+  { value: "between", label: "entre", kinds: ["number", "date"] },
+  { value: "empty", label: "est vide", kinds: ["text", "number", "date"], noValue: true },
+  { value: "notEmpty", label: "n’est pas vide", kinds: ["text", "number", "date"], noValue: true },
+];
+// Champ virtuel des règles : montant en valeur absolue.
+const FINANCE_TX_ABS_FIELD = { key: "__abs", label: "Montant absolu · €", numeric: true };
+// Séparateur catégorie / sous-catégorie dans `subcategories`.
+const FINANCE_TX_SUB_SEP = "\u001f";
+const FINANCE_TX_ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function financeTxSubKey(category, subcategory) {
+  return `${category || ""}${FINANCE_TX_SUB_SEP}${subcategory || ""}`;
+}
+function financeTxShiftDate(date, days) {
+  const d = new Date(date + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// Nombre saisi à la française (« 1 234,5 ») ; null si vide ou illisible.
+function financeTxNumber(input) {
+  if (typeof input === "number") return Number.isFinite(input) ? input : null;
+  const text = String(input ?? "").replace(/[\s  ]/g, "").replace(",", ".");
+  if (!text) return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Réglage brut -> réglage complet et sûr (valeurs inconnues remplacées).
+function financeTxFilterSpec(raw) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  const list = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === "string"))] : []);
+  const pick = (v, allowed, fallback) => (allowed.includes(v) ? v : fallback);
+  const text = (v) => (typeof v === "string" ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : "");
+  const days = Math.round(Number(s.days));
+  return {
+    period: pick(s.period, FINANCE_TX_PERIODS.map((p) => p.value), "all"),
+    dateField: pick(s.dateField, FINANCE_TX_DATE_FIELDS.map((f) => f.key), "effective_date"),
+    from: FINANCE_TX_ISO_DATE.test(s.from || "") ? s.from : "",
+    to: FINANCE_TX_ISO_DATE.test(s.to || "") ? s.to : "",
+    days: Number.isFinite(days) && days >= 1 ? Math.min(3660, days) : 30,
+    categories: list(s.categories),
+    subcategories: list(s.subcategories),
+    accounts: list(s.accounts),
+    banks: list(s.banks),
+    types: list(s.types),
+    direction: pick(s.direction, ["all", "out", "in"], "all"),
+    amountMin: text(s.amountMin),
+    amountMax: text(s.amountMax),
+    reconciled: pick(s.reconciled, ["all", "yes", "no"], "all"),
+    state: pick(s.state, ["all", "active", "cancelled"], "all"),
+    rulesMode: pick(s.rulesMode, ["all", "any"], "all"),
+    rules: (Array.isArray(s.rules) ? s.rules : []).filter((r) => r && typeof r === "object").map((r) => ({
+      field: typeof r.field === "string" && r.field ? r.field : "merchant",
+      op: pick(r.op, FINANCE_TX_RULE_OPS.map((o) => o.value), "contains"),
+      value: text(r.value),
+      value2: text(r.value2),
+    })),
+  };
+}
+
+// Bornes { from, to } incluses ("" = sans borne) ; semaine du lundi au dimanche.
+function financeTxPeriodRange(spec, today) {
+  const p = spec.period;
+  const monthEnd = (ym) => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0, 12)).toISOString().slice(0, 10);
+  const y = Number(today.slice(0, 4));
+  const quarter = (index) => {
+    const yy = y + Math.floor(index / 4), qq = ((index % 4) + 4) % 4;
+    return { from: `${yy}-${String(qq * 3 + 1).padStart(2, "0")}-01`, to: monthEnd(`${yy}-${String(qq * 3 + 3).padStart(2, "0")}`) };
+  };
+  const q = Math.floor((Number(today.slice(5, 7)) - 1) / 3);
+  const monday = financeTxShiftDate(today, -((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7));
+  if (p === "today") return { from: today, to: today };
+  if (p === "yesterday") { const d = financeTxShiftDate(today, -1); return { from: d, to: d }; }
+  if (p === "week") return { from: monday, to: financeTxShiftDate(monday, 6) };
+  if (p === "previousWeek") return { from: financeTxShiftDate(monday, -7), to: financeTxShiftDate(monday, -1) };
+  if (p === "month") return { from: today.slice(0, 7) + "-01", to: monthEnd(today.slice(0, 7)) };
+  if (p === "previousMonth") {
+    const last = financeTxShiftDate(today.slice(0, 7) + "-01", -1);
+    return { from: last.slice(0, 7) + "-01", to: last };
+  }
+  if (p === "quarter") return quarter(q);
+  if (p === "previousQuarter") return quarter(q - 1);
+  if (p === "year") return { from: `${y}-01-01`, to: `${y}-12-31` };
+  if (p === "previousYear") return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31` };
+  if (/^last\d+$/.test(p)) return { from: financeTxShiftDate(today, 1 - Number(p.slice(4))), to: today };
+  if (p === "rolling") return { from: financeTxShiftDate(today, 1 - spec.days), to: today };
+  if (p === "custom") return { from: spec.from, to: spec.to };
+  return { from: "", to: "" };
+}
+
+// Nature d'un champ pour les règles : nombre, date ou texte.
+function financeTxFieldKind(key) {
+  if (key === FINANCE_TX_ABS_FIELD.key || FINANCE_TX_COLUMNS.find((c) => c.key === key)?.numeric) return "number";
+  if (/(^|_)date$|_at$/.test(key)) return "date";
+  return "text";
+}
+function financeTxFieldValue(row, key) {
+  if (key === FINANCE_TX_ABS_FIELD.key) {
+    const n = Number(row.signed_amount);
+    return row.signed_amount === null || row.signed_amount === undefined || row.signed_amount === "" || !Number.isFinite(n) ? null : Math.abs(n);
+  }
+  return row[key];
+}
+function financeTxRuleOp(rule) {
+  const kind = financeTxFieldKind(rule.field);
+  return FINANCE_TX_RULE_OPS.find((o) => o.value === rule.op && o.kinds.includes(kind)) || null;
+}
+// Une règle incomplète (valeur manquante ou illisible) est ignorée.
+function financeTxRuleActive(rule) {
+  const op = financeTxRuleOp(rule);
+  if (!op) return false;
+  if (op.noValue) return true;
+  const kind = financeTxFieldKind(rule.field);
+  const ok = (v) => (kind === "number" ? financeTxNumber(v) !== null : kind === "date" ? FINANCE_TX_ISO_DATE.test(v || "") : String(v || "").trim() !== "");
+  return ok(rule.value) && (op.value !== "between" || ok(rule.value2));
+}
+function financeTxRuleMatch(row, rule) {
+  const kind = financeTxFieldKind(rule.field);
+  const raw = financeTxFieldValue(row, rule.field);
+  const empty = raw === null || raw === undefined || raw === "" || (kind === "number" && !Number.isFinite(Number(raw)));
+  if (rule.op === "empty") return empty;
+  if (rule.op === "notEmpty") return !empty;
+  if (empty) return rule.op === "notEquals" || rule.op === "notContains";
+  if (kind === "text") {
+    const text = financeTxText(rule.field, raw).toLocaleLowerCase("fr");
+    const v = String(rule.value).trim().toLocaleLowerCase("fr");
+    if (rule.op === "contains") return text.includes(v);
+    if (rule.op === "notContains") return !text.includes(v);
+    if (rule.op === "startsWith") return text.startsWith(v);
+    if (rule.op === "equals") return text === v;
+    if (rule.op === "notEquals") return text !== v;
+    return true;
+  }
+  const value = kind === "number" ? Number(raw) : String(raw).slice(0, 10);
+  const parse = (v) => (kind === "number" ? financeTxNumber(v) : v);
+  const a = parse(rule.value);
+  const cmp = (x, y) => (kind === "number" ? (Math.abs(x - y) < 0.005 ? 0 : x - y) : x.localeCompare(y));
+  if (rule.op === "equals") return cmp(value, a) === 0;
+  if (rule.op === "notEquals") return cmp(value, a) !== 0;
+  if (rule.op === "gt") return cmp(value, a) > 0;
+  if (rule.op === "gte") return cmp(value, a) >= 0;
+  if (rule.op === "lt") return cmp(value, a) < 0;
+  if (rule.op === "lte") return cmp(value, a) <= 0;
+  if (rule.op === "between") {
+    const b = parse(rule.value2);
+    const [lo, hi] = cmp(a, b) <= 0 ? [a, b] : [b, a];
+    return cmp(value, lo) >= 0 && cmp(value, hi) <= 0;
+  }
+  return true;
+}
+
+// Nombre de filtres actifs, affiché sur le bouton « Filtres ».
+function financeTxFilterCount(spec) {
+  const range = financeTxPeriodRange(spec, "2000-01-01");
+  return [
+    spec.period !== "all" && (spec.period !== "custom" || range.from || range.to),
+    spec.categories.length || spec.subcategories.length,
+    spec.accounts.length,
+    spec.banks.length,
+    spec.types.length,
+    spec.direction !== "all",
+    financeTxNumber(spec.amountMin) !== null || financeTxNumber(spec.amountMax) !== null,
+    spec.reconciled !== "all",
+    spec.state !== "all",
+  ].filter(Boolean).length + spec.rules.filter(financeTxRuleActive).length;
+}
+
+function financeTxApplyFilters(rows, spec, today) {
+  const range = financeTxPeriodRange(spec, today);
+  const cats = new Set(spec.categories);
+  const subs = new Set(spec.subcategories);
+  const accounts = new Set(spec.accounts);
+  const banks = new Set(spec.banks);
+  const types = new Set(spec.types);
+  const bounds = [financeTxNumber(spec.amountMin), financeTxNumber(spec.amountMax)].map((n) => (n === null ? null : Math.abs(n)));
+  const [lo, hi] = bounds[0] !== null && bounds[1] !== null && bounds[0] > bounds[1] ? [bounds[1], bounds[0]] : bounds;
+  const rules = spec.rules.filter(financeTxRuleActive);
+  return rows.filter((row) => {
+    if (range.from || range.to) {
+      const d = String(row[spec.dateField] || "").slice(0, 10);
+      if (!d || (range.from && d < range.from) || (range.to && d > range.to)) return false;
+    }
+    if ((cats.size || subs.size) && !cats.has(row.category || "") && !subs.has(financeTxSubKey(row.category, row.subcategory))) return false;
+    if (accounts.size && !accounts.has(row.__account || "")) return false;
+    if (banks.size && !banks.has(row.__bank || "")) return false;
+    if (types.size && !types.has(row.transaction_type || "")) return false;
+    const amount = row.signed_amount === null || row.signed_amount === undefined || row.signed_amount === "" ? NaN : Number(row.signed_amount);
+    if (spec.direction === "out" && !(amount < 0)) return false;
+    if (spec.direction === "in" && !(amount > 0)) return false;
+    if (lo !== null || hi !== null) {
+      if (!Number.isFinite(amount)) return false;
+      const abs = Math.abs(amount);
+      if ((lo !== null && abs < lo - 0.005) || (hi !== null && abs > hi + 0.005)) return false;
+    }
+    if (spec.reconciled === "yes" && row.reconciled !== true) return false;
+    if (spec.reconciled === "no" && row.reconciled === true) return false;
+    if (spec.state === "active" && row.__state) return false;
+    if (spec.state === "cancelled" && !row.__state) return false;
+    if (!rules.length) return true;
+    return spec.rulesMode === "any" ? rules.some((r) => financeTxRuleMatch(row, r)) : rules.every((r) => financeTxRuleMatch(row, r));
+  });
+}
+
+// Valeurs distinctes d'un champ avec leur nombre de lignes ; les valeurs
+// encore cochées mais disparues des données restent listées (compte 0).
+function financeTxDistinct(rows, key, keep = []) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    const v = financeTxText(key, row[key]);
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  for (const v of keep) if (!counts.has(v)) counts.set(v, 0);
+  return [...counts].map(([value, count]) => ({ value, count }))
+    .sort((a, b) => (a.value === "") - (b.value === "") || a.value.localeCompare(b.value, "fr", { numeric: true }));
+}
+// Catégories et leurs sous-catégories, avec les nombres de lignes.
+function financeTxCategoryTree(rows, keepCategories = [], keepSubs = []) {
+  const tree = new Map();
+  const node = (name) => {
+    if (!tree.has(name)) tree.set(name, { name, count: 0, subs: new Map() });
+    return tree.get(name);
+  };
+  for (const row of rows || []) {
+    const c = node(row.category || "");
+    c.count += 1;
+    const sub = row.subcategory || "";
+    c.subs.set(sub, (c.subs.get(sub) || 0) + 1);
+  }
+  for (const name of keepCategories) node(name);
+  for (const key of keepSubs) {
+    const [cat, sub = ""] = key.split(FINANCE_TX_SUB_SEP);
+    const c = node(cat);
+    if (!c.subs.has(sub)) c.subs.set(sub, 0);
+  }
+  const order = (a, b) => (a === "") - (b === "") || a.localeCompare(b, "fr", { numeric: true });
+  return [...tree.values()].sort((a, b) => order(a.name, b.name)).map((c) => ({
+    name: c.name,
+    count: c.count,
+    // Une catégorie dont aucune ligne n'a de sous-catégorie n'en propose pas.
+    subs: [...c.subs].filter(([name]) => name !== "" || c.subs.size > 1).map(([name, count]) => ({ name, count })).sort((a, b) => order(a.name, b.name)),
+  }));
+}
+// === NEXORA:FINANCE-TX-FILTERS:END ===
+
 const FINANCE_TX_CSS = `
 .lp-widget-head-toolbar:has(.nx-tx-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
 .lp-widget-head:has(.nx-tx-tools){align-items:flex-start}
@@ -36792,6 +37078,35 @@ const FINANCE_TX_CSS = `
 .nx-tx-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-top:1px solid #edf1f4;color:#60717c;font-size:11px}
 .nx-tx-footer button{height:22px;min-width:24px;padding:0 6px;border:1px solid #d8e1eb;border-radius:5px;background:#fff;cursor:pointer}
 .nx-tx-footer button:disabled{opacity:.4;cursor:default}
+.nx-tx-footer .nx-tx-sum{font-variant-numeric:tabular-nums;font-weight:600;color:#203246}
+.nx-tx-footer .nx-tx-sum.negative{color:#a33135}
+.nx-tx-tools button.has-filters{border-color:#24569a;color:#24569a}
+.nx-txf{flex:0 0 auto;max-height:min(460px,60%);overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;padding:8px 10px;border-bottom:1px solid #edf1f4;background:#f9fbfc;font-size:11.5px}
+.nx-txf fieldset{min-width:0;margin:0;padding:6px 8px 8px;border:1px solid #e3e9ef;border-radius:6px;background:#fff;display:flex;flex-direction:column;gap:5px}
+.nx-txf legend{padding:0 4px;font-weight:600;color:#203246}
+.nx-txf .wide{grid-column:1/-1}
+.nx-txf .row{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.nx-txf .row > span{color:#60717c}
+.nx-txf select,.nx-txf input{height:24px;min-width:0;padding:0 6px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background-color:#fff;color:#203246;box-sizing:border-box;margin:0}
+.nx-txf select{padding-right:22px;max-width:100%}
+.nx-txf input[type=checkbox]{height:auto;margin:0}
+.nx-txf input.amount{width:64px}
+.nx-txf select{width:auto}
+.nx-txf button{height:24px;padding:0 8px;font:inherit;border:1px solid #d8e1eb;border-radius:5px;background:#fff;color:#203246;cursor:pointer}
+.nx-txf button.link{border:none;background:none;padding:0;height:auto;color:#24569a;text-decoration:underline}
+.nx-txf-hint{color:#60717c}
+.nx-txf-list{max-height:170px;overflow:auto;display:flex;flex-direction:column;gap:1px}
+.nx-txf-list label{display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+.nx-txf-list label span{overflow:hidden;text-overflow:ellipsis}
+.nx-txf-list label small{margin-left:auto;color:#94a3b8;font-variant-numeric:tabular-nums}
+.nx-txf-list label.is-off{color:#94a3b8}
+.nx-txf-subs{padding-left:18px;display:flex;flex-direction:column;gap:1px}
+.nx-txf-cat > label{font-weight:600}
+.nx-txf-cat.partial > label span{color:#24569a}
+.nx-txf-rule{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:3px 0;border-bottom:1px dashed #edf1f4}
+.nx-txf-rule input:not([type=date]){width:140px}
+.nx-txf-actions{grid-column:1/-1;display:flex;align-items:center;gap:8px;color:#60717c}
+.nx-txf-actions button{margin-left:auto}
 `;
 
 // Chargement partagé : une requête pour tous les widgets Transactions de la page.
@@ -36853,6 +37168,224 @@ function FinanceTxColumnPicker({ columns, visible, onChange, defaults = FINANCE_
         <button type="button" onClick={() => onChange(columns.map((c) => c.key))}>Toutes</button>
         <button type="button" onClick={() => onChange(defaults)}>Par défaut</button>
       </span>
+    </div>
+  );
+}
+
+// Moteur de filtres du widget Transactions (#683). Le réglage est complet
+// (financeTxFilterSpec) ; `onChange` reçoit un correctif partiel.
+function FinanceTxChecklist({ items, selected, onChange, empty = "(vide)" }) {
+  const set = new Set(selected);
+  const toggle = (v) => onChange(set.has(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  if (!items.length) return <div className="nx-txf-hint">Aucune valeur.</div>;
+  return (
+    <div className="nx-txf-list">
+      {items.map((it) => (
+        <label key={it.value} className={it.count ? "" : "is-off"} title={it.value || empty}>
+          <input type="checkbox" checked={set.has(it.value)} onChange={() => toggle(it.value)} />
+          <span>{it.value || empty}</span><small>{it.count}</small>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function FinanceTxCategoryFilter({ rows, spec, onChange }) {
+  const [q, setQ] = useState("");
+  const tree = useMemo(() => financeTxCategoryTree(rows, spec.categories, spec.subcategories), [rows, spec.categories, spec.subcategories]);
+  const cats = new Set(spec.categories);
+  const subs = new Set(spec.subcategories);
+  const needle = q.trim().toLocaleLowerCase("fr");
+  const match = (s) => !needle || (s || "").toLocaleLowerCase("fr").includes(needle);
+  // Cocher une catégorie la prend en entier : ses sous-catégories cochées une à une deviennent inutiles.
+  const toggleCat = (name) => (cats.has(name)
+    ? onChange({ categories: spec.categories.filter((c) => c !== name) })
+    : onChange({ categories: [...spec.categories, name], subcategories: spec.subcategories.filter((k) => !k.startsWith(name + FINANCE_TX_SUB_SEP)) }));
+  const toggleSub = (cat, sub) => {
+    const key = financeTxSubKey(cat, sub);
+    onChange({ subcategories: subs.has(key) ? spec.subcategories.filter((k) => k !== key) : [...spec.subcategories, key] });
+  };
+  const selected = spec.categories.length + spec.subcategories.length;
+  return (
+    <fieldset>
+      <legend>Catégories et sous-catégories</legend>
+      <div className="row">
+        <input type="search" placeholder="Chercher une catégorie…" aria-label="Chercher une catégorie" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} />
+        {selected > 0 && <button type="button" className="link" onClick={() => onChange({ categories: [], subcategories: [] })}>Tout décocher</button>}
+      </div>
+      <div className="nx-txf-list">
+        {tree.filter((c) => match(c.name) || c.subs.some((s) => match(s.name))).map((c) => {
+          const whole = cats.has(c.name);
+          const partial = !whole && c.subs.some((s) => subs.has(financeTxSubKey(c.name, s.name)));
+          return (
+            <div key={c.name} className={"nx-txf-cat" + (partial ? " partial" : "")}>
+              <label className={c.count ? "" : "is-off"}>
+                <input type="checkbox" checked={whole} onChange={() => toggleCat(c.name)} />
+                <span>{c.name || "(Sans catégorie)"}</span><small>{c.count}</small>
+              </label>
+              {c.subs.length > 0 && (
+                <div className="nx-txf-subs">
+                  {c.subs.filter((s) => match(c.name) || match(s.name)).map((s) => (
+                    <label key={s.name} className={s.count ? "" : "is-off"}>
+                      <input type="checkbox" checked={whole || subs.has(financeTxSubKey(c.name, s.name))} disabled={whole} onChange={() => toggleSub(c.name, s.name)} />
+                      <span>{s.name || "(Sans sous-catégorie)"}</span><small>{s.count}</small>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function FinanceTxRulesEditor({ rows, columns, spec, onChange, idPrefix }) {
+  const fields = [...columns, FINANCE_TX_ABS_FIELD];
+  const setRules = (rules) => onChange({ rules });
+  const setRule = (i, patch) => setRules(spec.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const changeField = (i, field) => {
+    const rule = spec.rules[i];
+    const kind = financeTxFieldKind(field);
+    const sameKind = kind === financeTxFieldKind(rule.field);
+    const op = FINANCE_TX_RULE_OPS.some((o) => o.value === rule.op && o.kinds.includes(kind)) ? rule.op : FINANCE_TX_RULE_OPS.find((o) => o.kinds.includes(kind)).value;
+    setRule(i, { field, op, value: sameKind ? rule.value : "", value2: sameKind ? rule.value2 : "" });
+  };
+  return (
+    <fieldset className="wide">
+      <legend>Règles sur n’importe quel champ</legend>
+      {spec.rules.length > 1 && (
+        <div className="row">
+          <span>Garder les lignes qui vérifient</span>
+          <select value={spec.rulesMode} onChange={(e) => onChange({ rulesMode: e.target.value })} aria-label="Combinaison des règles">
+            <option value="all">toutes les règles (ET)</option>
+            <option value="any">au moins une règle (OU)</option>
+          </select>
+        </div>
+      )}
+      {spec.rules.map((rule, i) => {
+        const kind = financeTxFieldKind(rule.field);
+        const ops = FINANCE_TX_RULE_OPS.filter((o) => o.kinds.includes(kind));
+        const op = ops.find((o) => o.value === rule.op) || ops[0];
+        const listId = `${idPrefix}-values-${i}`;
+        const input = (key, label) => (kind === "date"
+          ? <input type="date" aria-label={label} value={rule[key]} onChange={(e) => setRule(i, { [key]: e.target.value })} />
+          : <input type="text" aria-label={label} inputMode={kind === "number" ? "decimal" : undefined} list={kind === "text" ? listId : undefined}
+              placeholder={kind === "number" ? "0,00" : "valeur"} value={rule[key]} onChange={(e) => setRule(i, { [key]: e.target.value })} />);
+        return (
+          <div key={i} className="nx-txf-rule" style={{ opacity: financeTxRuleActive(rule) ? 1 : 0.7 }}>
+            <select value={rule.field} onChange={(e) => changeField(i, e.target.value)} aria-label="Champ">
+              {!fields.some((f) => f.key === rule.field) && <option value={rule.field}>{rule.field}</option>}
+              {fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+            <select value={op.value} onChange={(e) => setRule(i, { op: e.target.value })} aria-label="Condition">
+              {ops.map((o) => <option key={o.value} value={o.value}>{o.labels?.[kind] || o.label}</option>)}
+            </select>
+            {!op.noValue && input("value", "Valeur")}
+            {op.value === "between" && <><span>et</span>{input("value2", "Seconde valeur")}</>}
+            {kind === "text" && !op.noValue && (
+              <datalist id={listId}>
+                {financeTxDistinct(rows, rule.field).filter((v) => v.value).slice(0, 200).map((v) => <option key={v.value} value={v.value} />)}
+              </datalist>
+            )}
+            <button type="button" onClick={() => setRules(spec.rules.filter((_, j) => j !== i))} aria-label="Supprimer la règle" title="Supprimer la règle">×</button>
+          </div>
+        );
+      })}
+      <div className="row">
+        <button type="button" onClick={() => setRules([...spec.rules, { field: "merchant", op: "contains", value: "", value2: "" }])}>+ Ajouter une règle</button>
+        {!spec.rules.length && <span className="nx-txf-hint">Ex. : Libellé contient « amazon », Description est vide, Date bancaire avant le…</span>}
+      </div>
+    </fieldset>
+  );
+}
+
+function FinanceTxFilterPanel({ rows, columns, spec, onChange, onReset, today, shownCount, idPrefix }) {
+  const range = financeTxPeriodRange(spec, today);
+  const d = (x) => new Date(x + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "UTC" });
+  const rangeText = range.from && range.to ? (range.from === range.to ? `le ${d(range.from)}` : `du ${d(range.from)} au ${d(range.to)}`)
+    : range.from ? `à partir du ${d(range.from)}` : range.to ? `jusqu’au ${d(range.to)}` : "";
+  const invalid = range.from && range.to && range.from > range.to;
+  return (
+    <div className="nx-txf" onPointerDown={(e) => e.stopPropagation()}>
+      <fieldset>
+        <legend>Période</legend>
+        <div className="row">
+          <select value={spec.period} onChange={(e) => onChange({ period: e.target.value })} aria-label="Période">
+            {FINANCE_TX_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+          {spec.period === "rolling" && (
+            <input type="number" min="1" max="3660" step="1" aria-label="Nombre de jours" style={{ width: 64 }} value={spec.days}
+              onChange={(e) => onChange({ days: e.target.value })} />
+          )}
+        </div>
+        {spec.period === "custom" && (
+          <div className="row">
+            <span>du</span><input type="date" aria-label="Du" value={spec.from} onChange={(e) => onChange({ from: e.target.value })} />
+            <span>au</span><input type="date" aria-label="Au" value={spec.to} onChange={(e) => onChange({ to: e.target.value })} />
+          </div>
+        )}
+        <div className="row">
+          <span>sur</span>
+          <select value={spec.dateField} onChange={(e) => onChange({ dateField: e.target.value })} aria-label="Date filtrée">
+            {FINANCE_TX_DATE_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+          </select>
+        </div>
+        {rangeText && <div className="nx-txf-hint" style={invalid ? { color: "#a33135" } : undefined}>{invalid ? "Début après la fin : aucune ligne." : rangeText}</div>}
+      </fieldset>
+      <fieldset>
+        <legend>Montant</legend>
+        <div className="row">
+          <span>Sens</span>
+          <select value={spec.direction} onChange={(e) => onChange({ direction: e.target.value })} aria-label="Sens">
+            <option value="all">Débits et crédits</option>
+            <option value="out">Débits (montant négatif)</option>
+            <option value="in">Crédits (montant positif)</option>
+          </select>
+        </div>
+        <div className="row">
+          <span>Valeur absolue</span>
+          <input className="amount" inputMode="decimal" placeholder="min" aria-label="Montant absolu minimum" value={spec.amountMin} onChange={(e) => onChange({ amountMin: e.target.value })} />
+          <span>à</span>
+          <input className="amount" inputMode="decimal" placeholder="max" aria-label="Montant absolu maximum" value={spec.amountMax} onChange={(e) => onChange({ amountMax: e.target.value })} />
+          <span>€</span>
+        </div>
+        <div className="row">
+          <span>Pointé</span>
+          <select value={spec.reconciled} onChange={(e) => onChange({ reconciled: e.target.value })} aria-label="Pointé">
+            <option value="all">Tous</option>
+            <option value="yes">Oui</option>
+            <option value="no">Non</option>
+          </select>
+        </div>
+        <div className="row">
+          <span>État</span>
+          <select value={spec.state} onChange={(e) => onChange({ state: e.target.value })} aria-label="État">
+            <option value="all">Tous</option>
+            <option value="active">Hors annulations</option>
+            <option value="cancelled">Annulées et annulations</option>
+          </select>
+        </div>
+      </fieldset>
+      <FinanceTxCategoryFilter rows={rows} spec={spec} onChange={onChange} />
+      <fieldset>
+        <legend>Comptes</legend>
+        <FinanceTxChecklist items={financeTxDistinct(rows, "__account", spec.accounts)} selected={spec.accounts} onChange={(accounts) => onChange({ accounts })} />
+      </fieldset>
+      <fieldset>
+        <legend>Banques</legend>
+        <FinanceTxChecklist items={financeTxDistinct(rows, "__bank", spec.banks)} selected={spec.banks} onChange={(banks) => onChange({ banks })} />
+      </fieldset>
+      <fieldset>
+        <legend>Types</legend>
+        <FinanceTxChecklist items={financeTxDistinct(rows, "transaction_type", spec.types)} selected={spec.types} onChange={(types) => onChange({ types })} />
+      </fieldset>
+      <FinanceTxRulesEditor rows={rows} columns={columns} spec={spec} onChange={onChange} idPrefix={idPrefix} />
+      <div className="nx-txf-actions">
+        <span>{shownCount} ligne{shownCount > 1 ? "s" : ""} retenue{shownCount > 1 ? "s" : ""} · filtres enregistrés avec le widget</span>
+        <button type="button" onClick={onReset}>Réinitialiser les filtres</button>
+      </div>
     </div>
   );
 }
@@ -37006,13 +37539,22 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
   const [page, setPage] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  // Filtres (#683) : enregistrés dans le widget ; gardés en local s'il n'est pas modifiable.
+  const [localFilters, setLocalFilters] = useState(widget.txFilters);
+  const filters = useMemo(() => financeTxFilterSpec(onUpdateWidget ? widget.txFilters : localFilters), [onUpdateWidget, widget.txFilters, localFilters]);
+  const setFilters = (next) => (onUpdateWidget ? onUpdateWidget({ txFilters: next }) : setLocalFilters(next));
+  const updateFilters = (patch) => setFilters({ ...filters, ...patch });
+  const filterCount = financeTxFilterCount(filters);
+  const today = financeBudgetToday();
   const columns = useMemo(() => financeTxAllColumns(rows), [rows]);
   const visibleKeys = financeTxVisibleKeys(widget);
   const visible = columns.filter((c) => visibleKeys.includes(c.key));
-  const shown = useMemo(() => (rows ? financeTxSort(financeTxSearch(rows, query), sort.key, sort.asc) : []), [rows, query, sort]);
+  const shown = useMemo(() => (rows ? financeTxSort(financeTxSearch(financeTxApplyFilters(rows, filters, today), query), sort.key, sort.asc) : []), [rows, filters, today, query, sort]);
+  const total = useMemo(() => shown.reduce((t, r) => (r.signed_amount !== null && r.signed_amount !== "" && Number.isFinite(Number(r.signed_amount)) ? t + Number(r.signed_amount) : t), 0), [shown]);
   const pages = Math.max(1, Math.ceil(shown.length / FINANCE_TX_PAGE_SIZE));
   const current = Math.min(page, pages - 1);
-  useEffect(() => { setPage(0); }, [query, sort.key, sort.asc]);
+  useEffect(() => { setPage(0); }, [query, sort.key, sort.asc, filters]);
   const setColumns = (keys) => onUpdateWidget && onUpdateWidget({ txColumns: keys.length ? keys : FINANCE_TX_DEFAULT_COLUMNS });
   const exportCsv = () => {
     const blob = new Blob(["﻿" + financeTxCsv(shown, visible)], { type: "text/csv;charset=utf-8" });
@@ -37030,6 +37572,13 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
         <button type="button" className={pickerOpen ? "active" : ""} aria-pressed={pickerOpen} onClick={() => setPickerOpen((v) => !v)} title="Choisir les colonnes affichées">
           Colonnes ({visible.length}/{columns.length})
         </button>
+        <select value={filters.period} onChange={(e) => updateFilters({ period: e.target.value })} aria-label="Période" title="Période (date effective par défaut, modifiable dans Filtres)">
+          {FINANCE_TX_PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+        <button type="button" className={(filtersOpen ? "active " : "") + (filterCount ? "has-filters" : "")} aria-pressed={filtersOpen} onClick={() => setFiltersOpen((v) => !v)} title="Filtrer sur tous les champs">
+          Filtres{filterCount ? ` (${filterCount})` : ""}
+        </button>
+        {filterCount > 0 && <button type="button" onClick={() => setFilters({})} title="Retirer tous les filtres">Effacer</button>}
         <input type="search" placeholder="Rechercher dans tous les champs…" aria-label="Rechercher dans les transactions" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button type="button" onClick={exportCsv} disabled={!rows} title="Exporter les lignes filtrées et les colonnes affichées">Export CSV</button>
         <button type="button" onClick={reload} title="Relire les transactions dans Supabase">Actualiser</button>
@@ -37052,6 +37601,7 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
     <div className="nx-tx">
       {tools}
       {pickerOpen && <FinanceTxColumnPicker columns={columns} visible={visibleKeys} onChange={setColumns} />}
+      {filtersOpen && <FinanceTxFilterPanel rows={rows} columns={columns} spec={filters} onChange={updateFilters} onReset={() => setFilters({})} today={today} shownCount={shown.length} idPrefix={`nx-txf-${widget.id}`} />}
       <div className="nx-tx-scroll">
         <table>
           <thead>
@@ -37078,10 +37628,14 @@ function WidgetFinanceTransactions({ widget, externalToolbarSlot, onUpdateWidget
             ))}
           </tbody>
         </table>
-        {!shown.length && <div className="lp-empty" style={{ padding: 16 }}>Aucune transaction ne correspond à « {query} ».</div>}
+        {!shown.length && <div className="lp-empty" style={{ padding: 16 }}>{query.trim() ? `Aucune transaction ne correspond à « ${query} »${filterCount ? " avec les filtres actifs" : ""}.` : "Aucune transaction ne correspond aux filtres."}</div>}
       </div>
       <div className="nx-tx-footer">
-        <span>{shown.length} ligne{shown.length > 1 ? "s" : ""} · clic sur une ligne pour la modifier</span>
+        <span>
+          {shown.length} ligne{shown.length > 1 ? "s" : ""} · somme{" "}
+          <span className={"nx-tx-sum" + (total < 0 ? " negative" : "")} title="Somme des montants signés des lignes retenues">{financeBudgetEuro(total)}</span>
+          {" "}· clic sur une ligne pour la modifier
+        </span>
         <span>
           <button type="button" disabled={current === 0} onClick={() => setPage(current - 1)} aria-label="Page précédente">‹</button>
           {" "}{current + 1} / {pages}{" "}
@@ -39057,6 +39611,309 @@ function BudgetCategoriesSettings({ pushToast }) {
         </div>
       ))}
       {!tree.length && <div className="lp-empty" style={{ padding: 12 }}>Aucune catégorie ne correspond.</div>}
+    </div>
+  );
+}
+
+// Réglages → Banques connectées (#677) : synchronisation bancaire Enable
+// Banking, en lecture seule. Le serveur garde la session bancaire
+// (/api/nexora/finance-bank-sync, session du propriétaire) : l'interface ne
+// voit ni identifiant de session ni IBAN complet. Une opération bancaire déjà
+// saisie (même compte, même montant, ±4 jours) est rapprochée, jamais
+// recréée ; une nouvelle opération sans règle arrive en « À classer ».
+// ---------------------------------------------------------------------------
+
+// === NEXORA:BANK-SYNC:START ===
+function bankSyncDate(value) {
+  if (!value) return "";
+  const d = new Date(String(value).length === 10 ? `${value}T12:00:00Z` : value);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Paris" });
+}
+function bankSyncConsentLabel(connection) {
+  const consent = connection?.consent || {};
+  const until = bankSyncDate(connection?.validUntil);
+  if (consent.state === "expired") return { tone: "danger", text: `Accès expiré${until ? ` le ${until}` : ""} : renouvelez-le.` };
+  if (consent.state === "soon") return { tone: "warn", text: `Accès valable jusqu'au ${until} (${consent.daysLeft} j) : pensez à le renouveler.` };
+  if (consent.state === "ok") return { tone: "ok", text: `Accès valable jusqu'au ${until} (${consent.daysLeft} j).` };
+  return { tone: "warn", text: "Validité de l'accès inconnue." };
+}
+const BANK_SYNC_ERRORS = {
+  consent_expired: "accès expiré, renouvelez la connexion",
+  bank_not_connected: "banque déconnectée",
+  configuration_missing: "configuration Enable Banking absente sur le serveur",
+  auth_request_unknown_or_expired: "demande expirée (plus de 30 minutes) ou déjà utilisée : recommencez",
+  invalid_callback: "retour de la banque incomplet",
+  access_denied: "autorisation refusée à la banque",
+};
+function bankSyncErrorText(code) {
+  const key = String(code || "");
+  const known = Object.keys(BANK_SYNC_ERRORS).find((k) => key === k || key.startsWith(`${k}:`));
+  return known ? BANK_SYNC_ERRORS[known] : (key || "erreur inconnue");
+}
+// Une ligne de résultat par compte : ce qui a été créé, rapproché, déjà là.
+function bankSyncResultLine(result) {
+  if (!result) return "";
+  if (result.error) return `Erreur : ${bankSyncErrorText(result.error)}.`;
+  const parts = [];
+  parts.push(`${result.created || 0} créée${result.created > 1 ? "s" : ""}`);
+  parts.push(`${result.reconciled || 0} rapprochée${result.reconciled > 1 ? "s" : ""}`);
+  parts.push(`${result.already || 0} déjà présente${result.already > 1 ? "s" : ""}`);
+  const pending = result.skipped?.pending || 0;
+  if (pending) {
+    const statuses = Object.entries(result.skipped?.statuses || {}).map(([k, n]) => `${k} ${n}`).join(", ");
+    parts.push(`${pending} en attente ignorée${pending > 1 ? "s" : ""}${statuses ? ` (${statuses})` : ""}`);
+  }
+  const ignored = result.skipped?.ignored || 0;
+  if (ignored) parts.push(`${ignored} ignorée${ignored > 1 ? "s" : ""} par libellé`);
+  if (result.remaining) parts.push(`${result.remaining} restant à traiter au prochain passage`);
+  const balance = result.balance && Number.isFinite(Number(result.balance.amount))
+    ? ` · solde banque ${Number(result.balance.amount).toLocaleString("fr-FR", { style: "currency", currency: result.balance.currency || "EUR" })}`
+    : "";
+  return parts.join(" · ") + balance;
+}
+// Banques connectées et comptes, dans l'ordre d'affichage. Un compte dont la
+// banque n'a plus de session reste listé (sa liaison est conservée).
+function bankSyncGroups(status) {
+  const connections = Array.isArray(status?.connections) ? status.connections : [];
+  const accounts = Array.isArray(status?.accounts) ? status.accounts : [];
+  const lastResults = new Map();
+  for (const c of connections) for (const r of (Array.isArray(c.lastSyncResult) ? c.lastSyncResult : [])) lastResults.set(r.accountKey, r);
+  const groups = connections.map((c) => ({ ...c, accounts: accounts.filter((a) => a.aspspKey === c.aspspKey).map((a) => ({ ...a, lastResult: lastResults.get(a.accountKey) || null })) }));
+  const orphans = accounts.filter((a) => !connections.some((c) => c.aspspKey === a.aspspKey));
+  if (orphans.length) groups.push({ aspspKey: "", name: "Banques déconnectées", consent: { state: "expired" }, validUntil: null, accounts: orphans.map((a) => ({ ...a, lastResult: null })), disconnected: true });
+  return groups;
+}
+function bankSyncPatternsText(patterns) {
+  return (Array.isArray(patterns) ? patterns : []).join("\n");
+}
+// Échantillon des opérations écartées au dernier passage, une ligne chacune.
+function bankSyncSampleLines(result) {
+  const money = (n) => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("fr-FR", { style: "currency", currency: "EUR" }) : "?");
+  const lines = [];
+  for (const s of result?.samples?.pending || []) lines.push(`En attente${s.status ? ` (${s.status})` : ""} · ${bankSyncDate(s.date) || "sans date"} · ${money(s.amount)} · ${s.label || "sans libellé"}`);
+  for (const s of result?.samples?.ignored || []) lines.push(`Ignorée par libellé · ${bankSyncDate(s.date) || "sans date"} · ${money(s.amount)} · ${s.label || "sans libellé"}`);
+  return lines;
+}
+function bankSyncCallbackMessage(params) {
+  const get = (k) => (params && typeof params.get === "function" ? params.get(k) : null) || "";
+  if (get("bankSync") === "ok") {
+    const n = Number(get("accounts")) || 0;
+    return { ok: true, message: `${get("bank") || "Banque"} connectée · ${n} compte${n > 1 ? "s" : ""}. Liez chaque compte à un compte Nexora, puis synchronisez.` };
+  }
+  return { ok: false, message: `Connexion bancaire impossible : ${bankSyncErrorText(get("reason"))}.` };
+}
+// === NEXORA:BANK-SYNC:END ===
+
+async function bankSyncCall(method, body) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Session Nexora absente : reconnecte-toi.");
+  const token = await user.getIdToken();
+  const response = await fetch("/api/nexora/finance-bank-sync", {
+    method,
+    headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) {
+    const reasons = {
+      unauthorized: "Accès refusé : seule la session du propriétaire Nexora gère les banques.",
+      finance_configuration_missing: "Données Budget non configurées sur le serveur (clé KDM360 absente).",
+      enable_banking_configuration_missing: `Enable Banking non configuré sur Netlify : ${(payload.missing || []).join(", ")}.`,
+    };
+    throw new Error(reasons[payload.error] || payload.detail || payload.error || `Erreur HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+const BANK_SYNC_MAX_ROUNDS = 40;
+
+// Après une synchronisation, les widgets Budget relisent leurs données.
+function bankSyncInvalidateBudget() {
+  if (typeof financeSankeyStore !== "undefined") financeSankeyStore.promise = null;
+  if (typeof financeTxStore !== "undefined") financeTxStore.promise = null;
+  for (const store of [typeof financeBudgetStore !== "undefined" && financeBudgetStore, typeof financeBudgetPeriodStore !== "undefined" && financeBudgetPeriodStore, typeof financeWealthStore !== "undefined" && financeWealthStore]) {
+    if (store?.entries) store.entries.clear();
+  }
+}
+
+const BANK_SYNC_CSS = `
+.nx-bank{display:flex;flex-direction:column;gap:12px;font-size:13px}
+.nx-bank-note{margin:0;font-size:12px;color:var(--text-600)}
+.nx-bank-box{border:1px solid var(--border,#d8e1eb);border-radius:8px;overflow:hidden}
+.nx-bank-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 10px;background:var(--surface-2,#f7f9fc)}
+.nx-bank-head strong{flex:1;min-width:140px}
+.nx-bank-consent{font-size:12px;padding:2px 8px;border-radius:10px}
+.nx-bank-consent.is-ok{background:#e7f6ec;color:#1d6b3a}
+.nx-bank-consent.is-warn{background:#fff4dc;color:#8a5a00}
+.nx-bank-consent.is-danger{background:#fde8e8;color:#9b1c1c}
+.nx-bank-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid var(--border,#d8e1eb)}
+.nx-bank-label{flex:1 1 200px;min-width:160px}
+.nx-bank-label small{display:block;color:var(--text-600)}
+.nx-bank-row select{min-width:180px}
+.nx-bank-result{flex:1 1 100%;font-size:12px;color:var(--text-600)}
+.nx-bank-result.is-error{color:#9b1c1c}
+.nx-bank-connect{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px;border:1px dashed var(--border,#d8e1eb);border-radius:8px}
+.nx-bank-connect select{min-width:220px}
+.nx-bank-ignore{display:flex;flex-direction:column;gap:2px;font-size:12px;flex:1 1 220px}
+.nx-bank-ignore textarea{font:inherit;font-size:12px;min-height:34px;resize:vertical}
+details.nx-bank-result summary{cursor:pointer}
+`;
+
+function BankSyncAccountRow({ account, nexoraAccounts, busy, onSave, onSync }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [accountId, setAccountId] = useState(account.accountId || "");
+  const [importFrom, setImportFrom] = useState(account.importFrom || today);
+  const savedPatterns = bankSyncPatternsText(account.ignorePatterns);
+  const [patterns, setPatterns] = useState(savedPatterns);
+  const dirty = (accountId || null) !== (account.accountId || null) || (accountId && importFrom !== (account.importFrom || "")) || patterns.trim() !== savedPatterns;
+  const result = account.lastResult;
+  const samples = bankSyncSampleLines(result);
+  return (
+    <div className="nx-bank-row">
+      <div className="nx-bank-label">
+        {account.label || "Compte"}
+        <small>{[account.ibanMasked, account.currency, account.lastSyncedAt ? `synchronisé le ${bankSyncDate(account.lastSyncedAt)}` : "jamais synchronisé"].filter(Boolean).join(" · ")}</small>
+      </div>
+      <select value={accountId} disabled={busy} onChange={(e) => setAccountId(e.target.value)} aria-label={`Compte Nexora pour ${account.label || "ce compte"}`}>
+        <option value="">— Ne pas importer —</option>
+        {nexoraAccounts.map((a) => <option key={a.accountId} value={a.accountId}>{a.name}{a.bank ? ` · ${a.bank}` : ""}</option>)}
+      </select>
+      {accountId && (
+        <label title="Aucune opération antérieure à cette date n'est importée">
+          depuis le{" "}
+          <input type="date" value={importFrom} max={today} disabled={busy} onChange={(e) => setImportFrom(e.target.value)} aria-label="Importer à partir du" />
+        </label>
+      )}
+      {accountId && (
+        <label className="nx-bank-ignore" title="Une opération dont le libellé contient l'un de ces textes (sans accents ni majuscules) n'est ni importée ni rapprochée. Un texte par ligne.">
+          Libellés à ignorer
+          <textarea rows={2} value={patterns} disabled={busy} placeholder="ex. FACTURE CARTE A DEBIT DIFFERE" onChange={(e) => setPatterns(e.target.value)} aria-label="Libellés à ignorer" />
+        </label>
+      )}
+      <button type="button" disabled={busy || !dirty || (accountId && !importFrom)} onClick={() => onSave(account, accountId || null, accountId ? importFrom : null, patterns)}>Enregistrer</button>
+      {account.accountId && account.connected && <button type="button" disabled={busy || dirty} onClick={() => onSync([account.accountKey])}>Synchroniser</button>}
+      {result && <div className={"nx-bank-result" + (result.error ? " is-error" : "")}>Dernier passage : {bankSyncResultLine(result)}</div>}
+      {samples.length > 0 && (
+        <details className="nx-bank-result">
+          <summary>Opérations écartées (échantillon)</summary>
+          {samples.map((line, i) => <div key={i}>{line}</div>)}
+        </details>
+      )}
+    </div>
+  );
+}
+
+function BankSyncSettings({ pushToast }) {
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [banks, setBanks] = useState(null);
+  const [choice, setChoice] = useState("");
+  const toast = (message) => { if (pushToast) pushToast({ message, duration: 8000 }); };
+  const load = useCallback(() => {
+    setError(null);
+    bankSyncCall("GET").then(setStatus).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const guard = async (fn) => {
+    setBusy(true);
+    try { return await fn(); } catch (e) { toast(e.message); return null; } finally { setBusy(false); }
+  };
+  const loadBanks = () => guard(async () => { const p = await bankSyncCall("POST", { action: "banks" }); setBanks(p.banks); });
+  const connect = (name) => guard(async () => {
+    const p = await bankSyncCall("POST", { action: "connect", aspspName: name });
+    window.location.assign(p.url); // vers la banque ; retour par /api/finance/enable-banking/callback
+  });
+  const disconnect = (c) => {
+    if (!window.confirm(`Déconnecter ${c.name} ? L'accès est fermé chez Enable Banking ; les opérations déjà importées et la liaison des comptes sont conservées.`)) return;
+    guard(async () => { await bankSyncCall("POST", { action: "disconnect", aspspKey: c.aspspKey }); toast(`${c.name} déconnectée.`); load(); });
+  };
+  const save = (account, accountId, importFrom, patterns) => guard(async () => {
+    await bankSyncCall("POST", { action: "link", accountKey: account.accountKey, accountId, importFrom, ignorePatterns: String(patterns || "").split("\n") });
+    toast(accountId ? `${account.label} lié · import à partir du ${bankSyncDate(importFrom)}.` : `${account.label} ne sera pas importé.`);
+    load();
+  });
+  // Un compte par appel, et l'appel est relancé tant que le serveur signale un
+  // passage partiel (écritures plafonnées par appel) : chaque appel reste court,
+  // même pour un premier import sur plusieurs mois.
+  const sync = (accountKeys) => guard(async () => {
+    let created = 0; let reconciled = 0; const errors = [];
+    for (const key of accountKeys) {
+      for (let round = 0; round < BANK_SYNC_MAX_ROUNDS; round += 1) {
+        const p = await bankSyncCall("POST", { action: "sync", accountKeys: [key] });
+        created += p.result.created; reconciled += p.result.reconciled;
+        for (const a of p.result.accounts) if (a.error) errors.push(`${a.label || a.accountId} : ${bankSyncErrorText(a.error)}`);
+        if (!p.result.partial) break;
+      }
+    }
+    bankSyncInvalidateBudget();
+    toast(`Synchronisation : ${created} opération(s) créée(s), ${reconciled} rapprochée(s)${errors.length ? ` · ${errors.join(" ; ")}` : "."}`);
+    load();
+  });
+
+  if (error && !status) {
+    return (
+      <div className="nx-bank">
+        <style>{BANK_SYNC_CSS}</style>
+        <div className="lp-empty" style={{ padding: 12 }}>{error}</div>
+        <div><button type="button" className="lp-btn" onClick={load}>Réessayer</button></div>
+      </div>
+    );
+  }
+  if (!status) return <div className="lp-empty" style={{ padding: 12 }}>Chargement des banques connectées…</div>;
+  const groups = bankSyncGroups(status);
+  const nexoraAccounts = Array.isArray(status.nexoraAccounts) ? status.nexoraAccounts : [];
+  const linkedKeys = (status.accounts || []).filter((a) => a.accountId && a.connected).map((a) => a.accountKey);
+  return (
+    <div className="nx-bank">
+      <style>{BANK_SYNC_CSS}</style>
+      <p className="nx-bank-note">
+        Comptes bancaires lus par Enable Banking, en lecture seule (aucun paiement possible). Synchronisation automatique
+        deux fois par jour. Une opération déjà saisie dans Nexora (même compte, même montant, à 4 jours près) est
+        rapprochée, jamais recréée ; une nouvelle opération prend la catégorie de la première règle marchand qui
+        s'applique, sinon « À classer » et apparaît dans « À catégoriser ».
+      </p>
+      <p className="nx-bank-note">
+        <strong>Comptes liés : ne plus les saisir à la main ni par capture d'écran.</strong> Le rapprochement ne marche que
+        dans un sens : une saisie faite avant l'import est retrouvée, une saisie faite après l'import de la même
+        opération crée un doublon.
+      </p>
+      {!status.configured && (
+        <div className="nx-bank-result is-error">Enable Banking n'est pas configuré sur Netlify : {(status.missing || []).join(", ")}.</div>
+      )}
+      <div className="nx-bank-connect">
+        <strong style={{ fontSize: 12 }}>Connecter une banque</strong>
+        {banks ? (
+          <>
+            <select value={choice} disabled={busy} onChange={(e) => setChoice(e.target.value)} aria-label="Banque à connecter">
+              <option value="">— Choisir —</option>
+              {banks.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
+            </select>
+            <button type="button" disabled={busy || !choice} onClick={() => connect(choice)}>Se connecter à la banque</button>
+          </>
+        ) : (
+          <button type="button" disabled={busy || !status.configured} onClick={loadBanks}>Choisir une banque…</button>
+        )}
+        {linkedKeys.length > 0 && <button type="button" disabled={busy} onClick={() => sync(linkedKeys)} style={{ marginLeft: "auto" }}>Tout synchroniser</button>}
+      </div>
+      {groups.map((g) => {
+        const consent = bankSyncConsentLabel(g);
+        return (
+          <div className="nx-bank-box" key={g.aspspKey || "orphans"}>
+            <div className="nx-bank-head">
+              <strong>{g.name}</strong>
+              {!g.disconnected && <span className={`nx-bank-consent is-${consent.tone}`}>{consent.text}</span>}
+              {!g.disconnected && <button type="button" disabled={busy || !status.configured} onClick={() => connect(g.name)}>Renouveler l'accès</button>}
+              {!g.disconnected && <button type="button" disabled={busy} onClick={() => disconnect(g)}>Déconnecter</button>}
+            </div>
+            {g.accounts.map((a) => (
+              <BankSyncAccountRow key={`${a.accountKey}:${a.accountId}:${a.importFrom}:${(a.ignorePatterns || []).join("|")}`} account={a} nexoraAccounts={nexoraAccounts} busy={busy} onSave={save} onSync={sync} />
+            ))}
+            {!g.accounts.length && <div className="nx-bank-row">Aucun compte exposé par cette banque.</div>}
+          </div>
+        );
+      })}
+      {!groups.length && <div className="lp-empty" style={{ padding: 12 }}>Aucune banque connectée.</div>}
     </div>
   );
 }

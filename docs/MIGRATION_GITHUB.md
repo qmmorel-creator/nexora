@@ -23,6 +23,9 @@ Faire de GitHub la source canonique du code sans changer les URLs publiques, le 
 - `NEXORA_USER_UID` — secret ;
 - `NEXORA_ASSISTANT_API_KEY` — secret ;
 - `KDM360_SUPABASE_SECRET_KEY` — secret si les fonctions finance sont conservées ;
+- `ENABLE_BANKING_APP_ID` — identifiant de l'application Enable Banking « Nexora » (nom du fichier `.pem` sans l'extension), synchronisation bancaire (nexora#677) ;
+- `ENABLE_BANKING_PRIVATE_KEY_B64` — secret, clé privée `.pem` de cette application encodée en base64 sur une ligne (`ENABLE_BANKING_PRIVATE_KEY`, la clé en clair, est aussi acceptée). Sans ces deux variables, Réglages → Banques connectées l'indique et la synchronisation planifiée ne fait rien ;
+- `ENABLE_BANKING_REDIRECT_URL` — facultative ; par défaut `https://nexora-project.org/api/finance/enable-banking/callback`, adresse déclarée dans le panneau Enable Banking (les deux doivent rester identiques) ;
 - `NEXORA_SPORT_CSV_URL` — URL du CSV publié de la feuille « Activités Strava » lue par `/api/nexora/sport-activities` (nexora#578), contexte production ; sans elle, les widgets sport affichent « Source Sport non configurée ». Depuis le retrait du moteur externe (nexora#597), l'URL ne figure plus dans aucun fichier publié ;
 - `NEXORA_HEALTH_CSV_URL` — URL du CSV publié de l'onglet Santé de la même feuille (Whoop, balance, nutrition ; `gid=0`), lue par `/api/nexora/health-records` (nexora#594), contexte production ; sans elle, le widget « Graphique santé » affiche « Source Santé non configurée ». À créer par Quentin ; une variable ne vaut qu'après un nouveau déploiement ;
 - `SECRETS_SCAN_OMIT_KEYS=NEXORA_SPORT_CSV_URL` — n'est plus nécessaire depuis le retrait du moteur externe (nexora#597) : le scanner de secrets de Netlify ne trouve plus l'URL dans les fichiers publiés. Peut être supprimée par Quentin ; la garder est sans effet. Ne pas y ajouter `NEXORA_HEALTH_CSV_URL` : cette URL n'est publiée nulle part ;
