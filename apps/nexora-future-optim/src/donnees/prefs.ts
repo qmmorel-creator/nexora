@@ -36,6 +36,12 @@ export const CARTES_DEFAUT: CarteCorps[] = [
 export const TUILE_CORPS_DEFAUT = ["recovery", "sleepHours", "hrv", "sport"];
 export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; }
 
+// Argent (#690) : onglet ouvert et durée N de l'évolution du patrimoine.
+export const ONGLETS_ARGENT = ["mois", "patrimoine", "pro", "operations"] as const;
+export type OngletArgent = (typeof ONGLETS_ARGENT)[number];
+export const DUREES_PATRIMOINE = [6, 12, 24, 36, 60] as const;
+export interface PrefsArgent { onglet: OngletArgent; patrimoineMois: number; }
+
 export interface PrefsOptim {
   version: 1;
   gantt: StyleGantt;
@@ -44,6 +50,7 @@ export interface PrefsOptim {
   couleursHabitudes: Record<string, string>;
   accueil: { pixels: boolean; corps: string[] };
   corps: PrefsCorps;
+  argent: PrefsArgent;
   vues: VueEnregistree[];
 }
 
@@ -54,6 +61,7 @@ export const PREFS_VIDES: PrefsOptim = {
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT },
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [] },
+  argent: { onglet: "mois", patrimoineMois: 24 },
   vues: [],
 };
 // Compatibilité : nom attendu par le magasin de données.
@@ -116,6 +124,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     couleursHabitudes: couleurs,
     accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT },
     corps: normaliserCorps(b.corps),
+    argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24 }; })(),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
   };
 }
