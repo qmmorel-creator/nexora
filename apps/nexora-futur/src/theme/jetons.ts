@@ -1,4 +1,5 @@
-// Identité « Plan » (piste A, choisie par Quentin le 03/10/2026 — Ref #654).
+// Identité « Clarté » (piste D, choisie par Quentin le 03/10/2026 pour
+// Futur, à la place de « Plan » — Ref #654).
 // Source unique des jetons : les variables CSS sont générées depuis ce fichier
 // et tests/jetons.test.ts vérifie les contrastes AA dans les deux modes.
 
@@ -7,30 +8,32 @@ export type Densite = "compacte" | "confortable";
 
 export const COULEURS: Record<Mode, Record<string, string>> = {
   clair: {
-    fond: "#eef1f4", surface: "#fbfcfd", rail: "#e4e9ee", quadrillage: "#e2e7ed",
-    encre: "#14202e", encre2: "#46566a", encre3: "#5f6e80",
-    ligne: "#cfd7e0", ligne2: "#e2e7ed", "ligne-champ": "#7d8a9b", sel: "#e3e9f0",
-    accent: "#c2410c", "accent-survol": "#a3360a", "sur-accent": "#ffffff", "accent-doux": "#fbe7dc",
-    crit: "#b42318", "crit-fond": "#fde4e1", alerte: "#8a5300", "alerte-fond": "#fdf0d5",
-    ok: "#136c34", "ok-fond": "#dcf3e4", info: "#1d64c9", "info-fond": "#e1ecfb",
-    focus: "#1d64c9",
+    fond: "#f6f7f9", surface: "#ffffff", rail: "#eef0f4", quadrillage: "#f6f7f9",
+    encre: "#111827", encre2: "#4b5563", encre3: "#5b6472",
+    ligne: "#e3e6eb", ligne2: "#eef0f3", "ligne-champ": "#848d9b", sel: "#eef0ff",
+    accent: "#4f46e5", "accent-survol": "#4338ca", "sur-accent": "#ffffff", "accent-doux": "#e8e7fd",
+    crit: "#b91c1c", "crit-fond": "#fde8e8", alerte: "#92400e", "alerte-fond": "#fef3c7",
+    ok: "#15803d", "ok-fond": "#dcfce7", info: "#1d4ed8", "info-fond": "#dbeafe",
+    focus: "#4f46e5",
   },
   sombre: {
-    fond: "#0f151c", surface: "#151d26", rail: "#0c1117", quadrillage: "#18212b",
-    encre: "#e6edf5", encre2: "#a9b6c5", encre3: "#8593a4",
-    ligne: "#273342", ligne2: "#1d2732", "ligne-champ": "#66768a", sel: "#1e2935",
-    accent: "#ff8a4c", "accent-survol": "#ffa271", "sur-accent": "#1a0d05", "accent-doux": "#3a2214",
-    crit: "#ff7a6e", "crit-fond": "#3a1714", alerte: "#f5c26b", "alerte-fond": "#3a2c12",
-    ok: "#4ade80", "ok-fond": "#123222", info: "#6ea8ff", "info-fond": "#14243d",
-    focus: "#6ea8ff",
+    fond: "#0f1115", surface: "#16191f", rail: "#0b0d10", quadrillage: "#0f1115",
+    encre: "#e8eaee", encre2: "#a8b0bc", encre3: "#8a93a0",
+    ligne: "#262b33", ligne2: "#1c2027", "ligne-champ": "#6b7482", sel: "#1f2433",
+    accent: "#8b87ff", "accent-survol": "#a5a2ff", "sur-accent": "#12103a", "accent-doux": "#262448",
+    crit: "#f87171", "crit-fond": "#3b1416", alerte: "#fbbf24", "alerte-fond": "#3a2a0c",
+    ok: "#4ade80", "ok-fond": "#10291a", info: "#7aa7ff", "info-fond": "#15223d",
+    focus: "#8b87ff",
   },
 };
 
 export const FORMES = {
-  "r": "3px", "r-puce": "3px", "r-case": "2px", "trait": "1px",
-  "titre": "'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif",
-  "texte": "'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif",
-  "mono": "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  "r": "8px", "r-puce": "6px", "r-case": "4px", "trait": "1px",
+  "titre": "'Inter Tight', 'Inter', system-ui, sans-serif",
+  "texte": "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
+  "mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  // Libellés (surtitres, en-têtes de colonnes) : en texte, sans capitales.
+  "libelle": "'Inter', system-ui, sans-serif", "libelle-casse": "none", "libelle-espace": "0", "t-libelle": "12px",
 } as const;
 
 // Échelle typographique fixe (px) et espacements (base 4).
