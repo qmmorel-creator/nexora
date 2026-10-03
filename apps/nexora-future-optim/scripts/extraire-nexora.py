@@ -98,26 +98,30 @@ print("écrit", cible2)
 # (relais corps d'Optim, lecture seule) au lieu de l'API de nexora-project.
 src3 = SOURCES[P3]
 debut_pur = src3.index("// === NEXORA:BODY-PHOTOS:START ===")
-fin_pur = src3.index("// === NEXORA:BODY-PHOTOS:END ===") + len("// === NEXORA:BODY-PHOTOS:END ===")
-ELEMENTS_PHOTOS = [(P3, "const BODY_PHOTO_CSS"), (P3, "const BODY_PHOTO_COLORS"), (P3, "function useBodyPhotoFrame("), (P3, "function BodyPhotoMarks("),
-  (P3, "function BodyPhotoCompare("), (P3, "const BODY_PHOTO_CROP_HANDLES"), (P3, "function BodyPhotoCrop(")]
+fin_widget = src3.index("\nconst root = createRoot(")
+code_photos = src3[debut_pur:fin_widget].rstrip()
+# Adaptations documentées : route d'Optim (/api/optim/photos, fonction optim-photos qui
+# reprend le serveur de Nexora sur le même stockage Firestore).
+ADAPTATIONS_PHOTOS = [("`/api/nexora/body-photos", "`/api/optim/photos"), ('"/api/nexora/body-photos"', '"/api/optim/photos"')]
+for avant, apres in ADAPTATIONS_PHOTOS:
+    assert avant in code_photos, avant
+    code_photos = code_photos.replace(avant, apres)
 photos = [
   "/* eslint-disable */",
   "// @ts-nocheck",
-  "// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (retour du 03/10/2026).",
-  f"// Comparaison des photos corporelles de Nexora (dernier commit du dossier source : {SHA}), reprise telle quelle.",
+  "// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (retours du 03/10/2026).",
+  f"// Photos corporelles de Nexora (dernier commit du dossier source : {SHA}) reprises telles quelles : calcul,",
+  "// import, repères, affinage, rognage, référence, dates, suppression, comparaison. Seule adaptation : la",
+  "// route /api/optim/photos au lieu de /api/nexora/body-photos (voir ADAPTATIONS_PHOTOS).",
   'import React, { useEffect, useMemo, useRef, useState } from "react";',
-  'import { useBodyPhotoUrl } from "./photos-adaptateur";',
+  'import { CalendarDays, Crop, Crosshair, Maximize2, Star, Trash2, Upload } from "lucide-react";',
+  'import { auth, financeSankeyToday, ViewToolbarPortal } from "./photos-adaptateur";',
   "",
   f"// — {P3}, ligne {src3.count(chr(10), 0, debut_pur) + 1}",
-  src3[debut_pur:fin_pur],
+  code_photos,
+  "",
+  "export { BODY_PHOTO_CSS, bodyPhotoSpec, bodyPhotoSorted, bodyPhotoRightPhoto, bodyPhotoAlignment, bodyPhotoFormatDate, bodyPhotoDeltaLabel, bodyPhotoNormalizeCrop, BodyPhotoCompare, BodyPhotoCrop, WidgetBodyPhotos };",
 ]
-for part, debut in ELEMENTS_PHOTOS:
-    ligne, code = bloc(part, debut)
-    photos.append(f"// — {part}, ligne {ligne}")
-    photos.append(code)
-photos.append("")
-photos.append("export { BODY_PHOTO_CSS, bodyPhotoSpec, bodyPhotoSorted, bodyPhotoRightPhoto, bodyPhotoAlignment, bodyPhotoFormatDate, bodyPhotoDeltaLabel, bodyPhotoNormalizeCrop, BodyPhotoCompare, BodyPhotoCrop };")
 cible3 = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/photos-nexora.jsx"
 cible3.write_text("\n".join(photos) + "\n", encoding="utf-8")
 print("écrit", cible3)
