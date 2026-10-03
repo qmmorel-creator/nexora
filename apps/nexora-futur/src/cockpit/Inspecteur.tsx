@@ -3,9 +3,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CRITICITES, ecartJours, estProjetCalendrier, estReunion, estTerminee, nouvelId, statutImpose, statutsDuProjet, typesDuProjet, type Catalogues, type ElementCheck, type PieceJointe, type Tache } from "../donnees/modele";
 import { Bouton, Etat, Kbd, Segment, Surtitre } from "../composants";
 import { comparaison, figerReference, libelleEcart, normaliserComparaison, type Baselines } from "../donnees/planning";
+import { journalTache } from "../donnees/historique";
+import type { Activite } from "../donnees/projet";
+import { naviguer } from "../navigation/routeur";
 
 interface Props {
-  t: Tache; cat: Catalogues; taches: Tache[]; aujourdhui: string; references?: Baselines;
+  t: Tache; cat: Catalogues; taches: Tache[]; aujourdhui: string; references?: Baselines; journal?: Activite[];
   onPatch: (patch: Partial<Tache>) => void; onBasculer: () => void; onArchiver: () => void; onDupliquer: () => void; onFermer: () => void;
   onOuvrir: (id: string) => void;
 }
@@ -28,7 +31,8 @@ function Texte({ id, valeur, onValider, multiligne, placeholder, lignes = 4 }: {
 
 const taille = (o: number) => (o > 1024 * 1024 ? `${(o / 1048576).toFixed(1)} Mo` : `${Math.ceil(o / 1024)} Ko`);
 
-export function Inspecteur({ t, cat, taches, aujourdhui, references, onPatch, onBasculer, onArchiver, onDupliquer, onFermer, onOuvrir }: Props) {
+export function Inspecteur({ t, cat, taches, aujourdhui, references, journal = [], onPatch, onBasculer, onArchiver, onDupliquer, onFermer, onOuvrir }: Props) {
+  const historique = journalTache(journal, t.id, 30, (x) => cat.statuts.find((s) => s.id === x)?.name || x);
   const calendrier = estProjetCalendrier(cat.projets, t.projectId);
   const impose = statutImpose(cat.types, cat.statuts, t.taskTypeId);
   const fini = estTerminee(t, cat.statuts);
@@ -181,6 +185,10 @@ export function Inspecteur({ t, cat, taches, aujourdhui, references, onPatch, on
         {erreurFichier && <p className="crit" role="alert">{erreurFichier}</p>}
       </section>
 
+      <section className="insp-section"><Surtitre>Historique</Surtitre>
+        {historique.length ? <ul className="insp-hist">{historique.map((h, i) => <li key={i}><span className="mono discret">{h.quand}</span> {h.texte}</li>)}</ul> : <p className="discret">Aucune entrée dans le journal d'activité.</p>}
+      </section>
+
       <section className="insp-section insp-infos mono">
         {t.lastInteraction && <div>Dernière modification : {new Date(t.lastInteraction).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</div>}
         {t.completedAt && <div>Terminée le : {new Date(t.completedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</div>}
@@ -191,6 +199,7 @@ export function Inspecteur({ t, cat, taches, aujourdhui, references, onPatch, on
       <div className="insp-actions">
         <Bouton variante="principal" raccourci="E" onClick={onBasculer} disabled={dis || !!impose}>{fini ? "Rouvrir" : "Marquer terminée"}</Bouton>
         <Bouton onClick={onDupliquer} disabled={dis}>Dupliquer</Bouton>
+        <Bouton onClick={() => naviguer("/fiche", new URLSearchParams({ t: t.id }))}>Fiche mémo</Bouton>
         <Bouton variante="danger" raccourci="X" onClick={onArchiver} disabled={dis}>Archiver</Bouton>
       </div>
     </aside>

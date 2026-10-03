@@ -11,16 +11,18 @@ import {
 } from "../donnees/reglages";
 import { ATELIERS_DEPART, capacite, equipesDe, normaliserEquipes, type Equipe, type MembreEquipe } from "../donnees/equipe";
 import { metaFiltresParDefaut, type Filtres } from "../donnees/filtres";
+import { sauvegarde, tachesCsv } from "../donnees/export";
+import { normaliserLienStrava } from "../donnees/strava";
 import { copiesSecours, oublierSecours, type CopieSecours } from "../donnees/secours";
 import { Bouton, Cartouche, Segment, Surtitre } from "../composants";
 import { ReglagesApparence } from "../composants/ReglagesApparence";
 import { useNotifier } from "./Notifications";
 
-export type OngletReglages = "apparence" | "projets" | "statuts" | "creation" | "habitudes" | "equipe" | "ateliers" | "filtres" | "sport" | "sauvegarde";
+export type OngletReglages = "apparence" | "projets" | "statuts" | "creation" | "habitudes" | "equipe" | "ateliers" | "filtres" | "sport" | "donnees" | "sauvegarde";
 export const ONGLETS_REGLAGES: { valeur: OngletReglages; libelle: string }[] = [
   { valeur: "apparence", libelle: "Apparence" }, { valeur: "projets", libelle: "Projets et dossiers" }, { valeur: "statuts", libelle: "Statuts et types" },
   { valeur: "creation", libelle: "Création" }, { valeur: "habitudes", libelle: "Thèmes d'habitudes" }, { valeur: "equipe", libelle: "Utilisateurs et équipes" },
-  { valeur: "ateliers", libelle: "Ateliers" }, { valeur: "filtres", libelle: "Méta-filtres" }, { valeur: "sport", libelle: "Objectifs sport" }, { valeur: "sauvegarde", libelle: "Sauvegarde" },
+  { valeur: "ateliers", libelle: "Ateliers" }, { valeur: "filtres", libelle: "Méta-filtres" }, { valeur: "sport", libelle: "Objectifs sport" }, { valeur: "donnees", libelle: "Données et exports" }, { valeur: "sauvegarde", libelle: "Sauvegarde" },
 ];
 const CRITICITES: [string, string][] = [["", "—"], ["low", "Faible"], ["normal", "Normale"], ["high", "Haute"], ["urgent", "Urgente"]];
 
@@ -74,6 +76,7 @@ export function PageReglages({ d, onglet, setOnglet }: { d: Donnees; onglet: Ong
           {onglet === "ateliers" && <Ateliers d={d} ecrire={ecrire} />}
           {onglet === "filtres" && <MetaFiltres d={d} ecrire={ecrire} />}
           {onglet === "sport" && <ObjectifsSport d={d} ecrire={ecrire} />}
+          {onglet === "donnees" && <DonneesExports d={d} />}
           {onglet === "sauvegarde" && <Sauvegarde />}
         </div>
       </div>
@@ -263,7 +266,7 @@ function Habitudes({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
                     onBlur={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n !== (k === "step" ? h.step ?? 1 : h[k]) && (k !== "step" || n > 0)) ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, { [k]: n })); }} /></label>)}
                 </span>
               ) : <span />}
-              <span />
+              <LienStrava valeur={h.strava} nom={h.name} onChange={(lien) => ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, { strava: lien ?? undefined }), lien ? `« ${h.name} » liée à Strava.` : `Lien Strava de « ${h.name} » retiré.`)} />
               <Supprimer libelle={`l'habitude ${h.name}`} onConfirmer={() => ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, null), `Habitude « ${h.name} » retirée (son historique reste dans le journal).`)} />
             </div>
           ))}
@@ -432,6 +435,43 @@ function ObjectifsSport({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
       <form className="rg-ajout" onSubmit={(e) => { e.preventDefault(); const n = libelle.trim(); if (!n) return; setLibelle("");
         ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: ajouterElement(annuels(v), { id: nouvelIdReglage(), label: n, sports: [], km: 1000 }) }), `Objectif « ${n} » créé.`); }}>
         <input className="rg-texte" aria-label="Libellé du nouvel objectif annuel" placeholder="Nouvel objectif (ex. Vélo)" value={libelle} onChange={(e) => setLibelle(e.target.value)} /><Bouton type="submit" disabled={!libelle.trim()}>Créer</Bouton></form>
+    </Bloc>
+  );
+}
+
+// Lien Strava d'une habitude : sports (séparés par des virgules) et durée minimale.
+function LienStrava({ valeur, nom, onChange }: { valeur: unknown; nom: string; onChange: (l: { sports: string[]; minMinutes: number; since: string } | null) => void }) {
+  const l = normaliserLienStrava(valeur);
+  const [ouvert, setOuvert] = useState(false);
+  const [sports, setSports] = useState(l?.sports.join(", ") || ""); const [min, setMin] = useState(String(l?.minMinutes || ""));
+  if (!ouvert) return <button type="button" className={`rg-strava ${l ? "on" : ""}`} onClick={() => setOuvert(true)} aria-label={`Strava de ${nom}`} title={l ? `${l.sports.join(", ")}${l.minMinutes ? ` · ${l.minMinutes} min` : ""}` : "Lier à Strava"}>{l ? "Strava ✓" : "Strava"}</button>;
+  return (
+    <form className="rg-strava-f" onSubmit={(e) => { e.preventDefault(); const sp = sports.split(",").map((x) => x.trim()).filter(Boolean); setOuvert(false);
+      onChange(sp.length ? { sports: sp, minMinutes: Math.max(0, Math.round(Number(min) || 0)), since: l?.since || new Date().toISOString().slice(0, 10) } : null); }}>
+      <input className="rg-texte" aria-label={`Sports Strava de ${nom}`} placeholder="Course à pied, Vélo" value={sports} onChange={(e) => setSports(e.target.value)} />
+      <input type="number" min={0} className="rg-texte rg-nombre" aria-label={`Minutes minimales de ${nom}`} placeholder="min" value={min} onChange={(e) => setMin(e.target.value)} />
+      <Bouton type="submit">OK</Bouton>
+    </form>
+  );
+}
+
+/* -------------------------------------------------- Données et exports */
+function DonneesExports({ d }: { d: Donnees }) {
+  const jour = d.aujourdhui;
+  const lectures = Object.fromEntries(Object.entries(d.etats).map(([k, e]) => [k, e.lecture ? { cle: e.lecture.cle, texte: e.lecture.texte, revision: e.lecture.revision } : null]));
+  return (
+    <Bloc titre="Données et exports" aide="Les exports partent des données lues dans cet onglet, sans rien modifier.">
+      <div className="rg-exports">
+        <div><b>Tâches (CSV)</b><span className="discret">{d.taches.length} tâches actives, séparateur « ; », lisible par Excel.</span>
+          <Bouton onClick={() => telecharger(`nexora-taches-${jour}.csv`, tachesCsv(d.taches, d), "text/csv;charset=utf-8")}>Exporter les tâches</Bouton></div>
+        <div><b>Archive (CSV)</b><span className="discret">{d.archive.length} tâches archivées.</span>
+          <Bouton onClick={() => telecharger(`nexora-archive-${jour}.csv`, tachesCsv(d.archive, d), "text/csv;charset=utf-8")}>Exporter l'archive</Bouton></div>
+        <div><b>Sauvegarde complète (JSON)</b><span className="discret">Toutes les clés lues avec leur révision ({Object.values(lectures).filter(Boolean).length} clés).</span>
+          <Bouton onClick={() => telecharger(`nexora-sauvegarde-${jour}.json`, sauvegarde(lectures))}>Télécharger la sauvegarde</Bouton></div>
+        <div><b>Impression</b><span className="discret">Chaque vue s'imprime sans la navigation (palette : « Imprimer la vue ») ; la fiche mémo d'une tâche s'ouvre depuis sa fiche.</span>
+          <Bouton onClick={() => window.print()}>Imprimer cette page</Bouton></div>
+        <div><b>Capture externe</b><span className="discret">Même adresse que Nexora actuel, en remplaçant le domaine : <code className="mono">{`${location.origin}/?nexoraCapture=1&title=…&desc=…&due=AAAA-MM-JJ&project=…`}</code></span></div>
+      </div>
     </Bloc>
   );
 }

@@ -19,7 +19,7 @@ export interface Tache {
   attachments?: PieceJointe[]; comparison?: { enabled?: boolean; referenceStart?: string | null; referenceEnd?: string | null; capturedAt?: string | null; history?: unknown[] } | null;
   delayRisks?: unknown[]; customFields?: Record<string, unknown>;
   lastInteraction?: string; completedAt?: string; archivedAt?: string;
-  source?: string | null; sourceUrl?: string | null; sourceSender?: string | null;
+  source?: string | null; sourceUrl?: string | null; sourceSender?: string | null; sourceMessageId?: string | null;
   [autre: string]: unknown;
 }
 export interface Projet { id: string; name?: string; color?: string; icon?: string; folderId?: string | null; priority?: string; disabledStatusIds?: string[]; disabledTaskTypeIds?: string[]; gcalSource?: boolean; syncedCalendarSource?: boolean; navigationDefaults?: unknown; }

@@ -29,6 +29,12 @@ import { PageAtlas } from "./Atlas";
 import { PagePhrase, commandesVues } from "./Phrase";
 import { ONGLETS_REGLAGES, PageReglages, type OngletReglages } from "./Reglages";
 import { copiesSecours } from "../donnees/secours";
+import { CLE_CAPTURE, brouillonCapture, type Capture } from "../donnees/capture";
+import { entreesStrava } from "../donnees/strava";
+import { normaliserJournal } from "../donnees/habitudes";
+import { activitesDe, type Activite } from "../donnees/sport";
+import { FicheMemo } from "./FicheMemo";
+import { Guide } from "./Guide";
 import { PageFinancesKdm } from "./Finances";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { fusionnerPrefs } from "../donnees/prefs";
@@ -70,8 +76,8 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const zone = useRef<HTMLDivElement>(null);
 
   const s0 = route.segments[0];
-  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" || s0 === "triage" || s0 === "atlas" || s0 === "phrase" || s0 === "reglages" ? s0 : "fil";
-  const espace: Espace = vue === "triage" || vue === "atlas" || vue === "phrase" || vue === "reglages" ? "fil" : vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
+  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" || s0 === "triage" || s0 === "atlas" || s0 === "phrase" || s0 === "reglages" || s0 === "fiche" ? s0 : "fil";
+  const espace: Espace = vue === "triage" || vue === "atlas" || vue === "phrase" || vue === "reglages" ? "fil" : vue === "fiche" ? "chantiers" : vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
   const sansRequete = espace !== "chantiers";
   const modeFil = (["matin", "journee", "soir", "semaine"] as const).find((m) => m === route.params.get("m")) ?? null;
   const projetFixe = vue === "projet" ? route.segments[1] : undefined;
@@ -191,6 +197,38 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     window.addEventListener("beforeunload", retenir);
     return () => window.removeEventListener("beforeunload", retenir);
   }, [enCours]);
+  // Capture externe (#663) : la tâche demandée par ?nexoraCapture=1 est créée
+  // une fois les données lues, puis sa fiche s'ouvre ; l'adresse est nettoyée.
+  const captureFaite = useRef(false);
+  useEffect(() => {
+    if (!d.charge || captureFaite.current) return;
+    let c: Capture | null = null;
+    try { c = JSON.parse(sessionStorage.getItem(CLE_CAPTURE) || "null"); } catch { c = null; }
+    if (!c?.title) return;
+    captureFaite.current = true;
+    try { sessionStorage.removeItem(CLE_CAPTURE); } catch { /* rien */ }
+    const id = nouvelId();
+    agir(creer(brouillonCapture(c, d.projets, d.defauts.assignee || "", nouvelId), d.aujourdhui, id), `« ${c.title} » capturée.`, () => retirer([id]))
+      .then(() => { setSelection(id); naviguer("/taches", new URLSearchParams({ t: id }), true); });
+  }, [d.charge]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Liaison Strava (#663) : une séance suffisante coche l'habitude liée, comme
+  // useSportHabitSync de nexora-project ; seulement des ajouts, jamais de retrait.
+  const [seances, setSeances] = useState<Activite[] | null>(null);
+  const lies = d.themesHabitudes.some((t) => t.habits.some((h) => h.strava));
+  useEffect(() => {
+    if (!d.charge || !lies || seances || !source.corps) return;
+    source.corps.lire("sport-activities").then((x) => setSeances(activitesDe(x))).catch(() => setSeances([]));
+  }, [d.charge, lies, seances, source]);
+  useEffect(() => {
+    if (!seances?.length || !lies) return;
+    if (!entreesStrava(d.themesHabitudes, d.journalHabitudes, d.nonApplicables, seances, d.aujourdhui).length) return;
+    ecrireJson("journalHabitudes", (v) => [...normaliserJournal(v), ...entreesStrava(d.themesHabitudes, v, d.nonApplicables, seances, d.aujourdhui)])
+      .catch((e) => notifier({ message: `Habitudes Strava non cochées : ${(e as Error).message}`, ton: "crit" }));
+  }, [seances, d.themesHabitudes, d.journalHabitudes, d.nonApplicables, d.aujourdhui, lies]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Guide de démarrage (#663) : à la première visite, puis par la palette.
+  const [guide, setGuide] = useState(false);
+  useEffect(() => { if (d.etats.prefs.charge && !d.prefs.guideVu) setGuide(true); }, [d.etats.prefs.charge]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fermerGuide = () => { setGuide(false); if (!d.prefs.guideVu) ecrireJson("prefs", (v) => fusionnerPrefs(v, { guideVu: true })).catch(() => {}); };
   // Copies de secours restées d'une session précédente (écriture non confirmée).
   useEffect(() => {
     const n = copiesSecours().length;
@@ -220,6 +258,8 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     { id: "atlas", libelle: "Atlas", detail: "prototype : la carte en relief de tout Nexora", executer: () => naviguer("/atlas") },
     { id: "phrase", libelle: "Phrase", detail: "poser une question en phrase, vues enregistrées", executer: () => naviguer("/phrase") },
     ...commandesVues(d),
+    { id: "guide", libelle: "Guide de démarrage", detail: "les espaces, le clavier, ce qui est partagé", executer: () => setGuide(true) },
+    { id: "imprimer", libelle: "Imprimer la vue", detail: "ou l'enregistrer en PDF", executer: () => setTimeout(() => window.print(), 50) },
     { id: "reglages", libelle: "Réglages", detail: "projets, statuts, types, modèles, habitudes", executer: () => naviguer("/reglages") },
     ...ONGLETS_REGLAGES.map((o) => ({ id: `reglages-${o.valeur}`, libelle: `Réglages : ${o.libelle}`, executer: () => naviguer("/reglages", new URLSearchParams({ o: o.valeur })) })),
     ...d.modeles.map((m) => ({ id: `modele-${m.id}`, libelle: `Nouvelle tâche : modèle ${m.name}`, detail: "crée la tâche et ouvre sa fiche", executer: () => actionCreerModele(m.id) })),
@@ -310,6 +350,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} />
         : vue === "triage" ? <PageTriage d={d} source={source} onOuvrir={ouvrir} />
         : vue === "atlas" ? <PageAtlas d={d} source={source} onOuvrir={ouvrir} />
+        : vue === "fiche" ? <FicheMemo d={d} id={route.params.get("t") || ""} />
         : vue === "reglages" ? <PageReglages d={d} onglet={(ONGLETS_REGLAGES.find((o) => o.valeur === route.params.get("o"))?.valeur ?? "projets") as OngletReglages} setOnglet={(o) => naviguer("/reglages", new URLSearchParams({ o }), true)} />
         : vue === "phrase" ? <PagePhrase d={d} source={source} vueId={route.params.get("vue")} onOuvrir={ouvrir} />
         : vue === "equipe" ? <PageEquipe d={d} />
@@ -356,7 +397,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         </>}
       </main>
       {tacheOuverte && (
-        <Inspecteur key={tacheOuverte.id} t={tacheOuverte} cat={d} taches={d.taches} aujourdhui={d.aujourdhui} references={d.references}
+        <Inspecteur key={tacheOuverte.id} t={tacheOuverte} cat={d} taches={d.taches} aujourdhui={d.aujourdhui} references={d.references} journal={d.journal}
           onPatch={(p) => actionPatch(tacheOuverte.id, p)} onBasculer={() => actionBasculer(tacheOuverte.id)} onArchiver={() => actionArchiver(tacheOuverte.id)}
           onDupliquer={() => actionDupliquer(tacheOuverte.id)} onFermer={fermer} onOuvrir={ouvrir} />
       )}
@@ -366,6 +407,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         <span>Écriture : tâches, archive, journal, habitudes, préférences, réglages, équipe et notes · finances, devis, sport et santé en lecture seule</span>
         <span className="marge-auto"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</span>
       </footer>
+      {guide && <Guide onFermer={fermerGuide} />}
       {palette && <Palette key={palette} ouverte modeInitial={palette} onFermer={() => setPalette(null)} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}
         onCreer={actionCreer} onOuvrirTache={(t, archivee) => (archivee ? naviguer("/archive") : ouvrir(t.id))} onAllerProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />}
       {aide && (
