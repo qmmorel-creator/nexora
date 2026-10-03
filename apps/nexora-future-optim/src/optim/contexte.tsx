@@ -72,7 +72,7 @@ export const MOIS_L = ["janvier", "février", "mars", "avril", "mai", "juin", "j
 const JOURS_C = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
 const JOURS_L = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
 const utc = (iso: string) => new Date(`${iso}T12:00:00Z`);
-export const dateCourte = (iso?: string) => { if (!iso) return "—"; const d = utc(iso); return `${d.getUTCDate()} ${MOIS_C[d.getUTCMonth()]}`; };
+export const dateCourte = (iso?: string) => { if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "—"; const d = utc(iso); return `${d.getUTCDate()} ${MOIS_C[d.getUTCMonth()]}`; };
 export const jourCourt = (iso: string) => JOURS_C[utc(iso).getUTCDay()];
 export const jourLong = (iso: string) => { const d = utc(iso); return `${JOURS_L[d.getUTCDay()]} ${d.getUTCDate()} ${MOIS_L[d.getUTCMonth()]}`; };
 export const majuscule = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

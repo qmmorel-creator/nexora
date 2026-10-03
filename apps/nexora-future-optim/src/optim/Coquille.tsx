@@ -17,6 +17,7 @@ import { Projets } from "./Projets";
 import { Corps } from "./Corps";
 import { Argent } from "./Argent";
 import { Reglages } from "./Reglages";
+import { GardeEcran } from "./Garde";
 
 const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
 
@@ -135,7 +136,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
         <button type="button" className="hx-gear" aria-label="Réglages" title="Réglages" onClick={() => setReglages("accueil")}>⚙</button>
         {!demo && <button type="button" className="hx-more is-plain" onClick={() => void deconnexion()}>Déconnexion</button>}
       </header>
-      <div className={`hx-body ${tacheId ? "has-panel" : ""}`}>{contenu}<Fiche /></div>
+      <div className={`hx-body ${tacheId ? "has-panel" : ""}`}><GardeEcran key={route.chemin} nom={ecran || "accueil"}>{contenu}</GardeEcran><GardeEcran key={"fiche-" + (tacheId || "")} nom="fiche"><Fiche /></GardeEcran></div>
       <Saisie /><Reglages /><Notification />
     </div>
   );

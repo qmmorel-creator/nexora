@@ -17,6 +17,11 @@ export const ZOOMS_PROJET: Zoom[] = ["mois", "trimestre", "annee", "pluri"];
 export const LIB_GROUPE: Record<GroupeProjet, string> = { aucun: "Aucun", statut: "Statut", responsable: "Responsable", type: "Type", criticite: "Criticité", echeance: "Échéance", jalon: "Tâche / jalon" };
 export const LIB_REF: Record<Reference, string> = { aucune: "Aucune", courante: "Référence courante", initiale: "Plan initial" };
 
+// Date exploitable : les données réelles contiennent des valeurs corrompues
+// (ex. « NaN-NaN-NaN » importé de Todoist, #688) qu'aucun calcul ne doit voir.
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const iso = (v: unknown): v is string => typeof v === "string" && ISO.test(v);
+
 interface Groupe { id: string; libelle: string; couleur: string; taches: Tache[]; }
 
 export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | null; email: string; ouvrirProjet: (id: string) => void }) {
@@ -36,8 +41,8 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
   const sante = santeProjet(d.taches, p.id, d, jour);
   const cmp = (t: Tache): Comparaison | null => (reference === "aucune" ? null : comparaison(t, d.references, reference));
   const reelles = toutes.filter((t) => statut(t.statusId).name.toLowerCase() !== "information");
-  const finAct = reelles.reduce((m, t) => (t.end && t.end > m ? t.end : m), "");
-  const finRef = reference !== "aucune" ? reelles.reduce((m, t) => { const c = cmp(t); const x = c ? c.referenceEnd : t.end || ""; return x > m ? x : m; }, "") : "";
+  const finAct = reelles.reduce((m, t) => (iso(t.end) && t.end > m ? t.end : m), "");
+  const finRef = reference !== "aucune" ? reelles.reduce((m, t) => { const c = cmp(t); const x = c ? c.referenceEnd : iso(t.end) ? t.end : ""; return x > m ? x : m; }, "") : "";
   const ecarts = reelles.map((t) => cmp(t)?.ecartFin).filter((x): x is number => typeof x === "number");
   const glissees = ecarts.filter((x) => x > 0).length, avance = ecarts.filter((x) => x < 0).length, heure = ecarts.filter((x) => x === 0).length;
   const moyenne = ecarts.length ? ecarts.reduce((a, b) => a + b, 0) / ecarts.length : 0;
@@ -81,7 +86,7 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
     if (groupe === "criticite") return [...CRITICITES.map((c) => ({ id: "c-" + c.id, libelle: c.nom, couleur: c.couleur, taches: ts.filter((t) => t.criticality === c.id) })), { id: "c-sans", libelle: "Sans criticité", couleur: "#94a3b8", taches: ts.filter((t) => !t.criticality) }];
     if (groupe === "jalon") return [{ id: "j-t", libelle: "Tâches", couleur: "#64748b", taches: ts.filter((t) => !t.milestone) }, { id: "j-m", libelle: "Jalons", couleur: "#18263d", taches: ts.filter((t) => t.milestone) }];
     if (groupe === "echeance") {
-      const rang = (t: Tache) => (fini(t) ? 4 : retard(t) ? 0 : !t.end ? 5 : t.end <= ajouterJours(jour, 6) ? 1 : t.end <= ajouterJours(jour, 30) ? 2 : 3);
+      const rang = (t: Tache) => (fini(t) ? 4 : retard(t) ? 0 : !iso(t.end) ? 5 : t.end <= ajouterJours(jour, 6) ? 1 : t.end <= ajouterJours(jour, 30) ? 2 : 3);
       return [["e0", "En retard", "#dc2626"], ["e1", "Sous 7 jours", "#d97706"], ["e2", "Sous 30 jours", "#2563eb"], ["e3", "Plus tard", "#64748b"], ["e4", "Terminées", "#16a34a"], ["e5", "Sans échéance", "#94a3b8"]].map(([id, l, c], i) => ({ id, libelle: l, couleur: c, taches: ts.filter((t) => rang(t) === i) }));
     }
     return [{ id: "", libelle: "", couleur: "", taches: ts }];
@@ -113,7 +118,7 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
           {groupes.map((g) => {
             if (!g.id) return g.taches.map(ligne);
             const col = replies.has(g.id), nRet = g.taches.filter(retard).length, ouv = g.taches.filter((t) => !fini(t)).length;
-            const dates = g.taches.flatMap((t) => [t.start, t.end].filter((x): x is string => !!x));
+            const dates = g.taches.flatMap((t) => [t.start, t.end].filter(iso));
             const g0 = dates.reduce((m, x) => (x < m ? x : m), "9999"), g1 = dates.reduce((m, x) => (x > m ? x : m), "0000");
             const a = dates.length ? Math.max(0, tx(r, g0)) : 0, b = dates.length ? Math.min(100, tx(r, ajouterJours(g1, 1))) : 0;
             return [
