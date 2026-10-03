@@ -246,6 +246,33 @@
     task: (id) => K.state.tasks.find((t) => t.id === id),
   };
 
+  // Champs de la fiche tâche : l'essentiel d'abord, le reste replié.
+  K.fields = (t) => {
+    const p = K.project(t.projectId), s = K.status(t.statusId);
+    return [
+      ["Projet", `<span class="k-dot" style="--c:${p.color}"></span>${K.esc(p.name)}`],
+      ["Statut", `<span class="k-st" style="--c:${s.color}">${K.esc(s.name)}</span>`],
+      ["Échéance", `${K.dateShort(t.end)}${t.startTime ? " · " + t.startTime + (t.endTime ? "–" + t.endTime : "") : ""} <span class="k-rel ${K.isLate(t) ? "is-late" : ""}">${K.rel(t.end)}</span>`],
+      ["Responsable", t.assignee ? `<span class="k-av">${K.initials(t.assignee)}</span>${K.esc(t.assignee)}` : `<span class="k-muted">Personne</span>`],
+      ["Criticité", t.crit ? `<span class="k-crit" style="--c:${K.critColor[t.crit]}">${K.critLabel[t.crit]}</span>` : `<span class="k-muted">Non définie</span>`],
+    ];
+  };
+  K.more = (t) => [
+    ["Type", K.type(t.typeId).name + (t.milestone ? " · jalon" : "") + (t.focus ? " · focus" : "")],
+    ["Début", K.dateShort(t.start)],
+    ["Récurrence", t.recurrence || "Aucune"],
+    ["Projet secondaire", "Aucun"],
+    ["Référence de planning", "Non figée"],
+    ["Risques de délai", "Aucun"],
+    ["Historique", "2 modifications · voir le journal"],
+  ];
+  K.deps = (t) => (t.dependsOn || []).map((id) => K.task(id)).filter(Boolean);
+  K.previewHtml = (text) => {
+    const p = K.parse(text);
+    const chips = p.tokens.map(([k, v]) => `<span class="k-tok"><b>${K.esc(k)}</b> ${K.esc(v)}</span>`).join("");
+    return `<span class="k-tok k-tok-title"><b>titre</b> ${K.esc(p.title || "…")}</span>${chips}`;
+  };
+
   window.K = K;
   window.CONCEPTS = window.CONCEPTS || {};
 })();
