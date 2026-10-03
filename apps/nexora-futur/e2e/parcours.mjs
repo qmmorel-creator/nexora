@@ -291,6 +291,29 @@ try {
   await page.getByRole("radiogroup", { name: "Moment" }).getByRole("radio", { name: "Soir" }).click();
   await page.getByText("Triage du soir · règles sans IA").waitFor();
 
+  etape = "atlas : zoom, tiroir, fiche, mesures"; console.log("→", etape);
+  await page.goto(`http://127.0.0.1:${PORT}/atlas`);
+  const atlas = page.getByRole("img", { name: "Atlas en 2,5D" });
+  await atlas.waitFor();
+  await page.locator('[data-ilot="p:p-ctex6"]').click({ force: true });
+  await page.getByRole("navigation", { name: "Fil d'Ariane" }).getByRole("button", { name: "Chantiers" }).waitFor();
+  await page.locator('[data-ilot="p:p-ctex6"]').click({ force: true });
+  const tiroir = page.getByRole("complementary", { name: "Îlot CTEX6" });
+  await tiroir.waitFor();
+  await capture("10f-atlas");
+  await tiroir.getByRole("button", { name: /Documents FOR-0129/ }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("t") === "t1");
+  await page.keyboard.press("Escape");
+  await page.goto(`http://127.0.0.1:${PORT}/atlas`);
+  await atlas.waitFor();
+  await page.getByRole("button", { name: "Mesures" }).click();
+  await page.getByRole("button", { name: "Essai 300 projets" }).click();
+  await page.getByText("300 projets", { exact: true }).waitFor();
+  await page.getByText(/résumé : 3\d\d îlots visibles/).waitFor();
+  assert.match(await page.locator("[data-m=noeuds]").textContent(), /^\d+ éléments SVG$/);
+  assert.ok(Number((await page.locator("[data-m=noeuds]").textContent()).match(/\d+/)[0]) < 8000, "niveau de détail : moins de 8 000 éléments pour 300 projets");
+  await page.getByRole("button", { name: "Mes données" }).click();
+
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
   const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
   const tache = async (id) => (await taches()).find((t) => t.id === id);
