@@ -6,9 +6,10 @@ import { naviguer } from "../navigation/routeur";
 import { MESURES_SANTE, mesureSante } from "../donnees/sante";
 import {
   CARTES_DEFAUT, DUREES_PATRIMOINE, GROUPES_PLANNING, GROUPES_PROJET, MAX_MESURES_CARTE, ONGLETS_ARGENT, PERIODES_CORPS, REFERENCES,
-  REGROUPEMENTS, TUILES_ACCUEIL, ZOOMS, type CarteCorps, type TuileAccueil, type VueEnregistree,
+  LIGNES_JOURNEE, REGROUPEMENTS, TUILES_ACCUEIL, ZOOMS, type CarteCorps, type TuileAccueil, type VueEnregistree,
 } from "../donnees/prefs";
 import { useOptim, useUi } from "./contexte";
+import { estProjetCalendrier } from "../donnees/modele";
 import { useCorps } from "./corps-donnees";
 import { EditeurCarte } from "./Corps";
 import { STYLES_DEF, ZOOMS_DEF } from "./frise";
@@ -45,11 +46,33 @@ function OngletAccueil() {
       <span><button type="button" className="hx-more is-plain" disabled={!on || i === 0} aria-label={`Monter ${NOMS_TUILES[t][0]}`} onClick={() => deplacer(t, -1)}>↑</button><button type="button" className="hx-more is-plain" disabled={!on || i === a.tuiles.length - 1} aria-label={`Descendre ${NOMS_TUILES[t][0]}`} onClick={() => deplacer(t, 1)}>↓</button></span></li>; })}</ol>
     <p className="hx-hint">Les largeurs s'ajustent pour que chaque rangée soit pleine.</p>
     <label className="hx-sopt"><input type="checkbox" checked={a.pixels} onChange={(e) => void ecrirePrefs({ accueil: { ...a, pixels: e.target.checked } })} /><span><b>Pixels au cœur du cadran</b><small>Pixel des tâches et pixel des habitudes ; décoché, le cadran n'affiche que les deux compteurs.</small></span></label>
+    <BlocsAccueil />
     <h3 className="ox-sh">Mesures de la tuile Corps <small>{corps.length} / {MAX_MESURES_CARTE}</small></h3>
     <div className="ox-choix">
       <div><h4>Activité</h4><label className={!corps.includes("sport") && plein ? "is-off" : ""}><input type="checkbox" checked={corps.includes("sport")} disabled={!corps.includes("sport") && plein} onChange={() => basculerMesure("sport")} />Sport de la semaine</label></div>
       {groupes.map((g) => <div key={g}><h4>{g}</h4>{MESURES_SANTE.filter((m) => m.group === g).map((m) => { const on = corps.includes(m.key), off = !on && plein; return <label key={m.key} className={off ? "is-off" : ""}><input type="checkbox" checked={on} disabled={off} onChange={() => basculerMesure(m.key)} />{m.label}</label>; })}</div>)}
     </div>
+  </>;
+}
+
+// Contenu des blocs Journée et Semaine (retour du 03/10/2026).
+function BlocsAccueil() {
+  const { d, prefs, ecrirePrefs } = useOptim();
+  const a = prefs.accueil, j = a.journee, s = a.semaine;
+  const majJ = (p: Partial<typeof j>) => void ecrirePrefs({ accueil: { ...a, journee: { ...j, ...p } } });
+  const majS = (p: Partial<typeof s>) => void ecrirePrefs({ accueil: { ...a, semaine: { ...s, ...p } } });
+  const Case = ({ on, maj, titre, aide }: { on: boolean; maj: (v: boolean) => void; titre: string; aide?: string }) => <label className="ox-scase"><input type="checkbox" checked={on} onChange={(e) => maj(e.target.checked)} /><span><b>{titre}</b>{aide && <small>{aide}</small>}</span></label>;
+  const projets = d.projets.filter((p) => !estProjetCalendrier(d.projets, p.id));
+  return <>
+    <h3 className="ox-sh">Bloc Journée</h3>
+    <div className="ox-scases"><Case on={j.cadran} maj={(v) => majJ({ cadran: v })} titre="Cadran" /><Case on={j.aujourdhui} maj={(v) => majJ({ aujourdhui: v })} titre="Aujourd'hui" aide="tâches échues ce jour" /><Case on={j.rattraper} maj={(v) => majJ({ rattraper: v })} titre="À rattraper" aide="tâches en retard" /><Case on={j.calendriers} maj={(v) => majJ({ calendriers: v })} titre="Rendez-vous des calendriers" aide="dans « Aujourd'hui »" /></div>
+    <Ligne titre="Lignes par liste"><Segment nom="Lignes par liste" valeurs={LIGNES_JOURNEE} valeur={j.lignes as (typeof LIGNES_JOURNEE)[number]} libelle={(n) => String(n)} choisir={(n) => majJ({ lignes: n })} /></Ligne>
+    <h3 className="ox-sh">Bloc Semaine</h3>
+    <Ligne titre="Durée"><Segment nom="Durée du bloc Semaine" valeurs={[7, 14] as const} valeur={s.jours} libelle={(n) => (n === 7 ? "7 jours" : "14 jours")} choisir={(n) => majS({ jours: n })} /></Ligne>
+    <Ligne titre="Début"><Segment nom="Début du bloc Semaine" valeurs={["aujourdhui", "lundi"] as const} valeur={s.debut} libelle={(x) => (x === "lundi" ? "Lundi" : "Aujourd'hui")} choisir={(x) => majS({ debut: x })} /></Ligne>
+    <div className="ox-scases"><Case on={s.calendriers} maj={(v) => majS({ calendriers: v })} titre="Rendez-vous des calendriers" /><Case on={s.retards} maj={(v) => majS({ retards: v })} titre="Tâches en retard" aide="échues avant la période" /><Case on={s.terminees} maj={(v) => majS({ terminees: v })} titre="Tâches terminées" /><Case on={s.jalonsSeuls} maj={(v) => majS({ jalonsSeuls: v })} titre="Jalons seulement" /></div>
+    <Ligne titre="Projets affichés" aide={s.projets.length ? `${s.projets.length} choisi${s.projets.length > 1 ? "s" : ""}` : "tous"}>{s.projets.length > 0 && <button type="button" className="hx-more" onClick={() => majS({ projets: [] })}>Tous</button>}</Ligne>
+    <div className="ox-choix ox-sprojets">{projets.map((p) => { const on = s.projets.includes(p.id); return <label key={p.id}><input type="checkbox" checked={on} onChange={() => majS({ projets: on ? s.projets.filter((x) => x !== p.id) : [...s.projets, p.id] })} /><i className="hx-hdot" style={{ background: p.color || "#94a3b8" }} />{p.name}</label>; })}</div>
   </>;
 }
 

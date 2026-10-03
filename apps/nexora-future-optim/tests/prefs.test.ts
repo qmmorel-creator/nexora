@@ -37,7 +37,7 @@ describe("préférences nexora:optimPrefs (#687)", () => {
     expect(p.vues).toEqual([{ id: "v1", ecran: "planning", nom: "Retards", filtre: { q: "", projets: ["p1"], statuts: [], responsables: [], types: [], criticites: [], retard: true, jalons: false, terminees: false }, zoom: "trimestre", style: "ecart" }]);
   });
   it("fusion : conserve les champs inconnus d'une version future", () => {
-    const r = fusionnerPrefs({ futur: 1, gantt: "pont" }, { accueil: { pixels: false, corps: ["hrv"], tuiles: ["corps"] } });
+    const r = fusionnerPrefs({ futur: 1, gantt: "pont" }, { accueil: { ...PREFS_VIDES.accueil, pixels: false, corps: ["hrv"], tuiles: ["corps"] } });
     expect(r).toMatchObject({ futur: 1, gantt: "pont", accueil: { pixels: false }, version: 1 });
   });
   it("Corps : toujours quatre cartes, titres et mesures (4 au plus) conservés", () => {
@@ -55,5 +55,13 @@ describe("Corps : sports et grandeur (retour du 03/10/2026)", () => {
     const c = normaliserPrefs({ corps: { sportsMasques: ["Vélo", 3, "Crossfit"], grandeurSport: "denivele" } }).corps;
     expect(c.sportsMasques).toEqual(["Vélo", "Crossfit"]); expect(c.grandeurSport).toBe("denivele");
     expect(normaliserPrefs({ corps: { grandeurSport: "vitesse" } }).corps.grandeurSport).toBe("duree");
+  });
+});
+
+describe("accueil : contenu des blocs (retour du 03/10/2026)", () => {
+  it("valeurs par défaut et normalisation", () => {
+    const a = normaliserPrefs({ accueil: { journee: { cadran: false, lignes: 99 }, semaine: { jours: 14, debut: "lundi", projets: ["p1", 2], retards: "oui" } } }).accueil;
+    expect(a.journee).toEqual({ cadran: false, aujourdhui: true, rattraper: true, lignes: 8, calendriers: true });
+    expect(a.semaine).toEqual({ jours: 14, debut: "lundi", calendriers: true, retards: false, terminees: false, jalonsSeuls: false, projets: ["p1"] });
   });
 });

@@ -36,6 +36,12 @@ export const CARTES_DEFAUT: CarteCorps[] = [
 // Accueil (#691) : tuiles affichées, dans l'ordre choisi (les absentes sont masquées).
 export const TUILES_ACCUEIL = ["journee", "corps", "semaine", "projets", "argent"] as const;
 export type TuileAccueil = (typeof TUILES_ACCUEIL)[number];
+// Contenu des blocs Journée et Semaine de l'accueil (retour du 03/10/2026).
+export interface BlocJourneeAccueil { cadran: boolean; aujourdhui: boolean; rattraper: boolean; lignes: number; calendriers: boolean; }
+export interface BlocSemaineAccueil { jours: 7 | 14; debut: "aujourdhui" | "lundi"; calendriers: boolean; retards: boolean; terminees: boolean; jalonsSeuls: boolean; projets: string[]; }
+export const LIGNES_JOURNEE = [5, 8, 12, 20] as const;
+export const JOURNEE_ACCUEIL_DEFAUT: BlocJourneeAccueil = { cadran: true, aujourdhui: true, rattraper: true, lignes: 8, calendriers: true };
+export const SEMAINE_ACCUEIL_DEFAUT: BlocSemaineAccueil = { jours: 7, debut: "aujourdhui", calendriers: true, retards: false, terminees: false, jalonsSeuls: false, projets: [] };
 export const TUILE_CORPS_DEFAUT = ["recovery", "sleepHours", "hrv", "sport"];
 // Sport (retour du 03/10/2026) : sports masqués et grandeur affichée.
 export const GRANDEURS_SPORT = ["duree", "distance", "denivele"] as const;
@@ -56,7 +62,7 @@ export interface PrefsOptim {
   planning: { zoom: Zoom; groupe: GroupePlanning; corps: boolean; argent: boolean };
   projets: { zoom: Zoom; groupe: GroupeProjet; reference: Reference };
   couleursHabitudes: Record<string, string>;
-  accueil: { pixels: boolean; corps: string[]; tuiles: TuileAccueil[] };
+  accueil: { pixels: boolean; corps: string[]; tuiles: TuileAccueil[]; journee: BlocJourneeAccueil; semaine: BlocSemaineAccueil };
   corps: PrefsCorps;
   argent: PrefsArgent;
   vues: VueEnregistree[];
@@ -67,7 +73,7 @@ export const PREFS_VIDES: PrefsOptim = {
   version: 1, gantt: "ruban",
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
-  couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL] },
+  couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL], journee: JOURNEE_ACCUEIL_DEFAUT, semaine: SEMAINE_ACCUEIL_DEFAUT },
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree" },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   vues: [],
@@ -119,6 +125,15 @@ export function normaliserCorps(v: unknown): PrefsCorps {
   return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 60), sportsMasques: chaines(b.sportsMasques, 40).map((x) => x.slice(0, 60)), grandeurSport: parmi(b.grandeurSport, GRANDEURS_SPORT, "duree") };
 }
 
+export function normaliserJourneeAccueil(v: unknown): BlocJourneeAccueil {
+  const b = objet(v), D = JOURNEE_ACCUEIL_DEFAUT;
+  return { cadran: b.cadran !== false, aujourdhui: b.aujourdhui !== false, rattraper: b.rattraper !== false, lignes: (LIGNES_JOURNEE as readonly number[]).includes(b.lignes as number) ? (b.lignes as number) : D.lignes, calendriers: b.calendriers !== false };
+}
+export function normaliserSemaineAccueil(v: unknown): BlocSemaineAccueil {
+  const b = objet(v);
+  return { jours: b.jours === 14 ? 14 : 7, debut: b.debut === "lundi" ? "lundi" : "aujourdhui", calendriers: b.calendriers !== false, retards: b.retards === true, terminees: b.terminees === true, jalonsSeuls: b.jalonsSeuls === true, projets: chaines(b.projets, 100) };
+}
+
 export function normaliserPrefs(v: unknown): PrefsOptim {
   if (!v || typeof v !== "object") return PREFS_VIDES;
   const b = objet(v), pl = objet(b.planning), pj = objet(b.projets), ac = objet(b.accueil);
@@ -130,7 +145,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     planning: { zoom: parmi(pl.zoom, ZOOMS, "mois"), groupe: parmi(pl.groupe, GROUPES_PLANNING, "projet"), corps: pl.corps !== false, argent: pl.argent === true },
     projets: { zoom: parmi(pj.zoom, ZOOMS, "trimestre"), groupe: parmi(pj.groupe, GROUPES_PROJET, "aucun"), reference: parmi(pj.reference, REFERENCES, "courante") },
     couleursHabitudes: couleurs,
-    accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT, tuiles: Array.isArray(ac.tuiles) ? [...new Set(chaines(ac.tuiles).filter((t): t is TuileAccueil => (TUILES_ACCUEIL as readonly string[]).includes(t)))] : [...TUILES_ACCUEIL] },
+    accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT, tuiles: Array.isArray(ac.tuiles) ? [...new Set(chaines(ac.tuiles).filter((t): t is TuileAccueil => (TUILES_ACCUEIL as readonly string[]).includes(t)))] : [...TUILES_ACCUEIL], journee: normaliserJourneeAccueil(ac.journee), semaine: normaliserSemaineAccueil(ac.semaine) },
     corps: normaliserCorps(b.corps),
     argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24, periode: parmi(a.periode, CHOIX_PERIODE_ARGENT, "mois") }; })(),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
