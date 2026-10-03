@@ -14,8 +14,10 @@ export default async () => {
     console.log(`bank-sync:skip configuration_missing=${[...bank.missing, ...finance.missing].join(",")}`);
     return;
   }
-  const result = await runSync(bank.config, { url: finance.url, secretKey: finance.secretKey });
-  console.log(`bank-sync:done comptes=${result.accounts.length} crees=${result.created} rapproches=${result.reconciled} erreurs=${result.errors}`);
+  // 30 s pour une fonction planifiée : plafond plus haut qu'à la demande ; un
+  // reste éventuel est repris au passage suivant.
+  const result = await runSync(bank.config, { url: finance.url, secretKey: finance.secretKey }, { maxWrites: 60 });
+  console.log(`bank-sync:done comptes=${result.accounts.length} crees=${result.created} rapproches=${result.reconciled} erreurs=${result.errors} partiel=${result.partial}`);
   for (const account of result.accounts.filter((a) => a.error)) console.log(`bank-sync:error compte=${account.accountId} erreur=${account.error}`);
 };
 

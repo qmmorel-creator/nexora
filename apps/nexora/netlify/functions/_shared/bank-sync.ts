@@ -242,14 +242,21 @@ async function setReconciled(finance: FinanceConfig, transactionId: string, date
 
 export type AccountSyncResult = {
   accountKey: string; accountId: string | null; label: string | null;
-  created: number; reconciled: number; already: number;
+  created: number; reconciled: number; already: number; remaining?: number;
   skipped?: Record<string, number>; balance?: unknown; dateFrom?: string; error?: string;
 };
 
+// Écritures par appel : une fonction Netlify est coupée au bout de 10 s
+// (30 s planifiée). Au-delà, le passage s'arrête proprement (`partial`) ; le
+// suivant reprend là où il s'est arrêté, sans doublon (identifiants stables),
+// et la date de dernière synchronisation n'avance qu'une fois le compte complet.
+export const MAX_WRITES_PER_CALL = 25;
+
 // Synchronise les comptes liés (tous, ou ceux de `accountKeys`). Chaque compte
 // est indépendant : l'échec de l'un n'arrête pas les autres.
-export async function runSync(config: EnableBankingConfig, finance: FinanceConfig, options: { accountKeys?: string[]; now?: Date } = {}) {
+export async function runSync(config: EnableBankingConfig, finance: FinanceConfig, options: { accountKeys?: string[]; now?: Date; maxWrites?: number } = {}) {
   const now = options.now || new Date();
+  let budget = options.maxWrites ?? MAX_WRITES_PER_CALL;
   const today = parisDate(now);
   const [connections, links, rules] = await Promise.all([
     listConnections(finance),
@@ -280,17 +287,24 @@ export async function runSync(config: EnableBankingConfig, finance: FinanceConfi
       const plan = planAccountSync({ accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, bankTransactions, existing, rules });
       result.already = plan.already;
       result.skipped = plan.skipped;
+      // Rapprochements d'abord : une saisie existante ne doit jamais être
+      // doublée par une création d'un passage interrompu.
+      for (const item of plan.reconcile) {
+        if (budget <= 0) break;
+        await setReconciled(finance, item.transactionId, item.reconciliationDate, item.reconciliationId);
+        result.reconciled += 1;
+        budget -= 1;
+      }
       for (const item of plan.create) {
+        if (budget <= 0) break;
         const transaction = item.transaction as Record<string, unknown>;
         await applyFinanceTransactionWrite(finance, "import", transaction, `enable-banking:${transaction.transaction_id}`);
         await setReconciled(finance, String(transaction.transaction_id), item.reconciliationDate, item.reconciliationId);
         result.created += 1;
+        budget -= 1;
       }
-      for (const item of plan.reconcile) {
-        await setReconciled(finance, item.transactionId, item.reconciliationDate, item.reconciliationId);
-        result.reconciled += 1;
-      }
-      await updateLink(finance, link.account_key, { last_synced_at: now.toISOString() });
+      result.remaining = plan.reconcile.length + plan.create.length - result.reconciled - result.created;
+      if (!result.remaining) await updateLink(finance, link.account_key, { last_synced_at: now.toISOString() });
     } catch (error) {
       result.error = error instanceof Error ? error.message : String(error);
     }
@@ -311,7 +325,8 @@ export async function runSync(config: EnableBankingConfig, finance: FinanceConfi
     accounts: results,
     created: results.reduce((n, r) => n + r.created, 0),
     reconciled: results.reduce((n, r) => n + r.reconciled, 0),
-    errors: results.filter((r) => r.error).length
+    errors: results.filter((r) => r.error).length,
+    partial: results.some((r) => (r.remaining || 0) > 0)
   };
 }
 

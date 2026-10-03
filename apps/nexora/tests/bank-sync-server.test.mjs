@@ -136,6 +136,24 @@ test("passage complet : rapproche la saisie, crée le reste, rien au second pass
   assert.equal(ledger.length, 2, "aucun doublon");
 });
 
+test("écritures plafonnées : passage partiel repris sans doublon, date de synchro figée jusqu'au bout", async () => {
+  const ledger = [{ transaction_id: "manual-1", account_id: "revolut", signed_amount: -42, bank_date: "2026-10-01", transaction_type: "Dépense", reconciled: false }];
+  const links = [{ account_key: "hash:H1", aspsp_key: "FR:revolut", account_uid: "uid-1", label: "Revolut", account_id: "revolut", import_from: "2026-09-25", last_synced_at: null }];
+  const connections = [{ aspsp_key: "FR:revolut", aspsp_name: "Revolut", session_id: "s", valid_until: "2027-03-31T00:00:00Z" }];
+  const bank = { "uid-1": [tx("A", "42.00", "2026-10-02", "Super U"), tx("B", "19.00", "2026-10-02", "Netlify"), tx("C", "7.00", "2026-10-02", "Café")] };
+  const writes = fakeNetwork({ ledger, links, connections, bank });
+  const now = new Date("2026-10-03T08:00:00Z");
+  const r1 = await S.runSync(config, finance, { now, maxWrites: 1 });
+  assert.deepEqual([r1.partial, r1.reconciled, r1.created, r1.accounts[0].remaining], [true, 1, 0, 2], "le rapprochement passe avant toute création");
+  assert.equal(writes.linkPatches.length, 0, "date de synchro non avancée");
+  const r2 = await S.runSync(config, finance, { now, maxWrites: 1 });
+  assert.deepEqual([r2.partial, r2.created], [true, 1]);
+  const r3 = await S.runSync(config, finance, { now, maxWrites: 1 });
+  assert.deepEqual([r3.partial, r3.created, r3.accounts[0].remaining], [false, 1, 0]);
+  assert.equal(writes.linkPatches.length, 1);
+  assert.equal(ledger.length, 3, "1 saisie rapprochée + 2 créations, aucun doublon");
+});
+
 test("erreurs par compte : consentement expiré, banque déconnectée", async () => {
   const links = [
     { account_key: "k1", aspsp_key: "FR:a", account_uid: "u1", account_id: "x", import_from: "2026-10-01" },

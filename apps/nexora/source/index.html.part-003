@@ -39106,6 +39106,7 @@ function bankSyncResultLine(result) {
   parts.push(`${result.already || 0} déjà présente${result.already > 1 ? "s" : ""}`);
   const pending = result.skipped?.pending || 0;
   if (pending) parts.push(`${pending} en attente ignorée${pending > 1 ? "s" : ""}`);
+  if (result.remaining) parts.push(`${result.remaining} restant à traiter au prochain passage`);
   const balance = result.balance && Number.isFinite(Number(result.balance.amount))
     ? ` · solde banque ${Number(result.balance.amount).toLocaleString("fr-FR", { style: "currency", currency: result.balance.currency || "EUR" })}`
     : "";
@@ -39153,6 +39154,8 @@ async function bankSyncCall(method, body) {
   }
   return payload;
 }
+
+const BANK_SYNC_MAX_ROUNDS = 40;
 
 // Après une synchronisation, les widgets Budget relisent leurs données.
 function bankSyncInvalidateBudget() {
@@ -39242,13 +39245,18 @@ function BankSyncSettings({ pushToast }) {
     toast(accountId ? `${account.label} lié · import à partir du ${bankSyncDate(importFrom)}.` : `${account.label} ne sera pas importé.`);
     load();
   });
-  // Un compte par appel : chaque appel reste court, même au premier import.
+  // Un compte par appel, et l'appel est relancé tant que le serveur signale un
+  // passage partiel (écritures plafonnées par appel) : chaque appel reste court,
+  // même pour un premier import sur plusieurs mois.
   const sync = (accountKeys) => guard(async () => {
     let created = 0; let reconciled = 0; const errors = [];
     for (const key of accountKeys) {
-      const p = await bankSyncCall("POST", { action: "sync", accountKeys: [key] });
-      created += p.result.created; reconciled += p.result.reconciled;
-      for (const a of p.result.accounts) if (a.error) errors.push(`${a.label || a.accountId} : ${bankSyncErrorText(a.error)}`);
+      for (let round = 0; round < BANK_SYNC_MAX_ROUNDS; round += 1) {
+        const p = await bankSyncCall("POST", { action: "sync", accountKeys: [key] });
+        created += p.result.created; reconciled += p.result.reconciled;
+        for (const a of p.result.accounts) if (a.error) errors.push(`${a.label || a.accountId} : ${bankSyncErrorText(a.error)}`);
+        if (!p.result.partial) break;
+      }
     }
     bankSyncInvalidateBudget();
     toast(`Synchronisation : ${created} opération(s) créée(s), ${reconciled} rapprochée(s)${errors.length ? ` · ${errors.join(" ; ")}` : "."}`);

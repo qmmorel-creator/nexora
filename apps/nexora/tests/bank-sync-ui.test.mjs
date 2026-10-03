@@ -39,6 +39,8 @@ test("consentement : valide, bientôt expiré, expiré", () => {
 test("résultat d'un passage, erreurs traduites", () => {
   const line = B.bankSyncResultLine({ created: 2, reconciled: 1, already: 5, skipped: { pending: 1 }, balance: { amount: 1500, currency: "EUR" } });
   assert.match(line, /^2 créées · 1 rapprochée · 5 déjà présentes · 1 en attente ignorée · solde banque 1\s500,00\s€$/);
+  assert.match(B.bankSyncResultLine({ created: 25, remaining: 40 }), /40 restant à traiter au prochain passage/);
+  assert.match(html, /if \(!p\.result\.partial\) break;/, "l'interface relance tant que le passage est partiel");
   assert.equal(B.bankSyncResultLine({ error: "consent_expired" }), "Erreur : accès expiré, renouvelez la connexion.");
   assert.equal(B.bankSyncErrorText("enable_banking_http_500"), "enable_banking_http_500");
 });
