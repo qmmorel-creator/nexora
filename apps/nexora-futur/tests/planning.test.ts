@@ -117,3 +117,15 @@ describe("édition en masse (part-003:1624)", () => {
     expect(r.taches.filter((t) => t.projectId === "p1").map((t) => t.statusId)).toEqual(["s6", "s6"]);
   });
 });
+
+import { couloirs } from "../src/donnees/planning";
+describe("bulles : couloirs", () => {
+  it("côte à côte sans chevauchement ; largeur minimale prise en compte", () => {
+    const L = lignesFrise([
+      { id: "a", start: "2026-10-01", end: "2026-10-03" }, { id: "b", start: "2026-10-04", end: "2026-10-06" },
+      { id: "c", start: "2026-10-02", end: "2026-10-05" }, { id: "d", start: "2026-10-05", end: "2026-10-05", milestone: true },
+    ]);
+    expect(couloirs(L, 1).map((c) => c.map((l) => l.t.id))).toEqual([["a", "b"], ["c"], ["d"]]);
+    expect(couloirs(L, 5).map((c) => c.map((l) => l.t.id))).toEqual([["a"], ["c"], ["b"], ["d"]]);
+  });
+});

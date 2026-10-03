@@ -36,6 +36,7 @@ Nouvelle version de Nexora, publiée sur https://nexora-futur.netlify.app (issue
 | `X` · Suppr | Archiver (annulable) |
 | `1` · `2` · `3` | Lentille Liste · Colonnes · Page (projet) |
 | `4` · `5` · `6` | Lentille Frise · Agenda · Tableur (#658) |
+| `7` · `8` | Lentille Densité · Synthèse (#658) |
 | `?` | Aide |
 
 L'adresse décrit la vue (`/projets/<id>?v=colonnes&retard=1&t=<tâche>`) : lien profond et
@@ -69,3 +70,20 @@ Trois lentilles de plus, sur la même requête que la liste (filtres, tri, regro
   toujours annulable. Colonnes au choix, synchronisées.
 - **Fiche** : section « Référence de planning », avec « Figer la référence » (l'ancienne est
   gardée dans l'historique, la première sous « Initiale »).
+
+## Densité, Synthèse, Bulles et Métro (lot 5b, #658)
+
+- **Frise** : trois styles, Barres, **Bulles** (côte à côte dans un couloir, une ligne de plus
+  seulement si elles se chevauchent) et **Métro** (une ligne par groupe, une station par tâche).
+- **Densité** (`v=densite`) :
+  - **Mois** : 3 mois, tâches sur leur fin, couleur des projets ;
+  - **Croisée** : deux axes au choix, nombre, retards, criticité ou progression ;
+  - **Pixels** : 1 tâche = 1 pixel, par jour, semaine ou mois ; les retards sont reportés sur la
+    période en cours.
+- **Synthèse** (`v=synthese`) :
+  - indicateurs : tâches, avancement, jalons, urgentes, dérive et retards sur la référence ;
+  - graphique en 7 styles ;
+  - **Treemap** des projets : surface = nombre de tâches, couleur = volume, criticité (score de
+    nexora-project), dérive ou avancement ;
+  - **notes** des tableaux de bord en lecture seule (Markdown).
+- Hors périmètre (décision du 2026-10-03) : Fleuve du temps, Cosmos, cartes 3D, Réunions 3D.

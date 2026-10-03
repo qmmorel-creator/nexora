@@ -5,7 +5,8 @@
 import { useMemo, useRef, useState, type PointerEvent as PE } from "react";
 import { ajouterJours, ecartJours, estEnRetard, estTerminee, type Catalogues, type Tache } from "../donnees/modele";
 import type { Paquet } from "../donnees/requete";
-import { cheminCritique, comparaison, fenetreFrise, graduations, libelleEcart, lignesFrise, syntheseGroupe, type Baselines, type LigneFrise } from "../donnees/planning";
+import { cheminCritique, comparaison, couloirs, fenetreFrise, graduations, libelleEcart, lignesFrise, syntheseGroupe, type Baselines, type LigneFrise } from "../donnees/planning";
+import { initiales } from "./Lignes";
 import type { PrefsFrise } from "../donnees/prefs";
 import { Bouton, Segment } from "../composants";
 
@@ -98,9 +99,50 @@ export function Frise({ paquets, cat, aujourdhui, selection, references, prefs, 
     );
   };
 
+  // Bulle : titre dans la pastille, champs condensés dessous (responsable,
+  // échéance, avancement), largeur minimale lisible.
+  const bulle = (l: LigneFrise) => {
+    const t = l.t; const fini = estTerminee(t, cat.statuts); const retard = estEnRetard(t, cat.statuts, aujourdhui);
+    const couleur = cat.statuts.find((s) => s.id === t.statusId)?.color || cat.projets.find((x) => x.id === t.projectId)?.color || "var(--encre3)";
+    const c = cmp.get(t.id) || null;
+    const largeur = Math.max(largeurPct(l.debut, l.fin), 12);
+    return (
+      <button key={t.id} type="button" data-id={t.id} className={`fr-bulle-t ${selection === t.id ? "sel" : ""} ${fini ? "fini" : ""} ${retard ? "retard" : ""} ${critique?.has(t.id) ? "critique" : ""} ${critique && !critique.has(t.id) ? "attenue" : ""}`}
+        style={{ left: `${pct(l.debut)}%`, width: `${largeur}%`, ["--c" as string]: couleur, ["--av" as string]: `${fini ? 100 : Math.max(0, Math.min(100, Number(t.progress) || 0))}%` }}
+        onClick={() => onSelect(t.id)} onDoubleClick={() => onOuvrir(t.id)}
+        aria-label={`${t.title || "Sans titre"}, ${l.jalon ? `jalon le ${court(l.fin)}` : `du ${court(l.debut)} au ${court(l.fin)}`}${retard ? ", en retard" : ""}${c ? `, écart de fin ${libelleEcart(c.ecartFin)}` : ""}`}>
+        <span className="fr-bulle-titre">{l.jalon ? "◆ " : ""}{t.title || "Sans titre"}</span>
+        <span className="fr-bulle-champs mono">{initiales(t.assignee) || "·"} · {court(l.fin)} · {fini ? 100 : Number(t.progress) || 0} %{c && c.ecartFin ? ` · ${libelleEcart(c.ecartFin)}` : ""}</span>
+      </button>
+    );
+  };
+  // Métro (Planning Projets) : une ligne par groupe, de la première à la
+  // dernière date ; une station par tâche, sur sa fin.
+  const metro = (libelle: string, couleurGroupe: string | undefined, lignes: LigneFrise[]) => {
+    const s = syntheseGroupe(lignes, cat.statuts); if (!s) return null;
+    const c = couleurGroupe || "var(--accent)";
+    return (
+      <div className="fr-ligne fr-metro" role="row">
+        <div className="fr-titre" role="rowheader"><span className="point" style={{ background: c }} /><strong>{libelle}</strong><span className="mono discret">{lignes.length} · {s.avancement} %</span></div>
+        <div className="fr-piste" role="gridcell">
+          <span className="fr-metro-ligne" style={{ left: `${pct(s.debut)}%`, width: `${largeurPct(s.debut, s.fin)}%`, background: c }} aria-hidden="true" />
+          {lignes.map((l) => {
+            const t = l.t; const fini = estTerminee(t, cat.statuts); const retard = estEnRetard(t, cat.statuts, aujourdhui);
+            return <button key={t.id} type="button" data-id={t.id} className={`fr-station ${l.jalon ? "jalon" : ""} ${fini ? "fini" : ""} ${retard ? "retard" : ""} ${selection === t.id ? "sel" : ""} ${critique && !critique.has(t.id) ? "attenue" : ""}`}
+              style={{ left: `${pct(l.fin) + 50 / f.jours}%`, ["--c" as string]: c }} title={`${t.title} · ${court(l.fin)}`}
+              aria-label={`${t.title || "Sans titre"}, station le ${court(l.fin)}${fini ? ", terminée" : retard ? ", en retard" : ""}`} onClick={() => onSelect(t.id)} onDoubleClick={() => onOuvrir(t.id)} />;
+          })}
+          <span className="fr-ecart mono conforme" style={{ left: `calc(${pct(s.fin) + 100 / f.jours}% + 8px)` }}>{s.avancement} %</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="frise">
       <div className="fr-outils">
+        <Segment etiquette="Style de frise" valeur={prefs.style} onChange={(style) => setPrefs({ ...prefs, style })}
+          options={[{ valeur: "barres", libelle: "Barres" }, { valeur: "bulles", libelle: "Bulles" }, { valeur: "metro", libelle: "Métro" }]} />
         <Segment etiquette="Référence" valeur={prefs.reference} onChange={(v) => setPrefs({ ...prefs, reference: v })}
           options={[{ valeur: "aucune", libelle: "Sans référence" }, { valeur: "courante", libelle: "Référence" }, { valeur: "initiale", libelle: "Plan initial" }]} />
         <label className="insp-case"><input type="checkbox" checked={prefs.critique} onChange={(e) => setPrefs({ ...prefs, critique: e.target.checked })} /> Chemin critique</label>
@@ -129,7 +171,7 @@ export function Frise({ paquets, cat, aujourdhui, selection, references, prefs, 
               const ferme = replies[p.cle];
               return (
                 <div key={p.cle} role="rowgroup">
-                  {p.cle !== "tout" && (
+                  {prefs.style === "metro" ? metro(p.libelle, p.couleur, lignes) : p.cle !== "tout" && (
                     <div className="fr-ligne fr-groupe" role="row">
                       <div className="fr-titre" role="rowheader">
                         <button type="button" className="groupe" aria-expanded={!ferme} onClick={() => setReplies((r) => ({ ...r, [p.cle]: !r[p.cle] }))}>
@@ -142,7 +184,13 @@ export function Frise({ paquets, cat, aujourdhui, selection, references, prefs, 
                       </div>
                     </div>
                   )}
-                  {!ferme && lignes.map(barre)}
+                  {!ferme && prefs.style === "barres" && lignes.map(barre)}
+                  {!ferme && prefs.style === "bulles" && couloirs(lignes, Math.ceil(f.jours * 0.12)).map((c, k) => (
+                    <div key={k} className="fr-ligne fr-couloir" role="row">
+                      <div className="fr-titre" role="rowheader"><span className="mono discret">{k === 0 ? `${lignes.length} tâche(s)` : ""}</span></div>
+                      <div className="fr-piste" role="gridcell">{c.map(bulle)}</div>
+                    </div>
+                  ))}
                 </div>
               );
             })}

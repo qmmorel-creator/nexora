@@ -12,6 +12,7 @@ import { normaliserJournal, normaliserNonApplicables, normaliserThemes, type Ent
 import { ajouterAuJournal, entreesJournal, type EntreeJournal } from "./journal";
 import { normaliserPrefs, type PrefsFutur } from "./prefs";
 import type { Baselines } from "./planning";
+import { notesTableaux, type NoteTableau } from "./notes";
 import type { Activite, Depense } from "./projet";
 
 export const CLES = {
@@ -21,6 +22,7 @@ export const CLES = {
   themesHabitudes: "nexora:habitThemes", journalHabitudes: "nexora:habitLog", nonApplicables: "nexora:habitSkips",
   depenses: "nexora:expenses", journal: "nexora:activityLog", equipes: "nexora:teams",
   prefs: "nexora:futurPrefs", references: "nexora:taskBaselines",
+  tableaux: "nexora:dashboards", accueil: "nexora:todayWidgets",
 } as const;
 type NomCle = keyof typeof CLES;
 
@@ -32,7 +34,7 @@ export interface Favori { type: "project" | "view" | "dashboard" | "task"; id: s
 export interface Donnees extends Catalogues {
   dossiers: Dossier[]; taches: Tache[]; archive: Tache[]; favoris: Favori[]; metaFiltres: Filtres;
   defauts: Defauts; modeles: Modele[]; raccourcis: Record<string, string>;
-  themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur; references: Baselines;
+  themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur; references: Baselines; notes: NoteTableau[];
   depenses: Depense[]; journal: Activite[]; equipes: { id: string; name?: string; color?: string }[];
   etats: Record<NomCle, EtatCle>; charge: boolean; aujourdhui: string;
 }
@@ -123,6 +125,7 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
       journalHabitudes: normaliserJournal(parse<unknown>(etats.journalHabitudes, CLES.journalHabitudes, [])),
       nonApplicables: normaliserNonApplicables(parse<unknown>(etats.nonApplicables, CLES.nonApplicables, [])),
       prefs: normaliserPrefs(parse<unknown>(etats.prefs, CLES.prefs, null)),
+      notes: notesTableaux(parse<unknown>(etats.tableaux, CLES.tableaux, []), parse<unknown>(etats.accueil, CLES.accueil, null)),
       references: (() => { const v = parse<unknown>(etats.references, CLES.references, {}); return v && typeof v === "object" && !Array.isArray(v) ? (v as Baselines) : {}; })(),
       depenses: parse<Depense[]>(etats.depenses, CLES.depenses, []), journal: parse<Activite[]>(etats.journal, CLES.journal, []),
       equipes: parse<{ id: string; name?: string; color?: string }[]>(etats.equipes, CLES.equipes, []),

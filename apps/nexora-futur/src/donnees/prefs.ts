@@ -4,7 +4,10 @@
 
 export interface PrefsPageProjet { ordre: string[]; masquees: string[]; }
 export type ModeReference = "aucune" | "courante" | "initiale";
-export interface PrefsFrise { reference: ModeReference; critique: boolean; }
+export type StyleFrise = "barres" | "bulles" | "metro";
+export interface PrefsFrise { reference: ModeReference; critique: boolean; style: StyleFrise; }
+export interface PrefsDensite { mode: "mois" | "croisee" | "pixels"; lignes: string; colonnes: string; mesure: string; vue: "jour" | "semaine" | "mois"; }
+export interface PrefsSynthese { style: string; groupe: string; pile: string; jauge: "avgProgress" | "doneRatio"; treemap: string; }
 export interface PrefsTableur { colonnes: string[]; }
 export interface PrefsFutur {
   version: 1;
@@ -12,10 +15,15 @@ export interface PrefsFutur {
   pageProjet: PrefsPageProjet | null;
   frise: PrefsFrise; // lentille Frise (#658)
   tableur: PrefsTableur | null; // colonnes du Tableur (#658)
+  densite: PrefsDensite; // lentille Densité (#658)
+  synthese: PrefsSynthese; // lentille Synthèse (#658)
 }
 
-export const FRISE_DEFAUT: PrefsFrise = { reference: "aucune", critique: false };
-export const PREFS_VIDES: PrefsFutur = { version: 1, espaces: {}, pageProjet: null, frise: FRISE_DEFAUT, tableur: null };
+export const FRISE_DEFAUT: PrefsFrise = { reference: "aucune", critique: false, style: "barres" };
+export const DENSITE_DEFAUT: PrefsDensite = { mode: "mois", lignes: "project", colonnes: "status", mesure: "count", vue: "semaine" };
+export const SYNTHESE_DEFAUT: PrefsSynthese = { style: "bar", groupe: "status", pile: "status", jauge: "avgProgress", treemap: "taille" };
+export const PREFS_VIDES: PrefsFutur = { version: 1, espaces: {}, pageProjet: null, frise: FRISE_DEFAUT, tableur: null, densite: DENSITE_DEFAUT, synthese: SYNTHESE_DEFAUT };
+const parmi = <T extends string>(v: unknown, liste: readonly T[], defaut: T): T => (typeof v === "string" && (liste as readonly string[]).includes(v) ? (v as T) : defaut);
 
 const chaines = (l: unknown) => (Array.isArray(l) ? l.filter((x): x is string => typeof x === "string") : []);
 
@@ -30,7 +38,13 @@ export function normaliserPrefs(v: unknown): PrefsFutur {
   return {
     version: 1, espaces,
     pageProjet: pp && Array.isArray(pp.ordre) ? { ordre: chaines(pp.ordre), masquees: chaines(pp.masquees) } : null,
-    frise: { reference: fr.reference === "courante" || fr.reference === "initiale" ? fr.reference : "aucune", critique: fr.critique === true },
+    frise: { reference: fr.reference === "courante" || fr.reference === "initiale" ? fr.reference : "aucune", critique: fr.critique === true, style: parmi(fr.style, ["barres", "bulles", "metro"] as const, "barres") },
+    densite: (() => { const x = (b.densite && typeof b.densite === "object" ? b.densite : {}) as Record<string, unknown>; const axes = ["project", "status", "taskType", "criticality", "assignee", "month"] as const; return {
+      mode: parmi(x.mode, ["mois", "croisee", "pixels"] as const, DENSITE_DEFAUT.mode), lignes: parmi(x.lignes, axes, "project"), colonnes: parmi(x.colonnes, axes, "status"),
+      mesure: parmi(x.mesure, ["count", "late", "criticality", "progress"] as const, "count"), vue: parmi(x.vue, ["jour", "semaine", "mois"] as const, "semaine") }; })(),
+    synthese: (() => { const x = (b.synthese && typeof b.synthese === "object" ? b.synthese : {}) as Record<string, unknown>; const champs = ["status", "project", "criticality", "taskType", "assignee", "milestone", "period"] as const; return {
+      style: parmi(x.style, ["pie", "bar", "barh", "gauge", "line", "completedPerWeek", "stackedBar"] as const, "bar"), groupe: parmi(x.groupe, champs, "status"), pile: parmi(x.pile, champs, "status"),
+      jauge: parmi(x.jauge, ["avgProgress", "doneRatio"] as const, "avgProgress"), treemap: parmi(x.treemap, ["taille", "criticite", "derive", "avancement"] as const, "taille") }; })(),
     tableur: tb && Array.isArray(tb.colonnes) ? { colonnes: chaines(tb.colonnes) } : null,
   };
 }
@@ -45,5 +59,7 @@ export function fusionnerPrefs(actuel: unknown, patch: Partial<Omit<PrefsFutur, 
     pageProjet: patch.pageProjet !== undefined ? patch.pageProjet : n.pageProjet,
     frise: patch.frise ?? n.frise,
     tableur: patch.tableur !== undefined ? patch.tableur : n.tableur,
+    densite: patch.densite ?? n.densite,
+    synthese: patch.synthese ?? n.synthese,
   };
 }
