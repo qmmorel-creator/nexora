@@ -5,7 +5,9 @@ import type { Donnees } from "../donnees/magasin";
 import type { RapportsJour, Source } from "../donnees/source";
 import { aCaser, echeancesDuJour, evenementsDuJour, glissent, heureParis, horizon, modeParHeure, pointsAttention, termineesLe, type ModeJour } from "../donnees/journee";
 import { HabitudesJour } from "./Habitudes";
+import { compterTriage } from "./Triage";
 import { Bouton, Etat, Segment, Surtitre } from "../composants";
+import { naviguer } from "../navigation/routeur";
 import { initiales } from "./Lignes";
 
 const PX_HEURE = 54;
@@ -120,8 +122,17 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
     </section>
   );
 
+  const nbTriage = compterTriage(d);
+  const lienTriage = (
+    <section className="panneau fil-carte fil-triage" aria-label="Triage">
+      <Surtitre>Triage du {mode === "soir" ? "soir" : "matin"}</Surtitre>
+      <p className="discret">{mode === "soir" ? "Ce qui reste dû aujourd'hui, les réunions sans compte rendu et les habitudes non cochées." : nbTriage ? `${nbTriage} décision${nbTriage > 1 ? "s" : ""} : retards sans activité, tâches à ranger ou à dater, réunions sans compte rendu, habitudes manquées.` : "Rien à trier ce matin."}</p>
+      <div><Bouton variante="principal" onClick={() => naviguer("/triage")}>Ouvrir le Triage</Bouton></div>
+    </section>
+  );
   const colonneGauche = mode === "soir" ? (
     <>
+      {lienTriage}
       <section className="panneau fil-carte"><Surtitre>Bilan · terminées aujourd'hui</Surtitre>
         {termineesLe(d.taches, jour, d).map((t) => carteTache(t))}{!termineesLe(d.taches, jour, d).length && <p className="discret">Aucune tâche terminée aujourd'hui.</p>}</section>
       <section className="panneau fil-carte"><Surtitre>Glisse à demain ?</Surtitre>
@@ -133,6 +144,7 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
   ) : (
     <>
       {mode === "matin" && <Rapport titre="Briefing de 7 h" r={r?.matin ?? null} vide={erreur || "Pas encore de rapport du matin pour aujourd'hui."} />}
+      {mode === "matin" && lienTriage}
       <section className="panneau fil-carte"><Surtitre>Points d'attention</Surtitre>
         {points.map((p) => (
           <div key={`${p.genre}-${p.t.id}`} className="fil-point">

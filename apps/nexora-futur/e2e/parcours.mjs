@@ -261,6 +261,36 @@ try {
   assert.equal(journal[0].taskId, choisie, "entrée en tête du journal");
   assert.equal(new Set(journal.map((e) => e.id)).size, journal.length, "identifiants uniques");
 
+  etape = "triage : appliquer, annuler, revoir, règles"; console.log("→", etape);
+  const attendre = async (lib, f, arg) => { try { await page.waitForFunction(f, arg, { timeout: 8000 }); } catch (e) { throw new Error(`${lib} : ${e.message.split("\n")[0]}`); } };
+  await page.goto(`http://127.0.0.1:${PORT}/triage`);
+  await page.getByRole("radiogroup", { name: "Moment" }).getByRole("radio", { name: "Matin" }).click();
+  const carteTri = page.locator('article[aria-label^="Carte de triage"]');
+  await carteTri.waitFor();
+  const titreCarte = await carteTri.locator("h3").textContent();
+  const idCarte = (await taches()).find((t) => t.title === titreCarte)?.id;
+  assert.ok(idCarte, `carte de tâche : ${titreCarte}`);
+  const finAvant = (await taches()).find((t) => t.id === idCarte).end;
+  await capture("10e-triage");
+  await page.keyboard.press("Enter");
+  await attendre("tâche datée", ([id, fin]) => window.__nexoraDemo.valeur("nexora:tasks").find((t) => t.id === id)?.end !== fin, [idCarte, finAvant]);
+  await attendre("carte suivante", (t) => document.querySelector('article[aria-label^="Carte de triage"] h3')?.textContent !== t, titreCarte);
+  await page.getByText(/^Progression · 1\//).waitFor();
+  await page.keyboard.press("u");
+  await attendre("tâche remise", ([id, fin]) => window.__nexoraDemo.valeur("nexora:tasks").find((t) => t.id === id)?.end === fin, [idCarte, finAvant]);
+  await attendre("carte revenue", (t) => document.querySelector('article[aria-label^="Carte de triage"] h3')?.textContent === t, titreCarte);
+  await page.keyboard.press("n");
+  await attendre("report enregistré", (id) => Object.keys(window.__nexoraDemo.valeur("nexora:futurPrefs")?.triage?.reports || {}).some((k) => k.includes(id)), idCarte);
+  await page.getByText(/^Progression · 1\//).waitFor();
+  await page.waitForTimeout(150);
+  const avantRegle = Number((await page.getByText(/\d+ à décider/).textContent()).match(/\d+/)[0]);
+  await page.getByRole("button", { name: "Règles" }).click();
+  await page.getByRole("region", { name: "Règles du triage" }).getByLabel("Tâche sans date").uncheck();
+  await attendre("compteur après la règle", (n) => Number((document.body.innerText.match(/(\d+) à décider/) || [])[1]) === n - 1, avantRegle);
+  assert.equal((await valeur("nexora:futurPrefs")).triage.regles.actives["sans-date"], false, "règle enregistrée dans les préférences");
+  await page.getByRole("radiogroup", { name: "Moment" }).getByRole("radio", { name: "Soir" }).click();
+  await page.getByText("Triage du soir · règles sans IA").waitFor();
+
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
   const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
   const tache = async (id) => (await taches()).find((t) => t.id === id);

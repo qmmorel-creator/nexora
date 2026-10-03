@@ -1,6 +1,7 @@
 // Rail et barre de navigation (Ref #655) : projets en arbre de dossiers,
 // favoris, lentilles enregistrées à venir.
 import { useMemo, useState } from "react";
+import { compterTriage } from "./Triage";
 import { useDonnees } from "../donnees/magasin";
 import { estTerminee, type Dossier, type Projet } from "../donnees/modele";
 import { naviguer } from "../navigation/routeur";
@@ -47,9 +48,11 @@ export function Navigation({ projetActif, vue }: { projetActif?: string; vue: st
   }, [d.taches, d.statuts]);
   const favorisProjets = d.favoris.filter((f) => f.type === "project").map((f) => d.projets.find((p) => p.id === f.id)).filter(Boolean) as Projet[];
   const total = [...ouvertes.values()].reduce((a, b) => a + b, 0);
+  const aTrier = useMemo(() => compterTriage(d), [d]);
   return (
     <nav className="nav" aria-label="Navigation principale">
       <a href="/" className={`nav-item ${vue === "fil" ? "actif" : ""}`} aria-current={vue === "fil" ? "page" : undefined} onClick={(e) => { e.preventDefault(); naviguer("/"); }}>Fil du jour</a>
+      <a href="/triage" className={`nav-item ${vue === "triage" ? "actif" : ""}`} aria-current={vue === "triage" ? "page" : undefined} onClick={(e) => { e.preventDefault(); naviguer("/triage"); }}>Triage<span className="nav-n mono">{aTrier || ""}</span></a>
       <a href="/taches" className={`nav-item ${vue === "toutes" ? "actif" : ""}`} onClick={(e) => { e.preventDefault(); naviguer("/taches"); }}>Toutes les tâches<span className="nav-n mono">{total}</span></a>
       <a href="/taches?retard=1" className="nav-item" onClick={(e) => { e.preventDefault(); naviguer("/taches", new URLSearchParams("retard=1")); }}>En retard</a>
       <a href="/taches?focus=yes" className="nav-item" onClick={(e) => { e.preventDefault(); naviguer("/taches", new URLSearchParams("focus=yes")); }}>Focus</a>
