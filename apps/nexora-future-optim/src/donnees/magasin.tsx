@@ -1,6 +1,7 @@
 // Magasin de données du Cockpit (Ref #655) : lecture temps réel des clés
 // Nexora utiles et actions d'écriture sur les tâches. Une action est une
 // fonction pure appliquée à la version la plus récente (rejouable).
+import { normaliserMetaBlocs, normaliserTypesJalon, objetOuVide, type MetaBloc, type TypeJalon } from "./reglages";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LectureCle } from "./firebase";
 import type { Source } from "./source";
@@ -34,6 +35,8 @@ export const CLES = {
   reglagesPro: "nexora:financeProSettings",
   // Équipe et objectifs sport : lecture seule (#660).
   ateliers: "nexora:workshops", affectations: "nexora:staffing", objectifsSport: "nexora:sportGoals",
+  // Réglages repris de Nexora, deuxième partie (retour du 03/10/2026).
+  typesJalon: "nexora:milestoneTypes", metaBlocs: "nexora:metaTemporalBlocks", gcal: "nexora:gcalSettings", calendriersSync: "nexora:syncedCalendarSettings",
 } as const;
 type NomCle = keyof typeof CLES;
 
@@ -48,6 +51,7 @@ export interface Donnees extends Catalogues {
   themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur; references: Baselines; notes: NoteTableau[]; pro: DonneesPro;
   depenses: Depense[]; journal: Activite[]; equipes: { id: string; name?: string; color?: string }[];
   equipesBrutes: unknown; ateliers: Atelier[]; affectations: Affectation[]; objectifsSport: ObjectifsSport; membresEquipe: MembreEquipe[];
+  typesJalon: TypeJalon[]; metaBlocs: MetaBloc[]; gcal: Record<string, unknown>; calendriersSync: Record<string, unknown>;
   etats: Record<NomCle, EtatCle>; charge: boolean; aujourdhui: string;
 }
 
@@ -57,7 +61,8 @@ export type Mutation = (taches: Tache[], archive: Tache[], cat: Catalogues) => {
 // Clés JSON modifiables hors tâches (Ref #669).
 export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs"
   // Réglages repris de Nexora (retour du 03/10/2026).
-  | "projets" | "dossiers" | "statuts" | "types" | "defauts" | "modeles" | "themesHabitudes" | "membres" | "equipes" | "objectifsSport";
+  | "projets" | "dossiers" | "statuts" | "types" | "defauts" | "modeles" | "themesHabitudes" | "membres" | "equipes" | "objectifsSport"
+  | "typesJalon" | "ateliers" | "affectations" | "metaBlocs" | "gcal" | "calendriersSync";
 export interface BilanMutation { journal?: string; }
 
 interface Contexte {
@@ -153,6 +158,9 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
       ...(() => { const ateliers = normaliserAteliers(parse<unknown>(etats.ateliers, CLES.ateliers, [])); return { ateliers, affectations: normaliserAffectations(parse<unknown>(etats.affectations, CLES.affectations, []), ateliers.map((w) => w.id)) }; })(),
       objectifsSport: normaliserObjectifs(parse<unknown>(etats.objectifsSport, CLES.objectifsSport, null)),
       membresEquipe: parse<MembreEquipe[]>(etats.membres, CLES.membres, []),
+      typesJalon: normaliserTypesJalon(parse<unknown>(etats.typesJalon, CLES.typesJalon, [])),
+      metaBlocs: normaliserMetaBlocs(parse<unknown>(etats.metaBlocs, CLES.metaBlocs, [])),
+      gcal: objetOuVide(parse<unknown>(etats.gcal, CLES.gcal, {})), calendriersSync: objetOuVide(parse<unknown>(etats.calendriersSync, CLES.calendriersSync, {})),
       etats, charge: etats.taches.charge && etats.projets.charge && etats.statuts.charge && etats.types.charge, aujourdhui: jour,
     };
   }, [etats, jour]);

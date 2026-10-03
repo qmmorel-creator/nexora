@@ -32,6 +32,17 @@ function useRessource<T>(ressource: RessourceFinance, params: Record<string, str
   }, [source, k]);
   return { data: etat.k === k ? etat.data : null, erreur: etat.k === k ? etat.erreur : "", charge: etat.k === k };
 }
+// Construction du Sankey protégée (audit K2) : une donnée inattendue donne un message,
+// jamais une page blanche ; sans flux, l'état vide de Nexora.
+type Sankey = ReturnType<typeof financeSankeyBuild>;
+function sankeySur(type: Parameters<typeof financeSankeyBuild>[0], donnees: unknown, config: Record<string, unknown>, jour: string): Sankey | { erreur: string } | null {
+  if (!donnees) return null;
+  try { const r = financeSankeyBuild(type, donnees, config, jour); return r.graph.links.length ? r : { erreur: "Aucun flux à représenter sur cette période." }; }
+  catch (e) { return { erreur: `Sankey impossible : ${(e as Error).message}` }; }
+}
+const VueSankey = ({ c, config, titre, grand, erreur }: { c: Sankey | { erreur: string } | null; config: Record<string, unknown>; titre: string; grand?: boolean; erreur: string }) =>
+  c && "graph" in c ? <div className={`ox-nexora ox-sankey ${grand ? "is-grand" : ""}`}><FinanceSankeyChart graph={c.graph} config={config} title={titre} period={c.period} /></div>
+    : c ? <p className="hx-dim">{c.erreur}</p> : <Etat erreur={erreur} />;
 const Etat = ({ erreur, texte = "Chargement…" }: { erreur?: string; texte?: string }) => <p className={erreur ? "ox-alerte" : "hx-dim"}>{erreur || texte}</p>;
 
 // --- Catégorisation (seule écriture côté budget) -------------------------------
@@ -77,7 +88,7 @@ function OngletPeriode({ rafraichir, cle }: { rafraichir: () => void; cle: numbe
   }, [sankey.data, ops.data, p]);
   const donneesSankey = useMemo(() => { try { return sankey.data ? financeSankeyNormalize(sankey.data) : null; } catch { return null; } }, [sankey.data]);
   const config = useMemo(() => ({ ...FINANCE_SANKEY_DEFAULT_CONFIG, from: p.from, to: p.to }), [p]);
-  const construit = useMemo(() => (donneesSankey ? financeSankeyBuild("financeSankeyMonthly", donneesSankey, config, jour) : null), [donneesSankey, config, jour]);
+  const construit = useMemo(() => (donneesSankey ? sankeySur("financeSankeyMonthly", donneesSankey, config, jour) : null), [donneesSankey, config, jour]);
   const s = synth && !("erreur" in synth) ? synth : null;
   const modele = useMemo(() => financeCumulModel(s?.charts), [s]);
   const n = joursDe(p), ecoules = jour < p.from ? 0 : jour > p.to ? n : joursDe({ from: p.from, to: jour }), enCours = jour >= p.from && jour <= p.to;
@@ -98,7 +109,7 @@ function OngletPeriode({ rafraichir, cle }: { rafraichir: () => void; cle: numbe
         {(() => { const e = s.totals.expenses - s.totals.budget * ecoules / n; return <span className={e > 0 ? "hx-red" : "hx-green"}>{e > 0 ? `${euros(e)} au-dessus du rythme` : "dans le rythme"}</span>; })()}</div></div>
       : <Etat erreur={erreur} />}
     <section className="hx-tile"><header className="hx-th"><h2>Flux de la période</h2><small className="hx-dim">graphique Sankey de Nexora, à l'identique</small></header>
-      {construit ? <div className="ox-nexora ox-sankey"><FinanceSankeyChart graph={construit.graph} config={config} title="Sankey (flux)" period={construit.period} /></div> : <Etat erreur={sankey.erreur} />}</section>
+      <VueSankey c={construit} config={config} titre="Sankey (flux)" erreur={sankey.erreur} /></section>
     {s && <div className="hx-acols ox-pcols">
       <section className="hx-tile"><header className="hx-th"><h2>Budget cumulé</h2><small className="hx-dim">par catégorie, face au budget et aux revenus · graphique de Nexora</small></header>
         {!modele.series.length ? <p className="hx-dim">Aucune dépense sur la période.</p>
@@ -125,7 +136,7 @@ function OngletPatrimoine({ cle }: { cle: number }) {
   const sankey = useRessource<unknown>("sankey-data", {}, cle);
   const donneesSankey = useMemo(() => { try { return sankey.data ? financeSankeyNormalize(sankey.data) : null; } catch { return null; } }, [sankey.data]);
   const config = useMemo(() => ({ ...FINANCE_SANKEY_DEFAULT_CONFIG, periodMode: "month", periodValue: jour.slice(0, 7) }), [jour]);
-  const construit = useMemo(() => (donneesSankey ? financeSankeyBuild("financeSankeyWealth", donneesSankey, config, jour) : null), [donneesSankey, config, jour]);
+  const construit = useMemo(() => (donneesSankey ? sankeySur("financeSankeyWealth", donneesSankey, config, jour) : null), [donneesSankey, config, jour]);
   const sr = serie.data;
   // Empilement par type de compte.
   const types = useMemo(() => {
@@ -172,7 +183,7 @@ function OngletPatrimoine({ cle }: { cle: number }) {
       <section className="hx-tile hx-wevo"><header className="hx-th"><h2>Évolution sur {N} mois <small>par type de compte</small></h2><span className="hx-sleg">{types.map((t) => <span key={t.type}><i style={{ background: t.couleur }} />{t.type}</span>)}</span>
         <div className="hx-seg is-xs" title="Durée, aussi réglable dans les réglages">{DUREES_PATRIMOINE.map((d) => <button key={d} type="button" aria-pressed={N === d} onClick={() => void ecrirePrefs({ argent: { ...prefs.argent, patrimoineMois: d } })}>{d} mois</button>)}</div></header>{graphique}</section></div>
     <section className="hx-tile ox-pat-sankey"><header className="hx-th"><h2>Structure du patrimoine</h2><small className="hx-dim">type › banque › compte · Sankey de Nexora</small></header>
-        {construit ? <div className="ox-nexora ox-sankey is-grand"><FinanceSankeyChart graph={construit.graph} config={config} title="Structure du patrimoine (Sankey)" period={construit.period} /></div> : <Etat erreur={sankey.erreur} />}</section>
+        <VueSankey c={construit} config={config} titre="Structure du patrimoine (Sankey)" grand erreur={sankey.erreur} /></section>
     <div className="hx-acols">
       <section className="hx-tile"><header className="hx-th"><h2>Comptes</h2></header>
         {!comptes.length ? <Etat erreur={resume.erreur} texte={resume.charge ? "Aucun compte." : "Chargement…"} /> : (() => {
@@ -260,7 +271,7 @@ function OngletOperations({ cle, rafraichir }: { cle: number; rafraichir: () => 
     <div className="hx-fbar">
       <label className="hx-fsearch"><span aria-hidden="true">⌕</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Libellé, catégorie, compte" aria-label="Rechercher une opération" autoComplete="off" /></label>
       {CHAMPS.map((c) => { const opts = [...new Set(ops.map(c.val))].sort((a, b) => a.localeCompare(b, "fr")), n = (sel[c.cle] || []).length; return <span key={c.cle} className="hx-fchip-w"><button type="button" className={`hx-fchip ${n ? "is-on" : ""}`} aria-expanded={pop === c.cle} onClick={() => setPop(pop === c.cle ? "" : c.cle)}>{c.lib}{n ? <> <b>{n}</b></> : null} ▾</button>
-        {pop === c.cle && <div className="hx-pop is-f ox-lc-pop" role="dialog" aria-label={c.lib}><ListeCoches options={opts.map((v) => ({ id: v, libelle: v, detail: ops.filter((o) => c.val(o) === v).length }))} choisis={sel[c.cle] || []} changer={(ids) => setSel((x) => ({ ...x, [c.cle]: ids }))} libelleRecherche={`Rechercher : ${c.lib.toLowerCase()}`} /></div>}</span>; })}
+        {pop === c.cle && <div className="hx-pop is-f ox-lc-pop" role="dialog" aria-label={c.lib}><ListeCoches options={opts.map((v) => ({ id: v, libelle: v, detail: ops.filter((o) => c.val(o) === v).length }))} choisis={sel[c.cle] || []} changer={(ids) => setSel((x) => ({ ...x, [c.cle]: ids }))} libelleRecherche={`Rechercher : ${c.lib.toLowerCase()}`} fermer={() => setPop("")} /></div>}</span>; })}
       <span className="hx-frange"><label>Du <input type="date" value={du} onChange={(e) => setDu(e.target.value)} /></label><label>au <input type="date" value={au} onChange={(e) => setAu(e.target.value)} /></label></span>
       <span className="hx-frange"><label>Montant ≥ <input type="number" min="0" value={min} onChange={(e) => setMin(e.target.value)} placeholder="0" /> €</label><label>≤ <input type="number" min="0" value={max} onChange={(e) => setMax(e.target.value)} placeholder="∞" /> €</label></span>
       <p className="hx-fsum"><b>{liste.length} opération{liste.length > 1 ? "s" : ""}</b> · {vide ? "aucun filtre" : [...actifs.map((c) => `${c.lib.toLowerCase()} : ${sel[c.cle].join(", ")}`), ...(du || au ? [`du ${du ? dateCourte(du) : "début"} au ${au ? dateCourte(au) : "aujourd'hui"}`] : []), ...(min !== "" || max !== "" ? [`montant ${min !== "" ? "≥ " + min + " €" : ""}${min !== "" && max !== "" ? " et " : ""}${max !== "" ? "≤ " + max + " €" : ""}`] : []), ...(q ? [`« ${q} »`] : [])].join(" · ")} · débits {euros(depenses)} · crédits {euros(revenus)}

@@ -45,3 +45,31 @@ describe("réglages", () => {
     expect(renommerResponsable(t, "Vincent B.", "Vincent Bernard", AT).map((x) => [x.assignee, x.lastInteraction])).toEqual([["Vincent Bernard", AT], ["Autre", undefined]]);
   });
 });
+
+describe("réglages, deuxième partie", () => {
+  it("types de jalon : liste vide ou illisible = catalogue de départ ; symbole inconnu = losange", async () => {
+    const { normaliserTypesJalon, TYPES_JALON_DEPART, avecDepart } = await import("../src/donnees/reglages");
+    expect(normaliserTypesJalon(null)).toEqual(TYPES_JALON_DEPART);
+    expect(normaliserTypesJalon([{ id: "x", name: " Go ", symbol: "inconnu", color: "#000000" }])).toEqual([{ id: "x", name: "Go", symbol: "diamond", color: "#000000" }]);
+    expect(avecDepart([], TYPES_JALON_DEPART)).toHaveLength(5);
+    expect(avecDepart([{ id: "a" }], TYPES_JALON_DEPART)).toEqual([{ id: "a" }]);
+  });
+  it("supprimer un atelier le retire des affectations ; une case vide disparaît", async () => {
+    const { retirerAtelierDesAffectations } = await import("../src/donnees/reglages");
+    const v = [{ id: "A|d1", workshops: ["ws-a", "ws-b"] }, { id: "B|d1", workshops: ["ws-a"] }, { id: "C|d1", workshops: ["ws-b"] }];
+    expect(retirerAtelierDesAffectations(v, "ws-a")).toEqual([{ id: "A|d1", workshops: ["ws-b"] }, { id: "C|d1", workshops: ["ws-b"] }]);
+  });
+  it("calendriers synchronisés : défauts de Nexora, modification d'un seul calendrier, champs conservés", async () => {
+    const { calendriersSync, majCalendrierSync } = await import("../src/donnees/reglages");
+    expect(calendriersSync({}).map((c) => [c.id, c.enabled, c.projectName])).toEqual([["fr-holidays", true, "Jours fériés"], ["school-holidays", true, "Vacances scolaires"], ["clock-changes", true, "Changements d'heure"], ["taxes", true, "Fiscalité"]]);
+    const n = majCalendrierSync({ zone: "B", lastSyncAt: "x", calendars: [{ id: "taxes", enabled: false, extra: 1 }] }, "fr-holidays", { enabled: false });
+    expect(n.zone).toBe("B"); expect(n.lastSyncAt).toBe("x");
+    const cals = n.calendars as { id: string; enabled: boolean; extra?: number }[];
+    expect(cals.find((c) => c.id === "fr-holidays")!.enabled).toBe(false);
+    expect(cals.find((c) => c.id === "taxes")).toMatchObject({ enabled: false, extra: 1 });
+  });
+  it("méta-blocs : dates invalides vidées, champs inconnus conservés", async () => {
+    const { normaliserMetaBlocs } = await import("../src/donnees/reglages");
+    expect(normaliserMetaBlocs([{ id: "m", title: "Phase 1", startDate: "2026-10-01", endDate: "bad", autre: 2 }, { pas: "d'id" }])).toEqual([{ id: "m", title: "Phase 1", startDate: "2026-10-01", endDate: "", kind: "phase", color: "#7A8290", borderStyle: "solid", dashboardIds: null, autre: 2 }]);
+  });
+});

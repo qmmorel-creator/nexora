@@ -56,7 +56,7 @@ function Choix({ cle, f, setF, ouvert, setOuvert }: { cle: CleListe; f: FiltreVu
     <span className="hx-fchip-w" ref={ref}>
       <button type="button" className={`hx-fchip ${sel.length ? "is-on" : ""}`} aria-expanded={ouvert} onClick={() => setOuvert(ouvert ? null : cle)}>{LIBELLES[cle]}{sel.length ? <> <b>{sel.length}</b></> : null} ▾</button>
       {ouvert && <div className="hx-pop is-f" role="dialog" aria-label={LIBELLES[cle]}>
-        <ListeCoches options={options.map(([id, libelle, couleur]) => ({ id, libelle, couleur }))} choisis={sel} changer={(ids) => setF({ ...f, [cle]: ids })} libelleRecherche={`Rechercher : ${LIBELLES[cle].toLowerCase()}`} />
+        <ListeCoches options={options.map(([id, libelle, couleur]) => ({ id, libelle, couleur }))} choisis={sel} changer={(ids) => setF({ ...f, [cle]: ids })} libelleRecherche={`Rechercher : ${LIBELLES[cle].toLowerCase()}`} fermer={() => setOuvert(null)} />
       </div>}
     </span>
   );

@@ -202,7 +202,7 @@ export function cartesTriage(ctx: Contexte, regles: ReglesTriage, moment: Moment
     if (dow >= 2 && ctx.sport.fait + 0.25 < attendu) {
       const reste = ctx.sport.cible - ctx.sport.fait; const h = (v: number) => `${Math.floor(v)} h ${String(Math.round((v % 1) * 60)).padStart(2, "0")}`;
       ajouter({ cle: `sport:${ajouterJours(jour, -dow)}:${jour}`, regle: "sport", titre: `Objectif ${ctx.sport.cible} h par semaine : ${h(ctx.sport.fait)} à ce jour`, meta: `il reste ${h(reste)} en ${7 - dow} jour${7 - dow > 1 ? "s" : ""}`, motif: "Objectif sport en retard sur le rythme de la semaine",
-        proposition: `Prévoir ${h(reste / Math.max(1, 7 - dow))} par jour d'ici dimanche`, choix: [{ touche: "Entrée", libelle: "Ouvrir le sport", action: { genre: "aller", chemin: "/corps" } }, { touche: "N", libelle: "Ignorer cette semaine", action: { genre: "revoir" } }] });
+        proposition: `Prévoir ${h(reste / Math.max(1, 7 - dow))} par jour d'ici dimanche`, choix: [{ touche: "Entrée", libelle: "Ouvrir le sport", action: { genre: "aller", chemin: "/sport" } }, { touche: "N", libelle: "Ignorer cette semaine", action: { genre: "revoir" } }] });
     }
   }
   return c;

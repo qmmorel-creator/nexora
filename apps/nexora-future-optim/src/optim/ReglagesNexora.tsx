@@ -6,11 +6,12 @@
 // suppression refusée quand l'élément sert encore, dossier vide seulement,
 // renommage d'un utilisateur reporté sur les tâches. Écrans de départ : Nexora
 // Futur (src/cockpit/Reglages.tsx, Ref #663), réécrits dans le langage d'Optim.
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CleJson, Modele } from "../donnees/magasin";
 import { CRITICITES, estProjetCalendrier, type Dossier, type Projet, type Statut, type Tache, type TypeTache } from "../donnees/modele";
-import { capacite, equipesDe, normaliserEquipes, type Equipe, type MembreEquipe } from "../donnees/equipe";
+import { ATELIERS_DEPART, capacite, equipesDe, normaliserEquipes, type Equipe, type MembreEquipe } from "../donnees/equipe";
 import {
+  SYMBOLES_JALON, TYPES_JALON_DEPART, avecDepart, calendriersSync, majCalendrierSync, objetOuVide, retirerAtelierDesAffectations, type TypeJalon,
   COULEURS_REGLAGES, ajouterElement, ajouterHabitude, deplacerElement, descendants, majElement, majHabitude, majObjet, nouvelIdReglage, parentsPossibles, renommerResponsable, retirerElement, statutProtege, usages,
 } from "../donnees/reglages";
 import { useOptim, useUi } from "./contexte";
@@ -31,8 +32,15 @@ function Texte({ valeur, libelle, onValider }: { valeur: string; libelle: string
   return <input className="ox-rg-t" aria-label={libelle} value={v} onChange={(e) => setV(e.target.value)} onBlur={valider}
     onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { e.stopPropagation(); setV(valeur); (e.target as HTMLInputElement).blur(); } }} />;
 }
-const Couleur = ({ valeur, libelle, onChange }: { valeur?: string; libelle: string; onChange: (c: string) => void }) =>
-  <input type="color" className="ox-rg-c" aria-label={libelle} value={/^#[0-9a-f]{6}$/i.test(valeur || "") ? valeur : "#7a8290"} onChange={(e) => onChange(e.target.value)} />;
+// Couleur : aperçu local pendant le choix, UNE écriture à la validation (événement natif « change »),
+// et non à chaque mouvement dans la palette (l'onChange de React suit l'événement « input »).
+function Couleur({ valeur, libelle, onChange }: { valeur?: string; libelle: string; onChange: (c: string) => void }) {
+  const v = /^#[0-9a-f]{6}$/i.test(valeur || "") ? (valeur as string) : "#7a8290";
+  const ref = useRef<HTMLInputElement>(null), rappel = useRef(onChange), initiale = useRef(v);
+  rappel.current = onChange; initiale.current = v;
+  useEffect(() => { const el = ref.current; if (!el) return; const f = () => { if (el.value.toLowerCase() !== initiale.current.toLowerCase()) rappel.current(el.value); }; el.addEventListener("change", f); return () => el.removeEventListener("change", f); }, []);
+  return <input ref={ref} key={v} type="color" className="ox-rg-c" aria-label={libelle} defaultValue={v} />;
+}
 // Suppression en deux temps (pas de boîte de dialogue native).
 function Supprimer({ libelle, refus, onConfirmer }: { libelle: string; refus?: string; onConfirmer: () => void }) {
   const [arme, setArme] = useState(false);
@@ -97,7 +105,7 @@ export function OngletProjets() {
             </div>
             {plus === p.id && <div className="ox-rg-plus">
               <label>Priorité <select value={p.priority || "normal"} onChange={(e) => void majP(p.id, { priority: e.target.value })}><option value="low">Basse</option><option value="normal">Normale</option><option value="high">Haute</option></select></label>
-              <label>Icône <input className="ox-rg-t is-court" maxLength={4} defaultValue={p.icon || ""} onBlur={(e) => { const v = e.target.value.trim(); if (v !== (p.icon || "")) void majP(p.id, { icon: v || undefined }); }} aria-label={`Icône de ${p.name}`} /></label>
+              <label>Icône <input key={p.icon || ""} className="ox-rg-t is-court" maxLength={4} defaultValue={p.icon || ""} onBlur={(e) => { const v = e.target.value.trim(); if (v !== (p.icon || "")) void majP(p.id, { icon: v || undefined }); }} aria-label={`Icône de ${p.name}`} /></label>
               <div><b>Statuts proposés</b> <small className="hx-dim">les statuts protégés et ceux du projet restent toujours actifs</small>
                 <div className="ox-rg-puces">{d.statuts.filter((s) => !s.projectId || s.projectId === p.id).map((s) => { const verrou = statutProtege(s) || s.projectId === p.id, off = (p.disabledStatusIds || []).includes(s.id);
                   return <label key={s.id} className={verrou ? "is-off" : ""}><input type="checkbox" checked={!off} disabled={verrou} onChange={() => void majP(p.id, { disabledStatusIds: off ? (p.disabledStatusIds || []).filter((x) => x !== s.id) : [...(p.disabledStatusIds || []), s.id] })} /><i style={{ background: s.color }} />{s.name}</label>; })}</div></div>
@@ -191,7 +199,7 @@ export function OngletCreation() {
   const ecrire = useEcrire();
   return <>
     <AvisPartage />
-    <Bloc titre="Valeurs par défaut des tâches" aide="Appliquées à chaque nouvelle tâche quand la saisie ne précise rien. « — » laisse le champ vide.">
+    <Bloc titre="Valeurs par défaut des tâches" aide="Appliquées à chaque nouvelle tâche quand la saisie ne précise rien. « — » laisse le champ vide. Attention : Nexora ne fusionne pas cette clé ; si Nexora la modifie au même moment, il affiche un conflit au lieu d'écraser.">
       <ChampsValeurs prefixe="Défaut" valeurs={d.defauts as Record<string, unknown>} onChange={(k, v) => void ecrire("defauts", (x) => majObjet(x, { [k]: v || undefined, ...(k === "assignee" ? { assigneeDefaulted: true } : {}) }), "Valeur par défaut enregistrée.")} />
     </Bloc>
     <Bloc titre="Modèles de tâche" aide="Un modèle crée une tâche déjà remplie (clic droit sur « Nouvelle tâche » dans Nexora)."
@@ -225,7 +233,7 @@ export function GestionHabitudes() {
         <Couleur valeur={h.color} libelle={`Couleur de ${h.name}`} onChange={(c) => void ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, { color: c }))} />
         <Texte valeur={h.name} libelle={`Nom de l'habitude ${h.name}`} onValider={(x) => void ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, { name: x }))} />
         <div className="hx-seg is-xs" role="group" aria-label={`Saisie de ${h.name}`}>{([["check", "Case"], ["numeric", "Chiffrée"]] as const).map(([k, l]) => <button key={k} type="button" aria-pressed={h.kind === k} onClick={() => void ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, k === "numeric" ? { kind: "numeric", min: h.min || 0, max: h.max > (h.min || 0) ? h.max : (h.min || 0) + 10, step: h.step || 1 } : { kind: "check" }))}>{l}</button>)}</div>
-        {h.kind === "numeric" ? <span className="ox-rg-bornes">{(["min", "max", "step"] as const).map((k) => <label key={k}>{k === "step" ? "pas" : k}<input type="number" className="ox-rg-t is-nb" aria-label={`${k} de ${h.name}`} defaultValue={k === "step" ? h.step ?? 1 : h[k]}
+        {h.kind === "numeric" ? <span className="ox-rg-bornes">{(["min", "max", "step"] as const).map((k) => <label key={k}>{k === "step" ? "pas" : k}<input key={`${k}${k === "step" ? h.step ?? 1 : h[k]}`} type="number" className="ox-rg-t is-nb" aria-label={`${k} de ${h.name}`} defaultValue={k === "step" ? h.step ?? 1 : h[k]}
           onBlur={(e) => { const n = Number(e.target.value), avant = k === "step" ? h.step ?? 1 : h[k]; if (!Number.isFinite(n) || n === avant) return; if (k === "step" && n <= 0) return; if (k === "max" && n <= h.min) return; if (k === "min" && n >= h.max) return; void ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, { [k]: n })); }} /></label>)}</span> : <span />}
         <Supprimer libelle={`l'habitude ${h.name}`} onConfirmer={() => void ecrire("themesHabitudes", (v) => majHabitude(v, t.id, h.id, null), `Habitude « ${h.name} » retirée (son historique reste dans le journal).`)} />
       </div>)}
@@ -254,19 +262,19 @@ export function OngletEquipe() {
   };
   return <>
     <AvisPartage />
-    <Bloc titre="Utilisateurs" aide="Renommer un utilisateur met à jour le responsable de ses tâches (comme Nexora). Capacité : nombre de tâches par jour au-delà duquel la charge passe en rouge. Un utilisateur qui a des tâches ne se supprime pas."
+    <Bloc titre="Utilisateurs" aide="Renommer un utilisateur met à jour le responsable de ses tâches et de l'archive (comme Nexora). Capacité : nombre de tâches par jour au-delà duquel la charge passe en rouge. Un utilisateur qui a des tâches (même archivées) ou qui dirige une équipe ne se supprime pas."
       actions={<Ajout placeholder="Prénom Nom" libelle="Nom du nouvel utilisateur" onCreer={(n) => d.membresEquipe.some((m) => m.name === n) ? notifier({ texte: `« ${n} » existe déjà.` }) : ecrire("membres", (v) => ajouterElement<MembreEquipe>(v, { id: nouvelIdReglage(), name: n, color: COULEURS_REGLAGES[d.membresEquipe.length % COULEURS_REGLAGES.length], capacityPerDay: 1, teamIds: [], teamId: null } as MembreEquipe), `« ${n} » ajouté.`)} />}>
       <div className="ox-rg-table" role="table" aria-label="Utilisateurs">
-        {d.membresEquipe.map((m) => { const n = d.taches.filter((t) => t.assignee === m.name).length;
+        {d.membresEquipe.map((m) => { const n = d.taches.filter((t) => t.assignee === m.name).length, nArch = d.archive.filter((t) => t.assignee === m.name).length, chef = equipes.filter((t) => t.leadName === m.name).length;
           return <div key={m.id} className="ox-rg-l" role="row" aria-label={m.name}>
             <Couleur valeur={m.color} libelle={`Couleur de ${m.name}`} onChange={(c) => void majM(m.id, { color: c })} />
             <Texte valeur={m.name} libelle={`Nom de ${m.name}`} onValider={(x) => void renommer(m, x)} />
             <ChoixRecherche libelle={`Équipe de ${m.name}`} vide="Sans équipe" valeur={equipesDe(m)[0] || ""} options={equipes.map((t) => ({ id: t.id, libelle: t.name, couleur: t.color }))}
               changer={(v) => void majM(m.id, v ? { teamIds: [v, ...equipesDe(m).slice(1).filter((x) => x !== v)], teamId: v } : { teamIds: [], teamId: null })} />
-            <label className="ox-rg-bornes">cap.<input type="number" min={1} step={1} className="ox-rg-t is-nb" aria-label={`Capacité de ${m.name}`} defaultValue={capacite(m.capacityPerDay)}
+            <label className="ox-rg-bornes">cap.<input key={capacite(m.capacityPerDay)} type="number" min={1} step={1} className="ox-rg-t is-nb" aria-label={`Capacité de ${m.name}`} defaultValue={capacite(m.capacityPerDay)}
               onBlur={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x > 0 && x !== capacite(m.capacityPerDay)) void majM(m.id, { capacityPerDay: x }); }} /></label>
             <span className="ox-rg-n">{n} tâche{n > 1 ? "s" : ""}</span>
-            <Supprimer libelle={m.name} refus={n ? "a des tâches" : undefined} onConfirmer={() => void ecrire("membres", (v) => retirerElement(v, m.id), `« ${m.name} » retiré.`)} />
+            <Supprimer libelle={m.name} refus={n ? "a des tâches" : nArch ? "a des tâches archivées" : chef ? "responsable d'équipe" : undefined} onConfirmer={() => void ecrire("membres", (v) => retirerElement(v, m.id), `« ${m.name} » retiré.`)} />
           </div>; })}
       </div>
     </Bloc>
@@ -300,18 +308,141 @@ export function OngletObjectifs() {
     <AvisPartage />
     <Bloc titre="Objectifs sport" aide="Heures par semaine et kilomètres par an (par groupe de sports) ; l'onglet Sport montre l'avancement. Une valeur vide ou nulle retire l'objectif.">
       <label className="ox-rg-champ"><span>Heures par semaine</span>
-        <input type="number" min={0} step={0.5} className="ox-rg-t is-nb" aria-label="Heures par semaine" defaultValue={o.weeklyHours ?? ""}
+        <input key={String(o.weeklyHours)} type="number" min={0} step={0.5} className="ox-rg-t is-nb" aria-label="Heures par semaine" defaultValue={o.weeklyHours ?? ""}
           onBlur={(e) => { const x = e.target.value === "" ? null : Number(e.target.value); const v = x !== null && Number.isFinite(x) && x > 0 ? arrondi(x) : null; if (v !== o.weeklyHours) void ecrire("objectifsSport", (y) => ({ ...brut(y), weeklyHours: v }), "Objectif hebdomadaire enregistré."); }} /></label>
       <h4 className="ox-rg-sous">Kilomètres par an</h4>
       {o.yearlyKm.map((g) => <div key={g.id} className="ox-rg-l" role="row" aria-label={g.label || g.id}>
         <Texte valeur={g.label || ""} libelle={`Libellé de l'objectif ${g.label}`} onValider={(x) => void ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: majElement(annuels(v), g.id, { label: x }) }))} />
-        <input className="ox-rg-t" aria-label={`Sports de ${g.label}`} placeholder="Tous les sports (ou : Vélo, Course à pied)" defaultValue={g.sports.join(", ")}
+        <input key={g.sports.join("|")} className="ox-rg-t" aria-label={`Sports de ${g.label}`} placeholder="Tous les sports (ou : Vélo, Course à pied)" defaultValue={g.sports.join(", ")}
           onBlur={(e) => { const sp = e.target.value.split(",").map((x) => x.trim()).filter(Boolean); if (sp.join("|") !== g.sports.join("|")) void ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: majElement(annuels(v), g.id, { sports: sp }) })); }} />
-        <label className="ox-rg-bornes">km<input type="number" min={0} className="ox-rg-t is-nb" aria-label={`Kilomètres de ${g.label}`} defaultValue={g.km ?? ""}
-          onBlur={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x !== g.km) void ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: majElement(annuels(v), g.id, { km: x > 0 ? arrondi(x) : null }) })); }} /></label>
+        <label className="ox-rg-bornes">km<input key={String(g.km)} type="number" min={0} className="ox-rg-t is-nb" aria-label={`Kilomètres de ${g.label}`} defaultValue={g.km ?? ""}
+          onBlur={(e) => { const x = e.target.value.trim() === "" ? null : Number(e.target.value); const km = x !== null && Number.isFinite(x) && x > 0 ? arrondi(x) : null; if (km !== (g.km ?? null)) void ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: majElement(annuels(v), g.id, { km }) })); }} /></label>
         <Supprimer libelle={`l'objectif ${g.label}`} onConfirmer={() => void ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: retirerElement(annuels(v), g.id) }))} />
       </div>)}
       <Ajout placeholder="Nouvel objectif annuel (ex. Vélo)" libelle="Libellé du nouvel objectif annuel" onCreer={(n) => ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: ajouterElement(annuels(v), { id: nouvelIdReglage(), label: n, sports: [], km: 1000 }) }), `Objectif « ${n} » créé.`)} />
+    </Bloc>
+  </>;
+}
+
+/* ------------------------------------------------- Types de jalon, ateliers */
+// Symbole d'un type de jalon : tracé SVG 24×24 de Nexora (plein ou creux).
+export function SymboleJalon({ cle, couleur, taille = 18 }: { cle: string; couleur: string; taille?: number }) {
+  const s = SYMBOLES_JALON.find((x) => x.key === cle) || SYMBOLES_JALON[0];
+  return <svg width={taille} height={taille} viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d={s.d} fill={s.hollow ? "none" : couleur} stroke={s.hollow ? couleur : "none"} strokeWidth={s.hollow ? 2.4 : 0} fillRule="evenodd" /></svg>;
+}
+function ChoixSymbole({ valeur, couleur, libelle, changer }: { valeur: string; couleur: string; libelle: string; changer: (k: string) => void }) {
+  const [ouvert, setOuvert] = useState(false);
+  return <span className="hx-fchip-w ox-rg-symb"><button type="button" className="ox-cr-b" aria-label={libelle} aria-expanded={ouvert} onClick={() => setOuvert(!ouvert)}><SymboleJalon cle={valeur} couleur={couleur} /> ▾</button>
+    {ouvert && <div className="hx-pop is-f ox-lc-pop ox-rg-symbs" role="listbox" aria-label={libelle}>{SYMBOLES_JALON.map((s) => <button key={s.key} type="button" role="option" aria-selected={s.key === valeur} title={s.label} aria-label={s.label} className={s.key === valeur ? "is-sel" : ""} onClick={() => { changer(s.key); setOuvert(false); }}><SymboleJalon cle={s.key} couleur={couleur} taille={20} /></button>)}</div>}</span>;
+}
+export function OngletJalons() {
+  const { d } = useOptim();
+  const ecrire = useEcrire();
+  const jalons = (f: (v: TypeJalon[]) => unknown) => (v: unknown) => f(avecDepart<TypeJalon>(v, TYPES_JALON_DEPART));
+  const ateliersEcr = (f: (v: { id: string }[]) => unknown) => (v: unknown) => f(avecDepart(v, ATELIERS_DEPART));
+  const utilisations = (id: string) => d.affectations.filter((a) => a.workshops.includes(id)).length;
+  const supprimerAtelier = async (w: { id: string; name: string }) => {
+    if (utilisations(w.id)) await ecrire("affectations", (v) => retirerAtelierDesAffectations(v, w.id));
+    await ecrire("ateliers", ateliersEcr((v) => retirerElement(v, w.id)), `Atelier « ${w.name} » supprimé.`);
+  };
+  return <>
+    <AvisPartage />
+    <Bloc titre="Types de jalon" aide="Nom, symbole et couleur, comme dans Nexora. Le premier type sert « par défaut » ; il en reste toujours au moins un. Un jalon dont le type est supprimé retombe sur le premier type."
+      actions={<Ajout placeholder="Nouveau type de jalon" libelle="Nom du nouveau type de jalon" onCreer={(n) => ecrire("typesJalon", jalons((v) => ajouterElement<TypeJalon>(v, { id: nouvelIdReglage(), name: n, symbol: "diamond", color: COULEURS_REGLAGES[d.typesJalon.length % COULEURS_REGLAGES.length] })), `Type de jalon « ${n} » créé.`)} />}>
+      <div className="ox-rg-table" role="table" aria-label="Types de jalon">
+        {d.typesJalon.map((t, i) => <div key={t.id} className="ox-rg-l" role="row" aria-label={t.name}>
+          <Couleur valeur={t.color} libelle={`Couleur du type de jalon ${t.name}`} onChange={(c) => void ecrire("typesJalon", jalons((v) => majElement<TypeJalon>(v, t.id, { color: c })))} />
+          <ChoixSymbole valeur={t.symbol} couleur={t.color} libelle={`Symbole de ${t.name}`} changer={(k) => void ecrire("typesJalon", jalons((v) => majElement<TypeJalon>(v, t.id, { symbol: k })))} />
+          <Texte valeur={t.name} libelle={`Nom du type de jalon ${t.name}`} onValider={(x) => void ecrire("typesJalon", jalons((v) => majElement<TypeJalon>(v, t.id, { name: x })))} />
+          <span className="ox-rg-n">{i === 0 ? "par défaut" : ""}</span>
+          <span className="ox-rg-ord"><button type="button" aria-label="Monter" disabled={i === 0} onClick={() => void ecrire("typesJalon", jalons((v) => deplacerElement(v, t.id, -1)))}>↑</button><button type="button" aria-label="Descendre" disabled={i === d.typesJalon.length - 1} onClick={() => void ecrire("typesJalon", jalons((v) => deplacerElement(v, t.id, 1)))}>↓</button></span>
+          <Supprimer libelle={`le type de jalon ${t.name}`} refus={d.typesJalon.length <= 1 ? "dernier type" : undefined} onConfirmer={() => void ecrire("typesJalon", jalons((v) => retirerElement(v, t.id)), `Type de jalon « ${t.name} » supprimé.`)} />
+        </div>)}
+      </div>
+    </Bloc>
+    <Bloc titre="Ateliers" aide="Postes de la charge du personnel (Usine, Bureau, Chantier…). Supprimer un atelier utilisé le retire aussi des affectations (comme Nexora) ; il reste toujours au moins un atelier."
+      actions={<Ajout placeholder="Nouvel atelier" libelle="Nom du nouvel atelier" onCreer={(n) => ecrire("ateliers", ateliersEcr((v) => ajouterElement(v, { id: `ws-${nouvelIdReglage()}`, name: n, color: COULEURS_REGLAGES[d.ateliers.length % COULEURS_REGLAGES.length], custom: true })), `Atelier « ${n} » créé.`)} />}>
+      <div className="ox-rg-table" role="table" aria-label="Ateliers">
+        {d.ateliers.map((w, i) => { const n = utilisations(w.id);
+          return <div key={w.id} className="ox-rg-l" role="row" aria-label={w.name}>
+            <Couleur valeur={w.color} libelle={`Couleur de l'atelier ${w.name}`} onChange={(c) => void ecrire("ateliers", ateliersEcr((v) => majElement(v, w.id, { color: c })))} />
+            <Texte valeur={w.name} libelle={`Nom de l'atelier ${w.name}`} onValider={(x) => void ecrire("ateliers", ateliersEcr((v) => majElement(v, w.id, { name: x })))} />
+            <span className="ox-rg-n">{n} jour{n > 1 ? "s" : ""} affecté{n > 1 ? "s" : ""}</span>
+            <span className="ox-rg-ord"><button type="button" aria-label="Monter" disabled={i === 0} onClick={() => void ecrire("ateliers", ateliersEcr((v) => deplacerElement(v, w.id, -1)))}>↑</button><button type="button" aria-label="Descendre" disabled={i === d.ateliers.length - 1} onClick={() => void ecrire("ateliers", ateliersEcr((v) => deplacerElement(v, w.id, 1)))}>↓</button></span>
+            <Supprimer libelle={`l'atelier ${w.name}${n ? ` (retiré de ${n} affectation${n > 1 ? "s" : ""})` : ""}`} refus={d.ateliers.length <= 1 ? "dernier atelier" : undefined} onConfirmer={() => void supprimerAtelier(w)} />
+          </div>; })}
+      </div>
+    </Bloc>
+  </>;
+}
+
+/* --------------------------------------- Google Calendar, calendriers synchronisés */
+export function OngletIntegrations() {
+  const { d } = useOptim();
+  const ecrire = useEcrire();
+  const g = d.gcal, cals = Array.isArray(g.calendars) ? (g.calendars as { id: string; name?: string; color?: string; customName?: string }[]) : [];
+  const majG = (patch: Record<string, unknown>, message?: string) => ecrire("gcal", (v) => majObjet(v, patch), message);
+  const majCal = (id: string, patch: Record<string, unknown>) => ecrire("gcal", (v) => { const o = objetOuVide(v); return { ...o, calendars: majElement(Array.isArray(o.calendars) ? o.calendars : [], id, patch) }; });
+  const sync = calendriersSync(d.calendriersSync), zone = typeof d.calendriersSync.zone === "string" ? d.calendriersSync.zone : "A";
+  const nombre = (k: string, defaut: number) => (typeof g[k] === "number" ? (g[k] as number) : defaut);
+  return <>
+    <AvisPartage />
+    <Bloc titre="Google Calendar" aide="Calendriers importés, nom affiché et fenêtre d'import. La liste des calendriers et l'import eux-mêmes viennent de la connexion Google (aujourd'hui assurée par Nexora et l'assistant) : on règle ici leur affichage.">
+      <div className="ox-rg-valeurs">
+        <label className="ox-rg-champ"><span>Jours passés importés</span><input key={nombre("daysPast", 30)} type="number" min={0} className="ox-rg-t is-nb" defaultValue={nombre("daysPast", 30)} onBlur={(e) => { const x = Math.round(Number(e.target.value)); if (Number.isFinite(x) && x >= 0 && x !== nombre("daysPast", 30)) void majG({ daysPast: x }, "Fenêtre d'import enregistrée."); }} aria-label="Jours passés importés" /></label>
+        <label className="ox-rg-champ"><span>Jours à venir importés</span><input key={nombre("daysFuture", 365)} type="number" min={0} className="ox-rg-t is-nb" defaultValue={nombre("daysFuture", 365)} onBlur={(e) => { const x = Math.round(Number(e.target.value)); if (Number.isFinite(x) && x >= 0 && x !== nombre("daysFuture", 365)) void majG({ daysFuture: x }, "Fenêtre d'import enregistrée."); }} aria-label="Jours à venir importés" /></label>
+        <label className="ox-rg-champ ox-rg-case"><span>Événements passés</span><span><input type="checkbox" checked={g.autoCompletePastEvents === true} onChange={(e) => void majG({ autoCompletePastEvents: e.target.checked }, e.target.checked ? "Les événements passés seront marqués « Terminé »." : "Marquage automatique désactivé.")} /> marquer « Terminé »</span></label>
+      </div>
+      <div className="ox-rg-table" role="table" aria-label="Calendriers Google">
+        {cals.map((c) => <div key={c.id} className="ox-rg-l" role="row" aria-label={c.name || c.id}>
+          <i className="ox-rg-pastille" style={{ background: c.color || "#7a8290" }} />
+          <span className="ox-rg-fixe" title={c.id}>{c.name || c.id}</span>
+          <Texte valeur={c.customName || ""} libelle={`Nom affiché de ${c.name || c.id}`} onValider={(x) => void majCal(c.id, { customName: x })} />
+          {c.customName && <button type="button" className="hx-more is-plain" onClick={() => void majCal(c.id, { customName: undefined })}>Nom d'origine</button>}
+        </div>)}
+        {!cals.length && <p className="hx-dim">Aucun calendrier Google configuré.</p>}
+      </div>
+    </Bloc>
+    <Bloc titre="Calendriers synchronisés" aide="Jours fériés, vacances scolaires, changements d'heure, calendrier fiscal : chacun alimente un projet. La synchronisation elle-même est faite par Nexora ; ses réglages sont partagés.">
+      <div className="ox-rg-valeurs">
+        <label className="ox-rg-champ"><span>Zone scolaire</span><div className="hx-seg is-xs" role="group" aria-label="Zone scolaire">{["A", "B", "C"].map((z) => <button key={z} type="button" aria-pressed={zone === z} onClick={() => void ecrire("calendriersSync", (v) => ({ ...objetOuVide(v), zone: z }), `Zone ${z} enregistrée.`)}>{z}</button>)}</div></label>
+        <label className="ox-rg-champ"><span>Département</span><input key={String(d.calendriersSync.department)} className="ox-rg-t is-nb" maxLength={3} defaultValue={typeof d.calendriersSync.department === "string" ? d.calendriersSync.department : "69"} onBlur={(e) => { const x = e.target.value.trim(); if (x && x !== d.calendriersSync.department) void ecrire("calendriersSync", (v) => ({ ...objetOuVide(v), department: x }), "Département enregistré."); }} aria-label="Département" /></label>
+      </div>
+      <div className="ox-rg-table" role="table" aria-label="Calendriers synchronisés">
+        {sync.map((c) => <div key={c.id} className="ox-rg-l" role="row" aria-label={c.label}>
+          <label className="ox-rg-case"><input type="checkbox" checked={c.enabled} onChange={(e) => void ecrire("calendriersSync", (v) => majCalendrierSync(v, c.id, { enabled: e.target.checked }))} aria-label={`Activer ${c.label}`} /></label>
+          <Couleur valeur={c.color} libelle={`Couleur de ${c.label}`} onChange={(x) => void ecrire("calendriersSync", (v) => majCalendrierSync(v, c.id, { color: x }))} />
+          <span className="ox-rg-fixe" title={c.description}>{c.label}</span>
+          <Texte valeur={c.projectName} libelle={`Projet de ${c.label}`} onValider={(x) => void ecrire("calendriersSync", (v) => majCalendrierSync(v, c.id, { projectName: x }))} />
+          <label className="ox-rg-case"><input type="checkbox" checked={c.showAsMetaBlock} onChange={(e) => void ecrire("calendriersSync", (v) => majCalendrierSync(v, c.id, { showAsMetaBlock: e.target.checked }))} /> bloc temporel</label>
+        </div>)}
+      </div>
+      {typeof d.calendriersSync.lastSyncAt === "string" && <p className="hx-hint">Dernière synchronisation : {new Date(d.calendriersSync.lastSyncAt).toLocaleString("fr-FR")}.</p>}
+    </Bloc>
+  </>;
+}
+
+/* ----------------------------------------------------- Méta-blocs temporels */
+export function OngletMetaBlocs() {
+  const { d, jour } = useOptim();
+  const ecrire = useEcrire();
+  const maj = (id: string, patch: Record<string, unknown>) => ecrire("metaBlocs", (v) => majElement(v, id, patch));
+  return <>
+    <AvisPartage />
+    <Bloc titre="Méta-blocs temporels" aide="Périodes affichées en fond des frises de Nexora (phases, congés, campagnes) : titre, dates, couleur, bordure."
+      actions={<Ajout placeholder="Nouveau bloc (ex. Phase 1)" libelle="Titre du nouveau bloc" onCreer={(n) => ecrire("metaBlocs", (v) => ajouterElement(v, { id: nouvelIdReglage(), title: n, startDate: jour, endDate: jour, kind: "phase", color: COULEURS_REGLAGES[d.metaBlocs.length % COULEURS_REGLAGES.length], borderStyle: "solid", dashboardIds: null }), `Bloc « ${n} » créé.`)} />}>
+      <div className="ox-rg-table" role="table" aria-label="Méta-blocs">
+        {d.metaBlocs.map((b) => <div key={b.id} className="ox-rg-l" role="row" aria-label={b.title}>
+          <Couleur valeur={b.color} libelle={`Couleur de ${b.title}`} onChange={(c) => void maj(b.id, { color: c })} />
+          <Texte valeur={b.title} libelle={`Titre de ${b.title}`} onValider={(x) => void maj(b.id, { title: x })} />
+          <label className="ox-rg-bornes">du<input key={b.startDate} type="date" className="ox-rg-t is-date" defaultValue={b.startDate} onBlur={(e) => { const x = e.target.value; if (x && x !== b.startDate) void maj(b.id, { startDate: x, ...(b.endDate && x > b.endDate ? { endDate: x } : {}) }); }} aria-label={`Début de ${b.title}`} /></label>
+          <label className="ox-rg-bornes">au<input key={b.endDate} type="date" className="ox-rg-t is-date" defaultValue={b.endDate} min={b.startDate || undefined} onBlur={(e) => { const x = e.target.value; if (x && x !== b.endDate && (!b.startDate || x >= b.startDate)) void maj(b.id, { endDate: x }); }} aria-label={`Fin de ${b.title}`} /></label>
+          <div className="hx-seg is-xs" role="group" aria-label={`Bordure de ${b.title}`}>{([["solid", "Pleine"], ["dashed", "Tirets"]] as const).map(([k, l]) => <button key={k} type="button" aria-pressed={b.borderStyle === k} onClick={() => void maj(b.id, { borderStyle: k })}>{l}</button>)}</div>
+          <button type="button" className="hx-more is-plain" onClick={() => void ecrire("metaBlocs", (v) => { const l = Array.isArray(v) ? v : []; const o = l.find((x) => x?.id === b.id); return o ? [...l, { ...o, id: nouvelIdReglage(), title: `${b.title} (copie)` }] : l; }, `Bloc « ${b.title} » dupliqué.`)}>Dupliquer</button>
+          <Supprimer libelle={`le bloc ${b.title}`} onConfirmer={() => void ecrire("metaBlocs", (v) => retirerElement(v, b.id), `Bloc « ${b.title} » supprimé.`)} />
+        </div>)}
+        {!d.metaBlocs.length && <p className="hx-dim">Aucun méta-bloc.</p>}
+      </div>
     </Bloc>
   </>;
 }

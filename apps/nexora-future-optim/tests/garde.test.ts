@@ -4,8 +4,9 @@ import { CLES_ECRITURE_OUVERTES } from "../src/donnees/config";
 
 describe("garde d'écriture", () => {
   it("clés ouvertes : tâches et archive (#655), journal, habitudes (#669), préférences propres au site (#687), réglages de Nexora (03/10/2026)", () => {
-    expect([...CLES_ECRITURE_OUVERTES].sort()).toEqual(["nexora:activityLog", "nexora:habitLog", "nexora:habitSkips", "nexora:habitThemes", "nexora:optimPrefs", "nexora:projectFolders", "nexora:projects",
-      "nexora:sportGoals", "nexora:statuses", "nexora:taskArchive", "nexora:taskDefaults", "nexora:taskTemplates", "nexora:taskTypes", "nexora:tasks", "nexora:teamMembers", "nexora:teams"]);
+    expect([...CLES_ECRITURE_OUVERTES].sort()).toEqual(["nexora:activityLog", "nexora:gcalSettings", "nexora:habitLog", "nexora:habitSkips", "nexora:habitThemes", "nexora:metaTemporalBlocks", "nexora:milestoneTypes", "nexora:optimPrefs",
+      "nexora:projectFolders", "nexora:projects", "nexora:sportGoals", "nexora:staffing", "nexora:statuses", "nexora:syncedCalendarSettings", "nexora:taskArchive", "nexora:taskDefaults", "nexora:taskTemplates", "nexora:taskTypes",
+      "nexora:tasks", "nexora:teamMembers", "nexora:teams", "nexora:workshops"]);
   });
   it("refuse toute clé non ouverte", () => {
     expect(() => exigerEcriture("nexora:tasks", [])).toThrow(ErreurLectureSeule);
