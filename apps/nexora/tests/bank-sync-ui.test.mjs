@@ -44,6 +44,7 @@ test("résultat d'un passage, erreurs traduites", () => {
   assert.match(html, /if \(!p\.result\.partial\) break;/, "l'interface relance tant que le passage est partiel");
   assert.equal(B.bankSyncResultLine({ error: "consent_expired" }), "Erreur : accès expiré, renouvelez la connexion.");
   assert.equal(B.bankSyncErrorText("enable_banking_http_500"), "enable_banking_http_500");
+  assert.match(B.bankSyncErrorText("enable_banking_http_429:ASPSP_RATE_LIMIT_EXCEEDED"), /^limite de la banque atteinte \(4 accès par jour sans vous\)/);
 });
 
 test("libellés ignorés et échantillon des opérations écartées", () => {
