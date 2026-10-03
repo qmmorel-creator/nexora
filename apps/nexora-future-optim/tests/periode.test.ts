@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bornes, decaler, moisCouverts, synthesePeriode } from "../src/donnees/periode";
-import { buildBudgetSummary } from "../../nexora/lib/finance-budget.mjs";
+import { buildBudgetSummary } from "../src/nexora/finance-budget.mjs";
 
 const J = "2026-10-03"; // samedi
 const tx = (id: string, d: string, type: string, montant: number, category: string, extra: Record<string, unknown> = {}) => ({ transaction_id: id, effective_date: d, bank_date: d, transaction_type: type, account_id: "cc", signed_amount: montant, category, subcategory: "", ...extra });

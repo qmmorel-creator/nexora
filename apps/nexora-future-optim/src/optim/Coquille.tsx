@@ -120,7 +120,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   const nbRetard = d.taches.filter(retard).length;
   let contenu;
   if (!d.charge) contenu = <main className="hx-main"><p className="hx-dim">Chargement de vos données…</p></main>;
-  else if (ecran === "journee") contenu = <Journee />;
+  else if (ecran === "journee") contenu = <Journee email={email} />;
   else if (ecran === "planning") contenu = <Planning email={email} allerJournee={() => aller("journee")} ouvrirProjet={(id) => aller("projets", id)} />;
   else if (ecran === "projets") contenu = <Projets projetId={route.segments[1] || null} email={email} ouvrirProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />;
   else if (ecran === "corps") contenu = <Corps />;

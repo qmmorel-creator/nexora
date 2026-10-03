@@ -9,3 +9,4 @@ export function budgetCharts(data: DonneesBudgetNexora, period: PeriodeNexora, t
 export function expensesOf<T>(list: T[]): T[];
 export function incomeOf<T>(list: T[]): T[];
 export function sumAbs(list: { amount: number }[]): number;
+export function buildBudgetSummary(raw: unknown, month: string, now?: Date): { tracking: unknown; charts: unknown; totals: { expenses: number; income: number } };

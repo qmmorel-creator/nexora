@@ -71,7 +71,7 @@ function resume(f: FiltreVue, n: number, noms: (cle: CleListe, id: string) => st
 const estVide = (f: FiltreVue) => !f.q && !f.retard && !f.jalons && (Object.keys(LIBELLES) as CleListe[]).every((k) => !f[k].length);
 
 export function BarreFiltres({ ecran, n, masquer = [], email, reglages, appliquerReglages }: {
-  ecran: "planning" | "projets"; n: number; masquer?: CleListe[]; email: string;
+  ecran: "planning" | "projets" | "journee"; n: number; masquer?: CleListe[]; email: string;
   reglages: Omit<VueEnregistree, "id" | "ecran" | "nom" | "filtre">; appliquerReglages: (v: VueEnregistree) => void;
 }) {
   const { d, prefs, ecrirePrefs, projet, statut } = useOptim();

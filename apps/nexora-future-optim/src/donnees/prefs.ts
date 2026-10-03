@@ -16,7 +16,7 @@ export type Reference = (typeof REFERENCES)[number];
 
 export interface FiltreVue { q: string; projets: string[]; statuts: string[]; responsables: string[]; types: string[]; criticites: string[]; retard: boolean; jalons: boolean; terminees: boolean; }
 export interface VueEnregistree {
-  id: string; ecran: "planning" | "projets"; nom: string; filtre: FiltreVue;
+  id: string; ecran: "planning" | "projets" | "journee"; nom: string; filtre: FiltreVue;
   zoom?: Zoom; groupe?: string; style?: StyleGantt; reference?: Reference;
 }
 // Corps (#689) : quatre cartes, chacune titrée librement, jusqu'à quatre
@@ -58,6 +58,11 @@ export const DUREES_PATRIMOINE = [6, 12, 24, 36, 60] as const;
 export const CHOIX_PERIODE_ARGENT = ["mois", "mois-prec", "semaine", "annee", "perso"] as const;
 export interface PrefsArgent { onglet: OngletArgent; patrimoineMois: number; periode: (typeof CHOIX_PERIODE_ARGENT)[number]; }
 
+// Journée (retour du 03/10/2026) : onglet personnel / professionnel et réglages
+// du module Tâches du jour de Nexora pour chacun (clés pixelTasks* du widget Nexora).
+export interface PrefsJournee { onglet: "perso" | "pro"; pixelPerso: Record<string, unknown>; pixelPro: Record<string, unknown>; }
+export const JOURNEE_DEFAUT: PrefsJournee = { onglet: "perso", pixelPerso: { pixelTasksSidesFolded: { prev: true, next: true } }, pixelPro: {} };
+
 export interface PrefsOptim {
   version: 1;
   gantt: StyleGantt;
@@ -67,6 +72,7 @@ export interface PrefsOptim {
   accueil: { pixels: boolean; corps: string[]; tuiles: TuileAccueil[]; journee: BlocJourneeAccueil; semaine: BlocSemaineAccueil };
   corps: PrefsCorps;
   argent: PrefsArgent;
+  journee: PrefsJournee;
   vues: VueEnregistree[];
 }
 
@@ -78,6 +84,7 @@ export const PREFS_VIDES: PrefsOptim = {
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL], journee: JOURNEE_ACCUEIL_DEFAUT, semaine: SEMAINE_ACCUEIL_DEFAUT },
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree", photos: {} },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
+  journee: JOURNEE_DEFAUT,
   vues: [],
 };
 // Compatibilité : nom attendu par le magasin de données.
@@ -102,7 +109,7 @@ function normaliserVue(v: unknown): VueEnregistree | null {
   const b = objet(v);
   const id = typeof b.id === "string" ? b.id.slice(0, 40) : "";
   const nom = typeof b.nom === "string" ? b.nom.trim().slice(0, 80) : "";
-  if (!id || !nom || (b.ecran !== "planning" && b.ecran !== "projets")) return null;
+  if (!id || !nom || (b.ecran !== "planning" && b.ecran !== "projets" && b.ecran !== "journee")) return null;
   return {
     id, nom, ecran: b.ecran, filtre: normaliserFiltre(b.filtre),
     ...(typeof b.zoom === "string" && (ZOOMS as readonly string[]).includes(b.zoom) ? { zoom: b.zoom as Zoom } : {}),
@@ -150,6 +157,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT, tuiles: Array.isArray(ac.tuiles) ? [...new Set(chaines(ac.tuiles).filter((t): t is TuileAccueil => (TUILES_ACCUEIL as readonly string[]).includes(t)))] : [...TUILES_ACCUEIL], journee: normaliserJourneeAccueil(ac.journee), semaine: normaliserSemaineAccueil(ac.semaine) },
     corps: normaliserCorps(b.corps),
     argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24, periode: parmi(a.periode, CHOIX_PERIODE_ARGENT, "mois") }; })(),
+    journee: (() => { const j = objet(b.journee); return { onglet: j.onglet === "pro" ? "pro" : "perso", pixelPerso: j.pixelPerso && typeof j.pixelPerso === "object" && !Array.isArray(j.pixelPerso) ? (j.pixelPerso as Record<string, unknown>) : JOURNEE_DEFAUT.pixelPerso, pixelPro: objet(j.pixelPro) } as PrefsJournee; })(),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
   };
 }
