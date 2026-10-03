@@ -27,6 +27,8 @@ import { PageEquipe } from "./Equipe";
 import { PageTriage } from "./Triage";
 import { PageAtlas } from "./Atlas";
 import { PagePhrase, commandesVues } from "./Phrase";
+import { ONGLETS_REGLAGES, PageReglages, type OngletReglages } from "./Reglages";
+import { copiesSecours } from "../donnees/secours";
 import { PageFinancesKdm } from "./Finances";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { fusionnerPrefs } from "../donnees/prefs";
@@ -68,8 +70,8 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const zone = useRef<HTMLDivElement>(null);
 
   const s0 = route.segments[0];
-  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" || s0 === "triage" || s0 === "atlas" || s0 === "phrase" ? s0 : "fil";
-  const espace: Espace = vue === "triage" || vue === "atlas" || vue === "phrase" ? "fil" : vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
+  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" || s0 === "triage" || s0 === "atlas" || s0 === "phrase" || s0 === "reglages" ? s0 : "fil";
+  const espace: Espace = vue === "triage" || vue === "atlas" || vue === "phrase" || vue === "reglages" ? "fil" : vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
   const sansRequete = espace !== "chantiers";
   const modeFil = (["matin", "journee", "soir", "semaine"] as const).find((m) => m === route.params.get("m")) ?? null;
   const projetFixe = vue === "projet" ? route.segments[1] : undefined;
@@ -171,6 +173,29 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     };
     agir(creer(b, d.aujourdhui, id), `« ${s.titre} » créée.`, () => retirer([id])).then(() => { setSelection(id); if (ouvrir) majAdresse({ t: id }, true); });
   };
+  // Modèle de tâche (Ref #663) : mêmes valeurs que TaskTemplatesManager.
+  const actionCreerModele = (modeleId: string) => {
+    const m = d.modeles.find((x) => x.id === modeleId); if (!m) return;
+    const v = m.values || {}; const id = nouvelId(); const def = d.defauts;
+    const b = {
+      title: m.name, projectId: v.projectId || projetFixe || def.projectId || undefined, taskTypeId: v.taskTypeId || def.taskTypeId || undefined, statusId: v.statusId || def.statusId || undefined,
+      assignee: v.assignee ?? def.assignee ?? "", criticality: (v.criticality || def.criticality || null) as Tache["criticality"], milestone: v.milestone === "true" || undefined,
+      start: d.aujourdhui, end: d.aujourdhui,
+    };
+    agir(creer(b, d.aujourdhui, id), `« ${m.name} » créée depuis le modèle.`, () => retirer([id])).then(() => { setSelection(id); majAdresse({ t: id }, true); });
+  };
+  // Écriture en cours : le navigateur demande confirmation avant de fermer l'onglet.
+  useEffect(() => {
+    if (!enCours) return;
+    const retenir = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", retenir);
+    return () => window.removeEventListener("beforeunload", retenir);
+  }, [enCours]);
+  // Copies de secours restées d'une session précédente (écriture non confirmée).
+  useEffect(() => {
+    const n = copiesSecours().length;
+    if (n) notifier({ message: `${n} écriture${n > 1 ? "s" : ""} non confirmée${n > 1 ? "s" : ""} lors d'une session précédente : voir Réglages, Sauvegarde.`, ton: "crit" });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Tableur (Ref #658) : actions en masse, annulables.
   const versions = (ids: string[]) => ids.map((id) => tache(id)).filter((t): t is Tache => !!t);
   const pluriel = (n: number) => `${n} tâche${n > 1 ? "s" : ""}`;
@@ -195,6 +220,9 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     { id: "atlas", libelle: "Atlas", detail: "prototype : la carte en relief de tout Nexora", executer: () => naviguer("/atlas") },
     { id: "phrase", libelle: "Phrase", detail: "poser une question en phrase, vues enregistrées", executer: () => naviguer("/phrase") },
     ...commandesVues(d),
+    { id: "reglages", libelle: "Réglages", detail: "projets, statuts, types, modèles, habitudes", executer: () => naviguer("/reglages") },
+    ...ONGLETS_REGLAGES.map((o) => ({ id: `reglages-${o.valeur}`, libelle: `Réglages : ${o.libelle}`, executer: () => naviguer("/reglages", new URLSearchParams({ o: o.valeur })) })),
+    ...d.modeles.map((m) => ({ id: `modele-${m.id}`, libelle: `Nouvelle tâche : modèle ${m.name}`, detail: "crée la tâche et ouvre sa fiche", executer: () => actionCreerModele(m.id) })),
     { id: "fil-soir", libelle: "Bilan du soir", executer: () => naviguer("/", new URLSearchParams("m=soir")) },
     { id: "fil-semaine", libelle: "Semaine", detail: "fil du jour, 7 jours", executer: () => naviguer("/", new URLSearchParams("m=semaine")) },
     { id: "toutes", libelle: "Toutes les tâches", executer: () => naviguer("/taches") },
@@ -282,6 +310,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} />
         : vue === "triage" ? <PageTriage d={d} source={source} onOuvrir={ouvrir} />
         : vue === "atlas" ? <PageAtlas d={d} source={source} onOuvrir={ouvrir} />
+        : vue === "reglages" ? <PageReglages d={d} onglet={(ONGLETS_REGLAGES.find((o) => o.valeur === route.params.get("o"))?.valeur ?? "projets") as OngletReglages} setOnglet={(o) => naviguer("/reglages", new URLSearchParams({ o }), true)} />
         : vue === "phrase" ? <PagePhrase d={d} source={source} vueId={route.params.get("vue")} onOuvrir={ouvrir} />
         : vue === "equipe" ? <PageEquipe d={d} />
         : vue === "corps" ? <PageCorps d={d} corps={source.corps} />
@@ -334,7 +363,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       <footer className="etat-barre mono" aria-live="polite">
         <span className={enCours ? "" : "ok"}>{enCours ? "● Enregistrement…" : "● Synchronisé"}</span>
         <span>Tâches · rév. {d.etats.taches.lecture?.revision?.slice(0, 8) || "—"}</span>
-        <span>Écriture : tâches, archive, journal, habitudes, préférences · le reste en lecture seule</span>
+        <span>Écriture : tâches, archive, journal, habitudes, préférences, réglages de projet · finances, équipe et devis en lecture seule</span>
         <span className="marge-auto"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</span>
       </footer>
       {palette && <Palette key={palette} ouverte modeInitial={palette} onFermer={() => setPalette(null)} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}

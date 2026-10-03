@@ -46,3 +46,22 @@ export function planifierEcriture(cle: string, texte: string, revisionAttendue: 
   ops.push({ type: "ecrire", id: cle, donnees: { value: null, updatedAt: maintenant, revision, source: SOURCE_NAVIGATEUR, storageMode: MODE_SEGMENTE, chunkIds: ids, chunkCount: ids.length, totalLength: texte.length } });
   return ops;
 }
+
+// Boucle de rejeu (Ref #663) : lit la dernière version, applique l'opération,
+// écrit en exigeant la révision lue ; en cas de conflit (une autre session a
+// écrit entre-temps), relit et rejoue, au plus `essais` fois. Pure vis-à-vis
+// du stockage : Firestore en production, mémoire dans les tests.
+export interface Stockage {
+  lire(): Promise<{ texte: string; revision: string | null }>;
+  ecrire(texte: string, revisionLue: string | null): Promise<string>; // lève ErreurConflit
+}
+export async function modifierAvecRejeu(s: Stockage, transformer: (texte: string) => string, essais = 3): Promise<{ revision: string; texte: string }> {
+  let derniere: unknown = null;
+  for (let essai = 0; essai < essais; essai++) {
+    const actuel = await s.lire();
+    const texte = transformer(actuel.texte);
+    try { return { revision: await s.ecrire(texte, actuel.revision), texte }; }
+    catch (e) { if (!(e instanceof ErreurConflit)) throw e; derniere = e; }
+  }
+  throw derniere;
+}

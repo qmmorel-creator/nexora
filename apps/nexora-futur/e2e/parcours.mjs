@@ -365,6 +365,50 @@ try {
   await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.phrase?.vues?.length === 0);
   assert.ok(await chiffre.textContent());
 
+  etape = "réglages : projets, statuts, modèles, habitudes"; console.log("→", etape);
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=projets`);
+  const blocProjets = page.getByRole("region", { name: "Projets", exact: true });
+  await blocProjets.getByLabel("Nom du nouveau projet").fill("Chantier Martin");
+  await blocProjets.getByRole("button", { name: "Créer" }).click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:projects") || []).some((p) => p.name === "Chantier Martin"));
+  const ligneMartin = blocProjets.getByRole("row", { name: "Chantier Martin" });
+  const nomMartin = ligneMartin.getByLabel("Nom de Chantier Martin");
+  await nomMartin.fill("Chantier Martin (Lyon)"); await nomMartin.press("Enter");
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:projects") || []).some((p) => p.name === "Chantier Martin (Lyon)"));
+  const martin = (await valeur("nexora:projects")).find((p) => p.name === "Chantier Martin (Lyon)");
+  await blocProjets.getByRole("button", { name: "Favori Chantier Martin (Lyon)" }).click();
+  await page.waitForFunction((id) => (window.__nexoraDemo.valeur("nexora:favorites") || []).some((f) => f.type === "project" && f.id === id), martin.id);
+  assert.ok(await blocProjets.getByRole("row", { name: "CTEX6" }).getByText("a des tâches").isVisible(), "projet avec tâches non supprimable");
+  await blocProjets.getByRole("button", { name: "Supprimer Chantier Martin (Lyon)" }).click();
+  await blocProjets.getByRole("button", { name: "Confirmer : supprimer Chantier Martin (Lyon)" }).click();
+  await page.waitForFunction((id) => !(window.__nexoraDemo.valeur("nexora:projects") || []).some((p) => p.id === id), martin.id);
+  // Statuts : création, portée, suppression.
+  await page.getByRole("navigation", { name: "Rubriques des réglages" }).getByRole("button", { name: "Statuts et types" }).click();
+  const blocStatuts = page.getByRole("region", { name: "Statuts", exact: true });
+  await blocStatuts.getByLabel("Nom du nouveau statut").fill("Bloqué"); await blocStatuts.getByRole("button", { name: "Créer" }).click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:statuses") || []).some((x) => x.name === "Bloqué"));
+  await blocStatuts.getByLabel("Portée de statut Bloqué").selectOption({ label: "CTEX6" });
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:statuses") || []).find((x) => x.name === "Bloqué")?.projectId === "p-ctex6");
+  // Modèle de tâche, puis création depuis la palette.
+  await page.getByRole("navigation", { name: "Rubriques des réglages" }).getByRole("button", { name: "Création" }).click();
+  const blocModeles = page.getByRole("region", { name: "Modèles de tâche" });
+  await blocModeles.getByLabel("Nom du nouveau modèle").fill("Visite de chantier"); await blocModeles.getByRole("button", { name: "Créer" }).click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:taskTemplates") || []).some((m) => m.name === "Visite de chantier"));
+  await blocModeles.getByLabel("Visite de chantier : Projet").selectOption({ label: "Lot 2B" });
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:taskTemplates") || []).find((m) => m.name === "Visite de chantier")?.values?.projectId === "p-lot2b");
+  await page.keyboard.press("Control+k"); await page.keyboard.type("modèle Visite");
+  await page.getByRole("dialog").getByText("Nouvelle tâche : modèle Visite de chantier").click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:tasks") || []).some((t) => t.title === "Visite de chantier" && t.projectId === "p-lot2b"));
+  await page.keyboard.press("Escape");
+  // Thème d'habitudes : nouvelle habitude chiffrée.
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=habitudes`);
+  const sante = page.getByRole("group", { name: "Thème Santé" });
+  await sante.getByLabel("Nouvelle habitude dans Santé").fill("Gainage"); await sante.getByRole("button", { name: "Ajouter" }).click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:habitThemes") || []).some((t) => (t.habits || []).some((h) => h.name === "Gainage")));
+  await sante.getByLabel("Saisie de Gainage").selectOption("numeric");
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:habitThemes") || []).flatMap((t) => t.habits || []).find((h) => h.name === "Gainage")?.kind === "numeric");
+  await capture("10h-reglages");
+
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
   const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
   const tache = async (id) => (await taches()).find((t) => t.id === id);
