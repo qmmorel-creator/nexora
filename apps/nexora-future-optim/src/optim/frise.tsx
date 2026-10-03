@@ -1,12 +1,13 @@
 // Moteur de frise (Ref #688), porté du prototype hybride v4 :
 // plages et zooms, graduations, traits verticaux à trois niveaux (retour du
 // 03/10/2026 : mieux distinguer les repères temporels), rangement en lignes
-// sans chevauchement et six représentations de Gantt.
-import type { CSSProperties, ReactNode } from "react";
+// sans chevauchement et représentations de Gantt (dont six timelines premium en SVG).
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { ajouterJours, ecartJours, type Statut, type Tache } from "../donnees/modele";
 import type { LigneFrise } from "../donnees/planning";
 import type { StyleGantt, Zoom } from "../donnees/prefs";
 import { dateCourte, jourCourt, MOIS_C, semaineIso } from "./contexte";
+import { dessinerBarre, STYLES_PREMIUM, type StylePremium } from "./timelines-premium.mjs";
 
 export const ZOOMS_DEF: Record<Zoom, { libelle: string; jours: number; avant: number }> = {
   semaine: { libelle: "Semaine", jours: 9, avant: 2 }, mois: { libelle: "Mois", jours: 35, avant: 7 },
@@ -21,7 +22,29 @@ export const STYLES_DEF: { id: StyleGantt; libelle: string; aide: string }[] = [
   { id: "pont", libelle: "Pont", aide: "Une arche du début à la fin ; la partie pleine est l'avancement." },
   { id: "compte", libelle: "Compte à rebours", aide: "Seul le temps restant est plein ; le passé est un pointillé ; « J−n » avant l'échéance." },
   { id: "jauge", libelle: "Jauge à curseur", aide: "Un rail fin pour la durée, une bille posée à l'avancement ; si la bille est derrière aujourd'hui, l'écart est rouge." },
+  // Timelines premium (retour du 03/10/2026) : prototype docs/maquettes/timelines-premium.
+  { id: "briques", libelle: "Briques techniques", aide: "Un module par jour, tenons plats ; modules pleins = réalisé, hachurés = restant." },
+  { id: "conduite", libelle: "Conduite hydraulique", aide: "Un conduit fin entre deux raccords ; le fluide remplit jusqu'à l'avancement." },
+  { id: "nuages", libelle: "Nuages de points", aide: "Particules entre deux bornes nettes : pleines = réalisé, creuses = restant." },
+  { id: "niveaux", libelle: "Courbes de niveau", aide: "Une île dessinée comme une carte IGN ; courbes pleines = réalisé, pointillées = restant. Le relief est décoratif." },
+  { id: "trajectoires", libelle: "Trajectoires", aide: "Brins tressés croisés au point d'avancement ; brin coloré et halo = réalisé, trait fin = restant." },
+  { id: "prismes", libelle: "Prismes plats", aide: "Facettes translucides ; soutenues = réalisé, pâles au contour pointillé = restant ; trait foncé à l'avancement." },
 ];
+const estPremium = (s: StyleGantt): s is StylePremium => (STYLES_PREMIUM as string[]).includes(s);
+
+// Barre premium : SVG redessiné à sa taille réelle (ResizeObserver).
+function FormePremium({ style, couleur, avancement, id, jours, libDebut, libFin }: { style: StylePremium; couleur: string; avancement: number; id: string; jours: number; libDebut: string; libFin: string }) {
+  const ref = useRef<SVGSVGElement>(null);
+  useLayoutEffect(() => {
+    const svg = ref.current; if (!svg) return;
+    const dessiner = () => { const b = svg.getBoundingClientRect(); dessinerBarre(svg, style, { largeur: b.width, hauteur: b.height, couleur, avancement, id, jours, libDebut, libFin, compact: true }); };
+    dessiner();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(dessiner); ro.observe(svg);
+    return () => ro.disconnect();
+  }, [style, couleur, avancement, id, jours, libDebut, libFin]);
+  return <svg ref={ref} className="g-svg" aria-hidden="true" />;
+}
 
 export interface Plage { zoom: Zoom; debut: string; fin: string; jours: number; }
 export function plage(zoom: Zoom, decalage: number, jour: string): Plage {
@@ -123,10 +146,11 @@ function pixels(l: LigneFrise, r: Plage, i: InfosTache) {
   const el = i.jour < s0 ? 0 : Math.min(n, Math.round((ecartJours(s0, i.jour < s1 ? i.jour : s1) + 1) / u));
   return <span className="g-px">{Array.from({ length: Math.min(n, 400) }, (_, k) => <i key={k} className={i.fini ? "is-done" : k < el ? "is-el" : ""} />)}</span>;
 }
-export function formeGantt(style: StyleGantt, t: Tache, l: LigneFrise, r: Plage, a: number, b: number, i: InfosTache): ReactNode {
+export function formeGantt(style: StyleGantt, t: Tache, l: LigneFrise, r: Plage, a: number, b: number, i: InfosTache, couleur = ""): ReactNode {
   const prog = i.fini ? 100 : Math.max(0, Math.min(100, Number(t.progress) || 0));
   const ecoule = i.fini ? 100 : dansBarre(r, ajouterJours(i.jour, 1), a, b);
   if (style === "pixels") return pixels(l, r, i);
+  if (estPremium(style)) { const jours = Math.max(1, Math.round((b - a) / 100 * r.jours)); return <FormePremium style={style} couleur={couleur} avancement={prog} id={t.id} jours={jours} libDebut={dateCourte(l.debut)} libFin={dateCourte(l.fin)} />; }
   if (style === "comete") return <><span className="g-tail" /><i className="g-head" /></>;
   if (style === "ecart") { const lag = Math.max(0, ecoule - prog); return <><span className="g-time"><i style={{ width: `${ecoule}%` }} /></span><span className="g-done"><i style={{ width: `${prog}%` }} />{lag > 0 && !i.fini && <b style={{ left: `${prog}%`, width: `${lag}%` }} />}</span></>; }
   if (style === "pont") return <><span className="g-arc" /><span className="g-arc is-fill" style={{ clipPath: `inset(0 ${100 - prog}% 0 0)` }} /></>;
@@ -151,7 +175,7 @@ export function LigneGantt({ el, r, style, couleur, statuts, infos, selection, o
         : <span className="g-lab">{infos.fini ? "✓ " : ""}{t.title} <small>{dateCourte(l.fin)}</small></span>;
   const forme = style === "ruban"
     ? <span className="g-bar"><i className="g-prog" style={{ width: `${infos.fini ? 100 : Math.max(0, Math.min(100, Number(t.progress) || 0))}%` }} /><span className="g-lab">{infos.fini ? "✓ " : ""}{t.title}</span></span>
-    : formeGantt(style, t, l, r, a, b, infos);
+    : formeGantt(style, t, l, r, a, b, infos, couleur);
   const depasse = infos.retard ? (() => { const o0 = Math.max(0, tx(r, ajouterJours(l.fin, 1))), o1 = Math.min(100, tx(r, infos.jour)); return o1 > o0 ? <span className={`hx-over gs-o-${style}`} style={{ left: `${o0}%`, width: `${o1 - o0}%`, top }} /> : null; })() : null;
   return <>
     <button type="button" className={`hx-g gs-${style} ${cls}`} data-drag={t.id} data-tip={info} onClick={() => ouvrir(t.id)} style={{ ...st, left: `${a}%`, width: `${Math.max(0.35, b - a)}%`, top }}>
@@ -170,7 +194,7 @@ export function BarreProjet({ l, r, style, couleur, statuts, infos, info }: { l:
   if (b <= 0 || a >= 100) return null;
   const prog = infos.fini ? 100 : Math.max(0, Math.min(100, Number(t.progress) || 0));
   const cls = `${classeStatut(t, statuts)} ${infos.fini ? "is-done" : ""} ${infos.retard ? "is-late" : ""}`;
-  const forme = style === "ruban" ? <span className="g-bar"><i className="g-prog" style={{ width: `${prog}%` }} />{prog > 0 && !infos.fini && <span className="g-lab is-pct">{prog} %</span>}</span> : formeGantt(style, t, l, r, a, b, infos);
+  const forme = style === "ruban" ? <span className="g-bar"><i className="g-prog" style={{ width: `${prog}%` }} />{prog > 0 && !infos.fini && <span className="g-lab is-pct">{prog} %</span>}</span> : formeGantt(style, t, l, r, a, b, infos, couleur);
   return <span className={`hx-g gs-${style} is-row ${cls}`} data-drag={t.id} data-tip={info} style={{ ...st, left: `${a}%`, width: `${Math.max(0.35, b - a)}%` }}>
     {forme}{style === "compte" && <span className="g-lab"><b className={`g-cd ${infos.retard ? "is-late" : ""}`}>{compteARebours(t, infos)}</b></span>}
   </span>;

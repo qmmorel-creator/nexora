@@ -23,7 +23,7 @@ https://nexora-future-optim.netlify.app. Issue mère : #687.
 - mutations rejouables avec le protocole anti-conflit de nexora-project ;
 - journal d'activité ;
 - règles des habitudes ;
-- relais serveur vers nexora-project pour le budget, la santé et le sport (`/api/optim/*`).
+- relais serveur vers nexora-project pour le budget, la santé et le sport (`/api/optim/*`) ; le budget passe en direct sur Supabase KDM360 dès que sa clé est posée (voir *Variables Netlify*).
 
 Différences avec Futur :
 - **Préférences** : clé `nexora:optimPrefs` (`src/donnees/prefs.ts`), propre à ce site. Elle porte la représentation de Gantt, les zooms et regroupements, les couleurs d'habitudes, le réglage d'accueil et les vues enregistrées. `nexora:futurPrefs` n'est ni lue ni écrite.
@@ -39,4 +39,8 @@ Différences avec Futur :
   Toute écriture Firestore passe par `src/donnees/ecriture-firebase.ts`. `tests/lecture-seule.test.ts` refuse toute autre fonction d'écriture.
 - **Démonstration** : `scripts/verifier-paquet.mjs` fait échouer le build de production s'il contient du code ou des données de démonstration.
 - **Variables Netlify** (jamais committées) : `FIREBASE_SERVICE_ACCOUNT_JSON` et `NEXORA_USER_UID`. Sans elles, les relais (budget, santé, sport) répondent `configuration_missing`. Les tâches et les habitudes, lues directement dans Firestore, fonctionnent quand même.
+- **Finances en direct** (sevrage de Nexora, #721), variables Netlify également jamais committées :
+  - `KDM360_SUPABASE_SECRET_KEY` : **à poser par Quentin** dans Netlify (site nexora-future-optim). Présente, `optim-finance` lit et catégorise directement dans Supabase KDM360 (`_partage/finance-directe.ts`), mêmes réponses que nexora-project ; absente, repli automatique sur le relais vers nexora-project ;
+  - `KDM360_SUPABASE_URL` : facultative, `https://ftgmjaozveprnshkdosj.supabase.co` par défaut ;
+  - la catégorisation garde la clé d'idempotence `nexora:optim:<clé>` du relais : une écriture rejouée n'est pas doublée après la bascule.
 - **Firebase Auth** : le domaine `nexora-future-optim.netlify.app` doit figurer dans *Authentication › Settings › Authorized domains*.

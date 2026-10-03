@@ -5,7 +5,8 @@ import { REGLES_DEFAUT, nettoyerReports, normaliserRegles, type ReglesTriage } f
 // clé NOUVELLE que ni nexora-project, ni le MCP, ni nexora-futur ne lisent.
 // Toute valeur inconnue ou invalide retombe sur la valeur par défaut.
 
-export const STYLES_GANTT = ["ruban", "pixels", "comete", "ecart", "pont", "compte", "jauge"] as const;
+// Les six derniers : timelines premium (retour du 03/10/2026, src/optim/timelines-premium.mjs).
+export const STYLES_GANTT = ["ruban", "pixels", "comete", "ecart", "pont", "compte", "jauge", "briques", "conduite", "nuages", "niveaux", "trajectoires", "prismes"] as const;
 export type StyleGantt = (typeof STYLES_GANTT)[number];
 export const ZOOMS = ["semaine", "mois", "trimestre", "annee", "pluri"] as const;
 export type Zoom = (typeof ZOOMS)[number];

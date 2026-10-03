@@ -8,7 +8,7 @@ Fait en lecture seule le 03/10/2026, sur `main` après #719.
 
 | Relais d'Optim | Appelle | Ce que fait nexora-project derrière | Secrets côté nexora-project |
 |---|---|---|---|
-| `optim-finance` (`/api/optim/finance/*`) : 4 lectures + catégorisation | `https://nexora-project.org/api/nexora/finance-*` (`_partage/relais-finance.ts`, `AMONT`) | Lit et écrit **Supabase KDM360** (tables `finance_*`, RPC `finance_apply_transaction_write`) ; calculs `lib/finance-budget.mjs` | `KDM360_SUPABASE_URL`, `KDM360_SUPABASE_SECRET_KEY` |
+| `optim-finance` (`/api/optim/finance/*`) : 4 lectures + catégorisation (en direct sur Supabase dès que la clé KDM360 est posée dans Optim, #721 ; voir étape 4 du plan) | `https://nexora-project.org/api/nexora/finance-*` (`_partage/relais-finance.ts`, `AMONT`) | Lit et écrit **Supabase KDM360** (tables `finance_*`, RPC `finance_apply_transaction_write`) ; calculs `lib/finance-budget.mjs` | `KDM360_SUPABASE_URL`, `KDM360_SUPABASE_SECRET_KEY` |
 | `optim-corps` (`/api/optim/corps/*`) : sport, santé, photos (lecture) | `https://nexora-project.org/api/nexora/{sport-activities,health-records,body-photos}` | Sport et santé : CSV publiés de Google Sheets (Strava, Whoop, balance, nutrition). Photos : **Firestore** (`bodyPhotos`, `bodyPhotoSettings/main`, `bodyPhotoBlobs/{id}/chunks`) | `NEXORA_SPORT_CSV_URL`, `NEXORA_HEALTH_CSV_URL`, compte de service Firebase |
 | `optim-rapports` | Firestore directement (`assistant_reports`) | Rapports écrits **uniquement** par les fonctions planifiées de nexora-project (matin et soir) | — |
 
@@ -79,6 +79,11 @@ Remarque : `optim-rapports` n'est appelé par aucun écran d'Optim (seule la dé
    - lire les CSV de sport et santé depuis Optim (deux secrets à dupliquer, analyse déjà portée) ;
    - lire et écrire les photos dans Firestore directement (même projet, Optim a déjà le compte de service). Cela couvre toutes les écritures photos demandées.
 4. **Finance sans relais** : Supabase KDM360 en direct. Cela revient sur le choix du 03/10 (pas de clé KDM360 sur Optim) : **décision de Quentin**. Il faut garder le préfixe d'idempotence existant pour ne pas doubler une écriture rejouée.
+   **État (#721) : code prêt**, activé dès que Quentin pose `KDM360_SUPABASE_SECRET_KEY` dans Netlify (site nexora-future-optim ; `KDM360_SUPABASE_URL` facultative).
+   - `_partage/finance-directe.ts` sert les cinq routes (budget-summary, wealth-series, sankey-data, transactions-data, catégoriser) sur Supabase, avec les modules copiés de nexora-project (`finance-supabase.ts`, `finance-validation.mjs`) et les calculs de `src/nexora/finance-budget.mjs` ;
+   - la liste blanche du relais (`relais-finance.ts`) s'applique d'abord : mêmes réponses et mêmes erreurs qu'aujourd'hui ;
+   - clé d'idempotence finale inchangée : `nexora:optim:<clé>` ;
+   - sans la clé : repli automatique sur le relais vers nexora-project.
 5. **Catalogues en écriture** (projets, dossiers, statuts, types, habitudes, objectifs sport, équipe), en portant les écrans de Futur. Risque d'écrasement tant que Nexora reste utilisé : basculer quand Nexora n'est plus ouvert.
 6. **Entretien** (purge à 30 jours, instantanés) : en fonction planifiée d'Optim, d'abord à blanc.
 7. **Finance complète, puis synchronisation bancaire** : désactiver la planification de nexora-project avant d'activer celle d'Optim.

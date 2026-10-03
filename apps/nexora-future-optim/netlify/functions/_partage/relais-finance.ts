@@ -3,6 +3,8 @@
 // du propriétaire à nexora-project, qui fait les calculs (lib/finance-budget.mjs).
 // Liste blanche : quatre lectures et la seule CATÉGORISATION (ni édition
 // complète, ni saisie d'opération, ni référentiel).
+// Sevrage de Nexora (#721) : si KDM360_SUPABASE_SECRET_KEY est posée dans Optim,
+// la route validée ici est servie en direct (_partage/finance-directe.ts).
 export const AMONT = "https://nexora-project.org";
 
 const MOIS = /^\d{4}-(0[1-9]|1[0-2])$/;

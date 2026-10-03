@@ -9,4 +9,7 @@ export function budgetCharts(data: DonneesBudgetNexora, period: PeriodeNexora, t
 export function expensesOf<T>(list: T[]): T[];
 export function incomeOf<T>(list: T[]): T[];
 export function sumAbs(list: { amount: number }[]): number;
-export function buildBudgetSummary(raw: unknown, month: string, now?: Date): { tracking: unknown; charts: unknown; totals: { expenses: number; income: number } };
+export function buildBudgetSummary(raw: unknown, month: string | null, now?: Date): { tracking: unknown; charts: unknown; totals: { expenses: number; income: number } };
+// Utilisés par la finance en direct des fonctions serveur (sevrage de Nexora, #721).
+export function buildBudgetPeriodTotals(raw: unknown, from: string | null, to: string | null, now?: Date): Record<string, unknown>;
+export function buildWealthSeries(raw: unknown, from: string | null, to: string | null, step?: string, now?: Date): Record<string, unknown>;
