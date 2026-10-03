@@ -24,7 +24,7 @@ const NOMS_TUILES: Record<TuileAccueil, [string, string]> = {
 };
 const NOMS_ONGLETS_ARGENT: Record<string, string> = { mois: "Période", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
 const NOMS_REGROUPEMENT: Record<string, string> = { jour: "Jour", semaine: "Semaine", mois: "Mois" };
-const NOMS_ECRANS: Record<VueEnregistree["ecran"], string> = { planning: "Planning", projets: "Projets" };
+const NOMS_ECRANS: Record<VueEnregistree["ecran"], string> = { planning: "Planning", projets: "Projets", journee: "Journée professionnelle" };
 
 function Segment<T extends string | number>({ valeurs, valeur, libelle, choisir, nom }: { valeurs: readonly T[]; valeur: T; libelle: (v: T) => string; choisir: (v: T) => void; nom: string }) {
   return <div className="hx-seg is-sm" role="group" aria-label={nom}>{valeurs.map((v) => <button key={String(v)} type="button" aria-pressed={valeur === v} onClick={() => choisir(v)}>{libelle(v)}</button>)}</div>;
@@ -144,9 +144,9 @@ function OngletVues() {
     void ecrirePrefs({ vues: avant.filter((x) => x.id !== v.id) });
     notifier({ texte: `Vue « ${v.nom} » supprimée`, annuler: () => ecrirePrefs({ vues: avant }) });
   };
-  const ouvrir = (v: VueEnregistree) => { setVueEnAttente(v); setReglages(null); naviguer(`/${v.ecran}`); };
+  const ouvrir = (v: VueEnregistree) => { setVueEnAttente(v); setReglages(null); naviguer(v.ecran === "journee" ? "/journee/pro" : `/${v.ecran}`); };
   if (!prefs.vues.length) return <p className="hx-dim">Aucune vue enregistrée. Sur Planning ou Projets, réglez filtres, zoom et groupement, puis « + Enregistrer la vue ».</p>;
-  return <>{(["planning", "projets"] as const).map((e) => { const l = prefs.vues.filter((v) => v.ecran === e); return l.length ? <div key={e}><h3 className="ox-sh">{NOMS_ECRANS[e]} <small>{l.length}</small></h3>
+  return <>{(["planning", "projets", "journee"] as const).map((e) => { const l = prefs.vues.filter((v) => v.ecran === e); return l.length ? <div key={e}><h3 className="ox-sh">{NOMS_ECRANS[e]} <small>{l.length}</small></h3>
     <ul className="ox-vues">{l.map((v) => <li key={v.id}>
       {nom?.id === v.id
         ? <input autoFocus value={nom.v} maxLength={80} aria-label="Nouveau nom" onChange={(ev) => setNom({ id: v.id, v: ev.target.value })} onBlur={() => renommer(v.id, nom.v)} onKeyDown={(ev) => { if (ev.key === "Enter") renommer(v.id, nom.v); if (ev.key === "Escape") { ev.stopPropagation(); setNom(null); } }} />

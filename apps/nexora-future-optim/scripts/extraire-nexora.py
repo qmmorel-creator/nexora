@@ -5,7 +5,7 @@
 # Nexora. Relancer ce script pour resynchroniser ; ne jamais modifier le
 # fichier généré à la main.
 #   python3 scripts/extraire-nexora.py   (depuis apps/nexora-future-optim)
-import pathlib, subprocess
+import json, pathlib, re, subprocess
 RACINE = pathlib.Path(__file__).resolve().parents[3]
 SOURCES = {p: (RACINE / "apps/nexora/source" / p).read_text(encoding="utf-8") for p in ["index.html.part-001", "index.html.part-002", "index.html.part-003"]}
 SHA = subprocess.run(["git", "-C", str(RACINE), "log", "-1", "--format=%h", "--", "apps/nexora/source"], capture_output=True, text=True).stdout.strip()
@@ -121,3 +121,96 @@ photos.append("export { BODY_PHOTO_CSS, bodyPhotoSpec, bodyPhotoSorted, bodyPhot
 cible3 = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/photos-nexora.jsx"
 cible3.write_text("\n".join(photos) + "\n", encoding="utf-8")
 print("écrit", cible3)
+
+# Pixel Tasks, « Tâches du jour » (retour du 03/10/2026) : module de Nexora
+# repris tel quel — bloc pur NEXORA:PIXEL-TASKS (part-002), interface
+# (part-003, de « Pixel des tâches » à WidgetHabitHeatmap exclu), utilitaires
+# de dates, de statuts et du Pixel des habitudes dont il dépend, et ses styles
+# (GlobalStyles de part-001), variables de thème résolues et limitées à
+# .nx-ptx-scope. Modal et icônes : voir pixel-tasks-adaptateur.tsx.
+P0, P1, P2 = "index.html.part-000", "index.html.part-001", "index.html.part-002"
+for p in (P0,):
+    SOURCES[p] = (RACINE / "apps/nexora/source" / p).read_text(encoding="utf-8")
+def entre(part, debut, fin):
+    s = SOURCES[part]; i = s.index(debut); j = s.index(fin, i) + len(fin)
+    return s.count("\n", 0, i) + 1, s[i:j]
+def jusqua(part, debut, avant):
+    s = SOURCES[part]; i = s.index(debut); j = s.index(avant, i)
+    return s.count("\n", 0, i) + 1, s[i:j].rstrip()
+ptx = [
+  "/* eslint-disable */",
+  "// @ts-nocheck",
+  "// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (retour du 03/10/2026).",
+  f"// Module « Pixel Tasks » (Tâches du jour) de Nexora (dernier commit du dossier source : {SHA}), repris tel quel.",
+  'import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";',
+  'import { createPortal } from "react-dom";',
+  'import { Check, CheckCircle2, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eye, EyeOff, Filter, Plus, Search, X, Grid3x3 } from "lucide-react";',
+  'import { Modal } from "./pixel-tasks-adaptateur";',
+  "",
+]
+morceaux = [
+  entre(P0, "// === NEXORA:DATE-UTILS:START ===", "// === NEXORA:DATE-UTILS:END ==="),
+  bloc(P0, "const uid ="),
+  jusqua(P0, "const isProtectedStatus =", "\nconst getStatusesForProject ="),
+  jusqua(P0, "const getStatusesForProject =", "\nconst getDefaultStatusForProject ="),
+  jusqua(P0, "const getDefaultStatusForProject =", "\n// ===="),
+  bloc(P0, "const isLockedTaskType ="),
+  jusqua(P0, "const getTaskTypesForProject =", "\nconst restrictedStatusForType ="),
+  jusqua(P0, "const restrictedStatusForType =", "\nconst FIELD_DEFS"),
+  bloc(P0, "function isTaskFocus("),
+  bloc(P0, "function isTaskDoneGlobal("),
+  bloc(P1, "function ViewToolbarPortal("),
+  bloc(P2, "function habitPixelWirePath("),
+  jusqua(P3, "const HPX_HEAD_H", "\nconst HPX_STATE_LABELS"),
+  bloc(P3, "function hpxDayLabel("), bloc(P3, "function hpxLongDate("), bloc(P3, "function hpxSubDate("), bloc(P3, "function hpxWeekStart("),
+  bloc(P3, "const HPX_VIEWS"), bloc(P3, "function hpxAddMonths("),
+  entre(P2, "// === NEXORA:PIXEL-TASKS:START ===", "// === NEXORA:PIXEL-TASKS:END ==="),
+]
+s3 = SOURCES[P3]; d_ui = s3.index("\n", s3.rindex("\n", 0, s3.index("function ptxStatusColor(")) - 1)
+d_ui = s3.rindex("\n/*", 0, s3.index("function ptxStatusColor(")) + 1
+morceaux.append((s3.count("\n", 0, d_ui) + 1, s3[d_ui:s3.index("\nfunction WidgetHabitHeatmap(")].rstrip()))
+for ligne, code in morceaux:
+    ptx.append(f"// — ligne {ligne}")
+    ptx.append(code)
+
+# Styles : plages Pixel Tasks + règles génériques utilisées, variables résolues.
+s1 = SOURCES[P1]; g = s1.index("function GlobalStyles()"); a = s1.index("<style>{`", g) + 9; b = s1.index("`}</style>", a)
+css_glob = s1[a:b]
+lignes1 = s1.split("\n")
+def plage(debut, fin): return "\n".join(lignes1[debut - 1:fin])
+i0 = next(k for k, l in enumerate(lignes1) if "/* Pixel des habitudes (#353)" in l) + 1
+i1 = next(k for k, l in enumerate(lignes1) if k > i0 and "/* Glisser-peindre (#353)" in l)
+morceau_ptx = plage(i0, i1)
+entete = "\n".join(l for l in lignes1[g:g + 9000] if ":has(.lp-ptx-groupby)" in l)
+def regles(texte):
+    out, prof, debut = [], 0, 0
+    for k, ch in enumerate(texte):
+        if ch == "{":
+            if prof == 0: debut_sel = debut
+            prof += 1
+        elif ch == "}":
+            prof -= 1
+            if prof == 0: out.append(texte[debut:k + 1].strip()); debut = k + 1
+        elif ch == "\n" and prof == 0 and not texte[debut:k].strip(): debut = k + 1
+    return out
+GENERIQUES = re.compile(r"\.(lp-overlay|lp-modal[\w-]*|lp-btn[\w-]*|lp-input|lp-icon-btn|lp-tool-btn|lp-quick-context-menu[\w-]*|lp-empty|lp-density-btn|lp-density-row|lp-widget-head-toolbar)(?![\w-])")
+gen = [r for r in regles(re.sub(r"/\*.*?\*/", "", css_glob, flags=re.S)) if not r.startswith("@") and GENERIQUES.search(r.split("{", 1)[0]) and "data-nexora-theme" not in r.split("{", 1)[0] and "data-theme" not in r.split("{", 1)[0]]
+css_ptx = entete + "\n" + "\n".join(gen) + "\n" + morceau_ptx
+jetons = {}
+for m in re.finditer(r"(?<![\w-])(--[\w-]+)\s*:\s*([^;{}]+);", css_glob):
+    jetons.setdefault(m.group(1), m.group(2).strip())
+DYNAMIQUES = {"--c", "--tc", "--pc", "--bc", "--sc", "--hpx-rows", "--ptx-spark-delay", "--ptx-hue-delay", "--ptx-star-delay"}
+a_definir, file = {}, set(re.findall(r"var\((--[\w-]+)", css_ptx)) - DYNAMIQUES
+while file:
+    v = file.pop()
+    if v in a_definir or v not in jetons: continue
+    a_definir[v] = jetons[v]; file |= set(re.findall(r"var\((--[\w-]+)", jetons[v])) - DYNAMIQUES
+# Portée : le module et ses fenêtres ouvertes par portail dans <body> (menus, capacité, clôture).
+scope = ".nx-ptx-scope,body>.lp-quick-context-menu,body>.lp-overlay{" + ";".join(f"{k}:{v}" for k, v in sorted(a_definir.items())) + "}"
+ptx.append("// Styles de Nexora (GlobalStyles, part-001) utilisés par le module, et jetons de thème résolus.")
+ptx.append("const PIXEL_TASKS_CSS = " + json.dumps(scope + "\n" + css_ptx) + ";")
+ptx.append("")
+ptx.append("export { WidgetPixelTasks, makePixelTaskUndoable, pixelTaskUpdateLabel, pixelTaskDoneLabel, makePixelTaskCreator, pixelTasksForDay, pixelTaskDate, isTaskDoneGlobal, PIXEL_TASKS_CSS };")
+cible4 = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/pixel-tasks-nexora.jsx"
+cible4.write_text("\n".join(ptx) + "\n", encoding="utf-8")
+print("écrit", cible4, len(a_definir), "jetons")

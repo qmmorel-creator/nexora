@@ -102,6 +102,8 @@ export const tailleCarreTaches = (n: number) => Math.max(2, Math.ceil(Math.sqrt(
 
 // --- Cadran --------------------------------------------------------------------
 const h2a = (h: number) => (h / 24) * 360 - 90;
+// Période de nuit de Quentin : 23 h → 6 h 30 (heures décimales).
+export const NUIT: [number, number] = [23, 6.5];
 const P = (cx: number, cy: number, r: number, a: number): [number, number] => [cx + r * Math.cos((a * Math.PI) / 180), cy + r * Math.sin((a * Math.PI) / 180)];
 function arc(cx: number, cy: number, r: number, a0: number, a1: number) {
   if (a1 < a0) a1 += 360;
@@ -123,14 +125,15 @@ export function useElementsHoraires() {
     }).sort((a, b) => a.h0 - b.h0), [d.taches, d.types, projet, statut, fini]);
 }
 
-export function Cadran({ date, taille = 440, mini = false, pixels = true }: { date: string; taille?: number; mini?: boolean; pixels?: boolean }) {
+// `habitudes` : faux pour la Journée professionnelle (retour du 03/10/2026) — ni anneau ni pixel des habitudes.
+export function Cadran({ date, taille = 440, mini = false, pixels = true, habitudes = true }: { date: string; taille?: number; mini?: boolean; pixels?: boolean; habitudes?: boolean }) {
   const { etats, compteTaches, couleurHabitude, d, jour, tachesDuJour } = useJour();
   const { ouvrir } = useUi();
   const items = useElementsHoraires()(date);
   const c = taille / 2, R1 = taille * .4, W1 = taille * .042, R2 = taille * .325, W2 = taille * .03;
   const e = etats(date), ct = compteTaches(date);
   const maintenant = heureParisDec();
-  const themes = e.parTheme, nh = themes.reduce((a, t) => a + t.habitudes.length, 0);
+  const themes = habitudes ? e.parTheme : [], nh = themes.reduce((a, t) => a + t.habitudes.length, 0);
   const gapT = 5, gapH = 1.6, span = nh ? (360 - themes.length * gapT - Math.max(0, nh - themes.length) * gapH) / nh : 0;
   const segments: ReactNode[] = [];
   let a = -90 + gapT / 2;
@@ -150,7 +153,16 @@ export function Cadran({ date, taille = 440, mini = false, pixels = true }: { da
       <text x={c + taille * .13} y={c + 4} textAnchor="middle" className="hx-cnum is-big">{e.faites}<tspan className="hx-cden">/{e.total}</tspan></text>
       <text x={c - taille * .13} y={c + 20} textAnchor="middle" className="hx-csub">tâches</text>
       <text x={c + taille * .13} y={c + 20} textAnchor="middle" className="hx-csub">habitudes</text></>;
-  } else {
+  } else if (!habitudes) {
+    const inner = 2 * (R2 - W2 / 2) * .62, pg = mini ? 2 : 3;
+    const tn = tailleCarreTaches(tachesDuJour(date).length), tps = Math.min(mini ? 14 : 22, (inner - (tn - 1) * pg) / tn), hw = tn * tps + (tn - 1) * pg;
+    const x0 = c - hw / 2, y0 = c - hw / 2 - (mini ? 6 : 12);
+    coeur = <>
+      <g transform={`translate(${x0.toFixed(1)} ${y0.toFixed(1)})`}><PixelTaches date={date} taille={tps} ecart={pg} brut /></g>
+      <text x={c} y={y0 + hw + (mini ? 14 : 22)} textAnchor="middle" className="hx-cnum">{ct.faites}<tspan className="hx-cden">/{ct.total}</tspan></text>
+      {!mini && <text x={c} y={y0 - 8} textAnchor="middle" className="hx-csub">tâches</text>}
+    </>;
+} else {
     const SQ = taillePixelHabitudes(d.themesHabitudes), pg = mini ? 2 : 3, gapC = mini ? 12 : 22, inner = 2 * (R2 - W2 / 2) * (mini ? .74 : .7);
     const hwMax = (inner - gapC) / 2, ps = Math.min(mini ? 12 : 14, (hwMax - (SQ - 1) * pg) / SQ), hw = SQ * ps + (SQ - 1) * pg;
     const tn = tailleCarreTaches(tachesDuJour(date).length), tps = (hw - (tn - 1) * pg) / tn;
@@ -168,6 +180,9 @@ export function Cadran({ date, taille = 440, mini = false, pixels = true }: { da
     <svg className="hx-dial" viewBox={`0 0 ${taille} ${taille}`} role="img" aria-label="Cadran de la journée et anneau des habitudes">
       <MotifNa />
       <circle cx={c} cy={c} r={R1} fill="none" stroke="#eef1f6" strokeWidth={W1} />
+      {/* Nuit (retour du 03/10/2026) : 23 h – 6 h 30, teinte nocturne et petite lune. */}
+      <path d={arc(c, c, R1, h2a(NUIT[0]), h2a(NUIT[1] + 24))} stroke="#2b3a67" strokeOpacity=".34" strokeWidth={W1} fill="none" data-tip={`Nuit|${hmf(NUIT[0])} – ${hmf(NUIT[1])}`} />
+      {(() => { const am = h2a((NUIT[0] + NUIT[1] + 24) / 2), [mx, my] = P(c, c, R1, am), k = (W1 * .78) / 20; return <path className="ox-lune" transform={`translate(${(mx - 10 * k).toFixed(1)} ${(my - 10 * k).toFixed(1)}) scale(${k.toFixed(2)})`} d="M14.5 2.5a8.5 8.5 0 1 0 5 15.3A7 7 0 0 1 14.5 2.5z" fill="#fff" fillOpacity=".95"><title>Nuit (23 h – 6 h 30)</title></path>; })()}
       {Array.from({ length: 24 }, (_, h) => {
         const an = h2a(h), [x0, y0] = P(c, c, R1 + W1 / 2 + 3, an), [x1, y1] = P(c, c, R1 + W1 / 2 + (h % 6 ? 6 : 10), an);
         const [tx, ty] = P(c, c, R1 + W1 / 2 + 21, an);
