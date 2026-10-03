@@ -50,7 +50,7 @@ test("jeton JWT RS256 vérifiable avec la clé publique", () => {
 
 // Fausse banque + fausse base : enregistre les écritures.
 function fakeNetwork({ ledger, links, connections, rules = [], bank = {} }) {
-  const writes = { imports: [], reconciliations: [], linkPatches: [], connectionPatches: [], authPatches: [] };
+  const writes = { imports: [], reconciliations: [], linkPatches: [], connectionPatches: [], authPatches: [], bankCalls: [] };
   const reply = (body, status = 200) => new Response(body == null ? "" : JSON.stringify(body), { status });
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -58,6 +58,7 @@ function fakeNetwork({ ledger, links, connections, rules = [], bank = {} }) {
     const body = init.body ? JSON.parse(init.body) : null;
     if (url.host === "api.enablebanking.com") {
       assert.match(init.headers.authorization, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+      writes.bankCalls.push({ path: url.pathname, ip: init.headers["Psu-Ip-Address"] || null, agent: init.headers["Psu-User-Agent"] || null });
       const m = url.pathname.match(/^\/accounts\/([^/]+)\/(transactions|balances)$/);
       if (m && m[2] === "transactions") {
         const all = bank[m[1]] || [];
@@ -116,7 +117,9 @@ test("passage complet : rapproche la saisie, crée le reste, rien au second pass
   const writes = fakeNetwork({ ledger, links, connections, rules, bank });
   const now = new Date("2026-10-03T08:00:00Z");
 
-  const first = await S.runSync(config, finance, { now });
+  const psu = { "Psu-Ip-Address": "203.0.113.7", "Psu-User-Agent": "Mozilla/5.0" };
+  const first = await S.runSync(config, finance, { now, psu });
+  assert.ok(writes.bankCalls.length >= 2 && writes.bankCalls.every((c) => c.ip === "203.0.113.7" && c.agent === "Mozilla/5.0"), "utilisateur en ligne : en-têtes PSU sur chaque appel");
   assert.deepEqual([first.created, first.reconciled, first.errors], [1, 1, 0]);
   assert.equal(first.accounts.length, 1, "compte ignoré non synchronisé");
   const [account] = first.accounts;
@@ -171,6 +174,24 @@ test("opération à venir : créée à sa date future sans rapprochement, rappro
   assert.deepEqual([r2.created, r2.reconciled], [0, 1]);
   assert.equal(ledger.length, 1, "aucun doublon");
   assert.equal(ledger[0].reconciled, true);
+});
+
+test("passage planifié : aucun en-tête PSU, solde non relu (dernier solde conservé)", async () => {
+  const links = [{ account_key: "hash:H1", aspsp_key: "FR:ce", account_uid: "uid-1", label: "Courant", account_id: "courant_ce", import_from: "2026-09-28", last_synced_at: null }];
+  const connections = [{ aspsp_key: "FR:ce", aspsp_name: "CE", session_id: "s", valid_until: "2027-03-31T00:00:00Z", last_sync_result: [{ accountKey: "hash:H1", balance: { amount: 2557.48, currency: "EUR" } }] }];
+  const writes = fakeNetwork({ ledger: [], links, connections, bank: { "uid-1": [tx("A", "10.00", "2026-10-02", "X")] } });
+  const r = await S.runSync(config, finance, { now: new Date("2026-10-03T08:00:00Z") });
+  assert.deepEqual(writes.bankCalls.map((c) => c.path), ["/accounts/uid-1/transactions"], "un seul appel : les opérations");
+  assert.ok(writes.bankCalls.every((c) => c.ip === null && c.agent === null), "aucun en-tête PSU");
+  assert.deepEqual(r.accounts[0].balance, { amount: 2557.48, currency: "EUR" });
+});
+
+test("en-têtes PSU tirés de la requête du navigateur, tous ou aucun", () => {
+  const req = (h) => new Request("https://n.test/api", { headers: h });
+  assert.deepEqual(S.psuHeadersOf(req({ "x-nf-client-connection-ip": "203.0.113.7", "user-agent": "Mozilla/5.0" })), { "Psu-Ip-Address": "203.0.113.7", "Psu-User-Agent": "Mozilla/5.0" });
+  assert.equal(S.psuHeadersOf(req({ "x-forwarded-for": "198.51.100.2, 10.0.0.1", "user-agent": "UA" }))["Psu-Ip-Address"], "198.51.100.2");
+  assert.equal(S.psuHeadersOf(req({ "user-agent": "UA" })), null, "sans adresse IP : aucun en-tête");
+  assert.equal(S.psuHeadersOf(req({ "x-nf-client-connection-ip": "203.0.113.7" })), null, "sans navigateur : aucun en-tête");
 });
 
 test("erreurs par compte : consentement expiré, banque déconnectée", async () => {

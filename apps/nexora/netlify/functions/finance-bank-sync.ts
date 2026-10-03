@@ -1,5 +1,5 @@
 import type { Config } from "@netlify/functions";
-import { disconnect, listFrenchBanks, readStatus, requireEnableBankingConfig, runSync, startAuthorization, updateLink } from "./_shared/bank-sync.js";
+import { disconnect, listFrenchBanks, psuHeadersOf, readStatus, requireEnableBankingConfig, runSync, startAuthorization, updateLink } from "./_shared/bank-sync.js";
 import { getFinanceCatalogs } from "./_shared/finance.js";
 import { normalizeIgnorePatterns } from "../../lib/bank-sync.mjs";
 import { requireOwnerFinance } from "./_shared/finance-owner.js";
@@ -60,7 +60,8 @@ export default async (req: Request) => {
         return json({ ok: true, ...(await startAuthorization(bank.config, finance, String(body.aspspName || ""), String(body.country || "FR"))) });
       case "sync": {
         const accountKeys = Array.isArray(body.accountKeys) ? body.accountKeys.map(String) : undefined;
-        return json({ ok: true, result: await runSync(bank.config, finance, { accountKeys }) });
+        // Lancée depuis l'onglet : l'utilisateur est en ligne (en-têtes PSU).
+        return json({ ok: true, result: await runSync(bank.config, finance, { accountKeys, psu: psuHeadersOf(req) }) });
       }
       case "disconnect":
         return json({ ok: true, ...(await disconnect(bank.config, finance, String(body.aspspKey || ""))) });

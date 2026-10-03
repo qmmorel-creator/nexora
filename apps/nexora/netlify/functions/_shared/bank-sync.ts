@@ -206,13 +206,28 @@ function shiftDays(date: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchBankTransactions(config: EnableBankingConfig, uid: string, dateFrom: string) {
+// Présence de l'utilisateur (#677) : synchronisation lancée depuis l'onglet,
+// l'utilisateur est en ligne. Enable Banking demande alors TOUS les en-têtes
+// PSU (adresse IP et navigateur) ; la banque ne décompte plus l'accès dans la
+// limite DSP2 de 4 accès par jour sans l'utilisateur. Passage planifié :
+// AUCUN en-tête PSU.
+export type PsuHeaders = { "Psu-Ip-Address": string; "Psu-User-Agent": string };
+
+export function psuHeadersOf(req: Request): PsuHeaders | null {
+  const forwarded = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim();
+  const ip = (req.headers.get("x-nf-client-connection-ip") || forwarded).trim();
+  const agent = (req.headers.get("user-agent") || "").trim();
+  if (!ip || !agent) return null;
+  return { "Psu-Ip-Address": ip.slice(0, 64), "Psu-User-Agent": agent.slice(0, 512) };
+}
+
+async function fetchBankTransactions(config: EnableBankingConfig, uid: string, dateFrom: string, psu: PsuHeaders | null = null) {
   const all: unknown[] = [];
   let continuation: string | null = null;
   for (let page = 0; page < 50; page += 1) {
     const params = new URLSearchParams({ date_from: dateFrom });
     if (continuation) params.set("continuation_key", continuation);
-    const payload = await enableBankingFetch(config, `/accounts/${enc(uid)}/transactions?${params}`);
+    const payload = await enableBankingFetch(config, `/accounts/${enc(uid)}/transactions?${params}`, psu ? { headers: psu } : {});
     if (Array.isArray(payload?.transactions)) all.push(...payload.transactions);
     continuation = payload?.continuation_key || null;
     if (!continuation) return all;
@@ -240,6 +255,15 @@ async function setReconciled(finance: FinanceConfig, transactionId: string, date
   });
 }
 
+// Dernier solde connu d'un compte (passage planifié, sans lecture du solde).
+function previousBalance(connections: any[], accountKey: string) {
+  for (const c of connections) {
+    const r = (Array.isArray(c.last_sync_result) ? c.last_sync_result : []).find((x: any) => x?.accountKey === accountKey);
+    if (r?.balance) return r.balance;
+  }
+  return null;
+}
+
 export type AccountSyncResult = {
   accountKey: string; accountId: string | null; label: string | null;
   created: number; reconciled: number; already: number; remaining?: number; upcomingKnown?: number;
@@ -254,7 +278,8 @@ export const MAX_WRITES_PER_CALL = 25;
 
 // Synchronise les comptes liés (tous, ou ceux de `accountKeys`). Chaque compte
 // est indépendant : l'échec de l'un n'arrête pas les autres.
-export async function runSync(config: EnableBankingConfig, finance: FinanceConfig, options: { accountKeys?: string[]; now?: Date; maxWrites?: number } = {}) {
+export async function runSync(config: EnableBankingConfig, finance: FinanceConfig, options: { accountKeys?: string[]; now?: Date; maxWrites?: number; psu?: PsuHeaders | null } = {}) {
+  const psu = options.psu || null;
   const now = options.now || new Date();
   let budget = options.maxWrites ?? MAX_WRITES_PER_CALL;
   const today = parisDate(now);
@@ -278,12 +303,14 @@ export async function runSync(config: EnableBankingConfig, finance: FinanceConfi
       if (consentStatus(connection.valid_until, now).state === "expired") throw new Error("consent_expired");
       const dateFrom = syncDateFrom({ importFrom: link.import_from, lastSyncedAt: link.last_synced_at, today });
       result.dateFrom = dateFrom;
+      // Solde : seulement en présence de l'utilisateur. Sans lui, chaque appel
+      // compte dans la limite de 4 par jour : on garde l'unique appel utile.
       const [bankTransactions, balances, existing] = await Promise.all([
-        fetchBankTransactions(config, link.account_uid, dateFrom),
-        enableBankingFetch(config, `/accounts/${enc(link.account_uid)}/balances`).catch(() => null),
+        fetchBankTransactions(config, link.account_uid, dateFrom, psu),
+        psu ? enableBankingFetch(config, `/accounts/${enc(link.account_uid)}/balances`, { headers: psu }).catch(() => null) : Promise.resolve(null),
         readExisting(finance, link.account_id, shiftDays(dateFrom, -(MATCH_DAYS + 3)))
       ]);
-      result.balance = pickBalance(balances?.balances);
+      result.balance = psu ? pickBalance(balances?.balances) : previousBalance(connections, link.account_key);
       const plan = planAccountSync({ accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, bankTransactions, existing, rules, ignorePatterns: Array.isArray(link.ignore_patterns) ? link.ignore_patterns : [], today });
       result.already = plan.already;
       result.skipped = plan.skipped;
