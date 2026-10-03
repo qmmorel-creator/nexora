@@ -26,6 +26,7 @@ import { PageCorps } from "./Corps";
 import { PageEquipe } from "./Equipe";
 import { PageTriage } from "./Triage";
 import { PageAtlas } from "./Atlas";
+import { PagePhrase, commandesVues } from "./Phrase";
 import { PageFinancesKdm } from "./Finances";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { fusionnerPrefs } from "../donnees/prefs";
@@ -67,8 +68,8 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const zone = useRef<HTMLDivElement>(null);
 
   const s0 = route.segments[0];
-  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" || s0 === "triage" || s0 === "atlas" ? s0 : "fil";
-  const espace: Espace = vue === "triage" || vue === "atlas" ? "fil" : vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
+  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" || s0 === "triage" || s0 === "atlas" || s0 === "phrase" ? s0 : "fil";
+  const espace: Espace = vue === "triage" || vue === "atlas" || vue === "phrase" ? "fil" : vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
   const sansRequete = espace !== "chantiers";
   const modeFil = (["matin", "journee", "soir", "semaine"] as const).find((m) => m === route.params.get("m")) ?? null;
   const projetFixe = vue === "projet" ? route.segments[1] : undefined;
@@ -192,6 +193,8 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     { id: "fil", libelle: "Fil du jour", detail: "accueil", executer: () => naviguer("/") },
     { id: "triage", libelle: "Triage", detail: "une décision à la fois, par règles", executer: () => naviguer("/triage") },
     { id: "atlas", libelle: "Atlas", detail: "prototype : la carte en relief de tout Nexora", executer: () => naviguer("/atlas") },
+    { id: "phrase", libelle: "Phrase", detail: "poser une question en phrase, vues enregistrées", executer: () => naviguer("/phrase") },
+    ...commandesVues(d),
     { id: "fil-soir", libelle: "Bilan du soir", executer: () => naviguer("/", new URLSearchParams("m=soir")) },
     { id: "fil-semaine", libelle: "Semaine", detail: "fil du jour, 7 jours", executer: () => naviguer("/", new URLSearchParams("m=semaine")) },
     { id: "toutes", libelle: "Toutes les tâches", executer: () => naviguer("/taches") },
@@ -209,7 +212,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     { id: "aide", libelle: "Raccourcis clavier", raccourci: "?", executer: () => setAide(true) },
     { id: "reference", libelle: "Référence de l'identité visuelle", executer: () => { location.href = "/reference"; } },
     { id: "deconnexion", libelle: "Se déconnecter", executer: () => { deconnexion(); } },
-  ], [r, majAdresse, changerApparence, apparence.densite, vue]);
+  ], [r, majAdresse, changerApparence, apparence.densite, vue, d]);
 
   // Clavier global.
   useEffect(() => {
@@ -279,6 +282,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} />
         : vue === "triage" ? <PageTriage d={d} source={source} onOuvrir={ouvrir} />
         : vue === "atlas" ? <PageAtlas d={d} source={source} onOuvrir={ouvrir} />
+        : vue === "phrase" ? <PagePhrase d={d} source={source} vueId={route.params.get("vue")} onOuvrir={ouvrir} />
         : vue === "equipe" ? <PageEquipe d={d} />
         : vue === "corps" ? <PageCorps d={d} corps={source.corps} />
         : vue === "finances" ? <PageFinancesKdm finance={source.finance} jour={d.aujourdhui} pro={d.pro} projets={d.projets} />
