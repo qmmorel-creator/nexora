@@ -9,7 +9,12 @@ import { PHRASE_VIDE, normaliserPhrase, type PrefsPhrase } from "./phrase";
 // Les six derniers : timelines premium (retour du 03/10/2026, src/optim/timelines-premium.mjs).
 export const STYLES_GANTT = ["ruban", "pixels", "comete", "ecart", "pont", "compte", "jauge", "briques", "conduite", "nuages", "niveaux", "trajectoires", "prismes"] as const;
 export type StyleGantt = (typeof STYLES_GANTT)[number];
-export const ZOOMS = ["semaine", "mois", "trimestre", "annee", "pluri"] as const;
+export const ZOOMS = ["jour", "semaine", "mois", "trimestre", "annee", "pluri"] as const;
+// Planning : pas de zoom « Jour » (son bouton « Jour » ouvre la Journée).
+export const ZOOMS_PLANNING: readonly Zoom[] = ["semaine", "mois", "trimestre", "annee", "pluri"];
+// Colonnes du planning détaillé de la page projet (retour du 03/10/2026 : au choix).
+export const COLONNES_PROJET = ["resp", "debut", "fin", "ref", "derive"] as const;
+export type ColonneProjet = (typeof COLONNES_PROJET)[number];
 export type Zoom = (typeof ZOOMS)[number];
 export const GROUPES_PLANNING = ["projet", "dossier", "responsable", "statut"] as const;
 export type GroupePlanning = (typeof GROUPES_PLANNING)[number];
@@ -75,7 +80,7 @@ export interface PrefsOptim {
   version: 1;
   gantt: StyleGantt;
   planning: { zoom: Zoom; groupe: GroupePlanning; corps: boolean; argent: boolean };
-  projets: { zoom: Zoom; groupe: GroupeProjet; reference: Reference };
+  projets: { zoom: Zoom; groupe: GroupeProjet; reference: Reference; colonnes: ColonneProjet[] };
   couleursHabitudes: Record<string, string>;
   accueil: { pixels: boolean; corps: string[]; tuiles: TuileAccueil[]; journee: BlocJourneeAccueil; semaine: BlocSemaineAccueil };
   corps: PrefsCorps;
@@ -90,7 +95,7 @@ export const FILTRE_VIDE: FiltreVue = { q: "", projets: [], statuts: [], respons
 export const PREFS_VIDES: PrefsOptim = {
   version: 1, gantt: "ruban",
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
-  projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
+  projets: { zoom: "trimestre", groupe: "aucun", reference: "courante", colonnes: [...COLONNES_PROJET] },
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL], journee: JOURNEE_ACCUEIL_DEFAUT, semaine: SEMAINE_ACCUEIL_DEFAUT },
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree", photos: {} },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
@@ -163,8 +168,9 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
   return {
     version: 1,
     gantt: parmi(b.gantt, STYLES_GANTT, PREFS_VIDES.gantt),
-    planning: { zoom: parmi(pl.zoom, ZOOMS, "mois"), groupe: parmi(pl.groupe, GROUPES_PLANNING, "projet"), corps: pl.corps !== false, argent: pl.argent === true },
-    projets: { zoom: parmi(pj.zoom, ZOOMS, "trimestre"), groupe: parmi(pj.groupe, GROUPES_PROJET, "aucun"), reference: parmi(pj.reference, REFERENCES, "courante") },
+    planning: { zoom: parmi(pl.zoom, ZOOMS_PLANNING, "mois"), groupe: parmi(pl.groupe, GROUPES_PLANNING, "projet"), corps: pl.corps !== false, argent: pl.argent === true },
+    projets: { zoom: parmi(pj.zoom, ZOOMS, "trimestre"), groupe: parmi(pj.groupe, GROUPES_PROJET, "aucun"), reference: parmi(pj.reference, REFERENCES, "courante"),
+      colonnes: Array.isArray(pj.colonnes) ? COLONNES_PROJET.filter((c) => (pj.colonnes as unknown[]).includes(c)) : [...COLONNES_PROJET] },
     couleursHabitudes: couleurs,
     accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT, tuiles: Array.isArray(ac.tuiles) ? [...new Set(chaines(ac.tuiles).filter((t): t is TuileAccueil => (TUILES_ACCUEIL as readonly string[]).includes(t)))] : [...TUILES_ACCUEIL], journee: normaliserJourneeAccueil(ac.journee), semaine: normaliserSemaineAccueil(ac.semaine) },
     corps: normaliserCorps(b.corps),

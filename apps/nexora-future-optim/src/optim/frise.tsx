@@ -10,6 +10,7 @@ import { dateCourte, jourCourt, MOIS_C, semaineIso } from "./contexte";
 import { dessinerBarre, STYLES_PREMIUM, type StylePremium } from "./timelines-premium.mjs";
 
 export const ZOOMS_DEF: Record<Zoom, { libelle: string; jours: number; avant: number }> = {
+  jour: { libelle: "Jour", jours: 3, avant: 1 },
   semaine: { libelle: "Semaine", jours: 9, avant: 2 }, mois: { libelle: "Mois", jours: 35, avant: 7 },
   trimestre: { libelle: "Trimestre", jours: 98, avant: 14 }, annee: { libelle: "Année", jours: 365, avant: 60 },
   pluri: { libelle: "Pluriannuel", jours: 1096, avant: 270 },
@@ -67,7 +68,7 @@ export function graduations(r: Plage): Graduation[] {
   const out: Graduation[] = [];
   for (let i = 0; i < r.jours; i++) {
     const iso = ajouterJours(r.debut, i), d = dt(iso), j = d.getUTCDate(), m = d.getUTCMonth(), y = d.getUTCFullYear(), w = d.getUTCDay();
-    if (r.zoom === "semaine") out.push({ iso, libelle: <>{jourCourt(iso)} <b>{j}</b></>, majeur: w === 1 });
+    if (r.zoom === "semaine" || r.zoom === "jour") out.push({ iso, libelle: <>{jourCourt(iso)} <b>{j}</b></>, majeur: w === 1 });
     else if (r.zoom === "mois" || r.zoom === "trimestre") { if (w === 1) out.push({ iso, libelle: <>S{semaineIso(iso)} <small>{j} {MOIS_C[m]}</small></>, majeur: j <= 7 }); }
     else if (r.zoom === "annee") { if (j === 1) out.push({ iso, libelle: <>{MOIS_C[m]}{m === 0 && <> <b>{y}</b></>}</>, majeur: m === 0 }); }
     else if (j === 1 && m % 3 === 0) out.push({ iso, libelle: <>T{m / 3 + 1} <b>{y}</b></>, majeur: m === 0 });
@@ -79,7 +80,7 @@ export function traits(r: Plage): Trait[] {
   for (let i = 0; i < r.jours; i++) {
     const iso = ajouterJours(r.debut, i), d = dt(iso), j = d.getUTCDate(), m = d.getUTCMonth(), w = d.getUTCDay();
     let n: 0 | 1 | 2 | -1 = -1;
-    if (r.zoom === "semaine") n = w === 1 ? 2 : 1;
+    if (r.zoom === "semaine" || r.zoom === "jour") n = w === 1 ? 2 : 1;
     else if (r.zoom === "mois") n = j === 1 ? 2 : w === 1 ? 1 : 0;
     else if (r.zoom === "trimestre") n = j === 1 ? 2 : w === 1 ? 1 : -1;
     else if (r.zoom === "annee") n = j === 1 ? (m === 0 ? 2 : 1) : w === 1 ? 0 : -1;
@@ -94,11 +95,11 @@ export const clairsemer = <T,>(l: T[], max: number) => { const pas = Math.max(1,
 // zooms courts, trait d'aujourd'hui.
 export function Grille({ r, jour }: { r: Plage; jour: string }) {
   const largeurJour = 100 / r.jours;
-  const we = r.zoom === "semaine" || r.zoom === "mois" ? Array.from({ length: r.jours }, (_, i) => ajouterJours(r.debut, i)).filter((iso) => dt(iso).getUTCDay() === 6) : [];
+  const we = r.zoom === "jour" || r.zoom === "semaine" || r.zoom === "mois" ? Array.from({ length: r.jours }, (_, i) => ajouterJours(r.debut, i)).filter((iso) => dt(iso).getUTCDay() === 6) : [];
   return <>
     {we.map((iso) => <i key={"w" + iso} className="ox-we" style={{ left: `${tx(r, iso)}%`, width: `${largeurJour * 2}%` }} />)}
     {traits(r).map((t) => <i key={t.iso} className={`hx-gl ox-n${t.niveau}`} style={{ left: `${tx(r, t.iso)}%` }} />)}
-    {jour >= r.debut && jour <= r.fin && <i className="hx-today" style={{ left: `${tx(r, jour) + (r.zoom === "semaine" ? largeurJour / 2 : 0)}%` }} />}
+    {jour >= r.debut && jour <= r.fin && <i className="hx-today" style={{ left: `${tx(r, jour) + (r.zoom === "semaine" || r.zoom === "jour" ? largeurJour / 2 : 0)}%` }} />}
   </>;
 }
 

@@ -6,7 +6,7 @@ import { naviguer } from "../navigation/routeur";
 import { MESURES_SANTE, mesureSante } from "../donnees/sante";
 import {
   CARTES_DEFAUT, DUREES_PATRIMOINE, GROUPES_PLANNING, GROUPES_PROJET, MAX_MESURES_CARTE, ONGLETS_ARGENT, PERIODES_CORPS, REFERENCES,
-  LIGNES_JOURNEE, REGROUPEMENTS, TUILES_ACCUEIL, ZOOMS, type CarteCorps, type TuileAccueil, type VueEnregistree,
+  LIGNES_JOURNEE, REGROUPEMENTS, TUILES_ACCUEIL, ZOOMS_PLANNING, type CarteCorps, type TuileAccueil, type VueEnregistree,
 } from "../donnees/prefs";
 import { useOptim, useUi } from "./contexte";
 import { estProjetCalendrier } from "../donnees/modele";
@@ -17,10 +17,10 @@ import { LIBELLE_GROUPE } from "./Planning";
 import { LIB_GROUPE, LIB_REF, ZOOMS_PROJET } from "./Projets";
 
 export const PALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
-const ONGLETS: [string, string][] = [["accueil", "Accueil"], ["corps", "Corps"], ["habitudes", "Habitudes"], ["gantt", "Gantt et frises"], ["argent", "Argent"], ["vues", "Vues enregistrées"]];
+const ONGLETS: [string, string][] = [["accueil", "Accueil"], ["corps", "Corps"], ["habitudes", "Habitudes"], ["gantt", "Gantt et frises"], ["argent", "Suivi du budget"], ["vues", "Vues enregistrées"]];
 const NOMS_TUILES: Record<TuileAccueil, [string, string]> = {
   journee: ["Journée", "cadran, tâches du jour et retards"], corps: ["Corps", "mesures choisies et habitudes des 7 jours"],
-  semaine: ["Semaine", "frise des tâches de la semaine"], projets: ["Projets", "avancement et retards par projet"], argent: ["Argent", "budget du mois"],
+  semaine: ["Semaine", "frise des tâches de la semaine"], projets: ["Projets", "avancement et retards par projet"], argent: ["Suivi du budget", "budget du mois"],
 };
 const NOMS_ONGLETS_ARGENT: Record<string, string> = { mois: "Période", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
 const NOMS_REGROUPEMENT: Record<string, string> = { jour: "Jour", semaine: "Semaine", mois: "Mois" };
@@ -115,7 +115,7 @@ function OngletGantt() {
     <h3 className="ox-sh">Représentation des barres <small>Planning, Projets et tuile Semaine</small></h3>
     <div className="ox-styles" role="radiogroup" aria-label="Représentation des barres">{STYLES_DEF.map((s) => <label key={s.id} className={prefs.gantt === s.id ? "is-on" : ""}><input type="radio" name="ox-style" checked={prefs.gantt === s.id} onChange={() => void ecrirePrefs({ gantt: s.id })} /><span><b>{s.libelle}</b><small>{s.aide}</small></span></label>)}</div>
     <h3 className="ox-sh">Planning</h3>
-    <Ligne titre="Zoom"><Segment nom="Zoom du planning" valeurs={ZOOMS} valeur={pl.zoom} libelle={(z) => ZOOMS_DEF[z].libelle} choisir={(z) => void ecrirePrefs({ planning: { ...pl, zoom: z } })} /></Ligne>
+    <Ligne titre="Zoom"><Segment nom="Zoom du planning" valeurs={ZOOMS_PLANNING} valeur={pl.zoom} libelle={(z) => ZOOMS_DEF[z].libelle} choisir={(z) => void ecrirePrefs({ planning: { ...pl, zoom: z } })} /></Ligne>
     <Ligne titre="Grouper par"><Segment nom="Groupement du planning" valeurs={GROUPES_PLANNING} valeur={pl.groupe} libelle={(g) => LIBELLE_GROUPE[g]} choisir={(g) => void ecrirePrefs({ planning: { ...pl, groupe: g } })} /></Ligne>
     <h3 className="ox-sh">Projets</h3>
     <Ligne titre="Zoom"><Segment nom="Zoom des projets" valeurs={ZOOMS_PROJET} valeur={pj.zoom} libelle={(z) => ZOOMS_DEF[z].libelle} choisir={(z) => void ecrirePrefs({ projets: { ...pj, zoom: z } })} /></Ligne>

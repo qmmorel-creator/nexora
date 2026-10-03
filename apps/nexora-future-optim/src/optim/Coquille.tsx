@@ -22,7 +22,7 @@ import { compterTriage, Triage } from "./Triage";
 import { Archive } from "./Archive";
 import { Phrase } from "./Phrase";
 
-const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"], ["archive", "Archive"]];
+const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Suivi du budget"], ["archive", "Archive"]];
 
 function Fiche() {
   const { d, projet, statut, fini, retard, joursRetard, executer, jour } = useOptim();
