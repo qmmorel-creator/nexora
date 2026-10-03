@@ -30,7 +30,7 @@ Remarque : `optim-rapports` n'est appelé par aucun écran d'Optim (seule la dé
 - Finance PRO : `proMissions`, `proTimeEntries`, `proExpenses`, `proBillingSchedule`, `proPayments`, `financeProSettings`.
 - Hors de la lecture d'Optim : `gcalSettings`, `quoteSettings`, `quoteCatalog`, `proObligations`, `milestoneTypes`, `views*`, `appearance`, `snapshot:*`.
 
-**Catalogues** (projets, dossiers, statuts, types, équipe, habitudes, objectifs sport) : écrits aujourd'hui par Nexora, Futur et le MCP, jamais par Optim.
+**Catalogues** (projets, dossiers, statuts, types, équipe, habitudes, objectifs sport) : écrits par Nexora, Futur, le MCP et, depuis le 03/10/2026, par les Réglages d'Optim (étape 5 ci-dessous).
 
 **Entretien que seule l'interface Nexora fait, quand elle est ouverte**
 - purge de la corbeille après 30 jours ;
@@ -85,6 +85,7 @@ Remarque : `optim-rapports` n'est appelé par aucun écran d'Optim (seule la dé
    - clé d'idempotence finale inchangée : `nexora:optim:<clé>` ;
    - sans la clé : repli automatique sur le relais vers nexora-project.
 5. **Catalogues en écriture** (projets, dossiers, statuts, types, habitudes, objectifs sport, équipe), en portant les écrans de Futur. Risque d'écrasement tant que Nexora reste utilisé : basculer quand Nexora n'est plus ouvert.
+   **Fait le 03/10/2026 (première partie)** : projets (priorité, icône, statuts et types masqués par projet, suppression avec réaffectation des tâches), dossiers, statuts (protégés comme Nexora, ordre), types (verrouillés, statut imposé, ordre), valeurs par défaut, modèles, thèmes et habitudes, utilisateurs (renommage reporté sur les tâches) et équipes, objectifs sport. Reste : types de jalon, ateliers, Google Calendar, calendriers synchronisés, méta-blocs temporels.
 6. **Entretien** (purge à 30 jours, instantanés) : en fonction planifiée d'Optim, d'abord à blanc.
 7. **Finance complète, puis synchronisation bancaire** : désactiver la planification de nexora-project avant d'activer celle d'Optim.
 8. **Rapports du matin et du soir** dans Optim, sans doublon avec nexora-project.

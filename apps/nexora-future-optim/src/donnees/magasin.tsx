@@ -55,7 +55,9 @@ export interface Resultat { message?: string; annuler?: () => Promise<void>; }
 export type Mutation = (taches: Tache[], archive: Tache[], cat: Catalogues) => { taches?: Tache[]; archive?: Tache[] };
 
 // Clés JSON modifiables hors tâches (Ref #669).
-export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs";
+export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs"
+  // Réglages repris de Nexora (retour du 03/10/2026).
+  | "projets" | "dossiers" | "statuts" | "types" | "defauts" | "modeles" | "themesHabitudes" | "membres" | "equipes" | "objectifsSport";
 export interface BilanMutation { journal?: string; }
 
 interface Contexte {

@@ -15,11 +15,15 @@ import { useCorps } from "./corps-donnees";
 import { EditeurCarte } from "./Corps";
 import { STYLES_DEF, ZOOMS_DEF } from "./frise";
 import { IconeStyle } from "./IconeStyle";
+import { GestionHabitudes, OngletCreation, OngletEquipe, OngletObjectifs, OngletProjets, OngletStatuts } from "./ReglagesNexora";
 import { LIBELLE_GROUPE } from "./Planning";
 import { LIB_GROUPE, LIB_REF, ZOOMS_PROJET } from "./Projets";
 
 export const PALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
-const ONGLETS: [string, string][] = [["accueil", "Accueil"], ["corps", "Corps"], ["habitudes", "Habitudes"], ["gantt", "Gantt et frises"], ["argent", "Suivi du budget"], ["vues", "Vues enregistrées"]];
+// Les cinq dernières rubriques sont celles de Nexora (catalogues partagés, retour du 03/10/2026).
+const ONGLETS: [string, string][] = [["accueil", "Accueil"], ["corps", "Corps"], ["habitudes", "Habitudes"], ["gantt", "Gantt et frises"], ["argent", "Suivi du budget"], ["vues", "Vues enregistrées"],
+  ["projets", "Projets et dossiers"], ["statuts", "Statuts et types"], ["creation", "Création des tâches"], ["equipe", "Utilisateurs et équipes"], ["sport", "Objectifs sport"]];
+const PARTAGES = new Set(["projets", "statuts", "creation", "equipe", "sport"]);
 const NOMS_TUILES: Record<TuileAccueil, [string, string]> = {
   journee: ["Journée", "cadran, tâches du jour et retards"], corps: ["Corps", "mesures choisies et habitudes des 7 jours"],
   semaine: ["Semaine", "frise des tâches de la semaine"], projets: ["Projets", "avancement et retards par projet"], argent: ["Suivi du budget", "budget du mois"],
@@ -161,8 +165,9 @@ export function Reglages() {
       <header className="hx-th"><h2>Réglages</h2><button type="button" className="hx-x" aria-label="Fermer" onClick={() => setReglages(null)}>×</button></header>
       <nav className="hx-stabs">{ONGLETS.map(([id, l]) => <button key={id} type="button" className={actif === id ? "is-on" : ""} aria-current={actif === id ? "page" : undefined} onClick={() => setReglages(id)}>{l}</button>)}</nav>
       <div className="hx-sbody">
-        {actif === "accueil" ? <OngletAccueil /> : actif === "corps" ? <OngletCorps /> : actif === "habitudes" ? <OngletHabitudes /> : actif === "gantt" ? <OngletGantt /> : actif === "argent" ? <OngletArgent /> : <OngletVues />}
-        <p className="hx-hint is-foot">Réglages synchronisés entre vos appareils (clé nexora:optimPrefs, propre à ce site). Nexora n'est pas modifié.</p>
+        {actif === "accueil" ? <OngletAccueil /> : actif === "corps" ? <OngletCorps /> : actif === "habitudes" ? <><OngletHabitudes /><GestionHabitudes /></> : actif === "gantt" ? <OngletGantt /> : actif === "argent" ? <OngletArgent />
+          : actif === "projets" ? <OngletProjets /> : actif === "statuts" ? <OngletStatuts /> : actif === "creation" ? <OngletCreation /> : actif === "equipe" ? <OngletEquipe /> : actif === "sport" ? <OngletObjectifs /> : <OngletVues />}
+        <p className="hx-hint is-foot">{PARTAGES.has(actif) ? "Rubrique partagée avec Nexora : les modifications sont écrites dans ses catalogues (horodatées, élément par élément)." : actif === "habitudes" ? "Couleurs d'affichage : propres à ce site (nexora:optimPrefs). Thèmes et habitudes : partagés avec Nexora." : "Réglages synchronisés entre vos appareils (clé nexora:optimPrefs, propre à ce site). Nexora n'est pas modifié."}</p>
       </div>
     </section></>;
 }
