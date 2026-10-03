@@ -90,11 +90,13 @@ const MAX_ROWS = 1_000_000;
 
 // Toutes les lignes, par pages de 1000. Au-delà de la limite de
 // sécurité : erreur, jamais un résultat partiel qui fausserait les montants.
-export async function readAllRows(config: FinanceReadConfig, spec: Spec) {
+// signal : échéance commune à toutes les pages (et à toutes les tables via readTables),
+// pour rester sous la limite d'une fonction Netlify même avec plusieurs pages.
+export async function readAllRows(config: FinanceReadConfig, spec: Spec, signal: AbortSignal = AbortSignal.timeout(9_000)) {
   const rows: unknown[] = [];
   const order = spec.order.split(",").map((column) => `${column}.asc`).join(",");
   for (let offset = 0; offset < MAX_ROWS; offset += PAGE) {
-    const page = await financeFetch(config, `/rest/v1/${spec.table}?select=${spec.select}&order=${order}&limit=${PAGE}&offset=${offset}`);
+    const page = await financeFetch(config, `/rest/v1/${spec.table}?select=${spec.select}&order=${order}&limit=${PAGE}&offset=${offset}`, { signal });
     if (!Array.isArray(page)) throw new Error("finance_invalid_response");
     rows.push(...page);
     if (page.length < PAGE) return rows;
@@ -132,7 +134,8 @@ export const TRANSACTIONS_TABLES = {
 } as const;
 
 export async function readTables(config: FinanceReadConfig, tables: Record<string, Spec>) {
-  const entries = await Promise.all(Object.entries(tables).map(async ([key, spec]) => [key, await readAllRows(config, spec)] as const));
+  const signal = AbortSignal.timeout(9_000);
+  const entries = await Promise.all(Object.entries(tables).map(async ([key, spec]) => [key, await readAllRows(config, spec, signal)] as const));
   return Object.fromEntries(entries);
 }
 

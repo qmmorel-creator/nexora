@@ -86,6 +86,8 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
       { id: "t0c", title: "Brouillon de newsletter de septembre", projectId: "p-com", statusId: "s5", taskTypeId: "tt1", start: J(-30), end: J(-25), archivedAt: new Date(Date.now() - 12 * 86400000).toISOString() },
     ],
     "nexora:favorites": [{ type: "project", id: "p-ctex6" }],
+    "nexora:gcalSettings": { calendars: [{ id: "agenda@demo", name: "Agenda personnel", color: "#3b82f6" }], daysPast: 30, daysFuture: 365, autoCompletePastEvents: false },
+    "nexora:metaTemporalBlocks": [{ id: "mb1", title: "Phase études", startDate: J(-20), endDate: J(15), kind: "phase", color: "#7A5AF8", borderStyle: "solid", dashboardIds: null }],
     "nexora:metaFilters": { showDone: true },
     "nexora:taskDefaults": { assignee: "Quentin Morel", assigneeDefaulted: true },
   };

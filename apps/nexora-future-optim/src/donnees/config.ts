@@ -26,4 +26,6 @@ export const CLES_ECRITURE_OUVERTES: readonly string[] = [
   "nexora:projects", "nexora:projectFolders", "nexora:statuses", "nexora:taskTypes",
   "nexora:taskDefaults", "nexora:taskTemplates", "nexora:habitThemes",
   "nexora:teamMembers", "nexora:teams", "nexora:sportGoals",
+  // Deuxième partie : types de jalon, ateliers et affectations, méta-blocs temporels, Google Calendar, calendriers synchronisés.
+  "nexora:milestoneTypes", "nexora:workshops", "nexora:staffing", "nexora:metaTemporalBlocks", "nexora:gcalSettings", "nexora:syncedCalendarSettings",
 ];

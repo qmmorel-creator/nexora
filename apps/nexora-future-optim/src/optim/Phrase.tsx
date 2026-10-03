@@ -102,7 +102,10 @@ export function Phrase() {
   const [saisie, setSaisie] = useState<{ mode: "nouvelle" | "renommer"; id?: string; nom: string } | null>(null);
   const racine = useRef<HTMLElement>(null);
 
-  useEffect(() => { const v = prefs.vues.find((x) => x.id === vueId); if (v) { setPhrase(v.ph); setCourante(v.id); } }, [vueId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Démarrage à froid : les préférences peuvent arriver après le premier rendu ; on
+  // applique alors la vue de l'URL tant qu'aucune vue n'est ouverte.
+  const vueAppliquee = useRef<string | null>(courante);
+  useEffect(() => { const v = prefs.vues.find((x) => x.id === vueId); if (v && vueAppliquee.current !== v.id) { vueAppliquee.current = v.id; setPhrase(v.ph); setCourante(v.id); } if (!vueId) vueAppliquee.current = null; }, [vueId, prefs.vues]);
 
   const visibles = useMemo(() => [phrase, ...prefs.tuiles, ...prefs.vues.map((v) => v.ph)], [phrase, prefs]);
   const lu = useLectures(source, visibles, d.aujourdhui);

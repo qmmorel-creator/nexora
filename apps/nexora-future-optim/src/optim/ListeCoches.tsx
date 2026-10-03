@@ -22,8 +22,8 @@ export function toutCocher(choisis: string[], visibles: { id: string; desactive?
 }
 export const toutDecocher = (choisis: string[], visibles: { id: string }[]): string[] => { const v = new Set(visibles.map((o) => o.id)); return choisis.filter((id) => !v.has(id)); };
 
-export function ListeCoches({ options, choisis, changer, max, recherche = true, libelleRecherche = "Rechercher" }: {
-  options: OptionCoche[]; choisis: string[]; changer: (ids: string[]) => void; max?: number; recherche?: boolean; libelleRecherche?: string;
+export function ListeCoches({ options, choisis, changer, max, recherche = true, libelleRecherche = "Rechercher", fermer }: {
+  options: OptionCoche[]; choisis: string[]; changer: (ids: string[]) => void; max?: number; recherche?: boolean; libelleRecherche?: string; fermer?: () => void;
 }) {
   const [q, setQ] = useState("");
   const visibles = filtrerOptions(options, q);
@@ -31,10 +31,11 @@ export function ListeCoches({ options, choisis, changer, max, recherche = true, 
   const groupes = [...new Set(visibles.map((o) => o.groupe || ""))];
   return (
     <div className="ox-lc">
-      {recherche && <input type="search" className="ox-lc-q" value={q} onChange={(e) => setQ(e.target.value)} placeholder={libelleRecherche} aria-label={libelleRecherche} autoComplete="off" />}
+      {recherche && <input type="search" className="ox-lc-q" value={q} onChange={(e) => setQ(e.target.value)} placeholder={libelleRecherche} aria-label={libelleRecherche} autoComplete="off"
+        onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); if (q) setQ(""); else fermer?.(); } }} />}
       <p className="ox-lc-act">
         <button type="button" className="hx-more" disabled={plein || visibles.every((o) => o.desactive || choisis.includes(o.id))} onClick={() => changer(toutCocher(choisis, visibles, max))}>Tout cocher</button>
-        <button type="button" className="hx-more" disabled={!visibles.some((o) => choisis.includes(o.id))} onClick={() => changer(toutDecocher(choisis, visibles))}>Tout décocher</button>
+        <button type="button" className="hx-more" disabled={q.trim() ? !visibles.some((o) => choisis.includes(o.id)) : !choisis.length} onClick={() => changer(q.trim() ? toutDecocher(choisis, visibles) : [])}>Tout décocher</button>
         {max !== undefined && <small className="hx-dim">{choisis.length} / {max}</small>}
       </p>
       <div className="ox-lc-l">
@@ -57,7 +58,7 @@ export function MenuCoches({ libelle, classe = "hx-fchip", ...p }: { libelle: Re
   const n = p.choisis.length;
   return <span className="hx-fchip-w" ref={ref}>
     <button type="button" className={`${classe} ${n ? "is-on" : ""}`} aria-expanded={ouvert} onClick={() => setOuvert(!ouvert)}>{libelle}{n ? <> <b>{n}</b></> : null} ▾</button>
-    {ouvert && <div className="hx-pop is-f ox-lc-pop" role="dialog">{<ListeCoches {...p} />}</div>}
+    {ouvert && <div className="hx-pop is-f ox-lc-pop" role="dialog">{<ListeCoches {...p} fermer={() => setOuvert(false)} />}</div>}
   </span>;
 }
 
@@ -87,7 +88,7 @@ export function ChoixRecherche({ options, valeur, changer, vide, libelle, classe
     <button type="button" className={classe} aria-haspopup="listbox" aria-expanded={ouvert} aria-label={libelle} onClick={() => setOuvert(!ouvert)}>{cur?.libelle || vide || "Choisir…"} ▾</button>
     {ouvert && <div className="hx-pop is-f ox-lc-pop" role="dialog" aria-label={libelle}>
       <input type="search" className="ox-lc-q" value={q} autoFocus onChange={(e) => setQ(e.target.value)} placeholder="Rechercher" aria-label={`Rechercher : ${libelle}`} autoComplete="off"
-        onKeyDown={(e) => { if (e.key === "Enter" && visibles[0]) { e.preventDefault(); choisir(visibles[0].id); } }} />
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (visibles[0]) choisir(visibles[0].id); } if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); setOuvert(false); setQ(""); } }} />
       <div className="ox-lc-l" role="listbox" aria-label={libelle}>
         {visibles.map((o, i) => { const g = "groupe" in o ? o.groupe : undefined, gp = i > 0 && "groupe" in visibles[i - 1] ? visibles[i - 1].groupe : undefined; return <span key={o.id || "_vide"} className="ox-cr-li">
           {g && g !== gp && <h4>{g}</h4>}

@@ -36,6 +36,7 @@ Différences avec Futur :
   - `nexora:activityLog`, `nexora:habitLog` et `nexora:habitSkips` ;
   - `nexora:optimPrefs` ;
   - les catalogues de configuration partagés avec Nexora (Réglages, retour du 03/10/2026) : `nexora:projects`, `nexora:projectFolders`, `nexora:statuses`, `nexora:taskTypes`, `nexora:taskDefaults`, `nexora:taskTemplates`, `nexora:habitThemes`, `nexora:teamMembers`, `nexora:teams`, `nexora:sportGoals`. Chaque élément modifié reçoit `updatedAt` (`src/donnees/reglages.ts`) : Nexora fusionne ces clés élément par élément. Exception : `nexora:taskDefaults` n'est pas fusionnable côté Nexora (une écriture concurrente y affiche un bandeau de conflit, sans écrasement silencieux).
+  - les autres réglages de Nexora (deuxième partie) : `nexora:milestoneTypes`, `nexora:workshops`, `nexora:staffing` (supprimer un atelier retire ses affectations), `nexora:metaTemporalBlocks`, `nexora:gcalSettings` et `nexora:syncedCalendarSettings` (réglages seuls : l'import des événements reste fait par Nexora).
 
   Toute écriture Firestore passe par `src/donnees/ecriture-firebase.ts`. `tests/lecture-seule.test.ts` refuse toute autre fonction d'écriture.
 - **Démonstration** : `scripts/verifier-paquet.mjs` fait échouer le build de production s'il contient du code ou des données de démonstration.
