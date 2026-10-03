@@ -20,14 +20,22 @@ export interface AccesFinance {
   lire(ressource: RessourceFinance, params?: Record<string, string>): Promise<unknown>;
   categoriser(c: Categorisation): Promise<void>;
 }
+// Corps (Ref #660) : sport, santé et photos lus par relais (lecture seule).
+export class ErreurCorps extends Error { constructor(public code: string) { super(code); this.name = "ErreurCorps"; } }
+export type RessourceCorps = "sport-activities" | "health-records" | "body-photos";
+export interface AccesCorps {
+  lire(ressource: RessourceCorps): Promise<unknown>;
+  image(id: string): Promise<Blob>;
+}
 export interface Source {
   ecouter(cle: string, rappel: (l: LectureCle | null) => void, erreur: (e: Error) => void): () => void;
   modifier(cle: string, transformer: (texte: string) => string): Promise<{ revision: string }>;
   rapports?(jour: string): Promise<RapportsJour>;
   finance?: AccesFinance;
+  corps?: AccesCorps;
 }
 
-export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour: string) => RapportsJour, finance?: AccesFinance): Source & { valeur(cle: string): unknown } {
+export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour: string) => RapportsJour, finance?: AccesFinance, corps?: AccesCorps): Source & { valeur(cle: string): unknown } {
   const valeurs = new Map<string, { texte: string; revision: string }>(Object.entries(initial).map(([k, v]) => [k, { texte: JSON.stringify(v), revision: "r0" }]));
   const ecoutes = new Map<string, Set<(l: LectureCle | null) => void>>();
   let n = 0;
@@ -50,5 +58,6 @@ export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour
     valeur(cle) { const v = valeurs.get(cle); return v ? JSON.parse(v.texte) : undefined; },
     ...(rapports ? { rapports: async (jour: string) => rapports(jour) } : {}),
     ...(finance ? { finance } : {}),
+    ...(corps ? { corps } : {}),
   };
 }

@@ -21,7 +21,9 @@ import { Palette, type Commande } from "./Palette";
 import { useNotifier } from "./Notifications";
 import { FilDuJour } from "./FilDuJour";
 import { PageProjet } from "./PageProjet";
-import { Bande, ESPACES, NavEspace, PageCorps, PageEquipe, allerEspace, memoriser, useRapportDuJour, type Espace } from "./Espaces";
+import { Bande, ESPACES, NavEspace, allerEspace, memoriser, useRapportDuJour, type Espace } from "./Espaces";
+import { PageCorps } from "./Corps";
+import { PageEquipe } from "./Equipe";
 import { PageFinancesKdm } from "./Finances";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { fusionnerPrefs } from "../donnees/prefs";
@@ -272,7 +274,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       <main className="zone quadrillage" ref={zone}>
         {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} />
         : vue === "equipe" ? <PageEquipe d={d} />
-        : vue === "corps" ? <PageCorps d={d} />
+        : vue === "corps" ? <PageCorps d={d} corps={source.corps} />
         : vue === "finances" ? <PageFinancesKdm finance={source.finance} jour={d.aujourdhui} pro={d.pro} projets={d.projets} />
         : vue === "projet" && lentille === "page" && projet ? <PageProjet d={d} projet={projet} selection={selection} onOuvrir={ouvrir} onBasculer={actionBasculer} lentilles={segmentLentilles} />
         : <>

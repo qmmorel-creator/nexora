@@ -13,6 +13,8 @@ import { ajouterAuJournal, entreesJournal, type EntreeJournal } from "./journal"
 import { normaliserPrefs, type PrefsFutur } from "./prefs";
 import type { Baselines } from "./planning";
 import { notesTableaux, type NoteTableau } from "./notes";
+import { normaliserAffectations, normaliserAteliers, type Affectation, type Atelier, type MembreEquipe } from "./equipe";
+import { normaliserObjectifs, type ObjectifsSport } from "./sport";
 import type { Client, DepensePro, Devis, Facture, LigneFacturation, MissionPro, Paiement, ReglagesPro, TempsPro } from "./finance-pro";
 
 export interface DonneesPro { devis: Devis[]; clients: Client[]; factures: Facture[]; missions: MissionPro[]; temps: TempsPro[]; depenses: DepensePro[]; echeancier: LigneFacturation[]; paiements: Paiement[]; reglages: ReglagesPro; }
@@ -30,6 +32,8 @@ export const CLES = {
   devis: "nexora:quotes", clients: "nexora:quoteClients", factures: "nexora:invoices", missions: "nexora:proMissions",
   temps: "nexora:proTimeEntries", depensesPro: "nexora:proExpenses", echeancier: "nexora:proBillingSchedule", paiements: "nexora:proPayments",
   reglagesPro: "nexora:financeProSettings",
+  // Équipe et objectifs sport : lecture seule (#660).
+  ateliers: "nexora:workshops", affectations: "nexora:staffing", objectifsSport: "nexora:sportGoals",
 } as const;
 type NomCle = keyof typeof CLES;
 
@@ -43,6 +47,7 @@ export interface Donnees extends Catalogues {
   defauts: Defauts; modeles: Modele[]; raccourcis: Record<string, string>;
   themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur; references: Baselines; notes: NoteTableau[]; pro: DonneesPro;
   depenses: Depense[]; journal: Activite[]; equipes: { id: string; name?: string; color?: string }[];
+  equipesBrutes: unknown; ateliers: Atelier[]; affectations: Affectation[]; objectifsSport: ObjectifsSport; membresEquipe: MembreEquipe[];
   etats: Record<NomCle, EtatCle>; charge: boolean; aujourdhui: string;
 }
 
@@ -142,6 +147,10 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
       references: (() => { const v = parse<unknown>(etats.references, CLES.references, {}); return v && typeof v === "object" && !Array.isArray(v) ? (v as Baselines) : {}; })(),
       depenses: parse<Depense[]>(etats.depenses, CLES.depenses, []), journal: parse<Activite[]>(etats.journal, CLES.journal, []),
       equipes: parse<{ id: string; name?: string; color?: string }[]>(etats.equipes, CLES.equipes, []),
+      equipesBrutes: parse<unknown>(etats.equipes, CLES.equipes, []),
+      ...(() => { const ateliers = normaliserAteliers(parse<unknown>(etats.ateliers, CLES.ateliers, [])); return { ateliers, affectations: normaliserAffectations(parse<unknown>(etats.affectations, CLES.affectations, []), ateliers.map((w) => w.id)) }; })(),
+      objectifsSport: normaliserObjectifs(parse<unknown>(etats.objectifsSport, CLES.objectifsSport, null)),
+      membresEquipe: parse<MembreEquipe[]>(etats.membres, CLES.membres, []),
       etats, charge: etats.taches.charge && etats.projets.charge && etats.statuts.charge && etats.types.charge, aujourdhui: jour,
     };
   }, [etats, jour]);
