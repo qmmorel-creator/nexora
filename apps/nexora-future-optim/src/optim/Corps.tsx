@@ -4,6 +4,8 @@
 // en barres empilées par discipline ; grille des habitudes.
 import { useState, type ReactNode } from "react";
 import { ajouterJours } from "../donnees/modele";
+import type { ThemeHabitudes } from "../donnees/habitudes";
+import { couleursDuJour, fondFacettes, grilleMois } from "../donnees/heatmap-habitudes";
 import { MESURES_SANTE, formaterSante, mesureSante, type Releve } from "../donnees/sante";
 import { couleurSport, nomsSports, type Activite } from "../donnees/sport";
 import { resumeMetrique, seaux, serieMetrique, type Seau } from "../donnees/corps";
@@ -11,6 +13,7 @@ import { GRANDEURS_SPORT, MAX_MESURES_CARTE, PERIODES_CORPS, REGROUPEMENTS, type
 import { dateCourte, hm, jourCourt, MOIS_C, semaineIso, useOptim } from "./contexte";
 import { ListeCoches } from "./ListeCoches";
 import { PhotosCorps } from "./PhotosCorps";
+import { naviguer } from "../navigation/routeur";
 import { styleMesure, useCorps } from "./corps-donnees";
 import { useActionsHabitudes, useJour } from "./jour";
 
@@ -106,7 +109,7 @@ const GRANDEUR: Record<GrandeurSport, { lib: string; val: (a: Activite) => numbe
   distance: { lib: "Distance", val: (a) => a.distance || 0, fmt: (v) => `${(Math.round(v * 10) / 10).toLocaleString("fr-FR")} km`, court: (v) => `${Math.round(v)} km` },
   denivele: { lib: "Dénivelé", val: (a) => a.elevation || 0, fmt: (v) => `${Math.round(v).toLocaleString("fr-FR")} m`, court: (v) => `${Math.round(v)} m` },
 };
-function BlocSport({ activites: toutes, c, setReg, maj }: { activites: Activite[]; c: PrefsCorps; setReg: (r: RegroupementCorps) => void; maj: (p: Partial<PrefsCorps>) => void }) {
+export function BlocSport({ activites: toutes, c, setReg, maj, detail = true }: { activites: Activite[]; c: PrefsCorps; setReg: (r: RegroupementCorps) => void; maj: (p: Partial<PrefsCorps>) => void; detail?: boolean }) {
   const { jour, d } = useOptim();
   const tousSports = nomsSports(toutes), masques = new Set(c.sportsMasques), G = GRANDEUR[c.grandeurSport];
   const activites = toutes.filter((a) => !masques.has(a.sport));
@@ -148,12 +151,32 @@ function BlocSport({ activites: toutes, c, setReg, maj }: { activites: Activite[
         </svg>
         <div className="hx-sleg is-tot">{ordre.filter((k) => parSport[k] && (c.grandeurSport === "duree" || parSport[k].m > 0)).map((k) => <span key={k}><i style={{ background: couleurSport(k, ordre) }} />{k} <b>{G.fmt(parSport[k].m)}</b> · {parSport[k].n} séance{parSport[k].n > 1 ? "s" : ""}</span>)}</div>
       </div></div>
-    {recentes.length > 0 && <table className="hx-stab"><thead><tr><th>Date</th><th>Sport</th><th>Séance</th><th>Durée</th><th>Distance</th><th>D+</th><th>FC moy.</th></tr></thead>
+    {detail && recentes.length > 0 && <table className="hx-stab"><thead><tr><th>Date</th><th>Sport</th><th>Séance</th><th>Durée</th><th>Distance</th><th>D+</th><th>FC moy.</th></tr></thead>
       <tbody>{recentes.map((a) => <tr key={a.id || a.date + a.title}><td>{jourCourt(a.date)} {dateCourte(a.date)}</td><td><i style={{ background: couleurSport(a.sport, ordre) }} />{a.sport}</td><td>{a.url ? <a href={a.url} target="_blank" rel="noreferrer noopener">{a.title}</a> : a.title}</td><td>{a.total ? hm(Math.round(a.total)) : "—"}</td><td>{a.distance ? `${String(a.distance).replace(".", ",")} km` : "—"}</td><td>{a.elevation ? `${a.elevation} m` : "—"}</td><td>{a.hr ? `${a.hr} bpm` : "—"}</td></tr>)}</tbody></table>}
   </>;
 }
 
 // Grille des habitudes : une case par jour, cliquable (règles de Nexora).
+// Thème replié (retour du 03/10/2026) : heatmap mensuelle comme le widget « Heat map »
+// d'habitudes de Nexora ; une case par jour, une facette de couleur par habitude posée.
+const JOURS_SEM = ["L", "M", "M", "J", "V", "S", "D"];
+function HeatmapMois({ theme }: { theme: ThemeHabitudes }) {
+  const { couleurHabitude, jour, d } = useJour();
+  const [decalage, setDecalage] = useState(0);
+  const [a, m] = (() => { const t = Number(jour.slice(0, 4)) * 12 + Number(jour.slice(5, 7)) - 1 + decalage; return [Math.floor(t / 12), t % 12]; })();
+  const cases = grilleMois(a, m);
+  const nom = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(a, m, 15)));
+  return <span className="ox-hm" style={{ gridColumn: "2 / -1" }}>
+    <span className="ox-hm-nav"><button type="button" aria-label="Mois précédent" onClick={() => setDecalage(decalage - 1)}>‹</button><b>{nom}</b><button type="button" aria-label="Mois suivant" disabled={decalage >= 0} onClick={() => setDecalage(decalage + 1)}>›</button></span>
+    <span className="ox-hm-g">{JOURS_SEM.map((j, i) => <i key={"j" + i} className="ox-hm-dow">{j}</i>)}
+      {cases.map((c) => { const cols = couleursDuJour(theme, d.journalHabitudes, c.date, couleurHabitude); const futur = c.date > jour;
+        return <i key={c.date} className={`ox-hm-c ${c.dansMois ? "" : "is-out"} ${c.date === jour ? "is-today" : ""} ${futur ? "is-futur" : ""}`} style={{ background: fondFacettes(cols, "var(--ox-hm-vide)") }}
+          title={`${theme.name} · ${dateCourte(c.date)} : ${cols.length ? `${cols.length} habitude${cols.length > 1 ? "s" : ""}` : futur ? "à venir" : "rien"}`}><span>{c.jour}</span></i>; })}
+    </span>
+    <span className="ox-hm-leg">{theme.habits.map((h) => <span key={h.id}><i style={{ background: couleurHabitude(h) }} />{h.name}</span>)}</span>
+  </span>;
+}
+
 // Thèmes repliables (retour du 03/10/2026) : repli mémorisé dans prefs.corps.replies (« theme:<id> »).
 function GrilleHabitudes({ n, replies, basculer }: { n: number; replies: string[]; basculer: (cle: string) => void }) {
   const { etats, couleurHabitude, jour, d } = useJour();
@@ -163,9 +186,8 @@ function GrilleHabitudes({ n, replies, basculer }: { n: number; replies: string[
   const cellules: ReactNode[] = [<span key="c0" />, ...jours.map((x, i) => <span key={"d" + x} className={`hx-hgd ${x === jour ? "is-today" : ""}`}>{n <= 30 || i % 7 === 0 ? Number(x.slice(8)) : ""}</span>), <span key="c1" />];
   d.themesHabitudes.filter((t) => t.habits.length).forEach((t) => {
     const ferme = replies.includes("theme:" + t.id);
-    const faitsTheme = jours.map((x) => parJour.get(x)!.parTheme.find((p) => p.theme.id === t.id)?.habitudes.filter((y) => y.etat === "fait" || y.etat === "partiel").length || 0);
     cellules.push(<button key={"t" + t.id} type="button" className="hx-hgl is-theme ox-hgt" aria-expanded={!ferme} style={{ ["--c" as string]: t.color }} onClick={() => basculer("theme:" + t.id)}><span className="hx-chev">{ferme ? "▸" : "▾"}</span><b>{t.name}</b><small>{t.habits.length} · {t.selectionMode === "single" ? "un seul choix" : "plusieurs"}</small></button>,
-      ...jours.map((x, k) => <span key={t.id + x} className={ferme ? "ox-hgsum" : ""} style={ferme ? { ["--c" as string]: t.color, ["--f" as string]: faitsTheme[k] / (t.selectionMode === "single" ? 1 : t.habits.length) } : undefined} title={ferme ? `${t.name} · ${dateCourte(x)} : ${faitsTheme[k]} / ${t.selectionMode === "single" ? 1 : t.habits.length}` : undefined} />), <span key={t.id + "r"} />);
+      ...(ferme ? [<HeatmapMois key={t.id + "hm"} theme={t} />] : [...jours.map((x) => <span key={t.id + x} />), <span key={t.id + "r"} />]));
     if (ferme) return;
     t.habits.forEach((h) => {
       const col = couleurHabitude(h); let ok = 0, tot = 0;
@@ -186,8 +208,8 @@ function GrilleHabitudes({ n, replies, basculer }: { n: number; replies: string[
 }
 
 export function Corps() {
-  const { prefs, ecrirePrefs, d, jour } = useOptim();
-  const { releves, activites, charge, erreurSante, erreurSport } = useCorps();
+  const { prefs, ecrirePrefs, jour } = useOptim();
+  const { releves, charge, erreurSante, erreurSport } = useCorps();
   const { etats } = useJour();
   const [edition, setEdition] = useState<string | null>(null);
   const c = prefs.corps;
@@ -212,16 +234,13 @@ export function Corps() {
       {!charge && <p className="hx-dim">Chargement des relevés santé et des activités…</p>}
       {(erreurSante || erreurSport) && <p className="ox-alerte">{erreurSante && <>Santé indisponible : {erreurSante}. </>}{erreurSport && <>Sport indisponible : {erreurSport}.</>}</p>}
       <div className="hx-cgrid">{c.cartes.map(carte)}</div>
-      <Section id="act" titre="Activité et sport" ouvert={!replie("act")} basculer={() => basculer("act")} resume={`${activites.filter((a) => a.date >= ajouterJours(jour, -6)).length} séances sur 7 jours`}>
-        {activites.length ? <BlocSport activites={activites} c={c} setReg={(r) => majCorps({ regroupementSport: r })} maj={majCorps} /> : <p className="hx-dim">{charge ? "Aucune activité relayée." : "…"}</p>}
-      </Section>
+      <p className="ox-vers-sport">Le sport a son propre onglet : <button type="button" className="hx-more" onClick={() => naviguer("/sport")}>Sport ›</button></p>
       <Section id="hab" titre="Habitudes" ouvert={!replie("hab")} basculer={() => basculer("hab")} resume={`${eh.faites}/${eh.total} aujourd'hui`}>
         <GrilleHabitudes n={Math.min(c.periode, 30)} replies={c.replies} basculer={(k) => majCorps({ replies: c.replies.includes(k) ? c.replies.filter((x) => x !== k) : [...c.replies, k] })} />{c.periode > 30 && <p className="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles.</p>}
       </Section>
       <Section id="photos" titre="Photos" ouvert={!replie("photos")} basculer={() => basculer("photos")} resume="comparaison de Nexora">
         <PhotosCorps c={c} maj={majCorps} />
       </Section>
-      {d.objectifsSport.weeklyHours == null && activites.length > 0 && <p className="hx-hint">Aucun objectif hebdomadaire de sport défini dans Nexora : la ligne d'objectif est masquée.</p>}
     </main>
   );
 }

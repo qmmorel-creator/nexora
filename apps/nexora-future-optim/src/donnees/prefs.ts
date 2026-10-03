@@ -1,3 +1,4 @@
+import { PERIODES_SPORT, type PeriodeSport } from "./sport";
 import { REGLES_DEFAUT, nettoyerReports, normaliserRegles, type ReglesTriage } from "./triage";
 import { PHRASE_VIDE, normaliserPhrase, type PrefsPhrase } from "./phrase";
 
@@ -57,7 +58,12 @@ export const GRANDEURS_SPORT = ["duree", "distance", "denivele"] as const;
 export type GrandeurSport = (typeof GRANDEURS_SPORT)[number];
 export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; sportsMasques: string[]; grandeurSport: GrandeurSport;
   // Comparaison des photos (module de Nexora) : réglages d'affichage, comme la config du widget Nexora (bodyPhotos).
-  photos: Record<string, unknown>; }
+  photos: Record<string, unknown>;
+  // Onglet Sport (retour du 03/10/2026) : sous-onglet et périodes du tableau de bord.
+  ongletSport: OngletSport; sportResume: PeriodeSport; sportRepartition: PeriodeSport; }
+export const ONGLETS_SPORT = ["tableau", "activite"] as const;
+export type OngletSport = (typeof ONGLETS_SPORT)[number];
+const PERIODES_SPORT_IDS = PERIODES_SPORT.map((p) => p.valeur);
 
 // Argent (#690) : onglet ouvert et durée N de l'évolution du patrimoine.
 export const ONGLETS_ARGENT = ["mois", "patrimoine", "pro", "operations"] as const;
@@ -97,7 +103,7 @@ export const PREFS_VIDES: PrefsOptim = {
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante", colonnes: [...COLONNES_PROJET] },
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL], journee: JOURNEE_ACCUEIL_DEFAUT, semaine: SEMAINE_ACCUEIL_DEFAUT },
-  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree", photos: {} },
+  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree", photos: {}, ongletSport: "tableau", sportResume: "year", sportRepartition: "year" },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   journee: JOURNEE_DEFAUT,
   triage: TRIAGE_DEFAUT,
@@ -148,7 +154,8 @@ export function normaliserCorps(v: unknown): PrefsCorps {
     return { id: d.id, titre, mesures: Array.isArray(c.mesures) ? mesuresValides(c.mesures) : d.mesures };
   });
   const periode = (PERIODES_CORPS as readonly number[]).includes(b.periode as number) ? (b.periode as PeriodeCorps) : 30;
-  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 60), sportsMasques: chaines(b.sportsMasques, 40).map((x) => x.slice(0, 60)), grandeurSport: parmi(b.grandeurSport, GRANDEURS_SPORT, "duree"), photos: objet(b.photos) };
+  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 60), sportsMasques: chaines(b.sportsMasques, 40).map((x) => x.slice(0, 60)), grandeurSport: parmi(b.grandeurSport, GRANDEURS_SPORT, "duree"), photos: objet(b.photos),
+    ongletSport: parmi(b.ongletSport, ONGLETS_SPORT, "tableau"), sportResume: parmi(b.sportResume, PERIODES_SPORT_IDS, "year"), sportRepartition: parmi(b.sportRepartition, PERIODES_SPORT_IDS, "year") };
 }
 
 export function normaliserJourneeAccueil(v: unknown): BlocJourneeAccueil {

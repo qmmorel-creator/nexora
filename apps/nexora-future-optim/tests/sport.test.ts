@@ -55,3 +55,15 @@ describe("Sport (#660, port de NEXORA:SPORT)", () => {
     expect(activitesDe({ activities: [{ date: "2026-10-01", sport: "X", total: "12" }, { date: "bad" }] })).toHaveLength(1);
   });
 });
+
+describe("répartition 1 carré = 1 h (port de sportWaffle)", () => {
+  it("heures par sport, dernier carré au prorata, séances sans durée comptées à part", async () => {
+    const { repartition } = await import("../src/donnees/sport");
+    const a = (id: string, sport: string, total: number | null, date = "2026-10-01") => ({ id, date, sport, title: "", total, moving: null, distance: null, elevation: null, hr: null, maxHr: null, url: null });
+    const r = repartition([a("1", "Course", 90), a("2", "Course", 60), a("3", "Vélo", 30), a("4", "Natation", null), a("5", "Course", 600, "2025-01-01")], "year", "2026-10-03");
+    expect(r.parSport.map((s) => [s.nom, s.heures, s.carres, s.dernier])).toEqual([["Course", 2.5, 3, 0.5], ["Vélo", 0.5, 1, 0.5]]);
+    expect(r.total).toBe(3);
+    expect(r.manquantes).toBe(1);
+    expect(r.tropGrand).toBe(false);
+  });
+});
