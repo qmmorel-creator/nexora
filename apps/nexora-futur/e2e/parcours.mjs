@@ -168,7 +168,7 @@ try {
   assert.match(page.url(), /\/equipe$/);
   await capture("9-espace-equipe");
   await page.keyboard.press("g"); await page.keyboard.press("s");
-  await page.getByRole("region", { name: "Grille des habitudes" }).waitFor();
+  await page.getByRole("region", { name: "Le pixel du jour, Aujourd'hui" }).waitFor();
   await page.keyboard.press("g"); await page.keyboard.press("f");
   await page.getByText("Reste à dépenser").waitFor();
   await page.keyboard.press("g"); await page.keyboard.press("c");
@@ -181,7 +181,7 @@ try {
   etape = "habitudes et journal"; console.log("→", etape);
   const valeur = (cle) => page.evaluate((c) => window.__nexoraDemo.valeur(c), cle);
   await page.keyboard.press("g"); await page.keyboard.press("s");
-  const jourHab = page.getByRole("region", { name: "Habitudes, Aujourd'hui" });
+  const jourHab = page.getByRole("region", { name: "Le pixel du jour, Aujourd'hui" });
   await jourHab.waitFor();
   await jourHab.getByRole("checkbox", { name: /Bureau/ }).click();
   await jourHab.getByRole("checkbox", { name: /Bureau/, checked: true }).waitFor();
@@ -189,9 +189,9 @@ try {
   await jourHab.getByRole("checkbox", { name: /Télétravail/, checked: true }).waitFor();
   assert.equal(await jourHab.getByRole("checkbox", { name: /Bureau/ }).getAttribute("aria-checked"), "false", "choix unique : Bureau décoché");
   await jourHab.getByRole("button", { name: "Augmenter Pas (milliers)" }).click();
-  await jourHab.getByText("0/10").waitFor();
+  await jourHab.getByText("0 / 10").waitFor();
   await jourHab.getByRole("button", { name: "Augmenter Pas (milliers)" }).click();
-  await jourHab.getByText("2/10").waitFor();
+  await jourHab.getByText("2 / 10").waitFor();
   await jourHab.getByRole("button", { name: "Méditation non applicable" }).click();
   await jourHab.getByRole("button", { name: "Méditation non applicable", pressed: true }).waitFor();
   const aujourdhui = await page.evaluate(() => new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()));
@@ -199,10 +199,54 @@ try {
   assert.deepEqual(duJour.filter((e) => ["h4", "h5", "h6"].includes(e.habitId)).map((e) => [e.id, e.value]), [[`h4|${aujourdhui}`, 2], [`h6|${aujourdhui}`, undefined]]);
   assert.deepEqual((await valeur("nexora:habitSkips")).map((e) => e.id), [`h3|${aujourdhui}`]);
   await capture("10-corps-habitudes");
-  // Hier, depuis la grille.
+  // Pixel : le clic sur le pixel de Lecture coche l'habitude, comme la case.
+  await jourHab.getByRole("group", { name: "Pixels Santé" }).getByRole("button", { name: "Lecture" }).click();
+  await jourHab.getByRole("checkbox", { name: "Lecture", checked: true }).waitFor();
+  // Hier, depuis la navigation du pixel du jour.
   await page.getByRole("button", { name: "Jour précédent" }).click();
-  await page.getByRole("region", { name: "Habitudes, Hier" }).getByRole("checkbox", { name: /Bureau/ }).click();
-  assert.ok((await valeur("nexora:habitLog")).some((e) => e.habitId === "h5" && e.date < aujourdhui), "habitude cochée pour hier");
+  await page.getByRole("region", { name: "Le pixel du jour, Hier" }).getByRole("checkbox", { name: /Bureau/ }).click();
+  await page.waitForFunction((auj) => (window.__nexoraDemo.valeur("nexora:habitLog") || []).some((e) => e.habitId === "h5" && e.date < auj), aujourdhui);
+  // Heat map : la case d'aujourd'hui porte les couleurs des habitudes faites.
+  assert.match(await page.locator(".co-cell.auj").getAttribute("style") || "", /conic-gradient|#/, "case du jour colorée");
+
+  etape = "corps : sport, santé, photos"; console.log("→", etape);
+  const rubrique = (nom) => page.getByRole("radiogroup", { name: "Rubrique" }).getByRole("radio", { name: nom, exact: true }).click();
+  await rubrique("Sport");
+  await page.getByText("Dernière séance").waitFor();
+  await page.getByRole("img", { name: /^Barres empilées/ }).waitFor();
+  await page.getByRole("radiogroup", { name: "Regroupement" }).getByRole("radio", { name: "Mois" }).click();
+  await page.getByRole("img", { name: /Barres empilées, 1[23] périodes/ }).waitFor();
+  await capture("10b-corps-sport");
+  await rubrique("Santé");
+  await page.getByRole("img", { name: "Courbe Poids" }).waitFor();
+  await page.getByLabel("Mesure").selectOption("recovery");
+  await page.getByRole("img", { name: "Courbe Récupération" }).waitFor();
+  await rubrique("Photos");
+  const curseur = page.getByRole("slider", { name: "Curseur avant / après" });
+  await curseur.waitFor();
+  await page.getByRole("img", { name: /alignée sur la référence/ }).waitFor();
+  await curseur.focus(); await page.keyboard.press("End");
+  assert.equal(await curseur.getAttribute("aria-valuenow"), "100");
+  assert.match(await page.getByRole("img", { name: /alignée sur la référence/ }).getAttribute("style"), /matrix\(/, "photo alignée par les repères");
+  await capture("10c-corps-photos");
+
+  etape = "équipe : charge du personnel, organigramme, fiche"; console.log("→", etape);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("g"); await page.keyboard.press("e");
+  await rubrique("Charge du personnel");
+  const grilleEq = page.getByRole("table", { name: "Affectations par personne et par jour" });
+  await grilleEq.waitFor();
+  assert.ok(await grilleEq.getByText("Karim (intérim)").count(), "personne hors annuaire affichée");
+  assert.ok(await grilleEq.locator(".eq-case.pleine").count() > 10, "affectations peintes");
+  await rubrique("Organigramme");
+  await page.getByRole("region", { name: "Organigramme" }).getByText("lien transverse avec Travaux").waitFor();
+  await page.getByRole("button", { name: /Maïa Sonnier/ }).first().click();
+  const fichePers = page.getByRole("complementary", { name: "Fiche de Maïa Sonnier" });
+  await fichePers.getByText("Travaux · Cheffe d'équipe").waitFor();
+  await capture("10d-equipe-organigramme");
+  await fichePers.getByRole("button", { name: "Fermer la fiche" }).click();
+  // Écritures : aucune clé Équipe n'est touchée par Futur.
+  for (const cle of ["nexora:staffing", "nexora:workshops", "nexora:teams", "nexora:teamMembers"]) assert.ok(Array.isArray(await valeur(cle)), cle);
   // Journal d'activité : une tâche terminée au clavier y est inscrite une fois.
   await page.keyboard.press("g"); await page.keyboard.press("c");
   await page.waitForTimeout(150);

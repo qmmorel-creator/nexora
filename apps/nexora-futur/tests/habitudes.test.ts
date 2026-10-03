@@ -56,3 +56,17 @@ describe("habitudes (port de nexora-project #193, #353)", () => {
     expect([e.faites, e.total]).toEqual([3, 3]);
   });
 });
+
+import { couleurIntensite, couleursCase, fondCase, intensite } from "../src/donnees/habitudes";
+describe("couleurs des habitudes (#660, port de habitCellColors)", () => {
+  it("intensité bornée, mélange avec le blanc à plancher 0,22, quartiers coniques", () => {
+    const h = { id: "p", name: "Pas", color: "#000000", kind: "numeric" as const, min: 0, max: 10 };
+    expect(intensite(h, 5)).toBe(0.5); expect(intensite(h, 99)).toBe(1); expect(intensite(h, undefined)).toBe(0);
+    expect(couleurIntensite("#000000", 0)).toBe("#c7c7c7");
+    expect(couleurIntensite("#000000", 1)).toBe("#000000");
+    const theme = { id: "t", name: "T", color: "#111111", selectionMode: "multi" as const, habits: [{ id: "a", name: "A", color: "#ff0000", kind: "check" as const, min: 0, max: 10 }, h] };
+    expect(couleursCase(theme, [{ id: "a|d", habitId: "a", date: "d" }, { id: "p|d", habitId: "p", date: "d", value: 10 }], "d")).toEqual(["#ff0000", "#000000"]);
+    expect(fondCase(["#ff0000", "#000000"])).toBe("conic-gradient(from 45deg, #ff0000 0deg 180deg, #000000 180deg 360deg)");
+    expect(fondCase([], "")).toBe("");
+  });
+});
