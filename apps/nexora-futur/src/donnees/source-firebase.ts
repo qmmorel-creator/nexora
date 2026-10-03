@@ -1,6 +1,6 @@
 import { auth, ecouterCle } from "./firebase";
 import { modifierCle } from "./ecriture-firebase";
-import type { RapportsJour, Source } from "./source";
+import { ErreurFinance, type AccesFinance, type RapportsJour, type Source } from "./source";
 
 async function rapports(jour: string): Promise<RapportsJour> {
   const jeton = await auth.currentUser?.getIdToken();
@@ -11,4 +11,17 @@ async function rapports(jour: string): Promise<RapportsJour> {
   return { matin: d.matin ?? null, soir: d.soir ?? null };
 }
 
-export const sourceFirebase: Source = { ecouter: ecouterCle, modifier: modifierCle, rapports };
+async function appelFinance(chemin: string, init: RequestInit = {}): Promise<unknown> {
+  const jeton = await auth.currentUser?.getIdToken();
+  if (!jeton) throw new ErreurFinance("unauthorized");
+  const r = await fetch(`/api/futur/finance/${chemin}`, { ...init, headers: { authorization: `Bearer ${jeton}`, ...(init.body ? { "content-type": "application/json" } : {}) } });
+  const d = await r.json().catch(() => ({})) as { ok?: boolean; error?: string; data?: unknown };
+  if (!r.ok || d.ok === false) throw new ErreurFinance(d.error || `http_${r.status}`);
+  return d.data ?? d;
+}
+const finance: AccesFinance = {
+  lire: (ressource, params = {}) => appelFinance(`${ressource}${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ""}`),
+  categoriser: async (c) => { await appelFinance("categoriser", { method: "PATCH", body: JSON.stringify(c) }); },
+};
+
+export const sourceFirebase: Source = { ecouter: ecouterCle, modifier: modifierCle, rapports, finance };
