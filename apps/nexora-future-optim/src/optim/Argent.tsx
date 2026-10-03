@@ -3,15 +3,16 @@
 // (src/nexora/finance-nexora.jsx, généré) : même esthétique, même comportement.
 // Seule écriture : la catégorisation d'une opération, comme dans Nexora.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { decalerMois, euros, libelleMois, messageFinance, trierSuivi, type ACategoriser, type SerieDePatrimoine, type SyntheseBudget } from "../donnees/finance";
+import { decalerMois, euros, messageFinance, trierSuivi, type ACategoriser, type SerieDePatrimoine, type SyntheseBudget } from "../donnees/finance";
 import { caEncaisseAnnee, euros2, statutDevis, statutFacture, STATUTS_DEVIS, STATUTS_FACTURE, totalDevis } from "../donnees/finance-pro";
 import { ErreurFinance, type RessourceFinance } from "../donnees/source";
 import { DUREES_PATRIMOINE, ONGLETS_ARGENT, type OngletArgent } from "../donnees/prefs";
+import { bornes, CHOIX_PERIODE, decaler, joursDe, LIB_PERIODE, moisCouverts, synthesePeriode, type ChoixPeriode, type Periode } from "../donnees/periode";
 import { nouvelId } from "../donnees/modele";
 import { FINANCE_BUDGET_CHART_CSS, FINANCE_BUDGET_CUMUL_CSS, FINANCE_SANKEY_DEFAULT_CONFIG, FinanceCumulCategories, FinanceSankeyChart, financeCumulModel, financeSankeyBuild, financeSankeyNormalize } from "../nexora/finance-nexora";
 import { dateCourte, MOIS_C, useOptim, useUi } from "./contexte";
 
-const LIB_ONGLET: Record<OngletArgent, string> = { mois: "Mois", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
+const LIB_ONGLET: Record<OngletArgent, string> = { mois: "Période", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
 
 // Lecture d'une ressource du relais finance, mise en cache pour la session.
 const cache = new Map<string, Promise<unknown>>();
@@ -55,41 +56,63 @@ function Classer({ x, categories, apres }: { x: { id: string; label: string; amo
   </span>;
 }
 
-// --- Mois ----------------------------------------------------------------------
-function OngletMois({ rafraichir, cle }: { rafraichir: () => void; cle: number }) {
-  const { jour } = useOptim();
-  const [mois, setMois] = useState(jour.slice(0, 7));
-  const resume = useRessource<SyntheseBudget>("budget-summary", { month: mois }, cle);
-  const sankey = useRessource<unknown>("sankey-data", {}, cle);
+// --- Période (#690, retour du 03/10/2026) ------------------------------------------
+// Boutons rapides ou dates libres ; tout l'onglet suit la période choisie.
+// Suivi et cumul : calculs de Nexora (finance-budget.mjs) sur les opérations.
+function OngletPeriode({ rafraichir, cle }: { rafraichir: () => void; cle: number }) {
+  const { jour, prefs, ecrirePrefs } = useOptim();
+  const choix = prefs.argent.periode;
+  const [perso, setPerso] = useState<Periode>(() => bornes("mois", jour));
+  const [ecart, setEcart] = useState(0);
+  const base = bornes(choix, jour, perso);
+  const p = useMemo(() => { let x = base; for (let k = 0; k < Math.abs(ecart); k++) x = decaler(x, ecart < 0 ? -1 : 1); return x; }, [base.from, base.to, ecart]); // eslint-disable-line react-hooks/exhaustive-deps
+  const choisir = (c: ChoixPeriode) => { setEcart(0); void ecrirePrefs({ argent: { ...prefs.argent, periode: c } }); };
+  const resume = useRessource<SyntheseBudget>("budget-summary", { month: jour.slice(0, 7) }, cle);
+  const sankey = useRessource<Record<string, unknown>>("sankey-data", {}, cle);
+  const ops = useRessource<Record<string, unknown>>("transactions-data", {}, cle);
+  const synth = useMemo(() => {
+    if (!sankey.data || !ops.data) return null;
+    try { return synthesePeriode({ ...sankey.data, subcategories: [], transactions: ops.data.transactions }, p); } catch (e) { return { erreur: (e as Error).message }; }
+  }, [sankey.data, ops.data, p]);
   const donneesSankey = useMemo(() => { try { return sankey.data ? financeSankeyNormalize(sankey.data) : null; } catch { return null; } }, [sankey.data]);
-  const config = useMemo(() => ({ ...FINANCE_SANKEY_DEFAULT_CONFIG, periodMode: "month", periodValue: mois }), [mois]);
+  const config = useMemo(() => ({ ...FINANCE_SANKEY_DEFAULT_CONFIG, from: p.from, to: p.to }), [p]);
   const construit = useMemo(() => (donneesSankey ? financeSankeyBuild("financeSankeyMonthly", donneesSankey, config, jour) : null), [donneesSankey, config, jour]);
-  const s = resume.data;
+  const s = synth && !("erreur" in synth) ? synth : null;
   const modele = useMemo(() => financeCumulModel(s?.charts), [s]);
-  const nbJours = new Date(Date.UTC(+mois.slice(0, 4), +mois.slice(5, 7), 0)).getUTCDate();
-  const jourMois = mois === jour.slice(0, 7) ? Number(jour.slice(8)) : nbJours;
-  const categories = s?.catalogs.categories.map((c) => ({ name: c.name, subcategories: c.subcategories })) || [];
+  const n = joursDe(p), ecoules = jour < p.from ? 0 : jour > p.to ? n : joursDe({ from: p.from, to: jour }), enCours = jour >= p.from && jour <= p.to;
+  const aClasser = (resume.data?.toCategorize || []).filter((x) => x.date >= p.from && x.date <= p.to);
+  const categories = resume.data?.catalogs.categories.map((c) => ({ name: c.name, subcategories: c.subcategories })) || [];
+  const libelle = `${dateCourte(p.from)} → ${dateCourte(p.to)}${p.from.slice(0, 4) !== p.to.slice(0, 4) || p.from.slice(0, 4) !== jour.slice(0, 4) ? " " + p.to.slice(0, 4) : ""}`;
+  const erreur = sankey.erreur || ops.erreur || (synth && "erreur" in synth ? `Calcul impossible : ${synth.erreur}` : "");
   return <>
-    <div className="hx-mhead2"><div className="hx-nav2"><button type="button" aria-label="Mois précédent" onClick={() => setMois(decalerMois(mois, -1))}>‹</button><b>{libelleMois(mois)}{mois === jour.slice(0, 7) ? ` · au ${Number(jour.slice(8))}` : ""}</b><button type="button" aria-label="Mois suivant" disabled={mois >= jour.slice(0, 7)} onClick={() => setMois(decalerMois(mois, 1))}>›</button></div>
-      {s && <div className="hx-mk"><div><small>Revenus</small><b>{euros(s.totals.income)}</b></div><div><small>Dépenses</small><b>{euros(s.totals.expenses)}</b></div><div><small>Solde du mois</small><b className={s.totals.net >= 0 ? "hx-green" : "hx-red"}>{euros(s.totals.net)}</b></div>
-        <div><small>Reste à dépenser</small><b>{euros(s.totals.remaining)}</b>{mois === jour.slice(0, 7) && <span className="hx-dim">{euros(s.totals.remaining / Math.max(1, nbJours - jourMois + 1))} / jour</span>}</div>
-        <div className="is-wide"><small>Rythme du budget · {euros(s.totals.expenses)} sur {euros(s.totals.budget)}</small><span className="hx-pace"><i style={{ width: `${Math.min(100, Math.round(s.totals.expenses / Math.max(1, s.totals.budget) * 100))}%` }} /><b style={{ left: `${Math.round(jourMois / nbJours * 100)}%` }} /></span>
-          {(() => { const e = s.totals.expenses - s.totals.budget * jourMois / nbJours; return <span className={e > 0 ? "hx-red" : "hx-green"}>{e > 0 ? `${euros(e)} au-dessus du rythme` : "dans le rythme"}</span>; })()}</div></div>}
-      <button type="button" className="hx-more" onClick={rafraichir} title="Relire les données">Actualiser</button></div>
-    <section className="hx-tile"><header className="hx-th"><h2>Flux du mois</h2><small className="hx-dim">graphique Sankey de Nexora, à l'identique</small></header>
-      {construit ? <div className="ox-nexora ox-sankey"><FinanceSankeyChart graph={construit.graph} config={config} title="Sankey mensuel (flux)" period={construit.period} /></div> : <Etat erreur={sankey.erreur} />}</section>
-    <section className="hx-tile"><header className="hx-th"><h2>Budget cumulé par mois</h2><small className="hx-dim">par catégorie, face au budget et aux revenus réels · graphique de Nexora, à l'identique</small></header>
-      {!s ? <Etat erreur={resume.erreur} /> : !modele.series.length ? <p className="hx-dim">Aucune dépense sur {libelleMois(mois).toLowerCase()}.</p>
-        : <div className="ox-cumul"><div className="nx-bch ox-nexora"><style>{FINANCE_BUDGET_CHART_CSS + FINANCE_BUDGET_CUMUL_CSS}</style><FinanceCumulCategories model={modele} /></div></div>}</section>
-    {s && <div className="hx-acols">
-      <section className="hx-tile"><header className="hx-th"><h2>Budget par catégorie</h2><small className="hx-dim">trait : où vous devriez en être au {jourMois}</small></header>
-        {trierSuivi(s.tracking).map((c) => { const pct = c.budget ? Math.round(c.actual / c.budget * 100) : 0; return <div key={c.category} className={`hx-bcat ${c.over ? "is-over" : ""}`}><span><i style={{ background: c.color || "#94a3b8" }} />{c.category}</span><span className="hx-bmeter"><i style={{ width: `${Math.min(100, pct)}%`, background: c.over ? "#dc2626" : c.color || "#94a3b8" }} /><b style={{ left: `${Math.round(jourMois / nbJours * 100)}%` }} /></span><span className="hx-num">{euros(c.actual)} <small>/ {c.budget ? euros(c.budget) : "—"}</small></span><span className={`hx-num ${c.over ? "hx-red" : "hx-dim"}`}>{c.budget ? `${pct} %` : ""}</span></div>; })}</section>
-      <section className="hx-tile"><header className="hx-th"><h2>À classer <span className="hx-badge">{s.toCategorize.length}</span></h2></header>
-        {s.toCategorize.map((x: ACategoriser) => <div key={x.id} className="hx-txr ox-txr"><span>{x.label} <small className="hx-dim">{dateCourte(x.date)} · {x.account}</small></span><span className="hx-num">{euros(x.amount)}</span><Classer x={x} categories={categories} apres={rafraichir} /></div>)}
-        {!s.toCategorize.length && <p className="hx-dim">Tout est classé.</p>}</section>
+    <div className="ox-periode">
+      <div className="hx-seg" role="group" aria-label="Période">{CHOIX_PERIODE.map((c) => <button key={c} type="button" aria-pressed={choix === c} onClick={() => choisir(c)}>{LIB_PERIODE[c]}</button>)}</div>
+      {choix === "perso" && <span className="ox-pdates"><label>Du <input type="date" value={perso.from} max={perso.to} onChange={(e) => { if (e.target.value) { setEcart(0); setPerso({ ...perso, from: e.target.value }); } }} /></label><label>au <input type="date" value={perso.to} min={perso.from} onChange={(e) => { if (e.target.value) { setEcart(0); setPerso({ ...perso, to: e.target.value }); } }} /></label></span>}
+      <div className="hx-nav2"><button type="button" aria-label="Période précédente" onClick={() => setEcart(ecart - 1)}>‹</button><b>{libelle}</b><button type="button" aria-label="Période suivante" disabled={p.to >= jour} onClick={() => setEcart(ecart + 1)}>›</button></div>
+      <button type="button" className="hx-more" onClick={rafraichir} title="Relire les données">Actualiser</button>
+    </div>
+    {s ? <div className="hx-mk ox-mk"><div><small>Revenus</small><b>{euros(s.totals.income)}</b></div><div><small>Dépenses</small><b>{euros(s.totals.expenses)}</b></div><div><small>Solde</small><b className={s.totals.net >= 0 ? "hx-green" : "hx-red"}>{euros(s.totals.net)}</b></div>
+      <div><small>Reste à dépenser</small><b>{euros(s.totals.remaining)}</b>{enCours && s.totals.remaining > 0 && <span className="hx-dim">{euros(s.totals.remaining / Math.max(1, n - ecoules + 1))} / jour</span>}</div>
+      <div className="is-wide"><small>Rythme du budget · {euros(s.totals.expenses)} sur {euros(s.totals.budget)}{n < 28 || moisPartiel(p) ? " (budget au prorata des jours)" : ""}</small><span className="hx-pace"><i style={{ width: `${Math.min(100, Math.round(s.totals.expenses / Math.max(1, s.totals.budget) * 100))}%` }} /><b style={{ left: `${Math.round(ecoules / n * 100)}%` }} /></span>
+        {(() => { const e = s.totals.expenses - s.totals.budget * ecoules / n; return <span className={e > 0 ? "hx-red" : "hx-green"}>{e > 0 ? `${euros(e)} au-dessus du rythme` : "dans le rythme"}</span>; })()}</div></div>
+      : <Etat erreur={erreur} />}
+    <section className="hx-tile"><header className="hx-th"><h2>Flux de la période</h2><small className="hx-dim">graphique Sankey de Nexora, à l'identique</small></header>
+      {construit ? <div className="ox-nexora ox-sankey"><FinanceSankeyChart graph={construit.graph} config={config} title="Sankey (flux)" period={construit.period} /></div> : <Etat erreur={sankey.erreur} />}</section>
+    {s && <div className="hx-acols ox-pcols">
+      <section className="hx-tile"><header className="hx-th"><h2>Budget cumulé</h2><small className="hx-dim">par catégorie, face au budget et aux revenus · graphique de Nexora</small></header>
+        {!modele.series.length ? <p className="hx-dim">Aucune dépense sur la période.</p>
+          : <div className="ox-cumul"><div className="nx-bch ox-nexora"><style>{FINANCE_BUDGET_CHART_CSS + FINANCE_BUDGET_CUMUL_CSS}</style><FinanceCumulCategories model={modele} /></div></div>}</section>
+      <section className="hx-tile"><header className="hx-th"><h2>Budget par catégorie</h2><small className="hx-dim">{enCours ? `trait : où vous devriez en être (${ecoules}/${n} j)` : "période close"}</small></header>
+        {trierSuivi(s.tracking).map((c) => { const pct = c.budget ? Math.round(c.actual / c.budget * 100) : 0; return <div key={c.category} className={`hx-bcat ${c.over ? "is-over" : ""}`}><span><i style={{ background: c.color || "#94a3b8" }} />{c.category}</span><span className="hx-bmeter"><i style={{ width: `${Math.min(100, pct)}%`, background: c.over ? "#dc2626" : c.color || "#94a3b8" }} />{enCours && <b style={{ left: `${Math.round(ecoules / n * 100)}%` }} />}</span><span className="hx-num">{euros(c.actual)} <small>/ {c.budget ? euros(c.budget) : "—"}</small></span><span className={`hx-num ${c.over ? "hx-red" : "hx-dim"}`}>{c.budget ? `${pct} %` : ""}</span></div>; })}
+        {!s.tracking.length && <p className="hx-dim">Aucun budget ni dépense sur la période.</p>}</section>
     </div>}
+    <section className="hx-tile"><header className="hx-th"><h2>À classer <span className="hx-badge">{aClasser.length}</span></h2><small className="hx-dim">opérations de la période</small></header>
+      {!resume.data ? <Etat erreur={resume.erreur} /> : <>
+        {aClasser.map((x: ACategoriser) => <div key={x.id} className="hx-txr ox-txr"><span>{x.label} <small className="hx-dim">{dateCourte(x.date)} · {x.account}</small></span><span className="hx-num">{euros(x.amount)}</span><Classer x={x} categories={categories} apres={rafraichir} /></div>)}
+        {!aClasser.length && <p className="hx-dim">Tout est classé sur la période.</p>}</>}</section>
   </>;
 }
+const moisPartiel = (p: Periode) => moisCouverts(p).some((m) => m.part < 1);
 
 // --- Patrimoine ------------------------------------------------------------------
 function OngletPatrimoine({ cle }: { cle: number }) {
@@ -261,7 +284,7 @@ export function Argent() {
     <main className="hx-main hx-argent" data-scroll>
       <div className="hx-hello hx-row"><div><h1>Argent</h1><p>Budget personnel (KDM360), patrimoine et activité pro. Côté budget, la seule écriture possible reste le classement d'une opération, comme dans Nexora.</p></div>
         <div className="hx-tabs">{ONGLETS_ARGENT.map((o) => <button key={o} type="button" aria-selected={onglet === o} onClick={() => void ecrirePrefs({ argent: { ...prefs.argent, onglet: o } })}>{LIB_ONGLET[o]}</button>)}</div></div>
-      {onglet === "mois" && <OngletMois rafraichir={rafraichir} cle={cle} />}
+      {onglet === "mois" && <OngletPeriode rafraichir={rafraichir} cle={cle} />}
       {onglet === "patrimoine" && <OngletPatrimoine cle={cle} />}
       {onglet === "pro" && <OngletPro />}
       {onglet === "operations" && <OngletOperations cle={cle} rafraichir={rafraichir} />}

@@ -795,6 +795,7 @@ function financeCumulPath(values, f) {
 function financeCumulDayLabel(d) {
   return new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "UTC" }).format(new Date(d + "T12:00:00Z"));
 }
+// ADAPTÉ pour Optim : voir ADAPTATIONS dans scripts/extraire-nexora.py
 // — index.html.part-003, ligne 38973
 function FinanceCumulAxes({ f }) {
   const I = FINANCE_CUMUL_INK;
@@ -803,8 +804,8 @@ function FinanceCumulAxes({ f }) {
       {f.ticks.map((t) => <g key={t}><line x1={f.L} x2={f.W - f.R} y1={f.y(t)} y2={f.y(t)} stroke={I.grid} /><text x={f.L - 5} y={f.y(t) + 3} textAnchor="end">{financeChartShortEuro(t)}</text></g>)}
       {f.days.map((d, k) => (
         <g key={d}>
-          <line x1={f.x(k)} x2={f.x(k)} y1={f.H - f.B} y2={f.H - f.B + 3} stroke={I.axis} />
-          <text x={f.x(k)} y={f.H - f.B + 13} textAnchor="middle" style={{ fontSize: f.days.length > 31 ? 7 : 8.5 }}>{Number(d.slice(8))}</text>
+          {(f.days.length <= 62 || d.slice(8) === "01") && <line x1={f.x(k)} x2={f.x(k)} y1={f.H - f.B} y2={f.H - f.B + 3} stroke={I.axis} />}
+          <text x={f.x(k)} y={f.H - f.B + 13} textAnchor={f.days.length > 62 ? "start" : "middle"} style={{ fontSize: f.days.length > 31 ? 7 : 8.5 }}>{f.days.length > 62 ? (d.slice(8) === "01" ? ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."][Number(d.slice(5, 7)) - 1] : "") : Number(d.slice(8))}</text>
         </g>
       ))}
       <line x1={f.L} x2={f.W - f.R} y1={f.H - f.B} y2={f.H - f.B} stroke={I.axis} />

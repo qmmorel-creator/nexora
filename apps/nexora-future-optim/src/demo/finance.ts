@@ -119,13 +119,16 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
         }
         return { from: params.from, to: params.to, step: params.step || "week", today: aujourdhui, accounts: COMPTES.map(({ id, name, bank, type, color, bankColor, typeColor }) => ({ id, name, bank, type, color, bankColor, typeColor })), points };
       }
+      // Lignes Budget de Nexora (format [B360:BUDGET_V2:mois]) : présentes dans les tables
+      // brutes comme en vrai, jamais dans le grand livre ni les soldes.
+      const lignesBudget = [mois(aujourdhui, -12).slice(0, 4), aujourdhui.slice(0, 4)].flatMap((an) => CATEGORIES.filter((c) => c.budget > 0).map((c) => ({ transaction_id: `budget-${an}-${c.name}`, effective_date: `${an}-01-01`, bank_date: `${an}-01-01`, transaction_type: "Budget", account_id: "cc", signed_amount: -c.budget, category: c.name, subcategory: "", description: "[B360:BUDGET_V2:1,2,3,4,5,6,7,8,9,10,11,12]" })));
       if (ressource === "sankey-data") return {
         transactions: tx.map((t) => ({ transaction_id: t.id, effective_date: t.date, bank_date: t.date, transaction_type: t.type, account_id: t.accountId, signed_amount: t.amount, category: t.category || "À classer", subcategory: t.subcategory || "" })),
         accounts: COMPTES.map((c) => ({ account_id: c.id, name: c.name, bank: c.bank, account_type: c.type, opening_balance: c.ouverture, color: c.color, active: true })),
         categories: CATEGORIES.map((c) => ({ category: c.name, color: c.color, active: true })), banks: [{ bank_id: "a", name: "Banque A", color: "#203246" }, { bank_id: "b", name: "Banque B", color: "#8899a6" }],
         accountTypes: [], balances: [],
       };
-      if (ressource === "transactions-data") return { transactions: tx.map((t) => ({ transaction_id: t.id, effective_date: t.date, bank_date: t.date, transaction_type: t.type, account_id: t.accountId, signed_amount: t.amount, merchant: t.label, category: t.category, subcategory: t.subcategory, category_confidence: t.confidence })), accounts: COMPTES.map((c) => ({ account_id: c.id, name: c.name, bank: c.bank })) };
+      if (ressource === "transactions-data") return { transactions: [...lignesBudget, ...tx.map((t) => ({ transaction_id: t.id, effective_date: t.date, bank_date: t.date, transaction_type: t.type, account_id: t.accountId, signed_amount: t.amount, merchant: t.label, category: t.category || null, subcategory: t.subcategory, category_confidence: t.confidence }))], accounts: COMPTES.map((c) => ({ account_id: c.id, name: c.name, bank: c.bank })) };
       throw new ErreurFinance("not_found");
     },
     async categoriser(c: Categorisation) {

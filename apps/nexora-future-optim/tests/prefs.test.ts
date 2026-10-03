@@ -7,10 +7,11 @@ describe("préférences nexora:optimPrefs (#687)", () => {
     expect(normaliserPrefs({ gantt: "metro", planning: { zoom: "siecle" }, accueil: { pixels: "oui" } })).toMatchObject({ gantt: "ruban", planning: { zoom: "mois" }, accueil: { pixels: true } });
   });
   it("argent (#690) : onglet connu et durée de patrimoine parmi 6/12/24/36/60 mois", () => {
-    expect(normaliserPrefs({}).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
-    expect(normaliserPrefs({ argent: { onglet: "pro", patrimoineMois: 60 } }).argent).toEqual({ onglet: "pro", patrimoineMois: 60 });
-    expect(normaliserPrefs({ argent: { onglet: "bourse", patrimoineMois: 7 } }).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
-    expect(normaliserPrefs({ argent: "x" }).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
+    expect(normaliserPrefs({}).argent).toEqual({ onglet: "mois", patrimoineMois: 24, periode: "mois" });
+    expect(normaliserPrefs({ argent: { onglet: "pro", patrimoineMois: 60, periode: "semaine" } }).argent).toEqual({ onglet: "pro", patrimoineMois: 60, periode: "semaine" });
+    expect(normaliserPrefs({ argent: { periode: "decennie" } }).argent.periode).toBe("mois");
+    expect(normaliserPrefs({ argent: { onglet: "bourse", patrimoineMois: 7 } }).argent).toEqual({ onglet: "mois", patrimoineMois: 24, periode: "mois" });
+    expect(normaliserPrefs({ argent: "x" }).argent).toEqual({ onglet: "mois", patrimoineMois: 24, periode: "mois" });
   });
   it("accueil (#691) : tuiles connues, sans doublon, ordre conservé ; absent = toutes", () => {
     expect(normaliserPrefs({}).accueil.tuiles).toEqual([...TUILES_ACCUEIL]);
