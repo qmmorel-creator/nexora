@@ -12,6 +12,7 @@ import { BarreFiltres, useFiltrage } from "./filtres";
 import { BarreProjet, clairsemer, Grille, graduations, infobulle, plage, tx } from "./frise";
 import { AideStyle, BarreZoom, SelecteurStyle } from "./Planning";
 import { Coche } from "./jour";
+import { FriseProjet } from "./FriseProjet";
 
 export const ZOOMS_PROJET: Zoom[] = ["mois", "trimestre", "annee", "pluri"];
 export const LIB_GROUPE: Record<GroupeProjet, string> = { aucun: "Aucun", statut: "Statut", responsable: "Responsable", type: "Type", criticite: "Criticité", echeance: "Échéance", jalon: "Tâche / jalon" };
@@ -99,6 +100,7 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
         <div className="hx-hello hx-row"><div><p className="hx-crumb">{dossier?.name || "À trier"} › {p.name}</p><h1 style={{ ["--c" as string]: p.color }} className="hx-ptitle">{p.name}</h1></div>
           <div className="hx-kpis is-inline"><div><small>Avancement</small><b>{sante.avancement} %</b></div><div><small>Ouvertes</small><b>{sante.ouvertes}</b></div><div><small>En retard</small><b className={sante.retards ? "hx-red" : ""}>{sante.retards}</b></div><div><small>Fin prévue</small><b>{dateCourte(finAct || undefined)}</b></div></div>
           <button type="button" className="hx-btn is-primary" onClick={() => setSaisie(true)}>+ Tâche</button></div>
+        <FriseProjet projetId={p.id} couleur={p.color} />
         <section className="hx-tile hx-cmp"><div className="hx-cmpl"><span>Comparer à</span><div className="hx-seg is-sm">{REFERENCES.map((x) => <button key={x} type="button" aria-pressed={reference === x} onClick={() => void ecrirePrefs({ projets: { ...prefs.projets, reference: x } })}>{LIB_REF[x]}</button>)}</div></div>
           {reference === "aucune" ? <p className="hx-dim">Choisissez une référence pour voir les glissements de dates.</p>
             : !ecarts.length ? <p className="hx-dim">Aucune tâche de ce projet n'a de référence figée. Elle se fige depuis la fiche d'une tâche dans Nexora.</p>
