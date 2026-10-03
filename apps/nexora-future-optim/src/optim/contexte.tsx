@@ -4,7 +4,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useDonnees, type Mutation } from "../donnees/magasin";
 import { ecartJours, estEnRetard, estTerminee, type Projet, type Statut, type Tache } from "../donnees/modele";
-import { fusionnerPrefs, FILTRE_VIDE, type FiltreVue, type PrefsOptim } from "../donnees/prefs";
+import { fusionnerPrefs, FILTRE_VIDE, type FiltreVue, type PrefsOptim, type VueEnregistree } from "../donnees/prefs";
 import { trouverHabitude, type Habitude } from "../donnees/habitudes";
 
 export interface Notification { texte: string; annuler?: () => Promise<void> | void; }
@@ -16,6 +16,8 @@ interface Ui {
   notif: Notification | null; notifier: (n: Notification | null) => void;
   filtre: FiltreVue; setFiltre: (f: FiltreVue) => void;
   vueActive: Record<string, string>; setVueActive: (ecran: string, id: string) => void;
+  // Vue à appliquer à l'ouverture de son écran (ouverte depuis les réglages).
+  vueEnAttente: VueEnregistree | null; setVueEnAttente: (v: VueEnregistree | null) => void;
 }
 const CtxUi = createContext<Ui | null>(null);
 
@@ -26,9 +28,10 @@ export function FournisseurUi({ children }: { children: ReactNode }) {
   const [notif, setNotif] = useState<Notification | null>(null);
   const [filtre, setFiltre] = useState<FiltreVue>(FILTRE_VIDE);
   const [vueActive, setVA] = useState<Record<string, string>>({});
+  const [vueEnAttente, setVueEnAttente] = useState<VueEnregistree | null>(null);
   const notifier = useCallback((n: Notification | null) => setNotif(n), []);
   const setVueActive = useCallback((ecran: string, id: string) => setVA((v) => ({ ...v, [ecran]: id })), []);
-  const v = useMemo(() => ({ tacheId, ouvrir, saisie, setSaisie, reglages, setReglages, notif, notifier, filtre, setFiltre, vueActive, setVueActive }), [tacheId, saisie, reglages, notif, notifier, filtre, vueActive, setVueActive]);
+  const v = useMemo(() => ({ tacheId, ouvrir, saisie, setSaisie, reglages, setReglages, notif, notifier, filtre, setFiltre, vueActive, setVueActive, vueEnAttente, setVueEnAttente }), [tacheId, saisie, reglages, notif, notifier, filtre, vueActive, setVueActive, vueEnAttente]);
   return <CtxUi.Provider value={v}>{children}</CtxUi.Provider>;
 }
 export function useUi(): Ui {

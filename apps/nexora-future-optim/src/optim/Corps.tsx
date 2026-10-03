@@ -73,7 +73,7 @@ function LigneMesure({ releves, cle, c, demi }: { releves: Releve[]; cle: string
 }
 
 // Éditeur d'une carte : titre libre, jusqu'à quatre mesures.
-function EditeurCarte({ carte, releves, fermer, enregistrer }: { carte: CarteCorps; releves: Releve[]; fermer: () => void; enregistrer: (c: CarteCorps) => void }) {
+export function EditeurCarte({ carte, releves, fermer, enregistrer }: { carte: CarteCorps; releves: Releve[]; fermer: () => void; enregistrer: (c: CarteCorps) => void }) {
   const [titre, setTitre] = useState(carte.titre);
   const [mesures, setMesures] = useState(carte.mesures);
   const avecDonnees = new Set(releves.flatMap((r) => Object.keys(r).filter((k) => typeof r[k] === "number")));

@@ -12,6 +12,7 @@ const VIDE: DonneesCorps = { releves: [], activites: [], charge: false, erreurSa
 
 const MESSAGES: Record<string, string> = {
   configuration_missing: "configuration serveur incomplète sur nexora-future-optim",
+  configuration_invalid: "compte de service Firebase illisible sur nexora-future-optim (variable FIREBASE_SERVICE_ACCOUNT_JSON)",
   unauthorized: "session expirée, reconnectez-vous",
 };
 const message = (e: unknown) => { const c = (e as { code?: string; message?: string })?.code || (e as Error)?.message || "erreur"; return MESSAGES[c] || c; };

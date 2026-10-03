@@ -13,9 +13,9 @@ import { BarreProjet, clairsemer, Grille, graduations, infobulle, plage, tx } fr
 import { AideStyle, BarreZoom, SelecteurStyle } from "./Planning";
 import { Coche } from "./jour";
 
-const ZOOMS_PROJET: Zoom[] = ["mois", "trimestre", "annee", "pluri"];
-const LIB_GROUPE: Record<GroupeProjet, string> = { aucun: "Aucun", statut: "Statut", responsable: "Responsable", type: "Type", criticite: "Criticité", echeance: "Échéance", jalon: "Tâche / jalon" };
-const LIB_REF: Record<Reference, string> = { aucune: "Aucune", courante: "Référence courante", initiale: "Plan initial" };
+export const ZOOMS_PROJET: Zoom[] = ["mois", "trimestre", "annee", "pluri"];
+export const LIB_GROUPE: Record<GroupeProjet, string> = { aucun: "Aucun", statut: "Statut", responsable: "Responsable", type: "Type", criticite: "Criticité", echeance: "Échéance", jalon: "Tâche / jalon" };
+export const LIB_REF: Record<Reference, string> = { aucune: "Aucune", courante: "Référence courante", initiale: "Plan initial" };
 
 interface Groupe { id: string; libelle: string; couleur: string; taches: Tache[]; }
 

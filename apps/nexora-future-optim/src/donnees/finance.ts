@@ -127,7 +127,7 @@ export function graduationsMontant(min: number, max: number, n = 4) {
 // Messages (financeBudgetError) : l'erreur technique n'est jamais affichée seule.
 export function messageFinance(code: string): string {
   const m: Record<string, string> = {
-    configuration_missing: "Configuration serveur incomplète sur nexora-future-optim.", unauthorized: "Session expirée : reconnecte-toi.",
+    configuration_missing: "Configuration serveur incomplète sur nexora-future-optim.", configuration_invalid: "Compte de service Firebase illisible sur nexora-future-optim (variable FIREBASE_SERVICE_ACCOUNT_JSON).", unauthorized: "Session expirée : reconnecte-toi.",
     finance_configuration_missing: "Budget indisponible : configuration KDM360 absente côté nexora-project.", finance_read_failed: "Lecture du budget impossible (KDM360).",
     finance_relay_failed: "nexora-project ne répond pas : réessaie dans un instant.", invalid_month: "Mois invalide.", invalid_period: "Période invalide.",
     too_many_points: "Trop de points : choisis un pas plus large.", transaction_not_found: "Opération introuvable : elle a peut-être été modifiée ailleurs.",

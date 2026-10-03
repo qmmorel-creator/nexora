@@ -16,9 +16,9 @@ import { Planning } from "./Planning";
 import { Projets } from "./Projets";
 import { Corps } from "./Corps";
 import { Argent } from "./Argent";
+import { Reglages } from "./Reglages";
 
 const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
-const PALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
 
 function Fiche() {
   const { d, projet, statut, fini, retard, joursRetard, executer, jour } = useOptim();
@@ -91,31 +91,6 @@ function Saisie() {
     </form></>;
 }
 
-function Reglages() {
-  const { d, prefs, ecrirePrefs, couleurHabitude } = useOptim();
-  const { reglages, setReglages } = useUi();
-  if (!reglages) return null;
-  const onglets: [string, string][] = [["habitudes", "Couleurs des habitudes"], ["accueil", "Accueil"]];
-  const poser = (id: string, c: string | null) => { const n = { ...prefs.couleursHabitudes }; if (c) n[id] = c; else delete n[id]; void ecrirePrefs({ couleursHabitudes: n }); };
-  return <>
-    <div className="hx-scrim" onClick={() => setReglages(null)} />
-    <section className="hx-settings" role="dialog" aria-label="Réglages">
-      <header className="hx-th"><h2>Réglages</h2><button type="button" className="hx-x" aria-label="Fermer" onClick={() => setReglages(null)}>×</button></header>
-      <nav className="hx-stabs">{onglets.map(([id, l]) => <button key={id} type="button" className={reglages === id ? "is-on" : ""} onClick={() => setReglages(id)}>{l}</button>)}<span title="Lot 4">Cartes Corps</span><span title="Lot 4">Patrimoine</span></nav>
-      <div className="hx-sbody">
-        {reglages === "accueil" ? <label className="hx-sopt"><input type="checkbox" checked={prefs.accueil.pixels} onChange={(e) => void ecrirePrefs({ accueil: { ...prefs.accueil, pixels: e.target.checked } })} /><span><b>Pixels au cœur du cadran</b><small>Pixel des tâches et pixel des habitudes. Leur taille s'adapte au nombre d'habitudes ; décoché, le cadran n'affiche que les deux compteurs.</small></span></label>
-          : <>
-            <p className="hx-hint">Chaque habitude garde sa couleur partout : anneau du cadran, pixel du jour, liaisons. Sans choix ici, la couleur définie dans Nexora s'applique. Ce réglage ne modifie pas Nexora.</p>
-            {d.themesHabitudes.filter((t) => t.habits.length).map((t) => <div key={t.id}><h3><i style={{ background: t.color }} />{t.name} <small>{t.selectionMode === "single" ? "un seul choix" : "plusieurs possibles"}</small></h3>
-              {t.habits.map((h) => { const cur = couleurHabitude(h); return <div key={h.id} className="hx-hset"><span className="hx-hname"><i className="hx-hdot" style={{ background: cur }} />{h.name}</span>
-                <span className="hx-swatches">{PALETTE.map((c) => <button key={c} type="button" className={c === cur ? "is-on" : ""} style={{ background: c }} aria-label={`Couleur ${c} pour ${h.name}`} onClick={() => poser(h.id, c)} />)}<input type="color" value={cur} aria-label={`Autre couleur pour ${h.name}`} onChange={(e) => poser(h.id, e.target.value)} /></span>
-                {prefs.couleursHabitudes[h.id] ? <button type="button" className="hx-more" onClick={() => poser(h.id, null)}>Couleur de Nexora</button> : <span className="hx-dim">couleur de Nexora</span>}</div>; })}</div>)}
-          </>}
-        <p className="hx-hint is-foot">Réglages synchronisés entre vos appareils (clé nexora:optimPrefs, propre à ce site).</p>
-      </div>
-    </section></>;
-}
-
 function Notification() {
   const { notif, notifier } = useUi();
   useEffect(() => { if (!notif) return; const t = setTimeout(() => notifier(null), 6000); return () => clearTimeout(t); }, [notif, notifier]);
@@ -157,7 +132,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
         <nav className="hx-nav" aria-label="Sections">{NAV.map(([id, l]) => <button key={id} type="button" aria-current={ecran === id ? "page" : "false"} onClick={() => aller(id)}>{l}{id === "projets" && nbRetard > 0 && <em>{nbRetard}</em>}</button>)}</nav>
         <span className="ox-user" title={email}>{email}</span>
         <button type="button" className="hx-btn is-primary" onClick={() => setSaisie(true)}>+ Nouvelle tâche</button>
-        <button type="button" className="hx-gear" aria-label="Réglages" title="Réglages" onClick={() => setReglages("habitudes")}>⚙</button>
+        <button type="button" className="hx-gear" aria-label="Réglages" title="Réglages" onClick={() => setReglages("accueil")}>⚙</button>
         {!demo && <button type="button" className="hx-more is-plain" onClick={() => void deconnexion()}>Déconnexion</button>}
       </header>
       <div className={`hx-body ${tacheId ? "has-panel" : ""}`}>{contenu}<Fiche /></div>

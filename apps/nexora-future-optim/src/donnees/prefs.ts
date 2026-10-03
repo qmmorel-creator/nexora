@@ -33,6 +33,9 @@ export const CARTES_DEFAUT: CarteCorps[] = [
   { id: "comp", titre: "Composition corporelle", mesures: ["weight", "bodyFat"] },
   { id: "vitaux", titre: "Signes vitaux", mesures: ["respRate", "spo2"] },
 ];
+// Accueil (#691) : tuiles affichées, dans l'ordre choisi (les absentes sont masquées).
+export const TUILES_ACCUEIL = ["journee", "corps", "semaine", "projets", "argent"] as const;
+export type TuileAccueil = (typeof TUILES_ACCUEIL)[number];
 export const TUILE_CORPS_DEFAUT = ["recovery", "sleepHours", "hrv", "sport"];
 export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; }
 
@@ -48,7 +51,7 @@ export interface PrefsOptim {
   planning: { zoom: Zoom; groupe: GroupePlanning; corps: boolean; argent: boolean };
   projets: { zoom: Zoom; groupe: GroupeProjet; reference: Reference };
   couleursHabitudes: Record<string, string>;
-  accueil: { pixels: boolean; corps: string[] };
+  accueil: { pixels: boolean; corps: string[]; tuiles: TuileAccueil[] };
   corps: PrefsCorps;
   argent: PrefsArgent;
   vues: VueEnregistree[];
@@ -59,7 +62,7 @@ export const PREFS_VIDES: PrefsOptim = {
   version: 1, gantt: "ruban",
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
-  couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT },
+  couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL] },
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [] },
   argent: { onglet: "mois", patrimoineMois: 24 },
   vues: [],
@@ -122,7 +125,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     planning: { zoom: parmi(pl.zoom, ZOOMS, "mois"), groupe: parmi(pl.groupe, GROUPES_PLANNING, "projet"), corps: pl.corps !== false, argent: pl.argent === true },
     projets: { zoom: parmi(pj.zoom, ZOOMS, "trimestre"), groupe: parmi(pj.groupe, GROUPES_PROJET, "aucun"), reference: parmi(pj.reference, REFERENCES, "courante") },
     couleursHabitudes: couleurs,
-    accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT },
+    accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT, tuiles: Array.isArray(ac.tuiles) ? [...new Set(chaines(ac.tuiles).filter((t): t is TuileAccueil => (TUILES_ACCUEIL as readonly string[]).includes(t)))] : [...TUILES_ACCUEIL] },
     corps: normaliserCorps(b.corps),
     argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24 }; })(),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
@@ -135,4 +138,20 @@ export function fusionnerPrefs(actuel: unknown, patch: Partial<Omit<PrefsOptim, 
   const base = objet(actuel);
   const n = normaliserPrefs(base);
   return { ...base, ...n, ...patch, version: 1 };
+}
+
+// Grille de l'accueil (#691) : largeur naturelle de chaque tuile sur 12
+// colonnes ; la dernière tuile d'une rangée incomplète s'élargit pour la
+// remplir, quel que soit l'ordre ou les tuiles masquées.
+export const LARGEURS_ACCUEIL: Record<TuileAccueil, number> = { journee: 8, corps: 4, semaine: 8, projets: 4, argent: 12 };
+export const LARGEURS_ACCUEIL_MOYEN: Record<TuileAccueil, number> = { journee: 12, corps: 12, semaine: 8, projets: 4, argent: 12 };
+export function placerTuiles(tuiles: readonly TuileAccueil[], largeurs: Record<TuileAccueil, number>, colonnes = 12): number[] {
+  const r: number[] = []; let reste = colonnes;
+  tuiles.forEach((t) => {
+    const w = Math.min(colonnes, largeurs[t]);
+    if (w > reste && r.length) { r[r.length - 1] += reste; reste = colonnes; }
+    r.push(w); reste -= w; if (!reste) reste = colonnes;
+  });
+  if (r.length && reste < colonnes) r[r.length - 1] += reste;
+  return r;
 }

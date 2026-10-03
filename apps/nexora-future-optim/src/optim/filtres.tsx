@@ -75,7 +75,7 @@ export function BarreFiltres({ ecran, n, masquer = [], email, reglages, applique
   reglages: Omit<VueEnregistree, "id" | "ecran" | "nom" | "filtre">; appliquerReglages: (v: VueEnregistree) => void;
 }) {
   const { d, prefs, ecrirePrefs, projet, statut } = useOptim();
-  const { filtre: f, setFiltre, vueActive, setVueActive, notifier } = useUi();
+  const { filtre: f, setFiltre, vueActive, setVueActive, notifier, vueEnAttente, setVueEnAttente } = useUi();
   const [ouvert, setOuvert] = useState<CleListe | null>(null);
   const [nom, setNom] = useState<string | null>(null);
   const moi = useMoi(email);
@@ -89,6 +89,11 @@ export function BarreFiltres({ ecran, n, masquer = [], email, reglages, applique
     const v = prefs.vues.find((x) => x.id === val.slice(2)); if (!v) return;
     setFiltre(v.filtre); appliquerReglages(v);
   };
+  // Vue ouverte depuis les réglages : appliquée une fois, à l'arrivée sur l'écran.
+  useEffect(() => {
+    if (!vueEnAttente || vueEnAttente.ecran !== ecran) return;
+    setVueEnAttente(null); setVueActive(ecran, "u:" + vueEnAttente.id); setFiltre(vueEnAttente.filtre); appliquerReglages(vueEnAttente);
+  }, [vueEnAttente, ecran, setVueEnAttente, setVueActive, setFiltre, appliquerReglages]);
   const enregistrer = async () => {
     const v: VueEnregistree = { id: "v" + Date.now().toString(36), ecran, nom: (nom || "").trim() || "Vue sans nom", filtre: f, ...reglages };
     await ecrirePrefs({ vues: [...prefs.vues, v] });
