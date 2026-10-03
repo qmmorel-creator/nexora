@@ -7,7 +7,7 @@ import { ecartJours, estEnRetard, estTerminee, type Projet, type Statut, type Ta
 import { fusionnerPrefs, FILTRE_VIDE, type FiltreVue, type PrefsOptim, type VueEnregistree } from "../donnees/prefs";
 import { trouverHabitude, type Habitude } from "../donnees/habitudes";
 
-export interface Notification { texte: string; annuler?: () => Promise<void> | void; }
+export interface Notification { texte: string; annuler?: () => Promise<void> | void; lien?: { libelle: string; aller: () => void }; }
 
 interface Ui {
   tacheId: string | null; ouvrir: (id: string | null) => void;
