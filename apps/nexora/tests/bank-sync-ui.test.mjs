@@ -24,6 +24,7 @@ test("onglet déclaré, rendu, appelé par le serveur et ouvert au retour de la 
   assert.match(html, /fetch\("\/api\/nexora\/finance-bank-sync"/);
   assert.match(html, /params\.get\("bankSync"\)/);
   assert.match(html, /setSettingsTab\("bankSync"\)/);
+  assert.match(html, /Comptes liés : ne plus les saisir à la main ni par capture d'écran\./, "avertissement doublons après import");
   assert.doesNotMatch(html, /api\.enablebanking\.com/, "le navigateur ne parle jamais à Enable Banking");
   assert.doesNotMatch(html, /session_id/, "aucun identifiant de session côté interface");
 });
