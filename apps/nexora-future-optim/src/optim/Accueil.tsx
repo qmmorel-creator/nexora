@@ -1,7 +1,7 @@
 // Accueil (Ref #688) : Mosaïque condensée — Journée (Cadran agrandi,
 // Aujourd'hui, À rattraper), Corps, Semaine, Projets, bandeau Argent.
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { ajouterJours, type Tache } from "../donnees/modele";
+import { ajouterJours, estProjetCalendrier, type Tache } from "../donnees/modele";
 import { lignesFrise } from "../donnees/planning";
 import { santeProjet } from "../donnees/projet";
 import type { SyntheseBudget } from "../donnees/finance";
@@ -28,20 +28,27 @@ function LigneTache({ t, sansProjet }: { t: Tache; sansProjet?: boolean }) {
 function Semaine({ ouvrirPlanning }: { ouvrirPlanning: () => void }) {
   const { d, jour, prefs, projet, statut, fini, retard, joursRetard } = useOptim();
   const { ouvrir, tacheId } = useUi();
-  const r: Plage = { zoom: "semaine", debut: jour, fin: ajouterJours(jour, 6), jours: 7 };
-  const ts = d.taches.filter((t) => !fini(t) && statut(t.statusId).name.toLowerCase() !== "information" && !!t.end && t.end >= jour && (t.milestone ? t.end : t.start || t.end) <= r.fin);
+  // Contenu réglable (Réglages › Accueil › Bloc Semaine).
+  const o = prefs.accueil.semaine;
+  const lundi = ajouterJours(jour, -((new Date(`${jour}T12:00:00Z`).getUTCDay() + 6) % 7));
+  const debut = o.debut === "lundi" ? lundi : jour;
+  const r: Plage = { zoom: "semaine", debut, fin: ajouterJours(debut, o.jours - 1), jours: o.jours };
+  const calendrier = (t: Tache) => estProjetCalendrier(d.projets, t.projectId);
+  const ts = d.taches.filter((t) => (o.terminees || !fini(t)) && statut(t.statusId).name.toLowerCase() !== "information" && !!t.end
+    && (o.calendriers || !calendrier(t)) && (!o.jalonsSeuls || !!t.milestone) && (!o.projets.length || o.projets.includes(t.projectId || ""))
+    && (t.end >= r.debut || (o.retards && retard(t))) && (t.milestone ? t.end : t.start || t.end) <= r.fin);
   const ref = useDebordRuban([ts, prefs.gantt]);
   const infos = (t: Tache) => ({ fini: fini(t), retard: retard(t), joursRetard: joursRetard(t), jour });
   const projets = d.projets.map((p) => ({ p, pk: ranger(lignesFrise(ts.filter((t) => t.projectId === p.id)), r, prefs.gantt, 640) })).filter((x) => x.pk.elements.length);
   return (
-    <section className="hx-tile hx-t-week"><header className="hx-th"><h2>Semaine</h2><SelecteurStyle petit /><button type="button" className="hx-more" onClick={ouvrirPlanning}>Ouvrir ›</button></header>
+    <section className="hx-tile hx-t-week"><header className="hx-th"><h2>{o.jours === 14 ? "Deux semaines" : "Semaine"}</h2><SelecteurStyle petit /><button type="button" className="hx-more" onClick={ouvrirPlanning}>Ouvrir ›</button></header>
       <div className="hx-tl is-mini" ref={ref}>
-        <div className="hx-tlhead"><span /><div className="hx-tltrack">{graduations(r).map((k) => <span key={k.iso} className={`hx-tick ${k.iso === jour ? "is-today" : ""}`} style={{ left: `${tx(r, k.iso)}%`, width: `${100 / 7}%` }}>{k.libelle}</span>)}</div></div>
+        <div className="hx-tlhead"><span /><div className="hx-tltrack">{graduations(r).map((k) => <span key={k.iso} className={`hx-tick ${k.iso === jour ? "is-today" : ""}`} style={{ left: `${tx(r, k.iso)}%`, width: `${100 / r.jours}%` }}>{k.libelle}</span>)}</div></div>
         {projets.map(({ p, pk }) => <div key={p.id} className="hx-lane" data-lane-project={p.id}><span className="hx-lh is-static" style={{ ["--c" as string]: p.color }}><b>{p.name}</b></span>
           <div className="hx-ltrack" data-rs={r.debut} data-rn={r.jours} style={{ height: pk.rangees * HAUTEUR_RANGEE + 6 }}><Grille r={r} jour={jour} />
             {pk.elements.map((el) => <LigneGantt key={el.l.t.id} el={el} r={r} style={prefs.gantt} couleur={projet(el.l.t.projectId).color} statuts={d.statuts} infos={infos(el.l.t)} selection={tacheId === el.l.t.id} ouvrir={ouvrir} info={infobulle(el.l.t, el.l, p.name || "", statut(el.l.t.statusId).name, infos(el.l.t))} />)}
           </div></div>)}
-        {!projets.length && <p className="hx-empty">Rien d'échu cette semaine.</p>}
+        {!projets.length && <p className="hx-empty">Rien d'échu sur la période{o.projets.length || o.jalonsSeuls || !o.calendriers ? " avec les réglages du bloc" : ""}.</p>}
       </div>
     </section>
   );
@@ -119,6 +126,9 @@ export function Accueil({ aller }: { aller: (ecran: string, projet?: string) => 
   const aujourdhui = tachesDuJour(jour).filter((t) => !retard(t));
   const enRetard = d.taches.filter((t) => retard(t)).sort((a, b) => (a.end || "").localeCompare(b.end || ""));
   const ct = compteTaches(jour), eh = etats(jour);
+  // Contenu réglable (Réglages › Accueil › Bloc Journée).
+  const oj = prefs.accueil.journee;
+  const jourListe = oj.calendriers ? aujourdhui : aujourdhui.filter((t) => !estProjetCalendrier(d.projets, t.projectId));
   return (
     <main className="hx-main hx-home" data-scroll>
       <div className="hx-hello is-tight"><h1>{majuscule(jourLong(jour))}</h1><p>{(() => { const n = aujourdhui.filter((t) => !fini(t)).length; return `${n} tâche${n > 1 ? "s" : ""} aujourd'hui`; })()} · <span className="hx-red">{enRetard.length} en retard</span> · {suivant ? <>ensuite <b>{hmf(suivant.h0)} {suivant.titre}</b></> : "plus rien d'horodaté"} · habitudes {eh.faites}/{eh.total}</p></div>
@@ -126,11 +136,12 @@ export function Accueil({ aller }: { aller: (ecran: string, projet?: string) => 
         const tuiles: Record<TuileAccueil, ReactNode> = {
           journee: <>
         <section className="hx-tile hx-t-day"><header className="hx-th"><h2>Journée <small>{ct.faites}/{ct.total} tâches · habitudes {eh.faites}/{eh.total}</small></h2><button type="button" className="hx-more" onClick={() => aller("journee")}>Ouvrir ›</button></header>
-          <div className="hx-dayin"><div className="hx-mini"><Cadran date={jour} taille={240} mini pixels={prefs.accueil.pixels} /></div>
-            <div className="hx-daycols">
-              <div><h3 className="hx-h3">Aujourd'hui <small>{aujourdhui.length}</small></h3><ul className="hx-list">{aujourdhui.slice(0, 8).map((t) => <LigneTache key={t.id} t={t} />)}</ul>{aujourdhui.length > 8 && <button type="button" className="hx-more" onClick={() => aller("journee")}>+ {aujourdhui.length - 8} autres</button>}{!aujourdhui.length && <p className="hx-dim">Rien d'échu aujourd'hui.</p>}</div>
-              <div><h3 className="hx-h3">À rattraper <span className="hx-red">{enRetard.length}</span><button type="button" className="hx-more" onClick={() => aller("planning")}>Planning ›</button></h3><ul className="hx-list">{enRetard.slice(0, 8).map((t) => <LigneTache key={t.id} t={t} sansProjet />)}</ul>{enRetard.length > 8 && <button type="button" className="hx-more" onClick={() => aller("planning")}>+ {enRetard.length - 8} autres</button>}</div>
-            </div></div></section></>,
+          <div className={`hx-dayin ${oj.cadran ? "" : "ox-sanscadran"}`}>{oj.cadran && <div className="hx-mini"><Cadran date={jour} taille={240} mini pixels={prefs.accueil.pixels} /></div>}
+            {(oj.aujourdhui || oj.rattraper) && <div className={`hx-daycols ${oj.aujourdhui && oj.rattraper ? "" : "ox-unecol"}`}>
+              {oj.aujourdhui && <div><h3 className="hx-h3">Aujourd'hui <small>{jourListe.length}</small></h3><ul className="hx-list">{jourListe.slice(0, oj.lignes).map((t) => <LigneTache key={t.id} t={t} />)}</ul>{jourListe.length > oj.lignes && <button type="button" className="hx-more" onClick={() => aller("journee")}>+ {jourListe.length - oj.lignes} autres</button>}{!jourListe.length && <p className="hx-dim">Rien d'échu aujourd'hui.</p>}</div>}
+              {oj.rattraper && <div><h3 className="hx-h3">À rattraper <span className="hx-red">{enRetard.length}</span><button type="button" className="hx-more" onClick={() => aller("planning")}>Planning ›</button></h3><ul className="hx-list">{enRetard.slice(0, oj.lignes).map((t) => <LigneTache key={t.id} t={t} sansProjet />)}</ul>{enRetard.length > oj.lignes && <button type="button" className="hx-more" onClick={() => aller("planning")}>+ {enRetard.length - oj.lignes} autres</button>}</div>}
+            </div>}
+            {!oj.cadran && !oj.aujourdhui && !oj.rattraper && <p className="hx-dim">Bloc vide : choisissez son contenu dans Réglages › Accueil.</p>}</div></section></>,
           corps: <TuileCorps aller={aller} />,
           semaine: <Semaine ouvrirPlanning={() => aller("planning")} />,
           projets: <>
