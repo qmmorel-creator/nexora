@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CRITICITES, ecartJours, estProjetCalendrier, estReunion, estTerminee, nouvelId, statutImpose, statutsDuProjet, typesDuProjet, type Catalogues, type ElementCheck, type PieceJointe, type Tache } from "../donnees/modele";
 import { Bouton, Etat, Kbd, Segment, Surtitre } from "../composants";
+import { comparaison, figerReference, libelleEcart, normaliserComparaison, type Baselines } from "../donnees/planning";
 
 interface Props {
-  t: Tache; cat: Catalogues; taches: Tache[]; aujourdhui: string;
+  t: Tache; cat: Catalogues; taches: Tache[]; aujourdhui: string; references?: Baselines;
   onPatch: (patch: Partial<Tache>) => void; onBasculer: () => void; onArchiver: () => void; onDupliquer: () => void; onFermer: () => void;
   onOuvrir: (id: string) => void;
 }
@@ -27,7 +28,7 @@ function Texte({ id, valeur, onValider, multiligne, placeholder, lignes = 4 }: {
 
 const taille = (o: number) => (o > 1024 * 1024 ? `${(o / 1048576).toFixed(1)} Mo` : `${Math.ceil(o / 1024)} Ko`);
 
-export function Inspecteur({ t, cat, taches, aujourdhui, onPatch, onBasculer, onArchiver, onDupliquer, onFermer, onOuvrir }: Props) {
+export function Inspecteur({ t, cat, taches, aujourdhui, references, onPatch, onBasculer, onArchiver, onDupliquer, onFermer, onOuvrir }: Props) {
   const calendrier = estProjetCalendrier(cat.projets, t.projectId);
   const impose = statutImpose(cat.types, cat.statuts, t.taskTypeId);
   const fini = estTerminee(t, cat.statuts);
@@ -43,8 +44,10 @@ export function Inspecteur({ t, cat, taches, aujourdhui, onPatch, onBasculer, on
   const deps = (t.dependsOn || []).map((id) => taches.find((x) => x.id === id)).filter(Boolean) as Tache[];
   const bloquee = deps.some((d) => !estTerminee(d, cat.statuts));
   const conflit = deps.some((d) => d.end && t.start && d.end > t.start);
-  const ref = t.comparison?.referenceEnd;
-  const ecart = ref && t.end ? ecartJours(ref, t.end) : null;
+  const cmpStockee = normaliserComparaison(t.comparison);
+  const cmp = comparaison(t, references, "courante");
+  const cmpInitiale = cmpStockee?.history.length ? comparaison(t, references, "initiale") : null;
+  const dateCourte = (iso: string) => iso.split("-").reverse().join("/");
   const pj = t.attachments || [];
 
   const majCase = (id: string, p: Partial<ElementCheck>) => onPatch({ checklist: checklist.map((c) => (c.id === id ? { ...c, ...p } : c)) });
@@ -146,6 +149,21 @@ export function Inspecteur({ t, cat, taches, aujourdhui, onPatch, onBasculer, on
         </select>
       </section>
 
+      <section className="insp-section" aria-label="Référence de planning"><Surtitre>Référence de planning</Surtitre>
+        {cmp ? (
+          <div className="insp-ref">
+            <span className="mono">{cmp.referenceStart !== cmp.referenceEnd ? `${dateCourte(cmp.referenceStart)} → ` : ""}{dateCourte(cmp.referenceEnd)}</span>
+            <Etat ton={cmp.tonFin === "retard" ? "crit" : cmp.tonFin === "avance" ? "ok" : "neutre"} point={false}>{`fin ${libelleEcart(cmp.ecartFin)}`}</Etat>
+            {cmpInitiale && <span className="discret">{`vs initiale ${libelleEcart(cmpInitiale.ecartFin)}`}</span>}
+            {!cmpStockee && <span className="discret">plan initial capturé automatiquement</span>}
+          </div>
+        ) : <p className="discret">{cmpStockee && !cmpStockee.enabled ? "Comparaison désactivée." : "Aucune référence."}</p>}
+        <div className="insp-ref-actions">
+          <Bouton disabled={dis || !figerReference(t)} onClick={() => { const c = figerReference(t, aujourdhui); if (c) onPatch({ comparison: c }); }} title="Les dates actuelles deviennent la référence ; l'ancienne est conservée dans l'historique">Figer la référence</Bouton>
+          {cmpStockee && <Bouton variante="discret" disabled={dis} onClick={() => onPatch({ comparison: { ...cmpStockee, enabled: !cmpStockee.enabled } })}>{cmpStockee.enabled ? "Désactiver la comparaison" : "Réactiver la comparaison"}</Bouton>}
+        </div>
+      </section>
+
       <section className="insp-section"><Surtitre>Pièces jointes</Surtitre>
         {pj.map((p) => (
           <div key={p.id} className="insp-dep">
@@ -164,7 +182,6 @@ export function Inspecteur({ t, cat, taches, aujourdhui, onPatch, onBasculer, on
       </section>
 
       <section className="insp-section insp-infos mono">
-        {ref && <div>Référence : fin {ref.split("-").reverse().join("/")}{ecart !== null && ecart !== 0 ? ` · écart ${ecart > 0 ? "+" : ""}${ecart} j` : ""}</div>}
         {t.lastInteraction && <div>Dernière modification : {new Date(t.lastInteraction).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</div>}
         {t.completedAt && <div>Terminée le : {new Date(t.completedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</div>}
         {t.sourceSender && <div>Origine : e-mail de {t.sourceSender}</div>}

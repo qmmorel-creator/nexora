@@ -217,6 +217,76 @@ try {
   assert.equal(journal[0].taskId, choisie, "entrée en tête du journal");
   assert.equal(new Set(journal.map((e) => e.id)).size, journal.length, "identifiants uniques");
 
+  etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
+  const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
+  const tache = async (id) => (await taches()).find((t) => t.id === id);
+  await page.goto(`http://127.0.0.1:${PORT}/taches?v=frise&grp=project`);
+  const gantt = page.getByRole("grid", { name: "Frise des tâches" });
+  await gantt.waitFor();
+  await capture("11-gantt");
+  // Glisser « Newsletter d'octobre » de 3 jours.
+  const jours = Number((await page.locator(".fr-outils .mono").first().textContent()).match(/(\d+) j/)[1]);
+  const largeur = (await page.locator(".fr-axe .fr-piste").boundingBox()).width;
+  const barreNews = gantt.getByRole("button", { name: /^Newsletter d'octobre, du/ });
+  const bb = await barreNews.boundingBox();
+  await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); await page.mouse.down();
+  await page.mouse.move(bb.x + bb.width / 2 + (3.2 * largeur) / jours, bb.y + bb.height / 2, { steps: 6 }); await page.mouse.up();
+  const attendu = [await J(8), await J(15)];
+  await page.waitForFunction((a) => { const t = window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === "t10"); return t.start === a[0] && t.end === a[1]; }, attendu);
+  // Référence courante puis plan initial (Revue DOE : fin J+7, référence J+2, initiale J+0).
+  await page.getByRole("radio", { name: "Référence", exact: true }).click();
+  await gantt.getByRole("button", { name: /^Revue DOE, .*écart de fin \+5 j/ }).waitFor();
+  await page.getByRole("radio", { name: "Plan initial" }).click();
+  await gantt.getByRole("button", { name: /^Revue DOE, .*écart de fin \+7 j/ }).waitFor();
+  // Repli sur nexora:taskBaselines (Newsletter : baseline J+10, fin désormais J+15).
+  await gantt.getByRole("button", { name: /^Newsletter d'octobre, .*écart de fin \+5 j/ }).waitFor();
+  await page.getByLabel("Chemin critique").check();
+  await gantt.getByRole("button", { name: /^Congés scolaires .*chemin critique/ }).waitFor();
+  assert.deepEqual((await valeur("nexora:futurPrefs")).frise, { reference: "initiale", critique: true }, "réglages de la frise synchronisés");
+  await capture("12-gantt-reference");
+
+  etape = "figer la référence"; console.log("→", etape);
+  await gantt.getByRole("button", { name: "Revue DOE", exact: true }).click();
+  const fiche = page.getByRole("complementary", { name: /Fiche : Revue DOE/ });
+  await fiche.getByRole("button", { name: "Figer la référence" }).click();
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === "t4").comparison.history.length === 2);
+  const c4 = (await tache("t4")).comparison;
+  assert.equal(c4.referenceEnd, await J(7)); assert.equal(c4.history[0].label, "Initiale");
+  await page.keyboard.press("Escape");
+
+  etape = "agenda"; console.log("→", etape);
+  await page.keyboard.press("5");
+  const jourAg = page.getByRole("region", { name: /^Frise du / });
+  await jourAg.waitFor();
+  await jourAg.getByRole("button", { name: "Jour suivant" }).click();
+  await jourAg.getByRole("button", { name: "Jour suivant" }).click();
+  await jourAg.getByRole("button", { name: "Jour suivant" }).click();
+  await jourAg.getByRole("button", { name: "Jour suivant" }).click();
+  await jourAg.getByRole("button", { name: /^09:00–11:00 Visite DREAL/ }).waitFor();
+  await capture("13-agenda");
+
+  etape = "tableur : édition en masse et annulation"; console.log("→", etape);
+  await page.keyboard.press("6");
+  const tb = page.getByRole("table", { name: "Tableur des tâches" });
+  await tb.waitFor();
+  await tb.getByRole("checkbox", { name: "Sélectionner Revue DOE" }).check();
+  await tb.getByRole("checkbox", { name: "Sélectionner Confirmer les personnes CNR aux PI" }).check();
+  const masseBarre = page.getByRole("toolbar", { name: "Édition en masse" });
+  await masseBarre.getByLabel("Décalage en jours").fill("2");
+  await masseBarre.getByRole("button", { name: "Décaler (j)" }).click();
+  const t8avant = await J(-13);
+  await page.waitForFunction((d) => window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === "t8").end === d, await J(-11));
+  assert.equal((await tache("t4")).end, await J(9));
+  await page.locator(".notif", { hasText: "Décalage" }).getByRole("button", { name: "Annuler" }).click();
+  await page.waitForFunction((d) => window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === "t8").end === d, t8avant);
+  await masseBarre.getByLabel("Responsable").selectOption({ label: "Maïa Sonnier" });
+  await page.waitForFunction(() => ["t4", "t8"].every((id) => window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === id).assignee === "Maïa Sonnier"));
+  const titre = tb.getByRole("row", { name: /Newsletter d'octobre/ }).getByLabel("Titre");
+  await titre.fill("Newsletter d'octobre (v2)"); await titre.press("Enter");
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === "t10").title === "Newsletter d'octobre (v2)");
+  await capture("14-tableur");
+  await page.keyboard.press("Escape");
+
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);
   await page.getByRole("complementary", { name: /Fiche : PV Contrôles DREAL/ }).waitFor();

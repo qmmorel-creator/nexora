@@ -16,7 +16,7 @@ export interface Tache {
   start?: string; end?: string; startTime?: string; endTime?: string; progress?: number; estimateMinutes?: number | null;
   desc?: string; meetingReport?: string; assignee?: string;
   checklist?: ElementCheck[]; dependsOn?: string[]; recurrence?: Recurrence | null;
-  attachments?: PieceJointe[]; comparison?: { enabled?: boolean; referenceStart?: string | null; referenceEnd?: string | null; capturedAt?: string; history?: unknown[] } | null;
+  attachments?: PieceJointe[]; comparison?: { enabled?: boolean; referenceStart?: string | null; referenceEnd?: string | null; capturedAt?: string | null; history?: unknown[] } | null;
   delayRisks?: unknown[]; customFields?: Record<string, unknown>;
   lastInteraction?: string; completedAt?: string; archivedAt?: string;
   source?: string | null; sourceUrl?: string | null; sourceSender?: string | null;

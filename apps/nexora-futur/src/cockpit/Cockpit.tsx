@@ -24,16 +24,24 @@ import { PageProjet } from "./PageProjet";
 import { Bande, ESPACES, NavEspace, PageCorps, PageEquipe, PageFinances, allerEspace, memoriser, useRapportDuJour, type Espace } from "./Espaces";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { fusionnerPrefs } from "../donnees/prefs";
-import { archiverTache, basculer, creer, dupliquerTache, modifier, remettre, restaurerTache, retirer, statutCyclique } from "./actions";
+import { archiverPlusieurs, archiverTache, basculer, creer, dupliquerPlusieurs, dupliquerTache, masse, modifier, remettre, restaurerPlusieurs, restaurerTache, retirer, statutCyclique } from "./actions";
+import { decalerDates } from "../donnees/operations";
+import { Frise } from "./Frise";
+import { Agenda } from "./Agenda";
+import { COLONNES_DEFAUT, Tableur } from "./Tableur";
+import { usePref } from "./usePref";
 
-type Lentille = "page" | "liste" | "colonnes";
+type Lentille = "page" | "liste" | "colonnes" | "frise" | "agenda" | "tableur";
+const LENTILLES: Record<string, { libelle: string; touche: string }> = {
+  liste: { libelle: "Liste", touche: "1" }, colonnes: { libelle: "Colonnes", touche: "2" }, frise: { libelle: "Frise", touche: "4" }, agenda: { libelle: "Agenda", touche: "5" }, tableur: { libelle: "Tableur", touche: "6" },
+};
 const ecrit = (el: EventTarget | null) => el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
 const AIDE: [string, string][] = [
   ["⌘K · Ctrl+K · /", "Palette : créer, chercher, aller à, commandes"], ["C · N · Ctrl+Alt+N", "Nouvelle tâche (saisie rapide)"],
   ["J · ↓ / K · ↑", "Tâche suivante / précédente"], ["↵", "Ouvrir la fiche"], ["Échap", "Fermer la fiche ou la palette"],
   ["g puis j · c · f · s · e", "Espace : Fil du jour, Chantiers, Finances, Corps, Équipe"], ["3", "Page du projet"], ["E", "Terminer / rouvrir"], ["S", "Statut suivant"], ["F", "Focus oui / non"], ["D", "Modifier la date de fin"], ["A", "Changer le responsable"],
-  ["X · Suppr", "Archiver (annulable)"], ["1 · 2", "Lentille Liste / Colonnes"], ["?", "Cette aide"],
+  ["X · Suppr", "Archiver (annulable)"], ["1 · 2 · 4 · 5 · 6", "Lentille Liste, Colonnes, Frise, Agenda, Tableur"], ["?", "Cette aide"],
 ];
 
 export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
@@ -59,7 +67,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const projet = d.projets.find((p) => p.id === projetFixe);
   const lentilleDefaut: Lentille = vue === "projet" ? "page" : "liste";
   const vParam = route.params.get("v");
-  const lentille: Lentille = vParam === "colonnes" ? "colonnes" : vParam === "liste" ? "liste" : vParam === "page" && vue === "projet" ? "page" : lentilleDefaut;
+  const lentille: Lentille = vParam && vParam in LENTILLES ? (vParam as Lentille) : vParam === "page" && vue === "projet" ? "page" : lentilleDefaut;
   const ouverte = route.params.get("t") || undefined;
   const r = useMemo(() => depuisParams(route.params), [route.params]);
   const base = vue === "projet" ? `/projets/${encodeURIComponent(projetFixe || "")}` : vue === "archive" ? "/archive" : vue === "toutes" ? "/taches" : vue === "fil" ? "/" : `/${vue}`;
@@ -75,6 +83,9 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const ctx: Contexte = useMemo(() => ({ projets: d.projets, statuts: d.statuts, types: d.types, aujourdhui: d.aujourdhui }), [d.projets, d.statuts, d.types, d.aujourdhui]);
   const filtres = useMemo(() => versFiltres(projetFixe ? { ...r, projets: [projetFixe] } : r), [r, projetFixe]);
   const visibles = useMemo(() => (vue === "archive" || sansRequete ? [] : d.taches.filter((t) => correspond(t, d.metaFiltres, ctx) && correspond(t, filtres, ctx))), [vue, sansRequete, d.taches, d.metaFiltres, filtres, ctx]);
+  // L'Agenda montre les terminées dans la frise du jour (sa grille les écarte).
+  const filtresAgenda = useMemo(() => versFiltres({ ...(projetFixe ? { ...r, projets: [projetFixe] } : r), terminees: true }), [r, projetFixe]);
+  const visiblesAgenda = useMemo(() => (lentille !== "agenda" || sansRequete ? [] : d.taches.filter((t) => correspond(t, d.metaFiltres, ctx) && correspond(t, filtresAgenda, ctx))), [lentille, sansRequete, d.taches, d.metaFiltres, filtresAgenda, ctx]);
   const paquets = useMemo(() => {
     const p = grouper(trier(visibles, r.tri, d), lentille === "colonnes" && r.groupe === "aucun" ? "status" : r.groupe, d);
     return r.groupe === "status" ? ouvertesDabord(p, d) : p;
@@ -106,10 +117,11 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const accord = useRef(0);
 
   // Exécution avec retour visible et « Annuler ».
-  const agir = useCallback(async (m: Mutation, message?: string, inverse?: () => Mutation) => {
+  const agir = useCallback(async (m: Mutation, messageOuCalcul?: string | (() => string), inverse?: () => Mutation) => {
     try {
       const bilan = await executer(m);
       if (bilan.journal) notifier({ message: `Modification enregistrée, mais le journal d'activité n'a pas pu être mis à jour : ${bilan.journal}`, ton: "crit" });
+      const message = typeof messageOuCalcul === "function" ? messageOuCalcul() : messageOuCalcul;
       if (message) notifier({ message, annuler: inverse ? () => { executer(inverse()).catch((e) => notifier({ message: (e as Error).message, ton: "crit" })); } : undefined });
     } catch (e) {
       const err = e as Error;
@@ -149,6 +161,17 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     };
     agir(creer(b, d.aujourdhui, id), `« ${s.titre} » créée.`, () => retirer([id])).then(() => { setSelection(id); if (ouvrir) majAdresse({ t: id }, true); });
   };
+  // Tableur (Ref #658) : actions en masse, annulables.
+  const versions = (ids: string[]) => ids.map((id) => tache(id)).filter((t): t is Tache => !!t);
+  const pluriel = (n: number) => `${n} tâche${n > 1 ? "s" : ""}`;
+  const actionMasse = (ids: string[], f: (t: Tache) => Partial<Tache> | null, libelle: string) => {
+    const avant = versions(ids); const bilan: { modifiees?: number; refusees?: number } = {};
+    agir(masse(ids, f, bilan), () => `${libelle} à ${pluriel(bilan.modifiees ?? 0)}.${bilan.refusees ? ` ${pluriel(bilan.refusees)} Google Calendar non modifiée(s).` : ""}`, () => remettre(avant));
+  };
+  const actionArchiverPlusieurs = (ids: string[]) => { if (ouverte && ids.includes(ouverte)) majAdresse({ t: null }); agir(archiverPlusieurs(ids), `${pluriel(ids.length)} archivée(s).`, () => restaurerPlusieurs(ids)); };
+  const actionDupliquerPlusieurs = (ids: string[]) => { const sortie: { ids?: string[] } = {}; agir(dupliquerPlusieurs(ids, sortie), () => `${pluriel(sortie.ids?.length ?? 0)} dupliquée(s).`, () => retirer(sortie.ids ?? [])); };
+  const [prefsFrise, setPrefsFrise] = usePref("frise");
+  const [prefsTableur, setPrefsTableur] = usePref("tableur");
   const ouvrir = (id: string) => { setSelection(id); majAdresse({ t: id }, true); };
   const fermer = () => majAdresse({ t: null });
 
@@ -161,6 +184,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     { id: "toutes", libelle: "Toutes les tâches", executer: () => naviguer("/taches") },
     { id: "lentille-liste", libelle: "Lentille Liste", raccourci: "1", executer: () => (vue === "fil" ? naviguer("/taches") : majAdresse({ v: "liste" })) },
     { id: "lentille-colonnes", libelle: "Lentille Colonnes", detail: "kanban par regroupement", raccourci: "2", executer: () => (vue === "fil" ? naviguer("/taches", new URLSearchParams("v=colonnes")) : majAdresse({ v: "colonnes" })) },
+    ...(["frise", "agenda", "tableur"] as const).map((v) => ({ id: `lentille-${v}`, libelle: `Lentille ${LENTILLES[v].libelle}`, detail: v === "frise" ? "Gantt, chemin critique, référence" : v === "agenda" ? "semaines et frise du jour" : "édition en masse", raccourci: LENTILLES[v].touche, executer: () => (sansRequete ? naviguer("/taches", new URLSearchParams(`v=${v}`)) : majAdresse({ v })) })),
     { id: "terminees", libelle: r.terminees ? "Masquer les terminées" : "Afficher les terminées", executer: () => majAdresse({ r: { ...r, terminees: !r.terminees } }) },
     { id: "retard", libelle: "Voir les tâches en retard", executer: () => naviguer("/taches", new URLSearchParams("retard=1")) },
     { id: "archive", libelle: "Ouvrir l'archive", executer: () => naviguer("/archive") },
@@ -208,6 +232,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         case "1": if (sansRequete) naviguer("/taches"); else majAdresse({ v: "liste" }); break;
         case "2": if (sansRequete) naviguer("/taches", new URLSearchParams("v=colonnes")); else majAdresse({ v: "colonnes" }); break;
         case "3": if (vue === "projet") majAdresse({ v: "page" }); break;
+        case "4": case "5": case "6": { const v = (["frise", "agenda", "tableur"] as const)[Number(e.key) - 4]; if (sansRequete) naviguer("/taches", new URLSearchParams(`v=${v}`)); else majAdresse({ v }); break; }
         case "?": setAide(true); break;
       }
     };
@@ -219,7 +244,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
 
   const segmentLentilles = (
     <Segment etiquette="Lentille" valeur={lentille} onChange={(v) => majAdresse({ v })}
-      options={[...(vue === "projet" ? [{ valeur: "page" as Lentille, libelle: "Page", raccourci: "3" }] : []), { valeur: "liste" as Lentille, libelle: "Liste", raccourci: "1" }, { valeur: "colonnes" as Lentille, libelle: "Colonnes", raccourci: "2" }]} />
+      options={[...(vue === "projet" ? [{ valeur: "page" as Lentille, libelle: "Page", raccourci: "3" }] : []), ...Object.entries(LENTILLES).map(([v, x]) => ({ valeur: v as Lentille, libelle: x.libelle, raccourci: x.touche }))]} />
   );
   const retards = visibles.filter((t) => estEnRetard(t, d.statuts, d.aujourdhui)).length;
   const titre = vue === "projet" ? projet?.name || "Projet introuvable" : vue === "archive" ? "Archive" : r.retard ? "En retard" : r.focus === "yes" ? "Focus" : "Toutes les tâches";
@@ -265,13 +290,21 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
               ))}
               {!d.archive.length && <div className="vide"><p>L'archive est vide.</p></div>}
             </div>
-          ) : lentille === "colonnes"
+          ) : lentille === "frise"
+            ? <Frise paquets={paquets} cat={d} aujourdhui={d.aujourdhui} selection={selection} references={d.references} prefs={prefsFrise} setPrefs={setPrefsFrise} onSelect={setSelection} onOuvrir={ouvrir} onDeplacer={(id, patch) => actionPatch(id, patch, "Dates modifiées.")} />
+          : lentille === "agenda"
+            ? <Agenda taches={visiblesAgenda} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} />
+          : lentille === "tableur"
+            ? <Tableur paquets={paquets} cat={d} aujourdhui={d.aujourdhui} references={d.references} selection={selection} colonnes={prefsTableur?.colonnes ?? COLONNES_DEFAUT} setColonnes={(c) => setPrefsTableur({ colonnes: c })}
+                onSelect={setSelection} onOuvrir={ouvrir} onPatch={(id, patch) => actionPatch(id, patch)} onMasse={actionMasse} onDecaler={(ids, n) => actionMasse(ids, decalerDates(n), `Décalage de ${n > 0 ? "+" : ""}${n} j appliqué`)}
+                onDupliquer={actionDupliquerPlusieurs} onArchiver={actionArchiverPlusieurs} />
+          : lentille === "colonnes"
             ? <Colonnes paquets={paquets} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} onBasculer={actionBasculer} champ={r.groupe === "aucun" ? "status" : r.groupe} onDeplacer={(id, patch) => actionPatch(id, patch, "Tâche déplacée.")} />
             : <Liste paquets={paquets} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} onBasculer={actionBasculer} />}
         </>}
       </main>
       {tacheOuverte && (
-        <Inspecteur key={tacheOuverte.id} t={tacheOuverte} cat={d} taches={d.taches} aujourdhui={d.aujourdhui}
+        <Inspecteur key={tacheOuverte.id} t={tacheOuverte} cat={d} taches={d.taches} aujourdhui={d.aujourdhui} references={d.references}
           onPatch={(p) => actionPatch(tacheOuverte.id, p)} onBasculer={() => actionBasculer(tacheOuverte.id)} onArchiver={() => actionArchiver(tacheOuverte.id)}
           onDupliquer={() => actionDupliquer(tacheOuverte.id)} onFermer={fermer} onOuvrir={ouvrir} />
       )}

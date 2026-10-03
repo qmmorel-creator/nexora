@@ -34,7 +34,8 @@ Nouvelle version de Nexora, publiée sur https://nexora-futur.netlify.app (issue
 | `E` · `S` · `F` | Terminer ou rouvrir · statut suivant · focus |
 | `D` · `A` | Date de fin · responsable |
 | `X` · Suppr | Archiver (annulable) |
-| `1` · `2` | Lentille Liste · Colonnes |
+| `1` · `2` · `3` | Lentille Liste · Colonnes · Page (projet) |
+| `4` · `5` · `6` | Lentille Frise · Agenda · Tableur (#658) |
 | `?` | Aide |
 
 L'adresse décrit la vue (`/projets/<id>?v=colonnes&retard=1&t=<tâche>`) : lien profond et
@@ -51,3 +52,20 @@ bouton Précédent. Paramètres réservés : `t` (tâche ouverte) et `v` (lentil
   choix unique par thème, valeurs bornées, « non applicable » hors du total.
 - **Préférences** (`nexora:futurPrefs`, clé lue par Futur seul) : dernière adresse de chaque
   espace, sections de la page projet. Synchronisées entre appareils.
+
+## Frise, Agenda, Tableur (lot 5a, #658)
+
+Trois lentilles de plus, sur la même requête que la liste (filtres, tri, regroupement) :
+
+- **Frise** (`v=frise`) : Gantt des tâches datées et des jalons, barre de synthèse par groupe
+  (avancement pondéré par la durée). On glisse une barre pour la déplacer, un bord pour changer
+  le début ou la fin. Chemin critique (dépendances, ancré sur les fins) et comparaison à la
+  **référence** ou au **plan initial**, avec repli sur `nexora:taskBaselines`. Les réglages sont
+  synchronisés dans `nexora:futurPrefs`.
+- **Agenda** (`v=agenda`) : grille continue de semaines (tâches ouvertes, multi-jours en bandeaux)
+  et frise horaire du jour choisi (terminées comprises).
+- **Tableur** (`v=tableur`) : édition en ligne ; sélection multiple et édition en masse (statut,
+  type, projet, responsable, jalon, avancement, dates fixées ou décalées, dupliquer, archiver),
+  toujours annulable. Colonnes au choix, synchronisées.
+- **Fiche** : section « Référence de planning », avec « Figer la référence » (l'ancienne est
+  gardée dans l'historique, la première sous « Initiale »).
