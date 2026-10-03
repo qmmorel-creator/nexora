@@ -3,8 +3,8 @@ import { ErreurLectureSeule, ecritureAutorisee, exigerEcriture } from "../src/do
 import { CLES_ECRITURE_OUVERTES } from "../src/donnees/config";
 
 describe("garde d'écriture", () => {
-  it("aucune clé n'est ouverte au lot 0", () => {
-    expect(CLES_ECRITURE_OUVERTES).toEqual([]);
+  it("seules les tâches et l'archive sont ouvertes (lot 2, #655)", () => {
+    expect([...CLES_ECRITURE_OUVERTES].sort()).toEqual(["nexora:taskArchive", "nexora:tasks"]);
   });
   it("refuse toute clé non ouverte", () => {
     expect(() => exigerEcriture("nexora:tasks", [])).toThrow(ErreurLectureSeule);
