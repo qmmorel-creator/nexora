@@ -69,6 +69,8 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
       { id: "t10", title: "Newsletter d'octobre", projectId: "p-com", statusId: "s1", taskTypeId: "tt1", start: J(5), end: J(12), assignee: "", dependsOn: ["t9"] },
       { id: "t11", title: "Congés scolaires (zone A)", projectId: "p-com", statusId: "s6", taskTypeId: "tt4", start: J(14), end: J(28) },
       { id: "t12", title: "Copil mensuel", projectId: "p-agenda", statusId: "s1", taskTypeId: "tt3", start: J(3), end: J(3), startTime: "14:00", endTime: "15:30" },
+      { id: "t13", title: "Rappeler le plombier", projectId: "p-lot2b", statusId: "s1", taskTypeId: "tt1", assignee: "Maïa Sonnier" },
+      { id: "t14", title: "Relancer le bureau d'études sur CTEX6", statusId: "s1", taskTypeId: "tt1", start: J(1), end: J(2), source: "assistant", assignee: "Vincent Bernard", lastInteraction: new Date().toISOString() },
     ],
     "nexora:dashboards": [{ id: "db1", name: "Pilotage chantiers", pages: [{ id: "pg1", name: "Semaine", widgets: [
       { id: "w1", type: "note", title: "Consignes de la semaine", content: "## Priorités\n- [x] Relancer le bureau de contrôle\n- [ ] Préparer la visite **DREAL**\n:::callout-warning Attention\nAccès chantier fermé jeudi.\n:::\nVoir [le plan](https://example.invalid/plan)." },
